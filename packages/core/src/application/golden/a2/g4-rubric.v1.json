@@ -1,0 +1,40 @@
+{
+ "version": 1,
+ "description": "G4 blind-comparison rubric and presentation rule (ADR-0121 A2, record decision 3, proposal A2-D19 G4). Frozen with the case set: its sha256 is in g4-manifest.v1.json. The owner labels every output blind.",
+ "labels": {
+  "useless": {
+   "ko": "그대로 쓸 수 없다. 주제와 어긋나거나, 지어낸 사실이 있거나, 요청한 형식(개수·목록)을 지키지 않았거나, 너무 일반적이어서 이 일정에 도움이 안 된다.",
+   "en": "Cannot be used as is: off-subject, invents facts, ignores the requested form (count, list), or is so generic it does not help with this event."
+  },
+  "usable": {
+   "ko": "조금 손보면 쓸 수 있다. 주제에 맞고 형식은 지켰지만 평범하거나 일부만 쓸모 있다.",
+   "en": "Usable with light editing: on subject and in the requested form, but ordinary or only partly useful."
+  },
+  "good": {
+   "ko": "그대로 써도 된다. 주제에 구체적이고 형식을 지켰고 군더더기가 없다.",
+   "en": "Could be used as is: specific to the subject, in the requested form, no filler."
+  }
+ },
+ "checks": [
+  "on the event's subject (title, as shown to the arm)",
+  "respects the owner's count and list form when given",
+  "does not state an invented time, date or attendee",
+  "same language as the owner's request",
+  "no URL, no markup noise"
+ ],
+ "pairwise": {
+  "choices": [
+   "A",
+   "B",
+   "tie"
+  ],
+  "note": "Ties are excluded from the binomial test; with more than 30 non-tie pairs the same one-sided test applies."
+ },
+ "normalization": "Both arms' outputs are normalized to the same generate.v1 schema, the same length cap (<= 1200 characters, <= 10 lines) and the same list format before the owner sees them; arm names are hidden.",
+ "seed": 20261023,
+ "presentationRule": {
+  "caseOrder": "sort case ids ascending by sha256(utf8(\"<seed>:order:<id>\")) as lowercase hex",
+  "armSide": "first shown arm is A when the first byte of sha256(utf8(\"<seed>:side:<id>\")) is even, else B",
+  "note": "No RNG library is involved, so the order is reproducible in any language."
+ }
+}

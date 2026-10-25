@@ -5,6 +5,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A2 data review fixes (Codex, 2026-10-23)
+
+- **Fixed (data and test).** The topic oracle now drops every Latin token over 20 characters (boundary cases added);
+  G5 separates identifying tokens (scored) from generic role and format words (not scored).
+
+## Unreleased — ADR-0121 A2: AP-8 owner review and the local-judgment set (data only, 2026-10-23)
+
+- **Changed (data).** All 66 AP-8 cases are owner-approved (51 ok, 15 fix, no captures provided, so the capture
+  placeholders stay). ap-p818 is grounded over the PR read; ap-n822 became ap-p843 (grounded over two reads); ap-n808
+  and ap-n809 encode the Q3 read-plus-write rule; ap-n802 and ap-n803 are clarified as plain reads.
+- **Decided.** Heavy multi-item judgment stays local (`grounded`, `qwen3:8b`) and is measured first.
+- **Added (data).** A local-judgment quality set: 35 synthetic multi-item cases over five sources, pre-registered bar
+  of 80% usable by blind owner labels, with a sha256 manifest. No egress is authorized.
+
+## Unreleased — ADR-0121 A2 stage A0: offline data sets (data only, 2026-10-23)
+
+- **Added (data, `packages/core/src/application/golden/a2/`).** No runtime code, no prompt change, no model call.
+  - AP-8 answer-step plan gold: 66 cases, pending the owner's review, not gating; 51 marked as stand-ins for the
+    owner's captures; the two 2026-10-22 trigger texts are regression-only.
+  - `s2-answer` red-team data: 186 cases with deterministic expected outcomes, no runner. It flags four spec gaps
+    (URL and email tokens split before the `@` and `://` drops, the 20-character token bound, the 10-minute boundary,
+    scheme-less URLs).
+  - G4 blind-comparison set: 36 synthetic cases, rubric, seed and presentation plan, with a sha256 manifest.
+  - G5 held-out name set: 161 titles, 166 invented names across 14 shapes, with a sha256 manifest and a provenance
+    statement.
+  - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
+- **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+
 ## Unreleased — ADR-0121 A2 ratified: the `answer` step and an owner-confirmed minimal topic (docs only, 2026-10-23)
 
 - **Changed (constitution).** `ARCHITECTURE.md` changes, ratified by the owner (ADR-0121 A2):

@@ -28990,3 +28990,77 @@ recommended default.
 9. **Data hygiene.** Revision 1 of the proposal quoted a real third party's name from the owner's calendar. It is
    replaced by the placeholder "홍길동" in every document. The unpushed commit that held it was rewritten, and its
    object was purged from the local repository (reflog expire and gc) on the owner's approval on 2026-10-23.
+
+#### ADR-0121 A2 implementation note: A0 offline data prepared (2026-10-23)
+
+Rollout step 3 (A0), data only. Branch `claude/v5-a2-data`. No runtime code, no prompt change, no model call (no Ollama,
+no remote). Files are in `packages/core/src/application/golden/a2/` (README there).
+
+| Set | File | Count | sha256 | State |
+|---|---|---|---|---|
+| G1 AP-8 plan gold | `agent-plan.ap8.v1.json` | 66 cases, all owner-approved 2026-10-23 (see the review record below); 51 still marked `replaceWithCapture` | `65d8222abd9bfed1d646a15594245b66571a9ee1e73fb01352eaf0669644e36a` | approved; not frozen; not gating until at least half are replaced by real captures |
+| G2 `s2-answer` | `s2-answer.redteam.v1.json` | 186 cases (answer 39, topic 58, consent 69, history 15, request 5; KO 144, EN 39); data only, no runner | `028d58c360dd749f1b0f9534077d106e21283c1966dd9f3b5c9a6a4a7fe02ecc` | pending the owner's review; not frozen |
+| G4 cases | `g4-generation-cases.v1.json` | 36 synthetic cases (KO 22, EN 14) | `c598144ef77a72545582ee416421304a2d2dab5be660dd8c94b0a7137bd62c4c` | frozen candidate |
+| G4 rubric and seed | `g4-rubric.v1.json`, `g4-manifest.v1.json` | `useless` / `usable` / `good`; seed `20261023`; presentation plan precomputed | rubric `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f`; case file hash is in its own row | frozen candidate |
+| G5 held-out | `g5-name-heldout.v1.json`, `g5-manifest.v1.json` | 161 titles, 166 held-out names (158 scored, 8 confidential subjects reported only), 14 shapes | `a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f` | frozen candidate |
+
+- **Hashes.** The manifests (`g4-manifest.v1.json`, `g5-manifest.v1.json`) are the source of truth and a test
+  recomputes every hash.
+- **Not yet frozen.** The G4 and G5 hashes become the freeze only when the owner approves the files. Any edit changes
+  the hash. The G4 manifest leaves the prompt hashes and model digests `null` until the measurement note records them.
+- **G5 provenance.** Authored by an agent session with no access to a classifier prompt (none exists) and no model
+  call, as the record requires of an independent author. The owner should skim it for accidental real names before the
+  freeze. It is never used for prompt tuning.
+- **Lint.** The repo's RAG-0 measures (`closeness` / `findingKind`, near-copy token or char-3 Jaccard at 0.6,
+  containment at 0.8) over every corpus under `golden/` (4,286 gold texts): 0 findings for the new sets
+  (containment of a short generic gold such as "내일 일정" is ignored, as the known artifact of that measure; only a
+  gold of 10+ characters counts). The existing `example-contamination.test.ts` passes unchanged. A separate difflib
+  ratio (0.8) check found 0 near duplicates after 9 rewrites.
+- **Spec gaps the red-team data exposes (for the owner and the Chief Architect, no text changed here).**
+  1. A2-D12 splits tokens on `.` `:` `/`, so the `@`, `://` and `www.` drops cannot fire on an email or URL as a whole.
+     `jane.doe@example.com` leaves `jane` and `com`; `https://evil.example/x` leaves `https evil example`.
+  2. A Latin token of up to 20 characters passes the deterministic drops (a short encoded string).
+  3. The exact 10-minute boundary, and whether the recipient is re-checked at the yes after `dataUse` is removed,
+     are not stated.
+  4. A URL detector for scheme-less domains and `hxxp` shapes is not specified.
+
+#### ADR-0121 A2: AP-8 owner review record and owner decisions (2026-10-23)
+
+- **Review.** The owner reviewed AP-8 in the review artifact: 51 `ok`, 15 `fix`. All 66 cases are now `owner-approved`
+  (each case keeps `ownerVerdict`, `ownerNote`, `approvedOn`). By mode: grounded 19, none 22, facts 9, words 8,
+  generate 8; pending 0. **The owner provided no capture sentences in this round:** every `replaceWithCapture` flag
+  (51 of 66) stays, and at least half must still be replaced by real DM or live captures before AP-8 gates.
+- **Plain read (ap-n802, ap-n803).** The gold stays. Planner `none` means no multi-step plan; the read itself runs and
+  the list is shown. (The owner had read "none" as "nothing shows": that label came from the review UI.)
+- **Q3, read plus write in one turn (ratified 2026-10-23, ADR-0121 S2 note).** The write part goes to A6 with args taken
+  only from the write clause. A write clause that refers to this turn's read result (ordinal, deictic, "그 내용") is not
+  run and gets the decision (f) fixed note; missing args go to the existing clarification. Encoded as `q3` on:
+  - ap-n808 "내일 일정 보고 준비할 것들 할 일에 추가해줘": the calendar read runs, the write is not run, decision (f)
+    note;
+  - ap-n809 "금요일 미팅 아젠다 만들어서 참석자들한테 메일 보내줘": the write part goes to the existing mail-send
+    clarification (recipients, what to send); nothing is taken from read or generated content.
+- **Changed gold.** ap-p818 is now `grounded` over the PR read (the advice is based on the PR list). ap-n822 (generate
+  over two reads, refused by V6) became **ap-p843** (`formerId: ap-n822`), `grounded` over both reads; the V6 plan
+  stays as its refused trap. ap-n821 keeps the unbounded ask.
+- **Owner decision: heavy multi-item judgment stays LOCAL and is measured first.** Prioritise, pick the important one
+  and pick the urgent ones run as `grounded` on the pinned local model (`qwen3:8b`). The owner's comments that heavy
+  tasks might go to Claude or to `generate` (ap-p819, ap-p821..p825, ap-p838..p840, ap-p842, ap-n821, ap-n822) are
+  recorded on the cases (`localJudgmentScope`). A pre-registered **local-judgment quality set** measures it:
+  - `local-judgment-cases.v1.json`: 35 synthetic multi-item cases (calendar, mail, jira, github, todo, 7 each; KO and
+    EN), hash `c6bc1e7ea26c8b6af33bb4f101f1391f03fe7f015849cb7232971270857c4d60`, with
+    `local-judgment-manifest.v1.json` (seed `20261024`, order precomputed);
+  - the owner labels each local output blind as `useless` / `usable` / `good` (the G4 rubric wording);
+  - **bar: at least 80% usable or better.** Only if it fails would an owner-confirmed title-list egress amendment be
+    considered (a separate ADR-0121 amendment). **Not now: no egress is authorized by this decision.**
+  - The hash becomes the freeze when the owner approves the file; prompt hash and model digest are recorded in the
+    measurement note before any run (a Strict model-in-the-loop run).
+
+- **Codex review fixes (2026-10-23, data and test only).**
+  - The red-team test oracle dropped only non-alphabetic Latin tokens over 20 characters; A2-D12 drops any Latin token
+    over 20 characters. The exception is removed, boundary cases (20 kept, 21 dropped, mixed) are added, and every topic
+    expectation is rechecked against the corrected oracle: `s2-answer.redteam.v1.json` is now 186 cases, sha256
+    `028d58c360dd749f1b0f9534077d106e21283c1966dd9f3b5c9a6a4a7fe02ecc`.
+  - G5 `held[].tokens` mixed identifying tokens with generic role or format words that A2-D13 tells the classifier to
+    keep (for example 팀장, 씨, Project, Labs, 지점). The schema now has `identifyingTokens` (scored as leaks) and
+    `genericTokens` (never scored; listed as keepable in `subjectTokens`). G5 is not frozen yet; its new sha256 is
+    `a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f` (161 titles, 166 names unchanged).

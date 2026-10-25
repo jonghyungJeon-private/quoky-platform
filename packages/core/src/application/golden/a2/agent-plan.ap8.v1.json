@@ -1,0 +1,2104 @@
+{
+ "version": 1,
+ "description": "AP-8 (ADR-0121 A2, gate G1, proposal Part III A2-D19): answer-step plan gold. Offline DATA only; no runtime reads this file yet (the validator has no `answer` step before S2 is `active`), and the loader of agent-plan.v1.json does NOT load it. Every case is pending-owner-approval and NOT gating. Agent-drafted on 2026-10-23; the two trigger texts are the owner's real 2026-10-22 DMs and are regression-only (excluded from the accuracy group). Cases with replaceWithCapture:true are synthetic stand-ins to be replaced by the owner's DM and live captures in the review artifact (record: at least half from captures). Schema extensions over docs/plans/agent-plan-corpus-schema.md: `mode` (structural label: facts | words | grounded | generate | none), `provenance`, `replaceWithCapture`, `regressionOnly`, `dependsOn`, `ownerDecision`; positives of family v-rule-trap also carry a refused `trap`. Gold for `answer` follows A2-D1: {answer:[refs], mode, facts?, count?}. No real person names; no phrase list is implied (ADR-0120 D10). OWNER REVIEW 2026-10-23: 51 ok, 15 fix, all resolved and approved as recorded in each case (ownerVerdict, ownerNote). The owner provided NO capture sentences in this round: replaceWithCapture flags stay, and at least half must still be replaced by real DM/live captures before AP-8 gates. Q3 (read plus write in one turn) is encoded in `q3` on ap-n808/ap-n809.",
+ "fixture": {
+  "now": "2026-10-20T03:00:00.000Z",
+  "timeZone": "Asia/Seoul",
+  "direct": true,
+  "offered": "every READ catalog entry"
+ },
+ "cases": [
+  {
+   "id": "ap-p801",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "regression",
+   "mode": "words",
+   "lang": "ko",
+   "text": "내일도 면접 있어? Ai agent 면접볼 때 주로 뭐 봐야할까? 간략하게 리스트로 한 세가지만 뽑아줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "면접"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "words",
+      "facts": [
+       "exists"
+      ],
+      "count": 3
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "regression-trigger-2026-10-22",
+   "regressionOnly": true,
+   "note": "Regression only (excluded from the accuracy group): the design was shaped on this text (proposal 0.1 #2). The text is the owner's real 2026-10-22 DM.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p802",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "regression",
+   "mode": "generate",
+   "lang": "ko",
+   "text": "내일 면접 기준으로 면접 질문 좀 뽑아줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "면접"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "regression-trigger-2026-10-22",
+   "regressionOnly": true,
+   "note": "Regression only (proposal 0.1 #3). The text is the owner's real 2026-10-22 DM.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p803",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "모레 일정 몇 개 잡혀 있고 각각 몇 시에 시작해?",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "day-after-tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "count",
+       "times"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p804",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "목요일에 일정 아예 없는 거 맞지?",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "thu"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "exists"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p805",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "읽지 않은 메일이 있긴 해? 있으면 같이 보여줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "exists"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p806",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "en",
+   "text": "do I have anything on thursday, and what time does it start",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "thu"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "exists",
+       "times"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p807",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "금요일에 비는 시간대가 언제야?",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "fri"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "free"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "dependsOn": "A1-D14",
+   "note": "free is refused by V5 until the A1-D14 free/busy entry is built (proposal A2-D3); stays pending until then.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p808",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "이번 주 마감인 지라 이슈 있어? 몇 개나 돼?",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "window": "due",
+       "range": "this-week"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "exists",
+       "count"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p809",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "en",
+   "text": "tell me the count of unread messages sitting in my inbox",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "count"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "ownerDecision": true,
+   "note": "count fact over the listing; 'from today' is not a second read, so it is not computed here (owner to confirm).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p810",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "facts-only",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "드라이브에 스프레드시트 파일 있는지 확인하고 보여줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "drive.files",
+      "args": {
+       "kind": "spreadsheet"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "exists"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p811",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "ko",
+   "text": "내일 일정 보여주고 발표 전에 긴장 푸는 방법 두 가지만 알려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [],
+      "mode": "words",
+      "count": 2
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p812",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "ko",
+   "text": "오늘 온 메일 확인하고 답장 쓸 때 말투 팁도 알려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {
+       "range": "today"
+      }
+     },
+     {
+      "answer": [],
+      "mode": "words"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p813",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "en",
+   "text": "show my calendar for tomorrow and tell me how to politely turn down extra meetings",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [],
+      "mode": "words"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p814",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "ko",
+   "text": "지라 이슈 쭉 보여주고 스프린트 회고 잘 진행하는 요령 알려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [],
+      "mode": "words"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p815",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "ko",
+   "text": "할 일 목록 보여주고 우선순위 매기는 일반적인 기준도 말해줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "todo.list",
+      "args": {}
+     },
+     {
+      "answer": [],
+      "mode": "words"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p816",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "ko",
+   "text": "금요일 일정 확인하고 영어로 회의 여는 말 세 개만 알려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "fri"
+      }
+     },
+     {
+      "answer": [],
+      "mode": "words",
+      "count": 3
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p817",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "words-advice",
+   "mode": "words",
+   "lang": "ko",
+   "text": "다음 주 일정 있는지 보고, 있으면 새 팀원한테 업무 인수인계할 때 뭘 챙기면 좋은지도",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "next-week"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "words",
+      "facts": [
+       "exists"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p818",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-advice",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "pull request 목록 보고 코드 리뷰 코멘트 친절하게 남기는 법 알려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "github.items",
+      "args": {
+       "kind": "pr"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "Owner 2026-10-23: the advice is to be based on the PR list, so grounded over the PR read (was words).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "이건 \npull request 목록 보고 코드 리뷰 코멘트 친절하게 남기는 법 알려줘 니까, \npull request 목록 기준으로 코드 리뷰 코멘트 친절하게 남기는 법을 알려줘야 하지 않을까? "
+  },
+  {
+   "id": "ap-p819",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정 중에 제일 먼저 준비해야 할 건 뭐야?",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "이건 일정 중 업무에 따라 다를거 같아. 큰 업무 같은 경우는 claude , 가벼운 업무 같은 경우는 로컬 답 이 맞을거 같은데? ",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
+  },
+  {
+   "id": "ap-p820",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-compare",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "이번 주 일정에서 서로 부담스럽게 붙어 있는 것들 있는지 봐줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p821",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "안 읽은 메일 중에 급해 보이는 거 두 개만 뽑아줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 2
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "Mail grounded is outside the first wave (record 4); the plan shape is still measured (shadow), the answer is not enabled. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "이것도 정확도가 낮아진다면, 새로 만들기 (generate) 가 되어야 될듯?",
+   "localJudgmentScope": true
+  },
+  {
+   "id": "ap-p822",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "지라 이슈 중에 오늘 안에 끝낼 수 있을 만한 것만 추려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
+  },
+  {
+   "id": "ap-p823",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-order",
+   "mode": "grounded",
+   "lang": "en",
+   "text": "which of my open PRs should I look at first",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "github.items",
+      "args": {
+       "kind": "pr"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
+  },
+  {
+   "id": "ap-p824",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-cross",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정이랑 할 일 같이 보고 어떤 순서로 처리하면 좋을지 정해줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "todo.list",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "note": "Order across two sources: one grounded call over both (A2-D6); labels decide the provider. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true
+  },
+  {
+   "id": "ap-p825",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "할 일 중에 자꾸 미루게 될 것 같은 거 세 개만 골라줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "todo.list",
+      "args": {}
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 3
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "ap-p821와 동일한 맥락",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
+  },
+  {
+   "id": "ap-p826",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "이번 주 일정 중에 밖에서 사람 만나는 건 어떤 거야?",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "ap-p821와 동일한 맥락"
+  },
+  {
+   "id": "ap-p827",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "en",
+   "text": "from my unread mail, which ones look like they need a reply today",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "ap-p821와 동일한 맥락"
+  },
+  {
+   "id": "ap-p828",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-compare",
+   "mode": "grounded",
+   "lang": "en",
+   "text": "compare tomorrow calendar and tell me which meeting is the heaviest",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 1
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "ownerDecision": true,
+   "note": "count 1 comes from 'which meeting'? Owner decides whether a singular is a count literal; the validator needs a literal N, so likely no count (HOLD).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "ap-p821와 동일한 맥락"
+  },
+  {
+   "id": "ap-p829",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-cross",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "다음 주 일정이랑 지라 마감 이슈를 같이 놓고 제일 바쁜 날이 언제인지 말해줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "next-week"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "window": "due",
+       "range": "next-week"
+      }
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p830",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "grounded-pick",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "드라이브에서 회고 문서 찾아서 그중에 제일 최근 걸 알려줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "drive.files",
+      "args": {
+       "name": "회고"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 1
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p831",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "ko",
+   "text": "목요일 팀 회의에서 쓸 아젠다 초안 잡아줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "thu",
+       "keyword": "팀 회의"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p832",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "ko",
+   "text": "내일 오전 고객사 미팅 때 쓸 오프닝 멘트 써줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "partOfDay": "morning",
+       "keyword": "고객사"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p833",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "en",
+   "text": "write a short prep checklist for the design review on friday",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "fri",
+       "keyword": "design review"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p834",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "ko",
+   "text": "다음 주 월요일 킥오프 때 던질 질문 다섯 개만 만들어줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "next-mon",
+       "keyword": "킥오프"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate",
+      "count": 5
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p835",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "ko",
+   "text": "모레 워크숍 준비물 체크리스트 만들어줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "day-after-tomorrow",
+       "keyword": "워크숍"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p836",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "en",
+   "text": "draft three talking points for the demo tomorrow",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "demo"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate",
+      "count": 3
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p837",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "generate-one",
+   "mode": "generate",
+   "lang": "ko",
+   "text": "내일 원온원에서 꺼낼 이야깃거리 정리해줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "원온원"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "ownerDecision": true,
+   "note": "'정리' here means produce material, not summarize one read; mode choice measured (RA2-5).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p838",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "v-rule-trap",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정 중에 중요한 거 골라주고, 지라 이슈 중에서도 급한 거 골라줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       2
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-at-most-one",
+   "note": "Two answer steps are refused (V1); the plan is one answer over both reads. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true
+  },
+  {
+   "id": "ap-p839",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "v-rule-trap",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정 중에 중요한 거 하나 고르고 그다음에 지라 이슈도 같이 보여줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 1
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 1
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-not-last",
+   "note": "The answer step must be last (V1); the listing order is kept and the answer references step 1 only. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true
+  },
+  {
+   "id": "ap-p840",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "v-rule-trap",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정 보여주고 그중에 제일 중요한 게 뭔지 말해줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-needs-ref",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true,
+   "note": "Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first."
+  },
+  {
+   "id": "ap-p841",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "v-rule-trap",
+   "mode": "facts",
+   "lang": "ko",
+   "text": "내일은 일정이 아예 없나? 확인해줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "exists"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-facts-empty",
+   "note": "facts mode needs a non-empty facts set (V4).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p842",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "v-rule-trap",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "이번 주 일정 정리해주고 그중에 제일 중요한 거 하나만 골라줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 1
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "provenance": "synthetic",
+   "ownerDecision": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "meeting-digest.v1"
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded",
+      "count": 1
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-overlaps-summary",
+   "note": "Summary and answer never cover the same read (V8). Owner decides whether the gold is the answer-only plan or the summary-only plan. | Owner decision 2026-10-23: heavy multi-item judgment stays LOCAL (grounded) and is measured by the local-judgment set first.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "localJudgmentScope": true
+  },
+  {
+   "id": "ap-n801",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "plain-read",
+   "mode": "none",
+   "lang": "ko",
+   "text": "목요일 일정 확인 좀 해줘 급한 건 아니고",
+   "expect": "none",
+   "provenance": "synthetic",
+   "note": "A plain read with no question or request to produce: no answer step. Planner none = the one-step read path.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n802",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "plain-read",
+   "mode": "none",
+   "lang": "ko",
+   "text": "안 읽은 메일 목록 한 번 띄워줘",
+   "expect": "none",
+   "provenance": "synthetic",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "띄워주는게 맞지 않나? 한번 판단해봐.",
+   "note": "Owner 2026-10-23: plain one-step read. \"none\" means no multi-step plan; the read itself runs and the list is shown (the label came from the review UI)."
+  },
+  {
+   "id": "ap-n803",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "plain-read",
+   "mode": "none",
+   "lang": "ko",
+   "text": "이번 주 일정 한눈에 보게 정리해줘",
+   "expect": "none",
+   "provenance": "synthetic",
+   "note": "A single read plus 정리 stays the one-step selection (schema rule 8); no answer step. | Owner 2026-10-23: plain one-step read. \"none\" means no multi-step plan; the read itself runs and the list is shown (the label came from the review UI).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "한눈에 요약해서 알려주면 될 거 같은데? 이슈가 있어?"
+  },
+  {
+   "id": "ap-n804",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "general-knowledge",
+   "mode": "none",
+   "lang": "ko",
+   "text": "면접 처음 자기소개 어떻게 시작하는 게 좋아?",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "A question with no read stays none and goes to honest chat.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n805",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "general-knowledge",
+   "mode": "none",
+   "lang": "ko",
+   "text": "스프린트 회고는 어떤 순서로 진행하는 게 좋을까",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n806",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "general-knowledge",
+   "mode": "none",
+   "lang": "en",
+   "text": "how do I politely decline a meeting invite",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n807",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "general-knowledge",
+   "mode": "none",
+   "lang": "ko",
+   "text": "내일 면접 있으면 어떤 옷 입고 가야 해?",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "Mentions a calendar notion but asks for general advice; no read requested.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n808",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "write-request",
+   "mode": "none",
+   "lang": "ko",
+   "text": "내일 일정 보고 준비할 것들 할 일에 추가해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "generate"
+     },
+     {
+      "entryId": "todo.add",
+      "args": {
+       "title": "준비"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "a6-in-plan",
+   "note": "Q3 (ratified 2026-10-23): the write clause depends on this turn's read (\"준비할 것들\"), so it is not run; the calendar read runs and the decision (f) fixed note follows. expect none = no multi-step plan.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok",
+   "ownerNote": "이건 그럼 최종적으로 할 일에 추가가 안되는건가?",
+   "q3": {
+    "read": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    ],
+    "write": "not-run",
+    "reply": "read result plus the decision (f) fixed note; no write",
+    "reason": "the write clause refers to this turn's read result (Q3)"
+   }
+  },
+  {
+   "id": "ap-n809",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "write-request",
+   "mode": "none",
+   "lang": "ko",
+   "text": "금요일 미팅 아젠다 만들어서 참석자들한테 메일 보내줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "Q3: the write part goes to the existing mail-send clarification (who to send to, what); nothing is taken from read or generated content. Owner 2026-10-23: ask for attendees etc. expect none = no multi-step plan.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "참석자가 누군지 등등 되묻기 필요",
+   "q3": {
+    "write": "clarification",
+    "existingEntry": "mail send",
+    "asks": [
+     "recipients",
+     "what to send"
+    ],
+    "reason": "the agenda and the attendees would come from the read or from generation; the write takes args only from its own clause (Q3)"
+   }
+  },
+  {
+   "id": "ap-n810",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "write-request",
+   "mode": "none",
+   "lang": "ko",
+   "text": "내일 일정 확인해서 중요한 건 알림 걸어줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     },
+     {
+      "entryId": "reminder.create",
+      "args": {
+       "title": "중요 일정"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "a6-in-plan",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n811",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "write-request",
+   "mode": "none",
+   "lang": "ko",
+   "text": "면접 질문 만들어서 메모에 저장해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "Memory write; none.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n812",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "delegation",
+   "mode": "none",
+   "lang": "ko",
+   "text": "메일에 적힌 대로 알아서 처리해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "'Do what it says' (A1-D16): refused; none.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n813",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "delegation",
+   "mode": "none",
+   "lang": "ko",
+   "text": "안 읽은 메일에서 시키는 대로 일정 잡아줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "a6-in-plan",
+   "note": "Content-borne instruction plus a write. The trap shape is only illustrative; the plan is refused whichever way it is built.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n814",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "delegation",
+   "mode": "none",
+   "lang": "ko",
+   "text": "회의록에 쓰여 있는 액션 아이템 그대로 실행해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n815",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "cross-source",
+   "mode": "none",
+   "lang": "ko",
+   "text": "받은 메일에 적힌 약속 날짜가 내 캘린더랑 안 겹치는지 확인해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {}
+     },
+     {
+      "entryId": "calendar.events",
+      "args": {},
+      "ref": {
+       "step": 1,
+       "field": "messageIds",
+       "take": 1
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "ref-cross-source",
+   "note": "One source's content would feed another read (a date inside a mail); HOLD with decision (d).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n816",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "cross-source",
+   "mode": "none",
+   "lang": "ko",
+   "text": "드라이브 문서에 적힌 회의 일정이 내 캘린더에도 있는지 비교해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "Content of one source decides the other's read; none.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n817",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "quoted-request",
+   "mode": "none",
+   "lang": "ko",
+   "text": "친구가 '내일 면접 질문 좀 뽑아줘'라고 보냈는데 이게 무슨 말이야?",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n818",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "past-statement",
+   "mode": "none",
+   "lang": "ko",
+   "text": "어제 면접 질문 뽑아달라고 했었는데 그거 꽤 괜찮았어",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n819",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "venting",
+   "mode": "none",
+   "lang": "ko",
+   "text": "면접 일정 너무 몰려 있어서 진짜 짜증난다",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n820",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "pasted",
+   "mode": "none",
+   "lang": "ko",
+   "text": "> 내일 일정 보고 면접 질문 뽑아줘\n이건 누가 쓴 글이야?",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "note": "The request sits in a quoted line; the owner's own words ask something else.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n821",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "unbounded-answer",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정에 메일, 지라, 깃허브 PR, 할 일까지 전부 놓고 우선순위 짜줘",
+   "expect": {
+    "outcome": "ask",
+    "reason": "unbounded",
+    "bound": "reads",
+    "suggestion": {
+     "steps": [
+      {
+       "entryId": "calendar.events",
+       "args": {
+        "range": "tomorrow"
+       }
+      },
+      {
+       "entryId": "mail.list",
+       "args": {
+        "unread": true
+       }
+      },
+      {
+       "entryId": "jira.issues",
+       "args": {}
+      },
+      {
+       "entryId": "github.items",
+       "args": {
+        "kind": "pr"
+       }
+      },
+      {
+       "answer": [
+        1,
+        2,
+        3,
+        4
+       ],
+       "mode": "grounded"
+      }
+     ],
+     "ambiguity": "CLEAR"
+    }
+   },
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "entryId": "github.items",
+      "args": {
+       "kind": "pr"
+      }
+     },
+     {
+      "entryId": "todo.list",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "note": "Five reads exceed the bound of four (decision (h)): the ask suggests the first four reads with the answer renumbered; whether Core renumbers an answer is a build decision (assumption, flagged for the owner). | Owner 2026-10-23 comment: heavy task may belong to generate; decision: keep the ask (unbounded), judgment stays local.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?"
+  },
+  {
+   "id": "ap-n823",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "answer-bad-ref",
+   "mode": "none",
+   "lang": "ko",
+   "text": "오늘 브리핑 확인하고 어디에 집중하면 될지 한 줄로 말해줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "brief.today",
+      "args": {}
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-bad-ref",
+   "note": "An answer over brief.today is refused (V2).",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-n824",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "family": "fact-unsupported",
+   "mode": "none",
+   "lang": "ko",
+   "text": "드라이브 최근 수정 파일들 수정 시각 좀 알려줘",
+   "expect": "none",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "trap": {
+    "steps": [
+     {
+      "entryId": "drive.files",
+      "args": {}
+     },
+     {
+      "answer": [
+       1
+      ],
+      "mode": "facts",
+      "facts": [
+       "times"
+      ]
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-fact-unsupported",
+   "note": "times is computed only for calendar events (A2-D3 table, V5); the read stays one step.",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "ok"
+  },
+  {
+   "id": "ap-p843",
+   "formerId": "ap-n822",
+   "batch": "AP-8",
+   "status": "owner-approved",
+   "approvedOn": "2026-10-23",
+   "ownerVerdict": "fix",
+   "ownerNote": "무거운 테스크면 답변(새로 만들기)로 진행해야할 듯?",
+   "family": "grounded-cross",
+   "mode": "grounded",
+   "lang": "ko",
+   "text": "내일 일정이랑 지라 이슈 다 보고 그 둘을 합쳐서 회의 아젠다 새로 짜줘",
+   "expect": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "grounded"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trap": {
+    "steps": [
+     {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "answer": [
+       1,
+       2
+      ],
+      "mode": "generate"
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "trapRefusal": "answer-generate-one-ref",
+   "provenance": "synthetic-placeholder",
+   "replaceWithCapture": true,
+   "localJudgmentScope": true,
+   "note": "Was ap-n822 (generate over two reads, refused by V6). Owner decision 2026-10-23: keep it local, grounded over both reads; the generate-over-two-refs plan stays the refused trap."
+  }
+ ]
+}

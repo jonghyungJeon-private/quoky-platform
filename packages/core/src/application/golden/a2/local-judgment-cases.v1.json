@@ -1,0 +1,1155 @@
+{
+ "version": 1,
+ "description": "Local-judgment quality set (owner decision 2026-10-23: heavy multi-item judgment, such as prioritise, pick the important one, pick the urgent ones, stays LOCAL (`grounded`, qwen3:8b) and is MEASURED first). Pre-registered bar: the owner labels every local output blind as useless / usable / good (the G4 rubric wording, `g4-rubric.v1.json`); the bar is >= 80% usable-or-better. Only if the bar fails would an owner-confirmed title-list egress amendment be considered (NOT now, no egress). SYNTHETIC ONLY: every item, sender, key and repo is invented (example.test domains). No model was called to author this file. The model output and any prompt are NOT in this file.",
+ "cases": [
+  {
+   "id": "lj-001",
+   "source": "calendar",
+   "lang": "ko",
+   "judgment": "pick-important",
+   "ownerRequest": "내일 일정 중에 제일 신경 써서 준비해야 하는 거 하나만 짚어줘",
+   "items": [
+    {
+     "summary": "주간 팀 스탠드업",
+     "start": "2026-11-03T09:30:00+09:00",
+     "end": "2026-11-03T09:45:00+09:00"
+    },
+    {
+     "summary": "투자자 대상 분기 실적 발표",
+     "start": "2026-11-03T11:00:00+09:00",
+     "end": "2026-11-03T12:00:00+09:00",
+     "location": "대회의실"
+    },
+    {
+     "summary": "점심 약속",
+     "start": "2026-11-03T12:30:00+09:00",
+     "end": "2026-11-03T13:30:00+09:00"
+    },
+    {
+     "summary": "디자인 시스템 싱크",
+     "start": "2026-11-03T15:00:00+09:00",
+     "end": "2026-11-03T15:30:00+09:00",
+     "location": "온라인"
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-002",
+   "source": "calendar",
+   "lang": "ko",
+   "judgment": "prioritise",
+   "ownerRequest": "이번 주 안에 잡힌 약속들 중요도 순으로 줄 세워줘",
+   "items": [
+    {
+     "summary": "신입 환영 점심",
+     "start": "2026-11-02T12:00:00+09:00",
+     "end": "2026-11-02T13:00:00+09:00"
+    },
+    {
+     "summary": "보안 감사 대응 회의",
+     "start": "2026-11-03T14:00:00+09:00",
+     "end": "2026-11-03T16:00:00+09:00",
+     "location": "3층 회의실"
+    },
+    {
+     "summary": "1:1 면담",
+     "start": "2026-11-04T10:00:00+09:00",
+     "end": "2026-11-04T10:30:00+09:00"
+    },
+    {
+     "summary": "릴리즈 컷오프 점검",
+     "start": "2026-11-05T17:00:00+09:00",
+     "end": "2026-11-05T18:00:00+09:00",
+     "location": "온라인"
+    },
+    {
+     "summary": "팀 회식",
+     "start": "2026-11-06T18:30:00+09:00",
+     "end": "2026-11-06T21:00:00+09:00"
+    }
+   ]
+  },
+  {
+   "id": "lj-003",
+   "source": "calendar",
+   "lang": "en",
+   "judgment": "pick-skippable",
+   "ownerRequest": "which of these meetings can I safely skip if I'm overloaded",
+   "items": [
+    {
+     "summary": "Weekly all-hands",
+     "start": "2026-11-04T10:00:00+09:00",
+     "end": "2026-11-04T11:00:00+09:00",
+     "location": "Main hall"
+    },
+    {
+     "summary": "Contract renewal call",
+     "start": "2026-11-04T13:00:00+09:00",
+     "end": "2026-11-04T14:00:00+09:00",
+     "location": "Zoom"
+    },
+    {
+     "summary": "Social hour",
+     "start": "2026-11-04T16:00:00+09:00",
+     "end": "2026-11-04T16:30:00+09:00"
+    },
+    {
+     "summary": "Roadmap review",
+     "start": "2026-11-04T17:00:00+09:00",
+     "end": "2026-11-04T18:00:00+09:00",
+     "location": "Room 12"
+    }
+   ]
+  },
+  {
+   "id": "lj-004",
+   "source": "calendar",
+   "lang": "ko",
+   "judgment": "order",
+   "ownerRequest": "모레 일정 순서대로 어떻게 준비하면 좋을지 짜줘",
+   "items": [
+    {
+     "summary": "고객 장애 사후 보고",
+     "start": "2026-11-05T09:00:00+09:00",
+     "end": "2026-11-05T10:00:00+09:00",
+     "location": "온라인"
+    },
+    {
+     "summary": "채용 면접 2건",
+     "start": "2026-11-05T11:00:00+09:00",
+     "end": "2026-11-05T13:00:00+09:00",
+     "location": "면접실"
+    },
+    {
+     "summary": "분기 예산 리뷰",
+     "start": "2026-11-05T15:00:00+09:00",
+     "end": "2026-11-05T16:30:00+09:00",
+     "location": "본사"
+    },
+    {
+     "summary": "운동 모임",
+     "start": "2026-11-05T19:00:00+09:00",
+     "end": "2026-11-05T20:00:00+09:00"
+    }
+   ]
+  },
+  {
+   "id": "lj-005",
+   "source": "calendar",
+   "lang": "en",
+   "judgment": "pick-important",
+   "ownerRequest": "pick the two meetings this week where I need to prepare the most",
+   "items": [
+    {
+     "summary": "Architecture review",
+     "start": "2026-11-03T10:00:00+09:00",
+     "end": "2026-11-03T11:30:00+09:00",
+     "location": "Room 4"
+    },
+    {
+     "summary": "Team lunch",
+     "start": "2026-11-03T12:00:00+09:00",
+     "end": "2026-11-03T13:00:00+09:00"
+    },
+    {
+     "summary": "Quarterly planning",
+     "start": "2026-11-04T14:00:00+09:00",
+     "end": "2026-11-04T16:00:00+09:00",
+     "location": "Board room"
+    },
+    {
+     "summary": "Vendor demo",
+     "start": "2026-11-05T11:00:00+09:00",
+     "end": "2026-11-05T11:45:00+09:00",
+     "location": "Zoom"
+    },
+    {
+     "summary": "Retro",
+     "start": "2026-11-05T16:00:00+09:00",
+     "end": "2026-11-05T17:00:00+09:00",
+     "location": "Online"
+    }
+   ],
+   "count": 2
+  },
+  {
+   "id": "lj-006",
+   "source": "calendar",
+   "lang": "ko",
+   "judgment": "pick-skippable",
+   "ownerRequest": "금요일 일정 중에 미루기 쉬운 건 뭐야? 이유도 한 줄로",
+   "items": [
+    {
+     "summary": "서버 점검 공지 검토",
+     "start": "2026-11-06T09:00:00+09:00",
+     "end": "2026-11-06T09:30:00+09:00"
+    },
+    {
+     "summary": "고객 데모",
+     "start": "2026-11-06T11:00:00+09:00",
+     "end": "2026-11-06T12:00:00+09:00",
+     "location": "온라인"
+    },
+    {
+     "summary": "사내 독서 모임",
+     "start": "2026-11-06T17:30:00+09:00",
+     "end": "2026-11-06T18:30:00+09:00",
+     "location": "라운지"
+    }
+   ]
+  },
+  {
+   "id": "lj-007",
+   "source": "calendar",
+   "lang": "ko",
+   "judgment": "compare",
+   "ownerRequest": "다음 주 일정 중에 겹치거나 빡빡해 보이는 구간 있는지 골라줘",
+   "items": [
+    {
+     "summary": "예산 협의",
+     "start": "2026-11-09T10:00:00+09:00",
+     "end": "2026-11-09T11:00:00+09:00"
+    },
+    {
+     "summary": "제품 데모",
+     "start": "2026-11-09T10:30:00+09:00",
+     "end": "2026-11-09T11:30:00+09:00"
+    },
+    {
+     "summary": "기술 면접",
+     "start": "2026-11-09T13:00:00+09:00",
+     "end": "2026-11-09T14:00:00+09:00"
+    },
+    {
+     "summary": "코드 프리즈 회의",
+     "start": "2026-11-09T14:00:00+09:00",
+     "end": "2026-11-09T15:00:00+09:00"
+    },
+    {
+     "summary": "교육 이수",
+     "start": "2026-11-09T15:00:00+09:00",
+     "end": "2026-11-09T17:00:00+09:00"
+    }
+   ]
+  },
+  {
+   "id": "lj-008",
+   "source": "mail",
+   "lang": "ko",
+   "judgment": "prioritise",
+   "ownerRequest": "안 읽은 메일 중에 오늘 안에 답해야 할 것 같은 거 우선순위대로 정리해줘",
+   "items": [
+    {
+     "from": "운영팀 <ops@example.test>",
+     "subject": "[긴급] 결제 모듈 장애 확인 요청",
+     "snippet": "새벽부터 결제 승인이 간헐적으로 실패합니다. 오전 중 확인 부탁드립니다.",
+     "receivedAt": "2026-11-04T07:10:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "뉴스레터 <news@example.test>",
+     "subject": "이번 주 업계 소식",
+     "snippet": "이번 주 주요 기사를 모았습니다.",
+     "receivedAt": "2026-11-04T06:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "인사팀 <hr@example.test>",
+     "subject": "연차 사용 계획 제출 안내",
+     "snippet": "이번 주 금요일까지 제출 바랍니다.",
+     "receivedAt": "2026-11-03T16:20:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "파트너 <partner@example.test>",
+     "subject": "견적서 회신 부탁드립니다",
+     "snippet": "지난번 요청드린 견적 회신을 기다리고 있습니다.",
+     "receivedAt": "2026-11-03T11:40:00+09:00",
+     "unread": true
+    }
+   ]
+  },
+  {
+   "id": "lj-009",
+   "source": "mail",
+   "lang": "en",
+   "judgment": "pick-important",
+   "ownerRequest": "which of these emails is the most important to answer first",
+   "items": [
+    {
+     "from": "Billing <billing@example.test>",
+     "subject": "Invoice 2026-114 overdue",
+     "snippet": "Payment is now 14 days past due.",
+     "receivedAt": "2026-11-04T08:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "Team <team@example.test>",
+     "subject": "Lunch on Friday?",
+     "snippet": "Anyone up for lunch Friday?",
+     "receivedAt": "2026-11-04T09:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "Security <sec@example.test>",
+     "subject": "Password expires in 2 days",
+     "snippet": "Please rotate your password.",
+     "receivedAt": "2026-11-04T07:30:00+09:00",
+     "unread": true
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-010",
+   "source": "mail",
+   "lang": "ko",
+   "judgment": "pick-urgent",
+   "ownerRequest": "메일 중에 급한 것만 두 개 골라줘",
+   "items": [
+    {
+     "from": "고객지원 <cs@example.test>",
+     "subject": "환불 요청 건 지연 문의",
+     "snippet": "3일째 답변이 없다고 문의가 들어왔어요.",
+     "receivedAt": "2026-11-04T10:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "총무 <admin@example.test>",
+     "subject": "사무실 정기 소독 안내",
+     "snippet": "다음 주 화요일에 소독이 있습니다.",
+     "receivedAt": "2026-11-03T15:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "외부 강사 <lecturer@example.test>",
+     "subject": "강의 자료 확인",
+     "snippet": "금요일 강의 자료 초안 보냅니다.",
+     "receivedAt": "2026-11-04T09:20:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "마케팅 <mkt@example.test>",
+     "subject": "캠페인 문구 승인 요청",
+     "snippet": "내일 오전 발행 예정입니다. 오늘 중 승인 부탁드립니다.",
+     "receivedAt": "2026-11-04T11:10:00+09:00",
+     "unread": true
+    }
+   ],
+   "count": 2
+  },
+  {
+   "id": "lj-011",
+   "source": "mail",
+   "lang": "en",
+   "judgment": "prioritise",
+   "ownerRequest": "rank what is sitting in my inbox by how soon it needs me",
+   "items": [
+    {
+     "from": "Legal <legal@example.test>",
+     "subject": "Contract signature needed today",
+     "snippet": "Counterparty is waiting on our signature.",
+     "receivedAt": "2026-11-04T08:15:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "IT <it@example.test>",
+     "subject": "Scheduled maintenance Saturday",
+     "snippet": "Systems unavailable 2-4am.",
+     "receivedAt": "2026-11-03T13:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "Recruiter <rec@example.test>",
+     "subject": "Candidate feedback overdue",
+     "snippet": "Two candidates are waiting for decisions.",
+     "receivedAt": "2026-11-03T17:45:00+09:00",
+     "unread": true
+    }
+   ]
+  },
+  {
+   "id": "lj-012",
+   "source": "mail",
+   "lang": "ko",
+   "judgment": "pick-skippable",
+   "ownerRequest": "답장 안 해도 되는 메일이 있으면 알려줘",
+   "items": [
+    {
+     "from": "알림 <noreply@example.test>",
+     "subject": "로그인 알림",
+     "snippet": "새 기기에서 로그인되었습니다.",
+     "receivedAt": "2026-11-04T05:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "영업 <sales@example.test>",
+     "subject": "신제품 소개 드립니다",
+     "snippet": "저희 신제품을 소개합니다.",
+     "receivedAt": "2026-11-03T10:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "팀장 <lead@example.test>",
+     "subject": "내일 회의 자료 확인 부탁",
+     "snippet": "내일 회의 전까지 자료 검토 부탁드려요.",
+     "receivedAt": "2026-11-04T09:30:00+09:00",
+     "unread": true
+    }
+   ]
+  },
+  {
+   "id": "lj-013",
+   "source": "mail",
+   "lang": "ko",
+   "judgment": "pick-important",
+   "ownerRequest": "읽지 않은 메일 중 내가 직접 챙겨야 하는 것 하나만 골라줘",
+   "items": [
+    {
+     "from": "공지 <notice@example.test>",
+     "subject": "전사 공지: 휴게실 이용 안내",
+     "snippet": "휴게실 이용 시간이 변경됩니다.",
+     "receivedAt": "2026-11-04T08:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "고객사 <client@example.test>",
+     "subject": "계약서 수정본 확인 요청",
+     "snippet": "법무 검토 반영본입니다. 오늘 확인 부탁드립니다.",
+     "receivedAt": "2026-11-04T09:50:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "커뮤니티 <comm@example.test>",
+     "subject": "모임 후기 공유",
+     "snippet": "지난 모임 사진을 공유합니다.",
+     "receivedAt": "2026-11-03T20:00:00+09:00",
+     "unread": true
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-014",
+   "source": "mail",
+   "lang": "en",
+   "judgment": "pick-urgent",
+   "ownerRequest": "two of these need a reply today, which ones",
+   "items": [
+    {
+     "from": "Alex Doe <alex@example.test>",
+     "subject": "Quick question on the proposal",
+     "snippet": "Can you confirm the timeline by EOD?",
+     "receivedAt": "2026-11-04T09:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "Newsletter <n@example.test>",
+     "subject": "Weekly digest",
+     "snippet": "Top stories this week.",
+     "receivedAt": "2026-11-04T06:00:00+09:00",
+     "unread": true
+    },
+    {
+     "from": "Pat Roe <pat@example.test>",
+     "subject": "Intro call tomorrow",
+     "snippet": "Confirming 3pm tomorrow, ok?",
+     "receivedAt": "2026-11-04T10:30:00+09:00",
+     "unread": true
+    }
+   ],
+   "count": 2
+  },
+  {
+   "id": "lj-015",
+   "source": "jira",
+   "lang": "ko",
+   "judgment": "prioritise",
+   "ownerRequest": "내 지라 이슈 중에 이번 주에 먼저 처리할 순서 정해줘",
+   "items": [
+    {
+     "key": "PAY-101",
+     "summary": "결제 실패 시 재시도 로직 수정",
+     "status": "In Progress",
+     "priority": "High",
+     "due": "2026-11-04"
+    },
+    {
+     "key": "PAY-87",
+     "summary": "정산 리포트 컬럼 추가",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-11-20"
+    },
+    {
+     "key": "PAY-120",
+     "summary": "운영 DB 인덱스 점검",
+     "status": "To Do",
+     "priority": "Medium",
+     "due": "2026-11-06"
+    },
+    {
+     "key": "PAY-95",
+     "summary": "로그인 오류 메시지 개선",
+     "status": "In Review",
+     "priority": "Medium",
+     "due": "2026-11-05"
+    }
+   ]
+  },
+  {
+   "id": "lj-016",
+   "source": "jira",
+   "lang": "en",
+   "judgment": "pick-important",
+   "ownerRequest": "which ticket is the riskiest if I don't finish it this week",
+   "items": [
+    {
+     "key": "WEB-310",
+     "summary": "Upgrade auth library",
+     "status": "To Do",
+     "priority": "High",
+     "due": "2026-11-06"
+    },
+    {
+     "key": "WEB-288",
+     "summary": "Fix typo on pricing page",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-11-12"
+    },
+    {
+     "key": "WEB-299",
+     "summary": "Cache invalidation bug",
+     "status": "In Progress",
+     "priority": "High",
+     "due": "2026-11-05"
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-017",
+   "source": "jira",
+   "lang": "ko",
+   "judgment": "pick-urgent",
+   "ownerRequest": "마감 임박한 이슈만 골라줘",
+   "items": [
+    {
+     "key": "APP-45",
+     "summary": "푸시 알림 문구 수정",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-11-03"
+    },
+    {
+     "key": "APP-52",
+     "summary": "앱 크래시 로그 분석",
+     "status": "In Progress",
+     "priority": "High",
+     "due": "2026-11-04"
+    },
+    {
+     "key": "APP-61",
+     "summary": "온보딩 화면 개선안",
+     "status": "To Do",
+     "priority": "Medium",
+     "due": "2026-11-18"
+    },
+    {
+     "key": "APP-33",
+     "summary": "스토어 심사 대응",
+     "status": "In Review",
+     "priority": "High",
+     "due": "2026-11-03"
+    }
+   ]
+  },
+  {
+   "id": "lj-018",
+   "source": "jira",
+   "lang": "ko",
+   "judgment": "pick-skippable",
+   "ownerRequest": "이슈 중에 다른 사람한테 넘겨도 될 만한 거 있어?",
+   "items": [
+    {
+     "key": "OPS-12",
+     "summary": "서버 인증서 갱신",
+     "status": "To Do",
+     "priority": "High",
+     "due": "2026-11-10"
+    },
+    {
+     "key": "OPS-19",
+     "summary": "온콜 위키 정리",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-11-25"
+    },
+    {
+     "key": "OPS-14",
+     "summary": "백업 복구 훈련",
+     "status": "To Do",
+     "priority": "Medium",
+     "due": "2026-11-15"
+    }
+   ]
+  },
+  {
+   "id": "lj-019",
+   "source": "jira",
+   "lang": "en",
+   "judgment": "prioritise",
+   "ownerRequest": "give me a priority order for these tickets and one line why",
+   "items": [
+    {
+     "key": "DATA-71",
+     "summary": "Backfill missing events",
+     "status": "In Progress",
+     "priority": "High",
+     "due": "2026-11-05"
+    },
+    {
+     "key": "DATA-80",
+     "summary": "Dashboard colour tweak",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-11-30"
+    },
+    {
+     "key": "DATA-76",
+     "summary": "Schema change for orders",
+     "status": "To Do",
+     "priority": "High",
+     "due": "2026-11-09"
+    },
+    {
+     "key": "DATA-83",
+     "summary": "Rename internal job",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-12-01"
+    }
+   ]
+  },
+  {
+   "id": "lj-020",
+   "source": "jira",
+   "lang": "ko",
+   "judgment": "pick-important",
+   "ownerRequest": "이번 스프린트 이슈 중에 제일 중요한 두 개만",
+   "items": [
+    {
+     "key": "SPR-5",
+     "summary": "검색 응답 속도 개선",
+     "status": "In Progress",
+     "priority": "High",
+     "due": "2026-11-13"
+    },
+    {
+     "key": "SPR-9",
+     "summary": "관리자 화면 문구 정리",
+     "status": "To Do",
+     "priority": "Low",
+     "due": "2026-11-13"
+    },
+    {
+     "key": "SPR-2",
+     "summary": "결제 수단 추가 연동",
+     "status": "To Do",
+     "priority": "High",
+     "due": "2026-11-13"
+    },
+    {
+     "key": "SPR-7",
+     "summary": "로그 포맷 통일",
+     "status": "To Do",
+     "priority": "Medium",
+     "due": "2026-11-13"
+    }
+   ],
+   "count": 2
+  },
+  {
+   "id": "lj-021",
+   "source": "jira",
+   "lang": "ko",
+   "judgment": "compare",
+   "ownerRequest": "담당 이슈 중에 막혀 있을 것 같은 건 어떤 거야",
+   "items": [
+    {
+     "key": "INT-8",
+     "summary": "외부 API 키 발급 대기",
+     "status": "Blocked",
+     "priority": "Medium",
+     "due": "2026-11-08"
+    },
+    {
+     "key": "INT-3",
+     "summary": "단위 테스트 보강",
+     "status": "In Progress",
+     "priority": "Low",
+     "due": "2026-11-14"
+    },
+    {
+     "key": "INT-11",
+     "summary": "스테이징 배포",
+     "status": "To Do",
+     "priority": "High",
+     "due": "2026-11-07"
+    }
+   ]
+  },
+  {
+   "id": "lj-022",
+   "source": "github",
+   "lang": "ko",
+   "judgment": "prioritise",
+   "ownerRequest": "열려 있는 PR 중에 먼저 리뷰해야 할 순서 알려줘",
+   "items": [
+    {
+     "repo": "acme/web",
+     "number": 412,
+     "kind": "pr",
+     "title": "결제 페이지 접근성 개선",
+     "updatedAt": "2026-11-03",
+     "state": "review requested"
+    },
+    {
+     "repo": "acme/web",
+     "number": 405,
+     "kind": "pr",
+     "title": "오타 수정",
+     "updatedAt": "2026-11-01",
+     "state": "open"
+    },
+    {
+     "repo": "acme/api",
+     "number": 233,
+     "kind": "pr",
+     "title": "주문 조회 쿼리 최적화 (장애 핫픽스)",
+     "updatedAt": "2026-11-04",
+     "state": "review requested"
+    },
+    {
+     "repo": "acme/api",
+     "number": 229,
+     "kind": "pr",
+     "title": "린트 규칙 업데이트",
+     "updatedAt": "2026-11-02",
+     "state": "open"
+    }
+   ]
+  },
+  {
+   "id": "lj-023",
+   "source": "github",
+   "lang": "en",
+   "judgment": "pick-urgent",
+   "ownerRequest": "which pull request is the most urgent to review",
+   "items": [
+    {
+     "repo": "acme/web",
+     "number": 501,
+     "kind": "pr",
+     "title": "Fix login redirect loop (production bug)",
+     "updatedAt": "2026-11-04",
+     "state": "review requested"
+    },
+    {
+     "repo": "acme/web",
+     "number": 498,
+     "kind": "pr",
+     "title": "Refactor button styles",
+     "updatedAt": "2026-11-02",
+     "state": "open"
+    },
+    {
+     "repo": "acme/docs",
+     "number": 77,
+     "kind": "pr",
+     "title": "Update README badges",
+     "updatedAt": "2026-11-01",
+     "state": "open"
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-024",
+   "source": "github",
+   "lang": "ko",
+   "judgment": "pick-important",
+   "ownerRequest": "이슈 중에 이번 주에 해결할 만한 것만 골라줘",
+   "items": [
+    {
+     "repo": "acme/web",
+     "number": 390,
+     "kind": "issue",
+     "title": "다크 모드에서 아이콘 안 보임",
+     "updatedAt": "2026-11-03",
+     "state": "open"
+    },
+    {
+     "repo": "acme/web",
+     "number": 371,
+     "kind": "issue",
+     "title": "전체 디자인 시스템 재구축 제안",
+     "updatedAt": "2026-11-01",
+     "state": "open"
+    },
+    {
+     "repo": "acme/api",
+     "number": 200,
+     "kind": "issue",
+     "title": "타임존 변환 버그",
+     "updatedAt": "2026-11-04",
+     "state": "open"
+    }
+   ]
+  },
+  {
+   "id": "lj-025",
+   "source": "github",
+   "lang": "en",
+   "judgment": "pick-important",
+   "ownerRequest": "two issues I should look at first, with a reason each",
+   "items": [
+    {
+     "repo": "acme/api",
+     "number": 301,
+     "kind": "issue",
+     "title": "Intermittent 500 on checkout",
+     "updatedAt": "2026-11-04",
+     "state": "open"
+    },
+    {
+     "repo": "acme/api",
+     "number": 287,
+     "kind": "issue",
+     "title": "Add dark mode to docs",
+     "updatedAt": "2026-11-02",
+     "state": "open"
+    },
+    {
+     "repo": "acme/web",
+     "number": 455,
+     "kind": "issue",
+     "title": "Memory leak in dashboard",
+     "updatedAt": "2026-11-03",
+     "state": "open"
+    },
+    {
+     "repo": "acme/web",
+     "number": 450,
+     "kind": "issue",
+     "title": "Typo in footer",
+     "updatedAt": "2026-11-01",
+     "state": "open"
+    }
+   ],
+   "count": 2
+  },
+  {
+   "id": "lj-026",
+   "source": "github",
+   "lang": "ko",
+   "judgment": "pick-important",
+   "ownerRequest": "내 PR들 중에 머지하기 전에 한 번 더 봐야 할 것 같은 거 골라줘",
+   "items": [
+    {
+     "repo": "acme/web",
+     "number": 420,
+     "kind": "pr",
+     "title": "캐시 정책 변경",
+     "updatedAt": "2026-11-03",
+     "state": "approved"
+    },
+    {
+     "repo": "acme/web",
+     "number": 418,
+     "kind": "pr",
+     "title": "의존성 마이너 업데이트",
+     "updatedAt": "2026-11-02",
+     "state": "approved"
+    },
+    {
+     "repo": "acme/api",
+     "number": 240,
+     "kind": "pr",
+     "title": "DB 마이그레이션 추가",
+     "updatedAt": "2026-11-04",
+     "state": "approved"
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-027",
+   "source": "github",
+   "lang": "en",
+   "judgment": "prioritise",
+   "ownerRequest": "rank these PRs by how risky they look to merge",
+   "items": [
+    {
+     "repo": "acme/api",
+     "number": 250,
+     "kind": "pr",
+     "title": "Drop unused table",
+     "updatedAt": "2026-11-04",
+     "state": "approved"
+    },
+    {
+     "repo": "acme/web",
+     "number": 430,
+     "kind": "pr",
+     "title": "Fix padding on mobile",
+     "updatedAt": "2026-11-03",
+     "state": "approved"
+    },
+    {
+     "repo": "acme/api",
+     "number": 248,
+     "kind": "pr",
+     "title": "Change auth token lifetime",
+     "updatedAt": "2026-11-04",
+     "state": "approved"
+    }
+   ]
+  },
+  {
+   "id": "lj-028",
+   "source": "github",
+   "lang": "ko",
+   "judgment": "pick-quick",
+   "ownerRequest": "리뷰 요청 PR 중에 작아서 금방 볼 수 있는 것 골라줘",
+   "items": [
+    {
+     "repo": "acme/web",
+     "number": 440,
+     "kind": "pr",
+     "title": "한 줄 설정 수정",
+     "updatedAt": "2026-11-04",
+     "state": "review requested"
+    },
+    {
+     "repo": "acme/web",
+     "number": 436,
+     "kind": "pr",
+     "title": "결제 모듈 전면 개편 (파일 60개)",
+     "updatedAt": "2026-11-03",
+     "state": "review requested"
+    },
+    {
+     "repo": "acme/docs",
+     "number": 80,
+     "kind": "pr",
+     "title": "문구 정리",
+     "updatedAt": "2026-11-04",
+     "state": "review requested"
+    }
+   ]
+  },
+  {
+   "id": "lj-029",
+   "source": "todo",
+   "lang": "ko",
+   "judgment": "pick-urgent",
+   "ownerRequest": "할 일 중에 오늘 꼭 해야 하는 것만 골라줘",
+   "items": [
+    {
+     "title": "세금계산서 발행",
+     "due": "2026-11-04",
+     "status": "open"
+    },
+    {
+     "title": "책상 정리",
+     "due": "2026-11-30",
+     "status": "open"
+    },
+    {
+     "title": "계약서 서명 회신",
+     "due": "2026-11-04",
+     "status": "open"
+    },
+    {
+     "title": "운동 등록",
+     "due": "2026-11-15",
+     "status": "open"
+    }
+   ]
+  },
+  {
+   "id": "lj-030",
+   "source": "todo",
+   "lang": "en",
+   "judgment": "prioritise",
+   "ownerRequest": "what should I tackle first, looking at everything I still owe",
+   "items": [
+    {
+     "title": "Prepare board slides",
+     "due": "2026-11-05",
+     "status": "open"
+    },
+    {
+     "title": "Book dentist",
+     "due": "2026-11-30",
+     "status": "open"
+    },
+    {
+     "title": "Reply to landlord",
+     "due": "2026-11-03",
+     "status": "open"
+    },
+    {
+     "title": "Submit expense report",
+     "due": "2026-11-06",
+     "status": "open"
+    }
+   ]
+  },
+  {
+   "id": "lj-031",
+   "source": "todo",
+   "lang": "ko",
+   "judgment": "compare",
+   "ownerRequest": "할 일 중에 한꺼번에 묶어서 처리하면 좋은 거 있어?",
+   "items": [
+    {
+     "title": "영수증 정리",
+     "due": "2026-11-10",
+     "status": "open"
+    },
+    {
+     "title": "출장비 정산",
+     "due": "2026-11-10",
+     "status": "open"
+    },
+    {
+     "title": "프린터 토너 주문",
+     "due": "2026-11-12",
+     "status": "open"
+    },
+    {
+     "title": "법인카드 내역 확인",
+     "due": "2026-11-10",
+     "status": "open"
+    }
+   ]
+  },
+  {
+   "id": "lj-032",
+   "source": "todo",
+   "lang": "ko",
+   "judgment": "compare",
+   "ownerRequest": "중요한데 급하지 않은 일은 뭐야",
+   "items": [
+    {
+     "title": "장기 프로젝트 기획서 초안",
+     "due": "2026-12-15",
+     "status": "open"
+    },
+    {
+     "title": "오늘 점심 예약",
+     "due": "2026-11-04",
+     "status": "open"
+    },
+    {
+     "title": "건강검진 예약",
+     "due": "2026-12-20",
+     "status": "open"
+    },
+    {
+     "title": "팀 공유 문서 업데이트",
+     "due": "2026-11-05",
+     "status": "open"
+    }
+   ]
+  },
+  {
+   "id": "lj-033",
+   "source": "todo",
+   "lang": "en",
+   "judgment": "pick-important",
+   "ownerRequest": "pick the one task that unblocks the others",
+   "items": [
+    {
+     "title": "Get API access approved",
+     "due": "2026-11-06",
+     "status": "open"
+    },
+    {
+     "title": "Write integration tests",
+     "due": "2026-11-10",
+     "status": "open"
+    },
+    {
+     "title": "Update the runbook",
+     "due": "2026-11-12",
+     "status": "open"
+    }
+   ],
+   "count": 1
+  },
+  {
+   "id": "lj-034",
+   "source": "todo",
+   "lang": "ko",
+   "judgment": "pick-skippable",
+   "ownerRequest": "미뤄도 되는 할 일 두 개만 알려줘",
+   "items": [
+    {
+     "title": "회의실 비품 점검",
+     "due": "2026-11-30",
+     "status": "open"
+    },
+    {
+     "title": "고객 보고서 제출",
+     "due": "2026-11-05",
+     "status": "open"
+    },
+    {
+     "title": "명함 재주문",
+     "due": "2026-12-10",
+     "status": "open"
+    },
+    {
+     "title": "교육 후기 작성",
+     "due": "2026-11-28",
+     "status": "open"
+    }
+   ],
+   "count": 2
+  },
+  {
+   "id": "lj-035",
+   "source": "todo",
+   "lang": "ko",
+   "judgment": "order",
+   "ownerRequest": "할 일 전체 보고 오늘 순서 짜줘",
+   "items": [
+    {
+     "title": "거래처 전화",
+     "due": "2026-11-04",
+     "status": "open"
+    },
+    {
+     "title": "보고서 최종 검토",
+     "due": "2026-11-04",
+     "status": "open"
+    },
+    {
+     "title": "점심 후 산책",
+     "due": "2026-11-04",
+     "status": "open"
+    },
+    {
+     "title": "내일 회의 자료 인쇄",
+     "due": "2026-11-04",
+     "status": "open"
+    }
+   ]
+  }
+ ]
+}

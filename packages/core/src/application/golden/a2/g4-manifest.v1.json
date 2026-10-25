@@ -1,0 +1,171 @@
+{
+ "version": 1,
+ "set": "g4-generation-cases",
+ "description": "Freeze record for the G4 blind comparison. Copy these hashes into the DECISIONS.md measurement note BEFORE any run. Not frozen until the owner approves; any edit to the case or rubric file changes the hash and invalidates the freeze.",
+ "authorship": "Synthetic cases drafted 2026-10-23 by an agent session; no model called.",
+ "files": {
+  "g4-generation-cases.v1.json": {
+   "sha256": "c598144ef77a72545582ee416421304a2d2dab5be660dd8c94b0a7137bd62c4c",
+   "cases": 36
+  },
+  "g4-rubric.v1.json": {
+   "sha256": "baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f"
+  }
+ },
+ "seed": 20261023,
+ "rule": "Part II opens only if Arm A usable-or-better < 80% AND Arm B usable-or-better >= 80% AND B preferred in >= 20 of 30 non-tie pairs (one-sided binomial p < 0.05).",
+ "toBeRecordedBeforeRun": {
+  "armAPromptSha256": null,
+  "armBPromptSha256": null,
+  "armAModelDigest": null,
+  "armBModelVersion": null,
+  "classifierPromptSha256": null,
+  "note": "Recorded in the DECISIONS.md measurement note; the extraction pipeline (A2-D12..D14) produces Arm B's topic, never hand-written."
+ },
+ "presentationPlan": [
+  {
+   "id": "g4-033",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-015",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-032",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-021",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-031",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-006",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-009",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-005",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-018",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-020",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-017",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-002",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-027",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-026",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-025",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-007",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-024",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-035",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-004",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-029",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-028",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-003",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-010",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-023",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-008",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-019",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-034",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-030",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-001",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-022",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-036",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-016",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-011",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-014",
+   "firstShownArm": "B"
+  },
+  {
+   "id": "g4-013",
+   "firstShownArm": "A"
+  },
+  {
+   "id": "g4-012",
+   "firstShownArm": "B"
+  }
+ ]
+}

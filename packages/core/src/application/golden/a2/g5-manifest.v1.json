@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "set": "g5-name-heldout",
+ "authorship": "AUTHORED 2026-10-23 by an agent session (Claude Sonnet 5.5) working offline in worktree claude/v5-a2-data. That session had NO access to a classifier prompt (none exists yet), did not call any model, and did not read or derive anything from the prompt this set will be run against. Per the A2 ratification record (G5 held-out set) the set must be authored by the owner or a separate session without access to the classifier prompt, and never used for prompt tuning: this file satisfies the first condition only as long as that holds. Author: agent session; reviewer of record: the owner (pending).",
+ "provenanceCaveat": "All names are invented by hand-picked syllable combinations or generic shapes; coincidence with a real person or organization is possible and unintended. No name was taken from the owner's calendar, mail, contacts or any corpus. The owner is asked to skim for accidental real names before the hash is frozen in DECISIONS.md.",
+ "files": {
+  "g5-name-heldout.v1.json": {
+   "sha256": "a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f",
+   "cases": 161,
+   "heldOutNames": 166,
+   "scoredHeldOutNames": 158
+  }
+ },
+ "neverUseForPromptTuning": true,
+ "note": "Freeze this hash in DECISIONS.md before the first classifier run. Anyone who reads the classifier prompt must not edit this file."
+}
