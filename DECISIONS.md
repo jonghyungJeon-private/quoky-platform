@@ -29630,3 +29630,39 @@ entries, reasons, diff kinds; no raw answers). No model was called for this note
   with the same corpus. The coordinator decides (Strict).
 - **Expected effect of the code fix alone** (from the archived records): multi-step +1 per run (ap-p174) → 95.8 / 92.8 /
   94.6%; with the ap-p096 relabel +1 more → 96.4 / 93.4 / 95.2%. Run 2 still fails on model variance.
+
+### ADR-0121 S2 note — the owner's decisions on the agent-plan gate classification (2026-10-26)
+
+Owner decisions of 2026-10-26 on the classification of the agent-plan gate on 2ef88619 (all recommended).
+
+1. **Relabels (owner-approved).**
+   - ap-p096 "깃허브 내 이슈랑 지라 이슈 같이 요약해서 브리핑해줘" → `github.items {kind: issue}` (the issues-only convention).
+   - ap-n051, n054, n055, n057 (questions whether Quoky handles a phrasing) → one-step `help.topic` golds (the read
+     prompt's rule 3), renumbered ap-p181..ap-p184 with `formerId`, new positive family `capability-help`.
+   - ap-n125 "지라 이슈 보여주고 첫 번째 거 요약해줘" → ap-p185 (`formerId` ap-n125), family `read-remainder`: the planner gold
+     is the Jira read; its `readWrite` stays `read-and-note` (`list-ref`), the turn outcome of the ratified read + write note.
+   - The two one-step families are scored in the one-step group (`AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES`); the
+     self-check requires exactly one step and, for a positive `readWrite`, `read-and-note` with the gold as its read plan.
+2. **ap-p066** "drive spreadsheets and confluence pages about budget": "about budget" scopes both reads → `drive.files
+   {kind: spreadsheet, name: budget}` + `confluence.search {keyword: budget}`.
+3. **The help-capture rule on the agent-plan gate (extends the 2026-10-22 ADR-0120 D12 gate amendment).** On negatives,
+   an executable plan that is exactly one `help.topic` step is a help capture (`helpCaptures`), allowed ceil(1% of the
+   run's negatives) (`helpAllowance`, `helpCaptureAllowance`); every other executable plan on a negative stays
+   zero-tolerance (`wrongOnNegatives` now counts only those); help captures over the allowance (`helpOverAllowance`) are a
+   hard failure (C1: an outage never hides them). The gate line and the help text print it; the JSON summaries carry the
+   three fields. AGENTS.md and the quoky-ship skill state it.
+
+**Offline re-score of the archived gates-s2p3-2ef88619 records** (outcomes as recorded; the report keeps no raw answers,
+so four inferences are marked): ap-p096 misses → exact (its `args` misses at step 1 are taken as `kind: issue`);
+ap-p066 `args` misses → exact (taken as `name: budget`), and run 1's old exact → miss; ap-p174 refusals → exact (the
+`range: today` fix of ec825d03); help.topic answers on ap-p181..ap-p184 and run 3's `jira.issues` on ap-p185 → exact.
+Negatives per run 288 → allowance 3.
+
+| Run | Multi-step | One-step | Non-help wrong on negatives | Help captures (≤ 3) | Verdict |
+|---|---|---|---|---|---|
+| 1 | 159/166 (95.8%) | 655/679 (96.5%) | 0 | 3 (neg-012, ap-n091, ap-n115) | PASS |
+| 2 | 156/166 (94.0%) | 657/679 (96.8%) | 0 | 1 (neg-110) | **FAIL** (multi-step < 95%) |
+| 3 | 159/166 (95.8%) | 655/679 (96.5%) | 0 | 2 (neg-010, ap-n115) | PASS |
+
+Run 2's multi-step misses are model choices (ap-p082, p093, p095, p098, p120, p127, p128, p135, p143, p167): the gate
+would still fail 2/3. A fresh run on the current code is the deciding measurement.

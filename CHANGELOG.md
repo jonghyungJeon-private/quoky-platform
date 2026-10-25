@@ -59,6 +59,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — agent-plan gate: owner relabels and the help-capture rule (2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Changed (eval).** The agent-plan gate counts help.topic-only plans on negatives apart, allowed ceil(1%) per run
+  (as the D12 read gates since 2026-10-22); every other plan on a negative stays zero-tolerance; over the allowance is a
+  hard failure.
+- **Changed (gold, owner-approved).** ap-p096 `kind: issue`; ap-p066 both reads scoped by "budget"; ap-n051/054/055/057 →
+  one-step help golds ap-p181..ap-p184; ap-n125 → ap-p185 (the Jira read; the turn adds the decision (f) note).
+- **Fixed.** A plan writing the calendar's default range explicitly is no longer refused when the owner named no period.
+
 ## Unreleased — S2 owner ratifications of 2026-10-23 (branch `claude/v5-s2-p3`)
 
 - **Changed (live).** The Jira release list orders upcoming versions (by the owner's local date) first, then released,
