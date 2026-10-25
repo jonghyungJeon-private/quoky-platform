@@ -1,4 +1,4 @@
-import { detectHelpCommand, detectHelpIntent, isHelpEnglishLead, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
+import { detectCapabilityQuestion, detectHelpCommand, detectHelpIntent, isHelpCloserStem, isHelpEnglishLead, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
@@ -164,7 +164,15 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
   const closer = others.some((token) => isHelpGuideCloser(bare(token.word)));
   if (!closer && !/^[a-z0-9]+$/u.test(alias) && !isHelpGuideToken(alias)) return undefined;
   const final = others[others.length - 1];
-  const finalIsPredicate = final !== undefined && (final.ends === 'connective' || (lastClause && final.ends === undefined));
+  // Codex P2 (2026-10-26): the predicate must be a help REQUEST in the help grammar's own vocabulary, never a negation or
+  // a refusal ("도움말 말고 …", "사용법 필요없고 …", "도움말은 됐고 …"): a connective word is one only when its stem is the
+  // stem of one of the grammar's closer verbs ("알려주고"); the message's last word only when it is a guide closer or the
+  // grammar's capability request with a help word ("사용법 보여줘").
+  const requestPredicate = (token: ConjunctToken): boolean =>
+    token.ends === 'connective'
+      ? isHelpCloserStem(token.word.replace(/고$/u, ''))
+      : isHelpGuideCloser(plain(token.word)) || helpNames.some((name) => detectCapabilityQuestion(`${name} ${plain(token.word)}`) !== null);
+  const finalIsPredicate = final !== undefined && (final.ends === 'connective' || (lastClause && final.ends === undefined)) && requestPredicate(final);
   const middle = finalIsPredicate ? others.slice(0, -1) : others;
   if (!middle.every((token) => isHelpGuideCloser(bare(token.word)))) return undefined;
   const shared = finalIsPredicate && final.ends !== 'connective' ? indexes[indexes.length - 1] : undefined;

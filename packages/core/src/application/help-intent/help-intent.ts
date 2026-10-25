@@ -100,8 +100,10 @@ const GUIDE_TOKEN = new RegExp(
   'u',
 );
 /** Polite closers after a guide noun: "알려줘", "뭐야", "있어?". */
-const GUIDE_CLOSER =
-  /^(?:좀|알려\s?줘|알려줘요|알려\s?주세요|알려줄래|알려줄래요|뭐야|뭐예요|뭐에요|뭔가요|있어|있어요|있나요|궁금해|궁금해요)$/u;
+const GUIDE_CLOSER_FORMS: readonly string[] = [
+  '좀', String.raw`알려\s?줘`, '알려줘요', String.raw`알려\s?주세요`, '알려줄래', '알려줄래요', '뭐야', '뭐예요', '뭐에요', '뭔가요', '있어', '있어요', '있나요', '궁금해', '궁금해요',
+];
+const GUIDE_CLOSER = new RegExp(`^(?:${GUIDE_CLOSER_FORMS.join('|')})$`, 'u');
 /** The verb right after "어떻게": a command action or a plain do/use verb ("해", "지워", "설정해", "써", "만들어"). */
 const HOWTO_DO_HEAD = `${ACTION_STEM}|하|해|써|꺼|봐|만들어|지워|바꿔|잊어|없애|빼|남겨|보여|올려`;
 /** The become / state verb of the same alternation ("어떻게 돼?"): a how-to form, but also a status question. */
@@ -376,4 +378,14 @@ export function isHelpEnglishLead(lead: string): boolean {
   const text = normalize(lead);
   if (text.length === 0) return true;
   return new RegExp(String.raw`^(?:${EN_SHOW_LEAD}|${EN_VERB}\s+(?:(?:${EN_ARTICLES}|your)\s+)?|(?:${EN_ARTICLES}|your)\s+)$`, 'u').test(`${text} `);
+}
+
+/**
+ * ADR-0121 A1-E1 (Codex P2, 2026-10-26): whether `stem` (a word without its connective "-고") is the stem of one of this
+ * grammar's own closer verbs ("알려주" of "알려주세요"), so "사용법 알려주고 …" is a help request and "도움말 말고 …",
+ * "사용법 필요없고 …", "도움말은 됐고 …" are not. Two syllables or more; no word is added.
+ */
+export function isHelpCloserStem(stem: string): boolean {
+  const text = normalize(stem);
+  return Array.from(text).length >= 2 && GUIDE_CLOSER_FORMS.some((form) => form.replace(/\\s\?/gu, '').startsWith(text));
 }

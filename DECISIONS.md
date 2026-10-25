@@ -29666,3 +29666,13 @@ Negatives per run 288 → allowance 3.
 
 Run 2's multi-step misses are model choices (ap-p082, p093, p095, p098, p120, p127, p128, p135, p143, p167): the gate
 would still fail 2/3. A fresh run on the current code is the deciding measurement.
+- **Codex P2 on 2ef88619..2c121616 (a negated help clause split).** The head-word form accepted any connective-ending
+  word as the clause's predicate, so "도움말 말고 내 지라 이슈 보여줘" and "사용법 필요없고 안 읽은 메일 보여줘" split off a help
+  section and dropped the negation from the planner text. The predicate now has to be a help request in the help grammar's
+  own vocabulary: a connective word only when its stem is the stem of one of the grammar's closer verbs
+  (`isHelpCloserStem`: "알려주" of "알려주세요"; the closer alternation is only listed as forms, the same regex); the
+  message's last word only when it is a guide closer or completes the grammar's capability request with a help word
+  (`detectCapabilityQuestion("사용법 보여줘")`). No negation word was added. No-split tests: "도움말 말고 …", "사용법 필요없고
+  …", "도움말은 됐고 …", "help 말고 …", "지라 이슈랑 도움말은 됐어", "지라 이슈랑 도움말 빼줘"; every split test still passes.
+  Re-measured over the 19 golden corpora (3402 texts): 0 false splits; only ap-p175, ap-p177 and ap-p180 split.
+  Residual: "도움말 보여주고 …" does not split ("보여주" is the stem of no closer form).

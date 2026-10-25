@@ -104,6 +104,13 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     ['슬랙 기능이랑 메일 보여줘', 'the help-alias clause also names a source (fail closed)'],
     ['도움말이랑 사용법이랑 메일', 'two help clauses'],
     ['도움말이랑', 'nothing else asked'],
+    // Codex P2 (2026-10-26): a negation or refusal of help is no help request; the planner gets the message whole.
+    ['도움말 말고 내 지라 이슈 보여줘', 'a negation (말고)'],
+    ['사용법 필요없고 안 읽은 메일 보여줘', 'a refusal (필요없고)'],
+    ['도움말은 됐고 지라 이슈 보여줘', 'a refusal (됐고)'],
+    ['help 말고 내 지라 이슈 보여줘', 'a mixed-language negation'],
+    ['지라 이슈랑 도움말은 됐어', 'a last-position refusal'],
+    ['지라 이슈랑 도움말 빼줘', 'a last-position removal verb'],
   ])('%s: no split (%s)', (text) => {
     expect(split(text)).toBeUndefined();
   });
