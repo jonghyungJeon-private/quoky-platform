@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
-import { loadReadRegressionCorpus, readRegressionPrompt, scoreReadRegression } from './nl-action-eval';
-import { NL_EVAL_OPEN_QUESTION_LABEL, buildPlan, computePlanDigest, loadCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
+import { loadReadRegressionCorpus, loadScoredReadRegressionCorpus, readRegressionPrompt, scoreReadRegression } from './nl-action-eval';
+import { NL_EVAL_CONTEXT_CORPUS_PATH, NL_EVAL_OPEN_QUESTION_LABEL, buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatSummary, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
@@ -317,16 +317,27 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
   });
 });
 
-describe('D1 / P7 / D4 golds (owner-approved as-is 2026-10-26; nl-intent.context-pending.v1.json until the Q11 / ADR-0123 decision)', () => {
-  const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-pending.v1.json', import.meta.url).pathname;
+describe('the supplemental context corpus (nl-intent.context.v1.json; owner decision (가) option 1, 2026-10-27)', () => {
+  it('is scored by eval:nl and read-regression with nl-intent.v1.json, never by Q11; both files are bound in the corpus digest', () => {
+    const main = loadCorpus();
+    const context = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH);
+    const scored = loadScoredCorpus();
+    expect(scored.corpus.cases.map((golden) => golden.id)).toEqual([...main.corpus.cases, ...context.corpus.cases].map((golden) => golden.id));
+    expect(scored.sha256).not.toBe(main.sha256);
+    expect(loadScoredReadRegressionCorpus().cases.map((golden) => golden.id)).toEqual(scored.corpus.cases.map((golden) => golden.id));
+    expect(loadScoredReadRegressionCorpus().sha256).toBe(scored.sha256);
+    // The default plan covers the 20 context cases (the gate counts them).
+    const plan = buildPlan(scored.corpus, scored.sha256, { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 3, concurrency: 2 });
+    expect(context.corpus.cases.every((golden) => plan.caseIds.includes(golden.id))).toBe(true);
+    // Q11 auto-includes nl-intent.v1.json only.
+    expect(main.corpus.cases.some((golden) => golden.id.startsWith('ctx-'))).toBe(false);
+  });
 
   it('render the chat-turn age, the earlier selections and the open question, and every gold is reachable after Core validation (eval:nl and read-regression)', async () => {
-    const { corpus } = loadCorpus(pendingPath);
+    const { corpus } = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH);
     expect(corpus.cases).toHaveLength(20);
-    expect(corpus.cases.every((golden) => golden.note?.includes('owner-approved as-is 2026-10-26') === true)).toBe(true);
-    // Not in the scored corpus yet (it is also the Q11 planner gold and the ADR-0123 lint gold).
-    const scored = new Set(loadCorpus().corpus.cases.map((golden) => golden.id));
-    expect(corpus.cases.filter((golden) => scored.has(golden.id))).toEqual([]);
+    expect(corpus.cases.every((golden) => golden.note?.includes('owner-approved') === true)).toBe(true);
+    expect(corpus.cases.find((golden) => golden.id === 'ctx-d1-005')).toMatchObject({ text: '주말에 뭐 하면 좋을까?', expect: 'none', prior: { entryId: 'calendar.events', args: { range: 'today' }, turns: 1 } });
     const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
     const seen: string[] = [];
     const provider = {
@@ -357,7 +368,7 @@ describe('D1 / P7 / D4 golds (owner-approved as-is 2026-10-26; nl-intent.context
     // The D4 answer golds are their own label in the per-entry report.
     expect(summarize(records).perEntry[NL_EVAL_OPEN_QUESTION_LABEL]).toMatchObject({ hits: 6, total: 6 });
     // read-regression (A6 entries offered) renders and scores the same cases the same way.
-    const regression = loadReadRegressionCorpus(pendingPath).cases;
+    const regression = loadReadRegressionCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).cases;
     expect(regression).toHaveLength(20);
     for (const golden of regression) {
       const prompt = readRegressionPrompt(golden, NOW as never) ?? '';

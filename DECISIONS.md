@@ -30474,3 +30474,46 @@ Source: owner decisions D1–D4 of 2026-10-26 on the context-eval classification
 - **What is done meanwhile.** `eval:nl` and `eval:nl --mode read-regression` both render and score `prior.turns`,
   `prior.earlier`, `openQuestion` and `expectAnswer` through shared helpers (`nl-intent-eval.ts`). The corpus schema test
   grounds a P7 gold against its earlier selection. When the owner decides the two points above, the move is mechanical.
+
+### Owner decisions (가) and (나) of 2026-10-27 — a supplemental scored context corpus, the S2 activation blocker, and the ADR-0123 checks (branch `claude/v5-context-fixes`)
+
+Made after a Codex consult. This section supersedes the "approved, not yet moved" note above.
+
+- **(가) = option 1: a selector-only supplemental scored corpus.**
+  - The 20 approved D1 / P7 / D4 cases are `golden/nl-intent.context.v1.json`.
+  - `eval:nl` (read) and `eval:nl --mode read-regression` score it together with `nl-intent.v1.json`, through
+    `loadScoredCorpus` and `loadScoredReadRegressionCorpus`. Every case counts in both gates: overall, per entry (a D4
+    answer gold is the label `open-question`) and wrong captures.
+  - The corpus digest of both plans binds both files: sha256 over `nl-intent.v1.json:<sha>\n` and
+    `nl-intent.context.v1.json:<sha>\n`. A case id in both files is an error.
+  - **Scope.** Selector-only. ADR-0121 Q11 is untouched: the one-step planner gold auto-includes `nl-intent.v1.json`
+    only, and the planner gold does not include this corpus.
+- **Hard S2 activation blocker (ADR-0121).** S2 must not leave `shadow` until both of these hold:
+  1. The planner receives the same bounded, structural listing context as the selector: the turn age (`turns`), the
+     latest listing of each other source (`earlier`), and the same retention and expiry (30 minutes per selection, at
+     most 3 earlier sources, cleared by the same non-chat turns).
+  2. The planner passes both gates:
+     - a dedicated context gate that reuses these 20 case ids, plus multi-step context cases;
+     - the full 3-run planner gate (pooled ≥ 95%, per-run rules unchanged).
+
+  D4 option answers resolve before planning: they are dialogue control, not a read plan. D4 is tested at S2's routing
+  boundary (a pending help-scope question is answered before the planner is asked), not as a planner gold.
+- **(나) = swap and regenerate.**
+  - `ctx-d1-005`'s text is now "주말에 뭐 하면 좋을까?" (was "점심 메뉴 추천해줘", a near duplicate of the pool's
+    `b1-none-03` "저녁 메뉴 추천해줘"). The expectation (`none`) and the prior are unchanged. The owner's approval of the
+    swap is recorded in the case note.
+- **ADR-0123 checks on all 20 cases.**
+  - The pool n-gram lint (`pnpm eval:rag -- --mode lint`, with the corpus added to the lint gold): 0 findings after the
+    swap.
+  - The embedding audit was regenerated with the LOCAL embedder only (Ollama on loopback, `nomic-embed-text-v2-moe`, no
+    remote call). It flags one pair: pool `b1-mail-list-05` "오늘 온 메일 중에 읽지 않은 것만" ~ `ctx-p7-002` "아까 메일 중에 안
+    읽은 것만", cosine 0.8219 against tau 0.7941. A flagged pair fails the audit, and the RAG plan then drops the
+    retrieval model.
+  - The static prompt-example lint (RAG-0 ratchet, `example-contamination.test.ts`), with this corpus added: one new
+    finding, the read prompt example "몇 건이야?" ~ `ctx-d1-002` "총 몇 통이야?" (token 0.74, char3 0.66, contain 0.88). The
+    ratchet's rule is to rewrite the example and never the gold. That is a prompt byte change.
+  - Neither finding was edited, as the owner asked. Wiring the corpus into the ADR-0123 gold files (lint and audit) and
+    the RAG-0 lint therefore waits for the owner's choice on these two pairs. The committed audit record is unchanged
+    meanwhile.
+  - The local Ollama is now 0.40.11, and the committed space id says 0.40.8. Any regeneration therefore also moves the
+    space id that an approved RAG plan binds.

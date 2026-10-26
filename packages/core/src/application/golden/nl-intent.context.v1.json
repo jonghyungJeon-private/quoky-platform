@@ -1,0 +1,351 @@
+{
+  "version": 1,
+  "description": "ADR-0120 D12 SUPPLEMENTAL scored corpus, selector-only (owner decision (가) option 1 of 2026-10-27): the 20 conversation-context cases of owner decisions D1 / D4 and context-eval fixes P7 / P10 (2026-10-26, nl-select.v68 / v69). Agent-drafted 2026-10-26, owner-approved as-is in the D12 batch of 2026-10-26; ctx-d1-005's text swapped by owner decision (나) of 2026-10-27 (ADR-0123 near duplicate). Scope: `eval:nl` (read) and `eval:nl --mode read-regression` score these cases together with nl-intent.v1.json, and they count in both gates (per-entry, overall and wrong captures; a D4 answer gold is its own label `open-question`). They are NOT part of the ADR-0121 Q11 one-step planner gold (Q11 auto-includes nl-intent.v1.json only; the planner does not yet receive the listing context, an S2 activation blocker in DECISIONS). ADR-0123 applies: the selector-RAG pool lint and the embedding audit check them (overlap only; they are not in the RAG experiment split). Same schema as nl-intent.v1.json plus: `prior.turns` (chat turns since the previous listing), `prior.earlier` (the latest selection of each other source; an output for an earlier entry is grounded against it), `openQuestion` (the help-scope question shown: sources, language) and `expectAnswer` (the option a worded reply means; `expect` stays `none`; an `answer` naming another option, or an `answer` on a case without `expectAnswer`, is a wrong capture). Rendered exactly as the runtime renders them.",
+  "promptVersion": "nl-select.v69",
+  "cases": [
+    {
+      "id": "ctx-d1-001",
+      "text": "거기서 인증 관련만",
+      "prior": {
+        "entryId": "jira.issues",
+        "args": {},
+        "turns": 1
+      },
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "인증"
+        }
+      },
+      "note": "D1: a narrowing after one chat turn still refines the previous list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d1-002",
+      "text": "총 몇 통이야?",
+      "prior": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        },
+        "turns": 2
+      },
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true,
+          "count": true
+        }
+      },
+      "note": "D1: a count after two chat turns keeps the previous args and adds count [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d1-003",
+      "text": "모레 건 어때?",
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        },
+        "turns": 1
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "day-after-tomorrow"
+        }
+      },
+      "note": "D1: a period correction after a chat turn changes range only [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d1-004",
+      "text": "슬랙에서 장애 얘기 찾아줘",
+      "prior": {
+        "entryId": "jira.issues",
+        "args": {
+          "status": "in-progress"
+        },
+        "turns": 2
+      },
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "장애"
+        }
+      },
+      "note": "D1: a new request naming another source takes none of the stale previous args [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d1-005",
+      "text": "주말에 뭐 하면 좋을까?",
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "today"
+        },
+        "turns": 1
+      },
+      "expect": "none",
+      "note": "D1: small talk after small talk is still none, whatever the previous list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved in the D12 batch of 2026-10-26; text swapped from \"점심 메뉴 추천해줘\" by owner decision (나) of 2026-10-27 (an ADR-0123 near duplicate of the RAG pool's b1-none-03 \"저녁 메뉴 추천해줘\"); expectation and prior unchanged]"
+    },
+    {
+      "id": "ctx-d1-006",
+      "text": "what about next week?",
+      "prior": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week"
+        },
+        "turns": 3
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-week"
+        }
+      },
+      "note": "D1 (EN): a period follow-up after three chat turns [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-p7-001",
+      "text": "그 세미나 어디서 해?",
+      "prior": {
+        "entryId": "todo.list",
+        "args": {},
+        "earlier": [
+          {
+            "entryId": "calendar.events",
+            "args": {
+              "range": "next-week"
+            },
+            "turns": 1
+          }
+        ]
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "next-week",
+          "keyword": "세미나"
+        }
+      },
+      "note": "P7: an event question after a to-do list refines the earlier calendar list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-p7-002",
+      "text": "아까 메일 중에 안 읽은 것만",
+      "prior": {
+        "entryId": "drive.files",
+        "args": {},
+        "earlier": [
+          {
+            "entryId": "mail.list",
+            "args": {
+              "range": "today"
+            },
+            "turns": 1
+          }
+        ]
+      },
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "today",
+          "unread": true
+        }
+      },
+      "note": "P7: naming the earlier source refines it [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-p7-003",
+      "text": "그중에 보안 관련만",
+      "prior": {
+        "entryId": "jira.issues",
+        "args": {},
+        "earlier": [
+          {
+            "entryId": "calendar.events",
+            "args": {
+              "range": "tomorrow"
+            },
+            "turns": 1
+          }
+        ]
+      },
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "keyword": "보안"
+        }
+      },
+      "note": "P7: a plain narrowing refines the Previous selection, not an earlier one [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-p7-004",
+      "text": "when was that offsite again?",
+      "prior": {
+        "entryId": "reminder.list",
+        "args": {},
+        "earlier": [
+          {
+            "entryId": "calendar.events",
+            "args": {
+              "range": "this-week"
+            },
+            "turns": 2
+          }
+        ]
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "this-week",
+          "keyword": "offsite"
+        }
+      },
+      "note": "P7 (EN): an event question after a reminder list refines the earlier calendar list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-both-001",
+      "text": "그 일정 중에 오전 것만",
+      "prior": {
+        "entryId": "todo.list",
+        "args": {},
+        "turns": 1,
+        "earlier": [
+          {
+            "entryId": "calendar.events",
+            "args": {
+              "range": "tomorrow"
+            },
+            "turns": 2
+          }
+        ]
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow",
+          "partOfDay": "morning"
+        }
+      },
+      "note": "D1 + P7: a calendar narrowing after a to-do list and a chat turn [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-both-002",
+      "text": "오늘 일정 보여줘",
+      "prior": {
+        "entryId": "todo.list",
+        "args": {},
+        "turns": 1,
+        "earlier": [
+          {
+            "entryId": "calendar.events",
+            "args": {
+              "range": "next-week"
+            },
+            "turns": 2
+          }
+        ]
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {}
+      },
+      "note": "D1 + P7: a full new request is read on its own words (today, the default: canonical args {}), never the earlier range [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-001",
+      "text": "퀴키한테 물어보는 방법 말이야",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "D4: a worded answer naming Quoky's way is option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-002",
+      "text": "아니 슬랙 앱에서 직접 하는 거",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "D4: a worded answer naming the app itself is option 2 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-003",
+      "text": "너로 찾는 거",
+      "openQuestion": {
+        "sources": "지라",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "D4: \"you\" means Quoky: option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-004",
+      "text": "앱 설정 쪽이야",
+      "openQuestion": {
+        "sources": [
+          "구글 캘린더",
+          "지메일"
+        ],
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "D4: the several-source question, the app side [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-005",
+      "text": "I meant through you",
+      "openQuestion": {
+        "sources": "Slack",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "D4 (EN): option 1 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-006",
+      "text": "the app's own settings",
+      "openQuestion": {
+        "sources": "Confluence",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "D4 (EN): option 2 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-007",
+      "text": "그건 됐고 내일 일정 알려줘",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "note": "D4: a new request after the question is no answer: routed as usual, no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-008",
+      "text": "고마워",
+      "openQuestion": {
+        "sources": "지라",
+        "language": "ko"
+      },
+      "expect": "none",
+      "note": "D4: small talk after the question is no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    }
+  ]
+}

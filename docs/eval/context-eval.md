@@ -177,18 +177,11 @@ therefore two Strict steps, both owner-approved by plan digest. No model was cal
    ```
    The bar is the ADR-0120 D12 gate (≥95% overall, ≥90% per entry, 0 wrong captures, 3 stable runs).
 2. **The new parts.**
-   - The owner reviews the 20 candidates in `packages/core/src/application/golden/nl-intent.context-pending.v1.json`:
-     - D1: a narrowing, count or period follow-up after 1–3 chat turns; a new request or small talk that must not
-       inherit;
-     - P7: an item question or source name that refers to an earlier list; a plain narrowing that stays on the previous
-       list;
-     - D4: worded answers to the help-scope question (KO / EN, one and several sources), and a new request or small
-       talk that is no answer.
-
-     The owner approved all 20 as-is (2026-10-26). Moving them into `nl-intent.v1.json` (so step 1 covers them) waits
-     for two decisions, because that file is also the ADR-0121 Q11 planner gold and the ADR-0123 lint and audit gold
-     (DECISIONS, 2026-10-26). `eval:nl` and read-regression render `prior.turns`, `prior.earlier` and `openQuestion`
-     exactly as the runtime does, and score `expectAnswer`.
+   - The 20 owner-approved cases (D1, P7, D4; `ctx-d1-005` swapped on 2026-10-27) are the supplemental scored corpus
+     `packages/core/src/application/golden/nl-intent.context.v1.json`. Step 1's two plans already include it: its cases
+     count in both gates, and the corpus digest binds both files. It is selector-only: not part of the ADR-0121 Q11
+     planner gold. `eval:nl` and read-regression render `prior.turns`, `prior.earlier` and `openQuestion` exactly as the
+     runtime does, and score `expectAnswer`.
    - Then the context eval, Strict, for the end-to-end view (`sc-jira-chat-refine`, `fr-todo-status-count` t3,
      `lc-interview-exists-then-time` t3, `sc-calendar-todo-interview` t3, `hs-calendar-words` t2):
      ```bash

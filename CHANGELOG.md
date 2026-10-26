@@ -68,6 +68,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   deterministic undo command beside "되돌리기". It is the hint's own constant: the whole message only, with the same
   rules as "되돌리기" and no selector call. The hint's wording is unchanged. Context eval dry: actions-local
   unparseable-suggestion 10 → 0.
+- **Changed (eval, owner decisions (가) and (나) of 2026-10-27).** The 20 approved D1 / P7 / D4 cases are a supplemental scored
+  corpus (`golden/nl-intent.context.v1.json`), scored with `nl-intent.v1.json` by `eval:nl` and read-regression (both
+  files are bound in the digest). It is selector-only: the ADR-0121 Q11 planner gold is unchanged. An S2 activation
+  blocker is recorded. `ctx-d1-005` is swapped to "주말에 뭐 하면 좋을까?".
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

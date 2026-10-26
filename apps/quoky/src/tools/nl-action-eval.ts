@@ -921,6 +921,23 @@ export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): 
   return { cases: (JSON.parse(text) as { cases: NlReadRegressionCase[] }).cases, sha256: createHash('sha256').update(text).digest('hex') };
 }
 
+/** The supplemental selector-only context corpus (owner decision (가) option 1, 2026-10-27). */
+export const NL_INTENT_CONTEXT_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-intent.context.v1.json');
+
+/**
+ * The read-regression gate's cases: `nl-intent.v1.json` then the supplemental context corpus (both scored; a duplicate id is
+ * an error). `sha256` binds both files exactly like `loadScoredCorpus` (`nl-intent-eval.ts`).
+ */
+export function loadScoredReadRegressionCorpus(mainPath: string = NL_INTENT_CORPUS_PATH, contextPath: string = NL_INTENT_CONTEXT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
+  const main = loadReadRegressionCorpus(mainPath);
+  const context = loadReadRegressionCorpus(contextPath);
+  const ids = new Set(main.cases.map((golden) => golden.id));
+  const clash = context.cases.find((golden) => ids.has(golden.id));
+  if (clash !== undefined) throw new Error(`case ${clash.id} is in both scored corpora`);
+  const sha256 = createHash('sha256').update(`nl-intent.v1.json:${main.sha256}\nnl-intent.context.v1.json:${context.sha256}\n`).digest('hex');
+  return { cases: [...main.cases, ...context.cases], sha256 };
+}
+
 /**
  * The read-regression prompt of one case: the A6 action prompt, every entry offered, the case's prior as the previous
  * selection and its `context` as the Reference context (`none` without one).

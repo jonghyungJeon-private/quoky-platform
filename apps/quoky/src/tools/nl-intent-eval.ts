@@ -147,6 +147,27 @@ export function loadCorpus(path: string = NL_EVAL_CORPUS_PATH): { corpus: NlEval
   return { corpus: JSON.parse(text) as NlEvalCorpus, sha256: createHash('sha256').update(text).digest('hex') };
 }
 
+/**
+ * Owner decision (가) option 1 (2026-10-27): the selector-only SUPPLEMENTAL scored corpus of the D1 / P7 / D4 context cases.
+ * Not part of the ADR-0121 Q11 one-step planner gold (Q11 auto-includes `nl-intent.v1.json` only).
+ */
+export const NL_EVAL_CONTEXT_CORPUS_PATH = resolve(__dirname, '../../../../packages/core/src/application/golden/nl-intent.context.v1.json');
+
+/**
+ * The scored read corpus of the D12 gate: `nl-intent.v1.json` then the supplemental context corpus, every case once (a
+ * duplicate id is an error). `sha256` binds both files: sha256 over `nl-intent.v1.json:<sha>\n` and
+ * `nl-intent.context.v1.json:<sha>\n`.
+ */
+export function loadScoredCorpus(mainPath: string = NL_EVAL_CORPUS_PATH, contextPath: string = NL_EVAL_CONTEXT_CORPUS_PATH): { corpus: NlEvalCorpus; sha256: string } {
+  const main = loadCorpus(mainPath);
+  const context = loadCorpus(contextPath);
+  const ids = new Set(main.corpus.cases.map((golden) => golden.id));
+  const clash = context.corpus.cases.find((golden) => ids.has(golden.id));
+  if (clash !== undefined) throw new Error(`case ${clash.id} is in both scored corpora`);
+  const sha256 = createHash('sha256').update(`nl-intent.v1.json:${main.sha256}\nnl-intent.context.v1.json:${context.sha256}\n`).digest('hex');
+  return { corpus: { version: main.corpus.version, cases: [...main.corpus.cases, ...context.corpus.cases] }, sha256 };
+}
+
 export interface NlEvalPlanOptions {
   readonly model: string;
   /** Restrict to these entries (and, with `includeNegatives`, the negatives). Empty = all. */

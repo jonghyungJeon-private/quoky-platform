@@ -53,6 +53,7 @@ import {
   loadActionCorpus,
   loadR2ActionCorpus,
   loadReadRegressionCorpus,
+  loadScoredReadRegressionCorpus,
   runActionEvaluation,
   runReadRegression,
   scoreActionGrammarSide,
@@ -69,6 +70,7 @@ import {
   buildPlan,
   computePlanDigest,
   loadCorpus,
+  loadScoredCorpus,
   runEvaluation,
   summarize,
   clarifyCaseIdsOf,
@@ -235,7 +237,8 @@ export function defaultDeps(): CliDeps {
     stdout: (line) => process.stdout.write(`${line}\n`),
     stderr: (line) => process.stderr.write(`${line}\n`),
     now: () => new Date().toISOString(),
-    loadCorpus: () => loadCorpus(),
+    // Owner decision (가) option 1 (2026-10-27): the D12 read gate scores the supplemental context corpus too.
+    loadCorpus: () => loadScoredCorpus(),
     writeReport: (fileName, contents) => {
       const dir = resolve(repoRoot, 'data/eval');
       mkdirSync(dir, { recursive: true });
@@ -449,7 +452,8 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     deps.stdout(`results written to ${path}`);
     return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
   }
-  const { cases, sha256 } = (deps.loadReadRegressionCorpus ?? loadReadRegressionCorpus)();
+  // Owner decision (가) option 1 (2026-10-27): read-regression scores the supplemental context corpus too.
+  const { cases, sha256 } = (deps.loadReadRegressionCorpus ?? loadScoredReadRegressionCorpus)();
   let plan: ReturnType<typeof buildActionPlan>;
   try {
     plan = buildActionPlan('nl-read-regression', cases.map((golden) => golden.id), sha256, settings);
