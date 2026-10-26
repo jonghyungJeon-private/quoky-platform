@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
+
+- **Recorded.** DECISIONS "G7 addendum": the exact A3b payload G7 measures (`g7-payload.v1`): per item only the
+  ordinal, a coarse time (relative day, duration, overlap and back-to-back flags; no date or clock time) and the
+  minimized title (dotted, URL, e-mail and phone spans removed whole; names dropped against the union of every
+  item's name fields plus the owner's; one batched local classifier; the 2–30 character, 1–4 token filter), plus the
+  owner's words and fixed text.
+- **Added.** `tools/g7/`: the payload builder, the batched classifier request and guard (`topicList.v1`), the
+  production-equivalent tool-less Claude CLI request (argv pinned to `ClaudeCliProvider.buildArgs` by a test), arm A
+  re-rendered from the sealed G6 L0 outputs, one seeded interleaved A/B blind session with preference pairs, the A/B
+  lock before arm C, the pre-registered G7 rule, and a fail-closed `g7-freeze` check. Prompts
+  `answer-list.v1` and `topic-list.v1`. 40 unit tests, no model call.
+- **Not run.** The G7 case file is prepared by a separate session; the G7 run and arm C are Strict owner steps.
+
 ## Unreleased — ADR-0121 A3a G6 result: local not adequate on calendar (docs only, 2026-10-26)
 
 - **Recorded.** The official G6 run (72 cases, arms L0 and LT) missed every latency bar: L0 warm median 12.97 s (bar

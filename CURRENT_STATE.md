@@ -16,8 +16,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - **Consequence:** until A3b is ratified and opened, multi-item judgment requests answer with the listing plus the
   criteria question (A3a-D6). No runtime change today (A3a code not built).
 
-Next: the A3b payload definition and the G7 harness (no run); a separate session prepares the G7 case file; then the
-G7 run on a separate Strict yes, G8, G9, a security review and the A3b ratification.
+- **G7 prepared (no run).** The A3b payload definition is recorded before any run (DECISIONS "G7 addendum",
+  `g7-payload.v1`), and `tools/g7/` implements it with arm A from the sealed G6 L0 outputs, a blind A/B session, the
+  A/B lock before arm C and a fail-closed freeze; part 1 of the G7 freeze (prompts, harness, payload definition and
+  the G6 run file) is hash-recorded.
+
+Next: a separate session prepares the G7 case file (`tools/g7/cases.mjs` format) and commits its hash; part 2 adds the
+seed and the recipient model on the run day; then the G7 run on a separate Strict yes, G8, G9, a security review and
+the A3b ratification.
 
 ### ADR-0121 amendment A3a — ratified (2026-10-26, docs only, branch `claude/v5-a3-proposal`)
 

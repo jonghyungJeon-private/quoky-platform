@@ -24,7 +24,7 @@ export default defineConfig({
   test: {
     // apps/** added (Sprint 3d-A, ADR-0051) so the single env-reading path `apps/quoky/src/config.ts`
     // can be tested directly (CA change 8) — the narrowest enabling change, no broad refactor.
-    include: ['packages/**/src/**/*.test.ts', 'apps/**/src/**/*.test.ts', 'tools/provider-routing/egress-allowlist-runner/**/*.test.ts', 'tools/test-lock/**/*.test.ts', 'tools/g6/**/*.test.ts'],
+    include: ['packages/**/src/**/*.test.ts', 'apps/**/src/**/*.test.ts', 'tools/provider-routing/egress-allowlist-runner/**/*.test.ts', 'tools/test-lock/**/*.test.ts', 'tools/g6/**/*.test.ts', 'tools/g7/**/*.test.ts'],
     environment: 'node',
     pool: 'forks',
     maxWorkers,
