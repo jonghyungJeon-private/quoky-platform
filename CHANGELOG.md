@@ -63,6 +63,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - Any other reply reaches this turn's selection call with the question's displayed options. The selector may answer
     `"answer": N`, which Core reads only then: 1 runs the help, 2 gives the app-itself reply.
   - No phrase list is added. The prompt is otherwise byte-identical. Eight D4 gold candidates are pending.
+- **Changed (P3, owner decision 2026-10-26, amending A6 decision 8).** The undo hint's command "되돌려줘" is a fixed,
+  deterministic undo command beside "되돌리기". It is the hint's own constant: the whole message only, with the same
+  rules as "되돌리기" and no selector call. The hint's wording is unchanged. Context eval dry: actions-local
+  unparseable-suggestion 10 → 0.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

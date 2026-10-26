@@ -560,8 +560,15 @@ export function renderedTodoRows(todos: readonly WorkItem[]): number {
   return shown;
 }
 
+/**
+ * The undo command the hint prints (wording per the owner, 2026-10-16). Owner decision P3 (a), 2026-10-26 (amending A6
+ * decision 8): this exact command is also a fixed, deterministic undo command beside `되돌리기` (`decideAnchoredUndo`),
+ * so the hint never suggests a sentence only the selector parses.
+ */
+export const NL_ACTION_UNDO_COMMAND = '되돌려줘';
+
 /** A6-D3: the undo hint of every A6 local write (the 10-minute `lastAction` window; wording per the owner, 2026-10-16). */
-export const NL_ACTION_UNDO_HINT = '되돌리려면 "되돌려줘" (10분 안)';
+export const NL_ACTION_UNDO_HINT = `되돌리려면 "${NL_ACTION_UNDO_COMMAND}" (10분 안)`;
 
 /** The number of a to-do as the owner sees it: its position among the open to-dos (createdAt order), 1-based. */
 export function todoNumberOf(todos: readonly WorkItem[], id: string): number | undefined {

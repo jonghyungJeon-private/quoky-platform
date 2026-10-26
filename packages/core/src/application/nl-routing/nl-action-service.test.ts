@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { NL_ACTION_UNDO_COMMAND, NL_ACTION_UNDO_HINT } from '../work-chat/work-chat-renderer';
 import { Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
 import { LAST_LISTING_METADATA_KEY, withLabelledListing, withListing } from '../last-listing';
@@ -337,6 +338,31 @@ describe('references, questions and the audit line', () => {
     const decision = await w.service.decideAnchoredUndo({ direct: true, text: '되돌리기', session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
     expect(decision).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', undo: { entryId: 'todo.add' } } });
     expect(w.calls).toHaveLength(0);
+  });
+
+  it('owner decision P3 (a): the exact command the undo hint prints is a fixed undo command too (no selector call)', async () => {
+    expect(NL_ACTION_UNDO_HINT).toBe(`되돌리려면 "${NL_ACTION_UNDO_COMMAND}" (10분 안)`);
+    for (const text of [NL_ACTION_UNDO_COMMAND, `${NL_ACTION_UNDO_COMMAND}.`, `  ${NL_ACTION_UNDO_COMMAND}!  `]) {
+      const w = world({ script: [] });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+      const decision = await w.service.decideAnchoredUndo({ direct: true, text, session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', undo: { entryId: 'todo.add' } } });
+      expect(w.calls, text).toHaveLength(0);
+    }
+    // Only the whole printed command: any other wording stays with the selector (no phrase list).
+    for (const text of ['아니 그거 되돌려줘', '되돌려 줘', '방금 거 되돌려줘', '되돌려줘요', '"되돌려줘"']) {
+      const w = world({ script: [] });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+      expect(await w.service.decideAnchoredUndo({ direct: true, text, session: w.session(), actor: w.actor(), now: at(1), entries: ALL }), text).toBeUndefined();
+    }
+    // The same resolution as a selected undo: a reply to an older echo asks; an already undone action is not undone again.
+    const older = world({ script: [] });
+    older.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: ['echo-new'] }, at(0)));
+    expect((await older.service.decideAnchoredUndo({ direct: true, text: NL_ACTION_UNDO_COMMAND, replyToMessageId: 'echo-old', session: older.session(), actor: older.actor(), now: at(1), entries: ALL }))?.kind).toBe('ask');
+    // In a channel it is DM-only, like 되돌리기.
+    const channel = world({ script: [] });
+    channel.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    expect(await channel.service.decideAnchoredUndo({ direct: false, text: NL_ACTION_UNDO_COMMAND, session: channel.session(), actor: channel.actor(), now: at(1), entries: ALL })).toEqual({ kind: 'ask', entryId: 'action.undo', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
   });
 
   it('A6-D3a amendment 1 (CA round 3): the anchored 되돌리기 is DM-only while ADR-0122 enforcement is off', async () => {

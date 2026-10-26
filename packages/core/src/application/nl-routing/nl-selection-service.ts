@@ -117,6 +117,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
@@ -846,14 +847,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`. The same resolution as a selected
-   * undo, with no selector call. `undefined` when the text is not the phrase or actions are not acting.
+   * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`, and (owner decision P3 (a),
+   * 2026-10-26, amending decision 8) the exact command the undo hint prints (`NL_ACTION_UNDO_COMMAND`, "되돌려줘"). The
+   * same resolution as a selected undo, with no selector call. `undefined` when the text is not one of the two fixed
+   * commands or actions are not acting.
    */
   async decideAnchoredUndo(
     turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId' | 'quotedRanges' | 'codeFormatted' | 'direct' | 'surfaceEnforced'>,
   ): Promise<NlSelectionDecision | undefined> {
     // The anchored phrase is the whole message on one line and meets the same plain-line eligibility as any action.
-    if (!/^되돌리기[.!]?$/u.test(turn.text.normalize('NFC').trim())) return undefined;
+    if (!ANCHORED_UNDO.test(turn.text.normalize('NFC').trim())) return undefined;
     if (nlActionInputRefusal(turn.text, turn.text, markedMaterial(turn)) !== undefined) return undefined;
     if (!this.actionsActing(turn.actor) || !turn.entries.some((entry) => entry.id === 'action.undo')) return undefined;
     // A6-D3a amendment 1 (CA round 3): the same DM-only guard as a selected local write.
@@ -2857,3 +2860,9 @@ function helpScopeOptionTexts(pending: Extract<PendingQuestion, { kind: 'entry' 
   const appSource = pending.appSources ?? pending.appSource;
   return appSource === undefined ? [] : renderHelpScopeOptions(appSource, pending.language, pending.appSourcesMore === true);
 }
+
+/**
+ * A6 decision 8 (amended by owner decision P3 (a), 2026-10-26): the fixed undo commands, each the whole message on one
+ * line: `되돌리기` and the command the undo hint prints. Built from the hint's own constant, never a phrase list.
+ */
+const ANCHORED_UNDO = new RegExp(`^(?:되돌리기|${NL_ACTION_UNDO_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[.!]?$`, 'u');

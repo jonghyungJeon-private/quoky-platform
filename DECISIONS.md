@@ -30438,3 +30438,18 @@ Source: owner decisions D1–D4 of 2026-10-26 on the context-eval classification
   D1 / P7 ones in `golden/nl-intent.context-pending.v1.json`, pending the owner's batch.
 - **Context eval.** The `hs-calendar-words` t2 oracle now answers `{"entryId": "none", "answer": 1}`, the ideal
   selector under D4; dry mode only.
+
+### Owner decision P3 (a) — amendment to A6 decision 8: the fixed undo command adds "되돌려줘" (2026-10-26, branch `claude/v5-context-fixes`)
+
+- **Decision (owner, 2026-10-26, option (a) of D2/P3).** The undo hint keeps the owner's wording of 2026-10-16
+  (`되돌리려면 "되돌려줘" (10분 안)`). The deterministic path also accepts that exact printed command, so Core's own copy
+  never suggests a sentence that only the selector parses (D2).
+- **A6 decision 8 is amended.** The fixed undo commands are now `되돌리기` and `되돌려줘`.
+  - `되돌려줘` is the hint's own constant, `NL_ACTION_UNDO_COMMAND` (`work-chat-renderer.ts`), and the hint is built from
+    it, so the printed command and the accepted one cannot drift apart.
+  - It is a command, not a phrase list: the whole message on one line, with an optional `.` or `!`, under the same
+    plain-line eligibility, DM-only rule, kill switch and resolution as `되돌리기` (`decideAnchoredUndo`). There is no
+    selector call.
+  - Any other wording ("아니 그거 되돌려줘", "되돌려 줘", "되돌려줘요") stays with the selector, as before.
+- **Context eval dry (oracle).** deployed 38/38 and actions-local 55/55. Every hard check is at 0, including
+  unparseable-suggestion (actions-local had 10 before).
