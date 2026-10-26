@@ -57,6 +57,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     after a to-do list) refines that list, with its period carried.
   - Without the new parts the prompts are byte-identical to v67 / v65 / v66. Twelve D12 gold candidates wait for the
     owner's batch (`golden/nl-intent.context-pending.v1.json`); `eval:nl` renders the new parts as the runtime does.
+- **Changed (P10, owner decision D4 2026-10-26; read `nl-select.v69`, A6 `v67`, R2 `v68`; D12 gate pending).** A worded
+  answer to the help-scope question ("Quoky로 하는 거") is understood.
+  - A number or a displayed option still resolves without a model.
+  - Any other reply reaches this turn's selection call with the question's displayed options. The selector may answer
+    `"answer": N`, which Core reads only then: 1 runs the help, 2 gives the app-itself reply.
+  - No phrase list is added. The prompt is otherwise byte-identical. Eight D4 gold candidates are pending.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

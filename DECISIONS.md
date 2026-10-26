@@ -30415,4 +30415,26 @@ Source: owner decisions D1–D4 of 2026-10-26 on the context-eval classification
   - `eval:nl` scores a `prior.turns` / `prior.earlier` exactly as the runtime renders them.
   - Twelve agent-drafted candidates wait in `golden/nl-intent.context-pending.v1.json` for the owner's batch approval
     (ADR-0120 D12; ADR-0098 D7). They are new phrasings, not copied from the context eval or a prompt example.
-  - The plan and the commands are in `docs/eval/context-eval.md` ("D12 gate for read v68").
+  - The plan and the commands are in `docs/eval/context-eval.md` ("D12 gate for read v68 / v69").
+
+### Owner decision D4 and fix P10 — a worded answer to the help-scope question (2026-10-26, branch `claude/v5-context-fixes`)
+
+- **D4 amends owner decision A (2026-10-22, with Codex P2):** "the two options are answered only by their displayed
+  texts". A number, an ordinal or a displayed option text is still resolved deterministically, with no model call
+  (`resolveChoice`, unchanged). A cancel and an out-of-range number are also unchanged.
+- **Any other reply** goes to this turn's one selection call with the question shown: `Open question (asked by Quoky
+  just before this message): 1. <option 1>; 2. <option 2>`. These are the displayed option texts, in the language the
+  question was asked in. Four rule-6 lines come with it.
+  - The selector may add `"answer": N` to its output (an integer 1–4; the parser rejects anything else).
+  - Core reads `answer` only when it showed an open question. Option 1 runs the stored help selection; the last option is
+    the app itself and gets its fixed reply. An unknown option is ignored.
+  - Without `answer` the reply is routed as usual, as before. The question ends with that turn either way.
+  - The call bypasses the selection cache. No word or phrase list is added: the selector interprets the reply.
+- **Prompt versions:** read `nl-select.v69`, A6 `v67`, R2 `v68`. The open question is rendered only in that one case;
+  every other prompt is v68 / v66 / v67 byte for byte. The golden pin is `golden/nl-select.v69.prompts.json`, with two
+  `open-question-*` cases.
+- **One D12 gate covers v68 and v69.** It is not run. `eval:nl` renders `openQuestion` and scores `expectAnswer` (a
+  wrong option is a wrong capture; an `answer` to a non-answer is a wrong capture). Eight D4 candidates have joined the
+  D1 / P7 ones in `golden/nl-intent.context-pending.v1.json`, pending the owner's batch.
+- **Context eval.** The `hs-calendar-words` t2 oracle now answers `{"entryId": "none", "answer": 1}`, the ideal
+  selector under D4; dry mode only.

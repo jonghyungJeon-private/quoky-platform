@@ -316,7 +316,7 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
   });
 });
 
-describe('D1 / P7 gold candidates (nl-intent.context-pending.v1.json, PENDING the owner D12 batch)', () => {
+describe('D1 / P7 / D4 gold candidates (nl-intent.context-pending.v1.json, PENDING the owner D12 batch)', () => {
   const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-pending.v1.json', import.meta.url).pathname;
 
   it('render the chat-turn age and the earlier selections in the prompt, and every gold is reachable after Core validation', async () => {
@@ -332,6 +332,7 @@ describe('D1 / P7 gold candidates (nl-intent.context-pending.v1.json, PENDING th
         seen.push(request.prompt);
         const message = /<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '';
         const golden = byText.get(message);
+        if (golden?.expectAnswer !== undefined) return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: golden.expectAnswer }), artifacts: [] };
         return { text: golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args), artifacts: [] };
       },
     } as unknown as AiProvider;
@@ -340,6 +341,14 @@ describe('D1 / P7 gold candidates (nl-intent.context-pending.v1.json, PENDING th
     expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
     expect(seen.some((prompt) => prompt.includes('(shown 2 turns ago; only chat replies since)'))).toBe(true);
     expect(seen.some((prompt) => prompt.includes('\nEarlier selections (newest first): {"entryId":"calendar.events","args":{"range":"next-week"}} (shown 1 turn ago)\n'))).toBe(true);
+    expect(seen.some((prompt) => prompt.includes('\nOpen question (asked by Quoky just before this message): 1. Quoky로 슬랙 조회하는 방법; 2. 슬랙 앱 자체의 사용법\n'))).toBe(true);
+    // An answer to the wrong option is a wrong capture; an answer with no open question shown is never scored as one.
+    const d4 = corpus.cases.find((golden) => golden.expectAnswer === 1) as NlEvalCase;
+    expect(scoreOutput(d4, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 2 }), NOW).outcome).toBe('wrong-capture');
+    expect(scoreOutput(d4, answer('none'), NOW).outcome).toBe('miss');
+    const plain = corpus.cases.find((golden) => golden.id === 'ctx-d4-008') as NlEvalCase;
+    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('wrong-capture');
+    expect(scoreOutput({ ...plain, openQuestion: undefined } as NlEvalCase, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('none');
     // A pending candidate is never in the scored corpus.
     const scored = new Set(loadCorpus().corpus.cases.map((golden) => golden.id));
     expect(corpus.cases.filter((golden) => scored.has(golden.id))).toEqual([]);

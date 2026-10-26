@@ -50,7 +50,13 @@ These fix the hard failures of the first `eval:context` run that need no owner d
 - **P6 + P7 (D1).** A chat turn keeps `lastSelection` one turn older (follow-up 2 reversed for chat), and it also keeps
   the latest selection of each other source. The selector prompt shows both only when present (read `nl-select.v68`, A6
   `v66`, R2 `v67`; otherwise byte-identical). **The D12 gate is not run**: it is prepared offline (12 pending gold
-  candidates, `docs/eval/context-eval.md` "D12 gate for read v68"), and the owner's Strict run comes next.
+  candidates, `docs/eval/context-eval.md` "D12 gate for read v68 / v69"), and the owner's Strict run comes next.
+- **P10 (D4).** A worded reply to the help-scope question goes to the selector with the question shown; its `answer` picks
+  the option (read `nl-select.v69`, A6 `v67`, R2 `v68`; same D12 gate, not run). 8 more pending candidates (20 in all).
+- **P3 (D2), stopped for an owner decision.** The undo hint "되돌리려면 \"되돌려줘\"" names a phrase that only the
+  selector parses. The deterministic twin is the anchored `되돌리기` (A6 decision 8). Options: (a) accept the exact
+  printed "되돌려줘" as an anchored twin (this amends the ratified A6 decision 8 phrase); (b) print "되돌리기" in the hint
+  (this changes the owner's chosen wording of 2026-10-16). It accounts for all 10 remaining actions-local dry misses.
 
 ### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
 

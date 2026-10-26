@@ -110,6 +110,8 @@ export interface ContextEvalTurn {
     readonly args?: Readonly<Record<string, unknown>>;
     readonly ambiguity?: 'CLEAR' | 'NEEDS_CLARIFICATION';
     readonly alternatives?: ReadonlyArray<{ readonly entryId: string; readonly args?: Readonly<Record<string, unknown>> }>;
+    /** Owner decision D4: the option of Quoky's open numbered question a worded reply means (the selector's `answer`). */
+    readonly answer?: number;
   };
   readonly expect: TurnExpectation;
 }

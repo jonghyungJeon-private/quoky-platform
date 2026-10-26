@@ -311,7 +311,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v68` (the read prompt). Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v69` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -805,7 +805,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v68` (the read prompt) byte for byte.
+   * prompt is `nl-select.v69` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -998,6 +998,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private async decideActive(turn: NlSelectionTurn): Promise<NlSelectionDecision> {
     const language = languageOf(turn.text);
     const pending = turn.pending !== undefined ? turn.pending ?? undefined : readPendingQuestion(turn.session, turn.actor.id, turn.now);
+    // Owner decision D4 (2026-10-26): a help-scope question the reply did not answer by number or displayed text goes to
+    // the selector with this turn's call, which says which option a worded answer means.
+    let openQuestion: Extract<PendingQuestion, { kind: 'entry' }> | undefined;
     if (pending !== undefined) {
       // Any reply ends the question: an answer resolves it, anything else is a new request.
       if (turn.pending === undefined) await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => undefined);
@@ -1015,6 +1018,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
             : undefined
           : await this.answerPending(pending, turn, answerInput.groundingText, answerLanguage);
         if (answered !== undefined) return answered;
+        if (pending.kind === 'entry' && (pending.appSources ?? pending.appSource) !== undefined) openQuestion = pending;
       }
     }
     // A6-D8/D3: action entries reach the selector only while the level allows and the kill switch is running; otherwise
@@ -1029,7 +1033,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.logAgreement(turn, { outcome: 'fallback', reason: prepared.skip });
       return { kind: 'skip', reason: prepared.skip };
     }
-    const selected = await this.select(effective, prepared, last, undefined, reference);
+    const shownQuestion = openQuestion === undefined ? undefined : { options: helpScopeOptionTexts(openQuestion) };
+    const selected = await this.select(effective, prepared, last, undefined, reference, shownQuestion);
     if (selected.kind === 'egress-refused') {
       this.log('info', 'nl_selection.skipped', { reason: selected.reason, route: turn.route });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.reason });
@@ -1039,6 +1044,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.log('info', 'nl_selection.decided', { outcome: 'unavailable', cause: selected.cause, route: turn.route, latencyMs: selected.latencyMs, ...(selected.detail !== undefined ? { detail: selected.detail } : {}), ...(selected.call ?? {}) });
       this.logAgreement(turn, { outcome: 'fallback', reason: selected.cause, latencyMs: selected.latencyMs, ...(selected.call !== undefined ? { call: selected.call } : {}) });
       return { kind: 'unavailable' };
+    }
+    if (openQuestion !== undefined && selected.output.answer !== undefined) {
+      const answered = await this.answerOpenQuestion(openQuestion, selected.output.answer, turn, language);
+      if (answered !== undefined) {
+        this.log('info', 'nl_selection.open_question_answered', { option: selected.output.answer, route: turn.route, latencyMs: selected.latencyMs });
+        return answered;
+      }
     }
     const decision =
       reference !== undefined && selected.output.entryId !== null && isNlActionEntryId(selected.output.entryId)
@@ -1318,6 +1330,22 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
+  }
+
+  /**
+   * D4: the selector read a worded reply as option `answer` of the help-scope question. Option 1 completes the stored help
+   * selection, the last option is the app itself (its fixed reply); anything else is `undefined` (the turn routes on).
+   */
+  private async answerOpenQuestion(pending: Extract<PendingQuestion, { kind: 'entry' }>, answer: number, turn: NlSelectionTurn, language: 'ko' | 'en'): Promise<NlSelectionDecision | undefined> {
+    const appSource = pending.appSources ?? pending.appSource;
+    if (appSource === undefined) return undefined;
+    const index = answer - 1;
+    if (index === pending.options.length) return { kind: 'ask', text: renderHelpScopeAppReply(appSource, language, pending.appSourcesMore === true) };
+    const option = pending.options[index];
+    if (option === undefined) return undefined;
+    const validated = validateSelection(option, this.validationContext(turn, '', option.args));
+    if (!validated.ok) return undefined;
+    return this.complete(validated.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, pending.groundingText ?? '');
   }
 
   /** A reply to the open numbered question: `1`, `2.`, `지라`, `담당` … or `undefined` when it is not an answer. */
@@ -2278,6 +2306,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     last: LastSelection | undefined,
     signal?: AbortSignal,
     reference?: NlReferenceState,
+    openQuestion?: { readonly options: readonly string[] },
   ): Promise<SelectOutcome> {
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
@@ -2304,7 +2333,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A6-D3: a turn with any fresh reference record bypasses the cache (no read, no write); an action, ITEM_READ or ref
     // output is never stored and never served, so a side-effecting choice always reflects this turn's state.
     const actionsOn = reference !== undefined;
-    const bypass = actionsOn && hasReferenceRecord(reference);
+    // D4: a turn with an open question shown bypasses the cache too (the answer depends on that question).
+    const bypass = (actionsOn && hasReferenceRecord(reference)) || openQuestion !== undefined;
     const cacheKey = nlSelectionCacheKey({
       actorId: turn.actor.id,
       text: prepared.text,
@@ -2321,6 +2351,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       entries: turn.entries,
       text: prepared.text,
       ...(previous !== undefined ? { previous } : {}),
+      ...(openQuestion !== undefined ? { openQuestion } : {}),
       ...(reference !== undefined ? { actions: { referenceContext: renderReferenceContext(reference) } } : {}),
     });
     const bound = this.selectionBound(clock());
@@ -2819,4 +2850,10 @@ export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {
   return (turn.quotedRanges ?? []).length > 0 || turn.codeFormatted === true;
+}
+
+/** D4: the help-scope question's displayed option texts, in the language it was asked in (what the owner saw). */
+function helpScopeOptionTexts(pending: Extract<PendingQuestion, { kind: 'entry' }>): readonly string[] {
+  const appSource = pending.appSources ?? pending.appSource;
+  return appSource === undefined ? [] : renderHelpScopeOptions(appSource, pending.language, pending.appSourcesMore === true);
 }

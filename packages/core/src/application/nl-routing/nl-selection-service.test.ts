@@ -1050,6 +1050,29 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(h.calls).toHaveLength(2);
   });
 
+  it('owner decision D4: a worded answer reaches the selector with the open question, which names the option', async () => {
+    const appReply = '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.';
+    const quoky = harness({ script: [out('help.topic'), out('none', {}, { answer: 1 })] });
+    await quoky.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await quoky.decide('퀴키로 하는 쪽')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(quoky.calls[1]?.prompt).toContain('\nOpen question (asked by Quoky just before this message): 1. Quoky로 슬랙 조회하는 방법; 2. 슬랙 앱 자체의 사용법\n');
+    expect(quoky.calls[1]?.prompt).toContain('"Open question" is the numbered question Quoky asked just before this message.');
+    const app = harness({ script: [out('help.topic'), out('none', {}, { answer: 2 })] });
+    await app.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await app.decide('앱 자체 얘기였어')).toEqual({ kind: 'ask', text: appReply });
+    // No answer: the message routes as usual; an answer beyond the options is ignored.
+    const other = harness({ script: [out('help.topic'), out('calendar.events', { range: 'tomorrow' }, { answer: 3 })] });
+    await other.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await other.decide('그건 됐고 내일 일정 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events' } });
+    // The question ends with that turn: a later answer field is never read without an Open question shown.
+    const late = harness({ script: [out('help.topic'), NONE, out('none', {}, { answer: 1 })] });
+    await late.decide('슬랙에서 검색하는 방법 알려줘');
+    await late.decide('고마워');
+    expect(late.calls[1]?.prompt).toContain('Open question');
+    expect(await late.decide('퀴키로 하는 쪽')).toEqual({ kind: 'none' });
+    expect(late.calls[2]?.prompt).not.toContain('Open question');
+  });
+
   it('CA review W2: a topic the selector named but Core dropped as out of set is not a general help: no help-scope question', async () => {
     const h = harness({ script: [out('help.topic', { topic: 'slack' })] });
     expect(await h.decide('너 슬랙 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });

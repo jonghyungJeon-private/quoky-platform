@@ -163,6 +163,17 @@ describe('strict output parser (ADR-0120 D3)', () => {
     });
   });
 
+  it('D4: an optional `answer` is an integer 1-4 (the open question\'s option); anything else rejects the output', () => {
+    const none = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]';
+    expect(parseSelectionOutput(`${none},"answer":1}`)).toMatchObject({ entryId: null, answer: 1 });
+    expect(parseSelectionOutput(`${none},"answer":4}`)).toMatchObject({ answer: 4 });
+    expect(parseSelectionOutput(`${none},"answer":null}`)).not.toHaveProperty('answer');
+    for (const bad of ['0', '5', '1.5', '"1"', 'true']) {
+      expect(parseSelectionOutput(`${none},"answer":${bad}}`), bad).toBeNull();
+      expect(nlSelectionParseFailure(`${none},"answer":${bad}}`), bad).toBe('bad-answer');
+    }
+  });
+
   it('rejects unknown keys, prose, a third alternative, nested args, a bad ambiguity and output over 2 KB', () => {
     for (const raw of [
       ok.replace('"alternatives"', '"reason":"x","alternatives"'),

@@ -1,7 +1,7 @@
 {
  "version": 1,
- "description": "Owner decision D1 / context-eval fix P7 (2026-10-26) gold CANDIDATES for nl-select.v68, PENDING the owner's D12 batch: not scored by eval:nl until approved and moved into nl-intent.v1.json (ADR-0120 D12: the agent drafts, the owner approves each batch). Same schema as nl-intent.v1.json; `prior.turns` (chat turns since the listing) and `prior.earlier` (the latest selection of each other source) are rendered exactly as the runtime renders them. Phrasings are new: none copies a context-eval scenario turn or a prompt example.",
- "promptVersion": "nl-select.v68",
+ "description": "Owner decisions D1 / D4 and context-eval fixes P7 / P10 (2026-10-26) gold CANDIDATES for nl-select.v69, PENDING the owner's D12 batch: not scored by eval:nl until approved and moved into nl-intent.v1.json (ADR-0120 D12: the agent drafts, the owner approves each batch). Same schema as nl-intent.v1.json; `prior.turns` (chat turns since the listing) and `prior.earlier` (the latest selection of each other source) are rendered exactly as the runtime renders them; `openQuestion` (the help-scope question shown) and `expectAnswer` (the option a worded reply means; absent = not an answer) score D4. Phrasings are new: none copies a context-eval scenario turn or a prompt example.",
+ "promptVersion": "nl-select.v69",
  "cases": [
   {
    "id": "ctx-d1-001",
@@ -252,6 +252,100 @@
     "args": {}
    },
    "note": "D1 + P7: a full new request is read on its own words (today, the default: canonical args {}), never the earlier range [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-001",
+   "text": "퀴키한테 물어보는 방법 말이야",
+   "openQuestion": {
+    "sources": "슬랙",
+    "language": "ko"
+   },
+   "expect": "none",
+   "expectAnswer": 1,
+   "note": "D4: a worded answer naming Quoky's way is option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-002",
+   "text": "아니 슬랙 앱에서 직접 하는 거",
+   "openQuestion": {
+    "sources": "슬랙",
+    "language": "ko"
+   },
+   "expect": "none",
+   "expectAnswer": 2,
+   "note": "D4: a worded answer naming the app itself is option 2 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-003",
+   "text": "너로 찾는 거",
+   "openQuestion": {
+    "sources": "지라",
+    "language": "ko"
+   },
+   "expect": "none",
+   "expectAnswer": 1,
+   "note": "D4: \"you\" means Quoky: option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-004",
+   "text": "앱 설정 쪽이야",
+   "openQuestion": {
+    "sources": [
+     "구글 캘린더",
+     "지메일"
+    ],
+    "language": "ko"
+   },
+   "expect": "none",
+   "expectAnswer": 2,
+   "note": "D4: the several-source question, the app side [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-005",
+   "text": "I meant through you",
+   "openQuestion": {
+    "sources": "Slack",
+    "language": "en"
+   },
+   "expect": "none",
+   "expectAnswer": 1,
+   "note": "D4 (EN): option 1 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-006",
+   "text": "the app's own settings",
+   "openQuestion": {
+    "sources": "Confluence",
+    "language": "en"
+   },
+   "expect": "none",
+   "expectAnswer": 2,
+   "note": "D4 (EN): option 2 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-007",
+   "text": "그건 됐고 내일 일정 알려줘",
+   "openQuestion": {
+    "sources": "슬랙",
+    "language": "ko"
+   },
+   "expect": {
+    "entryId": "calendar.events",
+    "args": {
+     "range": "tomorrow"
+    }
+   },
+   "note": "D4: a new request after the question is no answer: routed as usual, no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+  },
+  {
+   "id": "ctx-d4-008",
+   "text": "고마워",
+   "openQuestion": {
+    "sources": "지라",
+    "language": "ko"
+   },
+   "expect": "none",
+   "note": "D4: small talk after the question is no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
   }
  ]
 }

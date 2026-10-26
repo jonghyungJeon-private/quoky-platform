@@ -112,12 +112,13 @@ const READ_LISTINGS: ReadonlySet<string> = new Set(['calendar.events', 'mail.lis
 /** The oracle selector output of a turn (dry mode only). */
 export function oracleOutput(turn: ContextEvalTurn | undefined): string {
   const oracle = turn?.oracle;
-  if (oracle === undefined || oracle.entryId === 'none') return NONE;
+  if (oracle === undefined || (oracle.entryId === 'none' && oracle.answer === undefined)) return NONE;
   return JSON.stringify({
     entryId: oracle.entryId,
     args: oracle.args ?? {},
     ambiguity: oracle.ambiguity ?? 'CLEAR',
     alternatives: (oracle.alternatives ?? []).map((alternative) => ({ entryId: alternative.entryId, args: alternative.args ?? {} })),
+    ...(oracle.answer !== undefined ? { answer: oracle.answer } : {}),
   });
 }
 

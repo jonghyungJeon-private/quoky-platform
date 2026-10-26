@@ -35,6 +35,7 @@ import {
   nlSelectionMeaning,
   parseSelectionOutput,
   prepareSelectionInput,
+  renderHelpScopeOptions,
   validateSelection,
   type AiProvider,
   type NlArgs,
@@ -89,7 +90,17 @@ export interface NlEvalCase {
    * these entries and `none`. See the scoring notes above.
    */
   readonly clarify?: NlEvalClarifyGold;
+  /**
+   * Owner decision D4 (2026-10-26): the help-scope question Quoky asked just before (its sources and language), shown to
+   * the selector as the runtime shows it when the reply named no option by number or displayed text.
+   */
+  readonly openQuestion?: { readonly sources: string | readonly string[]; readonly language: 'ko' | 'en'; readonly more?: boolean };
+  /** D4: the option a worded reply means (the selector's `answer`); absent with an open question = not an answer. */
+  readonly expectAnswer?: number;
 }
+
+/** D4: the expected label of a case whose gold is an open-question answer. */
+export const NL_EVAL_OPEN_QUESTION_LABEL = 'open-question';
 
 /** A clarification gold: the entries the question is between (besides `none`) and the owner batch that set it. */
 export interface NlEvalClarifyGold {
@@ -197,11 +208,17 @@ const ALL_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => 
 
 /** Score one raw selector output for one case (exported for the offline tests). */
 export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZone = 'Asia/Seoul'): Omit<NlEvalRecord, 'run' | 'latencyMs'> {
-  const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+  const expected = golden.expectAnswer !== undefined ? NL_EVAL_OPEN_QUESTION_LABEL : golden.expect === 'none' ? 'none' : golden.expect.entryId;
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return { id: golden.id, expected, outcome: 'skipped' };
   const output = parseSelectionOutput(raw);
   if (output === null) return { id: golden.id, expected, outcome: 'error', error: 'malformed' };
+  // D4: with an open question shown, an `answer` decides the turn (the runtime reads it only then).
+  if (golden.openQuestion !== undefined && output.answer !== undefined) {
+    const got = `${NL_EVAL_OPEN_QUESTION_LABEL}:${output.answer}`;
+    return { id: golden.id, expected, outcome: output.answer === golden.expectAnswer ? 'hit' : 'wrong-capture', got };
+  }
+  if (golden.expectAnswer !== undefined) return { id: golden.id, expected, outcome: 'miss', got: output.entryId ?? 'none' };
   if (output.entryId === null) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.
   if (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
@@ -411,6 +428,9 @@ export async function runEvaluation(input: {
           text: prepared.text,
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
             ? { previous: priorPromptInput(golden.prior) }
+            : {}),
+          ...(golden.openQuestion !== undefined
+            ? { openQuestion: { options: renderHelpScopeOptions(golden.openQuestion.sources, golden.openQuestion.language, golden.openQuestion.more === true) } }
             : {}),
         });
         const started = clock();

@@ -1961,7 +1961,8 @@
     {
      "text": "Quoky로 하는 거",
      "oracle": {
-      "entryId": "none"
+      "entryId": "none",
+      "answer": 1
      },
      "expect": {
       "entry": "help.topic",
