@@ -365,6 +365,34 @@ describe('references, questions and the audit line', () => {
     expect(await channel.service.decideAnchoredUndo({ direct: false, text: NL_ACTION_UNDO_COMMAND, session: channel.session(), actor: channel.actor(), now: at(1), entries: ALL })).toEqual({ kind: 'ask', entryId: 'action.undo', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
   });
 
+  it('CA review P2-2: the printed "되돌려줘" does nothing exactly like 되돌리기 at level shadow, with the kill switch stopped, and at off', async () => {
+    const record = { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] } as const;
+    const cases: Array<[string, () => Promise<World>]> = [
+      ['level shadow', async () => world({ level: 'shadow', script: [] })],
+      [
+        'kill switch stopped',
+        async () => {
+          const w = world({ level: 'local', script: [] });
+          await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
+          return w;
+        },
+      ],
+      ['level off', async () => world({ level: 'off', script: [] })],
+    ];
+    for (const [name, make] of cases) {
+      for (const text of ['되돌리기', NL_ACTION_UNDO_COMMAND]) {
+        const w = await make();
+        w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', record, at(0)));
+        const before = JSON.stringify(w.session().metadata);
+        const decision = await w.service.decideAnchoredUndo({ direct: true, text, session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+        expect(decision, `${name}: ${text}`).toBeUndefined();
+        expect(w.calls, `${name}: ${text}`).toHaveLength(0);
+        // Nothing is undone or written: the last action stays exactly as it was.
+        expect(JSON.stringify(w.session().metadata), `${name}: ${text}`).toBe(before);
+      }
+    }
+  });
+
   it('A6-D3a amendment 1 (CA round 3): the anchored 되돌리기 is DM-only while ADR-0122 enforcement is off', async () => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
