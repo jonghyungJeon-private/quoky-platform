@@ -263,6 +263,13 @@ describe('deterministic validation (ADR-0120 D4)', () => {
     expect(validateSelection({ entryId: 'item.summarize', args: { source: 'mail', ref: '#1', scope: 'thread', mode: 'summary' } }, ctx('1번 메일 요약해줘', { offered: actions, actions: true }))).toMatchObject({ ok: false, reason: 'ungrounded', arg: 'scope' });
   });
 
+  it('owner smoke 2026-10-26: a release that is only a part of the project token is dropped; a separate token keeps it', () => {
+    const op = (args: Record<string, string>, text: string) => validateSelection({ entryId: 'jira.release', args }, ctx(text));
+    expect(op({ project: 'OP26', release: '26' }, 'OP26 릴리스 뭐 있어?')).toMatchObject({ ok: true, value: { args: { project: 'OP26' } } });
+    expect(op({ project: 'OP26', release: '26' }, 'OP26 26 릴리스')).toMatchObject({ ok: true, value: { args: { project: 'OP26', release: '26' } } });
+    expect(op({ project: 'OP26', release: '20261015' }, 'OP26 20261015 릴리스')).toMatchObject({ ok: true, value: { args: { project: 'OP26', release: '20261015' } } });
+  });
+
   it('read v67: the count description says a how-many follow-up keeps the previous selection and sets count', () => {
     expect(buildSelectionPrompt({ entries: ALL, text: 'x' })).toContain('A how-many follow-up to the previous selection keeps that entry and all its args and sets count true.');
   });
