@@ -41,7 +41,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - Every outcome of the write is recorded as the last action, with source `slack`, `jira` or `calendar` and the
     receipt id. It is never undoable until R3.
   - The undo answers with that family's fixed copy (Slack: "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워
-    주세요.") and writes nothing.
+    주세요."; Slack NOT_SENT: "보낸 메시지가 없어서 되돌릴 게 없어요.", both verbatim from S3; the calendar, Jira and UNCERTAIN
+    sentences are an explicit S3 copy amendment) and writes nothing.
   - "방금 거" does not reach back to the older item either.
 - **Changed (P5, owner decision D3 2026-10-26).** The help index shows the code-change flow steps as steps, not as
   stand-alone commands.
@@ -56,8 +57,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - The selector sees the previous selection's age ("shown N turns ago; only chat replies since") and the latest
     selection of each other source ("Earlier selections"), structure only. A follow-up about an earlier list (an event
     after a to-do list) refines that list, with its period carried.
-  - Without the new parts the prompts are byte-identical to v67 / v65 / v66. Twelve D12 gold candidates wait for the
-    owner's batch (`golden/nl-intent.context-pending.v1.json`); `eval:nl` renders the new parts as the runtime does.
+  - Without the new parts the prompts are byte-identical to v67 / v65 / v66. Their D12 golds are in the supplemental
+    scored corpus (`golden/nl-intent.context.v1.json`); `eval:nl` renders the new parts as the runtime does.
 - **Changed (P10, owner decision D4 2026-10-26; read `nl-select.v69`, A6 `v67`, R2 `v68`; D12 gate pending).** A worded
   answer to the help-scope question ("Quoky로 하는 거") is understood.
   - A number or a displayed option still resolves without a model.

@@ -410,14 +410,19 @@ export function renderReferenceQuestion(
 
 /**
  * ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): "되돌려줘" right after an approved connector write, while its R3 undo
- * is not on. SENT: the family's "not on yet" copy (the Slack sentence is the ADR's own); UNCERTAIN: check it there;
- * NOT_SENT: nothing was sent. Never names an older item, never suggests a command.
+ * is not on. Where S3 defines the sentence it is used verbatim: Slack SENT ("Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서
+ * 직접 지워 주세요.") and Slack NOT_SENT ("보낸 메시지가 없어서 되돌릴 게 없어요."). The calendar and Jira sentences, and every
+ * UNCERTAIN sentence (S3 gives only its meaning: check it there), are the S3 copy amendment of 2026-10-27 (DECISIONS,
+ * CA review P2-1). Never names an older item, never suggests a command.
  */
+/** ADR-0112 amendment 1 S3: the Slack NOT_SENT sentence, verbatim. */
+export const NL_SLACK_NOT_SENT_UNDO_KO = '보낸 메시지가 없어서 되돌릴 게 없어요.';
 function renderExternalUndo(external: { readonly source: 'slack' | 'jira' | 'calendar'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT' }, language: Lang): string {
   const ko = { slack: { thing: 'Slack 글', place: 'Slack', fix: '지워' }, jira: { thing: 'Jira 변경', place: 'Jira', fix: '고쳐' }, calendar: { thing: '캘린더 일정 변경', place: '캘린더', fix: '고쳐' } }[external.source];
   const en = { slack: { thing: 'Slack post', place: 'Slack' }, jira: { thing: 'Jira change', place: 'Jira' }, calendar: { thing: 'calendar change', place: 'your calendar' } }[external.source];
   if (external.outcome === 'NOT_SENT') {
-    return language === 'en' ? `Nothing was sent by that ${en.thing}, so there is nothing to undo.` : `방금 ${ko.thing}은 보내지 않아서 되돌릴 게 없어요.`;
+    if (external.source === 'slack') return language === 'en' ? 'No message was sent, so there is nothing to undo.' : NL_SLACK_NOT_SENT_UNDO_KO;
+    return language === 'en' ? `That ${en.thing} was not applied, so there is nothing to undo.` : `방금 ${ko.thing}은 적용되지 않아서 되돌릴 게 없어요.`;
   }
   if (external.outcome === 'UNCERTAIN') {
     return language === 'en'

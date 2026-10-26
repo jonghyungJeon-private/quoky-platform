@@ -323,7 +323,10 @@ describe('an external write is the last action, never undoable (ADR-0112 amendme
   it('every family and outcome has its fixed copy; none names an item or suggests a command', () => {
     expect(renderUndoUnresolved('external', 'ko', { source: 'slack', outcome: 'SENT' })).toBe('Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워 주세요.');
     expect(renderUndoUnresolved('external', 'ko', { source: 'calendar', outcome: 'SENT' })).toBe('캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐 주세요.');
-    expect(renderUndoUnresolved('external', 'ko', { source: 'jira', outcome: 'NOT_SENT' })).toBe('방금 Jira 변경은 보내지 않아서 되돌릴 게 없어요.');
+    // ADR-0112 am. 1 S3 verbatim for Slack NOT_SENT; calendar / Jira wording is the S3 copy amendment of 2026-10-27.
+    expect(renderUndoUnresolved('external', 'ko', { source: 'slack', outcome: 'NOT_SENT' })).toBe('보낸 메시지가 없어서 되돌릴 게 없어요.');
+    expect(renderUndoUnresolved('external', 'ko', { source: 'jira', outcome: 'NOT_SENT' })).toBe('방금 Jira 변경은 적용되지 않아서 되돌릴 게 없어요.');
+    expect(renderUndoUnresolved('external', 'ko', { source: 'calendar', outcome: 'NOT_SENT' })).toBe('방금 캘린더 일정 변경은 적용되지 않아서 되돌릴 게 없어요.');
     expect(renderUndoUnresolved('external', 'ko', { source: 'calendar', outcome: 'UNCERTAIN' })).toContain('결과를 확인하지 못해서 되돌리지 않을게요');
     for (const source of ['slack', 'jira', 'calendar'] as const) {
       for (const outcome of ['SENT', 'UNCERTAIN', 'NOT_SENT'] as const) {

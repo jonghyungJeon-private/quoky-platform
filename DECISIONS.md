@@ -30390,10 +30390,17 @@ Source: the first `eval:context` Strict run and its classification (`docs/eval/c
     - the record never holds content.
   - Until the R3 undo writers act, such a record is never undoable, and a stored flag cannot change that. "되돌려줘"
     (selected, anchored `되돌리기` or confirmed) answers with the family's fixed copy:
-    - Slack: the ADR's own sentence "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워 주세요.";
-    - calendar and Jira: the same shape;
-    - UNCERTAIN: "check it there";
-    - NOT_SENT: "nothing was sent".
+    - Slack SENT: the ADR's own sentence "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워 주세요.";
+    - Slack NOT_SENT: the ADR's own sentence "보낸 메시지가 없어서 되돌릴 게 없어요." (verbatim since CA review P2-1; the first
+      version said "방금 Slack 글은 보내지 않아서 …", which did not match S3);
+    - everything else is the **S3 copy amendment of 2026-10-27** (S3 defines no sentence for it):
+      - calendar and Jira SENT: the Slack shape ("캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐
+        주세요.", "Jira 변경 …");
+      - calendar and Jira NOT_SENT: "방금 캘린더 일정 변경은 적용되지 않아서 되돌릴 게 없어요." (likewise Jira), because
+        "보낸 메시지" names a message and these writes are not messages;
+      - every UNCERTAIN, Slack included (S3 gives only the meaning: the result is unknown, check it there): "방금 <thing>은
+        결과를 확인하지 못해서 되돌리지 않을게요. <place>에서 직접 확인해 주세요."
+      - English mirrors.
   - It never resolves to an older to-do or reminder, either by undo or by "방금 거" / deictic recency.
   - The calendar undo writer itself stays R3 (owner decision). The same gate applies as for every lastAction write:
     mode `active` and `QUOKY_NL_ACTIONS` not off.
