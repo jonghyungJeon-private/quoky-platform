@@ -30077,3 +30077,38 @@ Remaining multi-step misses are summary scope (ap-p093 r2/r3, ap-p107, ap-p102, 
   before the imperative slot, as the garbled-action grammar already does (`NL_EN_MODAL_LEAD`, now exported from
   `garbled-action.ts`; no new list). Regression tests run through `agentReadWriteProbeResult` (probe none and malformed).
 
+
+### ADR-0121 A3a G6 freeze addendum, part 1 of 2 — prompt and harness hashes (hash-only, 2026-10-26)
+
+- **What.** The hash-only addendum that the A3a measurement record requires (addendum conditions 1 and 3). It records
+  the sha256 of the pinned local judgment prompt (A3a-D4, `prompts/answer-judge-local.v1`, stored at
+  `tools/g6/prompts/answer-judge-local.v1.txt`) and of every G6 harness file: the run script, the A3a-D3 facts
+  computation, the A3a-D2 renderer and guards, the `judge.v1` schema builder, and the request, case-set, scoring and
+  freeze-check modules they use. The files came in `9ac62a11`; this commit changes nothing else.
+- **Prompt first.** No G6 held-out set exists in any tree when this is committed. The prompt was adapted from the dev
+  prompt `final_prompt_SYS3.txt` (`f6a1e735…`, see the measurement record) to `judge.v1`; it was tuned on nothing else
+  and no model was called to write it or this addendum.
+- **Part 2 follows separately.** The held-out set's sha256 is committed **later, in a separate hash-only commit by the
+  set author** (a session without access to the prompt; DECISIONS.md only), as a second `g6-freeze` block with one line
+  `set packages/core/src/application/golden/a2/local-judgment-heldout.v2.json <sha256>`. Until it exists, the G6 run
+  refuses to start.
+- **Fail closed.** `tools/g6/run.mjs` reads the `g6-freeze` blocks from the committed `DECISIONS.md` and refuses to run
+  on any mismatch: prompt, every harness file below, the set, the rubric (`baee67a3…`), the `qwen3:8b` manifest
+  (`500a1f06…`, layer `a3de86cd…`), and the commit order (these hashes strictly before the set hash; the set-hash
+  commit hash-only; the set file absent from this commit's tree). Any later change to a listed file needs a new
+  addendum before a held-out set exists, or a fresh set.
+- **Not run.** No G6 run and no LT dry run have happened. Both are Strict model-in-the-loop runs that need the owner's
+  separate yes.
+
+```g6-freeze
+prompt  tools/g6/prompts/answer-judge-local.v1.txt  9b43479a55ca367d8ebcbf6c05031730e36fb493e12585e0afa2af0f21236d85
+harness tools/g6/run.mjs      8406c9c3c0169d588fbd1320068d39bb051c18c7bc9e70d98110ed7d67df0095
+harness tools/g6/facts.mjs    0f0431b95845502ef826f62de39304acf96b8c3eadf6c831811d3f8ac74d92ff
+harness tools/g6/render.mjs   72f0ad090af5827f7b901e0627b9d46111bc22560ffb6c46a247018b8ae9b4ff
+harness tools/g6/schema.mjs   9795fe27fd74fbb63ac12e640c6866a2c403e3c30ca85ec95ab1eda1bd52d85e
+harness tools/g6/guards.mjs   34b2e0f2e688e5965e2b93b1e024b3a6b76d0908910d84414885fa7614e8dfbf
+harness tools/g6/request.mjs  d9f9e9dca23b20d258355d67751b9b044db9efa56c1d89af75ad7a5e9cb354de
+harness tools/g6/cases.mjs    ee070b113cf6c32c282760face620c476b1793df6ba54a54b28cc96cecbbd2a9
+harness tools/g6/score.mjs    a9c15b62f157c92df2a6004a3389a49a8a63f37a2c669ac60580b782036d64c1
+harness tools/g6/freeze.mjs   022cdce61f7a757eedfceaca497901ebb3eb76538dafd1474171543f4019ec49
+```
