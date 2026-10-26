@@ -29847,3 +29847,10 @@ project-token release drop included). The release-order paragraphs of the earlie
   `uncoveredClauses` count is the counter of how often the probe would fire (one line per shadowed turn).
 - **Tests.** The probe (W1 determiner and deictic payloads, W2 clarifications and the clause-only prompt), the eval (W3
   readWrite matching and mismatch, a write without a readWrite gold, W4 help-scope captures), the English rests.
+- **Codex on 7d349d27 (2 × P2), fixed.** (1) The probe judges payload spans in their canonical form (the validator's own
+  `normalizeNlSpan`: one pair of enclosing quotes removed), so `"그 첫 회의 제목"` and `그 첫 회의 제목` are both a note; a time
+  span (a reminder's `when`) is no payload, as in the validator's deictic check. (2) References come first: a `ref`
+  (quoted or not), a deictic-only or determiner-led payload, or the determiner grammar on the clause makes the result a
+  note before any missing or ungrounded detail could make it a clarification ("그 첫 회의 제목으로 알림 만들어줘" with no time →
+  note). Tests: three quote forms, the missing-time and NEEDS_CLARIFICATION variants, a quoted list reference, a quoted
+  plain payload that stays a write.

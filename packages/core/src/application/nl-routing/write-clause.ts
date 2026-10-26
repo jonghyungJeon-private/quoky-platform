@@ -1,7 +1,7 @@
 import type { IsoTimestamp } from '../../domain';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { detectWorkChatCommand, type WorkChatCommand } from '../work-chat/work-chat-command';
-import { nlDeterminerSources, nlSpanStartsWithDeterminer } from './action-entries';
+import { isNlDeicticOnlyPayload, nlDeterminerSources, nlSpanStartsWithDeterminer, normalizeNlSpan } from './action-entries';
 
 /**
  * ADR-0121 S2 (owner-approved fix of 2026-10-26 for ap-n131, under the ratified read + write note): whether one clause of
@@ -37,5 +37,13 @@ export function nlClauseClaimsWrite(clause: string, options: { readonly now: Iso
  * "그 내용"). Existing closed vocabulary only. Pure.
  */
 export function nlWriteClausePointsBack(clause: string, spans: readonly string[]): boolean {
-  return nlDeterminerSources(clause).size > 0 || spans.some((span) => nlSpanStartsWithDeterminer(span));
+  // Codex P2: the spans are judged in their canonical form (the validator's own `normalizeNlSpan`: one pair of enclosing
+  // quotes removed), so a quoted and an unquoted output can never differ in writability.
+  return (
+    nlDeterminerSources(clause).size > 0 ||
+    spans.some((raw) => {
+      const span = normalizeNlSpan(raw);
+      return span.length > 0 && (nlSpanStartsWithDeterminer(span) || isNlDeicticOnlyPayload(span));
+    })
+  );
 }

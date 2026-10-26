@@ -78,23 +78,25 @@ export function agentReadWriteProbeResult(
   // Codex P2: only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE); `item.summarize` (ITEM_READ) is no
   // write, so a summary of one listed item never re-scores or re-routes a plan.
   if (entry === undefined || (entry.risk !== 'LOCAL_WRITE' && entry.risk !== 'EXTERNAL_WRITE')) return { kind: 'stands' };
-  const spans = entry.args.flatMap((spec) => (spec.kind === 'span' && typeof output.args[spec.name] === 'string' ? [output.args[spec.name] as string] : []));
+  // The payload spans (a time span such as a reminder's `when` is no payload, as in the validator's deictic check).
+  const spans = entry.args.flatMap((spec) => (spec.kind === 'span' && spec.allowsTimeWords !== true && typeof output.args[spec.name] === 'string' ? [output.args[spec.name] as string] : []));
+  // A list or deictic reference in the raw output (any non-empty `ref`, quoted or not) points back whatever validation says.
+  const hasRef = entry.args.some((spec) => spec.kind === 'ref' && typeof output.args[spec.name] === 'string' && (output.args[spec.name] as string).trim().length > 0);
   let clarify: string | undefined;
   for (const clause of clauses) {
     const validated = validateSelection({ entryId: output.entryId, args: output.args }, { offered, groundingText: clause, now: ctx.now, timeZone: ctx.timeZone, actions: true });
-    // CA W1: a payload that points back (a deictic-only span, a determiner reference) is never written.
-    if (!validated.ok && validated.reason === 'deictic-payload') return { kind: 'note', entryId: output.entryId, clause };
     const requested = namesEntry(clause, entry) || nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone });
-    if (validated.ok) {
-      const referenced = entry.args.some((spec) => spec.kind === 'ref' && validated.value.args[spec.name] !== undefined);
-      if (referenced || nlWriteClausePointsBack(clause, spans)) return { kind: 'note', entryId: output.entryId, clause };
-      if (output.ambiguity !== 'CLEAR') {
-        if (requested) clarify ??= clause;
-        continue;
-      }
-      return { kind: 'write', entryId: output.entryId, clause };
+    // The write belongs to this clause when it validates there, when its only failures are a pointing-back payload, a
+    // missing or ungrounded detail, or a reference the validator cannot read (a quoted `ref`), in a clause that asks for it.
+    const forThisClause = validated.ok || validated.reason === 'deictic-payload' || ((CLARIFY_REASONS.has(validated.reason) || hasRef) && requested);
+    if (!forThisClause) continue;
+    // CA W1 / Codex P2: references first, before any clarification — a payload that points back (a `ref`, a deictic-only
+    // or determiner-led canonical span, the determiner grammar on the clause) is never written and never asked about.
+    if (hasRef || nlWriteClausePointsBack(clause, spans) || (!validated.ok && validated.reason === 'deictic-payload')) {
+      return { kind: 'note', entryId: output.entryId, clause };
     }
-    if (CLARIFY_REASONS.has(validated.reason) && requested) clarify ??= clause;
+    if (validated.ok && output.ambiguity === 'CLEAR') return { kind: 'write', entryId: output.entryId, clause };
+    if (requested) clarify ??= clause;
   }
   return clarify !== undefined ? { kind: 'clarify', entryId: output.entryId, clause: clarify } : { kind: 'stands' };
 }

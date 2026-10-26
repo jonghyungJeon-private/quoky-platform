@@ -68,6 +68,22 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
     expect(agentReadWriteProbeResult(out('item.summarize', { source: 'mail', ref: '#2' }), ['두 번째 메일 요약해줘'], OFFERED, CTX)).toEqual({ kind: 'stands' });
   });
 
+  it('Codex P2: canonical-equivalent outputs never differ — a quoted determiner payload is a note like the unquoted one', () => {
+    const clause = ['그 첫 회의 제목으로 3시에 알림 만들어줘'];
+    for (const body of ['그 첫 회의 제목', '"그 첫 회의 제목"', '「그 첫 회의 제목」']) {
+      expect(agentReadWriteProbeResult(out('reminder.create', { when: '3시', body }), clause, OFFERED, CTX), body).toMatchObject({ kind: 'note', entryId: 'reminder.create' });
+    }
+  });
+
+  it('Codex P2: references come before clarifications — a pointing-back payload with a missing time is a note, not a question', () => {
+    expect(agentReadWriteProbeResult(out('reminder.create', { body: '그 첫 회의 제목' }), ['그 첫 회의 제목으로 알림 만들어줘'], OFFERED, CTX)).toMatchObject({ kind: 'note' });
+    expect(agentReadWriteProbeResult(out('reminder.create', { body: '그 첫 회의 제목' }, 'NEEDS_CLARIFICATION'), ['그 첫 회의 제목으로 알림 만들어줘'], OFFERED, CTX)).toMatchObject({ kind: 'note' });
+    // A quoted list reference is a reference too.
+    expect(agentReadWriteProbeResult(out('todo.cancel', { ref: '"#2"' }), ['두 번째 거 취소해줘'], OFFERED, CTX)).toMatchObject({ kind: 'note', entryId: 'todo.cancel' });
+    // The reminder's own time span is no payload: a plain write stays a write.
+    expect(agentReadWriteProbeResult(out('reminder.create', { when: '내일 9시', body: '"출발"' }), ['내일 9시에 출발 알림 만들어줘'], OFFERED, CTX)).toMatchObject({ kind: 'write' });
+  });
+
   it('a write with a list or deictic reference is not run: the read sections and the decision (f) note (note)', () => {
     expect(agentReadWriteProbeResult(out('todo.cancel', { ref: '#2' }), ['두 번째 거 취소해줘'], OFFERED, CTX)).toMatchObject({ kind: 'note', entryId: 'todo.cancel' });
   });
