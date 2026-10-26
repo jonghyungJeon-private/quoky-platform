@@ -29064,3 +29064,19 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
     keep (for example 팀장, 씨, Project, Labs, 지점). The schema now has `identifyingTokens` (scored as leaks) and
     `genericTokens` (never scored; listed as keepable in `subjectTokens`). G5 is not frozen yet; its new sha256 is
     `a4eb1e1055a359967c583b91a7b6e0c833db07a39d76dbafb93a8b644283591f` (161 titles, 166 names unchanged).
+
+### ADR-0120 A8 implementation note — a project's release list order (owner decision Q4, ratified 2026-10-23; branch `claude/v5-release-order`)
+
+- **Trigger.** The owner's DM smoke of 2026-10-22: "릴리스 (미출시 4 · 출시 27, 최근 10개 표시)" listed versions in Jira's `-sequence`
+  order (the project's manual ordering: 20261020, 20261112, 20261028, 20260917, …), not by date.
+- **Order (owner-ratified 2026-10-23).** Structural, from Jira's own status and release date field (`dueDate`), never a
+  date read out of a version name, against the owner's local date (`QUOKY_TIMEZONE`, default Asia/Seoul):
+  unreleased versions dated today or later, soonest first → released versions, newest first → unreleased versions with a
+  past date, newest first → versions without a date, in Jira's order. Equal dates keep Jira's order (stable sort). Header
+  "(미출시 N · 출시 M, 예정 → 최근 출시 → 지난 예정 순 10개 표시)" when the list is cut.
+- **Code.** `releasesInListOrder` and `renderReleaseList(…, today)` (`jira-release-renderer.ts`); `lookupJiraRelease`
+  takes `today`; `WorkChatService` takes `timeZone` / `now` and passes the local date; the work-chat feature wires
+  `QUOKY_TIMEZONE`. The selection, the connectors and the scorers' snapshot (no dates) are unchanged.
+- **Split out** of the S2 P3 branch (`claude/v5-s2-p3`) so it ships without the planner gate: the same three commits,
+  cherry-picked onto origin/main bba23bc1. Tests: `work-chat/jira-release.test.ts` (the order, determinism, the time-zone
+  boundary through the service), the work-chat acceptance tests.
