@@ -151,3 +151,18 @@ The plan is ordered by severity (hard failures first), then by scenario impact. 
 Suggested order: P1 → P2 → P4 → P8 → (decide D1, D2) → P6/P7 under one D12 gate → P3 → P9 → P5/P10. Re-run
 `eval:context` after each group. Most of the remaining misses to the 95% gate are P1, D1/P6/P7 and the selector
 variance.
+
+## Addendum — Codex review of the eval (2026-10-26)
+
+Four eval fixes followed the Codex review:
+- per-owner approval and anchor state;
+- suggestions judged against the owner's words up to their turn;
+- write occurrences counted;
+- owner messages spaced so createdAt numbering is stable.
+
+The deployed dry baseline is unchanged at 35/38. Actions-local + oracle moved from 47/55 to 41/55:
+- The "되돌려줘" undo hint (`NL_ACTION_UNDO_HINT`) is now probed when the next turn echoes it. It does not parse
+  without the model (10 turns), so it falls under D2 (Core fixed copy must be deterministic).
+- One wrong write remains: the calendar-write undo (P4).
+- `of-todo-third-en` failed before because of equal createdAt stamps (the shown order differed from setup). It now
+  passes its target.

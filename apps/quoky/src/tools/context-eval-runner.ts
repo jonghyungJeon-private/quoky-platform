@@ -88,7 +88,7 @@ export function mergeWrites(all: ReadonlyArray<WriteExpectation | undefined>): W
   const merged: Record<string, unknown> = {};
   for (const writes of all) {
     for (const [name, value] of Object.entries(writes ?? {})) {
-      if (Array.isArray(value)) merged[name] = [...new Set([...((merged[name] as string[] | undefined) ?? []), ...value])];
+      if (Array.isArray(value)) merged[name] = [...((merged[name] as string[] | undefined) ?? []), ...value];
       else if (typeof value === 'number') merged[name] = ((merged[name] as number | undefined) ?? 0) + value;
       else if (value === true || merged[name] === undefined) merged[name] = value;
     }
@@ -191,11 +191,13 @@ export class ContextEvalRunner {
         if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
         observations.push(observation);
       }
+      // A reply's suggestions are judged against the owner's words up to that turn: a later echo of a suggestion is not the
+      // owner's earlier wording, so it still gets probed.
       // Suggestion probes: every command a reply suggested, sent alone in a fresh DM with the selector answering none.
       // Replies that leave the conversation waiting (a question, a choice, an approval) suggest answers in context; those
       // are exercised by the echo scenarios, not probed out of context.
       const earlierReplies = (position: number): string[] => observations.slice(0, position).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
-      const offered = observations.map((observation, position) => (observation === undefined ? [] : extractSuggestions(observation.reply, ownerTexts, fixtureTexts, earlierReplies(position))));
+      const offered = observations.map((observation, position) => (observation === undefined ? [] : extractSuggestions(observation.reply, ownerTextsAt[position] ?? [], fixtureTexts, earlierReplies(position))));
       const suggestions = observations.map((observation, position) => (observation === undefined || awaitsAnswer(observation) ? [] : (offered[position] ?? [])));
       const verdicts = new Map<string, boolean>();
       for (const suggestion of suggestions.flat()) {

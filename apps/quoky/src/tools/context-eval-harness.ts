@@ -482,10 +482,16 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
     for (const reminder of (await reminderStore?.listByActorStatuses(actorId, Object.values(core.ReminderStatus))) ?? []) {
       reminders[reminder.id] = { text: reminder.body, status: reminder.status };
     }
+    // One world runs the whole corpus: only this owner's tasks and approvals, so another scenario's pending card never
+    // reads as this owner's state.
+    const tasks = (await storage.tasks.list()).filter((task) => task.actorId === actorId);
+    const taskIds = new Set(tasks.map((task) => task.id));
     const approvals: Record<string, string> = {};
-    for (const approval of await storage.approvals.list()) approvals[approval.id] = String(approval.status);
+    for (const approval of await storage.approvals.list()) {
+      if (approval.requestedBy === actorId || (approval.taskId !== undefined && taskIds.has(approval.taskId))) approvals[approval.id] = String(approval.status);
+    }
     const anchors: Record<string, string> = {};
-    for (const task of await storage.tasks.list()) {
+    for (const task of tasks) {
       const anchor = (task.metadata as Record<string, unknown> | undefined)?.connectorWriteAnchor as { status?: unknown } | undefined;
       if (anchor !== undefined) anchors[task.id] = String(anchor.status ?? 'unknown');
     }
@@ -575,6 +581,9 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
       const writeStart = state.calendarWrites.length;
       const nonGetStart = state.nonGet.length;
       const blockedStart = state.blocked.length;
+      // Owner messages are never in the same millisecond: items are numbered in createdAt order, so equal stamps would
+      // let the shown order differ from the order of the setup messages.
+      await new Promise((resolve) => setTimeout(resolve, 3));
       messageSeq += 1;
       const messageId = `ctx-${messageSeq}`;
       const result = await runtime.handle({ id: messageId, context, text, receivedAt: new Date().toISOString() });

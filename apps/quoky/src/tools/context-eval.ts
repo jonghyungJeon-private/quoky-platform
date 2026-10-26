@@ -272,9 +272,14 @@ export function compareWrites(observed: ObservedWrites, expected: WriteExpectati
   const wrong: string[] = [];
   const missing: string[] = [];
   const list = (name: keyof WriteExpectation & keyof ObservedWrites, got: readonly string[]) => {
-    const want = (expected[name] as readonly string[] | undefined) ?? [];
-    for (const title of got) if (!want.includes(title)) wrong.push(`${name}: an undeclared item`);
-    for (const title of want) if (!got.includes(title)) missing.push(`${name}: a declared item was not written`);
+    // Occurrences, not membership: a declared title written twice is one undeclared write.
+    const left = [...((expected[name] as readonly string[] | undefined) ?? [])];
+    for (const title of got) {
+      const at = left.indexOf(title);
+      if (at === -1) wrong.push(`${name}: an undeclared item`);
+      else left.splice(at, 1);
+    }
+    for (const _ of left) missing.push(`${name}: a declared item was not written`);
   };
   list('todoAdded', observed.todoAdded);
   list('todoCompleted', observed.todoCompleted);

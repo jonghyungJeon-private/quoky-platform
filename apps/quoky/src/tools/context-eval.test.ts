@@ -198,6 +198,11 @@ describe('writes', () => {
     const restored = observedWrites({ before: { ...EMPTY, reminders: { r: { text: '치과 예약', status: 'CANCELED' } } }, after: { ...EMPTY, reminders: { r: { text: '치과 예약', status: 'SCHEDULED' } } }, calendarWrites: [] });
     expect(compareWrites(restored, { reminderRestored: ['치과 예약'] })).toEqual({ wrong: [], missing: [] });
     expect(compareWrites(observedWrites({ before: EMPTY, after: EMPTY, calendarWrites: [{ op: 'delete', eventId: 'x' }] })).wrong).toEqual(['calendar: an update or delete']);
+    // Occurrences count: the declared title written twice is one undeclared write.
+    const twice = observedWrites({ before: EMPTY, after: { ...EMPTY, todos: { a: { title: '자료 검토', status: 'ACTIVE' }, b: { title: '자료 검토', status: 'ACTIVE' } } }, calendarWrites: [] });
+    expect(compareWrites(twice, { todoAdded: ['자료 검토'] })).toEqual({ wrong: ['todoAdded: an undeclared item'], missing: [] });
+    expect(compareWrites(twice, { todoAdded: ['자료 검토', '자료 검토'] })).toEqual({ wrong: [], missing: [] });
+    expect(mergeWrites([{ todoAdded: ['자료 검토'] }, { todoAdded: ['자료 검토'] }])).toEqual({ todoAdded: ['자료 검토', '자료 검토'] });
   });
 });
 

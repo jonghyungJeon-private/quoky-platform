@@ -67,6 +67,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - the Jira harness resolves named versions like Jira does.
 
   No expectation changed.
+- **Fixed (eval, Codex review).**
+  - Approval and anchor state is scoped to the scenario's own owner, so another scenario's pending card no longer
+    suppresses probes or marks a card as seen.
+  - A reply's suggestions are judged against the owner's words up to that turn, so a later echo still gets probed.
+  - Writes are compared by occurrence, so a declared title written twice is a wrong write.
+  - Owner messages are spaced by a few milliseconds, so createdAt numbering follows the setup order.
+
+  Dry actions-local + oracle is now 41/55: the "되돌려줘" undo hint is probed and is unparseable without the model (10
+  turns, D2), and the calendar-undo wrong write (P4) remains.
 - **Not run.** No model call was made. The dry baseline and the Core-side misses are recorded in the doc. No runtime
   behaviour changed.
 
