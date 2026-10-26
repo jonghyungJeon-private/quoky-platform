@@ -30383,3 +30383,36 @@ Source: the first `eval:context` Strict run and its classification (`docs/eval/c
   - It never resolves to an older to-do or reminder, either by undo or by "방금 거" / deictic recency.
   - The calendar undo writer itself stays R3 (owner decision). The same gate applies as for every lastAction write:
     mode `active` and `QUOKY_NL_ACTIONS` not off.
+
+### Owner decision D1 and fix P7 — the listing context survives a chat turn (2026-10-26, branch `claude/v5-context-fixes`)
+
+Source: owner decisions D1–D4 of 2026-10-26 on the context-eval classification (`docs/eval/context-eval-baseline-2026-10-26.md`).
+
+- **D1 reverses ADR-0120 follow-up 2 (2026-10-12; restated in the R4/R5 notes) for a turn answered by chat.**
+  - Before: a turn answered by chat, help, an approval, a write preview or a clarification cleared `lastSelection`.
+  - Now: a turn answered by chat (`GENERAL_CHAT` or `POLICY_SENSITIVE_CHAT`) keeps the record one turn older
+    (`turns` + 1). Its own `at` and 30-minute TTL do not move. Help, an approval, a write preview, a clarification
+    question, an A6 action decision and an error turn still clear it, as before.
+  - The selector is told how old the record is: `Previous selection: {…} (shown N turns ago; only chat replies since)`.
+    Three rule-6 lines say that a narrowing, a count or a question about one of its items still refines that list, and
+    that a message naming another source, period or topic takes none of its args. The intent is that a stale binding
+    stays a question, not a guess.
+- **P7: the latest selection of each other source.**
+  - `lastSelection` gains `earlier`: when a new selection of another source replaces it, the replaced selection (and its
+    own earlier ones), one turn older, minus the new source. One per source (the entry id's prefix, so both Jira entries
+    are `jira`), at most 3, newest first, each within its own 30 minutes.
+  - The prompt shows them as `Earlier selections (newest first): {…} (shown N turns ago); …`, with four rule-6 lines.
+  - An output for an earlier entry is validated against that earlier selection's args (`lastSelectionFor`), so its
+    carried period grounds as a follow-up's period does. Any other output keeps today's grounding.
+- **Structure only.** Entry ids, canonical args and turn counts, exactly like `lastSelection` today. No item, title or
+  event text; ADR-0110 D4 is unchanged. No word list, no example.
+- **Prompt versions.** Read `nl-select.v68`, A6 `v66`, R2 `v67`.
+  - The new parts are rendered only when Core passes them (`turns` ≥ 1, `earlier` not empty). Every other prompt is
+    v67 / v65 / v66 byte for byte, so the pinned sha256 values are unchanged.
+  - The golden prompt pin moves to `golden/nl-select.v68.prompts.json`: the v67 cases plus three `context-*` cases.
+  - The planner (`agent-plan.v9`) never passes the new parts, so its bytes and version are unchanged.
+- **The D12 gate is not run** (no model call in this change). It is prepared offline:
+  - `eval:nl` scores a `prior.turns` / `prior.earlier` exactly as the runtime renders them.
+  - Twelve agent-drafted candidates wait in `golden/nl-intent.context-pending.v1.json` for the owner's batch approval
+    (ADR-0120 D12; ADR-0098 D7). They are new phrasings, not copied from the context eval or a prompt example.
+  - The plan and the commands are in `docs/eval/context-eval.md` ("D12 gate for read v68").

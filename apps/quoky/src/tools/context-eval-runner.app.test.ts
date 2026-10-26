@@ -115,9 +115,13 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(followUp.reply).toBe('면접 직무를 알려주시면 질문을 뽑아드릴게요.');
     // ADR-0110 D4: the chat prompt still carries no event text.
     expect(followUp.chatPrompts[0]).not.toContain('1차 면접_AI Agent_김하늘');
-    // Without a listing just before (a chat turn in between clears the record), the reply is left as it is.
+    // Owner decision D1: a chat turn keeps the listing's record (one turn older), so the guard still holds a turn later.
     const later = await world.turn(owner, '고마워', owner.dm);
-    expect(later.reply).toBe(reply);
+    expect(later.reply).toBe('면접 직무를 알려주시면 질문을 뽑아드릴게요.');
+    // Without a listing record (help ends the window), the reply is left as it is.
+    await world.turn(owner, '도움말', owner.dm);
+    const unrelated = await world.turn(owner, '고마워', owner.dm);
+    expect(unrelated.reply).toBe(reply);
   }, 120_000);
 
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {

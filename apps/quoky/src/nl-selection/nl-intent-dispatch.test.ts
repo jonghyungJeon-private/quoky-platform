@@ -807,18 +807,37 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ unread: true }]);
   });
 
-  it('follow-up 2, defect 1: a chat turn clears lastSelection, so "그 중에 스크럼만" then gets the clarification question', async () => {
+  it('owner decision D1 (reverses follow-up 2 for chat): a chat turn keeps lastSelection one turn older, so "그 중에 스크럼만" refines this week', async () => {
     const ctx = context();
     await send('이번 주 일정 알려줘', ctx);
     expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeDefined();
     selectorAnswer = none;
     expect((await send('요즘 날씨가 너무 덥다', ctx)).reply.text).toBe(CHAT_REPLY);
-    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
-    selectorAnswer = JSON.stringify({ entryId: 'calendar.events', args: { keyword: '스크럼' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'jira.issues', args: { keyword: '스크럼' } }] });
+    expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'calendar.events', args: { range: 'this-week' }, turns: 1 });
+    selectorAnswer = answer('calendar.events', { range: 'this-week', keyword: '스크럼' });
     const start = marks();
-    const asked = await send('그 중에 스크럼만', ctx);
-    expect(lastPrevious(start.requests)).toBe('Previous selection: none');
-    expect(asked.reply.text).toContain('어떤 걸 찾으세요?');
+    const refined = await send('그 중에 스크럼만', ctx);
+    expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"calendar.events","args":{"range":"this-week"}} (shown 1 turn ago; only chat replies since)');
+    expect(requests.slice(start.requests).find((request) => request.capability === SELECTION)?.prompt).toContain('only chat replies since" means small talk came after that list');
+    expect(selected.slice(start.selected).map((served) => served.command.args)).toEqual([{ range: 'this-week', keyword: '스크럼' }]);
+    expect(refined.reply.text).toContain('스크럼');
+  });
+
+  it('P7: after a calendar listing and then a to-do listing, the selector sees the calendar as an earlier selection and may refine it', async () => {
+    const ctx = context();
+    await send('내일 일정 알려줘', ctx);
+    await send('내 할 일 보여줘', ctx);
+    const stored = (await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY];
+    expect(stored).toMatchObject({ entryId: 'todo.list', earlier: [{ entryId: 'calendar.events', args: { range: 'tomorrow' }, turns: 1 }] });
+    // The carried period is the earlier calendar selection's own, so validation accepts it without the owner's time words.
+    selectorAnswer = answer('calendar.events', { range: 'tomorrow', keyword: '스크럼' });
+    const start = marks();
+    const refined = await send('그 스크럼 몇 시였지?', ctx);
+    const prompt = requests.slice(start.requests).find((request) => request.capability === SELECTION)?.prompt ?? '';
+    expect(prompt).toContain('\nEarlier selections (newest first): {"entryId":"calendar.events","args":{"range":"tomorrow"}} (shown 1 turn ago)\n');
+    expect(prompt).toContain('"Earlier selections" are the latest lists of other sources');
+    expect(selected.slice(start.selected).map((served) => served.command)).toMatchObject([{ entryId: 'calendar.events', args: { range: 'tomorrow', keyword: '스크럼' } }]);
+    expect(refined.reply.text).toContain('스크럼');
   });
 
   it('follow-up 2, defect 1: help clears lastSelection and a different grammar listing replaces it', async () => {
@@ -1358,19 +1377,19 @@ describe('ADR-0120 NL-1 — natural-language selection through the production Ap
     selectorAnswer = none;
   });
 
-  it('S1: "그 중에 …" after an intervening chat turn asks the numbered question in Phase C too (the selector is told there is no previous selection)', async () => {
+  it('S1 (D1): "그 중에 …" after an intervening chat turn reaches the selector with the previous selection and its age in Phase C too; a question still works', async () => {
     await withPhase('c', 'active', async () => {
       const ctx = context();
       selectorAnswer = answer('calendar.events', { range: 'this-week' });
       await send('이번 주 일정 알려줘', ctx);
       selectorAnswer = none;
       expect((await send('요즘 날씨가 너무 덥다', ctx)).reply.text).toBe(CHAT_REPLY);
-      expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+      expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'calendar.events', turns: 1 });
       selectorAnswer = JSON.stringify({ entryId: 'calendar.events', args: { keyword: '스크럼' }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'jira.issues', args: { keyword: '스크럼' } }] });
       const start = marks();
       const asked = await send('그 중에 스크럼 건만', ctx);
-      expect(lastPrevious(start.requests)).toBe('Previous selection: none');
-      expect(requests.slice(start.requests).find((request) => request.capability === SELECTION)?.prompt).toContain('A narrowing follow-up');
+      expect(lastPrevious(start.requests)).toBe('Previous selection: {"entryId":"calendar.events","args":{"range":"this-week"}} (shown 1 turn ago; only chat replies since)');
+      expect(requests.slice(start.requests).find((request) => request.capability === SELECTION)?.prompt).toContain('only chat replies since" means small talk came after that list');
       expect(asked.reply.text).toContain('어떤 걸 찾으세요?');
       expect((await send('1', ctx)).reply.text).toContain('스크럼');
     });

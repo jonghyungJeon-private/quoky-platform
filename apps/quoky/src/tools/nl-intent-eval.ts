@@ -39,6 +39,7 @@ import {
   type AiProvider,
   type NlArgs,
   type NlCatalogEntry,
+  type NlPreviousSelectionInput,
 } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
@@ -67,7 +68,16 @@ export interface NlEvalCase {
   readonly id: string;
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
-  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  /**
+   * The previous selection. `turns` (owner decision D1: chat turns since its listing) and `earlier` (P7: the latest
+   * selection of each other source) are rendered exactly as the runtime renders them; absent, the prompt is unchanged.
+   */
+  readonly prior?: {
+    readonly entryId: string;
+    readonly args: NlArgs;
+    readonly turns?: number;
+    readonly earlier?: readonly { readonly entryId: string; readonly args: NlArgs; readonly turns: number }[];
+  };
   readonly channel?: boolean;
   readonly note?: string;
   /** S1: the frozen Class B grammar that answers this case in Phase A (the grammar-handled subset of the report). */
@@ -196,9 +206,11 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.
   if (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
+  // P7: an output for an earlier selection's entry refines that one, as in the runtime (`lastSelectionFor`).
+  const base = golden.prior === undefined || golden.prior.entryId === output.entryId ? golden.prior : (golden.prior.earlier?.find((item) => item.entryId === output.entryId) ?? golden.prior);
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}), now, timeZone },
+    { offered, groundingText: prepared.groundingText, ...(base ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}), now, timeZone },
   );
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };
@@ -398,7 +410,7 @@ export async function runEvaluation(input: {
           entries: ALL_ENTRIES,
           text: prepared.text,
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
-            ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } }
+            ? { previous: priorPromptInput(golden.prior) }
             : {}),
         });
         const started = clock();
@@ -521,4 +533,15 @@ export function formatSideScore(label: string, score: NlSideScore): string {
 /** Owner decision A (2026-10-22): the ids of the clarification golds of a corpus (for `summarize`). */
 export function clarifyCaseIdsOf(corpus: NlEvalCorpus): ReadonlySet<string> {
   return new Set(corpus.cases.filter((golden) => golden.clarify !== undefined).map((golden) => golden.id));
+}
+
+/** The prior as the selection prompt takes it (D1 `turns` and P7 `earlier` only when present, wave-1 entries only). */
+function priorPromptInput(prior: NonNullable<NlEvalCase['prior']>): NlPreviousSelectionInput {
+  const earlier = (prior.earlier ?? []).filter((item) => isNlWave1EntryId(item.entryId));
+  return {
+    entryId: prior.entryId as NlPreviousSelectionInput['entryId'],
+    args: prior.args,
+    ...(prior.turns !== undefined && prior.turns > 0 ? { turns: prior.turns } : {}),
+    ...(earlier.length > 0 ? { earlier: earlier.map((item) => ({ entryId: item.entryId as NlPreviousSelectionInput['entryId'], args: item.args, turns: item.turns })) } : {}),
+  };
 }

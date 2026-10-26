@@ -93,7 +93,7 @@ pnpm eval:context -- --mode dry  [--profile P] [--selector oracle|none] [--scena
   - the corpus sha256;
   - the git revision;
   - the profile and its env;
-  - the prompt versions (`nl-select.v67` read, `v65` A6, `v66` R2);
+  - the prompt versions (`nl-select.v68` read, `v66` A6, `v67` R2);
   - the selection model;
   - the chat mode and chat model;
   - the runs;
@@ -160,6 +160,31 @@ What the oracle rows fail on (Core-side, measured without a model):
 - **The help index lists flow steps that do not parse alone** (`se-help-first-command`): "새 파일 만들어줘", "테스트
   실행해줘", "타입체크 실행해줘".
 - **A worded help-scope answer is not recognised** (`hs-calendar-words`): "Quoky로 하는 거" falls to chat.
+
+## D12 gate for read v68 (owner decision D1, fix P7; prepared offline, not run)
+
+The D1 / P7 change adds two optional parts to the selector prompt: the previous selection's chat-turn age and the
+earlier selections of other sources. Without them every prompt is v67 / v65 / v66 byte for byte. The gate is
+therefore two Strict steps, both owner-approved by plan digest. No model was called to prepare them.
+
+1. **Regression (byte-identical prompts, new version label).** Re-run the existing gates under the new versions:
+   ```bash
+   pnpm -s build
+   pnpm eval:nl -- --mode plan --runs 3                     # read v68 over nl-intent.v1.json
+   pnpm eval:nl -- --mode read-regression --runs 3          # A6 v66, read cases with the A6 entries offered
+   ```
+   The bar is the ADR-0120 D12 gate (≥95% overall, ≥90% per entry, 0 wrong captures, 3 stable runs).
+2. **The new parts.**
+   - The owner reviews the 12 candidates in `packages/core/src/application/golden/nl-intent.context-pending.v1.json`
+     (D1: a narrowing, count or period follow-up after 1–3 chat turns; a new request or small talk that must not
+     inherit; P7: an item question or source name that refers to an earlier list; a plain narrowing that stays on the
+     previous list). Approved cases move into `nl-intent.v1.json`, and step 1's read plan then covers them.
+     `eval:nl` renders `prior.turns` and `prior.earlier` exactly as the runtime does.
+   - Then the context eval, Strict, for the end-to-end view (`sc-jira-chat-refine`, `fr-todo-status-count` t3,
+     `lc-interview-exists-then-time` t3, `sc-calendar-todo-interview` t3):
+     ```bash
+     pnpm eval:context -- --mode plan --profile deployed --chat real --runs 1
+     ```
 
 ## Relation to `quoky-e2e`
 

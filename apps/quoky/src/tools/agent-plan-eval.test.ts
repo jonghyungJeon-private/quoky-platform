@@ -427,7 +427,7 @@ describe('plan digest', () => {
     expect(approved.caseIds).toHaveLength(approvedCount);
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     // The read + write probe bound (owner-ratified 2026-10-26): one more call for each case of two or more conjuncts.
-    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v65', maxCallsPerRun: expect.any(Number) });
+    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v66', maxCallsPerRun: expect.any(Number) });
     expect(approved.readWriteProbe.maxCallsPerRun).toBeGreaterThan(0);
     expect(approved.readWriteProbe.maxCallsPerRun).toBeLessThan(approvedCount);
     expect(approved.maxCalls).toBe((approvedCount + approved.readWriteProbe.maxCallsPerRun) * 3);
@@ -505,7 +505,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v65\) x 3 run\(s\)/.exec(text);
+    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v66\) x 3 run\(s\)/.exec(text);
     expect(bound).not.toBeNull();
     const [, total, planner, probes] = (bound as RegExpExecArray).map(Number);
     expect(planner).toBe(approvedCount);

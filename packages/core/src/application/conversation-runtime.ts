@@ -1112,6 +1112,8 @@ export interface ConversationRuntimeDeps {
         // Owner decision B (2026-10-22): a handler reply that asks to confirm one read keeps it as the open question.
         | 'recordConfirmQuestion'
         | 'clearLastSelection'
+        // Owner decision D1 (2026-10-26): a chat turn keeps `lastSelection`, one turn older.
+        | 'keepLastSelectionAcrossChat'
         | 'yieldsToSelection'
         | 'grammarYieldEnabled'
         | 'phaseCEnabled'
@@ -3388,8 +3390,11 @@ export class ConversationRuntime {
   /** Turns (by message object) for which the Class B listing grammars may yield to selection (amendment A2). */
   private readonly nlYield = new WeakSet<InboundMessage>();
 
-  /** Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. */
-  private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean }>();
+  /**
+   * Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. `chat`: the turn
+   * was answered by chat, which keeps the record one turn older (owner decision D1) instead of clearing it.
+   */
+  private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean; chat?: boolean }>();
   /** A6 R5a: who and where each turn is (and its SHORT_TERM user record), for `quoky.lastTurn`. */
   private readonly nlTurnFacts = new WeakMap<InboundMessage, { readonly sessionId: Id; readonly actorId: Id; readonly memoryId?: Id }>();
   /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
@@ -3515,14 +3520,29 @@ export class ConversationRuntime {
 
   /**
    * ADR-0120 follow-up: after a turn, a `lastSelection` that this turn did not itself write or record (a selection, or a
-   * handler's grammar listing) is cleared — a turn answered by chat, help, an approval, a write preview or a clarification
-   * question has no catalog equivalent, so a later "그 중에 …" must not bind to an older, unrelated listing.
+   * handler's grammar listing) is cleared — a turn answered by help, an approval, a write preview or a clarification
+   * question has no catalog equivalent, so a later "그 중에 …" must not bind to an older, unrelated listing. Owner
+   * decision D1 (2026-10-26) reverses follow-up 2 for a turn answered by chat: the record stays, one turn older, within
+   * its own 30 minutes, and the selector is told how many chat turns came after it.
    */
   private async settleNlLastSelection(message: InboundMessage, failed = false): Promise<void> {
     const turn = this.nlTurns.get(message);
     if (turn === undefined || (turn.keep && !failed)) return;
     this.nlTurns.delete(message);
+    const facts = this.nlTurnFacts.get(message);
+    const keep = this.deps.nlSelection?.keepLastSelectionAcrossChat;
+    if (turn.chat === true && !failed && facts !== undefined && keep !== undefined) {
+      await keep.call(this.deps.nlSelection, { id: turn.sessionId }, facts.actorId, this.clock());
+      return;
+    }
     await this.deps.nlSelection?.clearLastSelection?.({ id: turn.sessionId });
+  }
+
+  /** D1: mark that this turn is answered by chat (a general or policy-sensitive chat reply), so settle keeps the record. */
+  private markNlChatTurn(message: InboundMessage, capability: Capability): void {
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return;
+    const turn = this.nlTurns.get(message);
+    if (turn !== undefined && !turn.keep) turn.chat = true;
   }
 
   /** Mark that this turn wrote `lastSelection` (the selection service did), so the settle step keeps it. */
@@ -4218,6 +4238,7 @@ export class ConversationRuntime {
 
     // (E) Fast path — conversational, no Task needed.
     if (!intent.requiresWork) {
+      this.markNlChatTurn(message, intent.capability);
       const provider = await this.deps.router.select(intent.capability, { sessionId: session.id, actorId: actor.id });
       const raw = await provider.execute({ capability: intent.capability, prompt: message.text });
       const guard = this.guardChatReply(intent.capability, raw.text, message.text);
@@ -8915,6 +8936,7 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     // Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them; the guard keeps them).
     const controls = isDirectConversation(message.context) ? this.switchScope() : undefined;
+    this.markNlChatTurn(message, intent.capability);
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
       actorId: actor.id,

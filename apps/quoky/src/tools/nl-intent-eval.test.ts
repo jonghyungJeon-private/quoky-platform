@@ -315,3 +315,33 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 193, entry: 243, userVisible: 210, wrongCaptures: 0 });
   });
 });
+
+describe('D1 / P7 gold candidates (nl-intent.context-pending.v1.json, PENDING the owner D12 batch)', () => {
+  const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-pending.v1.json', import.meta.url).pathname;
+
+  it('render the chat-turn age and the earlier selections in the prompt, and every gold is reachable after Core validation', async () => {
+    const { corpus } = loadCorpus(pendingPath);
+    expect(corpus.cases.length).toBeGreaterThanOrEqual(10);
+    const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
+    const seen: string[] = [];
+    const provider = {
+      id: 'scripted',
+      capabilities: [Capability.INTENT_SELECTION],
+      isAvailable: async () => true,
+      execute: async (request: AiRequest) => {
+        seen.push(request.prompt);
+        const message = /<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '';
+        const golden = byText.get(message);
+        return { text: golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args), artifacts: [] };
+      },
+    } as unknown as AiProvider;
+    const plan = buildPlan(corpus, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 });
+    const records = await runEvaluation({ corpus, plan, provider, now: () => NOW });
+    expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
+    expect(seen.some((prompt) => prompt.includes('(shown 2 turns ago; only chat replies since)'))).toBe(true);
+    expect(seen.some((prompt) => prompt.includes('\nEarlier selections (newest first): {"entryId":"calendar.events","args":{"range":"next-week"}} (shown 1 turn ago)\n'))).toBe(true);
+    // A pending candidate is never in the scored corpus.
+    const scored = new Set(loadCorpus().corpus.cases.map((golden) => golden.id));
+    expect(corpus.cases.filter((golden) => scored.has(golden.id))).toEqual([]);
+  });
+});

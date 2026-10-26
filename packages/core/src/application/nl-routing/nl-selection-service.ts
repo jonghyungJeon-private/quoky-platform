@@ -101,7 +101,9 @@ import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
   NL_PENDING_METADATA_KEY,
+  agedLastSelectionRecord,
   isActionPendingQuestion,
+  lastSelectionFor,
   lastSelectionRecord,
   pendingQuestionRecord,
   readInterpretationPreference,
@@ -309,7 +311,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v67` (the read prompt). Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v68` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -721,7 +723,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const stored = sanitizeStoredSelection(selection);
     if (stored === undefined) return false;
     try {
-      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(actorId, stored, now));
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(actorId, stored, now, current));
       return true;
     } catch (error) {
       this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
@@ -750,9 +752,24 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (chat, help, an approval, a write
-   * preview) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older, unrelated
-   * listing. Only in `active`; never throws.
+   * Owner decision D1 (2026-10-26, reversing ADR-0120 follow-up 2 for chat turns): a turn answered by chat keeps the
+   * previous listing's follow-up window, one turn older (`turns`), within its own 30 minutes, so "그중에 …" still refines
+   * it after small talk; the selector is told how many chat turns came after it. Only in `active`; never throws.
+   */
+  async keepLastSelectionAcrossChat(session: Pick<Session, 'id'>, actorId: string, now: IsoTimestamp): Promise<void> {
+    if (this.mode !== 'active') return;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => agedLastSelectionRecord(current, actorId, now));
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
+   * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (help, an approval, a write preview, a
+   * clarification) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older,
+   * unrelated listing; a chat turn keeps it (owner decision D1, {@link keepLastSelectionAcrossChat}). Only in `active`;
+   * never throws.
    */
   async clearLastSelection(session: Pick<Session, 'id'>): Promise<void> {
     if (this.mode !== 'active') return;
@@ -788,7 +805,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v67` (the read prompt) byte for byte.
+   * prompt is `nl-select.v68` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -1057,6 +1074,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     cacheKey?: string,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
+    // P7: an output for an earlier listing's entry refines that listing (its args may be carried), not the last one.
+    last = lastSelectionFor(output.entryId, last);
     // A7: a clear past-tense statement is not a request, whatever read the selector named (message-level, once,
     // before any candidate is validated): like a selector `none`, the turn is chat, never a question.
     if (!isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) {
@@ -1295,7 +1314,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     };
     // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now));
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now, current));
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
@@ -2210,7 +2229,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
     if (output.entryId !== null && !isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) outcome = 'none';
     else if (output.entryId !== null) {
-      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId));
+      const base = lastSelectionFor(output.entryId, last);
+      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, base?.args, false, base?.entryId));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
       if (!validated.ok) outcome = 'INVALID';
       else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
@@ -2245,7 +2265,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private prepare(turn: NlSelectionTurn, last: LastSelection | undefined): PreparedSelectionInput | { readonly skip: NlSelectionSkipReason } {
     const prepared = prepareSelectionInput(turn.text, turn.attachmentCount, turn.quotedRanges ?? []);
     if ('skip' in prepared) return prepared;
-    const previousStrings = last === undefined ? [] : Object.values(last.args).filter((value): value is string => typeof value === 'string');
+    const previousStrings = (last === undefined ? [] : [last, ...(last.earlier ?? [])]).flatMap((selection) =>
+      Object.values(selection.args).filter((value): value is string => typeof value === 'string'),
+    );
     if ([prepared.text, ...previousStrings].some((value) => containsCredentialMaterial(value))) return { skip: 'credential' };
     return prepared;
   }
@@ -2259,7 +2281,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
   ): Promise<SelectOutcome> {
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
-    const previous = last === undefined ? undefined : { entryId: last.entryId, args: last.args };
+    const previous =
+      last === undefined
+        ? undefined
+        : {
+            entryId: last.entryId,
+            args: last.args,
+            ...(last.turns !== undefined && last.turns > 0 ? { turns: last.turns } : {}),
+            ...(last.earlier !== undefined && last.earlier.length > 0 ? { earlier: last.earlier.map((item) => ({ entryId: item.entryId, args: item.args, turns: item.turns })) } : {}),
+          };
     // D6/D8 first, before the cache: the request may only go where this turn's chat would have gone.
     if (turn.chatProviderId === undefined) return { kind: 'egress-refused', reason: 'chat-provider-unknown' };
     let provider: AiProvider;
@@ -2524,7 +2554,8 @@ function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingT
 export function nlSelectionCacheKey(input: {
   readonly actorId: string;
   readonly text: string;
-  readonly previous: { readonly entryId: string; readonly args: NlArgs } | undefined;
+  /** D1 / P7: the chat turns since it and the earlier selections are part of the prompt, so part of the key. */
+  readonly previous: { readonly entryId: string; readonly args: NlArgs; readonly turns?: number; readonly earlier?: readonly unknown[] } | undefined;
   readonly entryIds: readonly string[];
   readonly promptVersion: string;
 }): string {

@@ -48,6 +48,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - "새 파일" is part of the request: "없는 파일은 요청 문장에 새 파일이라고 함께 적어야 새로 만들어요".
   - The checks follow an apply: 코드 수정을 적용한 다음 → "테스트 실행해줘" 또는 "타입체크 실행해줘".
   - The context eval treats a quoted step after "→" as a flow step, not a suggestion to probe alone.
+- **Changed (P6 + P7, owner decision D1 2026-10-26; selector prompt read `nl-select.v68`, A6 `v66`, R2 `v67`; D12 gate
+  pending).** The listing context now survives small talk and a topic switch.
+  - A turn answered by chat keeps `lastSelection`, one turn older, within its 30 minutes. This reverses ADR-0120
+    follow-up 2 for chat turns. Help, approvals, write previews, clarifications and errors still end it.
+  - The selector sees the previous selection's age ("shown N turns ago; only chat replies since") and the latest
+    selection of each other source ("Earlier selections"), structure only. A follow-up about an earlier list (an event
+    after a to-do list) refines that list, with its period carried.
+  - Without the new parts the prompts are byte-identical to v67 / v65 / v66. Twelve D12 gold candidates wait for the
+    owner's batch (`golden/nl-intent.context-pending.v1.json`); `eval:nl` renders the new parts as the runtime does.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

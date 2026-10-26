@@ -17,8 +17,9 @@ import { NL_CATALOG_SOURCE_NAMES, nlWave1Entry } from './wave1-entries';
  * The content-free state of natural-language selection (ADR-0120 D7), all plain data, no storage migration (a stored
  * `lastSelection` of an older args shape is rewritten when it is read, `migrateStoredSelection`: amendment A5):
  *
- *  - `Session.metadata['quoky.lastSelection']` = `{ actorId, entryId, args, at }`, 30 minutes — the previous selection a
- *    follow-up refines ("그 중에 위클리카만"). Structure only: an entry id and canonical args, never an item, title,
+ *  - `Session.metadata['quoky.lastSelection']` = `{ actorId, entryId, args, at, turns?, earlier? }`, 30 minutes — the
+ *    previous selection a follow-up refines ("그 중에 위클리카만"), the chat turns since it (owner decision D1) and the
+ *    latest selection of each other source (P7). Structure only: entry ids and canonical args, never an item, title,
  *    subject or event text.
  *  - `Session.metadata['quoky.nlPending']` = `{ actorId, at, kind, … }`, 5 minutes — the open numbered question
  *    (which entry, or which interpretation) a reply such as `1` or `지라` resolves deterministically.
@@ -50,7 +51,28 @@ export interface StoredSelection {
 
 export interface LastSelection extends StoredSelection {
   readonly at: IsoTimestamp;
+  /**
+   * Owner decision D1 (2026-10-26): the owner turns answered by chat since this selection's listing (0 or absent: the
+   * listing was the previous turn). Only a chat turn keeps the record and adds one; any other turn clears it.
+   */
+  readonly turns?: number;
+  /**
+   * P7 (2026-10-26): the latest selection of each OTHER source, newest first, each within its own 30 minutes, at most
+   * {@link LAST_SELECTION_MAX_EARLIER}. Structure only, like the record itself.
+   */
+  readonly earlier?: readonly EarlierSelection[];
 }
+
+export interface EarlierSelection extends StoredSelection {
+  readonly at: IsoTimestamp;
+  /** The owner turns since this selection's listing (at least 1: a later listing came after it). */
+  readonly turns: number;
+}
+
+/** P7: how many earlier selections of other sources `lastSelection` keeps. */
+export const LAST_SELECTION_MAX_EARLIER = 3;
+/** D1: a turn count above this is stored as this (the 30-minute TTL ends the record anyway). */
+const MAX_TURNS = 99;
 
 export type PendingQuestion =
   | {
@@ -238,10 +260,63 @@ export function sanitizeStoredSelection(selection: { readonly entryId: unknown; 
 
 /** The previous selection of this actor in this session, within 30 minutes. */
 export function readLastSelection(session: Pick<Session, 'metadata'>, actorId: Id, now: IsoTimestamp): LastSelection | undefined {
-  const record = recordOf(session.metadata?.[LAST_SELECTION_METADATA_KEY]);
+  return lastSelectionOf(session.metadata?.[LAST_SELECTION_METADATA_KEY], actorId, now);
+}
+
+/** {@link readLastSelection} over the stored value itself (an updater's `current`). */
+function lastSelectionOf(value: unknown, actorId: Id, now: IsoTimestamp): LastSelection | undefined {
+  const record = recordOf(value);
   if (record.actorId !== actorId || !fresh(record.at, now, LAST_SELECTION_TTL_MS)) return undefined;
   const selection = selectionOf(record);
-  return selection === undefined ? undefined : { ...migrateStoredSelection(selection), at: record.at as IsoTimestamp };
+  if (selection === undefined) return undefined;
+  const turns = turnsOf(record.turns);
+  const earlier = earlierOf(record.earlier, now, selection.entryId);
+  return {
+    ...migrateStoredSelection(selection),
+    at: record.at as IsoTimestamp,
+    ...(turns > 0 ? { turns } : {}),
+    ...(earlier.length > 0 ? { earlier } : {}),
+  };
+}
+
+function turnsOf(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? Math.min(value as number, MAX_TURNS) : 0;
+}
+
+/** The fresh, well-formed earlier selections, one per source other than `mainEntryId`'s, newest first, bounded. */
+function earlierOf(value: unknown, now: IsoTimestamp, mainEntryId: NlWave1EntryId): EarlierSelection[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set([nlSelectionSourceOf(mainEntryId)]);
+  const out: EarlierSelection[] = [];
+  for (const item of value) {
+    const record = recordOf(item);
+    const selection = selectionOf(record);
+    if (selection === undefined || !fresh(record.at, now, LAST_SELECTION_TTL_MS)) continue;
+    const source = nlSelectionSourceOf(selection.entryId);
+    if (seen.has(source)) continue;
+    seen.add(source);
+    out.push({ ...migrateStoredSelection(selection), at: record.at as IsoTimestamp, turns: Math.max(1, turnsOf(record.turns)) });
+    if (out.length === LAST_SELECTION_MAX_EARLIER) break;
+  }
+  return out;
+}
+
+/**
+ * P7: the stored selection an output for `entryId` refines: the previous selection when it is that entry or no earlier
+ * one is, else the earlier selection of that entry. Its args are what a follow-up may carry without the owner's words.
+ */
+export function lastSelectionFor(entryId: string | null, last: LastSelection | undefined): LastSelection | undefined {
+  if (last === undefined || entryId === null || last.entryId === entryId) return last;
+  const earlier = last.earlier?.find((item) => item.entryId === entryId);
+  return earlier === undefined ? last : { entryId: earlier.entryId, args: earlier.args, at: earlier.at, turns: earlier.turns };
+}
+
+/**
+ * P7: the source a READ entry lists, from the closed entry id itself (`jira.issues` and `jira.release` are both `jira`):
+ * one earlier selection is kept per source.
+ */
+export function nlSelectionSourceOf(entryId: NlWave1EntryId): string {
+  return entryId.slice(0, entryId.indexOf('.'));
 }
 
 /**
@@ -269,8 +344,53 @@ export function migrateStoredSelection(selection: StoredSelection): StoredSelect
   return args === selection.args ? selection : { entryId: selection.entryId, args };
 }
 
-export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp): Metadata {
-  return { actorId, entryId: selection.entryId, args: { ...selection.args }, at: now };
+/**
+ * The record of a new selection shown this turn. With `current` (the stored value being replaced), P7 keeps the latest
+ * selection of each other source as `earlier`: the replaced one and its own earlier ones, each one turn older, minus the
+ * new selection's source. Only the same actor's fresh record carries over.
+ */
+export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp, current?: unknown): Metadata {
+  const replaced = current === undefined ? undefined : lastSelectionOf(current, actorId, now);
+  const earlier =
+    replaced === undefined
+      ? []
+      : earlierOf(
+          [
+            { entryId: replaced.entryId, args: replaced.args, at: replaced.at, turns: (replaced.turns ?? 0) + 1 },
+            ...(replaced.earlier ?? []).map((item) => ({ ...item, turns: item.turns + 1 })),
+          ],
+          now,
+          selection.entryId,
+        );
+  return {
+    actorId,
+    entryId: selection.entryId,
+    args: { ...selection.args },
+    at: now,
+    ...(earlier.length > 0 ? { earlier: earlier.map(earlierRecord) } : {}),
+  };
+}
+
+/**
+ * Owner decision D1 (2026-10-26): a turn answered by chat keeps `lastSelection` one turn older (its `at` and TTL stay).
+ * `undefined` when there is no fresh record of this actor (nothing to keep).
+ */
+export function agedLastSelectionRecord(current: unknown, actorId: Id, now: IsoTimestamp): Metadata | undefined {
+  const kept = lastSelectionOf(current, actorId, now);
+  if (kept === undefined) return undefined;
+  const earlier = (kept.earlier ?? []).map((item) => earlierRecord({ ...item, turns: item.turns + 1 }));
+  return {
+    actorId,
+    entryId: kept.entryId,
+    args: { ...kept.args },
+    at: kept.at,
+    turns: Math.min((kept.turns ?? 0) + 1, MAX_TURNS),
+    ...(earlier.length > 0 ? { earlier } : {}),
+  };
+}
+
+function earlierRecord(item: EarlierSelection): Metadata {
+  return { entryId: item.entryId, args: { ...item.args }, at: item.at, turns: Math.min(item.turns, MAX_TURNS) };
 }
 
 /** The open question of this actor in this session, within 5 minutes. */
