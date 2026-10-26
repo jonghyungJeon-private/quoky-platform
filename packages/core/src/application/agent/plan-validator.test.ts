@@ -743,3 +743,44 @@ describe('review of 0bde31cc: the position reference binds to its own item-summa
   });
 });
 
+describe('owner decisions of 2026-10-26 (e3462f46 gate): Core\'s final plan order and clause-grounded flags', () => {
+  const run = (text: string, steps: AgentPlanStep[]) => {
+    const result = validateAgentPlan(plan(steps), ctx(text));
+    if (!result.ok || result.plan.kind !== 'run') throw new Error(JSON.stringify(result));
+    return result.plan;
+  };
+
+  it('moves each summary right after the last read it covers (order only; scope, schema and references renumbered)', () => {
+    const text = '지난주 받은 메일 요약하고 지난주 업데이트된 이슈도 요약해줘';
+    const got = run(text, [read('mail.list', { range: 'last-week' }), read('jira.issues', { window: 'updated', range: 'last-week' }), summary([1]), summary([2])]);
+    expect(got.steps.map((step) => (step.kind === 'read' ? step.entry.id : `sum${JSON.stringify(step.from)}`))).toEqual(['mail.list', 'sum[1]', 'jira.issues', 'sum[3]']);
+    // A summary over both reads stays after the second one; a reference is renumbered with its source.
+    const release = run('1.2.0 릴리스 이슈 보여주고 각각 자세히 본 다음 메일도 보고 릴리스는 정리해줘', [
+      read('jira.release', { release: '1.2.0' }),
+      read('mail.list'),
+      read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 3 }),
+      summary([1]),
+    ]);
+    expect(release.steps.map((step) => (step.kind === 'read' ? `${step.entry.id}${step.ref !== undefined ? `<-${step.ref.step}` : ''}` : `sum${JSON.stringify(step.from)}`))).toEqual([
+      'jira.release',
+      'sum[1]',
+      'mail.list',
+      'jira.issues<-1',
+    ]);
+  });
+
+  it('sets calendar timedOnly from the calendar step\'s own clause (the arg\'s existing grounding words only)', () => {
+    const timed = (text: string, steps: AgentPlanStep[]) => run(text, steps).steps.map((step) => (step.kind === 'read' && step.entry.id === 'calendar.events' ? step.args.timedOnly === true : undefined)).find((value) => value !== undefined);
+    // One clause: the message is the step's own clause.
+    expect(timed('내일 회의 뭐 있어', [read('calendar.events', { range: 'tomorrow' })])).toBe(true);
+    expect(timed('다음 주 회의랑 지난주 업데이트된 지라 이슈 보여줘', [read('calendar.events', { range: 'next-week' }), read('jira.issues', { window: 'updated', range: 'last-week' })])).toBe(true);
+    // No grounding word in the calendar's clause: unchanged.
+    expect(timed('내일 일정 보여줘', [read('calendar.events', { range: 'tomorrow' })])).toBe(false);
+    // Cross-clause: the word in ANOTHER read's clause never sets it.
+    expect(timed('내일 일정이랑 회의록 문서 찾아줘', [read('calendar.events', { range: 'tomorrow' }), read('drive.files', { name: '회의록' })])).toBe(false);
+    // A word inside the step's own keyword is the event title (calendar-046), and a negated or excluded clause is unchanged.
+    expect(timed('다음 주 주간회의 일정 보여줘', [read('calendar.events', { range: 'next-week', keyword: '주간회의' })])).toBe(false);
+    expect(timed('내일 회의 빼고 일정 보여줘', [read('calendar.events', { range: 'tomorrow' })])).toBe(false);
+  });
+});
+

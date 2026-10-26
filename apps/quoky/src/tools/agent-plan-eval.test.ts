@@ -25,6 +25,7 @@ import {
   AGENT_PLAN_ENTRY_HELP_TOPICS,
   agentPlanPooledGate,
   namedSourceHelpTopics,
+  summaryDiffOf,
 } from './agent-plan-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, formatAgentPlanSummary, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 
@@ -219,9 +220,15 @@ describe('step-graph scorer (Q10)', () => {
     ['another entry', [gold[0], gold[1], { entryId: 'github.items', args: {} }], 'entry'],
     ['another schema', [gold[0], { summarize: [1], schema: 'digest.v1' }, gold[2]], 'summary'],
     ['a missing summary', [gold[0], gold[2]], 'step-count'],
-    ['another order', [gold[0], gold[2], { summarize: [1], schema: 'meeting-digest.v1' }], 'step-kind'],
   ])('%s is a miss with a closed diff kind', (_label, answer, diff) => {
     expect(score(owner, steps(answer))).toMatchObject({ outcome: 'miss', diff });
+  });
+
+  it('owner decision of 2026-10-26: Core places each summary right after the last read it covers, so another order is exact', () => {
+    const related = (value: unknown[]): string => JSON.stringify({ steps: value, ambiguity: 'CLEAR', related: 1 });
+    expect(score(owner, related([gold[0], gold[2], { summarize: [1], schema: 'meeting-digest.v1' }])).outcome).toBe('exact');
+    // Order only: another scope stays a miss.
+    expect(score(owner, related([gold[0], gold[2], { summarize: [1, 2], schema: 'digest.v1' }])).outcome).toBe('miss');
   });
 
   it('a different take or field in a reference is a ref miss', () => {
@@ -756,8 +763,8 @@ describe('owner decision of 2026-10-26: the multi-step rate is pooled over the r
 describe('gate on ed45e3f1: an args miss names the differing declared args (no value)', () => {
   it('reports the arg names only', () => {
     const golden = byId('ap-p127');
-    const raw = JSON.stringify({ steps: [{ entryId: 'calendar.events', args: { range: 'next-week' } }, { entryId: 'jira.issues', args: { window: 'updated', range: 'last-week' } }], ambiguity: 'CLEAR' });
-    expect(scoreAgentPlanOutput(golden, raw, FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args', diffStep: 1, diffArgs: ['timedOnly'] });
+    const raw = JSON.stringify({ steps: [{ entryId: 'calendar.events', args: { range: 'next-week', timedOnly: true } }, { entryId: 'jira.issues', args: { range: 'last-week' } }], ambiguity: 'CLEAR' });
+    expect(scoreAgentPlanOutput(golden, raw, FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args', diffStep: 2, diffArgs: expect.arrayContaining(['window']) });
   });
 });
 
@@ -970,3 +977,36 @@ describe('gate on 5c09fee4: the item-summary note and the probe diagnostics', ()
     expect(applyReadWriteProbe({ outcome: 'wrong', gotEntries: ['todo.list'] }, golden, none, ['장보기 추가해줘'], FIXTURE)).toMatchObject({ outcome: 'wrong', probe: 'stands', probeDetail: 'none' });
   });
 });
+
+describe('owner decision of 2026-10-26 (ap-n011): a change word in an uncovered clause is the decision (f) note, never a silent drop', () => {
+  it('ap-n011 ("알림 목록 보여주고 내일 거는 꺼줘"): a probe that finds no write scores read-note against the read-and-note gold', () => {
+    const golden = byId('ap-n011');
+    expect(golden.readWrite?.outcome).toBe('read-and-note');
+    const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(applyReadWriteProbe({ outcome: 'wrong', gotEntries: ['reminder.list', 'reminder.list'] }, golden, none, ['내일 거는 꺼줘'], FIXTURE)).toMatchObject({
+      outcome: 'read-note',
+      probe: 'note',
+      probeEntry: 'write-word',
+    });
+  });
+});
+
+describe('owner decision of 2026-10-26: the gate report records summary sources and splits order from scope', () => {
+  it('ap-p093 with one summary over both reads is a scope miss; the reported summaries name the covered reads', () => {
+    const golden = byId('ap-p093');
+    const raw = JSON.stringify({ steps: [{ entryId: 'jira.issues', args: {} }, { entryId: 'slack.search', args: { keyword: '장애 대응' } }, { summarize: [1, 2], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
+    expect(scoreAgentPlanOutput(golden, raw, FIXTURE)).toMatchObject({ outcome: 'miss', summaryDiff: 'scope', gotSummaries: ['digest.v1<-jira.issues,slack.search'] });
+    // The planner's other order of the right summaries is Core's normalized plan: exact.
+    const reordered = JSON.stringify({ steps: [{ entryId: 'jira.issues', args: {} }, { entryId: 'slack.search', args: { keyword: '장애 대응' } }, { summarize: [1], schema: 'digest.v1' }, { summarize: [2], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
+    expect(scoreAgentPlanOutput(golden, reordered, FIXTURE)).toMatchObject({ outcome: 'exact', gotSummaries: ['digest.v1<-jira.issues', 'digest.v1<-slack.search'] });
+  });
+
+  it('summaryDiffOf: order when the same schemas cover the same reads, scope otherwise, undefined when the reads differ', () => {
+    const r = (entryId: string) => ({ kind: 'read' as const, entryId, args: '[]' });
+    const sum = (from: number[]) => ({ kind: 'summarize' as const, from: JSON.stringify(from), schema: 'digest.v1' });
+    expect(summaryDiffOf([r('mail.list'), r('jira.issues'), sum([1])], [r('mail.list'), sum([1]), r('jira.issues')])).toBe('order');
+    expect(summaryDiffOf([r('mail.list'), r('jira.issues'), sum([1, 2])], [r('mail.list'), sum([1]), r('jira.issues')])).toBe('scope');
+    expect(summaryDiffOf([r('mail.list'), sum([1])], [r('jira.issues'), sum([1])])).toBeUndefined();
+  });
+});
+

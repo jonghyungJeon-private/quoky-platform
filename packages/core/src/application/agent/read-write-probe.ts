@@ -5,7 +5,7 @@ import { parseSelectionOutput } from '../nl-routing/selection-output';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { validateSelection } from '../nl-routing/selection-validator';
 import { nlClauseClaimsWrite, nlWriteClausePointsBack } from '../nl-routing/write-clause';
-import { agentUncoveredClauses, type AgentPlanValidationContext, type ValidatedAgentPlan } from './plan-validator';
+import { agentClauseHasWriteWord, agentUncoveredClauses, type AgentPlanValidationContext, type ValidatedAgentPlan } from './plan-validator';
 
 /**
  * ADR-0121 S2 — the owner-ratified amendment of 2026-10-26 to the TRIGGER of the read + write note of 2026-10-23: when a
@@ -58,8 +58,14 @@ export type AgentReadWriteProbeResult =
    */
   | {
       readonly kind: 'note';
-      readonly entryId: string;
+      /** The selected entry; absent for a write-word note (`writeWord`). */
+      readonly entryId?: string;
       readonly clause: string;
+      /**
+       * Owner decision of 2026-10-26 (ap-n011, never silent): the probe found no write, but the clause holds a write word
+       * of the catalog ("내일 거는 꺼줘"): the read sections and the decision (f) fixed note, never the read alone.
+       */
+      readonly writeWord?: true;
       /**
        * Gate on 5c09fee4 (ap-n129): `item.summarize` (ITEM_READ, never a write) with a list reference is decision (f)'s
        * own case: the read sections and the fixed note. Marked so a scorer never lets it excuse a plan the gold does not
@@ -91,8 +97,25 @@ function namesEntry(clause: string, entry: NlCatalogEntry): boolean {
   });
 }
 
-/** Judge the probe's raw A6 selection answer against the uncovered clauses. Pure and total. */
+/**
+ * Judge the probe's raw A6 selection answer against the uncovered clauses. Pure and total. Owner decision of 2026-10-26
+ * (ap-n011): when nothing is handed over but an uncovered clause holds a write word of the catalog
+ * (`agentClauseHasWriteWord`, the check of the position reference), the result is the decision (f) note on that clause,
+ * never the read plan alone (a silent drop of the owner's write).
+ */
 export function agentReadWriteProbeResult(
+  raw: string,
+  clauses: readonly string[],
+  offered: ReadonlyMap<string, NlCatalogEntry>,
+  ctx: Pick<AgentPlanValidationContext, 'now' | 'timeZone'>,
+): AgentReadWriteProbeResult {
+  const result = probeResultOf(raw, clauses, offered, ctx);
+  if (result.kind !== 'stands') return result;
+  const clause = clauses.find((candidate) => agentClauseHasWriteWord(candidate));
+  return clause !== undefined ? { kind: 'note', clause, writeWord: true } : result;
+}
+
+function probeResultOf(
   raw: string,
   clauses: readonly string[],
   offered: ReadonlyMap<string, NlCatalogEntry>,

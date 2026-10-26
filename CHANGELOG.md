@@ -59,6 +59,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 owner decisions on the e3462f46 gate (branch `claude/v5-s2-p3`, shadow only)
+
+- **Changed (not live).** Core puts each summary right after the reads it covers; a calendar read in a clause that says
+  회의 / 미팅 / meeting shows timed events only; a read with an uncovered "취소 / 꺼 / 완료 …" clause always carries the "따로
+  말씀해 주세요" note (never the read alone). The planner prompt is unchanged (v9).
+- **Changed (eval).** The gate report shows each summary's sources and whether a summary miss is order or scope.
+
 ## Unreleased — S2 review fixes of 0bde31cc (branch `claude/v5-s2-p3`, shadow only)
 
 - **Fixed (not live).** "Summarize the Nth one" binds only to its own clause: a number in the list request itself ("3번

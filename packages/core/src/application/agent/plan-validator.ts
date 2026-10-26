@@ -3,6 +3,7 @@ import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
+import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
@@ -269,13 +270,79 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     const fitted = fitToCharge(steps, reads - 1, ctx);
     return fitted === undefined ? refuse('over-bound') : { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls', suggestion: fitted } };
   }
-  const related = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
+  const relatedAsPlanned = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
   // Rule 7 (owner-approved fix of 2026-10-26, ap-n131): a read plan that leaves a write clause uncovered is `none`.
   if (leavesWriteClause(validated, ctx)) return { ok: true, plan: { kind: 'none', reason: 'write-clause' } };
+  // Owner decisions of 2026-10-26 (the e3462f46 gate): Core's final plan. A grounded flag the owner's own clause states
+  // (`withClauseGroundedFlags`), and each summary right after the last read it covers (`normalizeSummaryPlacement`;
+  // the planner's step order is not owner-visible).
+  const normalized = normalizeSummaryPlacement(withClauseGroundedFlags(validated, ctx));
+  const related = relatedAsPlanned !== undefined ? normalized.renumber.get(relatedAsPlanned) : undefined;
   return {
     ok: true,
-    plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated, connectorCalls, ...(related !== undefined ? { related } : {}) },
+    plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: normalized.steps, connectorCalls, ...(related !== undefined ? { related } : {}) },
   };
+}
+
+/**
+ * Owner decision of 2026-10-26 (ADR-0121 D1 / D2 note: Core normalizes the plan's order): each summarize step is moved to
+ * right after the last read it covers; the reads keep the planner's order, and summaries closing on the same read keep
+ * theirs. Order only: no step is added, removed or changed (scope and schema stay), and every reference, summary source
+ * and the related step are renumbered. Returns the old → new step numbers. Pure.
+ */
+export function normalizeSummaryPlacement(steps: readonly ValidatedAgentStep[]): { readonly steps: ValidatedAgentStep[]; readonly renumber: ReadonlyMap<number, number> } {
+  const order: number[] = [];
+  for (const [index, step] of steps.entries()) {
+    if (step.kind !== 'read') continue;
+    order.push(index);
+    for (const [other, summary] of steps.entries()) if (summary.kind === 'summarize' && Math.max(...summary.from) === index + 1) order.push(other);
+  }
+  // Fail-safe: a step the walk did not place (never for a validated plan) keeps the planner's order.
+  if (order.length !== steps.length) return { steps: [...steps], renumber: new Map(steps.map((_, index) => [index + 1, index + 1])) };
+  const renumber = new Map(order.map((original, position) => [original + 1, position + 1] as const));
+  const at = (number: number): number => renumber.get(number) as number;
+  const out = order.map((original): ValidatedAgentStep => {
+    const step = steps[original] as ValidatedAgentStep;
+    if (step.kind === 'summarize') return { ...step, from: step.from.map(at) };
+    if (step.ref === undefined) return step;
+    return { ...step, ref: { ...step.ref, step: at(step.ref.step), provenance: { ...step.ref.provenance, step: at(step.ref.provenance.step) } } };
+  });
+  return { steps: out, renumber };
+}
+
+/**
+ * Owner decision of 2026-10-26 (the e3462f46 gate; agent plan path only — the live one-step selection path is unchanged,
+ * see DECISIONS): a flag arg with catalog grounding words (`flagGrounding`, today calendar `timedOnly`: 회의, 미팅,
+ * meeting …) is set when the step's OWN clause states one of those words and holds no exclusion or negation marker
+ * (`nlHasExclusionOrNegation`, fail-safe). The step's own clause: the whole message when it is one conjunct; otherwise the
+ * conjuncts that name the step's entry and hold no value of another read; a word inside the step's own value (a keyword
+ * "주간회의") does not count. Never for a reference step, and never when
+ * another read step has the same entry (no clause is then its own). No vocabulary of its own. Pure.
+ */
+function withClauseGroundedFlags(steps: readonly ValidatedAgentStep[], ctx: AgentPlanValidationContext): ValidatedAgentStep[] {
+  const clauses = planClauses(ctx.groundingText);
+  const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
+  return steps.map((step) => {
+    if (step.kind !== 'read' || step.ref !== undefined) return step;
+    const specs = step.entry.args.filter((spec) => spec.kind === 'flag' && spec.flagGrounding !== undefined && step.args[spec.name] !== true);
+    if (specs.length === 0 || reads.filter((read) => read.entry.id === step.entry.id).length > 1) return step;
+    const otherValues = reads.filter((read) => read !== step).flatMap((read) => stringValues(read.args));
+    const own = clauses.length <= 1 ? clauses : clauses.filter((clause) => clauseNamesEntry(clause, step.entry) && !otherValues.some((value) => clause.normalized.includes(value)));
+    const plain = own.filter((clause) => !nlHasExclusionOrNegation(clause.text));
+    if (plain.length === 0 || plain.length !== own.length) return step;
+    // A word inside the step's own value is that value's (the keyword "주간회의" is an event title, calendar-046).
+    const ownValues = stringValues(step.args);
+    const residue = (clause: PlanClause): string => ownValues.reduce((text, value) => text.split(value).join(' '), clause.normalized);
+    const set = specs.filter((spec) => plain.some((clause) => (spec.flagGrounding ?? []).some((word) => groundingWordIn(residue(clause), normalizeForMatch(word)))));
+    if (set.length === 0) return step;
+    const args: Record<string, NlArgs[string]> = { ...step.args };
+    const provenance: Record<string, AgentArgProvenance> = { ...step.provenance };
+    for (const spec of set) {
+      args[spec.name] = true;
+      provenance[spec.name] = { kind: 'literal', label: OWNER_TEXT_FLOW_LABEL };
+    }
+    return { ...step, args, provenance };
+  });
 }
 
 /**
@@ -358,14 +425,32 @@ function stringValues(args: Readonly<Record<string, unknown>>): string[] {
   return Object.values(args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : []));
 }
 
+/**
+ * Whether a clause of the owner's prose holds a write word of the catalog (the A6 write entries' `actionGrounding`): the position reference check and, owner decision of 2026-10-26 (ap-n011), the read + write probe's
+ * never-silent rule. Owner text, never logged. Pure.
+ */
+export function agentClauseHasWriteWord(text: string): boolean {
+  return hasWriteVocabulary({ text, normalized: normalizeForMatch(text), words: [] });
+}
+
 let writeVocabulary: readonly string[] | undefined;
 /**
  * CA W1 (review of 0bde31cc): whether the clause holds a write word of the catalog — an A6 write entry's own
- * `actionGrounding` vocabulary or alias (the closed lists the A6 vetoes use; no list of its own).
+ * `actionGrounding` vocabulary of the writes that act on an existing item (complete, cancel, undo: the closed lists the A6
+ * vetoes use; no list of its own). Not the entries' noun aliases ("알림" / "reminder" also name the reminder list) and not
+ * a creation's verbs ("알려줘" is also a plain read request): both marked plain reads (brief-005, brief-017; e3462f46).
  */
 function hasWriteVocabulary(clause: PlanClause): boolean {
   writeVocabulary ??= Object.values(NL_ACTION_ENTRIES)
-    .flatMap((entry) => (entry !== undefined && (entry.risk === 'LOCAL_WRITE' || entry.risk === 'EXTERNAL_WRITE') ? [...(entry.actionGrounding ?? []), ...entry.aliases] : []))
+    // The action words only, never an entry's noun alias ("알림", "reminder" also name the reminder LIST), and only of the
+    // writes that act on an EXISTING item (no required payload span: complete, cancel, undo). A creation's own verbs are
+    // also plain read requests ("알려줘": brief-017 "… 다 합쳐서 오늘 거 알려줘"); a creation carries its payload, which the
+    // probe's selection and validation judge. Gate on e3462f46.
+    .flatMap((entry) =>
+      entry !== undefined && (entry.risk === 'LOCAL_WRITE' || entry.risk === 'EXTERNAL_WRITE') && !entry.args.some((spec) => spec.kind === 'span' && spec.required === true)
+        ? [...(entry.actionGrounding ?? [])]
+        : [],
+    )
     .map((word) => normalizeForMatch(word))
     .filter((word) => word.length > 0);
   return writeVocabulary.some((word) => groundingWordIn(clause.normalized, word));

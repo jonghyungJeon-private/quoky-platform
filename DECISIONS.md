@@ -30009,3 +30009,39 @@ ap-p093, ap-p095) give ≈ 3 of those misses per run; ap-p185 is the prompt's ow
   item-summary readers' size caps and flow labels. (4) A clarification is re-derived from the uncovered clause alone, never
   seeded from the probe's `output.args`.
 
+### ADR-0121 S2 note — owner decisions of 2026-10-26 on the e3462f46 gate (Core's final plan; planner stays `agent-plan.v9`)
+
+1. **ADR-0121 D1 / D2 note — Core normalizes the plan's order.** The planner's step order is not owner-visible: after
+   validation, Core moves each summarize step to right after the last read it covers (`normalizeSummaryPlacement`). Reads
+   keep the planner's order; summaries closing on the same read keep theirs; references, summary sources and the related
+   step are renumbered. Order only: no scope, schema or step changes. The runtime and the scorer use the same validator,
+   so the gate scores Core's final plan. Every gold is already in this order (no gold changed).
+2. **Calendar `timedOnly` from the step's own clause (agent plan path only).** A flag arg with catalog grounding words
+   (`flagGrounding`; today only calendar `timedOnly`: 회의, 미팅, 시간 지정, meeting …) is set when the step's OWN clause holds
+   one of those words: the whole message when it is one conjunct, else the conjuncts that name the step's entry and hold
+   no value of another read. Not when the word is inside the step's own value (keyword "주간회의", calendar-046 /
+   calendar-53), not when the clause has an exclusion or negation marker (`nlHasExclusionOrNegation`, fail-safe), never for
+   a reference step or when two read steps share the entry. No new vocabulary (the arg's existing `flagGrounding`).
+   - **One-step question (for the CA / owner).** The live ADR-0120 one-step selection path (`validateSelection` in the
+     selection service) is NOT changed: the same rule there would change live answers and needs a D12 regate. On the
+     agent-plan gate's one-step group (scored through the agent validator) it already applies (calendar-005, -018, -035).
+3. **Never the read alone when an uncovered clause holds a change word (ap-n011).** When the read + write probe hands
+   nothing over but an uncovered clause holds a write word of the catalog, the turn is the read plan + the decision (f)
+   fixed note ("추가·변경·취소 같은 작업은 조회와 함께 하지 않았어요. 따로 한 번 더 말씀해 주세요."), never the read alone
+   (`writeWord` note). The write words (`agentClauseHasWriteWord`, shared with the position reference): the
+   `actionGrounding` of the A6 writes that act on an EXISTING item (no required payload span: complete, cancel, reminder
+   cancel, undo). Measured on the golds, two narrower choices were needed: the entries' noun aliases ("알림", "reminder")
+   also name the reminder list (brief-005 / brief-027 became notes), and a creation's verbs are also plain read requests
+   ("알려줘": brief-017 "… 다 합쳐서 오늘 거 알려줘"); a creation carries its payload, which the probe's selection judges.
+   ap-n011's gold (`read-and-note`) is unchanged; it scores `read-note`.
+4. **Gate report.** Each record carries `gotSummaries` (`<schema><-<covered read entries>` of Core's final plan), and a
+   miss whose reads equal the gold's carries `summaryDiff: order | scope`; the miss line prints both.
+
+**Re-score of the e3462f46 records (estimate; the report holds no raw answers).** Deterministic replays of the gold plans
+without `timedOnly` confirm the flag is now set for ap-p127, ap-p135, ap-p036, ap-p143 and calendar-005 / -018 / -035.
+Multi-step: 483 + 9 (`timedOnly`) + 5 (order only: ap-p098 ×3 with two digests, ap-p093 r1, ap-p143 r3) = 497/513
+(96.9%), 498 (97.1%) if ap-p082 r1's digest covered the mail read alone (its sources were not recorded). One-step:
+656 / 656 / 654 of 678. ap-n011 r1 becomes `read-note`, so run 1's checks would pass: estimated gate PASSED (3 of 3 runs).
+Remaining multi-step misses are summary scope (ap-p093 r2/r3, ap-p107, ap-p102, ap-p119, ap-p083, ap-p185 r3), other args
+(ap-p045 ×2, ap-p116, ap-p038, ap-p160), two timeouts and one `range-unnamed`.
+

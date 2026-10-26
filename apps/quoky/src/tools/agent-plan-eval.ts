@@ -420,6 +420,37 @@ export function validatedGraph(steps: readonly ValidatedAgentStep[]): StepGraph 
   );
 }
 
+/** Each summary of a graph as `<schema><-<covered read entry ids>` (closed values). */
+export function graphSummaries(graph: StepGraph): string[] {
+  return graph.flatMap((step) => {
+    if (step.kind !== 'summarize') return [];
+    const covered = (JSON.parse(step.from) as number[]).map((number) => {
+      const source = graph[number - 1];
+      return source?.kind === 'read' && isNlCatalogEntryId(source.entryId) ? source.entryId : 'unknown';
+    });
+    return [`${step.schema}<-${covered.join(',')}`];
+  });
+}
+
+/**
+ * Owner decision of 2026-10-26: for two graphs with the same reads, whether their summaries differ only in order (the
+ * same schema over the same reads, by read position) or in scope; `undefined` when the reads differ or the summaries match.
+ */
+export function summaryDiffOf(got: StepGraph, want: StepGraph): 'order' | 'scope' | undefined {
+  const reads = (graph: StepGraph) => graph.filter((step) => step.kind === 'read');
+  if (JSON.stringify(reads(got)) !== JSON.stringify(reads(want))) return undefined;
+  const byRead = (graph: StepGraph): string[] => {
+    const position = new Map<number, number>();
+    let count = 0;
+    for (const [index, step] of graph.entries()) if (step.kind === 'read') position.set(index + 1, ++count);
+    return graph
+      .flatMap((step) => (step.kind === 'summarize' ? [`${step.schema}:${(JSON.parse(step.from) as number[]).map((number) => position.get(number) ?? 0).join(',')}`] : []))
+      .sort();
+  };
+  if (JSON.stringify(got) === JSON.stringify(want)) return undefined;
+  return JSON.stringify(byRead(got)) === JSON.stringify(byRead(want)) ? 'order' : 'scope';
+}
+
 /** The closed kind of the first difference between two graphs (`undefined` when they are the same graph). */
 export type GraphDiff = 'step-count' | 'step-kind' | 'entry' | 'args' | 'ref' | 'summary' | 'help' | 'related';
 
@@ -486,6 +517,13 @@ export interface AgentPlanScore {
   readonly diffStep?: number;
   /** An `args` diff: the declared names of the args that differ (never a value). */
   readonly diffArgs?: readonly string[];
+  /**
+   * Owner decision of 2026-10-26 (gate report): each summary step of Core's final plan as `<schema><-<covered read entry
+   * ids>` (closed values), and, for a miss whose reads are the gold's, whether the summaries differ only in `order` or in
+   * `scope` (coverage or schema).
+   */
+  readonly gotSummaries?: readonly string[];
+  readonly summaryDiff?: 'order' | 'scope';
 }
 
 /**
@@ -531,7 +569,7 @@ export async function scoreAgentPlanOutputInWorld(golden: AgentPlanEvalCase, raw
     const args = (graphArgs: string): NlArgs => Object.fromEntries(JSON.parse(graphArgs) as Array<[string, NlArgs[string]]>);
     if (!(await sameJiraReleaseOutcome(golden.text, args(a.args), args(b.args)))) return score;
   }
-  const { diff: _diff, diffStep: _diffStep, diffArgs: _diffArgs, ...rest } = score;
+  const { diff: _diff, diffStep: _diffStep, diffArgs: _diffArgs, summaryDiff: _summaryDiff, ...rest } = score;
   return { ...rest, outcome: 'exact' };
 }
 
@@ -588,16 +626,22 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
   // A clarification gold: a CLEAR plan of one listed entry is a miss (the question was the right answer), never wrong.
   if (golden.gold === 'none' && only?.kind === 'read' && golden.clarify?.between.includes(only.entry.id) === true) return { outcome: 'miss', gotEntries, reason: 'clarify-gold' };
   if (golden.gold === 'none' || isAgentPlanAskExpect(golden.gold)) return { outcome: 'wrong', gotEntries };
-  const diff = graphDiff(validatedGraph(validation.plan.steps), goldGraph(golden.gold));
+  const gotGraph = validatedGraph(validation.plan.steps);
+  const wantGraph = goldGraph(golden.gold);
+  const diff = graphDiff(gotGraph, wantGraph);
+  const summaries = graphSummaries(gotGraph);
+  const gotSummaries = summaries.length > 0 ? { gotSummaries: summaries } : {};
   // CA finding 5: the related step is scored too (a missing, extra or other step is a miss).
-  if (diff === undefined && validation.plan.related !== golden.gold.related) return { outcome: 'miss', gotEntries, diff: 'related' };
-  if (diff === undefined) return { outcome: 'exact', gotEntries };
+  if (diff === undefined && validation.plan.related !== golden.gold.related) return { outcome: 'miss', gotEntries, diff: 'related', ...gotSummaries };
+  if (diff === undefined) return { outcome: 'exact', gotEntries, ...gotSummaries };
+  const summaryDiff = summaryDiffOf(gotGraph, wantGraph);
+  const summaryFields = { ...gotSummaries, ...(summaryDiff !== undefined ? { summaryDiff } : {}) };
   // Owner decision of 2026-10-26 (capability-help golds): when the sentence names a source app, that source's help topic is
   // also correct for a general help.topic gold (the structural sourceNames -> help topic mapping); any other topic is not.
   if (golden.family === 'capability-help' && diff.kind === 'args' && only?.kind === 'read' && only.entry.id === 'help.topic' && sourceHelpTopicAccepted(golden.gold, only.args, prepared.ctx.groundingText)) {
     return { outcome: 'exact', gotEntries, reason: 'source-help-topic' };
   }
-  return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}), ...(diff.args !== undefined ? { diffArgs: diff.args } : {}) };
+  return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}), ...(diff.args !== undefined ? { diffArgs: diff.args } : {}), ...summaryFields };
 }
 
 /** A one-step general help.topic gold, answered with the help topic of a source the sentence names. */
@@ -877,8 +921,9 @@ export function applyReadWriteProbe(
 ): AgentPlanScore & { readonly probe: 'write' | 'note' | 'clarify' | 'stands'; readonly probeEntry?: string; readonly probeDetail?: string } {
   const result = agentReadWriteProbeResult(probeRaw, clauses, PROBE_OFFERED, { now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone });
   if (result.kind === 'stands') return { ...score, probe: 'stands', ...(result.detail !== undefined ? { probeDetail: closedProbeDetail(result.detail) } : {}) };
-  const { diff: _diff, diffStep: _diffStep, diffArgs: _diffArgs, ...rest } = score;
-  const entry = isNlActionEntryId(result.entryId) ? result.entryId : 'unknown';
+  const { diff: _diff, diffStep: _diffStep, diffArgs: _diffArgs, summaryDiff: _summaryDiff, ...rest } = score;
+  // A write-word note (owner decision of 2026-10-26, ap-n011) names no entry: the probe found no write.
+  const entry = result.entryId === undefined ? 'write-word' : isNlActionEntryId(result.entryId) ? result.entryId : 'unknown';
   const reason = `${result.kind}:${entry}`;
   const outcome = result.kind === 'write' ? 'read-write' : result.kind === 'note' ? 'read-note' : 'read-clarify';
   const expected = golden.readWrite !== undefined ? READ_WRITE_PROBE_OF[golden.readWrite.outcome] : undefined;

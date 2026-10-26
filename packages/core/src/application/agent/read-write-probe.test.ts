@@ -115,3 +115,18 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
     expect(agentReadWriteProbeResult(out('reminder.create', { when: '내일 9시', body: '일정' }), ['내일 9시에 출발 알림 만들어줘'], OFFERED, CTX)).toMatchObject({ kind: 'clarify' });
   });
 });
+
+describe('owner decision of 2026-10-26 (ap-n011): never the read alone when an uncovered clause holds a change word', () => {
+  const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+
+  it('a probe that finds no write on a clause with a catalog change word is the decision (f) note', () => {
+    expect(agentReadWriteProbeResult(none, ['내일 거는 꺼줘'], OFFERED, CTX)).toEqual({ kind: 'note', clause: '내일 거는 꺼줘', writeWord: true });
+    expect(agentReadWriteProbeResult('not json', ['두 번째 거 삭제해줘'], OFFERED, CTX)).toMatchObject({ kind: 'note', writeWord: true });
+  });
+
+  it('a plain read clause, a creation verb that is also a read request, or a reminder noun leaves the plan standing', () => {
+    expect(agentReadWriteProbeResult(none, ['다 합쳐서 오늘 거 알려줘'], OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'none' });
+    expect(agentReadWriteProbeResult(none, ['알림 한번에 요약해줘'], OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'none' });
+  });
+});
+
