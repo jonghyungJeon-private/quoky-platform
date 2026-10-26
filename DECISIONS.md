@@ -29676,3 +29676,34 @@ would still fail 2/3. A fresh run on the current code is the deciding measuremen
   …", "도움말은 됐고 …", "help 말고 …", "지라 이슈랑 도움말은 됐어", "지라 이슈랑 도움말 빼줘"; every split test still passes.
   Re-measured over the 19 golden corpora (3402 texts): 0 false splits; only ap-p175, ap-p177 and ap-p180 split.
   Residual: "도움말 보여주고 …" does not split ("보여주" is the stem of no closer form).
+
+### ADR-0121 S2 note — the agent-plan gate on ed212614 (FAILED 0/3) and the owner's decisions of 2026-10-26
+
+Gate (`gates-s2p3-ed212614-20261026`): run 1 help captures 4/3 (neg-010, neg-012, neg-110, ap-n093); run 2 multi-step
+94.0% and one wrong plan (ap-n131: the calendar read alone, the reminder dropped: a genuine miss, since the read + write
+path starts only from the planner's `none`); run 3 help captures 4/3 (neg-010, neg-110, ap-n091, ap-n115).
+
+1. **Core's final outcome for help.topic plans on negatives** (the owner's 2026-10-19 principle that gates score Core's
+   final result; as the read scorers since owner decision A of 2026-10-22). On a negative, a one-step `help.topic` plan
+   that the runtime's own `nlHelpSourceScope` turns into the help-scope question (a general topic, the owner's words
+   naming exactly one catalog source) is scored `clarify` (reason `help-scope`), not a help capture. On a clarification
+   gold (`clarify: {between}`, now carried from `nl-intent.v1.json` and allowed on agent-plan negatives), a CLEAR plan of
+   one listed entry is a `miss` (reason `clarify-gold`), never a wrong plan or a help capture. The summary reports
+   "clarification golds asked: n/m" (not gated). On positives the planner's help choice is scored as is (ap-p182, a
+   capability-help gold naming Slack, would get Core's scope question at run time: reported, not scored).
+2. **ap-n115** "구글 캘린더랑 지메일 연동 설정 어디서 해?" → a clarification gold (`between: [help.topic]`, owner decision
+   2026-10-26). **Core's help-scope rule does not ask for it**: `nlHelpSourceScope` asks only when the words name exactly
+   ONE catalog source family, and this text names two (calendar and mail). So the runtime answers a CLEAR help.topic with
+   the help text; the scorer counts it as a miss under the clarification-gold rule. Making Core ask here needs a change of
+   the shared rule (several sources), which is the owner's call.
+3. **Re-score of the ed212614 records** (help.topic records on negatives taken with the general topic, which the report
+   cannot show; allowance 3 of 288):
+
+| Run | Multi-step | One-step | Wrong (non-help) | Help captures | Verdict |
+|---|---|---|---|---|---|
+| 1 | 158/166 (95.2%) | 651/679 (95.9%) | 0 | 3 (neg-012, neg-110, ap-n093); neg-010 → asked | PASS |
+| 2 | 156/166 (94.0%) | 655/679 (96.5%) | 1 (ap-n131) | 2 (ap-n091, ap-n093) | **FAIL** (multi-step < 95%; ap-n131) |
+| 3 | 160/166 (96.4%) | 659/679 (97.1%) | 0 | 2 (neg-110, ap-n091); neg-010 → asked; ap-n115 → miss | PASS |
+
+4. **The release list order is split out** to `claude/v5-release-order` (from origin/main bba23bc1) so it ships without the
+   planner gate (see that branch's A8 implementation note).

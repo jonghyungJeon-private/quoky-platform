@@ -59,6 +59,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — agent-plan gate: Core's final outcome for help plans on negatives (2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Changed (eval).** On negatives, a general help.topic plan that Core turns into its help-scope question scores as a
+  clarification; a clarification gold's CLEAR plan of a listed entry is a miss, not a help capture. ap-n115 is a
+  clarification gold (owner decision); Core's help-scope rule does not ask for it yet (it names two sources).
+
 ## Unreleased — agent-plan gate: owner relabels and the help-capture rule (2026-10-26, branch `claude/v5-s2-p3`)
 
 - **Changed (eval).** The agent-plan gate counts help.topic-only plans on negatives apart, allowed ceil(1%) per run
