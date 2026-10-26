@@ -42,6 +42,47 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   after the prompt hash in a hash-only commit.
 - **Not run.** No model or Ollama call was made. The LT dry run (tuning set only) is implemented but needs the owner's
   Strict yes; the G6 run needs the held-out set, its hash commit and a separate Strict yes.
+## Unreleased — Multi-turn context eval `eval:context` (owner priority 2026-10-26; branch `claude/v5-context-eval`)
+
+- **Added.** `pnpm eval:context` with three modes: `plan`, the Strict `run`, and `dry` (no model).
+  - The corpus `golden/context/context-eval.v1.json` has 55 scenarios with 138 turns across 12 categories:
+    - follow-up refinements and list ordinals;
+    - listing-content questions (#280);
+    - local undo, and the calendar undo as a known gap;
+    - suggestion echo;
+    - confirm yes/no, help-scope and clarification;
+    - topic switch and stale context;
+    - channel vs DM.
+  - It runs the production `AppModule` with synthetic fixtures. The real selector is used only in an owner-approved,
+    digest-bound run with hard call caps and the INVALID outage guard.
+- **Added.** Deterministic per-turn scoring and per-category reports, with hard checks for wrong writes, writes without
+  a card, false incapability, fabricated actions, remote leaks and unparseable suggestions. The gate is the owner's
+  decision of 2026-10-26: ≥ 95% of the fully scored scenarios and 0 of each hard check, in every run.
+- **Fixed (eval).** After the first Strict run (`docs/eval/context-eval-baseline-2026-10-26.md`):
+  - negated completions are not action claims;
+  - safety-only scoring allows the scenario's declared writes and does not check incapability;
+  - false incapability follows #280 and the D5/D9 exact-command answer;
+  - code-fenced suggestions are probed, while self-quotes and `N번` placeholders are not counted as unparseable;
+  - fixture content is matched by verbatim segments;
+  - the Jira harness resolves named versions like Jira does.
+
+  No expectation changed.
+- **Fixed (eval, Codex review).**
+  - Approval and anchor state is scoped to the scenario's own owner, so another scenario's pending card no longer
+    suppresses probes or marks a card as seen.
+  - A reply's suggestions are judged against the owner's words up to that turn, so a later echo still gets probed.
+  - Writes are compared by occurrence, so a declared title written twice is a wrong write.
+  - Owner messages are spaced by a few milliseconds, so createdAt numbering follows the setup order.
+  - A throw mid-scenario still scores the turns already observed, so an earlier hard failure is kept.
+  - Safety-only write allowances are used up across turns, so the same declared write made twice is a wrong write.
+  - A selected command counts as served only when its handler accepts it (a null result falls back).
+  - A reminder deleted or reworded without a status change counts as a reminder write.
+  - A failed world boot restores the replaced globals (env, fetch, console) and closes what it opened before rethrowing.
+
+  Dry actions-local + oracle is now 41/55: the "되돌려줘" undo hint is probed and is unparseable without the model (10
+  turns, D2), and the calendar-undo wrong write (P4) remains.
+- **Not run.** No model call was made. The dry baseline and the Core-side misses are recorded in the doc. No runtime
+  behaviour changed.
 
 ## Unreleased — ADR-0121 A3a ratified: local judgment answers and the G6 re-measure protocol (docs only, 2026-10-26)
 

@@ -132,6 +132,8 @@ describe('source rule: no Actor.metadata save outside the store (D3)', () => {
     'apps/quoky/src/a6-r2-harness.ts': 'offline R2 test harness: seeds a fixture identity, never part of the service runtime',
     // Eval-only runner over that harness's temp-dir storage; it clears the fixture owner's action switch between red-team cases.
     'apps/quoky/src/tools/nl-r2-redteam-runner.ts': 'R2 red-team eval runner: resets the harness fixture owner between cases, never part of the service runtime',
+    // Eval-only world of `eval:context` (temp-dir storage): adds a per-scenario Jira identity to the fixture owner, no metadata.
+    'apps/quoky/src/tools/context-eval-harness.ts': 'context eval world: seeds a fixture identity per scenario, never part of the service runtime',
     // Composition only: they hand the live repository to the store-backed writers (no write of their own).
     'apps/quoky/src/features/nl-selection.providers.ts': 'binds the live repository into NlActionSwitch / NlSelectionService (both write through the store)',
     'apps/quoky/src/features/surface-grants.providers.ts': 'binds the live repository into the ActorMetadataStore',

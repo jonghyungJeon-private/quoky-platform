@@ -25,6 +25,38 @@ Next: a separate session prepares the G7 case file (`tools/g7/cases.mjs` format)
 seed and the recipient model on the run day; then the G7 run on a separate Strict yes, G8, G9, a security review and
 the A3b ratification.
 
+### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
+
+Owner priority (2026-10-26): conversation-context continuity is the top quality criterion; measure first, then fix gaps in
+score order. Built offline. **No model call was made.** The Strict run is an owner step.
+- **What.** `pnpm eval:context` (`apps/quoky/src/tools/context-eval*.ts`).
+  - The corpus `golden/context/context-eval.v1.json` has 55 scenarios with 138 scored turns, across 12 categories, and
+    includes the owner's 2026-10-22/26 DM flows with fictional names.
+  - It runs on the production `AppModule` with synthetic connector fixtures.
+  - The real NL selection runs in a Strict run; dry mode uses an oracle or none selector.
+  - Each turn is scored deterministically on Core's final result.
+  - Hard checks: wrong writes, writes without a card, false incapability, fabricated actions, remote leaks of D4
+    content and unparseable suggestions.
+  - Strict runs are plan-digest-bound, with hard call caps and the INVALID outage guard.
+- **Dry baseline (no model).**
+  - deployed + oracle: 35/38 full scenarios pass; safety-only 17/17.
+  - actions-local + oracle: 47/55 pass.
+  - Core-side misses: a calendar write followed by "되돌려줘" undoes an earlier to-do (actions-local); the "되돌려줘"
+    undo hint and one calendar usage example do not parse without the model; three help-index flow steps; a worded
+    help-scope answer.
+- **Gate** (owner decision 2026-10-26): ≥ 95% of the fully scored scenarios and 0 of each hard check, in every run.
+- **First Strict run** (deployed, chat real, digest `914a7c20…`): **FAILED**.
+  - Scenarios 22/38; hard failures wrong-write 1, false-incapability 8, fabricated-action 2, unparseable 4.
+  - Classified in `docs/eval/context-eval-baseline-2026-10-26.md`. After the scorer corrections listed there, the run
+    re-scores to 0 wrong writes, 4 real #280 false-incapability claims, 0 fabricated actions and about 5 unparseable
+    suggestions; the pass count is unchanged.
+  - Open owner decisions: D1 (keep the listing context across a chat turn: follow-up 2), D2 (do suggestions have to
+    parse without the model?), D3, D4.
+- **Docs:** `docs/eval/context-eval.md`, `docs/eval/context-eval-baseline-2026-10-26.md`.
+
+Next: the prioritised fix plan in the baseline doc, starting with P1 (#280 chat guard), P2 (calendar rename copy/gate) and
+P4 (a calendar write does not leave an older to-do as the last action).
+
 ### ADR-0121 amendment A3a — ratified (2026-10-26, docs only, branch `claude/v5-a3-proposal`)
 
 The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; no code changed; **no egress opened**.
