@@ -29080,3 +29080,18 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
 - **Split out** of the S2 P3 branch (`claude/v5-s2-p3`) so it ships without the planner gate: the same three commits,
   cherry-picked onto origin/main bba23bc1. Tests: `work-chat/jira-release.test.ts` (the order, determinism, the time-zone
   boundary through the service), the work-chat acceptance tests.
+
+### ADR-0120 A8 implementation correction — unreleased versions are the "upcoming" group; a release inside the project token (2026-10-26; branch `claude/v5-release-fix`)
+
+- **Trigger.** Live DM smoke 2026-10-26, real Jira OP26: the list header said "(미출시 5 · 출시 28, 예정 → 최근 출시 → 지난 예정 순
+  10개 표시)" but all 10 rows were released versions: the 5 unreleased ones have no Jira release date and the 2026-10-23 rule put
+  undated versions last, outside the 10 rows. That contradicted the owner's intent (decision Q4: upcoming first). This corrects
+  the implementation, not the decision.
+- **Order (corrected).** Structural, from status and `dueDate` only: unreleased dated today or later, soonest first → unreleased
+  without a date, in Jira's order → released, newest first (released without a date after them) → unreleased with a past date,
+  newest first. Header wording unchanged.
+- **Selection normalization.** "OP26 릴리스 뭐 있어?" was selected as project OP26, release "26" and ended in a clarification and
+  "릴리스 26을 찾지 못했어요". `normalizeJiraReleaseArgs` now drops a `release` that occurs in the owner's text only inside the
+  token the `project` value is (`releaseIsPartOfProjectToken`: a proper part of the ASCII project token, not a separate word;
+  the previous selection's release is kept). No word list; no selector or planner prompt change (no D12 regate).
+- **Tests.** `jira-release.test.ts` (live shape: 5 unreleased undated, 28 released, overdue), `selection-parts.test.ts`.

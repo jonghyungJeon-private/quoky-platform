@@ -447,7 +447,7 @@ describe('the release report renderer (A8)', () => {
   });
 });
 
-describe('the release list order (owner Q4, ratified 2026-10-23: upcoming, released, overdue, undated)', () => {
+describe('the release list order (owner Q4, corrected 2026-10-26: upcoming, undated unreleased, released, overdue)', () => {
   const TODAY = '2026-10-23';
   // The live smoke's order: Jira `-sequence`, not dates.
   const SEQUENCE_ORDER = ['20261020', '20261112', '20261028', '20260917', '20261015', '20261008', '20260924', '20261001', '20260910', '20260903', '20260827', '20260820'];
@@ -468,7 +468,7 @@ describe('the release list order (owner Q4, ratified 2026-10-23: upcoming, relea
     expect(rows(text)).toEqual(['20261028', '20261112', '20261020', '20261015', '20261008', '20261001', '20260924', '20260917', '20260910', '20260903']);
   });
 
-  it('an unreleased version whose date passed comes after the released ones (newest first); undated versions last, in Jira order', () => {
+  it('an unreleased version whose date passed comes after the released ones (newest first); unreleased undated versions follow the upcoming ones, released undated after the released', () => {
     const items: ConnectorItem[] = [
       { id: '1', title: '비정기 배포', status: 'released' },
       { id: '2', title: 'A', status: 'released', dueDate: '2026-10-01' },
@@ -481,10 +481,31 @@ describe('the release list order (owner Q4, ratified 2026-10-23: upcoming, relea
       { id: '9', title: 'G', status: 'unreleased', dueDate: '2026-10-20' },
     ];
     // Today counts as upcoming; equal dates keep the connector order.
-    expect(releasesInListOrder(items, TODAY).map((item) => item.title)).toEqual(['D', 'B', 'E', 'A', 'C', 'G', 'F', '비정기 배포', '핫픽스']);
-    expect(rows(plainTextOf(renderReleaseList({ key: 'OP26' }, items, false, false, TODAY)))).toEqual(['D', 'B', 'E', 'A', 'C', 'G', 'F', '비정기 배포', '핫픽스']);
+    expect(releasesInListOrder(items, TODAY).map((item) => item.title)).toEqual(['D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포', 'G', 'F']);
+    expect(rows(plainTextOf(renderReleaseList({ key: 'OP26' }, items, false, false, TODAY)))).toEqual(['D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포', 'G', 'F']);
     // Without a date every dated unreleased version counts as upcoming.
-    expect(releasesInListOrder(items).map((item) => item.title)).toEqual(['F', 'G', 'D', 'B', 'E', 'A', 'C', '비정기 배포', '핫픽스']);
+    expect(releasesInListOrder(items).map((item) => item.title)).toEqual(['F', 'G', 'D', 'B', '핫픽스', 'E', 'A', 'C', '비정기 배포']);
+  });
+
+  it('live OP26 shape: 5 unreleased without a date come first, then the newest released, then the overdue ones', () => {
+    const undated: ConnectorItem[] = Array.from({ length: 5 }, (_, i) => ({ id: `u${i}`, title: `U${i}`, status: 'unreleased' }));
+    const releasedItems: ConnectorItem[] = Array.from({ length: 28 }, (_, i) => ({
+      id: `r${i}`,
+      title: `R${i}`,
+      status: 'released',
+      dueDate: `2026-09-${String(28 - i > 0 ? 28 - i : 1).padStart(2, '0')}`,
+    }));
+    const overdue: ConnectorItem[] = [
+      { id: 'o1', title: 'O1', status: 'unreleased', dueDate: '2026-08-01' },
+      { id: 'o2', title: 'O2', status: 'unreleased', dueDate: '2026-08-15' },
+    ];
+    const items = [...releasedItems, ...undated, ...overdue];
+    const text = plainTextOf(renderReleaseList({ key: 'OP26' }, items, false, false, TODAY));
+    expect(text).toContain('(미출시 7 · 출시 28, 예정 → 최근 출시 → 지난 예정 순 10개 표시)');
+    expect(rows(text)).toEqual(['U0', 'U1', 'U2', 'U3', 'U4', 'R0', 'R1', 'R2', 'R3', 'R4']);
+    expect(releasesInListOrder(items, TODAY).slice(-2).map((item) => item.title)).toEqual(['O2', 'O1']);
+    // A dated upcoming version precedes the undated unreleased ones.
+    expect(releasesInListOrder([...undated, { id: 'd', title: 'D', status: 'unreleased', dueDate: '2026-11-26' }], TODAY)[0]?.title).toBe('D');
   });
 
   it('is deterministic: any input order of the same listing renders the same rows', () => {
@@ -495,13 +516,13 @@ describe('the release list order (owner Q4, ratified 2026-10-23: upcoming, relea
     }
   });
 
-  it('with no release dates: Jira order; the counts are unchanged', () => {
+  it('with no release dates: unreleased first, each group in Jira order; the counts are unchanged', () => {
     const items: ConnectorItem[] = [
       { id: '1', title: 'Y', status: 'released' },
       { id: '2', title: 'X', status: 'unreleased' },
     ];
     const text = plainTextOf(renderReleaseList({ key: 'OP26' }, items, true, false, TODAY));
-    expect(rows(text)).toEqual(['Y', 'X']);
+    expect(rows(text)).toEqual(['X', 'Y']);
     expect(text).toContain('(미출시 1 · 출시 1 이상, 예정 → 최근 출시 → 지난 예정 순 2개 표시)');
   });
 

@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Jira release list: unreleased first; release inside the project token (branch `claude/v5-release-fix`)
+
+- **Fixed.** Live smoke 2026-10-26 (OP26): the release list showed only released versions because unreleased ones without a
+  Jira release date were ordered last. Order is now: unreleased dated today or later, unreleased undated, released (newest
+  first), overdue unreleased. Implementation correction of the 2026-10-23 owner decision (DECISIONS, A8).
+- **Fixed.** "OP26 릴리스 뭐 있어?" no longer asks about a release "26": a `release` that is only a part of the project's own
+  token is dropped (structural rule in `normalizeJiraReleaseArgs`), so the project's release list is shown.
+
 ## Unreleased — Jira release list order (owner decision Q4, ratified 2026-10-23; branch `claude/v5-release-order`)
 
 - **Fixed.** A project's Jira release list ("최근 10개 표시" listed Jira's manual sequence) now orders upcoming versions

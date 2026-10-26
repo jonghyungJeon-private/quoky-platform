@@ -251,6 +251,7 @@ export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groun
     const extended = extendProjectToken(named, text, typeof args.release === 'string' ? args.release : undefined);
     if (extended !== undefined) args.project = extended;
   }
+  if (releaseIsPartOfProjectToken(args.release, args.project, text, previousArgs)) delete args.release;
   if (!hasJiraReleaseLink(text)) return;
   const links = (text.match(/https?:\/\/[^\s<>"'`]+/giu) ?? []).map((link) => link.toLowerCase());
   const prose = text.replace(/https?:\/\/[^\s<>"'`]+/giu, ' ').toLowerCase();
@@ -259,6 +260,24 @@ export function normalizeJiraReleaseArgs(args: Record<string, NlArgValue>, groun
   if (typeof release === 'string' && /^\d+$/u.test(release.trim()) && previousArgs?.release !== release.trim() && onlyInLink(release.trim())) delete args.release;
   const project = args.project;
   if (typeof project === 'string' && previousArgs?.project !== project && onlyInLink(project.trim().toLowerCase())) delete args.project;
+}
+
+/**
+ * Owner smoke 2026-10-26 ("OP26 릴리스 뭐 있어?" → project OP26, release "26"): a `release` that occurs in the owner's
+ * prose only inside the ASCII letters-and-digits token the `project` value is (a proper part of the project token, not a
+ * separate word) names no release; the owner named a project only (release list). A release that equals the previous
+ * selection's release (carry-over) is kept. Shape only, no word list.
+ */
+export function releaseIsPartOfProjectToken(release: NlArgValue | undefined, project: NlArgValue | undefined, groundingText: string, previousArgs?: NlArgs): boolean {
+  if (typeof release !== 'string' || typeof project !== 'string') return false;
+  const rel = release.trim().toLowerCase();
+  const proj = project.trim().toLowerCase();
+  if (rel.length === 0 || previousArgs?.release === release.trim() || !/^[a-z0-9]+$/u.test(proj) || rel.length >= proj.length || !proj.includes(rel)) return false;
+  const prose = groundingText.normalize('NFC').replace(/https?:\/\/[^\s<>"'`]+/giu, ' ').toLowerCase();
+  const tokens = prose.split(/[^a-z0-9]+/u).filter((token) => token.length > 0);
+  if (!tokens.includes(proj)) return false;
+  // Every occurrence of the release value lies inside a project token: nothing is left once those tokens are removed.
+  return !tokens.filter((token) => token !== proj).join(' ').includes(rel) && !prose.replace(new RegExp(`(?<![a-z0-9])${proj}(?![a-z0-9])`, 'gu'), ' ').includes(rel);
 }
 
 /**

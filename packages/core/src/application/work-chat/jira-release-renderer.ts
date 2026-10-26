@@ -153,13 +153,14 @@ function renderItemLine(item: ConnectorItem, number?: number): MessagePart {
 
 /**
  * The release list order (A8; live smoke 2026-10-22: Jira's `-sequence` order is the project's manual ordering; owner
- * decisions Q4 and its ratification of 2026-10-23). Deterministic and structural, from Jira's own status and release date
- * field only (`dueDate`, `YYYY-MM-DD`; never a date read out of a version name), against `today` (the owner's local date,
- * `QUOKY_TIMEZONE`):
+ * decisions Q4 and its ratification of 2026-10-23, corrected 2026-10-26 after the live OP26 smoke: unreleased versions
+ * are always the "upcoming" group, even without a release date). Deterministic and structural, from Jira's own status and
+ * release date field only (`dueDate`, `YYYY-MM-DD`; never a date read out of a version name), against `today` (the
+ * owner's local date, `QUOKY_TIMEZONE`):
  * 1. unreleased versions dated today or later, the soonest first (what ships next);
- * 2. released versions, the newest first;
- * 3. unreleased versions with a past date (overdue), the newest first;
- * 4. versions without a release date, released or not, in the connector's order (Jira's sequence).
+ * 2. unreleased versions without a release date, in the connector's order (Jira's sequence);
+ * 3. released versions, the newest first (released versions without a date after them, in the connector's order);
+ * 4. unreleased versions with a past date (overdue), the newest first.
  * Equal dates keep the connector's order (a stable sort). Without `today` every dated unreleased version counts as
  * upcoming. On a truncated listing the order covers the versions read (the first page). Pure.
  */
@@ -168,19 +169,20 @@ export function releasesInListOrder(releases: readonly ConnectorItem[], today?: 
   // Array.prototype.sort is stable (ES2019): equal dates keep the connector's order.
   const ascending = (a: ConnectorItem, b: ConnectorItem): number => (date(a) < date(b) ? -1 : date(a) > date(b) ? 1 : 0);
   const descending = (a: ConnectorItem, b: ConnectorItem): number => ascending(b, a);
-  const dated = releases.filter((item) => item.dueDate !== undefined);
-  const unreleased = dated.filter((item) => item.status !== 'released');
-  const upcoming = unreleased.filter((item) => today === undefined || date(item) >= today);
-  const overdue = unreleased.filter((item) => today !== undefined && date(item) < today);
+  const isReleased = (item: ConnectorItem): boolean => item.status === 'released';
+  const unreleasedDated = releases.filter((item) => !isReleased(item) && item.dueDate !== undefined);
+  const upcoming = unreleasedDated.filter((item) => today === undefined || date(item) >= today);
+  const overdue = unreleasedDated.filter((item) => today !== undefined && date(item) < today);
   return [
     ...upcoming.sort(ascending),
-    ...dated.filter((item) => item.status === 'released').sort(descending),
+    ...releases.filter((item) => !isReleased(item) && item.dueDate === undefined),
+    ...releases.filter((item) => isReleased(item) && item.dueDate !== undefined).sort(descending),
+    ...releases.filter((item) => isReleased(item) && item.dueDate === undefined),
     ...overdue.sort(descending),
-    ...releases.filter((item) => item.dueDate === undefined),
   ];
 }
 
-/** The releases of a project (the owner named a project and no release): upcoming, released, overdue, undated ({@link releasesInListOrder}), at most 10. */
+/** The releases of a project (the owner named a project and no release): upcoming, undated unreleased, released, overdue ({@link releasesInListOrder}), at most 10. */
 export function renderReleaseList(project: ReleaseProjectRef, releases: readonly ConnectorItem[], truncated: boolean, ignoredLink = false, today?: string): MessageBody {
   const lines: Array<{ text: MessagePart; droppable?: boolean }> = [];
   if (ignoredLink) lines.push({ text: renderIgnoredLinkNote() });
