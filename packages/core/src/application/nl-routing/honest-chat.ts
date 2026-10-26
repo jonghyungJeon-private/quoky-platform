@@ -62,7 +62,8 @@ export function renderConfiguredSourcesFact(
     parts.push(
       actions.length === 0
         ? `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
-            'When the User asks to create, change, send or remember something, reply with the exact command to send.'
+            'When the User asks to create, change, send or remember something, reply with the exact command to send. ' +
+            NO_YES_NO_OFFER_RULE
         : `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
             `Quoky does these actions itself when the User asks in plain words: ${actions.map((entry) => entry.label.en).join(', ')}. ` +
             'A chat reply never performs them, never claims they are done and never tells the User to type a fixed command phrase ' +
@@ -74,6 +75,15 @@ export function renderConfiguredSourcesFact(
   if (controls !== undefined) parts.push(controls);
   return parts.join(' ');
 }
+
+/**
+ * Context eval 2026-10-26 (P8): the A6-D6 yes/no sentence for the plain fact too. A chat reply runs nothing, and Core
+ * closes its own question when the User says anything else, so a chat reply that offers a yes/no (or asks the User to
+ * answer an earlier Quoky question with yes, no or a number) leads to an answer that runs nothing.
+ */
+export const NO_YES_NO_OFFER_RULE =
+  'A chat reply never offers anything as a yes/no question ("…할까요?") and never asks the User to answer an earlier ' +
+  'Quoky question with yes, no or a number: a yes, a no or a number sent to a chat reply runs nothing.';
 
 /**
  * What the one switch controls in the active configuration (CA P3 7): A6 natural-language actions (`QUOKY_NL_ACTIONS` not

@@ -6,7 +6,7 @@ import { LAST_LISTING_METADATA_KEY, withLabelledListing, withListing } from '../
 import { NL_ACTION_ENTRIES } from './action-entries';
 import { ACTION_SWITCH_METADATA_KEY, NlActionSwitch } from './action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { NO_YES_NO_OFFER_RULE, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
 import { NL_ACTION_LOG_EVENT, NlActionCaps, renderGarbledAction, type NlActionLevel } from './nl-action-policy';
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
@@ -443,6 +443,11 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
   it('drops "reply with the exact command" only when action entries are offered', () => {
     const help = ['- 할 일: "할 일 추가: 내용", "완료 처리: 번호"'];
     expect(renderConfiguredSourcesFact(READS, help)).toContain('reply with the exact command to send.');
+    // Context eval 2026-10-26 (P8): the plain fact also forbids yes/no offers (a yes to a chat reply runs nothing).
+    expect(renderConfiguredSourcesFact(READS, help)).toContain(NO_YES_NO_OFFER_RULE);
+    expect(renderConfiguredSourcesFact(READS, help)).toContain('a yes, a no or a number sent to a chat reply runs nothing.');
+    // The A6 variant keeps its own sentence (unchanged).
+    expect(renderConfiguredSourcesFact(ALL, help)).not.toContain(NO_YES_NO_OFFER_RULE);
     const fact = renderConfiguredSourcesFact(ALL, help) ?? '';
     expect(fact).toContain('Quoky does these actions itself when the User asks in plain words');
     expect(fact).toContain('never tells the User to type a fixed command phrase');

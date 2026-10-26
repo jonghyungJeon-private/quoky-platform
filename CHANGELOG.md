@@ -32,6 +32,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     (`isCalendarWriteRequest`) reuses them for a meeting named by a day or time phrase. There is no new phrase set.
   - "오늘 회의 내용을 표로 바꿔줘" and "회의록 제목을 …" stay chat.
   - A test checks that every example in Core's calendar usage copy is classified as a write.
+- **Fixed (P8).** The plain honest-chat fact, used when no action family is offered (A6 `shadow` today), now carries
+  the A6 yes/no rule (`NO_YES_NO_OFFER_RULE`): a chat reply never offers a yes/no and never asks the owner to answer an
+  earlier Quoky question with yes, no or a number. Context eval: chat invited "응/아니" for a question Core had already
+  closed, so the owner's "응" ran nothing. The A6 variant is unchanged.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

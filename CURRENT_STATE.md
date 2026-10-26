@@ -41,6 +41,8 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   strengthened.
 - **P2.** The write classification reuses the parser's rename and relocate shapes, so the calendar usage copy's rename
   example parses deterministically.
+- **P8.** The plain D9 fact carries the A6 yes/no rule: no yes/no offers, and no asking for an answer to an earlier,
+  closed question.
 
 ### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
 
