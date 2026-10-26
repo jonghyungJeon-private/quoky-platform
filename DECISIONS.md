@@ -29095,3 +29095,18 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
   token the `project` value is (`releaseIsPartOfProjectToken`: a proper part of the ASCII project token, not a separate word;
   the previous selection's release is kept). No word list; no selector or planner prompt change (no D12 regate).
 - **Tests.** `jira-release.test.ts` (live shape: 5 unreleased undated, 28 released, overdue), `selection-parts.test.ts`.
+
+### Eval judge: owner-calibrated pre-screen for judgment evals (2026-10-26; branch `claude/v5-eval-judge`)
+
+- **Owner-approved 2026-10-26.** A project subagent `quoky-eval-judge` (`.claude/agents/quoky-eval-judge.md`, model opus,
+  Read only) pre-screens owner evaluations of judgment answers with a rubric distilled only from the owner's own blind labels
+  and notes (`docs/eval/owner-rubric.md`, every rule cites its case ids). Output is strict JSON: per-answer
+  `useless | usable | good` with confidence and rule-cited reasons, a pairwise preference, and `lowConfidence`.
+- **Limits.** Eval/synthetic data only; never arm identities (`key.json` is never read); never decides an owner-only gate.
+  Where a ratified gate says "owner blind labels", the owner's labels stay the evidence and the judge only builds the review
+  queue (low-confidence cases and disagreements).
+- **Calibration.** Judgment blind eval 2026-10-23/26 (35 cases). Held-out half fixed by seed before the rubric was drafted
+  (18 cases). Held-out, 3 runs: exact 92.6%, usable+ 97.2%, preference 94.4%, κ 0.878 (3-class), labels stable across runs
+  97.2%. Bar ≥85% usable+ and preference met. Details, failure patterns and the re-calibration procedure:
+  `docs/eval/README.md`; harness `tools/eval-judge/calibrate.mjs`.
+- **Re-calibration** is required whenever new owner labels arrive.
