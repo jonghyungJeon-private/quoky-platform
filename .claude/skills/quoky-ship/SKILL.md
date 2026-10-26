@@ -1,6 +1,6 @@
 ---
 name: quoky-ship
-description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크 → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
+description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크(quoky-e2e) → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
 ---
 
 # Quoky Ship (side-job + Quoky 출하 절차)
@@ -19,13 +19,13 @@ description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 �
   - 브랜치명: `claude/<wave>-<task>`
   - `.env.local` 은 복사하지 않는다(코드 작업에는 필요 없음).
   - upstream 은 해제한다.
-- side-job §6.5 에 따라 실행 방식과 모델을 정한다(기본 haiku, 강등 규칙 포함).
-  - 경계, egress, 인증, 플랫폼 어댑터, 새 provider, 쓰기·권한 경로의 보안 수정, ADR 설계 → opus
-  - 여러 파일에 걸친 명세가 분명한 기능, 평가 실패 원인 분석·분류 → sonnet
-  - 작고 명확한 리뷰 지적, 테스트 행 추가, 문서·기록(DECISIONS/CHANGELOG/CURRENT_STATE) 갱신 → haiku
-  - 판단 모델 평가 실행(eval 3회, probe)과 결과 요약 → haiku
-  - 소유자 승인된 시험 정답(골든) 반영, 승인 표시, 소유자 시트 상태 갱신 → haiku
-  - rebase, 검증 실행, 배포, 정리 → haiku
+- side-job §6.5 에 따라 실행 방식을 정하고, 모델·effort 는 `token-budget` 스킬로 정한다(등급 J1/J2/J3/I/M/X, effort = min(기준값, 세션 effort), 예산 모드 포함). Quoky 작업의 등급은 다음과 같다.
+  - **J1**: 새 egress·inbound·인증·플랫폼 어댑터·새 provider 설계, ADR 설계·해석·충돌, 필수 CA 대상(PLT-0, TG-1, PRV-1, LRN-5, GML-1, PRV-3, 새 커넥터)의 첫 리뷰
+  - **J2**: 기존 쓰기·권한 경로의 보안 수정(token-budget §2 예외는 소유자 승인 전까지 쓰지 않는다), 기존 ADR 안의 설계, 일반 CA 리뷰, 원인 불명 평가 회귀 디버깅
+  - **J3**: CA·Codex 지적 수정분의 delta 재리뷰, 조항이 명확한 ADR 대조
+  - **I**: 여러 파일에 걸친 명세가 분명한 기능, 평가 실패 원인 분석·분류
+  - **M**: 작고 명확한 리뷰 지적, 테스트 행, 문서·기록(DECISIONS/CHANGELOG/CURRENT_STATE), 소유자 승인 골든 반영·승인 표시·시트 상태 갱신, 단순 rebase 충돌 해소
+  - **X**: 판단 모델 평가 실행(eval 3회, probe)과 결과 요약, 검증 실행, 승인된 배포 명령, worktree 정리
 - 구현 에이전트에게 반드시 지시할 것:
   - `AGENTS.md` 의 loading router 를 따른다.
   - 관련 ADR 과 `docs/plans/personal-v4-plan.md` 해당 행을 읽는다.
@@ -83,18 +83,19 @@ tmux attach -t gates-<name>                                          # 진행 �
   - `codex review --base` 는 프롬프트와 함께 쓸 수 없다.
   - 출력이 너무 길면 파일로 저장되니 끝부분에서 판정을 찾는다.
   - 사용량 한도로 끊긴 실행은 PASS 로 보지 않는다. 리셋 뒤 다시 실행한다.
-- **Chief Architect 리뷰는 필수**다. `code-reviewer` 에이전트(opus)로, 구현자와 독립적으로 수행한다. 필수 대상은 다음과 같다.
+- **Chief Architect 리뷰는 필수**다. `code-reviewer` 에이전트로, 구현자와 독립적으로 수행한다. 필수 대상의 첫 리뷰는 J1, 그 외는 J2 다(token-budget). 필수 대상은 다음과 같다.
   - PLT-0, TG-1, PRV-1, LRN-5, GML-1, PRV-3
   - 새 egress, 새 inbound surface, Core 경계 변경. DRV-1 같은 커넥터가 여기에 해당한다.
   - 판정이 CHANGES REQUIRED 이면 수정한 뒤 재리뷰를 받는다.
-- **delta 리뷰**: 수정 후에는 `git diff <이전 리뷰 시점>..HEAD` 만 다시 Codex 에 맡긴다.
+- **delta 리뷰**: 수정 후에는 `git diff <이전 리뷰 시점>..HEAD` 만 다시 Codex 에 맡긴다. Claude 쪽 delta 재리뷰는 J3 이고, 수정이 인증 순서·기본값·공용 helper·실패 동작을 바꿨으면 J2/J1 로 올린다.
+- **Claude ↔ Codex 이견**: token-budget §5 를 따른다(최대 2라운드, 소유자 규칙 → ADR → 재현 근거 → 판단 순, 경계 위험은 엄격한 쪽, 정책 변경은 소유자 결정). 보고에 쟁점별 `Claude 안 / Codex 안 / 결론` 을 남긴다.
 - **fix loop 상한**: 같은 지적의 수정은 2회까지다. 그 뒤에는 오케스트레이터가 범위 축소, 잔여 위험으로 수용, 중단 중 하나를 정하고 해당 ADR 구현 노트에 기록한다.
 - **ADR 충돌**: 구현이나 결정이 `ARCHITECTURE.md` 또는 확정된 ADR 과 충돌하면 멈추고, ADR 에 맞추거나 소유자에게 보고한다. ADR 을 우회하는 예외를 스스로 만들지 않는다.
-- **리뷰 지적 반영에 쓰는 모델 (보내기 전에 분류부터)**: 리뷰 결과를 받으면 지적마다 먼저 분류한 뒤 나눠 보낸다(side-job §6.5 강등 규칙).
-  - 설계·보안 판단이 필요한 지적(쓰기·권한 경로, 새 경계 규칙, ADR 해석) → 원래 opus 에이전트에 SendMessage 로 이어서.
-  - 작고 명확한 지적(문구, 테스트 행, 정답·기록 갱신, 주석, 오래된 문서 줄) → 새 haiku 에이전트(여러 파일이면 sonnet)에 같은 worktree 로.
+- **리뷰 지적 반영에 쓰는 모델 (보내기 전에 분류부터)**: 리뷰 결과를 받으면 지적마다 먼저 분류한 뒤 나눠 보낸다(token-budget §2 등급표).
+  - J1·J2 지적(쓰기·권한 경로, 새 경계 규칙, ADR 해석) → 원래 opus 에이전트에 SendMessage 로 이어서(모델·effort 는 처음 값 그대로).
+  - M 지적(문구, 테스트 행, 정답·기록 갱신, 주석, 오래된 문서 줄) → 새 haiku · medium 에이전트(여러 파일 I 면 sonnet · high)에 같은 worktree 로.
   - 한 라운드에 두 종류가 섞이면 쪼개서 동시에 보낸다. 같은 파일을 건드리면 opus 작업이 끝난 뒤 haiku 를 띄운다.
-  - 보고서의 "실행 방식·모델" 줄에 라운드마다 누구에게 무엇을 보냈는지 남긴다.
+  - 보고서에 token-budget §6 형식(예산 줄 + 에이전트별 `<등급> · <model> · <effort>`)으로 라운드마다 남긴다.
 
 ## 3.5 Review loop discipline (2026-10-21~)
 
@@ -155,7 +156,7 @@ tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 
 - 다른 worktree 의 fetch 와 겹쳐 ref lock 오류가 나면 다시 시도한다(빌드가 옛 코드로 돌았을 수 있다).
 - **스모크**: ego-browser 의 로그인된 Discord 탭(task space id 는 소유자 로컬 main checkout 의 `space_id`, page `p1`)만 쓴다. 새 탭·새 space 로 우회하지 않는다. 재부팅 뒤에는 space 가 사라지므로 `taskSpace("quoky discord relay")` 로 하나 만들어 Discord 로그인 상태를 확인하고 그 id 를 `space_id` 에 적는다(로그아웃 상태면 소유자에게 로그인을 요청).
-  - 먼저 `chat/busy` 잠금을 걸고 `qa/steps.sh <url> id msg …` 를 실행한 뒤 잠금을 푼다.
+  - 실행·판정·되돌리기·보고는 **`quoky-e2e` 스킬**로 한다. 넘기는 요청문은 이 PR 의 변경된 기능 경로와 미설정 기능의 기존 동작이다(범위는 출하 승인으로 갈음하므로 시나리오 표는 보고에만 남긴다).
   - 대상은 QA 채널 또는 Quoky DM(봇 "chunsik-bot")이다. 구체 URL·ID 는 저장소에 두지 않고 로컬 `scripts/chat/` 설정과 메모리(`quoky-*`)에 있다.
   - **`chat/`, `qa/`, `space_id` 는 추적되지 않는다.** 소유자 로컬 main checkout `/Users/seongsujeonjonghyeong/demo_Project/quoky-platform/.claude/skills/quoky-ship/scripts/` 에만 있고 worktree 에는 없으므로, 그 절대 경로로 실행한다.
   - 변경된 기능 경로와 미설정 기능의 기존 동작을 하나씩 확인한다.
