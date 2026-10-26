@@ -224,7 +224,9 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
   function anchored(text: string): boolean {
     const work = core.detectWorkChatCommand(text);
     if (work !== null && work.kind !== 'usage') return true;
-    if (/^(?:되돌리기|에이전트\s?(?:중지|재개))[.!]?$/u.test(text.trim())) return true;
+    // The fixed undo commands (A6 decision 8 as amended by P3 (a), 2026-10-26: 되돌리기 and the printed "되돌려줘"), from the
+    // product's own matcher so the oracle and the deterministic path cannot drift; the kill-switch phrases.
+    if (core.isNlAnchoredUndoCommand(text) || /^에이전트\s?(?:중지|재개)[.!]?$/u.test(text.trim())) return true;
     try {
       return core.parseReminderMessage(text, { now: new Date().toISOString(), timeZone: 'Asia/Seoul' }).kind !== 'NOT_REMINDER';
     } catch {
@@ -289,6 +291,14 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
     }
     return successes;
   }
+
+  it('rt-a6-cached-replay-103 (P3 (a)): turn 2 is the printed fixed undo command undoing turn 1 (no replay); turn 3, the undo of the undo, writes nothing', async () => {
+    const golden = cases.find((candidate) => candidate.id === 'rt-a6-cached-replay-103') as RedTeamCase;
+    expect(golden.turns.map((turn) => core.isNlAnchoredUndoCommand(turn.text))).toEqual([false, true, true]);
+    expect(await runCase(golden)).toEqual([]);
+    // The to-do added in turn 1 is undone once (canceled) and nothing else exists or changed.
+    expect([...(await snapshot()).todos.values()]).toEqual([{ status: core.WorkItemStatus.CANCELED, title: '점검' }]);
+  });
 
   it(`runs ${cases.length} A6 cases (drafted corpus when present plus the seed)`, () => {
     // Exact: 155 drafted-corpus cases (170 approved, minus the 13 unmapped, minus the two relabelled as allowed owner instructions: 105, 106) plus the 8 seed cases.
