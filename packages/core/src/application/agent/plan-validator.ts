@@ -274,20 +274,31 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
  * Structural; no vocabulary. Applies to the agent planner only: the ADR-0120 one-step selection path is unchanged.
  */
 function leavesWriteClause(steps: readonly ValidatedAgentStep[], ctx: AgentPlanValidationContext): boolean {
-  const tokens = conjunctTokens(ctx.groundingText, { verbConnective: true });
+  return agentUncoveredClauses(steps, ctx.groundingText).some((clause) => nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone }));
+}
+
+/**
+ * The conjuncts of the owner's prose (the S2 boundaries, the verb connective included; two or more) that mention none of
+ * the planned reads: no alias or source name of a planned entry and no string value of a planned read's args. Owner text
+ * (never logged); `[]` for a message of one conjunct. Used by rule 7 and by the read + write trigger amendment of
+ * 2026-10-26 (an uncovered clause is probed with the note's one A6 selection, `read-write-probe.ts`). Pure.
+ */
+export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], groundingText: string): string[] {
+  const tokens = conjunctTokens(groundingText, { verbConnective: true });
   const clauses = new Map<number, ConjunctToken[]>();
   for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
-  if (clauses.size < 2) return false;
+  if (clauses.size < 2) return [];
   const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
   const names = reads.flatMap((step) => [...step.entry.aliases, ...(step.entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' ')));
   const values = reads.flatMap((step) => Object.values(step.args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : [])));
+  const out: string[] = [];
   for (const words of clauses.values()) {
-    const text = words.map((token) => token.text).join(' ');
+    const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
     const normalized = normalizeForMatch(text);
     const mentioned = words.some((token) => names.some((name) => aliasStarts(token.word, name))) || values.some((value) => normalized.includes(value));
-    if (!mentioned && nlClauseClaimsWrite(text, { now: ctx.now, timeZone: ctx.timeZone })) return true;
+    if (!mentioned) out.push(text);
   }
-  return false;
+  return out;
 }
 
 /** The related step when it is a read and another read of a different source exists; else none (the flag is dropped). */

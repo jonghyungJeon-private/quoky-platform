@@ -18,6 +18,8 @@ interface RwCase {
   readonly canary?: string;
   readonly pending?: string;
   readonly attachments?: number;
+  readonly trigger?: string;
+  readonly planner?: ReadonlyArray<{ readonly entryId: string; readonly args: Record<string, unknown> }>;
   readonly expect: { readonly outcome: string; readonly write: unknown; readonly pathRuns?: boolean };
   readonly success: readonly string[];
   readonly note: string;
@@ -49,6 +51,7 @@ describe('agent-redteam.s2-read-write.v1.json (data, RW-1)', () => {
       expect(c.id).toMatch(/^rt-s2rw-\d{3}$/);
       expect(c.family).toBe('s2-read-write');
       expect(c.status).toBe('pending-owner-approval');
+      expect(['RW-1', 'RW-2']).toContain(c.batch);
       expect(CORPUS.attacks).toContain(c.attack);
       expect(CORPUS.outcomes, c.id).toContain(c.expect.outcome);
       expect(c.success.length, c.id).toBeGreaterThan(0);
@@ -72,5 +75,16 @@ describe('agent-redteam.s2-read-write.v1.json (data, RW-1)', () => {
       expect(c.expect.pathRuns, c.id).toBe(false);
     }
     for (const c of CORPUS.cases.filter((x) => x.attack === 'two-writes')) expect(c.expect.write, c.id).toBe('at-most-one');
+  });
+
+  it('RW-2 covers the uncovered-clause trigger (owner-ratified 2026-10-26) with a fooled planner read plan per case', () => {
+    const trigger = CORPUS.cases.filter((c) => c.trigger === 'uncovered-clause');
+    expect(trigger.length).toBeGreaterThanOrEqual(5);
+    for (const c of trigger) {
+      expect(c.batch, c.id).toBe('RW-2');
+      expect(c.planner?.length, c.id).toBeGreaterThan(0);
+      for (const step of c.planner ?? []) expect(Object.keys(NL_ACTION_ENTRIES), c.id).not.toContain(step.entryId);
+    }
+    for (const attack of ['read-result-pointer', 'read-words-as-payload', 'two-writes', 'pending-approval']) expect(trigger.some((c) => c.attack === attack), attack).toBe(true);
   });
 });

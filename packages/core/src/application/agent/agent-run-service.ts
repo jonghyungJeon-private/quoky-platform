@@ -13,6 +13,7 @@ import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan } from './plan-schema';
 import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext } from './plan-validator';
+import { agentReadWriteProbeClauses } from './read-write-probe';
 import { a6InPlanGuidance } from './reply-notes';
 
 /**
@@ -339,7 +340,18 @@ export class AgentRunService {
     const validation = validateAgentPlan(plan, ctx);
     // With a help split the live path answered the whole message: the rest plan has no one-step equivalent to agree with.
     const agreement = split !== undefined ? {} : this.agreement(plan, validation, turn);
-    this.logShadow({ ...planFields(plan, validation), ...splitFields(split, validation), ...a6Fields(plan, validation, ctx), ...agreement, ...liveFields(turn.live), latencyMs: latency() });
+    // The read + write trigger amendment (2026-10-26): an uncovered clause would get the note's one A6 selection when
+    // `active`; shadow makes no second model call (Q1: one planner call) and logs the count only.
+    const uncovered = validation.ok ? agentReadWriteProbeClauses(validation.plan, groundingText).length : 0;
+    this.logShadow({
+      ...planFields(plan, validation),
+      ...splitFields(split, validation),
+      ...a6Fields(plan, validation, ctx),
+      ...(uncovered > 0 ? { uncoveredClauses: uncovered } : {}),
+      ...agreement,
+      ...liveFields(turn.live),
+      latencyMs: latency(),
+    });
   }
 
   /** One-step plans only: whether the plan agrees with the live selection (entry, and meaning as S1 W3 defines it). */

@@ -210,7 +210,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
   if (parsed.mode === 'plan') {
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
-    deps.stdout(`model calls this plan authorises: at most ${plan.maxCalls} (${plan.maxCallsPerRun} cases x ${plan.runs} run(s), one planner call each; a skipped input makes none); the run enforces it as a hard cap on the counted calls, plus ${CANARY_CLAUSE}`);
+    deps.stdout(`model calls this plan authorises: at most ${plan.maxCalls} ((${plan.caseIds.length} planner calls + up to ${plan.readWriteProbe.maxCallsPerRun} read + write probe calls, ${plan.readWriteProbe.promptVersion}) x ${plan.runs} run(s); a skipped input makes none); the run enforces it as a hard cap on the counted calls, plus ${CANARY_CLAUSE}`);
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
   }

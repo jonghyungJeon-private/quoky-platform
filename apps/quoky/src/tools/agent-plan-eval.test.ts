@@ -411,8 +411,14 @@ describe('plan digest', () => {
     expect(approvedCount).toBe(873 + 260);
     expect(approved.caseIds).toHaveLength(approvedCount);
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
-    expect(approved.maxCalls).toBe(approvedCount * 3);
-    expect(pending.maxCalls).toBe((873 + NEW.length) * 3);
+    // The read + write probe bound (owner-ratified 2026-10-26): one more call for each case of two or more conjuncts.
+    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v65', maxCallsPerRun: expect.any(Number) });
+    expect(approved.readWriteProbe.maxCallsPerRun).toBeGreaterThan(0);
+    expect(approved.readWriteProbe.maxCallsPerRun).toBeLessThan(approvedCount);
+    expect(approved.maxCalls).toBe((approvedCount + approved.readWriteProbe.maxCallsPerRun) * 3);
+    expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
+    // The probe prompt is bound into the digest.
+    expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
     expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v7', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -484,12 +490,17 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    expect(text).toContain(`at most ${approvedCount * 3} (${approvedCount} cases x 3 run(s)`);
+    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v65\) x 3 run\(s\)/.exec(text);
+    expect(bound).not.toBeNull();
+    const [, total, planner, probes] = (bound as RegExpExecArray).map(Number);
+    expect(planner).toBe(approvedCount);
+    expect(total).toBe(((planner as number) + (probes as number)) * 3);
     expect(created).toEqual([]);
     const withPending = deps(created);
     expect(await runCli(['--mode', 'plan', '--runs', '3', '--include-pending'], withPending)).toBe(EXIT_OK);
     expect(digestOf(withPending.out)).not.toBe(digestOf(planned.out));
-    expect(withPending.out.join('\n')).toContain(`at most ${(873 + NEW.length) * 3}`);
+    const pendingPlan = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
+    expect(withPending.out.join('\n')).toContain(`at most ${(873 + NEW.length + pendingPlan.readWriteProbe.maxCallsPerRun) * 3}`);
   });
 
   it('run exits 3 before any provider is constructed without the digest, with a wrong one, or with another plan\'s', async () => {
@@ -729,5 +740,41 @@ describe('rule 7 in scoring: Core\'s final outcome of a read plan that leaves a 
     expect(scoreAgentPlanOutput(golden, calendarOnly, FIXTURE)).toMatchObject({ outcome: 'none' });
     const positive: AgentPlanEvalCase = { ...golden, id: 'ap-p999', family: 'compound', gold: { steps: [{ entryId: 'calendar.events', args: { range: 'tomorrow' } }], ambiguity: 'CLEAR' } };
     expect(scoreAgentPlanOutput(positive, calendarOnly, FIXTURE)).toMatchObject({ outcome: 'miss-none' });
+  });
+});
+
+describe('the read + write probe in the eval (owner-ratified trigger amendment, 2026-10-26)', () => {
+  const golden = byId('ap-n131');
+  const calendarOnly = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+  const scripted = (probeAnswer: string): AiProvider & { prompts: string[] } => {
+    const provider = {
+      id: 'scripted',
+      capabilities: [],
+      prompts: [] as string[],
+      isAvailable: async () => true,
+      execute: async (request: { prompt: string }) => {
+        provider.prompts.push(request.prompt);
+        return { text: request.prompt.startsWith('You are the request planner of Quoky') ? calendarOnly : probeAnswer };
+      },
+    };
+    return provider as unknown as AiProvider & { prompts: string[] };
+  };
+
+  it('a planner answer leaving the write clause gets one probe call; a write in that clause scores read-write (not wrong)', async () => {
+    const plan = buildAgentPlanEvalPlan([golden], HASHES, FIXTURE, { ...OPTIONS, runs: 1 });
+    expect(plan.readWriteProbe.maxCallsPerRun).toBe(1);
+    const provider = scripted(JSON.stringify({ entryId: 'reminder.create', args: { when: '내일 9시', body: '출발' }, ambiguity: 'CLEAR', alternatives: [] }));
+    const [record] = await runAgentPlanEvaluation({ cases: [golden], plan, provider });
+    expect(provider.prompts).toHaveLength(2);
+    expect(record).toMatchObject({ outcome: 'read-write', reason: 'write:reminder.create', probe: 'write' });
+    expect(summarizeAgentPlanRun([record as AgentPlanEvalRecord], plan.callTimeoutMs).wrongOnNegatives).toBe(0);
+  });
+
+  it('a probe that picks nothing leaves the read plan standing (wrong on this negative), and the hard cap covers the probe', async () => {
+    const plan = buildAgentPlanEvalPlan([golden], HASHES, FIXTURE, { ...OPTIONS, runs: 1 });
+    const [standing] = await runAgentPlanEvaluation({ cases: [golden], plan, provider: scripted(JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] })) });
+    expect(standing).toMatchObject({ outcome: 'wrong', probe: 'stands' });
+    const [capped] = await runAgentPlanEvaluation({ cases: [golden], plan: { ...plan, maxCalls: 1 }, provider: scripted('{}') });
+    expect(capped).toMatchObject({ outcome: 'capped' });
   });
 });

@@ -50,6 +50,10 @@ import {
   NL_CATALOG_ENTRY_IDS,
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
+  AGENT_READ_WRITE_PROBE_PROMPT_VERSION,
+  agentReadWriteProbeClauses,
+  agentReadWriteProbePrompt,
+  agentReadWriteProbeResult,
   buildAgentPlanPrompt,
   conjunctTokens,
   nlHelpSourceScope,
@@ -397,6 +401,13 @@ export type AgentPlanOutcome =
   | 'error'
   /** the hard call cap refused the call (the run fails). */
   | 'capped'
+  /**
+   * The read + write trigger amendment of 2026-10-26: the plan left an uncovered clause and the probe's one A6 selection
+   * picked a write lying in it (`read-write`: Core's read + write path answers the turn) or a referenced one
+   * (`read-note`: the read sections and the decision (f) note). Never `wrong` on a negative; never `exact` on a positive.
+   */
+  | 'read-write'
+  | 'read-note'
   | 'skipped';
 
 export interface AgentPlanScore {
@@ -723,12 +734,45 @@ export interface AgentPlanEvalPlan {
   readonly includePending: boolean;
   readonly fixture: AgentPlanCorpus['fixture'];
   readonly caseIds: readonly string[];
-  /** The hard call cap: one planner call per case per run (a skipped input makes none). */
+  /**
+   * The read + write trigger amendment (owner-ratified 2026-10-26): at most one more call per case, the A6 selection probe,
+   * made only when the planner's validated plan leaves an uncovered clause. Bound: the cases of two or more conjuncts.
+   */
+  readonly readWriteProbe: { readonly promptVersion: string; readonly promptSha256: string; readonly maxCallsPerRun: number };
+  /** The hard call cap: one planner call per case per run plus the probe bound (a skipped input makes none). */
   readonly maxCallsPerRun: number;
   readonly maxCalls: number;
   /** `false` with `--include-pending`: the run reports numbers only, never a gate verdict (CA review of S2 P2). */
   readonly gating: boolean;
   readonly gate: typeof AGENT_PLAN_EVAL_GATE | 'non-gating';
+}
+
+/** The A6 entries the read + write probe offers beside the reads (the A6 catalog). */
+const PROBE_ENTRIES: readonly NlCatalogEntry[] = [...READ_ENTRIES, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
+const PROBE_OFFERED: ReadonlyMap<string, NlCatalogEntry> = new Map(PROBE_ENTRIES.map((entry) => [entry.id, entry] as const));
+
+/** sha256 of the probe's A6 selection instruction text (every entry offered, an empty owner message). */
+export function readWriteProbePromptSha256(): string {
+  return sha256(agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: '' }));
+}
+
+/** The uncovered clauses of the planner's answer (validated under the case context), or `[]` (no probe needed). */
+export function readWriteProbeClausesOf(golden: AgentPlanEvalCase, raw: string, fixture: AgentPlanCorpus['fixture']): string[] {
+  const prepared = caseContext(golden, fixture);
+  if ('skip' in prepared) return [];
+  const plan = parseAgentPlanOutput(raw);
+  if (plan === null) return [];
+  const validation = validateAgentPlan(plan, prepared.ctx);
+  return validation.ok ? agentReadWriteProbeClauses(validation.plan, prepared.ctx.groundingText) : [];
+}
+
+/** Core's final outcome after the probe: a write or a referenced write in an uncovered clause replaces the plan's score. */
+export function applyReadWriteProbe(score: AgentPlanScore, probeRaw: string, clauses: readonly string[], fixture: AgentPlanCorpus['fixture']): AgentPlanScore & { readonly probe: 'write' | 'note' | 'stands' } {
+  const result = agentReadWriteProbeResult(probeRaw, clauses, PROBE_OFFERED, { now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone });
+  if (result.kind === 'stands') return { ...score, probe: 'stands' };
+  const { diff: _diff, diffStep: _diffStep, ...rest } = score;
+  const entry = isNlActionEntryId(result.entryId) ? result.entryId : 'unknown';
+  return { ...rest, outcome: result.kind === 'write' ? 'read-write' : 'read-note', reason: `${result.kind}:${entry}`, probe: result.kind };
 }
 
 export function agentPlanPromptSha256(): string {
@@ -749,6 +793,11 @@ export function buildAgentPlanEvalPlan(
   }
   const selected = cases.filter((golden) => golden.status === 'approved' || options.includePending);
   if (selected.length === 0) throw new Error('no case selected');
+  const probeBound = selected.filter((golden) => {
+    const prepared = caseContext(golden, fixture);
+    return !('skip' in prepared) && new Set(conjunctTokens(prepared.ctx.groundingText, { verbConnective: true }).filter((token) => !token.boundary).map((token) => token.conjunct)).size >= 2;
+  }).length;
+  const perRun = selected.length + probeBound;
   return {
     kind: 'agent-plan-eval',
     promptVersion: AGENT_PLAN_PROMPT_VERSION,
@@ -763,8 +812,9 @@ export function buildAgentPlanEvalPlan(
     includePending: options.includePending,
     fixture,
     caseIds: selected.map((golden) => golden.id),
-    maxCallsPerRun: selected.length,
-    maxCalls: selected.length * options.runs,
+    readWriteProbe: { promptVersion: AGENT_READ_WRITE_PROBE_PROMPT_VERSION, promptSha256: readWriteProbePromptSha256(), maxCallsPerRun: probeBound },
+    maxCallsPerRun: perRun,
+    maxCalls: perRun * options.runs,
     gating: !options.includePending,
     gate: options.includePending ? 'non-gating' : AGENT_PLAN_EVAL_GATE,
   };
@@ -788,6 +838,8 @@ export interface AgentPlanEvalRecord extends AgentPlanScore {
   readonly error?: string;
   /** The case is a clarification gold (a question is its correct answer). */
   readonly clarifyGold?: true;
+  /** The read + write probe of this case: its closed result (`error` when the probe call failed: the plan stands). */
+  readonly probe?: 'write' | 'note' | 'stands' | 'error';
 }
 
 export class AgentPlanCallCapReached extends Error {
@@ -859,7 +911,22 @@ export async function runAgentPlanEvaluation(input: {
               capped.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs }),
               input.plan.callTimeoutMs,
             );
-            record = { ...base, ...(await scoreAgentPlanOutputInWorld(golden, result.text, input.plan.fixture)), latencyMs: clock() - started };
+            const scored = await scoreAgentPlanOutputInWorld(golden, result.text, input.plan.fixture);
+            const latencyMs = clock() - started;
+            // The read + write trigger amendment: an uncovered clause gets the probe's one A6 selection call (capped).
+            const clauses = readWriteProbeClausesOf(golden, result.text, input.plan.fixture);
+            if (clauses.length === 0) {
+              record = { ...base, ...scored, latencyMs };
+            } else {
+              const probePrompt = agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: prepared.text });
+              try {
+                const probe = await withTimeout(capped.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: probePrompt, timeoutMs: input.plan.callTimeoutMs }), input.plan.callTimeoutMs);
+                record = { ...base, ...applyReadWriteProbe(scored, probe.text, clauses, input.plan.fixture), latencyMs };
+              } catch (error) {
+                if (error instanceof AgentPlanCallCapReached) record = { ...base, outcome: 'capped', latencyMs: 0 };
+                else record = { ...base, ...scored, probe: 'error', latencyMs };
+              }
+            }
           } catch (error) {
             const latencyMs = clock() - started;
             if (error instanceof AgentPlanCallCapReached) record = { ...base, outcome: 'capped', latencyMs: 0 };
