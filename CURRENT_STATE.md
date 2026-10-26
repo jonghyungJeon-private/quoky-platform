@@ -44,11 +44,18 @@ score order. Built offline. **No model call was made.** The Strict run is an own
   - Core-side misses: a calendar write followed by "되돌려줘" undoes an earlier to-do (actions-local); the "되돌려줘"
     undo hint and one calendar usage example do not parse without the model; three help-index flow steps; a worded
     help-scope answer.
-- **Gate proposal** (owner to ratify): ≥ 90% of the fully scored scenarios and 0 of each hard check, in every run.
-- **Docs:** `docs/eval/context-eval.md`.
+- **Gate** (owner decision 2026-10-26): ≥ 95% of the fully scored scenarios and 0 of each hard check, in every run.
+- **First Strict run** (deployed, chat real, digest `914a7c20…`): **FAILED**.
+  - Scenarios 22/38; hard failures wrong-write 1, false-incapability 8, fabricated-action 2, unparseable 4.
+  - Classified in `docs/eval/context-eval-baseline-2026-10-26.md`. After the scorer corrections listed there, the run
+    re-scores to 0 wrong writes, 4 real #280 false-incapability claims, 0 fabricated actions and about 5 unparseable
+    suggestions; the pass count is unchanged.
+  - Open owner decisions: D1 (keep the listing context across a chat turn: follow-up 2), D2 (do suggestions have to
+    parse without the model?), D3, D4.
+- **Docs:** `docs/eval/context-eval.md`, `docs/eval/context-eval-baseline-2026-10-26.md`.
 
-Next: the owner approves a plan digest (recommended `--profile deployed --chat real`, about 85 selection and 41 chat calls,
-about $4); then the gaps are fixed in score order.
+Next: the prioritised fix plan in the baseline doc, starting with P1 (#280 chat guard), P2 (calendar rename copy/gate) and
+P4 (a calendar write does not leave an older to-do as the last action).
 
 ### ADR-0121 amendment A3a — ratified (2026-10-26, docs only, branch `claude/v5-a3-proposal`)
 
