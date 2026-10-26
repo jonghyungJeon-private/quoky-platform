@@ -51,7 +51,9 @@ export function agentReadWriteProbeResult(
   const output = parseSelectionOutput(raw);
   if (output === null || output.entryId === null || output.ambiguity !== 'CLEAR' || !isNlActionEntryId(output.entryId)) return { kind: 'stands' };
   const entry = offered.get(output.entryId);
-  if (entry === undefined) return { kind: 'stands' };
+  // Codex P2: only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE); `item.summarize` (ITEM_READ) is no
+  // write, so a summary of one listed item never re-scores or re-routes a plan.
+  if (entry === undefined || (entry.risk !== 'LOCAL_WRITE' && entry.risk !== 'EXTERNAL_WRITE')) return { kind: 'stands' };
   for (const clause of clauses) {
     const validated = validateSelection({ entryId: output.entryId, args: output.args }, { offered, groundingText: clause, now: ctx.now, timeZone: ctx.timeZone, actions: true });
     if (!validated.ok) continue;

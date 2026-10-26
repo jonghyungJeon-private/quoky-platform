@@ -29805,3 +29805,11 @@ English or unusual phrasing) still relies on the planner's `none`.
   - Tests: `agent/read-write-probe.test.ts` (ap-n131's uncovered clause, write / note / stands, read words refused, the
     prompt), the eval runner (ap-n131: one probe call, `read-write`, not wrong; a `none` probe: the plan stands and is
     wrong; the hard cap covers the probe), the digest binding, the corpus shape.
+- **Codex review of ed212614..72ccd914 (3 × P2), fixed.** (1) The probe call is measured: its latency is recorded
+  (`probeLatencyMs`) and counts in the calls, the latency percentiles and the over-bound rate; a probe timeout or failure
+  is the record's outcome (`timeout` / `error`, reason `probe-timeout` / `probe-error`), never silently the planner's.
+  (2) The probe accepts only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE): `item.summarize`
+  (ITEM_READ) leaves the plan standing, so "두 번째 메일 요약해줘" never re-scores a wrong plan. (3) The help-scope question
+  resolves the Quoky option's help topic from EVERY named source and bounds only the stored and shown names (three), with
+  an overflow flag (`appSourcesMore`) so the question and the app reply still say "등" / "and others" (test: four
+  sources, one mapping to another topic → the general help and "슬랙·지라·깃허브 등").

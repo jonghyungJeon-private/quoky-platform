@@ -96,10 +96,13 @@ function namesOf(sources: NlHelpScopeSources): readonly string[] {
   return typeof sources === 'string' ? [sources] : sources;
 }
 
-/** Several names joined naturally ("구글 캘린더·지메일", "Google Calendar and Gmail"), capped, with "등" / "and others". */
-function joinedNames(names: readonly string[], language: 'ko' | 'en'): string {
+/**
+ * Several names joined naturally ("구글 캘린더·지메일", "Google Calendar and Gmail"), capped, with "등" / "and others" when
+ * more were named (`more`: a stored question keeps only the shown names and this flag, Codex P2).
+ */
+function joinedNames(names: readonly string[], language: 'ko' | 'en', overflow = false): string {
   const shown = names.slice(0, NL_HELP_SCOPE_MAX_SOURCES);
-  const more = names.length > shown.length;
+  const more = overflow || names.length > shown.length;
   if (language === 'en') {
     const list = shown.length <= 2 ? shown.join(' and ') : `${shown.slice(0, -1).join(', ')} and ${shown.at(-1) as string}`;
     return more ? `${shown.join(', ')} and others` : list;
@@ -108,10 +111,10 @@ function joinedNames(names: readonly string[], language: 'ko' | 'en'): string {
 }
 
 /** The two numbered options' labels: Quoky's way first, the app itself second (also the words a reply may echo). */
-export function renderHelpScopeOptions(sources: NlHelpScopeSources, language: 'ko' | 'en'): readonly [string, string] {
+export function renderHelpScopeOptions(sources: NlHelpScopeSources, language: 'ko' | 'en', more = false): readonly [string, string] {
   const names = namesOf(sources);
   if (names.length > 1) {
-    const label = joinedNames(names, language);
+    const label = joinedNames(names, language, more);
     return language === 'en'
       ? [`Looking up or connecting ${label} with Quoky`, `Settings or use of those apps themselves`]
       : [`Quoky로 ${label} 조회·연결하는 방법`, `그 앱 자체의 설정·사용법`];
@@ -127,11 +130,11 @@ export function renderHelpScopeOptions(sources: NlHelpScopeSources, language: 'k
  * sources (owner decision of 2026-10-26) "Quoky로 구글 캘린더·지메일을 조회·연결하는 방법을 물으신 건가요, 아니면 그 앱 자체의
  * 설정·사용법인가요?".
  */
-export function renderHelpScopeQuestion(sources: NlHelpScopeSources, language: 'ko' | 'en'): string {
+export function renderHelpScopeQuestion(sources: NlHelpScopeSources, language: 'ko' | 'en', more = false): string {
   const names = namesOf(sources);
-  const [quoky, app] = renderHelpScopeOptions(names, language);
+  const [quoky, app] = renderHelpScopeOptions(names, language, more);
   if (names.length > 1) {
-    const label = joinedNames(names, language);
+    const label = joinedNames(names, language, more);
     return language === 'en'
       ? [`Do you mean how to look up or connect ${label} with Quoky, or the settings or use of those apps themselves?`, `1. ${quoky}`, `2. ${app}`, 'Reply with the number.'].join('\n')
       : [`Quoky로 ${label}${objectParticle(label)} 조회·연결하는 방법을 물으신 건가요, 아니면 그 앱 자체의 설정·사용법인가요?`, `1. ${quoky}`, `2. ${app}`, '번호로 답해 주세요.'].join('\n');
@@ -143,10 +146,10 @@ export function renderHelpScopeQuestion(sources: NlHelpScopeSources, language: '
 }
 
 /** The app-itself answer: honest, fixed, never instructions for the other app. */
-export function renderHelpScopeAppReply(sources: NlHelpScopeSources, language: 'ko' | 'en'): string {
+export function renderHelpScopeAppReply(sources: NlHelpScopeSources, language: 'ko' | 'en', more = false): string {
   const names = namesOf(sources);
   if (names.length > 1) {
-    const label = joinedNames(names, language);
+    const label = joinedNames(names, language, more);
     return language === 'en'
       ? `That is about the settings or use of ${label} themselves, so I can't guide you through it reliably. Please check each app's own help.`
       : `그건 ${label} 앱 자체의 설정·사용법이라 제가 안내해 드리긴 어려워요. 각 앱의 도움말을 확인해 주세요.`;

@@ -49,6 +49,10 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
     expect(agentReadWriteProbeResult('not json', clause, OFFERED, CTX)).toEqual({ kind: 'stands' });
   });
 
+  it('Codex P2: only a write by catalog risk counts; item.summarize (ITEM_READ) leaves the plan standing', () => {
+    expect(agentReadWriteProbeResult(out('item.summarize', { source: 'mail', ref: '#2' }), ['두 번째 메일 요약해줘'], OFFERED, CTX)).toEqual({ kind: 'stands' });
+  });
+
   it('a write with a list or deictic reference is not run: the read sections and the decision (f) note (note)', () => {
     expect(agentReadWriteProbeResult(out('todo.cancel', { ref: '#2' }), ['두 번째 거 취소해줘'], OFFERED, CTX)).toMatchObject({ kind: 'note', entryId: 'todo.cancel' });
   });

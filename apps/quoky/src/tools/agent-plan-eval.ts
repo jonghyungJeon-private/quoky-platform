@@ -838,8 +838,13 @@ export interface AgentPlanEvalRecord extends AgentPlanScore {
   readonly error?: string;
   /** The case is a clarification gold (a question is its correct answer). */
   readonly clarifyGold?: true;
-  /** The read + write probe of this case: its closed result (`error` when the probe call failed: the plan stands). */
-  readonly probe?: 'write' | 'note' | 'stands' | 'error';
+  /**
+   * The read + write probe of this case: its closed result. A probe call that timed out or failed is the record's outcome
+   * (`timeout` / `error`, reason `probe-timeout` / `probe-error`; Codex P2), never silently the planner's.
+   */
+  readonly probe?: 'write' | 'note' | 'stands' | 'timeout' | 'error';
+  /** The probe call's latency (counted in the calls, the latency percentiles and the over-bound rate). */
+  readonly probeLatencyMs?: number;
 }
 
 export class AgentPlanCallCapReached extends Error {
@@ -919,12 +924,18 @@ export async function runAgentPlanEvaluation(input: {
               record = { ...base, ...scored, latencyMs };
             } else {
               const probePrompt = agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: prepared.text });
+              const probeStarted = clock();
               try {
                 const probe = await withTimeout(capped.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: probePrompt, timeoutMs: input.plan.callTimeoutMs }), input.plan.callTimeoutMs);
-                record = { ...base, ...applyReadWriteProbe(scored, probe.text, clauses, input.plan.fixture), latencyMs };
+                record = { ...base, ...applyReadWriteProbe(scored, probe.text, clauses, input.plan.fixture), latencyMs, probeLatencyMs: clock() - probeStarted };
               } catch (error) {
+                const probeLatencyMs = clock() - probeStarted;
                 if (error instanceof AgentPlanCallCapReached) record = { ...base, outcome: 'capped', latencyMs: 0 };
-                else record = { ...base, ...scored, probe: 'error', latencyMs };
+                else if (error instanceof EvalCallTimeout || (error as { kind?: unknown } | null)?.kind === 'TIMEOUT') {
+                  record = { ...base, outcome: 'timeout', reason: 'probe-timeout', probe: 'timeout', gotEntries: scored.gotEntries ?? [], latencyMs, probeLatencyMs };
+                } else {
+                  record = { ...base, outcome: 'error', reason: 'probe-error', probe: 'error', error: closedErrorName(error), latencyMs, probeLatencyMs };
+                }
               }
             }
           } catch (error) {
@@ -1025,10 +1036,15 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
   for (const family of Object.values(perFamily)) family.rate = family.positives === 0 ? 1 : family.exact / family.positives;
   for (const slot of Object.values(perEntry)) slot.rate = slot.total === 0 ? 1 : slot.exact / slot.total;
   const called = records.filter((record) => record.outcome !== 'skipped' && record.outcome !== 'capped');
-  const latencies = called.map((record) => record.latencyMs).sort((a, b) => a - b);
+  // Codex P2: the read + write probe calls are calls too: their latency and timeouts count in the gated measurements.
+  const probed = called.filter((record) => record.probeLatencyMs !== undefined);
+  const latencies = [...called.map((record) => record.latencyMs), ...probed.map((record) => record.probeLatencyMs as number)].sort((a, b) => a - b);
   const pct = (p: number): number => (latencies.length === 0 ? 0 : (latencies[Math.min(latencies.length - 1, Math.max(0, Math.ceil((p / 100) * latencies.length) - 1))] as number));
-  const overBound = called.filter((record) => record.outcome === 'timeout' || record.latencyMs > boundMs).length;
-  const overBoundRate = called.length === 0 ? 0 : overBound / called.length;
+  const plannerOver = called.filter((record) => (record.outcome === 'timeout' && record.probe !== 'timeout') || record.latencyMs > boundMs).length;
+  const probeOver = probed.filter((record) => record.probe === 'timeout' || (record.probeLatencyMs as number) > boundMs).length;
+  const overBound = plannerOver + probeOver;
+  const callCount = called.length + probed.length;
+  const overBoundRate = callCount === 0 ? 0 : overBound / callCount;
   const exactRate = positives.length === 0 ? 1 : exact / positives.length;
   const capped = records.filter((record) => record.outcome === 'capped').length;
   const group = (oneStepGroup: boolean): AgentPlanEvalSlot => {
@@ -1052,7 +1068,7 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
     perFamily,
     perEntry,
     outcomes,
-    calls: called.length,
+    calls: callCount,
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overBound },
     overBoundRate,
     capped,

@@ -74,6 +74,8 @@ export type PendingQuestion =
       readonly appSource?: string;
       /** Owner decision of 2026-10-26: several sources named (2..3 catalog source names, the owner's order). */
       readonly appSources?: readonly string[];
+      /** More sources were named than `appSources` holds (the question says "등" / "and others"; Codex P2). */
+      readonly appSourcesMore?: true;
     }
   | {
       readonly kind: 'preference';
@@ -290,6 +292,7 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
         ? (rawSources as string[])
         : undefined;
     if (rawSources !== undefined && (appSources === undefined || appSource !== undefined)) return undefined;
+    if (record.appSourcesMore !== undefined && (record.appSourcesMore !== true || appSources === undefined || appSources.length !== NL_HELP_SCOPE_MAX_SOURCES)) return undefined;
     return {
       kind: 'entry',
       at,
@@ -299,6 +302,7 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
       ...(confirm ? { confirm: true as const } : {}),
       ...(appSource !== undefined ? { appSource } : {}),
       ...(appSources !== undefined ? { appSources: [...appSources] } : {}),
+      ...(record.appSourcesMore === true ? { appSourcesMore: true as const } : {}),
     };
   }
   if (record.kind === 'action-target' && isNlActionEntryId(record.entryId) && (ITEM_SOURCES as readonly unknown[]).includes(record.source) && Array.isArray(record.candidates)) {
@@ -383,6 +387,7 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
         ...(question.confirm === true && question.options.length === 1 ? { confirm: true } : {}),
         ...(question.appSource !== undefined ? { appSource: question.appSource } : {}),
         ...(question.appSources !== undefined ? { appSources: [...question.appSources] } : {}),
+        ...(question.appSourcesMore === true ? { appSourcesMore: true } : {}),
       }
     : {
         actorId,

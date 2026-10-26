@@ -778,3 +778,30 @@ describe('the read + write probe in the eval (owner-ratified trigger amendment, 
     expect(capped).toMatchObject({ outcome: 'capped' });
   });
 });
+
+describe('Codex P2: the probe call is measured like every call', () => {
+  const golden = byId('ap-n131');
+  const calendarOnly = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+  const provider = (probe: () => Promise<{ text: string }>): AiProvider =>
+    ({
+      id: 'scripted',
+      capabilities: [],
+      isAvailable: async () => true,
+      execute: async (request: { prompt: string }) => (request.prompt.startsWith('You are the request planner of Quoky') ? { text: calendarOnly } : probe()),
+    }) as unknown as AiProvider;
+
+  it('a probe timeout is the record\'s outcome (probe-timeout), counted as a call over the bound', async () => {
+    const plan = { ...buildAgentPlanEvalPlan([golden], HASHES, FIXTURE, { ...OPTIONS, runs: 1 }), callTimeoutMs: 50 };
+    const [record] = await runAgentPlanEvaluation({ cases: [golden], plan, provider: provider(() => new Promise(() => undefined)) });
+    expect(record).toMatchObject({ outcome: 'timeout', reason: 'probe-timeout', probe: 'timeout' });
+    const summary = summarizeAgentPlanRun([record as AgentPlanEvalRecord], 50);
+    expect(summary.calls).toBe(2);
+    expect(summary.latency.overBound).toBe(1);
+  });
+
+  it('a slow probe counts in the latency percentiles and the over-bound rate', () => {
+    const record: AgentPlanEvalRecord = { run: 1, id: 'ap-n131', family: 'a6-in-plan', expected: 'none', goldEntries: [], outcome: 'read-write', gotEntries: ['calendar.events'], latencyMs: 100, probe: 'write', probeLatencyMs: 9000 };
+    const summary = summarizeAgentPlanRun([record], 6000);
+    expect(summary).toMatchObject({ calls: 2, latency: { max: 9000, overBound: 1 }, overBoundRate: 0.5 });
+  });
+});

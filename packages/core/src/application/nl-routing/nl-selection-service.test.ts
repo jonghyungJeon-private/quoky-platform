@@ -1095,6 +1095,16 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await same.decide('Quoky로 슬랙·지라 조회·연결하는 방법')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
   });
 
+  it('Codex P2: more than three sources resolve the help topic from ALL of them; the stored and shown names are capped with "등"', async () => {
+    const h = harness({ script: [out('help.topic')] });
+    const topics = { 'slack.search': 'work-lookup', 'jira.issues': 'work-lookup', 'github.items': 'work-lookup', 'confluence.search': 'memory' };
+    const decision = await h.service.decide({ text: '슬랙이랑 지라랑 깃허브랑 컨플루언스 연동하는 법 알려줘', attachmentCount: 0, session: h.session, actor: h.actor(), now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', entryHelpTopics: topics });
+    expect(decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('Quoky로 슬랙·지라·깃허브 등을 조회·연결하는 방법을 물으신 건가요') });
+    // The fourth source maps to another topic: the general help, never the first three's topic.
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'help.topic', args: {} }], appSources: ['슬랙', '지라', '깃허브'], appSourcesMore: true });
+    expect(await h.decide('2')).toEqual({ kind: 'ask', text: '그건 슬랙·지라·깃허브 등 앱 자체의 설정·사용법이라 제가 안내해 드리긴 어려워요. 각 앱의 도움말을 확인해 주세요.' });
+  });
+
   it('a selector clarification whose only read option is that help asks the same help-scope question', async () => {
     const h = harness({ script: [out('help.topic', {}, { ambiguity: 'NEEDS_CLARIFICATION' })] });
     expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
