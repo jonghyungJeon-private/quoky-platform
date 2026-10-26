@@ -3,7 +3,7 @@ import type { AnyListingReplyMatch, ListingItem, ListingRecord, ListingSlot, Lis
 import { LISTING_REPLY_TTL_MS } from '../last-listing';
 import type { NlActionEntryId, NlItemSource, NlItemTarget, NlUndoSpec } from './catalog';
 import { nlIndexWording, nlNamedItemSources, type NlRef } from './action-entries';
-import { LAST_ACTION_EXTERNAL_ENTRY, type LastActionExternalOutcome, type LastActionExternalSource, type LastActionView } from './last-action';
+import { LAST_ACTION_EXTERNAL_ENTRY, isLastActionExternalSource, type LastActionExternalOutcome, type LastActionExternalSource, type LastActionView } from './last-action';
 import type { LastReadRecord } from './last-read';
 import { newestReference } from './reference-recency';
 import { normalizeForMatch } from './selection-input';
@@ -187,7 +187,11 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
   // 3. `recent` / `this`.
   if (ref.kind === 'recent' || ref.kind === 'this') {
     const last = state.lastAction;
-    const lastAction = last !== undefined && last.fresh && last.record.source === source && !last.record.undone ? last.record : undefined;
+    // Codex P2 (2026-10-27): an external-write record (ADR-0112 am. 1 S3: Slack, Jira, calendar) holds the write's receipt
+    // id, never a source item id, so it is never an item candidate ("방금 지라 그거 요약해줘" must not become the receipt);
+    // it stays the last action for undo handling (`resolveUndo`).
+    const lastAction =
+      last !== undefined && last.fresh && last.record.source === source && !last.record.undone && !isLastActionExternalSource(last.record.source) ? last.record : undefined;
     // A6 R2 (D9): for `item.summarize` the fresh `lastRead` of the entry's source stands where `lastAction` would.
     const read = !localWrite && state.lastRead !== undefined && state.lastRead.source === source ? state.lastRead : undefined;
     const lastItem: { readonly source: string; readonly itemId: string; readonly label?: number; readonly at: string; readonly requestId?: string } | undefined =
