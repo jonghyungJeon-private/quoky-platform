@@ -67,7 +67,7 @@ Gate:            >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the
                  >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
                  (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives other than help.topic-only plans,
                  help.topic-only plans on negatives <= ceil(1% of the negatives) (owner decision 2026-10-26), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound,
-                 no call refused by the hard cap. --include-pending runs are NON-GATING (exit 4, no verdict).
+                 no call refused by the hard cap. --include-pending runs, and runs with --runs other than ${AGENT_PLAN_EVAL_GATE.runs}, are NON-GATING (exit 4, no verdict).
 Provider outage: 5 provider failures in a row, 10 timeouts in a row, or provider failures above 5% of the calls stop
                  further calls; the run is INVALID (provider unavailable: <reason>), exit 5, never PASSED or FAILED.
 `;
@@ -161,7 +161,7 @@ export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] 
     `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms`,
     summary.gating
       ? `run checks (one-step >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% exact, 0 wrong on negatives, help captures <= ${summary.helpAllowance} = ceil(1% of ${summary.negatives} negatives), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call; multi-step is pooled): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`
-      : 'gate: NON-GATING (--include-pending)',
+      : 'gate: NON-GATING (--include-pending, or not 3 runs)',
   ];
   return lines;
 }
@@ -273,7 +273,8 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
   deps.stdout(formatProviderOutcomes(outage));
   const pooled = agentPlanPooledGate(summaries);
   if (plan.gating) deps.stdout(formatAgentPlanPooledGate(`agent-plan gate (${plan.promptVersion})`, pooled, outage.invalidReason !== undefined ? outageAlsoSeenNote(outage.invalidReason) : undefined));
-  else deps.stdout(`agent-plan gate (${plan.promptVersion}): NON-GATING (--include-pending scores cases the owner has not approved; no verdict)`);
+  else if (plan.includePending) deps.stdout(`agent-plan gate (${plan.promptVersion}): NON-GATING (--include-pending scores cases the owner has not approved; no verdict)`);
+  else deps.stdout(`agent-plan gate (${plan.promptVersion}): NON-GATING (the gate needs exactly ${AGENT_PLAN_EVAL_GATE.runs} runs; this plan has ${plan.runs}; no verdict)`);
   // Content-free: ids, families, closed entry ids and reasons, diff kinds, latencies (never a text, an answer or a value).
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, ...(plan.gating ? { pooled } : {}), providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);

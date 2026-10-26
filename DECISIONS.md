@@ -29978,3 +29978,34 @@ ap-p093, ap-p095) give ≈ 3 of those misses per run; ap-p185 is the prompt's ow
    JSON report carries `pooled` (`agentPlanPooledGate`). Applied to the ed45e3f1 numbers it would read multi-step 474/498
    (95.2%) — that gate would still fail on run 1 / 2's wrong and run 3's help captures.
 
+### ADR-0121 S2 note — review fixes of 0bde31cc (Codex 2 × P2, CA PASS-with-fixes; validator and scoring only, no prompt change)
+
+- **Codex P2-1 / CA W1 — the position binds to ONE item-summary clause.** `positionClause`: the first clause AFTER the
+  list's own clause (the first naming the list's entry or holding one of its values) that names position N by digits or an
+  ordinal, holds no value of any planned read, and holds no write word of the catalog (the A6 write entries'
+  `actionGrounding` and aliases). Only that clause is covered; another clause with the same ordinal ("… and add a todo to
+  write the first draft") stays uncovered, so rule 7 and the read + write probe still see it. No such clause →
+  `ref-position`: "3번 회의실 예약 메일 보여주고 요약해줘" (the number sits in the list's own clause: a room) and "메일 보여주고
+  3번 삭제하고 요약해줘" (the only position clause holds a write word) are refused, never summarized. The write-grammar check
+  (`nlClauseClaimsWrite`) applies to that clause.
+  - **Deviation from the CA's wording (for the CA).** The CA proposed letting the probe run on a write-word position
+    clause and refusing `ref-position` when it returns write / note / clarify. Because such a clause never qualifies, the
+    plan is refused at validation instead (stricter: no probe outcome can turn it into a read summary), and the probe's
+    results on other clauses (a legitimate read + write) are not tied to the position.
+- **Codex P2-2 — the list → item entry mapping.** `AGENT_READ_SOURCES[…].itemEntry` names the entry that reads ONE listed
+  item by id (jira.issues and jira.release → jira.issues; slack.search, mail.list, drive.files → themselves; none for the
+  other sources). A position reference to any other entry is `ref-position`.
+- **CA W2 — exactly 3 runs.** `AGENT_PLAN_EVAL_GATE.runs = 3`: a plan with another `--runs` is NON-GATING (exit 4, "the
+  gate needs exactly 3 runs"), and `agentPlanPooledGate` passes only over 3 gating runs.
+- **Eval data.** ap-n145 ("메일 보여주고 3번 삭제하고 요약해줘") and ap-n146 ("list my jira issues and delete the second one,
+  then summarize it"), family `position-write`, trap = the position plan, `trapRefusal: ref-position`; agent-drafted,
+  pending the owner. The room-3 and Codex to-do cases are validator tests (their positive golds need the owner's args).
+- **Boundary (CA suggestion).** A transitive test walks every runtime (non-type) import from `application/agent` and
+  refuses any adapter, writer, repository, runner, storage, turn handler or `*-service` module outside the agent itself,
+  `domain/` and `ports/`. It passes today (the chain reaches the pure nl-routing, work-chat grammar and port modules).
+- **Executor contract (P3 part 3), recorded.** (1) N binds only to rows actually rendered in this reply; a list shorter
+  than N answers "목록에 K건만 있어요" and summarizes nothing. (2) The projector and the renderer use ONE shared ordered
+  array of the list's items, pinned by a test, so the Nth id is the Nth row the owner sees. (3) The item read uses the
+  item-summary readers' size caps and flow labels. (4) A clarification is re-derived from the uncovered clause alone, never
+  seeded from the probe's `output.args`.
+

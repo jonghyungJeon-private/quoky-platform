@@ -30,15 +30,19 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
  * - `brief.today`: 4 with every section on (calendar 1, Jira 2, mail 1; the brief flags can only lower it);
  * - reminders and help: 0 (host only).
  */
-export const AGENT_READ_SOURCES: Readonly<Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string; readonly connectorQueries: number }>> = Object.freeze({
-  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', connectorQueries: 1 },
-  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', connectorQueries: 8 },
+export const AGENT_READ_SOURCES: Readonly<
+  Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string; readonly itemEntry?: NlWave1EntryId; readonly connectorQueries: number }>
+> = Object.freeze({
+  // `itemEntry` (owner decision of 2026-10-26; Codex P2-2 of 0bde31cc): the entry that reads ONE listed item of this list
+  // by its id — the only target of a position reference (`ref.at`); set only for the item-summary sources.
+  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', itemEntry: 'jira.issues', connectorQueries: 1 },
+  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', itemEntry: 'jira.issues', connectorQueries: 8 },
   'github.items': { source: 'github', origin: 'github:configured-host', refField: 'itemIds', connectorQueries: 1 },
-  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds', connectorQueries: 1 },
+  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds', itemEntry: 'slack.search', connectorQueries: 1 },
   'confluence.search': { source: 'confluence', origin: 'confluence:configured-site', refField: 'pageIds', connectorQueries: 1 },
   'calendar.events': { source: 'calendar', origin: 'calendar:owner', refField: 'eventIds', connectorQueries: 1 },
-  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds', connectorQueries: 1 },
-  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds', connectorQueries: 1 },
+  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds', itemEntry: 'mail.list', connectorQueries: 1 },
+  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds', itemEntry: 'drive.files', connectorQueries: 1 },
   // Local stores and fixed answers: no projected id field (a reference to or from them is refused). The to-do list still
   // reads the Jira and GitHub work surface.
   'todo.list': { source: 'todo', origin: 'host', connectorQueries: 2 },

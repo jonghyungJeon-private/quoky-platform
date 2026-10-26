@@ -83,7 +83,8 @@ import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { EvalCallTimeout, helpCaptureAllowance, withTimeout } from './nl-intent-eval';
 
-export const AGENT_PLAN_EVAL_GATE = { multiStepExact: 0.95, oneStepExact: 0.95, askAsked: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01 } as const;
+/** `runs` (CA W2, review of 0bde31cc): the pooled multi-step verdict is given for exactly this many runs, never another count. */
+export const AGENT_PLAN_EVAL_GATE = { multiStepExact: 0.95, oneStepExact: 0.95, askAsked: 0.95, wrongOnNegatives: 0, overBoundRate: 0.01, runs: 3 } as const;
 /** The per-call bound: the runtime's selection bound (the shadow job runs inside it, ADR-0121 S2 P1). */
 export const AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS = NL_SELECTION_TIMEOUT_MS;
 
@@ -158,6 +159,8 @@ export const AGENT_PLAN_NEGATIVE_FAMILIES = [
   'help-style',
   'a6-in-plan',
   'past-or-negated',
+  // Review of 0bde31cc (CA W1): a position named only in a clause with a write word is no item summary (`ref-position`).
+  'position-write',
 ] as const;
 /** The family of the referenced `nl-intent.v1.json` cases (positives and negatives alike). */
 export const AGENT_PLAN_ONE_STEP_FAMILY = 'one-step';
@@ -927,8 +930,9 @@ export function buildAgentPlanEvalPlan(
     readWriteProbe: { promptVersion: AGENT_READ_WRITE_PROBE_PROMPT_VERSION, promptSha256: readWriteProbePromptSha256(), maxCallsPerRun: probeBound },
     maxCallsPerRun: perRun,
     maxCalls: perRun * options.runs,
-    gating: !options.includePending,
-    gate: options.includePending ? 'non-gating' : AGENT_PLAN_EVAL_GATE,
+    // CA W2: a gating verdict needs exactly AGENT_PLAN_EVAL_GATE.runs runs (the pooled multi-step rate is defined over 3).
+    gating: !options.includePending && options.runs === AGENT_PLAN_EVAL_GATE.runs,
+    gate: options.includePending || options.runs !== AGENT_PLAN_EVAL_GATE.runs ? 'non-gating' : AGENT_PLAN_EVAL_GATE,
   };
 }
 
@@ -1146,7 +1150,7 @@ export function agentPlanPooledGate(summaries: readonly AgentPlanEvalSummary[]):
   const rate = total === 0 ? 0 : exact / total;
   const multiStepPassed = total > 0 && rate >= AGENT_PLAN_EVAL_GATE.multiStepExact;
   const runsPassed = summaries.filter((summary) => summary.gatePassed).length;
-  const gating = summaries.length > 0 && summaries.every((summary) => summary.gating);
+  const gating = summaries.length === AGENT_PLAN_EVAL_GATE.runs && summaries.every((summary) => summary.gating);
   return { multiStep: { total, exact, rate }, multiStepPassed, runsPassed, runs: summaries.length, passed: gating && multiStepPassed && runsPassed === summaries.length };
 }
 

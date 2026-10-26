@@ -716,3 +716,30 @@ describe('owner decision of 2026-10-26: a list read and the summary of its Nth i
   });
 });
 
+describe('review of 0bde31cc: the position reference binds to its own item-summary clause and its list\'s item entry', () => {
+  const at = (step: number, field: string, n: number) => ({ step, field, take: 1, at: n });
+
+  it('Codex P2-1: only the item-summary clause is covered; another clause with the same ordinal stays for the probe', () => {
+    const text = 'list my jira issues and summarize the first one and add a todo to write the first draft';
+    const result = validateAgentPlan(plan([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])]), ctx(text));
+    expect(result).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    if (result.ok && result.plan.kind === 'run') expect(agentUncoveredClauses(result.plan.steps, text)).toEqual(['add a todo to write the first draft']);
+  });
+
+  it('Codex P2-2: the target is the list\'s own item entry (jira.release lists -> jira.issues), never another entry', () => {
+    const text = '지라 이슈 보여주고 첫 번째 거 요약해줘';
+    expect(validateAgentPlan(plan([read('jira.issues'), read('jira.release', {}, at(1, 'issueKeys', 1)), summary([2])]), ctx(text))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    const release = '1.2.0 릴리스 이슈 보여주고 두 번째 거 요약해줘';
+    expect(validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, at(1, 'issueKeys', 2)), summary([2])]), ctx(release))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('CA W1: a number inside the list\'s own clause or a read value is no position; a clause with a write word never is', () => {
+    // "3번 회의실" is a room: the number sits in the list's own clause.
+    expect(validateAgentPlan(plan([read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])]), ctx('3번 회의실 예약 메일 보여주고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // "3번 삭제하고" is a write clause (the catalog's cancel vocabulary): never a position, so the plan is refused.
+    expect(validateAgentPlan(plan([read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])]), ctx('메일 보여주고 3번 삭제하고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // A read value that carries the number ("2번 회의실") is no position either.
+    expect(validateAgentPlan(plan([read('slack.search', { keyword: '장애' }), read('slack.search', {}, at(1, 'messageIds', 2)), summary([2])]), ctx('슬랙에서 장애 찾고 장애 2번 스레드 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+  });
+});
+

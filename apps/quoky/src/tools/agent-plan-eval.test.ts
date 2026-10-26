@@ -112,7 +112,8 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     // The owner's review of 2026-10-21: 258 approved; 15 fixed or unreviewed and 45 held (decisions (d) and (e)) pending.
     // + ap-p180 (was ap-n121) and ap-p177 (was ap-n120), approved by the owner's decisions of 2026-10-23.
     expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(260);
-    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(58);
+    // + ap-n145 and ap-n146 (position-write, review of 0bde31cc, agent-drafted): pending the owner.
+    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(60);
     expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
     // ap-n085's suggestion is shrunk to fit the 10-query charge (CA re-check W2): still 12 asks.
     expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));
@@ -575,17 +576,23 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     const approved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'approved' as const })) } };
     const created: string[] = [];
     const planned = { ...deps(created), load: () => approved };
-    await runCli(['--mode', 'plan'], planned);
+    await runCli(['--mode', 'plan', '--runs', '3'], planned);
     const ran = { ...deps(created), load: () => approved };
-    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
+    expect(await runCli(['--mode', 'run', '--runs', '3', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
     expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 678/678 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v9): PASSED (multi-step pooled 185/185 (100.0%) >= 95%; run checks passed in 1 of 1 run(s))');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v9): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };
-    await runCli(['--mode', 'plan'], today);
+    await runCli(['--mode', 'plan', '--runs', '3'], today);
     const ranToday = { ...deps(created), load: () => unapproved };
-    expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(today.out)], ranToday)).toBe(EXIT_GATE_FAILED);
+    expect(await runCli(['--mode', 'run', '--runs', '3', '--approved-plan-digest', digestOf(today.out)], ranToday)).toBe(EXIT_GATE_FAILED);
+    // CA W2 (review of 0bde31cc): a gating verdict needs exactly 3 runs; one run is NON-GATING (exit 4, no verdict).
+    const one = { ...deps(created), load: () => approved };
+    await runCli(['--mode', 'plan', '--runs', '1'], one);
+    const ranOne = { ...deps(created), load: () => approved };
+    expect(await runCli(['--mode', 'run', '--runs', '1', '--approved-plan-digest', digestOf(one.out)], ranOne)).toBe(EXIT_NON_GATING);
+    expect(ranOne.out.join('\n')).toContain('NON-GATING (the gate needs exactly 3 runs; this plan has 1; no verdict)');
   });
 });
 

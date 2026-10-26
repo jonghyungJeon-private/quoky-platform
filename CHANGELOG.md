@@ -59,6 +59,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 review fixes of 0bde31cc (branch `claude/v5-s2-p3`, shadow only)
+
+- **Fixed (not live).** "Summarize the Nth one" binds only to its own clause: a number in the list request itself ("3번
+  회의실 예약 메일"), a clause with a write ("3번 삭제하고") or another clause with the same ordinal is never treated as the
+  item summary. A position reference reads only the list's own item entry.
+- **Changed (eval).** The agent-plan gate gives a verdict only for exactly 3 runs.
+
 ## Unreleased — S2 owner decisions of 2026-10-26 after the ed45e3f1 gate (branch `claude/v5-s2-p3`, shadow only)
 
 - **Changed (not live).** "지라 이슈 보여주고 첫 번째 거 요약해줘" is one plan: the list, then a summary of its first item in the

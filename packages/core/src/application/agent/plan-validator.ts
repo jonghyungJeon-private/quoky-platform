@@ -7,7 +7,7 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
 import { nlClauseClaimsWrite } from '../nl-routing/write-clause';
-import { nlIndexWording } from '../nl-routing/action-entries';
+import { NL_ACTION_ENTRIES, nlIndexWording } from '../nl-routing/action-entries';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
 import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
@@ -298,10 +298,8 @@ function leavesWriteClause(steps: readonly ValidatedAgentStep[], ctx: AgentPlanV
  * 2026-10-26 (an uncovered clause is probed with the note's one A6 selection, `read-write-probe.ts`). Pure.
  */
 export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], groundingText: string): string[] {
-  const tokens = conjunctTokens(groundingText, { verbConnective: true });
-  const clauses = new Map<number, ConjunctToken[]>();
-  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
-  if (clauses.size < 2) return [];
+  const clauses = planClauses(groundingText);
+  if (clauses.length < 2) return [];
   const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
   const allNames = reads.flatMap((step) => [...step.entry.aliases, ...(step.entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0));
   const names = allNames.filter((name) => !name.includes(' '));
@@ -309,21 +307,94 @@ export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], grou
   // 보여줘" uncovered while `todo.list` was planned, and the probe fired on correct plans.
   const phrases = allNames.filter((name) => name.includes(' '));
   const values = reads.flatMap((step) => Object.values(step.args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : [])));
-  // Owner decision of 2026-10-26: a validated position reference covers the clause that names its position (the
-  // validator already refused one in a clause a write grammar claims).
-  const positions = reads.flatMap((step) => (step.ref?.at !== undefined ? [step.ref.at] : []));
+  // Owner decision of 2026-10-26 (Codex P2-1, CA W1): a validated position reference covers ONLY its own item-summary
+  // clause (`positionClause`), never another clause that happens to hold the same number or ordinal.
+  const positionCovered = new Set<number>();
+  for (const step of reads) {
+    const list = step.ref?.at !== undefined ? steps[step.ref.step - 1] : undefined;
+    if (step.ref?.at === undefined || list?.kind !== 'read') continue;
+    const index = positionClause(clauses, { entry: list.entry, args: list.args }, reads, step.ref.at);
+    if (index !== undefined) positionCovered.add(index);
+  }
   const out: string[] = [];
-  for (const words of clauses.values()) {
-    const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
-    const normalized = normalizeForMatch(text);
+  for (const [index, clause] of clauses.entries()) {
     const mentioned =
-      words.some((token) => names.some((name) => aliasStarts(token.word, name))) ||
-      phrases.some((phrase) => ` ${normalized} `.includes(` ${phrase}`)) ||
-      values.some((value) => normalized.includes(value)) ||
-      positions.some((at) => nlIndexWording(at, text) !== undefined);
-    if (!mentioned) out.push(text);
+      clause.words.some((token) => names.some((name) => aliasStarts(token.word, name))) ||
+      phrases.some((phrase) => ` ${clause.normalized} `.includes(` ${phrase}`)) ||
+      values.some((value) => clause.normalized.includes(value)) ||
+      positionCovered.has(index);
+    if (!mentioned) out.push(clause.text);
   }
   return out;
+}
+
+/** One conjunct of the owner's prose (the S2 boundaries, the verb connective included). */
+interface PlanClause {
+  readonly text: string;
+  readonly normalized: string;
+  readonly words: readonly ConjunctToken[];
+}
+
+function planClauses(groundingText: string): PlanClause[] {
+  const tokens = conjunctTokens(groundingText, { verbConnective: true });
+  const clauses = new Map<number, ConjunctToken[]>();
+  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
+  return [...clauses.values()].map((words) => {
+    const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
+    return { text, normalized: normalizeForMatch(text), words };
+  });
+}
+
+/** Whether the clause names the entry by an alias or source name (a multi-word name as a phrase). */
+function clauseNamesEntry(clause: PlanClause, entry: NlCatalogEntry): boolean {
+  const all = [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0);
+  return (
+    clause.words.some((token) => all.some((name) => !name.includes(' ') && aliasStarts(token.word, name))) ||
+    all.some((name) => name.includes(' ') && ` ${clause.normalized} `.includes(` ${name}`))
+  );
+}
+
+function stringValues(args: Readonly<Record<string, unknown>>): string[] {
+  return Object.values(args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : []));
+}
+
+let writeVocabulary: readonly string[] | undefined;
+/**
+ * CA W1 (review of 0bde31cc): whether the clause holds a write word of the catalog — an A6 write entry's own
+ * `actionGrounding` vocabulary or alias (the closed lists the A6 vetoes use; no list of its own).
+ */
+function hasWriteVocabulary(clause: PlanClause): boolean {
+  writeVocabulary ??= Object.values(NL_ACTION_ENTRIES)
+    .flatMap((entry) => (entry !== undefined && (entry.risk === 'LOCAL_WRITE' || entry.risk === 'EXTERNAL_WRITE') ? [...(entry.actionGrounding ?? []), ...entry.aliases] : []))
+    .map((word) => normalizeForMatch(word))
+    .filter((word) => word.length > 0);
+  return writeVocabulary.some((word) => groundingWordIn(clause.normalized, word));
+}
+
+/**
+ * Owner decision of 2026-10-26, as fixed by the review of 0bde31cc (Codex P2-1, CA W1): the index of the ONE clause a
+ * position reference summarizes, or `undefined`. It is the first clause AFTER the list's own clause (the first one naming
+ * the list's entry or holding one of its values) that names position `at` by digits or an ordinal, holds no value of any
+ * planned read ("3번 회의실 예약 메일" is a room, not a position) and no write word of the catalog ("3번 삭제하고" stays a
+ * write the read + write path sees). Structural.
+ */
+function positionClause(
+  clauses: readonly PlanClause[],
+  list: { readonly entry: NlCatalogEntry; readonly args: Readonly<Record<string, unknown>> },
+  reads: ReadonlyArray<{ readonly args: Readonly<Record<string, unknown>> }>,
+  at: number,
+): number | undefined {
+  const listValues = stringValues(list.args);
+  const listIndex = clauses.findIndex((clause) => clauseNamesEntry(clause, list.entry) || listValues.some((value) => clause.normalized.includes(value)));
+  if (listIndex < 0) return undefined;
+  const values = reads.flatMap((read) => stringValues(read.args));
+  for (let index = listIndex + 1; index < clauses.length; index += 1) {
+    const clause = clauses[index] as PlanClause;
+    if (nlIndexWording(at, clause.text) === undefined) continue;
+    if (values.some((value) => clause.normalized.includes(value)) || hasWriteVocabulary(clause)) continue;
+    return index;
+  }
+  return undefined;
 }
 
 /** The related step when it is a read and another read of a different source exists; else none (the flag is dropped). */
@@ -596,7 +667,7 @@ function checkRef(
   if (from.source !== to.source || from.origin !== to.origin) return refuse('ref-cross-source', number);
   if (from.refField === undefined || ref.field !== from.refField) return refuse('ref-field', number);
   if (ref.take > AGENT_PLAN_MAX_REF_VALUES) return refuse('ref-too-many', number);
-  if (ref.at !== undefined && !positionRefHolds(ref.at, ref.take, from.source, number, steps, ctx)) return refuse('ref-position', number);
+  if (ref.at !== undefined && !positionRefHolds(ref.at, ref.take, source, step.entryId, number, steps, ctx)) return refuse('ref-position', number);
   const refProvenance = { kind: 'reference' as const, step: ref.step, entryId: source.entryId, origin: from.origin };
   const at = ref.at !== undefined ? { at: ref.at } : {};
   return { ok: true, step: { ...base, ref: { step: ref.step, field: ref.field, take: ref.take, ...at, provenance: refProvenance } } };
@@ -609,20 +680,28 @@ function checkRef(
  * covers it (the decision is for a read summary), and no clause carrying that position is claimed by a write grammar (a
  * write on a listed item keeps the ratified read + write note). Structural; no vocabulary of its own.
  */
-function positionRefHolds(at: number, take: number, source: string, number: number, steps: readonly AgentPlanStep[], ctx: AgentPlanValidationContext): boolean {
-  if (take !== 1 || at > AGENT_PLAN_MAX_REF_VALUES || !AGENT_POSITION_REF_SOURCES.includes(source)) return false;
-  if (nlIndexWording(at, ctx.groundingText) === undefined) return false;
+function positionRefHolds(
+  at: number,
+  take: number,
+  list: Extract<AgentPlanStep, { kind: 'read' }>,
+  target: NlWave1EntryId,
+  number: number,
+  steps: readonly AgentPlanStep[],
+  ctx: AgentPlanValidationContext,
+): boolean {
+  if (!isNlWave1EntryId(list.entryId)) return false;
+  const from = AGENT_READ_SOURCES[list.entryId];
+  if (take !== 1 || at > AGENT_PLAN_MAX_REF_VALUES || !AGENT_POSITION_REF_SOURCES.includes(from.source)) return false;
+  // Codex P2-2: the target is the list's own item entry (`itemEntry`: jira.release -> jira.issues), never another entry.
+  if (from.itemEntry === undefined || target !== from.itemEntry) return false;
   if (!steps.some((other, index) => other.kind === 'summarize' && index + 1 > number && other.from.includes(number))) return false;
-  return !positionClauses(ctx.groundingText, at).some((clause) => nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone }));
-}
-
-/** The conjuncts (the S2 boundaries, the verb connective included) that name position `at` by digits or an ordinal. */
-function positionClauses(groundingText: string, at: number): string[] {
-  const tokens = conjunctTokens(groundingText, { verbConnective: true });
-  const clauses = new Map<number, string[]>();
-  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token.text]);
-  const texts = clauses.size > 0 ? [...clauses.values()].map((words) => words.join(' ')) : [groundingText];
-  return texts.filter((text) => nlIndexWording(at, text) !== undefined);
+  const entry = ctx.offered.get(list.entryId);
+  if (entry === undefined) return false;
+  const reads = steps.flatMap((step) => (step.kind === 'read' ? [{ args: step.args }] : []));
+  const clauses = planClauses(ctx.groundingText);
+  const index = positionClause(clauses, { entry, args: list.args }, reads, at);
+  if (index === undefined) return false;
+  return !nlClauseClaimsWrite((clauses[index] as PlanClause).text, { now: ctx.now, timeZone: ctx.timeZone });
 }
 
 function checkSummary(step: Extract<AgentPlanStep, { kind: 'summarize' }>, number: number, steps: readonly AgentPlanStep[]): StepCheck {

@@ -88,6 +88,49 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
     }
   });
 
+  it('reaches no adapter, writer, repository, runner or application service through any runtime import chain (CA suggestion, review of 0bde31cc)', () => {
+    const src = new URL('../../', DIR);
+    const resolveFrom = (from: URL, specifier: string): URL | undefined => {
+      for (const candidate of [`${specifier}.ts`, `${specifier}/index.ts`]) {
+        const url = new URL(candidate, from);
+        try {
+          readFileSync(url);
+          return url;
+        } catch {
+          continue;
+        }
+      }
+      return undefined;
+    };
+    // Runtime (value) imports only: `import type …` and all-`type` named imports are erased by the compiler.
+    const runtimeSpecifiers = (text: string): string[] =>
+      [...text.matchAll(/^(?:import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?['"](\.[^'"]+)['"]/gm)].flatMap((match) => {
+        if (match[1] !== undefined) return [];
+        const names = /\{([^}]*)\}/.exec(match[0])?.[1];
+        if (names !== undefined && names.split(',').map((name) => name.trim()).filter((name) => name.length > 0).every((name) => name.startsWith('type '))) return [];
+        return [match[2] as string];
+      });
+    const seen = new Map<string, string | undefined>();
+    const queue: Array<[URL, string | undefined]> = SOURCES.map((source) => [new URL(source.name, DIR), undefined]);
+    while (queue.length > 0) {
+      const [url, parent] = queue.pop() as [URL, string | undefined];
+      if (seen.has(url.href)) continue;
+      seen.set(url.href, parent);
+      for (const specifier of runtimeSpecifiers(readFileSync(url, 'utf8'))) {
+        const next = resolveFrom(url, specifier);
+        if (next !== undefined) queue.push([next, url.href]);
+      }
+    }
+    const relative = (href: string): string => href.slice(src.href.length);
+    const refused = [...seen.keys()].map(relative).filter((path) => {
+      if (path.startsWith('application/agent/') || path.startsWith('domain/') || path.startsWith('ports/')) return false;
+      return /(?:^|\/)adapters?\//.test(path) || /(?:-service|writer|repository|runner|adapter|storage|turn-handler)[^/]*\.ts$/.test(path);
+    });
+    expect(refused).toEqual([]);
+    // The probe is not vacuous: the chain does reach the pure nl-routing and ports modules.
+    expect([...seen.keys()].map(relative).some((path) => path.startsWith('application/nl-routing/'))).toBe(true);
+  });
+
   it('has no dynamic import, require or fetch, and names no forbidden collaborator', () => {
     for (const source of SOURCES) {
       const code = codeOf(source.text);
