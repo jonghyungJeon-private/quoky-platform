@@ -59,6 +59,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — the help-scope question over several sources (owner decision 2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Changed (live read path).** A general help question naming several connected sources ("구글 캘린더랑 지메일 연동 설정 어디서
+  해?") now asks whether the owner means Quoky's way or the apps' own settings, naming up to three sources; one source is
+  unchanged. The read and agent-plan scorers use the same rule. No help positive of the read corpora newly asks.
+
 ## Unreleased — agent-plan gate: Core's final outcome for help plans on negatives (2026-10-26, branch `claude/v5-s2-p3`)
 
 - **Changed (eval).** On negatives, a general help.topic plan that Core turns into its help-scope question scores as a

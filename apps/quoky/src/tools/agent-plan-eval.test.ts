@@ -697,10 +697,12 @@ describe('Core\'s final outcome for help.topic plans on negatives (owner decisio
     expect(scoreAgentPlanOutput(neg010, topic, FIXTURE)).toMatchObject({ outcome: 'miss', reason: 'clarify-gold' });
   });
 
-  it('ap-n115 is a clarification gold; Core does not ask for it (two sources), so a CLEAR help plan is a miss, never a capture', () => {
+  it('ap-n115 is a clarification gold; Core now asks for it (two sources, owner decision 2026-10-26): asked', () => {
     const golden = byId('ap-n115');
     expect(golden.clarify).toMatchObject({ between: ['help.topic'] });
-    expect(scoreAgentPlanOutput(golden, help, FIXTURE)).toMatchObject({ outcome: 'miss', reason: 'clarify-gold' });
+    expect(scoreAgentPlanOutput(golden, help, FIXTURE)).toMatchObject({ outcome: 'clarify', reason: 'help-scope' });
+    const topic = JSON.stringify({ entryId: 'help.topic', args: { topic: 'calendar' }, ambiguity: 'CLEAR', alternatives: [] });
+    expect(scoreAgentPlanOutput(golden, topic, FIXTURE)).toMatchObject({ outcome: 'miss', reason: 'clarify-gold' });
     const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
     expect(scoreAgentPlanOutput(golden, none, FIXTURE)).toMatchObject({ outcome: 'none' });
   });

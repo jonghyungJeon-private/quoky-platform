@@ -29707,3 +29707,44 @@ path starts only from the planner's `none`); run 3 help captures 4/3 (neg-010, n
 
 4. **The release list order is split out** to `claude/v5-release-order` (from origin/main bba23bc1) so it ships without the
    planner gate (see that branch's A8 implementation note).
+
+### ADR-0120 implementation note — the help-scope question over several named sources (owner decision of 2026-10-26)
+
+Amends owner decision A of 2026-10-22 ("exactly one source family"). The owner decided that ap-n115 "구글 캘린더랑 지메일 연동
+설정 어디서 해?" should ask. Live change (the help-scope rule runs on the deployed read path).
+
+- **Rule.** `nlHelpSourceScope` fires on a general help selection whose words name **one or more** catalog source
+  families (`sourceNames`, unchanged matching); the topic gate, the lenient-drop exclusion and the selector-asked path are
+  unchanged. Several families return `sources` (owner spelling, owner order); `source` is the first.
+- **Question.** One source keeps the original text byte for byte. Several: "Quoky로 구글 캘린더·지메일을 조회·연결하는 방법을
+  물으신 건가요, 아니면 그 앱 자체의 설정·사용법인가요?" (options "Quoky로 구글 캘린더·지메일 조회·연결하는 방법" / "그 앱 자체의
+  설정·사용법"; EN "… Google Calendar and Gmail …"), at most `NL_HELP_SCOPE_MAX_SOURCES` (3) names shown, more as "등" /
+  "and others". The app option keeps the honest note ("… 각 앱의 도움말을 확인해 주세요."). The Quoky option is the topic
+  covering the offered entries that own any of the names (one topic → that topic; several → the general help), as before.
+  The pending record holds `appSources` (2..3 catalog names, each validated; never together with `appSource`).
+- **Scorers.** The read scorers (intent, read-regression, action) and the agent-plan scorer use the same shared function,
+  so a two-source general help selection now scores as Core's question there too.
+- **Measurement (offline).** Help positives that would newly ask: `nl-intent.v1.json` 0 of 51, `nl-action.v1.json` 0 of
+  6; `agent-plan.v1.json` capability-help golds: ap-p183 (드라이브 / 메일) newly asks at run time, ap-p182 (Slack) already
+  did (the agent-plan scorer applies the rule on negatives only, so neither score changes). Negatives where a general
+  help.topic would now ask instead of being a help capture: 45 agent-plan negatives naming two sources (e.g. ap-n091,
+  ap-n093, ap-n115), 0 in `nl-intent` and `nl-action`.
+- **Re-score of ed212614 under this rule** (on top of the 2026-10-26 note): run 1 help captures 2 (neg-012, neg-110;
+  ap-n093 asked) → PASS; run 2 still FAIL (multi-step 94.0%, ap-n131); run 3 help captures 1 (neg-110; neg-010, ap-n091,
+  ap-n115 asked) → PASS.
+- **Tests.** `help-scope.test.ts` (several sources, the cap, byte-identical single-source text, the record), the
+  selection service (the question, the record, the app reply, the shared-topic Quoky option answered by its text), the
+  agent-plan scorer (ap-n115 asked); the 2026-10-22 positive measurement is unchanged (0).
+
+**Proposal for ap-n131 (not implemented).** "내일 일정 보여주고 내일 9시에 출발 알림 만들어줘": the planner returned the calendar
+read alone, so the ratified read + write path (which starts from the planner's `none`) never ran and the reminder was
+dropped. Recommended: a structural Core check, not a prompt sentence. When the planner's validated `run` plan leaves a
+conjunct (the S2 conjunct boundaries, verb connective included) that holds no alias or source name of a planned entry
+and none of its grounded values, Core probes that conjunct with the existing deterministic write grammars (the frozen
+Class B reminder / to-do grammars that already recognise "내일 9시에 출발 알림 만들어줘"); if one claims it as a write, the
+plan is treated as `none`, so the ratified Q3 path runs (one A6 selection over the message, the read re-plan, the write
+clause alone as the write's grounding). Why: deterministic and testable offline, no model call and no new vocabulary,
+independent of planner variance, and it fails in the safe direction (to the existing guarded path). A planner prompt
+sentence (rule 8 already says a request with a write is none) is probabilistic, needs a v8 and a gate, and would still
+leave silent write drops at the model's error rate. Residual of the check: a write the grammars do not know (an
+English or unusual phrasing) still relies on the planner's `none`.

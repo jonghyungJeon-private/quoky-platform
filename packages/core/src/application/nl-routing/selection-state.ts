@@ -10,6 +10,7 @@ import {
   type NlWave1EntryId,
 } from './catalog';
 import { isTimeExpression } from './symbolic-time';
+import { NL_HELP_SCOPE_MAX_SOURCES } from './help-scope';
 import { NL_CATALOG_SOURCE_NAMES, nlWave1Entry } from './wave1-entries';
 
 /**
@@ -71,6 +72,8 @@ export type PendingQuestion =
        * numbered option (after the stored ones) is the source app itself. Holds the catalog source name the owner wrote.
        */
       readonly appSource?: string;
+      /** Owner decision of 2026-10-26: several sources named (2..3 catalog source names, the owner's order). */
+      readonly appSources?: readonly string[];
     }
   | {
       readonly kind: 'preference';
@@ -281,6 +284,12 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
     const confirm = record.confirm === true && options.length === 1;
     const appSource = typeof record.appSource === 'string' && isCatalogSourceName(record.appSource) ? record.appSource : undefined;
     if (record.appSource !== undefined && appSource === undefined) return undefined;
+    const rawSources: unknown = record.appSources;
+    const appSources =
+      Array.isArray(rawSources) && rawSources.length >= 2 && rawSources.length <= NL_HELP_SCOPE_MAX_SOURCES && rawSources.every((name) => typeof name === 'string' && isCatalogSourceName(name))
+        ? (rawSources as string[])
+        : undefined;
+    if (rawSources !== undefined && (appSources === undefined || appSource !== undefined)) return undefined;
     return {
       kind: 'entry',
       at,
@@ -289,6 +298,7 @@ export function readPendingQuestion(session: Pick<Session, 'metadata'>, actorId:
       ...(groundingText !== undefined ? { groundingText } : {}),
       ...(confirm ? { confirm: true as const } : {}),
       ...(appSource !== undefined ? { appSource } : {}),
+      ...(appSources !== undefined ? { appSources: [...appSources] } : {}),
     };
   }
   if (record.kind === 'action-target' && isNlActionEntryId(record.entryId) && (ITEM_SOURCES as readonly unknown[]).includes(record.source) && Array.isArray(record.candidates)) {
@@ -372,6 +382,7 @@ export function pendingQuestionRecord(actorId: Id, question: PendingQuestion): M
         ...(question.groundingText !== undefined ? { groundingText: question.groundingText.slice(0, MAX_GROUNDING) } : {}),
         ...(question.confirm === true && question.options.length === 1 ? { confirm: true } : {}),
         ...(question.appSource !== undefined ? { appSource: question.appSource } : {}),
+        ...(question.appSources !== undefined ? { appSources: [...question.appSources] } : {}),
       }
     : {
         actorId,
