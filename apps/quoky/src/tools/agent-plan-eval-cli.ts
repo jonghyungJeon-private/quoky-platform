@@ -167,7 +167,7 @@ function describeMiss(record: AgentPlanEvalRecord): string {
   const detail = [
     record.gotEntries !== undefined ? `got ${record.gotEntries.join('+')}` : undefined,
     record.reason !== undefined ? `reason ${record.reason}${record.failedStep !== undefined ? `@${record.failedStep}` : ''}` : undefined,
-    record.diff !== undefined ? `diff ${record.diff}${record.diffStep !== undefined ? `@${record.diffStep}` : ''}` : undefined,
+    record.diff !== undefined ? `diff ${record.diff}${record.diffStep !== undefined ? `@${record.diffStep}` : ''}${record.diffArgs !== undefined ? `(${record.diffArgs.join(',')})` : ''}` : undefined,
     record.error !== undefined ? `error ${record.error}` : undefined,
   ].filter((part): part is string => part !== undefined);
   return `  run ${record.run} ${record.outcome.padEnd(9)} ${record.id} (${record.family}) want ${record.expected === 'plan' ? record.goldEntries.join('+') : record.expected} ${detail.join(' ')}`.trimEnd();

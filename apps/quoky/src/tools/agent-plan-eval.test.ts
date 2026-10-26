@@ -699,6 +699,14 @@ describe('owner decisions of 2026-10-26: relabels and the help-capture rule of t
   });
 });
 
+describe('gate on ed45e3f1: an args miss names the differing declared args (no value)', () => {
+  it('reports the arg names only', () => {
+    const golden = byId('ap-p127');
+    const raw = JSON.stringify({ steps: [{ entryId: 'calendar.events', args: { range: 'next-week' } }, { entryId: 'jira.issues', args: { window: 'updated', range: 'last-week' } }], ambiguity: 'CLEAR' });
+    expect(scoreAgentPlanOutput(golden, raw, FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args', diffStep: 1, diffArgs: ['timedOnly'] });
+  });
+});
+
 describe('capability-help golds: a named source\'s help topic is also correct (owner decision of 2026-10-26)', () => {
   const topicPlan = (topic?: string): string => JSON.stringify({ entryId: 'help.topic', args: topic === undefined ? {} : { topic }, ambiguity: 'CLEAR', alternatives: [] });
 

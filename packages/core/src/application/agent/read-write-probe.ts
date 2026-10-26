@@ -34,9 +34,19 @@ export function agentReadWriteProbeClauses(plan: ValidatedAgentPlan, groundingTe
  * and the structural Reference context from BEFORE this turn (executor contract: the probe never sees this turn's read
  * output). The guarantee that no read-clause word reaches the write args is unchanged and structural: the selection is
  * validated with each uncovered clause ALONE as its grounding text (`agentReadWriteProbeResult`).
+ *
+ * Only the offered A6 action entries are in the prompt (gate on ed45e3f1): over the whole message the selector answered
+ * the read the plan already runs (93 of 104 probe calls `not-action`, ap-n134 "show my reminders and undo the last
+ * change" → `reminder.list`), and a read selection can only ever leave the plan standing, so offering the reads changes no
+ * outcome except to hide the write. Structural: by the catalog's own action ids, no per-case rule.
  */
 export function agentReadWriteProbePrompt(input: { readonly text: string; readonly entries: readonly NlCatalogEntry[]; readonly referenceContext?: string }): string {
-  return buildSelectionPrompt({ entries: input.entries, text: input.text, actions: { referenceContext: input.referenceContext ?? 'none' } });
+  return buildSelectionPrompt({ entries: agentReadWriteProbeEntries(input.entries), text: input.text, actions: { referenceContext: input.referenceContext ?? 'none' } });
+}
+
+/** The entries the probe offers: the A6 action entries among those offered this turn (a read selection is never a write). */
+export function agentReadWriteProbeEntries(entries: readonly NlCatalogEntry[]): readonly NlCatalogEntry[] {
+  return entries.filter((entry) => isNlActionEntryId(entry.id));
 }
 
 export type AgentReadWriteProbeResult =

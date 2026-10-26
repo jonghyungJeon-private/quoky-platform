@@ -29918,3 +29918,24 @@ Report `gates-s2p3-5c09fee4-20261026b` (probe outcomes and latency recorded; no 
    until the merged line maps per source. A per-entry topic for a merged line (each entry → the answered topic whose
    anchor is one of the entry's own `sourceNames`) would fix both; it changes the runtime's help-scope option, so it is
    left for an owner decision. Gold notes updated.
+
+### ADR-0121 S2 note — the agent-plan gate on ed45e3f1 (agent-plan.v8, FAILED 0/3): offline classification (2026-10-26)
+
+Report `gates-s2p3-ed45e3f1-20261026c`. Runs: multi-step 94.6 / 95.2 / 95.8% (157, 158, 159 of 166), one-step 96.0 /
+96.0 / 95.9%; run 1 fails on multi-step and one wrong, run 2 on one wrong, run 3 on help captures (4 of 3). v8 fixed the
+reference-step drops (ap-p118/p120/p122 exact 3/3).
+
+| Class | Cases | Finding / action |
+|---|---|---|
+| **Code — fixed** | ap-n134 (r1, r2: `reminder.list`, probe `stands` / `not-action`) | Over the whole message the probe's selector answers the read the plan already runs: 93 of 104 probe calls were `not-action`, none was a write. A read selection can only leave the plan standing, so the probe now offers the A6 action entries only (`agentReadWriteProbeEntries`); the uncovered-clause validation is unchanged. ap-n004 was not probed in this run (the planner answered none 3/3). |
+| **Code — diagnostics** | args misses | An `args` diff now names the differing declared args (`diffArgs`, never a value). |
+| Prompt vs gold (v9 candidate) | ap-p185 (miss-none 9 of 9 runs since the relabel) | Rule 9 says "Return none for a request to summarize one item of a list"; the planner obeys it on "지라 이슈 보여주고 첫 번째 거 요약해줘", while the owner's relabel (decision (f)) expects the list read plus Core's note. |
+| Model — stable | ap-p127 (11 of 12 runs since 2ef88619; calendar args at step 1), ap-p093 (7 of 12; one summary over both reads where rule 8 says "A 정리하고 B …" summarizes each) | The prompt already covers both; not a gold question. |
+| Model — help boundary | neg-012, neg-013, ap-n113 (help.topic on other-app how-tos), ap-n090 / ap-n091 (help.topic on chit-chat → Core's help-scope question, a capture under W4, 2 per run in r2 / r3) | The read prompt's other-app boundary; ap-n090 / ap-n091 alone use 2 of the 3 allowed captures. |
+| Model — variance | ap-p043, p045, p058, p066, p079, p082, p091, p095, p098, p107, p116, p138, p163, p164; timeouts ap-p052, p056 | One or two runs each. |
+| Gold question | ap-p183 (miss-none 2 of 3) | A capability question about a quoted phrasing read as chit-chat. |
+
+**Stability.** Over the 12 recorded runs, multi-step misses per run were 8–19 (mean ≈ 10 of 166–171); the gate needs at
+most 8 in every run, so a run passes with roughly even odds and three in a row rarely. Four cases (ap-p127, ap-p185,
+ap-p093, ap-p095) give ≈ 3 of those misses per run; ap-p185 is the prompt's own contradiction.
+

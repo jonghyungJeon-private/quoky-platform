@@ -4,7 +4,8 @@ import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { parseAgentPlanOutput } from './plan-schema';
 import { agentUncoveredClauses, validateAgentPlan } from './plan-validator';
-import { AGENT_READ_WRITE_PROBE_PROMPT_VERSION, agentReadWriteProbeClauses, agentReadWriteProbePrompt, agentReadWriteProbeResult } from './read-write-probe';
+import { AGENT_READ_WRITE_PROBE_PROMPT_VERSION, agentReadWriteProbeClauses, agentReadWriteProbeEntries,
+  agentReadWriteProbePrompt, agentReadWriteProbeResult } from './read-write-probe';
 
 // The owner-ratified amendment of 2026-10-26 to the trigger of the read + write note: an uncovered clause gets the note's
 // one A6 selection; a write lying in that clause hands the turn to the read + write path.
@@ -107,6 +108,10 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
     expect(prompt).toContain('reminder.create');
     expect(prompt).toContain('Reference context');
     expect(prompt).toContain(AP_N131);
+    // Gate on ed45e3f1 (ap-n134): only the A6 action entries are offered; the reads the plan runs are never in the prompt.
+    expect(agentReadWriteProbeEntries(ALL).map((entry) => entry.id)).toEqual(ACTIONS.map((entry) => entry.id));
+    expect(prompt).toBe(agentReadWriteProbePrompt({ entries: ACTIONS, text: AP_N131 }));
+    expect(prompt).not.toBe(agentReadWriteProbePrompt({ entries: ACTIONS.slice(1), text: AP_N131 }));
     expect(agentReadWriteProbeResult(out('reminder.create', { when: '내일 9시', body: '일정' }), ['내일 9시에 출발 알림 만들어줘'], OFFERED, CTX)).toMatchObject({ kind: 'clarify' });
   });
 });

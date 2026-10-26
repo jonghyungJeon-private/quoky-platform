@@ -366,6 +366,19 @@ export type StepGraph = ReadonlyArray<
   | { readonly kind: 'summarize'; readonly from: string; readonly schema: string }
 >;
 
+/**
+ * The names of the args whose values differ (gate on ed45e3f1: an args miss is classified without the raw answer). Only
+ * the entry's declared arg names are reported (closed values); any other name is `unknown`. Never a value.
+ */
+function differingArgNames(entryId: string, got: string, want: string): readonly string[] {
+  const parse = (graphArgs: string): Map<string, string> => new Map((JSON.parse(graphArgs) as Array<[string, unknown]>).map(([name, value]) => [name, JSON.stringify(value)]));
+  const a = parse(got);
+  const b = parse(want);
+  const declared = new Set((isNlWave1EntryId(entryId) ? NL_WAVE1_ENTRIES[entryId].args : []).map((spec) => spec.name));
+  const names = [...new Set([...a.keys(), ...b.keys()])].filter((name) => a.get(name) !== b.get(name)).map((name) => (declared.has(name) ? name : 'unknown'));
+  return [...new Set(names)].sort();
+}
+
 function sortedArgs(args: NlArgs | undefined): string {
   return JSON.stringify(Object.entries(args ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
@@ -401,7 +414,7 @@ export function validatedGraph(steps: readonly ValidatedAgentStep[]): StepGraph 
 /** The closed kind of the first difference between two graphs (`undefined` when they are the same graph). */
 export type GraphDiff = 'step-count' | 'step-kind' | 'entry' | 'args' | 'ref' | 'summary' | 'help' | 'related';
 
-export function graphDiff(got: StepGraph, want: StepGraph): { kind: GraphDiff; step?: number } | undefined {
+export function graphDiff(got: StepGraph, want: StepGraph): { kind: GraphDiff; step?: number; args?: readonly string[] } | undefined {
   if (got.length !== want.length) return { kind: 'step-count' };
   for (const [index, a] of got.entries()) {
     const b = want[index];
@@ -409,7 +422,7 @@ export function graphDiff(got: StepGraph, want: StepGraph): { kind: GraphDiff; s
     if (b === undefined || a.kind !== b.kind) return { kind: 'step-kind', step };
     if (a.kind === 'read' && b.kind === 'read') {
       if (a.entryId !== b.entryId) return { kind: 'entry', step };
-      if (a.args !== b.args) return { kind: 'args', step };
+      if (a.args !== b.args) return { kind: 'args', step, args: differingArgNames(a.entryId, a.args, b.args) };
       if (a.ref !== b.ref) return { kind: 'ref', step };
     } else if (a.kind === 'summarize' && b.kind === 'summarize') {
       if (a.from !== b.from || a.schema !== b.schema) return { kind: 'summary', step };
@@ -462,6 +475,8 @@ export interface AgentPlanScore {
   readonly failedStep?: number;
   readonly diff?: GraphDiff;
   readonly diffStep?: number;
+  /** An `args` diff: the declared names of the args that differ (never a value). */
+  readonly diffArgs?: readonly string[];
 }
 
 /**
@@ -507,7 +522,7 @@ export async function scoreAgentPlanOutputInWorld(golden: AgentPlanEvalCase, raw
     const args = (graphArgs: string): NlArgs => Object.fromEntries(JSON.parse(graphArgs) as Array<[string, NlArgs[string]]>);
     if (!(await sameJiraReleaseOutcome(golden.text, args(a.args), args(b.args)))) return score;
   }
-  const { diff: _diff, diffStep: _diffStep, ...rest } = score;
+  const { diff: _diff, diffStep: _diffStep, diffArgs: _diffArgs, ...rest } = score;
   return { ...rest, outcome: 'exact' };
 }
 
@@ -573,7 +588,7 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
   if (golden.family === 'capability-help' && diff.kind === 'args' && only?.kind === 'read' && only.entry.id === 'help.topic' && sourceHelpTopicAccepted(golden.gold, only.args, prepared.ctx.groundingText)) {
     return { outcome: 'exact', gotEntries, reason: 'source-help-topic' };
   }
-  return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}) };
+  return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}), ...(diff.args !== undefined ? { diffArgs: diff.args } : {}) };
 }
 
 /** A one-step general help.topic gold, answered with the help topic of a source the sentence names. */
@@ -804,8 +819,8 @@ export interface AgentPlanEvalPlan {
   readonly gate: typeof AGENT_PLAN_EVAL_GATE | 'non-gating';
 }
 
-/** The A6 entries the read + write probe offers beside the reads (the A6 catalog). */
-const PROBE_ENTRIES: readonly NlCatalogEntry[] = [...READ_ENTRIES, ...Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined)];
+/** The A6 entries the read + write probe offers (the A6 catalog; the probe prompt holds no read entry, gate on ed45e3f1). */
+const PROBE_ENTRIES: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
 const PROBE_OFFERED: ReadonlyMap<string, NlCatalogEntry> = new Map(PROBE_ENTRIES.map((entry) => [entry.id, entry] as const));
 
 /** sha256 of the probe's A6 selection instruction text (every entry offered, an empty owner message). */
@@ -853,7 +868,7 @@ export function applyReadWriteProbe(
 ): AgentPlanScore & { readonly probe: 'write' | 'note' | 'clarify' | 'stands'; readonly probeEntry?: string; readonly probeDetail?: string } {
   const result = agentReadWriteProbeResult(probeRaw, clauses, PROBE_OFFERED, { now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone });
   if (result.kind === 'stands') return { ...score, probe: 'stands', ...(result.detail !== undefined ? { probeDetail: closedProbeDetail(result.detail) } : {}) };
-  const { diff: _diff, diffStep: _diffStep, ...rest } = score;
+  const { diff: _diff, diffStep: _diffStep, diffArgs: _diffArgs, ...rest } = score;
   const entry = isNlActionEntryId(result.entryId) ? result.entryId : 'unknown';
   const reason = `${result.kind}:${entry}`;
   const outcome = result.kind === 'write' ? 'read-write' : result.kind === 'note' ? 'read-note' : 'read-clarify';
