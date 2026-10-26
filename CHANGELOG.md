@@ -5,6 +5,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
+
+- **Recorded.** DECISIONS "G7 addendum": the exact A3b payload G7 measures (`g7-payload.v1`): per item only the
+  ordinal, a coarse time (relative day, duration, overlap and back-to-back flags; no date or clock time) and the
+  minimized title (dotted, URL, e-mail and phone spans removed whole; names dropped against the union of every
+  item's name fields plus the owner's; one batched local classifier; the 2–30 character, 1–4 token filter), plus the
+  owner's words and fixed text.
+- **Added.** `tools/g7/`: the payload builder, the batched classifier request and guard (`topicList.v1`), the
+  production-equivalent tool-less Claude CLI request (argv pinned to `ClaudeCliProvider.buildArgs` by a test), arm A
+  re-rendered from the sealed G6 L0 outputs, one seeded interleaved A/B blind session with preference pairs, the A/B
+  lock before arm C, the pre-registered G7 rule, and a fail-closed `g7-freeze` check. Prompts
+  `answer-list.v1` and `topic-list.v1`. 40 unit tests, no model call.
+- **Not run.** The G7 case file is prepared by a separate session; the G7 run and arm C are Strict owner steps.
+
+## Unreleased — ADR-0121 A3a G6 result: local not adequate on calendar (docs only, 2026-10-26)
+
+- **Recorded.** The official G6 run (72 cases, arms L0 and LT) missed every latency bar: L0 warm median 12.97 s (bar
+  5 s), cold 23.4 s (bar 15 s); LT warm median 45.0 s and p95 45.0 s (bars 20 s / 35 s; 44 of 49 fallbacks at the 45 s
+  wall). By the pre-registered rule the decision is `no-arm-meets-latency-bar`: local judgment is not adequate on
+  calendar, independent of quality labels (re-verified from the archive with `score.mjs`, no model call).
+- **Owner decision.** Proceed with the A3b re-review; the 144-answer quality labelling is skipped. Memory pressure and a
+  concurrent gate during the run are recorded; no rerun (pre-registration).
+- **Consequence.** Until A3b is ratified and opened, multi-item judgment requests answer with the listing and the
+  criteria question (A3a-D6). G7 may run after its own Strict yes.
+
+## Unreleased — ADR-0121 A3a G6 measurement harness and pinned local prompt (branch `claude/v5-g6-harness`)
+
+- **Added.** `tools/g6/`: the official G6 harness. The pinned local judgment prompt
+  (`prompts/answer-judge-local.v1.txt`), the `judge.v1` schema builder (ordinal enum; `ranked` = N for `order`,
+  min(`count`, N) or 1..N for `pick`), the A3a-D3 calendar facts, the A3a-D2 renderer and guards, and the run script
+  for arms L0 (`think: false`) and LT (`think: true`) with the 45 s wall, one retry and the LT remaining-time rule. It
+  writes a seeded interleaved blind file for the owner's labels and scores only after the labels are complete.
+- **Fail closed.** The harness refuses to run unless the prompt, every harness file, the held-out set, the rubric and
+  the `qwen3:8b` digest match the committed `g6-freeze` addendum in `DECISIONS.md`, and the set hash was committed
+  after the prompt hash in a hash-only commit.
+- **Not run.** No model or Ollama call was made. The LT dry run (tuning set only) is implemented but needs the owner's
+  Strict yes; the G6 run needs the held-out set, its hash commit and a separate Strict yes.
+
 ## Unreleased — ADR-0121 A3a ratified: local judgment answers and the G6 re-measure protocol (docs only, 2026-10-26)
 
 - **Decided.** Judgment answers ("우선순위", "중요한 것 골라", "순서 짜줘") get a `select` field and the `judge.v1`

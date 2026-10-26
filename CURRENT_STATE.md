@@ -5,6 +5,26 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 A3a G6 result — local not adequate on calendar (2026-10-26, branch `claude/v5-g6-harness`)
+
+- **G6 ran** (Strict, owner yes): 72 frozen held-out cases, arms L0 and LT. Neither arm met its latency bar (L0 warm
+  median 12.97 s / cold 23.4 s against 5 s / 15 s; LT 45.0 s median and p95 against 20 s / 35 s), so the decision is
+  `no-arm-meets-latency-bar`: **local judgment is not adequate on calendar**. Record: DECISIONS "ADR-0121 A3a G6
+  result (2026-10-26)"; archive `eval-archive/g6-run-20261026T035948/`.
+- **Owner decision:** proceed with the A3b re-review; quality labelling skipped. Recorded conditions: memory pressure
+  (swap ~4.2/5 GB) and a concurrent gate; no rerun.
+- **Consequence:** until A3b is ratified and opened, multi-item judgment requests answer with the listing plus the
+  criteria question (A3a-D6). No runtime change today (A3a code not built).
+
+- **G7 prepared (no run).** The A3b payload definition is recorded before any run (DECISIONS "G7 addendum",
+  `g7-payload.v1`), and `tools/g7/` implements it with arm A from the sealed G6 L0 outputs, a blind A/B session, the
+  A/B lock before arm C and a fail-closed freeze; part 1 of the G7 freeze (prompts, harness, payload definition and
+  the G6 run file) is hash-recorded.
+
+Next: a separate session prepares the G7 case file (`tools/g7/cases.mjs` format) and commits its hash; part 2 adds the
+seed and the recipient model on the run day; then the G7 run on a separate Strict yes, G8, G9, a security review and
+the A3b ratification.
+
 ### ADR-0121 amendment A3a — ratified (2026-10-26, docs only, branch `claude/v5-a3-proposal`)
 
 The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; no code changed; **no egress opened**.
