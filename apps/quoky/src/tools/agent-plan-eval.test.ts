@@ -684,3 +684,38 @@ describe('owner decisions of 2026-10-26: relabels and the help-capture rule of t
     expect(text).toContain('help captures <= 3 = ceil(1% of 250 negatives)');
   });
 });
+
+describe('Core\'s final outcome for help.topic plans on negatives (owner decisions of 2026-10-26)', () => {
+  const help = JSON.stringify({ entryId: 'help.topic', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+
+  it('a general help.topic plan naming one source is Core\'s help-scope question: clarify, asked on a clarification gold', () => {
+    const neg010 = byId('neg-010');
+    expect(neg010.clarify).toMatchObject({ between: ['help.topic'] });
+    expect(scoreAgentPlanOutput(neg010, help, FIXTURE)).toMatchObject({ outcome: 'clarify', reason: 'help-scope' });
+    // A feature topic is the selector's own reading (the shared rule's topic gate): still a help capture there.
+    const topic = JSON.stringify({ entryId: 'help.topic', args: { topic: 'work-lookup' }, ambiguity: 'CLEAR', alternatives: [] });
+    expect(scoreAgentPlanOutput(neg010, topic, FIXTURE)).toMatchObject({ outcome: 'miss', reason: 'clarify-gold' });
+  });
+
+  it('ap-n115 is a clarification gold; Core does not ask for it (two sources), so a CLEAR help plan is a miss, never a capture', () => {
+    const golden = byId('ap-n115');
+    expect(golden.clarify).toMatchObject({ between: ['help.topic'] });
+    expect(scoreAgentPlanOutput(golden, help, FIXTURE)).toMatchObject({ outcome: 'miss', reason: 'clarify-gold' });
+    const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(scoreAgentPlanOutput(golden, none, FIXTURE)).toMatchObject({ outcome: 'none' });
+  });
+
+  it('a help.topic plan on an ordinary negative naming no source stays a help capture (wrong, help.topic only)', () => {
+    expect(scoreAgentPlanOutput(byId('neg-012'), help, FIXTURE)).toMatchObject({ outcome: 'wrong', gotEntries: ['help.topic'] });
+  });
+
+  it('the summary counts clarification golds and how many Core asked', () => {
+    const record = (id: string, outcome: AgentPlanEvalRecord['outcome'], clarifyGold: boolean): AgentPlanEvalRecord => ({
+      run: 1, id, family: 'one-step', expected: 'none', goldEntries: [], outcome, gotEntries: ['help.topic'], latencyMs: 1, ...(clarifyGold ? { clarifyGold: true as const } : {}),
+    });
+    const summary = summarizeAgentPlanRun([record('neg-010', 'clarify', true), record('ap-n115', 'miss', true), record('neg-012', 'none', false)], 6000);
+    expect(summary.clarifyGolds).toEqual({ total: 2, asked: 1 });
+    expect(summary.helpCaptures).toBe(0);
+    expect(formatAgentPlanSummary(summary).join('\n')).toContain('clarification golds asked: 1/2');
+  });
+});

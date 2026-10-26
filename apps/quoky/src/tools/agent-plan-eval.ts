@@ -52,6 +52,7 @@ import {
   NL_WAVE1_ENTRIES,
   buildAgentPlanPrompt,
   conjunctTokens,
+  nlHelpSourceScope,
   isNlActionEntryId,
   isNlCatalogEntryId,
   NL_ACTION_ENTRIES,
@@ -157,6 +158,12 @@ export interface AgentPlanCase {
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
   readonly expect: 'none' | AgentPlanGoldPlan | AgentPlanAskExpect;
   /**
+   * A clarification gold (owner decision A of 2026-10-22, as `nl-intent.v1.json`; ap-n115 by the owner's decision of
+   * 2026-10-26): a negative whose correct answer is a question between the listed entries and none. A CLEAR plan of one
+   * listed entry is a miss, never a wrong plan or a help capture; Core's own question is the hit (`asked`).
+   */
+  readonly clarify?: AgentPlanClarifyGold;
+  /**
    * Negatives: the tempting plan; the validator must refuse it (with `trapRefusal` when given). Ask cases: the unbounded
    * plan the planner would write; the validator must turn it into the expected ask.
    */
@@ -197,12 +204,19 @@ export interface AgentPlanCorpus {
   readonly cases: readonly AgentPlanCase[];
 }
 
+/** A clarification gold: the entries the correct question is between (and none). */
+export interface AgentPlanClarifyGold {
+  readonly between: readonly string[];
+  readonly batch?: string;
+}
+
 /** One `nl-intent.v1.json` case, as far as the one-step gold needs it. */
 export interface OneStepCase {
   readonly id: string;
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  readonly clarify?: AgentPlanClarifyGold;
 }
 
 /** One scored case: a new corpus case or a referenced one-step case. */
@@ -217,6 +231,8 @@ export interface AgentPlanEvalCase {
   readonly gold: 'none' | AgentPlanGoldPlan | AgentPlanAskExpect;
   /** A1-E4: the expected help section (split off before planning), when the gold has one. */
   readonly help?: string;
+  /** A clarification gold (negatives only). */
+  readonly clarify?: AgentPlanClarifyGold;
 }
 
 export function loadAgentPlanCorpus(
@@ -248,6 +264,7 @@ export function agentPlanEvalCases(corpus: AgentPlanCorpus, oneStep: readonly On
       attachments: 0,
       ...(golden.prior !== undefined ? { prior: golden.prior } : {}),
       gold: golden.expect === 'none' ? 'none' : { steps: [{ entryId: golden.expect.entryId, args: golden.expect.args }], ambiguity: 'CLEAR' },
+      ...(golden.clarify !== undefined ? { clarify: golden.clarify } : {}),
     });
   }
   for (const golden of corpus.cases) out.push(evalCaseOf(golden));
@@ -264,6 +281,7 @@ function evalCaseOf(golden: AgentPlanCase): AgentPlanEvalCase {
     ...(golden.prior !== undefined ? { prior: golden.prior } : {}),
     gold: golden.expect,
     ...(golden.help !== undefined ? { help: golden.help } : {}),
+    ...(golden.clarify !== undefined ? { clarify: golden.clarify } : {}),
   };
 }
 
@@ -481,6 +499,16 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
     if (gold === 'none') return { outcome: 'wrong', gotEntries, reason: `unbounded:${validation.plan.bound}` };
     return { outcome: same ? 'asked' : 'ask-other', gotEntries, reason: `unbounded:${validation.plan.bound}` };
   }
+  // Owner principle of 2026-10-19 (gates score Core's final result), as the read scorers since owner decision A of
+  // 2026-10-22: a general help.topic plan whose words name one catalog source is answered by Core's help-scope question
+  // (`nlHelpSourceScope`, the runtime's own function), never by the help text.
+  const only = validation.plan.steps.length === 1 ? validation.plan.steps[0] : undefined;
+  // Negatives only (the coordinator's scope of 2026-10-26): on a help.topic positive the planner's choice is scored as is.
+  if (golden.gold === 'none' && only?.kind === 'read' && nlHelpSourceScope({ entryId: only.entry.id, args: only.args }, prepared.ctx.groundingText) !== undefined) {
+    return { outcome: 'clarify', gotEntries, reason: 'help-scope' };
+  }
+  // A clarification gold: a CLEAR plan of one listed entry is a miss (the question was the right answer), never wrong.
+  if (golden.gold === 'none' && only?.kind === 'read' && golden.clarify?.between.includes(only.entry.id) === true) return { outcome: 'miss', gotEntries, reason: 'clarify-gold' };
   if (golden.gold === 'none' || isAgentPlanAskExpect(golden.gold)) return { outcome: 'wrong', gotEntries };
   const diff = graphDiff(validatedGraph(validation.plan.steps), goldGraph(golden.gold));
   // CA finding 5: the related step is scored too (a missing, extra or other step is a miss).
@@ -554,6 +582,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
         } else problems.push(...readWriteProblems(at, golden, corpus.fixture));
       }
       if (golden.formerId !== undefined && !/^ap-[pn]\d{3}$/.test(golden.formerId)) problems.push(`${at}: formerId must be an ap- id`);
+      if (golden.clarify !== undefined) problems.push(`${at}: only a negative is a clarification gold`);
       const validation = validateAgentPlan(plan, prepared.ctx);
       if (!validation.ok) {
         problems.push(`${at}: the gold is refused (${validation.reason}${validation.step !== undefined ? ` at step ${validation.step}` : ''}${validation.stepReason !== undefined ? `: ${validation.stepReason}` : ''})`);
@@ -569,6 +598,9 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       continue;
     }
     if (golden.help !== undefined) problems.push(`${at}: only a positive names a help section`);
+    if (golden.clarify !== undefined && (!Array.isArray(golden.clarify.between) || golden.clarify.between.length === 0 || !golden.clarify.between.every((id) => isNlWave1EntryId(id)))) {
+      problems.push(`${at}: clarify.between lists closed READ entry ids`);
+    }
     if (golden.readWrite !== undefined) problems.push(...readWriteProblems(at, golden, corpus.fixture));
     if (golden.trapRefusal !== undefined && golden.trap === undefined) problems.push(`${at}: trapRefusal without a trap`);
     if (golden.trap === undefined || 'skip' in prepared) continue;
@@ -754,6 +786,8 @@ export interface AgentPlanEvalRecord extends AgentPlanScore {
   readonly latencyMs: number;
   /** Closed error class name (never a message). */
   readonly error?: string;
+  /** The case is a clarification gold (a question is its correct answer). */
+  readonly clarifyGold?: true;
 }
 
 export class AgentPlanCallCapReached extends Error {
@@ -808,7 +842,7 @@ export async function runAgentPlanEvaluation(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is AgentPlanEvalCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const base = { run, id: golden.id, family: golden.family, expected: expectedOf(golden), goldEntries: goldEntriesOf(golden) };
+        const base = { run, id: golden.id, family: golden.family, expected: expectedOf(golden), goldEntries: goldEntriesOf(golden), ...(golden.clarify !== undefined ? { clarifyGold: true as const } : {}) };
         const prepared = caseContext(golden, input.plan.fixture);
         let record: AgentPlanEvalRecord;
         if ('skip' in prepared) {
@@ -877,6 +911,8 @@ export interface AgentPlanEvalSummary {
   readonly latency: { readonly p50: number; readonly p95: number; readonly max: number; readonly boundMs: number; readonly overBound: number };
   readonly overBoundRate: number;
   readonly capped: number;
+  /** Clarification golds and how many of them Core asked (not gated; as the read gates' report). */
+  readonly clarifyGolds: { readonly total: number; readonly asked: number };
   /**
    * The gated groups (CA review of S2 P2): multi-step positives (the new corpus) and one-step positives (Q11). `ask`
    * (decision (h)): the unbounded requests answered with the expected ask (`exact` = `asked`); gated at >= 95% when
@@ -953,6 +989,10 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
     latency: { p50: pct(50), p95: pct(95), max: latencies.at(-1) ?? 0, boundMs, overBound },
     overBoundRate,
     capped,
+    clarifyGolds: {
+      total: records.filter((record) => record.clarifyGold === true).length,
+      asked: records.filter((record) => record.clarifyGold === true && record.outcome === 'clarify').length,
+    },
     groups: { multiStep, oneStep, ask: { total: asks.length, exact: asked, rate: asks.length === 0 ? 0 : asked / asks.length } },
     gating,
     gatePassed:
