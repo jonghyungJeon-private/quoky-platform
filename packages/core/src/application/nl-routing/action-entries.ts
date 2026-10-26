@@ -102,6 +102,16 @@ const DETERMINERS_KO = ['이', '그', '저'] as const;
 type NlDeterminer = (typeof DETERMINERS_KO)[number];
 /** 저 is also the first-person pronoun: it grounds a read reference only. */
 const READ_ONLY_DETERMINERS: ReadonlySet<NlDeterminer> = new Set(['저']);
+
+/**
+ * ADR-0121 S2 (CA review of P3, W1): whether a payload span begins with one of this closed determiner set as its own word
+ * ("그 첫 회의 제목", "이 내용"): the span points at something already shown, so it is a reference, never the owner's own
+ * payload. 저 is excluded (the first-person pronoun). Pure.
+ */
+export function nlSpanStartsWithDeterminer(span: string): boolean {
+  const [first] = normalizeForMatch(span).split(/\s+/u);
+  return first !== undefined && (DETERMINERS_KO as readonly string[]).includes(first) && !READ_ONLY_DETERMINERS.has(first as NlDeterminer);
+}
 /**
  * The list entry of each item source, whose catalog words are that source's nouns. A6 R2 adds `jira.issues` (지라, 이슈,
  * 티켓, jira) and `slack.search` (슬랙, slack): derived from the catalog, never listed by hand.

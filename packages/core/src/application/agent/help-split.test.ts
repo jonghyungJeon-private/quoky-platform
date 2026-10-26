@@ -29,8 +29,10 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     ['도움말 좀, 지라 이슈 보여줘', 'all', '지라 이슈 보여줘'],
     ['help and my github PRs', 'all', 'my github PRs'],
     // Owner decision 2026-10-23: English "show the help page" with a read (ap-n120 → ap-p177).
-    ['show the help page and my github PRs', 'all', 'my github PRs'],
-    ['show me the help menu and my unread mail', 'all', 'my unread mail'],
+    // CA review of P3: the shared leading verb goes back to a rest that starts as a bare noun phrase.
+    ['show the help page and my github PRs', 'all', 'show my github PRs'],
+    ['show me the help menu and my unread mail', 'all', 'show me my unread mail'],
+    ['show me help and the calendar for tomorrow', 'all', 'show me the calendar for tomorrow'],
     ['check my jira issues and the help page', 'all', 'check my jira issues'],
     ['see the help page, and list my reminders', 'all', 'list my reminders'],
     // Codex P2: mixed Korean / English clauses fall back to the head-word form.
@@ -39,7 +41,7 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     ['지라 이슈랑 help 보여줘', 'all', '지라 이슈 보여줘'],
     // Codex P2: the English form tolerates trailing punctuation; no help word reaches the rest.
     ['check my jira issues and help page.', 'all', 'check my jira issues'],
-    ['show the help page! and my github PRs', 'all', 'my github PRs'],
+    ['show the help page! and my github PRs', 'all', 'show my github PRs'],
     ['show my unread mail and help.', 'all', 'show my unread mail'],
     // A non-guide alias with a guide closer is still help (W1).
     ['기능 좀 알려줘, 그리고 지라 이슈 보여줘', 'all', '지라 이슈 보여줘'],

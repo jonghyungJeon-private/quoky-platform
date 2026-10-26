@@ -29813,3 +29813,37 @@ English or unusual phrasing) still relies on the planner's `none`.
   resolves the Quoky option's help topic from EVERY named source and bounds only the stored and shown names (three), with
   an overflow flag (`appSourcesMore`) so the question and the app reply still say "등" / "and others" (test: four
   sources, one mapping to another topic → the general help and "슬랙·지라·깃허브 등").
+
+### ADR-0121 S2 note — the Chief Architect's review of P3 (PASS-with-fixes for the shadow merge, 2026-10-26)
+
+Rebased onto origin/main 74cbb858: the release-list commits shipped separately as #283 / #284 and were dropped from this
+branch as already applied; main's renderer, test and A8 note are kept (the #284 undated-unreleased order and the
+project-token release drop included). The release-order paragraphs of the earlier S2 notes are history.
+
+- **W1 — a payload that points back is never written.** The probe returns `note` (the read sections and the decision (f)
+  note) when the selection's validation on the clause fails with `deictic-payload`, when its `ref` arg is set, or when the
+  clause or a payload span points back (`nlWriteClausePointsBack`: the A6 determiner + item-noun grammar of the referent
+  grammar's step 3 over the clause, or a span that begins with a determiner of that closed set: "그 첫 회의 제목", "그 내용").
+- **W2 — a requested write is never silently dropped.** A write entry whose only failures on the clause are a missing
+  or ungrounded arg, or that the selector marked NEEDS_CLARIFICATION, in a clause that names the entry by a catalog alias
+  or that a write grammar claims, is `clarify`: the existing A6 clarification with the clause as its grounding (owner Q3
+  example 1; red team rt-s2rw-007/-008/-024/-030 `read-and-clarify`). The probe prompt is built over the uncovered
+  clause(s) only, so no read-clause word can be borrowed as a payload.
+- **W3 — the eval scores the probe against the gold.** With a `readWrite` gold the probe result must be the one it names
+  (write ↔ read-and-write, note ↔ read-and-note, clarify ↔ read-and-clarify, stands ↔ unchanged); a mismatch is `wrong` on
+  a negative (`probe-mismatch:…`) and a miss on a positive. Without one, a `write` on a negative is `wrong`; a note or a
+  clarification writes nothing. Probe timeouts and errors are the record's outcome and are counted (39a10ddb).
+- **W4 — a clarification of the owner's 2026-10-26 help-allowance decision (the owner will be told).** Core's help-scope
+  question on a negative WITHOUT a clarification gold (≈ 45 two-source chit-chat / capability negatives) is a help-like
+  answer on a negative, so it counts toward the ceil(1%) help-capture allowance; on a clarification gold (neg-010,
+  ap-n115) it stays the hit (asked).
+- **Minor.** An English help clause first gives its leading verb back to a rest that starts as a bare noun phrase (one of
+  the help grammar's own determiners: "show the help page and my github PRs" → help + "show my github PRs"; "show me help
+  and the calendar for tomorrow" → "show me the calendar for tomorrow"; a rest with its own verb keeps it).
+  `ownerSpelling` accepts the slice only when it equals the source name, case aside.
+- **Executor contract (P3 part 3).** The read + write probe runs with the Reference context from BEFORE this turn (the
+  listing and action records as they stood when the owner wrote) and never sees this turn's read output: no item, title,
+  id, date or position the read part returns may reach the probe prompt or the write args. The shadow line's
+  `uncoveredClauses` count is the counter of how often the probe would fire (one line per shadowed turn).
+- **Tests.** The probe (W1 determiner and deictic payloads, W2 clarifications and the clause-only prompt), the eval (W3
+  readWrite matching and mismatch, a write without a readWrite gold, W4 help-scope captures), the English rests.

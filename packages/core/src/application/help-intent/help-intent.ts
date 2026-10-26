@@ -389,3 +389,18 @@ export function isHelpCloserStem(stem: string): boolean {
   const text = normalize(stem);
   return Array.from(text).length >= 2 && GUIDE_CLOSER_FORMS.some((form) => form.replace(/\\s\?/gu, '').startsWith(text));
 }
+
+/**
+ * ADR-0121 A1-E1 (CA review of P3, minor): the verb part of an English help lead ("show the" → "show", "show me" →
+ * "show me", "the" → ""), i.e. the lead without its trailing determiner, using this grammar's own determiners. The help
+ * split gives it back to the rest when the help clause comes first ("show the help page and my github PRs" → "show my
+ * github PRs"). Pure.
+ */
+export function helpEnglishLeadVerb(lead: string): string {
+  return normalize(lead).replace(new RegExp(String.raw`(?:^|\s+)(?:${EN_ARTICLES}|your)$`, 'u'), '').trim();
+}
+
+/** Whether `word` is one of this grammar's English determiners (the how-to determiners and "your"). Pure. */
+export function isHelpEnglishDeterminer(word: string): boolean {
+  return new RegExp(String.raw`^(?:${EN_ARTICLES}|your)$`, 'u').test(normalize(word));
+}

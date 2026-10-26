@@ -1,6 +1,7 @@
 import type { IsoTimestamp } from '../../domain';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { detectWorkChatCommand, type WorkChatCommand } from '../work-chat/work-chat-command';
+import { nlDeterminerSources, nlSpanStartsWithDeterminer } from './action-entries';
 
 /**
  * ADR-0121 S2 (owner-approved fix of 2026-10-26 for ap-n131, under the ratified read + write note): whether one clause of
@@ -27,4 +28,14 @@ export function nlClauseClaimsWrite(clause: string, options: { readonly now: Iso
   }
   const work = detectWorkChatCommand(text);
   return work !== null && WORK_WRITE_KINDS.has(work.kind);
+}
+
+/**
+ * ADR-0121 S2 (CA review of P3, W1): whether a write clause, or one of a selection's payload spans, points back at
+ * something already shown instead of carrying the owner's own payload: the A6 determiner + item-noun grammar ("그 할 일",
+ * "이 메일"; the referent grammar's step 3) over the clause, or a span that begins with a determiner word ("그 첫 회의 제목",
+ * "그 내용"). Existing closed vocabulary only. Pure.
+ */
+export function nlWriteClausePointsBack(clause: string, spans: readonly string[]): boolean {
+  return nlDeterminerSources(clause).size > 0 || spans.some((span) => nlSpanStartsWithDeterminer(span));
 }

@@ -185,7 +185,7 @@ export interface AgentPlanCase {
 }
 
 /** The closed outcomes of the read + write path (S2 note of 2026-10-23). */
-export const AGENT_PLAN_READ_WRITE_OUTCOMES = ['read-and-write', 'read-and-note', 'unchanged'] as const;
+export const AGENT_PLAN_READ_WRITE_OUTCOMES = ['read-and-write', 'read-and-note', 'read-and-clarify', 'unchanged'] as const;
 /** Why a write clause is not run (`read-and-note`) or the path does not apply (`unchanged`). */
 export const AGENT_PLAN_READ_WRITE_WHY = ['list-ref', 'deictic', 'one-conjunct', 'no-offered-entry'] as const;
 
@@ -237,6 +237,8 @@ export interface AgentPlanEvalCase {
   readonly help?: string;
   /** A clarification gold (negatives only). */
   readonly clarify?: AgentPlanClarifyGold;
+  /** The read + write turn outcome (the ratified note), when the case has one. */
+  readonly readWrite?: AgentPlanReadWriteExpect;
 }
 
 export function loadAgentPlanCorpus(
@@ -286,6 +288,7 @@ function evalCaseOf(golden: AgentPlanCase): AgentPlanEvalCase {
     gold: golden.expect,
     ...(golden.help !== undefined ? { help: golden.help } : {}),
     ...(golden.clarify !== undefined ? { clarify: golden.clarify } : {}),
+    ...(golden.readWrite !== undefined ? { readWrite: golden.readWrite } : {}),
   };
 }
 
@@ -408,6 +411,8 @@ export type AgentPlanOutcome =
    */
   | 'read-write'
   | 'read-note'
+  /** CA W2: a requested write missing a detail: the existing A6 clarification. */
+  | 'read-clarify'
   | 'skipped';
 
 export interface AgentPlanScore {
@@ -753,7 +758,7 @@ const PROBE_OFFERED: ReadonlyMap<string, NlCatalogEntry> = new Map(PROBE_ENTRIES
 
 /** sha256 of the probe's A6 selection instruction text (every entry offered, an empty owner message). */
 export function readWriteProbePromptSha256(): string {
-  return sha256(agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: '' }));
+  return sha256(agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, clauses: [] }));
 }
 
 /** The uncovered clauses of the planner's answer (validated under the case context), or `[]` (no probe needed). */
@@ -766,13 +771,39 @@ export function readWriteProbeClausesOf(golden: AgentPlanEvalCase, raw: string, 
   return validation.ok ? agentReadWriteProbeClauses(validation.plan, prepared.ctx.groundingText) : [];
 }
 
-/** Core's final outcome after the probe: a write or a referenced write in an uncovered clause replaces the plan's score. */
-export function applyReadWriteProbe(score: AgentPlanScore, probeRaw: string, clauses: readonly string[], fixture: AgentPlanCorpus['fixture']): AgentPlanScore & { readonly probe: 'write' | 'note' | 'stands' } {
+/** The probe result each `readWrite` gold outcome expects. */
+const READ_WRITE_PROBE_OF: Readonly<Record<string, 'write' | 'note' | 'clarify' | 'stands'>> = {
+  'read-and-write': 'write',
+  'read-and-note': 'note',
+  'read-and-clarify': 'clarify',
+  unchanged: 'stands',
+};
+
+/**
+ * Core's final outcome after the probe (CA review of P3, W3). With a `readWrite` gold, the probe result must be the one
+ * that gold names (write ↔ read-and-write, note ↔ read-and-note, clarify ↔ read-and-clarify): a match is `read-write` /
+ * `read-note` / `read-clarify`, a mismatch is `wrong` on a negative and a miss on a positive. Without one, a `write` on a
+ * negative is `wrong` (a write the gold never expected); a note or a clarification writes nothing. A probe that `stands`
+ * keeps the plan's own score.
+ */
+export function applyReadWriteProbe(
+  score: AgentPlanScore,
+  golden: AgentPlanEvalCase,
+  probeRaw: string,
+  clauses: readonly string[],
+  fixture: AgentPlanCorpus['fixture'],
+): AgentPlanScore & { readonly probe: 'write' | 'note' | 'clarify' | 'stands' } {
   const result = agentReadWriteProbeResult(probeRaw, clauses, PROBE_OFFERED, { now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone });
   if (result.kind === 'stands') return { ...score, probe: 'stands' };
   const { diff: _diff, diffStep: _diffStep, ...rest } = score;
   const entry = isNlActionEntryId(result.entryId) ? result.entryId : 'unknown';
-  return { ...rest, outcome: result.kind === 'write' ? 'read-write' : 'read-note', reason: `${result.kind}:${entry}`, probe: result.kind };
+  const reason = `${result.kind}:${entry}`;
+  const outcome = result.kind === 'write' ? 'read-write' : result.kind === 'note' ? 'read-note' : 'read-clarify';
+  const expected = golden.readWrite !== undefined ? READ_WRITE_PROBE_OF[golden.readWrite.outcome] : undefined;
+  const negative = golden.gold === 'none' || isAgentPlanAskExpect(golden.gold);
+  if (expected !== undefined && expected !== result.kind) return { ...rest, outcome: negative ? 'wrong' : 'miss', reason: `probe-mismatch:${reason}`, probe: result.kind };
+  if (expected === undefined && negative && result.kind === 'write') return { ...rest, outcome: 'wrong', reason, probe: result.kind };
+  return { ...rest, outcome, reason, probe: result.kind };
 }
 
 export function agentPlanPromptSha256(): string {
@@ -842,7 +873,7 @@ export interface AgentPlanEvalRecord extends AgentPlanScore {
    * The read + write probe of this case: its closed result. A probe call that timed out or failed is the record's outcome
    * (`timeout` / `error`, reason `probe-timeout` / `probe-error`; Codex P2), never silently the planner's.
    */
-  readonly probe?: 'write' | 'note' | 'stands' | 'timeout' | 'error';
+  readonly probe?: 'write' | 'note' | 'clarify' | 'stands' | 'timeout' | 'error';
   /** The probe call's latency (counted in the calls, the latency percentiles and the over-bound rate). */
   readonly probeLatencyMs?: number;
 }
@@ -923,11 +954,11 @@ export async function runAgentPlanEvaluation(input: {
             if (clauses.length === 0) {
               record = { ...base, ...scored, latencyMs };
             } else {
-              const probePrompt = agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: prepared.text });
+              const probePrompt = agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, clauses });
               const probeStarted = clock();
               try {
                 const probe = await withTimeout(capped.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: probePrompt, timeoutMs: input.plan.callTimeoutMs }), input.plan.callTimeoutMs);
-                record = { ...base, ...applyReadWriteProbe(scored, probe.text, clauses, input.plan.fixture), latencyMs, probeLatencyMs: clock() - probeStarted };
+                record = { ...base, ...applyReadWriteProbe(scored, golden, probe.text, clauses, input.plan.fixture), latencyMs, probeLatencyMs: clock() - probeStarted };
               } catch (error) {
                 const probeLatencyMs = clock() - probeStarted;
                 if (error instanceof AgentPlanCallCapReached) record = { ...base, outcome: 'capped', latencyMs: 0 };
@@ -1010,7 +1041,12 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
   const asked = asks.filter((record) => record.outcome === 'asked').length;
   const exact = positives.filter((record) => record.outcome === 'exact').length;
   // Owner decision of 2026-10-26: a help.topic-only plan on a negative is a help capture, counted apart.
-  const isHelpCapture = (record: AgentPlanEvalRecord): boolean => record.outcome === 'wrong' && record.gotEntries?.length === 1 && record.gotEntries[0] === 'help.topic';
+  // CA review of P3, W4 (a clarification of the owner's 2026-10-26 decision): Core's help-scope question on a negative
+  // WITHOUT a clarification gold is a help-like answer there, so it counts toward the help allowance; on a clarification
+  // gold it is the hit (asked).
+  const isHelpCapture = (record: AgentPlanEvalRecord): boolean =>
+    (record.outcome === 'wrong' && record.gotEntries?.length === 1 && record.gotEntries[0] === 'help.topic') ||
+    (record.outcome === 'clarify' && record.reason === 'help-scope' && record.clarifyGold !== true);
   const helpCaptures = negatives.filter(isHelpCapture).length;
   const helpAllowance = helpCaptureAllowance(negatives.length);
   const wrongOnNegatives = negatives.filter((record) => record.outcome === 'wrong' && !isHelpCapture(record)).length;

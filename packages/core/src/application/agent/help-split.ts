@@ -1,4 +1,4 @@
-import { detectCapabilityQuestion, detectHelpCommand, detectHelpIntent, isHelpCloserStem, isHelpEnglishLead, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
+import { detectCapabilityQuestion, detectHelpCommand, detectHelpIntent, helpEnglishLeadVerb, isHelpCloserStem, isHelpEnglishDeterminer, isHelpEnglishLead, isHelpGuideCloser, isHelpGuideToken, isHelpTopicParticle } from '../help-intent/help-intent';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
@@ -79,6 +79,8 @@ interface Clause {
   readonly topic: string;
   /** The index (into the tokens) of a shared predicate that stays with the rest. */
   readonly sharedPredicate?: number;
+  /** English: the help clause's leading verb ("show", "show me"), given back to the rest when the clause comes first. */
+  readonly sharedLead?: string;
 }
 
 /**
@@ -128,6 +130,11 @@ export function splitHelpClause(prepared: { readonly text: string; readonly grou
     kept[kept.length - 1] = (kept[kept.length - 1] as string).replace(/(?:이랑|랑|하고|[,،])$/u, '');
     if (clause.sharedPredicate !== undefined) kept.push((tokens[clause.sharedPredicate] as ConjunctToken).text);
   }
+  // CA review of P3 (minor): an English help clause first gives its leading verb back to the rest ("show the help page and
+  // my github PRs" → "show my github PRs"), the mirror of the Korean shared predicate.
+  // Only when the rest starts as a bare noun phrase (one of the grammar's determiners: "my github PRs", "the calendar"); a
+  // rest with its own verb ("list my reminders") keeps it.
+  if (clause.sharedLead !== undefined && clause.conjunct === conjuncts[0] && isHelpEnglishDeterminer(plain(kept[0] ?? ''))) kept.unshift(clause.sharedLead);
   const rest = kept.filter((word) => word.length > 0).join(' ');
   if (rest.length === 0) return undefined;
   return { topic: topics.includes(clause.topic) ? clause.topic : 'all', rest };
@@ -149,7 +156,10 @@ function aliasClause(words: readonly ConjunctToken[], indexes: readonly number[]
     const lead = words.slice(0, at).map((token) => plain(token.word)).join(' ');
     // Trailing sentence punctuation is tolerated ("… and the help page.").
     const oneWordAfter = after.length === 0 || (after.length === 1 && /^[a-z]+$/u.test(plain((after[0] as ConjunctToken).word)));
-    if (isHelpEnglishLead(lead) && oneWordAfter) return { topic: 'all' };
+    if (isHelpEnglishLead(lead) && oneWordAfter) {
+      const verb = helpEnglishLeadVerb(lead);
+      return { topic: 'all', ...(verb.length > 0 ? { sharedLead: verb } : {}) };
+    }
     // Codex P2 (twice): only a mixed-language clause ("help 알려주고 …", a Korean word in it) falls back to the head-word
     // form below; a fully English clause that fails the English form is never split, so none of its words can reach the
     // rest ("check my jira issues and help desk tickets." stays whole).

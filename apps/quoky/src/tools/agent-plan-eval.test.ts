@@ -4,6 +4,7 @@ import {
   AGENT_PLAN_NEGATIVE_FAMILIES,
   AGENT_PLAN_POSITIVE_FAMILIES,
   agentPlanEvalCases,
+  applyReadWriteProbe,
   buildAgentPlanEvalPlan,
   cappedProvider,
   caseContext,
@@ -604,7 +605,7 @@ describe('the help split in scoring (ADR-0121 A1-E1 / A1-E4, S2 P3)', () => {
     expect(caseContext(split, FIXTURE)).toMatchObject({ split: { topic: 'all', rest: '안 읽은 메일도 보여줘' } });
     expect(scoreAgentPlanOutput(split, JSON.stringify({ entryId: 'mail.list', args: { unread: true }, ambiguity: 'CLEAR', alternatives: [] }), FIXTURE)).toMatchObject({ outcome: 'exact' });
     const english = byId('ap-p177');
-    expect(caseContext(english, FIXTURE)).toMatchObject({ split: { topic: 'all', rest: 'my github PRs' } });
+    expect(caseContext(english, FIXTURE)).toMatchObject({ split: { topic: 'all', rest: 'show my github PRs' } });
     expect(scoreAgentPlanOutput(english, JSON.stringify({ entryId: 'github.items', args: { kind: 'pr' }, ambiguity: 'CLEAR', alternatives: [] }), FIXTURE)).toMatchObject({ outcome: 'exact' });
   });
 
@@ -803,5 +804,33 @@ describe('Codex P2: the probe call is measured like every call', () => {
     const record: AgentPlanEvalRecord = { run: 1, id: 'ap-n131', family: 'a6-in-plan', expected: 'none', goldEntries: [], outcome: 'read-write', gotEntries: ['calendar.events'], latencyMs: 100, probe: 'write', probeLatencyMs: 9000 };
     const summary = summarizeAgentPlanRun([record], 6000);
     expect(summary).toMatchObject({ calls: 2, latency: { max: 9000, overBound: 1 }, overBoundRate: 0.5 });
+  });
+});
+
+describe('CA review of P3: the probe against the readWrite gold (W3) and help-scope asks on plain negatives (W4)', () => {
+  const golden = byId('ap-n131');
+  const clauses = ['내일 9시에 출발 알림 만들어줘'];
+  const base = { outcome: 'wrong' as const, gotEntries: ['calendar.events'] };
+  const write = JSON.stringify({ entryId: 'reminder.create', args: { when: '내일 9시', body: '출발' }, ambiguity: 'CLEAR', alternatives: [] });
+  const ask = JSON.stringify({ entryId: 'reminder.create', args: { when: '내일 9시' }, ambiguity: 'CLEAR', alternatives: [] });
+
+  it('the probe result must be the one the readWrite gold names; a mismatch is wrong on a negative', () => {
+    expect(golden.readWrite?.outcome).toBe('read-and-write');
+    expect(applyReadWriteProbe(base, golden, write, clauses, FIXTURE)).toMatchObject({ outcome: 'read-write', probe: 'write' });
+    expect(applyReadWriteProbe(base, golden, ask, clauses, FIXTURE)).toMatchObject({ outcome: 'wrong', reason: 'probe-mismatch:clarify:reminder.create' });
+  });
+
+  it('without a readWrite gold a write on a negative is wrong; a clarification is not', () => {
+    const { readWrite: _rw, ...plain } = golden;
+    expect(applyReadWriteProbe(base, plain, write, clauses, FIXTURE)).toMatchObject({ outcome: 'wrong', reason: 'write:reminder.create' });
+    expect(applyReadWriteProbe(base, plain, ask, clauses, FIXTURE)).toMatchObject({ outcome: 'read-clarify' });
+  });
+
+  it('W4: a help-scope question on a negative without a clarification gold counts as a help capture; on a clarification gold it is asked', () => {
+    const record = (id: string, clarifyGold: boolean): AgentPlanEvalRecord => ({
+      run: 1, id, family: 'capability-chit-chat', expected: 'none', goldEntries: [], outcome: 'clarify', reason: 'help-scope', gotEntries: ['help.topic'], latencyMs: 1, ...(clarifyGold ? { clarifyGold: true as const } : {}),
+    });
+    const summary = summarizeAgentPlanRun([record('ap-n093', false), record('neg-010', true)], 6000);
+    expect(summary).toMatchObject({ helpCaptures: 1, clarifyGolds: { total: 1, asked: 1 } });
   });
 });

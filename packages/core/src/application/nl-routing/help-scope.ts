@@ -76,7 +76,8 @@ function ownerSpelling(text: string, names: readonly string[]): string | undefin
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
     if (!containsGroundingWord(text, [name])) continue;
     const at = lower.indexOf(name);
-    if (at >= 0) return text.slice(at, at + name.length);
+    // CA review of P3 (minor): the slice must be the name itself, case aside (a case fold may change the length).
+    if (at >= 0 && text.slice(at, at + name.length).toLowerCase() === name) return text.slice(at, at + name.length);
   }
   return undefined;
 }
