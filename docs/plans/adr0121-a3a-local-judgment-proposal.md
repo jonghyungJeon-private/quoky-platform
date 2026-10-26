@@ -1,6 +1,13 @@
 # ADR-0121 amendment A3a: local judgment answers (`select`, `judge.v1`, Core relational facts), the G6 protocol, the Jira remote rule, and the G7–G9 pre-registration (no egress)
 
-- **Status:** **Proposed, ready to ratify** (2026-10-26). Docs only.
+- **Status:** **Ratified** by the Product Owner on 2026-10-26, with every recommended default, and **applied**.
+  - The ratification record, with the answers to Parts III and VI, is in `DECISIONS.md` ("ADR-0121 A3a ratification
+    record (2026-10-26)"). The text below is kept as proposed; where it and the record differ, the record wins.
+  - Settled by the record: **RQ-1** (GitHub is `REMOTE_OK` only when work summaries are on; A3a-D7 then applies to a
+    `github.items` list read, with pseudonyms) and **RQ-2** (the A3b recipient is an explicit owner-selected model only).
+  - Ratifying A3a opens **no egress**. A3b stays a draft.
+  - Implementation has not started. The build comes with A2 Part I after S2 is `active`, after the `readOutputLabel`
+    fix, behind `QUOKY_AGENT_ANSWER=off`. A G6 run needs a separate Strict owner yes.
 - **Origin.** Revision 1 of A3 (`89ab554f`) was one package. The Chief Architect / security review found it **NOT
   READY as one package**. The owner decided on 2026-10-26 to **split** it:
   - **A3a (this document):** no egress. An amendment of A2: the `select` field and `judge.v1` on the local path, Core

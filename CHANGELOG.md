@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A3a ratified: local judgment answers and the G6 re-measure protocol (docs only, 2026-10-26)
+
+- **Decided.** Judgment answers ("우선순위", "중요한 것 골라", "순서 짜줘") get a `select` field and the `judge.v1`
+  schema: the model answers by ordinal only, decoding is JSON-schema constrained so an order covers every item, and
+  Quoky renders each line's ID and subject. Calendar answers get Core-computed overlap, back-to-back, duration and gap
+  facts.
+- **Decided.** G6 re-measures the improved local prompt on new held-out cases, deciding calendar only. Below the bar the
+  reply is the listing and a criteria question. Jira and GitHub list judgments may use the remote model only where
+  work summaries are on.
+- **Recorded.** The G6 protocol is frozen and G7–G9 are pre-registered for the A3b title-list draft. A3b stays a draft
+  and opens no egress.
+- **Not implemented.** No runtime change. The `readOutputLabel` fix is a build precondition.
+
 ## Unreleased — Jira release list: unreleased first; release inside the project token (branch `claude/v5-release-fix`)
 
 - **Fixed.** Live smoke 2026-10-26 (OP26): the release list showed only released versions because unreleased ones without a
