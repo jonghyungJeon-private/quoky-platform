@@ -257,6 +257,8 @@ describe('detectors (measurement only)', () => {
     expect(quotedSegments('아래 문장을 보내 주세요.\n\n```\nNR26 프로젝트 20261029 릴리스 보여줘\n```')).toEqual(['NR26 프로젝트 20261029 릴리스 보여줘']);
     expect(extractSuggestions('앞선 답변에는 "이슈 5건"으로 나와 있었어요.', [], [], ['이슈 5건: 완료 1 · 할 일 4'])).toEqual([]);
     expect(instantiatePlaceholders('N번 메일 요약해줘')).toBe('1번 메일 요약해줘');
+    // Owner decision D3: a quoted step after "→" is a step of a flow, not a stand-alone suggestion.
+    expect(extractSuggestions('- 코드 수정: 요청 → "승인" → "적용해줘"\n- 기억: "기억해: 내용"', [], [])).toEqual(['기억해: 내용']);
     const reply = '할 일 2번을 완료 처리했어요: "회의록 정리" · 되돌리려면 "되돌려줘" (10분 안). \'누리 플랫폼 운영 2026 (NR26)\' 프로젝트';
     expect(extractSuggestions(reply, ['회의록 정리 끝났어'], ['누리 플랫폼 운영 2026'])).toEqual(['되돌려줘']);
     expect(instantiatePlaceholders('기억 N 수정: 내용')).toBe('기억 1 수정: 내용');

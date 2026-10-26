@@ -1968,7 +1968,11 @@ describe('ResponseComposer change-set replies (ADR-0099)', () => {
     const lines = text.split('\n').filter((l) => l.startsWith('- 여러 파일·새 파일'));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('5개까지');
-    expect(lines[0]).toContain('"새 파일 만들어줘"');
+    // Owner decision D3 (2026-10-26): "새 파일" is a part of the request, never a quoted stand-alone command.
+    expect(lines[0]).toContain('요청 문장에 새 파일이라고 함께 적어야');
+    expect(lines[0]).not.toContain('"');
+    // The post-apply checks are shown as a step of the flow (after "→").
+    expect(text).toContain('- 적용 후 검증: 코드 수정을 적용한 다음 → "테스트 실행해줘" 또는 "타입체크 실행해줘"');
     expect(text.length).toBeLessThanOrEqual(1900);
   });
 });

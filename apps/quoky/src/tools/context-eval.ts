@@ -425,7 +425,11 @@ export function extractSuggestions(reply: string, ownerTexts: readonly string[],
   const earlier = earlierReplies.map((text) => text.normalize('NFC').toLowerCase());
   const fixtures = fixtureStrings.map((text) => text.normalize('NFC').toLowerCase()).filter((text) => text.length >= 2);
   const out: string[] = [];
+  // Owner decision D3 (2026-10-26): a quoted step after "→" on its line is a step of a flow (the code-change chain),
+  // shown as such in Core's copy, not a stand-alone command; it is answered in its flow, not probed alone.
+  const flowSteps = new Set(reply.split('\n').flatMap((line) => (line.includes('→') ? quotedSegments(line.slice(line.indexOf('→'))) : [])));
   for (const segment of quotedSegments(reply)) {
+    if (flowSteps.has(segment)) continue;
     const lower = segment.normalize('NFC').toLowerCase();
     if (!/[\p{L}]/u.test(segment) || Array.from(segment).length < 2) continue;
     if (owner.some((text) => text.includes(lower))) continue;

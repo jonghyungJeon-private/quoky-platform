@@ -43,6 +43,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - The undo answers with that family's fixed copy (Slack: "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워
     주세요.") and writes nothing.
   - "방금 거" does not reach back to the older item either.
+- **Changed (P5, owner decision D3 2026-10-26).** The help index shows the code-change flow steps as steps, not as
+  stand-alone commands.
+  - "새 파일" is part of the request: "없는 파일은 요청 문장에 새 파일이라고 함께 적어야 새로 만들어요".
+  - The checks follow an apply: 코드 수정을 적용한 다음 → "테스트 실행해줘" 또는 "타입체크 실행해줘".
+  - The context eval treats a quoted step after "→" as a flow step, not a suggestion to probe alone.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 
