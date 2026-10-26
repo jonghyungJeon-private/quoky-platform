@@ -32,6 +32,14 @@ Next: a separate session prepares the G7 case file (`tools/g7/cases.mjs` format)
 seed and the recipient model on the run day; then the G7 run on a separate Strict yes, G8, G9, a security review and
 the A3b ratification.
 
+### Context eval fixes — P1/P2/P8/P4 (2026-10-26, branch `claude/v5-context-fixes`, not merged)
+
+These fix the hard failures of the first `eval:context` run that need no owner decision
+(`docs/eval/context-eval-baseline-2026-10-26.md`).
+- **P1.** A shown-listing guard: right after a listing, a denial of that listing or a re-run of it is dropped from the
+  chat reply. It works structurally from `lastSelection` and the handlers' Class B probes. The rule sentence is
+  strengthened.
+
 ### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
 
 Owner priority (2026-10-26): conversation-context continuity is the top quality criterion; measure first, then fix gaps in

@@ -82,15 +82,38 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(echo.turns[1]?.sent).toBe('알림 1 취소');
   }, 120_000);
 
-  it('catches the owner DM 2026-10-22 failure end to end: a chat reply denying the listing it just showed', async () => {
+  it('the owner DM 2026-10-22 reply no longer reaches the owner: the guard drops the denial and the re-run, the eval passes', async () => {
     world = await bootContextEvalWorld('deployed', { select: async () => '{}', chat: async () => '', summarize: async () => '' });
-    // The live reply of 2026-10-22 (a scripted chat provider; no model).
+    // The live reply of 2026-10-22 (a scripted chat provider; no model). Before the shown-listing guard the eval failed
+    // this scenario on false-incapability; now both sentences are dropped and the fixed ask closes the reply.
     const liveReply = '내일 면접 일정은 제가 직접 확인할 수 없어요. 일정 확인은 "내일 일정 보여줘"라고 물어봐 주세요.';
     const chat = { id: 'scripted-chat', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: liveReply, artifacts: [] }) } as never;
     const runner = new ContextEvalRunner(world, corpus, { profile: 'deployed', selection: { kind: 'oracle' }, chat, capabilityNouns: capabilityNouns() });
     const [record] = await runner.runAll(['lc-interview-questions'], 1);
-    expect(record?.score.pass).toBe(false);
-    expect(record?.score.hard['false-incapability']).toBe(1);
+    expect(record?.score.hard['false-incapability']).toBe(0);
+    expect(record?.score.pass).toBe(true);
+    expect(record?.turns[1]?.reply).toContain('위에 보여드린 목록은 화면에 그대로 있어요');
+    expect(record?.turns[1]?.reply).not.toContain('확인할 수 없어요');
+  }, 120_000);
+
+  it('the shown-listing guard over the real runtime: a denial of the listing and a re-run of it are dropped, the rest kept', async () => {
+    const calendarTomorrow = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+    const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    let selector = calendarTomorrow;
+    const reply = '위에서 Quoky가 보여드린 내일 일정 목록의 내용은 제가 볼 수 없어서, 어떤 면접인지는 알 수 없어요.\n다시 보고 싶으시면 "내일 일정"이라고 보내 주세요.\n면접 직무를 알려주시면 질문을 뽑아드릴게요.';
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => reply, summarize: async () => '' });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    const listing = await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    expect(listing.reply).toContain('1차 면접_AI Agent_김하늘');
+    selector = none;
+    const followUp = await world.turn(owner, '내일 면접 기준으로 면접 질문 좀 뽑아줘', owner.dm);
+    expect(followUp.chatPrompts).toHaveLength(1);
+    expect(followUp.reply).toBe('면접 직무를 알려주시면 질문을 뽑아드릴게요.');
+    // ADR-0110 D4: the chat prompt still carries no event text.
+    expect(followUp.chatPrompts[0]).not.toContain('1차 면접_AI Agent_김하늘');
+    // Without a listing just before (a chat turn in between clears the record), the reply is left as it is.
+    const later = await world.turn(owner, '고마워', owner.dm);
+    expect(later.reply).toBe(reply);
   }, 120_000);
 
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {

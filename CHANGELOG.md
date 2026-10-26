@@ -15,6 +15,17 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   and non-loopback daemons.
 - **Tests.** A `REMOTE` or undeclared embedder is never called and writes no vectors for memory text; recall equals
   lexical recall. No model call.
+## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
+
+- **Fixed (P1, #280 follow-up).** Right after Quoky shows a listing, a chat reply no longer tells the owner it cannot
+  see, read or check that listing, and no longer sends them to show it again.
+  - A new guard, `guardShownListingDenials`, works from Core's own record of what was shown: the previous turn's
+    `lastSelection` entry and args.
+  - It drops sentences with the D9 read-incapability patterns that do not name another source.
+  - It also drops sentences quoting a command that the handlers' pure Class B probes map to exactly that listing.
+  - It needs no word list, so the calendar "일정" reply is covered without adding a noun.
+  - The listing rule sentence and the composer's authority line are strengthened.
+  - No content reaches the remote model (ADR-0110 D4); the guard only removes sentences.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

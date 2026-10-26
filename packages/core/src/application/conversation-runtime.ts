@@ -94,7 +94,15 @@ import {
   type IntentClassifyContext,
 } from './intent-classifier';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
-import { guardFalseControlDenials, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, renderControlCommandsFact, type NlControlScope } from './nl-routing/honest-chat';
+import {
+  guardFalseControlDenials,
+  guardFalseIncapabilityClaims,
+  guardShownListingDenials,
+  renderConfiguredSourcesFact,
+  renderControlCommandsFact,
+  type NlControlScope,
+  type ShownListing,
+} from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { readLastSelection } from './nl-routing/selection-state';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
@@ -1151,6 +1159,12 @@ export interface ConversationRuntimeDeps {
 /** ADR-0120 D9: what the chat turn after a `none` (or unavailable) selection carries — the configured entries. */
 interface NlChatFacts {
   readonly entries: readonly NlCatalogEntry[];
+  /**
+   * #280 follow-up: the listing the previous turn showed (Core's own `lastSelection` record, read at the start of this
+   * turn) and whether a quoted command re-runs exactly that listing (the handlers' pure Class B probes). Absent when no
+   * offered listing was shown.
+   */
+  readonly listing?: { readonly shown: ShownListing; readonly rerunsListing: (segment: string) => boolean };
 }
 
 /**
@@ -3775,6 +3789,36 @@ export class ConversationRuntime {
     return { kind: 'continue', ...(early !== undefined ? { early } : {}) };
   }
 
+  /**
+   * #280 follow-up: the offered READ listing the previous turn showed (`lastSelection`, which a chat turn clears, so it
+   * is present only right after a listing), with a predicate telling whether a quoted command maps to exactly that
+   * listing (same entry and canonical args) through the handlers' own pure Class B probes. No read, no write, no provider.
+   */
+  private nlShownListing(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    catalog: ReadonlyMap<string, { readonly entry: NlCatalogEntry }>,
+  ): { readonly shown: ShownListing; readonly rerunsListing: (segment: string) => boolean } | undefined {
+    const now = this.clock();
+    const last = readLastSelection(session, actor.id, now);
+    const entry = last === undefined ? undefined : catalog.get(last.entryId)?.entry;
+    if (last === undefined || entry === undefined || entry.risk !== 'READ') return undefined;
+    const canonical = (args: Readonly<Record<string, unknown>>): string => JSON.stringify(Object.keys(args).sort().map((key) => [key, args[key]]));
+    const shownArgs = canonical(last.args);
+    const rerunsListing = (segment: string): boolean =>
+      this.turnHandlerRegistry.some((handler) => {
+        if (typeof handler.classBProbe !== 'function') return false;
+        try {
+          const probe = handler.classBProbe({ message: { ...message, id: `${message.id}:listing-probe`, text: segment }, now });
+          return probe?.selection !== undefined && probe.selection.entryId === entry.id && canonical(probe.selection.args) === shownArgs;
+        } catch {
+          return false;
+        }
+      });
+    return { shown: { entry, args: last.args }, rerunsListing };
+  }
+
   /** A handler's Class B probe, only when its catalog equivalent (if any) is offered this turn; never throws. */
   private nlClassBProbe(handler: ConversationTurnHandler, ctx: TurnHandlerContext): NlClassBProbe | null {
     if (typeof handler.classBProbe !== 'function') return null;
@@ -4034,6 +4078,8 @@ export class ConversationRuntime {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
     const catalog = this.nlCatalog(actor);
     const entries = [...catalog.values()].map((owned) => owned.entry);
+    // #280 follow-up: the listing the previous turn showed, read before this turn's selection changes the record.
+    const shownListing = this.nlShownListing(message, session, actor, catalog);
     const chat = await this.nlChatProvider(intent, session, actor);
     const decision = await nl.decide({
       ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
@@ -4058,7 +4104,7 @@ export class ConversationRuntime {
     if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentShadow(message, session, actor, entries, decision, chat, route, nlPending);
     // A6-D6: the honest-chat fact names the action families only while they act (shadow keeps today's fact).
     const factEntries = this.deps.nlSelection?.actionsActing?.(actor) === true ? entries : entries.filter((entry) => entry.risk === 'READ');
-    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries } : undefined;
+    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries, ...(shownListing !== undefined ? { listing: shownListing } : {}) } : undefined;
     switch (decision.kind) {
       case 'skip':
         // Phase C: the grammar is the fallback when selection did not run (shadow included: the grammar answers).
@@ -9187,8 +9233,13 @@ export class ConversationRuntime {
         this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
         return { text: control.text, guarded: true };
       }
-      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, controls !== undefined ? { controls } : {});
-      if (!incapable.guarded) return { text, guarded: false };
+      // #280 follow-up: right after a listing, a denial of that listing or a re-run of it is dropped first (from Core's
+      // record of what was shown, not from the reply's words); the D9 guard then judges what is left.
+      const language = languageOf(currentUserMessage);
+      const listing = nlFacts.listing === undefined ? { text, guarded: false } : guardShownListingDenials(text, nlFacts.listing.shown, nlFacts.entries, language, nlFacts.listing.rerunsListing);
+      if (listing.guarded) this.deps.logger.info('shown listing denial removed', { capability, entryId: nlFacts.listing?.shown.entry.id, ...(taskId ? { taskId } : {}) });
+      const incapable = guardFalseIncapabilityClaims(listing.text, nlFacts.entries, language, this.contributedHelpLines, controls !== undefined ? { controls } : {});
+      if (!incapable.guarded) return listing;
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };
     }
