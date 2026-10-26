@@ -54,6 +54,8 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   candidates, `docs/eval/context-eval.md` "D12 gate for read v68 / v69"), and the owner's Strict run comes next.
 - **P10 (D4).** A worded reply to the help-scope question goes to the selector with the question shown; its `answer` picks
   the option (read `nl-select.v69`, A6 `v67`, R2 `v68`; same D12 gate, not run). 8 more pending candidates (20 in all).
+- **The 20 D1 / P7 / D4 golds** were approved as-is by the owner (2026-10-26). They are not yet in `nl-intent.v1.json`:
+  moving them changes the ADR-0121 Q11 planner gold and the ADR-0123 lint and audit gold. Two owner decisions are needed.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.

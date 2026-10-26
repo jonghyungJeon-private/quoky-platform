@@ -185,8 +185,10 @@ therefore two Strict steps, both owner-approved by plan digest. No model was cal
      - D4: worded answers to the help-scope question (KO / EN, one and several sources), and a new request or small
        talk that is no answer.
 
-     Approved cases move into `nl-intent.v1.json`, and step 1's read plan then covers them. `eval:nl` renders
-     `prior.turns`, `prior.earlier` and `openQuestion` exactly as the runtime does, and scores `expectAnswer`.
+     The owner approved all 20 as-is (2026-10-26). Moving them into `nl-intent.v1.json` (so step 1 covers them) waits
+     for two decisions, because that file is also the ADR-0121 Q11 planner gold and the ADR-0123 lint and audit gold
+     (DECISIONS, 2026-10-26). `eval:nl` and read-regression render `prior.turns`, `prior.earlier` and `openQuestion`
+     exactly as the runtime does, and score `expectAnswer`.
    - Then the context eval, Strict, for the end-to-end view (`sc-jira-chat-refine`, `fr-todo-status-count` t3,
      `lc-interview-exists-then-time` t3, `sc-calendar-todo-interview` t3, `hs-calendar-words` t2):
      ```bash

@@ -1,6 +1,6 @@
 {
  "version": 1,
- "description": "Owner decisions D1 / D4 and context-eval fixes P7 / P10 (2026-10-26) gold CANDIDATES for nl-select.v69, PENDING the owner's D12 batch: not scored by eval:nl until approved and moved into nl-intent.v1.json (ADR-0120 D12: the agent drafts, the owner approves each batch). Same schema as nl-intent.v1.json; `prior.turns` (chat turns since the listing) and `prior.earlier` (the latest selection of each other source) are rendered exactly as the runtime renders them; `openQuestion` (the help-scope question shown) and `expectAnswer` (the option a worded reply means; absent = not an answer) score D4. Phrasings are new: none copies a context-eval scenario turn or a prompt example.",
+ "description": "Owner decisions D1 / D4 and context-eval fixes P7 / P10 (2026-10-26) gold CANDIDATES for nl-select.v69. The owner approved all 20 as-is on 2026-10-26 (ADR-0120 D12 batch). They are NOT yet in nl-intent.v1.json: that file is also the ADR-0121 Q11 one-step planner gold (every case, by id) and the ADR-0123 gold the selector-RAG pool is linted and embedding-audited against, so moving them needs the owner's decision on those two gates (DECISIONS, 2026-10-26). Until then eval:nl and read-regression score them only through this file's tests. Same schema as nl-intent.v1.json; `prior.turns` (chat turns since the listing) and `prior.earlier` (the latest selection of each other source) are rendered exactly as the runtime renders them; `openQuestion` (the help-scope question shown) and `expectAnswer` (the option a worded reply means; absent = not an answer) score D4. Phrasings are new: none copies a context-eval scenario turn or a prompt example.",
  "promptVersion": "nl-select.v69",
  "cases": [
   {
@@ -17,7 +17,7 @@
      "keyword": "인증"
     }
    },
-   "note": "D1: a narrowing after one chat turn still refines the previous list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1: a narrowing after one chat turn still refines the previous list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d1-002",
@@ -36,7 +36,7 @@
      "count": true
     }
    },
-   "note": "D1: a count after two chat turns keeps the previous args and adds count [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1: a count after two chat turns keeps the previous args and adds count [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d1-003",
@@ -54,7 +54,7 @@
      "range": "day-after-tomorrow"
     }
    },
-   "note": "D1: a period correction after a chat turn changes range only [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1: a period correction after a chat turn changes range only [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d1-004",
@@ -72,7 +72,7 @@
      "keyword": "장애"
     }
    },
-   "note": "D1: a new request naming another source takes none of the stale previous args [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1: a new request naming another source takes none of the stale previous args [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d1-005",
@@ -85,7 +85,7 @@
     "turns": 1
    },
    "expect": "none",
-   "note": "D1: small talk after small talk is still none, whatever the previous list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1: small talk after small talk is still none, whatever the previous list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d1-006",
@@ -103,7 +103,7 @@
      "range": "next-week"
     }
    },
-   "note": "D1 (EN): a period follow-up after three chat turns [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1 (EN): a period follow-up after three chat turns [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-p7-001",
@@ -128,7 +128,7 @@
      "keyword": "세미나"
     }
    },
-   "note": "P7: an event question after a to-do list refines the earlier calendar list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "P7: an event question after a to-do list refines the earlier calendar list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-p7-002",
@@ -153,7 +153,7 @@
      "unread": true
     }
    },
-   "note": "P7: naming the earlier source refines it [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "P7: naming the earlier source refines it [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-p7-003",
@@ -177,7 +177,7 @@
      "keyword": "보안"
     }
    },
-   "note": "P7: a plain narrowing refines the Previous selection, not an earlier one [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "P7: a plain narrowing refines the Previous selection, not an earlier one [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-p7-004",
@@ -202,7 +202,7 @@
      "keyword": "offsite"
     }
    },
-   "note": "P7 (EN): an event question after a reminder list refines the earlier calendar list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "P7 (EN): an event question after a reminder list refines the earlier calendar list [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-both-001",
@@ -228,7 +228,7 @@
      "partOfDay": "morning"
     }
    },
-   "note": "D1 + P7: a calendar narrowing after a to-do list and a chat turn [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1 + P7: a calendar narrowing after a to-do list and a chat turn [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-both-002",
@@ -251,7 +251,7 @@
     "entryId": "calendar.events",
     "args": {}
    },
-   "note": "D1 + P7: a full new request is read on its own words (today, the default: canonical args {}), never the earlier range [agent-drafted 2026-10-26 for owner decision D1 / fix P7; PENDING the owner's D12 batch]"
+   "note": "D1 + P7: a full new request is read on its own words (today, the default: canonical args {}), never the earlier range [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-001",
@@ -262,7 +262,7 @@
    },
    "expect": "none",
    "expectAnswer": 1,
-   "note": "D4: a worded answer naming Quoky's way is option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4: a worded answer naming Quoky's way is option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-002",
@@ -273,7 +273,7 @@
    },
    "expect": "none",
    "expectAnswer": 2,
-   "note": "D4: a worded answer naming the app itself is option 2 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4: a worded answer naming the app itself is option 2 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-003",
@@ -284,7 +284,7 @@
    },
    "expect": "none",
    "expectAnswer": 1,
-   "note": "D4: \"you\" means Quoky: option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4: \"you\" means Quoky: option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-004",
@@ -298,7 +298,7 @@
    },
    "expect": "none",
    "expectAnswer": 2,
-   "note": "D4: the several-source question, the app side [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4: the several-source question, the app side [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-005",
@@ -309,7 +309,7 @@
    },
    "expect": "none",
    "expectAnswer": 1,
-   "note": "D4 (EN): option 1 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4 (EN): option 1 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-006",
@@ -320,7 +320,7 @@
    },
    "expect": "none",
    "expectAnswer": 2,
-   "note": "D4 (EN): option 2 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4 (EN): option 2 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-007",
@@ -335,7 +335,7 @@
      "range": "tomorrow"
     }
    },
-   "note": "D4: a new request after the question is no answer: routed as usual, no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4: a new request after the question is no answer: routed as usual, no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   },
   {
    "id": "ctx-d4-008",
@@ -345,7 +345,7 @@
     "language": "ko"
    },
    "expect": "none",
-   "note": "D4: small talk after the question is no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; PENDING the owner's D12 batch]"
+   "note": "D4: small talk after the question is no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is 2026-10-26, not yet in nl-intent.v1.json]"
   }
  ]
 }

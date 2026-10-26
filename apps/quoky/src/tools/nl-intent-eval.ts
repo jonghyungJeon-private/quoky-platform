@@ -102,6 +102,33 @@ export interface NlEvalCase {
 /** D4: the expected label of a case whose gold is an open-question answer. */
 export const NL_EVAL_OPEN_QUESTION_LABEL = 'open-question';
 
+/** A case's expected label (its entry, `none`, or {@link NL_EVAL_OPEN_QUESTION_LABEL} for a D4 answer gold). */
+export function nlEvalExpectedLabel(golden: Pick<NlEvalCase, 'expect' | 'expectAnswer'>): string {
+  return golden.expectAnswer !== undefined ? NL_EVAL_OPEN_QUESTION_LABEL : golden.expect === 'none' ? 'none' : golden.expect.entryId;
+}
+
+/** P7: the stored selection an output for `entryId` refines (the runtime's `lastSelectionFor`, over a case's prior). */
+export function nlEvalPriorFor(prior: NlEvalCase['prior'], entryId: string): { readonly entryId: string; readonly args: NlArgs } | undefined {
+  if (prior === undefined || prior.entryId === entryId) return prior;
+  return prior.earlier?.find((item) => item.entryId === entryId) ?? prior;
+}
+
+/** D4: the open question as the selection prompt takes it (the displayed option texts). */
+export function nlEvalOpenQuestionInput(question: NonNullable<NlEvalCase['openQuestion']>): { readonly options: readonly string[] } {
+  return { options: renderHelpScopeOptions(question.sources, question.language, question.more === true) };
+}
+
+/**
+ * D4: the outcome of a case with an open question when the output carries `answer` (the runtime reads it only then), or
+ * a D4 answer gold the output did not answer; `undefined` otherwise (the case is scored as usual).
+ */
+export function nlEvalOpenQuestionOutcome(golden: Pick<NlEvalCase, 'openQuestion' | 'expectAnswer'>, output: { readonly entryId: string | null; readonly answer?: number }): { readonly outcome: 'hit' | 'wrong-capture' | 'miss'; readonly got: string } | undefined {
+  if (golden.openQuestion !== undefined && output.answer !== undefined) {
+    return { outcome: output.answer === golden.expectAnswer ? 'hit' : 'wrong-capture', got: `${NL_EVAL_OPEN_QUESTION_LABEL}:${output.answer}` };
+  }
+  return golden.expectAnswer !== undefined ? { outcome: 'miss', got: output.entryId ?? 'none' } : undefined;
+}
+
 /** A clarification gold: the entries the question is between (besides `none`) and the owner batch that set it. */
 export interface NlEvalClarifyGold {
   readonly between: readonly string[];
@@ -160,7 +187,7 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   const counts = new Map<string, number>();
   const caseIds: string[] = [];
   for (const golden of corpus.cases) {
-    const group = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+    const group = nlEvalExpectedLabel(golden);
     const wanted = group === 'none' ? options.includeNegatives : options.entries.length === 0 || options.entries.includes(group);
     if (!wanted) continue;
     const seen = counts.get(group) ?? 0;
@@ -208,23 +235,20 @@ const ALL_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => 
 
 /** Score one raw selector output for one case (exported for the offline tests). */
 export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZone = 'Asia/Seoul'): Omit<NlEvalRecord, 'run' | 'latencyMs'> {
-  const expected = golden.expectAnswer !== undefined ? NL_EVAL_OPEN_QUESTION_LABEL : golden.expect === 'none' ? 'none' : golden.expect.entryId;
+  const expected = nlEvalExpectedLabel(golden);
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return { id: golden.id, expected, outcome: 'skipped' };
   const output = parseSelectionOutput(raw);
   if (output === null) return { id: golden.id, expected, outcome: 'error', error: 'malformed' };
   // D4: with an open question shown, an `answer` decides the turn (the runtime reads it only then).
-  if (golden.openQuestion !== undefined && output.answer !== undefined) {
-    const got = `${NL_EVAL_OPEN_QUESTION_LABEL}:${output.answer}`;
-    return { id: golden.id, expected, outcome: output.answer === golden.expectAnswer ? 'hit' : 'wrong-capture', got };
-  }
-  if (golden.expectAnswer !== undefined) return { id: golden.id, expected, outcome: 'miss', got: output.entryId ?? 'none' };
+  const answered = nlEvalOpenQuestionOutcome(golden, output);
+  if (answered !== undefined) return { id: golden.id, expected, ...answered };
   if (output.entryId === null) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.
   if (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
   // P7: an output for an earlier selection's entry refines that one, as in the runtime (`lastSelectionFor`).
-  const base = golden.prior === undefined || golden.prior.entryId === output.entryId ? golden.prior : (golden.prior.earlier?.find((item) => item.entryId === output.entryId) ?? golden.prior);
+  const base = nlEvalPriorFor(golden.prior, output.entryId);
   const validated = validateSelection(
     { entryId: output.entryId, args: output.args },
     { offered, groundingText: prepared.groundingText, ...(base ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}), now, timeZone },
@@ -416,7 +440,7 @@ export async function runEvaluation(input: {
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
         const prepared = prepareSelectionInput(golden.text);
-        const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+        const expected = nlEvalExpectedLabel(golden);
         if ('skip' in prepared) {
           const record: NlEvalRecord = { run, id: golden.id, expected, outcome: 'skipped', latencyMs: 0 };
           records.push(record);
@@ -429,9 +453,7 @@ export async function runEvaluation(input: {
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
             ? { previous: priorPromptInput(golden.prior) }
             : {}),
-          ...(golden.openQuestion !== undefined
-            ? { openQuestion: { options: renderHelpScopeOptions(golden.openQuestion.sources, golden.openQuestion.language, golden.openQuestion.more === true) } }
-            : {}),
+          ...(golden.openQuestion !== undefined ? { openQuestion: nlEvalOpenQuestionInput(golden.openQuestion) } : {}),
         });
         const started = clock();
         let record: NlEvalRecord;
@@ -556,7 +578,7 @@ export function clarifyCaseIdsOf(corpus: NlEvalCorpus): ReadonlySet<string> {
 }
 
 /** The prior as the selection prompt takes it (D1 `turns` and P7 `earlier` only when present, wave-1 entries only). */
-function priorPromptInput(prior: NonNullable<NlEvalCase['prior']>): NlPreviousSelectionInput {
+export function priorPromptInput(prior: NonNullable<NlEvalCase['prior']>): NlPreviousSelectionInput {
   const earlier = (prior.earlier ?? []).filter((item) => isNlWave1EntryId(item.entryId));
   return {
     entryId: prior.entryId as NlPreviousSelectionInput['entryId'],

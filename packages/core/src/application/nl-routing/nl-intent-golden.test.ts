@@ -14,7 +14,17 @@ export interface NlIntentCase {
   readonly id: string;
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
-  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  readonly prior?: {
+    readonly entryId: string;
+    readonly args: NlArgs;
+    /** Owner decision D1: chat turns since the previous listing. */
+    readonly turns?: number;
+    /** P7: the latest selection of each other source. */
+    readonly earlier?: readonly { readonly entryId: string; readonly args: NlArgs; readonly turns: number }[];
+  };
+  /** Owner decision D4: the help-scope question shown, and the option a worded reply means (`expect` stays `none`). */
+  readonly openQuestion?: { readonly sources: string | readonly string[]; readonly language: 'ko' | 'en' };
+  readonly expectAnswer?: number;
   readonly channel?: boolean;
   readonly note?: string;
   /** S1: the frozen Class B grammar that answers it in Phase A (production flags); checked by the app dispatch test. */
@@ -67,10 +77,12 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
         problems.push(`${golden.id}: skipped (${prepared.skip})`);
         continue;
       }
+      // P7: a gold for an earlier selection's entry is grounded against that earlier selection, as the runtime does.
+      const base = golden.prior?.entryId === golden.expect.entryId ? golden.prior : (golden.prior?.earlier?.find((item) => item.entryId === golden.expect.entryId) ?? golden.prior);
       const result = validateSelection(golden.expect, {
         offered,
         groundingText: prepared.groundingText,
-        ...(golden.prior !== undefined ? { previousArgs: golden.prior.args } : {}),
+        ...(base !== undefined ? { previousArgs: base.args } : {}),
         now: NOW,
         timeZone: 'Asia/Seoul',
       });
