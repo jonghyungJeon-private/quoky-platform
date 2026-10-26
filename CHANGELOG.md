@@ -77,6 +77,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - Safety-only write allowances are used up across turns, so the same declared write made twice is a wrong write.
   - A selected command counts as served only when its handler accepts it (a null result falls back).
   - A reminder deleted or reworded without a status change counts as a reminder write.
+  - A failed world boot restores the replaced globals (env, fetch, console) and closes what it opened before rethrowing.
 
   Dry actions-local + oracle is now 41/55: the "되돌려줘" undo hint is probed and is unparseable without the model (10
   turns, D2), and the calendar-undo wrong write (P4) remains.

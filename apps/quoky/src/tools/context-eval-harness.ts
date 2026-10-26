@@ -313,6 +313,21 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
   const savedEnv = { ...process.env };
   for (const key of Object.keys(process.env)) if (ENV_PREFIXES.test(key)) delete process.env[key];
   const tempDir = mkdtempSync(join(tmpdir(), 'quoky-context-eval-'));
+  const restoreGlobals = (): void => {
+    process.env = savedEnv;
+    globalThis.fetch = savedFetch;
+    Object.assign(console, savedConsole);
+    vi?.restoreAllMocks();
+    rmSync(tempDir, { recursive: true, force: true });
+  };
+  // A boot that fails after the globals were replaced restores them and closes what it opened, then rethrows: the
+  // caller never gets a world whose close() could do it.
+  let booted: { close(): Promise<void> } | undefined;
+  const failBoot = async (error: unknown): Promise<never> => {
+    await booted?.close().catch(() => undefined);
+    restoreGlobals();
+    throw error;
+  };
   const gmailToken = join(tempDir, 'gmail.json');
   const driveToken = join(tempDir, 'drive.json');
   writeFileSync(gmailToken, JSON.stringify({ version: 1, scope: GMAIL_SCOPE, refresh_token: GMAIL_REFRESH }), { mode: 0o600 });
@@ -367,13 +382,19 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
     ...CONTEXT_EVAL_PROFILES[profile],
   });
 
-  const core = await import('@quoky/core');
-  const { AppModule } = await import('../app.module');
-  const { stubProviderSelection } = await import('../provider-selection/test-support');
-  const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+  const core = await import('@quoky/core').catch(failBoot);
+  const { AppModule } = await import('../app.module').catch(failBoot);
+  const { stubProviderSelection } = await import('../provider-selection/test-support').catch(failBoot);
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: false }).catch(failBoot);
   const storage = app.get<StorageProvider>(core.STORAGE_PROVIDER);
-  await storage.init();
-  await app.get<{ init(): Promise<void> }>(core.VECTOR_PROVIDER).init();
+  booted = {
+    async close() {
+      await storage.close().catch(() => undefined);
+      await app.close().catch(() => undefined);
+    },
+  };
+  await storage.init().catch(failBoot);
+  await app.get<{ init(): Promise<void> }>(core.VECTOR_PROVIDER).init().catch(failBoot);
 
   // The router prompt's opening words: the common prefix of the read prompt's and the action prompt's first lines (the
   // action variant rewrites the tail of that line); a planner prompt opens differently.
@@ -382,7 +403,7 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
   let shared = 0;
   while (shared < readHead.length && readHead[shared] === actionHead[shared]) shared += 1;
   const routerHead = readHead.slice(0, shared);
-  if (routerHead.length < 20) throw new Error('context eval: the router prompt head could not be derived');
+  if (routerHead.length < 20) await failBoot(new Error('context eval: the router prompt head could not be derived'));
   const requests: Array<AiRequest & { readonly locality: 'LOCAL' | 'REMOTE' }> = [];
   const stub = (provider: AiProvider): void => {
     const locality = core.executionLocalityOf(provider);
@@ -634,11 +655,7 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
     async close() {
       await storage.close().catch(() => undefined);
       await app.close().catch(() => undefined);
-      process.env = savedEnv;
-      globalThis.fetch = savedFetch;
-      Object.assign(console, savedConsole);
-      vi?.restoreAllMocks();
-      rmSync(tempDir, { recursive: true, force: true });
+      restoreGlobals();
       void consoleLines;
     },
   };
