@@ -59,6 +59,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 read + write trigger amendment (owner-ratified 2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Decided and built (not live).** A read plan that leaves a clause naming none of its reads gets the read + write
+  note's one A6 selection; a write lying in that clause hands the turn to the read + write path. The agent-plan eval makes
+  that one probe call per affected case (bound into the plan digest and the hard cap) and scores Core's final outcome.
+  Red-team batch RW-2 covers the trigger.
+
 ## Unreleased — S2 rule 7: a read plan that leaves a write clause (2026-10-26, branch `claude/v5-s2-p3`, shadow only)
 
 - **Added (not live).** When a planned read leaves a clause that the existing reminder or to-do grammar recognises as a

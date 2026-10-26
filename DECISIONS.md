@@ -29774,3 +29774,34 @@ English or unusual phrasing) still relies on the planner's `none`.
   plan stands. This catches every A6-recognised write (the A6 selector is the measured component for these phrasings)
   at the cost of one extra selection call on turns with an uncovered conjunct. It amends the ratified note's trigger
   ("when the planner returns none …"), so it is not implemented.
+
+### ADR-0121 S2 note — amendment of the read + write trigger (owner-ratified 2026-10-26)
+
+- **Status: Accepted — ratified by the owner on 2026-10-26.** Amends the trigger of "ADR-0121 S2 note — a read and a write
+  in one owner turn" (2026-10-23); everything else of that note stands.
+- **Text.** Besides the planner's `none` (or a plan refused `a6-in-plan`), the read + write path is also tried when a
+  validated read plan leaves a clause that mentions none of the planned reads (the S2 conjunct boundaries; no alias or
+  source name of a planned entry, no string value of a planned read's args). Core then runs the note's one A6 selection
+  over the message, counted against D7's model-call cap and Q7's hourly cap. If the selector picks an A6 write whose
+  verbatim spans and grounded values lie in that clause, the ratified read + write path proceeds (the read re-plan, the
+  write clause alone as the write's grounding, the unchanged A6 / connector-write path); a write with a list or deictic
+  reference is not run (the read sections and the decision (f) note); otherwise the read plan stands. DM only; the agent
+  kill switch disables it; such a turn records no Q1 cursor; the `s2-read-write` red-team family covers this trigger.
+- **Implementation (2026-10-26, branch `claude/v5-s2-p3`).**
+  - Core: `agentUncoveredClauses` (plan-validator; also used by rule 7's grammar probe), `read-write-probe.ts`
+    (`agentReadWriteProbeClauses`, `agentReadWriteProbePrompt`: the deployed A6 selection prompt `nl-select.v65`;
+    `agentReadWriteProbeResult`: the answer re-validated with each uncovered clause ALONE as grounding → `write`, `note`
+    for a `ref` arg, else `stands`). Pure; the caller makes the call. The runtime path itself is built with the executor
+    (P3 part 3). Shadow makes no second model call (Q1) and logs `uncoveredClauses` (a count).
+  - Eval (`eval:agent-plan`): when the planner's validated plan leaves an uncovered clause, the runner makes the ONE probe
+    call (the A6 prompt over the planner text) and scores Core's final outcome: `read-write` / `read-note` (never wrong on
+    a negative, never exact on a positive) or the plan's own score when the probe `stands` (a failed probe: the plan
+    stands, `probe: error`). The plan binds `readWriteProbe` {prompt version, prompt sha256, per-run bound = the cases of
+    two or more conjuncts} into the digest; `maxCalls` = (cases + bound) × runs, enforced by the hard cap (a capped probe
+    is `capped`). The approved plan today: 1133 planner calls + up to 260 probe calls per run.
+  - Red team: batch RW-2 of `agent-redteam.s2-read-write.v1.json` (6 cases, `trigger: uncovered-clause`, each with the
+    fooled planner's read plan): a pointer into this turn's results (canary), read words as payload, a clause boundary
+    inside the payload, two writes, an open approval, quoted material.
+  - Tests: `agent/read-write-probe.test.ts` (ap-n131's uncovered clause, write / note / stands, read words refused, the
+    prompt), the eval runner (ap-n131: one probe call, `read-write`, not wrong; a `none` probe: the plan stands and is
+    wrong; the hard cap covers the probe), the digest binding, the corpus shape.
