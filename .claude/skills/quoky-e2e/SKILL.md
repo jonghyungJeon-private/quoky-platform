@@ -46,7 +46,7 @@ CH1	...	...
 ## 2. 사전 점검 (하나라도 실패하면 실행하지 않고 보고)
 
 1. 서비스: `bash ops/launchd/quokyctl.sh status` 와 `tail ~/Library/Logs/Quoky/quoky.log` 에서 `[quoky] started`. 서비스 worktree(`.worktrees/quoky-platform/quoky-service`)의 HEAD 가 요청이 기대하는 SHA(보통 `origin/main`)인지 확인한다.
-2. 브라우저: ego-browser task space(`$Q/space_id`)가 살아 있고 Discord(page `p1`), Telegram 이 필요하면 Telegram Web(page `p2`)에 로그인돼 있다. space 가 없으면 quoky-ship §6 대로 만든다. 로그아웃이면 소유자에게 로그인을 요청한다.
+2. 브라우저: ego-browser task space(`$Q/space_id`)가 살아 있고 Discord(page `p1`), Telegram 이 필요하면 Telegram Web(page `p2`)에 로그인돼 있다. **재부팅 뒤에는 space 가 없어진다**(`taskSpace(<id>)` 가 resolveTaskSpace 오류로 실패): `taskSpace("quoky discord relay")` 로 다시 만들어 Discord 로그인을 확인하고 새 `spaceId` 를 `$Q/space_id` 에 적는다(2026-10-26 첫 실행에서 1 → 2). 로그아웃이면 소유자에게 로그인을 요청한다.
 3. 자원: 전체 `pnpm test` 가 돌고 있지 않다(`ps -axo pid,command | grep vitest`). 동시에 돌리지 않는다.
 4. 잠금: `$Q/chat/busy` 가 이미 있으면 다른 실행이 탭을 쓰는 중이다. 끝날 때까지 기다린다(`nl-uat.sh` 가 잠금을 걸고 푼다).
 5. 쓰기 시나리오가 있으면, 대상의 **실행 전 상태**를 읽어 기록한다(§4 의 다시 읽기 방법).
@@ -60,13 +60,17 @@ bash "$Q/qa/nl-uat.sh" tg <같은 tsv> > …-tg.txt     # Telegram 이 필요할
 ```
 
 - 세 번째 인자(id 정규식)로 일부만 다시 돌릴 수 있다.
+- **쓰기 흐름은 한 줄씩 돈다.** 쓰기는 `미리보기 → "승인" → "<동작> 실행"` 단계를 거치고, 봇이 번호 선택("1번")이나 되묻기로 갈라질 수 있다. 표 전체를 한 번에 보내지 말고 `'^<id>$'` 로 한 줄씩 보내 답을 확인한 뒤 다음 줄을 정한다. 승인·실행·선택 줄은 실제로 보낸 그대로 표에 덧붙여 기록한다(예: `DME1a 승인`, `DME1b 일정 추가 실행`). 미리보기 내용(대상·시간·참석자·메일 발송 여부)이 기대와 다르면 "거절"하고 멈춘다.
 - 출력은 시나리오마다 `### <id> | sent: … | <초>s` 블록과 봇 답으로 나온다. 실행이 중간에 끊기면(타임아웃·탭 오류) 그 시나리오는 FAIL 이 아니라 **미실행**으로 두고 다시 돌린다.
 
 ## 4. 판정
 
 1. **결정적 판정(M)**: 시나리오마다
    - 답이 왔는가, 응답 시간(블록의 초).
-   - 쓰기면 실제 대상이 바뀌었는가를 **Quoky 밖에서 읽어** 확인한다: Jira 는 Atlassian MCP 읽기(`getJiraIssue`/JQL), Slack 은 Slack MCP 읽기(`slack_read_channel` on `#quoky-test`), 캘린더는 `$Q/calendar-*.cjs` 같은 읽기 전용 probe. **MCP 로 쓰지 않는다** — 쓰기는 Quoky 가 한 것만 검증한다.
+   - 쓰기면 실제 대상이 바뀌었는가를 **Quoky 밖에서 읽어** 확인한다. **MCP 로 쓰지 않는다** — 쓰기는 Quoky 가 한 것만 검증한다.
+     - 캘린더: `node $Q/calendar-events-probe.cjs <서비스 worktree> "<제목 표시>"` (Node 22). primary 의 앞으로 7일 중 제목에 표시가 들어간 일정만 `id | 제목 | 시작 → 끝 | 상태` 로 출력한다. 테스트 일정 제목에는 항상 고유 표시(예: `Quoky E2E`)를 넣는다.
+     - Jira: Atlassian MCP 읽기(`searchJiraIssuesUsingJql`, cloudId 는 사이트 호스트명). 예: `project = BE AND summary ~ "Quoky E2E" AND created >= -1d`.
+     - Slack: Slack MCP 읽기(`slack_read_channel` on `#quoky-test`).
    - 엉뚱한 대상(다른 항목·다른 채널)을 건드렸으면 즉시 J1 로 올리고 남은 쓰기 시나리오를 멈춘다.
 2. **답변 품질 판정(J3)**: expected 의 "있어야 할 것 / 없어야 할 것"을 하나씩 대조해 PASS/FAIL 과 근거 문장을 낸다. 표현 차이는 문제 삼지 않고, 대상·기준·수치·누락만 본다.
 3. 판정 반환 형식은 token-budget §4 를 따른다: `판정 · 근거(시나리오 id, 답의 해당 줄) · 미해결점`.
@@ -74,6 +78,7 @@ bash "$Q/qa/nl-uat.sh" tg <같은 tsv> > …-tg.txt     # Telegram 이 필요할
 ## 5. 되돌리기와 원상복구 확인
 
 - 쓰기 시나리오마다 되돌리기 줄이 실행됐는지, 그리고 **같은 항목**이 실행 전 상태(§2-5)로 돌아왔는지 §4 와 같은 방법으로 다시 읽어 확인한다. 새 번호로 다시 만든 복사본은 원상복구가 아니다.
+- 되돌리기가 FAIL 이어도 **테스트 흔적은 반드시 지운다.** Quoky 의 다른 정상 경로(예: "방금 추가한 일정 취소해줘" → 번호 선택 → 승인 → 실행)로 같은 항목을 지우고, 다시 읽어 실행 전 상태와 같은지 확인한다. 정리 줄도 `DMC*` 처럼 표에 기록하고, 판정은 원래 되돌리기 줄의 FAIL 을 그대로 둔다.
 - 되돌리기가 실패했거나 확인이 안 되면 J1: 남은 실행을 멈추고, 무엇이 어떤 상태로 남았는지 소유자에게 바로 보고한다. 직접 MCP 로 고치지 않는다(외부 쓰기는 소유자 승인 대상).
 
 ## 6. 보고
@@ -90,6 +95,10 @@ bash "$Q/qa/nl-uat.sh" tg <같은 tsv> > …-tg.txt     # Telegram 이 필요할
 ```
 
 FAIL 이 있으면 원인 분석(J2/I)까지 붙이되, 코드 수정은 이 스킬에서 하지 않는다. 수정은 side-job/quoky-ship 으로 넘긴다.
+
+## 6.5 기능 존재 확인
+
+요청문의 기능이 서비스에 실제로 있는지 시나리오를 만들기 전에 확인한다(ADR 승인만 되고 미구현인 기능이 있다. 예: 2026-10-26 기준 Jira 이슈 생성). 서비스 worktree 의 NL catalog(`packages/core/src/application/nl-routing/`)와 플래그(`QUOKY_NL_ACTIONS` 등, 값만 읽고 시크릿은 출력하지 않는다)를 본다. 없는 기능은 "미지원을 사실대로 말하고 아무것도 하지 않는가"로 기대를 바꿔 넣고, 다시 읽기로 아무것도 생기지 않았음을 확인한다.
 
 ## 7. 멈추고 소유자에게 묻는 것
 
