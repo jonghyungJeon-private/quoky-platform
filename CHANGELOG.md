@@ -26,6 +26,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - It needs no word list, so the calendar "일정" reply is covered without adding a noun.
   - The listing rule sentence and the composer's authority line are strengthened.
   - No content reaches the remote model (ADR-0110 D4); the guard only removes sentences.
+- **Fixed (P2).** The calendar usage example "내일 3시 회의 제목을 주간 회의로 바꿔줘" is now classified as a write and
+  parsed deterministically; before, it fell to chat.
+  - The parser's rename and relocate shapes moved to `calendar/calendar-field-change.ts`, and the write classification
+    (`isCalendarWriteRequest`) reuses them for a meeting named by a day or time phrase. There is no new phrase set.
+  - "오늘 회의 내용을 표로 바꿔줘" and "회의록 제목을 …" stay chat.
+  - A test checks that every example in Core's calendar usage copy is classified as a write.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

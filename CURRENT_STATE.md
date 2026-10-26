@@ -39,6 +39,8 @@ These fix the hard failures of the first `eval:context` run that need no owner d
 - **P1.** A shown-listing guard: right after a listing, a denial of that listing or a re-run of it is dropped from the
   chat reply. It works structurally from `lastSelection` and the handlers' Class B probes. The rule sentence is
   strengthened.
+- **P2.** The write classification reuses the parser's rename and relocate shapes, so the calendar usage copy's rename
+  example parses deterministically.
 
 ### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
 

@@ -15,6 +15,7 @@ import type {
 } from '../connector-writes/connector-write-draft';
 import { addLocalDays, isValidLocalDate, zonedToUtc, type LocalDate } from '../reminders/zoned-time';
 import { extractSpan, placeCalendarSpan } from './calendar-question';
+import { CALENDAR_RELOCATE, CALENDAR_RENAME } from './calendar-field-change';
 
 /**
  * Calendar WRITE requests (ADR-0110 amendment D3, CWR-2) — the pure grammar that turns a message the calendar handler
@@ -65,8 +66,8 @@ const MOVE_TARGET = new RegExp(
   String.raw`(?:(${DAY_WORD})\s*)?${CLOCK}\s*(?:으로|로)\s*(?:옮겨|바꿔|미뤄|당겨|(?:변경|수정|이동|조정)\s*해)`,
   'u',
 );
-const RENAME = /제목\s*(?:을|를)?\s*([\s\S]{1,200}?)\s*(?:으로|로)\s*(?:바꿔|변경\s*해|수정\s*해)/u;
-const RELOCATE = /(?:장소|위치)\s*(?:을|를)?\s*([\s\S]{1,200}?)\s*(?:으로|로)\s*(?:바꿔|변경\s*해|수정\s*해|옮겨)/u;
+const RENAME = CALENDAR_RENAME;
+const RELOCATE = CALENDAR_RELOCATE;
 
 function normalize(text: string): string {
   return text.normalize('NFC').trim();
