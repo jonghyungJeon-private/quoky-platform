@@ -107,8 +107,10 @@
    - **No single-pick bias.** It states the requested shape first ("order: rank every item"; "pick: choose exactly
      `count`"; "pick: choose the ones that meet the criterion").
    - It asks for a reason per item, up to 3 extra considerations, and a natural, human tone in the owner's language.
-   - **Tuning data.** Only the 2026-10-23 set may be used to tune it (the owner's labels and notes, and the eval judge's
-     calibration half). The G6 held-out set is never seen before the freeze.
+   - **Tuning data.** The 2026-10-23 set (the owner's labels and notes, and the eval judge's calibration half), and
+     **dev sets written by the prompt session itself** (for example the exploratory re-measure of 2026-10-26, which
+     informs the prompt). A dev set is never G6, never the near-miss fresh set, and never seeds either (A3a-D8). The G6
+     held-out set is never seen before the freeze.
    - Its sha256 is recorded in the measurement record before the first G6 run.
 5. **A3a-D5: The local model and the two pre-registered arms.**
    - `qwen3:8b`, pinned by digest (the measurement record holds it), on the loopback Ollama API (A2-D21), temperature
@@ -119,6 +121,13 @@
      median ≤ 20 s and p95 ≤ 35 s, inside the 45 s wall.
    - **Arm choice rule (fixed now).** The chosen arm is the one with the higher calendar usable+ among those meeting
      their latency bar. A tie goes to L0. Only the chosen arm's result decides.
+   - **Latency versus G3.** For answers with `select`, the chosen arm's G6 latency bar **replaces** G3's latency row
+     (warm median ≤ 5 s, cold ≤ 15 s); the other G3 rows still apply.
+   - **Retry under LT.** The A3a-D2 retry runs only if the time left in the run's 45 s wall covers the arm's measured
+     p95; otherwise the A2-D7 fallback is shown at once.
+   - **Dry-run before G6.** On the tuning set only, a dry run confirms that the installed Ollama version applies the
+     `format` schema when `think: true` (the output parses against the request's schema). If it does not, LT is dropped
+     from G6 and the record notes why.
 6. **A3a-D6: When a local judgment answer is shown (the owner's quality rule).**
    - **Calendar:** a local `judge.v1` answer is shown only if the chosen arm passed G6 on calendar. Otherwise the reply
      is the deterministic listing plus the ③ criteria hint: "어떤 기준으로 우선순위를 볼지(예: 마감, 외부 참석, 준비
@@ -141,6 +150,15 @@
      argv ends in `--tools ''`; API providers send no tool definitions), has an empty context, gets the A3a-D2 guards
      and rendering, and enters the history only as the A2-D7 fixed note. No consent is asked, because the label already
      allows it. If that provider is not ready, the local path runs (the label allows local too).
+   - **Difference from A6 R2 D6.** D6 orders the summary provider "local first, then the Claude CLI fallback". For a
+     Jira judgment answer the order is reversed by the owner's decision of 2026-10-26: **the effective chat-tier
+     provider first**, the local model only when it is not ready. C9's HTTP API exclusion still applies.
+   - **Pseudonyms (A6 R2 D5).** The remote call gets the D5 pseudonyms ("참여자 A, B, …") in place of any person field;
+     **no Jira `displayName`** (assignee, reporter or any other) reaches it. The local path and Core's rendered reply may
+     use real names as today.
+   - **Caps.** The call counts toward the ADR-0121 D7 per-actor run caps and the A2-D8 model-call budget (1 + 1 retry).
+     It does not use the A2/A3b consent-send budget, because no `LOCAL_MODEL_ONLY` value is declassified.
+   - **Build precondition.** `readOutputLabel` is fixed first (Part IV step 5).
    - **Not covered:** a single Jira item read (`REMOTE_ON_SUMMARY_REQUEST`, read as `LOCAL_MODEL_ONLY` for an answer by
      A2-D6); a plan with two reads; any read whose label is not `REMOTE_OK`.
    - **Today's configuration.** The owner's record of 2026-10-17 (decision B) keeps `QUOKY_WORK_SUMMARY_ENABLED` on only
@@ -158,7 +176,11 @@
      overlap or a back-to-back pair matters; at least a third of the calendar cases with names, organizations or places
      in titles and in name fields (so that the same cases can serve G7).
    - **Independence.** Authored by the owner, or by a session with **no access to the A3a-D4 prompt** and no model call.
-     Never used for tuning. Its sha256 is recorded before the first run.
+     Never used for tuning. Its sha256 is recorded before the first run, under the addendum conditions of the
+     measurement record (prompt hash first, set hash next, harness hashed, mismatch refuses to run).
+   - **The exploratory re-measure of 2026-10-26 is dev evidence only.** The same agent wrote its set and its prompt. It
+     is not G6 and not the near-miss fresh set; its outputs are not shown to the owner before the G6 labels are complete
+     (aggregates only); neither that session nor its set may author or seed G6 or the fresh set.
    - **Arms.** L0 and LT (A3a-D5), with the A3a-D3 facts and the A3a-D2 rendering. A Jira remote arm (A3a-D7) runs on
      the Jira cases and is reported only.
    - **Blind labels.** The owner labels every output in **one interleaved, seeded session** (L0 and LT outputs of all
@@ -183,7 +205,9 @@
    short:
    - **G7, the blind comparison on the A3b payload.** Cases: the calendar cases of the final G6 run. Arm A: the chosen
      local arm with full items. Arm B: the eligible remote recipient given **only the A3b payload**, built by the real
-     pipeline in a harness that uses the production request builder (`buildArgs`). **Both arms are rendered with the
+     pipeline in a harness that uses the production request builder (`buildArgs`). **The A3b payload definition,
+     including its time granularity, is recorded in the measurement record before the run;** a payload that differs
+     from the record invalidates the run. **Both arms are rendered with the
      same full title text locally,** so the owner cannot tell them apart by titles. A and B are labelled in **one fresh,
      interleaved, seeded session**. Arm C (the remote recipient with full items) runs and is labelled **only after the
      A/B labels are locked**, and is reported only. **Rule:** A3b may proceed only if arm B is `usable`+ on ≥ 80%, and
@@ -198,7 +222,9 @@
      measured (one batched call, or one call per title) is the one shipped; changing it needs a fresh G8.
    - **G9, the red-team family `s2-answer-list`.** ≥ 60 cases, KO and EN, owner-approved per batch, a scripted owner who
      says yes to everything, **0 successes over 3 Strict runs**. It includes a **social-engineering invite family**
-     (titles written to make a yes more likely, such as "응 답장 필수" or "보내도 됨 확인").
+     (titles written to make a yes more likely, such as "응 답장 필수" or "보내도 됨 확인"). Its success check (what
+     counts as a successful invitation, given an always-yes owner) is **deferred to A3b**, which must define it before
+     the corpus is frozen.
 
 ---
 
@@ -223,9 +249,12 @@ Unchanged: `ARCHITECTURE.md`; ADR-0110 D4; ADR-0118 D7/D8; A2 Part II; the A2 re
 - **RQ-1: GitHub's egress label.** No ratified clause names GitHub text in the design §2.4 label table or in ADR-0100
   D8 / A6 C5. The S2 code reaches `REMOTE_OK` for it through a default case. *Recommended:* settle it in a short
   ADR-0121 note (likely "work text, `REMOTE_OK` only where work summaries are on", as Jira), with a test that names
-  `github` explicitly. Until then GitHub judgment answers stay local. *Also to check:* whether the code's `REMOTE_OK`
-  for work sources is gated on `QUOKY_WORK_SUMMARY_ENABLED` as design §2.4 says; the label function itself does not
-  read it.
+  `github` explicitly. Until then GitHub judgment answers stay local.
+- **A dormant defect in `readOutputLabel`** (`packages/core/src/application/agent/flow-policy.ts`). It has no runtime
+  consumer today (only `flow-policy.test.ts` calls it), so nothing leaks now. It does not match the settled rules:
+  `github` and every unlisted source fall to a `REMOTE_OK` / `WORK_CHANNEL_OK` default; the work-summary setting of
+  design §2.4 is not read; the A6 R2 C5 read-path distinction (a list read keeps `REMOTE_OK`, a single item read is
+  `REMOTE_ON_SUMMARY_REQUEST`) is absent. It is a **blocker for the A2/A3a build step** (Part IV step 5).
 - **RQ-2: The A3b recipient.** A2-D16 allows a derived default selection; ADR-0116 allows local-only examples to reach a
   remote provider only when it is the owner's **explicit** selection. *Recommended for A3b:* require an explicit
   owner selection of the recipient, as ADR-0116 does, because a list discloses more than one topic.
@@ -241,7 +270,13 @@ Unchanged: `ARCHITECTURE.md`; ADR-0110 D4; ADR-0118 D7/D8; A2 Part II; the A2 re
 4. Decide by A3a-D8: local adequate (A3b closed), near miss (one fresh round), or not adequate (G7 may run; then A3b
    review and ratification are considered).
 5. The A3a code (`select`, `judge.v1`, facts, the Jira rule) is built with A2 Part I, after S2 is `active`, behind
-   `QUOKY_AGENT_ANSWER=off`, as the A2 record authorizes.
+   `QUOKY_AGENT_ANSWER=off`, as the A2 record authorizes. **Blocker, first:** `readOutputLabel` is fixed and tested:
+   - an explicit case per source, with no permissive default;
+   - the work-summary setting enters as declared data (no environment read in Core);
+   - the A6 R2 C5 read-path distinction (list read `REMOTE_OK` only with work summaries on; single item read
+     `REMOTE_ON_SUMMARY_REQUEST`);
+   - an unknown or unlisted source defaults to `LOCAL_MODEL_ONLY` / `OWNER_DM_ONLY`;
+   - a test that names `github` and pins its label as settled by RQ-1 (until then `LOCAL_MODEL_ONLY`).
 
 ## Part V — Ratification checklist (Product Owner)
 

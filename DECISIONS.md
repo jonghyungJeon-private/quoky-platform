@@ -29126,9 +29126,9 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
 | Item | Value |
 |---|---|
 | Case set | `local-judgment-heldout.v2.json`, new and synthetic: ≥ 30 calendar cases, ≥ 7 per other source (mail, jira, github, todo); KO and EN; ≥ 40% `order`; ≥ 5 calendar cases where an overlap or back-to-back pair matters; ≥ 1/3 of calendar cases with names, organizations or places in titles and name fields |
-| Case set sha256 | **recorded by a hash-only addendum before the first run** (the set does not exist yet); a run without it is invalid |
+| Case set sha256 | **recorded by a hash-only addendum before the first run** (the set does not exist yet); a run without it is invalid. Addendum conditions below |
 | Authoring | the owner, or a session with no access to the local judgment prompt and no model call; never used for tuning |
-| Prompt | `prompts/answer-judge-local.v1`, tuned only on the 2026-10-23 set; **sha256 recorded by the same addendum before the first run** |
+| Prompt | `prompts/answer-judge-local.v1`, tuned on the 2026-10-23 set and dev sets written by the prompt session (never G6 or the fresh set); **sha256 recorded before the set exists** (addendum conditions below) |
 | Model | `qwen3:8b`, Ollama manifest sha256 `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`, model layer `sha256:a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f` (read from the local manifest file on 2026-10-26; no model call). A different digest invalidates the run |
 | Decoding | loopback Ollama API; temperature 0.2; `format` = the `judge.v1` JSON schema of the request (ordinal enum 1..N; `ranked` length N for `order`, `count` for `pick` with `count`, 1..N otherwise) |
 | Arms | L0 `think: false`; LT `think: true` (same model, prompt and schema; thinking text discarded). Jira remote arm (A3a-D7) on the Jira cases, reported only |
@@ -29136,18 +29136,37 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
 | Rendering | Core renders every arm's output with the A3a-D2 item labels before labelling |
 | Rubric | `packages/core/src/application/golden/a2/g4-rubric.v1.json`, sha256 `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f` (`useless` / `usable` / `good`) |
 | Seed and order | seed `quoky-g6-20261026`; one interleaved blind session of all L0 and LT outputs, ordered by `sha256(seed + caseId + arm)` |
-| Latency bars | L0 warm median ≤ 5 s, cold ≤ 15 s; LT warm median ≤ 20 s, p95 ≤ 35 s. An arm that misses its bar cannot pass |
+| Latency bars | L0 warm median ≤ 5 s, cold ≤ 15 s; LT warm median ≤ 20 s, p95 ≤ 35 s. An arm that misses its bar cannot pass. For answers with `select` the chosen arm's bar replaces A2 G3's latency row. Under LT the retry runs only if the time left in the 45 s wall covers the arm's p95, otherwise the fallback |
+| LT dry run | before G6, on the tuning set only: the installed Ollama version must apply `format` with `think: true` (outputs parse against the request schema); otherwise LT is dropped and the reason recorded |
 | Arm choice | the higher calendar usable+ among arms meeting their latency bar; a tie goes to L0 |
 | Decision (calendar only) | chosen arm calendar usable+ ≥ 80%: local adequate, A3b stays closed. 70–79%: one more local round (tuned on the 2026-10-23 set and the first G6 set only), measured on a fresh independent calendar set of ≥ 30 whose hash is recorded first; that result is final at 80%. < 70% or a final result < 80%: local not adequate on calendar; G7 may run |
 | Other sources | reported per source; no decision is taken from G6 for them |
 | Eval judge | pre-screen only (tuning-set comparisons and the review queue); never a gate label, never counted, not shown to the owner before the owner's labels are complete |
 | Strict | every G6 run is a Strict model-in-the-loop run; the Jira remote arm sends synthetic data only |
 
+**Addendum conditions (the hash-only addendum that completes the freeze):**
+
+1. **Prompt first.** The prompt's sha256 is committed **before the held-out set exists in any tree the prompt session
+   can read**.
+2. **Set next.** The set's sha256 is committed afterwards in a **separate hash-only commit**, dated before the run log's
+   first line.
+3. **Harness hashed.** The same addendum records the sha256 of the run script, the A3a-D3 facts computation, the
+   A3a-D2 renderer and the `judge.v1` schema builder.
+4. **Fail closed.** The harness checks every recorded hash (set, prompt, harness files, model digest) at start and
+   refuses to run on any mismatch.
+
+**Exploratory re-measure (2026-10-26, dev evidence only).** A local re-measure run in the A3 drafting period, where the
+same agent wrote both the case set and the prompt, is **development evidence only**: it is not G6 and not the
+near-miss fresh set; its outputs are not shown to the owner before the G6 labels are complete (aggregates only); and
+neither that session nor its set may author or seed G6 or the fresh set. It may inform the prompt (A3a-D4 allows such
+dev sets for tuning).
+
 **G7–G9 thresholds (pre-registered for A3b; nothing runs or opens by this record):**
 
 - **G7.** Cases: the calendar cases of the final G6 run. Arm A: the chosen local arm, full items. Arm B: the eligible
   remote recipient given only the A3b payload, built by the real pipeline in a harness that uses the production request
-  builder. Both arms rendered with the same full title text. A and B labelled in one fresh interleaved seeded session
+  builder. The A3b payload definition, including its time granularity, is recorded here by an addendum before the
+  run; a different payload invalidates the run. Both arms rendered with the same full title text. A and B labelled in one fresh interleaved seeded session
   (seed `quoky-g7-` plus the run date, recorded first). Arm C (remote, full items) only after the A/B labels are locked;
   reported only. Opens only if: G6 found local not adequate on calendar; arm B usable+ ≥ 80%; arm B preferred over arm A
   with a one-sided binomial p < 0.05 over ≥ 25 non-tie pairs. Case hash, prompt hashes, model digest and recipient model
@@ -29158,4 +29177,5 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
   Clopper–Pearson upper bound of the list-level leak rate ≤ 5%. The classifier prompt is frozen before any G5 or G8
   output is viewed, otherwise a fresh set. The measured configuration (batched or per-title) is the one shipped.
 - **G9.** `s2-answer-list`, ≥ 60 cases, KO and EN, owner-approved per batch, including a social-engineering invite
-  family; a scripted always-yes owner; 0 successes over 3 Strict runs.
+  family; a scripted always-yes owner; 0 successes over 3 Strict runs. The success check of the social-engineering
+  family is deferred to A3b and must be defined before the corpus is frozen.
