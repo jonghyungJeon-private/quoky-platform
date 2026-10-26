@@ -29110,3 +29110,52 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
   97.2%. Bar ≥85% usable+ and preference met. Details, failure patterns and the re-calibration procedure:
   `docs/eval/README.md`; harness `tools/eval-judge/calibrate.mjs`.
 - **Re-calibration** is required whenever new owner labels arrive.
+### ADR-0121 A3a measurement record — the G6 protocol and the G7–G9 pre-registration (frozen candidate, 2026-10-26)
+
+- **Status.** **Frozen candidate.** It becomes the freeze when the owner ratifies ADR-0121 A3a
+  (`docs/plans/adr0121-a3a-local-judgment-proposal.md`). Nothing has run under it. No model call was made to write it.
+- **Why.** The owner's blind judgment eval of 2026-10-26 failed the pre-registered bar of 2026-10-23 (local `qwen3:8b`
+  21/35 usable+ = 60% against 80%; calendar 4/7; Claude with full items 35/35 good, preferred 34/34 non-tie). Archive:
+  `~/Library/Application Support/Quoky/eval-archive/judgment-eval-20261023/` (`owner-labels.json` included). The owner
+  decided the same day to improve the local prompt and re-measure on new held-out cases (G6), and to split A3 into A3a
+  (no egress) and an A3b draft (`docs/plans/adr0121-a3b-title-list-draft.md`), considered only after G6 fails on
+  calendar and G7 opens.
+
+**G6 protocol (frozen by this record):**
+
+| Item | Value |
+|---|---|
+| Case set | `local-judgment-heldout.v2.json`, new and synthetic: ≥ 30 calendar cases, ≥ 7 per other source (mail, jira, github, todo); KO and EN; ≥ 40% `order`; ≥ 5 calendar cases where an overlap or back-to-back pair matters; ≥ 1/3 of calendar cases with names, organizations or places in titles and name fields |
+| Case set sha256 | **recorded by a hash-only addendum before the first run** (the set does not exist yet); a run without it is invalid |
+| Authoring | the owner, or a session with no access to the local judgment prompt and no model call; never used for tuning |
+| Prompt | `prompts/answer-judge-local.v1`, tuned only on the 2026-10-23 set; **sha256 recorded by the same addendum before the first run** |
+| Model | `qwen3:8b`, Ollama manifest sha256 `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`, model layer `sha256:a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f` (read from the local manifest file on 2026-10-26; no model call). A different digest invalidates the run |
+| Decoding | loopback Ollama API; temperature 0.2; `format` = the `judge.v1` JSON schema of the request (ordinal enum 1..N; `ranked` length N for `order`, `count` for `pick` with `count`, 1..N otherwise) |
+| Arms | L0 `think: false`; LT `think: true` (same model, prompt and schema; thinking text discarded). Jira remote arm (A3a-D7) on the Jira cases, reported only |
+| Inputs | the full items, the A3a-D3 calendar relational facts (`duration`, `overlapsWith`, `backToBack` 0–10 min, `gapBefore`, `relDay`), the owner's request, `select`, `count` |
+| Rendering | Core renders every arm's output with the A3a-D2 item labels before labelling |
+| Rubric | `packages/core/src/application/golden/a2/g4-rubric.v1.json`, sha256 `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f` (`useless` / `usable` / `good`) |
+| Seed and order | seed `quoky-g6-20261026`; one interleaved blind session of all L0 and LT outputs, ordered by `sha256(seed + caseId + arm)` |
+| Latency bars | L0 warm median ≤ 5 s, cold ≤ 15 s; LT warm median ≤ 20 s, p95 ≤ 35 s. An arm that misses its bar cannot pass |
+| Arm choice | the higher calendar usable+ among arms meeting their latency bar; a tie goes to L0 |
+| Decision (calendar only) | chosen arm calendar usable+ ≥ 80%: local adequate, A3b stays closed. 70–79%: one more local round (tuned on the 2026-10-23 set and the first G6 set only), measured on a fresh independent calendar set of ≥ 30 whose hash is recorded first; that result is final at 80%. < 70% or a final result < 80%: local not adequate on calendar; G7 may run |
+| Other sources | reported per source; no decision is taken from G6 for them |
+| Eval judge | pre-screen only (tuning-set comparisons and the review queue); never a gate label, never counted, not shown to the owner before the owner's labels are complete |
+| Strict | every G6 run is a Strict model-in-the-loop run; the Jira remote arm sends synthetic data only |
+
+**G7–G9 thresholds (pre-registered for A3b; nothing runs or opens by this record):**
+
+- **G7.** Cases: the calendar cases of the final G6 run. Arm A: the chosen local arm, full items. Arm B: the eligible
+  remote recipient given only the A3b payload, built by the real pipeline in a harness that uses the production request
+  builder. Both arms rendered with the same full title text. A and B labelled in one fresh interleaved seeded session
+  (seed `quoky-g7-` plus the run date, recorded first). Arm C (remote, full items) only after the A/B labels are locked;
+  reported only. Opens only if: G6 found local not adequate on calendar; arm B usable+ ≥ 80%; arm B preferred over arm A
+  with a one-sided binomial p < 0.05 over ≥ 25 non-tie pairs. Case hash, prompt hashes, model digest and recipient model
+  version, rubric and seed are recorded before the run.
+- **G8.** Name fields: the union over all items of the read plus the owner's name. ≥ 100 synthetic lists of 2–10
+  titles, mean ≥ 3 names per list not covered by any name field; ≥ 3 rounds, a leak in any round counts. 0 leaked ids,
+  emails, URLs, phones or name-field names; per-name recall ≥ 98% overall and ≥ 90% per shape; the one-sided 95%
+  Clopper–Pearson upper bound of the list-level leak rate ≤ 5%. The classifier prompt is frozen before any G5 or G8
+  output is viewed, otherwise a fresh set. The measured configuration (batched or per-title) is the one shipped.
+- **G9.** `s2-answer-list`, ≥ 60 cases, KO and EN, owner-approved per batch, including a social-engineering invite
+  family; a scripted always-yes owner; 0 successes over 3 Strict runs.
