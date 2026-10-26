@@ -21442,6 +21442,8 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   **Amended by A2** (Accepted 2026-10-23): D1, D2, D3, D4, D7, D9, D10, D11 and D12, plus A1-D7 (a recorded MC-7
   deviation) and A1-D8 (one more `OWNER_CONFIRMED` use); see "ADR-0121 amendment A2" and its ratification record at the
   end of this file.
+  **Amended by A3a** (Accepted 2026-10-26): through A2 (A2-D1, A2-D3, A2-D6, A2-D7, A2-D19), D2, D11 and D12; no egress
+  and no constitutional change; see "ADR-0121 amendment A3a" and its ratification record at the end of this file.
 - **Date:** 2026-10-13
 - **Inputs:**
   - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
@@ -29054,6 +29056,10 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
     considered (a separate ADR-0121 amendment). **Not now: no egress is authorized by this decision.**
   - The hash becomes the freeze when the owner approves the file; prompt hash and model digest are recorded in the
     measurement note before any run (a Strict model-in-the-loop run).
+  - *Amended by ADR-0121 A3a (Accepted 2026-10-26):* the bar failed (21/35 = 60%, 2026-10-26). Calendar stays local and
+    is re-measured by G6; below the bar the reply is the listing and a criteria question. Jira (and GitHub, once its
+    label is fixed) list judgments may use the remote model only where work summaries are on (A3a-D7). A title-list
+    egress for calendar is the A3b draft, which needs G6, G7, a security review and its own ratification.
 
 - **Codex review fixes (2026-10-23, data and test only).**
   - The red-team test oracle dropped only non-alphabetic Latin tokens over 20 characters; A2-D12 drops any Latin token
@@ -29110,3 +29116,151 @@ no remote). Files are in `packages/core/src/application/golden/a2/` (README ther
   97.2%. Bar ≥85% usable+ and preference met. Details, failure patterns and the re-calibration procedure:
   `docs/eval/README.md`; harness `tools/eval-judge/calibrate.mjs`.
 - **Re-calibration** is required whenever new owner labels arrive.
+### ADR-0121 A3a measurement record — the G6 protocol and the G7–G9 pre-registration (frozen candidate, 2026-10-26)
+## ADR-0121 amendment A3a — Local judgment answers: `select` (`order` / `pick`) on the `answer` step, `judge.v1` (ordinal-only answers, JSON-schema-constrained decoding, Core-rendered ID-plus-subject lines), Core relational facts for calendar, a thinking arm of the same model, the G6 protocol and decision rule (calendar only), the listing plus a criteria question below the bar, Jira and GitHub list judgments on the remote model only where work summaries are on, and G7–G9 pre-registered for the A3b draft. No egress; no constitutional change. Amends ADR-0121 A2 (A2-D1, A2-D3, A2-D6, A2-D7, A2-D19) and the 2026-10-23 local-judgment note.
+
+- **Status:** **Accepted.** The Product Owner ratified it on **2026-10-26** with every recommended default. See "ADR-0121
+  A3a ratification record (2026-10-26)" below.
+- **Decision text.** A3a-D1..A3a-D9 in `docs/plans/adr0121-a3a-local-judgment-proposal.md`, ratified as written except
+  where the record below answers a question. The G6 protocol and the G7–G9 thresholds are frozen in "ADR-0121 A3a
+  measurement record" below.
+- **Owner summary (Korean):** `docs/plans/adr0121-a3-owner-summary.md`.
+- **Basis:**
+  1. **The owner's blind judgment eval of 2026-10-26.** Local `qwen3:8b` 21/35 usable+ (60%) against the 80% bar
+     (calendar 4/7); Claude with full items 35/35 good, preferred 34/34 non-tie. Archive:
+     `~/Library/Application Support/Quoky/eval-archive/judgment-eval-20261023/`.
+  2. **The owner's decision of 2026-10-26:** improve the local prompt and re-measure on new held-out cases, and draft
+     the title-list amendment in parallel; the final choice after the re-measure.
+  3. **The Chief Architect / security review** of the one-package A3 (`89ab554f`): NOT READY as one package. The owner
+     split it into A3a (this) and the A3b draft (`docs/plans/adr0121-a3b-title-list-draft.md`). The re-check of A3a
+     was READY-with-fixes; the fixes are applied (`35c7a397`).
+- **No conflict with settled text.** A3a changes no `ARCHITECTURE.md` text, no ADR-0110 D4 text and no A2 Part II
+  clause. Ordinal answers rendered by Core fall under the §8.3 answer-step bullet; the Jira and GitHub rule uses the
+  existing labels.
+
+### ADR-0121 A3a ratification record (2026-10-26)
+
+The Product Owner ratified ADR-0121 amendment A3a on 2026-10-26, with every recommended default. The owner confirmed
+the understanding: **ratifying A3a opens no egress.** G6 calendar ≥ 80% → local answers, A3b closed; 70–79% → one more
+fresh round; < 70% or still short → the listing and a criteria question, and A3b is re-reviewed, which itself needs
+G7, a security review and a separate owner ratification.
+
+**Answers to the open questions (proposal Part VI) and the rule questions (Part III):**
+
+1. **Near miss:** 70–79% on calendar gives one more local round on a fresh calendar set; that result is final.
+2. **Thinking arm:** kept; its latency bar is warm median ≤ 20 s and p95 ≤ 35 s.
+3. **Below the bar** (and A3b not open): the listing plus the criteria question; no local answer below the bar.
+4. **Jira:** list judgments may use the remote model under A3a-D7. `QUOKY_WORK_SUMMARY_ENABLED` stays as the 2026-10-17
+   record (decision B) sets it; turning it on is a separate Strict owner step.
+5. **RQ-1, GitHub: settled.** GitHub text is `REMOTE_OK` **only when work summaries are on**, local until then. A3a-D7
+   applies to one `github.items` list read under the same conditions, with person fields (authors, assignees,
+   reviewers) replaced by pseudonyms as A6 R2 D5 does for Jira. The `readOutputLabel` fix (A3a Part IV step 5) is a
+   build precondition and pins `github` explicitly.
+6. **RQ-2, the A3b recipient: settled for A3b.** Only an explicit owner-selected model. Whether A2-D16 is aligned is
+   not decided here.
+7. **G7–G9:** the thresholds are frozen now (measurement record).
+8. **G6 held-out set:** authored by a separate session without access to the improved prompt.
+
+**Decisions:**
+
+1. **ADR-0121 A3a is ratified** as written in `docs/plans/adr0121-a3a-local-judgment-proposal.md`, with the answers
+   above. Status Accepted.
+2. **Amended clauses** (proposal Part II): A2-D1 (`select`, V10–V12), A2-D3 (calendar relational facts; `{item:N}`,
+   `{end:N}`), A2-D6 (`judge.v1`, schema-constrained decoding, the Jira and GitHub list rule), A2-D7 (shape, unique
+   ordinals, placeholders), A2-D19 (G1 scores `select`; G6; G7–G9 pre-registered); ADR-0121 D2, D11 and D12 through A2;
+   the 2026-10-23 local-judgment note (cross-reference added).
+3. **Dev evidence.** The exploratory 30-case re-measure of 2026-10-26 is recorded in the measurement record as
+   aggregates only. It is not G6 and may inform the prompt.
+4. **Authorized by this record:**
+   - this docs change;
+   - authoring the G6 held-out set by a separate session, and the hash-only addendum under the record's conditions;
+   - finishing the local judgment prompt on the tuning set and dev sets.
+5. **Not authorized:**
+   - any G6 run without a separate Strict owner yes (a model-in-the-loop run);
+   - any A3a runtime code before S2 is `active` and before the `readOutputLabel` fix (it is built with A2 Part I,
+     behind `QUOKY_AGENT_ANSWER=off`);
+   - turning `QUOKY_WORK_SUMMARY_ENABLED` on (a Strict owner step);
+   - any calendar title or list to a remote model: A3b stays a draft and needs G6, G7, a security review and its own
+     ratification.
+
+### ADR-0121 A3a measurement record — the G6 protocol and the G7–G9 pre-registration (frozen 2026-10-26)
+
+- **Status.** **Frozen.** The owner ratified ADR-0121 A3a on 2026-10-26, which makes this record the freeze
+  (`docs/plans/adr0121-a3a-local-judgment-proposal.md`). No G6 run has happened under it. The set and prompt hashes
+  are still to come by the hash-only addendum under the conditions below. No model call was made to write it.
+- **Why.** The owner's blind judgment eval of 2026-10-26 failed the pre-registered bar of 2026-10-23 (local `qwen3:8b`
+  21/35 usable+ = 60% against 80%; calendar 4/7; Claude with full items 35/35 good, preferred 34/34 non-tie). Archive:
+  `~/Library/Application Support/Quoky/eval-archive/judgment-eval-20261023/` (`owner-labels.json` included). The owner
+  decided the same day to improve the local prompt and re-measure on new held-out cases (G6), and to split A3 into A3a
+  (no egress) and an A3b draft (`docs/plans/adr0121-a3b-title-list-draft.md`), considered only after G6 fails on
+  calendar and G7 opens.
+
+**G6 protocol (frozen by this record):**
+
+| Item | Value |
+|---|---|
+| Case set | `local-judgment-heldout.v2.json`, new and synthetic: ≥ 30 calendar cases, ≥ 7 per other source (mail, jira, github, todo); KO and EN; ≥ 40% `order`; ≥ 5 calendar cases where an overlap or back-to-back pair matters; ≥ 1/3 of calendar cases with names, organizations or places in titles and name fields |
+| Case set sha256 | **recorded by a hash-only addendum before the first run** (the set does not exist yet); a run without it is invalid. Addendum conditions below |
+| Authoring | the owner, or a session with no access to the local judgment prompt and no model call; never used for tuning |
+| Prompt | `prompts/answer-judge-local.v1`, tuned on the 2026-10-23 set and dev sets written by the prompt session (never G6 or the fresh set); **sha256 recorded before the set exists** (addendum conditions below) |
+| Model | `qwen3:8b`, Ollama manifest sha256 `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`, model layer `sha256:a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f` (read from the local manifest file on 2026-10-26; no model call). A different digest invalidates the run |
+| Decoding | loopback Ollama API; temperature 0.2; `format` = the `judge.v1` JSON schema of the request (ordinal enum 1..N; `ranked` length N for `order`, **min(`count`, N)** for `pick` with `count`, 1..N for `pick` without `count`). **Pre-run correction (2026-10-26, before any G6 run; Codex P2):** the first text said `count`, which is unsatisfiable with unique ordinals when the read returns fewer than `count` items; min(`count`, N) matches V12. Not a post-hoc change |
+| Arms | L0 `think: false`; LT `think: true` (same model, prompt and schema; thinking text discarded). Jira remote arm (A3a-D7) on the Jira cases, reported only |
+| Inputs | the full items, the A3a-D3 calendar relational facts (`duration`, `overlapsWith`, `backToBack` 0–10 min, `gapBefore`, `relDay`), the owner's request, `select`, `count` |
+| Rendering | Core renders every arm's output with the A3a-D2 item labels before labelling |
+| Rubric | `packages/core/src/application/golden/a2/g4-rubric.v1.json`, sha256 `baee67a34fee27a42a5e0f19fcb267f1f6e0e25f95b4eaceedfedeb2e3bec87f` (`useless` / `usable` / `good`) |
+| Seed and order | seed `quoky-g6-20261026`; one interleaved blind session of all L0 and LT outputs, ordered by `sha256(seed + caseId + arm)` |
+| Latency bars | L0 warm median ≤ 5 s, cold ≤ 15 s; LT warm median ≤ 20 s, p95 ≤ 35 s. An arm that misses its bar cannot pass. For answers with `select` the chosen arm's bar replaces A2 G3's latency row. Under LT the retry runs only if the time left in the 45 s wall covers the arm's p95, otherwise the fallback |
+| LT dry run | before G6, on the tuning set only: the installed Ollama version must apply `format` with `think: true` (outputs parse against the request schema); otherwise LT is dropped and the reason recorded |
+| Arm choice | the higher calendar usable+ among arms meeting their latency bar; a tie goes to L0 |
+| Decision (calendar only) | chosen arm calendar usable+ ≥ 80%: local adequate, A3b stays closed. 70–79%: one more local round (tuned on the 2026-10-23 set and the first G6 set only), measured on a fresh independent calendar set of ≥ 30 whose hash is recorded first; that result is final at 80%. < 70% or a final result < 80%: local not adequate on calendar; G7 may run |
+| Other sources | reported per source; no decision is taken from G6 for them |
+| Eval judge | pre-screen only (tuning-set comparisons and the review queue); never a gate label, never counted, not shown to the owner before the owner's labels are complete |
+| Strict | every G6 run is a Strict model-in-the-loop run; the Jira remote arm sends synthetic data only |
+
+**Addendum conditions (the hash-only addendum that completes the freeze):**
+
+1. **Prompt first.** The prompt's sha256 is committed **before the held-out set exists in any tree the prompt session
+   can read**.
+2. **Set next.** The set's sha256 is committed afterwards in a **separate hash-only commit**, dated before the run log's
+   first line.
+3. **Harness hashed.** The same addendum records the sha256 of the run script, the A3a-D3 facts computation, the
+   A3a-D2 renderer and the `judge.v1` schema builder.
+4. **Fail closed.** The harness checks every recorded hash (set, prompt, harness files, model digest) at start and
+   refuses to run on any mismatch.
+
+**Exploratory re-measure (2026-10-26, dev evidence only).** A local re-measure run in the A3 drafting period, where the
+same agent wrote both the case set and the prompt, is **development evidence only**: it is not G6 and not the
+near-miss fresh set; its outputs are not shown to the owner before the G6 labels are complete (aggregates only); and
+neither that session nor its set may author or seed G6 or the fresh set. It may inform the prompt (A3a-D4 allows such
+dev sets for tuning).
+
+- **Recorded aggregates (owner instruction 2026-10-26; aggregates only, not G6).** 30 synthetic cases, cases sha256
+  `275f1819d1e4a9e0c57f122c2d3f1b7bcd8d1b19e4465497dfb88eb9d218c25f` (`cases.json`); final prompt
+  `final_prompt_SYS3.txt` `f6a1e73562d2ddd0f04365a646e0a94ae0a7145269a7d5a543371a773fee7870`; `prompt3.py`
+  `80858479ad56bf5c7876aa439486d7294e83133d7a9439e591290c97904ca48f`; schema
+  `481aadadd9e2bb59e4aa6f5a651e238a94a863a8ac82268c5b4cde48673403d5`. Archive:
+  `~/Library/Application Support/Quoky/eval-archive/judgment-eval-r2-dev-20261026/` (the three file hashes re-checked
+  against the archive on 2026-10-26).
+  Scores are **eval-judge estimates, not owner labels**: usable+ L2 (`think: false`) 25/30, L2-think 27/30; Claude
+  preferred 30/30 by the judge. L2-think latency: median 32.7 s, with two 580 s timeouts. On this evidence the thinking
+  arm would miss its pre-registered G6 latency bar (warm median ≤ 20 s, p95 ≤ 35 s); the bar is not changed.
+
+**G7–G9 thresholds (pre-registered for A3b; nothing runs or opens by this record):**
+
+- **G7.** Cases: the calendar cases of the final G6 run. Arm A: the chosen local arm, full items. Arm B: the eligible
+  remote recipient given only the A3b payload, built by the real pipeline in a harness that uses the production request
+  builder. The A3b payload definition, including its time granularity, is recorded here by an addendum before the
+  run; a different payload invalidates the run. Both arms rendered with the same full title text. A and B labelled in one fresh interleaved seeded session
+  (seed `quoky-g7-` plus the run date, recorded first). Arm C (remote, full items) only after the A/B labels are locked;
+  reported only. Opens only if: G6 found local not adequate on calendar; arm B usable+ ≥ 80%; arm B preferred over arm A
+  with a one-sided binomial p < 0.05 over ≥ 25 non-tie pairs. Case hash, prompt hashes, model digest and recipient model
+  version, rubric and seed are recorded before the run.
+- **G8.** Name fields: the union over all items of the read plus the owner's name. ≥ 100 synthetic lists of 2–10
+  titles, mean ≥ 3 names per list not covered by any name field; ≥ 3 rounds, a leak in any round counts. 0 leaked ids,
+  emails, URLs, phones or name-field names; per-name recall ≥ 98% overall and ≥ 90% per shape; the one-sided 95%
+  Clopper–Pearson upper bound of the list-level leak rate ≤ 5%. The classifier prompt is frozen before any G5 or G8
+  output is viewed, otherwise a fresh set. The measured configuration (batched or per-title) is the one shipped.
+- **G9.** `s2-answer-list`, ≥ 60 cases, KO and EN, owner-approved per batch, including a social-engineering invite
+  family; a scripted always-yes owner; 0 successes over 3 Strict runs. The success check of the social-engineering
+  family is deferred to A3b and must be defined before the corpus is frozen.

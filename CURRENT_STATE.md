@@ -5,6 +5,29 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A3a — ratified (2026-10-26, docs only, branch `claude/v5-a3-proposal`)
+
+The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; no code changed; **no egress opened**.
+- **Why.** The owner's blind judgment eval of 2026-10-26 failed the pre-registered bar: local `qwen3:8b` 21/35 usable+
+  (60%, calendar 4/7); Claude with full items 35/35 good. The one-package A3 was split after the Chief Architect /
+  security review: A3a (ratified) and the A3b title-list draft (`docs/plans/adr0121-a3b-title-list-draft.md`).
+- **DECISIONS.** A3a is Accepted with its ratification record, and the measurement record freezes the G6 protocol and
+  pre-registers G7–G9. `ARCHITECTURE.md` and ADR-0110 D4 are unchanged.
+  - `select` (`order` / `pick`) on the `answer` step; `judge.v1` with ordinal-only answers, JSON-schema-constrained
+    decoding and Core-rendered ID-plus-subject lines; Core relational facts for calendar; a thinking arm (median ≤ 20 s,
+    p95 ≤ 35 s).
+  - G6 decides calendar only: ≥ 80% local; 70–79% one fresh round; otherwise the listing and a criteria question, and
+    A3b may be re-reviewed (G7, a security review and its own ratification).
+  - Jira, and GitHub once its label is fixed, list judgments may use the remote model only where work summaries are on.
+    The A3b recipient must be an explicit owner selection.
+  - The exploratory 30-case re-measure is dev evidence only (aggregates recorded).
+- **Implementation: not started.** Build precondition: the `readOutputLabel` fix (explicit per-source labels, a test
+  naming `github`). The A3a code is built with A2 Part I after S2 is `active`, behind `QUOKY_AGENT_ANSWER=off`. Each G6
+  run is a Strict owner step.
+
+Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
+then G6 on a Strict yes.
+
 ### ADR-0121 amendment A2 — ratified (2026-10-23, docs only, branch `claude/v5-answer-step-adr`)
 
 The owner ratified A2 on 2026-10-23 with every recommended default. Docs only; no code changed.
