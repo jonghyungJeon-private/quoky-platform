@@ -45,7 +45,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - "방금 거" does not reach back to the older item either.
 - **Changed (P5, owner decision D3 2026-10-26).** The help index shows the code-change flow steps as steps, not as
   stand-alone commands.
-  - "새 파일" is part of the request: "없는 파일은 요청 문장에 새 파일이라고 함께 적어야 새로 만들어요".
+  - A new file needs create wording in the same request: "없는 파일은 같은 요청에 새 파일·파일 생성처럼 만들라는 말을 함께
+    적어야 새로 만들어요". These are the flow's own create markers (새 파일, 파일 생성/추가, 파일 … 만들어 줘).
   - The checks follow an apply: 코드 수정을 적용한 다음 → "테스트 실행해줘" 또는 "타입체크 실행해줘".
   - The context eval treats a quoted step after "→" as a flow step, not a suggestion to probe alone.
 - **Changed (P6 + P7, owner decision D1 2026-10-26; selector prompt read `nl-select.v68`, A6 `v66`, R2 `v67`; D12 gate

@@ -46,7 +46,8 @@ These fix the hard failures of the first `eval:context` run that need no owner d
 - **P4.** Following ADR-0112 amendment 1 S3, every approved connector write outcome becomes the last action (source
   `slack`, `jira` or `calendar`, plus the receipt id). It is not undoable until R3, so "되돌려줘" answers with the family's
   copy and never cancels an older to-do (actions-local dry: wrong-write 1 → 0).
-- **P5 (D3).** The help index shows flow steps as steps ("→"), and "새 파일" as part of the request.
+- **P5 (D3).** The help index shows flow steps as steps ("→"), and the new-file create wording as part of the request
+  (the flow's own create markers, unquoted).
 - **P6 + P7 (D1).** A chat turn keeps `lastSelection` one turn older (follow-up 2 reversed for chat), and it also keeps
   the latest selection of each other source. The selector prompt shows both only when present (read `nl-select.v68`, A6
   `v66`, R2 `v67`; otherwise byte-identical). **The D12 gate is not run**: it is prepared offline (12 pending gold
