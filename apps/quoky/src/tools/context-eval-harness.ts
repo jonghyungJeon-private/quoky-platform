@@ -682,7 +682,15 @@ function jiraRoute(url: URL, world: JiraFixtureWorld | undefined): Response | un
   }
   if (url.pathname === '/rest/api/3/search/jql') {
     const jql = url.searchParams.get('jql') ?? '';
-    const fixVersion = /fixVersion = (\d+)/.exec(jql)?.[1];
+    let fixVersion = /fixVersion = (\d+)/.exec(jql)?.[1];
+    // A version named in JQL resolves like Jira: by the exact version name in the fixture's versions; an unknown name is
+    // Jira's 400 naming the fix version (the connector maps it to NOT_FOUND).
+    const named = /fixVersion = "((?:[^"\\]|\\.)*)"/.exec(jql)?.[1]?.replace(/\\(.)/gu, '$1');
+    if (named !== undefined) {
+      const version = Object.values(jira.versions).flat().find((candidate) => candidate.name === named);
+      if (version === undefined) return json({ errorMessages: [`The value '${named}' does not exist for the field 'fixVersion'.`] }, 400);
+      fixVersion = version.id;
+    }
     const project = /project = "([A-Z][A-Z0-9]+)"/.exec(jql)?.[1];
     const assignee = /assignee = "/.test(jql);
     const reporter = /reporter = "/.test(jql);

@@ -12,6 +12,7 @@
  */
 import type { AiProvider, AiRequest } from '@quoky/core';
 import {
+  type WriteExpectation,
   awaitsAnswer,
   extractSuggestions,
   fixtureStringsOf,
@@ -78,9 +79,33 @@ export interface ScenarioRecord {
 export function instantiatePlaceholders(suggestion: string): string {
   return suggestion
     .replace(/<[^<>]{1,20}>/gu, '테스트')
-    .replace(/(?<![\p{L}\p{N}])N(?![\p{L}\p{N}])/gu, '1')
+    .replace(/(?<![\p{L}\p{N}])N(?=번|[^\p{L}\p{N}]|$)/gu, '1')
     .replace(/(?<![\p{L}\p{N}])번호(?![\p{L}\p{N}])/gu, '1');
 }
+
+/** Every write the scenario declares on any turn (the safety-only scoring's allowance). */
+export function mergeWrites(all: ReadonlyArray<WriteExpectation | undefined>): WriteExpectation {
+  const merged: Record<string, unknown> = {};
+  for (const writes of all) {
+    for (const [name, value] of Object.entries(writes ?? {})) {
+      if (Array.isArray(value)) merged[name] = [...new Set([...((merged[name] as string[] | undefined) ?? []), ...value])];
+      else if (typeof value === 'number') merged[name] = ((merged[name] as number | undefined) ?? 0) + value;
+      else if (value === true || merged[name] === undefined) merged[name] = value;
+    }
+  }
+  return merged as WriteExpectation;
+}
+
+/** The read entry the immediately previous turn listed (the #280 condition), if it showed a listing. */
+function listingOf(previous: TurnObservation | undefined): string | undefined {
+  // A listing, not a question: a turn that went to chat or left a question or an approval open showed no listing.
+  if (previous === undefined || previous.chatPrompts.length > 0 || awaitsAnswer(previous)) return undefined;
+  const entry = servedEntry(previous)?.entryId;
+  return entry !== undefined && READ_LISTINGS.has(entry) ? entry : undefined;
+}
+
+/** The read entries that show the owner a listing. */
+const READ_LISTINGS: ReadonlySet<string> = new Set(['calendar.events', 'mail.list', 'drive.files', 'jira.issues', 'jira.release', 'todo.list', 'reminder.list', 'slack.search']);
 
 /** The oracle selector output of a turn (dry mode only). */
 export function oracleOutput(turn: ContextEvalTurn | undefined): string {
@@ -150,7 +175,8 @@ export class ContextEvalRunner {
         let text = turn.text;
         if (turn.echoSuggestion === true) {
           const previous = observations.at(-1);
-          text = previous === undefined ? undefined : extractSuggestions(previous.reply, ownerTexts, fixtureTexts)[0];
+          const earlier = observations.slice(0, -1).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
+          text = previous === undefined ? undefined : extractSuggestions(previous.reply, ownerTexts, fixtureTexts, earlier)[0];
         }
         sent.push(text);
         if (text === undefined) {
@@ -168,7 +194,9 @@ export class ContextEvalRunner {
       // Suggestion probes: every command a reply suggested, sent alone in a fresh DM with the selector answering none.
       // Replies that leave the conversation waiting (a question, a choice, an approval) suggest answers in context; those
       // are exercised by the echo scenarios, not probed out of context.
-      const suggestions = observations.map((observation) => (observation === undefined || awaitsAnswer(observation) ? [] : extractSuggestions(observation.reply, ownerTexts, fixtureTexts)));
+      const earlierReplies = (position: number): string[] => observations.slice(0, position).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
+      const offered = observations.map((observation, position) => (observation === undefined ? [] : extractSuggestions(observation.reply, ownerTexts, fixtureTexts, earlierReplies(position))));
+      const suggestions = observations.map((observation, position) => (observation === undefined || awaitsAnswer(observation) ? [] : (offered[position] ?? [])));
       const verdicts = new Map<string, boolean>();
       for (const suggestion of suggestions.flat()) {
         if (verdicts.has(suggestion)) continue;
@@ -177,12 +205,14 @@ export class ContextEvalRunner {
         verdicts.set(suggestion, probe.chatPrompts.length === 0);
       }
       let cardSeen = false;
+      const scenarioWrites = mergeWrites(scenario.turns.map((entry) => entry.expect.writes));
       const scores: TurnScore[] = [];
       const records: TurnRecord[] = [];
       for (const [position, turn] of scenario.turns.entries()) {
         const observation = observations[position];
         const unparseable = (suggestions[position] ?? []).filter((suggestion) => verdicts.get(suggestion) === false);
         const priorObservation = observations.slice(0, position).filter((entry): entry is TurnObservation => entry !== undefined).at(-1);
+        const listingShown = position > 0 ? listingOf(observations[position - 1]) : undefined;
         const score = scoreTurn(
           position + 1,
           {
@@ -191,6 +221,9 @@ export class ContextEvalRunner {
             ...(priorObservation !== undefined ? { previousReply: priorObservation.reply, previousReplyWasChat: priorObservation.chatPrompts.length > 0 } : {}),
             unparseable,
             cardSeenBefore: cardSeen,
+            suggestions: offered[position] ?? [],
+            scenarioWrites,
+            ...(listingShown !== undefined ? { listingShown } : {}),
           },
           { fixtures, ownerTexts: ownerTextsAt[position] ?? ownerTexts, capabilityNouns: this.options.capabilityNouns, scored, chatIsStub: this.options.chat === undefined },
         );

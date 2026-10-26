@@ -87,12 +87,15 @@ export const CONTEXT_EVAL_CONFIGURED_READS = ['jira.issues', 'jira.release', 'sl
 export function capabilityNouns(): CapabilityNouns {
   const sources = new Set<string>();
   const lists = new Set<string>();
+  const byEntry: Record<string, string[]> = {};
   for (const id of CONTEXT_EVAL_CONFIGURED_READS) {
     const entry = NL_WAVE1_ENTRIES[id];
     const target = entry.sourceNames === undefined ? lists : sources;
-    for (const word of [...(entry.sourceNames ?? []), ...entry.aliases]) if (word.length >= 2) target.add(word.toLowerCase());
+    const words = [...(entry.sourceNames ?? []), ...entry.aliases].filter((word) => word.length >= 2).map((word) => word.toLowerCase());
+    for (const word of words) target.add(word);
+    byEntry[id] = [...new Set(words)].sort();
   }
-  return { sources: [...sources].sort(), lists: [...lists].sort() };
+  return { sources: [...sources].sort(), lists: [...lists].sort(), byEntry };
 }
 
 const HELP = `Multi-turn context eval (owner priority 2026-10-26; docs/eval/context-eval.md)
@@ -103,7 +106,7 @@ Dry:      pnpm eval:context -- --mode dry [--profile P] [--selector oracle|none]
 
 Options: --profile ${CONTEXT_EVAL_PROFILE_NAMES.join('|')} (default deployed)  --model <selection model, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>
          --chat stub|real (default stub)  --chat-model <alias, default: the Claude CLI default>  --runs <1-5, default 1>  --scenarios <id,id,...>
-Gate (proposed): >= 90% of the fully scored scenarios pass; 0 of each hard check (${HARD_CHECKS.join(', ')}); 0 harness errors.
+Gate (owner decision 2026-10-26): >= 95% of the fully scored scenarios pass in every run; 0 of each hard check (${HARD_CHECKS.join(', ')}); 0 harness errors.
 Provider outage: the eval:nl guard; an outage with no hard failure observed is INVALID (exit 5), never PASSED or FAILED.
 `;
 
