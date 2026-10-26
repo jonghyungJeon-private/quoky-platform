@@ -30118,3 +30118,56 @@ harness tools/g6/freeze.mjs   022cdce61f7a757eedfceaca497901ebb3eb76538dafd14741
 ```g6-freeze
 set packages/core/src/application/golden/a2/local-judgment-heldout.v2.json 2ca306a6f8e9a059be25dbfa88feb57e1b6f5b42034464f2f7195b6c158f3e84
 ```
+
+### ADR-0121 A3a G6 result (2026-10-26)
+
+- **Result.** **G6 decision: `no-arm-meets-latency-bar` — local judgment is NOT adequate on calendar.** By the
+  measurement record, "an arm that misses its bar cannot pass"; neither L0 nor LT met its latency bar, so no arm can be
+  chosen and the calendar decision is fixed **independently of any quality label**.
+- **The run.** The official G6 run on the frozen protocol, after the owner's Strict yes: start
+  `2026-10-26T03:59:46Z`, end `2026-10-26T05:06:20Z`, HEAD `bf13abbe`. The harness verified every `g6-freeze` hash at
+  start (prompt `9b43479a…`, the ten harness files, set `2ca306a6…`, rubric `baee67a3…`, `qwen3:8b` manifest
+  `500a1f06…`); the first line of `run.log` lists them. Coverage met every minimum: 72 cases (calendar 36; mail, jira,
+  github, todo 9 each), KO 51 / EN 21, `order` 47.2%, 13 calendar cases with an overlap or back-to-back pair, 31 with
+  name fields. Arms L0 and LT, 144 outputs.
+- **Archive.** `~/Library/Application Support/Quoky/eval-archive/g6-run-20261026T035948/` (sha256):
+  `run.log` `a69260a22676157b9b7f65455a81cd6fb32c648d17f9a2950e0f4b3802ec5c5f`,
+  `stats.json` `904c5480e49ed885b1dcac467b1a126c1c5e03205fc749950e40244d510cf099`,
+  `sealed-outputs.json` `f465527b45079aa528667ca557648ac757dadd2f52fb855f75920e16a7368a4e`,
+  `blind.json` `e84284d5a98a47a8def00c6fdfa4f504bb98c8a66dc27f1671f2d2806387cfc3`,
+  `labels.template.json` `402bffec1600c658d3e762b4785b83b1a6d86f4be72a2de1a41eadd88bfa3375`.
+
+| Arm | Answers / fallbacks (72) | Calendar answers (36) | Warm median | Warm p95 | Cold | Bar | Misses |
+|---|---|---|---|---|---|---|---|
+| L0 (`think: false`) | 59 / 13 | 33 | 12,967 ms | 32,918 ms | 23,418 ms | warm median ≤ 5 s, cold ≤ 15 s | warm median, cold |
+| LT (`think: true`) | 23 / 49 | 11 | 45,003 ms | 45,023 ms | 45,009 ms | warm median ≤ 20 s, p95 ≤ 35 s | warm median, warm p95 |
+
+- **Fallback causes** (from `run.log`): L0 13 (the time-date or placeholder guard failed on both attempts, one retry
+  ending at the wall); LT 49, of which **44 hit the 45 s wall** (the remaining-time rule left no retry), 3 placeholder,
+  2 time-date. Calendar only, warm: L0 median 14,032 ms (p95 40,412 ms); LT median 45,004 ms.
+- **How the decision was verified (no model call).** `latencySummary` of `tools/g6/score.mjs` (sha256 `a9c15b62…`,
+  unchanged since the freeze) was re-run over the per-output `latencyMs` and `cold` fields of `sealed-outputs.json`
+  (no answer text read): both arms reproduce `stats.json` exactly (warm n 71, cold n 1 each). `decide()` of the same
+  module, with both arms `meetsBar: false` and no labels, returns `{ chosenArm: null, decision:
+  'no-arm-meets-latency-bar' }`.
+- **Owner decision (2026-10-26).** Proceed with the A3b re-review. **Skip the 144-answer quality labelling**, because
+  the decision is fixed by latency. So G6 has **no usable+ number**; `blind.json` stays unlabelled, and
+  `sealed-outputs.json` is still not shown to the owner or the eval judge (it may feed G7 arm A, rendered and
+  labelled blind in G7's own session).
+- **Conditions, recorded honestly.**
+  - The machine was under memory pressure during the run (swap about 4.2 of 5 GB used), and an `eval:agent-plan`
+    gate ran concurrently. Both can inflate latency.
+  - The exploratory dev run of 2026-10-26 (dev evidence only) had an L2 (`think: false`) median of 8.1 s, which is
+    also above the 5 s bar; so the miss is not only an artefact of this run's load.
+  - **No rerun was done.** The protocol is pre-registered; rerunning to get a better number is not allowed.
+- **Consequence.**
+  - **A3a-D6 applies.** Until A3b is ratified and opened, a multi-item judgment request (`select`) on **calendar**
+    answers with the deterministic listing plus the ③ criteria question ("어떤 기준으로 우선순위를 볼지(예: 마감, 외부
+    참석, 준비 시간) 말씀해 주시면 그 기준으로 정리해 드릴게요."). No local `judge.v1` answer is shown.
+  - **Other sources (mail, to-do, and Jira / GitHub while their label is not `REMOTE_OK`):** G6 decides nothing for
+    them, but for answers with `select` the chosen arm's latency bar replaces A2 G3's latency row, and no arm met it.
+    So they too answer with the listing plus the criteria question. The A3a-D7 remote path for a `REMOTE_OK` Jira (or,
+    per RQ-1, GitHub) list read is unaffected; it needs work summaries on, a Strict owner step.
+  - This is the rule the A2 Part I / A3a build implements; no runtime behaviour changes today (A3a code is not built).
+  - **G7 may run** (measurement record): next is the A3b payload definition and the G7 harness, then a separate
+    Strict yes for the G7 run. A3b also needs G8, G9, a security review and its own ratification.

@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A3a G6 result: local not adequate on calendar (docs only, 2026-10-26)
+
+- **Recorded.** The official G6 run (72 cases, arms L0 and LT) missed every latency bar: L0 warm median 12.97 s (bar
+  5 s), cold 23.4 s (bar 15 s); LT warm median 45.0 s and p95 45.0 s (bars 20 s / 35 s; 44 of 49 fallbacks at the 45 s
+  wall). By the pre-registered rule the decision is `no-arm-meets-latency-bar`: local judgment is not adequate on
+  calendar, independent of quality labels (re-verified from the archive with `score.mjs`, no model call).
+- **Owner decision.** Proceed with the A3b re-review; the 144-answer quality labelling is skipped. Memory pressure and a
+  concurrent gate during the run are recorded; no rerun (pre-registration).
+- **Consequence.** Until A3b is ratified and opened, multi-item judgment requests answer with the listing and the
+  criteria question (A3a-D6). G7 may run after its own Strict yes.
+
 ## Unreleased — ADR-0121 A3a G6 measurement harness and pinned local prompt (branch `claude/v5-g6-harness`)
 
 - **Added.** `tools/g6/`: the official G6 harness. The pinned local judgment prompt
