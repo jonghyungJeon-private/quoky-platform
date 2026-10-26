@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A3a G6 measurement harness and pinned local prompt (branch `claude/v5-g6-harness`)
+
+- **Added.** `tools/g6/`: the official G6 harness. The pinned local judgment prompt
+  (`prompts/answer-judge-local.v1.txt`), the `judge.v1` schema builder (ordinal enum; `ranked` = N for `order`,
+  min(`count`, N) or 1..N for `pick`), the A3a-D3 calendar facts, the A3a-D2 renderer and guards, and the run script
+  for arms L0 (`think: false`) and LT (`think: true`) with the 45 s wall, one retry and the LT remaining-time rule. It
+  writes a seeded interleaved blind file for the owner's labels and scores only after the labels are complete.
+- **Fail closed.** The harness refuses to run unless the prompt, every harness file, the held-out set, the rubric and
+  the `qwen3:8b` digest match the committed `g6-freeze` addendum in `DECISIONS.md`, and the set hash was committed
+  after the prompt hash in a hash-only commit.
+- **Not run.** No model or Ollama call was made. The LT dry run (tuning set only) is implemented but needs the owner's
+  Strict yes; the G6 run needs the held-out set, its hash commit and a separate Strict yes.
+
 ## Unreleased — ADR-0121 A3a ratified: local judgment answers and the G6 re-measure protocol (docs only, 2026-10-26)
 
 - **Decided.** Judgment answers ("우선순위", "중요한 것 골라", "순서 짜줘") get a `select` field and the `judge.v1`
