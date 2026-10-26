@@ -30112,3 +30112,9 @@ harness tools/g6/cases.mjs    ee070b113cf6c32c282760face620c476b1793df6ba54a54b2
 harness tools/g6/score.mjs    a9c15b62f157c92df2a6004a3389a49a8a63f37a2c669ac60580b782036d64c1
 harness tools/g6/freeze.mjs   022cdce61f7a757eedfceaca497901ebb3eb76538dafd1474171543f4019ec49
 ```
+
+### ADR-0121 A3a G6 freeze addendum, part 2 of 2 (set hash, independent author, 2026-10-26)
+
+```g6-freeze
+set packages/core/src/application/golden/a2/local-judgment-heldout.v2.json 2ca306a6f8e9a059be25dbfa88feb57e1b6f5b42034464f2f7195b6c158f3e84
+```
