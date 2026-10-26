@@ -4,7 +4,7 @@ import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, 
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
 import { nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
-import { NL_EN_REQUEST_LEADS } from '../nl-routing/garbled-action';
+import { NL_EN_MODAL_LEAD, NL_EN_REQUEST_LEADS, NL_GLUED_REQUEST_TAIL } from '../nl-routing/garbled-action';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
@@ -465,8 +465,10 @@ let itemWriteVocabulary: readonly string[] | undefined;
 /**
  * CA S1 (review of f3e59814): a write word counts only as the clause's predicate, never as a modifier ("취소된 회의", "완료된
  * 거 보여줘"). Korean: a word in a request or imperative form (`nlIsRequestForm`: "꺼줘", "취소해", "되돌려") or the
- * clause's last word, that holds the write word. English: the clause's first word after the request leads
- * (`NL_EN_REQUEST_LEADS`), the imperative ("cancel the second one"). Existing grammar only.
+ * clause's last word, that holds the write word; or (Codex P2 of 7e4fad00) the bare action word followed by a word that is
+ * ONLY the light verb and a request ending (`NL_GLUED_REQUEST_TAIL`: "취소 해줘", "완료 처리해줘"). English: the clause's
+ * first word after the request leads (`NL_EN_REQUEST_LEADS`), also after a modal + "you" (`NL_EN_MODAL_LEAD`: "can you
+ * cancel the second one", "could you undo that"), the imperative. Existing grammar only.
  */
 function writeWordOnPredicate(text: string, vocabulary: readonly string[]): boolean {
   const words = normalizeForMatch(text).split(/\s+/u).filter((word) => word.length > 0);
@@ -478,9 +480,19 @@ function writeWordOnPredicate(text: string, vocabulary: readonly string[]): bool
     if (nlIsRequestForm(word)) return true;
     // A bare action noun closing the clause is a command ("2번 취소").
     if (index === words.length - 1 && korean.includes(last)) return true;
+    // The bare action noun with the light verb as its own word ("취소 해줘", "완료 처리해줘").
+    const next = words[index + 1];
+    if (korean.includes(word) && next !== undefined && next.replace(NL_GLUED_REQUEST_TAIL, '').length === 0) return true;
   }
   let head = 0;
-  while (head < words.length && NL_EN_REQUEST_LEADS.has(words[head] as string)) head += 1;
+  const leads = (): void => {
+    while (head < words.length && NL_EN_REQUEST_LEADS.has(words[head] as string)) head += 1;
+  };
+  leads();
+  if (NL_EN_MODAL_LEAD.test(words[head] ?? '') && words[head + 1] === 'you') {
+    head += 2;
+    leads();
+  }
   const rest = words.slice(head).join(' ');
   return vocabulary.filter(latin).some((write) => rest === write || rest.startsWith(`${write} `));
 }

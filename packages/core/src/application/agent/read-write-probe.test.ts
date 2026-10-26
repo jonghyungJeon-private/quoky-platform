@@ -130,3 +130,18 @@ describe('owner decision of 2026-10-26 (ap-n011): never the read alone when an u
   });
 });
 
+describe('Codex P2 of 7e4fad00: the never-silent note sees a split light verb and a modal + you lead', () => {
+  const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+
+  it('a probe that finds nothing (none or malformed) on these clauses is the decision (f) note', () => {
+    for (const clause of ['두 번째 거 취소 해줘', '첫 번째 거 완료 처리해줘', 'can you cancel the second one', 'could you undo that', 'can you please cancel the second one']) {
+      expect(agentReadWriteProbeResult(none, [clause], OFFERED, CTX), clause).toMatchObject({ kind: 'note', writeWord: true });
+      expect(agentReadWriteProbeResult('not json', [clause], OFFERED, CTX), clause).toMatchObject({ kind: 'note', writeWord: true });
+    }
+  });
+
+  it('a modifier or another verb after the action word stays standing', () => {
+    for (const clause of ['취소된 거 보여줘', '완료 일정 보여줘', 'can you show the cancelled ones']) expect(agentReadWriteProbeResult(none, [clause], OFFERED, CTX), clause).toEqual({ kind: 'stands', detail: 'none' });
+  });
+});
+

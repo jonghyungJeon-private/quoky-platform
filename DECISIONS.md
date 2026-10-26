@@ -30069,3 +30069,11 @@ Remaining multi-step misses are summary scope (ap-p093 r2/r3, ap-p107, ap-p102, 
    standing, as before this net. Boundary: `application/agent` may import `nl-routing/garbled-action` (the request-lead
    set; pure).
 
+### ADR-0121 S2 note — Codex 2 × P2 of 7e4fad00 (the never-silent change-word check; no prompt change)
+
+- A Korean bare action word followed by a word that is ONLY the light verb and a request ending ("취소 해줘", "완료
+  처리해줘": `NL_GLUED_REQUEST_TAIL`, existing) counts as the clause predicate.
+- An English modal + "you" lead ("can you cancel the second one", "could you undo that", "can you please …") is skipped
+  before the imperative slot, as the garbled-action grammar already does (`NL_EN_MODAL_LEAD`, now exported from
+  `garbled-action.ts`; no new list). Regression tests run through `agentReadWriteProbeResult` (probe none and malformed).
+
