@@ -29204,7 +29204,7 @@ G7, a security review and a separate owner ratification.
 | Authoring | the owner, or a session with no access to the local judgment prompt and no model call; never used for tuning |
 | Prompt | `prompts/answer-judge-local.v1`, tuned on the 2026-10-23 set and dev sets written by the prompt session (never G6 or the fresh set); **sha256 recorded before the set exists** (addendum conditions below) |
 | Model | `qwen3:8b`, Ollama manifest sha256 `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`, model layer `sha256:a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f` (read from the local manifest file on 2026-10-26; no model call). A different digest invalidates the run |
-| Decoding | loopback Ollama API; temperature 0.2; `format` = the `judge.v1` JSON schema of the request (ordinal enum 1..N; `ranked` length N for `order`, `count` for `pick` with `count`, 1..N otherwise) |
+| Decoding | loopback Ollama API; temperature 0.2; `format` = the `judge.v1` JSON schema of the request (ordinal enum 1..N; `ranked` length N for `order`, **min(`count`, N)** for `pick` with `count`, 1..N for `pick` without `count`). **Pre-run correction (2026-10-26, before any G6 run; Codex P2):** the first text said `count`, which is unsatisfiable with unique ordinals when the read returns fewer than `count` items; min(`count`, N) matches V12. Not a post-hoc change |
 | Arms | L0 `think: false`; LT `think: true` (same model, prompt and schema; thinking text discarded). Jira remote arm (A3a-D7) on the Jira cases, reported only |
 | Inputs | the full items, the A3a-D3 calendar relational facts (`duration`, `overlapsWith`, `backToBack` 0–10 min, `gapBefore`, `relDay`), the owner's request, `select`, `count` |
 | Rendering | Core renders every arm's output with the A3a-D2 item labels before labelling |
@@ -29236,8 +29236,12 @@ neither that session nor its set may author or seed G6 or the fresh set. It may 
 dev sets for tuning).
 
 - **Recorded aggregates (owner instruction 2026-10-26; aggregates only, not G6).** 30 synthetic cases, cases sha256
-  prefix `275f1819…`; final prompt `SYS3` sha256 prefix `f6a1e735…`, `prompt3.py` `80858479…`, schema `481aadad…`
-  (prefixes as reported by the orchestrator; the full hashes and the files belong in the eval archive with the run).
+  `275f1819d1e4a9e0c57f122c2d3f1b7bcd8d1b19e4465497dfb88eb9d218c25f` (`cases.json`); final prompt
+  `final_prompt_SYS3.txt` `f6a1e73562d2ddd0f04365a646e0a94ae0a7145269a7d5a543371a773fee7870`; `prompt3.py`
+  `80858479ad56bf5c7876aa439486d7294e83133d7a9439e591290c97904ca48f`; schema
+  `481aadadd9e2bb59e4aa6f5a651e238a94a863a8ac82268c5b4cde48673403d5`. Archive:
+  `~/Library/Application Support/Quoky/eval-archive/judgment-eval-r2-dev-20261026/` (the three file hashes re-checked
+  against the archive on 2026-10-26).
   Scores are **eval-judge estimates, not owner labels**: usable+ L2 (`think: false`) 25/30, L2-think 27/30; Claude
   preferred 30/30 by the judge. L2-think latency: median 32.7 s, with two 580 s timeouts. On this evidence the thinking
   arm would miss its pre-registered G6 latency bar (warm median ≤ 20 s, p95 ≤ 35 s); the bar is not changed.

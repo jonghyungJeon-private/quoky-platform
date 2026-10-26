@@ -83,8 +83,11 @@
    ```
 
    - **Decoding is JSON-schema constrained.** The Ollama `format` field carries the full `judge.v1` schema for that
-     request. `n` is an integer enum of 1..N. `ranked` has `minItems`/`maxItems` = N for `order`, = `count` for `pick`
-     with `count`, and 1..N otherwise.
+     request. `n` is an integer enum of 1..N. `ranked` has `minItems`/`maxItems` = N for `order` (every item ranked),
+     = **min(`count`, N)** for `pick` with `count`, and 1..N for `pick` without `count`. With `count` ≥ N the pick
+     therefore ranks every item, as V12 says, and the schema and the unique-ordinal guard can always both be met.
+     (Corrected on 2026-10-26, before any G6 run: the first text said `count`, which no answer can meet when the read
+     returns fewer than `count` items.)
    - **Ordinals only.** The model refers to items only by `n`, and to other items or times only through placeholders:
      `{item:N}` (Core inserts the item's label), `{time:N}` (start: weekday, date and time, as A2-D3) and `{end:N}`
      (end time). N must be in 1..N. Any other `{…}` fails the guard.
@@ -112,7 +115,7 @@
    - A1-D14 (the single-day free/busy entry) is not needed: these facts come from the read's own items.
 4. **A3a-D4: The local judgment prompt.** A versioned asset `prompts/answer-judge-local.v1` with a sha256 pin.
    - **No single-pick bias.** It states the requested shape first ("order: rank every item"; "pick: choose exactly
-     `count`"; "pick: choose the ones that meet the criterion").
+     min(`count`, N)"; "pick: choose the ones that meet the criterion").
    - It asks for a reason per item, up to 3 extra considerations, and a natural, human tone in the owner's language.
    - **Tuning data.** The 2026-10-23 set (the owner's labels and notes, and the eval judge's calibration half), and
      **dev sets written by the prompt session itself** (for example the exploratory re-measure of 2026-10-26, which
