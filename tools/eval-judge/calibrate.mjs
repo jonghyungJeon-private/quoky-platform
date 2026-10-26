@@ -8,8 +8,11 @@
 // Usage:
 //   node tools/eval-judge/calibrate.mjs [--set heldOut|calibration] [--runs 3] [--concurrency 3]
 //        [--archive <dir>] [--out <dir>] [--model <model>]
-// Resumable: results are written to <out>/raw.json after every call; a rerun skips finished (case, run) pairs.
+// Resumable: results are written to <out>/raw.json after every call with a fingerprint (model, system prompt hash, case
+// input hash); a rerun reuses a (case, run) result only when the fingerprint matches and the response is valid.
+// Exit 0 = COMPLETE calibration; exit 2 = INVALID (some (case, run) pair has no valid response; no metrics are reported).
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,6 +59,11 @@ function userMessage(c) {
   ].join('\n');
 }
 
+const sha256 = (s) => createHash('sha256').update(s).digest('hex');
+const systemSha = sha256(system);
+const fingerprint = (c) => ({ model, systemSha, inputSha: sha256(userMessage(c)) });
+const sameFingerprint = (a, b) => !!a && !!b && a.model === b.model && a.systemSha === b.systemSha && a.inputSha === b.inputSha;
+
 function callJudge(c) {
   return new Promise((resolve) => {
     const t0 = Date.now();
@@ -79,31 +87,53 @@ function callJudge(c) {
 }
 
 const LABELS = ['useless', 'usable', 'good'];
+const LOW_CONFIDENCE = 0.7; // the agent's own rule: any confidence below 0.7 means lowConfidence
+const isConfidence = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 1;
+const isReasons = (x) => Array.isArray(x) && x.every((r) => typeof r === 'string');
+// A response is valid only with every field the agent contract requires. `low` is conservative: the judge's flag OR any
+// confidence below the threshold, so an inconsistent flag can only route more cases to the owner, never fewer.
 function parse(raw) {
   const t = raw.replace(/^```(?:json)?\s*|\s*```$/g, '');
   try {
     const o = JSON.parse(t);
-    for (const k of ['A', 'B']) if (!LABELS.includes(o?.answers?.[k]?.label)) return null;
-    if (!['A', 'B', 'same'].includes(o?.preference?.choice)) return null;
-    return o;
+    for (const k of ['A', 'B']) {
+      const a = o?.answers?.[k];
+      if (!LABELS.includes(a?.label) || !isConfidence(a.confidence) || !isReasons(a.reasons)) return null;
+    }
+    if (!['A', 'B', 'same'].includes(o?.preference?.choice) || !isConfidence(o.preference.confidence)) return null;
+    if (!isReasons(o.preference.reasons) || typeof o.lowConfidence !== 'boolean') return null;
+    const confs = [o.answers.A.confidence, o.answers.B.confidence, o.preference.confidence];
+    return { ...o, low: o.lowConfidence || confs.some((c) => c < LOW_CONFIDENCE) };
   } catch {
     return null;
   }
+}
+// The cached result for (id, run), only if its fingerprint matches the current model, prompt and case input.
+function valid(id, r) {
+  const res = results[`${id}#${r}`];
+  return res && sameFingerprint(res.fingerprint, fingerprint(blind[id])) ? parse(res.raw ?? '') : null;
 }
 
 fs.mkdirSync(out, { recursive: true });
 const rawPath = path.join(out, 'raw.json');
 const results = fs.existsSync(rawPath) ? JSON.parse(fs.readFileSync(rawPath, 'utf8')) : {};
 const jobs = [];
-for (let r = 0; r < runs; r++) for (const id of ids) if (!parse(results[`${id}#${r}`]?.raw ?? '')) jobs.push([id, r]);
-console.log(`set=${set} cases=${ids.length} runs=${runs} model=${model} pending=${jobs.length}`);
+let rejected = 0;
+for (let r = 0; r < runs; r++)
+  for (const id of ids)
+    if (!valid(id, r)) {
+      if (results[`${id}#${r}`]) rejected++;
+      jobs.push([id, r]);
+    }
+console.log(`set=${set} cases=${ids.length} runs=${runs} model=${model} system=${systemSha.slice(0, 12)} ` +
+  `pending=${jobs.length} (cached results rejected: ${rejected})`);
 
 async function worker() {
   while (jobs.length) {
     const [id, r] = jobs.shift();
     let res;
     for (let attempt = 0; attempt < 2; attempt++) {
-      res = await callJudge(blind[id]);
+      res = { ...(await callJudge(blind[id])), fingerprint: fingerprint(blind[id]) };
       if (parse(res.raw)) break;
     }
     results[`${id}#${r}`] = res;
@@ -112,6 +142,16 @@ async function worker() {
   }
 }
 await Promise.all(Array.from({ length: concurrency }, worker));
+
+const missing = [];
+for (let r = 0; r < runs; r++) for (const id of ids) if (!valid(id, r)) missing.push(`${id}#${r}`);
+if (missing.length) {
+  const summary = { status: 'INVALID', reason: 'incomplete coverage', set, model, systemSha, runs, cases: ids.length, missing };
+  fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 1));
+  console.error(`INVALID calibration: ${missing.length}/${ids.length * runs} (case, run) pairs have no valid response: ` +
+    `${missing.join(', ')}. No metrics reported; rerun to resume.`);
+  process.exit(2);
+}
 
 // ---- metrics ----
 const plus = (l) => l !== 'useless';
@@ -132,12 +172,11 @@ for (let r = 0; r < runs; r++) {
   const pref = [];
   const rows = [];
   for (const id of ids) {
-    const o = parse(results[`${id}#${r}`]?.raw ?? '');
+    const o = valid(id, r);
     (judged[id] ??= [])[r] = o;
-    if (!o) continue;
     for (const k of ['A', 'B']) {
       lab.push([owner[id][k], o.answers[k].label]);
-      rows.push({ id, k, owner: owner[id][k], judge: o.answers[k].label, conf: o.answers[k].confidence, low: o.lowConfidence });
+      rows.push({ id, k, owner: owner[id][k], judge: o.answers[k].label, conf: o.answers[k].confidence, low: o.low });
     }
     pref.push([owner[id].pref, o.preference.choice]);
   }
@@ -184,7 +223,7 @@ for (const id of ids) {
 }
 
 const summary = {
-  set, model, runs, cases: ids.length, ids,
+  status: 'COMPLETE', set, model, systemSha, runs, cases: ids.length, ids,
   perRun,
   mean: Object.fromEntries(['exact', 'usablePlus', 'pref', 'kappa3', 'kappaBin', 'kappaPref', 'lowConfAnswers'].map((k) => [k, perRun.reduce((s, r) => s + (r[k] ?? 0), 0) / perRun.length])),
   majority: {

@@ -32,14 +32,19 @@ case: a label per answer (`useless | usable | good`, confidence, reasons citing 
 
 | Run | Exact label | Usable+ (binary) | Preference | Cohen's κ (3-class) | κ (usable+) | κ (pref) | Low-confidence cases |
 |---|---|---|---|---|---|---|---|
-| 0 | 91.7% | 97.2% | 94.4% | 0.863 | 0.893 | 0.885 | 2/18 |
-| 1 | 94.4% | 97.2% | 94.4% | 0.908 | 0.893 | 0.885 | 6/18 |
-| 2 | 91.7% | 97.2% | 94.4% | 0.863 | 0.893 | 0.885 | 2/18 |
+| 0 | 94.4% | 97.2% | 94.4% | 0.908 | 0.893 | 0.885 | 3/18 |
+| 1 | 91.7% | 97.2% | 94.4% | 0.863 | 0.893 | 0.885 | 4/18 |
+| 2 | 91.7% | 97.2% | 94.4% | 0.863 | 0.893 | 0.885 | 3/18 |
 | Mean | 92.6% | 97.2% | 94.4% | 0.878 | 0.893 | 0.885 | 18.5% |
+
+  Status COMPLETE (all 54 (case, run) pairs valid, fingerprinted: model opus, agent body sha256 `6304839a04f6…`). This is the
+  second held-out run: the first (same agent file, sha256 of the file `a4907d1f…`, unfingerprinted cache, kept in
+  `judge-runs/heldOut-v0-unfingerprinted/`) was repeated after the harness started rejecting unfingerprinted cache entries.
+  Means and stability were identical; per-run exact moved by one answer between runs.
 
 - Stability: labels identical in all 3 runs for 97.2% of answers (pairwise 98.1%); preference identical in all runs 100%.
 - Low-confidence routing: 8 of 108 answer judgments disagreed with the owner; 6 of those 8 were in cases flagged
-  `lowConfidence`. Exact agreement on unflagged cases was 96.9-100%.
+  `lowConfidence`. Exact agreement on unflagged cases was 96.4-100%.
 - Bar (≥85% usable+ and preference): **met** (97.2% and 94.4%). The held-out set is small (18 cases), so treat the numbers
   as a first estimate, not a tight bound.
 
@@ -49,7 +54,7 @@ case: a label per answer (`useless | usable | good`, confidence, reasons citing 
   real preparation plan. The owner said useless ("준비에 대해서 짜준 내용이 맞는지 의심스러워"); the judge said usable in all
   3 runs and flagged it only once. The judge treats R1 as satisfied when the visible shape (an order) is there.
 - **Bare IDs on an otherwise complete answer (lj-019 B).** The owner gave good while noting titles would be nicer; the judge
-  applied R5 strictly and said usable in 2 of 3 runs (flagged low each time). R5 is a preference, not a cap, for the owner.
+  applied R5 strictly and said usable in 2 of 3 runs (flagged low). R5 is a preference, not a cap, for the owner.
 - **`same` preference (lj-024).** The owner rated both answers good and chose `same` ("A, B를 적절히 섞으면"); the judge rated
   the single-pick answer usable and preferred B in all runs (flagged low). The judge almost never says `same`.
 
@@ -63,3 +68,15 @@ Re-calibrate whenever new owner labels arrive (a new blind eval, new notes, or t
    block of `.claude/agents/quoky-eval-judge.md`.
 4. Run `node tools/eval-judge/calibrate.mjs --set heldOut --runs 3` (check the Claude usage window first) and record the
    table above. If usable+ or preference drops below 85%, the judge goes back to "owner labels everything" until fixed.
+
+Harness guarantees (`tools/eval-judge/calibrate.mjs`):
+
+- Every cached result carries a fingerprint (model, sha256 of the agent body used as the system prompt, sha256 of the case
+  input). A rerun reuses a result only when the fingerprint matches; editing the rubric, switching the model or changing a
+  case re-judges it.
+- A response is valid only with labels, a preference, numeric confidences in [0, 1], reason arrays and a boolean
+  `lowConfidence`; an invalid response is retried once. A case is treated as low-confidence when the judge flags it or any
+  confidence is below 0.7, so an inconsistent flag can only send more cases to the owner.
+- If any (case, run) pair still has no valid response, the run is INVALID: exit code 2, `summary.json` has
+  `status: "INVALID"` and the missing pairs, and no metrics are printed. Rerun to resume. Only `status: "COMPLETE"` (exit 0)
+  is a calibration result.
