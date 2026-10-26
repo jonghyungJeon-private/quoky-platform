@@ -1,0 +1,230 @@
+/**
+ * The context eval runner: drives every scenario of the corpus through one booted world (`context-eval-harness.ts`, the
+ * production `AppModule`) and scores each turn (`context-eval.ts`). The selection source decides what kind of run it is:
+ *
+ * - `real` (Strict, `context-eval-cli.ts --mode run`): the app's own router prompt goes to a real model (the deployed
+ *   selection model), behind the CLI's outage guard and the plan's hard call cap;
+ * - `oracle` (dry, no model): the scenario's own `oracle` answer, i.e. a perfect selector, so the run measures Core's part
+ *   of context handling (pending answers, reference binding, carry-over, honest copy, writes) on its own;
+ * - `none` (dry, no model): the selector always answers none, i.e. the deterministic path alone (a provider outage).
+ *
+ * Chat is a fixed stub unless a real chat provider is given. Setup messages and the suggestion probes never reach a model.
+ */
+import type { AiProvider, AiRequest } from '@quoky/core';
+import {
+  awaitsAnswer,
+  extractSuggestions,
+  fixtureStringsOf,
+  scoreScenario,
+  scoreTurn,
+  servedEntry,
+  type CapabilityNouns,
+  type ContextEvalCorpus,
+  type ContextEvalScenario,
+  type ContextEvalTurn,
+  type ScenarioScore,
+  type TurnScore,
+} from './context-eval';
+import { profileActs, type ContextEvalProfile, type ContextEvalProviders, type ContextEvalWorld, type TurnObservation } from './context-eval-harness';
+
+/** The chat stub's reply: neutral (no claim, no incapability, no quoted command). */
+export const CONTEXT_EVAL_STUB_CHAT = '(평가용 대화 응답 자리표시자)';
+export const CONTEXT_EVAL_STUB_SUMMARY = '(평가용 요약 자리표시자)';
+const NONE = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+
+export type SelectionSource =
+  | { readonly kind: 'real'; readonly provider: AiProvider }
+  | { readonly kind: 'oracle' }
+  | { readonly kind: 'none' };
+
+export interface RunnerOptions {
+  readonly profile: ContextEvalProfile;
+  readonly selection: SelectionSource;
+  /** A real chat provider (Strict runs only); the stub otherwise. */
+  readonly chat?: AiProvider;
+  /** Catalog nouns of what Quoky can do in this run (the false-incapability detector's vocabulary). */
+  readonly capabilityNouns: CapabilityNouns;
+  readonly onScenario?: (record: ScenarioRecord) => void;
+}
+
+export interface TurnRecord {
+  readonly turn: number;
+  /** The owner text actually sent (an echo turn's suggestion), or undefined when skipped. */
+  readonly sent?: string;
+  readonly entry?: string;
+  readonly args?: Readonly<Record<string, unknown>>;
+  readonly chat: boolean;
+  readonly pending?: string;
+  readonly selectionCalls: number;
+  /** What the router prompt carried as context (the previous selection's entry, the reference context line). */
+  readonly selectorSaw?: TurnObservation['selectorSaw'];
+  /** Quoky's reply, bounded (synthetic fixtures only: for diagnosis in the report file, never printed). */
+  readonly reply?: string;
+  readonly suggestions: readonly string[];
+  readonly unparseable: readonly string[];
+  readonly failed: readonly string[];
+}
+
+export interface ScenarioRecord {
+  readonly run: number;
+  readonly score: ScenarioScore;
+  readonly turns: readonly TurnRecord[];
+}
+
+/**
+ * A suggestion as the owner would send it: Quoky's copy writes templates with placeholders (`N`, `번호`, `<내용>`); the probe
+ * fills them with a sample value. Everything else is sent as written.
+ */
+export function instantiatePlaceholders(suggestion: string): string {
+  return suggestion
+    .replace(/<[^<>]{1,20}>/gu, '테스트')
+    .replace(/(?<![\p{L}\p{N}])N(?![\p{L}\p{N}])/gu, '1')
+    .replace(/(?<![\p{L}\p{N}])번호(?![\p{L}\p{N}])/gu, '1');
+}
+
+/** The oracle selector output of a turn (dry mode only). */
+export function oracleOutput(turn: ContextEvalTurn | undefined): string {
+  const oracle = turn?.oracle;
+  if (oracle === undefined || oracle.entryId === 'none') return NONE;
+  return JSON.stringify({
+    entryId: oracle.entryId,
+    args: oracle.args ?? {},
+    ambiguity: oracle.ambiguity ?? 'CLEAR',
+    alternatives: (oracle.alternatives ?? []).map((alternative) => ({ entryId: alternative.entryId, args: alternative.args ?? {} })),
+  });
+}
+
+/** The scenario is scored in full only when the profile can act as it requires; otherwise on the hard checks only. */
+export function scoredUnder(scenario: ContextEvalScenario, profile: ContextEvalProfile): 'full' | 'safety' {
+  const acts = profileActs(profile);
+  for (const requirement of scenario.requires ?? []) {
+    if (requirement === 'actions' && !acts.actions) return 'safety';
+    if (requirement === 'itemR2' && !acts.itemR2) return 'safety';
+  }
+  return 'full';
+}
+
+export class ContextEvalRunner {
+  constructor(
+    private readonly world: ContextEvalWorld,
+    private readonly corpus: ContextEvalCorpus,
+    private readonly options: RunnerOptions,
+  ) {}
+
+  private providers(turn: ContextEvalTurn | undefined, mode: 'scored' | 'quiet'): ContextEvalProviders {
+    const { selection, chat } = this.options;
+    const stubChat = async (): Promise<string> => CONTEXT_EVAL_STUB_CHAT;
+    if (mode === 'quiet') return { select: async () => NONE, chat: stubChat, summarize: async () => CONTEXT_EVAL_STUB_SUMMARY };
+    return {
+      select: async (request: AiRequest) => {
+        if (selection.kind === 'oracle') return oracleOutput(turn);
+        if (selection.kind === 'none') return NONE;
+        return (await selection.provider.execute(request)).text;
+      },
+      chat: chat === undefined ? stubChat : async (request: AiRequest) => (await chat.execute(request)).text,
+      summarize: async () => CONTEXT_EVAL_STUB_SUMMARY,
+    };
+  }
+
+  async runScenario(scenario: ContextEvalScenario, index: number, run: number): Promise<ScenarioRecord> {
+    const { world } = this;
+    const fixtures = this.corpus.worlds[scenario.world] ?? {};
+    const scored = scoredUnder(scenario, this.options.profile);
+    const owner = await world.beginScenario(index, fixtures);
+    const ownerTexts: string[] = [];
+    const fixtureTexts = fixtureStringsOf(fixtures);
+    let harnessError: string | undefined;
+    try {
+      // Setup: deterministic grammar messages; any model call here is a corpus error.
+      for (const step of scenario.setup ?? []) {
+        world.providers = this.providers(undefined, 'quiet');
+        ownerTexts.push(step.text);
+        const observation = await world.turn(owner, step.text, step.context === 'channel' ? owner.channel : owner.dm);
+        if (observation.selectionCalls > 0 || observation.chatPrompts.length > 0) harnessError = 'setup-not-deterministic';
+        if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
+      }
+      const observations: Array<TurnObservation | undefined> = [];
+      const sent: Array<string | undefined> = [];
+      const ownerTextsAt: string[][] = [];
+      for (const turn of scenario.turns) {
+        let text = turn.text;
+        if (turn.echoSuggestion === true) {
+          const previous = observations.at(-1);
+          text = previous === undefined ? undefined : extractSuggestions(previous.reply, ownerTexts, fixtureTexts)[0];
+        }
+        sent.push(text);
+        if (text === undefined) {
+          observations.push(undefined);
+          ownerTextsAt.push([...ownerTexts]);
+          continue;
+        }
+        ownerTexts.push(text);
+        ownerTextsAt.push([...ownerTexts]);
+        world.providers = this.providers(turn, 'scored');
+        const observation = await world.turn(owner, text, turn.context === 'channel' ? owner.channel : owner.dm);
+        if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
+        observations.push(observation);
+      }
+      // Suggestion probes: every command a reply suggested, sent alone in a fresh DM with the selector answering none.
+      // Replies that leave the conversation waiting (a question, a choice, an approval) suggest answers in context; those
+      // are exercised by the echo scenarios, not probed out of context.
+      const suggestions = observations.map((observation) => (observation === undefined || awaitsAnswer(observation) ? [] : extractSuggestions(observation.reply, ownerTexts, fixtureTexts)));
+      const verdicts = new Map<string, boolean>();
+      for (const suggestion of suggestions.flat()) {
+        if (verdicts.has(suggestion)) continue;
+        world.providers = this.providers(undefined, 'quiet');
+        const probe = await world.turn(owner, instantiatePlaceholders(suggestion), world.freshDm());
+        verdicts.set(suggestion, probe.chatPrompts.length === 0);
+      }
+      let cardSeen = false;
+      const scores: TurnScore[] = [];
+      const records: TurnRecord[] = [];
+      for (const [position, turn] of scenario.turns.entries()) {
+        const observation = observations[position];
+        const unparseable = (suggestions[position] ?? []).filter((suggestion) => verdicts.get(suggestion) === false);
+        const priorObservation = observations.slice(0, position).filter((entry): entry is TurnObservation => entry !== undefined).at(-1);
+        const score = scoreTurn(
+          position + 1,
+          {
+            turn,
+            observation,
+            ...(priorObservation !== undefined ? { previousReply: priorObservation.reply, previousReplyWasChat: priorObservation.chatPrompts.length > 0 } : {}),
+            unparseable,
+            cardSeenBefore: cardSeen,
+          },
+          { fixtures, ownerTexts: ownerTextsAt[position] ?? ownerTexts, capabilityNouns: this.options.capabilityNouns, scored, chatIsStub: this.options.chat === undefined },
+        );
+        if (observation !== undefined && Object.keys(observation.after.anchors).length > 0) cardSeen = true;
+        scores.push(score);
+        const entry = observation === undefined ? undefined : servedEntry(observation);
+        records.push({
+          turn: position + 1,
+          ...(sent[position] !== undefined ? { sent: sent[position] } : {}),
+          ...(entry !== undefined ? { entry: entry.entryId, args: entry.args } : {}),
+          chat: (observation?.chatPrompts.length ?? 0) > 0,
+          ...(observation?.session.pending !== undefined ? { pending: observation.session.pending.kind } : {}),
+          selectionCalls: observation?.selectionCalls ?? 0,
+          ...(observation?.selectorSaw !== undefined ? { selectorSaw: observation.selectorSaw } : {}),
+          ...(observation !== undefined ? { reply: observation.reply.slice(0, 2000) } : {}),
+          suggestions: suggestions[position] ?? [],
+          unparseable,
+          failed: score.checks.filter((check) => !check.pass).map((check) => `${check.name}${check.detail !== undefined ? `: ${check.detail}` : ''}`),
+        });
+      }
+      const record = { run, score: scoreScenario(scenario, scores, scored, harnessError), turns: records };
+      this.options.onScenario?.(record);
+      return record;
+    } catch (error) {
+      const record = { run, score: scoreScenario(scenario, [], scored, `error:${error instanceof Error ? error.name : 'unknown'}`), turns: [] };
+      this.options.onScenario?.(record);
+      return record;
+    }
+  }
+
+  async runAll(scenarioIds: readonly string[], run: number): Promise<ScenarioRecord[]> {
+    const records: ScenarioRecord[] = [];
+    const selected = this.corpus.scenarios.filter((scenario) => scenarioIds.includes(scenario.id));
+    for (const [index, scenario] of selected.entries()) records.push(await this.runScenario(scenario, index, run));
+    return records;
+  }
+}

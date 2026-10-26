@@ -1,0 +1,2808 @@
+{
+ "version": 1,
+ "description": "Multi-turn context eval (owner priority 2026-10-26). Synthetic fixtures; every name is fictional. Expectations are the owner's quality bar scored on Core's final result per turn; `oracle` is dry-mode plumbing only and never reaches a model. See docs/eval/context-eval.md.",
+ "worlds": {
+  "office": {
+   "calendar": [
+    {
+     "id": "ev-today",
+     "title": "팀 주간회의",
+     "day": 0,
+     "start": "16:00",
+     "end": "17:00"
+    },
+    {
+     "id": "ev-interview",
+     "title": "1차 면접_AI Agent_김하늘",
+     "day": 1,
+     "start": "10:00",
+     "end": "11:00",
+     "location": "본사 3층 회의실"
+    },
+    {
+     "id": "ev-scrum",
+     "title": "주간 스크럼",
+     "day": 1,
+     "start": "14:00",
+     "end": "14:30"
+    },
+    {
+     "id": "ev-client",
+     "title": "고객사 미팅_한빛상사",
+     "day": 2,
+     "start": "09:30",
+     "end": "10:30",
+     "location": "한빛상사 본사"
+    },
+    {
+     "id": "ev-leave",
+     "title": "최유나 연차",
+     "day": 3
+    }
+   ],
+   "jira": {
+    "projects": [
+     {
+      "key": "NR26",
+      "name": "누리 플랫폼 운영 2026"
+     },
+     {
+      "key": "NR25",
+      "name": "누리 플랫폼 운영 2025"
+     },
+     {
+      "key": "HB26",
+      "name": "한빛 모바일 운영 2026"
+     }
+    ],
+    "versions": {
+     "NR26": [
+      {
+       "id": "20001",
+       "name": "배포일_20261029(목)",
+       "released": false,
+       "releaseDate": "2026-10-29"
+      },
+      {
+       "id": "20002",
+       "name": "배포일_20261020(화)",
+       "released": true,
+       "releaseDate": "2026-10-20"
+      },
+      {
+       "id": "20003",
+       "name": "비정기 배포",
+       "released": false
+      }
+     ]
+    },
+    "issues": [
+     {
+      "id": "30011",
+      "key": "NR26-11",
+      "summary": "결제 모듈 오류 수정",
+      "mine": true,
+      "fixVersions": [
+       "20001"
+      ]
+     },
+     {
+      "id": "30012",
+      "key": "NR26-12",
+      "summary": "정산 화면 개선",
+      "mine": true,
+      "fixVersions": [
+       "20001"
+      ]
+     },
+     {
+      "id": "30013",
+      "key": "NR26-13",
+      "summary": "결제 취소 API 추가",
+      "mine": false,
+      "fixVersions": [
+       "20001"
+      ]
+     },
+     {
+      "id": "30014",
+      "key": "NR26-14",
+      "summary": "Payment webhook retry",
+      "mine": true,
+      "status": "in-progress"
+     },
+     {
+      "id": "30015",
+      "key": "NR26-15",
+      "summary": "로그인 오류 대응",
+      "mine": true,
+      "reportedByMe": true
+     },
+     {
+      "id": "30016",
+      "key": "NR26-16",
+      "summary": "배포 체크리스트 정리",
+      "mine": true,
+      "status": "done",
+      "fixVersions": [
+       "20002"
+      ]
+     }
+    ]
+   },
+   "mail": [
+    {
+     "id": "m1",
+     "from": "박서준 <park@example.com>",
+     "subject": "분기 보고서 검토 요청",
+     "snippet": "금요일까지 검토 부탁드립니다.",
+     "body": "분기 보고서를 금요일까지 검토 부탁드립니다. 매출 항목 위주로 봐 주세요."
+    },
+    {
+     "id": "m2",
+     "from": "이도윤 <lee@example.com>",
+     "subject": "워크숍 장소 안내",
+     "snippet": "다음 주 워크숍은 판교에서 합니다.",
+     "body": "다음 주 워크숍은 판교 오피스 5층에서 합니다. 노트북을 챙겨 오세요."
+    },
+    {
+     "id": "m3",
+     "from": "최유나 <choi@example.com>",
+     "subject": "연차 사용 안내",
+     "snippet": "목요일 하루 연차입니다.",
+     "body": "목요일 하루 연차 사용합니다. 급한 일은 메신저로 주세요.",
+     "unread": false
+    }
+   ],
+   "drive": [
+    {
+     "id": "d1",
+     "name": "2026 로드맵 회의록",
+     "mimeType": "application/vnd.google-apps.document",
+     "text": "회의 결론: 11월 출시, 담당은 박서준. 다음 주까지 데모 준비."
+    },
+    {
+     "id": "d2",
+     "name": "채용 계획안",
+     "mimeType": "application/vnd.google-apps.document",
+     "text": "상반기 2명 채용, 면접관은 김하늘."
+    }
+   ],
+   "slack": [
+    {
+     "ts": "1700000001.000100",
+     "user": "U0CTX00001",
+     "text": "배포 일정 공유드립니다 내일 오후 3시"
+    },
+    {
+     "ts": "1700000002.000100",
+     "user": "U0CTX00002",
+     "text": "결제 오류 재현 방법 정리했습니다"
+    }
+   ]
+  }
+ },
+ "scenarios": [
+  {
+   "id": "fr-jira-keyword-count",
+   "category": "followup-refine",
+   "title": "Jira 목록 → 그중에 결제만 → 몇 개야",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "replyIncludes": [
+       "NR26-11",
+       "NR26-12"
+      ]
+     }
+    },
+    {
+     "text": "그중에 결제만",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      },
+      "replyIncludes": [
+       "NR26-11"
+      ],
+      "replyExcludes": [
+       "NR26-12"
+      ]
+     }
+    },
+    {
+     "text": "몇 개야?",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "결제",
+       "count": true
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "결제",
+       "count": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "fr-release-confirm-count-scope",
+   "category": "followup-refine",
+   "title": "릴리스 확인 → 응 → 몇 개야 → 다시 전체 담당으로",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "누리 운영 2026 프로젝트 20261029 배포건 보여줘",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "누리 운영 2026",
+       "release": "20261029"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "응",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029"
+      },
+      "asks": false,
+      "replyIncludes": [
+       "NR26-11"
+      ],
+      "replyExcludes": [
+       "NR26-13"
+      ]
+     }
+    },
+    {
+     "text": "몇 개야?",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029",
+       "count": true
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029",
+       "count": true
+      }
+     }
+    },
+    {
+     "text": "다시 전체 담당으로",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029",
+       "scope": "all"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029",
+       "scope": "all"
+      },
+      "replyIncludes": [
+       "NR26-13"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "fr-calendar-part-keyword",
+   "category": "followup-refine",
+   "title": "내일 일정 → 오후만 → 그 면접 몇 시",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내일 일정 보여줘",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    },
+    {
+     "text": "그중에 오후 것만",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "partOfDay": "afternoon"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "partOfDay": "afternoon"
+      },
+      "replyIncludes": [
+       "주간 스크럼"
+      ],
+      "replyExcludes": [
+       "1차 면접_AI Agent_김하늘"
+      ]
+     }
+    },
+    {
+     "text": "면접은 몇 시였지?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "면접"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      },
+      "replyIncludes": [
+       "10:00"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "fr-todo-status-count",
+   "category": "followup-refine",
+   "title": "할 일 목록 → 완료한 건 → 몇 개",
+   "lang": "ko",
+   "world": "office",
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    },
+    {
+     "text": "완료 처리: 1"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list",
+      "replyIncludes": [
+       "회의록 정리"
+      ]
+     }
+    },
+    {
+     "text": "완료한 건 뭐 있었지?",
+     "oracle": {
+      "entryId": "todo.list",
+      "args": {
+       "status": "completed"
+      }
+     },
+     "expect": {
+      "entry": "todo.list",
+      "args": {
+       "status": "completed"
+      },
+      "replyIncludes": [
+       "보고서 검토"
+      ]
+     }
+    },
+    {
+     "text": "그건 몇 개야?",
+     "oracle": {
+      "entryId": "todo.list",
+      "args": {
+       "status": "completed",
+       "count": true
+      }
+     },
+     "expect": {
+      "entry": "todo.list",
+      "args": {
+       "status": "completed",
+       "count": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "fr-jira-en",
+   "category": "followup-refine",
+   "title": "Jira list → only payment → how many (EN)",
+   "lang": "en",
+   "world": "office",
+   "turns": [
+    {
+     "text": "show my jira issues",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "replyIncludes": [
+       "NR26-14"
+      ]
+     }
+    },
+    {
+     "text": "only the payment ones",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "payment"
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "payment"
+      },
+      "replyIncludes": [
+       "NR26-14"
+      ],
+      "replyExcludes": [
+       "NR26-12"
+      ]
+     }
+    },
+    {
+     "text": "how many is that?",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "payment",
+       "count": true
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "payment",
+       "count": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "fr-release-list-pick",
+   "category": "followup-refine",
+   "title": "릴리스 목록 → 그중 29일 배포건 → 몇 개",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-26",
+   "turns": [
+    {
+     "text": "NR26 릴리스 뭐 있어?",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "NR26"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "project": "NR26"
+      },
+      "replyIncludes": [
+       "배포일_20261029(목)"
+      ]
+     }
+    },
+    {
+     "text": "20261029 거 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029"
+      },
+      "replyIncludes": [
+       "NR26-11"
+      ]
+     }
+    },
+    {
+     "text": "몇 개야?",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "NR26",
+       "release": "20261029",
+       "count": true
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "release": "20261029",
+       "count": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "of-todo-second-done",
+   "category": "ordinal-followup",
+   "title": "할 일 목록 → 두 번째 거 완료",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "두 번째 거 완료해줘",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "ref": "#2"
+      }
+     },
+     "expect": {
+      "entry": "todo.complete",
+      "target": "회의록 정리",
+      "writes": {
+       "todoCompleted": [
+        "회의록 정리"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "of-mail-summarize-sender",
+   "category": "ordinal-followup",
+   "title": "안 읽은 메일 → 2번 요약 → 첫 번째 건 누가",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "turns": [
+    {
+     "text": "안 읽은 메일 보여줘",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     "expect": {
+      "entry": "mail.list",
+      "args": {
+       "unread": true
+      }
+     }
+    },
+    {
+     "text": "2번 요약해줘",
+     "oracle": {
+      "entryId": "item.summarize",
+      "args": {
+       "source": "mail",
+       "ref": "#2",
+       "mode": "summary"
+      }
+     },
+     "expect": {
+      "entry": "item.summarize",
+      "target": "m2"
+     }
+    },
+    {
+     "text": "첫 번째 건 누가 보냈어?",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "item": 1
+      }
+     },
+     "expect": {
+      "entry": "mail.list",
+      "replyIncludes": [
+       "박서준"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "of-drive-first-summary",
+   "category": "ordinal-followup",
+   "title": "드라이브 목록 → 첫 번째 거 요약",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "turns": [
+    {
+     "text": "최근 드라이브 파일 보여줘",
+     "oracle": {
+      "entryId": "drive.files"
+     },
+     "expect": {
+      "entry": "drive.files"
+     }
+    },
+    {
+     "text": "첫 번째 거 요약해줘",
+     "oracle": {
+      "entryId": "item.summarize",
+      "args": {
+       "source": "drive",
+       "ref": "#1",
+       "mode": "summary"
+      }
+     },
+     "expect": {
+      "entry": "item.summarize",
+      "target": "d1"
+     }
+    }
+   ]
+  },
+  {
+   "id": "of-jira-second-summary",
+   "category": "ordinal-followup",
+   "title": "Jira 목록 → 2번 요약 (R2)",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions",
+    "itemR2"
+   ],
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues"
+     }
+    },
+    {
+     "text": "2번 내용 요약해줘",
+     "oracle": {
+      "entryId": "item.summarize",
+      "args": {
+       "source": "jira",
+       "ref": "#2",
+       "mode": "summary"
+      }
+     },
+     "expect": {
+      "entry": "item.summarize",
+      "target": "NR26-12"
+     }
+    }
+   ]
+  },
+  {
+   "id": "of-reminder-second-cancel",
+   "category": "ordinal-followup",
+   "title": "알림 목록 → 두 번째 알림 취소",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "내일 오전 9시에 보고서 제출 알려줘"
+    },
+    {
+     "text": "모레 오전 11시에 은행 서류 제출 알려줘"
+    }
+   ],
+   "turns": [
+    {
+     "text": "알림 목록 보여줘",
+     "oracle": {
+      "entryId": "reminder.list"
+     },
+     "expect": {
+      "entry": "reminder.list"
+     }
+    },
+    {
+     "text": "두 번째 알림 취소해줘",
+     "oracle": {
+      "entryId": "reminder.cancel",
+      "args": {
+       "ref": "#2"
+      }
+     },
+     "expect": {
+      "entry": "reminder.cancel",
+      "target": "은행 서류 제출",
+      "writes": {
+       "reminderCanceled": [
+        "은행 서류 제출"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "of-todo-third-en",
+   "category": "ordinal-followup",
+   "title": "to-do list → mark the third one done (EN)",
+   "lang": "en",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "show my to-do list",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "mark the third one as done",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "ref": "#3"
+      }
+     },
+     "expect": {
+      "entry": "todo.complete",
+      "target": "출장 신청",
+      "writes": {
+       "todoCompleted": [
+        "출장 신청"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "lc-interview-questions",
+   "category": "listing-content",
+   "title": "내일 일정 → 그 면접 기준으로 질문 뽑아줘",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "내일 일정 뭐있어",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      },
+      "replyIncludes": [
+       "1차 면접_AI Agent_김하늘"
+      ]
+     }
+    },
+    {
+     "text": "내일 면접 기준으로 면접 질문 좀 뽑아줘",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "noFixtureContent": [
+       "calendar"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "lc-interview-exists-then-time",
+   "category": "listing-content",
+   "title": "내일 일정 → 내일도 면접 있어? 세 가지 뽑아줘 → 몇 시",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "내일 일정 뭐있어",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events"
+     }
+    },
+    {
+     "text": "내일도 면접 있어? AI agent 면접볼 때 주로 뭐 봐야할까? 간략하게 리스트로 한 세가지만 뽑아줘",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "면접"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    },
+    {
+     "text": "그 면접 몇 시에 시작해?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "면접"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "replyIncludes": [
+       "10:00"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "lc-mail-checklist",
+   "category": "listing-content",
+   "title": "오늘 메일 → 워크숍 메일 기준으로 준비물 체크리스트",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "오늘 온 메일 보여줘",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "range": "today"
+      }
+     },
+     "expect": {
+      "entry": "mail.list"
+     }
+    },
+    {
+     "text": "워크숍 메일 기준으로 준비물 체크리스트 만들어줘",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "noFixtureContent": [
+       "mail"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "lc-drive-roadmap-en",
+   "category": "listing-content",
+   "title": "recent Drive files → plan from the roadmap doc (EN)",
+   "lang": "en",
+   "world": "office",
+   "turns": [
+    {
+     "text": "show my recent drive files",
+     "oracle": {
+      "entryId": "drive.files"
+     },
+     "expect": {
+      "entry": "drive.files"
+     }
+    },
+    {
+     "text": "based on the roadmap doc, what should I prepare next week?",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "noFixtureContent": [
+       "drive"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "lc-calendar-en",
+   "category": "listing-content",
+   "title": "tomorrow's calendar → interview questions for that interview (EN)",
+   "lang": "en",
+   "world": "office",
+   "turns": [
+    {
+     "text": "what's on my calendar tomorrow?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    },
+    {
+     "text": "give me three questions to ask in that interview",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "noFixtureContent": [
+       "calendar"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "ul-todo-add-undo",
+   "category": "undo-local",
+   "title": "할 일 추가 → 잘못 넣었어 되돌려줘",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "turns": [
+    {
+     "text": "보고서 초안 작성 할 일로 추가해줘",
+     "oracle": {
+      "entryId": "todo.add",
+      "args": {
+       "title": "보고서 초안 작성"
+      }
+     },
+     "expect": {
+      "entry": "todo.add",
+      "writes": {
+       "todoAdded": [
+        "보고서 초안 작성"
+       ]
+      }
+     }
+    },
+    {
+     "text": "아 잘못 넣었어 되돌려줘",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "entry": "action.undo",
+      "target": "보고서 초안 작성",
+      "writes": {
+       "todoCanceled": [
+        "보고서 초안 작성"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "ul-todo-complete-undo",
+   "category": "undo-local",
+   "title": "할 일 목록 → 끝났어 체크 → 되돌려줘",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "회의록 정리 끝났어 체크해줘",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "match": "회의록 정리"
+      }
+     },
+     "expect": {
+      "entry": "todo.complete",
+      "writes": {
+       "todoCompleted": [
+        "회의록 정리"
+       ]
+      }
+     }
+    },
+    {
+     "text": "되돌려줘",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "entry": "action.undo",
+      "target": "회의록 정리",
+      "writes": {
+       "todoReopened": [
+        "회의록 정리"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "ul-reminder-cancel-undo",
+   "category": "undo-local",
+   "title": "알림 만든 뒤 → 방금 거 취소 → 되돌려줘",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "내일 오전 9시에 보고서 제출 알려줘"
+    }
+   ],
+   "turns": [
+    {
+     "text": "방금 거 취소해줘",
+     "oracle": {
+      "entryId": "reminder.cancel",
+      "args": {
+       "ref": "recent"
+      }
+     },
+     "expect": {
+      "entry": "reminder.cancel",
+      "target": "보고서 제출",
+      "writes": {
+       "reminderCanceled": [
+        "보고서 제출"
+       ]
+      }
+     }
+    },
+    {
+     "text": "되돌려줘",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "entry": "action.undo",
+      "writes": {
+       "reminderRestored": [
+        "보고서 제출"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "ul-reminder-create-undo",
+   "category": "undo-local",
+   "title": "알림 만들기 → 아니 그거 되돌려줘",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "turns": [
+    {
+     "text": "내일 오전 10시에 팀장님께 전화하기 알려줘",
+     "oracle": {
+      "entryId": "reminder.create",
+      "args": {
+       "body": "팀장님께 전화하기",
+       "when": "내일 오전 10시"
+      }
+     },
+     "expect": {
+      "writes": {
+       "reminderCreated": 1
+      }
+     }
+    },
+    {
+     "text": "아니 그거 되돌려줘",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "entry": "action.undo",
+      "writes": {
+       "reminderCanceled": [
+        "팀장님께 전화하기"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "ul-todo-en",
+   "category": "undo-local",
+   "title": "to-do list → mark the first done → undo that (EN)",
+   "lang": "en",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "show my todos",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "mark the first one done",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "ref": "#1"
+      }
+     },
+     "expect": {
+      "entry": "todo.complete",
+      "target": "보고서 검토",
+      "writes": {
+       "todoCompleted": [
+        "보고서 검토"
+       ]
+      }
+     }
+    },
+    {
+     "text": "undo that",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "entry": "action.undo",
+      "writes": {
+       "todoReopened": [
+        "보고서 검토"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "kg-calendar-undo",
+   "category": "undo-external-known-gap",
+   "title": "일정 추가(승인·실행) → 되돌려줘: 정직한 답, 아무 동작 없음",
+   "lang": "ko",
+   "world": "office",
+   "knownGap": "calendar undo (되돌려줘 of an external write) is deferred to R1→R3; expected: an honest reply, never a wrong action",
+   "turns": [
+    {
+     "text": "내일 오후 3시에 회의 잡아줘 제목 주간 회의",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": true
+      }
+     }
+    },
+    {
+     "text": "승인",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": true
+      }
+     }
+    },
+    {
+     "text": "일정 추가 실행",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": true,
+       "calendarCreated": 1
+      }
+     }
+    },
+    {
+     "text": "되돌려줘",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": "optional"
+      },
+      "incapabilityAllowed": true,
+      "notRepeatPrevious": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "kg-calendar-undo-after-todo",
+   "category": "undo-external-known-gap",
+   "title": "할 일 추가 후 일정 추가 → 되돌려줘: 앞의 할 일을 건드리지 않음",
+   "lang": "ko",
+   "world": "office",
+   "knownGap": "calendar undo is deferred to R1→R3; an earlier to-do must not be undone in its place",
+   "setup": [
+    {
+     "text": "할 일 추가: 회의 자료 준비"
+    },
+    {
+     "text": "내일 오후 3시에 회의 잡아줘 제목 주간 회의"
+    },
+    {
+     "text": "승인"
+    },
+    {
+     "text": "일정 추가 실행"
+    }
+   ],
+   "turns": [
+    {
+     "text": "되돌려줘",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": "optional"
+      },
+      "incapabilityAllowed": true
+     }
+    },
+    {
+     "text": "아니 캘린더에 방금 추가한 일정 말이야",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": "optional"
+      },
+      "incapabilityAllowed": true,
+      "notRepeatPrevious": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "kg-calendar-undo-en",
+   "category": "undo-external-known-gap",
+   "title": "calendar add → undo that → remove the meeting you just added (EN)",
+   "lang": "en",
+   "world": "office",
+   "knownGap": "calendar undo is deferred to R1→R3; expected: an honest reply, no calendar change without a new approval card",
+   "setup": [
+    {
+     "text": "내일 오후 3시에 회의 잡아줘 제목 주간 회의"
+    },
+    {
+     "text": "승인"
+    },
+    {
+     "text": "일정 추가 실행"
+    }
+   ],
+   "turns": [
+    {
+     "text": "undo that",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": "optional"
+      },
+      "incapabilityAllowed": true
+     }
+    },
+    {
+     "text": "remove the meeting you just added",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": "optional"
+      },
+      "incapabilityAllowed": true,
+      "notRepeatPrevious": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "se-mail-summary-hint",
+   "category": "suggestion-echo",
+   "title": "메일 목록의 \"1번 메일 요약해줘\" 안내를 그대로 보냄",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "안 읽은 메일 보여줘",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     "expect": {
+      "entry": "mail.list"
+     }
+    },
+    {
+     "echoSuggestion": true,
+     "oracle": {
+      "entryId": "item.summarize",
+      "args": {
+       "source": "mail",
+       "ref": "#1",
+       "mode": "summary"
+      }
+     },
+     "expect": {
+      "chat": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "se-reminder-cancel-hint",
+   "category": "suggestion-echo",
+   "title": "알림 생성 답의 '알림 N 취소' 안내를 그대로 보냄",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "모레 오전 11시에 은행 서류 제출 알려줘",
+     "oracle": {
+      "entryId": "reminder.create",
+      "args": {
+       "body": "은행 서류 제출",
+       "when": "모레 오전 11시"
+      }
+     },
+     "expect": {
+      "writes": {
+       "reminderCreated": 1
+      }
+     }
+    },
+    {
+     "echoSuggestion": true,
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "chat": false,
+      "writes": {
+       "reminderCanceled": [
+        "은행 서류 제출"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "se-undo-hint",
+   "category": "suggestion-echo",
+   "title": "완료 답의 \"되돌려줘\" 안내를 그대로 보냄",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "첫 번째 거 완료해줘",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "ref": "#1"
+      }
+     },
+     "expect": {
+      "entry": "todo.complete",
+      "writes": {
+       "todoCompleted": [
+        "보고서 검토"
+       ]
+      }
+     }
+    },
+    {
+     "echoSuggestion": true,
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "chat": false,
+      "writes": {
+       "todoReopened": [
+        "보고서 검토"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "se-help-first-command",
+   "category": "suggestion-echo",
+   "title": "도움말의 첫 예시 명령을 그대로 보냄",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "너 뭐 할 수 있어?",
+     "oracle": {
+      "entryId": "help.topic"
+     },
+     "expect": {
+      "chat": false
+     }
+    },
+    {
+     "echoSuggestion": true,
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "chat": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "se-calendar-approve-execute",
+   "category": "suggestion-echo",
+   "title": "일정 미리보기의 \"승인\" → \"일정 추가 실행\" 안내를 차례로 보냄",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "모레 오전 10시에 일정 잡아줘 제목 치과 진료",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "writes": {
+       "approvalCard": true
+      }
+     }
+    },
+    {
+     "echoSuggestion": true,
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "chat": false,
+      "writes": {
+       "approvalCard": true
+      }
+     }
+    },
+    {
+     "echoSuggestion": true,
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "chat": false,
+      "writes": {
+       "approvalCard": true,
+       "calendarCreated": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "cy-project-yes",
+   "category": "confirm-yes-no",
+   "title": "프로젝트 이름이 비슷함 → 맞나요? → 응",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "누리 운영 2026 릴리스 뭐 있어?",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "누리 운영 2026"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "응",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "jira.release",
+      "args": {
+       "project": "NR26"
+      },
+      "asks": false,
+      "replyIncludes": [
+       "배포일_20261029(목)"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "cy-project-no",
+   "category": "confirm-yes-no",
+   "title": "프로젝트 이름이 비슷함 → 맞나요? → 아니",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "누리 운영 2026 프로젝트 20261029 배포건 보여줘",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "누리 운영 2026",
+       "release": "20261029"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "아니",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "asks": false,
+      "replyExcludes": [
+       "NR26-11"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "cy-undo-confirm-yes",
+   "category": "confirm-yes-no",
+   "title": "완료 → 원래대로 돌려줄 수 있어? → 되돌릴까요? → 응",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "회의록 정리 완료 처리해줘",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "match": "회의록 정리"
+      }
+     },
+     "expect": {
+      "entry": "todo.complete",
+      "writes": {
+       "todoCompleted": [
+        "회의록 정리"
+       ]
+      }
+     }
+    },
+    {
+     "text": "아까 완료한 거 원래대로 돌려줄 수 있어?",
+     "oracle": {
+      "entryId": "action.undo"
+     },
+     "expect": {
+      "asks": "action-undo-confirm"
+     }
+    },
+    {
+     "text": "응",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "action.undo",
+      "asks": false,
+      "writes": {
+       "todoReopened": [
+        "회의록 정리"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "cy-question-then-other",
+   "category": "confirm-yes-no",
+   "title": "확인 질문 → 다른 요청 → 응: 지난 질문에 답하지 않음",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "누리 운영 2026 프로젝트 20261029 배포건 보여줘",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "누리 운영 2026",
+       "release": "20261029"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "내일 일정 뭐있어",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "asks": false
+     }
+    },
+    {
+     "text": "응",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "replyExcludes": [
+       "NR26-11"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "hs-slack-quoky",
+   "category": "help-scope",
+   "title": "슬랙에서 검색하는 방법 → 1",
+   "lang": "ko",
+   "world": "office",
+   "source": "owner-dm-2026-10-22",
+   "turns": [
+    {
+     "text": "슬랙에서 검색하는 방법 알려줘",
+     "oracle": {
+      "entryId": "help.topic",
+      "ambiguity": "NEEDS_CLARIFICATION"
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "1",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "help.topic",
+      "asks": false,
+      "chat": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "hs-jira-app",
+   "category": "help-scope",
+   "title": "지라에서 이슈 찾는 방법 → 2",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "지라에서 이슈 찾는 방법 알려줘",
+     "oracle": {
+      "entryId": "help.topic",
+      "ambiguity": "NEEDS_CLARIFICATION"
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "2",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "asks": false,
+      "chat": false,
+      "incapabilityAllowed": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "hs-calendar-words",
+   "category": "help-scope",
+   "title": "캘린더에서 일정 찾는 방법 → 번호 대신 말로 답함",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "캘린더에서 일정 찾는 방법 알려줘",
+     "oracle": {
+      "entryId": "help.topic",
+      "ambiguity": "NEEDS_CLARIFICATION"
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "Quoky로 하는 거",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "help.topic",
+      "asks": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "hs-slack-en",
+   "category": "help-scope",
+   "title": "how do I search in slack → 1 (EN)",
+   "lang": "en",
+   "world": "office",
+   "turns": [
+    {
+     "text": "how do I search in slack?",
+     "oracle": {
+      "entryId": "help.topic",
+      "ambiguity": "NEEDS_CLARIFICATION"
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "1",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "help.topic",
+      "asks": false,
+      "chat": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "cl-number",
+   "category": "clarification",
+   "title": "애매한 요청 → 번호로 답함",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "이번 주 거 좀 보여줘",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      },
+      "ambiguity": "NEEDS_CLARIFICATION",
+      "alternatives": [
+       {
+        "entryId": "todo.list"
+       }
+      ]
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "1",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "this-week"
+      },
+      "asks": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "cl-name",
+   "category": "clarification",
+   "title": "애매한 요청 → 이름으로 답함",
+   "lang": "ko",
+   "world": "office",
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "이번 주 거 좀 보여줘",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      },
+      "ambiguity": "NEEDS_CLARIFICATION",
+      "alternatives": [
+       {
+        "entryId": "todo.list"
+       }
+      ]
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "할 일",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "todo.list",
+      "asks": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "cl-ignored",
+   "category": "clarification",
+   "title": "애매한 요청 → 다른 요청 → 1: 지난 선택지를 고르지 않음",
+   "lang": "ko",
+   "world": "office",
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "이번 주 거 좀 보여줘",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      },
+      "ambiguity": "NEEDS_CLARIFICATION",
+      "alternatives": [
+       {
+        "entryId": "todo.list"
+       }
+      ]
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "아니 그냥 내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list",
+      "asks": false
+     }
+    },
+    {
+     "text": "1",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null
+     }
+    }
+   ]
+  },
+  {
+   "id": "cl-en",
+   "category": "clarification",
+   "title": "ambiguous → answer by name (EN)",
+   "lang": "en",
+   "world": "office",
+   "turns": [
+    {
+     "text": "show me this week's stuff",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "this-week"
+      },
+      "ambiguity": "NEEDS_CLARIFICATION",
+      "alternatives": [
+       {
+        "entryId": "todo.list"
+       }
+      ]
+     },
+     "expect": {
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "the calendar one",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "asks": false
+     }
+    }
+   ]
+  },
+  {
+   "id": "ts-jira-to-calendar-count",
+   "category": "topic-switch",
+   "title": "Jira 목록 → 내일 일정 → 몇 개야: 캘린더 기준",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues"
+     }
+    },
+    {
+     "text": "내일 일정 뭐있어",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": null
+      }
+     }
+    },
+    {
+     "text": "몇 개야?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "replyExcludes": [
+       "NR26-11"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "ts-mail-todo-second",
+   "category": "topic-switch",
+   "title": "메일 목록 → 할 일 목록 → 2번 요약해줘: 메일을 요약하지 않음",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "안 읽은 메일 보여줘",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     "expect": {
+      "entry": "mail.list"
+     }
+    },
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "2번 요약해줘",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "replyExcludes": [
+       "워크숍 장소 안내",
+       "판교"
+      ],
+      "incapabilityAllowed": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "ts-jira-calendar-keyword",
+   "category": "topic-switch",
+   "title": "Jira 목록 → 내일 일정은? → 거기서 스크럼만",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues"
+     }
+    },
+    {
+     "text": "내일 일정은?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     }
+    },
+    {
+     "text": "거기서 스크럼만",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "스크럼"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "스크럼"
+      },
+      "replyIncludes": [
+       "주간 스크럼"
+      ],
+      "replyExcludes": [
+       "NR26-11"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "ts-jira-first-not-todo",
+   "category": "topic-switch",
+   "title": "할 일이 있는 상태에서 Jira 목록 → 첫 번째 거 완료해줘: 할 일 1번을 건드리지 않음",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues"
+     }
+    },
+    {
+     "text": "첫 번째 거 완료해줘",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "incapabilityAllowed": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "ts-mail-calendar-en",
+   "category": "topic-switch",
+   "title": "unread mail → tomorrow's calendar → summarize the second one (EN)",
+   "lang": "en",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "turns": [
+    {
+     "text": "show my unread emails",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     "expect": {
+      "entry": "mail.list"
+     }
+    },
+    {
+     "text": "what's on my calendar tomorrow?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events"
+     }
+    },
+    {
+     "text": "summarize the second one",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "replyExcludes": [
+       "워크숍 장소 안내",
+       "판교"
+      ],
+      "incapabilityAllowed": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "sc-jira-chat-refine",
+   "category": "stale-context",
+   "title": "Jira 목록 → 잡담 두 번 → 그중에 결제만",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues"
+     }
+    },
+    {
+     "text": "오늘 점심 뭐 먹을까?",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "chat": true
+     }
+    },
+    {
+     "text": "요즘 일이 많네",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null
+     }
+    },
+    {
+     "text": "그중에 결제만",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      },
+      "replyIncludes": [
+       "NR26-11"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "sc-todo-chat-complete",
+   "category": "stale-context",
+   "title": "할 일 목록 → 잡담 → 2번 완료해줘",
+   "lang": "ko",
+   "world": "office",
+   "requires": [
+    "actions"
+   ],
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "요즘 너무 바쁘다",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null
+     }
+    },
+    {
+     "text": "2번 완료해줘",
+     "oracle": {
+      "entryId": "todo.complete",
+      "args": {
+       "ref": "#2"
+      }
+     },
+     "expect": {
+      "target": "회의록 정리",
+      "writes": {
+       "todoCompleted": [
+        "회의록 정리"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "sc-calendar-todo-interview",
+   "category": "stale-context",
+   "title": "내일 일정 → 할 일 목록 → 그 면접 몇 시였지",
+   "lang": "ko",
+   "world": "office",
+   "setup": [
+    {
+     "text": "할 일 추가: 보고서 검토"
+    },
+    {
+     "text": "할 일 추가: 회의록 정리"
+    },
+    {
+     "text": "할 일 추가: 출장 신청"
+    }
+   ],
+   "turns": [
+    {
+     "text": "내일 일정 뭐있어",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events"
+     }
+    },
+    {
+     "text": "내 할 일 보여줘",
+     "oracle": {
+      "entryId": "todo.list"
+     },
+     "expect": {
+      "entry": "todo.list"
+     }
+    },
+    {
+     "text": "그 면접 몇 시였지?",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow",
+       "keyword": "면접"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events",
+      "replyIncludes": [
+       "10:00"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "sc-confirm-chat-yes",
+   "category": "stale-context",
+   "title": "확인 질문 → 잡담 → 응: 지난 질문을 실행하지 않음",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "누리 운영 2026 프로젝트 20261029 배포건 보여줘",
+     "oracle": {
+      "entryId": "jira.release",
+      "args": {
+       "project": "누리 운영 2026",
+       "release": "20261029"
+      }
+     },
+     "expect": {
+      "entry": "jira.release",
+      "asks": "entry"
+     }
+    },
+    {
+     "text": "아 근데 오늘 날씨 어때?",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null
+     }
+    },
+    {
+     "text": "응",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "replyExcludes": [
+       "NR26-11"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "cd-dm-mail-channel-summary",
+   "category": "channel-dm",
+   "title": "DM 메일 목록 → 채널에서 2번 요약해줘: 메일 내용 없음",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "안 읽은 메일 보여줘",
+     "oracle": {
+      "entryId": "mail.list",
+      "args": {
+       "unread": true
+      }
+     },
+     "expect": {
+      "entry": "mail.list"
+     }
+    },
+    {
+     "text": "2번 요약해줘",
+     "context": "channel",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "replyExcludes": [
+       "워크숍 장소 안내",
+       "판교",
+       "이도윤"
+      ],
+      "incapabilityAllowed": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "cd-dm-calendar-channel-question",
+   "category": "channel-dm",
+   "title": "DM 일정 목록 → 채널에서 그 면접 기준 질문: 일정 내용 없음",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내일 일정 뭐있어",
+     "oracle": {
+      "entryId": "calendar.events",
+      "args": {
+       "range": "tomorrow"
+      }
+     },
+     "expect": {
+      "entry": "calendar.events"
+     }
+    },
+    {
+     "text": "그 면접 기준으로 질문 좀 뽑아줘",
+     "context": "channel",
+     "oracle": {
+      "entryId": "none"
+     },
+     "expect": {
+      "entry": null,
+      "noFixtureContent": [
+       "calendar"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "cd-channel-refine",
+   "category": "channel-dm",
+   "title": "채널 Jira 목록 → 채널에서 그중에 결제만",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내 지라 이슈 보여줘",
+     "context": "channel",
+     "oracle": {
+      "entryId": "jira.issues"
+     },
+     "expect": {
+      "entry": "jira.issues"
+     }
+    },
+    {
+     "text": "그중에 결제만",
+     "context": "channel",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      },
+      "replyIncludes": [
+       "NR26-11"
+      ],
+      "replyExcludes": [
+       "NR26-12"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "id": "cd-dm-args-not-in-channel",
+   "category": "channel-dm",
+   "title": "DM에서 내가 만든 이슈 → 채널에서 로그인 관련만: DM 조건이 넘어가지 않음",
+   "lang": "ko",
+   "world": "office",
+   "turns": [
+    {
+     "text": "내가 만든 지라 이슈 보여줘",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "role": "reporter"
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "role": "reporter"
+      }
+     }
+    },
+    {
+     "text": "로그인 관련 이슈만 보여줘",
+     "context": "channel",
+     "oracle": {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "로그인"
+      }
+     },
+     "expect": {
+      "entry": "jira.issues",
+      "args": {
+       "keyword": "로그인",
+       "role": null
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
