@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Jira release list order (owner decision Q4, ratified 2026-10-23; branch `claude/v5-release-order`)
+
+- **Fixed.** A project's Jira release list ("최근 10개 표시" listed Jira's manual sequence) now orders upcoming versions
+  (by the owner's local date, `QUOKY_TIMEZONE`) first, soonest first; then released, newest first; then overdue
+  unreleased; then undated in Jira's order. The header says "예정 → 최근 출시 → 지난 예정 순 N개 표시".
+
 ## Unreleased — ADR-0121 A2 data review fixes (Codex, 2026-10-23)
 
 - **Fixed (data and test).** The topic oracle now drops every Latin token over 20 characters (boundary cases added);

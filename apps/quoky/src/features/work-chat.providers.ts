@@ -43,6 +43,8 @@ export interface WorkChatCompositionOptions {
   readonly jiraSiteHost?: () => string | undefined;
   /** ADR-0120 amendment A6 R2: `QUOKY_NL_ITEM_R2` (numbered Jira / Slack lists and `item.summarize` over them). */
   readonly itemR2?: () => 'off' | 'shadow' | 'jira' | 'all';
+  /** `QUOKY_TIMEZONE`: the release list orders by the owner's local date (owner decision Q4, 2026-10-23). */
+  readonly timeZone?: () => string;
 }
 
 export function createWorkChatProviders(
@@ -68,6 +70,7 @@ export function createWorkChatProviders(
             ...(options.actionReceipts?.() === true ? { actionReceipts: true } : {}),
             ...(jiraSiteHost !== undefined ? { linkHosts: { jira: jiraSiteHost } } : {}),
             ...((options.itemR2?.() ?? 'off') !== 'off' ? { numberedLists: true } : {}),
+            ...(options.timeZone !== undefined ? { timeZone: options.timeZone() } : {}),
           },
         );
       },
@@ -86,4 +89,5 @@ export const workChatProviders: Provider[] = createWorkChatProviders(() => loadC
   actionReceipts: () => loadConfig().nlSelection.actions !== 'off',
   jiraSiteHost: () => loadConfig().connectors.jira?.host,
   itemR2: () => loadConfig().nlSelection.itemR2,
+  timeZone: () => loadConfig().reminders.timeZone,
 });
