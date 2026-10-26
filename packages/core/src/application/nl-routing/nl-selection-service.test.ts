@@ -409,6 +409,29 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await h.decide('안 읽은 메일', { entries: [NL_WAVE1_ENTRIES['jira.issues']] })).toEqual({ kind: 'none' });
   });
 
+  it('Codex P2 (2026-10-27): each clarification candidate is grounded against its own listing (P7 history), so an earlier listing keeps its carried keyword', async () => {
+    const h = harness({
+      script: [
+        out('calendar.events', { range: 'this-week', keyword: '스크럼' }),
+        out('jira.issues', { keyword: '청구서' }),
+        JSON.stringify({ entryId: 'jira.issues', args: { keyword: '청구서', count: true }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } }] }),
+      ],
+    });
+    await h.decide('이번 주 스크럼 일정');
+    await h.decide('청구서 지라 이슈');
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'jira.issues', earlier: [{ entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼' } }] });
+    expect((await h.decide('몇 개야?')).kind).toBe('ask');
+    // Both options keep their own listing's args: the calendar option is the 스크럼 listing, not the broader calendar.
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({
+      options: [
+        { entryId: 'jira.issues', args: { keyword: '청구서', count: true } },
+        { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } },
+      ],
+    });
+    // Choosing the calendar option counts the 스크럼 listing.
+    expect(await h.decide('2')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } } });
+  });
+
   it('NEEDS_CLARIFICATION asks one numbered question; "1" or "지라" resolves it deterministically (no second call)', async () => {
     for (const reply of ['1', '1번', '지라', '지라로']) {
       const h = harness({

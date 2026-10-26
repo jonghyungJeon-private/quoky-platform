@@ -1089,8 +1089,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
     cacheKey?: string,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
-    // P7: an output for an earlier listing's entry refines that listing (its args may be carried), not the last one.
-    last = lastSelectionFor(output.entryId, last);
+    // P7: an output for an earlier listing's entry refines that listing (its args may be carried), not the last one. The
+    // whole history is kept: each clarification candidate is grounded against its own listing (Codex P2, below).
+    const history = last;
+    last = lastSelectionFor(output.entryId, history);
     // A7: a clear past-tense statement is not a request, whatever read the selector named (message-level, once,
     // before any candidate is validated): like a selector `none`, the turn is chat, never a question.
     if (!isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) {
@@ -1153,7 +1155,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
         droppedAction = true;
         continue;
       }
-      const repaired = validateWithRepair(candidate, ctx);
+      // Codex P2 (2026-10-27): every candidate is validated against ITS OWN listing in the history (`lastSelectionFor`), so
+      // an alternative for an earlier listing keeps that listing's carried args (a keyword, a period) instead of being
+      // validated against the primary candidate's listing and losing them.
+      const own = lastSelectionFor(candidate.entryId, history);
+      const candidateCtx = index === 0 ? ctx : this.validationContext(turn, prepared.groundingText, own?.args, false, own?.entryId);
+      const repaired = validateWithRepair(candidate, candidateCtx);
       // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
       // with the weekday hint as well.
       if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
