@@ -1,0 +1,2896 @@
+{
+  "version": 2,
+  "set": "local-judgment-heldout",
+  "timezone": "Asia/Seoul",
+  "description": "G6 held-out set for ADR-0121 A3a local judgment answers: multi-item order/pick judgment requests an owner sends over one read result (calendar, mail, jira, github, todo). Written by an independent author without access to the local judgment prompt, the harness request/guard code, or the dev/tuning evidence. All people, companies, repositories and addresses are fictional.",
+  "cases": [
+    {
+      "id": "cal-ko-prep-order-tomorrow",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "내일 회의 중에 준비가 제일 필요한 순서대로 정리해줘",
+      "now": "2026-11-02T18:30:00+09:00",
+      "items": [
+        {
+          "summary": "주간 팀 스탠드업",
+          "start": "2026-11-03T09:30:00+09:00",
+          "end": "2026-11-03T09:45:00+09:00",
+          "location": "판교 3층 소회의실"
+        },
+        {
+          "summary": "분기 예산 검토 (재무팀)",
+          "start": "2026-11-03T10:00:00+09:00",
+          "end": "2026-11-03T11:30:00+09:00",
+          "attendees": [
+            "윤서진",
+            "마도현"
+          ],
+          "description": "Q4 집행률 자료와 내년 인력 계획 초안 지참"
+        },
+        {
+          "summary": "점심 - 입사 동기 모임",
+          "start": "2026-11-03T12:00:00+09:00",
+          "end": "2026-11-03T13:00:00+09:00",
+          "location": "정자역 근처"
+        },
+        {
+          "summary": "고객사 하늘다리커머스 킥오프",
+          "start": "2026-11-03T14:00:00+09:00",
+          "end": "2026-11-03T15:00:00+09:00",
+          "attendees": [
+            "채하늘",
+            "편가온",
+            "Ethan Marlow"
+          ],
+          "organizer": "편가온",
+          "description": "제안서 최종본 화면 공유, 일정표 합의"
+        },
+        {
+          "summary": "1:1 - 국지안",
+          "start": "2026-11-03T16:00:00+09:00",
+          "end": "2026-11-03T16:30:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-postpone-two",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "이번 주 일정 중 미뤄도 되는 거 두 개만 골라줘",
+      "now": "2026-11-02T08:40:00+09:00",
+      "items": [
+        {
+          "summary": "신규 입사자 온보딩 세션 진행",
+          "start": "2026-11-02T10:00:00+09:00",
+          "end": "2026-11-02T11:00:00+09:00",
+          "organizer": "석보람"
+        },
+        {
+          "summary": "디자인 시스템 스터디",
+          "start": "2026-11-03T15:00:00+09:00",
+          "end": "2026-11-03T16:00:00+09:00"
+        },
+        {
+          "summary": "투자사 IR 미팅 - 브램블크레스트",
+          "start": "2026-11-04T13:00:00+09:00",
+          "end": "2026-11-04T14:00:00+09:00",
+          "attendees": [
+            "Grace Holloway",
+            "남궁별"
+          ]
+        },
+        {
+          "summary": "사내 보드게임 동호회 회의",
+          "start": "2026-11-05T17:00:00+09:00",
+          "end": "2026-11-05T17:30:00+09:00"
+        },
+        {
+          "summary": "릴리스 Go/No-Go",
+          "start": "2026-11-06T11:00:00+09:00",
+          "end": "2026-11-06T12:00:00+09:00",
+          "description": "금요일 오후 배포 승인 여부 결정"
+        },
+        {
+          "summary": "사무실 자리 이동 짐 정리",
+          "start": "2026-11-06T16:00:00+09:00",
+          "end": "2026-11-06T17:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-overlap-interview",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "내일 일정 겹치는 게 있던데, 어떤 걸 먼저 챙겨야 할지 순서 좀 정해줘",
+      "now": "2026-11-04T21:10:00+09:00",
+      "items": [
+        {
+          "summary": "1차 면접_백엔드_임준호",
+          "start": "2026-11-05T10:00:00+09:00",
+          "end": "2026-11-05T11:00:00+09:00",
+          "attendees": [
+            "임준호",
+            "백소율"
+          ],
+          "location": "본사 7층 면접실 B"
+        },
+        {
+          "summary": "보안 점검 결과 공유",
+          "start": "2026-11-05T10:30:00+09:00",
+          "end": "2026-11-05T11:00:00+09:00",
+          "organizer": "노하림",
+          "description": "정보보호팀 정기 점검, 지적사항 2건 회신 필요"
+        },
+        {
+          "summary": "스프린트 플래닝",
+          "start": "2026-11-05T11:00:00+09:00",
+          "end": "2026-11-05T12:00:00+09:00"
+        },
+        {
+          "summary": "협력사 납기 조율 콜 (솔내정밀)",
+          "start": "2026-11-05T14:00:00+09:00",
+          "end": "2026-11-05T15:00:00+09:00",
+          "attendees": [
+            "탁영민"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cal-en-skip-tomorrow",
+      "source": "calendar",
+      "lang": "en",
+      "select": "pick",
+      "ownerRequest": "Which of tomorrow's meetings can I safely skip?",
+      "now": "2026-11-09T19:00:00+09:00",
+      "items": [
+        {
+          "summary": "Daily sync",
+          "start": "2026-11-10T09:00:00+09:00",
+          "end": "2026-11-10T09:15:00+09:00"
+        },
+        {
+          "summary": "Architecture review: payments ledger",
+          "start": "2026-11-10T10:00:00+09:00",
+          "end": "2026-11-10T11:00:00+09:00",
+          "organizer": "Odessa Lindqvist",
+          "description": "Decision needed on the ledger partitioning proposal you wrote"
+        },
+        {
+          "summary": "Lunch & learn: intro to Rust",
+          "start": "2026-11-10T12:00:00+09:00",
+          "end": "2026-11-10T13:00:00+09:00",
+          "description": "Optional, recorded"
+        },
+        {
+          "summary": "All-hands Q&A",
+          "start": "2026-11-10T15:00:00+09:00",
+          "end": "2026-11-10T15:50:00+09:00"
+        },
+        {
+          "summary": "Customer escalation - Quillmark Analytics",
+          "start": "2026-11-10T16:00:00+09:00",
+          "end": "2026-11-10T17:00:00+09:00",
+          "attendees": [
+            "Nolan Pryce",
+            "Ava Bertrand",
+            "하주원"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cal-en-sf-trip-prep",
+      "source": "calendar",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "I'm flying to San Francisco Wednesday night. Put these in the order I should prep for them.",
+      "now": "2026-11-10T09:00:00+09:00",
+      "items": [
+        {
+          "summary": "Partner demo with Harborline Robotics",
+          "start": "2026-11-12T10:00:00-08:00",
+          "end": "2026-11-12T11:00:00-08:00",
+          "attendees": [
+            "Marcus Delaney",
+            "Ines Okafor"
+          ],
+          "location": "Harborline HQ, Mission Bay",
+          "description": "Live demo of the fleet dashboard on their staging data"
+        },
+        {
+          "summary": "Board pre-read call",
+          "start": "2026-11-11T08:00:00+09:00",
+          "end": "2026-11-11T09:00:00+09:00",
+          "organizer": "여민결",
+          "description": "Walk through Q3 numbers before the board pack goes out Friday"
+        },
+        {
+          "summary": "Roadmap workshop (offsite)",
+          "start": "2026-11-13T09:00:00-08:00",
+          "end": "2026-11-13T12:00:00-08:00",
+          "location": "Harborline HQ, SF"
+        },
+        {
+          "summary": "Team check-in before travel",
+          "start": "2026-11-11T16:00:00+09:00",
+          "end": "2026-11-11T16:30:00+09:00"
+        },
+        {
+          "summary": "Dinner with Tidewell Logistics",
+          "start": "2026-11-12T18:30:00-08:00",
+          "end": "2026-11-12T20:30:00-08:00",
+          "attendees": [
+            "Rafael Quint"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-friday-leave-move",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "20일 금요일에 연차 쓰려는데, 그날 일정 중에 꼭 다른 날로 옮겨야 하는 것만 골라줘",
+      "now": "2026-11-12T10:15:00+09:00",
+      "items": [
+        {
+          "summary": "주간 스탠드업",
+          "start": "2026-11-20T09:30:00+09:00",
+          "end": "2026-11-20T09:45:00+09:00"
+        },
+        {
+          "summary": "협력사 감사 대응 (모아틀시스템즈)",
+          "start": "2026-11-20T10:00:00+09:00",
+          "end": "2026-11-20T12:00:00+09:00",
+          "attendees": [
+            "엄채린",
+            "피우람"
+          ],
+          "description": "외부 감사인 방문, 담당자 본인 참석 필수"
+        },
+        {
+          "summary": "대표 보고 자료 제출 마감",
+          "start": "2026-11-20",
+          "end": "2026-11-21"
+        },
+        {
+          "summary": "팀 점심 회식",
+          "start": "2026-11-20T12:00:00+09:00",
+          "end": "2026-11-20T13:30:00+09:00"
+        },
+        {
+          "summary": "채용 2차 면접_데이터엔지니어_류제니",
+          "start": "2026-11-20T15:00:00+09:00",
+          "end": "2026-11-20T16:00:00+09:00",
+          "attendees": [
+            "류제니",
+            "기도윤"
+          ]
+        },
+        {
+          "summary": "금요 회고",
+          "start": "2026-11-20T17:00:00+09:00",
+          "end": "2026-11-20T17:30:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-external-first",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "다음 주 미팅들 외부 손님 오는 거 위주로 신경 써야 할 순서대로 줄 세워줘",
+      "now": "2026-11-13T17:40:00+09:00",
+      "items": [
+        {
+          "summary": "주간 리더 회의",
+          "start": "2026-11-16T09:00:00+09:00",
+          "end": "2026-11-16T10:00:00+09:00"
+        },
+        {
+          "summary": "파란고래물산 계약 갱신 협의",
+          "start": "2026-11-17T14:00:00+09:00",
+          "end": "2026-11-17T15:30:00+09:00",
+          "attendees": [
+            "육다온",
+            "봉재석",
+            "Mina Corwell"
+          ],
+          "location": "본사 대회의실",
+          "description": "단가 인상안 회신 필요, 법무 검토본 지참"
+        },
+        {
+          "summary": "사내 해커톤 심사",
+          "start": "2026-11-18T16:00:00+09:00",
+          "end": "2026-11-18T18:00:00+09:00"
+        },
+        {
+          "summary": "Tidewell Logistics 실사 방문",
+          "start": "2026-11-19T10:00:00+09:00",
+          "end": "2026-11-19T12:00:00+09:00",
+          "attendees": [
+            "Rafael Quint",
+            "Selma Ardent"
+          ],
+          "description": "물류센터 투어 동행"
+        },
+        {
+          "summary": "파트장 1:1 - 도해솔",
+          "start": "2026-11-20T11:00:00+09:00",
+          "end": "2026-11-20T11:30:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-today-focus",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "오늘 남은 일정 집중력 많이 필요한 순서로 줄 세워줘",
+      "now": "2026-11-03T13:05:00+09:00",
+      "items": [
+        {
+          "summary": "점심 미팅 - 영업팀",
+          "start": "2026-11-03T12:00:00+09:00",
+          "end": "2026-11-03T13:00:00+09:00"
+        },
+        {
+          "summary": "코드 리뷰 세션",
+          "start": "2026-11-03T13:30:00+09:00",
+          "end": "2026-11-03T14:30:00+09:00"
+        },
+        {
+          "summary": "구매 품의 결재",
+          "start": "2026-11-03T14:30:00+09:00",
+          "end": "2026-11-03T15:00:00+09:00"
+        },
+        {
+          "summary": "장애 회고 (11/1 결제 지연)",
+          "start": "2026-11-03T15:00:00+09:00",
+          "end": "2026-11-03T16:30:00+09:00",
+          "organizer": "기도윤",
+          "description": "원인 분석 문서 내가 발표"
+        },
+        {
+          "summary": "커피챗 - 인턴 봉시우",
+          "start": "2026-11-03T17:00:00+09:00",
+          "end": "2026-11-03T17:20:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-count-exceeds-five",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 5,
+      "ownerRequest": "내일 일정 중 중요한 거 5개 뽑아줘",
+      "now": "2026-11-05T22:00:00+09:00",
+      "items": [
+        {
+          "summary": "월간 실적 리뷰",
+          "start": "2026-11-06T10:00:00+09:00",
+          "end": "2026-11-06T11:00:00+09:00",
+          "attendees": [
+            "윤서진",
+            "마도현",
+            "국지안"
+          ]
+        },
+        {
+          "summary": "치과 예약",
+          "start": "2026-11-06T13:00:00+09:00",
+          "end": "2026-11-06T13:40:00+09:00",
+          "location": "서현역 치과"
+        },
+        {
+          "summary": "배포 모니터링 당번",
+          "start": "2026-11-06T16:00:00+09:00",
+          "end": "2026-11-06T18:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-en-free-an-hour",
+      "source": "calendar",
+      "lang": "en",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "I need to free up an hour on Wednesday afternoon to finish the budget doc. Which meeting should go?",
+      "now": "2026-11-16T09:20:00+09:00",
+      "items": [
+        {
+          "summary": "Weekly product sync",
+          "start": "2026-11-18T13:00:00+09:00",
+          "end": "2026-11-18T14:00:00+09:00",
+          "description": "Status round-robin, notes posted afterwards"
+        },
+        {
+          "summary": "Interview: Senior SRE - Callum Ferris",
+          "start": "2026-11-18T14:30:00+09:00",
+          "end": "2026-11-18T15:30:00+09:00",
+          "attendees": [
+            "Callum Ferris",
+            "Odessa Lindqvist"
+          ]
+        },
+        {
+          "summary": "Vendor pitch: observability tooling",
+          "start": "2026-11-18T15:30:00+09:00",
+          "end": "2026-11-18T16:30:00+09:00",
+          "organizer": "Brennan Achterberg"
+        },
+        {
+          "summary": "Budget review with finance",
+          "start": "2026-11-18T17:00:00+09:00",
+          "end": "2026-11-18T17:30:00+09:00",
+          "description": "Budget doc due before this meeting"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-deadline-reasoning",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "이번 주 일정을 마감 걸린 거 기준으로 먼저 챙겨야 하는 순서대로 정리해줘",
+      "now": "2026-11-16T08:50:00+09:00",
+      "items": [
+        {
+          "summary": "정부과제 제안서 리허설",
+          "start": "2026-11-18T14:00:00+09:00",
+          "end": "2026-11-18T15:30:00+09:00",
+          "description": "제안서 제출 마감 11/19 18시, 리허설 후 수정 반영"
+        },
+        {
+          "summary": "사내 보안교육 (온라인)",
+          "start": "2026-11-20T10:00:00+09:00",
+          "end": "2026-11-20T11:00:00+09:00",
+          "description": "11/30까지 이수"
+        },
+        {
+          "summary": "하반기 평가 면담 - 반서하",
+          "start": "2026-11-17T16:00:00+09:00",
+          "end": "2026-11-17T16:30:00+09:00",
+          "description": "평가 입력 마감 11/17 자정"
+        },
+        {
+          "summary": "마케팅 캠페인 아이디어 회의",
+          "start": "2026-11-16T15:00:00+09:00",
+          "end": "2026-11-16T16:00:00+09:00"
+        },
+        {
+          "summary": "세금계산서 발행 확인",
+          "start": "2026-11-19T09:30:00+09:00",
+          "end": "2026-11-19T10:00:00+09:00",
+          "description": "월 마감 전 발행 누락 확인"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-allday-send-team",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "다음 달 외부 행사 중에 나 대신 팀원 보내도 되는 거 두 개만 골라줘",
+      "now": "2026-11-20T11:00:00+09:00",
+      "items": [
+        {
+          "summary": "클라우드 인프라 컨퍼런스 (코엑스)",
+          "start": "2026-12-02",
+          "end": "2026-12-04",
+          "description": "부스 방문 위주"
+        },
+        {
+          "summary": "고객사 연말 파트너스 데이",
+          "start": "2026-12-09",
+          "end": "2026-12-10",
+          "description": "대표 초청, 감사패 수령 예정"
+        },
+        {
+          "summary": "오픈소스 밋업 발표",
+          "start": "2026-12-12",
+          "end": "2026-12-13",
+          "description": "발표자로 등록됨"
+        },
+        {
+          "summary": "업계 채용 박람회",
+          "start": "2026-12-15",
+          "end": "2026-12-16"
+        },
+        {
+          "summary": "보안 인증 갱신 심사",
+          "start": "2026-12-17",
+          "end": "2026-12-18",
+          "organizer": "노하림"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-thursday-drop-one",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "목요일 회의가 줄줄이 붙어 있어서 숨 좀 돌리고 싶어. 하나 빠진다면 뭐가 제일 나아?",
+      "now": "2026-11-17T20:30:00+09:00",
+      "items": [
+        {
+          "summary": "주간 기획 회의",
+          "start": "2026-11-19T10:00:00+09:00",
+          "end": "2026-11-19T11:00:00+09:00"
+        },
+        {
+          "summary": "신규 기능 스펙 리뷰",
+          "start": "2026-11-19T11:00:00+09:00",
+          "end": "2026-11-19T12:00:00+09:00",
+          "description": "내가 작성한 스펙, 승인 필요"
+        },
+        {
+          "summary": "파트너 API 연동 점검",
+          "start": "2026-11-19T13:00:00+09:00",
+          "end": "2026-11-19T14:00:00+09:00",
+          "attendees": [
+            "엄채린",
+            "Jonas Tervo"
+          ]
+        },
+        {
+          "summary": "사내 뉴스레터 편집 회의",
+          "start": "2026-11-19T14:00:00+09:00",
+          "end": "2026-11-19T14:30:00+09:00"
+        },
+        {
+          "summary": "채용 시장 동향 세미나",
+          "start": "2026-11-19T14:35:00+09:00",
+          "end": "2026-11-19T15:30:00+09:00",
+          "description": "녹화본 제공"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-interview-day",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "내일 면접이 몰려 있는데, 후보자 자료 볼 순서대로 정리해줘",
+      "now": "2026-11-23T19:45:00+09:00",
+      "items": [
+        {
+          "summary": "1차 면접_프론트엔드_도해솔",
+          "start": "2026-11-24T10:00:00+09:00",
+          "end": "2026-11-24T11:00:00+09:00",
+          "attendees": [
+            "도해솔",
+            "편가온"
+          ]
+        },
+        {
+          "summary": "2차 면접_데이터분석_여민결",
+          "start": "2026-11-24T11:00:00+09:00",
+          "end": "2026-11-24T12:00:00+09:00",
+          "attendees": [
+            "여민결",
+            "마도현",
+            "윤서진"
+          ],
+          "description": "과제 제출물 사전 검토 필요"
+        },
+        {
+          "summary": "컬처핏 면접_PM_반서하",
+          "start": "2026-11-24T14:00:00+09:00",
+          "end": "2026-11-24T14:45:00+09:00",
+          "attendees": [
+            "반서하"
+          ]
+        },
+        {
+          "summary": "최종 면접_인프라_피우람",
+          "start": "2026-11-24T16:00:00+09:00",
+          "end": "2026-11-24T17:00:00+09:00",
+          "attendees": [
+            "피우람",
+            "석보람"
+          ],
+          "description": "처우 협의 전 마지막 단계, 이전 면접 평가표 확인"
+        }
+      ]
+    },
+    {
+      "id": "cal-en-tz-calls-priority",
+      "source": "calendar",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "These cross-timezone calls are all at awkward hours. Rank them by how much it matters that I join live.",
+      "now": "2026-11-23T10:00:00+09:00",
+      "items": [
+        {
+          "summary": "Global ops weekly (recorded)",
+          "start": "2026-11-24T08:00:00-05:00",
+          "end": "2026-11-24T09:00:00-05:00",
+          "organizer": "Delphine Rourke"
+        },
+        {
+          "summary": "Contract signing call - Ostrava Pixel",
+          "start": "2026-11-25T09:30:00+01:00",
+          "end": "2026-11-25T10:00:00+01:00",
+          "attendees": [
+            "Tomas Vrba",
+            "Hana Lisková"
+          ],
+          "description": "Our signature required on the call"
+        },
+        {
+          "summary": "APAC partner office hours",
+          "start": "2026-11-25T11:00:00+09:00",
+          "end": "2026-11-25T12:00:00+09:00"
+        },
+        {
+          "summary": "US team retro",
+          "start": "2026-11-26T16:00:00-08:00",
+          "end": "2026-11-26T17:00:00-08:00",
+          "description": "Async notes accepted"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-delegate-dohyeon",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "이번 주 회의 중에 도현님한테 대신 들어가 달라고 해도 될 만한 거 골라줘",
+      "now": "2026-11-23T08:30:00+09:00",
+      "items": [
+        {
+          "summary": "주간 예산 집행 점검",
+          "start": "2026-11-23T14:00:00+09:00",
+          "end": "2026-11-23T14:30:00+09:00",
+          "attendees": [
+            "마도현",
+            "윤서진"
+          ]
+        },
+        {
+          "summary": "임원 보고 - 내년 사업계획",
+          "start": "2026-11-24T10:00:00+09:00",
+          "end": "2026-11-24T11:00:00+09:00",
+          "attendees": [
+            "임원진"
+          ],
+          "description": "발표자: 본인"
+        },
+        {
+          "summary": "유관부서 협의 - 고객센터 이관",
+          "start": "2026-11-25T15:00:00+09:00",
+          "end": "2026-11-25T16:00:00+09:00",
+          "attendees": [
+            "마도현",
+            "하주원",
+            "육다온"
+          ]
+        },
+        {
+          "summary": "파트장 1:1 - 채하늘",
+          "start": "2026-11-26T11:00:00+09:00",
+          "end": "2026-11-26T11:30:00+09:00"
+        },
+        {
+          "summary": "벤더 정기 미팅 (모아틀시스템즈)",
+          "start": "2026-11-27T10:00:00+09:00",
+          "end": "2026-11-27T10:30:00+09:00",
+          "attendees": [
+            "피우람"
+          ],
+          "description": "월간 장애 리포트 공유"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-double-booked-friday",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "금요일 오후에 두 개가 겹치게 잡혀 있네. 어느 쪽에 들어가야 할까?",
+      "now": "2026-11-25T09:10:00+09:00",
+      "items": [
+        {
+          "summary": "분기 OKR 점검",
+          "start": "2026-11-27T14:00:00+09:00",
+          "end": "2026-11-27T15:30:00+09:00",
+          "organizer": "여민결",
+          "attendees": [
+            "팀 전체"
+          ]
+        },
+        {
+          "summary": "고객 장애 원인 보고 (하늘다리커머스)",
+          "start": "2026-11-27T15:00:00+09:00",
+          "end": "2026-11-27T16:00:00+09:00",
+          "attendees": [
+            "채하늘",
+            "Ethan Marlow"
+          ],
+          "description": "고객사 요청, 담당 PM 참석 요청됨"
+        },
+        {
+          "summary": "팀 회고",
+          "start": "2026-11-27T17:00:00+09:00",
+          "end": "2026-11-27T17:30:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-next-week-priority",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "다음 주 일정 우선순위대로 정리 좀 해줄래?",
+      "now": "2026-11-27T18:00:00+09:00",
+      "items": [
+        {
+          "summary": "월간 전사 타운홀",
+          "start": "2026-11-30T16:00:00+09:00",
+          "end": "2026-11-30T17:00:00+09:00"
+        },
+        {
+          "summary": "신규 서비스 베타 오픈 점검",
+          "start": "2026-12-01T10:00:00+09:00",
+          "end": "2026-12-01T11:30:00+09:00",
+          "description": "12/3 베타 오픈 전 마지막 점검"
+        },
+        {
+          "summary": "헬스장 PT",
+          "start": "2026-12-01T19:30:00+09:00",
+          "end": "2026-12-01T20:20:00+09:00"
+        },
+        {
+          "summary": "예산 확정 회의",
+          "start": "2026-12-02T13:00:00+09:00",
+          "end": "2026-12-02T14:00:00+09:00",
+          "attendees": [
+            "윤서진",
+            "마도현"
+          ]
+        },
+        {
+          "summary": "베타 오픈 모니터링",
+          "start": "2026-12-03T09:00:00+09:00",
+          "end": "2026-12-03T12:00:00+09:00"
+        },
+        {
+          "summary": "연말 송년회 장소 답사",
+          "start": "2026-12-03T18:00:00+09:00",
+          "end": "2026-12-03T19:00:00+09:00"
+        },
+        {
+          "summary": "인턴 최종 평가 면담 - 봉시우",
+          "start": "2026-12-04T15:00:00+09:00",
+          "end": "2026-12-04T15:30:00+09:00"
+        },
+        {
+          "summary": "독서 모임",
+          "start": "2026-12-04T19:00:00+09:00",
+          "end": "2026-12-04T21:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-en-cant-miss-three",
+      "source": "calendar",
+      "lang": "en",
+      "select": "pick",
+      "count": 3,
+      "ownerRequest": "Pick the three meetings next week I absolutely can't miss.",
+      "now": "2026-11-27T16:20:00+09:00",
+      "items": [
+        {
+          "summary": "Board meeting",
+          "start": "2026-12-01T09:00:00+09:00",
+          "end": "2026-12-01T12:00:00+09:00",
+          "attendees": [
+            "Board members"
+          ],
+          "description": "You present the FY27 plan"
+        },
+        {
+          "summary": "Team lunch",
+          "start": "2026-12-01T12:30:00+09:00",
+          "end": "2026-12-01T13:30:00+09:00"
+        },
+        {
+          "summary": "Security incident tabletop",
+          "start": "2026-12-02T14:00:00+09:00",
+          "end": "2026-12-02T16:00:00+09:00",
+          "organizer": "노하림"
+        },
+        {
+          "summary": "Coffee chat with new designer",
+          "start": "2026-12-02T16:30:00+09:00",
+          "end": "2026-12-02T17:00:00+09:00"
+        },
+        {
+          "summary": "Customer QBR - Quillmark Analytics",
+          "start": "2026-12-03T10:00:00+09:00",
+          "end": "2026-12-03T11:00:00+09:00",
+          "attendees": [
+            "Nolan Pryce",
+            "Ava Bertrand"
+          ],
+          "description": "Renewal is due Dec 31"
+        },
+        {
+          "summary": "Engineering guild talk",
+          "start": "2026-12-04T15:00:00+09:00",
+          "end": "2026-12-04T16:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-field-dont-be-late",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "내일 외근이 여러 개인데, 절대 늦으면 안 되는 순서대로 알려줘",
+      "now": "2026-12-01T22:10:00+09:00",
+      "items": [
+        {
+          "summary": "물류센터 현장 점검",
+          "start": "2026-12-02T09:00:00+09:00",
+          "end": "2026-12-02T10:30:00+09:00",
+          "location": "이천 물류센터",
+          "attendees": [
+            "탁영민"
+          ]
+        },
+        {
+          "summary": "고객사 계약 서명 (파란고래물산)",
+          "start": "2026-12-02T13:00:00+09:00",
+          "end": "2026-12-02T13:30:00+09:00",
+          "location": "파란고래물산 본사",
+          "attendees": [
+            "육다온",
+            "봉재석"
+          ],
+          "description": "대표이사 서명식"
+        },
+        {
+          "summary": "협력사 미팅 (솔내정밀)",
+          "start": "2026-12-02T15:00:00+09:00",
+          "end": "2026-12-02T16:00:00+09:00",
+          "location": "안산 공장"
+        },
+        {
+          "summary": "사무실 복귀 후 팀 공유",
+          "start": "2026-12-02T17:30:00+09:00",
+          "end": "2026-12-02T18:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-cancel-three-of-two",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 3,
+      "ownerRequest": "이번 주 약속 중에 취소해도 될 만한 거 세 개만 골라줘",
+      "now": "2026-11-30T09:00:00+09:00",
+      "items": [
+        {
+          "summary": "대학 동기 저녁",
+          "start": "2026-12-02T19:00:00+09:00",
+          "end": "2026-12-02T21:00:00+09:00"
+        },
+        {
+          "summary": "부서 간 친목 볼링",
+          "start": "2026-12-04T18:30:00+09:00",
+          "end": "2026-12-04T20:30:00+09:00",
+          "organizer": "석보람"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-last-week-nov",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "11월 마지막 주 일정 중요도 순으로 정리해줘",
+      "now": "2026-11-22T20:00:00+09:00",
+      "items": [
+        {
+          "summary": "연말정산 서류 제출 마감",
+          "start": "2026-11-27",
+          "end": "2026-11-28",
+          "description": "미제출 시 다음 달 급여에서 정산 불가"
+        },
+        {
+          "summary": "어머니 생신",
+          "start": "2026-11-28",
+          "end": "2026-11-29"
+        },
+        {
+          "summary": "사내 워크숍 사전 회의",
+          "start": "2026-11-24T15:00:00+09:00",
+          "end": "2026-11-24T16:00:00+09:00"
+        },
+        {
+          "summary": "전사 워크숍",
+          "start": "2026-11-25",
+          "end": "2026-11-27",
+          "location": "양평 연수원"
+        },
+        {
+          "summary": "차량 정기 점검",
+          "start": "2026-11-23T08:00:00+09:00",
+          "end": "2026-11-23T09:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-en-slides-needed",
+      "source": "calendar",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "Which of tomorrow's meetings need slides from me? Order them by how urgent the deck is.",
+      "now": "2026-12-07T17:30:00+09:00",
+      "items": [
+        {
+          "summary": "Exec staff",
+          "start": "2026-12-08T09:00:00+09:00",
+          "end": "2026-12-08T10:00:00+09:00",
+          "description": "Each lead brings a 3-slide update"
+        },
+        {
+          "summary": "1:1 with Odessa",
+          "start": "2026-12-08T10:30:00+09:00",
+          "end": "2026-12-08T11:00:00+09:00"
+        },
+        {
+          "summary": "Pricing committee",
+          "start": "2026-12-08T14:00:00+09:00",
+          "end": "2026-12-08T15:00:00+09:00",
+          "attendees": [
+            "Brennan Achterberg",
+            "윤서진"
+          ],
+          "description": "Present the tiered pricing proposal"
+        },
+        {
+          "summary": "Sprint demo",
+          "start": "2026-12-08T16:00:00+09:00",
+          "end": "2026-12-08T16:45:00+09:00",
+          "description": "Live demo, no slides"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-lunch-overlap",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "점심 약속이랑 회의가 겹치는데 둘 중 뭘 옮기는 게 나아?",
+      "now": "2026-12-08T08:20:00+09:00",
+      "items": [
+        {
+          "summary": "점심 - 전 직장 동료 엄채린",
+          "start": "2026-12-09T12:00:00+09:00",
+          "end": "2026-12-09T13:30:00+09:00",
+          "location": "광화문"
+        },
+        {
+          "summary": "긴급 결함 분류 회의",
+          "start": "2026-12-09T13:00:00+09:00",
+          "end": "2026-12-09T13:30:00+09:00",
+          "organizer": "기도윤",
+          "description": "이번 주 배포 차단 이슈 3건 결정"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-recurring-skip-two",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "반복 회의들 중에서 이번 주는 빠져도 될 것 같은 거 두 개 골라줘",
+      "now": "2026-12-07T08:45:00+09:00",
+      "items": [
+        {
+          "summary": "[반복] 월요 리더십 싱크",
+          "start": "2026-12-07T09:00:00+09:00",
+          "end": "2026-12-07T09:30:00+09:00",
+          "description": "이번 주 안건: 연말 인사 발표 일정"
+        },
+        {
+          "summary": "[반복] 아키텍처 오피스아워",
+          "start": "2026-12-08T15:00:00+09:00",
+          "end": "2026-12-08T16:00:00+09:00",
+          "description": "이번 주 신청 안건 없음"
+        },
+        {
+          "summary": "[반복] 주간 고객 VOC 리뷰",
+          "start": "2026-12-09T10:00:00+09:00",
+          "end": "2026-12-09T10:30:00+09:00"
+        },
+        {
+          "summary": "[반복] 테크 블로그 편집 회의",
+          "start": "2026-12-10T17:00:00+09:00",
+          "end": "2026-12-10T17:30:00+09:00"
+        },
+        {
+          "summary": "[반복] 금요 배포 회의",
+          "start": "2026-12-11T11:00:00+09:00",
+          "end": "2026-12-11T11:30:00+09:00",
+          "description": "이번 주 배포 담당: 본인"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-onboarding-week",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "신입 온보딩 주간 일정인데, 내가 직접 챙겨야 하는 순서대로 정리해줘",
+      "now": "2026-12-04T17:00:00+09:00",
+      "items": [
+        {
+          "summary": "신입 환영 오리엔테이션",
+          "start": "2026-12-07T09:30:00+09:00",
+          "end": "2026-12-07T11:00:00+09:00",
+          "organizer": "석보람"
+        },
+        {
+          "summary": "장비 지급 및 계정 발급",
+          "start": "2026-12-07T11:00:00+09:00",
+          "end": "2026-12-07T12:00:00+09:00",
+          "organizer": "IT지원팀",
+          "description": "사전 계정 신청은 사수(본인)가 금요일까지"
+        },
+        {
+          "summary": "사수 1:1 - 신입 남궁별",
+          "start": "2026-12-07T14:00:00+09:00",
+          "end": "2026-12-07T15:00:00+09:00",
+          "attendees": [
+            "남궁별"
+          ]
+        },
+        {
+          "summary": "코드베이스 투어",
+          "start": "2026-12-08T10:00:00+09:00",
+          "end": "2026-12-08T12:00:00+09:00",
+          "attendees": [
+            "남궁별",
+            "편가온"
+          ]
+        },
+        {
+          "summary": "온보딩 1주차 회고",
+          "start": "2026-12-11T16:00:00+09:00",
+          "end": "2026-12-11T16:30:00+09:00",
+          "attendees": [
+            "남궁별"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cal-en-tz-overlap-evening",
+      "source": "calendar",
+      "lang": "en",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "Two things collide Tuesday evening my time. Which one should I actually take?",
+      "now": "2026-12-14T12:00:00+09:00",
+      "items": [
+        {
+          "summary": "Investor update call - Bramblecrest Capital",
+          "start": "2026-12-15T02:00:00-08:00",
+          "end": "2026-12-15T03:00:00-08:00",
+          "attendees": [
+            "Grace Holloway"
+          ],
+          "description": "Quarterly update, they asked for the churn numbers"
+        },
+        {
+          "summary": "Team year-end dinner",
+          "start": "2026-12-15T18:30:00+09:00",
+          "end": "2026-12-15T21:00:00+09:00",
+          "location": "역삼동"
+        },
+        {
+          "summary": "Gym",
+          "start": "2026-12-15T07:00:00+09:00",
+          "end": "2026-12-15T08:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-personal-keep",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "이번 주 개인 일정 중에 업무 때문에 미루면 안 되는 것만 골라줘",
+      "now": "2026-12-14T07:50:00+09:00",
+      "items": [
+        {
+          "summary": "건강검진",
+          "start": "2026-12-15T08:00:00+09:00",
+          "end": "2026-12-15T11:00:00+09:00",
+          "location": "판교 검진센터",
+          "description": "연내 미수검 시 과태료, 재예약 불가"
+        },
+        {
+          "summary": "아이 학부모 상담",
+          "start": "2026-12-16T16:00:00+09:00",
+          "end": "2026-12-16T16:30:00+09:00",
+          "location": "초등학교"
+        },
+        {
+          "summary": "네일샵",
+          "start": "2026-12-17T19:00:00+09:00",
+          "end": "2026-12-17T20:00:00+09:00"
+        },
+        {
+          "summary": "친구 집들이",
+          "start": "2026-12-18T19:00:00+09:00",
+          "end": "2026-12-18T22:00:00+09:00"
+        },
+        {
+          "summary": "은행 대출 서류 제출",
+          "start": "2026-12-18T12:30:00+09:00",
+          "end": "2026-12-18T13:00:00+09:00",
+          "description": "이번 주 금요일까지 제출해야 금리 유지"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-quarter-close",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "분기 마감 주간 일정이야. 놓치면 타격 큰 순서대로 줄 세워줘",
+      "now": "2026-12-24T09:00:00+09:00",
+      "items": [
+        {
+          "summary": "매출 인식 검토 (외부 회계법인)",
+          "start": "2026-12-28T10:00:00+09:00",
+          "end": "2026-12-28T12:00:00+09:00",
+          "attendees": [
+            "Selma Ardent",
+            "윤서진"
+          ]
+        },
+        {
+          "summary": "연말 팀 회고",
+          "start": "2026-12-29T15:00:00+09:00",
+          "end": "2026-12-29T16:00:00+09:00"
+        },
+        {
+          "summary": "세무 신고 자료 회신 마감",
+          "start": "2026-12-30",
+          "end": "2026-12-31"
+        },
+        {
+          "summary": "내년 OKR 초안 공유",
+          "start": "2026-12-30T14:00:00+09:00",
+          "end": "2026-12-30T15:00:00+09:00"
+        },
+        {
+          "summary": "종무식",
+          "start": "2026-12-31T16:00:00+09:00",
+          "end": "2026-12-31T17:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-which-first-two",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "오늘 둘 중에 뭐부터 챙겨야 돼?",
+      "now": "2026-11-11T08:30:00+09:00",
+      "items": [
+        {
+          "summary": "팀 주간보고 작성",
+          "start": "2026-11-11T16:00:00+09:00",
+          "end": "2026-11-11T17:00:00+09:00"
+        },
+        {
+          "summary": "고객 미팅 자료 검토 - 하늘다리커머스",
+          "start": "2026-11-11T11:00:00+09:00",
+          "end": "2026-11-11T11:30:00+09:00",
+          "attendees": [
+            "채하늘"
+          ],
+          "description": "오후 2시 고객 미팅 전 확인"
+        }
+      ]
+    },
+    {
+      "id": "cal-en-could-be-email",
+      "source": "calendar",
+      "lang": "en",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "Which two meetings this week could honestly have been an email?",
+      "now": "2026-11-16T08:00:00+09:00",
+      "items": [
+        {
+          "summary": "Status update: Q4 hiring",
+          "start": "2026-11-16T11:00:00+09:00",
+          "end": "2026-11-16T11:30:00+09:00",
+          "description": "Read out of the hiring tracker"
+        },
+        {
+          "summary": "Design critique: onboarding flow",
+          "start": "2026-11-17T14:00:00+09:00",
+          "end": "2026-11-17T15:00:00+09:00",
+          "attendees": [
+            "Ines Okafor",
+            "편가온"
+          ]
+        },
+        {
+          "summary": "Facilities announcement: office move",
+          "start": "2026-11-18T10:00:00+09:00",
+          "end": "2026-11-18T10:20:00+09:00"
+        },
+        {
+          "summary": "Incident review: Nov 12 outage",
+          "start": "2026-11-19T13:00:00+09:00",
+          "end": "2026-11-19T14:00:00+09:00",
+          "organizer": "Delphine Rourke"
+        },
+        {
+          "summary": "Pairing session with Callum",
+          "start": "2026-11-20T10:00:00+09:00",
+          "end": "2026-11-20T11:30:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-vendor-overlap",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "수요일 벤더 콜들이 좀 겹쳐. 중요한 순서대로 정리해서 겹치는 건 어떻게 할지 보자",
+      "now": "2026-12-14T18:00:00+09:00",
+      "items": [
+        {
+          "summary": "클라우드 비용 협상 콜",
+          "start": "2026-12-16T10:00:00+09:00",
+          "end": "2026-12-16T11:00:00+09:00",
+          "attendees": [
+            "Jonas Tervo"
+          ],
+          "description": "연간 약정 할인 확정, 12/18 견적 만료"
+        },
+        {
+          "summary": "보안 솔루션 데모",
+          "start": "2026-12-16T10:30:00+09:00",
+          "end": "2026-12-16T11:30:00+09:00",
+          "organizer": "노하림"
+        },
+        {
+          "summary": "사무용품 업체 미팅",
+          "start": "2026-12-16T11:30:00+09:00",
+          "end": "2026-12-16T12:00:00+09:00"
+        },
+        {
+          "summary": "콜센터 아웃소싱 RFP 질의응답",
+          "start": "2026-12-16T14:00:00+09:00",
+          "end": "2026-12-16T15:00:00+09:00",
+          "attendees": [
+            "하주원",
+            "육다온"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-laptop-needed",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "오늘 오후 일정 중에 노트북 꼭 들고 가야 하는 것만 골라줘",
+      "now": "2026-12-09T12:40:00+09:00",
+      "items": [
+        {
+          "summary": "신규 대시보드 시연",
+          "start": "2026-12-09T13:30:00+09:00",
+          "end": "2026-12-09T14:00:00+09:00",
+          "description": "본인 화면 공유로 시연"
+        },
+        {
+          "summary": "인사팀 면담",
+          "start": "2026-12-09T14:30:00+09:00",
+          "end": "2026-12-09T15:00:00+09:00",
+          "organizer": "석보람"
+        },
+        {
+          "summary": "데이터 품질 워킹세션",
+          "start": "2026-12-09T15:30:00+09:00",
+          "end": "2026-12-09T17:00:00+09:00",
+          "attendees": [
+            "여민결",
+            "국지안"
+          ],
+          "description": "쿼리 같이 수정"
+        },
+        {
+          "summary": "산책 미팅 - 도해솔",
+          "start": "2026-12-09T17:30:00+09:00",
+          "end": "2026-12-09T18:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-en-before-busan",
+      "source": "calendar",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "I'm at the Busan conference Wednesday and Thursday. Order the rest of the week by what I need to handle before I leave.",
+      "now": "2026-11-30T08:15:00+09:00",
+      "items": [
+        {
+          "summary": "Busan developer conference",
+          "start": "2026-12-02",
+          "end": "2026-12-04",
+          "location": "BEXCO, Busan"
+        },
+        {
+          "summary": "Hand-off meeting with on-call backup",
+          "start": "2026-12-01T16:00:00+09:00",
+          "end": "2026-12-01T16:30:00+09:00",
+          "attendees": [
+            "도해솔"
+          ]
+        },
+        {
+          "summary": "Finalize conference talk slides",
+          "start": "2026-11-30T14:00:00+09:00",
+          "end": "2026-11-30T16:00:00+09:00"
+        },
+        {
+          "summary": "Weekly 1:1 with manager",
+          "start": "2026-12-04T10:00:00+09:00",
+          "end": "2026-12-04T10:30:00+09:00"
+        },
+        {
+          "summary": "Expense report cut-off",
+          "start": "2026-12-01T17:00:00+09:00",
+          "end": "2026-12-01T17:30:00+09:00",
+          "description": "Finance closes November expenses at 18:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-weekend-cancel-one",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "주말 일정이 너무 빡빡해. 하나만 취소한다면 뭘 빼는 게 좋을까?",
+      "now": "2026-12-17T21:00:00+09:00",
+      "items": [
+        {
+          "summary": "조카 돌잔치",
+          "start": "2026-12-19T12:00:00+09:00",
+          "end": "2026-12-19T14:00:00+09:00",
+          "location": "수원"
+        },
+        {
+          "summary": "대학원 기말 발표",
+          "start": "2026-12-19T16:00:00+09:00",
+          "end": "2026-12-19T17:30:00+09:00",
+          "description": "학점 반영"
+        },
+        {
+          "summary": "러닝 크루 정기런",
+          "start": "2026-12-20T07:00:00+09:00",
+          "end": "2026-12-20T08:30:00+09:00"
+        },
+        {
+          "summary": "친구랑 전시회",
+          "start": "2026-12-20T14:00:00+09:00",
+          "end": "2026-12-20T16:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "cal-ko-prep-time-blocks",
+      "source": "calendar",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "내일 오전이 회의 연달아 있는데 미리 자료 봐둘 순서 좀 정해줘",
+      "now": "2026-12-09T20:40:00+09:00",
+      "items": [
+        {
+          "summary": "주간 KPI 리뷰",
+          "start": "2026-12-10T09:00:00+09:00",
+          "end": "2026-12-10T09:50:00+09:00",
+          "attendees": [
+            "윤서진",
+            "국지안"
+          ]
+        },
+        {
+          "summary": "파트너 정산 이슈 논의",
+          "start": "2026-12-10T09:55:00+09:00",
+          "end": "2026-12-10T10:40:00+09:00",
+          "attendees": [
+            "Mina Corwell"
+          ],
+          "description": "11월 정산 차액 1,240만원 원인 설명 필요"
+        },
+        {
+          "summary": "채용 공고 문구 검토",
+          "start": "2026-12-10T10:45:00+09:00",
+          "end": "2026-12-10T11:15:00+09:00"
+        },
+        {
+          "summary": "사업부장 보고",
+          "start": "2026-12-10T11:20:00+09:00",
+          "end": "2026-12-10T12:00:00+09:00",
+          "organizer": "여민결",
+          "description": "정산 이슈 결론을 보고 안건에 포함"
+        }
+      ]
+    },
+    {
+      "id": "mail-ko-unread-reply-order",
+      "source": "mail",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "안 읽은 메일 중에 답장 급한 순서대로 정리해줘",
+      "now": "2026-11-04T09:05:00+09:00",
+      "items": [
+        {
+          "from": "편가온 <gaon.pyeon@haneuldari-commerce.example>",
+          "subject": "[회신 요청] 킥오프 일정 확정 건",
+          "receivedAt": "2026-11-03T18:22:00+09:00",
+          "snippet": "내일 오전 중 확정 부탁드립니다. 외부 참석자 출입 등록이 필요합니다.",
+          "unread": true
+        },
+        {
+          "from": "사내 복지몰 <noreply@welfare.example>",
+          "subject": "11월 포인트 소멸 예정 안내",
+          "receivedAt": "2026-11-03T07:00:00+09:00",
+          "snippet": "11/30 소멸 예정 포인트가 있습니다.",
+          "unread": true
+        },
+        {
+          "from": "윤서진 <seojin.yoon@company.example>",
+          "subject": "Q4 예산 초안 의견 부탁드려요",
+          "receivedAt": "2026-11-03T15:40:00+09:00",
+          "snippet": "금요일 재무팀 제출 전에 의견 주시면 반영할게요.",
+          "unread": true
+        },
+        {
+          "from": "GitHub <notifications@github.example>",
+          "subject": "[orchard-labs/checkout-web] Review requested on #418",
+          "receivedAt": "2026-11-04T08:12:00+09:00",
+          "unread": true
+        },
+        {
+          "from": "노하림 <harim.noh@company.example>",
+          "subject": "보안 점검 지적사항 회신 (기한: 11/4)",
+          "receivedAt": "2026-11-02T10:05:00+09:00",
+          "snippet": "오늘까지 조치 계획 회신이 없으면 경영진 보고에 포함됩니다.",
+          "unread": true
+        }
+      ]
+    },
+    {
+      "id": "mail-ko-today-three",
+      "source": "mail",
+      "lang": "ko",
+      "select": "pick",
+      "count": 3,
+      "ownerRequest": "오늘 온 메일 중에 오늘 안에 처리해야 할 거 세 개만 뽑아줘",
+      "now": "2026-11-10T13:30:00+09:00",
+      "items": [
+        {
+          "from": "석보람 <boram.seok@company.example>",
+          "subject": "하반기 평가 자기평가 입력 안내",
+          "receivedAt": "2026-11-10T09:00:00+09:00",
+          "snippet": "입력 마감은 11/20입니다."
+        },
+        {
+          "from": "탁영민 <ym.tak@solnae-precision.example>",
+          "subject": "견적서 송부 - 금일 18시까지 유효",
+          "receivedAt": "2026-11-10T10:14:00+09:00",
+          "snippet": "원자재 가격 변동으로 금일까지만 유효합니다.",
+          "unread": true
+        },
+        {
+          "from": "마도현 <dohyeon.ma@company.example>",
+          "subject": "오늘 오후 4시 회의 안건 확인 부탁",
+          "receivedAt": "2026-11-10T11:02:00+09:00",
+          "snippet": "안건 추가할 거 있으면 3시까지 알려주세요.",
+          "unread": true
+        },
+        {
+          "from": "카드사 <alert@card.example>",
+          "subject": "11월 명세서 안내",
+          "receivedAt": "2026-11-10T06:30:00+09:00"
+        },
+        {
+          "from": "채하늘 <haneul.chae@company.example>",
+          "subject": "고객사 장애 공지문 검토 요청 (오늘 배포)",
+          "receivedAt": "2026-11-10T12:48:00+09:00",
+          "snippet": "오후 5시에 고객 공지 나가야 해서 그 전에 봐주세요.",
+          "unread": true
+        },
+        {
+          "from": "테크 뉴스레터 <hello@devweekly.example>",
+          "subject": "이번 주 개발 소식 TOP 10",
+          "receivedAt": "2026-11-10T08:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "mail-en-answer-first",
+      "source": "mail",
+      "lang": "en",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "Which email should I answer first?",
+      "now": "2026-11-12T08:10:00+09:00",
+      "items": [
+        {
+          "from": "Nolan Pryce <nolan@quillmark.example>",
+          "subject": "Re: Escalation - dashboard export failing",
+          "receivedAt": "2026-11-12T01:44:00+09:00",
+          "snippet": "Our CFO needs the export for the month-end close tomorrow morning. Any ETA?",
+          "unread": true
+        },
+        {
+          "from": "Odessa Lindqvist <odessa@company.example>",
+          "subject": "Ledger design doc comments",
+          "receivedAt": "2026-11-11T19:20:00+09:00",
+          "snippet": "Left a few comments, no rush, before next Tuesday is fine."
+        },
+        {
+          "from": "Recruiting <jobs@company.example>",
+          "subject": "Interview feedback overdue: Callum Ferris",
+          "receivedAt": "2026-11-11T17:00:00+09:00",
+          "snippet": "Please submit your scorecard.",
+          "unread": true
+        },
+        {
+          "from": "Conference team <cfp@devsummit.example>",
+          "subject": "Your talk was accepted!",
+          "receivedAt": "2026-11-11T22:05:00+09:00",
+          "snippet": "Please confirm attendance by Nov 25.",
+          "unread": true
+        }
+      ]
+    },
+    {
+      "id": "mail-ko-ignore",
+      "source": "mail",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "이 메일들 중에 그냥 무시해도 되는 거 골라줘",
+      "now": "2026-11-16T09:00:00+09:00",
+      "items": [
+        {
+          "from": "쇼핑몰 <ad@shop.example>",
+          "subject": "(광고) 블랙프라이데이 최대 80% 할인",
+          "receivedAt": "2026-11-15T10:00:00+09:00"
+        },
+        {
+          "from": "국지안 <jian.guk@company.example>",
+          "subject": "주간 지표 이상치 문의",
+          "receivedAt": "2026-11-15T21:12:00+09:00",
+          "snippet": "전환율이 갑자기 0으로 찍혔는데 트래킹 문제일까요?",
+          "unread": true
+        },
+        {
+          "from": "사내 공지 <notice@company.example>",
+          "subject": "주차장 도색 공사 안내 (지하 3층)",
+          "receivedAt": "2026-11-14T16:00:00+09:00"
+        },
+        {
+          "from": "육다온 <daon.yuk@parangorae.example>",
+          "subject": "계약 갱신 미팅 자료 사전 공유",
+          "receivedAt": "2026-11-16T08:30:00+09:00",
+          "snippet": "화요일 미팅 전에 검토 부탁드립니다.",
+          "unread": true
+        },
+        {
+          "from": "웨비나 <events@saasconf.example>",
+          "subject": "지난 웨비나 다시보기 링크",
+          "receivedAt": "2026-11-13T11:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "mail-ko-contract-order",
+      "source": "mail",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "계약 관련 메일들 처리 순서 좀 잡아줘",
+      "now": "2026-11-18T10:00:00+09:00",
+      "items": [
+        {
+          "from": "법무팀 엄채린 <chaerin.eom@company.example>",
+          "subject": "파란고래물산 갱신 계약서 검토 의견",
+          "receivedAt": "2026-11-17T17:30:00+09:00",
+          "snippet": "책임 제한 조항 수정 필요. 상대측 회신 기한은 11/20입니다."
+        },
+        {
+          "from": "봉재석 <jaeseok.bong@parangorae.example>",
+          "subject": "계약서 수정본 회신 요청",
+          "receivedAt": "2026-11-18T08:50:00+09:00",
+          "snippet": "법무 의견 반영되면 이번 주 안에 날인하고 싶습니다.",
+          "unread": true
+        },
+        {
+          "from": "전자계약 서비스 <sign@esign.example>",
+          "subject": "[서명 대기] 솔내정밀 NDA",
+          "receivedAt": "2026-11-16T14:00:00+09:00",
+          "snippet": "서명 링크는 11/19에 만료됩니다.",
+          "unread": true
+        },
+        {
+          "from": "구매팀 피우람 <wooram.pi@company.example>",
+          "subject": "내년 사무기기 임대 계약 참고 자료",
+          "receivedAt": "2026-11-15T09:40:00+09:00",
+          "snippet": "12월 중순까지 검토하시면 됩니다."
+        }
+      ]
+    },
+    {
+      "id": "mail-en-week-order",
+      "source": "mail",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "Sort these by what I need to deal with this week, most pressing first.",
+      "now": "2026-11-23T08:30:00+09:00",
+      "items": [
+        {
+          "from": "Selma Ardent <selma@ardent-audit.example>",
+          "subject": "Audit document request #2",
+          "receivedAt": "2026-11-20T18:00:00+09:00",
+          "snippet": "We need the revenue recognition memo by Wednesday EOD."
+        },
+        {
+          "from": "Brennan Achterberg <brennan@company.example>",
+          "subject": "Pricing proposal - thoughts?",
+          "receivedAt": "2026-11-22T13:10:00+09:00",
+          "snippet": "Want to bring this to the committee on Dec 8."
+        },
+        {
+          "from": "IT Helpdesk <it@company.example>",
+          "subject": "Your password expires in 2 days",
+          "receivedAt": "2026-11-23T06:00:00+09:00"
+        },
+        {
+          "from": "Ines Okafor <ines@harborline.example>",
+          "subject": "Follow-up from the SF demo",
+          "receivedAt": "2026-11-21T03:30:00+09:00",
+          "snippet": "Could you send the pilot proposal so we can take it to our budget meeting on Thursday?",
+          "unread": true
+        },
+        {
+          "from": "Team social <fun@company.example>",
+          "subject": "Year-end party: vote on the venue",
+          "receivedAt": "2026-11-22T09:00:00+09:00",
+          "snippet": "Voting closes Dec 5."
+        }
+      ]
+    },
+    {
+      "id": "mail-ko-five-of-three",
+      "source": "mail",
+      "lang": "ko",
+      "select": "pick",
+      "count": 5,
+      "ownerRequest": "받은편지함에서 중요한 거 5개만 골라줘",
+      "now": "2026-11-25T18:20:00+09:00",
+      "items": [
+        {
+          "from": "여민결 <mingyeol.yeo@company.example>",
+          "subject": "사업부장 보고 일정 변경",
+          "receivedAt": "2026-11-25T16:00:00+09:00",
+          "snippet": "목요일 오전으로 당겨졌습니다.",
+          "unread": true
+        },
+        {
+          "from": "배송 알림 <noreply@delivery.example>",
+          "subject": "택배가 문 앞에 도착했습니다",
+          "receivedAt": "2026-11-25T14:20:00+09:00"
+        },
+        {
+          "from": "하주원 <juwon.ha@company.example>",
+          "subject": "고객센터 이관 일정표 공유",
+          "receivedAt": "2026-11-25T11:05:00+09:00",
+          "snippet": "검토 후 코멘트 부탁드립니다."
+        }
+      ]
+    },
+    {
+      "id": "mail-ko-before-report",
+      "source": "mail",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "팀장님 보고 들어가기 전에 확인해야 할 메일들 순서대로 정리해줘",
+      "now": "2026-12-01T08:40:00+09:00",
+      "items": [
+        {
+          "from": "국지안 <jian.guk@company.example>",
+          "subject": "11월 KPI 최종본",
+          "receivedAt": "2026-11-30T22:10:00+09:00",
+          "snippet": "보고서 표 3번 수치가 바뀌었어요.",
+          "unread": true
+        },
+        {
+          "from": "도해솔 <haesol.do@company.example>",
+          "subject": "야간 장애 경과 공유",
+          "receivedAt": "2026-12-01T03:15:00+09:00",
+          "snippet": "04시 복구 완료, 영향 고객 약 120명. 보고 필요할 수 있습니다.",
+          "unread": true
+        },
+        {
+          "from": "석보람 <boram.seok@company.example>",
+          "subject": "연말 조직 개편 설문",
+          "receivedAt": "2026-11-28T10:00:00+09:00"
+        },
+        {
+          "from": "윤서진 <seojin.yoon@company.example>",
+          "subject": "예산 확정안 (재무 승인)",
+          "receivedAt": "2026-11-30T17:45:00+09:00",
+          "snippet": "어제 말씀드린 감액분 반영됐습니다."
+        }
+      ]
+    },
+    {
+      "id": "mail-en-forward-legal",
+      "source": "mail",
+      "lang": "en",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "Which two of these should I forward to the legal team?",
+      "now": "2026-12-03T11:00:00+09:00",
+      "items": [
+        {
+          "from": "Tomas Vrba <tomas@ostravapixel.example>",
+          "subject": "Redlines on the MSA",
+          "receivedAt": "2026-12-02T20:30:00+09:00",
+          "snippet": "We changed the indemnity cap and the governing law clause."
+        },
+        {
+          "from": "Ava Bertrand <ava@quillmark.example>",
+          "subject": "Feature request: SSO",
+          "receivedAt": "2026-12-02T09:00:00+09:00"
+        },
+        {
+          "from": "Unknown sender <claims@notice-desk.example>",
+          "subject": "Notice of trademark infringement",
+          "receivedAt": "2026-12-03T07:12:00+09:00",
+          "snippet": "Our client believes your product name infringes their registered mark.",
+          "unread": true
+        },
+        {
+          "from": "Marcus Delaney <marcus@harborline.example>",
+          "subject": "Lunch next time you are in SF?",
+          "receivedAt": "2026-12-01T05:00:00+09:00"
+        },
+        {
+          "from": "Payroll <payroll@company.example>",
+          "subject": "December payroll schedule",
+          "receivedAt": "2026-12-01T09:00:00+09:00"
+        }
+      ]
+    },
+    {
+      "id": "jira-ko-sprint-order",
+      "source": "jira",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "이번 스프린트 남은 티켓, 먼저 해야 할 순서대로 정리해줘",
+      "now": "2026-11-09T09:30:00+09:00",
+      "items": [
+        {
+          "key": "PAY-412",
+          "summary": "결제 취소 시 포인트 환불 누락",
+          "status": "To Do",
+          "priority": "Highest",
+          "due": "2026-11-10",
+          "assignee": "나"
+        },
+        {
+          "key": "PAY-415",
+          "summary": "정산 리포트 CSV 컬럼 순서 변경",
+          "status": "To Do",
+          "priority": "Low",
+          "due": "2026-11-20",
+          "assignee": "나"
+        },
+        {
+          "key": "PAY-418",
+          "summary": "결제 모듈 로그 마스킹 적용",
+          "status": "In Progress",
+          "priority": "High",
+          "due": "2026-11-13",
+          "assignee": "나",
+          "reporter": "노하림"
+        },
+        {
+          "key": "PAY-420",
+          "summary": "관리자 화면 오탈자 수정",
+          "status": "To Do",
+          "priority": "Lowest",
+          "assignee": "나"
+        },
+        {
+          "key": "PAY-421",
+          "summary": "환불 API 타임아웃 설정 조정",
+          "status": "To Do",
+          "priority": "Medium",
+          "due": "2026-11-12",
+          "assignee": "나"
+        }
+      ]
+    },
+    {
+      "id": "jira-ko-blocking-two",
+      "source": "jira",
+      "lang": "ko",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "내 티켓 중에 다른 사람 일 막고 있는 거 두 개만 골라줘",
+      "now": "2026-11-11T10:00:00+09:00",
+      "items": [
+        {
+          "key": "APP-230",
+          "summary": "로그인 API 응답 스키마 확정 (모바일팀 대기 중)",
+          "status": "In Progress",
+          "priority": "High",
+          "assignee": "나",
+          "reporter": "도해솔"
+        },
+        {
+          "key": "APP-233",
+          "summary": "설정 화면 다크모드 색상 조정",
+          "status": "To Do",
+          "priority": "Low",
+          "assignee": "나"
+        },
+        {
+          "key": "APP-236",
+          "summary": "푸시 알림 서버 인증서 갱신 (QA 테스트 블록)",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-11-12",
+          "assignee": "나",
+          "reporter": "반서하"
+        },
+        {
+          "key": "APP-238",
+          "summary": "리팩터링: 네트워크 레이어 정리",
+          "status": "To Do",
+          "priority": "Medium",
+          "assignee": "나"
+        }
+      ]
+    },
+    {
+      "id": "jira-en-before-release",
+      "source": "jira",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "Order these by what has to land before Friday's release.",
+      "now": "2026-11-16T09:00:00+09:00",
+      "items": [
+        {
+          "key": "CORE-901",
+          "summary": "Release notes for v3.8",
+          "status": "To Do",
+          "priority": "Medium",
+          "due": "2026-11-20",
+          "assignee": "me"
+        },
+        {
+          "key": "CORE-897",
+          "summary": "Migration script for the new invoice table (blocks CORE-899)",
+          "status": "In Review",
+          "priority": "Highest",
+          "due": "2026-11-18",
+          "assignee": "me"
+        },
+        {
+          "key": "CORE-899",
+          "summary": "Backfill invoice history after migration",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-11-19",
+          "assignee": "me"
+        },
+        {
+          "key": "CORE-905",
+          "summary": "Spike: evaluate new charting library",
+          "status": "To Do",
+          "priority": "Low",
+          "assignee": "me"
+        },
+        {
+          "key": "CORE-903",
+          "summary": "Feature flag cleanup for checkout v2",
+          "status": "To Do",
+          "priority": "Medium",
+          "due": "2026-11-27",
+          "assignee": "me"
+        }
+      ]
+    },
+    {
+      "id": "jira-ko-defer-next-sprint",
+      "source": "jira",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "다음 스프린트로 넘겨도 될 티켓 골라줘",
+      "now": "2026-11-25T14:00:00+09:00",
+      "items": [
+        {
+          "key": "DATA-77",
+          "summary": "일간 배치 실패 알림 누락",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-11-27",
+          "assignee": "나"
+        },
+        {
+          "key": "DATA-81",
+          "summary": "대시보드 차트 색상 통일",
+          "status": "To Do",
+          "priority": "Low",
+          "assignee": "나"
+        },
+        {
+          "key": "DATA-83",
+          "summary": "고객 이탈 모델 재학습 실험",
+          "status": "To Do",
+          "priority": "Medium",
+          "due": "2026-12-15",
+          "assignee": "나",
+          "reporter": "여민결"
+        },
+        {
+          "key": "DATA-84",
+          "summary": "개인정보 컬럼 암호화 (감사 지적)",
+          "status": "In Progress",
+          "priority": "Highest",
+          "due": "2026-11-30",
+          "assignee": "나",
+          "reporter": "노하림"
+        },
+        {
+          "key": "DATA-86",
+          "summary": "쿼리 문서화 위키 정리",
+          "status": "To Do",
+          "priority": "Lowest",
+          "assignee": "나"
+        }
+      ]
+    },
+    {
+      "id": "jira-ko-dependency-order",
+      "source": "jira",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "선후관계 따져서 작업 순서 정해줘",
+      "now": "2026-11-30T09:15:00+09:00",
+      "items": [
+        {
+          "key": "SHOP-510",
+          "summary": "주문 상세 화면 신규 API 연동 (SHOP-505 완료 후)",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-12-08",
+          "assignee": "나"
+        },
+        {
+          "key": "SHOP-505",
+          "summary": "주문 상세 API 스펙 확정",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-12-02",
+          "assignee": "나",
+          "reporter": "편가온"
+        },
+        {
+          "key": "SHOP-512",
+          "summary": "주문 상세 E2E 테스트 작성 (SHOP-510 이후)",
+          "status": "To Do",
+          "priority": "Medium",
+          "due": "2026-12-10",
+          "assignee": "나"
+        },
+        {
+          "key": "SHOP-498",
+          "summary": "장바구니 쿠폰 중복 적용 버그",
+          "status": "In Progress",
+          "priority": "Highest",
+          "due": "2026-12-01",
+          "assignee": "나"
+        }
+      ]
+    },
+    {
+      "id": "jira-en-pick-one-today",
+      "source": "jira",
+      "lang": "en",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "I only have time for one ticket today. Which one?",
+      "now": "2026-12-02T13:00:00+09:00",
+      "items": [
+        {
+          "key": "OPS-88",
+          "summary": "Rotate expiring TLS cert for api gateway",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-12-03",
+          "assignee": "me"
+        },
+        {
+          "key": "OPS-91",
+          "summary": "Terraform module upgrade",
+          "status": "To Do",
+          "priority": "Medium",
+          "due": "2026-12-20",
+          "assignee": "me"
+        },
+        {
+          "key": "OPS-93",
+          "summary": "Grafana dashboard for queue depth",
+          "status": "In Progress",
+          "priority": "Medium",
+          "assignee": "me",
+          "reporter": "Delphine Rourke"
+        }
+      ]
+    },
+    {
+      "id": "jira-ko-overdue-order",
+      "source": "jira",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "기한 지난 것들 포함해서 지금 처리 순서 정리해줘",
+      "now": "2026-12-07T10:00:00+09:00",
+      "items": [
+        {
+          "key": "CS-140",
+          "summary": "VIP 고객 환불 처리 지연 건",
+          "status": "To Do",
+          "priority": "Highest",
+          "due": "2026-12-04",
+          "assignee": "나",
+          "reporter": "하주원"
+        },
+        {
+          "key": "CS-142",
+          "summary": "FAQ 문구 업데이트",
+          "status": "To Do",
+          "priority": "Low",
+          "due": "2026-12-01",
+          "assignee": "나"
+        },
+        {
+          "key": "CS-145",
+          "summary": "상담 매크로 답변 개선",
+          "status": "In Progress",
+          "priority": "Medium",
+          "due": "2026-12-11",
+          "assignee": "나"
+        },
+        {
+          "key": "CS-147",
+          "summary": "고객 데이터 삭제 요청 처리 (법정 기한 12/9)",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-12-09",
+          "assignee": "나"
+        }
+      ]
+    },
+    {
+      "id": "jira-ko-four-of-two",
+      "source": "jira",
+      "lang": "ko",
+      "select": "pick",
+      "count": 4,
+      "ownerRequest": "오늘 손댈 티켓 4개만 골라줘",
+      "now": "2026-12-09T09:00:00+09:00",
+      "items": [
+        {
+          "key": "WEB-602",
+          "summary": "검색 결과 페이지 로딩 개선",
+          "status": "To Do",
+          "priority": "Medium",
+          "assignee": "나"
+        },
+        {
+          "key": "WEB-604",
+          "summary": "결제 버튼 비활성화 버그",
+          "status": "To Do",
+          "priority": "High",
+          "due": "2026-12-09",
+          "assignee": "나"
+        }
+      ]
+    },
+    {
+      "id": "jira-en-triage-three",
+      "source": "jira",
+      "lang": "en",
+      "select": "pick",
+      "count": 3,
+      "ownerRequest": "Triage time: pick the three bugs we should fix first.",
+      "now": "2026-12-14T09:30:00+09:00",
+      "items": [
+        {
+          "key": "BUG-1201",
+          "summary": "Data loss when two users edit the same invoice",
+          "status": "Open",
+          "priority": "High",
+          "reporter": "Ava Bertrand"
+        },
+        {
+          "key": "BUG-1203",
+          "summary": "Tooltip misaligned on Safari",
+          "status": "Open",
+          "priority": "Low"
+        },
+        {
+          "key": "BUG-1204",
+          "summary": "Password reset email not sent for SSO users",
+          "status": "Open",
+          "priority": "High",
+          "reporter": "Nolan Pryce"
+        },
+        {
+          "key": "BUG-1206",
+          "summary": "CSV export times out above 50k rows",
+          "status": "Open",
+          "priority": "Medium",
+          "reporter": "Nolan Pryce"
+        },
+        {
+          "key": "BUG-1207",
+          "summary": "Typo in German locale",
+          "status": "Open",
+          "priority": "Lowest"
+        },
+        {
+          "key": "BUG-1209",
+          "summary": "Session not invalidated after password change",
+          "status": "Open",
+          "priority": "Medium"
+        }
+      ]
+    },
+    {
+      "id": "gh-en-review-first",
+      "source": "github",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "Which of these PRs should I review first? Give me an order.",
+      "now": "2026-11-04T10:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 418,
+          "kind": "pr",
+          "title": "Fix double charge on retry after 3DS timeout",
+          "state": "open",
+          "updatedAt": "2026-11-04T08:10:00+09:00",
+          "author": "callum-ferris"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 412,
+          "kind": "pr",
+          "title": "Bump eslint config",
+          "state": "open",
+          "updatedAt": "2026-10-29T11:00:00+09:00",
+          "author": "dependabot"
+        },
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 77,
+          "kind": "pr",
+          "title": "Partition ledger table by month (design approved)",
+          "state": "open",
+          "updatedAt": "2026-11-03T19:30:00+09:00",
+          "author": "odessa-l"
+        },
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 230,
+          "kind": "pr",
+          "title": "WIP: new onboarding illustrations",
+          "state": "draft",
+          "updatedAt": "2026-11-02T14:00:00+09:00",
+          "author": "ines-o"
+        }
+      ]
+    },
+    {
+      "id": "gh-ko-review-two",
+      "source": "github",
+      "lang": "ko",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "리뷰 요청 들어온 PR 중에 오늘 꼭 봐야 하는 거 두 개만",
+      "now": "2026-11-12T09:40:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 81,
+          "kind": "pr",
+          "title": "정산 배치 동시성 버그 수정 (금요일 배포 대상)",
+          "state": "open",
+          "updatedAt": "2026-11-12T08:00:00+09:00",
+          "author": "gaon-pyeon"
+        },
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 82,
+          "kind": "pr",
+          "title": "README 오타 수정",
+          "state": "open",
+          "updatedAt": "2026-11-11T17:00:00+09:00",
+          "author": "sion-bong"
+        },
+        {
+          "repo": "orchard-labs/admin-console",
+          "number": 145,
+          "kind": "pr",
+          "title": "권한 체크 누락 엔드포인트 보완",
+          "state": "open",
+          "updatedAt": "2026-11-11T22:30:00+09:00",
+          "author": "harim-noh"
+        },
+        {
+          "repo": "orchard-labs/admin-console",
+          "number": 141,
+          "kind": "pr",
+          "title": "테이블 컴포넌트 리팩터링",
+          "state": "open",
+          "updatedAt": "2026-11-06T10:00:00+09:00",
+          "author": "haesol-do"
+        }
+      ]
+    },
+    {
+      "id": "gh-ko-issue-triage",
+      "source": "github",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "새로 올라온 이슈들 심각한 순서대로 정리해줘",
+      "now": "2026-11-17T09:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 241,
+          "kind": "issue",
+          "title": "안드로이드 14에서 앱 실행 직후 크래시",
+          "state": "open",
+          "updatedAt": "2026-11-17T07:50:00+09:00",
+          "author": "byeol-ng"
+        },
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 239,
+          "kind": "issue",
+          "title": "다크모드에서 아이콘 대비 낮음",
+          "state": "open",
+          "updatedAt": "2026-11-16T15:00:00+09:00",
+          "author": "seoha-ban"
+        },
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 240,
+          "kind": "issue",
+          "title": "푸시 알림이 두 번씩 옴",
+          "state": "open",
+          "updatedAt": "2026-11-16T22:40:00+09:00",
+          "author": "juwon-ha"
+        },
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 238,
+          "kind": "issue",
+          "title": "기능 제안: 위젯 지원",
+          "state": "open",
+          "updatedAt": "2026-11-15T10:00:00+09:00",
+          "author": "jian-guk"
+        }
+      ]
+    },
+    {
+      "id": "gh-en-close-stale",
+      "source": "github",
+      "lang": "en",
+      "select": "pick",
+      "ownerRequest": "Which of these can I just close as stale?",
+      "now": "2026-11-20T16:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/infra",
+          "number": 55,
+          "kind": "pr",
+          "title": "Experiment: switch CI runners to arm64",
+          "state": "draft",
+          "updatedAt": "2026-06-02T10:00:00+09:00",
+          "author": "jonas-t"
+        },
+        {
+          "repo": "orchard-labs/infra",
+          "number": 61,
+          "kind": "issue",
+          "title": "Nightly backup job failing intermittently",
+          "state": "open",
+          "updatedAt": "2026-11-19T23:00:00+09:00",
+          "author": "delphine-r"
+        },
+        {
+          "repo": "orchard-labs/infra",
+          "number": 42,
+          "kind": "issue",
+          "title": "Consider moving to a different log shipper",
+          "state": "open",
+          "updatedAt": "2026-04-11T09:00:00+09:00",
+          "author": "brennan-a"
+        },
+        {
+          "repo": "orchard-labs/infra",
+          "number": 63,
+          "kind": "pr",
+          "title": "Raise disk alert threshold",
+          "state": "open",
+          "updatedAt": "2026-11-18T13:00:00+09:00",
+          "author": "callum-ferris"
+        },
+        {
+          "repo": "orchard-labs/infra",
+          "number": 38,
+          "kind": "pr",
+          "title": "Add Terraform docs (superseded by #60)",
+          "state": "open",
+          "updatedAt": "2026-03-20T09:00:00+09:00",
+          "author": "jonas-t"
+        }
+      ]
+    },
+    {
+      "id": "gh-ko-hotfix-one",
+      "source": "github",
+      "lang": "ko",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "지금 핫픽스로 바로 머지해야 할 거 하나만 골라줘",
+      "now": "2026-11-27T15:20:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 431,
+          "kind": "pr",
+          "title": "쿠폰 적용 시 결제 금액 음수 방지",
+          "state": "open",
+          "updatedAt": "2026-11-27T15:00:00+09:00",
+          "author": "gaon-pyeon"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 429,
+          "kind": "pr",
+          "title": "결제 완료 페이지 디자인 개선",
+          "state": "open",
+          "updatedAt": "2026-11-26T11:00:00+09:00",
+          "author": "ines-o"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 430,
+          "kind": "issue",
+          "title": "쿠폰 중복 적용 시 결제 금액이 마이너스로 표시됨",
+          "state": "open",
+          "updatedAt": "2026-11-27T14:10:00+09:00",
+          "author": "juwon-ha"
+        }
+      ]
+    },
+    {
+      "id": "gh-en-stacked-merge-order",
+      "source": "github",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "What order should these get merged in?",
+      "now": "2026-12-01T11:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 95,
+          "kind": "pr",
+          "title": "Expose monthly partitions in the reporting API (stacked on #93)",
+          "state": "open",
+          "updatedAt": "2026-11-30T18:00:00+09:00",
+          "author": "odessa-l"
+        },
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 92,
+          "kind": "pr",
+          "title": "Add partition key column",
+          "state": "open",
+          "updatedAt": "2026-11-29T10:00:00+09:00",
+          "author": "odessa-l"
+        },
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 93,
+          "kind": "pr",
+          "title": "Backfill partitions (stacked on #92)",
+          "state": "open",
+          "updatedAt": "2026-11-30T09:00:00+09:00",
+          "author": "odessa-l"
+        },
+        {
+          "repo": "orchard-labs/ledger-service",
+          "number": 94,
+          "kind": "pr",
+          "title": "Unrelated: upgrade test containers",
+          "state": "open",
+          "updatedAt": "2026-11-28T16:00:00+09:00",
+          "author": "callum-ferris"
+        }
+      ]
+    },
+    {
+      "id": "gh-ko-mixed-order",
+      "source": "github",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "내 앞으로 걸린 PR이랑 이슈들, 오늘 처리할 순서대로 줄 세워줘",
+      "now": "2026-12-08T09:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/admin-console",
+          "number": 152,
+          "kind": "issue",
+          "title": "관리자 로그인 시 2FA 우회 가능 (보안)",
+          "state": "open",
+          "updatedAt": "2026-12-08T07:30:00+09:00",
+          "author": "harim-noh"
+        },
+        {
+          "repo": "orchard-labs/admin-console",
+          "number": 150,
+          "kind": "pr",
+          "title": "엑셀 내보내기 컬럼 추가",
+          "state": "open",
+          "updatedAt": "2026-12-05T16:00:00+09:00",
+          "author": "jian-guk"
+        },
+        {
+          "repo": "orchard-labs/docs",
+          "number": 18,
+          "kind": "issue",
+          "title": "온보딩 문서 링크 깨짐",
+          "state": "open",
+          "updatedAt": "2026-12-02T10:00:00+09:00",
+          "author": "byeol-ng"
+        },
+        {
+          "repo": "orchard-labs/admin-console",
+          "number": 151,
+          "kind": "pr",
+          "title": "세션 만료 시간 설정 UI",
+          "state": "open",
+          "updatedAt": "2026-12-07T21:00:00+09:00",
+          "author": "haesol-do"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 440,
+          "kind": "pr",
+          "title": "연말 프로모션 배너 (12/10 오픈)",
+          "state": "open",
+          "updatedAt": "2026-12-07T18:00:00+09:00",
+          "author": "ines-o"
+        }
+      ]
+    },
+    {
+      "id": "gh-ko-three-of-two",
+      "source": "github",
+      "lang": "ko",
+      "select": "pick",
+      "count": 3,
+      "ownerRequest": "리뷰할 PR 세 개 골라줘",
+      "now": "2026-12-10T14:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 255,
+          "kind": "pr",
+          "title": "크래시 리포팅 SDK 업데이트",
+          "state": "open",
+          "updatedAt": "2026-12-10T10:00:00+09:00",
+          "author": "seoha-ban"
+        },
+        {
+          "repo": "orchard-labs/mobile-app",
+          "number": 256,
+          "kind": "pr",
+          "title": "설정 화면 문구 수정",
+          "state": "open",
+          "updatedAt": "2026-12-10T11:30:00+09:00",
+          "author": "byeol-ng"
+        }
+      ]
+    },
+    {
+      "id": "gh-en-release-blockers",
+      "source": "github",
+      "lang": "en",
+      "select": "pick",
+      "ownerRequest": "Which of these are actually blocking the 4.0 release?",
+      "now": "2026-12-14T10:00:00+09:00",
+      "items": [
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 450,
+          "kind": "issue",
+          "title": "4.0: checkout fails for saved cards migrated from v3",
+          "state": "open",
+          "updatedAt": "2026-12-13T20:00:00+09:00",
+          "author": "nolan-p"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 451,
+          "kind": "issue",
+          "title": "Nice to have: animate the order summary",
+          "state": "open",
+          "updatedAt": "2026-12-12T09:00:00+09:00",
+          "author": "ines-o"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 452,
+          "kind": "pr",
+          "title": "Migration: map legacy card tokens (fixes #450)",
+          "state": "open",
+          "updatedAt": "2026-12-14T08:00:00+09:00",
+          "author": "callum-ferris"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 453,
+          "kind": "issue",
+          "title": "Docs: update screenshots for 4.0",
+          "state": "open",
+          "updatedAt": "2026-12-11T15:00:00+09:00",
+          "author": "byeol-ng"
+        },
+        {
+          "repo": "orchard-labs/checkout-web",
+          "number": 454,
+          "kind": "issue",
+          "title": "Refund webhook signature check rejects valid events after key rotation",
+          "state": "open",
+          "updatedAt": "2026-12-13T23:40:00+09:00",
+          "author": "delphine-r"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-today-order",
+      "source": "todo",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "오늘 할 일 순서 좀 정해줘",
+      "now": "2026-11-05T08:30:00+09:00",
+      "items": [
+        {
+          "title": "분기 예산 의견 회신 (서진님)",
+          "due": "2026-11-06",
+          "status": "open"
+        },
+        {
+          "title": "보안 지적사항 조치 계획 제출",
+          "due": "2026-11-05",
+          "status": "open"
+        },
+        {
+          "title": "면접 평가표 작성 - 임준호",
+          "due": "2026-11-05",
+          "status": "open"
+        },
+        {
+          "title": "택배 반품 접수",
+          "status": "open"
+        },
+        {
+          "title": "팀 회식 장소 예약",
+          "due": "2026-11-12",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-pick-three",
+      "source": "todo",
+      "lang": "ko",
+      "select": "pick",
+      "count": 3,
+      "ownerRequest": "할 일 중에 이번 주에 꼭 끝내야 하는 거 세 개만 골라줘",
+      "now": "2026-11-16T09:00:00+09:00",
+      "items": [
+        {
+          "title": "정부과제 제안서 최종 수정",
+          "due": "2026-11-19",
+          "status": "in progress"
+        },
+        {
+          "title": "하반기 평가 입력",
+          "due": "2026-11-17",
+          "status": "open"
+        },
+        {
+          "title": "노트북 OS 업데이트",
+          "status": "open"
+        },
+        {
+          "title": "사내 보안교육 이수",
+          "due": "2026-11-30",
+          "status": "open"
+        },
+        {
+          "title": "세금계산서 발행 누락 확인",
+          "due": "2026-11-19",
+          "status": "open"
+        },
+        {
+          "title": "책상 서랍 정리",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-en-weekend-two",
+      "source": "todo",
+      "lang": "en",
+      "select": "pick",
+      "count": 2,
+      "ownerRequest": "Pick two things from my list I can knock out this weekend.",
+      "now": "2026-11-20T18:00:00+09:00",
+      "items": [
+        {
+          "title": "Renew passport",
+          "due": "2026-12-31",
+          "status": "open"
+        },
+        {
+          "title": "Draft conference talk outline",
+          "due": "2026-11-30",
+          "status": "open"
+        },
+        {
+          "title": "Fix the leaking kitchen faucet",
+          "status": "open"
+        },
+        {
+          "title": "Prepare board pack numbers",
+          "due": "2026-11-24",
+          "status": "blocked"
+        },
+        {
+          "title": "Call the bank about the card limit",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-drop",
+      "source": "todo",
+      "lang": "ko",
+      "select": "pick",
+      "ownerRequest": "할 일 목록이 너무 길어. 그냥 빼도 되는 거 골라줘",
+      "now": "2026-11-24T21:00:00+09:00",
+      "items": [
+        {
+          "title": "연말정산 서류 제출",
+          "due": "2026-11-27",
+          "status": "open"
+        },
+        {
+          "title": "안 쓰는 구독 서비스 정리",
+          "status": "open"
+        },
+        {
+          "title": "작년 워크숍 사진 정리",
+          "status": "open"
+        },
+        {
+          "title": "고객센터 이관 일정표 검토",
+          "due": "2026-11-26",
+          "status": "open"
+        },
+        {
+          "title": "취미로 보던 강의 마저 듣기",
+          "status": "open"
+        },
+        {
+          "title": "이미 끝난 OKR 회고 문서 다시 읽기",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-dependency-order",
+      "source": "todo",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "마감이랑 선후관계 생각해서 순서 정해줘",
+      "now": "2026-12-01T09:00:00+09:00",
+      "items": [
+        {
+          "title": "베타 오픈 공지문 작성 (점검 결과 반영)",
+          "due": "2026-12-02",
+          "status": "open"
+        },
+        {
+          "title": "베타 오픈 점검 체크리스트 완료",
+          "due": "2026-12-01",
+          "status": "in progress"
+        },
+        {
+          "title": "예산 확정 회의 자료 준비",
+          "due": "2026-12-02",
+          "status": "open"
+        },
+        {
+          "title": "송년회 장소 후보 3곳 추리기",
+          "due": "2026-12-03",
+          "status": "open"
+        },
+        {
+          "title": "베타 사용자 초대 메일 발송 (공지문 확정 후)",
+          "due": "2026-12-03",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-first-thing",
+      "source": "todo",
+      "lang": "ko",
+      "select": "pick",
+      "count": 1,
+      "ownerRequest": "출근해서 제일 먼저 할 거 하나만 골라줘",
+      "now": "2026-12-04T08:10:00+09:00",
+      "items": [
+        {
+          "title": "인턴 최종 평가서 작성 (15시 면담 전)",
+          "due": "2026-12-04",
+          "status": "open"
+        },
+        {
+          "title": "야간 장애 고객 보상안 승인",
+          "due": "2026-12-04",
+          "status": "open"
+        },
+        {
+          "title": "주간 회고 노트 정리",
+          "status": "open"
+        },
+        {
+          "title": "메일함 정리",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-en-order",
+      "source": "todo",
+      "lang": "en",
+      "select": "order",
+      "ownerRequest": "Help me sequence my to-dos for today.",
+      "now": "2026-12-08T08:45:00+09:00",
+      "items": [
+        {
+          "title": "Send pricing deck to Brennan before the 2pm committee",
+          "due": "2026-12-08",
+          "status": "open"
+        },
+        {
+          "title": "Review Callum's PR #452",
+          "due": "2026-12-09",
+          "status": "open"
+        },
+        {
+          "title": "Book flights for January offsite",
+          "due": "2026-12-15",
+          "status": "open"
+        },
+        {
+          "title": "Reply to Ines about pilot pricing",
+          "due": "2026-12-08",
+          "status": "open"
+        },
+        {
+          "title": "Clean up old feature flags",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-errands-order",
+      "source": "todo",
+      "lang": "ko",
+      "select": "order",
+      "ownerRequest": "퇴근길에 처리할 개인 볼일들 순서 정해줘",
+      "now": "2026-12-10T17:30:00+09:00",
+      "items": [
+        {
+          "title": "세탁소 정장 찾기 (20시 마감)",
+          "due": "2026-12-10",
+          "status": "open"
+        },
+        {
+          "title": "약국에서 아이 감기약 사기",
+          "due": "2026-12-10",
+          "status": "open"
+        },
+        {
+          "title": "마트 장보기",
+          "status": "open"
+        },
+        {
+          "title": "은행 ATM에서 경조사비 출금",
+          "due": "2026-12-11",
+          "status": "open"
+        }
+      ]
+    },
+    {
+      "id": "todo-ko-four-of-three",
+      "source": "todo",
+      "lang": "ko",
+      "select": "pick",
+      "count": 4,
+      "ownerRequest": "오늘 할 거 네 개만 골라줘",
+      "now": "2026-12-15T09:00:00+09:00",
+      "items": [
+        {
+          "title": "클라우드 견적 비교표 작성",
+          "due": "2026-12-17",
+          "status": "open"
+        },
+        {
+          "title": "건강검진 결과 확인",
+          "status": "open"
+        },
+        {
+          "title": "팀원 연말 피드백 작성",
+          "due": "2026-12-18",
+          "status": "open"
+        }
+      ]
+    }
+  ]
+}
