@@ -721,3 +721,13 @@ describe('Core\'s final outcome for help.topic plans on negatives (owner decisio
     expect(formatAgentPlanSummary(summary).join('\n')).toContain('clarification golds asked: 1/2');
   });
 });
+
+describe('rule 7 in scoring: Core\'s final outcome of a read plan that leaves a write clause', () => {
+  it('scores none on a none gold (the read + write path answers the turn), a miss-none on a positive', () => {
+    const golden: AgentPlanEvalCase = { id: 'ap-n999', family: 'write-read', status: 'approved', text: '내일 일정 보여주고 내일 9시에 출발 리마인드 해줘', attachments: 0, gold: 'none' };
+    const calendarOnly = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+    expect(scoreAgentPlanOutput(golden, calendarOnly, FIXTURE)).toMatchObject({ outcome: 'none' });
+    const positive: AgentPlanEvalCase = { ...golden, id: 'ap-p999', family: 'compound', gold: { steps: [{ entryId: 'calendar.events', args: { range: 'tomorrow' } }], ambiguity: 'CLEAR' } };
+    expect(scoreAgentPlanOutput(positive, calendarOnly, FIXTURE)).toMatchObject({ outcome: 'miss-none' });
+  });
+});

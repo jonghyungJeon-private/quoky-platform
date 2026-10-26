@@ -59,6 +59,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 rule 7: a read plan that leaves a write clause (2026-10-26, branch `claude/v5-s2-p3`, shadow only)
+
+- **Added (not live).** When a planned read leaves a clause that the existing reminder or to-do grammar recognises as a
+  write, the plan is treated as `none` so the ratified read + write path handles the turn. "알림 만들어줘"-style phrasings
+  the grammars do not know (ap-n131) are not caught; an option is recorded for the owner.
+
 ## Unreleased — the help-scope question over several sources (owner decision 2026-10-26, branch `claude/v5-s2-p3`)
 
 - **Changed (live read path).** A general help question naming several connected sources ("구글 캘린더랑 지메일 연동 설정 어디서

@@ -436,3 +436,12 @@ describe('AgentRunService — shadow, S2 P3 (A1 decision (e), owner decisions (a
     for (const line of shadowLines(h)) expect(JSON.stringify(line)).not.toMatch(/장보기|첫 번째|요약해줘/u);
   });
 });
+
+describe('AgentRunService — shadow, rule 7 (write clause left by a read plan)', () => {
+  it('logs none with the closed reason write-clause; the plan is never run', async () => {
+    const h = harness({ script: [JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] })] });
+    await h.service.runShadow(turn(h, { text: '내일 일정 보여주고 내일 9시에 출발 리마인드 해줘' }, { kind: 'execute', source: 'personal-data', entryId: 'calendar.events', args: { range: 'tomorrow' } }), async () => CHAT);
+    expect(shadowLines(h)).toEqual([expect.objectContaining({ outcome: 'none', noneReason: 'write-clause', validator: 'ok' })]);
+    expect(JSON.stringify(shadowLines(h))).not.toMatch(/출발|리마인드/u);
+  });
+});

@@ -29748,3 +29748,29 @@ independent of planner variance, and it fails in the safe direction (to the exis
 sentence (rule 8 already says a request with a write is none) is probabilistic, needs a v8 and a gate, and would still
 leave silent write drops at the model's error rate. Residual of the check: a write the grammars do not know (an
 English or unusual phrasing) still relies on the planner's `none`.
+
+### ADR-0121 S2 implementation note — rule 7: a read plan that leaves a write clause (owner-approved 2026-10-26)
+
+- **Built (shadow only; S2 is not active).** `validateAgentPlan` rule 7: when the owner's message has two or more conjuncts
+  (the S2 boundaries, verb connective included) and one of them mentions none of the planned reads (no alias or source
+  name of a planned entry, no string value of a planned read's args) while an existing deterministic write grammar
+  claims it (`nl-routing/write-clause.ts` `nlClauseClaimsWrite`: the reminder grammar's create / event-relative create /
+  cancel / clarification, the to-do / work grammar's add / complete / cancel / link and the exact connector writes; closed
+  command kinds, no word added), the plan is `none` with `reason: write-clause`, so the ratified read + write path
+  answers the turn. The ADR-0120 one-step selection path is untouched (the rule lives in the agent validator only).
+  The shadow line logs `noneReason: write-clause`; the agent-plan scorer scores the same final outcome (it validates with
+  the same function). The agent import allowlist gains `../nl-routing/write-clause` (a pure grammar probe).
+- **Measured.** Every gold of `agent-plan.v1.json` and the 873 one-step golds keep their outcome under a perfect planner
+  (no positive becomes `none`). Caught (tests): "내일 일정 보여주고 내일 9시에 출발 리마인드 해줘", "내일 일정 보여주고, 할 일 추가:
+  장보기", "show my calendar for tomorrow and remind me at 9 to leave".
+- **Correction of the proposal: ap-n131 itself is NOT caught.** The proposal assumed the reminder grammar recognises "내일
+  9시에 출발 알림 만들어줘"; it does not ("알림 만들어줘" is A6-selection phrasing: neither the frozen reminder grammar nor the to-do
+  grammar claims it), and neither does "add a todo to follow up". Pinned as the residual in the tests. So the re-score of
+  ed212614 run 2 is unchanged: ap-n131 stays a wrong plan, and the run stays FAILED (multi-step 94.0%).
+- **Option for ap-n131 (needs the owner / CA: it widens the ratified note's trigger).** Hand an uncovered conjunct to the
+  read + write path without a grammar probe: when a read plan leaves a conjunct that mentions none of the planned reads,
+  Core runs the note's one A6 selection over the message (counted against D7 and Q7 exactly as the note's added call);
+  if the A6 selection picks a write whose spans lie in that conjunct, the read + write path proceeds, otherwise the read
+  plan stands. This catches every A6-recognised write (the A6 selector is the measured component for these phrasings)
+  at the cost of one extra selection call on turns with an uncovered conjunct. It amends the ratified note's trigger
+  ("when the planner returns none …"), so it is not implemented.

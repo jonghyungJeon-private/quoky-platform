@@ -644,3 +644,25 @@ describe('agent-plan gate on 2ef88619: an explicit default range needs no period
     expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx('다음 주 일정이랑 안 읽은 메일 보여줘')).ok).toBe(false);
   });
 });
+
+describe('rule 7: a read plan that leaves a write clause is none (owner-approved fix of 2026-10-26, ap-n131)', () => {
+  const tomorrow = [read('calendar.events', { range: 'tomorrow' })];
+  it('a clause an existing write grammar claims, mentioning no planned read, turns the plan into none (reason write-clause)', () => {
+    for (const text of ['내일 일정 보여주고 내일 9시에 출발 리마인드 해줘', '내일 일정 보여주고, 할 일 추가: 장보기', 'show my calendar for tomorrow and remind me at 9 to leave']) {
+      expect(validateAgentPlan(plan(tomorrow), ctx(text)), text).toEqual({ ok: true, plan: { kind: 'none', reason: 'write-clause' } });
+    }
+  });
+
+  it('an extra clause that is no write, or a single clause, leaves the read plan as it is', () => {
+    expect(validateAgentPlan(plan([read('jira.issues')]), ctx('지라 이슈 보여주고 고마워'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    expect(validateAgentPlan(plan(tomorrow), ctx('내일 일정 보여줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    // A planned read's own clause is never probed: the reminder list read of "알림 목록 보여주고 …" names its own source.
+    expect(validateAgentPlan(plan([read('reminder.list'), read('calendar.events', { range: 'tomorrow' })]), ctx('알림 목록이랑 내일 일정 보여줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('residual (recorded): a write the existing grammars do not recognise is not caught — ap-n131 itself', () => {
+    // "알림 만들어줘" is A6-selection phrasing; neither the reminder grammar nor the to-do grammar claims it.
+    expect(validateAgentPlan(plan(tomorrow), ctx('내일 일정 보여주고 내일 9시에 출발 알림 만들어줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    expect(validateAgentPlan(plan([read('jira.issues')]), ctx('show my jira issues and add a todo to follow up'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+});

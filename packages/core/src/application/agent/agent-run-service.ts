@@ -405,7 +405,8 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
   if (!validation.ok) {
     return { outcome: 'refused', ...fields, ...(validation.step !== undefined ? { failedStep: validation.step } : {}), ...(validation.stepReason !== undefined ? { stepReason: validation.stepReason } : {}) };
   }
-  if (validation.plan.kind === 'none') return { outcome: 'none', ...fields };
+  // Rule 7: the read plan left a write clause; the turn goes to the read + write path (logged as a closed reason).
+  if (validation.plan.kind === 'none') return { outcome: 'none', ...fields, ...(validation.plan.reason !== undefined ? { noneReason: validation.plan.reason } : {}) };
   // Decision (h): an unbounded plan is an ask with a bounded suggestion (closed bound, closed entry ids only).
   if (validation.plan.kind === 'ask') {
     const suggestion = validation.plan.suggestion.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');

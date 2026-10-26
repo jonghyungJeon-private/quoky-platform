@@ -20,7 +20,8 @@ const SOURCES = readdirSync(DIR)
   .map((name) => ({ name, text: readFileSync(new URL(name, DIR), 'utf8') }));
 
 /** The named pure `nl-routing` files the agent may import (never the selection service or the barrel). */
-const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard'];
+// `write-clause` (2026-10-26): the existing reminder and to-do grammars as one pure write probe (no I/O, no state).
+const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause'];
 
 function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;

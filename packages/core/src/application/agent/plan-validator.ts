@@ -6,7 +6,8 @@ import { nlReadNotRequest } from '../nl-routing/read-statement';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
-import { aliasStarts, conjunctTokens } from './conjuncts';
+import { nlClauseClaimsWrite } from '../nl-routing/write-clause';
+import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
 
@@ -154,7 +155,11 @@ export type ValidatedAgentStep =
   | { readonly kind: 'summarize'; readonly from: readonly number[]; readonly schema: (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] };
 
 export type ValidatedAgentPlan =
-  | { readonly kind: 'none' }
+  /**
+   * `reason: write-clause` (owner-approved fix of 2026-10-26, ap-n131): the planner's read plan left a clause that an
+   * existing write grammar claims, so the plan is treated as `none` and the ratified read + write path answers the turn.
+   */
+  | { readonly kind: 'none'; readonly reason?: 'write-clause' }
   | {
       readonly kind: 'run' | 'clarify';
       readonly steps: readonly ValidatedAgentStep[];
@@ -251,10 +256,38 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     return fitted === undefined ? refuse('over-bound') : { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls', suggestion: fitted } };
   }
   const related = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
+  // Rule 7 (owner-approved fix of 2026-10-26, ap-n131): a read plan that leaves a write clause uncovered is `none`.
+  if (leavesWriteClause(validated, ctx)) return { ok: true, plan: { kind: 'none', reason: 'write-clause' } };
   return {
     ok: true,
     plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated, connectorCalls, ...(related !== undefined ? { related } : {}) },
   };
+}
+
+/**
+ * Rule 7 (owner-approved fix of 2026-10-26 for ap-n131, under the ratified read + write note): whether the owner's message
+ * has two or more conjuncts (the S2 boundaries, the verb connective included) and one of them mentions none of the planned
+ * reads — no alias or source name of a planned entry, no string value of a planned read's args — while an existing write
+ * grammar claims it as a write (`nlClauseClaimsWrite`: the reminder and to-do / work grammars). Then the planner dropped a
+ * write ("내일 일정 보여주고 내일 9시에 출발 알림 만들어줘" planned as the calendar read alone), and the plan is treated as `none`
+ * so the read + write path (one A6 selection, the read re-plan, the write clause alone as grounding) answers the turn.
+ * Structural; no vocabulary. Applies to the agent planner only: the ADR-0120 one-step selection path is unchanged.
+ */
+function leavesWriteClause(steps: readonly ValidatedAgentStep[], ctx: AgentPlanValidationContext): boolean {
+  const tokens = conjunctTokens(ctx.groundingText, { verbConnective: true });
+  const clauses = new Map<number, ConjunctToken[]>();
+  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
+  if (clauses.size < 2) return false;
+  const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
+  const names = reads.flatMap((step) => [...step.entry.aliases, ...(step.entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' ')));
+  const values = reads.flatMap((step) => Object.values(step.args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : [])));
+  for (const words of clauses.values()) {
+    const text = words.map((token) => token.text).join(' ');
+    const normalized = normalizeForMatch(text);
+    const mentioned = words.some((token) => names.some((name) => aliasStarts(token.word, name))) || values.some((value) => normalized.includes(value));
+    if (!mentioned && nlClauseClaimsWrite(text, { now: ctx.now, timeZone: ctx.timeZone })) return true;
+  }
+  return false;
 }
 
 /** The related step when it is a read and another read of a different source exists; else none (the flag is dropped). */
