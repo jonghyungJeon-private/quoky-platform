@@ -42,6 +42,24 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   after the prompt hash in a hash-only commit.
 - **Not run.** No model or Ollama call was made. The LT dry run (tuning set only) is implemented but needs the owner's
   Strict yes; the G6 run needs the held-out set, its hash commit and a separate Strict yes.
+## Unreleased — Multi-turn context eval `eval:context` (owner priority 2026-10-26; branch `claude/v5-context-eval`)
+
+- **Added.** `pnpm eval:context` with three modes: `plan`, the Strict `run`, and `dry` (no model).
+  - The corpus `golden/context/context-eval.v1.json` has 55 scenarios with 138 turns across 12 categories:
+    - follow-up refinements and list ordinals;
+    - listing-content questions (#280);
+    - local undo, and the calendar undo as a known gap;
+    - suggestion echo;
+    - confirm yes/no, help-scope and clarification;
+    - topic switch and stale context;
+    - channel vs DM.
+  - It runs the production `AppModule` with synthetic fixtures. The real selector is used only in an owner-approved,
+    digest-bound run with hard call caps and the INVALID outage guard.
+- **Added.** Deterministic per-turn scoring and per-category reports, with hard checks for wrong writes, writes without
+  a card, false incapability, fabricated actions, remote leaks and unparseable suggestions. A gate is proposed in
+  `docs/eval/context-eval.md`.
+- **Not run.** No model call was made. The dry baseline and the Core-side misses are recorded in the doc. No runtime
+  behaviour changed.
 
 ## Unreleased — ADR-0121 A3a ratified: local judgment answers and the G6 re-measure protocol (docs only, 2026-10-26)
 
