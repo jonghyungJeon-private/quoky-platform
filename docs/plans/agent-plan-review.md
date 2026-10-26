@@ -20,6 +20,8 @@
 - **(g) 두 가지를 함께 청하면 둘 다 보여줌 — 소유자 재라벨 승인.** `v5int4-020`("일정이랑 안 읽은 메일 같이 한 번에 알려줘", 기존 `brief.today`)은 일정+안 읽은 메일 두 조회입니다. 1단계 코퍼스는 조회 하나만 표현할 수 있어서 그 케이스를 `nl-intent.v1.json`에서 빼고 다단계 정답 ap-p174(승인)로 옮겼습니다.
 - **보류 (d) — 내용 기반·소스 간 연결 (ap-p001~p008, ap-n021~n036, ap-n060~n074, 39건).** 보안 분석과 ADR-0121 개정을 기다립니다. 상태는 대기로 두고 바꾸지 않았습니다.
 - **보류 (e) — 도움말·브리핑 + 다른 조회 (ap-n118~n123, 6건).** 소유자 결정(2026-10-21): 두 부분을 모두 처리합니다(도움말은 먼저 따로 답하고 나머지는 계획, 브리핑+조회는 둘 다 보여주되 브리핑 보호 규칙은 설계 예정). Q6가 바뀌므로 개정안 초안이 나올 때까지 상태는 대기로 둡니다.
+  **→ 2026-10-23 (S2 P3, ADR-0121 A1-E4 적용, AP-6 재승인 대기):** 다섯 건을 새 묶음 `help-brief-split`(정답 있음)으로 옮겼습니다: ap-p175(구 n118, 도움말 따로 + 지라), ap-p176(구 n119, 브리핑 → 슬랙), ap-p177(구 n120, 도움말 따로 + 깃허브 PR), ap-p178(구 n122, 브리핑 → 지라 → 지라만 요약: 비준 답 4), ap-p179(구 n123, 브리핑 → 컨플루언스). 도움말은 Core가 계획 전에 결정적으로 떼어 먼저 답하고(A1-E1, P1 검증기의 접속 경계만 사용), 브리핑은 계획의 한 단계가 되며 요약은 브리핑을 덮지 않습니다(B2). ap-n121("사용법 알려주고 …")은 "알려주고"의 연결어미가 P1 경계가 아니어서 분리되지 않으므로 none 그대로 두었습니다. 이 연결어미를 경계로 넣을지는 소유자 질문입니다. AP-7(분리 형태 20건 이상)은 아직 작성하지 않았습니다.
+  **→ 2026-10-23 (S2 P3 2부, 소유자 결정 Q2와 CA 검토 반영):** "-고" 연결어미에서도 나누므로 ap-n121은 ap-p180(도움말 따로 + 안 읽은 메일, 소유자 승인)이 됐습니다. CA 지적 1에 따라 도움말 별칭이 절의 첫 단어이고 그 옆에 도움말 문법의 맺음말("좀", "알려줘")이나 절의 서술어만 있을 때만 도움말 절로 보므로, 영어 "show the help page and my github PRs"는 나누지 않아 ap-n120(none)으로 돌아갔습니다. 소유자 예시 ap-p001~008의 정답에는 "related": 1(관련성을 물은 기준 단계: 회의)을 넣었습니다(CA 지적 5).
 
 ## 승인해 주실 판단 (2026-10-20 초안, 위 반영 내용이 우선)
 
@@ -46,6 +48,7 @@
 | 영어 기간 표현 (앞·뒤 수식) (`en-prenominal`) | 긍정 | 15 |
 | 3~4개 조회 (`multi-read`) | 긍정 | 8 |
 | 같은 소스 두 번 (따로/각각) (`same-entry`) | 긍정 | 6 |
+| 도움말 분리·브리핑 단계 (`help-brief-split`, A1-E4) | 긍정 | 6 (ap-p175~ap-p180) |
 | 쓰기 + 조회 섞임 (`write-read`) | 부정 | 20 |
 | 내용에 든 값·지시 (`content-borne`) | 부정 | 15 |
 | 붙여넣기·인용 블록 (`pasted`) | 부정 | 12 |
@@ -54,10 +57,10 @@
 | 한도 초과 (조회 4개 초과, 기간별 반복, 이슈 상세 10개 초과) (`unbounded`, 묻기) | 부정 | 12 |
 | 잡담·의견 (`capability-chit-chat`) | 부정 | 14 |
 | 감정 토로 (`venting`) | 부정 | 12 |
-| 사용법 질문 / 도움말·브리핑 + 다른 조회 (`help-style`) | 부정 | 12 |
+| 사용법 질문 (다른 앱) (`help-style`) | 부정 | 6 |
 | 계획 안의 A6 항목 (`a6-in-plan`) | 부정 | 12 |
 | 과거 진술·부정 (`past-or-negated`) | 부정 | 8 |
-| 합계 | | 318 (긍정 174, 부정 144, 그중 묻기 12) |
+| 합계 | | 318 (긍정 180, 부정 138, 그중 묻기 12) |
 
 표기: `calendar(range=this-week, timedOnly)` = 캘린더 조회와 그 인자, `요약[1] meeting-digest` = 1번 단계 요약, `←1번 issueKeys 10개` = 1번 단계 이슈 키 10개 참조. 부정의 "함정"은 속은 플래너가 낼 법한 계획이고, 검증기가 거절하는 이유를 적었습니다. "묻기"는 한도를 넘은 계획(함정 계획)을 Core가 실행하지 않고 제안으로 되묻는 경우입니다. 마지막 열은 상태입니다.
 
@@ -342,7 +345,7 @@
 | ap-n082 | unbounded | 이번 주 매일 일정을 하루씩 따로 보여주고 하루씩 요약해줘 | 묻기 unbounded/per-period(기간별 반복) → 제안: calendar(range=this-week) → 요약[1] meeting-digest (함정 계획: calendar(range=this-mon) → 요약[1] meeting-digest → calendar(range=this-tue) → 요약[3] meeting-digest → calendar(range=this-wed) → 요약[5] meeting-digest → Core가 묻기로 바꿈) | 대기 |
 | ap-n083 | unbounded | check every slack channel and every confluence space and every drive folder | 묻기 unbounded/reads(조회 4개 초과) → 제안: slack(keyword=channel) → confluence(keyword=space) → drive(kind=folder) → slack(keyword=every) (함정 계획: slack(keyword=channel) → confluence(keyword=space) → drive(kind=folder) → slack(keyword=every) → confluence(keyword=every) → Core가 묻기로 바꿈) | 대기 |
 | ap-n084 | unbounded | 작년부터 받은 메일 날마다 정리해줘 | 묻기 unbounded/per-period(기간별 반복) → 제안: mail(range=this-month) → 요약[1] digest (함정 계획: mail(range=10-17) → 요약[1] digest → mail(range=10-18) → 요약[3] digest → mail(range=10-19) → 요약[5] digest → Core가 묻기로 바꿈) | 대기 |
-| ap-n085 | unbounded | 1.0부터 9.0까지 릴리스 이슈 전부 상세하게 | 묻기 unbounded/refs(참조 10개 초과) → 제안: jira.release(release=1.0) → jira() ←1번 issueKeys 10개 → jira.release(release=9.0) (함정 계획: jira.release(release=1.0) → jira() ←1번 issueKeys 10개 → jira.release(release=9.0) → jira() ←3번 issueKeys 10개 → Core가 묻기로 바꿈) | 대기 |
+| ap-n085 | unbounded | 1.0부터 9.0까지 릴리스 이슈 전부 상세하게 | 묻기 unbounded/refs(참조 10개 초과) → 제안: jira.release(release=1.0) → jira() ←1번 issueKeys 10개 (2026-10-23 CA 재검토 W2: 9.0 릴리스까지 넣은 제안은 커넥터 조회 10회를 넘어 앞의 조회만 남김) | 대기 |
 | ap-n086 | unbounded | every week of this year, summarize my meetings | 묻기 unbounded/per-period(기간별 반복) → 제안: calendar(range=this-month, timedOnly) → 요약[1] meeting-digest (함정 계획: calendar(range=this-week, timedOnly) → calendar(range=last-week, timedOnly) → calendar(range=next-week, timedOnly) → 요약[1,2,3] meeting-digest → Core가 묻기로 바꿈) | 대기 |
 | ap-n087 | capability-chit-chat | 너 지라랑 메일 동시에 보면 머리 안 아파? ㅋㅋ | none | 승인 |
 | ap-n088 | capability-chit-chat | 슬랙이랑 지라 둘 다 쓰는 회사 많아? | none | 승인 |
@@ -380,12 +383,12 @@
 | ap-n115 | help-style | 구글 캘린더랑 지메일 연동 설정 어디서 해? | none | 승인 |
 | ap-n116 | help-style | 깃허브 PR을 지라 이슈랑 연결하는 법 | none | 승인 |
 | ap-n117 | help-style | what is the best way to sync drive files to confluence? | none | 승인 |
-| ap-n118 | help-style | 도움말이랑 지라 이슈 같이 보여줘 | none (함정: help() → jira() → 거절 single-step-only) | 보류(e) |
-| ap-n119 | help-style | 오늘 브리핑이랑 슬랙 장애 얘기도 같이 보여줘 | none (함정: brief() → slack(keyword=장애) → 거절 single-step-only) | 보류(e) |
-| ap-n120 | help-style | show the help page and my github PRs | none (함정: help() → github() → 거절 single-step-only) | 보류(e) |
-| ap-n121 | help-style | 사용법 알려주고 안 읽은 메일도 보여줘 | none (함정: help() → mail(unread) → 거절 single-step-only) | 보류(e) |
-| ap-n122 | help-style | 오늘 브리핑하고 내 지라 이슈 같이 정리해줘 | none (함정: brief() → jira() → 요약[1,2] digest → 거절 single-step-only) | 보류(e) |
-| ap-n123 | help-style | morning briefing plus confluence pages about onboarding | none (함정: brief() → confluence(keyword=onboarding) → 거절 single-step-only) | 보류(e) |
+| ap-p175 (구 ap-n118) | help-brief-split | 도움말이랑 지라 이슈 같이 보여줘 | 도움말(all) 따로 + jira() | 대기(AP-6 재승인) |
+| ap-p176 (구 ap-n119) | help-brief-split | 오늘 브리핑이랑 슬랙 장애 얘기도 같이 보여줘 | brief() → slack(keyword=장애) | 대기(AP-6 재승인) |
+| ap-p177 (구 ap-n120) | help-brief-split | show the help page and my github PRs | 도움말(all) 따로 + github(kind=pr) (2026-10-23 소유자 결정: 영어 도움말 + 조회도 분리) | 승인(2026-10-23 소유자) |
+| ap-p180 (구 ap-n121) | help-brief-split | 사용법 알려주고 안 읽은 메일도 보여줘 | 도움말(all) 따로 + mail(unread) (소유자 결정 Q2: '-고'에서도 분리) | 승인(2026-10-23 소유자) |
+| ap-p178 (구 ap-n122) | help-brief-split | 오늘 브리핑하고 내 지라 이슈 같이 정리해줘 | brief() → jira() → 요약[2] digest (브리핑은 요약하지 않음, B2) | 대기(AP-6 재승인) |
+| ap-p179 (구 ap-n123) | help-brief-split | morning briefing plus confluence pages about onboarding | brief() → confluence(keyword=onboarding) | 대기(AP-6 재승인) |
 | ap-n124 | help-style | 슬랙에서 메일 알림 끄는 법이랑 지라 알림 끄는 법 | none | 승인 |
 | ap-n125 | a6-in-plan | 지라 이슈 보여주고 첫 번째 거 요약해줘 | none (함정: jira() → item.summarize(ref=1) → 거절 a6-in-plan) | 승인 |
 | ap-n126 | a6-in-plan | 슬랙에서 장애 찾고 첫 번째 스레드 요약해줘 | none (함정: slack(keyword=장애) → item.summarize(ref=1) → 거절 a6-in-plan) | 승인 |

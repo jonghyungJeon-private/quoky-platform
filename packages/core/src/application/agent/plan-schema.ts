@@ -9,10 +9,15 @@ import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput, type NlAmbiguity, 
  *
  * - **the selection form** (ADR-0120 D3, unchanged): `{entryId | "none", args, ambiguity, alternatives}`. It is a one-step
  *   plan (or `none`), exactly today's selection, so the read prompt's examples stay valid outputs;
- * - **the steps form** (new): `{"steps": [step, …], "ambiguity": "CLEAR" | "NEEDS_CLARIFICATION"}` with 1–6 steps. A step is
+ * - **the steps form** (new): `{"steps": [step, …], "ambiguity": "CLEAR" | "NEEDS_CLARIFICATION", "related"?: <step no>}` with
+ *   1–6 steps (`related`, S2 P3 / owner decision (a), CA finding 5: the number of the read step the owner relates the other
+ *   reads to; Quoky reads
+ *   each on its own and the reply says the relation was not checked; it changes no step). A step is
  *   either a read `{"entryId", "args"?, "ref"?}` or a summary `{"summarize": [<step no>, …], "schema": "<id>.v<N>"}`.
  *   A `ref` is `{"step": <earlier step no>, "field": "<projected id field>", "take": <1..>}`: the closed-format ids a
- *   deterministic projector takes from that earlier read (stage S2 P3), never a model-written value.
+ *   deterministic projector takes from that earlier read (stage S2 P3), never a model-written value. An optional `"at":
+ *   <1..>` (owner decision of 2026-10-26, "지라 이슈 보여주고 첫 번째 거 요약해줘") picks the ONE id at that position of the
+ *   earlier list, in the order Quoky shows it in this reply (`take` 1; the validator checks the rest).
  *
  * Parsing is strict and total: unknown keys, wrong types, out-of-range numbers, more than 6 steps or more than 2 KB give
  * `null` (the caller treats the call as failed; no retry). The catalog, the step mix, the references and every argument
@@ -41,6 +46,11 @@ export interface AgentPlanRef {
   readonly field: string;
   /** How many values the reference carries (the validator bounds it at 10 per reference and 10 per run). */
   readonly take: number;
+  /**
+   * Owner decision of 2026-10-26 (a position reference): the 1-based position of the ONE item in the earlier list, in the
+   * order Quoky renders that list in this reply. With `at`, `take` is 1.
+   */
+  readonly at?: number;
 }
 
 export type AgentPlanStep =
@@ -69,12 +79,19 @@ export type AgentPlan =
       readonly alternatives: readonly NlSelectionCandidate[];
       /** Logged only; never decides anything. */
       readonly confidence?: number;
+      /**
+       * Steps form only (owner decision (a), 2026-10-20; CA finding 5): the number of the read step the owner relates the
+       * other reads to (the meetings of "이번 주 회의 정리하고 관련 jira 이슈도 같이").
+       * Nothing is joined (a content value is never a query); the reply adds a fixed note that the relation was not
+       * checked. It never changes, adds or removes a step.
+       */
+      readonly related?: number;
     };
 
-const STEPS_TOP_KEYS = new Set(['steps', 'ambiguity', 'confidence']);
+const STEPS_TOP_KEYS = new Set(['steps', 'ambiguity', 'confidence', 'related']);
 const READ_KEYS = new Set(['entryId', 'args', 'ref']);
 const SUMMARY_KEYS = new Set(['summarize', 'schema']);
-const REF_KEYS = new Set(['step', 'field', 'take']);
+const REF_KEYS = new Set(['step', 'field', 'take', 'at']);
 
 /** Parse the planner's raw text strictly (a single surrounding code fence is tolerated, as for the selection output). */
 export function parseAgentPlanOutput(raw: string): AgentPlan | null {
@@ -97,6 +114,9 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
   if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return null;
   const confidence = value.confidence;
   if (confidence !== undefined && (typeof confidence !== 'number' || !Number.isFinite(confidence))) return null;
+  // A step number (structure, CA finding 5); any other value is malformed.
+  const related = value.related;
+  if (related !== undefined && !isStepNumber(related)) return null;
   const rawSteps = value.steps;
   if (!Array.isArray(rawSteps) || rawSteps.length === 0 || rawSteps.length > AGENT_PLAN_MAX_STEPS) return null;
   const steps: AgentPlanStep[] = [];
@@ -112,6 +132,7 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
     ambiguity: value.ambiguity,
     alternatives: [],
     ...(typeof confidence === 'number' ? { confidence } : {}),
+    ...(typeof related === 'number' ? { related } : {}),
   };
 }
 
@@ -128,6 +149,7 @@ export function agentPlanParseFailure(raw: string): string | undefined {
   if (!('steps' in value)) return 'selection-form-invalid';
   if (!Object.keys(value).every((key) => STEPS_TOP_KEYS.has(key))) return 'unknown-key';
   if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return 'bad-enum:ambiguity';
+  if (value.related !== undefined && !isStepNumber(value.related)) return 'bad-related';
   if (!Array.isArray(value.steps)) return 'bad-steps';
   if (value.steps.length === 0) return 'no-steps';
   if (value.steps.length > AGENT_PLAN_MAX_STEPS) return 'too-many-steps';
@@ -175,11 +197,13 @@ function parseStep(value: unknown): AgentPlanStep | null {
 
 function parseRef(value: unknown): AgentPlanRef | null {
   if (!isPlainObject(value) || !Object.keys(value).every((key) => REF_KEYS.has(key))) return null;
-  const { step, field, take } = value;
+  const { step, field, take, at } = value;
   if (!isStepNumber(step)) return null;
   if (typeof field !== 'string' || field.length === 0 || field.length > MAX_FIELD_CHARS || !/^[a-zA-Z][a-zA-Z0-9]*$/.test(field)) return null;
   if (typeof take !== 'number' || !Number.isInteger(take) || take < 1 || take > MAX_REF_TAKE_PARSED) return null;
-  return { step, field, take };
+  if (at === undefined || at === null) return { step, field, take };
+  if (typeof at !== 'number' || !Number.isInteger(at) || at < 1 || at > MAX_REF_TAKE_PARSED) return null;
+  return { step, field, take, at };
 }
 
 function parseArgs(value: unknown): Record<string, NlArgValue> | null {

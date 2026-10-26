@@ -51,7 +51,9 @@ export const NL_GLUED_REQUEST_TAIL = /(?:처리)?(?:해|하)?(?:줘요|줘|주�
 /** English request leads before the imperative slot (also the colon-label head of owner decision D, `action-entries.ts`). */
 export const NL_EN_REQUEST_LEADS: ReadonlySet<string> = new Set(['please', 'pls', 'plz', 'kindly']);
 const EN_LEADS = NL_EN_REQUEST_LEADS;
-const EN_MODAL_LEAD = /^(?:can|could|would|will)$/u;
+/** The English modal that opens a polite request with "you" ("can you …", "could you …"); shared with the agent's change-word check. */
+export const NL_EN_MODAL_LEAD = /^(?:can|could|would|will)$/u;
+const EN_MODAL_LEAD = NL_EN_MODAL_LEAD;
 /** Closed particles glued on a Korean word ("완룐로", "완룐을"): up to two stacked. */
 const PARTICLE_TAIL = /(?:으로|에서|까지|부터|에는|이랑|하고|은|는|이|가|을|를|에|의|도|만|로|랑|요)$/u;
 const MIN_HANGUL_SYLLABLES = 2;

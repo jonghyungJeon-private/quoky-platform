@@ -29264,3 +29264,816 @@ dev sets for tuning).
 - **G9.** `s2-answer-list`, ≥ 60 cases, KO and EN, owner-approved per batch, including a social-engineering invite
   family; a scripted always-yes owner; 0 successes over 3 Strict runs. The success check of the social-engineering
   family is deferred to A3b and must be defined before the corpus is frozen.
+### ADR-0121 S2 implementation note — P3 part 1: the reply notes, the bulk detail read, the help split and brief step, the connector charge, and the release list order (2026-10-23, branch `claude/v5-s2-p3`)
+
+Scope: the P3 items of the coordinator's list, each checked against the record first. **No executor exists yet**: the
+P3 core of the S2 plan (§3 P3: the `structure?` port field, `structure-projector.ts`, the sequential executor with its
+run budgets, `quarantined-summary.ts`, `reply-assembler.ts`, the `quoky.agentRun` audit, M1') is not on `origin/main`
+and is not built here. Everything below is either live code that needs no executor (the release list order, the Jira
+bulk query) or a pure, tested piece the executor will compose; `shadow` logs what can be measured. `active` stays
+refused (`AGENT_MODE_ACTIVE_NOT_RELEASED`). A2 is not touched (no `answer` step, no topic consent). The read / A6 / R2
+selector prompts (`nl-select.v67`, A6 `v65`, R2 `v66`) are unchanged.
+
+- **Release list order (live; A8 "newest 10").** The owner's DM smoke of 2026-10-22 showed "릴리스 (미출시 4 · 출시 27,
+  최근 10개 표시)" listing 20261020, 20261112, 20261028, 20260917, 20261015, …: the rows were Jira's `-sequence` order (the
+  project's manual ordering), not dates. `renderReleaseList` now orders by Jira's release date (`dueDate`), newest first,
+  released and unreleased together (an upcoming version dated later leads; the record's "newest 10" and the renderer's
+  own "newest first" doc, no status grouping); versions without a release date follow in the connector's order; equal
+  dates keep the connector's order (stable). No date is read from a version name. On a truncated listing the order
+  covers the first page read (the header keeps "이상"). Residual: if the live versions carry no release date, the order
+  stays Jira's sequence (fixing that would need the connector's `orderBy=-releaseDate`, which also changes which versions
+  a partial first page holds for the name lookups; left for a measured follow-up).
+- **Item 1 — the detail cap (owner decision (c), A1 ratification answer 8).** `renderRefDetailCapNote`: when a reference
+  read the full 10 and the listing held more, "이슈 N개 중 10개만 자세히 보여드렸어요. 더 보려면 '다음 10개 보여줘'라고 말씀해
+  주세요." (the recorded hint; EN equivalent; "N개 이상" for a cut listing). A smaller `take` (the owner's own number) or a
+  listing of 10 or fewer adds nothing. `agentReplyNotes` takes Core's counts per step (the source listing, the bulk read).
+  **The "다음 10개" follow-up is not built (conservative reading, open question 1):** decision (c) asks P3 for "a bounded
+  follow-up (the next 10 keys of the same release listing, structure only)", but S2 Q9 keeps no follow-up state from agent
+  replies, and the A1 and A2 records enumerate Q9's exceptions (the handoff, the topic consent) without this one; the
+  follow-up also needs the executor. Until the owner records a Q9 exception, the hint promises a request the agent cannot
+  yet continue: it must be built or the hint dropped before P5.
+- **Item 2 — one bulk detail call, charged once (the "same-source detail reads" note).** A new read-only named query
+  `items-by-key` (`ConnectorQueryName.ITEMS_BY_KEY`; an additive ADR-0100 D7 vocabulary entry authorized by that note):
+  1..10 distinct keys of the closed `CONNECTOR_ITEM_KEY` shape (`parseItemsByKeyParams`). The Jira adapter reads them in
+  ONE request (`/rest/api/3/search/jql`, `key in ("A-1", …) ORDER BY key ASC`, keys quoted, `maxResults` = the key count,
+  the jira.issues fields with the description bounded and the token redacted); only issues asked for are returned (a moved
+  issue under another key is dropped); a 400 naming an issue key is `NOT_FOUND`. Every other adapter refuses the name. The
+  validator's **static connector-call charge** (`agentPlanConnectorCharge`, rule 6): an external read 1, a reference step
+  1 whatever its `take`, the brief its configured worst case (`briefConnectorCalls`, default 7: B4 / ratification answer
+  6), the to-do, reminder and help reads 0; over 10 is refused `over-bound`. With the default brief no plan of ≤ 4 reads
+  exceeds 10 (7 + 3); the rule bites only on a larger configured brief. The executor's run budget still counts real calls
+  (a `jira.release` lookup may read the project and version lists too) and ends the run with a partial reply.
+- **Item 3 — decision (a) and decision (e).**
+  - *Decision (a) fixed note.* The record names the trigger as the owner's words asking for relatedness ("관련",
+    "related"); a word match would be a phrase list (owner rule), so the planner marks it: prompt rule 9 asks for
+    `"related": true` next to `"steps"` when the owner relates one read to another (the reads stay separate). The parse
+    accepts only a boolean (`bad-related` otherwise); the validator keeps the flag only on a plan that reads two or more
+    sources; no step depends on it. `renderRelatedUncheckedNote` names the first read's source with a closed noun:
+    "회의와 관련 있는지는 확인하지 않았어요." for a calendar read (the recorded text), "메일과 …" etc. (agent's choice, for review:
+    planner flag over a word list). The eval does not score the flag (Q10 compares steps); `shadow` logs `related`.
+  - *Decision (e), A1-E1 help split* (`help-split.ts`, pure): conjuncts at exactly the P1 boundaries ("and", "그리고", a
+    comma, a glued -랑 / -하고); a conjunct is the help clause when the frozen ADR-0104 grammar matches it
+    (`detectHelpIntent`, which also names the topic) or one of its words starts with a `help.topic` alias and none names
+    another offered entry (fail closed); exactly one help clause and something else asked, plain owner text only (no
+    placeholder). The rest (minus the joining boundary word) is the planner's text and the grounding text. Measured: 0 of
+    the 873 `nl-intent.v1.json` and 0 of the 605 `nl-action.v1.json` cases split (A1-E5 byte-identity, pinned by test);
+    ap-n118 and ap-n120 split. **ap-n121 ("사용법 알려주고 안 읽은 메일도 보여줘") does not split**: the verb connective of
+    "알려주고" is not a P1 boundary, and A1-E1 says the P1 boundaries (open question 2). The agent import allowlist gains
+    `../help-intent/help-intent` (pure, import-free; pinned).
+  - *A1-E2, the brief as a step.* `AGENT_SINGLE_STEP_ONLY` is `['help.topic']`. New refusals `brief-repeated` (a second
+    brief step) and `summary-covers-brief` (B2); B3 holds by the source table (no id field: `ref-cross-source` /
+    `ref-field`); B4 is the connector charge above; B1 labels are `readOutputLabel` unchanged; B5 is `not-dm`.
+  - *A1-E3, prompt `agent-plan.v5` → `agent-plan.v6`* (never run against a model; the coordinator's agent-plan gate
+    decides): rule 8 "brief.today may be ONE step of a plan, never two, and a summarize step never covers it … help.topic
+    is never part of a plan of two or more steps: a message asking for help together with another read is none" (help
+    reaches the planner only when the split could not apply, so none stays the safe answer); rule 9's related flag. No
+    example changed; RAG-0 clean; the sha256 pin moved.
+  - *A1-E4, gold (pending the owner's AP-6 re-approval).* ap-n118, n119, n120, n122, n123 moved to the new positive
+    family `help-brief-split` as ap-p175..ap-p179 (ids changed because ap-n ids are negatives; each note says "Was …"):
+    help `all` + `[jira.issues]`; `[brief.today, slack.search 장애]`; help `all` + `[github.items kind=pr]` (the owner's PR
+    relabel convention); `[brief.today, jira.issues, summarize [2] digest.v1]` (answer 4); `[brief.today,
+    confluence.search onboarding]`. ap-n121 stays a `none` negative (see above). Multi-step positives 174 → 179,
+    negatives 144 → 139. The case schema gains `help`; the self-check needs "≥ 2 sections" and the split to give exactly
+    the gold topic (and no split without `help`). **AP-7 (≥ 20 new split-shape cases) is not drafted** (owner batch).
+  - *Eval.* `caseContext` runs the help split as the runtime does; a positive is exact only with the exact rest plan and
+    the gold help section (an extra section is a miss, diff `help`).
+  - *A1-E5 shadow.* The line gains `split` (`help` / `brief` / `none`), `helpTopic` (the entry's closed enum value),
+    `connectorCalls`, `related`; a split turn logs no one-step agreement (the live path answered the whole message).
+- **Item 4 — the unbounded ask (decision (h)): already done in review set A (#276).** `renderUnboundedAsk` exists and
+  `shadow` logs the ask's closed fields; there is no P3 executor or `active` reply path to wire it to (P5 sends it). No
+  change.
+- **Item 5 — the action-in-plan guidance (decision (f), A6-D4).** The record: "목록 보여주고 첫 번째 거 요약해줘" shows the
+  list and asks which number to summarize; the one-item summary is the next turn's A6 `item.summarize`.
+  `a6InPlanGuidance` (pure) answers only a plan refused `a6-in-plan`: the reads without the A6 steps (summaries and
+  references that depended on them dropped, the rest renumbered and validated by the same validator) as a candidate
+  remainder, the closed kind (`item-read` when every A6 step is the one ITEM_READ entry `item.summarize`, else `action`)
+  and a fixed note ("한 항목 요약은 목록을 보신 뒤 번호로 말씀해 주세요. 예: '1번 요약해줘'" / "추가·변경·취소 같은 작업은 조회와
+  함께 하지 않았어요. 따로 한 번 더 말씀해 주세요."). Never a yes/no question (nothing is pending). Whether the remainder
+  runs is the P5 dispatcher's decision (open question 3: the record covers the item-summary case; for a write mixed with
+  reads the gold is `none` and the record says nothing about running the read part). `shadow` logs `a6Kind` and
+  `a6Remainder` (`run` / `none`).
+- **Versions.** Planner `agent-plan.v6` (pin `f4bb3828…`). Read / A6 / R2 selector prompts unchanged. Deps stay 38. No
+  migration.
+- **Tests (targeted, offline; no model call).** `work-chat/jira-release.test.ts` (+5: the live order, determinism over
+  input orders, undated after dated, no dates, through the lookup); `connector-jira/items-by-key.test.ts` (4: ten keys in
+  exactly one request, only asked issues, shape refusals before any request, the 400 mapping); `ports/connector-query`
+  (+1); `agent/plan-validator.test.ts` (+13: brief rules, the charge, over-bound, the related flag);
+  `agent/help-split.test.ts` (14, incl. the A1-E5 corpus byte-identity); `agent/reply-notes.test.ts` (9);
+  `agent/agent-run-service.test.ts` (+4: help split, brief and summary-covers-brief, related, a6 fields; content-free);
+  `agent/plan-prompt.test.ts` (v6 edits, pin); `agent/agent-boundary.test.ts` (allowlist, file list);
+  `tools/agent-plan-eval.test.ts` (+4: help self-check and scoring, the brief, ap-n121; the perfect planner 179/179,
+  674/674, 12/12). `pnpm build` passes.
+- **Open questions for the owner.**
+  1. The "다음 10개" follow-up needs a Q9 exception (structure-only state: the release listing's next keys) and the
+     executor; until then the recorded hint promises a follow-up that does not exist.
+  2. Should the help split also cut at the Korean verb connective "-고" ("사용법 알려주고 …", ap-n121)? A1-E1 names the P1
+     boundaries only; A1-E4's proposed gold for ap-n121 needs it.
+  3. For a plan refused `a6-in-plan` that holds a write, should the read part run (with the "do it separately" note) or
+     should the turn stay `none` as the write-read gold says?
+  4. The release list puts upcoming and shipped versions together by date (newest first). Unreleased first (soonest
+     first), then released (newest first) is the alternative.
+- **Not done here.** The P3 executor and everything it carries (above), AP-7, the AP-6 re-approval, any model-in-the-loop
+  run (the coordinator runs the agent-plan gate on v6), reviews (CA for the port addition and the validator rules, Codex,
+  `/security-review`).
+
+### ADR-0121 S2 implementation note — P3 part 2: the owner's answers of 2026-10-23 and the review of part 1 (branch `claude/v5-s2-p3`)
+
+Reviews of P3 part 1 (987217e6): Codex clean; the Chief Architect PASS-with-fixes (findings 1–6 and suggestions below).
+The owner answered the four open questions of part 1 on 2026-10-23 (relayed by the coordinator). Still: no executor,
+`active` refused (`AGENT_MODE_ACTIVE_NOT_RELEASED`), no A2 code, the read / A6 / R2 selector prompts unchanged
+(`nl-select.v67`, A6 `v65`, R2 `v66`), deps 38.
+
+#### Owner decisions (2026-10-23)
+
+1. **Q1 — "다음 10개": an owner decision amending S2 plan Q9 (third exception).** Besides the A1 pending handoff and the
+   A2 topic consent, S2 may keep ONE pending pagination cursor after an agent reply that showed "N개 중 10개": the source,
+   the query identity (the release listing the reference read: project key and release id) and the offset of the next
+   keys. No item content, no title, no key list, no model output. It is valid only for the owner's next message in the
+   same DM, per actor, in the single pending slot shared with the other pendings (a new turn voids it), and it expires
+   like the NL pending question (`NL_PENDING_TTL_MS`, 5 minutes). The kill switch voids it. **Not built in part 2**: the
+   follow-up runs the next 10 detail reads through the executor (a bulk `items-by-key` query from the cursor), and the
+   planner must see the cursor as structure to plan the continuation; both are P3 part 3 work. Until the follow-up runs,
+   the hint is not shown: `renderRefDetailCapNote` takes `followUp` (default `false`) and renders only "이슈 N개 중 10개만
+   자세히 보여드렸어요." (tested: the hint is absent by default in KO and EN).
+2. **Q2 — the help split cuts at the Korean verb connective "-고".** Built (below); ap-n121 → ap-p180, owner-approved.
+3. **Q3 — a read and a write in one request: handle both in one turn.** Reads through S2 / the selector as usual; the
+   write part through the existing A6 / connector-write path with its own rules: complete args ("내일 10시 30분에 12-1 회의실에
+   BE 아키텍처 안건으로 회의 잡아줘") go straight to the existing approval card (an external write; no extra question);
+   incomplete args ("회의 하나 잡아줘") get the existing clarification ("어떤 회의를 잡아드릴까요?"). S2 itself stays read-only.
+   **Checked against the record: not implementable under the settled text; STOPPED for this part.** It conflicts with:
+   - ADR-0121 D5 and A6-D4 ("A6 entries are never offered to an ADR-0121 plan with more than one step, and such a plan
+     is refused"): the planner sees READ entries only, so it cannot name the write part, and a plan holding one is
+     refused, not split;
+   - S2 plan Q2 (at `active` the v2 planner is the single M1 call) and Q6 ("A6 entries never"): handling the write part
+     in the same turn needs either a second selection call over the write clause (the A6 selector) or a deterministic
+     clause split that hands the write clause to the A6 path;
+   - D7 (≤ 5 model calls per run) only if that second call is counted in the run.
+   The gold changes it implies are **not made** (they wait for the note): the write-read family ap-n001..ap-n020 and
+   the write cases of the a6-in-plan family (ap-n127, n128, n130, n131, n133, n134, n135) would become split-shape cases
+   (the read plan as gold, the write part scored by the A6 corpora), and prompt rule 8's "a request with any write in it
+   is none" would change. The fixed note "추가·변경·취소 같은 작업은 조회와 함께 하지 않았어요" of `a6InPlanGuidance` becomes
+   obsolete once the note is ratified.
+   **Draft replaced (2026-10-23):** the owner ratified the Chief Architect's corrected text, recorded below as "ADR-0121
+   S2 note — a read and a write in one owner turn".
+4. **Q4 — the release list order.** Unreleased versions first, the soonest release date first; then released versions,
+   the newest first; undated versions after the dated ones of their own group in Jira's order. The header now says
+   "(미출시 N · 출시 M, 예정 → 최근 출시 순 10개 표시)" instead of "최근 10개 표시" (live renderer, tested).
+
+#### Review of part 1 — the Chief Architect's findings
+
+1. **Help split false positives.** The alias form now needs the `help.topic` alias as the clause's HEAD word, alone or
+   with one of the help grammar's own topic particles, and every other word a guide closer of that grammar ("좀",
+   "알려줘") or the clause's predicate (the word that ends it with the connective, or the message's last word, shared).
+   The grammar form needs a guide noun or a Quoky command action in the clause, so "일정 어떻게 돼" (a status question in
+   how-to form) is not help. A message the help grammar matches as a whole (an address included: "Quoky야, 할 일 어떻게
+   취소해?") is today's one-step help, never a split. The help grammar exports its own closed token classes read-only
+   (`isHelpGuideCloser`, `isHelpGuideToken`, `isHelpActionToken`, `isHelpTopicParticle`); no match of the grammar changed.
+   The CA probes are no-split tests. Residual: an English help request whose head word is not the alias ("show the help
+   page and my github PRs") is not split: ap-p177 went back to ap-n120 (`none`, trap `single-step-only`).
+2. **The shared verb.** A last-position help clause leaves its predicate with the rest and the new last word drops its
+   dangling "-랑" / "-이랑" / "-하고" / comma ("지라 이슈랑 도움말 보여줘" → help + "지라 이슈 보여줘"). Residual: the message's
+   last word is taken as the predicate whatever it is ("메일이랑 도움말 페이지" keeps "페이지" with the rest).
+   - *Measurement (owner Q2).* Over every golden corpus with case texts (18 files, 3374 texts: nl-intent 873, nl-action
+     605, r2 212, deictic 183, seed 17, exec-time 26, live4-pending 13, intent-routing 203, turn-handler-routing 419,
+     action-shaped-fallthrough 155, approval-decision 163, agent-plan 318, nl-select pins 79 and the small control
+     corpora): **0 false splits**; only ap-p175 and ap-p180 split (pinned by test). 116 texts contain a "-고" boundary
+     (nl-action 22, nl-intent 13, agent-plan 42, …), none of which splits. The conjuncts are shared in `agent/conjuncts.ts`
+     (`conjunctTokens`, `aliasStarts`); only the help split passes `verbConnective`, so the validator's P1 conjuncts are
+     unchanged (the corpus self-check and the perfect-planner run are unchanged).
+3. **The connector-charge unit.** One unit is now one **connector query** (a named port call), charged from ONE per-entry
+   worst-case table (`AGENT_READ_SOURCES[…].connectorQueries`): Jira issues, GitHub, Slack, Confluence, calendar, mail,
+   Drive 1; `jira.release` 8 (`containers` twice, `releases` for up to 5 candidates, then `releases` or `release-items`);
+   **`todo.list` 2** (part 1 wrongly charged 0: the open list reads the Jira and GitHub work surface); the brief 4 with every
+   section on (calendar 1, Jira 2, mail 1; the shadow job charges this worst case, a caller may pass the configured one);
+   reminders and help 0; a reference step ONE `items-by-key` query. The HTTP requests behind the queries (read-only
+   survey of the handlers and adapters, 2026-10-23): Jira issues 1; `jira.release` up to 17 (four-page project listing
+   twice, five narrowing pages, a four-page version listing); GitHub 1 (4 with a cold App token); Slack up to 21 (one
+   `conversations.info` per uncached channel of 20 matches); Confluence 1; calendar 5 per configured calendar plus a token
+   refresh (C×5+1); mail 11 plus a refresh (list + 10 metadata GETs); Drive 2 plus a refresh; `todo.list` 2 (5 cold);
+   the brief 13 at one calendar (calendar 6, Jira 2, mail 1 + 3 + refresh); `items-by-key` 1 (2 with the key-error retry).
+   **Open (owner / CA): the D7 unit.** With HTTP requests as the unit and the cap at 10, `jira.release`, Slack, calendar,
+   mail and the brief each exceed it alone at their worst, so most approved plans would be refused; the query unit keeps
+   D7's "≤ 10 connector calls" meaningful and is what the validator now enforces. Effect on the gold: ap-n085's bounded
+   suggestion ([`jira.release`, its 10 details, `jira.release`] = 17 queries) no longer fits, so decision (h) fails closed to
+   the bound's refusal (`run-refs-too-many`): it is a `none` negative now (asks 12 → 11). Every other gold is unchanged.
+4. **= Q1** above.
+5. **The relation note's subject.** `related` names the step the owner relates the other reads to (`"related": <step
+   no>`, structure; parse `bad-related` otherwise; the validator keeps it only when it names a read step and another read
+   of a different source exists). The note names that step's source. Planner `agent-plan.v6` → **`agent-plan.v7`** (v6
+   was never run; only the rule 9 sentence changed; pin `043e2d7b…`). Gold: ap-p001..ap-p008 (the owner's example and
+   its variants, still pending) carry `"related": 1`; ap-p054 ("로그인 관련 이슈", "관련" as "about") has none. The scorer
+   compares `related` after the step graph (a missing or another step is a miss, diff `related`) and the self-check
+   requires the gold's `related` to be canonical.
+6. **`items-by-key`.** Read through the capped item reader (1 MB, `TOO_LARGE`); the 400 test is Jira's key-error shape
+   (a message naming the JQL field `'key'` and quoting an asked key); partial failure is handled in the adapter: ONE
+   retry without the refused keys, the result marked `truncated` (at most 2 HTTP requests, one query for the run budget);
+   a second refusal, or every key refused, is `NOT_FOUND`; any other 400 is `INVALID_RESPONSE`, never retried.
+   - **D7 authority of the port addition (CA sign-off in this review).** `ConnectorQueryName.ITEMS_BY_KEY` is an additive
+     ADR-0100 D7 amendment: a read-only named query of 1..10 closed-shape item keys (`parseItemsByKeyParams`), rendered and
+     escaped by the adapter, never owner text, refused by every adapter that cannot bulk-read. Its only caller will be the
+     S2 executor's reference step (keys a deterministic projector took from an earlier same-source read).
+
+*Suggestions applied:* the shared conjunct helper; `a6InPlanGuidance` reuses the caller's validation (the shadow job
+passes it); an item summary with no list to show gets "한 항목 요약은 먼저 그 목록을 조회한 뒤 번호로 말씀해 주세요."; the
+host-source set is gone (the per-entry table replaces it).
+
+#### Gold and versions
+
+Multi-step positives 179 (ap-p177 out, ap-p180 in), negatives 139 (11 asks), approved 259, pending 59. Planner
+`agent-plan.v7` (not gated; the coordinator's agent-plan gate decides). Tests (targeted, offline; no model call):
+`agent/help-split.test.ts` (24: the Q2 cases, CA probes, the shared predicate, the 3374-text measurement, the P1 set kept),
+`agent/plan-validator.test.ts` (the query table, the charge, over-bound, the related step), `agent/reply-notes.test.ts` (the
+hidden hint, `followUp`, the related source, the no-list note, the reused validation), `agent/agent-run-service.test.ts`,
+`agent/plan-prompt.test.ts` (v7 pin), `connector-jira/items-by-key.test.ts` (8), `work-chat/jira-release.test.ts` (Q4),
+`tools/agent-plan-eval.test.ts` (ap-p180 / ap-n120, the related scoring; the perfect planner 179/179, 674/674, 11/11);
+26 files, 1101 tests passed; `pnpm build` passes.
+
+#### Not done here
+
+The executor and everything it carries; the Q1 cursor and follow-up (P3 part 3); the Q3 write-part handling (stopped:
+needs the draft note above ratified); the D7 unit decision; AP-7; any model-in-the-loop run.
+
+#### Codex P2 on P3 part 2 (2026-10-23): the help clause's grammar form
+
+The part 2 grammar form required a guide noun or an action token from the grammar's Korean token classes, so valid
+command how-tos the grammar recognises were no longer split: "how do I add a reminder and show my jira issues" (an
+English verb) and "알림 어떻게 지워요? 그리고 지라 이슈 보여줘" (a polite -요 conjugation). Fix: the help grammar itself
+classifies the form. `detectHelpCommand` (help-intent.ts) is `detectHelpIntent` except a Korean "<topic> 어떻게 <verb>"
+whose verb is the grammar's own become / state head (되 / 돼, "어떻게 돼?", "어떻게 되나요"), which may ask for a status. The
+grammar's `HOWTO_VERB_HEAD` alternation is only split into its do heads and its state heads (the same regex; no match of
+`detectHelpIntent` changed; the help-intent suites pass unchanged); no word was added. The unused token exports of part 2
+(`isHelpGuideToken`, `isHelpActionToken`) are removed. Tests: both regressions plus six polite / English variants split
+(`할 일 어떻게 추가해요?`, `알림 설정 어떻게 하나요?`, `알림 지우는 방법 알려주세요,`, `how can I mark a todo as done …`, `how to
+cancel my reminders, …`, a help clause in last position), the state form does not split (`일정 어떻게 돼요?`, `할 일 어떻게
+되나요,`), and the CA probes still do not. Re-measured over the same 18 golden corpora (3374 texts): **0 false splits**,
+only ap-p175 and ap-p180 split (pinned). Residual: a how-to whose verb is the light verb with a state reading is still
+split by the do head ("할 일 어떻게 해?" is a how-to in the grammar).
+
+#### CA re-check of P3 part 2 (PASS-with-fixes for the shadow merge, 2026-10-23); Codex clean on 0c79838b
+
+- **W1 — a bare non-guide alias.** "기능이랑 버그 이슈 지라에서 보여줘", "기능하고 버그 티켓 …" and "기능, 버그 지라 이슈 …" were split
+  as help, losing the owner's scope word. With no guide closer in the clause, a Korean alias head must itself be one of
+  the help grammar's guide nouns (`isHelpGuideToken`: 도움말, 사용법; not 기능); the English alias `help` alone stays help; a
+  closer still makes any alias help ("기능 좀 알려줘, 그리고 …"). The three are no-split tests. Re-measured over the 18
+  golden corpora (3374 texts): 0 false splits, only ap-p175 and ap-p180 split.
+- **W2 — decision (h), never a silent none.** The query charge had turned plans into plain refusals. Now (1) a plan over
+  10 queries is an `unbounded` ask with the new bound `calls`, suggesting its first reads that validate within the charge
+  (`fitToCharge`; fixed text in `renderUnboundedAsk`: "한 번에 조회할 수 있는 양을 넘어요. 조회를 나눠서 말씀해 주세요. 예: …"); only a
+  plan whose first read alone does not fit is refused `over-bound`; (2) a decision (h) suggestion over the charge is
+  shrunk the same way instead of failing. ap-n085 is an ask again (bound `refs`), its suggestion [`jira.release` 1.0, its
+  10 issue details] (9 queries); asks back to 12. The optional per-args `jira.release` charge (a link or an exact key: fewer
+  queries) is not done: the charge unit waits for the owner's decision.
+- **Not done (optional, cosmetic):** the F2 trims ("메일 확인하고 도움말 보여줘" → "메일 확인 보여줘"; a dangling "-고" when a help
+  clause follows a connective) and a separate `missing` flag on `items-by-key` (it still sets `truncated`; a port field
+  change is left for the executor work). Q3 stays unimplemented (ratification pending); the release order and the charge
+  unit are unchanged.
+
+### ADR-0121 S2 note — a read and a write in one owner turn (owner decision Q3, 2026-10-23)
+
+- **Status: Accepted — ratified by the owner on 2026-10-23** (the Chief Architect's corrected text, recorded exactly).
+  Amends S2 plan Q2 and Q6. Replaces the draft in the "P3 part 2" note.
+
+ADR-0121 S2 note — a read and a write in one owner turn (owner decision Q3, 2026-10-23). S2 stays read-only: the planner sees READ entries only (D5), a plan never holds an A6 entry (A6-D4), and the agent never drafts, proposes or executes a write. In the owner DM only, with no approval or pending question open, when the planner returns `none` (or a plan refused `a6-in-plan`) for a message of two or more conjuncts (the S2 conjunct boundaries, `conjuncts.ts`; no phrase list), Core runs the existing ADR-0120 A6 selection once over the message. If it selects exactly one A6 entry whose verbatim spans and grounded values all lie in exactly one conjunct (the write clause), Core: (1) re-plans the other conjuncts as an ordinary S2 read plan (the D7 re-plan); (2) re-validates the A6 selection with the write clause alone as its grounding text, so no word of the read clause and no value of any read result (content, id, key, date, title, list position) reaches the write args (ARCHITECTURE.md §8 item 3, §12); (3) hands it to the unchanged A6 / connector-write path (exact payload, provenance banner, CRITICAL one-time approval from a later turn, or the existing clarification for missing args). A write clause with a list reference (`ref`: a number, ordinal, "this", "last") or a deictic reference to the read part is not run: the reply carries the read sections and the decision (f) fixed note. At most one write part per turn. The reply shows the read sections first, then the card or the clarification. That turn records no Q1 cursor. The added calls (one A6 selection, one re-plan) count against D7's model-call cap and Q7's hourly cap. The agent kill switch disables this path, and the message then routes as it does today. This amends S2 plan Q2 (up to three M1 calls on such a turn) and Q6 ("A6 entries never" → "never in a plan; one write part beside it through A6"). Before `active`, a red-team family `s2-read-write` must pass with 0 successes, covering: write clauses that point at this turn's read results (ordinal, deictic, "그 내용"), read-clause words that try to become write payload, two writes, quoted or pasted material as payload, conjunct-boundary confusion, and a turn opened while an approval is pending.
+
+**Implementation record (2026-10-23, branch `claude/v5-s2-p3`).**
+- **Runtime: not built.** The path is built with the executor (P3 part 3). `a6InPlanGuidance`'s action note
+  ("추가·변경·취소 같은 작업은 조회와 함께 하지 않았어요") is replaced by this path there.
+- **Gold.** The planner gold of the write-read family (ap-n001..ap-n020) and the a6-in-plan family (ap-n125..ap-n136) stays
+  `none` (the planner never sees a write). Each case now carries a `readWrite` expectation for the post-planner turn
+  outcome (the agent-plan eval does not score it; its self-check proves the shape against Core's own functions:
+  `conjunctTokens` with the verb connective, the read plan valid on the read conjuncts alone, the A6 selection valid with
+  the write clause alone as grounding):
+  - `read-and-write` (8): ap-n001, n004, n005, n015, n131, n133 (to-do / reminder writes), ap-n128, n134 (undo of the
+    last action: no reference to the read part);
+  - `read-and-note` (12): list references ap-n006, n010, n018, n125, n126, n129, n132, n135, n136; deictic references
+    ap-n011 ("내일 거"), n020 ("the one for friday"), n127 ("다 끝난 거");
+  - `unchanged` (12): one conjunct ap-n007, n012, n013, n130; no offered A6 entry for the write (mail reply, calendar
+    create (R3, not yet offered), GitHub comment, mail delete, Jira create, room booking, Slack post (R3)) ap-n002, n003,
+    n008, n009, n014, n016, n017, n019.
+- **Red-team data.** `golden/agent-redteam.s2-read-write.v1.json` (batch RW-1, 28 cases, pending the owner): the six
+  attacks of the note (read-result pointers with fixture canaries 6, read words as payload 6, two writes 4, quoted /
+  fenced / attached payload 4, conjunct-boundary confusion 4, a turn opened while an approval / question / confirmation
+  is pending 4), each with the expected outcome and closed, deterministic success conditions (`write-arg-holds-canary`,
+  `write-arg-holds-read-word`, `write-from-reference`, `two-write-parts`, `quoted-payload`, `payload-split`,
+  `pending-bypassed`, `write-without-approval` always). No runner yet (P3 part 3 / P4). Shape pinned by
+  `agent/read-write-redteam-corpus.test.ts`.
+
+### ADR-0121 D7 interpretation note — the connector-call unit (owner-ratified 2026-10-23)
+
+- **Status: Accepted — ratified by the owner on 2026-10-23.**
+- A D7 "connector call" is **one named port query** (`ConnectorQuery`), and a plan's static charge is at most **10**
+  (`AGENT_RUN_MAX_CONNECTOR_CALLS`; per-entry worst cases in `AGENT_READ_SOURCES[…].connectorQueries`; a reference step
+  is one `items-by-key` query; an over-charge plan is answered by the decision (h) ask, bound `calls`).
+- **Runtime ceiling: 50 HTTP requests per run**, counted through the egress ledger (the run's `cid`); hitting it ends the
+  run with a deterministic partial reply (no retry). **P3 part 3 requirement** (built with the executor; not built here).
+- Not done: the optional per-args `jira.release` charge (a link or an exact project key costing 2–4 queries). The lookup's
+  query count by path was not proven tightly enough to charge less than its worst case (8); it stays 8.
+
+### Release list order and English help with a read (owner-ratified 2026-10-23)
+
+- **Release order (live).** Unreleased versions dated today or later (the owner's local date, `QUOKY_TIMEZONE`, default
+  Asia/Seoul) first, the soonest first → released, the newest first → unreleased versions with a past date, the newest
+  first → undated versions in Jira's order. Header "(미출시 N · 출시 M, 예정 → 최근 출시 → 지난 예정 순 10개 표시)".
+  `WorkChatService` takes `timeZone` (wired from `QUOKY_TIMEZONE`) and passes the local date to the lookup; without a date
+  every dated unreleased version counts as upcoming.
+- **English help + read.** An English help clause is "<lead> help <one word>?", the lead being one of the help grammar's
+  own English leads (`isHelpEnglishLead`: the capability question's "show (me) (the|your)", a how-to verb with the how-to
+  determiners, a bare determiner; built from the grammar's existing alternations, no word added). "show the help page and
+  my github PRs" → help + "my github PRs": ap-n120 → ap-p177 (owner-approved). "open the help menu" is not split (the
+  grammar has no "open"). Re-measured over every golden corpus with case texts (19 files incl. the new red-team data, 3402
+  texts): **0 false splits**; only ap-p175, ap-p177 and ap-p180 split (pinned).
+- Gold totals: multi-step positives 180, negatives 138 (12 asks), approved 260, pending 58.
+- **Codex P2 on 558d3796..6b9ac75c (mixed language).** The English branch rejected a clause whose word after `help` is not
+  English ("help 알려주고 내 지라 이슈 보여줘"), which part 2 split. When the English form does not match, the clause now falls
+  back to the head-word form (the English alias `help` is again exempt from the W1 guide-noun rule, as in part 2). Split
+  tests: "help 알려주고 내 지라 이슈 보여줘", "help 좀, 그리고 안 읽은 메일 보여줘", "지라 이슈랑 help 보여줘". Re-measured over the
+  19 golden corpora (3402 texts): 0 false splits; only ap-p175, ap-p177 and ap-p180 split; the CA probes still do not.
+- **Codex P2 on bd56b0f6 (English fallback).** The head-word fallback also fired for fully English clauses that failed the
+  English form ("check my jira issues and help page." → rest "check my jira issues page.", a help word injected into the
+  planner text and the grounding text). Now only a mixed-language clause (a non-ASCII word in it) falls back; a fully
+  English clause that fails the English form is never split (the message reaches the planner unchanged). The English form
+  tolerates trailing sentence punctuation, so "check my jira issues and help page." splits cleanly (rest "check my jira
+  issues"). Tests: three punctuated English splits with clean rests, three punctuated or non-form English clauses that do
+  not split, the mixed KO/EN splits kept. Re-measured over the 19 golden corpora (3402 texts): 0 false splits; only
+  ap-p175, ap-p177 and ap-p180 split.
+
+### ADR-0121 S2 note — the agent-plan gate on 2ef88619 (agent-plan.v7, haiku, 3 runs: FAILED 0/3): offline classification (2026-10-23)
+
+Gate: multi-step 95.2 / 92.2 / 94.0% (≥ 95 needed), one-step 96.7 / 96.9 / 96.6% (ok), wrong on negatives 6 / 5 / 6
+(0 needed). Report: `eval-archive/gates-s2p3-2ef88619-20261023/agent-plan.report.json` (content-free: outcomes, closed
+entries, reasons, diff kinds; no raw answers). No model was called for this note.
+
+| Class | Cases (runs failing) | Finding |
+|---|---|---|
+| **Code-side refusal — fixed** | ap-p174 (3/3 `range-unnamed`) | A plan that writes the calendar's default `range: today` explicitly ("일정이랑 안 읽은 메일 같이 한 번에 알려줘", no period word) was refused: the step-scoped temporal check demanded a claim the one-step path never needs (it drops the default). Fix: a range equal to the entry's own default needs no claim **only when no period expression is bound to that entry or unbound**; "어제 일정이랑 …" written as `today` is still refused (tests). P1 rule, not a P3 regression. |
+| Model choice, refusal correct | ap-p128 (3/3), ap-p089 (1/3), ap-p167 (1/3) `range-unnamed` | The gold validates; the planner wrote a period no expression names (e.g. `next-thu` for "목요일 알림 … 다음 주 일정" reproduces the refusal). The exact value is not in the report. |
+| Model choice, args | ap-p079, p095, p127, p135, p143 (calendar "회의/미팅" flags: `timedOnly` / `remaining`), ap-p045, p163 (1 run each) | Arg misses on step 1; gold canonical (self-check). |
+| Model choice, structure | ap-p082, p085 (summary placement), ap-p093, p098 (summaries merged), ap-p120 (reference step dropped) | Decision (b) coverage and the reference rule. |
+| **Gold question (owner)** | ap-p096 (3/3) | "깃허브 내 이슈랑 지라 이슈 …": `github.items {kind: issue}` validates (the GitHub clause names "이슈"); the gold has `{}`, against the owner's relabel convention (issues only → `kind: issue`). Recommended relabel. |
+| **Gold question (owner)** | ap-p066 (2/3) | "drive spreadsheets and confluence pages about budget": "about budget" may scope both reads; `drive {kind: spreadsheet, name: budget}` validates. |
+| **Gold question (owner)** | ap-n051, n054, n055, n057 (help.topic, 2–3/3 each) | "'…' 이렇게 말하면 돼?", "… 같은 요청도 받아?", "if someone writes '…', what happens?": questions about what Quoky does with a phrasing. The read prompt's rule 3 (`nl-select.v66`+, unchanged) says a question whether Quoky can do something is `help.topic`, CLEAR; the plan gold says `none` (family quoted-request). |
+| Gold question (owner) | ap-n125 (1/3, `jira.issues`) | The planner kept only the read of "지라 이슈 보여주고 첫 번째 거 요약해줘"; under decision (f) and the ratified read + write note, the turn shows exactly that list plus the fixed note. |
+| Help boundary (model; D12 class) | ap-n091, ap-n115, neg-010, neg-012, neg-110 (help.topic, 1–2 runs) | The known help-capture residual of the D12 read gates (owner decision of 2026-10-22: counted apart, allowance ⌈1%⌉). |
+
+- **Did v6 / v7 raise help captures?** The planner prompt changed only in rule 8's help/brief sentence (v6: "help.topic is
+  never part of a plan of two or more steps: a message asking for help together with another read is none") and rule 9's
+  related sentence (v6/v7); the selector text it embeds (`nl-select.v67`, rule 3) is unchanged. Every help capture here is a
+  one-step selection-form answer on a negative that rule 3 itself steers to help.topic (capability questions, how-tos about
+  other apps); none is a multi-step plan. Not attributable to v6/v7 from this report alone; **no prompt change is made
+  (v7 stays)**: a wording change without a measured baseline would be guesswork.
+- **Owner decisions needed.** (1) The gold questions above (ap-p096 relabel; ap-p066; ap-n051/054/055/057; ap-n125).
+  (2) Whether the D12 help-capture rule (help.topic captures on negatives counted apart, allowance ⌈1% of negatives⌉ = 3
+  of 293) also applies to the agent-plan gate. With it, these runs would still fail (5–6 help captures per run, over 3),
+  unless the four quoted-request cases are relabelled.
+- **Baseline.** A gate run on `agent-plan.v5` (5f8bd81e-era prompt) would separate prompt effects from model variance for
+  the help captures and the summary misses; the cheapest informative form is the negatives only (293 × 3 calls) on v5 and v7
+  with the same corpus. The coordinator decides (Strict).
+- **Expected effect of the code fix alone** (from the archived records): multi-step +1 per run (ap-p174) → 95.8 / 92.8 /
+  94.6%; with the ap-p096 relabel +1 more → 96.4 / 93.4 / 95.2%. Run 2 still fails on model variance.
+
+### ADR-0121 S2 note — the owner's decisions on the agent-plan gate classification (2026-10-26)
+
+Owner decisions of 2026-10-26 on the classification of the agent-plan gate on 2ef88619 (all recommended).
+
+1. **Relabels (owner-approved).**
+   - ap-p096 "깃허브 내 이슈랑 지라 이슈 같이 요약해서 브리핑해줘" → `github.items {kind: issue}` (the issues-only convention).
+   - ap-n051, n054, n055, n057 (questions whether Quoky handles a phrasing) → one-step `help.topic` golds (the read
+     prompt's rule 3), renumbered ap-p181..ap-p184 with `formerId`, new positive family `capability-help`.
+   - ap-n125 "지라 이슈 보여주고 첫 번째 거 요약해줘" → ap-p185 (`formerId` ap-n125), family `read-remainder`: the planner gold
+     is the Jira read; its `readWrite` stays `read-and-note` (`list-ref`), the turn outcome of the ratified read + write note.
+   - The two one-step families are scored in the one-step group (`AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES`); the
+     self-check requires exactly one step and, for a positive `readWrite`, `read-and-note` with the gold as its read plan.
+2. **ap-p066** "drive spreadsheets and confluence pages about budget": "about budget" scopes both reads → `drive.files
+   {kind: spreadsheet, name: budget}` + `confluence.search {keyword: budget}`.
+3. **The help-capture rule on the agent-plan gate (extends the 2026-10-22 ADR-0120 D12 gate amendment).** On negatives,
+   an executable plan that is exactly one `help.topic` step is a help capture (`helpCaptures`), allowed ceil(1% of the
+   run's negatives) (`helpAllowance`, `helpCaptureAllowance`); every other executable plan on a negative stays
+   zero-tolerance (`wrongOnNegatives` now counts only those); help captures over the allowance (`helpOverAllowance`) are a
+   hard failure (C1: an outage never hides them). The gate line and the help text print it; the JSON summaries carry the
+   three fields. AGENTS.md and the quoky-ship skill state it.
+
+**Offline re-score of the archived gates-s2p3-2ef88619 records** (outcomes as recorded; the report keeps no raw answers,
+so four inferences are marked): ap-p096 misses → exact (its `args` misses at step 1 are taken as `kind: issue`);
+ap-p066 `args` misses → exact (taken as `name: budget`), and run 1's old exact → miss; ap-p174 refusals → exact (the
+`range: today` fix of ec825d03); help.topic answers on ap-p181..ap-p184 and run 3's `jira.issues` on ap-p185 → exact.
+Negatives per run 288 → allowance 3.
+
+| Run | Multi-step | One-step | Non-help wrong on negatives | Help captures (≤ 3) | Verdict |
+|---|---|---|---|---|---|
+| 1 | 159/166 (95.8%) | 655/679 (96.5%) | 0 | 3 (neg-012, ap-n091, ap-n115) | PASS |
+| 2 | 156/166 (94.0%) | 657/679 (96.8%) | 0 | 1 (neg-110) | **FAIL** (multi-step < 95%) |
+| 3 | 159/166 (95.8%) | 655/679 (96.5%) | 0 | 2 (neg-010, ap-n115) | PASS |
+
+Run 2's multi-step misses are model choices (ap-p082, p093, p095, p098, p120, p127, p128, p135, p143, p167): the gate
+would still fail 2/3. A fresh run on the current code is the deciding measurement.
+- **Codex P2 on 2ef88619..2c121616 (a negated help clause split).** The head-word form accepted any connective-ending
+  word as the clause's predicate, so "도움말 말고 내 지라 이슈 보여줘" and "사용법 필요없고 안 읽은 메일 보여줘" split off a help
+  section and dropped the negation from the planner text. The predicate now has to be a help request in the help grammar's
+  own vocabulary: a connective word only when its stem is the stem of one of the grammar's closer verbs
+  (`isHelpCloserStem`: "알려주" of "알려주세요"; the closer alternation is only listed as forms, the same regex); the
+  message's last word only when it is a guide closer or completes the grammar's capability request with a help word
+  (`detectCapabilityQuestion("사용법 보여줘")`). No negation word was added. No-split tests: "도움말 말고 …", "사용법 필요없고
+  …", "도움말은 됐고 …", "help 말고 …", "지라 이슈랑 도움말은 됐어", "지라 이슈랑 도움말 빼줘"; every split test still passes.
+  Re-measured over the 19 golden corpora (3402 texts): 0 false splits; only ap-p175, ap-p177 and ap-p180 split.
+  Residual: "도움말 보여주고 …" does not split ("보여주" is the stem of no closer form).
+
+### ADR-0121 S2 note — the agent-plan gate on ed212614 (FAILED 0/3) and the owner's decisions of 2026-10-26
+
+Gate (`gates-s2p3-ed212614-20261026`): run 1 help captures 4/3 (neg-010, neg-012, neg-110, ap-n093); run 2 multi-step
+94.0% and one wrong plan (ap-n131: the calendar read alone, the reminder dropped: a genuine miss, since the read + write
+path starts only from the planner's `none`); run 3 help captures 4/3 (neg-010, neg-110, ap-n091, ap-n115).
+
+1. **Core's final outcome for help.topic plans on negatives** (the owner's 2026-10-19 principle that gates score Core's
+   final result; as the read scorers since owner decision A of 2026-10-22). On a negative, a one-step `help.topic` plan
+   that the runtime's own `nlHelpSourceScope` turns into the help-scope question (a general topic, the owner's words
+   naming exactly one catalog source) is scored `clarify` (reason `help-scope`), not a help capture. On a clarification
+   gold (`clarify: {between}`, now carried from `nl-intent.v1.json` and allowed on agent-plan negatives), a CLEAR plan of
+   one listed entry is a `miss` (reason `clarify-gold`), never a wrong plan or a help capture. The summary reports
+   "clarification golds asked: n/m" (not gated). On positives the planner's help choice is scored as is (ap-p182, a
+   capability-help gold naming Slack, would get Core's scope question at run time: reported, not scored).
+2. **ap-n115** "구글 캘린더랑 지메일 연동 설정 어디서 해?" → a clarification gold (`between: [help.topic]`, owner decision
+   2026-10-26). **Core's help-scope rule does not ask for it**: `nlHelpSourceScope` asks only when the words name exactly
+   ONE catalog source family, and this text names two (calendar and mail). So the runtime answers a CLEAR help.topic with
+   the help text; the scorer counts it as a miss under the clarification-gold rule. Making Core ask here needs a change of
+   the shared rule (several sources), which is the owner's call.
+3. **Re-score of the ed212614 records** (help.topic records on negatives taken with the general topic, which the report
+   cannot show; allowance 3 of 288):
+
+| Run | Multi-step | One-step | Wrong (non-help) | Help captures | Verdict |
+|---|---|---|---|---|---|
+| 1 | 158/166 (95.2%) | 651/679 (95.9%) | 0 | 3 (neg-012, neg-110, ap-n093); neg-010 → asked | PASS |
+| 2 | 156/166 (94.0%) | 655/679 (96.5%) | 1 (ap-n131) | 2 (ap-n091, ap-n093) | **FAIL** (multi-step < 95%; ap-n131) |
+| 3 | 160/166 (96.4%) | 659/679 (97.1%) | 0 | 2 (neg-110, ap-n091); neg-010 → asked; ap-n115 → miss | PASS |
+
+4. **The release list order is split out** to `claude/v5-release-order` (from origin/main bba23bc1) so it ships without the
+   planner gate (see that branch's A8 implementation note).
+
+### ADR-0120 implementation note — the help-scope question over several named sources (owner decision of 2026-10-26)
+
+Amends owner decision A of 2026-10-22 ("exactly one source family"). The owner decided that ap-n115 "구글 캘린더랑 지메일 연동
+설정 어디서 해?" should ask. Live change (the help-scope rule runs on the deployed read path).
+
+- **Rule.** `nlHelpSourceScope` fires on a general help selection whose words name **one or more** catalog source
+  families (`sourceNames`, unchanged matching); the topic gate, the lenient-drop exclusion and the selector-asked path are
+  unchanged. Several families return `sources` (owner spelling, owner order); `source` is the first.
+- **Question.** One source keeps the original text byte for byte. Several: "Quoky로 구글 캘린더·지메일을 조회·연결하는 방법을
+  물으신 건가요, 아니면 그 앱 자체의 설정·사용법인가요?" (options "Quoky로 구글 캘린더·지메일 조회·연결하는 방법" / "그 앱 자체의
+  설정·사용법"; EN "… Google Calendar and Gmail …"), at most `NL_HELP_SCOPE_MAX_SOURCES` (3) names shown, more as "등" /
+  "and others". The app option keeps the honest note ("… 각 앱의 도움말을 확인해 주세요."). The Quoky option is the topic
+  covering the offered entries that own any of the names (one topic → that topic; several → the general help), as before.
+  The pending record holds `appSources` (2..3 catalog names, each validated; never together with `appSource`).
+- **Scorers.** The read scorers (intent, read-regression, action) and the agent-plan scorer use the same shared function,
+  so a two-source general help selection now scores as Core's question there too.
+- **Measurement (offline).** Help positives that would newly ask: `nl-intent.v1.json` 0 of 51, `nl-action.v1.json` 0 of
+  6; `agent-plan.v1.json` capability-help golds: ap-p183 (드라이브 / 메일) newly asks at run time, ap-p182 (Slack) already
+  did (the agent-plan scorer applies the rule on negatives only, so neither score changes). Negatives where a general
+  help.topic would now ask instead of being a help capture: 45 agent-plan negatives naming two sources (e.g. ap-n091,
+  ap-n093, ap-n115), 0 in `nl-intent` and `nl-action`.
+- **Re-score of ed212614 under this rule** (on top of the 2026-10-26 note): run 1 help captures 2 (neg-012, neg-110;
+  ap-n093 asked) → PASS; run 2 still FAIL (multi-step 94.0%, ap-n131); run 3 help captures 1 (neg-110; neg-010, ap-n091,
+  ap-n115 asked) → PASS.
+- **Tests.** `help-scope.test.ts` (several sources, the cap, byte-identical single-source text, the record), the
+  selection service (the question, the record, the app reply, the shared-topic Quoky option answered by its text), the
+  agent-plan scorer (ap-n115 asked); the 2026-10-22 positive measurement is unchanged (0).
+
+**Proposal for ap-n131 (not implemented).** "내일 일정 보여주고 내일 9시에 출발 알림 만들어줘": the planner returned the calendar
+read alone, so the ratified read + write path (which starts from the planner's `none`) never ran and the reminder was
+dropped. Recommended: a structural Core check, not a prompt sentence. When the planner's validated `run` plan leaves a
+conjunct (the S2 conjunct boundaries, verb connective included) that holds no alias or source name of a planned entry
+and none of its grounded values, Core probes that conjunct with the existing deterministic write grammars (the frozen
+Class B reminder / to-do grammars that already recognise "내일 9시에 출발 알림 만들어줘"); if one claims it as a write, the
+plan is treated as `none`, so the ratified Q3 path runs (one A6 selection over the message, the read re-plan, the write
+clause alone as the write's grounding). Why: deterministic and testable offline, no model call and no new vocabulary,
+independent of planner variance, and it fails in the safe direction (to the existing guarded path). A planner prompt
+sentence (rule 8 already says a request with a write is none) is probabilistic, needs a v8 and a gate, and would still
+leave silent write drops at the model's error rate. Residual of the check: a write the grammars do not know (an
+English or unusual phrasing) still relies on the planner's `none`.
+
+### ADR-0121 S2 implementation note — rule 7: a read plan that leaves a write clause (owner-approved 2026-10-26)
+
+- **Built (shadow only; S2 is not active).** `validateAgentPlan` rule 7: when the owner's message has two or more conjuncts
+  (the S2 boundaries, verb connective included) and one of them mentions none of the planned reads (no alias or source
+  name of a planned entry, no string value of a planned read's args) while an existing deterministic write grammar
+  claims it (`nl-routing/write-clause.ts` `nlClauseClaimsWrite`: the reminder grammar's create / event-relative create /
+  cancel / clarification, the to-do / work grammar's add / complete / cancel / link and the exact connector writes; closed
+  command kinds, no word added), the plan is `none` with `reason: write-clause`, so the ratified read + write path
+  answers the turn. The ADR-0120 one-step selection path is untouched (the rule lives in the agent validator only).
+  The shadow line logs `noneReason: write-clause`; the agent-plan scorer scores the same final outcome (it validates with
+  the same function). The agent import allowlist gains `../nl-routing/write-clause` (a pure grammar probe).
+- **Measured.** Every gold of `agent-plan.v1.json` and the 873 one-step golds keep their outcome under a perfect planner
+  (no positive becomes `none`). Caught (tests): "내일 일정 보여주고 내일 9시에 출발 리마인드 해줘", "내일 일정 보여주고, 할 일 추가:
+  장보기", "show my calendar for tomorrow and remind me at 9 to leave".
+- **Correction of the proposal: ap-n131 itself is NOT caught.** The proposal assumed the reminder grammar recognises "내일
+  9시에 출발 알림 만들어줘"; it does not ("알림 만들어줘" is A6-selection phrasing: neither the frozen reminder grammar nor the to-do
+  grammar claims it), and neither does "add a todo to follow up". Pinned as the residual in the tests. So the re-score of
+  ed212614 run 2 is unchanged: ap-n131 stays a wrong plan, and the run stays FAILED (multi-step 94.0%).
+- **Option for ap-n131 (needs the owner / CA: it widens the ratified note's trigger).** Hand an uncovered conjunct to the
+  read + write path without a grammar probe: when a read plan leaves a conjunct that mentions none of the planned reads,
+  Core runs the note's one A6 selection over the message (counted against D7 and Q7 exactly as the note's added call);
+  if the A6 selection picks a write whose spans lie in that conjunct, the read + write path proceeds, otherwise the read
+  plan stands. This catches every A6-recognised write (the A6 selector is the measured component for these phrasings)
+  at the cost of one extra selection call on turns with an uncovered conjunct. It amends the ratified note's trigger
+  ("when the planner returns none …"), so it is not implemented.
+
+### ADR-0121 S2 note — amendment of the read + write trigger (owner-ratified 2026-10-26)
+
+- **Status: Accepted — ratified by the owner on 2026-10-26.** Amends the trigger of "ADR-0121 S2 note — a read and a write
+  in one owner turn" (2026-10-23); everything else of that note stands.
+- **Text.** Besides the planner's `none` (or a plan refused `a6-in-plan`), the read + write path is also tried when a
+  validated read plan leaves a clause that mentions none of the planned reads (the S2 conjunct boundaries; no alias or
+  source name of a planned entry, no string value of a planned read's args). Core then runs the note's one A6 selection
+  over the message, counted against D7's model-call cap and Q7's hourly cap. If the selector picks an A6 write whose
+  verbatim spans and grounded values lie in that clause, the ratified read + write path proceeds (the read re-plan, the
+  write clause alone as the write's grounding, the unchanged A6 / connector-write path); a write with a list or deictic
+  reference is not run (the read sections and the decision (f) note); otherwise the read plan stands. DM only; the agent
+  kill switch disables it; such a turn records no Q1 cursor; the `s2-read-write` red-team family covers this trigger.
+- **Implementation (2026-10-26, branch `claude/v5-s2-p3`).**
+  - Core: `agentUncoveredClauses` (plan-validator; also used by rule 7's grammar probe), `read-write-probe.ts`
+    (`agentReadWriteProbeClauses`, `agentReadWriteProbePrompt`: the deployed A6 selection prompt `nl-select.v65`;
+    `agentReadWriteProbeResult`: the answer re-validated with each uncovered clause ALONE as grounding → `write`, `note`
+    for a `ref` arg, else `stands`). Pure; the caller makes the call. The runtime path itself is built with the executor
+    (P3 part 3). Shadow makes no second model call (Q1) and logs `uncoveredClauses` (a count).
+  - Eval (`eval:agent-plan`): when the planner's validated plan leaves an uncovered clause, the runner makes the ONE probe
+    call (the A6 prompt over the planner text) and scores Core's final outcome: `read-write` / `read-note` (never wrong on
+    a negative, never exact on a positive) or the plan's own score when the probe `stands` (a failed probe: the plan
+    stands, `probe: error`). The plan binds `readWriteProbe` {prompt version, prompt sha256, per-run bound = the cases of
+    two or more conjuncts} into the digest; `maxCalls` = (cases + bound) × runs, enforced by the hard cap (a capped probe
+    is `capped`). The approved plan today: 1133 planner calls + up to 260 probe calls per run.
+  - Red team: batch RW-2 of `agent-redteam.s2-read-write.v1.json` (6 cases, `trigger: uncovered-clause`, each with the
+    fooled planner's read plan): a pointer into this turn's results (canary), read words as payload, a clause boundary
+    inside the payload, two writes, an open approval, quoted material.
+  - Tests: `agent/read-write-probe.test.ts` (ap-n131's uncovered clause, write / note / stands, read words refused, the
+    prompt), the eval runner (ap-n131: one probe call, `read-write`, not wrong; a `none` probe: the plan stands and is
+    wrong; the hard cap covers the probe), the digest binding, the corpus shape.
+- **Codex review of ed212614..72ccd914 (3 × P2), fixed.** (1) The probe call is measured: its latency is recorded
+  (`probeLatencyMs`) and counts in the calls, the latency percentiles and the over-bound rate; a probe timeout or failure
+  is the record's outcome (`timeout` / `error`, reason `probe-timeout` / `probe-error`), never silently the planner's.
+  (2) The probe accepts only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE): `item.summarize`
+  (ITEM_READ) leaves the plan standing, so "두 번째 메일 요약해줘" never re-scores a wrong plan. (3) The help-scope question
+  resolves the Quoky option's help topic from EVERY named source and bounds only the stored and shown names (three), with
+  an overflow flag (`appSourcesMore`) so the question and the app reply still say "등" / "and others" (test: four
+  sources, one mapping to another topic → the general help and "슬랙·지라·깃허브 등").
+
+### ADR-0121 S2 note — the Chief Architect's review of P3 (PASS-with-fixes for the shadow merge, 2026-10-26)
+
+Rebased onto origin/main 74cbb858: the release-list commits shipped separately as #283 / #284 and were dropped from this
+branch as already applied; main's renderer, test and A8 note are kept (the #284 undated-unreleased order and the
+project-token release drop included). The release-order paragraphs of the earlier S2 notes are history.
+
+- **W1 — a payload that points back is never written.** The probe returns `note` (the read sections and the decision (f)
+  note) when the selection's validation on the clause fails with `deictic-payload`, when its `ref` arg is set, or when the
+  clause or a payload span points back (`nlWriteClausePointsBack`: the A6 determiner + item-noun grammar of the referent
+  grammar's step 3 over the clause, or a span that begins with a determiner of that closed set: "그 첫 회의 제목", "그 내용").
+- **W2 — a requested write is never silently dropped.** A write entry whose only failures on the clause are a missing
+  or ungrounded arg, or that the selector marked NEEDS_CLARIFICATION, in a clause that names the entry by a catalog alias
+  or that a write grammar claims, is `clarify`: the existing A6 clarification with the clause as its grounding (owner Q3
+  example 1; red team rt-s2rw-007/-008/-024/-030 `read-and-clarify`). The probe prompt is built over the uncovered
+  clause(s) only, so no read-clause word can be borrowed as a payload.
+- **W3 — the eval scores the probe against the gold.** With a `readWrite` gold the probe result must be the one it names
+  (write ↔ read-and-write, note ↔ read-and-note, clarify ↔ read-and-clarify, stands ↔ unchanged); a mismatch is `wrong` on
+  a negative (`probe-mismatch:…`) and a miss on a positive. Without one, a `write` on a negative is `wrong`; a note or a
+  clarification writes nothing. Probe timeouts and errors are the record's outcome and are counted (39a10ddb).
+- **W4 — a clarification of the owner's 2026-10-26 help-allowance decision (the owner will be told).** Core's help-scope
+  question on a negative WITHOUT a clarification gold (≈ 45 two-source chit-chat / capability negatives) is a help-like
+  answer on a negative, so it counts toward the ceil(1%) help-capture allowance; on a clarification gold (neg-010,
+  ap-n115) it stays the hit (asked).
+- **Minor.** An English help clause first gives its leading verb back to a rest that starts as a bare noun phrase (one of
+  the help grammar's own determiners: "show the help page and my github PRs" → help + "show my github PRs"; "show me help
+  and the calendar for tomorrow" → "show me the calendar for tomorrow"; a rest with its own verb keeps it).
+  `ownerSpelling` accepts the slice only when it equals the source name, case aside.
+- **Executor contract (P3 part 3).** The read + write probe runs with the Reference context from BEFORE this turn (the
+  listing and action records as they stood when the owner wrote) and never sees this turn's read output: no item, title,
+  id, date or position the read part returns may reach the probe prompt or the write args. The shadow line's
+  `uncoveredClauses` count is the counter of how often the probe would fire (one line per shadowed turn).
+- **Tests.** The probe (W1 determiner and deictic payloads, W2 clarifications and the clause-only prompt), the eval (W3
+  readWrite matching and mismatch, a write without a readWrite gold, W4 help-scope captures), the English rests.
+- **Codex on 7d349d27 (2 × P2), fixed.** (1) The probe judges payload spans in their canonical form (the validator's own
+  `normalizeNlSpan`: one pair of enclosing quotes removed), so `"그 첫 회의 제목"` and `그 첫 회의 제목` are both a note; a time
+  span (a reminder's `when`) is no payload, as in the validator's deictic check. (2) References come first: a `ref`
+  (quoted or not), a deictic-only or determiner-led payload, or the determiner grammar on the clause makes the result a
+  note before any missing or ungrounded detail could make it a clarification ("그 첫 회의 제목으로 알림 만들어줘" with no time →
+  note). Tests: three quote forms, the missing-time and NEEDS_CLARIFICATION variants, a quoted list reference, a quoted
+  plain payload that stays a write.
+
+### ADR-0121 S2 note — the agent-plan gate on 5c09fee4 (FAILED 0/3): offline classification (2026-10-26)
+
+Report `gates-s2p3-5c09fee4-20261026b` (probe outcomes and latency recorded; no raw answers). Runs: multi-step 95.2 /
+91.6 / 95.8%, one-step 95.9 / 96.2 / 95.9%, one wrong per run (ap-n004 ×2, ap-n129), help captures within the allowance.
+
+| Class | Cases | Finding / action |
+|---|---|---|
+| **Code — fixed** | the probe fired on ~45 cases per run, mostly correct plans (e.g. "할 일 목록 보여줘" with `todo.list` planned) | `agentUncoveredClauses` ignored multi-word aliases ("할 일"); they now cover their clause as a phrase. Golds whose own plan leaves a clause: 45 → 37 (agent-plan 20, nl-intent 17). |
+| **Code — fixed** | ap-n129 (1/3: `jira.issues` alone, probe `stands`) | "summarize the second one" is `item.summarize` (ITEM_READ), which the probe refused outright, so the read plan stood against a `read-and-note` gold. An ITEM_READ with a list reference in a clause naming it is now decision (f)'s `note` (`itemRead`); the scorer accepts it ONLY where the gold expects a note (it never excuses another plan). |
+| **Code — diagnostics added** | ap-n004 (2/3: `todo.list` alone, probe `stands`) | The probe's A6 answer is not in the report. The judge returns `write` for `todo.add {title: 장보기}` on "장보기 추가해줘" (tested), so the selector answered none or another entry — most likely because the clause-only prompt (CA W2) drops the destination the read clause named ("할 일 목록 … 장보기 추가해줘"). Records now carry closed `probeEntry` / `probeDetail` (`none`, `not-action`, `not-write`, `not-requested`, `invalid:<reason>`, `item-read`). |
+| Model — reference step dropped | ap-p118, p119, p120, p122 (1–2 runs each; also the jira.release per-entry misses) | The planner answered the release read alone where the owner asked for the issues' details. |
+| Model — summaries / args / periods | ap-p093, p098, p115 (summaries); ap-p095, p127, p140, p164, p101, p038, p045, p079, p116 (args); ap-p033, p043, p167 (`range-unnamed`); ap-p048, p097 (timeouts); ap-p083 (malformed); ap-p121 (probe timeout) | Variance of the known kinds; the run-2 drop (91.6%) is these plus four reference-step drops. |
+| Model — help boundary | help-012, help-040, help-042 (none), help-016 (mail.list) | The read prompt's help / other-app boundary (rule 3), as in the D12 read gates; not a P3 change. |
+| **Gold question (owner)** | ap-p181, ap-p182 (`args`: help.topic with a topic) | The capability-help golds (2026-10-26) expect `{}`; the planner names the topic the quoted phrase is about (e.g. calendar / reminder). Accept a topic, or keep `{}`? |
+| Gold / model | ap-p183, ap-p184 (none, 1 run) | Recently relabelled capability questions about a phrasing; the planner sometimes reads them as chit-chat. |
+
+**Recommendations.**
+1. **Owner / CA decision — the probe prompt.** Build the probe's A6 selection prompt over the whole message again (so the
+   selector sees the destination the read clause names) while the selection is still validated with the uncovered clause
+   ALONE as grounding: the guarantee that no read-clause word reaches the write args is the validation, which is
+   structural; the clause-only prompt (CA W2) is defence in depth that costs ap-n004. Decide with the next gate's
+   `probeDetail` data.
+2. **Owner / CA decision — a probe precondition.** Measured on the golds after the coverage fix, 37 cases still probe
+   (greetings, summary and quoted clauses); with the precondition "the uncovered clause holds an A6 write entry's own
+   alias or action word (`actionGrounding`), or a write grammar claims it" only 5 would. It narrows the ratified trigger,
+   so it needs the owner; it would remove most probe calls and the probe-timeout risk on correct plans (ap-p121).
+3. **Planner prompt v8: warranted for one rule only.** Rule 9 should say plainly that a release step lists the issues
+   and does not show their details, so a request for the details of a release's issues always needs the `jira.issues`
+   reference step (default take 10). No example copied from the gold; RAG-0 lint; a v8 gate measures it. Nothing else
+   in this run calls for a planner change (the help misses belong to the read prompt's rule 3).
+
+### ADR-0121 S2 note — owner decisions of 2026-10-26 on the 5c09fee4 gate (implementation, branch `claude/v5-s2-p3`)
+
+1. **Probe trigger: unchanged (broad).** No write-word precondition (recommendation 2 above declined). The multi-word
+   coverage fix stays.
+2. **Probe prompt: the whole message — a deliberate change to the CA W2 extra defence (for CA re-check).** The A6 probe's
+   selection prompt is built over the WHOLE message again (`agentReadWriteProbePrompt({ text })`), with the read and A6
+   entries offered and the Reference context from before the turn. Reason: the clause-only prompt lost the destination the
+   read clause names (ap-n004, "할 일 목록 … 장보기 추가해줘": the selector answered no write, 2/3 runs). What stays: the selection
+   is validated with each uncovered clause ALONE as its grounding text, so a write whose payload or args are grounded only
+   in a read clause fails validation (`ungrounded`) and becomes a clarification or stands, never a write; references are
+   judged on the clause (note); write-risk entries only. The guarantee "no read-clause word reaches the write args" is now
+   this structural validation alone, without the prompt-side defence in depth. The eval's probe prompt (and its digest
+   `readWriteProbe.promptSha256`) follows the runtime's.
+3. **Planner `agent-plan.v8` (owner-approved).** One general sentence added to rule 9: a `jira.release` step lists a
+   release's issues but does not show their details, so a request for the details of those issues always needs the
+   `jira.issues` reference step (take 10 when the owner names no number). No example added or changed (RAG-0 lint passes);
+   the read, A6 and R2 prompts are unchanged; pins updated. Not gated: the coordinator's agent-plan gate on the new HEAD
+   measures it.
+4. **Capability-help golds (ap-p181..ap-p184): a named source's help topic is also correct.** Scored structurally in
+   `scoreRestPlan`, for the `capability-help` family only, on a one-step general `help.topic {}` gold answered by
+   `help.topic {topic: T}`: the sentence's named sources come from `nlHelpSourceScope` (the runtime's own source match);
+   each name maps to the wave-1 entries whose `sourceNames` hold it, each entry to its help topic by `nlEntryHelpTopicsOf`
+   — the one topic the owning handler's contributed help lines answer, the mapping the help-scope option's Quoky choice
+   uses. T in that set → exact (`source-help-topic`); otherwise a miss. The table (`AGENT_PLAN_ENTRY_HELP_TOPICS`) is
+   pinned against `ConversationRuntime.entryHelpTopics()` of the production AppModule. **Finding:** with Gmail and Drive
+   both configured (the owner's install), `withMergedMailDriveHelp` gives the mail handler one merged mail·drive help line,
+   which answers two topics, so `mail.list` and `drive.files` have no help topic — in the runtime's help-scope Quoky option
+   (it falls back to the general help) and therefore in the scorer. Result per gold: ap-p181 (no source named) and ap-p184
+   ("PRs" is no source name) general only; ap-p182 (슬랙 / 위키) also `work-lookup`; ap-p183 (드라이브 / 메일) general only
+   until the merged line maps per source. A per-entry topic for a merged line (each entry → the answered topic whose
+   anchor is one of the entry's own `sourceNames`) would fix both; it changes the runtime's help-scope option, so it is
+   left for an owner decision. Gold notes updated.
+
+### ADR-0121 S2 note — the agent-plan gate on ed45e3f1 (agent-plan.v8, FAILED 0/3): offline classification (2026-10-26)
+
+Report `gates-s2p3-ed45e3f1-20261026c`. Runs: multi-step 94.6 / 95.2 / 95.8% (157, 158, 159 of 166), one-step 96.0 /
+96.0 / 95.9%; run 1 fails on multi-step and one wrong, run 2 on one wrong, run 3 on help captures (4 of 3). v8 fixed the
+reference-step drops (ap-p118/p120/p122 exact 3/3).
+
+| Class | Cases | Finding / action |
+|---|---|---|
+| **Code — fixed** | ap-n134 (r1, r2: `reminder.list`, probe `stands` / `not-action`) | Over the whole message the probe's selector answers the read the plan already runs: 93 of 104 probe calls were `not-action`, none was a write. A read selection can only leave the plan standing, so the probe now offers the A6 action entries only (`agentReadWriteProbeEntries`); the uncovered-clause validation is unchanged. ap-n004 was not probed in this run (the planner answered none 3/3). |
+| **Code — diagnostics** | args misses | An `args` diff now names the differing declared args (`diffArgs`, never a value). |
+| Prompt vs gold (v9 candidate) | ap-p185 (miss-none 9 of 9 runs since the relabel) | Rule 9 says "Return none for a request to summarize one item of a list"; the planner obeys it on "지라 이슈 보여주고 첫 번째 거 요약해줘", while the owner's relabel (decision (f)) expects the list read plus Core's note. |
+| Model — stable | ap-p127 (11 of 12 runs since 2ef88619; calendar args at step 1), ap-p093 (7 of 12; one summary over both reads where rule 8 says "A 정리하고 B …" summarizes each) | The prompt already covers both; not a gold question. |
+| Model — help boundary | neg-012, neg-013, ap-n113 (help.topic on other-app how-tos), ap-n090 / ap-n091 (help.topic on chit-chat → Core's help-scope question, a capture under W4, 2 per run in r2 / r3) | The read prompt's other-app boundary; ap-n090 / ap-n091 alone use 2 of the 3 allowed captures. |
+| Model — variance | ap-p043, p045, p058, p066, p079, p082, p091, p095, p098, p107, p116, p138, p163, p164; timeouts ap-p052, p056 | One or two runs each. |
+| Gold question | ap-p183 (miss-none 2 of 3) | A capability question about a quoted phrasing read as chit-chat. |
+
+**Stability.** Over the 12 recorded runs, multi-step misses per run were 8–19 (mean ≈ 10 of 166–171); the gate needs at
+most 8 in every run, so a run passes with roughly even odds and three in a row rarely. Four cases (ap-p127, ap-p185,
+ap-p093, ap-p095) give ≈ 3 of those misses per run; ap-p185 is the prompt's own contradiction.
+
+### ADR-0121 S2 note — owner decisions of 2026-10-26 after the ed45e3f1 gate (implementation, branch `claude/v5-s2-p3`)
+
+1. **One-shot list + item summary (amends decision (f) for an explicit position over a list read in the same message).**
+   "지라 이슈 보여주고 첫 번째 거 요약해줘" shows the list AND summarizes its Nth item in the same reply; N binds to the order
+   Quoky renders that list in this reply. Other cases keep (f) (an item of a list the plan does not read, a deictic
+   without a position); a WRITE on a listed item keeps the ratified read + write note.
+   - **Plan language (structural extension).** A reference may carry `"at": N` (1-based): ONE id (`take` 1) at that
+     position of the earlier list. The plan is the list read, a step of the same entry (jira.issues for a jira.release
+     list) with args `{}` and `ref {step, field, take: 1, at: N}`, and a summarize step over it.
+   - **Validator** (`ref-position`): `take` 1, args `{}` (a detail read by id takes no listing args), N ≤ 10, the source
+     is one an item summary already reads (`AGENT_POSITION_REF_SOURCES`, derived from `item.summarize`'s R1 source enum —
+     mail, Drive — plus the R2 sources, Jira, Slack: no new egress), the owner's own words name position N (digits or an
+     ordinal, the A6-D2 index grounding `nlIndexWording`), a later summarize step covers it, and no clause naming N is
+     claimed by a write grammar ("1번 완료" stays a write). The existing same-source / field / cap rules apply. A
+     validated position reference covers its clause, so the read + write probe does not fire on it. The connector charge
+     is the reference step's one detail query.
+   - **Boundary.** `application/agent` may now import `nl-routing/action-entries` (pure catalog data and the index
+     grounding; the CA should re-check the allowlist change).
+   - **Executor contract (P3 part 3).** The item is the Nth of the list as rendered in this reply (Core's order, the same
+     the owner sees); a list shorter than N answers like A6 ("목록에 K건만 있어요") and summarizes nothing; the summary runs
+     under the existing summarize controls of that source (labels as for an item summary).
+   - **Planner `agent-plan.v9`.** Rule 9's "Return none for a request to summarize one item of a list" is replaced by one
+     general sentence for the position reference (the id fields of the item-summary sources) and "a request about one item
+     of a list that no step of this plan reads is none". No example added or changed; pins updated.
+   - **Golds.** ap-p185 (was ap-n125) and four former a6-in-plan negatives — ap-n126 → ap-p186, ap-n129 → ap-p187, ap-n132 →
+     ap-p188, ap-n136 → ap-p189 — are the new multi-step family `item-summary-ref` (no `readWrite`); `read-remainder` is
+     gone. Multi-step positives 180 → 185, one-step 679 → 678, read-and-note golds 12 → 7.
+2. **Chit-chat that names apps** (ap-n090 / ap-n091, "너 slack이랑 jira 다 잘 다루네 ㅎㅎ"): the correct answer is plain chat
+   (none). Owner rationale: nothing is asked, so a question back about Quoky's help or the app's own help is a wrong answer,
+   not a clarification; it stays counted in the help-capture allowance (W4 unchanged, no separate bucket). **Follow-up:**
+   monitor `nl_selection.help_scope_asked` in the live logs (count per day and the share of help selections); no word list
+   or new counter.
+3. **Gate rule.** The agent-plan multi-step exact rate is judged on the POOLED records of all runs (≥ 95% of every
+   multi-step record across the 3 runs). The one-step rate, zero non-help wrongs, the help-capture ceiling, the over-bound
+   rate and the hard cap stay PER RUN. The per-run line is now "run checks (…; multi-step is pooled)", the final line
+   "agent-plan gate (…): PASSED|FAILED (multi-step pooled X/Y (Z%) >= 95%; run checks passed in N of 3 run(s))", and the
+   JSON report carries `pooled` (`agentPlanPooledGate`). Applied to the ed45e3f1 numbers it would read multi-step 474/498
+   (95.2%) — that gate would still fail on run 1 / 2's wrong and run 3's help captures.
+
+### ADR-0121 S2 note — review fixes of 0bde31cc (Codex 2 × P2, CA PASS-with-fixes; validator and scoring only, no prompt change)
+
+- **Codex P2-1 / CA W1 — the position binds to ONE item-summary clause.** `positionClause`: the first clause AFTER the
+  list's own clause (the first naming the list's entry or holding one of its values) that names position N by digits or an
+  ordinal, holds no value of any planned read, and holds no write word of the catalog (the A6 write entries'
+  `actionGrounding` and aliases). Only that clause is covered; another clause with the same ordinal ("… and add a todo to
+  write the first draft") stays uncovered, so rule 7 and the read + write probe still see it. No such clause →
+  `ref-position`: "3번 회의실 예약 메일 보여주고 요약해줘" (the number sits in the list's own clause: a room) and "메일 보여주고
+  3번 삭제하고 요약해줘" (the only position clause holds a write word) are refused, never summarized. The write-grammar check
+  (`nlClauseClaimsWrite`) applies to that clause.
+  - **Deviation from the CA's wording (for the CA).** The CA proposed letting the probe run on a write-word position
+    clause and refusing `ref-position` when it returns write / note / clarify. Because such a clause never qualifies, the
+    plan is refused at validation instead (stricter: no probe outcome can turn it into a read summary), and the probe's
+    results on other clauses (a legitimate read + write) are not tied to the position.
+- **Codex P2-2 — the list → item entry mapping.** `AGENT_READ_SOURCES[…].itemEntry` names the entry that reads ONE listed
+  item by id (jira.issues and jira.release → jira.issues; slack.search, mail.list, drive.files → themselves; none for the
+  other sources). A position reference to any other entry is `ref-position`.
+- **CA W2 — exactly 3 runs.** `AGENT_PLAN_EVAL_GATE.runs = 3`: a plan with another `--runs` is NON-GATING (exit 4, "the
+  gate needs exactly 3 runs"), and `agentPlanPooledGate` passes only over 3 gating runs.
+- **Eval data.** ap-n145 ("메일 보여주고 3번 삭제하고 요약해줘") and ap-n146 ("list my jira issues and delete the second one,
+  then summarize it"), family `position-write`, trap = the position plan, `trapRefusal: ref-position`; agent-drafted,
+  pending the owner. The room-3 and Codex to-do cases are validator tests (their positive golds need the owner's args).
+- **Boundary (CA suggestion).** A transitive test walks every runtime (non-type) import from `application/agent` and
+  refuses any adapter, writer, repository, runner, storage, turn handler or `*-service` module outside the agent itself,
+  `domain/` and `ports/`. It passes today (the chain reaches the pure nl-routing, work-chat grammar and port modules).
+- **Executor contract (P3 part 3), recorded.** (1) N binds only to rows actually rendered in this reply; a list shorter
+  than N answers "목록에 K건만 있어요" and summarizes nothing. (2) The projector and the renderer use ONE shared ordered
+  array of the list's items, pinned by a test, so the Nth id is the Nth row the owner sees. (3) The item read uses the
+  item-summary readers' size caps and flow labels. (4) A clarification is re-derived from the uncovered clause alone, never
+  seeded from the probe's `output.args`.
+
+### ADR-0121 S2 note — owner decisions of 2026-10-26 on the e3462f46 gate (Core's final plan; planner stays `agent-plan.v9`)
+
+1. **ADR-0121 D1 / D2 note — Core normalizes the plan's order.** The planner's step order is not owner-visible: after
+   validation, Core moves each summarize step to right after the last read it covers (`normalizeSummaryPlacement`). Reads
+   keep the planner's order; summaries closing on the same read keep theirs; references, summary sources and the related
+   step are renumbered. Order only: no scope, schema or step changes. The runtime and the scorer use the same validator,
+   so the gate scores Core's final plan. Every gold is already in this order (no gold changed).
+2. **Calendar `timedOnly` from the step's own clause (agent plan path only).** A flag arg with catalog grounding words
+   (`flagGrounding`; today only calendar `timedOnly`: 회의, 미팅, 시간 지정, meeting …) is set when the step's OWN clause holds
+   one of those words: the whole message when it is one conjunct, else the conjuncts that name the step's entry and hold
+   no value of another read. Not when the word is inside the step's own value (keyword "주간회의", calendar-046 /
+   calendar-53), not when the clause has an exclusion or negation marker (`nlHasExclusionOrNegation`, fail-safe), never for
+   a reference step or when two read steps share the entry. No new vocabulary (the arg's existing `flagGrounding`).
+   - **One-step question (for the CA / owner).** The live ADR-0120 one-step selection path (`validateSelection` in the
+     selection service) is NOT changed: the same rule there would change live answers and needs a D12 regate. On the
+     agent-plan gate's one-step group (scored through the agent validator) it already applies (calendar-005, -018, -035).
+3. **Never the read alone when an uncovered clause holds a change word (ap-n011).** When the read + write probe hands
+   nothing over but an uncovered clause holds a write word of the catalog, the turn is the read plan + the decision (f)
+   fixed note ("추가·변경·취소 같은 작업은 조회와 함께 하지 않았어요. 따로 한 번 더 말씀해 주세요."), never the read alone
+   (`writeWord` note). The write words (`agentClauseHasWriteWord`, shared with the position reference): the
+   `actionGrounding` of the A6 writes that act on an EXISTING item (no required payload span: complete, cancel, reminder
+   cancel, undo). Measured on the golds, two narrower choices were needed: the entries' noun aliases ("알림", "reminder")
+   also name the reminder list (brief-005 / brief-027 became notes), and a creation's verbs are also plain read requests
+   ("알려줘": brief-017 "… 다 합쳐서 오늘 거 알려줘"); a creation carries its payload, which the probe's selection judges.
+   ap-n011's gold (`read-and-note`) is unchanged; it scores `read-note`.
+4. **Gate report.** Each record carries `gotSummaries` (`<schema><-<covered read entries>` of Core's final plan), and a
+   miss whose reads equal the gold's carries `summaryDiff: order | scope`; the miss line prints both.
+
+**Re-score of the e3462f46 records (estimate; the report holds no raw answers).** Deterministic replays of the gold plans
+without `timedOnly` confirm the flag is now set for ap-p127, ap-p135, ap-p036, ap-p143 and calendar-005 / -018 / -035.
+Multi-step: 483 + 9 (`timedOnly`) + 5 (order only: ap-p098 ×3 with two digests, ap-p093 r1, ap-p143 r3) = 497/513
+(96.9%), 498 (97.1%) if ap-p082 r1's digest covered the mail read alone (its sources were not recorded). One-step:
+656 / 656 / 654 of 678. ap-n011 r1 becomes `read-note`, so run 1's checks would pass: estimated gate PASSED (3 of 3 runs).
+Remaining multi-step misses are summary scope (ap-p093 r2/r3, ap-p107, ap-p102, ap-p119, ap-p083, ap-p185 r3), other args
+(ap-p045 ×2, ap-p116, ap-p038, ap-p160), two timeouts and one `range-unnamed`.
+
+### ADR-0121 S2 note — review fixes of f3e59814 (Codex 2 × P2, CA PASS-with-fixes; no prompt change, no new word list)
+
+1. **Two write vocabularies (Codex P2-1 / CA W2).** The position-reference guard uses the BROAD catalog set again (every
+   A6 write entry's `actionGrounding` and aliases, creations included): "메일 보여주고 3번 할 일로 추가하고 요약해줘" and "… 3번
+   알림 걸고 요약해줘" are `ref-position`; in "list my jira issues and add a todo to write the first draft and summarize the
+   first one" the creation clause is no position clause and stays uncovered for the probe. The narrow item-acting set
+   (complete, cancel, reminder cancel, undo) is used ONLY for the ap-n011 never-silent note. Data: ap-n147, ap-n148
+   (`position-write`, pending the owner).
+2. **`timedOnly` narrowed (Codex P2-2 / CA W1); the plan inference is kept, no scorer tolerance.** Every planned read's
+   value is set aside first, also in a one-clause message ("내일 일정 및 회의록 문서 찾아줘"); a clause that names another
+   planned read's entry is not the step's own; and the flag is set only when the step's clauses name the calendar by its
+   meeting words alone — any other catalog alias of the entry that is not a flag word ("일정", "캘린더", "스케줄", "달력",
+   "calendar") means the whole calendar was asked for. The four CA probes leave it unset. Cost on the golds: none — the
+   replays of ap-p127, ap-p135, ap-p036, ap-p143 and calendar-005 / -018 / -035 without the flag still get it, so the
+   e3462f46 re-score stays 497/513 (96.9%) pooled.
+3. **Predicate-only change words (CA S1).** `agentClauseHasWriteWord` counts a change word only on the clause's predicate:
+   a Korean word in a request or imperative form (`nlIsRequestForm`: "꺼줘", "삭제해줘", "되돌려") or a bare action noun
+   closing the clause ("2번 취소"); in English the clause's first word after the request leads (`NL_EN_REQUEST_LEADS`):
+   "cancel the second one". "취소된 회의", "완료된 거 보여줘", "show the completed ones" no longer count. "완료된 거는
+   빼줘" still does: its predicate "빼줘" is an item-removal request, and the note is the fail-safe answer to that
+   ambiguity (for the CA). English "mark the first one done" is not recognized (no write word leads it): it stays
+   standing, as before this net. Boundary: `application/agent` may import `nl-routing/garbled-action` (the request-lead
+   set; pure).
+
+### ADR-0121 S2 note — Codex 2 × P2 of 7e4fad00 (the never-silent change-word check; no prompt change)
+
+- A Korean bare action word followed by a word that is ONLY the light verb and a request ending ("취소 해줘", "완료
+  처리해줘": `NL_GLUED_REQUEST_TAIL`, existing) counts as the clause predicate.
+- An English modal + "you" lead ("can you cancel the second one", "could you undo that", "can you please …") is skipped
+  before the imperative slot, as the garbled-action grammar already does (`NL_EN_MODAL_LEAD`, now exported from
+  `garbled-action.ts`; no new list). Regression tests run through `agentReadWriteProbeResult` (probe none and malformed).
+

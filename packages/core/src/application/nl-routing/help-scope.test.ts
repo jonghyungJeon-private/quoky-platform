@@ -29,10 +29,21 @@ describe('nlHelpSourceScope', () => {
     expect(nlHelpSourceScope({ entryId: 'help.topic', args: {} }, '구글 드라이브에서 폴더 공유하는 법 알려줘')).toEqual({ source: '구글 드라이브' });
   });
 
-  it('never fires on a topic, without a source, on two source families or on another entry', () => {
+  it('several source families (owner decision of 2026-10-26): all of them, in the owner order and spelling', () => {
+    expect(nlHelpSourceScope({ entryId: 'help.topic', args: {} }, '슬랙이랑 지라 쓰는 법')).toEqual({ source: '슬랙', sources: ['슬랙', '지라'] });
+    expect(nlHelpSourceScope({ entryId: 'help.topic', args: {} }, '구글 캘린더랑 지메일 연동 설정 어디서 해?')).toEqual({ source: '구글 캘린더', sources: ['구글 캘린더', '지메일'] });
+    expect(renderHelpScopeQuestion(['구글 캘린더', '지메일'], 'ko').split('\n')[0]).toBe('Quoky로 구글 캘린더·지메일을 조회·연결하는 방법을 물으신 건가요, 아니면 그 앱 자체의 설정·사용법인가요?');
+    expect(renderHelpScopeQuestion(['Slack', 'Jira'], 'en').split('\n')[0]).toBe('Do you mean how to look up or connect Slack and Jira with Quoky, or the settings or use of those apps themselves?');
+    // At most three names are shown; more say so.
+    expect(renderHelpScopeQuestion(['슬랙', '지라', '깃허브', '메일'], 'ko').split('\n')[0]).toContain('Quoky로 슬랙·지라·깃허브 등을 조회·연결하는');
+    // One source keeps the original text byte for byte.
+    expect(renderHelpScopeQuestion(['슬랙'], 'ko')).toBe(renderHelpScopeQuestion('슬랙', 'ko'));
+  });
+
+  it('never fires on a topic, without a source, or on another entry', () => {
     expect(nlHelpSourceScope({ entryId: 'help.topic', args: { topic: 'work-lookup' } }, '슬랙에서 검색하는 방법 알려줘')).toBeUndefined();
     expect(nlHelpSourceScope({ entryId: 'help.topic', args: {} }, '아이폰 알림 어떻게 꺼?')).toBeUndefined();
-    expect(nlHelpSourceScope({ entryId: 'help.topic', args: {} }, '슬랙이랑 지라 쓰는 법')).toBeUndefined();
+    expect(nlHelpSourceScope({ entryId: 'help.topic', args: { topic: 'calendar' } }, '구글 캘린더랑 지메일 연동 설정 어디서 해?')).toBeUndefined();
     expect(nlHelpSourceScope({ entryId: 'slack.search', args: { keyword: '배포' } }, '슬랙에서 배포 검색해줘')).toBeUndefined();
     // Jira's two entries share one source family.
     expect(nlHelpSourceScope({ entryId: 'help.topic', args: {} }, '지라 쓰는 법')).toEqual({ source: '지라' });
@@ -55,6 +66,14 @@ describe('nlHelpSourceScope', () => {
     expect(readPendingQuestion(record('슬랙'), 'a', '2026-10-22T00:01:00.000Z')).toMatchObject({ appSource: '슬랙' });
     expect(readPendingQuestion(record('Confluence'), 'a', '2026-10-22T00:01:00.000Z')).toMatchObject({ appSource: 'Confluence' });
     expect(readPendingQuestion(record('아이폰'), 'a', '2026-10-22T00:01:00.000Z')).toBeUndefined();
+    const several = (appSources: unknown, extra: Record<string, unknown> = {}) => ({
+      metadata: { [NL_PENDING_METADATA_KEY]: { actorId: 'a', at: '2026-10-22T00:00:00.000Z', kind: 'entry', language: 'ko', options: [{ entryId: 'help.topic', args: {} }], appSources, ...extra } },
+    });
+    expect(readPendingQuestion(several(['구글 캘린더', '지메일']), 'a', '2026-10-22T00:01:00.000Z')).toMatchObject({ appSources: ['구글 캘린더', '지메일'] });
+    for (const bad of [['슬랙'], ['슬랙', '아이폰'], ['슬랙', '지라', '깃허브', '메일'], '슬랙']) {
+      expect(readPendingQuestion(several(bad), 'a', '2026-10-22T00:01:00.000Z'), JSON.stringify(bad)).toBeUndefined();
+    }
+    expect(readPendingQuestion(several(['슬랙', '지라'], { appSource: '슬랙' }), 'a', '2026-10-22T00:01:00.000Z')).toBeUndefined();
   });
 });
 

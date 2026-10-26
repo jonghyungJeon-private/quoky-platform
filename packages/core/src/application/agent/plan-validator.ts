@@ -3,10 +3,15 @@ import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
+import { nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
+import { NL_EN_MODAL_LEAD, NL_EN_REQUEST_LEADS, NL_GLUED_REQUEST_TAIL } from '../nl-routing/garbled-action';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
-import { AGENT_READ_SOURCES } from './flow-policy';
+import { nlClauseClaimsWrite } from '../nl-routing/write-clause';
+import { NL_ACTION_ENTRIES, nlIndexWording } from '../nl-routing/action-entries';
+import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
+import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
 
 /**
@@ -19,13 +24,15 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  * 1a. **Not a request** (ADR-0120 A7, the selection path's message-level vetoes, shared so the eval and the runtime apply
  *    one rule; CA review of S2 P2): a past statement (`veto-past-statement`), or a read step whose own sentence only
  *    quotes or reports a request (`veto-quoted-request`) or gives a reason for a feeling (`veto-reason-statement`).
- * 2. **Step mix** (D7, Q6, A6-D4): 1–6 steps, at most 3 summaries, at least one read. A plan of more than one step never
- *    names `help.topic`, `brief.today` or any A6 action entry.
+ * 2. **Step mix** (D7, Q6 as amended by ADR-0121 A1 decision (e), A6-D4): 1–6 steps, at most 3 summaries, at least one
+ *    read. A plan of more than one step never names `help.topic` (help is split off before planning, A1-E1) or any A6
+ *    action entry. `brief.today` may be ONE step of a plan (A1-E2): at most one brief step (B4: it counts as one read),
+ *    no summary over it (B2, `summary-covers-brief`), no reference from or to it (B3: it has no id field).
  * 2a. **Unbounded → a bounded-suggestion ask** (the owner's review of 2026-10-21, decision (h)): a plan over a bound — more
- *    than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), or more than 10
- *    referenced values — never runs and is never a silent none: it is `ask` with reason `unbounded` and ONE deterministic
+ *    than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), more than 10
+ *    referenced values, or (rule 6) more than 10 connector queries — never runs and is never a silent none: it is `ask` with reason `unbounded` and ONE deterministic
  *    narrower plan Core derives from the planner's own steps (the period → this week, or this month; the first 4 reads;
- *    the first 10 referenced values). The suggestion passes this validator itself (the period as Core's own value);
+ *    the first 10 referenced values; then the first reads that fit the query charge). The suggestion passes this validator itself (the period as Core's own value);
  *    when it does not, the plan is refused (fail closed). The ask runs nothing: an owner reply that takes the suggestion
  *    is a new turn.
  * 3. **Per read step**: a closed READ entry (never ITEM_READ, LOCAL_WRITE, EXTERNAL_WRITE or an A6 id), offered this turn,
@@ -36,7 +43,15 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *    calendar or Drive id never feeds Jira); the closed id field that source projects (never a date field); at most 10
  *    values per reference and 10 per run (ADR-0121 D2, kept by the owner on 2026-10-21). The cap bounds per-item DETAIL
  *    reads only: a listing (a release's issue list, a Jira list) is one read and is not capped here.
- * 5. **Summaries**: a closed output schema over earlier read steps only.
+ * 5. **Summaries**: a closed output schema over earlier read steps only, never over the brief (A1-E2 B2).
+ * 6. **Connector calls** (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note; CA finding 3 of P3 part 1): the plan's
+ *    static charge is at most 10 connector calls, ONE unit being one connector query (a named port call). Each read is its
+ *    entry's worst case (`AGENT_READ_SOURCES[…].connectorQueries`: a listing 1, `jira.release` 8, `todo.list` 2, the
+ *    brief 4 or its configured worst case, reminders and help 0); a reference step is ONE bulk `items-by-key` query.
+ *    Over it, the plan is answered like decision (h): an ask (bound `calls`) suggesting its first reads that fit; only a
+ *    plan whose first read alone does not fit is refused `over-bound` (CA re-check W2). The HTTP requests behind the queries (pages, per-item metadata, token refreshes) are not this
+ *    unit: the record (S2 P3 part 2 note) lists them, and choosing HTTP requests as the D7 unit is an open owner / CA
+ *    decision (most single reads exceed 10 requests at their worst).
  *
  * `NEEDS_CLARIFICATION` with every rule met is `clarify` (one numbered question), not a refusal.
  */
@@ -53,12 +68,23 @@ export const AGENT_PLAN_MAX_RUN_REF_VALUES = 10;
 /** Decision (h): one entry read for this many different periods or more is a read per day, week or month (unbounded). */
 export const AGENT_PLAN_PER_PERIOD_STEPS = 3;
 /** The closed bounds an `unbounded` ask names. */
-export const AGENT_UNBOUNDED_KINDS = ['per-period', 'reads', 'refs'] as const;
+export const AGENT_UNBOUNDED_KINDS = ['per-period', 'reads', 'refs', 'calls'] as const;
 export type AgentUnboundedKind = (typeof AGENT_UNBOUNDED_KINDS)[number];
 /** The closed quarantined-summary output schemas (stage S2 P3 binds each to its bounded shape). */
 export const AGENT_PLAN_SUMMARY_SCHEMAS = ['digest.v1', 'meeting-digest.v1'] as const;
-/** Q6: entries that may only ever be a one-step plan. */
-export const AGENT_SINGLE_STEP_ONLY: readonly NlWave1EntryId[] = ['help.topic', 'brief.today'];
+/**
+ * Q6 as amended by ADR-0121 A1 decision (e) (A1-E1 / A1-E2): `help.topic` may only ever be a one-step plan (help is split
+ * off before planning); `brief.today` left this list and may be one step of a plan under B1–B6.
+ */
+export const AGENT_SINGLE_STEP_ONLY: readonly NlWave1EntryId[] = ['help.topic'];
+/** ADR-0121 D7: at most this many connector (external) calls per run. */
+export const AGENT_RUN_MAX_CONNECTOR_CALLS = 10;
+/**
+ * A1-E2 B4: the brief's worst case of connector queries with every section on (calendar 1, assigned work 2, mail 1; the
+ * mail query's ≤ 3 metadata GETs are HTTP requests, not queries). A caller may pass the configured worst case
+ * (`briefConnectorCalls`); the shadow job charges this one (every section on).
+ */
+export const AGENT_BRIEF_MAX_CONNECTOR_CALLS = AGENT_READ_SOURCES['brief.today'].connectorQueries;
 
 export type AgentPlanRefusal =
   | 'not-dm'
@@ -84,9 +110,21 @@ export type AgentPlanRefusal =
   | 'ref-cross-source'
   | 'ref-field'
   | 'ref-too-many'
+  /**
+   * Owner decision of 2026-10-26: a position reference (`at`) that is not one item (`take` 1, args `{}`, at most 10) of an
+   * item-summary source, not named by the owner's own digits or ordinal, not summarized by a later step of the plan, or in
+   * a clause a write grammar claims.
+   */
+  | 'ref-position'
   | 'run-refs-too-many'
   | 'summary-schema'
-  | 'summary-source';
+  | 'summary-source'
+  /** A1-E2: more than one `brief.today` step. */
+  | 'brief-repeated'
+  /** A1-E2 B2: a summary step covering the brief. */
+  | 'summary-covers-brief'
+  /** D7 / A1-E2 B4: the plan's static connector-call charge is over {@link AGENT_RUN_MAX_CONNECTOR_CALLS}. */
+  | 'over-bound';
 
 export interface AgentPlanValidationContext {
   /** The entries offered this turn (registered and configured). */
@@ -101,6 +139,11 @@ export interface AgentPlanValidationContext {
   readonly timeZone: string;
   /** The turn is the owner's direct conversation. Absent or false: refused (fail closed). */
   readonly direct?: boolean;
+  /**
+   * A1-E2 B4: the brief's configured worst case of connector queries (by the brief flags); absent:
+   * {@link AGENT_BRIEF_MAX_CONNECTOR_CALLS} (every section on).
+   */
+  readonly briefConnectorCalls?: number;
 }
 
 /** Where an argument value came from (ADR-0121 D2): the owner's words, or an earlier step's projected ids. */
@@ -115,14 +158,36 @@ export type ValidatedAgentStep =
       /** Canonical (ADR-0120 D4), every value a literal grounded in the owner's words. */
       readonly args: NlArgs;
       readonly range?: NlResolvedRange;
-      readonly ref?: { readonly step: number; readonly field: string; readonly take: number; readonly provenance: Extract<AgentArgProvenance, { kind: 'reference' }> };
+      readonly ref?: {
+        readonly step: number;
+        readonly field: string;
+        readonly take: number;
+        /** A position reference: the one item at this 1-based position of the earlier list as Quoky renders it. */
+        readonly at?: number;
+        readonly provenance: Extract<AgentArgProvenance, { kind: 'reference' }>;
+      };
       readonly provenance: Readonly<Record<string, AgentArgProvenance>>;
     }
   | { readonly kind: 'summarize'; readonly from: readonly number[]; readonly schema: (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] };
 
 export type ValidatedAgentPlan =
-  | { readonly kind: 'none' }
-  | { readonly kind: 'run' | 'clarify'; readonly steps: readonly ValidatedAgentStep[] }
+  /**
+   * `reason: write-clause` (owner-approved fix of 2026-10-26, ap-n131): the planner's read plan left a clause that an
+   * existing write grammar claims, so the plan is treated as `none` and the ratified read + write path answers the turn.
+   */
+  | { readonly kind: 'none'; readonly reason?: 'write-clause' }
+  | {
+      readonly kind: 'run' | 'clarify';
+      readonly steps: readonly ValidatedAgentStep[];
+      /** The static connector-call charge (rule 6); the executor's run budget starts from it. */
+      readonly connectorCalls: number;
+      /**
+       * Owner decision (a), CA finding 5: the read step the owner related the other reads to (1-based); kept only when it
+       * names a read step and another read of a different source exists. The reply adds the fixed "not checked" note
+       * naming that step's source; no step depends on it.
+       */
+      readonly related?: number;
+    }
   /**
    * Decision (h): the planner's plan is over a bound. Nothing runs; the reply asks whether to read `suggestion` instead (a
    * validated, bounded plan Core derived; its narrowed period has no owner provenance, so it never runs from the ask).
@@ -169,10 +234,13 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   if (summaries.length > AGENT_PLAN_MAX_SUMMARIES) return refuse('too-many-summaries');
   // A6 and single-step-only entries refuse before any bound is considered: an unbounded plan holding one is never an ask.
   if (steps.length > 1) {
+    let briefs = 0;
     for (const [index, step] of steps.entries()) {
       if (step.kind !== 'read') continue;
       if (isNlActionEntryId(step.entryId)) return refuse('a6-in-plan', index + 1);
       if ((AGENT_SINGLE_STEP_ONLY as readonly string[]).includes(step.entryId)) return refuse('single-step-only', index + 1);
+      // A1-E2: at most one brief step in a plan.
+      if (step.entryId === 'brief.today' && ++briefs > 1) return refuse('brief-repeated', index + 1);
     }
   }
   const unbounded = unboundedOf(steps, ctx);
@@ -196,7 +264,302 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     }
     validated.push(checked.step);
   }
-  return { ok: true, plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: validated } };
+  const connectorCalls = agentPlanConnectorCharge(validated, ctx);
+  if (connectorCalls > AGENT_RUN_MAX_CONNECTOR_CALLS) {
+    // CA re-check W2 (decision (h): never a silent none): over the query charge, ask with the first reads that fit.
+    const reads = steps.filter((step) => step.kind === 'read').length;
+    const fitted = fitToCharge(steps, reads - 1, ctx);
+    return fitted === undefined ? refuse('over-bound') : { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls', suggestion: fitted } };
+  }
+  const relatedAsPlanned = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
+  // Rule 7 (owner-approved fix of 2026-10-26, ap-n131): a read plan that leaves a write clause uncovered is `none`.
+  if (leavesWriteClause(validated, ctx)) return { ok: true, plan: { kind: 'none', reason: 'write-clause' } };
+  // Owner decisions of 2026-10-26 (the e3462f46 gate): Core's final plan. A grounded flag the owner's own clause states
+  // (`withClauseGroundedFlags`), and each summary right after the last read it covers (`normalizeSummaryPlacement`;
+  // the planner's step order is not owner-visible).
+  const normalized = normalizeSummaryPlacement(withClauseGroundedFlags(validated, ctx));
+  const related = relatedAsPlanned !== undefined ? normalized.renumber.get(relatedAsPlanned) : undefined;
+  return {
+    ok: true,
+    plan: { kind: plan.ambiguity === 'NEEDS_CLARIFICATION' ? 'clarify' : 'run', steps: normalized.steps, connectorCalls, ...(related !== undefined ? { related } : {}) },
+  };
+}
+
+/**
+ * Owner decision of 2026-10-26 (ADR-0121 D1 / D2 note: Core normalizes the plan's order): each summarize step is moved to
+ * right after the last read it covers; the reads keep the planner's order, and summaries closing on the same read keep
+ * theirs. Order only: no step is added, removed or changed (scope and schema stay), and every reference, summary source
+ * and the related step are renumbered. Returns the old → new step numbers. Pure.
+ */
+export function normalizeSummaryPlacement(steps: readonly ValidatedAgentStep[]): { readonly steps: ValidatedAgentStep[]; readonly renumber: ReadonlyMap<number, number> } {
+  const order: number[] = [];
+  for (const [index, step] of steps.entries()) {
+    if (step.kind !== 'read') continue;
+    order.push(index);
+    for (const [other, summary] of steps.entries()) if (summary.kind === 'summarize' && Math.max(...summary.from) === index + 1) order.push(other);
+  }
+  // Fail-safe: a step the walk did not place (never for a validated plan) keeps the planner's order.
+  if (order.length !== steps.length) return { steps: [...steps], renumber: new Map(steps.map((_, index) => [index + 1, index + 1])) };
+  const renumber = new Map(order.map((original, position) => [original + 1, position + 1] as const));
+  const at = (number: number): number => renumber.get(number) as number;
+  const out = order.map((original): ValidatedAgentStep => {
+    const step = steps[original] as ValidatedAgentStep;
+    if (step.kind === 'summarize') return { ...step, from: step.from.map(at) };
+    if (step.ref === undefined) return step;
+    return { ...step, ref: { ...step.ref, step: at(step.ref.step), provenance: { ...step.ref.provenance, step: at(step.ref.provenance.step) } } };
+  });
+  return { steps: out, renumber };
+}
+
+/**
+ * Owner decision of 2026-10-26 (the e3462f46 gate; agent plan path only — the live one-step selection path is unchanged,
+ * see DECISIONS): a flag arg with catalog grounding words (`flagGrounding`, today calendar `timedOnly`: 회의, 미팅,
+ * meeting …) is set when the step's OWN clause states one of those words and holds no exclusion or negation marker
+ * (`nlHasExclusionOrNegation`, fail-safe). The step's own clause: the whole message when it is one conjunct; otherwise the
+ * conjuncts that name the step's entry and hold no value of another read; a word inside the step's own value (a keyword
+ * "주간회의") does not count. Never for a reference step, and never when
+ * another read step has the same entry (no clause is then its own). No vocabulary of its own. Pure.
+ */
+function withClauseGroundedFlags(steps: readonly ValidatedAgentStep[], ctx: AgentPlanValidationContext): ValidatedAgentStep[] {
+  const clauses = planClauses(ctx.groundingText);
+  const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
+  return steps.map((step) => {
+    if (step.kind !== 'read' || step.ref !== undefined) return step;
+    const specs = step.entry.args.filter((spec) => spec.kind === 'flag' && spec.flagGrounding !== undefined && step.args[spec.name] !== true);
+    if (specs.length === 0 || reads.filter((read) => read.entry.id === step.entry.id).length > 1) return step;
+    const others = reads.filter((read) => read !== step);
+    // Every read's value is set aside first: a word inside the step's own value is that value's (the keyword "주간회의" is an
+    // event title, calendar-046), and one inside another read's value is that read's ("회의록 문서", also in a one-clause
+    // message; Codex P2-2 of f3e59814).
+    const values = reads.flatMap((read) => stringValues(read.args)).sort((a, b) => b.length - a.length);
+    const residue = (clause: PlanClause): string => values.reduce((text, value) => text.split(value).join(' '), clause.normalized);
+    const own = (clauses.length <= 1 ? clauses : clauses.filter((clause) => clauseNamesEntry(clause, step.entry))).filter(
+      // CA W1: a clause naming another planned read's entry is not this step's own.
+      (clause) => !others.some((other) => other.entry.id !== step.entry.id && clauseNamesEntry({ ...clause, normalized: residue(clause) }, other.entry)),
+    );
+    const plain = own.filter((clause) => !nlHasExclusionOrNegation(clause.text));
+    if (plain.length === 0 || plain.length !== own.length) return step;
+    const set = specs.filter((spec) => {
+      const flagWords = (spec.flagGrounding ?? []).map((word) => normalizeForMatch(word));
+      // CA W1 (review of f3e59814): only when the step's clauses name the entry by those words alone. Another alias of the
+      // entry ("일정", "캘린더", "스케줄": the catalog's own aliases that are not flag words) means the owner asked for the
+      // whole calendar ("이번 주 회의랑 연차 일정", "일정 전부 … 회의 포함해서").
+      const broader = step.entry.aliases.map((alias) => normalizeForMatch(alias)).filter((alias) => alias.length > 0 && !flagWords.includes(alias));
+      if (plain.some((clause) => broader.some((alias) => groundingWordIn(residue(clause), alias)))) return false;
+      return plain.some((clause) => flagWords.some((word) => groundingWordIn(residue(clause), word)));
+    });
+    if (set.length === 0) return step;
+    const args: Record<string, NlArgs[string]> = { ...step.args };
+    const provenance: Record<string, AgentArgProvenance> = { ...step.provenance };
+    for (const spec of set) {
+      args[spec.name] = true;
+      provenance[spec.name] = { kind: 'literal', label: OWNER_TEXT_FLOW_LABEL };
+    }
+    return { ...step, args, provenance };
+  });
+}
+
+/**
+ * Rule 7 (owner-approved fix of 2026-10-26 for ap-n131, under the ratified read + write note): whether the owner's message
+ * has two or more conjuncts (the S2 boundaries, the verb connective included) and one of them mentions none of the planned
+ * reads — no alias or source name of a planned entry, no string value of a planned read's args — while an existing write
+ * grammar claims it as a write (`nlClauseClaimsWrite`: the reminder and to-do / work grammars). Then the planner dropped a
+ * write ("내일 일정 보여주고 내일 9시에 출발 알림 만들어줘" planned as the calendar read alone), and the plan is treated as `none`
+ * so the read + write path (one A6 selection, the read re-plan, the write clause alone as grounding) answers the turn.
+ * Structural; no vocabulary. Applies to the agent planner only: the ADR-0120 one-step selection path is unchanged.
+ */
+function leavesWriteClause(steps: readonly ValidatedAgentStep[], ctx: AgentPlanValidationContext): boolean {
+  return agentUncoveredClauses(steps, ctx.groundingText).some((clause) => nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone }));
+}
+
+/**
+ * The conjuncts of the owner's prose (the S2 boundaries, the verb connective included; two or more) that mention none of
+ * the planned reads: no alias or source name of a planned entry and no string value of a planned read's args. Owner text
+ * (never logged); `[]` for a message of one conjunct. Used by rule 7 and by the read + write trigger amendment of
+ * 2026-10-26 (an uncovered clause is probed with the note's one A6 selection, `read-write-probe.ts`). Pure.
+ */
+export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], groundingText: string): string[] {
+  const clauses = planClauses(groundingText);
+  if (clauses.length < 2) return [];
+  const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
+  const allNames = reads.flatMap((step) => [...step.entry.aliases, ...(step.entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0));
+  const names = allNames.filter((name) => !name.includes(' '));
+  // Gate on 5c09fee4: a multi-word alias ("할 일", "google drive") is a phrase of the clause; ignoring it left "할 일 목록
+  // 보여줘" uncovered while `todo.list` was planned, and the probe fired on correct plans.
+  const phrases = allNames.filter((name) => name.includes(' '));
+  const values = reads.flatMap((step) => Object.values(step.args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : [])));
+  // Owner decision of 2026-10-26 (Codex P2-1, CA W1): a validated position reference covers ONLY its own item-summary
+  // clause (`positionClause`), never another clause that happens to hold the same number or ordinal.
+  const positionCovered = new Set<number>();
+  for (const step of reads) {
+    const list = step.ref?.at !== undefined ? steps[step.ref.step - 1] : undefined;
+    if (step.ref?.at === undefined || list?.kind !== 'read') continue;
+    const index = positionClause(clauses, { entry: list.entry, args: list.args }, reads, step.ref.at);
+    if (index !== undefined) positionCovered.add(index);
+  }
+  const out: string[] = [];
+  for (const [index, clause] of clauses.entries()) {
+    const mentioned =
+      clause.words.some((token) => names.some((name) => aliasStarts(token.word, name))) ||
+      phrases.some((phrase) => ` ${clause.normalized} `.includes(` ${phrase}`)) ||
+      values.some((value) => clause.normalized.includes(value)) ||
+      positionCovered.has(index);
+    if (!mentioned) out.push(clause.text);
+  }
+  return out;
+}
+
+/** One conjunct of the owner's prose (the S2 boundaries, the verb connective included). */
+interface PlanClause {
+  readonly text: string;
+  readonly normalized: string;
+  readonly words: readonly ConjunctToken[];
+}
+
+function planClauses(groundingText: string): PlanClause[] {
+  const tokens = conjunctTokens(groundingText, { verbConnective: true });
+  const clauses = new Map<number, ConjunctToken[]>();
+  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
+  return [...clauses.values()].map((words) => {
+    const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
+    return { text, normalized: normalizeForMatch(text), words };
+  });
+}
+
+/** Whether the clause names the entry by an alias or source name (a multi-word name as a phrase). */
+function clauseNamesEntry(clause: PlanClause, entry: NlCatalogEntry): boolean {
+  const all = [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0);
+  return (
+    clause.words.some((token) => all.some((name) => !name.includes(' ') && aliasStarts(token.word, name))) ||
+    all.some((name) => name.includes(' ') && ` ${clause.normalized} `.includes(` ${name}`))
+  );
+}
+
+function stringValues(args: Readonly<Record<string, unknown>>): string[] {
+  return Object.values(args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : []));
+}
+
+/**
+ * Whether a clause of the owner's prose asks for a write on an existing item: the A6 write entries' `actionGrounding` of
+ * the item-acting writes, on the clause's predicate (`writeWordOnPredicate`): the read + write probe's never-silent rule
+ * (owner decision of 2026-10-26, ap-n011). Owner text, never logged. Pure.
+ */
+export function agentClauseHasWriteWord(text: string): boolean {
+  itemWriteVocabulary ??= Object.values(NL_ACTION_ENTRIES)
+    // The action words only, never an entry's noun alias ("알림", "reminder" also name the reminder LIST), and only of the
+    // writes that act on an EXISTING item (no required payload span: complete, cancel, undo). A creation's own verbs are
+    // also plain read requests ("알려줘": brief-017 "… 다 합쳐서 오늘 거 알려줘"); a creation carries its payload, which the
+    // probe's selection and validation judge. Gate on e3462f46.
+    .flatMap((entry) =>
+      entry !== undefined && (entry.risk === 'LOCAL_WRITE' || entry.risk === 'EXTERNAL_WRITE') && !entry.args.some((spec) => spec.kind === 'span' && spec.required === true)
+        ? [...(entry.actionGrounding ?? [])]
+        : [],
+    )
+    .map((word) => normalizeForMatch(word))
+    .filter((word) => word.length > 0);
+  return writeWordOnPredicate(text, itemWriteVocabulary);
+}
+
+let itemWriteVocabulary: readonly string[] | undefined;
+
+/**
+ * CA S1 (review of f3e59814): a write word counts only as the clause's predicate, never as a modifier ("취소된 회의", "완료된
+ * 거 보여줘"). Korean: a word in a request or imperative form (`nlIsRequestForm`: "꺼줘", "취소해", "되돌려") or the
+ * clause's last word, that holds the write word; or (Codex P2 of 7e4fad00) the bare action word followed by a word that is
+ * ONLY the light verb and a request ending (`NL_GLUED_REQUEST_TAIL`: "취소 해줘", "완료 처리해줘"). English: the clause's
+ * first word after the request leads (`NL_EN_REQUEST_LEADS`), also after a modal + "you" (`NL_EN_MODAL_LEAD`: "can you
+ * cancel the second one", "could you undo that"), the imperative. Existing grammar only.
+ */
+function writeWordOnPredicate(text: string, vocabulary: readonly string[]): boolean {
+  const words = normalizeForMatch(text).split(/\s+/u).filter((word) => word.length > 0);
+  const latin = (word: string): boolean => /^[a-z0-9 -]+$/u.test(word);
+  const korean = vocabulary.filter((word) => !latin(word));
+  const last = words.at(-1)?.replace(/[.!?~]+$/u, '') ?? '';
+  for (const [index, word] of words.entries()) {
+    if (!korean.some((write) => word.includes(write))) continue;
+    if (nlIsRequestForm(word)) return true;
+    // A bare action noun closing the clause is a command ("2번 취소").
+    if (index === words.length - 1 && korean.includes(last)) return true;
+    // The bare action noun with the light verb as its own word ("취소 해줘", "완료 처리해줘").
+    const next = words[index + 1];
+    if (korean.includes(word) && next !== undefined && next.replace(NL_GLUED_REQUEST_TAIL, '').length === 0) return true;
+  }
+  let head = 0;
+  const leads = (): void => {
+    while (head < words.length && NL_EN_REQUEST_LEADS.has(words[head] as string)) head += 1;
+  };
+  leads();
+  if (NL_EN_MODAL_LEAD.test(words[head] ?? '') && words[head + 1] === 'you') {
+    head += 2;
+    leads();
+  }
+  const rest = words.slice(head).join(' ');
+  return vocabulary.filter(latin).some((write) => rest === write || rest.startsWith(`${write} `));
+}
+
+let writeVocabulary: readonly string[] | undefined;
+/**
+ * CA W1 (review of 0bde31cc), kept BROAD by the review of f3e59814 (Codex P2-1 / CA W2): whether the clause holds any write
+ * word of the catalog — every A6 write entry's `actionGrounding` and aliases (creations included: "3번 할 일로 추가하고",
+ * "3번 알림 걸고"). Used only by the position-reference guard, which fails safe (a refused position, never a summary);
+ * the ap-n011 note uses the narrow, predicate-only {@link agentClauseHasWriteWord}.
+ */
+function hasWriteVocabulary(clause: PlanClause): boolean {
+  writeVocabulary ??= Object.values(NL_ACTION_ENTRIES)
+    .flatMap((entry) => (entry !== undefined && (entry.risk === 'LOCAL_WRITE' || entry.risk === 'EXTERNAL_WRITE') ? [...(entry.actionGrounding ?? []), ...entry.aliases] : []))
+    .map((word) => normalizeForMatch(word))
+    .filter((word) => word.length > 0);
+  return writeVocabulary.some((word) => groundingWordIn(clause.normalized, word));
+}
+
+/**
+ * Owner decision of 2026-10-26, as fixed by the review of 0bde31cc (Codex P2-1, CA W1): the index of the ONE clause a
+ * position reference summarizes, or `undefined`. It is the first clause AFTER the list's own clause (the first one naming
+ * the list's entry or holding one of its values) that names position `at` by digits or an ordinal, holds no value of any
+ * planned read ("3번 회의실 예약 메일" is a room, not a position) and no write word of the catalog ("3번 삭제하고" stays a
+ * write the read + write path sees). Structural.
+ */
+function positionClause(
+  clauses: readonly PlanClause[],
+  list: { readonly entry: NlCatalogEntry; readonly args: Readonly<Record<string, unknown>> },
+  reads: ReadonlyArray<{ readonly args: Readonly<Record<string, unknown>> }>,
+  at: number,
+): number | undefined {
+  const listValues = stringValues(list.args);
+  const listIndex = clauses.findIndex((clause) => clauseNamesEntry(clause, list.entry) || listValues.some((value) => clause.normalized.includes(value)));
+  if (listIndex < 0) return undefined;
+  const values = reads.flatMap((read) => stringValues(read.args));
+  for (let index = listIndex + 1; index < clauses.length; index += 1) {
+    const clause = clauses[index] as PlanClause;
+    if (nlIndexWording(at, clause.text) === undefined) continue;
+    if (values.some((value) => clause.normalized.includes(value)) || hasWriteVocabulary(clause)) continue;
+    return index;
+  }
+  return undefined;
+}
+
+/** The related step when it is a read and another read of a different source exists; else none (the flag is dropped). */
+function relatedStep(steps: readonly ValidatedAgentStep[], related: number): number | undefined {
+  const target = steps[related - 1];
+  if (target?.kind !== 'read' || !isNlWave1EntryId(target.entry.id)) return undefined;
+  const source = AGENT_READ_SOURCES[target.entry.id].source;
+  return steps.some((step) => step.kind === 'read' && isNlWave1EntryId(step.entry.id) && AGENT_READ_SOURCES[step.entry.id].source !== source) ? related : undefined;
+}
+
+/**
+ * Rule 6 (D7; A1-E2 B4; the S2 P3 "same-source detail reads" note; CA finding 3): the static charge of validated steps in
+ * connector queries. Each read is its entry's worst case; a reference step is ONE bulk detail query (whatever its
+ * `take`); the brief is its configured worst case. Summaries call no connector. Pure.
+ */
+export function agentPlanConnectorCharge(steps: readonly ValidatedAgentStep[], ctx: Pick<AgentPlanValidationContext, 'briefConnectorCalls'>): number {
+  let calls = 0;
+  for (const step of steps) {
+    if (step.kind !== 'read' || !isNlWave1EntryId(step.entry.id)) continue;
+    if (step.ref !== undefined) calls += 1;
+    else if (step.entry.id === 'brief.today') calls += ctx.briefConnectorCalls ?? AGENT_BRIEF_MAX_CONNECTOR_CALLS;
+    else calls += AGENT_READ_SOURCES[step.entry.id].connectorQueries;
+  }
+  return calls;
 }
 
 type StepCheck = { readonly ok: true; readonly step: ValidatedAgentStep } | Extract<AgentPlanValidation, { ok: false }>;
@@ -280,9 +643,26 @@ function askUnbounded(steps: readonly AgentPlanStep[], unbounded: Unbounded, ctx
     suggestion = clamped;
   }
   if (unboundedOf(suggestion, check) !== undefined) return failed;
-  const validated = validateAgentPlan({ kind: 'steps', form: 'steps', steps: suggestion, ambiguity: 'CLEAR', alternatives: [] }, check);
-  if (!validated.ok || validated.plan.kind !== 'run') return failed;
-  return { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: unbounded.bound, suggestion: validated.plan.steps } };
+  // CA re-check W2: a suggestion over the query charge is shrunk to its first reads until it fits (ap-n085: the first
+  // release and its 10 details), never dropped to a silent none.
+  const fitted = fitToCharge(suggestion, suggestion.filter((step) => step.kind === 'read').length, check);
+  if (fitted === undefined) return failed;
+  return { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: unbounded.bound, suggestion: fitted } };
+}
+
+/**
+ * The first `maxReads` (then fewer) reads of `steps`, with their summaries and references renumbered (`firstReads`), that
+ * validate to a `run` plan within the query charge; `undefined` when none does. Each candidate is validated by this
+ * validator, so the result is a plan Core could run.
+ */
+function fitToCharge(steps: readonly AgentPlanStep[], maxReads: number, ctx: AgentPlanValidationContext): readonly ValidatedAgentStep[] | undefined {
+  for (let reads = maxReads; reads >= 1; reads -= 1) {
+    const candidate = firstReads(steps, reads);
+    if (!candidate.some((step) => step.kind === 'read')) continue;
+    const validated = validateAgentPlan({ kind: 'steps', form: 'steps', steps: candidate, ambiguity: 'CLEAR', alternatives: [] }, ctx);
+    if (validated.ok && validated.plan.kind === 'run') return validated.plan.steps;
+  }
+  return undefined;
 }
 
 /** The plan with only its bound lifted: the repeated entry's period removed (`per-period`), references clamped to the cap. */
@@ -377,6 +757,11 @@ function checkRead(
   });
   if (ungroundedDate) return refuse('date-ungrounded', number);
   if (temporal?.refusal !== undefined && temporal.refusal.step === number) return refuse(temporal.refusal.reason, number);
+  // Owner decision of 2026-10-26: a position reference reads ONE listed item by its id; the listing args do not apply.
+  if (step.ref?.at !== undefined) {
+    if (Object.keys(step.args).length > 0) return refuse('ref-position', number);
+    return checkRef(step, number, steps, ctx, { kind: 'read', entry, args: {}, provenance: {} });
+  }
   const result = validateSelection(
     { entryId: step.entryId, args: step.args },
     {
@@ -401,7 +786,19 @@ function checkRead(
     provenance,
   };
   if (step.ref === undefined) return { ok: true, step: base };
+  return checkRef(step, number, steps, ctx, base);
+}
+
+/** The reference of a read step (D2; a position reference, owner decision of 2026-10-26). */
+function checkRef(
+  step: Extract<AgentPlanStep, { kind: 'read' }>,
+  number: number,
+  steps: readonly AgentPlanStep[],
+  ctx: AgentPlanValidationContext,
+  base: Extract<ValidatedAgentStep, { kind: 'read' }>,
+): StepCheck {
   const ref = step.ref;
+  if (ref === undefined || !isNlWave1EntryId(step.entryId)) return { ok: true, step: base };
   if (ref.step >= number) return refuse('ref-forward', number);
   const source = steps[ref.step - 1];
   if (source === undefined || source.kind !== 'read' || !isNlWave1EntryId(source.entryId)) return refuse('ref-not-read', number);
@@ -411,15 +808,51 @@ function checkRead(
   if (from.source !== to.source || from.origin !== to.origin) return refuse('ref-cross-source', number);
   if (from.refField === undefined || ref.field !== from.refField) return refuse('ref-field', number);
   if (ref.take > AGENT_PLAN_MAX_REF_VALUES) return refuse('ref-too-many', number);
+  if (ref.at !== undefined && !positionRefHolds(ref.at, ref.take, source, step.entryId, number, steps, ctx)) return refuse('ref-position', number);
   const refProvenance = { kind: 'reference' as const, step: ref.step, entryId: source.entryId, origin: from.origin };
-  return { ok: true, step: { ...base, ref: { step: ref.step, field: ref.field, take: ref.take, provenance: refProvenance } } };
+  const at = ref.at !== undefined ? { at: ref.at } : {};
+  return { ok: true, step: { ...base, ref: { step: ref.step, field: ref.field, take: ref.take, ...at, provenance: refProvenance } } };
+}
+
+/**
+ * Owner decision of 2026-10-26 (one-shot list + item summary): a position reference holds when it is ONE item (`take` 1,
+ * at most the 10 a reference may carry) of a source an item summary already reads ({@link AGENT_POSITION_REF_SOURCES}),
+ * the owner's own words name that position (digits or an ordinal, the A6-D2 index grounding), a later summarize step
+ * covers it (the decision is for a read summary), and no clause carrying that position is claimed by a write grammar (a
+ * write on a listed item keeps the ratified read + write note). Structural; no vocabulary of its own.
+ */
+function positionRefHolds(
+  at: number,
+  take: number,
+  list: Extract<AgentPlanStep, { kind: 'read' }>,
+  target: NlWave1EntryId,
+  number: number,
+  steps: readonly AgentPlanStep[],
+  ctx: AgentPlanValidationContext,
+): boolean {
+  if (!isNlWave1EntryId(list.entryId)) return false;
+  const from = AGENT_READ_SOURCES[list.entryId];
+  if (take !== 1 || at > AGENT_PLAN_MAX_REF_VALUES || !AGENT_POSITION_REF_SOURCES.includes(from.source)) return false;
+  // Codex P2-2: the target is the list's own item entry (`itemEntry`: jira.release -> jira.issues), never another entry.
+  if (from.itemEntry === undefined || target !== from.itemEntry) return false;
+  if (!steps.some((other, index) => other.kind === 'summarize' && index + 1 > number && other.from.includes(number))) return false;
+  const entry = ctx.offered.get(list.entryId);
+  if (entry === undefined) return false;
+  const reads = steps.flatMap((step) => (step.kind === 'read' ? [{ args: step.args }] : []));
+  const clauses = planClauses(ctx.groundingText);
+  const index = positionClause(clauses, { entry, args: list.args }, reads, at);
+  if (index === undefined) return false;
+  return !nlClauseClaimsWrite((clauses[index] as PlanClause).text, { now: ctx.now, timeZone: ctx.timeZone });
 }
 
 function checkSummary(step: Extract<AgentPlanStep, { kind: 'summarize' }>, number: number, steps: readonly AgentPlanStep[]): StepCheck {
   if (!(AGENT_PLAN_SUMMARY_SCHEMAS as readonly string[]).includes(step.schema)) return refuse('summary-schema', number);
   if (new Set(step.from).size !== step.from.length) return refuse('summary-source', number);
   for (const from of step.from) {
-    if (from >= number || steps[from - 1]?.kind !== 'read') return refuse('summary-source', number);
+    const source = steps[from - 1];
+    if (from >= number || source?.kind !== 'read') return refuse('summary-source', number);
+    // A1-E2 B2: no model over the brief; its section is the deterministic on-demand brief.
+    if (source.entryId === 'brief.today') return refuse('summary-covers-brief', number);
   }
   return { ok: true, step: { kind: 'summarize', from: [...step.from], schema: step.schema as (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] } };
 }
@@ -443,32 +876,15 @@ function clauseGrounded(entry: NlCatalogEntry, args: NlArgs, ctx: AgentPlanValid
   });
 }
 
-/**
- * Whether a normalized word names the alias. A Korean alias may be followed by anything (a particle: `깃허브에서`); an
- * English (ASCII) alias must end at a word boundary, with only a plural or possessive allowed (`PRs`, `PR's`), so that
- * `project` never reads as the GitHub alias `pr` (Codex P3).
- */
-function aliasStarts(word: string, name: string): boolean {
-  if (!word.startsWith(name)) return false;
-  if (!/^[a-z0-9]+$/u.test(name)) return true;
-  return /^(?:s|['\u2019]s)?(?![a-z0-9])/u.test(word.slice(name.length));
-}
-
 /** The conjuncts of the owner's prose that name `entry` by one of its aliases or source names (normalized). */
 function entryClauses(groundingText: string, entry: NlCatalogEntry): string[] {
-  const tokens = groundingText.split(/\s+/u).filter((token) => token.length > 0);
   const names = [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' '));
-  const conjuncts: string[][] = [[]];
-  for (const token of tokens) {
-    const word = normalizeForMatch(token);
-    if (word === 'and' || word === '그리고') {
-      conjuncts.push([]);
-      continue;
-    }
-    (conjuncts[conjuncts.length - 1] as string[]).push(word);
-    if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) conjuncts.push([]);
+  const conjuncts = new Map<number, string[]>();
+  for (const token of conjunctTokens(groundingText)) {
+    if (token.boundary) continue;
+    conjuncts.set(token.conjunct, [...(conjuncts.get(token.conjunct) ?? []), token.word]);
   }
-  return conjuncts.filter((words) => words.some((word) => names.some((name) => aliasStarts(word, name)))).map((words) => words.join(' '));
+  return [...conjuncts.values()].filter((words) => words.some((word) => names.some((name) => aliasStarts(word, name)))).map((words) => words.join(' '));
 }
 
 /** A reference field that would carry a date or time (dates come only from the planner's symbolic time, D2). */
@@ -553,7 +969,8 @@ function spanEndInherits(month: number, startDay: number, endDay: number, text: 
  *    ("calendar for friday"), else after it; no alias → unbound. Further binding edge cases are fail-closed residuals.
  * 3. A ranged step CLAIMS an expression when the expression names the step's period (a weekday placement, a closed period
  *    label, or a date resolving to the same instants) and is bound to the step's entry or unbound.
- * 4. Every ranged step must claim an expression (`range-unnamed`) unless its range is the previous selection's; two steps
+ * 4. Every ranged step must claim an expression (`range-unnamed`) unless its range is the previous selection's or the
+ *    entry's own default (the read the entry makes with the arg omitted); two steps
  *    of the same entry with different ranges are ambiguous (`range-ambiguous`).
  * 5. A step is validated against the prose minus the expressions claimed by OTHER steps only. An unclaimed expression
  *    stays in every step's text, so it still constrains (fail closed). The literal-grounding rules of ADR-0120 D4 still
@@ -576,6 +993,8 @@ interface RangedStep {
   readonly entry: NlCatalogEntry;
   readonly value: string;
   readonly carried: boolean;
+  /** The value is the entry's own default (the read the entry makes with the arg omitted). */
+  readonly isDefault: boolean;
   readonly range?: NlResolvedRange;
 }
 
@@ -591,7 +1010,11 @@ function stepTemporalTexts(steps: readonly AgentPlanStep[], ctx: AgentPlanValida
     const value = spec !== undefined ? step.args[spec.name] : undefined;
     if (spec === undefined || typeof value !== 'string') continue;
     const range = resolveNlRange(normalizeNlRangeSymbol(value), ctx.now, ctx.timeZone);
-    ranged.push({ number: index + 1, entry, value, carried: value === ctx.previousArgs?.[spec.name], ...(range !== undefined ? { range } : {}) });
+    // A range equal to the entry's own default (the calendar's `today`) is the read the entry makes with the arg omitted;
+    // it needs no period word when the owner named NO period for that entry (agent-plan gate on 2ef88619: "일정이랑 안 읽은
+    // 메일 …" with an explicit `range: today` was refused `range-unnamed` 3/3, ap-p174). See the claim check below.
+    const isDefault = spec.default !== undefined && value === spec.default;
+    ranged.push({ number: index + 1, entry, value, carried: value === ctx.previousArgs?.[spec.name], isDefault, ...(range !== undefined ? { range } : {}) });
   }
   if (ranged.length === 0) return undefined;
   for (const [i, a] of ranged.entries()) {
@@ -608,7 +1031,11 @@ function stepTemporalTexts(steps: readonly AgentPlanStep[], ctx: AgentPlanValida
       if (expression.boundEntry !== undefined && expression.boundEntry !== step.entry.id) return;
       if (step.range !== undefined && expressionNames(expression.text, step.range, ctx)) claimed.add(index);
     });
-    if (claimed.size === 0 && !step.carried) return { texts: new Map(), refusal: { reason: 'range-unnamed', step: step.number } };
+    // The default needs no claim only when no period expression is bound to this entry or left unbound: "어제 일정이랑 …"
+    // written as the calendar's default `today` still has to claim "어제" (and cannot).
+    const ownPeriod = expressions.some((expression) => expression.boundEntry === undefined || expression.boundEntry === step.entry.id);
+    const unstated = step.carried || (step.isDefault && !ownPeriod);
+    if (claimed.size === 0 && !unstated) return { texts: new Map(), refusal: { reason: 'range-unnamed', step: step.number } };
     claims.set(step.number, claimed);
   }
   const texts = new Map<number, string>();
@@ -638,18 +1065,7 @@ function periodExpressions(tokens: readonly string[], entries: readonly NlCatalo
   });
   // Conjuncts (Codex P2): "and", "그리고" and a comma or a glued "-랑" / "-하고" end one; an English period word binds to the
   // next source noun inside its own conjunct ("Friday calendar and today mail"), else to the preceding source.
-  const conjunct: number[] = [];
-  let current = 0;
-  for (const token of tokens) {
-    const word = normalizeForMatch(token);
-    if (word === 'and' || word === '그리고') {
-      conjunct.push(-1);
-      current += 1;
-      continue;
-    }
-    conjunct.push(current);
-    if (/[,،]$/u.test(word) || /(?:랑|하고)$/u.test(word)) current += 1;
-  }
+  const conjunct = conjunctTokens(tokens.join(' ')).map((token) => token.conjunct);
   const out: PeriodExpression[] = [];
   let index = 0;
   while (index < tokens.length) {

@@ -3854,6 +3854,25 @@ export class ConversationRuntime {
   }
 
   /**
+   * The help topic of every catalog entry the registered handlers declare, by the same per-handler topics the help-scope
+   * question's Quoky option uses (read-only diagnostics; the agent-plan scorer's table is pinned against it by test, owner
+   * decision of 2026-10-26).
+   */
+  entryHelpTopics(): Readonly<Record<string, string>> {
+    const topics: Record<string, string> = {};
+    for (const handler of this.turnHandlerRegistry) {
+      const topic = this.handlerHelpTopics.get(handler);
+      if (topic === undefined) continue;
+      try {
+        for (const entry of handler.catalog ?? []) topics[entry.id] = topic;
+      } catch {
+        continue;
+      }
+    }
+    return topics;
+  }
+
+  /**
    * Owner decision A follow-up (2026-10-22): per offered entry, the one help topic its owning handler's contributed help
    * lines answer (`helpTopicOfLines`, computed once per handler at construction), so the help-scope question's Quoky
    * option shows that source's help section.

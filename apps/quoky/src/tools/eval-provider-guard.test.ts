@@ -214,20 +214,21 @@ describe('eval:agent-plan under a provider outage', () => {
     };
   }
 
+  // CA W2 (review of 0bde31cc): the agent-plan gate gives a verdict only for exactly 3 runs, so these runs use 3.
   it('INVALID, exit 5, early stop; a sporadic failure is still scored', async () => {
     const planned = deps(scripted(() => undefined));
-    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], planned);
+    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '3'], planned);
     const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(planned.out.join('\n'))?.[1] as string;
     const provider = scripted(outageFrom(6));
     const d = deps(provider);
-    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], d)).toBe(EXIT_INVALID_PLAN);
+    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '3', '--approved-plan-digest', digest], d)).toBe(EXIT_INVALID_PLAN);
     expect(provider.calls).toBe(12);
     expect(verdictLines(d.out)).toEqual([]);
     expect(d.out.some((line) => line.startsWith('agent-plan gate') && line.includes('INVALID (provider unavailable: provider-execution_failed)'))).toBe(true);
 
     const blip = scripted(onlyAt(2));
     const scored = deps(blip);
-    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], scored)).not.toBe(EXIT_INVALID_PLAN);
+    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '3', '--approved-plan-digest', digest], scored)).not.toBe(EXIT_INVALID_PLAN);
     expect(scored.out.some((line) => /^agent-plan gate .*: (PASSED|FAILED)/.test(line))).toBe(true);
   }, 60_000);
 });
@@ -415,11 +416,23 @@ describe('C1: an outage never hides a hard failure already observed (FAILED, exi
   it('eval:agent-plan: a wrong plan on a negative then an outage is FAILED with the note', async () => {
     const out: string[] = [];
     const make = (provider: AiProvider): AgentPlanCliDeps => ({ stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'a'.repeat(40), load: () => loadAgentPlanCorpus(), writeReport: (n) => `/tmp/${n}`, createProvider: () => provider, canary: async () => false });
-    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '1'], make(scripted(() => undefined)));
+    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '3'], make(scripted(() => undefined)));
     const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
     out.length = 0;
     const mail = JSON.stringify({ entryId: 'mail.list', args: {}, ambiguity: 'CLEAR', alternatives: [] });
-    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '1', '--approved-plan-digest', digest], make(wrongThenOutage(400, mail)))).toBe(1);
+    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '3', '--approved-plan-digest', digest], make(wrongThenOutage(400, mail)))).toBe(1);
+    expect(out.some((line) => line.startsWith('agent-plan gate') && line.includes(': FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
+    expect(out.join('\n')).not.toContain('INVALID');
+  }, 60_000);
+
+  it('eval:agent-plan: help captures over the allowance then an outage is FAILED with the note (owner decision 2026-10-26)', async () => {
+    const out: string[] = [];
+    const make = (provider: AiProvider): AgentPlanCliDeps => ({ stdout: (l) => void out.push(l), stderr: () => undefined, now: () => NOW, gitHead: () => 'a'.repeat(40), load: () => loadAgentPlanCorpus(), writeReport: (n) => `/tmp/${n}`, createProvider: () => provider, canary: async () => false });
+    await runAgentPlanCli(['--mode', 'plan', '--concurrency', '1', '--runs', '3'], make(scripted(() => undefined)));
+    const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
+    out.length = 0;
+    const help = JSON.stringify({ entryId: 'help.topic', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(await runAgentPlanCli(['--mode', 'run', '--concurrency', '1', '--runs', '3', '--approved-plan-digest', digest], make(wrongThenOutage(400, help)))).toBe(1);
     expect(out.some((line) => line.startsWith('agent-plan gate') && line.includes(': FAILED') && line.endsWith(FAILED_NOTE))).toBe(true);
     expect(out.join('\n')).not.toContain('INVALID');
   }, 60_000);

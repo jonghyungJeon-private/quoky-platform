@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTOR_ITEM_RESPONSE_MAX_BYTES,
   parseItemParams,
+  parseItemsByKeyParams,
+  CONNECTOR_ITEMS_BY_KEY_MAX,
   CONNECTOR_QUERY_DEFAULT_LIMIT,
   CONNECTOR_QUERY_DEFAULT_TIMEOUT_MS,
   CONNECTOR_QUERY_ERROR_REASONS,
@@ -21,7 +23,7 @@ import {
 import * as ports from './index';
 
 describe('connector query vocabulary', () => {
-  it('names exactly the read-only queries (the two of ADR-0100 D7, the three of ADR-0120 A8 and the A6 R2 item read) and bounds results to 20', () => {
+  it('names exactly the read-only queries (the two of ADR-0100 D7, the three of ADR-0120 A8, the A6 R2 item read and the ADR-0121 S2 P3 bulk detail read) and bounds results to 20', () => {
     expect(ConnectorQueryName).toEqual({
       PERSONAL_WORK: 'personal-work',
       SEARCH: 'search',
@@ -29,6 +31,7 @@ describe('connector query vocabulary', () => {
       RELEASES: 'releases',
       RELEASE_ITEMS: 'release-items',
       ITEM: 'item',
+      ITEMS_BY_KEY: 'items-by-key',
     });
     expect(CONNECTOR_QUERY_DEFAULT_LIMIT).toBe(20);
     expect(CONNECTOR_QUERY_MAX_LIMIT).toBe(20);
@@ -54,6 +57,29 @@ describe('connector query vocabulary', () => {
       'MOVED',
       'TOO_LARGE',
     ]);
+  });
+
+  it('ADR-0121 S2 P3: items-by-key params are exactly { keys }, 1..10 distinct keys of the closed item-key shape', () => {
+    expect(CONNECTOR_ITEMS_BY_KEY_MAX).toBe(10);
+    expect(parseItemsByKeyParams({ keys: ['OP26-1', 'OP26-20', 'WEB_2-7'] })).toEqual({ keys: ['OP26-1', 'OP26-20', 'WEB_2-7'] });
+    const ten = Array.from({ length: 10 }, (_, i) => `OP26-${i + 1}`);
+    expect(parseItemsByKeyParams({ keys: ten }).keys).toHaveLength(10);
+    for (const params of [
+      undefined,
+      {},
+      { keys: [] },
+      { keys: [...ten, 'OP26-11'] },
+      { keys: 'OP26-1' },
+      { keys: ['op26-1'] },
+      { keys: ['OP26-0'] },
+      { keys: ['OP26-1 OR 1=1'] },
+      { keys: ['"OP26-1"'] },
+      { keys: ['OP26-1', 'OP26-1'] },
+      { keys: [1] },
+      { keys: ['OP26-1'], limit: 5 },
+    ]) {
+      expect(() => parseItemsByKeyParams(params as never), JSON.stringify(params)).toThrowError(ConnectorQueryError);
+    }
   });
 
   it('A6 R2: item params are exactly { id, scope } with a bounded opaque id and a closed scope', () => {

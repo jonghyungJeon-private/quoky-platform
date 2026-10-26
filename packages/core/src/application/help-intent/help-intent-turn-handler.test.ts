@@ -9,6 +9,7 @@ import { outboundMessage, plainTextOf } from '../message-rendering';
 import { WORK_CHAT_TODO_TURN_HELP_LINES } from '../work-chat/work-chat-turn-handler';
 import {
   HELP_INTENT_HELP_LINES,
+  nlEntryHelpTopicsOf,
   HELP_INTENT_TURN_HANDLER_ID,
   HELP_INTENT_TURN_HANDLER_ORDER,
   HelpIntentTurnHandler,
@@ -20,6 +21,7 @@ import { CALENDAR_HELP_LINES } from '../calendar/calendar-turn-handler';
 import { MAIL_HELP_LINES } from '../mail/mail-turn-handler';
 import { DRIVE_HELP_LINES } from '../drive/drive-turn-handler';
 import * as coreBarrel from '../../index';
+import type { NlCatalogEntry } from '../nl-routing/catalog';
 
 const NOW = '2026-10-06T03:00:00.000Z';
 const CONTEXT: ConversationContext = { platform: 'discord', channelId: 'dm-1', userId: 'owner' };
@@ -160,5 +162,17 @@ describe('helpTopicOfLines (owner decision A follow-up, 2026-10-22): a handler h
     expect(helpTopicOfLines([])).toBeUndefined();
     expect(helpTopicOfLines(HELP_INTENT_HELP_LINES)).toBeUndefined();
     expect(helpTopicOfLines([...CALENDAR_HELP_LINES, ...MAIL_HELP_LINES])).toBeUndefined();
+  });
+
+  it('nlEntryHelpTopicsOf: each declared entry gets its handler\'s one topic; a handler with none or several gives none', () => {
+    const entry = (id: string) => ({ id }) as unknown as NlCatalogEntry;
+    expect(
+      nlEntryHelpTopicsOf([
+        { catalog: [entry('calendar.events')], helpLines: CALENDAR_HELP_LINES },
+        { catalog: [entry('mail.list')], helpLines: [...MAIL_HELP_LINES, ...DRIVE_HELP_LINES] },
+        { catalog: [entry('drive.files')], helpLines: [] },
+        { helpLines: WORK_CHAT_LOOKUP_TURN_HELP_LINES },
+      ]),
+    ).toEqual({ 'calendar.events': 'calendar' });
   });
 });

@@ -38,6 +38,21 @@ export function helpTopicOfLines(lines: readonly string[]): string | undefined {
   return answered.length === 1 ? answered[0] : undefined;
 }
 
+/**
+ * The help topic of each catalog entry a handler declares: the one topic the handler's own help lines answer
+ * (`helpTopicOfLines`). The runtime's help-scope Quoky option and the agent-plan scorer (owner decision of 2026-10-26 on
+ * the capability-help golds) use this same mapping. Pure.
+ */
+export function nlEntryHelpTopicsOf(handlers: ReadonlyArray<{ readonly catalog?: readonly NlCatalogEntry[]; readonly helpLines?: readonly string[] }>): Record<string, string> {
+  const topics: Record<string, string> = {};
+  for (const handler of handlers) {
+    const topic = helpTopicOfLines(handler.helpLines ?? []);
+    if (topic === undefined) continue;
+    for (const entry of handler.catalog ?? []) topics[entry.id] = topic;
+  }
+  return topics;
+}
+
 /** ADR-0104 D4 (amends ADR-0096 D5): `pre-classify`, after work lookups (300), before the intent classifier. */
 export const HELP_INTENT_TURN_HANDLER_ORDER = 400;
 

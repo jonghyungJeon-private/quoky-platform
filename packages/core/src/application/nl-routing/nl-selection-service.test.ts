@@ -1063,15 +1063,46 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await topic.decide('슬랙에서 검색하는 방법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
   });
 
-  it('positives stay untouched: a source-specific or feature topic, no source named, or two source families', async () => {
+  it('positives stay untouched: a source-specific or feature topic, or no source named', async () => {
     const h = harness({
-      script: [out('help.topic', { topic: 'work-lookup' }), out('help.topic', { topic: 'drive' }), out('help.topic'), out('help.topic', { topic: 'reminder' }), out('help.topic')],
+      script: [out('help.topic', { topic: 'work-lookup' }), out('help.topic', { topic: 'drive' }), out('help.topic'), out('help.topic', { topic: 'reminder' })],
     });
     expect(await h.decide('너 jira 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
     expect(await h.decide('구글 드라이브에서 폴더 공유하는 법 알려줘')).toMatchObject({ kind: 'execute', command: { args: { topic: 'drive' } } });
     expect(await h.decide('사용법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
     expect(await h.decide('알림 설정하는 법 알려줘')).toMatchObject({ kind: 'execute', command: { args: { topic: 'reminder' } } });
-    expect(await h.decide('슬랙이랑 지라 쓰는 방법 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+  });
+
+  it('owner decision of 2026-10-26: several named sources are asked about together; the Quoky option maps them structurally', async () => {
+    const MULTI = [
+      'Quoky로 구글 캘린더·지메일을 조회·연결하는 방법을 물으신 건가요, 아니면 그 앱 자체의 설정·사용법인가요?',
+      '1. Quoky로 구글 캘린더·지메일 조회·연결하는 방법',
+      '2. 그 앱 자체의 설정·사용법',
+      '번호로 답해 주세요.',
+    ].join('\n');
+    const h = harness({ script: [out('help.topic')] });
+    const topics = { 'calendar.events': 'calendar', 'mail.list': 'mail' };
+    const decision = await h.service.decide({ text: '구글 캘린더랑 지메일 연동 설정 어디서 해?', attachmentCount: 0, session: h.session, actor: h.actor(), now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', entryHelpTopics: topics });
+    expect(decision).toEqual({ kind: 'ask', text: MULTI, entryId: 'help.topic' });
+    // Two sources mapping to two topics: the Quoky option is the general help; the record holds both names.
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'help.topic', args: {} }], appSources: ['구글 캘린더', '지메일'] });
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).not.toHaveProperty('appSource');
+    expect(await h.decide('2')).toEqual({ kind: 'ask', text: '그건 구글 캘린더·지메일 앱 자체의 설정·사용법이라 제가 안내해 드리긴 어려워요. 각 앱의 도움말을 확인해 주세요.' });
+    // Two sources whose entries share one help topic: that topic.
+    const same = harness({ script: [out('help.topic')] });
+    await same.service.decide({ text: '슬랙이랑 지라 쓰는 방법 알려줘', attachmentCount: 0, session: same.session, actor: same.actor(), now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', entryHelpTopics: { 'slack.search': 'work-lookup', 'jira.issues': 'work-lookup' } });
+    expect(same.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'help.topic', args: { topic: 'work-lookup' } }], appSources: ['슬랙', '지라'] });
+    expect(await same.decide('Quoky로 슬랙·지라 조회·연결하는 방법')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
+  });
+
+  it('Codex P2: more than three sources resolve the help topic from ALL of them; the stored and shown names are capped with "등"', async () => {
+    const h = harness({ script: [out('help.topic')] });
+    const topics = { 'slack.search': 'work-lookup', 'jira.issues': 'work-lookup', 'github.items': 'work-lookup', 'confluence.search': 'memory' };
+    const decision = await h.service.decide({ text: '슬랙이랑 지라랑 깃허브랑 컨플루언스 연동하는 법 알려줘', attachmentCount: 0, session: h.session, actor: h.actor(), now: T0, entries: ALL, route: 'chat', chatProviderId: 'scripted-selector', entryHelpTopics: topics });
+    expect(decision).toMatchObject({ kind: 'ask', text: expect.stringContaining('Quoky로 슬랙·지라·깃허브 등을 조회·연결하는 방법을 물으신 건가요') });
+    // The fourth source maps to another topic: the general help, never the first three's topic.
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'help.topic', args: {} }], appSources: ['슬랙', '지라', '깃허브'], appSourcesMore: true });
+    expect(await h.decide('2')).toEqual({ kind: 'ask', text: '그건 슬랙·지라·깃허브 등 앱 자체의 설정·사용법이라 제가 안내해 드리긴 어려워요. 각 앱의 도움말을 확인해 주세요.' });
   });
 
   it('a selector clarification whose only read option is that help asks the same help-scope question', async () => {

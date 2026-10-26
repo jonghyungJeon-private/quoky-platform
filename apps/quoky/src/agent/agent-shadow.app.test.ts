@@ -175,6 +175,14 @@ describe('ADR-0121 S2 P1 — the agent in shadow through the production AppModul
   const plannerCalls = () => requests.filter((request) => request.capability === 'INTENT_SELECTION' && request.prompt.startsWith('You are the request planner'));
   const shadowLines = () => agentLogs.filter((log) => log.event === 'agent_run.shadow').map((log) => log.fields ?? {});
 
+  it('owner decision of 2026-10-26: the agent-plan scorer\'s entry -> help topic table is the production composition\'s', async () => {
+    const { AGENT_PLAN_ENTRY_HELP_TOPICS } = await import('../tools/agent-plan-eval');
+    const sourced = new Set(Object.values(core.NL_WAVE1_ENTRIES).filter((entry) => (entry.sourceNames ?? []).length > 0).map((entry) => entry.id));
+    const composed = Object.fromEntries(Object.entries(runtime.entryHelpTopics()).filter(([id]) => sourced.has(id)));
+    expect(Object.keys(composed).sort()).toEqual(Object.keys(AGENT_PLAN_ENTRY_HELP_TOPICS).sort());
+    for (const [id, topic] of Object.entries(composed)) expect([id, AGENT_PLAN_ENTRY_HELP_TOPICS[id]]).toEqual([id, topic]);
+  });
+
   it('is composed in shadow from QUOKY_AGENT_MODE', () => {
     expect(agent.mode).toBe('shadow');
   });

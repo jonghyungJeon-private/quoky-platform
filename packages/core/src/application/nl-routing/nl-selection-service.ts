@@ -105,7 +105,7 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
-import { nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
+import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
 
@@ -1141,13 +1141,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private async askHelpScope(selection: NlValidatedSelection, turn: NlSelectionTurn, language: 'ko' | 'en', groundingText: string, selectorAsked = false): Promise<NlSelectionDecision | undefined> {
     const scope = nlHelpSourceScope({ entryId: selection.entry.id, args: selection.args }, groundingText, selection.entry, { selectorAsked });
     if (scope === undefined || !isNlWave1EntryId(selection.entry.id)) return undefined;
-    // The Quoky option shows that source's help section: the topic covering the offered entries that own the source name
-    // (one topic only; otherwise the general help the selection named).
-    const sourceName = scope.source.normalize('NFC').toLowerCase();
+    // The Quoky option shows those sources' help section: the topic covering the offered entries that own the source names
+    // (one topic only; otherwise the general help the selection named). Several sources (owner decision of 2026-10-26)
+    // are asked about together, at most NL_HELP_SCOPE_MAX_SOURCES shown and stored.
+    // Codex P2: the help topics come from EVERY named source; only the stored and shown names are bounded, with an
+    // overflow flag so the question still says "등" / "and others".
+    const all = scope.sources ?? [scope.source];
+    const names = all.slice(0, NL_HELP_SCOPE_MAX_SOURCES);
+    const more = all.length > names.length;
+    const sourceNames = new Set(all.map((name) => name.normalize('NFC').toLowerCase()));
     const covering = [
       ...new Set(
         turn.entries
-          .filter((entry) => (entry.sourceNames ?? []).some((name) => name.normalize('NFC').toLowerCase() === sourceName))
+          .filter((entry) => (entry.sourceNames ?? []).some((name) => sourceNames.has(name.normalize('NFC').toLowerCase())))
           .flatMap((entry) => {
             const topic = turn.entryHelpTopics?.[entry.id];
             return topic !== undefined && (NL_HELP_TOPICS as readonly string[]).includes(topic) ? [topic] : [];
@@ -1156,10 +1162,17 @@ export class NlSelectionService implements TurnDeliveryObserver {
     ];
     const option: StoredSelection = { entryId: selection.entry.id, args: covering.length === 1 ? { ...selection.args, topic: covering[0] as string } : selection.args };
     await this.writeSession(turn, NL_PENDING_METADATA_KEY, () =>
-      pendingQuestionRecord(turn.actor.id, { kind: 'entry', at: turn.now, language, options: [option], groundingText, appSource: scope.source }),
+      pendingQuestionRecord(turn.actor.id, {
+        kind: 'entry',
+        at: turn.now,
+        language,
+        options: [option],
+        groundingText,
+        ...(names.length === 1 ? { appSource: names[0] as string } : { appSources: names, ...(more ? { appSourcesMore: true as const } : {}) }),
+      }),
     );
-    this.log('info', 'nl_selection.help_scope_asked', { entryId: selection.entry.id });
-    return { kind: 'ask', text: renderHelpScopeQuestion(scope.source, language), entryId: selection.entry.id };
+    this.log('info', 'nl_selection.help_scope_asked', { entryId: selection.entry.id, sources: all.length });
+    return { kind: 'ask', text: renderHelpScopeQuestion(names, language, more), entryId: selection.entry.id };
   }
 
   /** A validated selection: apply or ask the interpretation preference (D7), then execute. */
@@ -1257,10 +1270,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // Owner decision A: the help-scope question's two options are answered by exactly what it displays (Codex P2): the
       // rendered option texts, KO and EN, on their own choices (the help entry's generic aliases are not shown there, and
       // the app option's text holds one of them), plus the number or ordinal.
-      const appSource = pending.appSource;
+      const appSource = pending.appSources ?? pending.appSource;
+      const more = pending.appSourcesMore === true;
       if (appSource !== undefined) {
-        const [quokyKo, appKo] = renderHelpScopeOptions(appSource, 'ko');
-        const [quokyEn, appEn] = renderHelpScopeOptions(appSource, 'en');
+        const [quokyKo, appKo] = renderHelpScopeOptions(appSource, 'ko', more);
+        const [quokyEn, appEn] = renderHelpScopeOptions(appSource, 'en', more);
         labels.splice(0, labels.length, [quokyKo, quokyEn], [appKo, appEn]);
       }
       // Owner decision B: a one-option confirmation takes the A6 continuation confirmation's yes and no (the same closed
@@ -1271,14 +1285,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (resolved.kind === 'none') return undefined;
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
       if (resolved.kind === 'pick' && appSource !== undefined && resolved.index === pending.options.length) {
-        return { kind: 'ask', text: renderHelpScopeAppReply(appSource, language) };
+        return { kind: 'ask', text: renderHelpScopeAppReply(appSource, language, more) };
       }
       const validated = pending.options.map((option) => validateSelection(option, this.validationContext(turn, '', option.args)));
       if (resolved.kind === 'unclear') {
         const options = validated.flatMap((result) => (result.ok ? [result.value] : []));
         if (options.length === 0) return undefined;
         await this.writeSession(turn, NL_PENDING_METADATA_KEY, () => pendingQuestionRecord(turn.actor.id, { ...pending, at: turn.now }));
-        return { kind: 'ask', text: appSource !== undefined ? renderHelpScopeQuestion(appSource, language) : renderEntryQuestion(options, language) };
+        return { kind: 'ask', text: appSource !== undefined ? renderHelpScopeQuestion(appSource, language, pending.appSourcesMore === true) : renderEntryQuestion(options, language) };
       }
       const picked = validated[resolved.index];
       if (picked === undefined || !picked.ok) return undefined;

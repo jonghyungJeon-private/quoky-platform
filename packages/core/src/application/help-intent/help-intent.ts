@@ -80,7 +80,8 @@ const TRAILING_PUNCTUATION = /[\s?？!！.。~…]+$/u;
 const ADDRESS_PREFIX =
   /^(?:(?:quoky|퀴키|쿼키)(?:야|아)?[,，]?\s+)?(?:(?:여기서|여기선|여기에서|(?:quoky|퀴키|쿼키)(?:에서|로|는|에선))\s+)?/u;
 /** A Korean particle, optionally after the noun 기능, following a topic keyword ("알림 기능은", "할 일을"). */
-const TOPIC_SUFFIX = String.raw`(?:\s?기능)?(?:은|는|을|를|이|가|도|의|에서|에|이랑|랑|하고)?`;
+const TOPIC_PARTICLES = '은|는|을|를|이|가|도|의|에서|에|이랑|랑|하고';
+const TOPIC_SUFFIX = String.raw`(?:\s?기능)?(?:${TOPIC_PARTICLES})?`;
 /** A leading "도움말 <topic>" / "사용법: <topic>" / "help <topic>". */
 const HELP_PREFIX = /^(?:도움말|사용법|help|\/help)\s*[:：]?\s+/u;
 
@@ -99,13 +100,16 @@ const GUIDE_TOKEN = new RegExp(
   'u',
 );
 /** Polite closers after a guide noun: "알려줘", "뭐야", "있어?". */
-const GUIDE_CLOSER =
-  /^(?:좀|알려\s?줘|알려줘요|알려\s?주세요|알려줄래|알려줄래요|뭐야|뭐예요|뭐에요|뭔가요|있어|있어요|있나요|궁금해|궁금해요)$/u;
+const GUIDE_CLOSER_FORMS: readonly string[] = [
+  '좀', String.raw`알려\s?줘`, '알려줘요', String.raw`알려\s?주세요`, '알려줄래', '알려줄래요', '뭐야', '뭐예요', '뭐에요', '뭔가요', '있어', '있어요', '있나요', '궁금해', '궁금해요',
+];
+const GUIDE_CLOSER = new RegExp(`^(?:${GUIDE_CLOSER_FORMS.join('|')})$`, 'u');
 /** The verb right after "어떻게": a command action or a plain do/use verb ("해", "지워", "설정해", "써", "만들어"). */
-const HOWTO_VERB_HEAD = new RegExp(
-  `^(?:${ACTION_STEM}|하|해|되|돼|써|꺼|봐|만들어|지워|바꿔|잊어|없애|빼|남겨|보여|올려)[가-힣]{0,4}$`,
-  'u',
-);
+const HOWTO_DO_HEAD = `${ACTION_STEM}|하|해|써|꺼|봐|만들어|지워|바꿔|잊어|없애|빼|남겨|보여|올려`;
+/** The become / state verb of the same alternation ("어떻게 돼?"): a how-to form, but also a status question. */
+const HOWTO_STATE_HEAD = '되|돼';
+const HOWTO_VERB_HEAD = new RegExp(`^(?:${HOWTO_DO_HEAD}|${HOWTO_STATE_HEAD})[가-힣]{0,4}$`, 'u');
+const HOWTO_STATE_VERB = new RegExp(`^(?:${HOWTO_STATE_HEAD})[가-힣]{0,4}$`, 'u');
 /** Helper words after that verb: "하면 돼", "하는 거야", "해 줘". */
 const HOWTO_HELPER_TOKEN =
   /^(?:돼|돼요|되나요|되지|되는지|되는데|거야|거예요|거에요|건가요|거지|해|해요|하나요|하지|하는|하면|줘|줘요|주세요|할까|할까요)$/u;
@@ -117,8 +121,10 @@ const EN_TOPICS: ReadonlyArray<{ readonly id: string; readonly pattern: string }
   { id: 'todo', pattern: String.raw`(?:to-?dos?|tasks?)` },
 ];
 const EN_VERB = '(?:add|set|set up|create|make|cancel|delete|remove|complete|finish|list|see|view|check|mark|use|turn off|stop)';
+/** The determiners the English how-to form allows before its topic. */
+const EN_ARTICLES = String.raw`a|an|my|the|all|new|all\s+my`;
 const EN_HOWTO = new RegExp(
-  String.raw`^how\s+(?:do\s+i|can\s+i|should\s+i|to)\s+${EN_VERB}\s+(?:(?:a|an|my|the|all|new|all\s+my)\s+)?` +
+  String.raw`^how\s+(?:do\s+i|can\s+i|should\s+i|to)\s+${EN_VERB}\s+(?:(?:${EN_ARTICLES})\s+)?` +
     String.raw`(${EN_TOPICS.map((t) => t.pattern).join('|')})(?:\s+as\s+(?:done|complete|completed))?(?:\s+(?:here|in\s+quoky|with\s+quoky))?$`,
   'u',
 );
@@ -243,8 +249,12 @@ const CAPABILITY_KO: readonly RegExp[] = [
   // "명령어 뭐 있어?", "명령어 알려줘", "명령어 목록", "사용법"
   /^(?:명령어|사용법)(?:\s?(?:목록|뭐\s?있어|뭐\s?있어요|뭐뭐\s?있어|뭐야|알려\s?줘|알려\s?주세요|보여\s?줘))?$/u,
 ];
-const CAPABILITY_EN =
-  /^(?:what\s+can\s+(?:you|quoky)\s+(?:do|help\s+(?:me\s+)?with)(?:\s+for\s+me)?|what\s+do\s+you\s+do|what\s+are\s+your\s+(?:features|capabilities|commands)|what\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+i\s+use)|show\s+(?:me\s+)?(?:the\s+|your\s+)?commands)$/u;
+/** The capability question's English "show (me) (the|your)" lead, also the lead of an English help clause. */
+const EN_SHOW_LEAD = String.raw`show\s+(?:me\s+)?(?:the\s+|your\s+)?`;
+const CAPABILITY_EN = new RegExp(
+  String.raw`^(?:what\s+can\s+(?:you|quoky)\s+(?:do|help\s+(?:me\s+)?with)(?:\s+for\s+me)?|what\s+do\s+you\s+do|what\s+are\s+your\s+(?:features|capabilities|commands)|what\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+i\s+use)|${EN_SHOW_LEAD}commands)$`,
+  'u',
+);
 
 /**
  * A whole-message question about what Quoky can do ("뭐 할 수 있어?", "할 수 있는 게 뭐야?", "무슨 기능 있어?",
@@ -317,4 +327,80 @@ export function composeHelpIntentReply(language: HelpIntentLanguage, lines: read
     ].join('\n');
   }
   return ['Quoky에서는 이렇게 하면 돼요.', ...lines, '전체 안내는 "도움말"이라고 보내 주세요.'].join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The grammar's own closed token classes, read-only (ADR-0121 A1-E1, stage S2 P3): the agent's help split uses them to
+// tell a help clause from a clause that merely contains a help word. Exporting them changes no match of this grammar.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A polite closer after a guide noun ("좀", "알려줘", "뭐야", "있어?"). */
+export function isHelpGuideCloser(token: string): boolean {
+  return GUIDE_CLOSER.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
+}
+
+/** A guide noun, optionally after a command action ("추가하는 법", "사용법", "도움말", "명령어", "안내"; not "기능"). */
+export function isHelpGuideToken(token: string): boolean {
+  return GUIDE_TOKEN.test(normalize(token).replace(TRAILING_PUNCTUATION, ''));
+}
+
+/** Whether `rest` is empty or one of the grammar's topic particles ("이랑", "도", "은" …). */
+export function isHelpTopicParticle(rest: string): boolean {
+  return new RegExp(`^(?:${TOPIC_PARTICLES})?$`, 'u').test(rest);
+}
+
+/**
+ * ADR-0121 A1-E1 (S2 P3, Codex P2 on part 2): {@link detectHelpIntent}, except a Korean "<topic> 어떻게 <verb>" whose verb is
+ * the grammar's own become / state head ("일정 어떻게 돼?", "어떻게 되나요"), which may ask for the status of the thing rather
+ * than how to use the command. Every other form is a command how-to as the grammar recognises it, with its own
+ * conjugations and English verbs ("알림 어떻게 지워요?", "how do I add a reminder", "할 일 추가하는 법"). Pure.
+ */
+export function detectHelpCommand(
+  text: string,
+  topics: readonly HelpIntentTopic[] = HELP_INTENT_TOPICS,
+): HelpIntentMatch | null {
+  const match = detectHelpIntent(text, topics);
+  if (match === null || match.language === 'en') return match;
+  const addressed = normalize(text).replace(TRAILING_PUNCTUATION, '').replace(ADDRESS_PREFIX, '');
+  if (HELP_PREFIX.test(addressed)) return match;
+  const tokens = consumeTopics(addressed, topics).rest.split(' ');
+  let index = 0;
+  while (index < tokens.length && ACTION_TOKEN.test(tokens[index] ?? '')) index += 1;
+  return index === 0 && tokens[0] === '어떻게' && HOWTO_STATE_VERB.test(tokens[1] ?? '') ? null : match;
+}
+
+/**
+ * ADR-0121 A1-E1 (owner decision of 2026-10-23, English help with a read): whether `lead` — the English words before the
+ * help word of a clause — is empty or one of this grammar's own English leads: the capability question's "show (me)
+ * (the|your)", or a how-to verb with the how-to form's determiners ("see the", "check my", "view"). No other word.
+ */
+export function isHelpEnglishLead(lead: string): boolean {
+  const text = normalize(lead);
+  if (text.length === 0) return true;
+  return new RegExp(String.raw`^(?:${EN_SHOW_LEAD}|${EN_VERB}\s+(?:(?:${EN_ARTICLES}|your)\s+)?|(?:${EN_ARTICLES}|your)\s+)$`, 'u').test(`${text} `);
+}
+
+/**
+ * ADR-0121 A1-E1 (Codex P2, 2026-10-26): whether `stem` (a word without its connective "-고") is the stem of one of this
+ * grammar's own closer verbs ("알려주" of "알려주세요"), so "사용법 알려주고 …" is a help request and "도움말 말고 …",
+ * "사용법 필요없고 …", "도움말은 됐고 …" are not. Two syllables or more; no word is added.
+ */
+export function isHelpCloserStem(stem: string): boolean {
+  const text = normalize(stem);
+  return Array.from(text).length >= 2 && GUIDE_CLOSER_FORMS.some((form) => form.replace(/\\s\?/gu, '').startsWith(text));
+}
+
+/**
+ * ADR-0121 A1-E1 (CA review of P3, minor): the verb part of an English help lead ("show the" → "show", "show me" →
+ * "show me", "the" → ""), i.e. the lead without its trailing determiner, using this grammar's own determiners. The help
+ * split gives it back to the rest when the help clause comes first ("show the help page and my github PRs" → "show my
+ * github PRs"). Pure.
+ */
+export function helpEnglishLeadVerb(lead: string): string {
+  return normalize(lead).replace(new RegExp(String.raw`(?:^|\s+)(?:${EN_ARTICLES}|your)$`, 'u'), '').trim();
+}
+
+/** Whether `word` is one of this grammar's English determiners (the how-to determiners and "your"). Pure. */
+export function isHelpEnglishDeterminer(word: string): boolean {
+  return new RegExp(String.raw`^(?:${EN_ARTICLES}|your)$`, 'u').test(normalize(word));
 }

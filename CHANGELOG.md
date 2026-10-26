@@ -59,6 +59,115 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 review fixes of f3e59814 (branch `claude/v5-s2-p3`, shadow only)
+
+- **Fixed (not live).** "3번 할 일로 추가하고 요약해줘" is never read as an item summary; a calendar read is narrowed to
+  meetings only when its clause says 회의 / 미팅 and not 일정 / 캘린더; "취소된 회의" or "완료된 거 보여줘" no longer adds the
+  "따로 말씀해 주세요" note.
+
+## Unreleased — S2 owner decisions on the e3462f46 gate (branch `claude/v5-s2-p3`, shadow only)
+
+- **Changed (not live).** Core puts each summary right after the reads it covers; a calendar read in a clause that says
+  회의 / 미팅 / meeting shows timed events only; a read with an uncovered "취소 / 꺼 / 완료 …" clause always carries the "따로
+  말씀해 주세요" note (never the read alone). The planner prompt is unchanged (v9).
+- **Changed (eval).** The gate report shows each summary's sources and whether a summary miss is order or scope.
+
+## Unreleased — S2 review fixes of 0bde31cc (branch `claude/v5-s2-p3`, shadow only)
+
+- **Fixed (not live).** "Summarize the Nth one" binds only to its own clause: a number in the list request itself ("3번
+  회의실 예약 메일"), a clause with a write ("3번 삭제하고") or another clause with the same ordinal is never treated as the
+  item summary. A position reference reads only the list's own item entry.
+- **Changed (eval).** The agent-plan gate gives a verdict only for exactly 3 runs.
+
+## Unreleased — S2 owner decisions of 2026-10-26 after the ed45e3f1 gate (branch `claude/v5-s2-p3`, shadow only)
+
+- **Changed (not live).** "지라 이슈 보여주고 첫 번째 거 요약해줘" is one plan: the list, then a summary of its first item in the
+  same reply (Jira, Slack, mail and Drive lists). Planner `agent-plan.v8` → **`agent-plan.v9`**.
+- **Changed (not live).** The read + write probe offers only the action entries (a read pick hid the write).
+- **Changed (eval).** The agent-plan gate judges the multi-step exact rate over all runs together; every other check stays
+  per run. An args miss names the args that differ.
+
+## Unreleased — S2 owner decisions of 2026-10-26 on the 5c09fee4 gate (branch `claude/v5-s2-p3`, shadow only)
+
+- **Changed (not live).** Planner `agent-plan.v7` → **`agent-plan.v8`**: rule 9 says a release step lists a release's
+  issues without their details, so asking for those details needs the `jira.issues` reference step (10 by default).
+- **Changed (not live).** The read + write probe's selector prompt holds the whole message again (it lost the destination
+  a read clause names: "할 일 목록 보여주고 장보기 추가해줘"); the selected write is still checked against the uncovered clause
+  alone. The probe trigger stays as ratified (no write-word precondition).
+- **Changed (eval).** For the capability-help golds, a `help.topic` plan with the help topic of a source app the sentence
+  names also counts as correct (same mapping the help-scope option uses); any other topic is a miss.
+
+## Unreleased — S2 read + write trigger amendment (owner-ratified 2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Decided and built (not live).** A read plan that leaves a clause naming none of its reads gets the read + write
+  note's one A6 selection; a write lying in that clause hands the turn to the read + write path. The agent-plan eval makes
+  that one probe call per affected case (bound into the plan digest and the hard cap) and scores Core's final outcome.
+  Red-team batch RW-2 covers the trigger.
+
+## Unreleased — S2 rule 7: a read plan that leaves a write clause (2026-10-26, branch `claude/v5-s2-p3`, shadow only)
+
+- **Added (not live).** When a planned read leaves a clause that the existing reminder or to-do grammar recognises as a
+  write, the plan is treated as `none` so the ratified read + write path handles the turn. "알림 만들어줘"-style phrasings
+  the grammars do not know (ap-n131) are not caught; an option is recorded for the owner.
+
+## Unreleased — the help-scope question over several sources (owner decision 2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Changed (live read path).** A general help question naming several connected sources ("구글 캘린더랑 지메일 연동 설정 어디서
+  해?") now asks whether the owner means Quoky's way or the apps' own settings, naming up to three sources; one source is
+  unchanged. The read and agent-plan scorers use the same rule. No help positive of the read corpora newly asks.
+
+## Unreleased — agent-plan gate: Core's final outcome for help plans on negatives (2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Changed (eval).** On negatives, a general help.topic plan that Core turns into its help-scope question scores as a
+  clarification; a clarification gold's CLEAR plan of a listed entry is a miss, not a help capture. ap-n115 is a
+  clarification gold (owner decision); Core's help-scope rule does not ask for it yet (it names two sources).
+
+## Unreleased — agent-plan gate: owner relabels and the help-capture rule (2026-10-26, branch `claude/v5-s2-p3`)
+
+- **Changed (eval).** The agent-plan gate counts help.topic-only plans on negatives apart, allowed ceil(1%) per run
+  (as the D12 read gates since 2026-10-22); every other plan on a negative stays zero-tolerance; over the allowance is a
+  hard failure.
+- **Changed (gold, owner-approved).** ap-p096 `kind: issue`; ap-p066 both reads scoped by "budget"; ap-n051/054/055/057 →
+  one-step help golds ap-p181..ap-p184; ap-n125 → ap-p185 (the Jira read; the turn adds the decision (f) note).
+- **Fixed.** A plan writing the calendar's default range explicitly is no longer refused when the owner named no period.
+
+## Unreleased — S2 owner ratifications of 2026-10-23 (branch `claude/v5-s2-p3`)
+
+- **Changed (live).** The Jira release list orders upcoming versions (by the owner's local date) first, then released,
+  then overdue unreleased, then undated; header "예정 → 최근 출시 → 지난 예정 순".
+- **Changed (not live).** English help with a read splits ("show the help page and my github PRs").
+- **Decided.** A read and a write in one owner turn (ratified ADR-0121 S2 note; built with the executor); D7's connector
+  call is one named port query (cap 10) plus a 50-HTTP-request runtime ceiling (built with the executor).
+- **Added (data).** `readWrite` outcomes on the write-read and a6-in-plan plan-gold negatives; the `s2-read-write`
+  red-team corpus (28 cases, pending the owner).
+
+## Unreleased — S2 P3 part 2: owner answers and the part 1 review (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Changed (live).** A project's Jira release list shows planned versions first (soonest first), then the newest
+  released ones; the header says "예정 → 최근 출시 순 N개 표시".
+- **Changed (not live).** The help split also cuts at "-고" ("사용법 알려주고 …") and only treats a clause as help when the
+  help word leads it (0 false splits over 3374 golden texts). The S2 connector charge counts connector queries from one
+  per-entry worst-case table (the to-do list now counts 2). The relation note names the step it is about (planner
+  `agent-plan.v7`, not gated). The "다음 10개" hint stays hidden until its follow-up exists. Jira `items-by-key` reads
+  through the 1 MB capped reader and retries once without a key Jira refuses.
+- **Decided, not built.** A pending pagination cursor for "다음 10개" (an owner amendment of S2 Q9; needs the executor).
+  A read and a write in one request: drafted as an ADR-0121 note for ratification (conflicts with D5 / A6-D4 / Q2 / Q6
+  as written).
+
+## Unreleased — S2 P3 part 1: release list order, bulk detail read, help split and brief step, reply notes (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Fixed.** A project's Jira release list ("최근 10개 표시") is ordered by release date, newest first, instead of Jira's
+  manual sequence; versions without a date follow in Jira's order.
+- **Added (not live).** A read-only Jira `items-by-key` query: up to 10 issue details in one request, for S2 same-source
+  references. The S2 validator charges connector calls statically (a reference step is one call; the brief its worst
+  case 7; over 10 is refused).
+- **Added (shadow only).** ADR-0121 decision (e): a help clause asked with other reads is split off deterministically
+  before planning, and the brief may be one plan step (never summarized). Owner decision (a): the planner may flag a
+  relation the owner asked for; Core adds "회의와 관련 있는지는 확인하지 않았어요". Fixed reply notes for the 10-item detail
+  cap ("N개 중 10개" + the next-10 hint) and for an action mixed into a plan. Planner prompt `agent-plan.v6` (not gated
+  yet). Five held AP-6 cases became split-shape positives (pending the owner's re-approval).
+- **Not done.** The P3 executor, assembler, M2 summariser and audit; the "다음 10개" follow-up (needs a Q9 exception);
+  AP-7.
 
 ## Unreleased — ADR-0121 A2 ratified: the `answer` step and an owner-confirmed minimal topic (docs only, 2026-10-23)
 

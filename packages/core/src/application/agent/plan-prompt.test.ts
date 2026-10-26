@@ -8,9 +8,10 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_PLAN_PROMPT_VERSION, agentPlanExamples, buildAgentPlanPrompt } from './plan-prompt';
 import { parseAgentPlanOutput } from './plan-schema';
+import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
 import { validateAgentPlan } from './plan-validator';
 
-// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v5` — its edits of the gated read prompt, its examples
+// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v9` — its edits of the gated read prompt, its examples
 // (valid plans, never a near-copy of a gold case: the RAG-0 contamination lint of ADR-0123 D5), and a byte pin.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -35,7 +36,7 @@ function gold(): Array<{ id: string; text: string; expects: GoldExpect[] }> {
   });
 }
 
-describe('agent-plan.v5 prompt', () => {
+describe('agent-plan.v9 prompt', () => {
   const prompt = buildAgentPlanPrompt({ entries: [...READS, ...ACTIONS], text: '이번 주 회의 일정 보여줘' });
 
   it('is the read prompt over the READ entries with the four fixed edits (no action entry is ever shown)', () => {
@@ -49,6 +50,12 @@ describe('agent-plan.v5 prompt', () => {
     expect(prompt).toContain('covering ONLY the reads the owner asks to summarize');
     expect(prompt).toContain('"take": <the number of issues the owner names, else 10>');
     expect(prompt).toContain('Core runs none of it');
+    // v6 (S2 P3; ADR-0121 A1-E3, owner decision (a)): the brief may be one step, never summarized; help with another read
+    // stays none (Core splits help off first); a relation the owner asks for is flagged, never joined.
+    expect(prompt).toContain('brief.today may be ONE step of a plan, never two, and a summarize step never covers it');
+    expect(prompt).toContain('help.topic is never part of a plan of two or more steps');
+    expect(prompt).not.toContain('help.topic and brief.today are never part of a plan');
+    expect(prompt).toContain('add "related":\n   <the number of the step whose items the owner relates the other reads to>');
     for (const action of ACTIONS) expect(prompt).not.toContain(`- ${action.id}:`);
     // Every catalog line and every read example of the gated read prompt is kept, byte for byte (nl-select.v67 lists the
     // GitHub `kind`, so the planner's catalog has it too).
@@ -102,10 +109,23 @@ describe('agent-plan.v5 prompt', () => {
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v5');
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v9');
     const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });
 
-const PINNED_SHA256 = 'eac54ca7792275b0384ac87adfce2aa159f6cee923f3f07e1516f63df73774a5';
+const PINNED_SHA256 = '5e837034a9e46062b8e5a675e8901d5be863d8e423f22a01959af3ac1cdb720c';
+
+describe('agent-plan.v9: the position reference sentence (owner decision of 2026-10-26)', () => {
+  it('names every item-summary source\'s entries with their own id field, and only those', () => {
+    const prompt = buildAgentPlanPrompt({ entries: NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]), text: 'x' });
+    const line = prompt.split('\n').find((text) => text.includes('Id fields:')) ?? '';
+    const fields = new Set(Object.values(AGENT_READ_SOURCES).filter((source) => AGENT_POSITION_REF_SOURCES.includes(source.source)).map((source) => source.refField));
+    for (const field of fields) expect(prompt).toContain(`${field} (`);
+    expect(AGENT_POSITION_REF_SOURCES).toEqual(['mail', 'drive', 'jira', 'slack']);
+    expect(line).not.toMatch(/itemIds|pageIds|eventIds/);
+    expect(prompt).not.toContain('Return none for a request to summarize one item of a list');
+  });
+});
+

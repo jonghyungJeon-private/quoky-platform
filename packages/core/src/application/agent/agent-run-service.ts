@@ -9,9 +9,12 @@ import { nlSameEgress } from '../nl-routing/selection-egress';
 import { nlSelectionMeaning } from '../nl-routing/selection-meaning';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf } from './flow-policy';
+import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan } from './plan-schema';
-import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation } from './plan-validator';
+import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext } from './plan-validator';
+import { agentReadWriteProbeClauses } from './read-write-probe';
+import { a6InPlanGuidance } from './reply-notes';
 
 /**
  * ADR-0121 D1 / D7 (stage S2 P1): `AgentRunService`, the bounded read agent behind the `AgentProfile` id
@@ -20,6 +23,7 @@ import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation
  * - `off` (the default): nothing runs. The runtime reads `mode` and nothing else, so every turn is byte-identical.
  * - `shadow`: after the reply of an owner DM turn that reached selection, or (`c-shadow`) whose read a Class B grammar
  *   answered (`liveSource: grammar`), ONE background planner call (M1,
+ *   after Core's deterministic help split (ADR-0121 A1-E1; logged as `split`, never changing the live reply, A1-E5),
  *   `INTENT_SELECTION`, prompt `agent-plan.vN`) plans the same message; the plan is parsed and validated and one
  *   content-free `agent_run.shadow` line is logged. **Zero connector reads and zero M2 calls**: this service has no
  *   connector, reader, writer, command runner, tool provider, memory or fetch dependency at all (its deps type below; an
@@ -300,8 +304,12 @@ export class AgentRunService {
       { label: CATALOG_FLOW_LABEL },
       ...(turn.previous !== undefined ? [{ label: PREVIOUS_SELECTION_FLOW_LABEL }] : []),
     ]);
-    const prompt = buildAgentPlanPrompt({ entries: turn.entries, text: prepared.text, ...(turn.previous !== undefined ? { previous: turn.previous } : {}) });
-    if (flow !== undefined || plannerPromptCanaryHit(prompt, untrustedCanariesOf(turn.text, turn.quotedRanges ?? []), prepared.groundingText)) {
+    // A1-E1: a help clause asked with other reads is split off before planning; only the rest reaches the planner.
+    const split = splitHelpClause(prepared, turn.entries);
+    const planText = split?.rest ?? prepared.text;
+    const groundingText = split?.rest ?? prepared.groundingText;
+    const prompt = buildAgentPlanPrompt({ entries: turn.entries, text: planText, ...(turn.previous !== undefined ? { previous: turn.previous } : {}) });
+    if (flow !== undefined || plannerPromptCanaryHit(prompt, untrustedCanariesOf(turn.text, turn.quotedRanges ?? []), groundingText)) {
       this.logShadow({ outcome: 'refused', reason: flow ?? 'canary' });
       return;
     }
@@ -321,15 +329,29 @@ export class AgentRunService {
       return;
     }
     const offered = new Map(turn.entries.filter((entry) => entry.risk === 'READ').map((entry) => [entry.id, entry] as const));
-    const validation = validateAgentPlan(plan, {
+    const ctx: AgentPlanValidationContext = {
       offered,
-      groundingText: prepared.groundingText,
+      groundingText,
       ...(turn.previous !== undefined ? { previousArgs: turn.previous.args, previousEntryId: turn.previous.entryId } : {}),
       now: turn.now,
       timeZone: this.deps.timeZone,
       direct: turn.direct,
+    };
+    const validation = validateAgentPlan(plan, ctx);
+    // With a help split the live path answered the whole message: the rest plan has no one-step equivalent to agree with.
+    const agreement = split !== undefined ? {} : this.agreement(plan, validation, turn);
+    // The read + write trigger amendment (2026-10-26): an uncovered clause would get the note's one A6 selection when
+    // `active`; shadow makes no second model call (Q1: one planner call) and logs the count only.
+    const uncovered = validation.ok ? agentReadWriteProbeClauses(validation.plan, groundingText).length : 0;
+    this.logShadow({
+      ...planFields(plan, validation),
+      ...splitFields(split, validation),
+      ...a6Fields(plan, validation, ctx),
+      ...(uncovered > 0 ? { uncoveredClauses: uncovered } : {}),
+      ...agreement,
+      ...liveFields(turn.live),
+      latencyMs: latency(),
     });
-    this.logShadow({ ...planFields(plan, validation), ...this.agreement(plan, validation, turn), ...liveFields(turn.live), latencyMs: latency() });
   }
 
   /** One-step plans only: whether the plan agrees with the live selection (entry, and meaning as S1 W3 defines it). */
@@ -395,12 +417,14 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
   if (!validation.ok) {
     return { outcome: 'refused', ...fields, ...(validation.step !== undefined ? { failedStep: validation.step } : {}), ...(validation.stepReason !== undefined ? { stepReason: validation.stepReason } : {}) };
   }
-  if (validation.plan.kind === 'none') return { outcome: 'none', ...fields };
+  // Rule 7: the read plan left a write clause; the turn goes to the read + write path (logged as a closed reason).
+  if (validation.plan.kind === 'none') return { outcome: 'none', ...fields, ...(validation.plan.reason !== undefined ? { noneReason: validation.plan.reason } : {}) };
   // Decision (h): an unbounded plan is an ask with a bounded suggestion (closed bound, closed entry ids only).
   if (validation.plan.kind === 'ask') {
     const suggestion = validation.plan.suggestion.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');
     return { outcome: 'ask', ...fields, bound: validation.plan.bound, suggestion };
   }
+  const extra: LogFields = { connectorCalls: validation.plan.connectorCalls, ...(validation.plan.related !== undefined ? { related: validation.plan.related } : {}) };
   const argKinds = validation.plan.steps
     .map((step) => {
       if (step.kind === 'summarize') return 'summary';
@@ -409,7 +433,26 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
       return [...new Set(kinds)].sort().join('+') || 'none';
     })
     .join(';');
-  return { outcome: validation.plan.kind === 'clarify' ? 'clarify' : 'planned', ...fields, argKinds };
+  return { outcome: validation.plan.kind === 'clarify' ? 'clarify' : 'planned', ...fields, argKinds, ...extra };
+}
+
+/**
+ * A1-E5: the closed `split` field — `help` (a help clause was split off; `helpTopic` is the help entry's own closed enum
+ * value), `brief` (a validated plan of two or more steps holds the brief) or `none`. The `validator` field is the rest
+ * plan's. Shadow only: the split never changes the live reply.
+ */
+function splitFields(split: AgentHelpSplit | undefined, validation: AgentPlanValidation): LogFields {
+  if (split !== undefined) return { split: 'help', helpTopic: split.topic };
+  const brief = validation.ok && validation.plan.kind !== 'none' && validation.plan.kind !== 'ask' && validation.plan.steps.length > 1 && validation.plan.steps.some((step) => step.kind === 'read' && step.entry.id === 'brief.today');
+  return { split: brief ? 'brief' : 'none' };
+}
+
+/** Decision (f): for an `a6-in-plan` refusal, the closed action kind and whether a read remainder validates (no content). */
+function a6Fields(plan: AgentPlan, validation: AgentPlanValidation, ctx: AgentPlanValidationContext): LogFields {
+  if (validation.ok || validation.reason !== 'a6-in-plan') return {};
+  // The refusal is structural (`isNlActionEntryId`, whatever is offered); the remainder validates against the same READ offer.
+  const guidance = a6InPlanGuidance(plan, ctx, 'ko', validation);
+  return guidance === undefined ? {} : { a6Kind: guidance.kind, a6Remainder: guidance.remainder !== undefined ? 'run' : 'none' };
 }
 
 const LIVE_SOURCES: ReadonlySet<string> = new Set(['chat', 'personal-data', 'class-b', 'work-surface', 'grammar']);

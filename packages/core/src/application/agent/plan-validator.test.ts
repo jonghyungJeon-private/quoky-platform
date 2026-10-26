@@ -2,8 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
+import { AGENT_READ_SOURCES } from './flow-policy';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan, type AgentPlanStep } from './plan-schema';
-import { absoluteDatesGrounded, validateAgentPlan, type AgentPlanValidationContext } from './plan-validator';
+import {
+  agentClauseHasWriteWord,
+  agentUncoveredClauses,
+  AGENT_BRIEF_MAX_CONNECTOR_CALLS,
+  AGENT_RUN_MAX_CONNECTOR_CALLS,
+  AGENT_SINGLE_STEP_ONLY,
+  absoluteDatesGrounded,
+  agentPlanConnectorCharge,
+  validateAgentPlan,
+  type AgentPlanValidationContext,
+} from './plan-validator';
 import { renderUnboundedAsk } from './unbounded-ask';
 
 // ADR-0121 D2 / D5 / D7 (stage S2 P1): the v2 plan parse and every static rule of the deterministic plan validator.
@@ -23,7 +34,7 @@ function ctx(groundingText: string, extra: Partial<AgentPlanValidationContext> =
   };
 }
 
-const read = (entryId: string, args: Record<string, string | number | boolean> = {}, ref?: { step: number; field: string; take: number }): AgentPlanStep => ({
+const read = (entryId: string, args: Record<string, string | number | boolean> = {}, ref?: { step: number; field: string; take: number; at?: number }): AgentPlanStep => ({
   kind: 'read',
   entryId,
   args,
@@ -127,9 +138,9 @@ describe('plan validator: DM only, READ only, offered, step mix', () => {
     expect(validateAgentPlan(sixSteps, ctx('지라 깃허브 일정 메일 요약')).ok).toBe(true);
   });
 
-  it('a multi-step plan never names help.topic, brief.today or an A6 entry; alone they stay today\'s selection', () => {
+  it('a multi-step plan never names help.topic or an A6 entry; alone they stay today\'s selection (brief: A1-E2, below)', () => {
     expect(validateAgentPlan(plan([read('help.topic'), read('jira.issues')]), ctx('도움말이랑 지라'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 1 });
-    expect(validateAgentPlan(plan([read('jira.issues'), read('brief.today')]), ctx('지라랑 브리핑'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 2 });
+    expect(validateAgentPlan(plan([read('jira.issues'), read('help.topic')]), ctx('지라랑 도움말'))).toMatchObject({ ok: false, reason: 'single-step-only', step: 2 });
     expect(validateAgentPlan(plan([read('jira.issues'), read('todo.add', { title: '우유' })]), ctx('지라 보고 우유 할 일 추가'))).toMatchObject({ ok: false, reason: 'a6-in-plan', step: 2 });
     expect(validateAgentPlan(plan([read('brief.today')]), ctx('오늘 브리핑')).ok).toBe(true);
   });
@@ -258,7 +269,7 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
     expect(validateAgentPlan(steps, ctx('show Friday calendar, today mail')).ok).toBe(true);
     // Postnominal: no source follows inside the conjunct, so the preceding one.
     expect(validateAgentPlan(steps, ctx('show my calendar for friday and my mail from today')).ok).toBe(true);
-    // Swapped values under either construction are refused.
+    // Swapped values under either construction are refused (a default range must claim when its entry has a period).
     const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
     expect(validateAgentPlan(swapped, ctx('show Friday calendar and today mail'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
     expect(validateAgentPlan(swapped, ctx('show my calendar for friday and my mail from today'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
@@ -266,6 +277,7 @@ describe('plan validator: dates only symbolic, summaries closed', () => {
 
   it('swapped ranges are refused: each period is bound to the source it modifies', () => {
     const swapped = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'fri' })]);
+    // The calendar's `today` is its default, but the owner named a period for it: it must claim one (and cannot).
     expect(validateAgentPlan(swapped, ctx('금요일 일정이랑 오늘 받은 메일 보여줘'))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
     // Both swapped periods would be valid values on their own: still refused.
     const both = plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'yesterday' })]);
@@ -472,3 +484,343 @@ describe('plan validator: the planner-only GitHub item type (owner review 2026-1
     expect(validateAgentPlan(plan(five.kind === 'steps' ? five.steps.slice(0, 2) : []), ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run' } });
   });
 });
+
+describe('the brief as one plan step (ADR-0121 A1-E2, decision (e); S2 P3)', () => {
+  it('brief.today left the single-step-only list; help.topic stays on it', () => {
+    expect(AGENT_SINGLE_STEP_ONLY).toEqual(['help.topic']);
+  });
+
+  it('a brief plus a read validates (B6: calendar or mail in the same plan too), each step keeping its own entry', () => {
+    const slack = validateAgentPlan(plan([read('brief.today'), read('slack.search', { keyword: '장애' })]), ctx('오늘 브리핑이랑 슬랙 장애 얘기도 같이 보여줘'));
+    expect(slack).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    const mail = validateAgentPlan(plan([read('brief.today'), read('mail.list', { unread: true })]), ctx('브리핑이랑 안 읽은 메일도'));
+    expect(mail).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('at most one brief step (brief-repeated)', () => {
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues'), read('brief.today')]), ctx('브리핑이랑 지라 이슈랑 브리핑'))).toMatchObject({ ok: false, reason: 'brief-repeated', step: 3 });
+  });
+
+  it('B2: a summary never covers the brief (summary-covers-brief); a summary of the other read passes (ratification answer 4)', () => {
+    const text = '오늘 브리핑하고 내 지라 이슈 같이 정리해줘';
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues'), summary([1, 2])]), ctx(text))).toMatchObject({ ok: false, reason: 'summary-covers-brief', step: 3 });
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues'), summary([2])]), ctx(text))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('B3: no reference from or to the brief (it has no id field)', () => {
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 2 })]), ctx('브리핑이랑 지라 이슈'))).toMatchObject({ ok: false, reason: 'ref-cross-source', step: 2 });
+  });
+
+  it('B5: never outside the DM', () => {
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { direct: false }))).toMatchObject({ ok: false, reason: 'not-dm' });
+  });
+});
+
+describe('the static connector-query charge (ADR-0121 D7; A1-E2 B4; S2 P3 detail reads; CA finding 3)', () => {
+  const RELEASE = '1.2.0 릴리스 이슈들 상세도 같이 보여줘';
+
+  it('one unit is one connector query; each entry is charged its worst case from one table', () => {
+    expect(AGENT_RUN_MAX_CONNECTOR_CALLS).toBe(10);
+    expect(Object.fromEntries(Object.entries(AGENT_READ_SOURCES).map(([id, source]) => [id, source.connectorQueries]))).toEqual({
+      'jira.issues': 1,
+      'jira.release': 8,
+      'github.items': 1,
+      'slack.search': 1,
+      'confluence.search': 1,
+      'calendar.events': 1,
+      'mail.list': 1,
+      'drive.files': 1,
+      'todo.list': 2,
+      'reminder.list': 0,
+      'brief.today': 4,
+      'help.topic': 0,
+    });
+    expect(AGENT_BRIEF_MAX_CONNECTOR_CALLS).toBe(4);
+  });
+
+  it('a reference step is ONE bulk items-by-key query whatever its take (owner answer 8)', () => {
+    for (const take of [1, 5, 10]) {
+      const result = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take })]), ctx(RELEASE));
+      expect(result).toMatchObject({ ok: true, plan: { kind: 'run', connectorCalls: 9 } });
+    }
+  });
+
+  it('the to-do list reads the work surface (2); reminders 0; summaries 0; the brief its configured worst case', () => {
+    expect(validateAgentPlan(plan([read('jira.issues'), read('todo.list'), read('reminder.list')]), ctx('지라 이슈랑 할 일이랑 알림 목록'))).toMatchObject({ ok: true, plan: { connectorCalls: 3 } });
+    expect(validateAgentPlan(plan([read('jira.issues'), read('mail.list'), summary([1, 2])]), ctx('지라 이슈랑 메일 정리해줘'))).toMatchObject({ ok: true, plan: { connectorCalls: 2 } });
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈'))).toMatchObject({ ok: true, plan: { connectorCalls: 5 } });
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { briefConnectorCalls: 1 }))).toMatchObject({ ok: true, plan: { connectorCalls: 2 } });
+  });
+
+  it('CA re-check W2: a plan over 10 is never run and never a silent none: an ask (bound calls) with its first reads that fit', () => {
+    const base = [read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 3 })];
+    const entries = (result: ReturnType<typeof validateAgentPlan>): string[] =>
+      result.ok && result.plan.kind === 'ask' ? result.plan.suggestion.map((step) => (step.kind === 'read' ? step.entry.id : 'summarize')) : [];
+    expect(validateAgentPlan(plan([...base, read('slack.search', { keyword: '배포' })]), ctx(`${RELEASE} 슬랙 배포 얘기도`))).toMatchObject({ ok: true, plan: { connectorCalls: 10 } });
+    const over = validateAgentPlan(plan([...base, read('slack.search', { keyword: '배포' }), read('mail.list')]), ctx(`${RELEASE} 슬랙 배포 얘기랑 메일도`));
+    expect(over).toMatchObject({ ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls' } });
+    expect(entries(over)).toEqual(['jira.release', 'jira.issues', 'slack.search']);
+    const brief = validateAgentPlan(plan([read('brief.today'), read('todo.list'), read('jira.issues'), read('github.items')]), ctx('브리핑이랑 할 일이랑 지라 이슈랑 깃허브', { briefConnectorCalls: 7 }));
+    expect(entries(brief)).toEqual(['brief.today', 'todo.list', 'jira.issues']);
+    // Only a first read that alone exceeds the charge is refused.
+    expect(validateAgentPlan(plan([read('brief.today'), read('jira.issues')]), ctx('브리핑이랑 지라 이슈', { briefConnectorCalls: 11 }))).toEqual({ ok: false, reason: 'over-bound' });
+  });
+
+  it('CA re-check W2: an unbounded suggestion over the charge is shrunk to fit (ap-n085 shape: the first release and its 10 details)', () => {
+    const text = '1.0부터 9.0까지 릴리스 이슈 전부 상세하게';
+    const trap = [read('jira.release', { release: '1.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 10 }), read('jira.release', { release: '9.0' }), read('jira.issues', {}, { step: 3, field: 'issueKeys', take: 10 })];
+    const asked = validateAgentPlan(plan(trap), ctx(text));
+    expect(asked).toMatchObject({ ok: true, plan: { kind: 'ask', bound: 'refs' } });
+    if (!asked.ok || asked.plan.kind !== 'ask') throw new Error('expected an ask');
+    expect(asked.plan.suggestion.map((step) => (step.kind === 'read' ? `${step.entry.id}:${step.ref?.take ?? 0}` : 'summarize'))).toEqual(['jira.release:0', 'jira.issues:10']);
+  });
+
+  it('the calls ask has a fixed text naming the suggested reads', () => {
+    const over = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 3 }), read('slack.search', { keyword: '배포' }), read('mail.list')]), ctx(`${RELEASE} 슬랙 배포 얘기랑 메일도`));
+    if (!over.ok || over.plan.kind !== 'ask') throw new Error('expected an ask');
+    expect(renderUnboundedAsk(over.plan, 'ko')).toMatch(/^한 번에 조회할 수 있는 양을 넘어요\. 조회를 나눠서 말씀해 주세요\. 예: /u);
+    expect(renderUnboundedAsk(over.plan, 'en')).toMatch(/^That is more than I can read in one request\./u);
+  });
+
+  it('agentPlanConnectorCharge is pure over validated steps', () => {
+    const result = validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 10 })]), ctx(RELEASE));
+    if (!result.ok || result.plan.kind !== 'run') throw new Error('expected a run plan');
+    expect(agentPlanConnectorCharge(result.plan.steps, {})).toBe(9);
+  });
+});
+
+describe('owner decision (a): the related step (S2 P3; CA finding 5)', () => {
+  const TEXT = '이번 주 회의 정리하고 관련 jira 이슈도 같이';
+  const steps = [read('calendar.events', { range: 'this-week', timedOnly: true }), summary([1], 'meeting-digest.v1'), read('jira.issues')];
+
+  it('parses `related: <step no>` in the steps form only as a step number; any other value is malformed', () => {
+    const raw = (related: unknown) => JSON.stringify({ steps: [{ entryId: 'jira.issues' }, { entryId: 'mail.list' }], ambiguity: 'CLEAR', related });
+    expect(parseAgentPlanOutput(raw(1))).toMatchObject({ kind: 'steps', related: 1 });
+    for (const bad of [true, 'yes', 0, 7, 1.5]) {
+      expect(parseAgentPlanOutput(raw(bad)), String(bad)).toBeNull();
+      expect(agentPlanParseFailure(raw(bad))).toBe('bad-related');
+    }
+  });
+
+  it('is kept on a validated plan reading two or more sources; it changes no step', () => {
+    const flagged: AgentPlan = { ...plan(steps), related: 1 } as AgentPlan;
+    const result = validateAgentPlan(flagged, ctx(TEXT));
+    const plain = validateAgentPlan(plan(steps), ctx(TEXT));
+    expect(result).toMatchObject({ ok: true, plan: { kind: 'run', related: 1 } });
+    if (!result.ok || !plain.ok || result.plan.kind !== 'run' || plain.plan.kind !== 'run') throw new Error('expected run plans');
+    expect(result.plan.steps).toEqual(plain.plan.steps);
+    expect(plain.plan).not.toHaveProperty('related');
+  });
+
+  it('is dropped when the plan reads one source only, or the step is a summary or out of range', () => {
+    const one: AgentPlan = { ...plan([read('jira.issues'), read('jira.issues', { status: 'in-progress' })]), related: 1 } as AgentPlan;
+    const result = validateAgentPlan(one, ctx('지라 이슈랑 진행 중인 지라 이슈'));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plan).not.toHaveProperty('related');
+    for (const related of [2, 4]) {
+      const other = validateAgentPlan({ ...plan(steps), related } as AgentPlan, ctx(TEXT));
+      expect(other.ok).toBe(true);
+      if (other.ok) expect(other.plan, String(related)).not.toHaveProperty('related');
+    }
+    const third = validateAgentPlan({ ...plan(steps), related: 3 } as AgentPlan, ctx(TEXT));
+    expect(third).toMatchObject({ ok: true, plan: { related: 3 } });
+  });
+});
+
+describe('agent-plan gate on 2ef88619: an explicit default range needs no period word (ap-p174)', () => {
+  const TEXT = '일정이랑 안 읽은 메일 같이 한 번에 알려줘';
+  it('the calendar default today written out validates like the omitted one, with the same canonical args', () => {
+    const explicit = validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx(TEXT));
+    const omitted = validateAgentPlan(plan([read('calendar.events'), read('mail.list', { unread: true })]), ctx(TEXT));
+    expect(explicit).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    if (!explicit.ok || !omitted.ok || explicit.plan.kind !== 'run' || omitted.plan.kind !== 'run') throw new Error('expected run plans');
+    expect(explicit.plan.steps.map((step) => (step.kind === 'read' ? step.args : {}))).toEqual(omitted.plan.steps.map((step) => (step.kind === 'read' ? step.args : {})));
+  });
+
+  it('a non-default unnamed range is still refused, and a default range never overrides another named period', () => {
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'tomorrow' }), read('mail.list', { unread: true })]), ctx(TEXT))).toMatchObject({ ok: false, reason: 'range-unnamed', step: 1 });
+    // "금요일" names the calendar's period; the default `today` written instead is refused (the weekday stays in its text).
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { range: 'today' })]), ctx('금요일 일정이랑 오늘 받은 메일 보여줘')).ok).toBe(false);
+    // A relative day named for the calendar but written as its default is refused too.
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx('어제 일정이랑 안 읽은 메일 보여줘')).ok).toBe(false);
+    expect(validateAgentPlan(plan([read('calendar.events', { range: 'today' }), read('mail.list', { unread: true })]), ctx('다음 주 일정이랑 안 읽은 메일 보여줘')).ok).toBe(false);
+  });
+});
+
+describe('rule 7: a read plan that leaves a write clause is none (owner-approved fix of 2026-10-26, ap-n131)', () => {
+  const tomorrow = [read('calendar.events', { range: 'tomorrow' })];
+  it('a clause an existing write grammar claims, mentioning no planned read, turns the plan into none (reason write-clause)', () => {
+    for (const text of ['내일 일정 보여주고 내일 9시에 출발 리마인드 해줘', '내일 일정 보여주고, 할 일 추가: 장보기', 'show my calendar for tomorrow and remind me at 9 to leave']) {
+      expect(validateAgentPlan(plan(tomorrow), ctx(text)), text).toEqual({ ok: true, plan: { kind: 'none', reason: 'write-clause' } });
+    }
+  });
+
+  it('an extra clause that is no write, or a single clause, leaves the read plan as it is', () => {
+    expect(validateAgentPlan(plan([read('jira.issues')]), ctx('지라 이슈 보여주고 고마워'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    expect(validateAgentPlan(plan(tomorrow), ctx('내일 일정 보여줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    // A planned read's own clause is never probed: the reminder list read of "알림 목록 보여주고 …" names its own source.
+    expect(validateAgentPlan(plan([read('reminder.list'), read('calendar.events', { range: 'tomorrow' })]), ctx('알림 목록이랑 내일 일정 보여줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('residual (recorded): a write the existing grammars do not recognise is not caught — ap-n131 itself', () => {
+    // "알림 만들어줘" is A6-selection phrasing; neither the reminder grammar nor the to-do grammar claims it.
+    expect(validateAgentPlan(plan(tomorrow), ctx('내일 일정 보여주고 내일 9시에 출발 알림 만들어줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    expect(validateAgentPlan(plan([read('jira.issues')]), ctx('show my jira issues and add a todo to follow up'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+});
+
+describe('owner decision of 2026-10-26: a list read and the summary of its Nth item in one plan (position reference)', () => {
+  const at = (step: number, field: string, n: number) => ({ step, field, take: 1, at: n });
+
+  it('parses `at` (a 1-based integer) and refuses any other value', () => {
+    const raw = (ref: unknown) => JSON.stringify({ steps: [{ entryId: 'jira.issues', args: {} }, { entryId: 'jira.issues', args: {}, ref }, { summarize: [2], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
+    expect(parseAgentPlanOutput(raw({ step: 1, field: 'issueKeys', take: 1, at: 2 }))).toMatchObject({ steps: [{}, { ref: { step: 1, field: 'issueKeys', take: 1, at: 2 } }, {}] });
+    for (const bad of [0, -1, 1.5, '1']) expect(parseAgentPlanOutput(raw({ step: 1, field: 'issueKeys', take: 1, at: bad }))).toBeNull();
+  });
+
+  it('validates the one-shot plan over every item-summary source (Jira, Slack, mail, Drive); the clause is covered', () => {
+    const cases: Array<[string, AgentPlanStep[]]> = [
+      ['지라 이슈 보여주고 첫 번째 거 요약해줘', [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])]],
+      ['list my jira issues and summarize the second one', [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 2)), summary([2])]],
+      ['슬랙에서 장애 찾고 첫 번째 스레드 요약해줘', [read('slack.search', { keyword: '장애' }), read('slack.search', {}, at(1, 'messageIds', 1)), summary([2])]],
+      ['메일 목록 보고 세 번째 메일 요약해줘', [read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])]],
+      ['드라이브 파일 찾고 첫 번째 파일 요약해줘', [read('drive.files'), read('drive.files', {}, at(1, 'fileIds', 1)), summary([2])]],
+    ];
+    for (const [text, steps] of cases) {
+      const result = validateAgentPlan(plan(steps), ctx(text));
+      expect(result, text).toMatchObject({ ok: true, plan: { kind: 'run', steps: [{}, { ref: { take: 1, at: (steps[1] as { ref: { at: number } }).ref.at } }, { kind: 'summarize' }] } });
+      if (result.ok && result.plan.kind === 'run') expect(agentUncoveredClauses(result.plan.steps, text), text).toEqual([]);
+    }
+  });
+
+  it('refuses a position reference that is not one grounded, summarized item of an item-summary source', () => {
+    const text = '지라 이슈 보여주고 첫 번째 거 요약해줘';
+    const refused = (steps: AgentPlanStep[], t = text) => validateAgentPlan(plan(steps), ctx(t));
+    // Not the owner's position.
+    expect(refused([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 2)), summary([2])])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // More than one item, or listing args.
+    expect(refused([read('jira.issues'), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 2, at: 1 }), summary([2])])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    expect(refused([read('jira.issues'), read('jira.issues', { status: 'all' }, at(1, 'issueKeys', 1)), summary([2])])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // Not summarized (the decision is for a read summary).
+    expect(refused([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1))])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // A source no item summary reads (GitHub, Confluence, calendar).
+    expect(refused([read('github.items', { query: 'review-requests' }), read('github.items', {}, at(1, 'itemIds', 1)), summary([2])], '깃허브 리뷰 요청 보여주고 첫 번째 거 요약해줘')).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // Beyond the 10 a reference may carry.
+    expect(refused([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 11)), summary([2])], '지라 이슈 보여주고 11번째 거 요약해줘')).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+  });
+
+  it('a clause a write grammar claims keeps the ratified read + write note (never a read summary)', () => {
+    // "1번 완료" is the to-do grammar's own write (nlClauseClaimsWrite): a position reference there is refused.
+    const steps = [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])];
+    expect(validateAgentPlan(plan(steps), ctx('지라 이슈 보여주고 1번 완료'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    expect(validateAgentPlan(plan(steps), ctx('지라 이슈 보여주고 1번 요약해줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+});
+
+describe('review of 0bde31cc: the position reference binds to its own item-summary clause and its list\'s item entry', () => {
+  const at = (step: number, field: string, n: number) => ({ step, field, take: 1, at: n });
+
+  it('Codex P2-1: only the item-summary clause is covered; another clause with the same ordinal stays for the probe', () => {
+    const text = 'list my jira issues and summarize the first one and add a todo to write the first draft';
+    const result = validateAgentPlan(plan([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])]), ctx(text));
+    expect(result).toMatchObject({ ok: true, plan: { kind: 'run' } });
+    if (result.ok && result.plan.kind === 'run') expect(agentUncoveredClauses(result.plan.steps, text)).toEqual(['add a todo to write the first draft']);
+  });
+
+  it('Codex P2-2: the target is the list\'s own item entry (jira.release lists -> jira.issues), never another entry', () => {
+    const text = '지라 이슈 보여주고 첫 번째 거 요약해줘';
+    expect(validateAgentPlan(plan([read('jira.issues'), read('jira.release', {}, at(1, 'issueKeys', 1)), summary([2])]), ctx(text))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    const release = '1.2.0 릴리스 이슈 보여주고 두 번째 거 요약해줘';
+    expect(validateAgentPlan(plan([read('jira.release', { release: '1.2.0' }), read('jira.issues', {}, at(1, 'issueKeys', 2)), summary([2])]), ctx(release))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+
+  it('CA W1: a number inside the list\'s own clause or a read value is no position; a clause with a write word never is', () => {
+    // "3번 회의실" is a room: the number sits in the list's own clause.
+    expect(validateAgentPlan(plan([read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])]), ctx('3번 회의실 예약 메일 보여주고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // "3번 삭제하고" is a write clause (the catalog's cancel vocabulary): never a position, so the plan is refused.
+    expect(validateAgentPlan(plan([read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])]), ctx('메일 보여주고 3번 삭제하고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // A read value that carries the number ("2번 회의실") is no position either.
+    expect(validateAgentPlan(plan([read('slack.search', { keyword: '장애' }), read('slack.search', {}, at(1, 'messageIds', 2)), summary([2])]), ctx('슬랙에서 장애 찾고 장애 2번 스레드 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+  });
+});
+
+describe('owner decisions of 2026-10-26 (e3462f46 gate): Core\'s final plan order and clause-grounded flags', () => {
+  const run = (text: string, steps: AgentPlanStep[]) => {
+    const result = validateAgentPlan(plan(steps), ctx(text));
+    if (!result.ok || result.plan.kind !== 'run') throw new Error(JSON.stringify(result));
+    return result.plan;
+  };
+
+  it('moves each summary right after the last read it covers (order only; scope, schema and references renumbered)', () => {
+    const text = '지난주 받은 메일 요약하고 지난주 업데이트된 이슈도 요약해줘';
+    const got = run(text, [read('mail.list', { range: 'last-week' }), read('jira.issues', { window: 'updated', range: 'last-week' }), summary([1]), summary([2])]);
+    expect(got.steps.map((step) => (step.kind === 'read' ? step.entry.id : `sum${JSON.stringify(step.from)}`))).toEqual(['mail.list', 'sum[1]', 'jira.issues', 'sum[3]']);
+    // A summary over both reads stays after the second one; a reference is renumbered with its source.
+    const release = run('1.2.0 릴리스 이슈 보여주고 각각 자세히 본 다음 메일도 보고 릴리스는 정리해줘', [
+      read('jira.release', { release: '1.2.0' }),
+      read('mail.list'),
+      read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 3 }),
+      summary([1]),
+    ]);
+    expect(release.steps.map((step) => (step.kind === 'read' ? `${step.entry.id}${step.ref !== undefined ? `<-${step.ref.step}` : ''}` : `sum${JSON.stringify(step.from)}`))).toEqual([
+      'jira.release',
+      'sum[1]',
+      'mail.list',
+      'jira.issues<-1',
+    ]);
+  });
+
+  it('sets calendar timedOnly from the calendar step\'s own clause (the arg\'s existing grounding words only)', () => {
+    const timed = (text: string, steps: AgentPlanStep[]) => run(text, steps).steps.map((step) => (step.kind === 'read' && step.entry.id === 'calendar.events' ? step.args.timedOnly === true : undefined)).find((value) => value !== undefined);
+    // One clause: the message is the step's own clause.
+    expect(timed('내일 회의 뭐 있어', [read('calendar.events', { range: 'tomorrow' })])).toBe(true);
+    expect(timed('다음 주 회의랑 지난주 업데이트된 지라 이슈 보여줘', [read('calendar.events', { range: 'next-week' }), read('jira.issues', { window: 'updated', range: 'last-week' })])).toBe(true);
+    // No grounding word in the calendar's clause: unchanged.
+    expect(timed('내일 일정 보여줘', [read('calendar.events', { range: 'tomorrow' })])).toBe(false);
+    // Cross-clause: the word in ANOTHER read's clause never sets it.
+    expect(timed('내일 일정이랑 회의록 문서 찾아줘', [read('calendar.events', { range: 'tomorrow' }), read('drive.files', { name: '회의록' })])).toBe(false);
+    // A word inside the step's own keyword is the event title (calendar-046), and a negated or excluded clause is unchanged.
+    expect(timed('다음 주 주간회의 일정 보여줘', [read('calendar.events', { range: 'next-week', keyword: '주간회의' })])).toBe(false);
+    expect(timed('내일 회의 빼고 일정 보여줘', [read('calendar.events', { range: 'tomorrow' })])).toBe(false);
+  });
+});
+
+describe('review of f3e59814: two write vocabularies, a narrower timedOnly and predicate-only write words', () => {
+  const at = (step: number, field: string, n: number) => ({ step, field, take: 1, at: n });
+  const run = (text: string, steps: AgentPlanStep[]) => {
+    const result = validateAgentPlan(plan(steps), ctx(text));
+    if (!result.ok || result.plan.kind !== 'run') throw new Error(JSON.stringify(result));
+    return result.plan;
+  };
+
+  it('Codex P2-1 / CA W2: the position guard uses the BROAD catalog vocabulary (creations included)', () => {
+    const mail = [read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])];
+    expect(validateAgentPlan(plan(mail), ctx('메일 보여주고 3번 할 일로 추가하고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    expect(validateAgentPlan(plan(mail), ctx('메일 보여주고 3번 알림 걸고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // The creation clause is no position clause and stays uncovered, so the probe sees it.
+    const text = 'list my jira issues and add a todo to write the first draft and summarize the first one';
+    const got = run(text, [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])]);
+    expect(agentUncoveredClauses(got.steps, text)).toEqual(['add a todo to write the first draft']);
+  });
+
+  it('Codex P2-2 / CA W1: timedOnly is not set by another read\'s value, another alias of the calendar or another entry\'s clause', () => {
+    const timed = (text: string, steps: AgentPlanStep[]) => run(text, steps).steps.some((step) => step.kind === 'read' && step.entry.id === 'calendar.events' && step.args.timedOnly === true);
+    const calAndMail = [read('calendar.events', { range: 'this-week' }), read('mail.list')];
+    expect(timed('내일 일정 및 회의록 문서 찾아줘', [read('calendar.events', { range: 'tomorrow' }), read('drive.files', { name: '회의록' })])).toBe(false);
+    expect(timed('이번 주 회의랑 연차 일정 보여주고 메일도 보여줘', calAndMail)).toBe(false);
+    expect(timed('이번 주 회의 일정이랑 종일 일정, 그리고 메일', calAndMail)).toBe(false);
+    expect(timed('이번 주 일정 전부 보여줘 회의 포함해서, 그리고 메일', calAndMail)).toBe(false);
+    expect(timed('이번 주 일정 보여주고 메일에서 회의 관련 거', calAndMail)).toBe(false);
+    // Still set when the calendar's own clause names it by a meeting word alone.
+    expect(timed('이번 주 회의랑 메일 보여줘', calAndMail)).toBe(true);
+    expect(timed('내일 회의 뭐 있어', [read('calendar.events', { range: 'tomorrow' })])).toBe(true);
+  });
+
+  it('CA S1: a change word counts only on the clause predicate, never as a modifier', () => {
+    for (const text of ['취소된 회의', '완료된 거 보여줘', '취소된 일정 알려줘', 'show the completed ones']) expect(agentClauseHasWriteWord(text), text).toBe(false);
+    for (const text of ['내일 거는 꺼줘', '두 번째 거 삭제해줘', '2번 취소', '방금 거 되돌려', 'cancel the second one', 'please undo that']) expect(agentClauseHasWriteWord(text), text).toBe(true);
+    // An item-removal request on the predicate stays a change request (the note is the fail-safe answer).
+    expect(agentClauseHasWriteWord('완료된 거는 빼줘')).toBe(true);
+  });
+});
+

@@ -1,6 +1,7 @@
 import type { InboundQuotedRange } from '../../domain';
 import { flowLabel, type FlowLabel } from '../../domain/flow-label';
-import type { NlWave1EntryId } from '../nl-routing/catalog';
+import { NL_R2_ITEM_SOURCES, type NlWave1EntryId } from '../nl-routing/catalog';
+import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 
 /**
@@ -17,22 +18,49 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
  *   DM-only rule). Stage S2 P1 performs no read, so nothing is labelled at run time yet.
  */
 
-/** The READ entries an agent plan may name, each with its source and the id field a projector may extract from it. */
-export const AGENT_READ_SOURCES: Readonly<Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string }>> = Object.freeze({
-  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys' },
-  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys' },
-  'github.items': { source: 'github', origin: 'github:configured-host', refField: 'itemIds' },
-  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds' },
-  'confluence.search': { source: 'confluence', origin: 'confluence:configured-site', refField: 'pageIds' },
-  'calendar.events': { source: 'calendar', origin: 'calendar:owner', refField: 'eventIds' },
-  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds' },
-  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds' },
-  // Local stores and fixed answers: no projected id field (a reference to or from them is refused).
-  'todo.list': { source: 'todo', origin: 'host' },
-  'reminder.list': { source: 'reminder', origin: 'host' },
-  'brief.today': { source: 'brief', origin: 'host' },
-  'help.topic': { source: 'help', origin: 'host' },
+/**
+ * The READ entries an agent plan may name, each with its source, the id field a projector may extract from it, and its
+ * worst-case number of connector queries (named port calls) for one selection through its handler (`connectorQueries`;
+ * S2 P3 part 2, CA finding 3; the HTTP requests behind each query are recorded in the S2 P3 part 2 note of DECISIONS.md):
+ * - Jira, GitHub, Slack, Confluence, calendar, mail and Drive listings: one query each (`personal-work`, `search`,
+ *   `listEvents`, mail `search`, Drive `recentFiles` / `searchByName`);
+ * - `jira.release`: up to 8 (`containers` twice, `releases` for up to 5 candidate projects, then a project's `releases`
+ *   or `release-items`; `jira-release-lookup.ts`, `DISAMBIGUATE_MAX`);
+ * - `todo.list`: 2 — the open list also reads the Jira and GitHub work surface (`work-surface-query.ts`);
+ * - `brief.today`: 4 with every section on (calendar 1, Jira 2, mail 1; the brief flags can only lower it);
+ * - reminders and help: 0 (host only).
+ */
+export const AGENT_READ_SOURCES: Readonly<
+  Record<NlWave1EntryId, { readonly source: string; readonly origin: string; readonly refField?: string; readonly itemEntry?: NlWave1EntryId; readonly connectorQueries: number }>
+> = Object.freeze({
+  // `itemEntry` (owner decision of 2026-10-26; Codex P2-2 of 0bde31cc): the entry that reads ONE listed item of this list
+  // by its id — the only target of a position reference (`ref.at`); set only for the item-summary sources.
+  'jira.issues': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', itemEntry: 'jira.issues', connectorQueries: 1 },
+  'jira.release': { source: 'jira', origin: 'jira:configured-site', refField: 'issueKeys', itemEntry: 'jira.issues', connectorQueries: 8 },
+  'github.items': { source: 'github', origin: 'github:configured-host', refField: 'itemIds', connectorQueries: 1 },
+  'slack.search': { source: 'slack', origin: 'slack:configured-workspace', refField: 'messageIds', itemEntry: 'slack.search', connectorQueries: 1 },
+  'confluence.search': { source: 'confluence', origin: 'confluence:configured-site', refField: 'pageIds', connectorQueries: 1 },
+  'calendar.events': { source: 'calendar', origin: 'calendar:owner', refField: 'eventIds', connectorQueries: 1 },
+  'mail.list': { source: 'mail', origin: 'mail:owner', refField: 'messageIds', itemEntry: 'mail.list', connectorQueries: 1 },
+  'drive.files': { source: 'drive', origin: 'drive:owner', refField: 'fileIds', itemEntry: 'drive.files', connectorQueries: 1 },
+  // Local stores and fixed answers: no projected id field (a reference to or from them is refused). The to-do list still
+  // reads the Jira and GitHub work surface.
+  'todo.list': { source: 'todo', origin: 'host', connectorQueries: 2 },
+  'reminder.list': { source: 'reminder', origin: 'host', connectorQueries: 0 },
+  'brief.today': { source: 'brief', origin: 'host', connectorQueries: 4 },
+  'help.topic': { source: 'help', origin: 'host', connectorQueries: 0 },
 });
+
+/**
+ * Owner decision of 2026-10-26 (a position reference, "지라 이슈 보여주고 첫 번째 거 요약해줘"): the sources whose listed
+ * items a plan may summarize one by position — exactly the sources an item summary already reads (`item.summarize`: its
+ * R1 `source` enum, mail and Drive, plus the R2 sources, Jira and Slack), so the plan adds no egress an item summary does
+ * not already allow. Derived from the catalog; no list of its own.
+ */
+export const AGENT_POSITION_REF_SOURCES: readonly string[] = Object.freeze([
+  ...((NL_ACTION_ENTRIES['item.summarize']?.args.find((spec) => spec.name === 'source')?.values ?? []) as readonly string[]),
+  ...NL_R2_ITEM_SOURCES,
+]);
 
 /** The label of what a READ entry returns (ADR-0121 D4; ADR-0110 D4, ADR-0118 D7/D8, ADR-0100). */
 export function readOutputLabel(entryId: NlWave1EntryId): FlowLabel {

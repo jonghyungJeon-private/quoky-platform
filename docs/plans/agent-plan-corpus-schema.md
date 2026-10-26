@@ -41,22 +41,30 @@ what an answer means.
 | `text` | yes | The owner's raw message (quoted lines, fences and `>>>` included as typed). |
 | `attachments` | no | The number of attachments (the D3 preparation turns them into `[files: N]`). |
 | `prior` | no | The previous selection, structure only: `{entryId, args}`. |
-| `expect` | yes | A positive: the gold plan in the planner's own steps form, `{"steps": [...], "ambiguity": "CLEAR"}`. A negative: `"none"`. An unbounded request (decision (h), family `unbounded`): `{"outcome": "ask", "reason": "unbounded", "bound": "per-period" \| "reads" \| "refs", "suggestion": <steps form>}`. |
+| `expect` | yes | A positive: the gold plan in the planner's own steps form, `{"steps": [...], "ambiguity": "CLEAR"}`, with `"related": <step no>` when the owner relates the other reads to that step (owner decision (a); CA finding 5; scored with the steps). A negative: `"none"`. An unbounded request (decision (h), family `unbounded`): `{"outcome": "ask", "reason": "unbounded", "bound": "per-period" \| "reads" \| "refs", "suggestion": <steps form>}`. |
 | `trap` | no | Negatives: the tempting plan, in the steps form; the validator must refuse it. Ask cases (required): the unbounded plan as the planner writes it; the validator must turn it into exactly the expected ask (the same bound and suggestion). |
+| `help` | no | Positives only (ADR-0121 A1-E4, family `help-brief-split`): the help section Core's deterministic help split (A1-E1) gives before planning, a `NL_HELP_TOPICS` topic. The `expect` is then the plan of the rest of the owner's words (it may be one step: the help section is the other section). The self-check proves the split gives exactly this topic; a case without `help` must not split. |
 | `trapRefusal` | no | Not on ask cases. The closed `AgentPlanRefusal` the trap must be refused with (`a6-in-plan`, `ref-cross-source`, `date-ungrounded`, `too-many-reads`, `ref-too-many`, `run-refs-too-many`, `single-step-only`, `range-ambiguous`, …). |
 | `note` | no | Free text for the reviewer. |
 
 A **step** is either a read `{"entryId", "args", "ref"?}` or a summary `{"summarize": [<step no>, …], "schema"}`.
-A `ref` is `{"step", "field", "take"}`: the closed-format ids a deterministic projector takes from an earlier read
-(stage S2 P3). The planner never writes an id.
+A `ref` is `{"step", "field", "take", "at"?}`: the closed-format ids a deterministic projector takes from an earlier read
+(stage S2 P3). The planner never writes an id. With `at` (owner decision of 2026-10-26, agent-plan.v9) it is ONE item
+(`take` 1) at that 1-based position of the earlier list, in the order Quoky renders it in this reply.
 
 A planner `none` means "no multi-step plan", not "no reply" (decision (f)): the message keeps the one-step path (the
-read selection or honest chat). "목록 보여주고 첫 번째 거 요약해줘" shows the list and then asks which number to summarize
-(P3); the one-item summary is the A6 `item.summarize` turn that follows.
+read selection or honest chat). Owner decision of 2026-10-26 (amends (f) for an explicit position over a list read in
+the same message): "목록 보여주고 첫 번째 거 요약해줘" is a plan — the list read, a position reference to its Nth item and a
+summary over it — answered in one reply (`item-summary-ref`). A write on a listed item keeps the ratified read + write
+note.
+
+The scorer (S2 P3) runs Core's help split (A1-E1) before the planner call, exactly as the runtime does: the planner sees
+the rest of the owner's words. An exact positive needs the exact rest plan AND the gold `help` section (none expected,
+none split); an extra help section is a miss (`help`).
 
 ## 4. Families
 
-Positives (every gold has at least two steps):
+Positives (every gold has at least two sections: two steps, or a help section plus at least one step):
 
 | Family | What it holds |
 |---|---|
@@ -68,6 +76,8 @@ Positives (every gold has at least two steps):
 | `en-prenominal` | English periods before their noun ("Friday calendar and today mail") and after it. |
 | `multi-read` | Three or four reads. |
 | `same-entry` | Two reads of the same entry with different keywords ("각각", "따로", "separately"). |
+| `item-summary-ref` | Owner decision of 2026-10-26: a list read, a position reference (`ref.at`, take 1) to its Nth item, and a summary over it (Jira, Slack, mail, Drive). ap-p185..ap-p189 (formerly ap-n125, ap-n126, ap-n129, ap-n132, ap-n136). |
+| `help-brief-split` | ADR-0121 A1-E4 (decision (e), S2 P3): a help clause with other reads (`help` + the rest plan), or the brief as one step of a plan (never covered by a summary, B2). ap-p175..ap-p179 (formerly ap-n118..ap-n120, ap-n122, ap-n123; ap-p177: the owner's English help decision of 2026-10-23) and ap-p180 (formerly ap-n121: owner decision Q2, the verb connective -고 splits). |
 
 Negatives (`expect: "none"`, or an `ask` for `unbounded`; any executable plan is wrong):
 
@@ -81,7 +91,7 @@ Negatives (`expect: "none"`, or an `ask` for `unbounded`; any executable plan is
 | `unbounded` | More than 4 reads, one entry read for 3 or more different periods (a read per day, week or month), or details of more than 10 issues. Expect an `ask` with a bounded suggestion (decision (h)), not `none`. |
 | `capability-chit-chat` | Small talk or opinions that name sources. |
 | `venting` | Feelings about sources, asking nothing. |
-| `help-style` | How-tos about other apps; `help.topic` or `brief.today` together with another read (trap: `single-step-only`). |
+| `help-style` | How-tos about other apps (the six of A1-E4). |
 | `a6-in-plan` | A plan that would need an A6 entry (item summary, to-do or reminder write, undo; trap: `a6-in-plan`). |
 | `past-or-negated` | Past statements and negated requests. |
 

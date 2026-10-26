@@ -4,9 +4,11 @@ import {
   connectorQueryErrorReasonForStatus,
   CONNECTOR_CATALOG_MAX_ITEMS,
   CONNECTOR_CONTAINER_KEY,
+  CONNECTOR_ITEM_KEY,
   CONNECTOR_ITEM_RESPONSE_MAX_BYTES,
   CONNECTOR_RELEASE_ID,
   parseItemParams,
+  parseItemsByKeyParams,
   parsePersonalWorkParams,
   parseReleaseItemsParams,
   parseReleasesParams,
@@ -163,6 +165,8 @@ export class JiraConnectorProvider implements ConnectorProvider {
         return this.releaseItems(input.params);
       case ConnectorQueryName.ITEM:
         return this.item(input.params);
+      case ConnectorQueryName.ITEMS_BY_KEY:
+        return this.itemsByKey(input.params);
       default:
         throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: unsupported query');
     }
@@ -272,6 +276,60 @@ export class JiraConnectorProvider implements ConnectorProvider {
       payload.isLast === false ||
       (typeof payload.nextPageToken === 'string' && payload.nextPageToken.length > 0);
     return { source: this.source, items, ...(more ? { truncated: true } : {}) };
+  }
+
+  /**
+   * ADR-0121 S2 P3 `items-by-key` (the "same-source detail reads" implementation note; CA review finding 6): the details
+   * of up to 10 issues in ONE request, `key in (…)`, built only from keys the port parser re-validated against the closed
+   * key shape and quoted as JQL string literals; the order is constant; `maxResults` = the number of keys, so one page
+   * holds them all. The response is read through the capped item reader (`CONNECTOR_ITEM_RESPONSE_MAX_BYTES`, 1 MB;
+   * `TOO_LARGE` over it). Only issues whose key was asked for are returned (a moved issue answering under another key is
+   * dropped, never substituted).
+   *
+   * Partial failure: Jira refuses the whole JQL with a 400 when a key no longer exists or is not visible, naming it in
+   * its key-error shape (`… key 'OP26-404' … field 'key' …`). Then the adapter retries ONCE without the asked keys that
+   * error names, and marks the result `truncated` (some asked items are missing): at most 2 HTTP requests, one connector
+   * query for the run budget. A 400 of any other shape is `INVALID_RESPONSE`; a retry that fails again, or a 400 naming
+   * every asked key, is `NOT_FOUND`. The error text is inspected, never kept or returned.
+   */
+  private async itemsByKey(params: Metadata | undefined): Promise<ConnectorResult> {
+    const { keys } = parseItemsByKeyParams(params, 'jira connector');
+    const first = await this.searchKeys(keys);
+    if (!('missing' in first)) return { source: this.source, items: first.items };
+    const remaining = keys.filter((key) => !first.missing.includes(key));
+    if (remaining.length === 0) throw new ConnectorQueryError('NOT_FOUND', 'jira connector: item not found');
+    const second = await this.searchKeys(remaining);
+    if ('missing' in second) throw new ConnectorQueryError('NOT_FOUND', 'jira connector: item not found');
+    return { source: this.source, items: second.items, truncated: true };
+  }
+
+  /** One `key in (…)` page through the capped reader; a key-error 400 names the asked keys Jira refused. */
+  private async searchKeys(keys: readonly string[]): Promise<{ readonly items: ConnectorItem[] } | { readonly missing: readonly string[] }> {
+    const url = new URL('/rest/api/3/search/jql', this.baseUrl);
+    url.searchParams.set('jql', itemsByKeyJql(keys));
+    url.searchParams.set('fields', SEARCH_FIELDS);
+    url.searchParams.set('maxResults', String(keys.length));
+    let missing: readonly string[] = [];
+    let json: unknown;
+    try {
+      json = (
+        await this.getItemJson(url, (status, body) => {
+          if (status !== 400) return undefined;
+          missing = refusedIssueKeys(body, keys);
+          return missing.length > 0 ? new ConnectorQueryError('NOT_FOUND', 'jira connector: item not found') : new JiraConnectorResponseError();
+        })
+      ).json;
+    } catch (error) {
+      if (missing.length > 0) return { missing };
+      throw error;
+    }
+    if (!isRecord(json) || !Array.isArray(json.issues)) throw new JiraConnectorResponseError();
+    const asked = new Set(keys);
+    const items = json.issues
+      .filter((issue) => isRecord(issue) && typeof issue.key === 'string' && asked.has(issue.key))
+      .slice(0, keys.length)
+      .map((issue) => this.mapIssue(issue));
+    return { items };
   }
 
   /**
@@ -426,7 +484,7 @@ export class JiraConnectorProvider implements ConnectorProvider {
    * `redirect: 'manual'` itself and maps any 3xx (or an opaque redirect) to `MOVED`: nothing is ever followed. The body
    * is read as a stream and counted; above CONNECTOR_ITEM_RESPONSE_MAX_BYTES the reader is cancelled.
    */
-  private async getItemJson(url: URL): Promise<{ json: unknown; bytes: number }> {
+  private async getItemJson(url: URL, onError?: (status: number, body: unknown) => Error | undefined): Promise<{ json: unknown; bytes: number }> {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
@@ -443,7 +501,19 @@ export class JiraConnectorProvider implements ConnectorProvider {
       throw new ConnectorQueryError('MOVED', 'jira connector: item moved');
     }
     if (!response.ok) {
-      void response.body?.cancel().catch(() => undefined);
+      if (onError !== undefined) {
+        // The error body is read capped too, parsed, inspected by the caller and dropped.
+        let body: unknown;
+        try {
+          body = JSON.parse((await readCappedText(response)).text) as unknown;
+        } catch {
+          body = undefined;
+        }
+        const mapped = onError(response.status, body);
+        if (mapped !== undefined) throw mapped;
+      } else {
+        void response.body?.cancel().catch(() => undefined);
+      }
       throw mapHttpError(response.status);
     }
     const { text, bytes } = await readCappedText(response);
@@ -634,6 +704,32 @@ export function releaseItemsJql(params: ParsedReleaseItemsParams): string {
   }
   if (params.assignee !== undefined) parts.push(`assignee = ${jqlString(params.assignee)}`);
   return `${parts.join(' AND ')} ORDER BY key ASC`;
+}
+
+/**
+ * ADR-0121 S2 P3: the JQL of a bulk detail read. Every key is re-validated against the closed item-key shape and quoted
+ * as a string literal; owner text never reaches it. The order is constant.
+ */
+export function itemsByKeyJql(keys: readonly string[]): string {
+  if (keys.length === 0 || !keys.every((key) => CONNECTOR_ITEM_KEY.test(key))) throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira connector: invalid item keys');
+  return `key in (${keys.map((key) => jqlString(key)).join(', ')}) ORDER BY key ASC`;
+}
+
+/**
+ * The asked keys a Jira 400 refuses in its key-error shape: an error message that names the JQL field `'key'` and quotes
+ * the key (`An issue with key 'OP26-404' does not exist for field 'key'.`, `The issue key 'OP26-404' for field 'key' is
+ * invalid.`). Only asked keys count; any other message names none (the caller treats that 400 as a malformed answer).
+ */
+function refusedIssueKeys(body: unknown, asked: readonly string[]): string[] {
+  if (!isRecord(body)) return [];
+  const messages = Array.isArray(body.errorMessages) ? body.errorMessages.filter((value): value is string => typeof value === 'string') : [];
+  const errors = isRecord(body.errors) ? Object.values(body.errors).filter((value): value is string => typeof value === 'string') : [];
+  const named = new Set<string>();
+  for (const text of [...messages, ...errors]) {
+    if (!/field\s+'key'/i.test(text)) continue;
+    for (const match of text.matchAll(/'([A-Z][A-Z0-9_]{1,19}-[1-9][0-9]{0,9})'/g)) named.add(match[1] as string);
+  }
+  return asked.filter((key) => named.has(key));
 }
 
 /** Jira's status category keys as the neutral groups (a closed lookup, own properties only). */

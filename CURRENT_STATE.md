@@ -28,6 +28,69 @@ The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; 
 Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
 then G6 on a Strict yes.
 
+### ADR-0121 S2 — owner decisions of 2026-10-26 after the ed45e3f1 gate (branch `claude/v5-s2-p3`)
+
+- **Built, not live.** The position reference (`ref.at`) and planner `agent-plan.v9`: a list and its Nth item's summary in
+  one reply; the probe offers the action entries only.
+- **Eval.** Multi-step exact pooled over the runs; `item-summary-ref` golds ap-p185..ap-p189.
+- **Follow-up.** Monitor `nl_selection.help_scope_asked` in live logs.
+
+### ADR-0121 S2 — owner decisions of 2026-10-26 on the 5c09fee4 gate (branch `claude/v5-s2-p3`)
+
+- **Built, not live.** Planner `agent-plan.v8` (rule 9: a release's issue details need the `jira.issues` reference step);
+  the read + write probe's prompt is the whole message again (validation stays on the uncovered clause alone); the probe
+  trigger stays broad.
+- **Eval.** Capability-help golds also accept the help topic of a named source (structural mapping, pinned to the
+  runtime). Mail and Drive have no per-source topic while their help lines are merged (owner decision pending).
+- **Next.** The coordinator's agent-plan gate on the new HEAD.
+
+### ADR-0121 S2 — owner ratifications of 2026-10-23 (branch `claude/v5-s2-p3`)
+
+- **Ratified and recorded.** The read + write note (Q3); the D7 unit (one port query, cap 10; 50-HTTP runtime ceiling).
+- **Live change.** The release order: upcoming → released → overdue → undated, by the owner's local date.
+- **Built, not live.** English help + read split; ap-p177 approved.
+- **Data.** `readWrite` outcomes on 32 plan negatives; `agent-redteam.s2-read-write.v1.json` (RW-1, 28 cases, pending).
+- **P3 part 3 (with the executor).** The read + write path, the 50-HTTP ceiling, the Q1 cursor and follow-up, the
+  `s2-read-write` runner.
+
+### ADR-0121 S2 P3 part 2 (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Live change.** The release list order: planned (soonest first), then released (newest first); header "예정 → 최근 출시 순".
+- **Built, not live.**
+  - The help split at "-고" with a strict help clause.
+  - The query-unit connector charge (`todo.list` 2, `jira.release` 8, the brief 4).
+  - `related: <step no>`; planner `agent-plan.v7`, not gated.
+  - The next-10 hint hidden behind `followUp`.
+  - `items-by-key` capped and with a one-retry partial read.
+- **Gold.** ap-p180 (was ap-n121, approved); ap-n120 back to `none`; ap-n085 an ask with a suggestion shrunk to fit (asks 12); ap-p001..008 carry `related: 1`.
+- **Waiting on the owner / CA.**
+  - The Q3 draft note (a read and a write in one turn).
+  - The D7 unit (queries vs HTTP requests).
+- **Next.** P3 part 3: the executor, then the Q1 cursor and its follow-up.
+
+DECISIONS: "ADR-0121 S2 implementation note — P3 part 2".
+
+### ADR-0121 S2 P3 part 1 (2026-10-23, branch `claude/v5-s2-p3`)
+
+- **Live change.** The Jira release list orders by release date, newest first (the 2026-10-22 smoke showed Jira's
+  manual sequence order under "최근 10개 표시").
+- **Built, not live.**
+  - Jira `items-by-key`: one bulk request for up to 10 issue details.
+  - The S2 validator: the brief as one plan step (`brief-repeated`, `summary-covers-brief`), a static connector-call
+    charge (`over-bound` over 10), the `related` flag.
+  - The help split before planning (A1-E1).
+  - Fixed reply notes: the detail cap with the next-10 hint, the relation note, the action-in-plan guidance.
+- **Shadow.** The `agent_run.shadow` line gains `split`, `helpTopic`, `connectorCalls`, `related`, `a6Kind`,
+  `a6Remainder`.
+- **Prompt.** Planner `agent-plan.v6` (rule 8 brief/help, rule 9 related); not gated yet. Selector prompts unchanged.
+- **Gold.** ap-p175..ap-p179 (formerly ap-n118/119/120/122/123) are `help-brief-split` positives, pending the AP-6
+  re-approval; ap-n121 stays `none`.
+- **Not built.** The P3 executor, structure projector, quarantined summary, reply assembler and `quoky.agentRun` audit;
+  the "다음 10개" follow-up (needs a Q9 exception); AP-7.
+
+Next: the agent-plan gate on v6; the owner's answers to the four open questions; then the P3 executor. DECISIONS:
+"ADR-0121 S2 implementation note — P3 part 1".
+
 ### ADR-0121 amendment A2 — ratified (2026-10-23, docs only, branch `claude/v5-answer-step-adr`)
 
 The owner ratified A2 on 2026-10-23 with every recommended default. Docs only; no code changed.

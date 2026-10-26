@@ -42,6 +42,12 @@ export function renderUnboundedAsk(ask: AgentUnboundedAsk, language: 'ko' | 'en'
       if (language === 'en') return `I can read at most ${AGENT_PLAN_MAX_READS} sources in one request. Ask for ${AGENT_PLAN_MAX_READS} or fewer at a time, for example: ${labels}.`;
       return `한 번에 ${AGENT_PLAN_MAX_READS}곳까지만 읽을 수 있어요. ${AGENT_PLAN_MAX_READS}곳 이하로 나눠 말씀해 주세요. 예: ${labels}`;
     }
+    case 'calls': {
+      // CA re-check W2: the plan needs more connector queries than one run may make (ADR-0121 D7).
+      const labels = reads.map((step) => step.entry.label[language]).join(', ');
+      if (language === 'en') return `That is more than I can read in one request. Ask for fewer sources at a time, for example: ${labels}.`;
+      return `한 번에 조회할 수 있는 양을 넘어요. 조회를 나눠서 말씀해 주세요. 예: ${labels}`;
+    }
     case 'refs':
       if (language === 'en') return `I can open at most ${AGENT_PLAN_MAX_REF_VALUES} issues in detail at once. Ask like "show ${AGENT_PLAN_MAX_REF_VALUES} of the release issues in detail".`;
       return `이슈 상세는 한 번에 ${AGENT_PLAN_MAX_REF_VALUES}개까지 볼 수 있어요. '릴리스 이슈 ${AGENT_PLAN_MAX_REF_VALUES}개 자세히 보여줘'처럼 ${AGENT_PLAN_MAX_REF_VALUES}개 이하로 말씀해 주세요.`;

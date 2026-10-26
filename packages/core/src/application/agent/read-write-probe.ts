@@ -1,0 +1,164 @@
+import type { NlCatalogEntry } from '../nl-routing/catalog';
+import { isNlActionEntryId } from '../nl-routing/catalog';
+import { NL_ACTION_PROMPT_VERSION, buildSelectionPrompt } from '../nl-routing/selection-prompt';
+import { parseSelectionOutput } from '../nl-routing/selection-output';
+import { normalizeForMatch } from '../nl-routing/selection-input';
+import { validateSelection } from '../nl-routing/selection-validator';
+import { nlClauseClaimsWrite, nlWriteClausePointsBack } from '../nl-routing/write-clause';
+import { agentClauseHasWriteWord, agentUncoveredClauses, type AgentPlanValidationContext, type ValidatedAgentPlan } from './plan-validator';
+
+/**
+ * ADR-0121 S2 — the owner-ratified amendment of 2026-10-26 to the TRIGGER of the read + write note of 2026-10-23: when a
+ * validated read plan leaves a clause that mentions none of the planned reads (`agentUncoveredClauses`), Core runs the
+ * note's one A6 selection over the message (the existing ADR-0120 A6 selection prompt, counted against D7's model-call cap
+ * and Q7's hourly cap). If the selector picks an A6 write whose verbatim spans and grounded values lie in that clause (the
+ * selection re-validates with that clause ALONE as its grounding text, so no read word or read result reaches it), the
+ * read + write path proceeds; a write clause with a list or deictic reference (a `ref` arg) is not run (the decision (f)
+ * fixed note); anything else leaves the read plan standing. DM only (the plan validator already is); the kill switch stops
+ * it like every agent path; such a turn records no Q1 cursor. Pure: the caller makes the model call; this module builds
+ * the prompt and judges the answer.
+ */
+
+/** The A6 selection prompt version the probe uses (the deployed A6 prompt). */
+export const AGENT_READ_WRITE_PROBE_PROMPT_VERSION = NL_ACTION_PROMPT_VERSION;
+
+/** The uncovered clauses of a validated plan, or `[]` (no probe needed). */
+export function agentReadWriteProbeClauses(plan: ValidatedAgentPlan, groundingText: string): string[] {
+  return plan.kind === 'run' ? agentUncoveredClauses(plan.steps, groundingText) : [];
+}
+
+/**
+ * The probe's one A6 selection prompt over the WHOLE message (owner decision of 2026-10-26, a deliberate change to the CA
+ * W2 extra defence: the clause-only prompt dropped the destination the read clause names — "할 일 목록 보여주고 장보기
+ * 추가해줘" — and the selector answered no write, gate on 5c09fee4, ap-n004), the read and A6 entries offered this turn,
+ * and the structural Reference context from BEFORE this turn (executor contract: the probe never sees this turn's read
+ * output). The guarantee that no read-clause word reaches the write args is unchanged and structural: the selection is
+ * validated with each uncovered clause ALONE as its grounding text (`agentReadWriteProbeResult`).
+ *
+ * Only the offered A6 action entries are in the prompt (gate on ed45e3f1): over the whole message the selector answered
+ * the read the plan already runs (93 of 104 probe calls `not-action`, ap-n134 "show my reminders and undo the last
+ * change" → `reminder.list`), and a read selection can only ever leave the plan standing, so offering the reads changes no
+ * outcome except to hide the write. Structural: by the catalog's own action ids, no per-case rule.
+ */
+export function agentReadWriteProbePrompt(input: { readonly text: string; readonly entries: readonly NlCatalogEntry[]; readonly referenceContext?: string }): string {
+  return buildSelectionPrompt({ entries: agentReadWriteProbeEntries(input.entries), text: input.text, actions: { referenceContext: input.referenceContext ?? 'none' } });
+}
+
+/** The entries the probe offers: the A6 action entries among those offered this turn (a read selection is never a write). */
+export function agentReadWriteProbeEntries(entries: readonly NlCatalogEntry[]): readonly NlCatalogEntry[] {
+  return entries.filter((entry) => isNlActionEntryId(entry.id));
+}
+
+export type AgentReadWriteProbeResult =
+  /** The selector picked an A6 write lying in one uncovered clause: the read + write path proceeds. */
+  | { readonly kind: 'write'; readonly entryId: string; readonly clause: string }
+  /**
+   * The write clause points at a list position, at something already shown or at the read part (a `ref` arg, a
+   * `deictic-payload`, the determiner grammar): not run; the read sections and the decision (f) note.
+   */
+  | {
+      readonly kind: 'note';
+      /** The selected entry; absent for a write-word note (`writeWord`). */
+      readonly entryId?: string;
+      readonly clause: string;
+      /**
+       * Owner decision of 2026-10-26 (ap-n011, never silent): the probe found no write, but the clause holds a write word
+       * of the catalog ("내일 거는 꺼줘"): the read sections and the decision (f) fixed note, never the read alone.
+       */
+      readonly writeWord?: true;
+      /**
+       * Gate on 5c09fee4 (ap-n129): `item.summarize` (ITEM_READ, never a write) with a list reference is decision (f)'s
+       * own case: the read sections and the fixed note. Marked so a scorer never lets it excuse a plan the gold does not
+       * expect a note for (Codex P2 of 39a10ddb).
+       */
+      readonly itemRead?: true;
+    }
+  /**
+   * A write the owner asked for whose details are missing or not in the clause (the selector's NEEDS_CLARIFICATION, a
+   * missing or ungrounded arg), in a clause that names the entry by its catalog alias or that a write grammar claims: the
+   * existing A6 clarification, with the clause as its grounding (CA W2; owner Q3 example 1).
+   */
+  | { readonly kind: 'clarify'; readonly entryId: string; readonly clause: string }
+  /**
+   * Nothing to hand over: the read plan stands. `detail` is a closed, content-free reason (the gate report's probe
+   * diagnostics): `malformed`, `none`, `not-action`, `not-write`, `not-requested` or `invalid:<validation reason>`.
+   */
+  | { readonly kind: 'stands'; readonly detail?: string };
+
+/** The validation failures a clarification answers (the request is there; a detail is missing or not the owner's). */
+const CLARIFY_REASONS: ReadonlySet<string> = new Set(['missing-arg', 'ungrounded']);
+
+/** Whether the clause names the entry by one of its catalog aliases (normalized; a multi-word alias as a phrase). */
+function namesEntry(clause: string, entry: NlCatalogEntry): boolean {
+  const text = normalizeForMatch(clause);
+  return entry.aliases.some((alias) => {
+    const name = normalizeForMatch(alias);
+    return name.length > 0 && text.includes(name);
+  });
+}
+
+/**
+ * Judge the probe's raw A6 selection answer against the uncovered clauses. Pure and total. Owner decision of 2026-10-26
+ * (ap-n011): when nothing is handed over but an uncovered clause holds a write word of the catalog
+ * (`agentClauseHasWriteWord`, the check of the position reference), the result is the decision (f) note on that clause,
+ * never the read plan alone (a silent drop of the owner's write).
+ */
+export function agentReadWriteProbeResult(
+  raw: string,
+  clauses: readonly string[],
+  offered: ReadonlyMap<string, NlCatalogEntry>,
+  ctx: Pick<AgentPlanValidationContext, 'now' | 'timeZone'>,
+): AgentReadWriteProbeResult {
+  const result = probeResultOf(raw, clauses, offered, ctx);
+  if (result.kind !== 'stands') return result;
+  const clause = clauses.find((candidate) => agentClauseHasWriteWord(candidate));
+  return clause !== undefined ? { kind: 'note', clause, writeWord: true } : result;
+}
+
+function probeResultOf(
+  raw: string,
+  clauses: readonly string[],
+  offered: ReadonlyMap<string, NlCatalogEntry>,
+  ctx: Pick<AgentPlanValidationContext, 'now' | 'timeZone'>,
+): AgentReadWriteProbeResult {
+  const output = parseSelectionOutput(raw);
+  if (output === null) return { kind: 'stands', detail: 'malformed' };
+  if (output.entryId === null) return { kind: 'stands', detail: 'none' };
+  if (!isNlActionEntryId(output.entryId)) return { kind: 'stands', detail: 'not-action' };
+  const entry = offered.get(output.entryId);
+  if (entry === undefined) return { kind: 'stands', detail: 'not-action' };
+  // Codex P2: only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE) is ever written or asked about.
+  // An ITEM_READ (`item.summarize`) with a list reference in a clause that names it is decision (f)'s note (ap-n129). Since
+  // the owner decision of 2026-10-26 a summary by position of a list this plan reads is a plan step (`ref.at`, which
+  // covers its clause); this note is left only for a plan that did not take that step.
+  if (entry.risk !== 'LOCAL_WRITE' && entry.risk !== 'EXTERNAL_WRITE') {
+    const referenced = entry.args.some((spec) => spec.kind === 'ref' && typeof output.args[spec.name] === 'string' && (output.args[spec.name] as string).trim().length > 0);
+    const clause = clauses.find((candidate) => namesEntry(candidate, entry));
+    return referenced && clause !== undefined ? { kind: 'note', entryId: output.entryId, clause, itemRead: true } : { kind: 'stands', detail: 'not-write' };
+  }
+  // The payload spans (a time span such as a reminder's `when` is no payload, as in the validator's deictic check).
+  const spans = entry.args.flatMap((spec) => (spec.kind === 'span' && spec.allowsTimeWords !== true && typeof output.args[spec.name] === 'string' ? [output.args[spec.name] as string] : []));
+  // A list or deictic reference in the raw output (any non-empty `ref`, quoted or not) points back whatever validation says.
+  const hasRef = entry.args.some((spec) => spec.kind === 'ref' && typeof output.args[spec.name] === 'string' && (output.args[spec.name] as string).trim().length > 0);
+  let clarify: string | undefined;
+  let detail = 'not-requested';
+  for (const clause of clauses) {
+    const validated = validateSelection({ entryId: output.entryId, args: output.args }, { offered, groundingText: clause, now: ctx.now, timeZone: ctx.timeZone, actions: true });
+    const requested = namesEntry(clause, entry) || nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone });
+    // The write belongs to this clause when it validates there, when its only failures are a pointing-back payload, a
+    // missing or ungrounded detail, or a reference the validator cannot read (a quoted `ref`), in a clause that asks for it.
+    const forThisClause = validated.ok || validated.reason === 'deictic-payload' || ((CLARIFY_REASONS.has(validated.reason) || hasRef) && requested);
+    if (!forThisClause) {
+      if (!validated.ok) detail = `invalid:${validated.reason}`;
+      continue;
+    }
+    // CA W1 / Codex P2: references first, before any clarification — a payload that points back (a `ref`, a deictic-only
+    // or determiner-led canonical span, the determiner grammar on the clause) is never written and never asked about.
+    if (hasRef || nlWriteClausePointsBack(clause, spans) || (!validated.ok && validated.reason === 'deictic-payload')) {
+      return { kind: 'note', entryId: output.entryId, clause };
+    }
+    if (validated.ok && output.ambiguity === 'CLEAR') return { kind: 'write', entryId: output.entryId, clause };
+    if (requested) clarify ??= clause;
+  }
+  return clarify !== undefined ? { kind: 'clarify', entryId: output.entryId, clause: clarify } : { kind: 'stands', detail };
+}
