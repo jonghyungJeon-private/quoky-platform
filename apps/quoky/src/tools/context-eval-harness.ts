@@ -458,13 +458,18 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
     const serve = handler.handleSelected?.bind(handler);
     if (serve !== undefined) {
       (handler as { handleSelected?: ConversationTurnHandler['handleSelected'] }).handleSelected = async (command: NlSelectedCommand, ctx) => {
-        served.push({
+        // Recorded in dispatch order, then dropped if the handler returns null: a null result is unserved (Core falls back
+        // to grammar or chat), so only an accepted command counts as served.
+        const record = {
           handlerId: handler.id,
           entryId: command.entryId,
           args: { ...command.args },
           ...(command.target !== undefined ? { target: { source: command.target.source, ...(command.target.id !== undefined ? { id: command.target.id } : {}), ...(command.target.label !== undefined ? { label: command.target.label } : {}) } } : {}),
-        });
-        return serve(command, ctx);
+        };
+        served.push(record);
+        const outcome = await serve(command, ctx);
+        if (outcome === null) served.splice(served.indexOf(record), 1);
+        return outcome;
       };
     }
   }

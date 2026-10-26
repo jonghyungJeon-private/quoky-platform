@@ -259,8 +259,9 @@ export function observedWrites(observation: Pick<TurnObservation, 'before' | 'af
       if (reminder.status === 'CANCELED') out.reminderCanceled.push(reminder.text);
       else if (reminder.status === 'SCHEDULED' && was.status === 'CANCELED') out.reminderRestored.push(reminder.text);
       else out.reminderOther.push(reminder.text);
-    }
+    } else if (was.text !== reminder.text) out.reminderOther.push(reminder.text);
   }
+  for (const [id, reminder] of Object.entries(before.reminders)) if (after.reminders[id] === undefined) out.reminderOther.push(reminder.text);
   const changed = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): number =>
     Object.keys(b).filter((id) => a[id] !== b[id]).length + Object.keys(a).filter((id) => b[id] === undefined).length;
   (out as { approvalActivity: number }).approvalActivity = changed(before.approvals, after.approvals) + changed(before.anchors, after.anchors);
