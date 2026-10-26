@@ -1,6 +1,6 @@
 ---
 name: quoky-ship
-description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크 → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
+description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크(quoky-e2e) → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
 ---
 
 # Quoky Ship (side-job + Quoky 출하 절차)
@@ -156,7 +156,7 @@ tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 
 - 다른 worktree 의 fetch 와 겹쳐 ref lock 오류가 나면 다시 시도한다(빌드가 옛 코드로 돌았을 수 있다).
 - **스모크**: ego-browser 의 로그인된 Discord 탭(task space id 는 소유자 로컬 main checkout 의 `space_id`, page `p1`)만 쓴다. 새 탭·새 space 로 우회하지 않는다. 재부팅 뒤에는 space 가 사라지므로 `taskSpace("quoky discord relay")` 로 하나 만들어 Discord 로그인 상태를 확인하고 그 id 를 `space_id` 에 적는다(로그아웃 상태면 소유자에게 로그인을 요청).
-  - 먼저 `chat/busy` 잠금을 걸고 `qa/steps.sh <url> id msg …` 를 실행한 뒤 잠금을 푼다.
+  - 실행·판정·되돌리기·보고는 **`quoky-e2e` 스킬**로 한다. 넘기는 요청문은 이 PR 의 변경된 기능 경로와 미설정 기능의 기존 동작이다(범위는 출하 승인으로 갈음하므로 시나리오 표는 보고에만 남긴다).
   - 대상은 QA 채널 또는 Quoky DM(봇 "chunsik-bot")이다. 구체 URL·ID 는 저장소에 두지 않고 로컬 `scripts/chat/` 설정과 메모리(`quoky-*`)에 있다.
   - **`chat/`, `qa/`, `space_id` 는 추적되지 않는다.** 소유자 로컬 main checkout `/Users/seongsujeonjonghyeong/demo_Project/quoky-platform/.claude/skills/quoky-ship/scripts/` 에만 있고 worktree 에는 없으므로, 그 절대 경로로 실행한다.
   - 변경된 기능 경로와 미설정 기능의 기존 동작을 하나씩 확인한다.
