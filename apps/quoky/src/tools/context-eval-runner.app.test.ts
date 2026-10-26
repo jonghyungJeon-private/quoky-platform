@@ -77,6 +77,10 @@ describe('context eval runner — dry, over the production AppModule', () => {
       const first = (records.find((record) => record.score.id === id) as ScenarioRecord).turns[0];
       expect(first?.reply, id).toContain('(3건)');
     }
+    // P4: a calendar write after a to-do add, then "되돌려줘": the honest answer, and the earlier to-do is untouched.
+    const calendarUndo = records.find((record) => record.score.id === 'kg-calendar-undo-after-todo') as ScenarioRecord;
+    expect(calendarUndo.score.hard['wrong-write']).toBe(0);
+    expect(calendarUndo.turns[0]?.reply).toBe('캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐 주세요.');
     // An echo turn sends the first command the previous reply suggested.
     const echo = records.find((record) => record.score.id === 'se-reminder-cancel-hint') as ScenarioRecord;
     expect(echo.turns[1]?.sent).toBe('알림 1 취소');

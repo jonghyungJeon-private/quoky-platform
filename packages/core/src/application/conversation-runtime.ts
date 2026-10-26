@@ -105,6 +105,7 @@ import {
 } from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { readLastSelection } from './nl-routing/selection-state';
+import { externalLastActionOf } from './nl-routing/last-action';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
@@ -1124,6 +1125,8 @@ export interface ConversationRuntimeDeps {
         | 'decideAnchoredUndo'
         | 'answerActionPending'
         | 'recordActionReceipt'
+        // Context eval 2026-10-26 (P4): an approved connector write becomes the (not undoable) last action.
+        | 'recordExternalWrite'
         | 'logActionUnserved'
         | 'actionsStillActing'
         // ADR-0120 amendment A6 R5a (no new deps key): deictic writes; inert while QUOKY_NL_DEICTIC_WRITES is off.
@@ -4870,7 +4873,14 @@ export class ConversationRuntime {
             ? undefined
             : () => this.surfaceStillAllows(message.context, actor, writeGroups);
           try {
-            return respond(await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck));
+            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck);
+            // ADR-0112 amendment 1 S3 (context eval P4): every outcome of the write is the last action (receipt id), so
+            // "되돌려줘" answers about it and never reaches an older to-do or reminder.
+            if (executed.kind === 'outcome') {
+              const { source, entryId } = externalLastActionOf(anchor.family, executed.operation);
+              await this.deps.nlSelection?.recordExternalWrite?.({ session, actor, message, now: this.clock(), source, entryId, receiptId: executed.receiptId ?? view.taskId, outcome: executed.outcome.status });
+            }
+            return respond(executed);
           } catch (error) {
             if (!(error instanceof SurfaceDeniedError)) throw error;
             return this.surfaceDeniedTurn(message, session, error.decision);

@@ -28,11 +28,45 @@ const MAX_ID_CHARS = 512;
 const MAX_REPLY_IDS = 16;
 const MAX_REPLY_ID_CHARS = 256;
 
-export type LastActionSource = 'todo' | 'reminder';
+/**
+ * ADR-0112 amendment 1 S3 (Accepted 2026-10-15; amendment 2, S9): `LastActionSource` gains `slack`, `jira` and
+ * `calendar`. Every outcome of an approved connector write of those families (a Slack post, a Jira comment or transition,
+ * a calendar create, update or delete) writes `lastAction` with `itemId` = its receipt id, so "되돌려줘" after it can never
+ * undo an older to-do or reminder instead (owner rule: undo = the inverse of the same item). Until the R3 undo writers
+ * act, such a record is never undoable and the undo answers with that family's fixed copy (context eval 2026-10-26, P4).
+ */
+export type LastActionSource = 'todo' | 'reminder' | LastActionExternalSource;
+export type LastActionExternalSource = 'slack' | 'jira' | 'calendar';
+export const LAST_ACTION_EXTERNAL_SOURCES: readonly LastActionExternalSource[] = ['slack', 'jira', 'calendar'];
+/** The entry id of an external record whose operation has no catalog entry (a comment, a transition, an event change). */
+export const LAST_ACTION_EXTERNAL_ENTRY = 'external.write';
+export type LastActionEntryId = NlActionEntryId | typeof LAST_ACTION_EXTERNAL_ENTRY;
+/** What became of an external write (its receipt status at record time). */
+export type LastActionExternalOutcome = 'SENT' | 'UNCERTAIN' | 'NOT_SENT';
+
+export function isLastActionExternalSource(value: unknown): value is LastActionExternalSource {
+  return typeof value === 'string' && (LAST_ACTION_EXTERNAL_SOURCES as readonly string[]).includes(value);
+}
+
+/**
+ * The `lastAction` source and entry of one connector write (ADR-0112 amendment 1 S3): by its family (the draft kind, never a
+ * connector id) and its neutral operation name. A closed mapping of Core's own write kinds.
+ */
+export function externalLastActionOf(
+  family: 'calendar' | 'channel-post' | 'issue-comment' | 'issue-transition',
+  operation: string,
+): { readonly source: LastActionExternalSource; readonly entryId: LastActionEntryId } {
+  const source: LastActionExternalSource = family === 'calendar' ? 'calendar' : family === 'channel-post' ? 'slack' : 'jira';
+  const entryId: LastActionEntryId = operation === 'CALENDAR_EVENT_CREATE' ? 'calendar.create' : operation === 'CHANNEL_POST' ? 'slack.post' : LAST_ACTION_EXTERNAL_ENTRY;
+  return { source, entryId };
+}
 
 export interface LastActionRecord {
-  /** The executed entry (`todo.add`, …) or `action.undo` after an undo. */
-  readonly entryId: NlActionEntryId;
+  /**
+   * The executed entry (`todo.add`, …), `action.undo` after an undo; for a connector write its catalog id (`slack.post`,
+   * `calendar.create`) or `external.write`.
+   */
+  readonly entryId: LastActionEntryId;
   readonly source: LastActionSource;
   /** The local UUID of the item acted on (the restored or canceled item after an undo). */
   readonly itemId: Id;
@@ -43,6 +77,8 @@ export interface LastActionRecord {
   readonly at: IsoTimestamp;
   /** Whether "되돌려줘" may undo it (an `action.undo` record never is). */
   readonly undoable: boolean;
+  /** External records only: the write's outcome (ADR-0112 amendment 1 S3: every outcome is recorded). */
+  readonly outcome?: LastActionExternalOutcome;
   readonly undone: boolean;
   /** `action.undo` records: the entry that was undone. */
   readonly undoOf?: NlActionEntryId;
@@ -72,8 +108,11 @@ function boundedString(value: unknown, max: number): string | undefined {
 /** One stored record, or `undefined` when malformed. */
 export function lastActionOf(raw: unknown): LastActionRecord | undefined {
   const record = recordOf(raw);
-  if (!isNlActionEntryId(record.entryId)) return undefined;
-  if (record.source !== 'todo' && record.source !== 'reminder') return undefined;
+  const external = isLastActionExternalSource(record.source);
+  if (!(isNlActionEntryId(record.entryId) || (external && record.entryId === LAST_ACTION_EXTERNAL_ENTRY))) return undefined;
+  if (record.source !== 'todo' && record.source !== 'reminder' && !external) return undefined;
+  const outcome = record.outcome === 'SENT' || record.outcome === 'UNCERTAIN' || record.outcome === 'NOT_SENT' ? record.outcome : undefined;
+  if (external && outcome === undefined) return undefined;
   const itemId = boundedString(record.itemId, MAX_ID_CHARS);
   if (itemId === undefined) return undefined;
   if (typeof record.at !== 'string' || !Number.isFinite(Date.parse(record.at))) return undefined;
@@ -85,14 +124,16 @@ export function lastActionOf(raw: unknown): LastActionRecord | undefined {
     ? record.echoReplyIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= MAX_REPLY_ID_CHARS).slice(0, MAX_REPLY_IDS)
     : [];
   return {
-    entryId: record.entryId,
-    source: record.source,
+    entryId: record.entryId as LastActionEntryId,
+    source: record.source as LastActionSource,
     itemId,
     ...(label !== undefined ? { label } : {}),
     ...(version !== undefined ? { version } : {}),
     at: record.at as IsoTimestamp,
-    undoable: record.undoable === true && record.entryId !== 'action.undo',
+    // Until the R3 undo writers act, an external write is never undone here (a stored flag cannot change that).
+    undoable: record.undoable === true && record.entryId !== 'action.undo' && !external,
     undone: record.undone === true,
+    ...(external && outcome !== undefined ? { outcome } : {}),
     ...(undoOf !== undefined ? { undoOf } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
     echoReplyIds: echo,
@@ -123,6 +164,7 @@ function serialize(record: LastActionRecord): Record<string, unknown> {
     at: record.at,
     undoable: record.undoable,
     undone: record.undone,
+    ...(record.outcome !== undefined ? { outcome: record.outcome } : {}),
     ...(record.undoOf !== undefined ? { undoOf: record.undoOf } : {}),
     ...(record.requestId !== undefined ? { requestId: record.requestId } : {}),
     echoReplyIds: [...record.echoReplyIds],

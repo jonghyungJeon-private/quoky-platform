@@ -36,6 +36,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   the A6 yes/no rule (`NO_YES_NO_OFFER_RULE`): a chat reply never offers a yes/no and never asks the owner to answer an
   earlier Quoky question with yes, no or a number. Context eval: chat invited "응/아니" for a question Core had already
   closed, so the owner's "응" ran nothing. The A6 variant is unchanged.
+- **Fixed (P4).** After a calendar or other approved connector write, "되돌려줘" no longer cancels an earlier local to-do.
+  - This implements the `lastAction` part of ADR-0112 amendment 1 S3.
+  - Every outcome of the write is recorded as the last action, with source `slack`, `jira` or `calendar` and the
+    receipt id. It is never undoable until R3.
+  - The undo answers with that family's fixed copy (Slack: "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워
+    주세요.") and writes nothing.
+  - "방금 거" does not reach back to the older item either.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

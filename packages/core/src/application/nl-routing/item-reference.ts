@@ -3,7 +3,7 @@ import type { AnyListingReplyMatch, ListingItem, ListingRecord, ListingSlot, Lis
 import { LISTING_REPLY_TTL_MS } from '../last-listing';
 import type { NlActionEntryId, NlItemSource, NlItemTarget, NlUndoSpec } from './catalog';
 import { nlIndexWording, nlNamedItemSources, type NlRef } from './action-entries';
-import type { LastActionView } from './last-action';
+import { LAST_ACTION_EXTERNAL_ENTRY, type LastActionExternalOutcome, type LastActionExternalSource, type LastActionView } from './last-action';
 import type { LastReadRecord } from './last-read';
 import { newestReference } from './reference-recency';
 import { normalizeForMatch } from './selection-input';
@@ -238,7 +238,19 @@ export function resolveItemReference(input: NlReferenceInput): NlReferenceResolu
 
 export type NlUndoResolution =
   | { readonly kind: 'resolved'; readonly target: NlItemTarget; readonly undo: NlUndoSpec }
-  | { readonly kind: 'unresolved'; readonly outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' };
+  | { readonly kind: 'unresolved'; readonly outcome: NlUndoUnresolvedOutcome; readonly external?: NlUndoExternal };
+
+/**
+ * Why "되돌려줘" undoes nothing. `external`: the last action is an approved connector write (ADR-0112 amendment 1 S3), which
+ * this undo cannot invert yet (R3), and which an older local item never stands in for.
+ */
+export type NlUndoUnresolvedOutcome = 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external';
+
+/** The external write an `external` outcome names: its family and what became of it. */
+export interface NlUndoExternal {
+  readonly source: LastActionExternalSource;
+  readonly outcome: LastActionExternalOutcome;
+}
 
 /**
  * Which action "되돌려줘" undoes: the latest action of this (Session, Actor) within 10 minutes, or the action whose echo a
@@ -256,6 +268,12 @@ export function resolveUndo(state: Pick<NlReferenceState, 'lastAction' | 'replyT
     return { kind: 'unresolved', outcome: 'stale' };
   }
   const record = last.record;
+  // ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): an external write is the last action; it is answered, never
+  // skipped for an older item.
+  if (record.source !== 'todo' && record.source !== 'reminder') {
+    return { kind: 'unresolved', outcome: 'external', external: { source: record.source, outcome: record.outcome ?? 'SENT' } };
+  }
+  if (record.entryId === LAST_ACTION_EXTERNAL_ENTRY) return { kind: 'unresolved', outcome: 'undo-of-undo' };
   if (record.entryId === 'action.undo' || !record.undoable) return { kind: 'unresolved', outcome: 'undo-of-undo' };
   if (record.undone) return { kind: 'unresolved', outcome: 'undo-of-undo' };
   return {

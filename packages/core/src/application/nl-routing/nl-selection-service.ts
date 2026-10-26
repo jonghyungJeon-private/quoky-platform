@@ -50,7 +50,17 @@ import {
   type NlReferenceState,
   type NlResolutionOutcome,
 } from './item-reference';
-import { LAST_ACTION_METADATA_KEY, readLastAction, withLastAction, withLastActionEcho, type LastActionRecord } from './last-action';
+import {
+  LAST_ACTION_METADATA_KEY,
+  isLastActionExternalSource,
+  readLastAction,
+  withLastAction,
+  withLastActionEcho,
+  type LastActionEntryId,
+  type LastActionExternalOutcome,
+  type LastActionExternalSource,
+  type LastActionRecord,
+} from './last-action';
 import { LAST_READ_METADATA_KEY, readLastRead, withLastRead } from './last-read';
 import {
   NL_ACTION_LOG_EVENT,
@@ -880,6 +890,42 @@ export class NlSelectionService implements TurnDeliveryObserver {
       await this.recordReceipt(input);
     } catch (error) {
       this.log('warn', 'nl_action.record_failed', { errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
+   * ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): every outcome of an approved connector write becomes this
+   * actor's last action, with `itemId` = its receipt id, never undoable until the R3 undo writers act, so a plain
+   * "되돌려줘" after it answers with that family's copy and never undoes an older to-do or reminder. Content-free (ids,
+   * the family, the outcome, the time). Same gate as every lastAction write (mode `active`, `QUOKY_NL_ACTIONS` not off);
+   * best-effort, never throws.
+   */
+  async recordExternalWrite(input: {
+    readonly session: Pick<Session, 'id'>;
+    readonly actor: Pick<Actor, 'id'>;
+    readonly message: { readonly id: string };
+    readonly now: IsoTimestamp;
+    readonly source: LastActionExternalSource;
+    readonly entryId: LastActionEntryId;
+    readonly receiptId: string;
+    readonly outcome: LastActionExternalOutcome;
+  }): Promise<void> {
+    if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
+    const record: LastActionRecord = {
+      entryId: input.entryId,
+      source: input.source,
+      itemId: input.receiptId,
+      at: input.now,
+      undoable: false,
+      undone: false,
+      outcome: input.outcome,
+      requestId: input.message.id,
+      echoReplyIds: [],
+    };
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: input.session.id }, LAST_ACTION_METADATA_KEY, (current) => withLastAction(current, input.actor.id, record, input.now));
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_ACTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
   }
 
@@ -1742,7 +1788,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
    */
   private undoTargetMismatch(groundingText: string, reference: NlReferenceState, base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en', shadow: boolean): NlSelectionDecision | undefined {
     const record = reference.lastAction?.record;
-    if (record === undefined) return undefined;
+    // An external write is answered by the undo itself (P4); its words never pick an older local item.
+    if (record === undefined || isLastActionExternalSource(record.source)) return undefined;
     const named = nlNamedItemSources(groundingText);
     const numbers = [...nlNumeralsIn(groundingText), ...nlOrdinalsIn(groundingText)];
     const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
@@ -1782,7 +1829,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (resolved.kind === 'unresolved') {
       const audit: NlActionAudit = { ...base, resolution: resolved.outcome === 'stale' ? 'stale' : 'none', result: 'refused', reason: resolved.outcome };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
-      return this.actionAnswer(audit, renderUndoUnresolved(resolved.outcome, language));
+      return this.actionAnswer(audit, renderUndoUnresolved(resolved.outcome, language, resolved.external));
     }
     const audit: NlActionAudit = { ...base, resolution: 'resolved', target: resolved.target, result: 'undone' };
     if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
@@ -2013,7 +2060,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (!same) {
         return this.actionAnswer(
           { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: 'undo-changed', ...correlationOf(turn) },
-          renderUndoUnresolved(resolved.kind === 'unresolved' ? resolved.outcome : 'echo-mismatch', language),
+          renderUndoUnresolved(resolved.kind === 'unresolved' ? resolved.outcome : 'echo-mismatch', language, resolved.kind === 'unresolved' ? resolved.external : undefined),
         );
       }
       return this.decideUndo(turn, language, 0, 'none', reference);

@@ -425,6 +425,17 @@ describe('shadow (A6-D8): the decision is logged, nothing acts, nothing is writt
 });
 
 describe('receipts: lastAction, the echo label and the delivery binding', () => {
+  it('an approved connector write becomes the not-undoable last action, replacing an older to-do; nothing while off (P4)', async () => {
+    const w = world({ script: [] });
+    const message = { id: 'in-1', context: { platform: 'test', channelId: 'dm' } };
+    await w.service.recordActionReceipt({ session: w.session(), actor: w.actor(), message, now: at(0), action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: 'todo-7', label: 7, version: at(0), undoable: true } });
+    await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', undoable: false, outcome: 'SENT', requestId: 'in-2' } } });
+    const off = world({ level: 'off', script: [] });
+    await off.service.recordExternalWrite({ session: off.session(), actor: off.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
+    expect(off.session().metadata).toBeUndefined();
+  });
+
   it('records an executed action and binds the echo ids after delivery; nothing while off', async () => {
     const w = world({ script: [] });
     const message = { id: 'in-1', context: { platform: 'test', channelId: 'dm' } };

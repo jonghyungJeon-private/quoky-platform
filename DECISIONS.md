@@ -30353,3 +30353,33 @@ Durable memory is the owner's personal content (ADR-0110 D4; MSIT guidance), so 
 `localOnlyProviderSelector`, exactly like the curated-example scorer (ADR-0107 D6). An embedding provider that does not
 declare `LOCAL` execution (for example an Ollama model whose name contains `cloud`) is treated as absent: the scorer
 degrades to lexical recall and never falls back to a remote model. No decision changes; this closes an implementation gap.
+### Context eval fixes — implementation notes for P1 and P4 (2026-10-26, branch `claude/v5-context-fixes`)
+
+Source: the first `eval:context` Strict run and its classification (`docs/eval/context-eval-baseline-2026-10-26.md`).
+
+- **P1 amends the #280 note's "guard unchanged".**
+  - The D9 false-incapability guard itself is unchanged. A second, structural guard (`guardShownListingDenials`) runs
+    first, and only right after a listing. It works from Core's own record of what was shown: the previous turn's
+    `lastSelection` entry and args, read before this turn's selection.
+  - It drops sentences with the D9 read-incapability patterns that do not name another offered source.
+  - It drops sentences quoting a command that the handlers' pure Class B probes map to exactly that listing (same entry,
+    same canonical args).
+  - No word list is added, which keeps the #280 condition "not extended with words".
+  - ADR-0110 D4 is unchanged: the guard only removes sentences and reads no content.
+- **P4 implements ADR-0112 amendment 1 S3 now, for the not-yet-undoable state** (Accepted 2026-10-15; amendment 2;
+  S9).
+  - `LastActionSource` gains `slack`, `jira` and `calendar`.
+  - Every outcome (SENT, UNCERTAIN, NOT_SENT) of an approved connector write is recorded as this actor's last action:
+    - `itemId` is the write's receipt id, passed on the flow's `outcome` step as an additive `receiptId`;
+    - `entryId` is `calendar.create` or `slack.post` where a catalog id exists, else `external.write`;
+    - the outcome is kept;
+    - the record never holds content.
+  - Until the R3 undo writers act, such a record is never undoable, and a stored flag cannot change that. "되돌려줘"
+    (selected, anchored `되돌리기` or confirmed) answers with the family's fixed copy:
+    - Slack: the ADR's own sentence "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워 주세요.";
+    - calendar and Jira: the same shape;
+    - UNCERTAIN: "check it there";
+    - NOT_SENT: "nothing was sent".
+  - It never resolves to an older to-do or reminder, either by undo or by "방금 거" / deictic recency.
+  - The calendar undo writer itself stays R3 (owner decision). The same gate applies as for every lastAction write:
+    mode `active` and `QUOKY_NL_ACTIONS` not off.

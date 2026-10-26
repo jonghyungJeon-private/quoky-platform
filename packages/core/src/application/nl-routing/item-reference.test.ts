@@ -13,8 +13,10 @@ import { isNlRefGrounded, parseNlRef } from './action-entries';
 import type { NlActionEntryId, NlItemSource } from './catalog';
 import { hasReferenceRecord, renderReferenceContext, resolveItemReference, resolveUndo, type NlReferenceState } from './item-reference';
 import {
+  LAST_ACTION_EXTERNAL_ENTRY,
   LAST_ACTION_METADATA_KEY,
   LAST_ACTION_TTL_MS,
+  externalLastActionOf,
   readLastAction,
   readSessionLastAction,
   withLastAction,
@@ -22,7 +24,7 @@ import {
   type LastActionRecord,
 } from './last-action';
 import { newestReference } from './reference-recency';
-import { resolveLabelChoice } from './nl-action-policy';
+import { renderUndoUnresolved, resolveLabelChoice } from './nl-action-policy';
 
 // ADR-0120 amendment A6-D2 (NLA-2): labelled listings, the most recent slot, `quoky.lastAction` and the pure reference
 // resolution. Every A6-D2 branch as a table, plus a property test over random states.
@@ -293,6 +295,63 @@ describe('lastAction and undo resolution (ratification record A)', () => {
     const lateReply = readLastAction(action('reminder.cancel', 'reminder', 'rem-1', 0, { echoReplyIds: ['echo-1'] }), ACTOR, at(20));
     expect(resolveUndo({ ...(lateReply !== undefined ? { lastAction: lateReply } : {}), replyTo: { messageId: 'echo-1' } })).toMatchObject({ kind: 'resolved' });
     expect(resolveUndo({ ...(lateReply !== undefined ? { lastAction: lateReply } : {}) })).toEqual({ kind: 'unresolved', outcome: 'stale' });
+  });
+});
+
+describe('an external write is the last action, never undoable (ADR-0112 amendment 1 S3; context eval 2026-10-26, P4)', () => {
+  const external = (minute: number, overrides: Partial<LastActionRecord> = {}): LastActionRecord => ({
+    entryId: 'calendar.create',
+    source: 'calendar',
+    itemId: 'receipt-1',
+    at: at(minute) as LastActionRecord['at'],
+    undoable: false,
+    undone: false,
+    outcome: 'SENT',
+    requestId: 'req-ext',
+    echoReplyIds: [],
+    ...overrides,
+  });
+
+  it('a calendar write after a to-do add replaces it as the last action: the undo answers honestly, the to-do is never named', () => {
+    let value = action('todo.add', 'todo', 'todo-9', 0, { requestId: 'req-1' });
+    value = withLastAction(value, ACTOR, external(1), at(1));
+    const last = readLastAction(value, ACTOR, at(2));
+    expect(last?.record).toMatchObject({ source: 'calendar', entryId: 'calendar.create', itemId: 'receipt-1', undoable: false, outcome: 'SENT' });
+    expect(resolveUndo({ ...(last !== undefined ? { lastAction: last } : {}) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+  });
+
+  it('every family and outcome has its fixed copy; none names an item or suggests a command', () => {
+    expect(renderUndoUnresolved('external', 'ko', { source: 'slack', outcome: 'SENT' })).toBe('Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워 주세요.');
+    expect(renderUndoUnresolved('external', 'ko', { source: 'calendar', outcome: 'SENT' })).toBe('캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐 주세요.');
+    expect(renderUndoUnresolved('external', 'ko', { source: 'jira', outcome: 'NOT_SENT' })).toBe('방금 Jira 변경은 보내지 않아서 되돌릴 게 없어요.');
+    expect(renderUndoUnresolved('external', 'ko', { source: 'calendar', outcome: 'UNCERTAIN' })).toContain('결과를 확인하지 못해서 되돌리지 않을게요');
+    for (const source of ['slack', 'jira', 'calendar'] as const) {
+      for (const outcome of ['SENT', 'UNCERTAIN', 'NOT_SENT'] as const) {
+        for (const language of ['ko', 'en'] as const) expect(renderUndoUnresolved('external', language, { source, outcome })).not.toMatch(/["“'`]/u);
+      }
+    }
+  });
+
+  it('a stored external record cannot be made undoable; one without an outcome, or a local one with the external entry, is dropped', () => {
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
+    const { outcome: _dropped, ...withoutOutcome } = external(0);
+    expect(readLastAction({ byActor: { [ACTOR]: withoutOutcome } }, ACTOR, at(1))).toBeUndefined();
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), source: 'todo', entryId: LAST_ACTION_EXTERNAL_ENTRY } } }, ACTOR, at(1))).toBeUndefined();
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), entryId: LAST_ACTION_EXTERNAL_ENTRY, source: 'jira' } } }, ACTOR, at(1))?.record.source).toBe('jira');
+  });
+
+  it('"방금 거" for a to-do after an external write does not bind to the older to-do through the last action', () => {
+    // An older to-do add, then the external write: "방금 거" must not reach back to the to-do.
+    const value = withLastAction(action('todo.add', 'todo', 'todo-9', 0, { requestId: 'req-1' }), ACTOR, external(1), at(1));
+    const resolution = resolve('todo.cancel', 'todo', 'recent', '방금 거 취소해줘', state(undefined, 2, { lastAction: value }));
+    expect(resolution.kind).toBe('unresolved');
+  });
+
+  it('maps Core\'s write kinds to the ADR sources and entries', () => {
+    expect(externalLastActionOf('calendar', 'CALENDAR_EVENT_CREATE')).toEqual({ source: 'calendar', entryId: 'calendar.create' });
+    expect(externalLastActionOf('calendar', 'CALENDAR_EVENT_DELETE')).toEqual({ source: 'calendar', entryId: LAST_ACTION_EXTERNAL_ENTRY });
+    expect(externalLastActionOf('channel-post', 'CHANNEL_POST')).toEqual({ source: 'slack', entryId: 'slack.post' });
+    expect(externalLastActionOf('issue-comment', 'ISSUE_COMMENT')).toEqual({ source: 'jira', entryId: LAST_ACTION_EXTERNAL_ENTRY });
   });
 });
 

@@ -43,6 +43,9 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   example parses deterministically.
 - **P8.** The plain D9 fact carries the A6 yes/no rule: no yes/no offers, and no asking for an answer to an earlier,
   closed question.
+- **P4.** Following ADR-0112 amendment 1 S3, every approved connector write outcome becomes the last action (source
+  `slack`, `jira` or `calendar`, plus the receipt id). It is not undoable until R3, so "되돌려줘" answers with the family's
+  copy and never cancels an older to-do (actions-local dry: wrong-write 1 → 0).
 
 ### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
 

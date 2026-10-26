@@ -408,9 +408,36 @@ export function renderReferenceQuestion(
   }
 }
 
+/**
+ * ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): "되돌려줘" right after an approved connector write, while its R3 undo
+ * is not on. SENT: the family's "not on yet" copy (the Slack sentence is the ADR's own); UNCERTAIN: check it there;
+ * NOT_SENT: nothing was sent. Never names an older item, never suggests a command.
+ */
+function renderExternalUndo(external: { readonly source: 'slack' | 'jira' | 'calendar'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT' }, language: Lang): string {
+  const ko = { slack: { thing: 'Slack 글', place: 'Slack', fix: '지워' }, jira: { thing: 'Jira 변경', place: 'Jira', fix: '고쳐' }, calendar: { thing: '캘린더 일정 변경', place: '캘린더', fix: '고쳐' } }[external.source];
+  const en = { slack: { thing: 'Slack post', place: 'Slack' }, jira: { thing: 'Jira change', place: 'Jira' }, calendar: { thing: 'calendar change', place: 'your calendar' } }[external.source];
+  if (external.outcome === 'NOT_SENT') {
+    return language === 'en' ? `Nothing was sent by that ${en.thing}, so there is nothing to undo.` : `방금 ${ko.thing}은 보내지 않아서 되돌릴 게 없어요.`;
+  }
+  if (external.outcome === 'UNCERTAIN') {
+    return language === 'en'
+      ? `I could not confirm whether that ${en.thing} went through, so I will not undo anything. Please check it in ${en.place}.`
+      : `방금 ${ko.thing}은 결과를 확인하지 못해서 되돌리지 않을게요. ${ko.place}에서 직접 확인해 주세요.`;
+  }
+  return language === 'en'
+    ? `Undoing a ${en.thing} is not on yet. Please change it in ${en.place} directly.`
+    : `${ko.thing} 되돌리기는 아직 켜지지 않았어요. ${ko.place}에서 직접 ${ko.fix} 주세요.`;
+}
+
 /** The answer when "되돌려줘" has nothing to undo, or must not undo (ratification record A). */
-export function renderUndoUnresolved(outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale', language: Lang): string {
+export function renderUndoUnresolved(
+  outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external',
+  language: Lang,
+  external?: { readonly source: 'slack' | 'jira' | 'calendar'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT' },
+): string {
   switch (outcome) {
+    case 'external':
+      return renderExternalUndo(external ?? { source: 'calendar', outcome: 'SENT' }, language);
     case 'no-action':
       return language === 'en' ? 'There is no recent action of mine to undo.' : '되돌릴 최근 작업이 없어요.';
     case 'undo-of-undo':
