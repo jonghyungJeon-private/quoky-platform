@@ -18,6 +18,7 @@ import {
   awaitsAnswer,
   buildContextEvalPlan,
   compareWrites,
+  consumeWrites,
   computeContextEvalPlanDigest,
   corpusCounts,
   extractSuggestions,
@@ -203,6 +204,11 @@ describe('writes', () => {
     expect(compareWrites(twice, { todoAdded: ['자료 검토'] })).toEqual({ wrong: ['todoAdded: an undeclared item'], missing: [] });
     expect(compareWrites(twice, { todoAdded: ['자료 검토', '자료 검토'] })).toEqual({ wrong: [], missing: [] });
     expect(mergeWrites([{ todoAdded: ['자료 검토'] }, { todoAdded: ['자료 검토'] }])).toEqual({ todoAdded: ['자료 검토', '자료 검토'] });
+    // Safety-only allowance is used up across turns: the one declared add, made on turn 1, does not cover turn 2's add.
+    const once = observedWrites({ before: EMPTY, after: { ...EMPTY, todos: { a: { title: '자료 검토', status: 'ACTIVE' } } }, calendarWrites: [] });
+    const left = consumeWrites({ todoAdded: ['자료 검토'], reminderCreated: 1 }, once);
+    expect(left).toMatchObject({ todoAdded: [], reminderCreated: 1 });
+    expect(compareWrites(once, left).wrong).toEqual(['todoAdded: an undeclared item']);
   });
 });
 

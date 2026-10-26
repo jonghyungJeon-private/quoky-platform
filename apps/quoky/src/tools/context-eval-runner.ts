@@ -14,7 +14,9 @@ import type { AiProvider, AiRequest } from '@quoky/core';
 import {
   type WriteExpectation,
   awaitsAnswer,
+  consumeWrites,
   extractSuggestions,
+  observedWrites,
   fixtureStringsOf,
   scoreScenario,
   scoreTurn,
@@ -159,58 +161,67 @@ export class ContextEvalRunner {
     const ownerTexts: string[] = [];
     const fixtureTexts = fixtureStringsOf(fixtures);
     let harnessError: string | undefined;
+    const observations: Array<TurnObservation | undefined> = [];
+    const sent: Array<string | undefined> = [];
+    const ownerTextsAt: string[][] = [];
+    const offered: string[][] = [];
+    const suggestions: string[][] = [];
+    const verdicts = new Map<string, boolean>();
     try {
-      // Setup: deterministic grammar messages; any model call here is a corpus error.
-      for (const step of scenario.setup ?? []) {
-        world.providers = this.providers(undefined, 'quiet');
-        ownerTexts.push(step.text);
-        const observation = await world.turn(owner, step.text, step.context === 'channel' ? owner.channel : owner.dm);
-        if (observation.selectionCalls > 0 || observation.chatPrompts.length > 0) harnessError = 'setup-not-deterministic';
-        if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
-      }
-      const observations: Array<TurnObservation | undefined> = [];
-      const sent: Array<string | undefined> = [];
-      const ownerTextsAt: string[][] = [];
-      for (const turn of scenario.turns) {
-        let text = turn.text;
-        if (turn.echoSuggestion === true) {
-          const previous = observations.at(-1);
-          const earlier = observations.slice(0, -1).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
-          text = previous === undefined ? undefined : extractSuggestions(previous.reply, ownerTexts, fixtureTexts, earlier)[0];
+      try {
+        // Setup: deterministic grammar messages; any model call here is a corpus error.
+        for (const step of scenario.setup ?? []) {
+          world.providers = this.providers(undefined, 'quiet');
+          ownerTexts.push(step.text);
+          const observation = await world.turn(owner, step.text, step.context === 'channel' ? owner.channel : owner.dm);
+          if (observation.selectionCalls > 0 || observation.chatPrompts.length > 0) harnessError = 'setup-not-deterministic';
+          if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
         }
-        sent.push(text);
-        if (text === undefined) {
-          observations.push(undefined);
+        for (const turn of scenario.turns) {
+          let text = turn.text;
+          if (turn.echoSuggestion === true) {
+            const previous = observations.at(-1);
+            const earlier = observations.slice(0, -1).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
+            text = previous === undefined ? undefined : extractSuggestions(previous.reply, ownerTexts, fixtureTexts, earlier)[0];
+          }
+          sent.push(text);
+          if (text === undefined) {
+            observations.push(undefined);
+            ownerTextsAt.push([...ownerTexts]);
+            continue;
+          }
+          ownerTexts.push(text);
           ownerTextsAt.push([...ownerTexts]);
-          continue;
+          world.providers = this.providers(turn, 'scored');
+          const observation = await world.turn(owner, text, turn.context === 'channel' ? owner.channel : owner.dm);
+          if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
+          observations.push(observation);
         }
-        ownerTexts.push(text);
-        ownerTextsAt.push([...ownerTexts]);
-        world.providers = this.providers(turn, 'scored');
-        const observation = await world.turn(owner, text, turn.context === 'channel' ? owner.channel : owner.dm);
-        if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
-        observations.push(observation);
-      }
-      // A reply's suggestions are judged against the owner's words up to that turn: a later echo of a suggestion is not the
-      // owner's earlier wording, so it still gets probed.
-      // Suggestion probes: every command a reply suggested, sent alone in a fresh DM with the selector answering none.
-      // Replies that leave the conversation waiting (a question, a choice, an approval) suggest answers in context; those
-      // are exercised by the echo scenarios, not probed out of context.
-      const earlierReplies = (position: number): string[] => observations.slice(0, position).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
-      const offered = observations.map((observation, position) => (observation === undefined ? [] : extractSuggestions(observation.reply, ownerTextsAt[position] ?? [], fixtureTexts, earlierReplies(position))));
-      const suggestions = observations.map((observation, position) => (observation === undefined || awaitsAnswer(observation) ? [] : (offered[position] ?? [])));
-      const verdicts = new Map<string, boolean>();
-      for (const suggestion of suggestions.flat()) {
-        if (verdicts.has(suggestion)) continue;
-        world.providers = this.providers(undefined, 'quiet');
-        const probe = await world.turn(owner, instantiatePlaceholders(suggestion), world.freshDm());
-        verdicts.set(suggestion, probe.chatPrompts.length === 0);
+        // A reply's suggestions are judged against the owner's words up to that turn: a later echo of a suggestion is not the
+        // owner's earlier wording, so it still gets probed.
+        // Suggestion probes: every command a reply suggested, sent alone in a fresh DM with the selector answering none.
+        // Replies that leave the conversation waiting (a question, a choice, an approval) suggest answers in context; those
+        // are exercised by the echo scenarios, not probed out of context.
+        const earlierReplies = (position: number): string[] => observations.slice(0, position).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
+        for (const [position, observation] of observations.entries()) offered.push(observation === undefined ? [] : extractSuggestions(observation.reply, ownerTextsAt[position] ?? [], fixtureTexts, earlierReplies(position)));
+        for (const [position, observation] of observations.entries()) suggestions.push(observation === undefined || awaitsAnswer(observation) ? [] : (offered[position] ?? []));
+        for (const suggestion of suggestions.flat()) {
+          if (verdicts.has(suggestion)) continue;
+          world.providers = this.providers(undefined, 'quiet');
+          const probe = await world.turn(owner, instantiatePlaceholders(suggestion), world.freshDm());
+          verdicts.set(suggestion, probe.chatPrompts.length === 0);
+        }
+      } catch (error) {
+        // A throw mid-scenario still scores the turns it observed: a hard failure seen before the throw is kept (hard
+        // failures take precedence over an INVALID outage).
+        harnessError = `error:${error instanceof Error ? error.name : 'unknown'}`;
       }
       let cardSeen = false;
-      const scenarioWrites = mergeWrites(scenario.turns.map((entry) => entry.expect.writes));
+      // Safety-only scoring: the scenario's declared writes, used up as turns make them (any turn may make one, none twice).
+      let scenarioWrites = mergeWrites(scenario.turns.map((entry) => entry.expect.writes));
       const scores: TurnScore[] = [];
       const records: TurnRecord[] = [];
-      for (const [position, turn] of scenario.turns.entries()) {
+      for (const [position, turn] of scenario.turns.slice(0, observations.length).entries()) {
         const observation = observations[position];
         const unparseable = (suggestions[position] ?? []).filter((suggestion) => verdicts.get(suggestion) === false);
         const priorObservation = observations.slice(0, position).filter((entry): entry is TurnObservation => entry !== undefined).at(-1);
@@ -230,6 +241,7 @@ export class ContextEvalRunner {
           { fixtures, ownerTexts: ownerTextsAt[position] ?? ownerTexts, capabilityNouns: this.options.capabilityNouns, scored, chatIsStub: this.options.chat === undefined },
         );
         if (observation !== undefined && Object.keys(observation.after.anchors).length > 0) cardSeen = true;
+        if (observation !== undefined) scenarioWrites = consumeWrites(scenarioWrites, observedWrites(observation));
         scores.push(score);
         const entry = observation === undefined ? undefined : servedEntry(observation);
         records.push({

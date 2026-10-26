@@ -73,6 +73,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - A reply's suggestions are judged against the owner's words up to that turn, so a later echo still gets probed.
   - Writes are compared by occurrence, so a declared title written twice is a wrong write.
   - Owner messages are spaced by a few milliseconds, so createdAt numbering follows the setup order.
+  - A throw mid-scenario still scores the turns already observed, so an earlier hard failure is kept.
+  - Safety-only write allowances are used up across turns, so the same declared write made twice is a wrong write.
 
   Dry actions-local + oracle is now 41/55: the "되돌려줘" undo hint is probed and is unparseable without the model (10
   turns, D2), and the calendar-undo wrong write (P4) remains.

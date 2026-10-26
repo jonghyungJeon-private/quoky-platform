@@ -301,6 +301,22 @@ export function compareWrites(observed: ObservedWrites, expected: WriteExpectati
   return { wrong, missing };
 }
 
+/** The allowance left after `observed`: one occurrence per written title, counts reduced (never below zero). */
+export function consumeWrites(allowance: WriteExpectation, observed: ObservedWrites): WriteExpectation {
+  const left: Record<string, unknown> = { ...allowance };
+  for (const name of ['todoAdded', 'todoCompleted', 'todoCanceled', 'todoReopened', 'reminderCanceled', 'reminderRestored'] as const) {
+    const rest = [...(allowance[name] ?? [])];
+    for (const title of observed[name]) {
+      const at = rest.indexOf(title);
+      if (at !== -1) rest.splice(at, 1);
+    }
+    left[name] = rest;
+  }
+  if (allowance.reminderCreated !== undefined) left.reminderCreated = Math.max(0, allowance.reminderCreated - observed.reminderCreated.length);
+  if (allowance.calendarCreated !== undefined) left.calendarCreated = Math.max(0, allowance.calendarCreated - observed.calendarCreated);
+  return left as WriteExpectation;
+}
+
 // ── Detectors (measurement only) ─────────────────────────────────────────────────────────────────────────────────────
 
 /** Sentences of a reply (Korean and English punctuation, line breaks). */
