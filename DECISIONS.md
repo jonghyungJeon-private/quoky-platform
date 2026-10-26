@@ -30307,3 +30307,41 @@ reveals the arm.
      plus prompt;
   7. the recipient model is the `--model` value recorded in part 2; with an alias such as `sonnet` the served version
      can change, so a full model id is recommended for the run (A3b-D11 records the measured version).
+
+### ADR-0121 A3a G7 freeze addendum, part 1 of 2 — prompts, payload definition, G6 run file and harness hashes (hash-only, 2026-10-26)
+
+- **What.** The hash-only part 1 of the G7 freeze. It records the sha256 of the arm-B instruction
+  (`tools/g7/prompts/answer-list.v1.txt`), the A3b-D5 classifier prompt (`tools/g7/prompts/topic-list.v1.txt`), the
+  body of the one `g7-payload` block (the payload definition, `g7-payload.v1`), arm A's source (the G6 run's
+  `sealed-outputs.json` under the eval archive), and every G7 harness file plus every frozen G6 module it imports
+  (the G6 hashes are unchanged from the G6 addendum). The files came in `605c24ea`; this commit changes nothing else.
+- **Before the case file.** No G7 case file exists in any tree when this is committed. No model was called.
+- **Part 2 follows separately, in hash-only commits on `DECISIONS.md`:** the G7 case file's hash (by the separate
+  session that writes it), then, on the run day and before the run, the seed and the recipient:
+  `set packages/core/src/application/golden/a2/g7-calendar.v1.json <sha256>`, `seed quoky-g7-<YYYYMMDD>` and
+  `recipient claude-cli model=<model> cli=<claude --version>`, each in a `g7-freeze` block. Until they exist,
+  `node tools/g7/run.mjs g7` refuses to start.
+- **Fail closed.** Any later change to a file listed here, or to the payload block, invalidates this part 1: a new
+  addendum is needed before the case file exists, otherwise the G7 run refuses.
+
+```g7-freeze
+prompt     tools/g7/prompts/answer-list.v1.txt  063d6df5c6ff438233f794bd3ae8f124dbda5d71940f1579a3fd5fb1b59a0128
+classifier tools/g7/prompts/topic-list.v1.txt  417845e0b9ac43d44e9b8a49ab720ec954f3b0c607d1dc8a9bfae0c7df66954d
+payload    DECISIONS.md#g7-payload  74e491675a540e63ba24133c298b162c030946373fce6bca4fd0d3b9a978ab67
+g6run      g6-run-20261026T035948/sealed-outputs.json  f465527b45079aa528667ca557648ac757dadd2f52fb855f75920e16a7368a4e
+harness    tools/g7/run.mjs  9a275966dfdaecdf8d0227d3eda39f9ca6c6dd65d220a59b061e2df2f897fe7d
+harness    tools/g7/payload.mjs  c29573d7bf75db9a6cea4b3e4492f2390dad13d42644077882532dd9609e3815
+harness    tools/g7/classify.mjs  4095b06df9fa559ae62dbbcb6e56caf3b742b86c6bb90182fdc11b3a0dc89c08
+harness    tools/g7/claude.mjs  0006b1f8709041b91ef7a95152c1c68483d3a0f8dad3899084d96fd3582ae13d
+harness    tools/g7/cases.mjs  2d67069fa738d51b307e7911d2d12495c89904639132b56d8b9893ca2bd9880e
+harness    tools/g7/blind.mjs  0cf12a6f8684d61e1c687d15e257a50976bda1975f7acb278e593a6a3d4b1c1e
+harness    tools/g7/freeze.mjs  db45eb6828d7238c42abc5a012aa3ca6c4f3755ec144d27d84008583c32fab76
+harness    tools/g6/facts.mjs  0f0431b95845502ef826f62de39304acf96b8c3eadf6c831811d3f8ac74d92ff
+harness    tools/g6/render.mjs  72f0ad090af5827f7b901e0627b9d46111bc22560ffb6c46a247018b8ae9b4ff
+harness    tools/g6/guards.mjs  34b2e0f2e688e5965e2b93b1e024b3a6b76d0908910d84414885fa7614e8dfbf
+harness    tools/g6/schema.mjs  9795fe27fd74fbb63ac12e640c6866a2c403e3c30ca85ec95ab1eda1bd52d85e
+harness    tools/g6/request.mjs  d9f9e9dca23b20d258355d67751b9b044db9efa56c1d89af75ad7a5e9cb354de
+harness    tools/g6/cases.mjs  ee070b113cf6c32c282760face620c476b1793df6ba54a54b28cc96cecbbd2a9
+harness    tools/g6/score.mjs  a9c15b62f157c92df2a6004a3389a49a8a63f37a2c669ac60580b782036d64c1
+harness    tools/g6/freeze.mjs  022cdce61f7a757eedfceaca497901ebb3eb76538dafd1474171543f4019ec49
+```
