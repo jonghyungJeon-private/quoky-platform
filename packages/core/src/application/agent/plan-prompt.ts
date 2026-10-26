@@ -2,7 +2,7 @@ import type { NlArgs, NlCatalogEntry, NlCatalogEntryId } from '../nl-routing/cat
 import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 
 /**
- * ADR-0121 D1 / D12 (stage S2 P1, P2, P3): the planner prompt `agent-plan.v7` (v5 plus the v6 and v7 edits below).
+ * ADR-0121 D1 / D12 (stage S2 P1, P2, P3): the planner prompt `agent-plan.v8` (v5 plus the v6, v7 and v8 edits below).
  *
  * It is the read selection prompt (`nl-select.vN`, the gated ADR-0120 prompt) over the offered READ entries only, with
  * four fixed edits, so a one-step plan is exactly today's selection:
@@ -53,8 +53,13 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * separate; Core adds a fixed "not checked" note). No example changed; the read / A6 / R2 prompts are unchanged.
  *
  * v6 -> v7 (S2 P3 part 2, 2026-10-23; v6 was never run against a model): CA finding 5: `related` names the step the
- * relation is against (`"related": <step no>`, structure), so the note names that step's source. No other change. */
-export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v7';
+ * relation is against (`"related": <step no>`, structure), so the note names that step's source. No other change.
+ *
+ * v7 -> v8 (owner-approved 2026-10-26, the agent-plan gate on 5c09fee4: the planner answered the release read alone where
+ * the owner asked for its issues' details): one general rule-9 sentence — a release step lists a release's issues but does
+ * not show their details, so a request for those details always needs the jira.issues reference step (take 10 by
+ * default). No example changed; the read / A6 / R2 prompts are unchanged. */
+export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v8';
 
 export interface AgentPlanPromptInput {
   /** The offered entries; only `READ` entries are shown to the planner. */
@@ -96,6 +101,8 @@ const PLAN_RULES = [
   '   owner did not write.',
   '9. References: for the details of the issues an earlier jira.release step lists, add a jira.issues step with args {} and',
   '   "ref": {"step": <that step number>, "field": "issueKeys", "take": <the number of issues the owner names, else 10>}.',
+  '   A jira.release step lists a release\'s issues but does not show their details, so a request for the details of those',
+  '   issues always needs that jira.issues reference step (take 10 when the owner names no number).',
   '   There is no other reference. Return none when a read needs a value found inside another source (a key, title,',
   '   sender, attendee or date in a mail, event, file, page, message or issue): Quoky never carries content into another',
   '   read. A word like 관련 or related alone asks for no such value: read that source on its own and add "related":',

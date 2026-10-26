@@ -133,7 +133,7 @@ describe('AgentRunService — shadow', () => {
     expect(h.calls[0]?.prompt).toContain('You are the request planner of Quoky');
     expect(h.calls[0]?.signal).toBeDefined();
     expect(shadowLines(h)).toEqual([
-      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v7', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
+      expect.objectContaining({ outcome: 'planned', mode: 'shadow', promptVersion: 'agent-plan.v8', steps: 2, form: 'steps', entries: 'calendar.events,jira.issues', argKinds: 'range;none', validator: 'ok' }),
     ]);
     // A multi-step plan has no one-step agreement.
     expect(shadowLines(h)[0]).not.toHaveProperty('agree');

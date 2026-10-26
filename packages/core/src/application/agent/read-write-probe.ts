@@ -28,12 +28,15 @@ export function agentReadWriteProbeClauses(plan: ValidatedAgentPlan, groundingTe
 }
 
 /**
- * The probe's one A6 selection prompt over the UNCOVERED clauses only (CA review of P3, W2: the read clauses' words are
- * never in the prompt, so they cannot be borrowed as a payload), the read and A6 entries offered this turn, and the
- * structural Reference context from BEFORE this turn (executor contract: the probe never sees this turn's read output).
+ * The probe's one A6 selection prompt over the WHOLE message (owner decision of 2026-10-26, a deliberate change to the CA
+ * W2 extra defence: the clause-only prompt dropped the destination the read clause names — "할 일 목록 보여주고 장보기
+ * 추가해줘" — and the selector answered no write, gate on 5c09fee4, ap-n004), the read and A6 entries offered this turn,
+ * and the structural Reference context from BEFORE this turn (executor contract: the probe never sees this turn's read
+ * output). The guarantee that no read-clause word reaches the write args is unchanged and structural: the selection is
+ * validated with each uncovered clause ALONE as its grounding text (`agentReadWriteProbeResult`).
  */
-export function agentReadWriteProbePrompt(input: { readonly clauses: readonly string[]; readonly entries: readonly NlCatalogEntry[]; readonly referenceContext?: string }): string {
-  return buildSelectionPrompt({ entries: input.entries, text: input.clauses.join('\n'), actions: { referenceContext: input.referenceContext ?? 'none' } });
+export function agentReadWriteProbePrompt(input: { readonly text: string; readonly entries: readonly NlCatalogEntry[]; readonly referenceContext?: string }): string {
+  return buildSelectionPrompt({ entries: input.entries, text: input.text, actions: { referenceContext: input.referenceContext ?? 'none' } });
 }
 
 export type AgentReadWriteProbeResult =

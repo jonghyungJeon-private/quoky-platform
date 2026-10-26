@@ -59,6 +59,16 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 owner decisions of 2026-10-26 on the 5c09fee4 gate (branch `claude/v5-s2-p3`, shadow only)
+
+- **Changed (not live).** Planner `agent-plan.v7` → **`agent-plan.v8`**: rule 9 says a release step lists a release's
+  issues without their details, so asking for those details needs the `jira.issues` reference step (10 by default).
+- **Changed (not live).** The read + write probe's selector prompt holds the whole message again (it lost the destination
+  a read clause names: "할 일 목록 보여주고 장보기 추가해줘"); the selected write is still checked against the uncovered clause
+  alone. The probe trigger stays as ratified (no write-word precondition).
+- **Changed (eval).** For the capability-help golds, a `help.topic` plan with the help topic of a source app the sentence
+  names also counts as correct (same mapping the help-scope option uses); any other topic is a miss.
+
 ## Unreleased — S2 read + write trigger amendment (owner-ratified 2026-10-26, branch `claude/v5-s2-p3`)
 
 - **Decided and built (not live).** A read plan that leaves a clause naming none of its reads gets the read + write

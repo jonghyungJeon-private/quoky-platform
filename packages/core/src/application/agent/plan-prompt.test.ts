@@ -10,7 +10,7 @@ import { AGENT_PLAN_PROMPT_VERSION, agentPlanExamples, buildAgentPlanPrompt } fr
 import { parseAgentPlanOutput } from './plan-schema';
 import { validateAgentPlan } from './plan-validator';
 
-// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v7` — its edits of the gated read prompt, its examples
+// ADR-0121 D1 (stage S2 P1, P2; the owner's review of 2026-10-21): the planner prompt `agent-plan.v8` — its edits of the gated read prompt, its examples
 // (valid plans, never a near-copy of a gold case: the RAG-0 contamination lint of ADR-0123 D5), and a byte pin.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -35,7 +35,7 @@ function gold(): Array<{ id: string; text: string; expects: GoldExpect[] }> {
   });
 }
 
-describe('agent-plan.v7 prompt', () => {
+describe('agent-plan.v8 prompt', () => {
   const prompt = buildAgentPlanPrompt({ entries: [...READS, ...ACTIONS], text: '이번 주 회의 일정 보여줘' });
 
   it('is the read prompt over the READ entries with the four fixed edits (no action entry is ever shown)', () => {
@@ -108,10 +108,10 @@ describe('agent-plan.v7 prompt', () => {
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v7');
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v8');
     const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });
 
-const PINNED_SHA256 = '043e2d7be78aedb154d3652f4c1dc96422286e791d6361bc8ee52ea4a7b72954';
+const PINNED_SHA256 = '7144d6885cc53bcdb799a6959fb8870e03b5d8eea5eedbff1cbfb48ca1b7dd95';

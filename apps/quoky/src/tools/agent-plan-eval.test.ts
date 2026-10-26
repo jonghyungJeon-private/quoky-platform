@@ -22,6 +22,8 @@ import {
   type AgentPlanEvalCase,
   type AgentPlanEvalOptions,
   type AgentPlanEvalRecord,
+  AGENT_PLAN_ENTRY_HELP_TOPICS,
+  namedSourceHelpTopics,
 } from './agent-plan-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, formatAgentPlanSummary, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 
@@ -420,7 +422,7 @@ describe('plan digest', () => {
     expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v7', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v8', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -487,7 +489,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v7"');
+    expect(text).toContain('"promptVersion": "agent-plan.v8"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
@@ -573,7 +575,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
     expect(ran.out.join('\n')).toContain('multi-step exact: 180/180 (100.0%)  one-step exact: 679/679 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v7): PASSED in all 1 run(s)');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v8): PASSED in all 1 run(s)');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };
@@ -694,6 +696,49 @@ describe('owner decisions of 2026-10-26: relabels and the help-capture rule of t
     const text = formatAgentPlanSummary(summarizeAgentPlanRun(records, 6000)).join('\n');
     expect(text).toContain('help captures: 1 (allowed 3 = ceil(1% of 250))');
     expect(text).toContain('help captures <= 3 = ceil(1% of 250 negatives)');
+  });
+});
+
+describe('capability-help golds: a named source\'s help topic is also correct (owner decision of 2026-10-26)', () => {
+  const topicPlan = (topic?: string): string => JSON.stringify({ entryId: 'help.topic', args: topic === undefined ? {} : { topic }, ambiguity: 'CLEAR', alternatives: [] });
+
+  it('the entry -> help topic table is the structural mapping (every source entry, from the handlers\' own help lines)', () => {
+    expect(AGENT_PLAN_ENTRY_HELP_TOPICS).toEqual({
+      'jira.issues': 'work-lookup',
+      'jira.release': 'work-lookup',
+      'github.items': 'work-lookup',
+      'slack.search': 'work-lookup',
+      'confluence.search': 'work-lookup',
+      'calendar.events': 'calendar',
+    });
+    // Gmail and Drive share one merged help line in the production composition (it answers two topics): no topic, so a
+    // help.topic plan naming mail or drive is scored as the general gold only, exactly as the help-scope option answers.
+    expect(AGENT_PLAN_ENTRY_HELP_TOPICS['mail.list']).toBeUndefined();
+    expect(AGENT_PLAN_ENTRY_HELP_TOPICS['drive.files']).toBeUndefined();
+  });
+
+  it('the named sources of each capability-help gold, by the runtime\'s own source match', () => {
+    const named = (id: string): string[] => [...namedSourceHelpTopics(byId(id).text)].sort();
+    expect(named('ap-p181')).toEqual([]);
+    expect(named('ap-p182')).toEqual(['work-lookup']);
+    expect(named('ap-p183')).toEqual([]);
+    expect(named('ap-p184')).toEqual([]);
+  });
+
+  it('the general topic is exact; a named source\'s topic is exact; any other topic, or no named source, is a miss', () => {
+    for (const id of ['ap-p181', 'ap-p182', 'ap-p183', 'ap-p184']) expect(scoreAgentPlanOutput(byId(id), topicPlan(), FIXTURE)).toMatchObject({ outcome: 'exact' });
+    expect(scoreAgentPlanOutput(byId('ap-p182'), topicPlan('work-lookup'), FIXTURE)).toMatchObject({ outcome: 'exact', reason: 'source-help-topic' });
+    expect(scoreAgentPlanOutput(byId('ap-p183'), topicPlan('drive'), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args' });
+    expect(scoreAgentPlanOutput(byId('ap-p183'), topicPlan('calendar'), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args' });
+    expect(scoreAgentPlanOutput(byId('ap-p182'), topicPlan('drive'), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args' });
+    // No source named: only the general topic.
+    expect(scoreAgentPlanOutput(byId('ap-p181'), topicPlan('calendar'), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args' });
+    expect(scoreAgentPlanOutput(byId('ap-p184'), topicPlan('work-lookup'), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args' });
+  });
+
+  it('the acceptance is the capability-help family only (a help.topic gold elsewhere is scored as written)', () => {
+    const other = { ...byId('ap-p182'), family: 'compound' };
+    expect(scoreAgentPlanOutput(other, topicPlan('work-lookup'), FIXTURE)).toMatchObject({ outcome: 'miss', diff: 'args' });
   });
 });
 

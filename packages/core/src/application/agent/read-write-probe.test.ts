@@ -101,11 +101,12 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
 
   it('the probe prompt is the deployed A6 selection prompt with the action entries offered', () => {
     expect(AGENT_READ_WRITE_PROBE_PROMPT_VERSION).toBe('nl-select.v65');
-    const prompt = agentReadWriteProbePrompt({ entries: ALL, clauses: ['내일 9시에 출발 알림 만들어줘'] });
+    // Owner decision of 2026-10-26: the whole message is the prompt (the destination the read clause names stays visible);
+    // the write is still validated on the uncovered clause alone, so a read-clause word never reaches its args (below).
+    const prompt = agentReadWriteProbePrompt({ entries: ALL, text: AP_N131 });
     expect(prompt).toContain('reminder.create');
     expect(prompt).toContain('Reference context');
-    // CA W2: only the uncovered clause is in the prompt; the read clause's words never are.
-    expect(prompt).toContain('내일 9시에 출발 알림 만들어줘');
-    expect(prompt).not.toContain('내일 일정 보여주고');
+    expect(prompt).toContain(AP_N131);
+    expect(agentReadWriteProbeResult(out('reminder.create', { when: '내일 9시', body: '일정' }), ['내일 9시에 출발 알림 만들어줘'], OFFERED, CTX)).toMatchObject({ kind: 'clarify' });
   });
 });

@@ -29885,3 +29885,36 @@ Report `gates-s2p3-5c09fee4-20261026b` (probe outcomes and latency recorded; no 
    and does not show their details, so a request for the details of a release's issues always needs the `jira.issues`
    reference step (default take 10). No example copied from the gold; RAG-0 lint; a v8 gate measures it. Nothing else
    in this run calls for a planner change (the help misses belong to the read prompt's rule 3).
+
+### ADR-0121 S2 note — owner decisions of 2026-10-26 on the 5c09fee4 gate (implementation, branch `claude/v5-s2-p3`)
+
+1. **Probe trigger: unchanged (broad).** No write-word precondition (recommendation 2 above declined). The multi-word
+   coverage fix stays.
+2. **Probe prompt: the whole message — a deliberate change to the CA W2 extra defence (for CA re-check).** The A6 probe's
+   selection prompt is built over the WHOLE message again (`agentReadWriteProbePrompt({ text })`), with the read and A6
+   entries offered and the Reference context from before the turn. Reason: the clause-only prompt lost the destination the
+   read clause names (ap-n004, "할 일 목록 … 장보기 추가해줘": the selector answered no write, 2/3 runs). What stays: the selection
+   is validated with each uncovered clause ALONE as its grounding text, so a write whose payload or args are grounded only
+   in a read clause fails validation (`ungrounded`) and becomes a clarification or stands, never a write; references are
+   judged on the clause (note); write-risk entries only. The guarantee "no read-clause word reaches the write args" is now
+   this structural validation alone, without the prompt-side defence in depth. The eval's probe prompt (and its digest
+   `readWriteProbe.promptSha256`) follows the runtime's.
+3. **Planner `agent-plan.v8` (owner-approved).** One general sentence added to rule 9: a `jira.release` step lists a
+   release's issues but does not show their details, so a request for the details of those issues always needs the
+   `jira.issues` reference step (take 10 when the owner names no number). No example added or changed (RAG-0 lint passes);
+   the read, A6 and R2 prompts are unchanged; pins updated. Not gated: the coordinator's agent-plan gate on the new HEAD
+   measures it.
+4. **Capability-help golds (ap-p181..ap-p184): a named source's help topic is also correct.** Scored structurally in
+   `scoreRestPlan`, for the `capability-help` family only, on a one-step general `help.topic {}` gold answered by
+   `help.topic {topic: T}`: the sentence's named sources come from `nlHelpSourceScope` (the runtime's own source match);
+   each name maps to the wave-1 entries whose `sourceNames` hold it, each entry to its help topic by `nlEntryHelpTopicsOf`
+   — the one topic the owning handler's contributed help lines answer, the mapping the help-scope option's Quoky choice
+   uses. T in that set → exact (`source-help-topic`); otherwise a miss. The table (`AGENT_PLAN_ENTRY_HELP_TOPICS`) is
+   pinned against `ConversationRuntime.entryHelpTopics()` of the production AppModule. **Finding:** with Gmail and Drive
+   both configured (the owner's install), `withMergedMailDriveHelp` gives the mail handler one merged mail·drive help line,
+   which answers two topics, so `mail.list` and `drive.files` have no help topic — in the runtime's help-scope Quoky option
+   (it falls back to the general help) and therefore in the scorer. Result per gold: ap-p181 (no source named) and ap-p184
+   ("PRs" is no source name) general only; ap-p182 (슬랙 / 위키) also `work-lookup`; ap-p183 (드라이브 / 메일) general only
+   until the merged line maps per source. A per-entry topic for a merged line (each entry → the answered topic whose
+   anchor is one of the entry's own `sourceNames`) would fix both; it changes the runtime's help-scope option, so it is
+   left for an owner decision. Gold notes updated.

@@ -57,6 +57,10 @@ import {
   buildAgentPlanPrompt,
   conjunctTokens,
   nlHelpSourceScope,
+  nlEntryHelpTopicsOf,
+  CALENDAR_HELP_LINES,
+  MAIL_DRIVE_HELP_LINES,
+  WORK_CHAT_LOOKUP_TURN_HELP_LINES,
   isNlActionEntryId,
   isNlCatalogEntryId,
   NL_ACTION_ENTRIES,
@@ -107,6 +111,40 @@ export const AGENT_PLAN_POSITIVE_FAMILIES = [
 ] as const;
 /** The positive families whose gold is one step: scored in the one-step group with the referenced one-step cases. */
 export const AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES: readonly string[] = ['capability-help', 'read-remainder'];
+
+/**
+ * Owner decision of 2026-10-26 (capability-help golds): each source entry's help topic, by the same structural mapping the
+ * runtime's help-scope Quoky option uses (`nlEntryHelpTopicsOf`: the one topic the owning handler's contributed help lines
+ * answer). The handlers' catalogs and help lines as the production composition registers them: with Gmail and Drive both
+ * configured, `withMergedMailDriveHelp` gives the mail handler the one merged mail·drive line (it answers two topics, so
+ * neither entry has one) and the Drive handler none. Pinned against `ConversationRuntime.entryHelpTopics()` by the agent
+ * app test. No topic is written here.
+ */
+export const AGENT_PLAN_ENTRY_HELP_TOPICS: Readonly<Record<string, string>> = Object.freeze(
+  nlEntryHelpTopicsOf([
+    { catalog: (['jira.issues', 'jira.release', 'github.items', 'slack.search', 'confluence.search'] as const).map((id) => NL_WAVE1_ENTRIES[id]), helpLines: WORK_CHAT_LOOKUP_TURN_HELP_LINES },
+    { catalog: [NL_WAVE1_ENTRIES['calendar.events']], helpLines: CALENDAR_HELP_LINES },
+    { catalog: [NL_WAVE1_ENTRIES['mail.list']], helpLines: MAIL_DRIVE_HELP_LINES },
+    { catalog: [NL_WAVE1_ENTRIES['drive.files']], helpLines: [] },
+  ]),
+);
+
+/**
+ * The help topics of the sources the owner's sentence names (owner decision of 2026-10-26): the names by
+ * `nlHelpSourceScope` (the runtime's own source match), each name to the entries whose `sourceNames` hold it, each entry
+ * to its topic ({@link AGENT_PLAN_ENTRY_HELP_TOPICS}). Empty when no source is named.
+ */
+export function namedSourceHelpTopics(groundingText: string): ReadonlySet<string> {
+  const scope = nlHelpSourceScope({ entryId: 'help.topic', args: {} }, groundingText);
+  if (scope === undefined) return new Set();
+  const names = (scope.sources ?? [scope.source]).map((name) => name.normalize('NFC').toLowerCase());
+  const topics = new Set<string>();
+  for (const [id, topic] of Object.entries(AGENT_PLAN_ENTRY_HELP_TOPICS)) {
+    const entry = (NL_WAVE1_ENTRIES as Readonly<Record<string, NlCatalogEntry>>)[id];
+    if (entry?.sourceNames?.some((name) => names.includes(name.normalize('NFC').toLowerCase())) === true) topics.add(topic);
+  }
+  return topics;
+}
 export const AGENT_PLAN_NEGATIVE_FAMILIES = [
   'write-read',
   'content-borne',
@@ -530,7 +568,21 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
   // CA finding 5: the related step is scored too (a missing, extra or other step is a miss).
   if (diff === undefined && validation.plan.related !== golden.gold.related) return { outcome: 'miss', gotEntries, diff: 'related' };
   if (diff === undefined) return { outcome: 'exact', gotEntries };
+  // Owner decision of 2026-10-26 (capability-help golds): when the sentence names a source app, that source's help topic is
+  // also correct for a general help.topic gold (the structural sourceNames -> help topic mapping); any other topic is not.
+  if (golden.family === 'capability-help' && diff.kind === 'args' && only?.kind === 'read' && only.entry.id === 'help.topic' && sourceHelpTopicAccepted(golden.gold, only.args, prepared.ctx.groundingText)) {
+    return { outcome: 'exact', gotEntries, reason: 'source-help-topic' };
+  }
   return { outcome: 'miss', gotEntries, diff: diff.kind, ...(diff.step !== undefined ? { diffStep: diff.step } : {}) };
+}
+
+/** A one-step general help.topic gold, answered with the help topic of a source the sentence names. */
+function sourceHelpTopicAccepted(gold: AgentPlanGoldPlan, args: NlArgs, groundingText: string): boolean {
+  const [step, ...rest] = gold.steps;
+  if (step === undefined || rest.length > 0 || !('entryId' in step) || step.entryId !== 'help.topic' || step.ref !== undefined || Object.keys(step.args ?? {}).length > 0) return false;
+  const keys = Object.keys(args);
+  const topic = args.topic;
+  return keys.length === 1 && typeof topic === 'string' && namedSourceHelpTopics(groundingText).has(topic);
 }
 
 // ── the corpus self-check ───────────────────────────────────────────────────────────────────────────────────────
@@ -758,7 +810,7 @@ const PROBE_OFFERED: ReadonlyMap<string, NlCatalogEntry> = new Map(PROBE_ENTRIES
 
 /** sha256 of the probe's A6 selection instruction text (every entry offered, an empty owner message). */
 export function readWriteProbePromptSha256(): string {
-  return sha256(agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, clauses: [] }));
+  return sha256(agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: '' }));
 }
 
 /** The uncovered clauses of the planner's answer (validated under the case context), or `[]` (no probe needed). */
@@ -965,7 +1017,8 @@ export async function runAgentPlanEvaluation(input: {
             if (clauses.length === 0) {
               record = { ...base, ...scored, latencyMs };
             } else {
-              const probePrompt = agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, clauses });
+              // Owner decision of 2026-10-26: the whole message (validation still on each uncovered clause alone).
+              const probePrompt = agentReadWriteProbePrompt({ entries: PROBE_ENTRIES, text: prepared.text });
               const probeStarted = clock();
               try {
                 const probe = await withTimeout(capped.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: probePrompt, timeoutMs: input.plan.callTimeoutMs }), input.plan.callTimeoutMs);

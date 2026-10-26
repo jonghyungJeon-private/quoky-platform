@@ -28,6 +28,15 @@ The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; 
 Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
 then G6 on a Strict yes.
 
+### ADR-0121 S2 — owner decisions of 2026-10-26 on the 5c09fee4 gate (branch `claude/v5-s2-p3`)
+
+- **Built, not live.** Planner `agent-plan.v8` (rule 9: a release's issue details need the `jira.issues` reference step);
+  the read + write probe's prompt is the whole message again (validation stays on the uncovered clause alone); the probe
+  trigger stays broad.
+- **Eval.** Capability-help golds also accept the help topic of a named source (structural mapping, pinned to the
+  runtime). Mail and Drive have no per-source topic while their help lines are merged (owner decision pending).
+- **Next.** The coordinator's agent-plan gate on the new HEAD.
+
 ### ADR-0121 S2 — owner ratifications of 2026-10-23 (branch `claude/v5-s2-p3`)
 
 - **Ratified and recorded.** The read + write note (Q3); the D7 unit (one port query, cap 10; 50-HTTP runtime ceiling).
