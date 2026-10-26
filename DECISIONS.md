@@ -29939,3 +29939,42 @@ reference-step drops (ap-p118/p120/p122 exact 3/3).
 most 8 in every run, so a run passes with roughly even odds and three in a row rarely. Four cases (ap-p127, ap-p185,
 ap-p093, ap-p095) give ≈ 3 of those misses per run; ap-p185 is the prompt's own contradiction.
 
+### ADR-0121 S2 note — owner decisions of 2026-10-26 after the ed45e3f1 gate (implementation, branch `claude/v5-s2-p3`)
+
+1. **One-shot list + item summary (amends decision (f) for an explicit position over a list read in the same message).**
+   "지라 이슈 보여주고 첫 번째 거 요약해줘" shows the list AND summarizes its Nth item in the same reply; N binds to the order
+   Quoky renders that list in this reply. Other cases keep (f) (an item of a list the plan does not read, a deictic
+   without a position); a WRITE on a listed item keeps the ratified read + write note.
+   - **Plan language (structural extension).** A reference may carry `"at": N` (1-based): ONE id (`take` 1) at that
+     position of the earlier list. The plan is the list read, a step of the same entry (jira.issues for a jira.release
+     list) with args `{}` and `ref {step, field, take: 1, at: N}`, and a summarize step over it.
+   - **Validator** (`ref-position`): `take` 1, args `{}` (a detail read by id takes no listing args), N ≤ 10, the source
+     is one an item summary already reads (`AGENT_POSITION_REF_SOURCES`, derived from `item.summarize`'s R1 source enum —
+     mail, Drive — plus the R2 sources, Jira, Slack: no new egress), the owner's own words name position N (digits or an
+     ordinal, the A6-D2 index grounding `nlIndexWording`), a later summarize step covers it, and no clause naming N is
+     claimed by a write grammar ("1번 완료" stays a write). The existing same-source / field / cap rules apply. A
+     validated position reference covers its clause, so the read + write probe does not fire on it. The connector charge
+     is the reference step's one detail query.
+   - **Boundary.** `application/agent` may now import `nl-routing/action-entries` (pure catalog data and the index
+     grounding; the CA should re-check the allowlist change).
+   - **Executor contract (P3 part 3).** The item is the Nth of the list as rendered in this reply (Core's order, the same
+     the owner sees); a list shorter than N answers like A6 ("목록에 K건만 있어요") and summarizes nothing; the summary runs
+     under the existing summarize controls of that source (labels as for an item summary).
+   - **Planner `agent-plan.v9`.** Rule 9's "Return none for a request to summarize one item of a list" is replaced by one
+     general sentence for the position reference (the id fields of the item-summary sources) and "a request about one item
+     of a list that no step of this plan reads is none". No example added or changed; pins updated.
+   - **Golds.** ap-p185 (was ap-n125) and four former a6-in-plan negatives — ap-n126 → ap-p186, ap-n129 → ap-p187, ap-n132 →
+     ap-p188, ap-n136 → ap-p189 — are the new multi-step family `item-summary-ref` (no `readWrite`); `read-remainder` is
+     gone. Multi-step positives 180 → 185, one-step 679 → 678, read-and-note golds 12 → 7.
+2. **Chit-chat that names apps** (ap-n090 / ap-n091, "너 slack이랑 jira 다 잘 다루네 ㅎㅎ"): the correct answer is plain chat
+   (none). Owner rationale: nothing is asked, so a question back about Quoky's help or the app's own help is a wrong answer,
+   not a clarification; it stays counted in the help-capture allowance (W4 unchanged, no separate bucket). **Follow-up:**
+   monitor `nl_selection.help_scope_asked` in the live logs (count per day and the share of help selections); no word list
+   or new counter.
+3. **Gate rule.** The agent-plan multi-step exact rate is judged on the POOLED records of all runs (≥ 95% of every
+   multi-step record across the 3 runs). The one-step rate, zero non-help wrongs, the help-capture ceiling, the over-bound
+   rate and the hard cap stay PER RUN. The per-run line is now "run checks (…; multi-step is pooled)", the final line
+   "agent-plan gate (…): PASSED|FAILED (multi-step pooled X/Y (Z%) >= 95%; run checks passed in N of 3 run(s))", and the
+   JSON report carries `pooled` (`agentPlanPooledGate`). Applied to the ed45e3f1 numbers it would read multi-step 474/498
+   (95.2%) — that gate would still fail on run 1 / 2's wrong and run 3's help captures.
+

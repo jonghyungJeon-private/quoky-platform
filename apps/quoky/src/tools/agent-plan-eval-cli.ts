@@ -25,6 +25,7 @@ import {
   AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS,
   AGENT_PLAN_EVAL_GATE,
   agentPlanEvalCases,
+  agentPlanPooledGate,
   buildAgentPlanEvalPlan,
   computeAgentPlanEvalDigest,
   loadAgentPlanCorpus,
@@ -35,8 +36,9 @@ import {
   type AgentPlanEvalPlan,
   type AgentPlanEvalRecord,
   type AgentPlanEvalSummary,
+  type AgentPlanPooledGate,
 } from './agent-plan-eval';
-import { formatGateRuns, guardRunProvider, sumHardFailures } from './nl-intent-eval-cli';
+import { guardRunProvider, sumHardFailures } from './nl-intent-eval-cli';
 import { CANARY_CLAUSE, type CanaryResult, EXIT_INVALID_PROVIDER, formatProviderOutcomes, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun } from './eval-provider-guard';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 
@@ -61,7 +63,8 @@ Strict:   pnpm eval:agent-plan -- --mode run [options] --approved-plan-digest <s
 Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-8000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
-Gate, every run: >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives AND >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
+Gate:            >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives POOLED over all runs (owner decision 2026-10-26), AND in every run:
+                 >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
                  (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives other than help.topic-only plans,
                  help.topic-only plans on negatives <= ceil(1% of the negatives) (owner decision 2026-10-26), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% of calls over the bound,
                  no call refused by the hard cap. --include-pending runs are NON-GATING (exit 4, no verdict).
@@ -157,7 +160,7 @@ export function formatAgentPlanSummary(summary: AgentPlanEvalSummary): string[] 
       .map(([entry, slot]) => `  ${entry.padEnd(22)} ${slot.exact}/${slot.total} (${pct(slot.rate)})`),
     `latency: p50 ${summary.latency.p50} ms, p95 ${summary.latency.p95} ms, max ${summary.latency.max} ms`,
     summary.gating
-      ? `gate (multi-step >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% and one-step >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% exact, 0 wrong on negatives, help captures <= ${summary.helpAllowance} = ceil(1% of ${summary.negatives} negatives), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`
+      ? `run checks (one-step >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% exact, 0 wrong on negatives, help captures <= ${summary.helpAllowance} = ceil(1% of ${summary.negatives} negatives), <= ${AGENT_PLAN_EVAL_GATE.overBoundRate * 100}% over the bound, no capped call; multi-step is pooled): ${summary.gatePassed ? 'PASSED' : 'FAILED'}`
       : 'gate: NON-GATING (--include-pending)',
   ];
   return lines;
@@ -268,13 +271,24 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     for (const record of misses) deps.stdout(describeMiss(record));
   }
   deps.stdout(formatProviderOutcomes(outage));
-  if (plan.gating) deps.stdout(formatGateRuns(`agent-plan gate (${plan.promptVersion})`, summaries, outage.invalidReason !== undefined ? outageAlsoSeenNote(outage.invalidReason) : undefined));
+  const pooled = agentPlanPooledGate(summaries);
+  if (plan.gating) deps.stdout(formatAgentPlanPooledGate(`agent-plan gate (${plan.promptVersion})`, pooled, outage.invalidReason !== undefined ? outageAlsoSeenNote(outage.invalidReason) : undefined));
   else deps.stdout(`agent-plan gate (${plan.promptVersion}): NON-GATING (--include-pending scores cases the owner has not approved; no verdict)`);
   // Content-free: ids, families, closed entry ids and reasons, diff kinds, latencies (never a text, an answer or a value).
-  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: outage, records }, null, 2)}\n`);
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, ...(plan.gating ? { pooled } : {}), providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   if (!plan.gating) return EXIT_NON_GATING;
-  return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
+  return pooled.passed ? EXIT_OK : EXIT_GATE_FAILED;
+}
+
+/**
+ * The gate line (owner decision of 2026-10-26): the pooled multi-step rate and the runs whose own checks passed. Content
+ * free.
+ */
+export function formatAgentPlanPooledGate(label: string, pooled: AgentPlanPooledGate, outageNote?: string): string {
+  const multi = `multi-step pooled ${pooled.multiStep.exact}/${pooled.multiStep.total} (${pct(pooled.multiStep.rate)}) ${pooled.multiStepPassed ? '>=' : '<'} ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}%`;
+  const runs = `run checks passed in ${pooled.runsPassed} of ${pooled.runs} run(s)`;
+  return pooled.passed ? `${label}: PASSED (${multi}; ${runs})` : `${label}: FAILED (${multi}; ${runs}; the gate needs both)${outageNote !== undefined ? ` ${outageNote}` : ''}`;
 }
 
 if (require.main === module) {

@@ -106,11 +106,12 @@ export const AGENT_PLAN_POSITIVE_FAMILIES = [
   // Owner decisions of 2026-10-26 (the agent-plan gate classification): one-step golds of the plan corpus.
   // A question whether Quoky handles a phrasing is help.topic (the read prompt's rule 3).
   'capability-help',
-  // A read with a write clause that is not run (decision (f), the ratified read + write note): the read plan.
-  'read-remainder',
+  // Owner decision of 2026-10-26 (amends decision (f) for an explicit position over a list read in the same message): the
+  // list read, a position reference to its Nth item and a summary over it (agent-plan.v9 rule 9).
+  'item-summary-ref',
 ] as const;
 /** The positive families whose gold is one step: scored in the one-step group with the referenced one-step cases. */
-export const AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES: readonly string[] = ['capability-help', 'read-remainder'];
+export const AGENT_PLAN_ONE_STEP_POSITIVE_FAMILIES: readonly string[] = ['capability-help'];
 
 /**
  * Owner decision of 2026-10-26 (capability-help golds): each source entry's help topic, by the same structural mapping the
@@ -177,7 +178,7 @@ export function isAgentPlanAskExpect(value: unknown): value is AgentPlanAskExpec
 
 /** A gold step as written in the corpus (the planner's own steps form). */
 export type AgentPlanGoldStep =
-  | { readonly entryId: string; readonly args?: NlArgs; readonly ref?: { readonly step: number; readonly field: string; readonly take: number } }
+  | { readonly entryId: string; readonly args?: NlArgs; readonly ref?: { readonly step: number; readonly field: string; readonly take: number; readonly at?: number } }
   | { readonly summarize: readonly number[]; readonly schema: string };
 
 export interface AgentPlanGoldPlan {
@@ -379,6 +380,11 @@ function differingArgNames(entryId: string, got: string, want: string): readonly
   return [...new Set(names)].sort();
 }
 
+/** A reference as one comparable string (a position reference adds its `at`). */
+function refKey(ref: { readonly step: number; readonly field: string; readonly take: number; readonly at?: number }): string {
+  return JSON.stringify([ref.step, ref.field, ref.take, ...(ref.at !== undefined ? [ref.at] : [])]);
+}
+
 function sortedArgs(args: NlArgs | undefined): string {
   return JSON.stringify(Object.entries(args ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
@@ -392,7 +398,7 @@ export function goldGraph(gold: AgentPlanGoldPlan): StepGraph {
           kind: 'read' as const,
           entryId: step.entryId,
           args: sortedArgs(step.args),
-          ...(step.ref !== undefined ? { ref: JSON.stringify([step.ref.step, step.ref.field, step.ref.take]) } : {}),
+          ...(step.ref !== undefined ? { ref: refKey(step.ref) } : {}),
         },
   );
 }
@@ -406,7 +412,7 @@ export function validatedGraph(steps: readonly ValidatedAgentStep[]): StepGraph 
           kind: 'read' as const,
           entryId: step.entry.id,
           args: sortedArgs(step.args),
-          ...(step.ref !== undefined ? { ref: JSON.stringify([step.ref.step, step.ref.field, step.ref.take]) } : {}),
+          ...(step.ref !== undefined ? { ref: refKey(step.ref) } : {}),
         },
   );
 }
@@ -712,7 +718,7 @@ const ACTION_ENTRIES: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIE
 function readWriteProblems(at: string, golden: AgentPlanCase, fixture: AgentPlanCorpus['fixture']): string[] {
   const rw = golden.readWrite as AgentPlanReadWriteExpect;
   const problems: string[] = [];
-  if (golden.expect !== 'none' && golden.readWrite?.outcome !== 'read-and-note') problems.push(`${at}: readWrite is for a none negative or a read-remainder positive`);
+  if (golden.expect !== 'none' && golden.readWrite?.outcome !== 'read-and-note') problems.push(`${at}: readWrite is for a none negative or a read-and-note positive`);
   if (!(AGENT_PLAN_READ_WRITE_OUTCOMES as readonly string[]).includes(rw.outcome)) return [...problems, `${at}: unknown readWrite outcome`];
   if (rw.why !== undefined && !(AGENT_PLAN_READ_WRITE_WHY as readonly string[]).includes(rw.why)) problems.push(`${at}: unknown readWrite why`);
   const prepared = prepareSelectionInput(golden.text, golden.attachments ?? 0);
@@ -1109,7 +1115,39 @@ export interface AgentPlanEvalSummary {
   readonly groups: { readonly multiStep: AgentPlanEvalSlot; readonly oneStep: AgentPlanEvalSlot; readonly ask: AgentPlanEvalSlot };
   /** `false` for an `--include-pending` run: no verdict, `gatePassed` is always false. */
   readonly gating: boolean;
+  /**
+   * The run's own checks (owner decision of 2026-10-26: every gate criterion except the multi-step exact rate, which is
+   * judged on the pooled runs, {@link agentPlanPooledGate}): one-step >= 95%, 0 wrong on negatives other than help
+   * captures, help captures within the allowance, over-bound and asks as before, no capped call.
+   */
   readonly gatePassed: boolean;
+}
+
+/** The pooled multi-step verdict over the runs (owner decision of 2026-10-26) and the gate's final verdict. */
+export interface AgentPlanPooledGate {
+  /** Every multi-step record of every run. */
+  readonly multiStep: AgentPlanEvalSlot;
+  readonly multiStepPassed: boolean;
+  /** Runs whose own checks passed (`gatePassed`). */
+  readonly runsPassed: number;
+  readonly runs: number;
+  /** The gate: the pooled multi-step rate >= 95% AND every run's own checks passed. */
+  readonly passed: boolean;
+}
+
+/**
+ * Owner decision of 2026-10-26 (the gate rule): the multi-step exact rate is judged on the POOLED records of all runs
+ * (>= 95% of every multi-step record across the runs); the one-step rate, zero non-help wrongs, the help-capture ceiling,
+ * the over-bound rate and the hard cap stay per run. Pure.
+ */
+export function agentPlanPooledGate(summaries: readonly AgentPlanEvalSummary[]): AgentPlanPooledGate {
+  const total = summaries.reduce((sum, summary) => sum + summary.groups.multiStep.total, 0);
+  const exact = summaries.reduce((sum, summary) => sum + summary.groups.multiStep.exact, 0);
+  const rate = total === 0 ? 0 : exact / total;
+  const multiStepPassed = total > 0 && rate >= AGENT_PLAN_EVAL_GATE.multiStepExact;
+  const runsPassed = summaries.filter((summary) => summary.gatePassed).length;
+  const gating = summaries.length > 0 && summaries.every((summary) => summary.gating);
+  return { multiStep: { total, exact, rate }, multiStepPassed, runsPassed, runs: summaries.length, passed: gating && multiStepPassed && runsPassed === summaries.length };
 }
 
 export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], boundMs: number, options: { readonly gating?: boolean } = {}): AgentPlanEvalSummary {
@@ -1197,7 +1235,7 @@ export function summarizeAgentPlanRun(records: readonly AgentPlanEvalRecord[], b
       gating &&
       multiStep.total > 0 &&
       oneStep.total > 0 &&
-      multiStep.rate >= AGENT_PLAN_EVAL_GATE.multiStepExact &&
+      // Owner decision of 2026-10-26: the multi-step rate is pooled over the runs (`agentPlanPooledGate`), not per run.
       oneStep.rate >= AGENT_PLAN_EVAL_GATE.oneStepExact &&
       wrongOnNegatives <= AGENT_PLAN_EVAL_GATE.wrongOnNegatives &&
       helpCaptures <= helpAllowance &&

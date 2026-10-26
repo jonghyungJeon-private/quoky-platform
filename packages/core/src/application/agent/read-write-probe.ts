@@ -105,7 +105,9 @@ export function agentReadWriteProbeResult(
   const entry = offered.get(output.entryId);
   if (entry === undefined) return { kind: 'stands', detail: 'not-action' };
   // Codex P2: only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE) is ever written or asked about.
-  // An ITEM_READ (`item.summarize`) with a list reference in a clause that names it is decision (f)'s note (ap-n129).
+  // An ITEM_READ (`item.summarize`) with a list reference in a clause that names it is decision (f)'s note (ap-n129). Since
+  // the owner decision of 2026-10-26 a summary by position of a list this plan reads is a plan step (`ref.at`, which
+  // covers its clause); this note is left only for a plan that did not take that step.
   if (entry.risk !== 'LOCAL_WRITE' && entry.risk !== 'EXTERNAL_WRITE') {
     const referenced = entry.args.some((spec) => spec.kind === 'ref' && typeof output.args[spec.name] === 'string' && (output.args[spec.name] as string).trim().length > 0);
     const clause = clauses.find((candidate) => namesEntry(candidate, entry));

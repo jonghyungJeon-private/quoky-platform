@@ -48,13 +48,15 @@ what an answer means.
 | `note` | no | Free text for the reviewer. |
 
 A **step** is either a read `{"entryId", "args", "ref"?}` or a summary `{"summarize": [<step no>, …], "schema"}`.
-A `ref` is `{"step", "field", "take"}`: the closed-format ids a deterministic projector takes from an earlier read
-(stage S2 P3). The planner never writes an id.
+A `ref` is `{"step", "field", "take", "at"?}`: the closed-format ids a deterministic projector takes from an earlier read
+(stage S2 P3). The planner never writes an id. With `at` (owner decision of 2026-10-26, agent-plan.v9) it is ONE item
+(`take` 1) at that 1-based position of the earlier list, in the order Quoky renders it in this reply.
 
 A planner `none` means "no multi-step plan", not "no reply" (decision (f)): the message keeps the one-step path (the
-read selection or honest chat). "목록 보여주고 첫 번째 거 요약해줘" shows the list and then asks which number to summarize
-(P3: `a6InPlanGuidance` derives the read remainder and the fixed number hint for a plan refused `a6-in-plan`); the
-one-item summary is the A6 `item.summarize` turn that follows.
+read selection or honest chat). Owner decision of 2026-10-26 (amends (f) for an explicit position over a list read in
+the same message): "목록 보여주고 첫 번째 거 요약해줘" is a plan — the list read, a position reference to its Nth item and a
+summary over it — answered in one reply (`item-summary-ref`). A write on a listed item keeps the ratified read + write
+note.
 
 The scorer (S2 P3) runs Core's help split (A1-E1) before the planner call, exactly as the runtime does: the planner sees
 the rest of the owner's words. An exact positive needs the exact rest plan AND the gold `help` section (none expected,
@@ -74,6 +76,7 @@ Positives (every gold has at least two sections: two steps, or a help section pl
 | `en-prenominal` | English periods before their noun ("Friday calendar and today mail") and after it. |
 | `multi-read` | Three or four reads. |
 | `same-entry` | Two reads of the same entry with different keywords ("각각", "따로", "separately"). |
+| `item-summary-ref` | Owner decision of 2026-10-26: a list read, a position reference (`ref.at`, take 1) to its Nth item, and a summary over it (Jira, Slack, mail, Drive). ap-p185..ap-p189 (formerly ap-n125, ap-n126, ap-n129, ap-n132, ap-n136). |
 | `help-brief-split` | ADR-0121 A1-E4 (decision (e), S2 P3): a help clause with other reads (`help` + the rest plan), or the brief as one step of a plan (never covered by a summary, B2). ap-p175..ap-p179 (formerly ap-n118..ap-n120, ap-n122, ap-n123; ap-p177: the owner's English help decision of 2026-10-23) and ap-p180 (formerly ap-n121: owner decision Q2, the verb connective -고 splits). |
 
 Negatives (`expect: "none"`, or an `ask` for `unbounded`; any executable plan is wrong):

@@ -1,6 +1,7 @@
 import type { InboundQuotedRange } from '../../domain';
 import { flowLabel, type FlowLabel } from '../../domain/flow-label';
-import type { NlWave1EntryId } from '../nl-routing/catalog';
+import { NL_R2_ITEM_SOURCES, type NlWave1EntryId } from '../nl-routing/catalog';
+import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 
 /**
@@ -45,6 +46,17 @@ export const AGENT_READ_SOURCES: Readonly<Record<NlWave1EntryId, { readonly sour
   'brief.today': { source: 'brief', origin: 'host', connectorQueries: 4 },
   'help.topic': { source: 'help', origin: 'host', connectorQueries: 0 },
 });
+
+/**
+ * Owner decision of 2026-10-26 (a position reference, "지라 이슈 보여주고 첫 번째 거 요약해줘"): the sources whose listed
+ * items a plan may summarize one by position — exactly the sources an item summary already reads (`item.summarize`: its
+ * R1 `source` enum, mail and Drive, plus the R2 sources, Jira and Slack), so the plan adds no egress an item summary does
+ * not already allow. Derived from the catalog; no list of its own.
+ */
+export const AGENT_POSITION_REF_SOURCES: readonly string[] = Object.freeze([
+  ...((NL_ACTION_ENTRIES['item.summarize']?.args.find((spec) => spec.name === 'source')?.values ?? []) as readonly string[]),
+  ...NL_R2_ITEM_SOURCES,
+]);
 
 /** The label of what a READ entry returns (ADR-0121 D4; ADR-0110 D4, ADR-0118 D7/D8, ADR-0100). */
 export function readOutputLabel(entryId: NlWave1EntryId): FlowLabel {

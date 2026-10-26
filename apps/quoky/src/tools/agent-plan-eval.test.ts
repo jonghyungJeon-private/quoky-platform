@@ -23,6 +23,7 @@ import {
   type AgentPlanEvalOptions,
   type AgentPlanEvalRecord,
   AGENT_PLAN_ENTRY_HELP_TOPICS,
+  agentPlanPooledGate,
   namedSourceHelpTopics,
 } from './agent-plan-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, formatAgentPlanSummary, runCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
@@ -145,10 +146,11 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     const summary = summarizeAgentPlanRun(records, plan.callTimeoutMs);
     const notExact = records.filter((record) => record.expected === 'plan' && record.outcome !== 'exact');
     expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
-    // 174 + the six help-brief-split positives (ap-p175..ap-p180, formerly ap-n118..ap-n123).
-    expect(summary.groups.multiStep).toEqual({ total: 180, exact: 180, rate: 1 });
-    // + the five one-step plan golds of the owner's decisions of 2026-10-26 (ap-p181..ap-p185).
-    expect(summary.groups.oneStep).toEqual({ total: 679, exact: 679, rate: 1 });
+    // 174 + the six help-brief-split positives (ap-p175..ap-p180, formerly ap-n118..ap-n123) + the five item-summary-ref
+    // positives (ap-p185..ap-p189; owner decision of 2026-10-26, the one-shot list + item summary).
+    expect(summary.groups.multiStep).toEqual({ total: 185, exact: 185, rate: 1 });
+    // + the four capability-help one-step plan golds of the owner's decisions of 2026-10-26 (ap-p181..ap-p184).
+    expect(summary.groups.oneStep).toEqual({ total: 678, exact: 678, rate: 1 });
     expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
@@ -302,7 +304,7 @@ describe('step-graph scorer (Q10)', () => {
     expect(summarizeAgentPlanRun([...records, ...asks(18)], 6000).gatePassed).toBe(false);
   });
 
-  it('gates each group on its own (CA P1): a 75% multi-step group fails even when the pooled rate is above 95%', () => {
+  it('gates each group on its own (CA P1): a 75% multi-step group fails even when the overall rate is above 95%', () => {
     const records = [
       ...Array.from({ length: 30 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000)),
       ...Array.from({ length: 10 }, (_, i) => record(`m${i}`, 'miss', 'plan', 1000)),
@@ -311,7 +313,9 @@ describe('step-graph scorer (Q10)', () => {
     const summary = summarizeAgentPlanRun(records, 6000);
     expect(summary.exactRate).toBeGreaterThan(0.95);
     expect(summary.groups.multiStep.rate).toBe(0.75);
-    expect(summary.gatePassed).toBe(false);
+    // Owner decision of 2026-10-26: the run's own checks pass; the multi-step rate is judged pooled, and fails there.
+    expect(summary.gatePassed).toBe(true);
+    expect(agentPlanPooledGate([summary])).toMatchObject({ multiStepPassed: false, runsPassed: 1, passed: false });
     // And the other way round: a weak one-step group fails too.
     const weakOneStep = summarizeAgentPlanRun([...Array.from({ length: 200 }, (_, i) => record(`p${i}`, 'exact', 'plan', 1000)), ...oneStep(18), ...oneStep(2, 'miss')], 6000);
     expect(weakOneStep.groups.oneStep.rate).toBe(0.9);
@@ -422,7 +426,7 @@ describe('plan digest', () => {
     expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v8', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v9', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -489,7 +493,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v8"');
+    expect(text).toContain('"promptVersion": "agent-plan.v9"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
@@ -574,8 +578,8 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 180/180 (100.0%)  one-step exact: 679/679 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v8): PASSED in all 1 run(s)');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 678/678 (100.0%)  ask: 12/12');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v9): PASSED (multi-step pooled 185/185 (100.0%) >= 95%; run checks passed in 1 of 1 run(s))');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };
@@ -627,12 +631,12 @@ describe('the ratified read + write note (owner decision Q3, 2026-10-23): readWr
   const check = (cases: AgentPlanCase[]): string[] => validateAgentPlanCorpus({ ...CORPUS, cases }, ONE_STEP);
 
   it('every write-read and a6-in-plan negative carries one; the planner gold stays none', () => {
-    const families = NEW.filter((golden) => golden.family === 'write-read' || golden.family === 'a6-in-plan' || golden.family === 'read-remainder').map((golden) => golden.id).sort();
+    const families = NEW.filter((golden) => golden.family === 'write-read' || golden.family === 'a6-in-plan').map((golden) => golden.id).sort();
     expect(annotated.map((golden) => golden.id).sort()).toEqual(families);
-    // The planner gold stays none, except ap-p185 (was ap-n125; owner decision 2026-10-26): its gold is the read plan.
-    expect(annotated.filter((golden) => golden.expect !== 'none').map((golden) => golden.id)).toEqual(['ap-p185']);
+    // The planner gold stays none (the one-shot item summaries of 2026-10-26 left these families: item-summary-ref).
+    expect(annotated.filter((golden) => golden.expect !== 'none').map((golden) => golden.id)).toEqual([]);
     const count = (outcome: string): number => annotated.filter((golden) => golden.readWrite?.outcome === outcome).length;
-    expect({ write: count('read-and-write'), note: count('read-and-note'), unchanged: count('unchanged') }).toEqual({ write: 8, note: 12, unchanged: 12 });
+    expect({ write: count('read-and-write'), note: count('read-and-note'), unchanged: count('unchanged') }).toEqual({ write: 8, note: 7, unchanged: 12 });
   });
 
   it('the self-check catches a write that takes read words, a clause that is no conjunct, and a wrong conjunct count', () => {
@@ -647,7 +651,7 @@ describe('the ratified read + write note (owner decision Q3, 2026-10-23): readWr
 });
 
 describe('owner decisions of 2026-10-26: relabels and the help-capture rule of the agent-plan gate', () => {
-  it('the relabels: ap-p096 kind issue, ap-p066 both reads scoped by budget, four capability questions and ap-p185 as one-step golds', () => {
+  it('the relabels: ap-p096 kind issue, ap-p066 both reads scoped by budget, four capability questions; the item-summary-ref plans', () => {
     const plan = (id: string): unknown => (NEW.find((golden) => golden.id === id) as AgentPlanCase).expect;
     expect(plan('ap-p096')).toMatchObject({ steps: [{ entryId: 'github.items', args: { kind: 'issue' } }, { entryId: 'jira.issues' }, { summarize: [1, 2] }] });
     expect(plan('ap-p066')).toMatchObject({ steps: [{ entryId: 'drive.files', args: { kind: 'spreadsheet', name: 'budget' } }, { entryId: 'confluence.search', args: { keyword: 'budget' } }] });
@@ -657,11 +661,21 @@ describe('owner decisions of 2026-10-26: relabels and the help-capture rule of t
       'ap-n054->ap-p182:capability-help',
       'ap-n055->ap-p183:capability-help',
       'ap-n057->ap-p184:capability-help',
-      'ap-n125->ap-p185:read-remainder',
+      'ap-n125->ap-p185:item-summary-ref',
+      'ap-n126->ap-p186:item-summary-ref',
+      'ap-n129->ap-p187:item-summary-ref',
+      'ap-n132->ap-p188:item-summary-ref',
+      'ap-n136->ap-p189:item-summary-ref',
     ]);
     for (const id of ['ap-p181', 'ap-p182', 'ap-p183', 'ap-p184']) expect(plan(id)).toEqual({ steps: [{ entryId: 'help.topic', args: {} }], ambiguity: 'CLEAR' });
-    expect(plan('ap-p185')).toEqual({ steps: [{ entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR' });
-    expect(NEW.find((golden) => golden.id === 'ap-p185')?.readWrite).toMatchObject({ outcome: 'read-and-note', why: 'list-ref' });
+    // Owner decision of 2026-10-26 (one-shot list + item summary): the list read, the position reference, the summary.
+    expect(plan('ap-p185')).toEqual({
+      steps: [{ entryId: 'jira.issues', args: {} }, { entryId: 'jira.issues', args: {}, ref: { step: 1, field: 'issueKeys', take: 1, at: 1 } }, { summarize: [2], schema: 'digest.v1' }],
+      ambiguity: 'CLEAR',
+    });
+    expect(plan('ap-p187')).toMatchObject({ steps: [{ entryId: 'jira.issues' }, { ref: { field: 'issueKeys', at: 2 } }, { summarize: [2] }] });
+    expect(plan('ap-p188')).toMatchObject({ steps: [{ entryId: 'mail.list' }, { entryId: 'mail.list', ref: { field: 'messageIds', at: 3 } }, { summarize: [2] }] });
+    for (const id of ['ap-p185', 'ap-p186', 'ap-p187', 'ap-p188', 'ap-p189']) expect(NEW.find((golden) => golden.id === id)?.readWrite).toBeUndefined();
   });
 
   const record = (id: string, expected: 'plan' | 'none', outcome: AgentPlanEvalRecord['outcome'], gotEntries: string[] = []): AgentPlanEvalRecord => ({
@@ -696,6 +710,39 @@ describe('owner decisions of 2026-10-26: relabels and the help-capture rule of t
     const text = formatAgentPlanSummary(summarizeAgentPlanRun(records, 6000)).join('\n');
     expect(text).toContain('help captures: 1 (allowed 3 = ceil(1% of 250))');
     expect(text).toContain('help captures <= 3 = ceil(1% of 250 negatives)');
+  });
+});
+
+describe('owner decision of 2026-10-26: the multi-step rate is pooled over the runs; every other check stays per run', () => {
+  const rec = (run: number, id: string, outcome: AgentPlanEvalRecord['outcome'], expected: 'plan' | 'none' = 'plan', family = 'compound'): AgentPlanEvalRecord => ({
+    run, id, family: expected === 'none' ? 'quoted-request' : family, expected, goldEntries: [], outcome, gotEntries: [], latencyMs: 100,
+  });
+  // One run: `misses` of 166 multi-step positives missed, 100 one-step positives exact, 288 negatives none.
+  const run = (n: number, misses: number, extra: AgentPlanEvalRecord[] = []): AgentPlanEvalRecord[] => [
+    ...Array.from({ length: 166 }, (_, i) => rec(n, `ap-p${i}`, i < misses ? 'miss' : 'exact')),
+    ...Array.from({ length: 100 }, (_, i) => rec(n, `one-${i}`, 'exact', 'plan', 'one-step')),
+    ...Array.from({ length: 288 }, (_, i) => rec(n, `ap-n${i}`, 'none', 'none')),
+    ...extra,
+  ];
+  const gate = (runs: AgentPlanEvalRecord[][]) => agentPlanPooledGate(runs.map((records) => summarizeAgentPlanRun(records, 6000)));
+
+  it('94.6 / 95.2 / 95.8% (the ed45e3f1 runs) pool to 95.2%: passed; 9 / 9 / 9 misses pool to 94.6%: failed', () => {
+    expect(gate([run(1, 9), run(2, 8), run(3, 7)])).toMatchObject({ multiStep: { total: 498, exact: 474 }, multiStepPassed: true, runsPassed: 3, passed: true });
+    expect(gate([run(1, 9), run(2, 9), run(3, 9)])).toMatchObject({ multiStepPassed: false, passed: false });
+  });
+
+  it('a wrong on a negative, help captures over the allowance or a weak one-step group in ONE run fail the gate', () => {
+    const wrong = [rec(2, 'ap-n999', 'wrong', 'none')];
+    expect(gate([run(1, 0), run(2, 0, wrong), run(3, 0)])).toMatchObject({ multiStepPassed: true, runsPassed: 2, passed: false });
+    const help = Array.from({ length: 4 }, (_, i) => ({ ...rec(3, `ap-h${i}`, 'wrong', 'none'), gotEntries: ['help.topic'] }));
+    expect(gate([run(1, 0), run(2, 0), run(3, 0, help)])).toMatchObject({ runsPassed: 2, passed: false });
+    const weak = Array.from({ length: 10 }, (_, i) => rec(1, `one-x${i}`, 'miss', 'plan', 'one-step'));
+    expect(gate([run(1, 0, weak), run(2, 0), run(3, 0)])).toMatchObject({ runsPassed: 2, passed: false });
+  });
+
+  it('a non-gating run never passes', () => {
+    expect(agentPlanPooledGate([summarizeAgentPlanRun(run(1, 0), 6000, { gating: false })]).passed).toBe(false);
+    expect(agentPlanPooledGate([]).passed).toBe(false);
   });
 });
 
@@ -892,14 +939,21 @@ describe('gate on 5c09fee4: the item-summary note and the probe diagnostics', ()
   const base = { outcome: 'wrong' as const, gotEntries: ['jira.issues'] };
   const summarize = JSON.stringify({ entryId: 'item.summarize', args: { source: 'jira', ref: '#2' }, ambiguity: 'CLEAR', alternatives: [] });
 
-  it('ap-n129: an item-summary note matches the read-and-note gold (read-note, not wrong)', () => {
-    const golden = byId('ap-n129');
+  // ap-n129 became the item-summary-ref positive ap-p187 (2026-10-26); the note path is kept for a read-and-note gold.
+  const noteGold = (): AgentPlanEvalCase => ({
+    ...byId('ap-n006'),
+    text: 'list my jira issues and summarize the second one',
+    readWrite: { outcome: 'read-and-note', writeClause: 'summarize the second one', readPlan: { steps: [{ entryId: 'jira.issues', args: {} }], ambiguity: 'CLEAR' }, why: 'list-ref' },
+  });
+
+  it('an item-summary note matches a read-and-note gold (read-note, not wrong)', () => {
+    const golden = noteGold();
     expect(golden.readWrite?.outcome).toBe('read-and-note');
     expect(applyReadWriteProbe(base, golden, summarize, ['summarize the second one'], FIXTURE)).toMatchObject({ outcome: 'read-note', probe: 'note', probeEntry: 'item.summarize' });
   });
 
   it('an item-summary note never excuses a plan where the gold expects no note (Codex P2 of 39a10ddb)', () => {
-    const { readWrite: _rw, ...plain } = byId('ap-n129');
+    const { readWrite: _rw, ...plain } = noteGold();
     expect(applyReadWriteProbe(base, plain, summarize, ['summarize the second one'], FIXTURE)).toMatchObject({ outcome: 'wrong', probe: 'stands', probeDetail: 'item-read' });
   });
 

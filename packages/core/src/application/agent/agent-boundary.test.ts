@@ -21,7 +21,9 @@ const SOURCES = readdirSync(DIR)
 
 /** The named pure `nl-routing` files the agent may import (never the selection service or the barrel). */
 // `write-clause` (2026-10-26): the existing reminder and to-do grammars as one pure write probe (no I/O, no state).
-const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause'];
+// `action-entries` (owner decision of 2026-10-26, the position reference): the A6 catalog data (`item.summarize`'s source
+// enum, the item-summary sources) and the A6-D2 index grounding (`nlIndexWording`); pure data and grammar, no I/O.
+const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause', 'action-entries'];
 
 function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;

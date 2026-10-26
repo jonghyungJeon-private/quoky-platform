@@ -28,6 +28,13 @@ The owner ratified A3a on 2026-10-26 with every recommended default. Docs only; 
 Next: a separate session authors the G6 held-out set; the hash-only addendum (prompt hash first, then the set hash);
 then G6 on a Strict yes.
 
+### ADR-0121 S2 — owner decisions of 2026-10-26 after the ed45e3f1 gate (branch `claude/v5-s2-p3`)
+
+- **Built, not live.** The position reference (`ref.at`) and planner `agent-plan.v9`: a list and its Nth item's summary in
+  one reply; the probe offers the action entries only.
+- **Eval.** Multi-step exact pooled over the runs; `item-summary-ref` golds ap-p185..ap-p189.
+- **Follow-up.** Monitor `nl_selection.help_scope_asked` in live logs.
+
 ### ADR-0121 S2 — owner decisions of 2026-10-26 on the 5c09fee4 gate (branch `claude/v5-s2-p3`)
 
 - **Built, not live.** Planner `agent-plan.v8` (rule 9: a release's issue details need the `jira.issues` reference step);

@@ -132,6 +132,9 @@ external/destructive action을 감싼다.
   `agent-plan` 게이트도 같다: 부정 골드에 `help.topic` 한 단계만 낸 계획은 `helpCaptures`로 따로 세고 run마다 부정 골드
   수의 ceil(1%)까지 허용하며 초과분(`helpOverAllowance`)만 하드 실패다. 다른 실행 가능한 계획은 그대로 0이다(owner 결정
   2026-10-26).
+  `agent-plan` 게이트의 multi-step exact는 run별이 아니라 모든 run의 multi-step 기록을 합친 비율(pooled)이 95% 이상이어야
+  한다. one-step 95%, help 아닌 오답 0, help 포착 허용치, bound 초과율, hard cap은 그대로 run마다 판정한다(owner 결정
+  2026-10-26).
 - Deterministic plumbing은 test하고, 미구현 model cognition은 `NotImplementedError`로 유지한다.
 - 시간과 ID는 shared `clock`/`id` utility를 사용한다.
 - `Resource` input과 `Artifact` output을 합치지 않는다.

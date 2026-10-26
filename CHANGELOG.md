@@ -59,6 +59,14 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 owner decisions of 2026-10-26 after the ed45e3f1 gate (branch `claude/v5-s2-p3`, shadow only)
+
+- **Changed (not live).** "지라 이슈 보여주고 첫 번째 거 요약해줘" is one plan: the list, then a summary of its first item in the
+  same reply (Jira, Slack, mail and Drive lists). Planner `agent-plan.v8` → **`agent-plan.v9`**.
+- **Changed (not live).** The read + write probe offers only the action entries (a read pick hid the write).
+- **Changed (eval).** The agent-plan gate judges the multi-step exact rate over all runs together; every other check stays
+  per run. An args miss names the args that differ.
+
 ## Unreleased — S2 owner decisions of 2026-10-26 on the 5c09fee4 gate (branch `claude/v5-s2-p3`, shadow only)
 
 - **Changed (not live).** Planner `agent-plan.v7` → **`agent-plan.v8`**: rule 9 says a release step lists a release's

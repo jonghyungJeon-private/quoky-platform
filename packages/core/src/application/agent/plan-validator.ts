@@ -7,8 +7,9 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
 import { nlClauseClaimsWrite } from '../nl-routing/write-clause';
+import { nlIndexWording } from '../nl-routing/action-entries';
 import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
-import { AGENT_READ_SOURCES } from './flow-policy';
+import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
 
 /**
@@ -107,6 +108,12 @@ export type AgentPlanRefusal =
   | 'ref-cross-source'
   | 'ref-field'
   | 'ref-too-many'
+  /**
+   * Owner decision of 2026-10-26: a position reference (`at`) that is not one item (`take` 1, args `{}`, at most 10) of an
+   * item-summary source, not named by the owner's own digits or ordinal, not summarized by a later step of the plan, or in
+   * a clause a write grammar claims.
+   */
+  | 'ref-position'
   | 'run-refs-too-many'
   | 'summary-schema'
   | 'summary-source'
@@ -149,7 +156,14 @@ export type ValidatedAgentStep =
       /** Canonical (ADR-0120 D4), every value a literal grounded in the owner's words. */
       readonly args: NlArgs;
       readonly range?: NlResolvedRange;
-      readonly ref?: { readonly step: number; readonly field: string; readonly take: number; readonly provenance: Extract<AgentArgProvenance, { kind: 'reference' }> };
+      readonly ref?: {
+        readonly step: number;
+        readonly field: string;
+        readonly take: number;
+        /** A position reference: the one item at this 1-based position of the earlier list as Quoky renders it. */
+        readonly at?: number;
+        readonly provenance: Extract<AgentArgProvenance, { kind: 'reference' }>;
+      };
       readonly provenance: Readonly<Record<string, AgentArgProvenance>>;
     }
   | { readonly kind: 'summarize'; readonly from: readonly number[]; readonly schema: (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] };
@@ -295,6 +309,9 @@ export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], grou
   // 보여줘" uncovered while `todo.list` was planned, and the probe fired on correct plans.
   const phrases = allNames.filter((name) => name.includes(' '));
   const values = reads.flatMap((step) => Object.values(step.args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : [])));
+  // Owner decision of 2026-10-26: a validated position reference covers the clause that names its position (the
+  // validator already refused one in a clause a write grammar claims).
+  const positions = reads.flatMap((step) => (step.ref?.at !== undefined ? [step.ref.at] : []));
   const out: string[] = [];
   for (const words of clauses.values()) {
     const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
@@ -302,7 +319,8 @@ export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], grou
     const mentioned =
       words.some((token) => names.some((name) => aliasStarts(token.word, name))) ||
       phrases.some((phrase) => ` ${normalized} `.includes(` ${phrase}`)) ||
-      values.some((value) => normalized.includes(value));
+      values.some((value) => normalized.includes(value)) ||
+      positions.some((at) => nlIndexWording(at, text) !== undefined);
     if (!mentioned) out.push(text);
   }
   return out;
@@ -527,6 +545,11 @@ function checkRead(
   });
   if (ungroundedDate) return refuse('date-ungrounded', number);
   if (temporal?.refusal !== undefined && temporal.refusal.step === number) return refuse(temporal.refusal.reason, number);
+  // Owner decision of 2026-10-26: a position reference reads ONE listed item by its id; the listing args do not apply.
+  if (step.ref?.at !== undefined) {
+    if (Object.keys(step.args).length > 0) return refuse('ref-position', number);
+    return checkRef(step, number, steps, ctx, { kind: 'read', entry, args: {}, provenance: {} });
+  }
   const result = validateSelection(
     { entryId: step.entryId, args: step.args },
     {
@@ -551,7 +574,19 @@ function checkRead(
     provenance,
   };
   if (step.ref === undefined) return { ok: true, step: base };
+  return checkRef(step, number, steps, ctx, base);
+}
+
+/** The reference of a read step (D2; a position reference, owner decision of 2026-10-26). */
+function checkRef(
+  step: Extract<AgentPlanStep, { kind: 'read' }>,
+  number: number,
+  steps: readonly AgentPlanStep[],
+  ctx: AgentPlanValidationContext,
+  base: Extract<ValidatedAgentStep, { kind: 'read' }>,
+): StepCheck {
   const ref = step.ref;
+  if (ref === undefined || !isNlWave1EntryId(step.entryId)) return { ok: true, step: base };
   if (ref.step >= number) return refuse('ref-forward', number);
   const source = steps[ref.step - 1];
   if (source === undefined || source.kind !== 'read' || !isNlWave1EntryId(source.entryId)) return refuse('ref-not-read', number);
@@ -561,8 +596,33 @@ function checkRead(
   if (from.source !== to.source || from.origin !== to.origin) return refuse('ref-cross-source', number);
   if (from.refField === undefined || ref.field !== from.refField) return refuse('ref-field', number);
   if (ref.take > AGENT_PLAN_MAX_REF_VALUES) return refuse('ref-too-many', number);
+  if (ref.at !== undefined && !positionRefHolds(ref.at, ref.take, from.source, number, steps, ctx)) return refuse('ref-position', number);
   const refProvenance = { kind: 'reference' as const, step: ref.step, entryId: source.entryId, origin: from.origin };
-  return { ok: true, step: { ...base, ref: { step: ref.step, field: ref.field, take: ref.take, provenance: refProvenance } } };
+  const at = ref.at !== undefined ? { at: ref.at } : {};
+  return { ok: true, step: { ...base, ref: { step: ref.step, field: ref.field, take: ref.take, ...at, provenance: refProvenance } } };
+}
+
+/**
+ * Owner decision of 2026-10-26 (one-shot list + item summary): a position reference holds when it is ONE item (`take` 1,
+ * at most the 10 a reference may carry) of a source an item summary already reads ({@link AGENT_POSITION_REF_SOURCES}),
+ * the owner's own words name that position (digits or an ordinal, the A6-D2 index grounding), a later summarize step
+ * covers it (the decision is for a read summary), and no clause carrying that position is claimed by a write grammar (a
+ * write on a listed item keeps the ratified read + write note). Structural; no vocabulary of its own.
+ */
+function positionRefHolds(at: number, take: number, source: string, number: number, steps: readonly AgentPlanStep[], ctx: AgentPlanValidationContext): boolean {
+  if (take !== 1 || at > AGENT_PLAN_MAX_REF_VALUES || !AGENT_POSITION_REF_SOURCES.includes(source)) return false;
+  if (nlIndexWording(at, ctx.groundingText) === undefined) return false;
+  if (!steps.some((other, index) => other.kind === 'summarize' && index + 1 > number && other.from.includes(number))) return false;
+  return !positionClauses(ctx.groundingText, at).some((clause) => nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone }));
+}
+
+/** The conjuncts (the S2 boundaries, the verb connective included) that name position `at` by digits or an ordinal. */
+function positionClauses(groundingText: string, at: number): string[] {
+  const tokens = conjunctTokens(groundingText, { verbConnective: true });
+  const clauses = new Map<number, string[]>();
+  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token.text]);
+  const texts = clauses.size > 0 ? [...clauses.values()].map((words) => words.join(' ')) : [groundingText];
+  return texts.filter((text) => nlIndexWording(at, text) !== undefined);
 }
 
 function checkSummary(step: Extract<AgentPlanStep, { kind: 'summarize' }>, number: number, steps: readonly AgentPlanStep[]): StepCheck {

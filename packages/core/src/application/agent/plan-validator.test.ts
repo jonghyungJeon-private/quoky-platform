@@ -5,6 +5,7 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan, type AgentPlanStep } from './plan-schema';
 import {
+  agentUncoveredClauses,
   AGENT_BRIEF_MAX_CONNECTOR_CALLS,
   AGENT_RUN_MAX_CONNECTOR_CALLS,
   AGENT_SINGLE_STEP_ONLY,
@@ -32,7 +33,7 @@ function ctx(groundingText: string, extra: Partial<AgentPlanValidationContext> =
   };
 }
 
-const read = (entryId: string, args: Record<string, string | number | boolean> = {}, ref?: { step: number; field: string; take: number }): AgentPlanStep => ({
+const read = (entryId: string, args: Record<string, string | number | boolean> = {}, ref?: { step: number; field: string; take: number; at?: number }): AgentPlanStep => ({
   kind: 'read',
   entryId,
   args,
@@ -666,3 +667,52 @@ describe('rule 7: a read plan that leaves a write clause is none (owner-approved
     expect(validateAgentPlan(plan([read('jira.issues')]), ctx('show my jira issues and add a todo to follow up'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
   });
 });
+
+describe('owner decision of 2026-10-26: a list read and the summary of its Nth item in one plan (position reference)', () => {
+  const at = (step: number, field: string, n: number) => ({ step, field, take: 1, at: n });
+
+  it('parses `at` (a 1-based integer) and refuses any other value', () => {
+    const raw = (ref: unknown) => JSON.stringify({ steps: [{ entryId: 'jira.issues', args: {} }, { entryId: 'jira.issues', args: {}, ref }, { summarize: [2], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
+    expect(parseAgentPlanOutput(raw({ step: 1, field: 'issueKeys', take: 1, at: 2 }))).toMatchObject({ steps: [{}, { ref: { step: 1, field: 'issueKeys', take: 1, at: 2 } }, {}] });
+    for (const bad of [0, -1, 1.5, '1']) expect(parseAgentPlanOutput(raw({ step: 1, field: 'issueKeys', take: 1, at: bad }))).toBeNull();
+  });
+
+  it('validates the one-shot plan over every item-summary source (Jira, Slack, mail, Drive); the clause is covered', () => {
+    const cases: Array<[string, AgentPlanStep[]]> = [
+      ['지라 이슈 보여주고 첫 번째 거 요약해줘', [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])]],
+      ['list my jira issues and summarize the second one', [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 2)), summary([2])]],
+      ['슬랙에서 장애 찾고 첫 번째 스레드 요약해줘', [read('slack.search', { keyword: '장애' }), read('slack.search', {}, at(1, 'messageIds', 1)), summary([2])]],
+      ['메일 목록 보고 세 번째 메일 요약해줘', [read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])]],
+      ['드라이브 파일 찾고 첫 번째 파일 요약해줘', [read('drive.files'), read('drive.files', {}, at(1, 'fileIds', 1)), summary([2])]],
+    ];
+    for (const [text, steps] of cases) {
+      const result = validateAgentPlan(plan(steps), ctx(text));
+      expect(result, text).toMatchObject({ ok: true, plan: { kind: 'run', steps: [{}, { ref: { take: 1, at: (steps[1] as { ref: { at: number } }).ref.at } }, { kind: 'summarize' }] } });
+      if (result.ok && result.plan.kind === 'run') expect(agentUncoveredClauses(result.plan.steps, text), text).toEqual([]);
+    }
+  });
+
+  it('refuses a position reference that is not one grounded, summarized item of an item-summary source', () => {
+    const text = '지라 이슈 보여주고 첫 번째 거 요약해줘';
+    const refused = (steps: AgentPlanStep[], t = text) => validateAgentPlan(plan(steps), ctx(t));
+    // Not the owner's position.
+    expect(refused([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 2)), summary([2])])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // More than one item, or listing args.
+    expect(refused([read('jira.issues'), read('jira.issues', {}, { step: 1, field: 'issueKeys', take: 2, at: 1 }), summary([2])])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    expect(refused([read('jira.issues'), read('jira.issues', { status: 'all' }, at(1, 'issueKeys', 1)), summary([2])])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // Not summarized (the decision is for a read summary).
+    expect(refused([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1))])).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // A source no item summary reads (GitHub, Confluence, calendar).
+    expect(refused([read('github.items', { query: 'review-requests' }), read('github.items', {}, at(1, 'itemIds', 1)), summary([2])], '깃허브 리뷰 요청 보여주고 첫 번째 거 요약해줘')).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // Beyond the 10 a reference may carry.
+    expect(refused([read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 11)), summary([2])], '지라 이슈 보여주고 11번째 거 요약해줘')).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+  });
+
+  it('a clause a write grammar claims keeps the ratified read + write note (never a read summary)', () => {
+    // "1번 완료" is the to-do grammar's own write (nlClauseClaimsWrite): a position reference there is refused.
+    const steps = [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])];
+    expect(validateAgentPlan(plan(steps), ctx('지라 이슈 보여주고 1번 완료'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    expect(validateAgentPlan(plan(steps), ctx('지라 이슈 보여주고 1번 요약해줘'))).toMatchObject({ ok: true, plan: { kind: 'run' } });
+  });
+});
+
