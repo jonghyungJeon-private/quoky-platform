@@ -834,3 +834,25 @@ describe('CA review of P3: the probe against the readWrite gold (W3) and help-sc
     expect(summary).toMatchObject({ helpCaptures: 1, clarifyGolds: { total: 1, asked: 1 } });
   });
 });
+
+describe('gate on 5c09fee4: the item-summary note and the probe diagnostics', () => {
+  const base = { outcome: 'wrong' as const, gotEntries: ['jira.issues'] };
+  const summarize = JSON.stringify({ entryId: 'item.summarize', args: { source: 'jira', ref: '#2' }, ambiguity: 'CLEAR', alternatives: [] });
+
+  it('ap-n129: an item-summary note matches the read-and-note gold (read-note, not wrong)', () => {
+    const golden = byId('ap-n129');
+    expect(golden.readWrite?.outcome).toBe('read-and-note');
+    expect(applyReadWriteProbe(base, golden, summarize, ['summarize the second one'], FIXTURE)).toMatchObject({ outcome: 'read-note', probe: 'note', probeEntry: 'item.summarize' });
+  });
+
+  it('an item-summary note never excuses a plan where the gold expects no note (Codex P2 of 39a10ddb)', () => {
+    const { readWrite: _rw, ...plain } = byId('ap-n129');
+    expect(applyReadWriteProbe(base, plain, summarize, ['summarize the second one'], FIXTURE)).toMatchObject({ outcome: 'wrong', probe: 'stands', probeDetail: 'item-read' });
+  });
+
+  it('a standing probe records its closed detail', () => {
+    const golden = byId('ap-n004');
+    const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    expect(applyReadWriteProbe({ outcome: 'wrong', gotEntries: ['todo.list'] }, golden, none, ['장보기 추가해줘'], FIXTURE)).toMatchObject({ outcome: 'wrong', probe: 'stands', probeDetail: 'none' });
+  });
+});

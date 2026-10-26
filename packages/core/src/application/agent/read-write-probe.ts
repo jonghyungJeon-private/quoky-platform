@@ -43,15 +43,28 @@ export type AgentReadWriteProbeResult =
    * The write clause points at a list position, at something already shown or at the read part (a `ref` arg, a
    * `deictic-payload`, the determiner grammar): not run; the read sections and the decision (f) note.
    */
-  | { readonly kind: 'note'; readonly entryId: string; readonly clause: string }
+  | {
+      readonly kind: 'note';
+      readonly entryId: string;
+      readonly clause: string;
+      /**
+       * Gate on 5c09fee4 (ap-n129): `item.summarize` (ITEM_READ, never a write) with a list reference is decision (f)'s
+       * own case: the read sections and the fixed note. Marked so a scorer never lets it excuse a plan the gold does not
+       * expect a note for (Codex P2 of 39a10ddb).
+       */
+      readonly itemRead?: true;
+    }
   /**
    * A write the owner asked for whose details are missing or not in the clause (the selector's NEEDS_CLARIFICATION, a
    * missing or ungrounded arg), in a clause that names the entry by its catalog alias or that a write grammar claims: the
    * existing A6 clarification, with the clause as its grounding (CA W2; owner Q3 example 1).
    */
   | { readonly kind: 'clarify'; readonly entryId: string; readonly clause: string }
-  /** Nothing to hand over: the read plan stands. */
-  | { readonly kind: 'stands' };
+  /**
+   * Nothing to hand over: the read plan stands. `detail` is a closed, content-free reason (the gate report's probe
+   * diagnostics): `malformed`, `none`, `not-action`, `not-write`, `not-requested` or `invalid:<validation reason>`.
+   */
+  | { readonly kind: 'stands'; readonly detail?: string };
 
 /** The validation failures a clarification answers (the request is there; a detail is missing or not the owner's). */
 const CLARIFY_REASONS: ReadonlySet<string> = new Set(['missing-arg', 'ungrounded']);
@@ -73,23 +86,34 @@ export function agentReadWriteProbeResult(
   ctx: Pick<AgentPlanValidationContext, 'now' | 'timeZone'>,
 ): AgentReadWriteProbeResult {
   const output = parseSelectionOutput(raw);
-  if (output === null || output.entryId === null || !isNlActionEntryId(output.entryId)) return { kind: 'stands' };
+  if (output === null) return { kind: 'stands', detail: 'malformed' };
+  if (output.entryId === null) return { kind: 'stands', detail: 'none' };
+  if (!isNlActionEntryId(output.entryId)) return { kind: 'stands', detail: 'not-action' };
   const entry = offered.get(output.entryId);
-  // Codex P2: only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE); `item.summarize` (ITEM_READ) is no
-  // write, so a summary of one listed item never re-scores or re-routes a plan.
-  if (entry === undefined || (entry.risk !== 'LOCAL_WRITE' && entry.risk !== 'EXTERNAL_WRITE')) return { kind: 'stands' };
+  if (entry === undefined) return { kind: 'stands', detail: 'not-action' };
+  // Codex P2: only a write by the catalog's own risk (LOCAL_WRITE / EXTERNAL_WRITE) is ever written or asked about.
+  // An ITEM_READ (`item.summarize`) with a list reference in a clause that names it is decision (f)'s note (ap-n129).
+  if (entry.risk !== 'LOCAL_WRITE' && entry.risk !== 'EXTERNAL_WRITE') {
+    const referenced = entry.args.some((spec) => spec.kind === 'ref' && typeof output.args[spec.name] === 'string' && (output.args[spec.name] as string).trim().length > 0);
+    const clause = clauses.find((candidate) => namesEntry(candidate, entry));
+    return referenced && clause !== undefined ? { kind: 'note', entryId: output.entryId, clause, itemRead: true } : { kind: 'stands', detail: 'not-write' };
+  }
   // The payload spans (a time span such as a reminder's `when` is no payload, as in the validator's deictic check).
   const spans = entry.args.flatMap((spec) => (spec.kind === 'span' && spec.allowsTimeWords !== true && typeof output.args[spec.name] === 'string' ? [output.args[spec.name] as string] : []));
   // A list or deictic reference in the raw output (any non-empty `ref`, quoted or not) points back whatever validation says.
   const hasRef = entry.args.some((spec) => spec.kind === 'ref' && typeof output.args[spec.name] === 'string' && (output.args[spec.name] as string).trim().length > 0);
   let clarify: string | undefined;
+  let detail = 'not-requested';
   for (const clause of clauses) {
     const validated = validateSelection({ entryId: output.entryId, args: output.args }, { offered, groundingText: clause, now: ctx.now, timeZone: ctx.timeZone, actions: true });
     const requested = namesEntry(clause, entry) || nlClauseClaimsWrite(clause, { now: ctx.now, timeZone: ctx.timeZone });
     // The write belongs to this clause when it validates there, when its only failures are a pointing-back payload, a
     // missing or ungrounded detail, or a reference the validator cannot read (a quoted `ref`), in a clause that asks for it.
     const forThisClause = validated.ok || validated.reason === 'deictic-payload' || ((CLARIFY_REASONS.has(validated.reason) || hasRef) && requested);
-    if (!forThisClause) continue;
+    if (!forThisClause) {
+      if (!validated.ok) detail = `invalid:${validated.reason}`;
+      continue;
+    }
     // CA W1 / Codex P2: references first, before any clarification — a payload that points back (a `ref`, a deictic-only
     // or determiner-led canonical span, the determiner grammar on the clause) is never written and never asked about.
     if (hasRef || nlWriteClausePointsBack(clause, spans) || (!validated.ok && validated.reason === 'deictic-payload')) {
@@ -98,5 +122,5 @@ export function agentReadWriteProbeResult(
     if (validated.ok && output.ambiguity === 'CLEAR') return { kind: 'write', entryId: output.entryId, clause };
     if (requested) clarify ??= clause;
   }
-  return clarify !== undefined ? { kind: 'clarify', entryId: output.entryId, clause: clarify } : { kind: 'stands' };
+  return clarify !== undefined ? { kind: 'clarify', entryId: output.entryId, clause: clarify } : { kind: 'stands', detail };
 }

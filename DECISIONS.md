@@ -29854,3 +29854,34 @@ project-token release drop included). The release-order paragraphs of the earlie
   note before any missing or ungrounded detail could make it a clarification ("그 첫 회의 제목으로 알림 만들어줘" with no time →
   note). Tests: three quote forms, the missing-time and NEEDS_CLARIFICATION variants, a quoted list reference, a quoted
   plain payload that stays a write.
+
+### ADR-0121 S2 note — the agent-plan gate on 5c09fee4 (FAILED 0/3): offline classification (2026-10-26)
+
+Report `gates-s2p3-5c09fee4-20261026b` (probe outcomes and latency recorded; no raw answers). Runs: multi-step 95.2 /
+91.6 / 95.8%, one-step 95.9 / 96.2 / 95.9%, one wrong per run (ap-n004 ×2, ap-n129), help captures within the allowance.
+
+| Class | Cases | Finding / action |
+|---|---|---|
+| **Code — fixed** | the probe fired on ~45 cases per run, mostly correct plans (e.g. "할 일 목록 보여줘" with `todo.list` planned) | `agentUncoveredClauses` ignored multi-word aliases ("할 일"); they now cover their clause as a phrase. Golds whose own plan leaves a clause: 45 → 37 (agent-plan 20, nl-intent 17). |
+| **Code — fixed** | ap-n129 (1/3: `jira.issues` alone, probe `stands`) | "summarize the second one" is `item.summarize` (ITEM_READ), which the probe refused outright, so the read plan stood against a `read-and-note` gold. An ITEM_READ with a list reference in a clause naming it is now decision (f)'s `note` (`itemRead`); the scorer accepts it ONLY where the gold expects a note (it never excuses another plan). |
+| **Code — diagnostics added** | ap-n004 (2/3: `todo.list` alone, probe `stands`) | The probe's A6 answer is not in the report. The judge returns `write` for `todo.add {title: 장보기}` on "장보기 추가해줘" (tested), so the selector answered none or another entry — most likely because the clause-only prompt (CA W2) drops the destination the read clause named ("할 일 목록 … 장보기 추가해줘"). Records now carry closed `probeEntry` / `probeDetail` (`none`, `not-action`, `not-write`, `not-requested`, `invalid:<reason>`, `item-read`). |
+| Model — reference step dropped | ap-p118, p119, p120, p122 (1–2 runs each; also the jira.release per-entry misses) | The planner answered the release read alone where the owner asked for the issues' details. |
+| Model — summaries / args / periods | ap-p093, p098, p115 (summaries); ap-p095, p127, p140, p164, p101, p038, p045, p079, p116 (args); ap-p033, p043, p167 (`range-unnamed`); ap-p048, p097 (timeouts); ap-p083 (malformed); ap-p121 (probe timeout) | Variance of the known kinds; the run-2 drop (91.6%) is these plus four reference-step drops. |
+| Model — help boundary | help-012, help-040, help-042 (none), help-016 (mail.list) | The read prompt's help / other-app boundary (rule 3), as in the D12 read gates; not a P3 change. |
+| **Gold question (owner)** | ap-p181, ap-p182 (`args`: help.topic with a topic) | The capability-help golds (2026-10-26) expect `{}`; the planner names the topic the quoted phrase is about (e.g. calendar / reminder). Accept a topic, or keep `{}`? |
+| Gold / model | ap-p183, ap-p184 (none, 1 run) | Recently relabelled capability questions about a phrasing; the planner sometimes reads them as chit-chat. |
+
+**Recommendations.**
+1. **Owner / CA decision — the probe prompt.** Build the probe's A6 selection prompt over the whole message again (so the
+   selector sees the destination the read clause names) while the selection is still validated with the uncovered clause
+   ALONE as grounding: the guarantee that no read-clause word reaches the write args is the validation, which is
+   structural; the clause-only prompt (CA W2) is defence in depth that costs ap-n004. Decide with the next gate's
+   `probeDetail` data.
+2. **Owner / CA decision — a probe precondition.** Measured on the golds after the coverage fix, 37 cases still probe
+   (greetings, summary and quoted clauses); with the precondition "the uncovered clause holds an A6 write entry's own
+   alias or action word (`actionGrounding`), or a write grammar claims it" only 5 would. It narrows the ratified trigger,
+   so it needs the owner; it would remove most probe calls and the probe-timeout risk on correct plans (ap-p121).
+3. **Planner prompt v8: warranted for one rule only.** Rule 9 should say plainly that a release step lists the issues
+   and does not show their details, so a request for the details of a release's issues always needs the `jira.issues`
+   reference step (default take 10). No example copied from the gold; RAG-0 lint; a v8 gate measures it. Nothing else
+   in this run calls for a planner change (the help misses belong to the read prompt's rule 3).

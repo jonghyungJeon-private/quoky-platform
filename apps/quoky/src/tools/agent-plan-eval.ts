@@ -771,6 +771,12 @@ export function readWriteProbeClausesOf(golden: AgentPlanEvalCase, raw: string, 
   return validation.ok ? agentReadWriteProbeClauses(validation.plan, prepared.ctx.groundingText) : [];
 }
 
+/** The probe's stand detail as a closed value (`invalid:<closed validation reason>` or one of the fixed details). */
+function closedProbeDetail(detail: string): string {
+  if (['malformed', 'none', 'not-action', 'not-write', 'not-requested'].includes(detail)) return detail;
+  return /^invalid:[a-z-]+$/.test(detail) ? detail : 'other';
+}
+
 /** The probe result each `readWrite` gold outcome expects. */
 const READ_WRITE_PROBE_OF: Readonly<Record<string, 'write' | 'note' | 'clarify' | 'stands'>> = {
   'read-and-write': 'write',
@@ -792,18 +798,20 @@ export function applyReadWriteProbe(
   probeRaw: string,
   clauses: readonly string[],
   fixture: AgentPlanCorpus['fixture'],
-): AgentPlanScore & { readonly probe: 'write' | 'note' | 'clarify' | 'stands' } {
+): AgentPlanScore & { readonly probe: 'write' | 'note' | 'clarify' | 'stands'; readonly probeEntry?: string; readonly probeDetail?: string } {
   const result = agentReadWriteProbeResult(probeRaw, clauses, PROBE_OFFERED, { now: fixture.now as AgentPlanValidationContext['now'], timeZone: fixture.timeZone });
-  if (result.kind === 'stands') return { ...score, probe: 'stands' };
+  if (result.kind === 'stands') return { ...score, probe: 'stands', ...(result.detail !== undefined ? { probeDetail: closedProbeDetail(result.detail) } : {}) };
   const { diff: _diff, diffStep: _diffStep, ...rest } = score;
   const entry = isNlActionEntryId(result.entryId) ? result.entryId : 'unknown';
   const reason = `${result.kind}:${entry}`;
   const outcome = result.kind === 'write' ? 'read-write' : result.kind === 'note' ? 'read-note' : 'read-clarify';
   const expected = golden.readWrite !== undefined ? READ_WRITE_PROBE_OF[golden.readWrite.outcome] : undefined;
   const negative = golden.gold === 'none' || isAgentPlanAskExpect(golden.gold);
-  if (expected !== undefined && expected !== result.kind) return { ...rest, outcome: negative ? 'wrong' : 'miss', reason: `probe-mismatch:${reason}`, probe: result.kind };
-  if (expected === undefined && negative && result.kind === 'write') return { ...rest, outcome: 'wrong', reason, probe: result.kind };
-  return { ...rest, outcome, reason, probe: result.kind };
+  // An item-summary note (ITEM_READ, never a write) re-scores only where the gold expects decision (f)'s note.
+  if (result.kind === 'note' && result.itemRead === true && expected !== 'note') return { ...score, probe: 'stands', probeEntry: entry, probeDetail: 'item-read' };
+  if (expected !== undefined && expected !== result.kind) return { ...rest, outcome: negative ? 'wrong' : 'miss', reason: `probe-mismatch:${reason}`, probe: result.kind, probeEntry: entry };
+  if (expected === undefined && negative && result.kind === 'write') return { ...rest, outcome: 'wrong', reason, probe: result.kind, probeEntry: entry };
+  return { ...rest, outcome, reason, probe: result.kind, probeEntry: entry };
 }
 
 export function agentPlanPromptSha256(): string {
@@ -874,6 +882,9 @@ export interface AgentPlanEvalRecord extends AgentPlanScore {
    * (`timeout` / `error`, reason `probe-timeout` / `probe-error`; Codex P2), never silently the planner's.
    */
   readonly probe?: 'write' | 'note' | 'clarify' | 'stands' | 'timeout' | 'error';
+  /** The probe's closed diagnostics (content-free): the A6 entry it picked, or why the plan stood. */
+  readonly probeEntry?: string;
+  readonly probeDetail?: string;
   /** The probe call's latency (counted in the calls, the latency percentiles and the over-bound rate). */
   readonly probeLatencyMs?: number;
 }

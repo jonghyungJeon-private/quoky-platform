@@ -41,9 +41,10 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
 
   it('none, a read, or a malformed answer leaves the read plan standing', () => {
     const clause = ['내일 9시에 출발 알림 만들어줘'];
-    expect(agentReadWriteProbeResult(out('none'), clause, OFFERED, CTX)).toEqual({ kind: 'stands' });
-    expect(agentReadWriteProbeResult(out('calendar.events', { range: 'tomorrow' }), clause, OFFERED, CTX)).toEqual({ kind: 'stands' });
-    expect(agentReadWriteProbeResult('not json', clause, OFFERED, CTX)).toEqual({ kind: 'stands' });
+    // Closed, content-free diagnostics (gate report).
+    expect(agentReadWriteProbeResult(out('none'), clause, OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'none' });
+    expect(agentReadWriteProbeResult(out('calendar.events', { range: 'tomorrow' }), clause, OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'not-action' });
+    expect(agentReadWriteProbeResult('not json', clause, OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'malformed' });
   });
 
   it('CA W2: a requested write with a read-clause word, a missing detail or the selector\'s doubt is the A6 clarification, never written or dropped', () => {
@@ -55,7 +56,7 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
     expect(agentReadWriteProbeResult(out('todo.add', {}), ['할 일 추가해줘'], OFFERED, CTX)).toMatchObject({ kind: 'clarify', entryId: 'todo.add' });
     expect(agentReadWriteProbeResult(out('reminder.create', { body: '운동' }), ['운동 알림 추가해줘'], OFFERED, CTX)).toMatchObject({ kind: 'clarify', entryId: 'reminder.create' });
     // A clause that neither names the entry nor is claimed by a write grammar is no request: the plan stands.
-    expect(agentReadWriteProbeResult(out('todo.add', {}), ['고마워'], OFFERED, CTX)).toEqual({ kind: 'stands' });
+    expect(agentReadWriteProbeResult(out('todo.add', {}), ['고마워'], OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'invalid:missing-arg' });
   });
 
   it('CA W1: a payload that points back is never written (note): a determiner span or a deictic-only payload', () => {
@@ -64,8 +65,18 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
     expect(agentReadWriteProbeResult(out('todo.add', { title: '그거' }), ['그거 할 일로 추가해줘'], OFFERED, CTX)).toMatchObject({ kind: 'note' });
   });
 
-  it('Codex P2: only a write by catalog risk counts; item.summarize (ITEM_READ) leaves the plan standing', () => {
-    expect(agentReadWriteProbeResult(out('item.summarize', { source: 'mail', ref: '#2' }), ['두 번째 메일 요약해줘'], OFFERED, CTX)).toEqual({ kind: 'stands' });
+  it('Codex P2 / gate on 5c09fee4: item.summarize is never a write; with a list reference in a clause naming it, it is decision (f)\'s note (itemRead)', () => {
+    expect(agentReadWriteProbeResult(out('item.summarize', { source: 'mail', ref: '#2' }), ['두 번째 메일 요약해줘'], OFFERED, CTX)).toEqual({ kind: 'note', entryId: 'item.summarize', clause: '두 번째 메일 요약해줘', itemRead: true });
+    expect(agentReadWriteProbeResult(out('item.summarize', { source: 'jira', ref: '#2' }), ['summarize the second one'], OFFERED, CTX)).toMatchObject({ kind: 'note', itemRead: true });
+    // No reference: no note, the plan stands.
+    expect(agentReadWriteProbeResult(out('item.summarize', { source: 'mail' }), ['요약해줘'], OFFERED, CTX)).toEqual({ kind: 'stands', detail: 'not-write' });
+  });
+
+  it('gate on 5c09fee4: a multi-word alias covers its clause ("할 일 목록 보여줘" with todo.list planned is no uncovered clause)', () => {
+    const plan = runPlan('할 일 목록 보여주고 장보기 추가해줘', [{ entryId: 'todo.list', args: {} }]);
+    expect(agentReadWriteProbeClauses(plan, '할 일 목록 보여주고 장보기 추가해줘')).toEqual(['장보기 추가해줘']);
+    const both = runPlan('드라이브 최근 파일이랑 메일함이랑 할 일 목록 보여줘', [{ entryId: 'drive.files', args: {} }, { entryId: 'mail.list', args: {} }, { entryId: 'todo.list', args: {} }]);
+    expect(agentReadWriteProbeClauses(both, '드라이브 최근 파일이랑 메일함이랑 할 일 목록 보여줘')).toEqual([]);
   });
 
   it('Codex P2: canonical-equivalent outputs never differ — a quoted determiner payload is a note like the unquoted one', () => {

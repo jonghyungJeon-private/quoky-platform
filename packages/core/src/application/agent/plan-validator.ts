@@ -289,13 +289,20 @@ export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], grou
   for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
   if (clauses.size < 2) return [];
   const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
-  const names = reads.flatMap((step) => [...step.entry.aliases, ...(step.entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0 && !name.includes(' ')));
+  const allNames = reads.flatMap((step) => [...step.entry.aliases, ...(step.entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0));
+  const names = allNames.filter((name) => !name.includes(' '));
+  // Gate on 5c09fee4: a multi-word alias ("할 일", "google drive") is a phrase of the clause; ignoring it left "할 일 목록
+  // 보여줘" uncovered while `todo.list` was planned, and the probe fired on correct plans.
+  const phrases = allNames.filter((name) => name.includes(' '));
   const values = reads.flatMap((step) => Object.values(step.args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : [])));
   const out: string[] = [];
   for (const words of clauses.values()) {
     const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
     const normalized = normalizeForMatch(text);
-    const mentioned = words.some((token) => names.some((name) => aliasStarts(token.word, name))) || values.some((value) => normalized.includes(value));
+    const mentioned =
+      words.some((token) => names.some((name) => aliasStarts(token.word, name))) ||
+      phrases.some((phrase) => ` ${normalized} `.includes(` ${phrase}`)) ||
+      values.some((value) => normalized.includes(value));
     if (!mentioned) out.push(text);
   }
   return out;
