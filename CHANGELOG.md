@@ -59,6 +59,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     statement.
   - `a2-data.test.ts`: shape, count, duplicate, hash and RAG-0 contamination checks over every golden corpus.
 - **Not implemented.** The `answer` step, the topic path and every gate run stay as ratified.
+## Unreleased — S2 review fixes of f3e59814 (branch `claude/v5-s2-p3`, shadow only)
+
+- **Fixed (not live).** "3번 할 일로 추가하고 요약해줘" is never read as an item summary; a calendar read is narrowed to
+  meetings only when its clause says 회의 / 미팅 and not 일정 / 캘린더; "취소된 회의" or "완료된 거 보여줘" no longer adds the
+  "따로 말씀해 주세요" note.
+
 ## Unreleased — S2 owner decisions on the e3462f46 gate (branch `claude/v5-s2-p3`, shadow only)
 
 - **Changed (not live).** Core puts each summary right after the reads it covers; a calendar read in a clause that says

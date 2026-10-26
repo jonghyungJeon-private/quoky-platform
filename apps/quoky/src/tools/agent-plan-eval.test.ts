@@ -113,8 +113,8 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     // The owner's review of 2026-10-21: 258 approved; 15 fixed or unreviewed and 45 held (decisions (d) and (e)) pending.
     // + ap-p180 (was ap-n121) and ap-p177 (was ap-n120), approved by the owner's decisions of 2026-10-23.
     expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(260);
-    // + ap-n145 and ap-n146 (position-write, review of 0bde31cc, agent-drafted): pending the owner.
-    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(60);
+    // + ap-n145..ap-n148 (position-write, reviews of 0bde31cc and f3e59814, agent-drafted): pending the owner.
+    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(62);
     expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
     // ap-n085's suggestion is shrunk to fit the 10-query charge (CA re-check W2): still 12 asks.
     expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));

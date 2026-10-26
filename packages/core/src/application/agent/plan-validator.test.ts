@@ -5,6 +5,7 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan, type AgentPlanStep } from './plan-schema';
 import {
+  agentClauseHasWriteWord,
   agentUncoveredClauses,
   AGENT_BRIEF_MAX_CONNECTOR_CALLS,
   AGENT_RUN_MAX_CONNECTOR_CALLS,
@@ -781,6 +782,45 @@ describe('owner decisions of 2026-10-26 (e3462f46 gate): Core\'s final plan orde
     // A word inside the step's own keyword is the event title (calendar-046), and a negated or excluded clause is unchanged.
     expect(timed('다음 주 주간회의 일정 보여줘', [read('calendar.events', { range: 'next-week', keyword: '주간회의' })])).toBe(false);
     expect(timed('내일 회의 빼고 일정 보여줘', [read('calendar.events', { range: 'tomorrow' })])).toBe(false);
+  });
+});
+
+describe('review of f3e59814: two write vocabularies, a narrower timedOnly and predicate-only write words', () => {
+  const at = (step: number, field: string, n: number) => ({ step, field, take: 1, at: n });
+  const run = (text: string, steps: AgentPlanStep[]) => {
+    const result = validateAgentPlan(plan(steps), ctx(text));
+    if (!result.ok || result.plan.kind !== 'run') throw new Error(JSON.stringify(result));
+    return result.plan;
+  };
+
+  it('Codex P2-1 / CA W2: the position guard uses the BROAD catalog vocabulary (creations included)', () => {
+    const mail = [read('mail.list'), read('mail.list', {}, at(1, 'messageIds', 3)), summary([2])];
+    expect(validateAgentPlan(plan(mail), ctx('메일 보여주고 3번 할 일로 추가하고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    expect(validateAgentPlan(plan(mail), ctx('메일 보여주고 3번 알림 걸고 요약해줘'))).toMatchObject({ ok: false, reason: 'ref-position', step: 2 });
+    // The creation clause is no position clause and stays uncovered, so the probe sees it.
+    const text = 'list my jira issues and add a todo to write the first draft and summarize the first one';
+    const got = run(text, [read('jira.issues'), read('jira.issues', {}, at(1, 'issueKeys', 1)), summary([2])]);
+    expect(agentUncoveredClauses(got.steps, text)).toEqual(['add a todo to write the first draft']);
+  });
+
+  it('Codex P2-2 / CA W1: timedOnly is not set by another read\'s value, another alias of the calendar or another entry\'s clause', () => {
+    const timed = (text: string, steps: AgentPlanStep[]) => run(text, steps).steps.some((step) => step.kind === 'read' && step.entry.id === 'calendar.events' && step.args.timedOnly === true);
+    const calAndMail = [read('calendar.events', { range: 'this-week' }), read('mail.list')];
+    expect(timed('내일 일정 및 회의록 문서 찾아줘', [read('calendar.events', { range: 'tomorrow' }), read('drive.files', { name: '회의록' })])).toBe(false);
+    expect(timed('이번 주 회의랑 연차 일정 보여주고 메일도 보여줘', calAndMail)).toBe(false);
+    expect(timed('이번 주 회의 일정이랑 종일 일정, 그리고 메일', calAndMail)).toBe(false);
+    expect(timed('이번 주 일정 전부 보여줘 회의 포함해서, 그리고 메일', calAndMail)).toBe(false);
+    expect(timed('이번 주 일정 보여주고 메일에서 회의 관련 거', calAndMail)).toBe(false);
+    // Still set when the calendar's own clause names it by a meeting word alone.
+    expect(timed('이번 주 회의랑 메일 보여줘', calAndMail)).toBe(true);
+    expect(timed('내일 회의 뭐 있어', [read('calendar.events', { range: 'tomorrow' })])).toBe(true);
+  });
+
+  it('CA S1: a change word counts only on the clause predicate, never as a modifier', () => {
+    for (const text of ['취소된 회의', '완료된 거 보여줘', '취소된 일정 알려줘', 'show the completed ones']) expect(agentClauseHasWriteWord(text), text).toBe(false);
+    for (const text of ['내일 거는 꺼줘', '두 번째 거 삭제해줘', '2번 취소', '방금 거 되돌려', 'cancel the second one', 'please undo that']) expect(agentClauseHasWriteWord(text), text).toBe(true);
+    // An item-removal request on the predicate stays a change request (the note is the fail-safe answer).
+    expect(agentClauseHasWriteWord('완료된 거는 빼줘')).toBe(true);
   });
 });
 

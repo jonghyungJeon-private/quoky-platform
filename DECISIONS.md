@@ -30045,3 +30045,27 @@ Multi-step: 483 + 9 (`timedOnly`) + 5 (order only: ap-p098 ×3 with two digests,
 Remaining multi-step misses are summary scope (ap-p093 r2/r3, ap-p107, ap-p102, ap-p119, ap-p083, ap-p185 r3), other args
 (ap-p045 ×2, ap-p116, ap-p038, ap-p160), two timeouts and one `range-unnamed`.
 
+### ADR-0121 S2 note — review fixes of f3e59814 (Codex 2 × P2, CA PASS-with-fixes; no prompt change, no new word list)
+
+1. **Two write vocabularies (Codex P2-1 / CA W2).** The position-reference guard uses the BROAD catalog set again (every
+   A6 write entry's `actionGrounding` and aliases, creations included): "메일 보여주고 3번 할 일로 추가하고 요약해줘" and "… 3번
+   알림 걸고 요약해줘" are `ref-position`; in "list my jira issues and add a todo to write the first draft and summarize the
+   first one" the creation clause is no position clause and stays uncovered for the probe. The narrow item-acting set
+   (complete, cancel, reminder cancel, undo) is used ONLY for the ap-n011 never-silent note. Data: ap-n147, ap-n148
+   (`position-write`, pending the owner).
+2. **`timedOnly` narrowed (Codex P2-2 / CA W1); the plan inference is kept, no scorer tolerance.** Every planned read's
+   value is set aside first, also in a one-clause message ("내일 일정 및 회의록 문서 찾아줘"); a clause that names another
+   planned read's entry is not the step's own; and the flag is set only when the step's clauses name the calendar by its
+   meeting words alone — any other catalog alias of the entry that is not a flag word ("일정", "캘린더", "스케줄", "달력",
+   "calendar") means the whole calendar was asked for. The four CA probes leave it unset. Cost on the golds: none — the
+   replays of ap-p127, ap-p135, ap-p036, ap-p143 and calendar-005 / -018 / -035 without the flag still get it, so the
+   e3462f46 re-score stays 497/513 (96.9%) pooled.
+3. **Predicate-only change words (CA S1).** `agentClauseHasWriteWord` counts a change word only on the clause's predicate:
+   a Korean word in a request or imperative form (`nlIsRequestForm`: "꺼줘", "삭제해줘", "되돌려") or a bare action noun
+   closing the clause ("2번 취소"); in English the clause's first word after the request leads (`NL_EN_REQUEST_LEADS`):
+   "cancel the second one". "취소된 회의", "완료된 거 보여줘", "show the completed ones" no longer count. "완료된 거는
+   빼줘" still does: its predicate "빼줘" is an item-removal request, and the note is the fail-safe answer to that
+   ambiguity (for the CA). English "mark the first one done" is not recognized (no write word leads it): it stays
+   standing, as before this net. Boundary: `application/agent` may import `nl-routing/garbled-action` (the request-lead
+   set; pure).
+

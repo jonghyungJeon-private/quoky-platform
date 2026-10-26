@@ -24,7 +24,7 @@ const SOURCES = readdirSync(DIR)
 // `request-shape` (owner decision of 2026-10-26, a clause-grounded flag): the pure exclusion / negation markers.
 // `action-entries` (owner decision of 2026-10-26, the position reference): the A6 catalog data (`item.summarize`'s source
 // enum, the item-summary sources) and the A6-D2 index grounding (`nlIndexWording`); pure data and grammar, no I/O.
-const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause', 'action-entries', 'request-shape'];
+const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause', 'action-entries', 'request-shape', 'garbled-action'];
 
 function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;

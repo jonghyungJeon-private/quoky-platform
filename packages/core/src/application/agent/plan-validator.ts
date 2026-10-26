@@ -3,7 +3,8 @@ import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
-import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
+import { nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
+import { NL_EN_REQUEST_LEADS } from '../nl-routing/garbled-action';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
@@ -326,14 +327,27 @@ function withClauseGroundedFlags(steps: readonly ValidatedAgentStep[], ctx: Agen
     if (step.kind !== 'read' || step.ref !== undefined) return step;
     const specs = step.entry.args.filter((spec) => spec.kind === 'flag' && spec.flagGrounding !== undefined && step.args[spec.name] !== true);
     if (specs.length === 0 || reads.filter((read) => read.entry.id === step.entry.id).length > 1) return step;
-    const otherValues = reads.filter((read) => read !== step).flatMap((read) => stringValues(read.args));
-    const own = clauses.length <= 1 ? clauses : clauses.filter((clause) => clauseNamesEntry(clause, step.entry) && !otherValues.some((value) => clause.normalized.includes(value)));
+    const others = reads.filter((read) => read !== step);
+    // Every read's value is set aside first: a word inside the step's own value is that value's (the keyword "주간회의" is an
+    // event title, calendar-046), and one inside another read's value is that read's ("회의록 문서", also in a one-clause
+    // message; Codex P2-2 of f3e59814).
+    const values = reads.flatMap((read) => stringValues(read.args)).sort((a, b) => b.length - a.length);
+    const residue = (clause: PlanClause): string => values.reduce((text, value) => text.split(value).join(' '), clause.normalized);
+    const own = (clauses.length <= 1 ? clauses : clauses.filter((clause) => clauseNamesEntry(clause, step.entry))).filter(
+      // CA W1: a clause naming another planned read's entry is not this step's own.
+      (clause) => !others.some((other) => other.entry.id !== step.entry.id && clauseNamesEntry({ ...clause, normalized: residue(clause) }, other.entry)),
+    );
     const plain = own.filter((clause) => !nlHasExclusionOrNegation(clause.text));
     if (plain.length === 0 || plain.length !== own.length) return step;
-    // A word inside the step's own value is that value's (the keyword "주간회의" is an event title, calendar-046).
-    const ownValues = stringValues(step.args);
-    const residue = (clause: PlanClause): string => ownValues.reduce((text, value) => text.split(value).join(' '), clause.normalized);
-    const set = specs.filter((spec) => plain.some((clause) => (spec.flagGrounding ?? []).some((word) => groundingWordIn(residue(clause), normalizeForMatch(word)))));
+    const set = specs.filter((spec) => {
+      const flagWords = (spec.flagGrounding ?? []).map((word) => normalizeForMatch(word));
+      // CA W1 (review of f3e59814): only when the step's clauses name the entry by those words alone. Another alias of the
+      // entry ("일정", "캘린더", "스케줄": the catalog's own aliases that are not flag words) means the owner asked for the
+      // whole calendar ("이번 주 회의랑 연차 일정", "일정 전부 … 회의 포함해서").
+      const broader = step.entry.aliases.map((alias) => normalizeForMatch(alias)).filter((alias) => alias.length > 0 && !flagWords.includes(alias));
+      if (plain.some((clause) => broader.some((alias) => groundingWordIn(residue(clause), alias)))) return false;
+      return plain.some((clause) => flagWords.some((word) => groundingWordIn(residue(clause), word)));
+    });
     if (set.length === 0) return step;
     const args: Record<string, NlArgs[string]> = { ...step.args };
     const provenance: Record<string, AgentArgProvenance> = { ...step.provenance };
@@ -426,22 +440,12 @@ function stringValues(args: Readonly<Record<string, unknown>>): string[] {
 }
 
 /**
- * Whether a clause of the owner's prose holds a write word of the catalog (the A6 write entries' `actionGrounding`): the position reference check and, owner decision of 2026-10-26 (ap-n011), the read + write probe's
- * never-silent rule. Owner text, never logged. Pure.
+ * Whether a clause of the owner's prose asks for a write on an existing item: the A6 write entries' `actionGrounding` of
+ * the item-acting writes, on the clause's predicate (`writeWordOnPredicate`): the read + write probe's never-silent rule
+ * (owner decision of 2026-10-26, ap-n011). Owner text, never logged. Pure.
  */
 export function agentClauseHasWriteWord(text: string): boolean {
-  return hasWriteVocabulary({ text, normalized: normalizeForMatch(text), words: [] });
-}
-
-let writeVocabulary: readonly string[] | undefined;
-/**
- * CA W1 (review of 0bde31cc): whether the clause holds a write word of the catalog — an A6 write entry's own
- * `actionGrounding` vocabulary of the writes that act on an existing item (complete, cancel, undo: the closed lists the A6
- * vetoes use; no list of its own). Not the entries' noun aliases ("알림" / "reminder" also name the reminder list) and not
- * a creation's verbs ("알려줘" is also a plain read request): both marked plain reads (brief-005, brief-017; e3462f46).
- */
-function hasWriteVocabulary(clause: PlanClause): boolean {
-  writeVocabulary ??= Object.values(NL_ACTION_ENTRIES)
+  itemWriteVocabulary ??= Object.values(NL_ACTION_ENTRIES)
     // The action words only, never an entry's noun alias ("알림", "reminder" also name the reminder LIST), and only of the
     // writes that act on an EXISTING item (no required payload span: complete, cancel, undo). A creation's own verbs are
     // also plain read requests ("알려줘": brief-017 "… 다 합쳐서 오늘 거 알려줘"); a creation carries its payload, which the
@@ -451,6 +455,46 @@ function hasWriteVocabulary(clause: PlanClause): boolean {
         ? [...(entry.actionGrounding ?? [])]
         : [],
     )
+    .map((word) => normalizeForMatch(word))
+    .filter((word) => word.length > 0);
+  return writeWordOnPredicate(text, itemWriteVocabulary);
+}
+
+let itemWriteVocabulary: readonly string[] | undefined;
+
+/**
+ * CA S1 (review of f3e59814): a write word counts only as the clause's predicate, never as a modifier ("취소된 회의", "완료된
+ * 거 보여줘"). Korean: a word in a request or imperative form (`nlIsRequestForm`: "꺼줘", "취소해", "되돌려") or the
+ * clause's last word, that holds the write word. English: the clause's first word after the request leads
+ * (`NL_EN_REQUEST_LEADS`), the imperative ("cancel the second one"). Existing grammar only.
+ */
+function writeWordOnPredicate(text: string, vocabulary: readonly string[]): boolean {
+  const words = normalizeForMatch(text).split(/\s+/u).filter((word) => word.length > 0);
+  const latin = (word: string): boolean => /^[a-z0-9 -]+$/u.test(word);
+  const korean = vocabulary.filter((word) => !latin(word));
+  const last = words.at(-1)?.replace(/[.!?~]+$/u, '') ?? '';
+  for (const [index, word] of words.entries()) {
+    if (!korean.some((write) => word.includes(write))) continue;
+    if (nlIsRequestForm(word)) return true;
+    // A bare action noun closing the clause is a command ("2번 취소").
+    if (index === words.length - 1 && korean.includes(last)) return true;
+  }
+  let head = 0;
+  while (head < words.length && NL_EN_REQUEST_LEADS.has(words[head] as string)) head += 1;
+  const rest = words.slice(head).join(' ');
+  return vocabulary.filter(latin).some((write) => rest === write || rest.startsWith(`${write} `));
+}
+
+let writeVocabulary: readonly string[] | undefined;
+/**
+ * CA W1 (review of 0bde31cc), kept BROAD by the review of f3e59814 (Codex P2-1 / CA W2): whether the clause holds any write
+ * word of the catalog — every A6 write entry's `actionGrounding` and aliases (creations included: "3번 할 일로 추가하고",
+ * "3번 알림 걸고"). Used only by the position-reference guard, which fails safe (a refused position, never a summary);
+ * the ap-n011 note uses the narrow, predicate-only {@link agentClauseHasWriteWord}.
+ */
+function hasWriteVocabulary(clause: PlanClause): boolean {
+  writeVocabulary ??= Object.values(NL_ACTION_ENTRIES)
+    .flatMap((entry) => (entry !== undefined && (entry.risk === 'LOCAL_WRITE' || entry.risk === 'EXTERNAL_WRITE') ? [...(entry.actionGrounding ?? []), ...entry.aliases] : []))
     .map((word) => normalizeForMatch(word))
     .filter((word) => word.length > 0);
   return writeVocabulary.some((word) => groundingWordIn(clause.normalized, word));
