@@ -105,19 +105,30 @@ describe('context eval runner — dry, over the production AppModule', () => {
     const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
     let selector = calendarTomorrow;
     const reply = '위에서 Quoky가 보여드린 내일 일정 목록의 내용은 제가 볼 수 없어서, 어떤 면접인지는 알 수 없어요.\n다시 보고 싶으시면 "내일 일정"이라고 보내 주세요.\n면접 직무를 알려주시면 질문을 뽑아드릴게요.';
-    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => reply, summarize: async () => '' });
+    const weather = '실시간 날씨는 확인할 수 없어요. 기상 앱에서 내일 예보를 확인해 보세요.';
+    let chatReply = reply;
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => chatReply, summarize: async () => '' });
     const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
     const listing = await world.turn(owner, '내일 일정 뭐있어', owner.dm);
     expect(listing.reply).toContain('1차 면접_AI Agent_김하늘');
     selector = none;
+    // CA review P1-1: right after the listing, a true unrelated limitation is kept as written.
+    chatReply = weather;
+    expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
+    chatReply = reply;
     const followUp = await world.turn(owner, '내일 면접 기준으로 면접 질문 좀 뽑아줘', owner.dm);
     expect(followUp.chatPrompts).toHaveLength(1);
     expect(followUp.reply).toBe('면접 직무를 알려주시면 질문을 뽑아드릴게요.');
     // ADR-0110 D4: the chat prompt still carries no event text.
     expect(followUp.chatPrompts[0]).not.toContain('1차 면접_AI Agent_김하늘');
-    // Owner decision D1: a chat turn keeps the listing's record (one turn older), so the guard still holds a turn later.
+    // Owner decision D1: a chat turn keeps the listing's record (one turn older), so a denial that refers to the listing is
+    // still dropped at turns >= 1 (CA review P1-1: only with the reference condition).
     const later = await world.turn(owner, '고마워', owner.dm);
     expect(later.reply).toBe('면접 직무를 알려주시면 질문을 뽑아드릴게요.');
+    // A true limitation that does not refer to the listing is kept, at turns >= 1 too.
+    chatReply = weather;
+    expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
+    chatReply = reply;
     // Without a listing record (help ends the window), the reply is left as it is.
     await world.turn(owner, '도움말', owner.dm);
     const unrelated = await world.turn(owner, '고마워', owner.dm);

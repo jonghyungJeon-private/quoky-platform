@@ -30366,6 +30366,20 @@ Source: the first `eval:context` Strict run and its classification (`docs/eval/c
     same canonical args).
   - No word list is added, which keeps the #280 condition "not extended with words".
   - ADR-0110 D4 is unchanged: the guard only removes sentences and reads no content.
+  - **CA review P1-1 (2026-10-27): the reference condition.** As built, the guard dropped any read-incapability sentence
+    that named no other source, whether or not it was about the listing. Since D1 keeps the record across chat turns for
+    up to 30 minutes, a true, unrelated limitation was deleted: calendar listing, then "내일 날씨 어때?", and "실시간 날씨는
+    확인할 수 없어요." was replaced by the listing ask.
+    - Now a denial is dropped only when it refers to the shown listing: it names that entry's own catalog words (source
+      names, aliases (the list nouns the D9 guard also uses), label), or it names Quoky (or "above") as the one that
+      showed a list. It must also name no other offered source.
+    - Every other sentence is left to the D9 guard.
+    - **Turn age.** The CA suggested limiting the guard to turns 0. It is kept while the record is held, but only with
+      the reference condition. Under D1 the listing is still on the owner's screen and is still the follow-up context,
+      so a denial that refers to it is just as false one chat turn later. An unrelated sentence is never touched at any
+      age.
+    - Tests: an unrelated limitation is kept right after a listing and at turns ≥ 1; a referencing denial is dropped at
+      turns 1.
 - **P4 implements ADR-0112 amendment 1 S3 now, for the not-yet-undoable state** (Accepted 2026-10-15; amendment 2;
   S9).
   - `LastActionSource` gains `slack`, `jira` and `calendar`.

@@ -69,6 +69,19 @@ describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', ()
       expect(guardShownListingDenials(plain, calendar, CONFIGURED, 'ko', rerun)).toEqual({ text: plain, guarded: false });
     });
 
+    it('CA review P1-1: only a denial that refers to the shown listing is dropped; a true unrelated limitation stays', () => {
+      // Right after a calendar listing, the owner asks about the weather: the limitation is true and is not about the listing.
+      const weather = '실시간 날씨는 확인할 수 없어요. 기상 앱에서 내일 예보를 확인해 보세요.';
+      expect(guardShownListingDenials(weather, calendar, CONFIGURED, 'ko')).toEqual({ text: weather, guarded: false });
+      const en = "I can't check live stock prices. A finance app will have them.";
+      expect(guardShownListingDenials(en, calendar, CONFIGURED, 'en')).toEqual({ text: en, guarded: false });
+      // The listing's own catalog words (an alias such as 회의) or Quoky as the one that showed it make the reference.
+      expect(guardShownListingDenials('그 회의 내용은 제가 확인할 수 없어요. 직무를 알려 주세요.', calendar, CONFIGURED, 'ko').text).toBe('직무를 알려 주세요.');
+      expect(guardShownListingDenials('Quoky가 위에 보여드린 건 제가 볼 수 없어요. 직무를 알려 주세요.', calendar, CONFIGURED, 'ko').text).toBe('직무를 알려 주세요.');
+      // A mixed reply keeps the unrelated sentence and drops only the referencing one.
+      expect(guardShownListingDenials('일정 내용은 제가 볼 수 없어요. 실시간 날씨는 확인할 수 없어요.', calendar, CONFIGURED, 'ko')).toEqual({ text: '실시간 날씨는 확인할 수 없어요.', guarded: true });
+    });
+
     it('a reply left empty gets the fixed ask (KO and EN), never a command to show the listing again', () => {
       expect(guardShownListingDenials('내일 일정은 제가 확인할 수 없어요.', calendar, CONFIGURED, 'ko')).toEqual({ text: renderShownListingAsk('ko'), guarded: true });
       expect(renderShownListingAsk('en')).toContain('The list Quoky showed above is on your screen');

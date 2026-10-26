@@ -3813,9 +3813,11 @@ export class ConversationRuntime {
   }
 
   /**
-   * #280 follow-up: the offered READ listing the previous turn showed (`lastSelection`, which a chat turn clears, so it
-   * is present only right after a listing), with a predicate telling whether a quoted command maps to exactly that
-   * listing (same entry and canonical args) through the handlers' own pure Class B probes. No read, no write, no provider.
+   * #280 follow-up: the offered READ listing Core still holds as `lastSelection` (right after the listing, and, since owner
+   * decision D1, across chat turns within its 30 minutes; any other turn clears it), with a predicate telling whether a
+   * quoted command maps to exactly that listing (same entry and canonical args) through the handlers' own pure Class B
+   * probes. The guard drops only denials that refer to this listing (CA review P1-1), so a held record never deletes an
+   * unrelated true limitation. No read, no write, no provider.
    */
   private nlShownListing(
     message: InboundMessage,

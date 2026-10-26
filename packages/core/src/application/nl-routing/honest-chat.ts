@@ -453,6 +453,12 @@ export interface ShownListing {
 /** Quoted segments of a reply ("…", “…”, ‘…’, `…`, '…' around a whole phrase). */
 const QUOTED_SEGMENT = /"([^"\n]{2,80})"|“([^”\n]{2,80})”|‘([^’\n]{2,80})’|`([^`\n]{2,80})`|(?<![\p{L}\p{N}])'([^'\n]{2,80})'(?![\p{L}\p{N}])/gu;
 
+/**
+ * A sentence that names Quoky (or "above") as the one that showed a list: the reference the #280 note itself gives the
+ * chat reply ("the list Quoky showed above"). A closed form of Quoky's own act, not a phrase list for the owner's words.
+ */
+const SHOWN_BY_QUOKY = /(?:quoky|퀴키|위에서?|above)[^.!?\n]{0,24}?(?:보여|보여\s*드|show(?:ed|n)|list(?:ed)?)/iu;
+
 /** The Korean and English copy that closes a reply whose every sentence denied or re-ran the listing shown above. */
 export function renderShownListingAsk(language: 'ko' | 'en'): string {
   return language === 'en'
@@ -465,8 +471,11 @@ export function renderShownListingAsk(language: 'ko' | 'en'): string {
  * must not tell the owner it cannot see, read or check that listing, and must not send them to show it again. The guard
  * works from Core's own record of what was shown (`listing`: the entry and args of the previous turn's selection), never
  * from the words of the reply:
- *  - a sentence stating a read / see / check incapability (the same closed patterns as the D9 guard) is dropped unless it
- *    names ANOTHER offered source (the D9 guard judges that one);
+ *  - a sentence stating a read / see / check incapability (the same closed patterns as the D9 guard) is dropped ONLY when
+ *    it refers to the listing shown (CA review P1-1, 2026-10-27): it names that listing's own entry (its source names,
+ *    its catalog aliases, the list nouns the D9 guard also uses, or its label), or it names Quoky as the one that showed
+ *    a list above ({@link SHOWN_BY_QUOKY}); and it names no OTHER offered source (the D9 guard judges that one). Every
+ *    other sentence is left to the D9 guard: "실시간 날씨는 확인할 수 없어요." right after a calendar listing is true and stays;
  *  - a sentence quoting a command that Core's own grammar maps to the very listing shown (same entry, same canonical
  *    args; `rerunsListing`, supplied by the runtime from the handlers' pure Class B probes) is dropped;
  *  - every other sentence is kept as written. A reply left empty gets the fixed ask above.
@@ -481,6 +490,11 @@ export function guardShownListingDenials(
 ): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.trim() === '') return { text, guarded: false };
   const ownNames = new Set((listing.entry.sourceNames ?? []).map((name) => name.toLowerCase()));
+  // The words that name the listing shown: the catalog's own words for its entry (no list of this guard's own).
+  const ownWords = [...ownNames, ...listing.entry.aliases, listing.entry.label.ko, listing.entry.label.en]
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length >= 2);
+  const refersToListing = (lower: string): boolean => ownWords.some((word) => lower.includes(word)) || SHOWN_BY_QUOKY.test(lower);
   const otherNames = offered
     .filter((entry) => entry.id !== listing.entry.id)
     .flatMap((entry) => entry.sourceNames ?? [])
@@ -493,7 +507,7 @@ export function guardShownListingDenials(
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
     const lower = sentence.toLowerCase();
-    const denies = (KO_INCAPABLE.test(sentence) || EN_INCAPABLE.test(sentence)) && !otherNames.some((name) => lower.includes(name));
+    const denies = (KO_INCAPABLE.test(sentence) || EN_INCAPABLE.test(sentence)) && refersToListing(lower) && !otherNames.some((name) => lower.includes(name));
     const reruns = [...sentence.matchAll(QUOTED_SEGMENT)].some((match) => {
       const segment = (match.slice(1).find((group) => group !== undefined) ?? '').trim();
       return segment.length > 0 && rerunsListing(segment);
