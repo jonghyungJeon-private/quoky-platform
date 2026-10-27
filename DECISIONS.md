@@ -30853,3 +30853,15 @@ The merge waits until EVERY Strict context run is at or above 95%.
   - Covered: the four 95386868 sentences. "내일 면접이 있는지는 제가 직접 확인할 수 없어요." matches the title word 면접.
     "… the roadmap doc …" ×3 matches the shown item kind "document": the Korean title "로드맵" is not matched across
     languages.
+- **Fix 2, suggestion extraction: the chat-prompt option.** A structural extractor could not tell commands from
+  non-commands without a word list. In the 95386868 replies, real commands and non-commands share every structural
+  form:
+  - a quote followed by an object particle: `내 할 일 보여줘`를 보내 (a command) vs "되돌리기"가 (a mention) and "내일 오후 3시
+    주간 회의"를 취소하려면 (a paraphrase); telling them apart needs the verb ("보내"), which is a word list;
+  - a quote at the start of a list item: - 문서: "2번 문서 요약해줘" (a command) vs 1. **"What does success look like …?"**
+    (an example question); and a command may end in "?" ("다음 회의 언제야?").
+  So, as the owner allowed, the chat prompt now reserves quotes. The D9 fact adds `QUOTES_ARE_COMMANDS_RULE`, with or
+  without action entries: "In a chat reply, quotes and code marks hold only a command the User can send to Quoky as its
+  own message; examples, questions for other people, the User's own earlier words and terms being mentioned are written
+  without quotes." The extractor and the D2 measurement are unchanged: by this contract, every quoted segment is a
+  command.

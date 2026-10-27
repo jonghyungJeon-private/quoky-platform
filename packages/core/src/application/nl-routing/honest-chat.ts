@@ -79,8 +79,19 @@ export function renderConfiguredSourcesFact(
     );
   }
   if (controls !== undefined) parts.push(controls);
+  // Owner decision of 2026-10-28 (fix 2 of the 95386868 analysis): quotes and code marks are reserved for commands.
+  parts.push(QUOTES_ARE_COMMANDS_RULE);
   return parts.join(' ');
 }
+
+/**
+ * Owner decision of 2026-10-28 (fix 2 of the 95386868 context analysis; the chat-prompt option, because a structural
+ * extractor cannot tell a quoted command from a quoted example, question, paraphrase or mention without a word list):
+ * in a chat reply, quotes and code marks hold only a command the User can send to Quoky as its own message.
+ */
+export const QUOTES_ARE_COMMANDS_RULE =
+  'In a chat reply, quotes and code marks hold only a command the User can send to Quoky as its own message; examples, ' +
+  "questions for other people, the User's own earlier words and terms being mentioned are written without quotes.";
 
 /**
  * Context eval 2026-10-26 (P8): the A6-D6 yes/no sentence for the plain fact too. A chat reply runs nothing, and Core

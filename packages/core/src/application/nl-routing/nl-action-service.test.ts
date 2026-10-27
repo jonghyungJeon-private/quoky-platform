@@ -7,7 +7,7 @@ import { LAST_LISTING_METADATA_KEY, withLabelledListing, withListing } from '../
 import { NL_ACTION_ENTRIES } from './action-entries';
 import { ACTION_SWITCH_METADATA_KEY, NlActionSwitch } from './action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { NO_YES_NO_OFFER_RULE, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { NO_YES_NO_OFFER_RULE, QUOTES_ARE_COMMANDS_RULE, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
 import { NL_ACTION_LOG_EVENT, NlActionCaps, renderGarbledAction, type NlActionLevel } from './nl-action-policy';
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
@@ -510,6 +510,10 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
     expect(renderConfiguredSourcesFact(READS, help)).toContain('reply with the exact command to send.');
     // Context eval 2026-10-26 (P8): the plain fact also forbids yes/no offers (a yes to a chat reply runs nothing).
     expect(renderConfiguredSourcesFact(READS, help)).toContain(NO_YES_NO_OFFER_RULE);
+    // Owner decision of 2026-10-28 (fix 2): quotes and code marks are reserved for commands, with or without action entries.
+    expect(renderConfiguredSourcesFact(READS, help)).toContain(QUOTES_ARE_COMMANDS_RULE);
+    expect(renderConfiguredSourcesFact(ALL, help)).toContain(QUOTES_ARE_COMMANDS_RULE);
+    expect(renderConfiguredSourcesFact(READS, [])).toContain(QUOTES_ARE_COMMANDS_RULE);
     expect(renderConfiguredSourcesFact(READS, help)).toContain('a yes, a no or a number sent to a chat reply runs nothing.');
     // The A6 variant keeps its own sentence (unchanged).
     expect(renderConfiguredSourcesFact(ALL, help)).not.toContain(NO_YES_NO_OFFER_RULE);

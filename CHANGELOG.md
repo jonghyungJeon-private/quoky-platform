@@ -17,6 +17,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (chat prompt, owner decision 2026-10-28).** Chat replies keep quotes and code marks for commands to send.
+  Examples, questions for others, paraphrases and mentioned words are written without quotes.
 - **Fixed (P1 guard, owner decision 2026-10-28).** Right after a listing, a chat sentence denying that it can see an item
   Quoky showed ("내일 면접이 있는지는 확인할 수 없어요", "I can't see what's in the roadmap doc") is dropped too. The item
   words are taken from Quoky's own listing reply and held in process memory only.
