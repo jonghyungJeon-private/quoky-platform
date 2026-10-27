@@ -30626,3 +30626,7 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     - 6 non-answers: fresh requests and small talk.
 
     None is an ordinal or a displayed option text, because those resolve deterministically before the selector.
+  - **The owner approved all 26 as-is** (D12 batch of 2026-10-27). They moved into `golden/nl-intent.context.v1.json`
+    (now 46 cases; notes say "owner-approved as-is in the D12 batch of 2026-10-27"), and the pending file is removed.
+    `eval:nl` read and read-regression score them; the `open-question` label has 26 answer golds. The ADR-0123 audit
+    was regenerated with the local embedder only (space `@ollama0.40.11`): pool 153, gold 1567, 0 entries flagged.

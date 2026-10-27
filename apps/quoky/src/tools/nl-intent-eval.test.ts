@@ -317,15 +317,16 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
   });
 });
 
-describe('D4 strengthening candidates (nl-intent.context-d4-pending.v1.json, PENDING the owner D12 batch)', () => {
-  const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-d4-pending.v1.json', import.meta.url).pathname;
-
-  it('bring the open-question label to >= 25 answer golds, render the open question, and score as expected with a perfect selector', async () => {
-    const { corpus } = loadCorpus(pendingPath);
-    const approved = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).corpus.cases.filter((golden) => golden.expectAnswer !== undefined).length;
-    expect(approved + corpus.cases.filter((golden) => golden.expectAnswer !== undefined).length).toBeGreaterThanOrEqual(25);
+describe('D4 strengthening golds (ctx-d4-009..034 in nl-intent.context.v1.json, owner-approved as-is 2026-10-27)', () => {
+  it('bring the open-question label to >= 25 answer golds, are scored, render the open question, and score as expected with a perfect selector', async () => {
+    const context = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).corpus;
+    const strengthened = context.cases.filter((golden) => /^ctx-d4-0(09|[12]\d|3[0-4])$/.test(golden.id));
+    expect(strengthened).toHaveLength(26);
+    expect(strengthened.every((golden) => golden.note?.includes('owner-approved as-is in the D12 batch of 2026-10-27') === true)).toBe(true);
+    expect(context.cases.filter((golden) => golden.expectAnswer !== undefined).length).toBeGreaterThanOrEqual(25);
     const scored = new Set(loadScoredCorpus().corpus.cases.map((golden) => golden.id));
-    expect(corpus.cases.filter((golden) => scored.has(golden.id))).toEqual([]);
+    expect(strengthened.filter((golden) => !scored.has(golden.id))).toEqual([]);
+    const corpus = { ...context, cases: strengthened };
     const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
     const seen: string[] = [];
     const provider = {
@@ -367,7 +368,7 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
     expect(scored.sha256).not.toBe(main.sha256);
     expect(loadScoredReadRegressionCorpus().cases.map((golden) => golden.id)).toEqual(scored.corpus.cases.map((golden) => golden.id));
     expect(loadScoredReadRegressionCorpus().sha256).toBe(scored.sha256);
-    // The default plan covers the 20 context cases (the gate counts them).
+    // The default plan covers the 46 context cases (the gate counts them).
     const plan = buildPlan(scored.corpus, scored.sha256, { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 3, concurrency: 2 });
     expect(context.corpus.cases.every((golden) => plan.caseIds.includes(golden.id))).toBe(true);
     // Q11 auto-includes nl-intent.v1.json only.
@@ -376,7 +377,7 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
 
   it('render the chat-turn age, the earlier selections and the open question, and every gold is reachable after Core validation (eval:nl and read-regression)', async () => {
     const { corpus } = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH);
-    expect(corpus.cases).toHaveLength(20);
+    expect(corpus.cases).toHaveLength(46);
     expect(corpus.cases.every((golden) => golden.note?.includes('owner-approved') === true)).toBe(true);
     expect(corpus.cases.find((golden) => golden.id === 'ctx-d1-005')).toMatchObject({ text: '주말에 뭐 하면 좋을까?', expect: 'none', prior: { entryId: 'calendar.events', args: { range: 'today' }, turns: 1 } });
     const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
@@ -407,10 +408,10 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
     expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('wrong-capture');
     expect(scoreOutput({ ...plain, openQuestion: undefined } as NlEvalCase, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('none');
     // The D4 answer golds are their own label in the per-entry report.
-    expect(summarize(records).perEntry[NL_EVAL_OPEN_QUESTION_LABEL]).toMatchObject({ hits: 6, total: 6 });
+    expect(summarize(records).perEntry[NL_EVAL_OPEN_QUESTION_LABEL]).toMatchObject({ hits: 26, total: 26 });
     // read-regression (A6 entries offered) renders and scores the same cases the same way.
     const regression = loadReadRegressionCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).cases;
-    expect(regression).toHaveLength(20);
+    expect(regression).toHaveLength(46);
     for (const golden of regression) {
       const prompt = readRegressionPrompt(golden, NOW as never) ?? '';
       if (golden.prior?.turns !== undefined) expect(prompt, golden.id).toContain('only chat replies since)');

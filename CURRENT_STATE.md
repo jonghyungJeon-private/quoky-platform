@@ -60,6 +60,9 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   - The ADR-0123 near pairs were resolved by the owner's text picks (`ctx-p7-002`, `ctx-d1-002`, 2026-10-27). The corpus is
     in the ADR-0123 lint and audit gold (overlap only), and the audit was regenerated with the local embedder (space id
     `@ollama0.40.11`, accepted).
+  - The 26 D4 strengthening golds (`ctx-d4-009`..`034`, read `nl-select.v70`) were approved as-is by the owner on
+    2026-10-27 and moved in: 46 cases, and the `open-question` label has 26 answer golds (D12: at least 25). The
+    ADR-0123 audit was regenerated locally: 0 entries flagged.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.

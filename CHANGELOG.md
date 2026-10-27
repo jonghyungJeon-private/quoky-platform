@@ -80,6 +80,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     no titles or content (ADR-0110 D4).
   - When the symbolic range still resolves to the same dates it is kept; otherwise Core inherits the stored dates.
   - A test moves the clock across midnight for a "tomorrow" listing and a default-today listing.
+- **Changed (eval, owner D12 batch of 2026-10-27).** The 26 D4 strengthening golds (`ctx-d4-009`..`034`) are approved
+  as-is and scored in `golden/nl-intent.context.v1.json` (46 cases); the `open-question` label has 26 answer golds. The
+  ADR-0123 audit was regenerated with the local embedder (0 entries flagged).
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

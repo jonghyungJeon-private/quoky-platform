@@ -110,9 +110,9 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
 const context = JSON.parse(readFileSync(new URL('../golden/nl-intent.context.v1.json', import.meta.url), 'utf8')) as { version: number; cases: NlIntentCase[] };
 
 describe('nl-intent.context.v1.json (D1 / P7 / D4, supplemental scored corpus)', () => {
-  it('has 20 cases, ids unique across both scored corpora, and every case carries the context it tests', () => {
+  it('has 46 cases, ids unique across both scored corpora, and every case carries the context it tests', () => {
     expect(context.version).toBe(1);
-    expect(context.cases).toHaveLength(20);
+    expect(context.cases).toHaveLength(46);
     const ids = [...corpus.cases, ...context.cases].map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const golden of context.cases) {
