@@ -30578,3 +30578,10 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
   - The listing actually shown (`{project: KEY}`) becomes `lastSelection`, so a follow-up refines the project.
   - Structure only: no word list, and never a guess (a key no visible project has stays a release). In a channel the
     list stays DM-only.
+- **D2 for Core's copy.** Core's fixed copy quotes only commands that resolve deterministically.
+  - `jira.release` and `brief.today` are chosen by the selector only, so their usage is an unquoted example ("예: …").
+    The D9 sources fact describes such an entry as "no fixed command: ask in your own words, e.g. …".
+  - The release-usage reply and the brief DM-only reply no longer quote a sentence to send.
+  - `help.topic`'s English usage is "도움말" (a bare "help" is not a command).
+  - An app test sends every quoted usage command over the production AppModule with the selector answering none: read
+    entries under `deployed`, action entries under `actions-local`.

@@ -42,7 +42,12 @@ export function renderConfiguredSourcesFact(
   const sources = entries.filter((entry) => entry.sourceNames !== undefined);
   const controls = options.controls !== undefined ? renderControlCommandsFact(options.controls) : undefined;
   if (sources.length === 0 && helpLines.length === 0) return controls;
-  const listed = bounded(sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; '), SOURCES_MAX_CHARS);
+  // Owner decision D2 (2026-10-26): only a usage that quotes a command (one that resolves deterministically) is offered as a
+  // command; a selector-only entry (an unquoted usage example) is described as words to ask in, never a command to send.
+  const listed = bounded(
+    sources.map((entry) => (quotedCommandsOf([entry.usage.ko]).length > 0 ? `${entry.label.en} (command: ${entry.usage.ko})` : `${entry.label.en} (no fixed command: ask in your own words, ${entry.usage.en})`)).join('; '),
+    SOURCES_MAX_CHARS,
+  );
   const parts: string[] = [];
   if (sources.length > 0) {
     parts.push(

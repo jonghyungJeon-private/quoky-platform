@@ -8,6 +8,15 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 const CONFIGURED = [NL_WAVE1_ENTRIES['calendar.events'], NL_WAVE1_ENTRIES['mail.list'], NL_WAVE1_ENTRIES['drive.files']];
 
+describe('owner decision D2: the sources fact offers only deterministic commands', () => {
+  it('a selector-only entry (jira.release) is described as words to ask in, never a command; a grammar entry keeps its command', () => {
+    const fact = renderConfiguredSourcesFact([NL_WAVE1_ENTRIES['jira.issues'], NL_WAVE1_ENTRIES['jira.release'], NL_WAVE1_ENTRIES['calendar.events']]) ?? '';
+    expect(fact).toContain('(command: "내 Jira 이슈 보여줘")');
+    expect(fact).toContain('(no fixed command: ask in your own words, e.g. ABC 프로젝트 1.2.0 릴리스 보여줘)');
+    expect(fact).not.toContain('"ABC 프로젝트');
+  });
+});
+
 describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', () => {
   it('the fact says a listing noted in the history is on the screen, never unreachable, and its contents are never guessed', () => {
     const fact = renderConfiguredSourcesFact(CONFIGURED) ?? '';
