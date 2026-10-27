@@ -701,6 +701,8 @@ export interface NlActionPlan {
   readonly promptSha256: string;
   readonly corpusSha256: string;
   readonly model: string;
+  /** The selector's reasoning effort (`--effort`), when the CLI set it (owner decision of 2026-10-28). */
+  readonly effort?: string;
   readonly runs: number;
   readonly concurrency: number;
   readonly callTimeoutMs: number;
@@ -724,7 +726,7 @@ export function buildActionPlan(
   kind: NlActionEvalKind,
   caseIds: readonly string[],
   corpusSha256: string,
-  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
+  options: { readonly model: string; readonly effort?: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
 ): NlActionPlan {
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
@@ -736,6 +738,7 @@ export function buildActionPlan(
     promptSha256: r2 ? actionPromptSha256(NL_ACTION_R2_EVAL_ENTRIES) : actionPromptSha256(),
     corpusSha256,
     model: options.model,
+    ...(options.effort !== undefined ? { effort: options.effort } : {}),
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,

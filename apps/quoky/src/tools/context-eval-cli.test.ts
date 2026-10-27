@@ -109,7 +109,13 @@ describe('context eval CLI — plan and the Strict boundary', () => {
     expect(plan.out.join('\n')).toContain('"runs": 3');
     const d = deps();
     expect(await runCli(['--mode', 'run', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--approved-plan-digest', digestOf(plan.out)], d)).toBe(EXIT_OK);
-    expect(d.createSelectionProvider).toHaveBeenCalledWith('haiku');
+    // Owner decision of 2026-10-28 (cost study P0): the effort reaches the provider and is bound into the digest.
+    expect(d.createSelectionProvider).toHaveBeenCalledWith('haiku', 'low');
+    expect(plan.out.join('\n')).toContain('"selectionEffort": "low"');
+    const medium = deps();
+    await runCli(['--mode', 'plan', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--effort', 'medium'], medium);
+    expect(digestOf(medium.out)).not.toBe(digestOf(plan.out));
+    expect(await runCli(['--mode', 'plan', '--effort', 'turbo'], deps())).toBe(EXIT_USAGE);
     expect(d.out.join('\n')).toContain('context gate (3 runs; EACH run >= 95% scenarios, 0 hard failures, 0 harness errors): PASSED');
     expect(d.out.join('\n')).toContain('selection: 6 answered, 0 failed, 0 refused');
     expect(JSON.parse(d.reports[0] as string).plan.digest).toBe(digestOf(plan.out));

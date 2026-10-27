@@ -69,7 +69,7 @@ describe('eval:nl --mode r2 plan', () => {
   it('prints the plan: the R2 prompt v56, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'r2', '--runs', '3'], d)).toBe(EXIT_OK);
-    const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' });
+    const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', effort: 'low', runs: 3, concurrency: 4, gitHead: 'rev-1' });
     expect(plan.promptVersion).toBe('nl-select.v72');
     expect(plan).toMatchObject({ corpusSha256: sha256, runs: 3, itemR2: 'all', calls: corpus.cases.length * 3, gate: NL_ACTION_R2_EVAL_GATE });
     expect(digestOf(d.out)).toBe(computeActionPlanDigest(plan));

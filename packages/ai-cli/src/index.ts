@@ -341,6 +341,9 @@ export type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const CLAUDE_EFFORT_LEVELS: readonly ClaudeEffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** The Claude effort levels, in order (eval CLIs validate `--effort` against them; owner decision of 2026-10-28). */
+export const CLAUDE_EFFORT_LEVEL_NAMES: readonly ClaudeEffortLevel[] = CLAUDE_EFFORT_LEVELS;
+
 export const DEFAULT_CLAUDE_MODEL = 'sonnet';
 
 /**

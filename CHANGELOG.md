@@ -17,6 +17,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Added (eval, owner decision 2026-10-28).** `eval:nl --effort` and `eval:context --effort / --chat-effort`. Both
+  efforts and the model names are bound into the plan digests.
 - **Changed (chat prompt, owner decision 2026-10-28).** After a listing, the chat prompt now says plainly what the reply
   has (Quoky's note) and lacks (the items, which stay with Quoky), and that item content is reached with the exact
   command. It no longer gives the two contradicting "never say" instructions.

@@ -892,8 +892,12 @@ export interface ContextEvalPlan {
   /** The prompt versions the app renders under this profile (bound so a prompt change changes the digest). */
   readonly promptVersions: Readonly<Record<string, string>>;
   readonly selectionModel: string;
+  /** Owner decision of 2026-10-28 (cost study P0): the selector's reasoning effort, when the CLI set it. */
+  readonly selectionEffort?: string;
   readonly chat: 'stub' | 'real';
   readonly chatModel?: string;
+  /** The chat model's reasoning effort (real chat only), when the CLI set it. */
+  readonly chatEffort?: string;
   readonly runs: number;
   readonly scenarioIds: readonly string[];
   /**
@@ -916,8 +920,10 @@ export function buildContextEvalPlan(
     readonly profile: ContextEvalProfile;
     readonly promptVersions: Readonly<Record<string, string>>;
     readonly selectionModel: string;
+    readonly selectionEffort?: string;
     readonly chat: 'stub' | 'real';
     readonly chatModel?: string;
+    readonly chatEffort?: string;
     readonly runs: number;
     readonly scenarioIds?: readonly string[];
     readonly gitHead: string;
@@ -938,8 +944,10 @@ export function buildContextEvalPlan(
     profile: options.profile,
     promptVersions: options.promptVersions,
     selectionModel: options.selectionModel,
+    ...(options.selectionEffort !== undefined ? { selectionEffort: options.selectionEffort } : {}),
     chat: options.chat,
     ...(options.chat === 'real' && options.chatModel !== undefined ? { chatModel: options.chatModel } : {}),
+    ...(options.chat === 'real' && options.chatEffort !== undefined ? { chatEffort: options.chatEffort } : {}),
     runs: options.runs,
     scenarioIds: selected.map((scenario) => scenario.id),
     maxSelectionCalls: turns * options.runs * (1 + (options.chat === 'real' ? CONTEXT_EVAL_CHAT_PROBES_PER_TURN : 0)),

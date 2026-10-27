@@ -159,6 +159,8 @@ export interface NlEvalPlanOptions {
   readonly concurrency: number;
   /** The per-call bound (`QUOKY_NL_INTENT_TIMEOUT_MS` rule: 2000..8000). Default {@link NL_EVAL_RUNTIME_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
+  /** Owner decision of 2026-10-28 (cost study P0): the selector's reasoning effort, bound into the digest when given. */
+  readonly effort?: string;
 }
 
 export interface NlEvalPlan {
@@ -168,6 +170,8 @@ export interface NlEvalPlan {
   readonly promptSha256: string;
   readonly corpusSha256: string;
   readonly model: string;
+  /** The selector's reasoning effort (`--effort`), when the CLI set it (owner decision of 2026-10-28). */
+  readonly effort?: string;
   readonly runs: number;
   readonly concurrency: number;
   /** The per-call bound (the runtime's selection bound). */
@@ -202,6 +206,7 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
     promptSha256: createHash('sha256').update(buildSelectionPrompt({ entries: ALL_ENTRIES, text: '' })).digest('hex'),
     corpusSha256,
     model: options.model,
+    ...(options.effort !== undefined ? { effort: options.effort } : {}),
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_EVAL_RUNTIME_TIMEOUT_MS,

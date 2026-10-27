@@ -30930,3 +30930,14 @@ The merge waits until EVERY Strict context run is at or above 95%.
     item says, the reply gives the exact command that fetches it (the D5/D9 command list) or asks the owner for that
     detail. It never guesses, and it never sends the owner to show the listing again.
   - The P1 guard stays as the safety net. ADR-0110 D4 holds: no content reaches the chat.
+- **C. Eval CLIs take the reasoning effort (cost study P0).**
+  - `eval:nl` (every mode) takes `--effort`. `eval:context` takes `--effort` (the selector) and `--chat-effort` (the
+    chat model). The levels are the adapter's own (`CLAUDE_EFFORT_LEVEL_NAMES`), and the default is the adapter's
+    policy for the capability (`low` today). An unknown level is a usage error.
+  - The values reach `ClaudeCliProvider` through `effortByCapability`. `INTENT_SELECTION` takes the selector effort;
+    `GENERAL_CHAT` and `POLICY_SENSITIVE_CHAT` take the chat effort.
+  - The plan digests bind both efforts and the model names: the effective chat model, default `sonnet`, is now always
+    in the context plan for real chat. A full model id (`--model`, `--chat-model`) pins the model; an alias is bound
+    as written. The help text says so.
+  - Real token counts are not recorded. The Claude CLI's print mode returns text only, and reading usage would need
+    its JSON output format, which is a provider change left out of this branch.

@@ -20,7 +20,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
 import {
   Capability,
   NL_ACTION_PROMPT_VERSION,
@@ -106,14 +106,23 @@ Strict:   pnpm eval:context -- --mode run [options] --approved-plan-digest <sha2
 Dry:      pnpm eval:context -- --mode dry [--profile P] [--selector oracle|none] [--scenarios id,id]   (no model call)
 
 Options: --profile ${CONTEXT_EVAL_PROFILE_NAMES.join('|')} (default deployed)  --model <selection model, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>
-         --chat stub|real (default stub)  --chat-model <alias, default: the Claude CLI default>  --runs <1-5, default 1>  --scenarios <id,id,...>
+         --chat stub|real (default stub)  --chat-model <alias or full model id, default ${DEFAULT_CLAUDE_MODEL}>  --runs <1-5, default 3>  --scenarios <id,id,...>
+         --effort <${CLAUDE_EFFORT_LEVEL_NAMES.join('|')}: the selector's, default ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low'}>  --chat-effort <same levels: the chat model's, default ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.GENERAL_CHAT] ?? 'low'}>
+         Both efforts and the full model names are bound into the digest (owner decision 2026-10-28; a full model id pins the model).
 Gate (owner decision 2026-10-26): >= 95% of the fully scored scenarios pass in every run; 0 of each hard check (${HARD_CHECKS.join(', ')}); 0 harness errors.
 Provider outage: the eval:nl guard; an outage with no hard failure observed is INVALID (exit 5), never PASSED or FAILED.
 `;
 
-const OPTIONS = new Set(['--mode', '--profile', '--model', '--chat', '--chat-model', '--runs', '--scenarios', '--selector', '--approved-plan-digest']);
+const OPTIONS = new Set(['--mode', '--profile', '--model', '--chat', '--chat-model', '--runs', '--scenarios', '--selector', '--approved-plan-digest', '--effort', '--chat-effort']);
 
 export class UsageError extends Error {}
+
+/** Owner decision of 2026-10-28 (cost study P0): a reasoning effort option, validated; default the adapter's own policy. */
+function effortOf(value: string | undefined, fallback: string | undefined, name: string): string {
+  const effort = value ?? fallback ?? 'low';
+  if (!(CLAUDE_EFFORT_LEVEL_NAMES as readonly string[]).includes(effort)) throw new UsageError(`${name} must be one of ${CLAUDE_EFFORT_LEVEL_NAMES.join(', ')}`);
+  return effort;
+}
 
 export type ContextEvalMode = 'plan' | 'run' | 'dry' | 'help';
 
@@ -174,8 +183,8 @@ export interface ContextEvalDeps {
   readonly loadCorpus: () => { corpus: ContextEvalCorpus; sha256: string };
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
-  readonly createSelectionProvider: (model: string) => AiProvider;
-  readonly createChatProvider: (model: string | undefined) => AiProvider;
+  readonly createSelectionProvider: (model: string, effort?: string) => AiProvider;
+  readonly createChatProvider: (model: string | undefined, effort?: string) => AiProvider;
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Boots one world per run and runs the scenarios (tests inject it; production uses the real harness). */
   readonly runScenarios?: (input: RunInput) => Promise<ScenarioRecord[]>;
@@ -196,8 +205,13 @@ export function defaultDeps(): ContextEvalDeps {
       writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' });
       return path;
     },
-    createSelectionProvider: (model) => new ClaudeCliProvider('claude', { intentSelectionModel: model }),
-    createChatProvider: (model) => new ClaudeCliProvider('claude', model !== undefined ? { model } : {}),
+    createSelectionProvider: (model, effort) =>
+      new ClaudeCliProvider('claude', { intentSelectionModel: model, ...(effort !== undefined ? { effortByCapability: { [Capability.INTENT_SELECTION]: effort as ClaudeEffortLevel } } : {}) }),
+    createChatProvider: (model, effort) =>
+      new ClaudeCliProvider('claude', {
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effortByCapability: { [Capability.GENERAL_CHAT]: effort as ClaudeEffortLevel, [Capability.POLICY_SENSITIVE_CHAT]: effort as ClaudeEffortLevel } } : {}),
+      }),
   };
 }
 
@@ -272,8 +286,11 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
       profile,
       promptVersions: promptVersions(),
       selectionModel: parsed.options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
+      selectionEffort: effortOf(parsed.options['--effort'], DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION], '--effort'),
       chat: parsed.options['--chat'] === 'real' ? 'real' : 'stub',
-      ...(parsed.options['--chat-model'] !== undefined ? { chatModel: parsed.options['--chat-model'] } : {}),
+      // Owner decision of 2026-10-28: the effective chat model (the adapter default when none is named) and effort.
+      chatModel: parsed.options['--chat-model'] ?? DEFAULT_CLAUDE_MODEL,
+      chatEffort: effortOf(parsed.options['--chat-effort'], DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.GENERAL_CHAT], '--chat-effort'),
       // Owner decision 2026-10-27: a gate is 3 runs (the default); fewer runs never pass it.
       runs: integer(parsed.options['--runs'], CONTEXT_EVAL_GATE.runs),
       scenarioIds,
@@ -316,7 +333,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const selector = deps.createSelectionProvider(plan.selectionModel);
+  const selector = deps.createSelectionProvider(plan.selectionModel, plan.selectionEffort);
   if (!(await selector.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the selection provider is not available; nothing was executed');
     return EXIT_BLOCKED;
@@ -331,7 +348,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   let chatGuard: ReturnType<typeof guardEvalProvider> | undefined;
   let chatCounting: ReturnType<typeof countingProvider> | undefined;
   if (plan.chat === 'real') {
-    const chat = deps.createChatProvider(plan.chatModel);
+    const chat = deps.createChatProvider(plan.chatModel, plan.chatEffort);
     if (!(await chat.isAvailable().catch(() => false))) {
       deps.stderr('BLOCKED: the chat provider is not available; nothing was executed');
       return EXIT_BLOCKED;

@@ -239,7 +239,12 @@ describe('nl-intent evaluation CLI (Strict digest gate)', () => {
     const planned = deps(created);
     expect(await runCli(['--mode', 'plan', '--per-entry', '1'], planned)).toBe(EXIT_OK);
     const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(planned.out.join('\n'))?.[1];
-    expect(digest).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    expect(digest).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', effort: 'low', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    // Owner decision of 2026-10-28 (cost study P0): --effort is bound into the digest, and an unknown level is a usage error.
+    const medium = deps(created);
+    expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--effort', 'medium'], medium)).toBe(EXIT_OK);
+    expect(/plan digest \(sha256\): ([0-9a-f]{64})/.exec(medium.out.join('\n'))?.[1]).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', effort: 'medium', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    expect(await runCli(['--mode', 'plan', '--effort', 'turbo'], deps(created))).toBe(EXIT_USAGE);
     expect(await runCli(['--mode', 'run', '--per-entry', '1'], deps(created))).toBe(EXIT_USAGE);
     expect(await runCli(['--mode', 'run', '--per-entry', '1', '--approved-plan-digest', 'f'.repeat(64)], deps(created))).toBe(EXIT_BLOCKED);
     expect(await runCli(['--mode', 'run', '--per-entry', '2', '--approved-plan-digest', digest as string], deps(created))).toBe(EXIT_BLOCKED);
