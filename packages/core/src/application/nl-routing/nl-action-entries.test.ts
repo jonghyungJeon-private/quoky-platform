@@ -475,7 +475,7 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
 describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
   const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v72.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
-    cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; openQuestion?: { options: string[] }; prompt: string }>;
+    cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
   it('pins nl-select.v72 for every golden input (no `actions`)', () => {
@@ -483,7 +483,7 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v72');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
-      const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}), ...(golden_.openQuestion ? { openQuestion: golden_.openQuestion } : {}) });
+      const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
       expect(prompt, golden_.name).toBe(golden_.prompt);
     }
   });

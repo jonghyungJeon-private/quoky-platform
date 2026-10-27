@@ -65,7 +65,6 @@ import {
 } from './nl-action-eval';
 import {
   NL_EVAL_GATE,
-  NL_EVAL_OPEN_QUESTION_LABEL,
   NL_EVAL_RUNTIME_TIMEOUT_MS,
   buildPlan,
   computePlanDigest,
@@ -487,7 +486,6 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
   const reportName = `nl-read-regression-${startedAt.replace(/[:.]/g, '-')}.json`;
   const goldOf = (id: string): string => {
     const golden = cases.find((candidate) => candidate.id === id);
-    if (golden?.expectAnswer !== undefined && golden.a6Relabel === undefined) return NL_EVAL_OPEN_QUESTION_LABEL;
     const expect = golden?.a6Relabel ?? golden?.expect;
     return expect === undefined || expect === 'none' ? 'none' : expect.entryId;
   };

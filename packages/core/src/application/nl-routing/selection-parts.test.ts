@@ -163,24 +163,12 @@ describe('strict output parser (ADR-0120 D3)', () => {
     });
   });
 
-  it('D4: an optional `answer` is an integer 1-4 (the open question\'s option); anything else but its one-digit string or "none" rejects the output', () => {
+  it('D4 moved out of the router (owner decision of 2026-10-27): an `answer` key is an unknown key again', () => {
     const none = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]';
-    expect(parseSelectionOutput(`${none},"answer":1}`)).toMatchObject({ entryId: null, answer: 1 });
-    expect(parseSelectionOutput(`${none},"answer":4}`)).toMatchObject({ answer: 4 });
-    expect(parseSelectionOutput(`${none},"answer":null}`)).not.toHaveProperty('answer');
-    for (const bad of ['0', '5', '1.5', 'true', '"0"', '"5"', '"01"', '"1번"', '"one"', '" 1"', '"None"', '[1]']) {
-      expect(parseSelectionOutput(`${none},"answer":${bad}}`), bad).toBeNull();
-      expect(nlSelectionParseFailure(`${none},"answer":${bad}}`), bad).toBe('bad-answer');
+    for (const value of ['1', '"1"', 'null', '"none"']) {
+      expect(parseSelectionOutput(`${none},"answer":${value}}`), value).toBeNull();
+      expect(nlSelectionParseFailure(`${none},"answer":${value}}`), value).toBe('unknown-key');
     }
-  });
-
-  it('owner decision of 2026-10-27: a one-digit string "1".."4" is that option, and "none" means no answer', () => {
-    const none = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]';
-    expect(parseSelectionOutput(`${none},"answer":"1"}`)).toMatchObject({ entryId: null, answer: 1 });
-    expect(parseSelectionOutput(`${none},"answer":"4"}`)).toMatchObject({ answer: 4 });
-    expect(parseSelectionOutput(`${none},"answer":"none"}`)).toEqual({ entryId: null, args: {}, ambiguity: 'CLEAR', alternatives: [] });
-    expect(nlSelectionParseFailure(`${none},"answer":"2"}`)).toBeUndefined();
-    expect(parseSelectionOutput('{"entryId":"calendar.events","args":{"range":"today"},"ambiguity":"CLEAR","alternatives":[],"answer":"none"}')).toMatchObject({ entryId: 'calendar.events' });
   });
 
   it('rejects unknown keys, prose, a third alternative, nested args, a bad ambiguity and output over 2 KB', () => {

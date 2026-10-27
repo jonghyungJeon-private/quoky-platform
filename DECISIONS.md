@@ -30738,3 +30738,55 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     0 breaks.
     Residual (accepted, conservative): a Korean source alias that prefixes a longer word (e.g. 파일 in 파일럿) counts as
     another source, so grounding is skipped and the selector's range stands.
+
+### Owner decision of 2026-10-27 — D4 moves to the next merge, as a dedicated classifier (branch `claude/v5-context-fixes`)
+
+- **Decision.** D4, the worded answer to the help-scope question, leaves this merge. It comes back as a dedicated small
+  classifier call that answers 1 / 2 / neither, outside the router prompt, with its own eval and gate.
+- **Why.** In the router prompt, haiku misreads non-answers as answers. The Strict gates at 32a2c81f (read v72 / A6
+  v70) failed only on D4:
+  - intent run 1: ctx-d4-008 "고마워" was read as option 1;
+  - intent run 2: ctx-d4-032 "cool, thanks" was read as option 1;
+  - read-regression run 2: ctx-d4-015 "앱 안에서 직접 하는 방법" was read as option 1 (gold 2).
+  That makes 3 wrong captures in 6 runs, after three prompt rounds (v70, v71, v72). Calendar passed.
+- **Runtime (removed).**
+  - The open question is no longer passed to the selector, and the open-question prompt part is removed.
+  - The help-scope question falls back to the ratified behaviour of owner decision A (2026-10-22): only a number or a
+    displayed option text answers it (`resolveChoice`, unchanged). Any other reply ends the question and is routed as
+    usual.
+  - The parser's `answer` field (with the relaxed contract of the same day) has no other user, so it is removed: an
+    `answer` key is an unknown key again (`unknown-key`).
+  - Everything D4-independent stays: D1 / P7, P-time (ii) and its midnight fix, `timedOnly`, range grounding, D2 copy,
+    P9, and the read-regression `gotArgs` / raw records.
+- **Prompt versions: no bump; read stays `nl-select.v72`, A6 `v70` and R2 `v71`.** The open-question part was the only
+  difference from v71 / v69 / v70, and it was rendered only with an open question. So every prompt these versions can
+  still render is byte-identical to one they already rendered. A version names the bytes the selector receives, and
+  this change only shrinks that set:
+  - the pinned sha256 values are unchanged;
+  - the 82 non-question cases of `golden/nl-select.v72.prompts.json` are unchanged, and its 2 open-question cases are
+    removed;
+  - every remaining scored case prompt at 32a2c81f and at this HEAD was rendered by both builds: 878 read and 877 A6
+    unique message prompts, 0 different.
+  A bump would detach the 32a2c81f gate records, made on exactly these bytes, without any byte change. The selection
+  cache is unaffected: open-question turns bypassed it, and nothing else changes.
+- **Golds.** All 34 `ctx-d4-*` cases move, with their owner approvals in their notes, to
+  `golden/nl-intent.context-d4-pending.v1.json` for the classifier work. They are not scored. The scored context
+  corpus is the 12 D1 / P7 cases. The ADR-0123 audit was regenerated with the local embedder only (`@ollama0.40.11`):
+  pool 153, gold 1533, 0 entries flagged.
+- **Context eval.** The `hs-calendar-words` oracle is back to `none`, and its expectation is unchanged. That scenario
+  (t2, "Quoky로 하는 거") fails again in the dry runs until the classifier lands: deployed 37/38, actions-local 54/55, all
+  hard checks 0.
+- **Plan for the classifier (next merge).**
+  - One bounded call per worded reply to an open help-scope question.
+  - The input is the displayed options and the owner's reply. The output is 1 / 2 / neither, with a strict schema.
+  - It runs before the router: "neither" routes as usual.
+  - It has its own corpus (the 34 pending golds plus new non-answers), its own eval and its own gate, with 0 wrong
+    captures on non-answers. The bar is set before the run.
+- **Offline evidence (32a2c81f re-scored without the 34 `ctx-d4-*` records; recorded outcomes, no model call).**
+  - intent (read v72): 97.4 / 97.4 / 98.0%. No entry below 90%, 0 wrong captures, 0/2 help captures; the gate (and
+    S1) passes in all 3 runs.
+  - read-regression (A6 v70): 97.2 / 97.5 / 96.5%. No entry below 90%, 0 wrong or action captures, help captures
+    0 / 1 / 1 (neg-110) of 2; the gate passes in all 3 runs.
+- **S2 activation blocker, updated.** The blocker's context gate reuses the 12 D1 / P7 case ids. The D4 note becomes:
+  D4 is not part of this merge; when the classifier lands, it answers a pending help-scope question before the router
+  or the planner is asked, and it is tested at that boundary, not as a planner gold.

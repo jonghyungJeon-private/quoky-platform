@@ -191,6 +191,12 @@ therefore two Strict steps, both owner-approved by plan digest. No model was cal
      pnpm eval:context -- --mode plan --profile deployed --chat real          # 3 runs (the gate)
      ```
 
+**Update (owner decision of 2026-10-27, after the 32a2c81f gates): D4 moves to the next merge.** The open question is no
+longer shown to the selector (read v72 / A6 v70 / R2 v71 now render only their no-open-question bytes), and a worded
+help-scope reply is routed as usual again (number or displayed option text only). The 34 `ctx-d4-*` golds wait in
+`golden/nl-intent.context-d4-pending.v1.json` for the dedicated D4 classifier; the scored context corpus is the 12 D1 /
+P7 cases. `hs-calendar-words` t2 is expected to fail again until that classifier lands (its expectation is unchanged).
+
 ## Relation to `quoky-e2e`
 
 `quoky-e2e` (the live-channel skill) drives the owner's real service over Discord or Telegram with real connectors.

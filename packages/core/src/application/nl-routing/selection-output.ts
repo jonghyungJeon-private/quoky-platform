@@ -3,10 +3,7 @@ import type { NlArgValue } from './catalog';
 /**
  * The selector's output contract (ADR-0120 D3): one JSON object of at most 2 KB,
  * `{ entryId | "none", args, ambiguity: CLEAR | NEEDS_CLARIFICATION, alternatives (at most 2) }`, unknown keys rejected.
- * A `confidence` number is accepted and only ever logged. An `answer` (an integer 1-4, owner decision D4 of 2026-10-26;
- * since 2026-10-27 also the same number as a one-digit string, and `"none"` for no answer) names the option of the open
- * numbered question the prompt showed; Core reads it only when it showed one. Parsing is
- * strict and total: anything else is `null` and the
+ * A `confidence` number is accepted and only ever logged. Parsing is strict and total: anything else is `null` and the
  * runtime treats the call as failed (no retry). Ids and args are checked against the catalog later (D4), not here.
  */
 
@@ -33,27 +30,9 @@ export interface NlSelectionOutput {
   readonly alternatives: readonly NlSelectionCandidate[];
   /** Logged only (ADR-0120 D3); never decides anything. */
   readonly confidence?: number;
-  /** D4: the option number of the open question the prompt showed, when the message answers it in other words. */
-  readonly answer?: number;
 }
 
-/** D4: the largest option number an `answer` may name (a D7 numbered question has at most 4 options). */
-export const NL_SELECTION_MAX_ANSWER = 4;
-
-const isAnswer = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= NL_SELECTION_MAX_ANSWER;
-
-/**
- * Owner decision of 2026-10-27 (the answer contract relaxed): the option number as a JSON integer 1-4, or the same number
- * as a one-digit string ("1".."4"); `"none"` and `null` (or no field) mean no answer. `invalid` for anything else.
- */
-function answerOf(value: unknown): number | undefined | 'invalid' {
-  if (value === undefined || value === null || value === 'none') return undefined;
-  if (isAnswer(value)) return value;
-  if (typeof value === 'string' && /^[1-9]$/u.test(value) && isAnswer(Number(value))) return Number(value);
-  return 'invalid';
-}
-
-const TOP_KEYS = new Set(['entryId', 'args', 'ambiguity', 'alternatives', 'confidence', 'answer']);
+const TOP_KEYS = new Set(['entryId', 'args', 'ambiguity', 'alternatives', 'confidence']);
 const ALTERNATIVE_KEYS = new Set(['entryId', 'args']);
 
 /** Parse the selector's raw text strictly. A single surrounding code fence is tolerated; nothing else around the object. */
@@ -81,15 +60,12 @@ export function parseSelectionOutput(raw: string): NlSelectionOutput | null {
   if (alternatives === null) return null;
   const confidence = value.confidence;
   if (confidence !== undefined && (typeof confidence !== 'number' || !Number.isFinite(confidence))) return null;
-  const answer = answerOf(value.answer);
-  if (answer === 'invalid') return null;
   return {
     entryId,
     args,
     ambiguity: value.ambiguity,
     alternatives,
     ...(typeof confidence === 'number' ? { confidence } : {}),
-    ...(answer !== undefined ? { answer } : {}),
   };
 }
 
@@ -130,7 +106,6 @@ export function nlSelectionParseFailure(raw: string, knownArgNames: ReadonlySet<
   }
   if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return 'bad-enum:ambiguity';
   if (parseAlternatives(value.alternatives) === null) return 'bad-alternatives';
-  if (answerOf(value.answer) === 'invalid') return 'bad-answer';
   return 'bad-confidence';
 }
 

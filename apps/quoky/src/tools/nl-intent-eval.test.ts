@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
 import { loadReadRegressionCorpus, loadScoredReadRegressionCorpus, readRegressionPrompt, scoreReadRegression } from './nl-action-eval';
-import { NL_EVAL_CONTEXT_CORPUS_PATH, NL_EVAL_OPEN_QUESTION_LABEL, buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
+import { NL_EVAL_CONTEXT_CORPUS_PATH, buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatSummary, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
@@ -317,40 +318,16 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
   });
 });
 
-describe('D4 strengthening golds (ctx-d4-009..034 in nl-intent.context.v1.json, owner-approved as-is 2026-10-27)', () => {
-  it('bring the open-question label to >= 25 answer golds, are scored, render the open question, and score as expected with a perfect selector', async () => {
-    const context = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).corpus;
-    const strengthened = context.cases.filter((golden) => /^ctx-d4-0(09|[12]\d|3[0-4])$/.test(golden.id));
-    expect(strengthened).toHaveLength(26);
-    expect(strengthened.every((golden) => golden.note?.includes('owner-approved as-is in the D12 batch of 2026-10-27') === true)).toBe(true);
-    expect(context.cases.filter((golden) => golden.expectAnswer !== undefined).length).toBeGreaterThanOrEqual(25);
-    const scored = new Set(loadScoredCorpus().corpus.cases.map((golden) => golden.id));
-    expect(strengthened.filter((golden) => !scored.has(golden.id))).toEqual([]);
-    const corpus = { ...context, cases: strengthened };
-    const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
-    const seen: string[] = [];
-    const provider = {
-      id: 'scripted',
-      capabilities: [Capability.INTENT_SELECTION],
-      isAvailable: async () => true,
-      execute: async (request: AiRequest) => {
-        seen.push(request.prompt);
-        const golden = byText.get(/<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '');
-        if (golden?.expectAnswer !== undefined) return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: golden.expectAnswer }), artifacts: [] };
-        return { text: golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args), artifacts: [] };
-      },
-    } as unknown as AiProvider;
-    const plan = buildPlan(corpus, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 });
-    const records = await runEvaluation({ corpus, plan, provider, now: () => NOW });
-    expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
-    expect(seen.every((prompt) => prompt.includes('\nOpen question (asked by Quoky just before this message): 1. '))).toBe(true);
-    expect(seen.some((prompt) => prompt.includes('Decide FIRST, before rules 2 and 3,'))).toBe(true);
-    // read v71: the non-answer categories come before the answer format, and "this chat" means Quoky.
-    for (const prompt of seen) {
-      expect(prompt.indexOf('points to neither option')).toBeGreaterThan(0);
-      expect(prompt.indexOf('points to neither option')).toBeLessThan(prompt.indexOf('"answer": N}'));
-      expect(prompt).toContain('"Quoky" and this chat mean Quoky.');
-    }
+describe('D4 moves to the next merge (owner decision of 2026-10-27): its golds wait for the dedicated classifier', () => {
+  it('the 34 ctx-d4 cases are pending with their owner approvals, none is scored, and no scored case carries an open question', () => {
+    const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-d4-pending.v1.json', import.meta.url).pathname;
+    const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as { cases: Array<{ id: string; note?: string; openQuestion?: unknown }> };
+    expect(pending.cases).toHaveLength(34);
+    expect(pending.cases.every((golden) => /^ctx-d4-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true && golden.openQuestion !== undefined)).toBe(true);
+    const scored = loadScoredCorpus().corpus.cases;
+    expect(scored.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
+    expect(scored.filter((golden) => 'openQuestion' in golden || 'expectAnswer' in golden)).toEqual([]);
+    expect(loadScoredReadRegressionCorpus().cases.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
   });
 });
 
@@ -391,9 +368,9 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
     expect(main.corpus.cases.some((golden) => golden.id.startsWith('ctx-'))).toBe(false);
   });
 
-  it('render the chat-turn age, the earlier selections and the open question, and every gold is reachable after Core validation (eval:nl and read-regression)', async () => {
+  it('render the chat-turn age and the earlier selections, never an open question, and every gold is reachable after Core validation (eval:nl and read-regression)', async () => {
     const { corpus } = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH);
-    expect(corpus.cases).toHaveLength(46);
+    expect(corpus.cases).toHaveLength(12);
     expect(corpus.cases.every((golden) => golden.note?.includes('owner-approved') === true)).toBe(true);
     expect(corpus.cases.find((golden) => golden.id === 'ctx-d1-005')).toMatchObject({ text: '주말에 뭐 하면 좋을까?', expect: 'none', prior: { entryId: 'calendar.events', args: { range: 'today' }, turns: 1 } });
     const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
@@ -406,7 +383,6 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
         seen.push(request.prompt);
         const message = /<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '';
         const golden = byText.get(message);
-        if (golden?.expectAnswer !== undefined) return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: golden.expectAnswer }), artifacts: [] };
         return { text: golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args), artifacts: [] };
       },
     } as unknown as AiProvider;
@@ -415,36 +391,19 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
     expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
     expect(seen.some((prompt) => prompt.includes('(shown 2 turns ago; only chat replies since)'))).toBe(true);
     expect(seen.some((prompt) => prompt.includes('\nEarlier selections (newest first): {"entryId":"calendar.events","args":{"range":"next-week"}} (shown 1 turn ago)\n'))).toBe(true);
-    expect(seen.some((prompt) => prompt.includes('\nOpen question (asked by Quoky just before this message): 1. Quoky로 슬랙 조회하는 방법; 2. 슬랙 앱 자체의 사용법\n'))).toBe(true);
-    // An answer to the wrong option is a wrong capture; an answer with no open question shown is never scored as one.
-    const d4 = corpus.cases.find((golden) => golden.expectAnswer === 1) as NlEvalCase;
-    expect(scoreOutput(d4, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 2 }), NOW).outcome).toBe('wrong-capture');
-    expect(scoreOutput(d4, answer('none'), NOW).outcome).toBe('miss');
-    const plain = corpus.cases.find((golden) => golden.id === 'ctx-d4-008') as NlEvalCase;
-    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('wrong-capture');
-    expect(scoreOutput({ ...plain, openQuestion: undefined } as NlEvalCase, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('none');
-    // Owner decision of 2026-10-27: a quoted number is a real read (or misread), and "none" is no answer.
-    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: '1' }), NOW).outcome).toBe('wrong-capture');
-    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 'none' }), NOW).outcome).toBe('none');
-    expect(scoreOutput(d4, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: String(d4.expectAnswer) }), NOW).outcome).toBe('hit');
-    const regressionPlain = { id: plain.id, text: plain.text, openQuestion: plain.openQuestion, expect: 'none' } as never;
-    expect(scoreReadRegression(regressionPlain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: '1' }), NOW).outcome).toBe('wrong-capture');
-    // The D4 answer golds are their own label in the per-entry report.
-    expect(summarize(records).perEntry[NL_EVAL_OPEN_QUESTION_LABEL]).toMatchObject({ hits: 26, total: 26 });
+    expect(seen.some((prompt) => prompt.includes('Open question'))).toBe(false);
+    // The router's output contract has no `answer` any more: an output with one is malformed (D4 is the classifier's).
+    const plain = corpus.cases.find((golden) => golden.expect === 'none') as NlEvalCase;
+    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('error');
     // read-regression (A6 entries offered) renders and scores the same cases the same way.
     const regression = loadReadRegressionCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).cases;
-    expect(regression).toHaveLength(46);
+    expect(regression).toHaveLength(12);
     for (const golden of regression) {
       const prompt = readRegressionPrompt(golden, NOW as never) ?? '';
       if (golden.prior?.turns !== undefined) expect(prompt, golden.id).toContain('only chat replies since)');
       if (golden.prior?.earlier !== undefined) expect(prompt, golden.id).toContain('\nEarlier selections (newest first): ');
-      if (golden.openQuestion !== undefined) expect(prompt, golden.id).toContain('\nOpen question (asked by Quoky just before this message): 1. ');
-      const raw =
-        golden.expectAnswer !== undefined
-          ? JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: golden.expectAnswer })
-          : golden.expect === 'none'
-            ? answer('none')
-            : answer(golden.expect.entryId, golden.expect.args);
+      expect(prompt, golden.id).not.toContain('Open question');
+      const raw = golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args);
       expect(['hit', 'none'], golden.id).toContain(scoreReadRegression(golden, raw, NOW).outcome);
     }
   });

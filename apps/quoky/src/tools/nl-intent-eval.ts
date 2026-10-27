@@ -38,7 +38,6 @@ import {
   nlSelectionMeaning,
   parseSelectionOutput,
   prepareSelectionInput,
-  renderHelpScopeOptions,
   validateSelection,
   type AiProvider,
   type NlArgs,
@@ -93,43 +92,17 @@ export interface NlEvalCase {
    * these entries and `none`. See the scoring notes above.
    */
   readonly clarify?: NlEvalClarifyGold;
-  /**
-   * Owner decision D4 (2026-10-26): the help-scope question Quoky asked just before (its sources and language), shown to
-   * the selector as the runtime shows it when the reply named no option by number or displayed text.
-   */
-  readonly openQuestion?: { readonly sources: string | readonly string[]; readonly language: 'ko' | 'en'; readonly more?: boolean };
-  /** D4: the option a worded reply means (the selector's `answer`); absent with an open question = not an answer. */
-  readonly expectAnswer?: number;
 }
 
-/** D4: the expected label of a case whose gold is an open-question answer. */
-export const NL_EVAL_OPEN_QUESTION_LABEL = 'open-question';
-
-/** A case's expected label (its entry, `none`, or {@link NL_EVAL_OPEN_QUESTION_LABEL} for a D4 answer gold). */
-export function nlEvalExpectedLabel(golden: Pick<NlEvalCase, 'expect' | 'expectAnswer'>): string {
-  return golden.expectAnswer !== undefined ? NL_EVAL_OPEN_QUESTION_LABEL : golden.expect === 'none' ? 'none' : golden.expect.entryId;
+/** A case's expected label: its entry, or `none`. */
+export function nlEvalExpectedLabel(golden: Pick<NlEvalCase, 'expect'>): string {
+  return golden.expect === 'none' ? 'none' : golden.expect.entryId;
 }
 
 /** P7: the stored selection an output for `entryId` refines (the runtime's `lastSelectionFor`, over a case's prior). */
 export function nlEvalPriorFor(prior: NlEvalCase['prior'], entryId: string): { readonly entryId: string; readonly args: NlArgs } | undefined {
   if (prior === undefined || prior.entryId === entryId) return prior;
   return prior.earlier?.find((item) => item.entryId === entryId) ?? prior;
-}
-
-/** D4: the open question as the selection prompt takes it (the displayed option texts). */
-export function nlEvalOpenQuestionInput(question: NonNullable<NlEvalCase['openQuestion']>): { readonly options: readonly string[] } {
-  return { options: renderHelpScopeOptions(question.sources, question.language, question.more === true) };
-}
-
-/**
- * D4: the outcome of a case with an open question when the output carries `answer` (the runtime reads it only then), or
- * a D4 answer gold the output did not answer; `undefined` otherwise (the case is scored as usual).
- */
-export function nlEvalOpenQuestionOutcome(golden: Pick<NlEvalCase, 'openQuestion' | 'expectAnswer'>, output: { readonly entryId: string | null; readonly answer?: number }): { readonly outcome: 'hit' | 'wrong-capture' | 'miss'; readonly got: string } | undefined {
-  if (golden.openQuestion !== undefined && output.answer !== undefined) {
-    return { outcome: output.answer === golden.expectAnswer ? 'hit' : 'wrong-capture', got: `${NL_EVAL_OPEN_QUESTION_LABEL}:${output.answer}` };
-  }
-  return golden.expectAnswer !== undefined ? { outcome: 'miss', got: output.entryId ?? 'none' } : undefined;
 }
 
 /** A clarification gold: the entries the question is between (besides `none`) and the owner batch that set it. */
@@ -264,9 +237,6 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   if ('skip' in prepared) return { id: golden.id, expected, outcome: 'skipped' };
   const output = parseSelectionOutput(raw);
   if (output === null) return { id: golden.id, expected, outcome: 'error', error: 'malformed' };
-  // D4: with an open question shown, an `answer` decides the turn (the runtime reads it only then).
-  const answered = nlEvalOpenQuestionOutcome(golden, output);
-  if (answered !== undefined) return { id: golden.id, expected, ...answered };
   if (output.entryId === null) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.
   if (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
@@ -480,7 +450,6 @@ export async function runEvaluation(input: {
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
             ? { previous: priorPromptInput(golden.prior) }
             : {}),
-          ...(golden.openQuestion !== undefined ? { openQuestion: nlEvalOpenQuestionInput(golden.openQuestion) } : {}),
         });
         const started = clock();
         let record: NlEvalRecord;

@@ -109,16 +109,17 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
 // eval:nl and read-regression (never by the ADR-0121 Q11 planner gold).
 const context = JSON.parse(readFileSync(new URL('../golden/nl-intent.context.v1.json', import.meta.url), 'utf8')) as { version: number; cases: NlIntentCase[] };
 
-describe('nl-intent.context.v1.json (D1 / P7 / D4, supplemental scored corpus)', () => {
-  it('has 46 cases, ids unique across both scored corpora, and every case carries the context it tests', () => {
+describe('nl-intent.context.v1.json (D1 / P7, supplemental scored corpus; D4 moved to its pending file)', () => {
+  it('has 12 cases, ids unique across both scored corpora, and every case carries the context it tests', () => {
     expect(context.version).toBe(1);
-    expect(context.cases).toHaveLength(46);
+    expect(context.cases).toHaveLength(12);
     const ids = [...corpus.cases, ...context.cases].map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const golden of context.cases) {
-      const carries = golden.prior?.turns !== undefined || golden.prior?.earlier !== undefined || golden.openQuestion !== undefined;
+      const carries = golden.prior?.turns !== undefined || golden.prior?.earlier !== undefined;
       expect(carries, golden.id).toBe(true);
-      if (golden.expectAnswer !== undefined) expect(golden.expect, golden.id).toBe('none');
+      expect(golden.openQuestion, golden.id).toBeUndefined();
+      expect(golden.expectAnswer, golden.id).toBeUndefined();
     }
   });
 

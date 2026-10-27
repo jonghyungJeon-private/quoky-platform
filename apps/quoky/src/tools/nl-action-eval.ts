@@ -76,7 +76,7 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
-import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance, nlEvalOpenQuestionInput, nlEvalOpenQuestionOutcome, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
+import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
 
@@ -825,9 +825,6 @@ export interface NlReadRegressionCase {
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
   /** The previous selection, with D1 `turns` and P7 `earlier` as `eval:nl` renders them (`NlEvalCase.prior`). */
   readonly prior?: NlEvalCase['prior'];
-  /** D4: the open help-scope question shown, and the option a worded reply means (`NlEvalCase`). */
-  readonly openQuestion?: NlEvalCase['openQuestion'];
-  readonly expectAnswer?: number;
   /** The case was asked in a channel (the scorer's snapshot lookup answers as the runtime does there). */
   readonly channel?: boolean;
   /**
@@ -874,9 +871,6 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   if ('skip' in prepared) return { outcome: 'skipped', relabeled };
   const output = parseSelectionOutput(raw);
   if (output === null) return { outcome: 'error', relabeled };
-  // D4: with an open question shown, an `answer` decides the turn, exactly as in `eval:nl`.
-  const answered = nlEvalOpenQuestionOutcome(golden, output);
-  if (answered !== undefined) return { ...answered, relabeled };
   if (output.entryId === null) return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
   if (!isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) {
     return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
@@ -954,7 +948,6 @@ export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimes
     text: prepared.text,
     actions: { referenceContext: golden.context === undefined ? 'none' : renderReferenceContext(readRegressionReferenceState(golden.context, now)) },
     ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: priorPromptInput(golden.prior) } : {}),
-    ...(golden.openQuestion !== undefined ? { openQuestion: nlEvalOpenQuestionInput(golden.openQuestion) } : {}),
   });
 }
 

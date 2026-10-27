@@ -73,6 +73,10 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   - the clause-grounded `timedOnly` rule now runs on the one-step path;
   - the owner's one stated label-table period wins over the selector's range.
   Archive simulation (records with args): 0 golds and 0 archived hits broken.
+- **D4 moves to the next merge (owner decision 2026-10-27).** The 32a2c81f gates failed only on D4: 3 wrong captures in
+  6 runs. The open question is removed from the router, and the 34 D4 golds are pending for a dedicated classifier.
+  Re-scored without them, 32a2c81f passes both gates in all 3 runs. `hs-calendar-words` fails in the dry runs until
+  the classifier lands.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.
