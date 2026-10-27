@@ -382,10 +382,10 @@ describe('read regression records keep the final args like eval:nl (owner go-ahe
     expect(scoreReadRegression(read, answer('none'), NOW)).not.toHaveProperty('gotArgs');
   });
 
-  it('a malformed output keeps its raw text and says so, like eval:nl read records (2026-10-27: a quoted "answer")', async () => {
+  it('a malformed output keeps its raw text and says so, like eval:nl read records (an "answer" outside the contract)', async () => {
     const thanks = { id: 'oq-1', text: '음 잘 모르겠네', openQuestion: { sources: '드라이브', language: 'ko' }, expect: 'none' } as const;
     const read = { id: 'c2', text: '내 할 일 보여줘', expect: { entryId: 'todo.list', args: {} } } as const;
-    const malformed = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[],"answer":"1"}';
+    const malformed = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[],"answer":"1번"}';
     const plan = buildActionPlan('nl-read-regression', ['oq-1', 'c2'], 'sha', { model: 'haiku', runs: 1, concurrency: 1 });
     const records = await runReadRegression({ cases: [thanks as never, read], plan, provider: provider((request) => (request.prompt.includes('음 잘 모르겠네') ? malformed : answer('todo.list'))), now: () => NOW });
     expect(records.find((record) => record.id === 'oq-1')).toMatchObject({ outcome: 'error', error: 'malformed', raw: malformed });

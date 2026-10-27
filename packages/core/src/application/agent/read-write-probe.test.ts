@@ -101,7 +101,7 @@ describe('the read + write probe (trigger amendment, owner-ratified 2026-10-26)'
   });
 
   it('the probe prompt is the deployed A6 selection prompt with the action entries offered', () => {
-    expect(AGENT_READ_WRITE_PROBE_PROMPT_VERSION).toBe('nl-select.v69');
+    expect(AGENT_READ_WRITE_PROBE_PROMPT_VERSION).toBe('nl-select.v70');
     // Owner decision of 2026-10-26: the whole message is the prompt (the destination the read clause names stays visible);
     // the write is still validated on the uncovered clause alone, so a read-clause word never reaches its args (below).
     const prompt = agentReadWriteProbePrompt({ entries: ALL, text: AP_N131 });

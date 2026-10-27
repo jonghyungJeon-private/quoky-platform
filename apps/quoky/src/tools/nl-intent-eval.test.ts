@@ -348,7 +348,7 @@ describe('D4 strengthening golds (ctx-d4-009..034 in nl-intent.context.v1.json, 
     // read v71: the non-answer categories come before the answer format, and "this chat" means Quoky.
     for (const prompt of seen) {
       expect(prompt.indexOf('points to neither option')).toBeGreaterThan(0);
-      expect(prompt.indexOf('points to neither option')).toBeLessThan(prompt.indexOf('"answer": <that option'));
+      expect(prompt.indexOf('points to neither option')).toBeLessThan(prompt.indexOf('"answer": N}'));
       expect(prompt).toContain('"Quoky" and this chat mean Quoky.');
     }
   });
@@ -413,6 +413,12 @@ describe('the supplemental context corpus (nl-intent.context.v1.json; owner deci
     const plain = corpus.cases.find((golden) => golden.id === 'ctx-d4-008') as NlEvalCase;
     expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('wrong-capture');
     expect(scoreOutput({ ...plain, openQuestion: undefined } as NlEvalCase, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('none');
+    // Owner decision of 2026-10-27: a quoted number is a real read (or misread), and "none" is no answer.
+    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: '1' }), NOW).outcome).toBe('wrong-capture');
+    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 'none' }), NOW).outcome).toBe('none');
+    expect(scoreOutput(d4, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: String(d4.expectAnswer) }), NOW).outcome).toBe('hit');
+    const regressionPlain = { id: plain.id, text: plain.text, openQuestion: plain.openQuestion, expect: 'none' } as never;
+    expect(scoreReadRegression(regressionPlain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: '1' }), NOW).outcome).toBe('wrong-capture');
     // The D4 answer golds are their own label in the per-entry report.
     expect(summarize(records).perEntry[NL_EVAL_OPEN_QUESTION_LABEL]).toMatchObject({ hits: 26, total: 26 });
     // read-regression (A6 entries offered) renders and scores the same cases the same way.

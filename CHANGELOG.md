@@ -93,6 +93,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed (eval only, 2026-10-27).** Read-regression records also keep the raw output of a non-hit (bounded, like
   `eval:nl` read) and the error kind (`malformed` or `provider`), so a malformed selector output, such as a quoted
   `"answer": "1"`, can be read from the report. Scoring and the gate are unchanged.
+- **Changed (owner decision 2026-10-27; read `nl-select.v72`, A6 `v70`, R2 `v71`).** A selector `answer` written as a
+  one-digit string ("1"–"4") is that option, and `"none"` is no answer (runtime and eval). The open-question lines now
+  say that N is a JSON integer and that a non-answer leaves the field out. Prompts without an open question are
+  byte-identical.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

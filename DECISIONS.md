@@ -30642,3 +30642,16 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
   - Only the open-question block changes. Every prompt without an open question is byte-identical (pinned sha256
     unchanged; 82 of 84 pinned prompts unchanged, the 2 open-question ones regenerated in
     `golden/nl-select.v71.prompts.json`). No example, no phrase list.
+- **The answer contract relaxed and spelled out: read `nl-select.v72`, A6 `v70`, R2 `v71`** (owner decision of
+  2026-10-27; amends D4's "an integer 1–4; the parser rejects anything else").
+  - Why: at cda61425 the selector wrote `"answer":"1"`, `"answer":"2"` and `"answer":"none"`. The parser rejected them, so
+    the runtime failed closed, and the eval scored `error`. That hid two non-answer misreads (ctx-d4-034 at cda61425,
+    ctx-d4-032 at 24112d09) and lost one correct answer (ctx-d4-020).
+  - The parser (runtime and eval alike) reads a one-digit string `"1"`–`"4"` as that integer, and `"none"` (like `null`
+    or no field) as no answer. Anything else is still rejected (`bad-answer`).
+  - The open-question lines say that a non-answer leaves the `answer` field out (never `"none"`), and that N is a JSON
+    integer. Only that block changes. Every prompt without an open question is byte-identical (pinned sha256
+    unchanged; 2 of 84 pinned prompts regenerated in `golden/nl-select.v72.prompts.json`).
+  - The eval now counts these outputs as real reads or misreads. Re-scored on the archived raw outputs: cda61425 intent
+    run 1 becomes a wrong capture (ctx-d4-034), run 2 gains a hit (ctx-d4-020), and ctx-d4-032 ×2 becomes `none`.
+    24112d09 intent run 3 becomes a wrong capture (ctx-d4-032).

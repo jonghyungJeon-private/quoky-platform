@@ -1146,6 +1146,17 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(late.calls[2]?.prompt).not.toContain('Open question');
   });
 
+  it('owner decision of 2026-10-27: a quoted option number is that option, and "none" is no answer (the relaxed contract)', async () => {
+    const quoted = harness({ script: [out('help.topic'), out('none', {}, { answer: '1' })] });
+    await quoted.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await quoted.decide('퀴키로 하는 쪽')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+    expect(quoted.calls[1]?.prompt).toContain('as a JSON integer (1, not');
+    expect(quoted.calls[1]?.prompt).toContain('leave');
+    const none = harness({ script: [out('help.topic'), out('none', {}, { answer: 'none' })] });
+    await none.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await none.decide('고마워')).toEqual({ kind: 'none' });
+  });
+
   it('CA review W2: a topic the selector named but Core dropped as out of set is not a general help: no help-scope question', async () => {
     const h = harness({ script: [out('help.topic', { topic: 'slack' })] });
     expect(await h.decide('너 슬랙 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
