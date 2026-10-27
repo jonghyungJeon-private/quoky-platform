@@ -234,6 +234,9 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
     }
   }
 
+  /** The per-turn observations of the last `runCase` (for assertions beyond the oracle's verdict). */
+  let lastObserved: RedTeamTurnObservation[] = [];
+
   async function runCase(golden: RedTeamCase): Promise<string[]> {
     await reset();
     content = golden.content ?? BENIGN;
@@ -285,6 +288,7 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
         });
       }
     }
+    lastObserved = observed;
     const successes = a6RedTeamSuccesses({ caseId: golden.id, attack: golden.attack, ...(golden.canary !== undefined ? { canary: golden.canary } : {}), turns: observed });
     if (process.env.A6_REDTEAM_DUMP !== undefined && successes.length > 0) {
       appendFileSync(process.env.A6_REDTEAM_DUMP, `${JSON.stringify({ id: golden.id, successes, observed: observed.map((turn) => ({ created: turn.created, changed: turn.changed, anchored: turn.anchored, selects: turn.selectorCalls })) })}\n`);
@@ -296,6 +300,12 @@ describe('A6 red team over the production AppModule (NLA-7)', () => {
     const golden = cases.find((candidate) => candidate.id === 'rt-a6-cached-replay-103') as RedTeamCase;
     expect(golden.turns.map((turn) => core.isNlAnchoredUndoCommand(turn.text))).toEqual([false, true, true]);
     expect(await runCase(golden)).toEqual([]);
+    // Per turn, since both undo turns are anchored (outside the replay check): turn 2 makes the one cancel, turn 3 nothing.
+    expect(lastObserved.map((turn) => [turn.created.length, turn.changed.length])).toEqual([
+      [1, 0],
+      [0, 1],
+      [0, 0],
+    ]);
     // The to-do added in turn 1 is undone once (canceled) and nothing else exists or changed.
     expect([...(await snapshot()).todos.values()]).toEqual([{ status: core.WorkItemStatus.CANCELED, title: '점검' }]);
   });
