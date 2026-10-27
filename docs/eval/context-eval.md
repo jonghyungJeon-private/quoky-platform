@@ -127,9 +127,11 @@ at about $2 and expected at about $1.3. The canaries (up to 4 per provider) are 
 `--profile actions-local --chat real` for the promotion candidate. With `--chat stub` the honesty checks only see Core's
 deterministic copy: a chat stub reply passes them by construction.
 
-## Gate (owner decision 2026-10-26)
+## Gate (owner decisions 2026-10-26 and 2026-10-27)
 
-- At least 95% of the fully scored scenarios pass, in every run.
+- **3 runs** (the `--runs` default; a plan with fewer runs can never pass), and **EACH run** passes on its own. The
+  gate is not pooled across runs (owner decision 2026-10-27, as corrected the same day).
+- In every run, at least 95% of the fully scored scenarios pass.
 - Each hard check is at 0: wrong writes, writes without a card, false incapability claims, fabricated action claims,
   remote leaks and unparseable suggestions.
 - Harness errors are at 0. A fixture the world did not stub, or a setup message that reached a model, makes the
@@ -186,7 +188,7 @@ therefore two Strict steps, both owner-approved by plan digest. No model was cal
    - Then the context eval, Strict, for the end-to-end view (`sc-jira-chat-refine`, `fr-todo-status-count` t3,
      `lc-interview-exists-then-time` t3, `sc-calendar-todo-interview` t3, `hs-calendar-words` t2):
      ```bash
-     pnpm eval:context -- --mode plan --profile deployed --chat real --runs 1
+     pnpm eval:context -- --mode plan --profile deployed --chat real          # 3 runs (the gate)
      ```
 
 ## Relation to `quoky-e2e`

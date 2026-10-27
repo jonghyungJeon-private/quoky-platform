@@ -16,7 +16,7 @@ function provider(execute: (request: AiRequest) => Promise<string>): AiProvider 
 }
 
 /** A run that makes one selection call per scenario and scores every scenario as passed, or the given failures. */
-function scriptedRun(options: { hardFailureIn?: string; failCalls?: boolean } = {}) {
+function scriptedRun(options: { hardFailureIn?: string; failCalls?: boolean; softFailureIn?: { readonly id: string; readonly run: number } } = {}) {
   return async (input: RunInput): Promise<ScenarioRecord[]> => {
     const records: ScenarioRecord[] = [];
     for (let run = 1; run <= input.runs; run += 1) {
@@ -24,7 +24,8 @@ function scriptedRun(options: { hardFailureIn?: string; failCalls?: boolean } = 
         const scenario = input.corpus.scenarios.find((entry) => entry.id === id) as ContextEvalCorpus['scenarios'][number];
         if (input.selection.kind === 'real') await input.selection.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: 'p' }).catch(() => undefined);
         const hard = id === options.hardFailureIn;
-        const turns = scenario.turns.map((_, index) => ({ turn: index + 1, checks: [{ name: hard ? 'wrong-write' : 'chat', pass: !hard, hard }], pass: !hard }));
+        const soft = options.softFailureIn !== undefined && options.softFailureIn.id === id && options.softFailureIn.run === run;
+        const turns = scenario.turns.map((_, index) => ({ turn: index + 1, checks: [{ name: hard ? 'wrong-write' : 'chat', pass: !hard && !soft, hard }], pass: !hard && !soft }));
         records.push({ run, score: scoreScenario(scenario, turns, 'full'), turns: [] });
         input.onScenario?.(records.at(-1) as ScenarioRecord);
       }
@@ -102,16 +103,33 @@ describe('context eval CLI — plan and the Strict boundary', () => {
     expect(await runCli(['--mode', 'run'], deps())).toBe(EXIT_USAGE);
   });
 
-  it('run with the approved digest scores every run and passes the gate', async () => {
+  it('run with the approved digest scores every run and passes the gate (3 runs by default, owner decision 2026-10-27)', async () => {
     const plan = deps();
-    await runCli(['--mode', 'plan', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--runs', '2'], plan);
+    await runCli(['--mode', 'plan', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions'], plan);
+    expect(plan.out.join('\n')).toContain('"runs": 3');
     const d = deps();
-    expect(await runCli(['--mode', 'run', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--runs', '2', '--approved-plan-digest', digestOf(plan.out)], d)).toBe(EXIT_OK);
+    expect(await runCli(['--mode', 'run', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--approved-plan-digest', digestOf(plan.out)], d)).toBe(EXIT_OK);
     expect(d.createSelectionProvider).toHaveBeenCalledWith('haiku');
-    expect(d.out.join('\n')).toContain('context gate');
-    expect(d.out.join('\n')).toContain('PASSED');
-    expect(d.out.join('\n')).toContain('selection: 4 answered, 0 failed, 0 refused');
+    expect(d.out.join('\n')).toContain('context gate (3 runs; EACH run >= 95% scenarios, 0 hard failures, 0 harness errors): PASSED');
+    expect(d.out.join('\n')).toContain('selection: 6 answered, 0 failed, 0 refused');
     expect(JSON.parse(d.reports[0] as string).plan.digest).toBe(digestOf(plan.out));
+  });
+
+  it('owner decision 2026-10-27: the gate is per run, never pooled, and needs 3 runs', async () => {
+    const scenarios = 'fr-jira-keyword-count,lc-interview-questions';
+    // One scenario failing in run 2 only: 5 of 6 pooled (83%) and runs 1 and 3 at 100% — the gate fails on run 2 alone.
+    const plan = deps();
+    await runCli(['--mode', 'plan', '--scenarios', scenarios], plan);
+    const d = deps({ runScenarios: scriptedRun({ softFailureIn: { id: 'lc-interview-questions', run: 2 } }) });
+    expect(await runCli(['--mode', 'run', '--scenarios', scenarios, '--approved-plan-digest', digestOf(plan.out)], d)).toBe(EXIT_GATE_FAILED);
+    expect(d.out.join('\n')).toContain('run 2: misses the per-run bar');
+    expect(d.out.join('\n')).toContain('run 1: meets the per-run bar');
+    // Two passing runs are not a gate.
+    const two = deps();
+    await runCli(['--mode', 'plan', '--scenarios', scenarios, '--runs', '2'], two);
+    const short = deps();
+    expect(await runCli(['--mode', 'run', '--scenarios', scenarios, '--runs', '2', '--approved-plan-digest', digestOf(two.out)], short)).toBe(EXIT_GATE_FAILED);
+    expect(short.out.join('\n')).toContain('(the gate needs 3 runs; this plan has 2)');
   });
 
   it('a hard failure fails the gate', async () => {

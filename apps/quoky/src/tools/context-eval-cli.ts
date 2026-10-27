@@ -47,6 +47,7 @@ import {
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import { countingProvider } from './nl-r2-redteam-cli';
 import {
+  CONTEXT_EVAL_GATE,
   HARD_CHECKS,
   buildContextEvalPlan,
   computeContextEvalPlanDigest,
@@ -273,7 +274,8 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
       selectionModel: parsed.options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
       chat: parsed.options['--chat'] === 'real' ? 'real' : 'stub',
       ...(parsed.options['--chat-model'] !== undefined ? { chatModel: parsed.options['--chat-model'] } : {}),
-      runs: integer(parsed.options['--runs'], 1),
+      // Owner decision 2026-10-27: a gate is 3 runs (the default); fewer runs never pass it.
+      runs: integer(parsed.options['--runs'], CONTEXT_EVAL_GATE.runs),
       scenarioIds,
       gitHead: (deps.gitHead ?? defaultGitHead)(),
     });
@@ -380,8 +382,13 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
     deps.stdout(`chat: ${chatCounts.ok} answered, ${chatCounts.failed} failed, ${chatCounts.refused} refused over the bound (bound ${plan.maxChatCalls})`);
     deps.stdout(formatProviderOutcomes(chatOutage));
   }
-  const passed = !overBound && summaries.every((summary) => gatePasses(summary));
-  deps.stdout(`context gate (>= ${plan.gate.scenarioPassRate * 100}% scenarios, 0 hard failures, 0 harness errors, every run): ${passed ? 'PASSED' : `FAILED${invalidReason !== undefined ? ` ${outageAlsoSeenNote(invalidReason)}` : ''}`}`);
+  // Owner decision 2026-10-27 (not pooled): at least CONTEXT_EVAL_GATE.runs runs, and EACH run passes on its own.
+  const enoughRuns = plan.runs >= CONTEXT_EVAL_GATE.runs;
+  const passed = enoughRuns && !overBound && summaries.every((summary) => gatePasses(summary));
+  for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}: ${gatePasses(summary) ? 'meets' : 'misses'} the per-run bar`);
+  deps.stdout(
+    `context gate (${CONTEXT_EVAL_GATE.runs} runs; EACH run >= ${plan.gate.scenarioPassRate * 100}% scenarios, 0 hard failures, 0 harness errors): ${passed ? 'PASSED' : `FAILED${enoughRuns ? '' : ` (the gate needs ${CONTEXT_EVAL_GATE.runs} runs; this plan has ${plan.runs})`}${invalidReason !== undefined ? ` ${outageAlsoSeenNote(invalidReason)}` : ''}`}`,
+  );
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return passed ? EXIT_OK : EXIT_GATE_FAILED;

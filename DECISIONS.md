@@ -30598,3 +30598,7 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     both `eval:nl` scorers apply it too, so they score Core's final read.
   - Strict run 2: `fr-calendar-part-keyword` t3 and `sc-calendar-todo-interview` t3 now read tomorrow even when the
     selector leaves the range out.
+- **The context gate: 3 runs, each passing** (owner decision of 2026-10-27, corrected the same day: NOT pooled).
+  - `eval:context --mode run` defaults to 3 runs. The gate passes only with at least 3 runs.
+  - EACH run must reach at least 95% of its fully scored scenarios, with every hard check at 0 and no harness error.
+  - The CLI prints each run's verdict, and a plan with fewer runs reports that the gate needs 3.
