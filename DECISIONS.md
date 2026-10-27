@@ -30538,3 +30538,26 @@ Made after a Codex consult. This section supersedes the "approved, not yet moved
     meanwhile.
   - The local Ollama is now 0.40.11, and the committed space id says 0.40.8. Any regeneration therefore also moves the
     space id that an approved RAG plan binds.
+
+### ADR-0123 audit regenerated for the supplemental context corpus (2026-10-27, branch `claude/v5-context-fixes`)
+
+- **Texts.** The owner picked the replacement texts on 2026-10-27, and each case's note records the pick:
+  - `ctx-p7-002` "그 전에 보여준 메일 목록에서 아직 안 연 것만";
+  - `ctx-d1-002` "그 메일들 개수가 어떻게 돼?".
+
+  They resolve the two near pairs of the section above.
+- **Wiring.** `nl-intent.context.v1.json` is in the ADR-0123 gold files as overlap-only (`OVERLAP_ONLY_GOLD_FILES`):
+  - the pool n-gram lint and the embedding audit check it;
+  - it is not in the experiment split, so the dev / held-out membership and `splitSha256` are unchanged;
+  - the RAG-0 prompt-example lint (`example-contamination.test.ts`) reads it too.
+- **Audit record.** Regenerated with `pnpm eval:rag -- --mode dry-run --write-audit true`, with the LOCAL Ollama on loopback
+  only and no remote call.
+  - Pool lint: 0 findings. Flagged pairs: 0. tau 0.7941 and tau_low 0.7441 are unchanged. Held-out low stratum: 98.6%.
+  - The gold digest moves because the gold files changed.
+  - **The space id moves from `@ollama0.40.8` to `@ollama0.40.11`** (same model digest `ff9c2f10ef5e`). The owner accepted
+    this on 2026-10-27, the same as the 0.40.5 → 0.40.6 regeneration. On the old gold set, the 0.40.11 run reproduces the
+    committed metrics exactly; only the id differs.
+  - The tau calibration's seeded random gold-gold negatives change with the larger gold set: 375 → 345 pairs, one at 0.837
+    (false-positive rate 0.29%). tau comes from the positives and is unchanged, and this rate is not a gate.
+  - No RAG plan is live: phase 1 ended with "no measured gain", and the old plan digests are already stale. A reopened
+    experiment approves a new plan digest anyway.

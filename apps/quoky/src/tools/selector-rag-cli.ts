@@ -21,7 +21,7 @@ import { resolve } from 'node:path';
 import { DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
 import { runEmbedAudit, type ModelAudit } from './selector-rag/audit';
 import { DEFAULT_OLLAMA_URL, OllamaHttpEmbedder, readPin, type Embedder } from './selector-rag/embed';
-import { contaminatedGoldIds, loadCalibrationPositives, loadGold, loadKnownFindings } from './selector-rag/gold';
+import { contaminatedGoldIds, experimentCases, loadCalibrationPositives, loadGold, loadKnownFindings } from './selector-rag/gold';
 import { buildRagPlan, ragPlanDigest } from './selector-rag/plan';
 import { approvedEntries, checkPool, loadPoolFile, poolDigest, type PoolEntry } from './selector-rag/pool';
 import { splitCases } from './selector-rag/split';
@@ -161,7 +161,7 @@ export function toAuditRecord(audits: readonly ModelAudit[], splitSha256: string
 }
 
 function splitOf(gold: ReturnType<typeof loadGold>): { split: ReturnType<typeof splitCases>; sha256: string } {
-  const split = splitCases(gold.cases.map((golden) => ({ id: golden.id, entry: golden.entry })));
+  const split = splitCases(experimentCases(gold).map((golden) => ({ id: golden.id, entry: golden.entry })));
   return { split, sha256: createHash('sha256').update(JSON.stringify(split)).digest('hex') };
 }
 

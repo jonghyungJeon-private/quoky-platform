@@ -57,8 +57,9 @@ These fix the hard failures of the first `eval:context` run that need no owner d
 - **The 20 D1 / P7 / D4 golds** form the supplemental scored corpus `nl-intent.context.v1.json` (owner decision (가),
   2026-10-27). `eval:nl` read and read-regression score it, Q11 does not, and `ctx-d1-005` was swapped (decision (나)).
   - S2 activation blocker recorded: the planner needs the same listing context and must pass both gates.
-  - The ADR-0123 checks found two near pairs (embedding: pool `b1-mail-list-05` ~ `ctx-p7-002`; static example "몇 건이야?"
-    ~ `ctx-d1-002`). They wait for the owner, so the ADR-0123 wiring is not committed.
+  - The ADR-0123 near pairs were resolved by the owner's text picks (`ctx-p7-002`, `ctx-d1-002`, 2026-10-27). The corpus is
+    in the ADR-0123 lint and audit gold (overlap only), and the audit was regenerated with the local embedder (space id
+    `@ollama0.40.11`, accepted).
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.
