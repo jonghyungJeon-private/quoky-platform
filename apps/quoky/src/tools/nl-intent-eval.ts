@@ -30,6 +30,7 @@ import {
   isNlCatalogEntryId,
   isNlWave1EntryId,
   nlHelpSourceScope,
+  isJiraReleaseLinkOnly,
   nlInheritHeldRange,
   nlOneStepClauseGroundedFlags,
   nlOwnerStatedRange,
@@ -93,6 +94,9 @@ export interface NlEvalCase {
    */
   readonly clarify?: NlEvalClarifyGold;
 }
+
+/** a8-25: Core's own reading of a link-only message (`isJiraReleaseLinkOnly`), as a selector output. */
+export const NL_EVAL_RELEASE_LINK_OUTPUT = { entryId: 'jira.release', args: {}, ambiguity: 'CLEAR', alternatives: [] } as const;
 
 /** A case's expected label: its entry, or `none`. */
 export function nlEvalExpectedLabel(golden: Pick<NlEvalCase, 'expect'>): string {
@@ -235,7 +239,8 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   const expected = nlEvalExpectedLabel(golden);
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return { id: golden.id, expected, outcome: 'skipped' };
-  const output = parseSelectionOutput(raw);
+  // a8-25 (2026-10-27): a link-only message is `jira.release` with no args in Core, with no model call (the runtime's rule).
+  const output = isJiraReleaseLinkOnly(prepared.groundingText) ? NL_EVAL_RELEASE_LINK_OUTPUT : parseSelectionOutput(raw);
   if (output === null) return { id: golden.id, expected, outcome: 'error', error: 'malformed' };
   if (output.entryId === null) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.

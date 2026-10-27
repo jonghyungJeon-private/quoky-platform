@@ -1135,6 +1135,16 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await stray.decide('퀴키로 하는 쪽')).toEqual({ kind: 'unavailable' });
   });
 
+  it('a8-25 (2026-10-27): a link-only message is jira.release with no args, with no selector call', async () => {
+    const h = harness({ script: [] });
+    expect(await h.decide('https://example.atlassian.net/browse/OP26/fixforversion/16555')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: {} } });
+    expect(h.calls).toHaveLength(0);
+    // A link with words goes to the selector as before.
+    const worded = harness({ script: [out('jira.release')] });
+    await worded.decide('https://example.atlassian.net/browse/OP26/fixforversion/16555 이거 몇 개야?');
+    expect(worded.calls).toHaveLength(1);
+  });
+
   it('owner decision of 2026-10-27 (range grounding): the one label-table period the owner states is the range Core runs', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
     expect(await h.decide('다다음 주 일정 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'week-after-next' } } });

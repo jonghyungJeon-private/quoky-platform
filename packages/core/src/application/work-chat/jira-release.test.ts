@@ -7,7 +7,7 @@ import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
-import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
+import { hasJiraReleaseLink, isJiraReleaseLinkOnly, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
 import { fuzzyProjects, lookupJiraRelease, nearProjectsOfJoined, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { releasesInListOrder, renderReleaseIssues, renderReleaseList } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
@@ -157,6 +157,19 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     const fake = connector();
     const channel = await lookupJiraRelease({ connector: fake.provider, command: { scope: 'mine', links: [], release: 'OP26' }, identity: 'acc-1', siteHost: SITE, inChannel: true });
     expect(channel.kind === 'body' ? plainTextOf(channel.body) : '').toContain('프로젝트·릴리스 목록은 DM에서만');
+  });
+
+  it('a8-25 (2026-10-27): a message that is nothing but Jira release-page links is link-only; anything else is not', () => {
+    for (const text of [`https://${SITE}/browse/OP26/fixforversion/16555`, `${LINK}`, `<${LINK}>`, `${LINK} ${LINK}.`, `  ${LINK} !`]) expect(isJiraReleaseLinkOnly(text), text).toBe(true);
+    for (const text of [
+      `${LINK} 이거 보여줘`,
+      `how many in ${LINK}`,
+      `https://${SITE}/projects/OP26`,
+      `https://${SITE}/browse/OP26-123`,
+      `${LINK} https://example.com/x`,
+      '릴리스 보여줘',
+      '',
+    ]) expect(isJiraReleaseLinkOnly(text), text).toBe(false);
   });
 
   it('P9 mirror (2026-10-27, a8-18): with no release, a project value that cannot be a Jira key and names no visible project is the release', async () => {

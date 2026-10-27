@@ -76,9 +76,9 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
-import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
+import { NL_EVAL_HELP_ENTRY, NL_EVAL_RELEASE_LINK_OUTPUT, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
-import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
+import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, isJiraReleaseLinkOnly, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
@@ -869,7 +869,8 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const expect = golden.a6Relabel ?? golden.expect;
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return { outcome: 'skipped', relabeled };
-  const output = parseSelectionOutput(raw);
+  // a8-25 (2026-10-27): a link-only message is `jira.release` with no args in Core, with no model call (the runtime's rule).
+  const output = isJiraReleaseLinkOnly(prepared.groundingText) ? NL_EVAL_RELEASE_LINK_OUTPUT : parseSelectionOutput(raw);
   if (output === null) return { outcome: 'error', relabeled };
   if (output.entryId === null) return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
   if (!isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) {

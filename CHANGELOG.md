@@ -19,6 +19,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Fixed (Jira release, 2026-10-27).** With no release named, a project value that cannot be a Jira key and names no
   visible project ("2.3.0") is read as the release, the mirror of P9.
+- **Changed (Jira release, 2026-10-27).** A message that is nothing but Jira release-page links is read as the release
+  link deterministically, with no model call. The existing link parser does this; no word list is added.
 - **Removed (owner decision 2026-10-27): D4 moves to the next merge.** The help-scope question no longer reaches the
   selector, and a worded reply is routed as usual (a number or a displayed option text still answers it). The
   selector's `answer` field is gone, and prompt versions stay read v72 / A6 v70 / R2 v71 (byte-identical for every

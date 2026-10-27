@@ -124,6 +124,7 @@ import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 import { nlOneStepClauseGroundedFlags } from './clause-flags';
 import { nlOwnerStatedRange } from './owner-period';
+import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -1037,6 +1038,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.logAgreement(turn, { outcome: 'fallback', reason: prepared.skip });
       return { kind: 'skip', reason: prepared.skip };
     }
+    // Owner request of 2026-10-27 (a8-25): a message that is nothing but Jira release-page links is `jira.release` with
+    // no args (the link is the release), read by the existing link parser with no model call.
+    const linkOnly = this.releaseLinkOnly(effective, prepared.groundingText, turn, last, language);
+    if (linkOnly !== undefined) return linkOnly;
     const selected = await this.select(effective, prepared, last, undefined, reference);
     if (selected.kind === 'egress-refused') {
       this.log('info', 'nl_selection.skipped', { reason: selected.reason, route: turn.route });
@@ -1343,6 +1348,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
+  }
+
+  /** a8-25: `jira.release` with no args for a link-only message, when the entry is offered and validates; else undefined. */
+  private releaseLinkOnly(turn: NlSelectionTurn, groundingText: string, original: NlSelectionTurn, last: LastSelection | undefined, language: 'ko' | 'en'): Promise<NlSelectionDecision> | undefined {
+    if (!isJiraReleaseLinkOnly(groundingText) || !turn.entries.some((entry) => entry.id === 'jira.release')) return undefined;
+    const validated = validateSelection({ entryId: 'jira.release', args: {} }, this.validationContext(turn, groundingText, undefined));
+    if (!validated.ok) return undefined;
+    this.log('info', 'nl_selection.release_link_only', { route: original.route });
+    return this.complete(validated.value, original, last, language, groundingText);
   }
 
   /** Owner decision P-time (ii): {@link nlInheritHeldRange} with this turn's validation context; logs an inheritance. */

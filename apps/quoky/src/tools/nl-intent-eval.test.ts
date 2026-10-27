@@ -342,6 +342,15 @@ describe('owner decision P-time (ii) in the scorers (Core\'s final outcome)', ()
   });
 });
 
+describe('a8-25 (2026-10-27): a link-only message is Core\'s jira.release in both scorers, whatever the selector said', () => {
+  it('scores the link-only gold as a hit even when the selector answered none', () => {
+    const golden: NlEvalCase = { id: 'link-1', text: 'https://example.atlassian.net/browse/OP26/fixforversion/16555', expect: { entryId: 'jira.release', args: {} } };
+    expect(scoreOutput(golden, answer('none'), NOW).outcome).toBe('hit');
+    expect(scoreReadRegression(golden as never, answer('none'), NOW).outcome).toBe('hit');
+    expect(scoreOutput({ ...golden, text: `${golden.text} 이거 뭐야` }, answer('none'), NOW).outcome).toBe('miss');
+  });
+});
+
 describe('owner decision of 2026-10-27: the one-step timedOnly rule in both scorers (Core\'s final outcome)', () => {
   it('a meeting question without the flag scores as the runtime completes it; "일정" keeps the whole calendar', () => {
     const meeting: NlEvalCase = { id: 'to-1', text: '지난주에 무슨 회의 있었지?', expect: { entryId: 'calendar.events', args: { range: 'last-week', timedOnly: true } } };

@@ -30823,3 +30823,13 @@ prompts.
     value next to a named release.
   - It is the lookup Core already runs, so the eval's in-world equivalence (owner answer 1) credits it with no scorer
     change.
+- **a8-25 (a pasted fix-version URL read as `none`): the existing link parser is wired for a link-only message.**
+  - `parseJiraReleaseLinks` (ADR-0120 A8) already reads release links deterministically, but nothing routed on it.
+  - A message counts as link-only when every URL in it is a Jira release-page link with a version id and no letter or
+    digit is left once the links are removed (`isJiraReleaseLinkOnly`). Such a message is now `jira.release` with no
+    args, with no model call, when the entry is offered and validates.
+  - A link with words still goes to the selector, as before.
+  - Both `eval:nl` scorers apply the same rule, so they score Core's final outcome.
+- **a8-16 ("몇 개야?" after a release listing: the selector kept the release and dropped `count`): left as variance.**
+  `count` has no catalog grounding vocabulary (no `flagGrounding`, unlike `timedOnly`'s `CALENDAR_TIMED_ONLY_WORDS`),
+  and none is invented.
