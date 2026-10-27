@@ -1,6 +1,6 @@
 import { nlStatedLabelPeriod } from './action-entries';
 import { nlClauseStringValues } from './clause-flags';
-import type { NlCatalogEntry } from './catalog';
+import type { NlArgs, NlCatalogEntry } from './catalog';
 import { nlHasExclusionOrNegation } from './request-shape';
 import { normalizeForMatch } from './selection-input';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext } from './selection-validator';
@@ -59,5 +59,37 @@ export function nlOwnerStatedRange(selection: NlValidatedSelection, groundingTex
     if (shown !== undefined && owner !== undefined && shown.from === owner.from && shown.to === owner.to) return selection;
   }
   const again = validateSelection({ entryId: entry.id, args: { ...selection.args, [spec.name]: stated } }, ctx);
+  return again.ok ? { ...again.value, ...(selection.defaulted !== undefined ? { defaulted: selection.defaulted } : {}) } : selection;
+}
+
+/**
+ * Owner decision of 2026-10-28 (fix 4 of the 95386868 analysis; amends the follow-up inheritance rule): an ITEM question
+ * after a narrowed listing searches the full parent listing. When the held listing of the same entry narrowed its parent
+ * (`LastSelection.parent`, e.g. "그중에 오후 것만") and the read names a new item (a keyword arg with a value the held
+ * listing did not have, "면접은 몇 시였지?"), every narrowing arg the read only carried over (one the owner's words of this
+ * turn do not ground, judged by the validator against the parent alone) is dropped, so the read covers the parent listing.
+ * A narrowing the owner states again ("오후 면접은?") stays. The result is validated again; an invalid one keeps the read.
+ * Pure.
+ */
+export function nlSearchParentListing(
+  selection: NlValidatedSelection,
+  held: { readonly entryId: string; readonly args: NlArgs; readonly parent?: NlArgs } | undefined,
+  ctx: NlValidationContext,
+): NlValidatedSelection {
+  const { entry } = selection;
+  if (held === undefined || held.parent === undefined || held.entryId !== entry.id || entry.risk !== 'READ') return selection;
+  const namesNewItem = entry.args.some((spec) => spec.kind === 'keyword' && typeof selection.args[spec.name] === 'string' && selection.args[spec.name] !== held.args[spec.name]);
+  if (!namesNewItem) return selection;
+  const parent = held.parent;
+  const narrowing = Object.keys(held.args).filter((name) => parent[name] !== held.args[name] && selection.args[name] === held.args[name]);
+  if (narrowing.length === 0) return selection;
+  const parentCtx: NlValidationContext = { ...ctx, previousArgs: parent, previousEntryId: entry.id as never };
+  const stated = validateSelection({ entryId: entry.id, args: selection.args }, parentCtx);
+  const carried = narrowing.filter((name) => !stated.ok || stated.value.args[name] !== selection.args[name]);
+  if (carried.length === 0) return selection;
+  const args: Record<string, NlArgs[string]> = {};
+  for (const [name, value] of Object.entries(selection.args)) if (!carried.includes(name)) args[name] = value;
+  for (const [name, value] of Object.entries(parent)) if (args[name] === undefined) args[name] = value;
+  const again = validateSelection({ entryId: entry.id, args }, parentCtx);
   return again.ok ? { ...again.value, ...(selection.defaulted !== undefined ? { defaulted: selection.defaulted } : {}) } : selection;
 }

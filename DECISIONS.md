@@ -30869,3 +30869,16 @@ The merge waits until EVERY Strict context run is at or above 95%.
   now scores the `lastSelection` Core recorded this turn for the same entry. It used to score the raw command the
   handler received. For P9, the dispatched `{release: NR26}` is recorded as `{project: NR26}`. A record of another
   entry, or one that did not change this turn, is not used. The served entry is unchanged.
+- **Fix 4: an item question after a narrowed listing searches the full parent listing.** This owner decision amends
+  the follow-up inheritance rule ("a follow-up keeps the previous args").
+  - A listing that narrows the one just shown keeps the parent's args in `lastSelection.parent`. Narrowing means the
+    same entry, every arg kept and at least one added, as in "그중에 오후 것만". A chain of narrowings keeps the top parent;
+    any other listing keeps none. The parent is structure only and survives a chat turn (D1).
+  - In `complete`, before the P-time inheritance: when the read names a new item (a keyword arg with a value the held
+    listing did not have, as in "면접은 몇 시였지?"), Core drops the narrowing args it only carried over
+    (`nlSearchParentListing`). An arg counts as carried when the validator, against the parent alone, does not ground
+    it in this turn's words. The parent's args fill any gap, and the result is validated again.
+  - A narrowing the owner states again ("오후 면접은?") stays. A count follow-up ("몇 개야?"), a read with no new item, or
+    an unnarrowed listing is unchanged.
+  - 95386868: `fr-calendar-part-keyword` t3 failed 2 of 3 runs on exactly this read (`{tomorrow, afternoon, keyword
+    면접}`, with the interview in the morning).

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { nlStatedLabelPeriod } from './action-entries';
 import { nlInheritHeldRange } from './nl-selection-service';
-import { nlOwnerStatedRange } from './owner-period';
+import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
@@ -100,5 +100,23 @@ describe('nlOwnerStatedRange', () => {
     const plain = '그 면접 어디서 해?';
     const kept = nlInheritHeldRange(selected(plain, { keyword: '면접' }, held.args), held, plain, ctxOf(plain, held.args));
     expect(nlOwnerStatedRange(kept, plain, ctxOf(plain, held.args)).args).toEqual({ range: 'next-week', keyword: '면접' });
+  });
+});
+
+describe('owner decision of 2026-10-28: an item question after a narrowed listing searches the full parent listing', () => {
+  const held = { entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon' }, parent: { range: 'tomorrow' } };
+  const search = (text: string, args: Record<string, unknown>, h: typeof held | { entryId: string; args: Record<string, string> } = held) =>
+    nlSearchParentListing(selected(text, args, h.args), h as never, ctxOf(text, h.args)).args;
+
+  it('drops the narrowing the read only carried over; keeps one the owner states again', () => {
+    expect(search('면접은 몇 시였지?', { range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' })).toEqual({ range: 'tomorrow', keyword: '면접' });
+    expect(search('오후 면접은 몇 시야?', { range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' })).toEqual({ range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' });
+  });
+
+  it('leaves a non-item follow-up, an unnarrowed listing and the same keyword alone', () => {
+    expect(search('몇 개야?', { range: 'tomorrow', partOfDay: 'afternoon', count: true })).toEqual({ range: 'tomorrow', partOfDay: 'afternoon', count: true });
+    expect(search('면접은 몇 시였지?', { range: 'tomorrow', keyword: '면접' }, { entryId: 'calendar.events', args: { range: 'tomorrow' } })).toEqual({ range: 'tomorrow', keyword: '면접' });
+    const sameKeyword = { entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' }, parent: { range: 'tomorrow' } };
+    expect(search('그 면접 어디서 해?', { range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' }, sameKeyword as never)).toEqual({ range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' });
   });
 });

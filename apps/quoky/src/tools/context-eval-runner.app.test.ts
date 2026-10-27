@@ -155,6 +155,21 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
   }, 120_000);
 
+  it('owner decision of 2026-10-28 over the real runtime: "면접은 몇 시였지?" after "그중에 오후 것만" searches the whole held listing', async () => {
+    let selector = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => '', summarize: async () => '' });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    selector = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon' }, ambiguity: 'CLEAR', alternatives: [] });
+    await world.turn(owner, '그중에 오후 것만', owner.dm);
+    // The selector carries the afternoon narrowing (the refine rule); Core searches the parent listing (tomorrow).
+    selector = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' }, ambiguity: 'CLEAR', alternatives: [] });
+    const item = await world.turn(owner, '면접은 몇 시였지?', owner.dm);
+    expect(item.served.at(-1)).toMatchObject({ entryId: 'calendar.events', args: { range: 'tomorrow', keyword: '면접' } });
+    expect(item.served.at(-1)?.args).not.toHaveProperty('partOfDay');
+    expect(item.reply).toContain('1차 면접_AI Agent_김하늘');
+  }, 120_000);
+
   it('owner decision D2: a chat-suggested command is probed with the real selector in a Strict run; Core copy stays deterministic; both are reported apart', async () => {
     const releasePhrase = 'NR26 프로젝트 20261029 릴리스 보여줘';
     const chatReply = `그것만으로는 아무것도 실행되지 않아요. 아래 문장을 그대로 보내 주세요. "${releasePhrase}"`;

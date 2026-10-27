@@ -63,6 +63,12 @@ export interface LastSelection extends StoredSelection {
   readonly earlier?: readonly EarlierSelection[];
   /** Codex P2 (2026-10-27): the local dates the listing's `range` resolved to when it was shown (P-time inheritance). */
   readonly period?: HeldPeriod;
+  /**
+   * Owner decision of 2026-10-28 (fix 4 of the 95386868 analysis): when this listing narrowed the listing shown just before
+   * it of the same entry (every one of its args kept, at least one added, e.g. "그중에 오후 것만"), the args of the full
+   * parent listing (the top of a chain of narrowings). Structure only, like `args`. An item question searches the parent.
+   */
+  readonly parent?: NlArgs;
 }
 
 export interface EarlierSelection extends StoredSelection {
@@ -292,12 +298,14 @@ function lastSelectionOf(value: unknown, actorId: Id, now: IsoTimestamp): LastSe
   const turns = turnsOf(record.turns);
   const earlier = earlierOf(record.earlier, now, selection.entryId);
   const period = periodOf(record.period);
+  const parent = record.parent === undefined ? undefined : argsOf(record.parent);
   return {
     ...migrateStoredSelection(selection),
     at: record.at as IsoTimestamp,
     ...(turns > 0 ? { turns } : {}),
     ...(earlier.length > 0 ? { earlier } : {}),
     ...(period !== undefined ? { period } : {}),
+    ...(parent !== undefined ? { parent } : {}),
   };
 }
 
@@ -385,6 +393,14 @@ export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now
           now,
           selection.entryId,
         );
+  // Owner decision of 2026-10-28: a listing that narrows the one just shown (same entry, every arg kept, one or more added)
+  // keeps the full parent listing's args (the top of a chain of narrowings).
+  const narrows =
+    replaced !== undefined &&
+    replaced.entryId === selection.entryId &&
+    Object.keys(selection.args).length > Object.keys(replaced.args).length &&
+    Object.entries(replaced.args).every(([name, value]) => selection.args[name] === value);
+  const parent = narrows ? (replaced.parent ?? replaced.args) : undefined;
   return {
     actorId,
     entryId: selection.entryId,
@@ -392,6 +408,7 @@ export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now
     at: now,
     ...(earlier.length > 0 ? { earlier: earlier.map(earlierRecord) } : {}),
     ...(period !== undefined && periodOf(period) !== undefined ? { period: { start: period.start, days: period.days } } : {}),
+    ...(parent !== undefined ? { parent: { ...parent } } : {}),
   };
 }
 
@@ -411,6 +428,7 @@ export function agedLastSelectionRecord(current: unknown, actorId: Id, now: IsoT
     turns: Math.min((kept.turns ?? 0) + 1, MAX_TURNS),
     ...(earlier.length > 0 ? { earlier } : {}),
     ...(kept.period !== undefined ? { period: { ...kept.period } } : {}),
+    ...(kept.parent !== undefined ? { parent: { ...kept.parent } } : {}),
   };
 }
 

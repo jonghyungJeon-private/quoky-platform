@@ -123,7 +123,7 @@ import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, 
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 import { nlOneStepClauseGroundedFlags } from './clause-flags';
-import { nlOwnerStatedRange } from './owner-period';
+import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
 import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
 
 /**
@@ -1271,6 +1271,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
   ): Promise<NlSelectionDecision> {
     // Owner decision P-time (ii), 2026-10-27: a read that refines or asks about the held listing of the same entry keeps
     // that listing's period when the owner's words name none (`inheritHeldRange`).
+    // Owner decision of 2026-10-28 (amends the inheritance rule): an item question after a narrowed listing searches the
+    // full parent listing (the narrowing the owner only carried over is dropped first).
+    selection = this.searchParentListing(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
     selection = this.inheritHeldRange(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
     // Owner decision of 2026-10-27 (range grounding): the one label-table period the owner states wins over another range.
     selection = this.groundOwnerRange(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
@@ -1365,6 +1368,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const inherited = nlInheritHeldRange(selection, held, groundingText, this.validationContext(turn, groundingText, held.args, false, held.entryId));
     if (inherited !== selection) this.log('info', 'nl_selection.range_inherited', { entryId: selection.entry.id });
     return inherited;
+  }
+
+  /** Owner decision of 2026-10-28: {@link nlSearchParentListing} with this turn's validation context; logs a widened read. */
+  private searchParentListing(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    const widened = nlSearchParentListing(selection, held, this.validationContext(turn, groundingText, held?.args, false, held?.entryId));
+    if (widened !== selection) this.log('info', 'nl_selection.parent_listing_searched', { entryId: selection.entry.id });
+    return widened;
   }
 
   /** Owner decision of 2026-10-27: {@link nlOwnerStatedRange} with this turn's validation context; logs a replaced range. */

@@ -70,3 +70,18 @@ describe('lastSelection context (D1, P7)', () => {
     expect(read(record, at(2))).toEqual({ entryId: 'todo.list', args: {}, at: at(1) });
   });
 });
+
+describe('owner decision of 2026-10-28: a narrowing keeps its parent listing', () => {
+  it('a listing that narrows the one just shown keeps the parent args; a chain keeps the top; anything else keeps none', () => {
+    const first = lastSelectionRecord('owner', { entryId: 'calendar.events', args: { range: 'tomorrow' } }, at(0));
+    const narrowed = lastSelectionRecord('owner', { entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon' } }, at(1), first);
+    expect(read(narrowed, at(2))?.parent).toEqual({ range: 'tomorrow' });
+    const again = lastSelectionRecord('owner', { entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon', keyword: '스크럼' } }, at(2), narrowed);
+    expect(read(again, at(3))?.parent).toEqual({ range: 'tomorrow' });
+    // A different listing (an arg changed or dropped, or another entry) has no parent.
+    expect(read(lastSelectionRecord('owner', { entryId: 'calendar.events', args: { range: 'next-week' } }, at(2), narrowed), at(3))?.parent).toBeUndefined();
+    expect(read(lastSelectionRecord('owner', { entryId: 'mail.list', args: { range: 'today' } }, at(2), narrowed), at(3))?.parent).toBeUndefined();
+    // A chat turn keeps it (D1).
+    expect(read(agedLastSelectionRecord(narrowed, 'owner', at(2)), at(3))?.parent).toEqual({ range: 'tomorrow' });
+  });
+});

@@ -17,6 +17,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-28).** After "그중에 오후 것만", a question about an item ("면접은 몇 시였지?") searches
+  the whole earlier listing (tomorrow), not only the afternoon. A narrowing restated by the owner stays.
 - **Changed (chat prompt, owner decision 2026-10-28).** Chat replies keep quotes and code marks for commands to send.
   Examples, questions for others, paraphrases and mentioned words are written without quotes.
 - **Fixed (P1 guard, owner decision 2026-10-28).** Right after a listing, a chat sentence denying that it can see an item
