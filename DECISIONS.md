@@ -30561,3 +30561,20 @@ Made after a Codex consult. This section supersedes the "approved, not yet moved
     (false-positive rate 0.29%). tau comes from the positives and is unchanged, and this rate is not a gate.
   - No RAG plan is live: phase 1 ended with "no measured gain", and the old plan digests are already stale. A reopened
     experiment approves a new plan digest anyway.
+
+### Owner decisions of 2026-10-27 after Strict context run 2 — implementation notes (branch `claude/v5-context-fixes`)
+
+Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
+
+- **D2 in the eval.**
+  - A command the chat model wrote (it appears in that turn's raw chat reply) is probed with the real selector in a
+    Strict run, at most 3 per reply.
+  - Core's fixed copy stays deterministic-only: the selector answers none.
+  - The two origins are reported apart. Both count toward the `unparseable-suggestion` hard check.
+- **Quote pairing.** Quoted spans are matched in order and only then length-filtered, so the text between two quotes is
+  never a "suggestion".
+- **P9.** With no project named, a `jira.release` release value that is exactly one visible project key (the
+  connector's own project listing, case aside) is that project: the answer is its release list.
+  - The listing actually shown (`{project: KEY}`) becomes `lastSelection`, so a follow-up refines the project.
+  - Structure only: no word list, and never a guess (a key no visible project has stays a release). In a channel the
+    list stays DM-only.

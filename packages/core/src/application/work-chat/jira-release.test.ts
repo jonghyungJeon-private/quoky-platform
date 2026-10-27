@@ -141,6 +141,24 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     expect(both.queries.some((query) => query.query === 'release-items')).toBe(false);
   });
 
+  it('P9 (owner decision 2026-10-27): with no project, a release value that is exactly one visible project key is that project\'s release list', async () => {
+    const asKey = await run({ release: 'OP26' });
+    const asList = await run({ project: 'OP26' });
+    expect(asKey.text).toBe(asList.text);
+    expect(asKey.result).toMatchObject({ kind: 'body', asProject: 'OP26' });
+    // Case aside (the owner's own spelling), still only a visible key.
+    expect((await run({ release: 'op26' })).result).toMatchObject({ kind: 'body', asProject: 'OP26' });
+    // A key-shaped value that no visible project has stays a release; a release name never reads as a project.
+    expect((await run({ release: 'ZZ99' })).result).not.toHaveProperty('asProject');
+    expect((await run({ release: '20261015' })).result).not.toHaveProperty('asProject');
+    // With a project named, the release stays a release.
+    expect((await run({ release: 'OP25', project: 'OP26' })).result).not.toHaveProperty('asProject');
+    // In a channel the reinterpreted list is DM-only, like any release list.
+    const fake = connector();
+    const channel = await lookupJiraRelease({ connector: fake.provider, command: { scope: 'mine', links: [], release: 'OP26' }, identity: 'acc-1', siteHost: SITE, inChannel: true });
+    expect(channel.kind === 'body' ? plainTextOf(channel.body) : '').toContain('프로젝트·릴리스 목록은 DM에서만');
+  });
+
   it('owner sentence 4: a project and no release is the project release list', async () => {
     const { text, queries } = await run({ project: '차란차 운영 2026' });
     expect(queries.map((query) => query.query)).toEqual(['containers', 'releases']);

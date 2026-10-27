@@ -111,6 +111,11 @@ export type WorkChatOutcome =
       readonly listing?: NlListingReceipt;
       /** Owner decision B (2026-10-22): the reply asks the owner to confirm exactly this read (a near-matched project). */
       readonly confirm?: NlGrammarSelection;
+      /**
+       * P9 (owner decision of 2026-10-27): the read the reply actually answered when Core reinterpreted the command (a release
+       * value that was a visible project key answers that project's release list): the listing shown, for `lastSelection`.
+       */
+      readonly resolved?: NlGrammarSelection;
     }
   /** The command did not apply (e.g. a completion hint that names no single open to-do): the turn falls through. */
   | { readonly kind: 'none' }
@@ -962,6 +967,7 @@ export class WorkChatService implements WorkDesk {
       ...(result.listed !== undefined ? { listed: result.listed } : {}),
       ...(listing !== undefined ? { listing } : {}),
       ...(result.confirm !== undefined ? { confirm: releaseConfirmSelection(result.confirm, command.scope) } : {}),
+      ...(result.asProject !== undefined ? { resolved: releaseConfirmSelection({ project: result.asProject }, command.scope) } : {}),
     };
   }
 

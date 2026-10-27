@@ -52,6 +52,12 @@ export type ReleaseLookupResult =
        * Absent for a reply about no single resolved project (not found, several projects, a refusal, the usage text).
        */
       readonly resolvedProject?: string;
+      /**
+       * Strict run 2 / owner decision of 2026-10-27 (P9): the owner's release value was exactly one visible project key, so
+       * the lookup answered that project's release list. Its key, so the caller records the project (not a release) as
+       * the listing shown.
+       */
+      readonly asProject?: string;
       readonly listed?: { readonly count: number; readonly truncated: boolean };
       /** A6 R2 (numbered): the issues in display order and how many leading rows were certainly delivered. */
       readonly shown?: { readonly items: readonly ConnectorItem[]; readonly labelled: number };
@@ -113,6 +119,17 @@ export async function lookupJiraRelease(input: {
   if (command.scope === 'mine' && (input.identity === undefined || input.identity.length === 0)) return { kind: 'failure', reason: 'IDENTITY_MISSING' };
   try {
     if (!(await connector.isAvailable())) return { kind: 'failure', reason: 'UNAVAILABLE' };
+    // P9 (owner decision of 2026-10-27; Strict context run 2, "NR26 릴리스 뭐 있어?" → release "NR26"): with no project named,
+    // a release value that is exactly one visible project key (the connector's own project listing, case aside) is that
+    // project, and the answer is its release list. Structure only: the key must be a visible key, never a guess.
+    if (onSite === undefined && command.project === undefined && command.release !== undefined) {
+      const key = await visibleKeyOf(connector, command.release);
+      if (key !== undefined) {
+        const { release: _release, ...rest } = command;
+        const asList = await lookupJiraRelease({ ...input, command: { ...rest, project: key } });
+        return asList.kind === 'body' ? { ...asList, asProject: key } : asList;
+      }
+    }
     // 0. A project key the selector left inside the release words ("OP26 20261015"): moved to `project` when it is a visible
     // key, or, when `project` already is that same visible key, stripped from the release (it only repeats the project).
     if (onSite === undefined && command.release !== undefined && splitKeyToken(command.release) !== undefined) {
@@ -535,6 +552,14 @@ function body(value: MessageBody): ReleaseLookupResult {
 /** A reply about one resolved visible project (its key). */
 function resolvedBody(value: MessageBody, project: string): ReleaseLookupResult {
   return { kind: 'body', body: value, resolvedProject: project };
+}
+
+/** P9: the visible project key a whole release value spells (one token, a key's shape, case aside), or `undefined`. */
+async function visibleKeyOf(connector: ConnectorProvider, release: string): Promise<string | undefined> {
+  const token = release.trim().toUpperCase();
+  if (!CONNECTOR_CONTAINER_KEY.test(token)) return undefined;
+  const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
+  return itemsOf(listed).some((item) => item.id === token) ? token : undefined;
 }
 
 function itemsOf(result: ConnectorResult): readonly ConnectorItem[] {

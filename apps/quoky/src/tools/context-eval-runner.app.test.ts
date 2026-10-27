@@ -171,6 +171,22 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(summary.unparseableByOrigin.core).toBe(0);
   }, 120_000);
 
+  it('P9 over the real runtime: a selected release that is a visible project key answers its release list and is recorded as the project', async () => {
+    let selector = JSON.stringify({ entryId: 'jira.release', args: { release: 'NR26' }, ambiguity: 'CLEAR', alternatives: [] });
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => '', summarize: async () => '' });
+    const scenario = corpus.scenarios.find((entry) => entry.id === 'fr-release-list-pick');
+    const owner = await world.beginScenario(0, corpus.worlds[scenario?.world ?? 'office'] ?? {});
+    const listing = await world.turn(owner, 'NR26 릴리스 뭐 있어?', owner.dm);
+    expect(listing.reply).not.toContain('찾지 못했어요');
+    expect(listing.session.lastSelection).toMatchObject({ entryId: 'jira.release', args: { project: 'NR26' } });
+    expect(listing.session.lastSelection?.args).not.toHaveProperty('release');
+    // The follow-up's selector now sees the project as the previous selection.
+    selector = JSON.stringify({ entryId: 'jira.release', args: { project: 'NR26', release: '20261029' }, ambiguity: 'CLEAR', alternatives: [] });
+    const followUp = await world.turn(owner, '20261029 거 이슈 보여줘', owner.dm);
+    expect(followUp.selectorSaw?.previousEntry).toBe('jira.release');
+    expect(followUp.reply).not.toContain('찾지 못했어요');
+  }, 120_000);
+
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {
     const records = await dryRun('deployed', { kind: 'none' });
     expect(records).toHaveLength(corpus.scenarios.length);
