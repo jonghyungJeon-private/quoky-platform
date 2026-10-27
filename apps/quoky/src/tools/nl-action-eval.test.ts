@@ -14,6 +14,7 @@ import {
   scoreActionDecision,
   scoreActionGrammarSide,
   scoreReadRegression,
+  scoreReadRegressionInWorld,
   summarizeAction,
   summarizeReadRegression,
   validateActionCorpus,
@@ -367,6 +368,18 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
       (id) => (id === 'r1' ? 'todo.list' : 'none'),
     );
     expect(summary).toMatchObject({ actionCaptures: 1, gatePassed: false });
+  });
+});
+
+describe('read regression records keep the final args like eval:nl (owner go-ahead 2026-10-27, eval only)', () => {
+  it('a hit, a miss, a wrong capture and an action capture carry gotArgs; none and clarify carry none', async () => {
+    const read = { id: 'c1', text: '다다음 주 일정 알려줘', expect: { entryId: 'calendar.events', args: { range: 'week-after-next' } } } as const;
+    expect(scoreReadRegression(read, answer('calendar.events', { range: 'week-after-next' }), NOW)).toMatchObject({ outcome: 'hit', gotArgs: { range: 'week-after-next' } });
+    expect(scoreReadRegression(read, answer('calendar.events', { range: 'next-week' }), NOW)).toMatchObject({ outcome: 'miss', gotArgs: { range: 'next-week' } });
+    expect(await scoreReadRegressionInWorld(read, answer('calendar.events', { range: 'next-week' }), NOW)).toMatchObject({ outcome: 'miss', gotArgs: { range: 'next-week' } });
+    expect(scoreReadRegression({ id: 'n1', text: '오늘 날씨 좋다', expect: 'none' }, answer('todo.list'), NOW)).toMatchObject({ outcome: 'wrong-capture', gotArgs: {} });
+    expect(scoreReadRegression({ id: 'n2', text: '보고서 할 일 추가해줘', expect: 'none' }, answer('todo.add', { title: '보고서' }), NOW)).toMatchObject({ outcome: 'action-capture', gotArgs: { title: '보고서' } });
+    expect(scoreReadRegression(read, answer('none'), NOW)).not.toHaveProperty('gotArgs');
   });
 });
 

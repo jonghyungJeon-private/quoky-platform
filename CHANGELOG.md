@@ -87,6 +87,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   that a reply answers only when it points to one option's meaning (even when worded as a request; "this chat" means
   Quoky), and that a reply pointing to neither option (thanks, small talk, undecided, a new request) is no answer. That
   sentence now comes before the answer format. Prompts without an open question are byte-identical.
+- **Changed (eval only, owner go-ahead 2026-10-27).** `eval:nl --mode read-regression` records keep Core's final args
+  (`gotArgs`) on a hit, a miss, a wrong capture and an action capture, like `eval:nl` read records, so an A6 miss can be
+  classified by argument. Scoring and the gate are unchanged.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

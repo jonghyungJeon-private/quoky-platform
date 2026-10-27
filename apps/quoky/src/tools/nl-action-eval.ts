@@ -891,13 +891,14 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const got = validated.value.entry.id;
   const isAction = validated.value.entry.risk !== 'READ';
   const goldIsAction = expect !== 'none' && isNlActionEntryId(expect.entryId);
-  if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got };
+  const gotArgs = validated.value.args;
+  if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got, gotArgs };
   // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
   if (nlHelpSourceScope({ entryId: got, args: validated.value.args }, prepared.groundingText) !== undefined) return { outcome: 'clarify', relabeled, got };
-  if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got };
-  if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got };
+  if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got, gotArgs };
+  if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got, gotArgs };
   const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
-  return got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? { outcome: 'hit', relabeled, got, ...defaulted } : { outcome: 'miss', relabeled, got, gotArgs: validated.value.args, ...defaulted };
+  return { outcome: got === expect.entryId && canonical(gotArgs) === canonical(expect.args) ? 'hit' : 'miss', relabeled, got, gotArgs, ...defaulted };
 }
 
 /**
@@ -909,11 +910,11 @@ export async function scoreReadRegressionInWorld(
   golden: NlReadRegressionCase,
   raw: string,
   now: string,
-): Promise<{ readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly equivalent?: true; readonly defaulted?: readonly string[] }> {
-  const { gotArgs, ...scored } = scoreReadRegression(golden, raw, now);
+): Promise<{ readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly gotArgs?: NlArgs; readonly equivalent?: true; readonly defaulted?: readonly string[] }> {
+  const scored = scoreReadRegression(golden, raw, now);
   const expect = golden.a6Relabel ?? golden.expect;
-  if (scored.outcome !== 'miss' || expect === 'none' || expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || gotArgs === undefined) return scored;
-  return (await sameJiraReleaseOutcome(golden.text, gotArgs, expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
+  if (scored.outcome !== 'miss' || expect === 'none' || expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || scored.gotArgs === undefined) return scored;
+  return (await sameJiraReleaseOutcome(golden.text, scored.gotArgs, expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
 }
 
 export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
@@ -960,10 +961,10 @@ export async function runReadRegression(input: {
   readonly provider: AiProvider;
   readonly now: () => string;
   readonly elapsed?: () => number;
-}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; equivalent?: true; defaulted?: readonly string[] }>> {
+}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[] }>> {
   const byId = new Map(input.cases.map((golden) => [golden.id, golden] as const));
   const clock = input.elapsed ?? Date.now;
-  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; equivalent?: true; defaulted?: readonly string[] }> = [];
+  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[] }> = [];
   for (let run = 1; run <= input.plan.runs; run += 1) {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
