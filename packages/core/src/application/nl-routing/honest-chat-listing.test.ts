@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LISTING_SHOWN_ABOVE_RULE, guardFalseIncapabilityClaims, guardShownListingDenials, renderConfiguredSourcesFact, renderShownListingAsk } from './honest-chat';
+import { LISTING_SHOWN_ABOVE_RULE, guardFalseIncapabilityClaims, guardShownListingDenials, nlShownItemWords, renderConfiguredSourcesFact, renderShownListingAsk } from './honest-chat';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // Owner DM 2026-10-22: after Quoky listed tomorrow's events, the next message went to chat (selection `none`), which said
@@ -89,6 +89,30 @@ describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', ()
       expect(guardShownListingDenials('Quoky가 위에 보여드린 건 제가 볼 수 없어요. 직무를 알려 주세요.', calendar, CONFIGURED, 'ko').text).toBe('직무를 알려 주세요.');
       // A mixed reply keeps the unrelated sentence and drops only the referencing one.
       expect(guardShownListingDenials('일정 내용은 제가 볼 수 없어요. 실시간 날씨는 확인할 수 없어요.', calendar, CONFIGURED, 'ko')).toEqual({ text: '실시간 날씨는 확인할 수 없어요.', guarded: true });
+    });
+
+    it('owner decision of 2026-10-28: a denial that names an item Core showed refers to the listing (the 95386868 sentences)', () => {
+      const calendarReply = '내일 · 10월 28일(수): 일정 2개\n- 10:00–11:00 1차 면접_AI Agent_김하늘 · 본사 3층 회의실\n- 14:00–14:30 주간 스크럼\n(Asia/Seoul 기준)';
+      const driveReply = 'Recently modified files: 2 files\n1. 2026 로드맵 회의록 · document · Oct 20 09:00\n2. 채용 계획안 · document · Oct 20 09:00\n(Google Drive, read-only)';
+      const calendarItems = { ...calendar, itemWords: nlShownItemWords(calendarReply) };
+      const drive = { entry: NL_WAVE1_ENTRIES['drive.files'], args: {}, itemWords: nlShownItemWords(driveReply) };
+      // Only list-item lines, without time words and digits-only tokens.
+      expect(calendarItems.itemWords).toEqual(expect.arrayContaining(['면접', 'agent', '김하늘', '스크럼']));
+      expect(calendarItems.itemWords).not.toContain('10월');
+      expect(drive.itemWords).toEqual(expect.arrayContaining(['로드맵', '회의록', 'document', '채용']));
+      // The four sentences of the 95386868 Strict run (KO and EN), each followed by the rest of its reply.
+      expect(guardShownListingDenials('내일 면접이 있는지는 제가 직접 확인할 수 없어요. 위 목록에서 확인해 주세요.', calendarItems, CONFIGURED, 'ko').text).toBe('위 목록에서 확인해 주세요.');
+      for (const sentence of ["I can't see what's in the roadmap doc, so I can't tell you what to prepare yet.", "I can't see what's inside the roadmap doc, so I can't tell you what to prepare from it.", "I can't read the roadmap doc from here."]) {
+        expect(guardShownListingDenials(`${sentence} Send "1번 문서 요약해줘" and Quoky will summarize it.`, drive, CONFIGURED, 'en').text, sentence).toBe('Send "1번 문서 요약해줘" and Quoky will summarize it.');
+      }
+      // CA P1-1 still holds with the item words: a true unrelated limitation stays (KO and EN).
+      const weather = '실시간 날씨는 확인할 수 없어요. 기상 앱에서 내일 예보를 확인해 보세요.';
+      expect(guardShownListingDenials(weather, calendarItems, CONFIGURED, 'ko')).toEqual({ text: weather, guarded: false });
+      const stocks = "I can't check live stock prices. A finance app will have them.";
+      expect(guardShownListingDenials(stocks, drive, CONFIGURED, 'en')).toEqual({ text: stocks, guarded: false });
+      // The incapability phrase itself never matches an item word ("확인" in a title).
+      const titled = { ...calendar, itemWords: nlShownItemWords('- 09:00 배포 확인') };
+      expect(guardShownListingDenials(weather, titled, CONFIGURED, 'ko')).toEqual({ text: weather, guarded: false });
     });
 
     it('a reply left empty gets the fixed ask (KO and EN), never a command to show the listing again', () => {

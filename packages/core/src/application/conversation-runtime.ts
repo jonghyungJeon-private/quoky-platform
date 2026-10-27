@@ -67,7 +67,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { isDirectConversation, messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
+import { isDirectConversation, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from './message-rendering';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
@@ -98,6 +98,7 @@ import {
   guardFalseControlDenials,
   guardFalseIncapabilityClaims,
   guardShownListingDenials,
+  nlShownItemWords,
   renderConfiguredSourcesFact,
   renderControlCommandsFact,
   type NlControlScope,
@@ -2394,6 +2395,7 @@ export class ConversationRuntime {
       // A6 R5a §3.2 `none`: a turn that ended an unanswered preview says so before its own reply.
       const prefix = this.nlDeicticPrefix.get(message);
       if (prefix !== undefined) result = { ...result, reply: withOutboundBody(result.reply, messageBody(prefix, '\n', outboundBody(result.reply))) };
+      this.holdNlShownItemWords(message, result);
       await this.settleNlLastSelection(message);
       await this.recordNlLastTurn(message);
       this.startAfterReply(message);
@@ -3395,6 +3397,8 @@ export class ConversationRuntime {
    * was answered by chat, which keeps the record one turn older (owner decision D1) instead of clearing it.
    */
   private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean; chat?: boolean }>();
+  /** Owner decision of 2026-10-28: the shown listing's item words per `sessionId|actorId` (process memory only, bounded). */
+  private readonly nlShownItems = new BoundedShownItems();
   /** A6 R5a: who and where each turn is (and its SHORT_TERM user record), for `quoky.lastTurn`. */
   private readonly nlTurnFacts = new WeakMap<InboundMessage, { readonly sessionId: Id; readonly actorId: Id; readonly memoryId?: Id }>();
   /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
@@ -3543,6 +3547,20 @@ export class ConversationRuntime {
     if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return;
     const turn = this.nlTurns.get(message);
     if (turn !== undefined && !turn.keep) turn.chat = true;
+  }
+
+  /**
+   * Owner decision of 2026-10-28 (fix 1 of the 95386868 context analysis): when this turn wrote `lastSelection` (it showed
+   * a listing), the words of the items Core itself rendered in that reply are held IN PROCESS MEMORY ONLY, per session and
+   * actor, for the shown-listing guard (`ShownListing.itemWords`). They are never persisted, logged or sent anywhere
+   * (ADR-0110 D4), and they are used only while `lastSelection` still names the same entry, within its own 30 minutes.
+   */
+  private holdNlShownItemWords(message: InboundMessage, result: TurnResult): void {
+    const turn = this.nlTurns.get(message);
+    const facts = this.nlTurnFacts.get(message);
+    if (turn?.keep !== true || facts === undefined) return;
+    const words = nlShownItemWords(plainTextOf(outboundBody(result.reply)));
+    this.nlShownItems.set(`${facts.sessionId}|${facts.actorId}`, { at: this.clock(), words });
   }
 
   /** Mark that this turn wrote `lastSelection` (the selection service did), so the settle step keeps it. */
@@ -3841,7 +3859,10 @@ export class ConversationRuntime {
           return false;
         }
       });
-    return { shown: { entry, args: last.args }, rerunsListing };
+    // The item words Core held for this listing: only when they were taken at or after the listing was recorded.
+    const held = this.nlShownItems.get(`${session.id}|${actor.id}`);
+    const itemWords = held !== undefined && Date.parse(held.at) >= Date.parse(last.at) ? held.words : undefined;
+    return { shown: { entry, args: last.args, ...(itemWords !== undefined && itemWords.length > 0 ? { itemWords } : {}) }, rerunsListing };
   }
 
   /** A handler's Class B probe, only when its catalog equivalent (if any) is offered this turn; never throws. */
@@ -9896,4 +9917,17 @@ interface NlEarlySelection {
 export function nlConfirmToRecord(handled: TurnHandlerOutcome): TurnHandlerReply['nlConfirm'] {
   if (handled.kind === 'summarize' || handled.kind === 'write-draft' || handled.status === 'FAILED') return undefined;
   return handled.nlConfirm;
+}
+
+/** Owner decision of 2026-10-28: a small in-memory map of shown item words (at most 256 sessions, oldest dropped first). */
+class BoundedShownItems {
+  private readonly map = new Map<string, { readonly at: IsoTimestamp; readonly words: readonly string[] }>();
+  get(key: string): { readonly at: IsoTimestamp; readonly words: readonly string[] } | undefined {
+    return this.map.get(key);
+  }
+  set(key: string, value: { readonly at: IsoTimestamp; readonly words: readonly string[] }): void {
+    this.map.delete(key);
+    this.map.set(key, value);
+    while (this.map.size > 256) this.map.delete(this.map.keys().next().value as string);
+  }
 }

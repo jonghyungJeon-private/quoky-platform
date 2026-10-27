@@ -2,6 +2,7 @@ import type { NlCatalogEntry } from './catalog';
 import { renderRestate } from './nl-action-policy';
 import { ACTION_SWITCH_PHRASES, renderActionSwitchHint, type NlActionSwitchState } from './action-switch';
 import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNlTimeExpression } from './action-entries';
+import { isNlTimeWord } from './symbolic-time';
 
 /**
  * Honest chat after selection (ADR-0120 D9). When the selector finds no entry (or cannot run), the chat turn carries
@@ -453,6 +454,49 @@ export function guardFalseIncapabilityClaims(
 export interface ShownListing {
   readonly entry: NlCatalogEntry;
   readonly args: Readonly<Record<string, unknown>>;
+  /**
+   * Owner decision of 2026-10-28 (fix 1 of the 95386868 analysis): the words of the items Core itself showed in that
+   * listing (`nlShownItemWords` over Core's own reply), held in process memory only for the listing's lifetime. A denial
+   * that names one of them refers to the listing. Never persisted, never sent anywhere (ADR-0110 D4).
+   */
+  readonly itemWords?: readonly string[];
+}
+
+/** The word tokens of a text: letters and digits, lower-cased (NFC); everything else separates. */
+function wordTokens(text: string): string[] {
+  return text.normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((token) => token.length > 0);
+}
+
+/** A word long enough to identify an item: two Hangul syllables or three Latin letters, not only digits. */
+function isItemWord(token: string): boolean {
+  if (/^\p{N}+$/u.test(token)) return false;
+  return /\p{Script=Hangul}/u.test(token) ? token.length >= 2 : token.length >= 3;
+}
+
+/**
+ * Owner decision of 2026-10-28: the item words of a listing reply Core rendered, from its own list structure only: the
+ * lines that start a list item ("- ", "1. ", "1) "). Their words, without digits-only tokens and time words
+ * (`isNlTimeWord`: dates, weekdays, clock times). No vocabulary of its own. Local and pure.
+ */
+export function nlShownItemWords(reply: string): string[] {
+  const words = new Set<string>();
+  for (const line of reply.split(/\r?\n/u)) {
+    const item = /^\s*(?:[-*•]|\d{1,3}[.)])\s+(.*)$/u.exec(line)?.[1];
+    if (item === undefined) continue;
+    for (const token of wordTokens(item)) if (isItemWord(token) && !isNlTimeWord(token)) words.add(token);
+  }
+  return [...words];
+}
+
+/**
+ * Whether a sentence names one of the shown items' words, with the incapability phrase itself set aside first (so a
+ * title word such as "확인" never matches "확인할 수 없어요"). A Korean word may carry a particle ("면접이" names "면접");
+ * an English word may be the item word's short form ("doc" names "document"). Pure.
+ */
+function namesShownItem(sentence: string, itemWords: readonly string[]): boolean {
+  if (itemWords.length === 0) return false;
+  const rest = sentence.replace(KO_INCAPABLE, ' ').replace(EN_INCAPABLE, ' ');
+  return wordTokens(rest).filter(isItemWord).some((token) => itemWords.some((word) => token.startsWith(word) || (!/\p{Script=Hangul}/u.test(token) && word.startsWith(token))));
 }
 
 /** Quoted segments of a reply ("…", “…”, ‘…’, `…`, '…' around a whole phrase). */
@@ -512,7 +556,10 @@ export function guardShownListingDenials(
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
     const lower = sentence.toLowerCase();
-    const denies = (KO_INCAPABLE.test(sentence) || EN_INCAPABLE.test(sentence)) && refersToListing(lower) && !otherNames.some((name) => lower.includes(name));
+    const denies =
+      (KO_INCAPABLE.test(sentence) || EN_INCAPABLE.test(sentence)) &&
+      (refersToListing(lower) || namesShownItem(sentence, listing.itemWords ?? [])) &&
+      !otherNames.some((name) => lower.includes(name));
     const reruns = [...sentence.matchAll(QUOTED_SEGMENT)].some((match) => {
       const segment = (match.slice(1).find((group) => group !== undefined) ?? '').trim();
       return segment.length > 0 && rerunsListing(segment);

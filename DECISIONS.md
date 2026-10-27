@@ -30833,3 +30833,23 @@ prompts.
 - **a8-16 ("몇 개야?" after a release listing: the selector kept the release and dropped `count`): left as variance.**
   `count` has no catalog grounding vocabulary (no `flagGrounding`, unlike `timedOnly`'s `CALENDAR_TIMED_ONLY_WORDS`),
   and none is invented.
+
+### Owner decisions of 2026-10-28 — fixes 1–4 of the 95386868 context analysis (branch `claude/v5-context-fixes`)
+
+The merge waits until EVERY Strict context run is at or above 95%.
+
+- **Fix 1, the P1 guard and item names.** A denial sentence that names an item Core showed in the held listing now
+  counts as referring to the listing.
+  - When a turn writes `lastSelection` (a listing), the runtime takes the words of the list-item lines of Core's own
+    reply ("- ", "1. ", "1) "). Digits-only tokens and time words are left out (`nlShownItemWords`).
+  - It holds them IN PROCESS MEMORY ONLY, per session and actor, in a bounded map (256). They are never persisted,
+    logged or sent anywhere (ADR-0110 D4). They are used only while `lastSelection` was written no later than they were
+    taken.
+  - The guard first sets the incapability phrase aside, so a title word such as "확인" never matches "확인할 수
+    없어요". A sentence then refers to the listing if one of its words starts with an item word (a Korean particle:
+    "면접이" names "면접"), or if an English word is a short form of one ("doc" names "document").
+  - CA P1-1 holds: a true unrelated limitation ("실시간 날씨는 확인할 수 없어요", "I can't check live stock prices") names no
+    shown item and stays.
+  - Covered: the four 95386868 sentences. "내일 면접이 있는지는 제가 직접 확인할 수 없어요." matches the title word 면접.
+    "… the roadmap doc …" ×3 matches the shown item kind "document": the Korean title "로드맵" is not matched across
+    languages.

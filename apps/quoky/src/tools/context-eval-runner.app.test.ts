@@ -135,6 +135,26 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(unrelated.reply).toBe(reply);
   }, 120_000);
 
+  it('owner decision of 2026-10-28 over the real runtime: a denial naming an item Core showed is dropped; nothing of it reaches chat', async () => {
+    const calendarTomorrow = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+    const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    let selector = calendarTomorrow;
+    const reply = '내일 면접이 있는지는 제가 직접 확인할 수 없어요. 위에서 Quoky가 보여드린 목록을 확인해 주세요.';
+    const weather = '실시간 날씨는 확인할 수 없어요. 기상 앱에서 내일 예보를 확인해 보세요.';
+    let chatReply = reply;
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => chatReply, summarize: async () => '' });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    selector = none;
+    const followUp = await world.turn(owner, '내일도 면접 있어? 면접 볼 때 뭐 봐야 할까?', owner.dm);
+    // The item word 면접 (from Core's own listing) makes the denial refer to the listing: dropped.
+    expect(followUp.reply).toBe('위에서 Quoky가 보여드린 목록을 확인해 주세요.');
+    expect(followUp.chatPrompts[0]).not.toContain('1차 면접_AI Agent_김하늘');
+    // CA review P1-1 still holds.
+    chatReply = weather;
+    expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
+  }, 120_000);
+
   it('owner decision D2: a chat-suggested command is probed with the real selector in a Strict run; Core copy stays deterministic; both are reported apart', async () => {
     const releasePhrase = 'NR26 프로젝트 20261029 릴리스 보여줘';
     const chatReply = `그것만으로는 아무것도 실행되지 않아요. 아래 문장을 그대로 보내 주세요. "${releasePhrase}"`;

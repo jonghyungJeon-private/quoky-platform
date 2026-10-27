@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Fixed (P1 guard, owner decision 2026-10-28).** Right after a listing, a chat sentence denying that it can see an item
+  Quoky showed ("내일 면접이 있는지는 확인할 수 없어요", "I can't see what's in the roadmap doc") is dropped too. The item
+  words are taken from Quoky's own listing reply and held in process memory only.
 - **Fixed (Jira release, 2026-10-27).** With no release named, a project value that cannot be a Jira key and names no
   visible project ("2.3.0") is read as the release, the mirror of P9.
 - **Changed (Jira release, 2026-10-27).** A message that is nothing but Jira release-page links is read as the release
