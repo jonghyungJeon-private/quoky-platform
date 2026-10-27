@@ -427,14 +427,14 @@ describe('plan digest', () => {
     expect(approved.caseIds).toHaveLength(approvedCount);
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     // The read + write probe bound (owner-ratified 2026-10-26): one more call for each case of two or more conjuncts.
-    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v70', maxCallsPerRun: expect.any(Number) });
+    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v71', maxCallsPerRun: expect.any(Number) });
     expect(approved.readWriteProbe.maxCallsPerRun).toBeGreaterThan(0);
     expect(approved.readWriteProbe.maxCallsPerRun).toBeLessThan(approvedCount);
     expect(approved.maxCalls).toBe((approvedCount + approved.readWriteProbe.maxCallsPerRun) * 3);
     expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v9', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v10', callTimeoutMs: 6000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -501,11 +501,11 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
     expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v9"');
+    expect(text).toContain('"promptVersion": "agent-plan.v10"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v70\) x 3 run\(s\)/.exec(text);
+    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v71\) x 3 run\(s\)/.exec(text);
     expect(bound).not.toBeNull();
     const [, total, planner, probes] = (bound as RegExpExecArray).map(Number);
     expect(planner).toBe(approvedCount);
@@ -587,7 +587,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--runs', '3', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
     expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 678/678 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v9): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v10): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };

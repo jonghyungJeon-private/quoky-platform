@@ -17,6 +17,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (selector, owner decision 2026-10-28; read `nl-select.v73`, A6 `v71`, R2 `v72`, planner `agent-plan.v10`).**
+  Rules 2, 3, 6 and 7 are one decision order, with no new example and a smaller prompt (read −610, A6 −626 characters).
+  How-tos go to rule 3 (Quoky itself, then an unclear how-to that asks, then another app's own feature). A request that
+  names only a period or a reference with nothing before it asks which list.
 - **Changed (owner decision 2026-10-28).** After "그중에 오후 것만", a question about an item ("면접은 몇 시였지?") searches
   the whole earlier listing (tomorrow), not only the afternoon. A narrowing restated by the owner stays.
 - **Changed (chat prompt, owner decision 2026-10-28).** Chat replies keep quotes and code marks for commands to send.

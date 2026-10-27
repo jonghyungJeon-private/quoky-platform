@@ -93,7 +93,7 @@ pnpm eval:context -- --mode dry  [--profile P] [--selector oracle|none] [--scena
   - the corpus sha256;
   - the git revision;
   - the profile and its env;
-  - the prompt versions (`nl-select.v72` read, `v70` A6, `v71` R2);
+  - the prompt versions (`nl-select.v73` read, `v71` A6, `v72` R2);
   - the selection model;
   - the chat mode and chat model;
   - the runs;

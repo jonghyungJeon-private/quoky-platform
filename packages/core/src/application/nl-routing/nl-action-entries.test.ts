@@ -279,8 +279,8 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
-    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v72', sha256: '4a12e11a43838851dff076aaeb3ddcfc8a6327811a7f8232a14caca8b6f5b276' });
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v70', sha256: '7a7842d097160991e6d7f152638630b82e8bf1748585c0f5f108b9c7429536e8' });
+    expect({ version: NL_SELECTION_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v73', sha256: '0453b3ab68a16df03a0300f2b881498e6ab9ec45a33d93bbab45cbd44dd531a1' });
+    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v71', sha256: '83868ee241d1548748c6fdf432cd657df24217cb81479be15cacfaaa8acc2fe9' });
   });
 });
 
@@ -301,23 +301,20 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
     expect(prompt).toContain('Message: 기억해 둔 거 보려면 무슨 명령어 쓰면 돼?\nOutput: {"entryId":"help.topic","args":{"topic":"memory"}');
   });
 
-  it('v66 / v64 (owner answer 2, 2026-10-22): an app-own how-to is none, an unclear how-to about a source Quoky reads asks (read and A6)', () => {
+  it('v73 / v71 (owner decision of 2026-10-28): rule 3 decides how-to and capability questions in one order (read and A6)', () => {
     const read = buildSelectionPrompt({ entries: READS, text: 'x' });
     for (const p of [read, prompt]) {
-      expect(p).toContain('   something inside another app, device or service ("<app>에서 …하는 법/방법", "<device> <setting> 어떻게 …", "how to\n');
-      expect(p).toContain("   … in/on <app>\") is none when the action is that app's or device's own feature that Quoky does not do for it, even\n");
-      expect(p).toContain('   An unclear how-to is different: the place is a source an offered entry reads, the action is one Quoky also does for\n');
-      expect(p).toContain('   entryId help.topic, args {}, no alternatives. A question whether Quoky can read a source or do something with it\n');
-      expect(p).toContain('   is a question about Quoky itself: help.topic, CLEAR.\n');
-      // The v62 sentence that made every how-to inside a readable app none is gone; no example was added for the rule.
-      expect(p).not.toContain('(a search, a\n   notification, a schedule)');
-    }
-  });
-
-  it('v61 / v59: a how-to about acting inside another app is none; asking how to get it from Quoky is help.topic (read and A6)', () => {
-    const read = buildSelectionPrompt({ entries: READS, text: 'x' });
-    for (const p of [read, prompt]) {
-      expect(p).toContain('   It must be about asking Quoky (a Quoky command or feature, 여기서, 너한테, how to ask you): a how-to about doing\n');
+      expect(p).toContain('3. How-to and capability questions, decided in this order (the first that applies wins):\n');
+      expect(p).toContain('   a. About Quoky itself: it addresses Quoky (여기서, 너한테, how to ask you), asks whether Quoky can read a source or do\n');
+      expect(p).toContain('   b. A how-to about a source an offered entry reads, for an action Quoky also does there (finding, searching, listing or\n');
+      expect(p).toContain('      NEEDS_CLARIFICATION, entryId help.topic, args {}, no alternatives.\n');
+      expect(p).toContain("   c. A how-to about another app's, device's or service's own feature that Quoky does not do for it, even when Quoky\n");
+      // Rule 2 defers every how-to to rule 3: the example that contradicted rule 3b is gone, and none was added.
+      expect(p).toContain('   questions or tips that rule 3 does not send to help.topic ("git 태그는 어떻게 달아?", "슬랙 채널 정리 잘하는 팁"),\n');
+      expect(p).not.toContain('깃허브에서 코드 검색하는 방법');
+      // Rule 7 covers a request that does not settle one entry; rule 6 no longer repeats the Previous-none narrowing case.
+      expect(p).toContain('   names only a period or a reference with Previous selection none ("이번 주 거", "그 중에 X만", "among those, only X");\n');
+      expect(p).not.toContain('nothing: NEEDS_CLARIFICATION with the (at most 2) entries whose keyword or filter could hold X');
       expect(p).toContain('Message: 피그마에서 프레임 복제하는 방법 알려줘\nOutput: {"entryId":"none"');
       expect(p).toContain('Message: 여기서 지라 이슈 찾으려면 너한테 뭐라고 하면 돼?\nOutput: {"entryId":"help.topic","args":{"topic":"work-lookup"}');
     }
@@ -473,14 +470,14 @@ describe('A6 prompt v53 / v58: the help.topic block as one decision, the label a
 });
 
 describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55 with actions', () => {
-  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v72.prompts.json', import.meta.url), 'utf8')) as {
+  const golden = JSON.parse(readFileSync(new URL('../golden/nl-select.v73.prompts.json', import.meta.url), 'utf8')) as {
     version: string;
     cases: Array<{ name: string; entryIds: string[]; text: string; previous?: { entryId: string; args: Record<string, string> }; prompt: string }>;
   };
 
-  it('pins nl-select.v72 for every golden input (no `actions`)', () => {
-    expect(golden.version).toBe('nl-select.v72');
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v72');
+  it('pins nl-select.v73 for every golden input (no `actions`)', () => {
+    expect(golden.version).toBe('nl-select.v73');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v73');
     for (const golden_ of golden.cases) {
       const entries = golden_.entryIds.map((id) => NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES]);
       const prompt = buildSelectionPrompt({ entries, text: golden_.text, ...(golden_.previous ? { previous: golden_.previous as never } : {}) });
@@ -489,7 +486,7 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
   });
 
   it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v70');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v71');
     const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
@@ -778,7 +775,7 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
   it('keeps the rule-8 help.topic rules (one decision block since v58) and the v35 examples', () => {
     expect(actionPrompt).toContain('   help.topic stays rule 3 (only Quoky itself: you, or one of Quoky\'s own features or commands). Decide it by what the');
     expect(actionPrompt).toContain('   - to learn how to do something inside any other app, software, device or service (the app as the place, X에서 /\n');
-    expect(actionPrompt).toContain("     feature; when the place is a source Quoky reads and Quoky also does that action for it, rule 3's unclear how-to.");
+    expect(actionPrompt).toContain('     feature; when the place is a source Quoky reads and Quoky also does that action for it, rule 3b.');
     expect(actionPrompt).toContain('     none, or an action entry above when one fits, even when it names one of Quoky\'s own features.');
     expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;');
     expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}');

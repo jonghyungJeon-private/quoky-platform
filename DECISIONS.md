@@ -30882,3 +30882,43 @@ The merge waits until EVERY Strict context run is at or above 95%.
     an unnarrowed listing is unchanged.
   - 95386868: `fr-calendar-part-keyword` t3 failed 2 of 3 runs on exactly this read (`{tomorrow, afternoon, keyword
     면접}`, with the interview in the morning).
+
+### Owner decisions of 2026-10-28, after an independent design review and a cost study (branch `claude/v5-context-fixes`)
+
+- **A. Selector rule-conflict cleanup: read `nl-select.v73`, A6 `v71`, R2 `v72` (D12 re-gate); planner `agent-plan.v10`.**
+  The planner moves only because it embeds the read rules; none of its own rules or examples changed.
+  - Conflicts the review found:
+    - rule 2 listed "깃허브에서 코드 검색하는 방법" as none, while rule 3's unclear how-to (NEEDS_CLARIFICATION help.topic)
+      has the same shape;
+    - rule 7 allowed a question only when two entries fit equally well, which does not cover a request that names only
+      a period ("이번 주 거");
+    - Core asks the help-scope question only after a general `help.topic`. That is owner decision A, and it is
+      unchanged here.
+  - The change is one decision order, and it adds no example:
+    - Rule 2 drops its own how-to examples and defers every how-to to rule 3. The contradicting example is gone.
+    - Rule 3 decides how-to and capability questions in order:
+      - a. about Quoky itself → `help.topic` CLEAR;
+      - b. an unclear how-to about a source Quoky reads, for an action Quoky also does there → NEEDS_CLARIFICATION
+        `help.topic`, args {};
+      - c. another app's or device's own feature → none.
+      Its examples are the ones it had, regrouped.
+    - Rule 7 covers a request that does not settle one entry: two entries fit, or only a period or a reference with
+      Previous selection none. Rule 6's own sentence for the reference case is removed.
+    - A6 rule 8 points to "rule 3b". The line that anchors rule 8 is kept.
+  - **Size: smaller.**
+    - Read: 287 → 283 lines (−4), 28,534 → 27,924 characters (−610).
+    - A6: 389 → 385 lines (−4), 38,350 → 37,724 characters (−626). (Full rendered prompts, empty message.)
+    - All 82 pinned prompts were regenerated as `golden/nl-select.v73.prompts.json`, with new sha256 pins.
+  - **Golds each change is meant to affect** (no gold changed):
+    - rule 2/3 order:
+      - 3b: `neg-010` "슬랙에서 검색하는 방법 알려줘" (clarify gold) and `neg-013` "how do I search in Confluence?";
+      - 3c: `neg-015`, `neg-121`, `a8n-04` and `v5int4-034`;
+      - 3a: the `help-0xx` how-to golds;
+      - context eval: `hs-slack-en`, `hs-jira-app` and `hs-slack-quoky` (t1).
+    - rule 7: `neg-210`–`neg-215` (a narrowing with Previous selection none), and the context eval's `cl-number` and
+      `cl-ignored` ("이번 주 거").
+    - The count case (`neg-208`, `neg-209`) keeps rule 6's own sentence.
+  - **Offline evidence:**
+    - A perfect selector still hits every gold.
+    - The ADR-0123 example lint is unchanged, because the examples are unchanged.
+    - The model-facing effect needs the D12 re-gate (Strict). No model was called.
