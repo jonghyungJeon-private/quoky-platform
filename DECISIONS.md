@@ -30700,3 +30700,11 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
       a selector matter.
     - Simulation of the narrowed rule: intent fixes calendar-023 ×2, and cda61425 read-regression fixes calendar-023,
       uat5r3-14 and uat5r3-15. There are 0 gold and 0 archived-hit breaks.
+  - **Codex delta review of 6cc157e6 (one P2): periods are counted over the whole message.** The read's own clauses are
+    used only for the exclusion check. The one period is counted over the WHOLE message without its excluded or negated
+    clauses and with the read's own values set aside; two or more distinct periods leave the selector's range alone.
+    "내일이랑 모레 일정" keeps `this-week`. In "내일 말고 모레 일정" the excluded clause "내일 말고" is set aside, so 모레 is
+    the one stated period. When the negation sits in the read's own clause ("내일 일정 말고 모레 거"), the range stays
+    (fail-safe). A second read's period in another clause counts as well ("다다음 주 일정 보여주고 어제 메일도": left
+    alone). Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression calendar-023, uat5r3-14 and uat5r3-15;
+    0 breaks.
