@@ -130,6 +130,18 @@ export async function lookupJiraRelease(input: {
         return asList.kind === 'body' ? { ...asList, asProject: key } : asList;
       }
     }
+    // Mirror of P9 (owner request of 2026-10-27 after the 0634ddb2 gate, a8-18 "what's in the 2.3.0 release on jira?" →
+    // project "2.3.0"): with no release named, a `project` value that cannot be a Jira project key under Jira's own key
+    // format (one ASCII token, upper-cased still not `CONNECTOR_CONTAINER_KEY`: "2.3.0", "2026") and names no visible
+    // project on a complete listing (key, name, contained or words) is the release. Structure only: no word list; a
+    // non-ASCII or multi-word value (a project name such as "모바일 앱 운영") is never moved.
+    if (onSite === undefined && command.release === undefined && command.project !== undefined && notKeyShapedToken(command.project)) {
+      const listed = await connector.query({ query: ConnectorQueryName.CONTAINERS });
+      if (listed.truncated !== true && matchProjectsTiered(itemsOf(listed), command.project).items.length === 0) {
+        const { project: value, ...rest } = command;
+        return lookupJiraRelease({ ...input, command: { ...rest, release: value } });
+      }
+    }
     // 0. A project key the selector left inside the release words ("OP26 20261015"): moved to `project` when it is a visible
     // key, or, when `project` already is that same visible key, stripped from the release (it only repeats the project).
     if (onSite === undefined && command.release !== undefined && splitKeyToken(command.release) !== undefined) {
@@ -555,6 +567,12 @@ function resolvedBody(value: MessageBody, project: string): ReleaseLookupResult 
 }
 
 /** P9: the visible project key a whole release value spells (one token, a key's shape, case aside), or `undefined`. */
+/** One ASCII token without whitespace that cannot be a Jira project key, even upper-cased ("2.3.0", "v1.2", "2026"). */
+function notKeyShapedToken(value: string): boolean {
+  const token = value.trim();
+  return /^[\x21-\x7e]+$/u.test(token) && !CONNECTOR_CONTAINER_KEY.test(token.toUpperCase());
+}
+
 async function visibleKeyOf(connector: ConnectorProvider, release: string): Promise<string | undefined> {
   const token = release.trim().toUpperCase();
   if (!CONNECTOR_CONTAINER_KEY.test(token)) return undefined;

@@ -30807,3 +30807,19 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
   - **When D4 lands**, the turn's `knownGap` mark (and the scenario's) is removed, and the turn is re-scored as a
     normal turn against its unchanged expectation.
 - **(3)** The context eval (3 runs) is approved after ① and ② pass.
+
+### Jira release follow-ups after the 0634ddb2 gates (2026-10-27, branch `claude/v5-context-fixes`)
+
+The intent gate's run 1 failed only on the `jira.release` per-entry rate (25/28). All three cases had byte-identical
+prompts.
+
+- **a8-18 ("what's in the 2.3.0 release on jira?" → `project: "2.3.0"`): the mirror of P9, in the lookup.** With no
+  release named, a `project` value is the release when all of these hold:
+  - it cannot be a Jira project key under Jira's own key format (one ASCII token that, upper-cased, still fails
+    `CONNECTOR_CONTAINER_KEY`, e.g. "2.3.0" or "2026");
+  - it names no visible project on a complete listing (key, name, contained or words).
+  Core then looks the release up, as for `{release}`. The rule is structural, with no word list.
+  - It never moves a non-ASCII or multi-word value (a project name such as "모바일 앱 운영"), a key-shaped value, or a
+    value next to a named release.
+  - It is the lookup Core already runs, so the eval's in-world equivalence (owner answer 1) credits it with no scorer
+    change.

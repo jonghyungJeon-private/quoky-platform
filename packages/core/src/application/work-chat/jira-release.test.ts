@@ -159,6 +159,20 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     expect(channel.kind === 'body' ? plainTextOf(channel.body) : '').toContain('프로젝트·릴리스 목록은 DM에서만');
   });
 
+  it('P9 mirror (2026-10-27, a8-18): with no release, a project value that cannot be a Jira key and names no visible project is the release', async () => {
+    const asProject = await run({ project: '2.3.0' });
+    const asRelease = await run({ release: '2.3.0' });
+    expect(asProject.text).toBe(asRelease.text);
+    expect(asProject.queries.map((query) => query.query)).toEqual(['containers', 'release-items']);
+    expect(asProject.queries.at(-1)?.params).toEqual({ releaseName: '2.3.0', limit: 20 });
+    expect((await run({ project: '20261015' })).queries.at(-1)?.params).toEqual({ releaseName: '20261015', limit: 20 });
+    // Never moved: a key-shaped value, a visible project, a non-ASCII or multi-word name, or with a release named.
+    expect((await run({ project: 'ZZ99' })).queries.map((query) => query.query)).not.toContain('release-items');
+    expect((await run({ project: '없는 프로젝트' })).queries.map((query) => query.query)).not.toContain('release-items');
+    expect((await run({ project: 'Mobile App' })).queries.map((query) => query.query)).not.toContain('release-items');
+    expect((await run({ project: '2026', release: '20261015' })).queries.at(-1)?.params).not.toEqual({ releaseName: '2026', limit: 20 });
+  });
+
   it('owner sentence 4: a project and no release is the project release list', async () => {
     const { text, queries } = await run({ project: '차란차 운영 2026' });
     expect(queries.map((query) => query.query)).toEqual(['containers', 'releases']);
