@@ -220,6 +220,13 @@ export interface NlCatalogEntry {
    */
   readonly inheritsHeldRange?: true;
   /**
+   * Owner decision of 2026-10-27 (range grounding, narrowed in the Codex review of 86271dd5): this entry's `range` is the
+   * date of the items themselves (calendar: the events' own time), so the one period the owner states is that range. Not
+   * set where `range` filters another date field (mail receipt time, Drive modified time, Slack message time, Jira's
+   * `window` field): there a stated period may describe the content ("어제 회의 관련 메일"), and the selector decides.
+   */
+  readonly rangeIsItemDate?: true;
+  /**
    * The names the owner and a chat reply use for this entry's external source ("jira", "캘린더"); the honest-chat guard
    * (ADR-0120 D9) recognizes a false "cannot access" claim about the source by them. Absent for Quoky's own data.
    */

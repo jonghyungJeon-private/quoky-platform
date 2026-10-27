@@ -9,8 +9,8 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 const NOW = '2026-10-27T03:00:00.000Z';
 const offered = new Map(Object.values(NL_WAVE1_ENTRIES).map((entry) => [entry.id, entry] as const));
 const ctxOf = (text: string, previousArgs?: Record<string, string>): NlValidationContext => ({ offered, groundingText: text, now: NOW, timeZone: 'Asia/Seoul', ...(previousArgs ? { previousArgs, previousEntryId: 'calendar.events' } : {}) });
-const selected = (text: string, args: Record<string, unknown>, previousArgs?: Record<string, string>): NlValidatedSelection => {
-  const result = validateSelection({ entryId: 'calendar.events', args }, ctxOf(text, previousArgs));
+const selected = (text: string, args: Record<string, unknown>, previousArgs?: Record<string, string>, entryId = 'calendar.events'): NlValidatedSelection => {
+  const result = validateSelection({ entryId, args }, ctxOf(text, previousArgs));
   if (!result.ok) throw new Error(`${text}: ${result.reason}`);
   return result.value;
 };
@@ -35,7 +35,9 @@ describe('nlOwnerStatedRange', () => {
     expect(final('이번 달 말까지 일정 보여줘', { range: 'this-month' })).toEqual({ range: 'rest-of-month' });
     expect(final('다음 주말에 잡힌 일정 있어?', { range: 'this-weekend' })).toEqual({ range: 'next-weekend' });
     expect(final('다음 주말에 잡힌 일정 있어?', {})).toEqual({ range: 'next-weekend' });
-    expect(final('아니 다다음 주', { range: 'next-week' }, { range: 'next-week' })).toEqual({ range: 'week-after-next' });
+    expect(final('다다음 주는?', { range: 'next-week' }, { range: 'next-week' })).toEqual({ range: 'week-after-next' });
+    // "아니" is one of the shared negation markers: fail-safe, the selector's range stays (uat5r4-17 is a selector matter).
+    expect(final('아니 다다음 주', { range: 'next-week' }, { range: 'next-week' })).toEqual({ range: 'next-week' });
   });
 
   it('keeps the selector\'s range for a weekday ("목요일 거는?"), a span, "today", the same dates and an unstated period', () => {
@@ -44,6 +46,21 @@ describe('nlOwnerStatedRange', () => {
     expect(final('오늘 일정 알려줘', { range: 'tomorrow' })).toEqual({ range: 'tomorrow' });
     expect(final('다음 주말에 잡힌 일정 있어?', { range: 'next-weekend' })).toEqual({ range: 'next-weekend' });
     expect(final('그 세미나 어디서 해?', { range: 'next-week', keyword: '세미나' }, { range: 'next-week' })).toEqual({ range: 'next-week', keyword: '세미나' });
+  });
+
+  it('Codex review of 86271dd5: an excluded period is never stated, a period inside a value is the value\'s, and only an item-date range is grounded', () => {
+    // 1. Exclusion / negation: the clause-grounded rule's own markers, no new word.
+    expect(final('내일 말고 일정 보여줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
+    expect(final('다음 주 일정은 빼고 보여줘', { range: 'this-month' })).toEqual({ range: 'this-month' });
+    // 2. The read's own values are set aside first: the keyword "다음 주 계획" is an event title.
+    expect(final('다음 주 계획 회의 찾아줘', { range: 'this-month', keyword: '다음 주 계획' })).toEqual({ range: 'this-month', keyword: '다음 주 계획' });
+    expect(final('"다음 주 계획" 회의 찾아줘', { range: 'this-month', keyword: '다음 주 계획' })).toEqual({ range: 'this-month', keyword: '다음 주 계획' });
+    // 3. Only calendar.events (`rangeIsItemDate`): a mail range is receipt time, so the selector decides.
+    const mailText = '어제 회의 관련 메일 보여줘';
+    const mail = selected(mailText, {}, undefined, 'mail.list');
+    expect(nlOwnerStatedRange(mail, mailText, ctxOf(mailText))).toBe(mail);
+    const items = Object.values(NL_WAVE1_ENTRIES).filter((entry) => entry.rangeIsItemDate === true).map((entry) => entry.id);
+    expect(items).toEqual(['calendar.events']);
   });
 
   it('explicit periods still win over the held listing\'s (P-time (ii) never inherits when the owner states one)', () => {

@@ -443,6 +443,7 @@ const calendarEvents: NlCatalogEntry = {
   dmOnly: false,
   // Owner decision P-time (ii), 2026-10-27: "그 면접 몇 시였지?" after tomorrow's listing reads tomorrow, not today.
   inheritsHeldRange: true,
+  rangeIsItemDate: true,
   label: { ko: '캘린더 일정 조회', en: 'Calendar events' },
   aliases: ['calendar', '캘린더', '일정', '스케줄', '달력', '회의', '미팅'],
   description: {

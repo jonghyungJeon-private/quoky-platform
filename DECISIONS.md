@@ -30687,3 +30687,16 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     too.
   - Gold check: a perfect selector still hits every gold under both scorers at three clocks (10-22, 10-27 12:00 and
     23:58 KST).
+  - **Narrowed in the Codex review of 86271dd5 (three P2s).**
+    - An excluded period is never stated: the read's own clauses are read as the clause-grounded flag rule reads them
+      (the whole message when it is one conjunct, else those naming the entry). Any exclusion or negation marker there
+      (`nlHasExclusionOrNegation`, the shared markers, no new word) keeps the selector's range. "내일 말고 일정 보여줘"
+      keeps `this-week`; "아니 다다음 주" keeps it too (fail-safe), so uat5r4-17 is a selector matter.
+    - The read's own arg values are set aside before the period is read. The keyword "다음 주 계획" is a title, not a
+      period.
+    - Only entries whose `range` is the items' own date (catalog `rangeIsItemDate`): today `calendar.events` alone. Mail
+      (receipt time), Drive (modified time), Slack (message time) and Jira (the `window` field) filter another date field,
+      where a stated period may describe the content ("어제 회의 관련 메일"), so the selector decides there; uat5r1-02 is
+      a selector matter.
+    - Simulation of the narrowed rule: intent fixes calendar-023 ×2, and cda61425 read-regression fixes calendar-023,
+      uat5r3-14 and uat5r3-15. There are 0 gold and 0 archived-hit breaks.

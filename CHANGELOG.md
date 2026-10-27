@@ -103,7 +103,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   leaves it off. The rule only turns the flag on.
 - **Changed (owner decision 2026-10-27).** When the owner states exactly one period of the existing period-label table
   ("다다음 주", "이번 달 말까지", "다음 주말", "last week" …) and the selector read other dates, Core uses the owner's
-  period. Weekdays, spans, "today" and a range with the same dates are left alone.
+  period. Weekdays, spans, "today" and a range with the same dates are left alone. After the Codex review it applies to
+  calendar events only (`rangeIsItemDate`), never to an excluded or negated period ("내일 말고"), and never to a period
+  inside the read's own values (a title keyword).
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 
