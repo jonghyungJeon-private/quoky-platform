@@ -83,6 +83,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed (eval, owner D12 batch of 2026-10-27).** The 26 D4 strengthening golds (`ctx-d4-009`..`034`) are approved
   as-is and scored in `golden/nl-intent.context.v1.json` (46 cases); the `open-question` label has 26 answer golds. The
   ADR-0123 audit was regenerated with the local embedder (0 entries flagged).
+- **Changed (D4, read `nl-select.v71`, A6 `v69`, R2 `v70`; owner go-ahead 2026-10-27).** The open-question lines say
+  that a reply answers only when it points to one option's meaning (even when worded as a request; "this chat" means
+  Quoky), and that a reply pointing to neither option (thanks, small talk, undecided, a new request) is no answer. That
+  sentence now comes before the answer format. Prompts without an open question are byte-identical.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

@@ -345,6 +345,12 @@ describe('D4 strengthening golds (ctx-d4-009..034 in nl-intent.context.v1.json, 
     expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
     expect(seen.every((prompt) => prompt.includes('\nOpen question (asked by Quoky just before this message): 1. '))).toBe(true);
     expect(seen.some((prompt) => prompt.includes('Decide FIRST, before rules 2 and 3,'))).toBe(true);
+    // read v71: the non-answer categories come before the answer format, and "this chat" means Quoky.
+    for (const prompt of seen) {
+      expect(prompt.indexOf('points to neither option')).toBeGreaterThan(0);
+      expect(prompt.indexOf('points to neither option')).toBeLessThan(prompt.indexOf('"answer": <that option'));
+      expect(prompt).toContain('"Quoky" and this chat mean Quoky.');
+    }
   });
 });
 

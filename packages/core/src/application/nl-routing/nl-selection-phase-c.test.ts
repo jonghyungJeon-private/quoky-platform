@@ -254,7 +254,7 @@ describe('selection prompt — S1 narrowing follow-up rule', () => {
   it('tells the selector that a narrowing follow-up with no previous selection is a clarification, never CLEAR or none', async () => {
     const { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } = await import('./selection-prompt');
     const prompt = buildSelectionPrompt({ entries: ALL, text: '그 중에 스크럼만' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v70');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v71');
     expect(prompt).toContain('A narrowing follow-up');
     expect(prompt).toContain('never CLEAR, never none');
     expect(prompt.split('\n').filter((line) => line.startsWith('Previous selection:')).at(-1)).toBe('Previous selection: none');

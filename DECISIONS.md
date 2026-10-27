@@ -30630,3 +30630,15 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     (now 46 cases; notes say "owner-approved as-is in the D12 batch of 2026-10-27"), and the pending file is removed.
     `eval:nl` read and read-regression score them; the `open-question` label has 26 answer golds. The ADR-0123 audit
     was regenerated with the local embedder only (space `@ollama0.40.11`): pool 153, gold 1567, 0 entries flagged.
+- **D4 open-question lines reordered: read `nl-select.v71`, A6 `v69`, R2 `v70`** (owner go-ahead of 2026-10-27, after the
+  Strict gates of 24112d09, both 2/3).
+  - Why: `ctx-d4-032` "cool, thanks" was read as option 2 once (the only non-answer misread in 48 runs of the 8
+    non-answer golds), and `ctx-d4-013` "채팅으로 검색하는 방법" was read as a help request 3/3. In v70 the not-an-answer
+    clause came last, after the answer format.
+  - The block now says that a reply answers only when it points to one option's meaning, even when worded as a request,
+    and that "this chat" means Quoky (the owner talks to Quoky in the chat). A reply that points to neither option
+    does not answer, and it is routed as usual. That sentence names categories only (thanks or an acknowledgement,
+    small talk, an undecided reply, a new request) and comes BEFORE the answer format.
+  - Only the open-question block changes. Every prompt without an open question is byte-identical (pinned sha256
+    unchanged; 82 of 84 pinned prompts unchanged, the 2 open-question ones regenerated in
+    `golden/nl-select.v71.prompts.json`). No example, no phrase list.
