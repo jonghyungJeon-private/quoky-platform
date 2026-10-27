@@ -41,8 +41,7 @@ import {
   type ContextEvalCorpus,
   type ContextEvalScenario,
   type ScoreContext,
-  type TurnExpectation,
-} from './context-eval';
+  type TurnExpectation, CONTEXT_EVAL_CHAT_PROBES_PER_TURN } from './context-eval';
 import type { ContextEvalFixtures, StateSnapshot, TurnObservation } from './context-eval-harness';
 import { instantiatePlaceholders, mergeWrites, oracleOutput, scoredUnder } from './context-eval-runner';
 
@@ -396,7 +395,9 @@ describe('summary, gate and plan', () => {
     const plan = buildContextEvalPlan(corpus, sha256, options);
     const turns = corpusCounts(corpus).turns;
     expect(plan).toMatchObject({ maxSelectionCalls: turns, maxChatCalls: 0 });
-    expect(buildContextEvalPlan(corpus, sha256, { ...options, chat: 'real', runs: 2 })).toMatchObject({ maxSelectionCalls: 2 * turns, maxChatCalls: 2 * turns });
+    // D2: with real chat, each scored turn may also probe up to CONTEXT_EVAL_CHAT_PROBES_PER_TURN chat-suggested commands.
+    expect(buildContextEvalPlan(corpus, sha256, { ...options, chat: 'real', runs: 2 })).toMatchObject({ maxSelectionCalls: 2 * turns * (1 + CONTEXT_EVAL_CHAT_PROBES_PER_TURN), chatProbesPerTurn: CONTEXT_EVAL_CHAT_PROBES_PER_TURN, maxChatCalls: 2 * turns });
+    expect(plan).toMatchObject({ chatProbesPerTurn: 0 });
     const digest = computeContextEvalPlanDigest(plan);
     for (const changed of [{ ...options, gitHead: 'def' }, { ...options, promptVersions: { read: 'v2' } }, { ...options, profile: 'actions-local' as const }, { ...options, selectionModel: 'sonnet' }]) {
       expect(computeContextEvalPlanDigest(buildContextEvalPlan(corpus, sha256, changed))).not.toBe(digest);

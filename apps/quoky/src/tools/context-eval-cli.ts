@@ -302,7 +302,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
     deps.stdout(`plan digest (sha256): ${digest}`);
     const cost = plan.maxSelectionCalls * COST_PER_SELECTION_CALL_USD + plan.maxChatCalls * COST_PER_CHAT_CALL_USD;
     deps.stdout(
-      `model calls this plan authorises: at most ${plan.maxSelectionCalls} selection call(s) (${plan.selectionModel})` +
+      `model calls this plan authorises: at most ${plan.maxSelectionCalls} selection call(s) (${plan.selectionModel}${plan.chatProbesPerTurn > 0 ? `; one per scored turn plus up to ${plan.chatProbesPerTurn} probes of chat-suggested commands per turn, owner decision D2` : ''})` +
         (plan.maxChatCalls > 0 ? ` and ${plan.maxChatCalls} chat call(s)` : ' and 0 chat calls (stub)') +
         `, plus ${CANARY_CLAUSE}${plan.maxChatCalls > 0 ? ' per provider' : ''}; estimated cost at most ~$${cost.toFixed(2)} (assumes ~$${COST_PER_SELECTION_CALL_USD}/selection call, ~$${COST_PER_CHAT_CALL_USD}/chat call)`,
     );

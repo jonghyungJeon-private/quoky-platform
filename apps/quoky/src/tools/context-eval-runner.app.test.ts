@@ -135,6 +135,42 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(unrelated.reply).toBe(reply);
   }, 120_000);
 
+  it('owner decision D2: a chat-suggested command is probed with the real selector in a Strict run; Core copy stays deterministic; both are reported apart', async () => {
+    const releasePhrase = 'NR26 프로젝트 20261029 릴리스 보여줘';
+    const chatReply = `그것만으로는 아무것도 실행되지 않아요. 아래 문장을 그대로 보내 주세요. "${releasePhrase}"`;
+    const probes: string[] = [];
+    const selector = {
+      id: 'scripted-selector',
+      capabilities: [],
+      isAvailable: async () => true,
+      execute: async (request: { prompt: string }) => {
+        const owner = /<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '';
+        if (owner === releasePhrase) {
+          probes.push(owner);
+          return { text: JSON.stringify({ entryId: 'jira.release', args: { project: 'NR26', release: '20261029' }, ambiguity: 'CLEAR', alternatives: [] }), artifacts: [] };
+        }
+        return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] }), artifacts: [] };
+      },
+    } as never;
+    const chat = { id: 'scripted-chat', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: chatReply, artifacts: [] }) } as never;
+    world = await bootContextEvalWorld('deployed', { select: async () => '{}', chat: async () => '', summarize: async () => '' });
+    const strict = new ContextEvalRunner(world, corpus, { profile: 'deployed', selection: { kind: 'real', provider: selector }, chat, capabilityNouns: capabilityNouns() });
+    const [record] = await strict.runAll(['cy-question-then-other'], 1);
+    const chatTurn = (record as ScenarioRecord).turns.find((turn) => turn.chat && turn.suggestions.includes(releasePhrase));
+    expect(chatTurn?.chatSuggestions).toEqual([releasePhrase]);
+    expect(chatTurn?.unparseable).toEqual([]);
+    expect(probes).toContain(releasePhrase);
+    // The same chat reply on the deterministic path only (a dry run): the selector-only phrase is unparseable, and it is
+    // reported as the chat model's, not Core's copy.
+    const dry = new ContextEvalRunner(world, corpus, { profile: 'deployed', selection: { kind: 'none' }, chat, capabilityNouns: capabilityNouns() });
+    const [dryRecord] = await dry.runAll(['cy-question-then-other'], 2);
+    const dryTurn = (dryRecord as ScenarioRecord).turns.find((turn) => turn.chat && turn.suggestions.includes(releasePhrase));
+    expect(dryTurn?.unparseable).toEqual([releasePhrase]);
+    const summary = summarize([(dryRecord as ScenarioRecord).score]);
+    expect(summary.unparseableByOrigin.chat).toBeGreaterThan(0);
+    expect(summary.unparseableByOrigin.core).toBe(0);
+  }, 120_000);
+
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {
     const records = await dryRun('deployed', { kind: 'none' });
     expect(records).toHaveLength(corpus.scenarios.length);

@@ -91,7 +91,7 @@ describe('context eval CLI — plan and the Strict boundary', () => {
     expect(d.createChatProvider).not.toHaveBeenCalled();
     expect(d.out.join('\n')).toMatch(/context eval corpus: \d+ scenarios, \d+ turns/u);
     expect(digestOf(d.out)).toMatch(/^[0-9a-f]{64}$/u);
-    expect(d.out.join('\n')).toMatch(/at most \d+ selection call\(s\) \(haiku\) and \d+ chat call\(s\)/u);
+    expect(d.out.join('\n')).toMatch(/at most \d+ selection call\(s\) \(haiku; one per scored turn plus up to 3 probes of chat-suggested commands per turn, owner decision D2\) and \d+ chat call\(s\)/u);
     expect(d.out.join('\n')).toContain('estimated cost at most');
   });
 
