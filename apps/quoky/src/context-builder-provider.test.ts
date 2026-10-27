@@ -199,7 +199,7 @@ describe('production ContextBuilder composition with opt-in semantic recall (ADR
   });
 
   it('with semantic options, the lexically disjoint memory is recalled through the EMBEDDING capability', async () => {
-    const embedder = new FakeEmbedder();
+    const embedder = Object.assign(new FakeEmbedder(), { executionLocality: 'LOCAL' as const });
     const select = vi.fn(async (capability: Capability) => {
       expect(capability).toBe(Capability.EMBEDDING);
       return embedder;
@@ -243,6 +243,37 @@ describe('production ContextBuilder composition with opt-in semantic recall (ADR
       entries?.map((entry) => [entry.source.memoryId, entry.retrievalReason]);
     expect(view(degraded.durableRecall)).toEqual(view(lexical.durableRecall));
     expect(degraded.durableRecall?.every((entry) => !entry.retrievalReason.includes('semantic='))).toBe(true);
+  });
+
+  // ADR-0110 D4: durable memory text is the owner's personal content; a cloud-marked embedding model never sees it.
+  it('never embeds memory text with a REMOTE (cloud-marked) embedding provider; recall stays lexical', async () => {
+    const lexical = await composedBuilder(async () => [...distractors, petMemory]).build(petTask);
+    for (const executionLocality of ['REMOTE', undefined] as const) {
+      const cloud = Object.assign(new FakeEmbedder(), executionLocality === undefined ? {} : { executionLocality });
+      const vectors = vectorStore();
+      const builder = composedBuilder(async () => [...distractors, petMemory], {
+        selector: { select: async () => cloud },
+        vectors,
+        timeoutMs: 3000,
+        maxNewPerTurn: 4,
+      });
+      let bundle = await builder.build(petTask);
+      for (let turn = 0; turn < 3; turn++) bundle = await builder.build(petTask);
+      expect(cloud.prompts).toEqual([]);
+      expect(vectors.records.size).toBe(0);
+      expect(bundle.durableRecall?.every((entry) => !entry.retrievalReason.includes('semantic='))).toBe(true);
+      const view = (entries: typeof lexical.durableRecall) => entries?.map((entry) => entry.source.memoryId);
+      expect(view(bundle.durableRecall)).toEqual(view(lexical.durableRecall));
+    }
+    // Lexical recall itself still finds a memory that shares words with the request.
+    const lexicalHit = durableRecord('durable-lex', '고양이 이름은 나비야', '2026-08-01T00:00:00.000Z');
+    const bundle = await composedBuilder(async () => [lexicalHit], {
+      selector: { select: async () => Object.assign(new FakeEmbedder(), { executionLocality: 'REMOTE' as const }) },
+      vectors: vectorStore(),
+      timeoutMs: 3000,
+      maxNewPerTurn: 4,
+    }).build({ ...petTask, intent: { ...petTask.intent, summary: '고양이 이름이 뭐였지' } });
+    expect(bundle.durableRecall?.some((entry) => entry.content === lexicalHit.content)).toBe(true);
   });
 });
 

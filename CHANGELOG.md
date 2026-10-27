@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Security: durable-memory embeddings are local-only (fail closed to lexical recall)
+
+- **Fixed.** The durable-memory `SemanticRecallScorer` was built with the unfiltered provider selector, so an Ollama
+  embedding model whose name contains `cloud` (declared `REMOTE`) could have embedded memory text off the host. It now
+  uses `localOnlyProviderSelector`, like the curated examples: a non-`LOCAL` embedding provider is treated as absent and
+  recall stays lexical; it never falls back to a remote model (ADR-0110 D4, MSIT guidance).
+- **Checked.** No other runtime path selects `EMBEDDING`; the offline selector-RAG harness already refuses cloud models
+  and non-loopback daemons.
+- **Tests.** A `REMOTE` or undeclared embedder is never called and writes no vectors for memory text; recall equals
+  lexical recall. No model call.
+
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 
 - **Recorded.** DECISIONS "G7 addendum": the exact A3b payload G7 measures (`g7-payload.v1`): per item only the

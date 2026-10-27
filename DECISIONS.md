@@ -30345,3 +30345,11 @@ harness    tools/g6/cases.mjs  ee070b113cf6c32c282760face620c476b1793df6ba54a54b
 harness    tools/g6/score.mjs  a9c15b62f157c92df2a6004a3389a49a8a63f37a2c669ac60580b782036d64c1
 harness    tools/g6/freeze.mjs  022cdce61f7a757eedfceaca497901ebb3eb76538dafd1474171543f4019ec49
 ```
+
+
+## ADR-0098 D8 implementation note — durable-memory embeddings are local-only (2026-10-28)
+
+Durable memory is the owner's personal content (ADR-0110 D4; MSIT guidance), so its embedding scorer is built with
+`localOnlyProviderSelector`, exactly like the curated-example scorer (ADR-0107 D6). An embedding provider that does not
+declare `LOCAL` execution (for example an Ollama model whose name contains `cloud`) is treated as absent: the scorer
+degrades to lexical recall and never falls back to a remote model. No decision changes; this closes an implementation gap.

@@ -107,7 +107,9 @@ export function createProductionContextBuilder(
       : {
           semanticScorer: new SemanticRecallScorer(
             {
-              selector: semanticRecall.selector,
+              // ADR-0110 D4: durable memory text is the owner's personal content and must not reach a remote model,
+              // so a non-LOCAL embedding provider is treated as absent (fail closed to lexical, never remote).
+              selector: localOnlyProviderSelector(semanticRecall.selector),
               vectors: semanticRecall.vectors,
               ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
             },

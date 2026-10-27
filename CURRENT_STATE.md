@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
+
+- **Gap closed.** Durable-memory semantic recall used the unfiltered selector (`context-builder-provider.ts`), so a
+  cloud-marked Ollama embedding model could have received memory text. It now uses `localOnlyProviderSelector`; a
+  non-`LOCAL` embedder is treated as absent and recall stays lexical (never remote). Tests cover both. No other
+  embedding path had the gap. Record: DECISIONS "ADR-0098 D8 implementation note (2026-10-28)".
+
 ### ADR-0121 A3a G6 result — local not adequate on calendar (2026-10-26, branch `claude/v5-g6-harness`)
 
 - **G6 ran** (Strict, owner yes): 72 frozen held-out cases, arms L0 and LT. Neither arm met its latency bar (L0 warm
