@@ -30922,3 +30922,11 @@ The merge waits until EVERY Strict context run is at or above 95%.
     - A perfect selector still hits every gold.
     - The ADR-0123 example lint is unchanged, because the examples are unchanged.
     - The model-facing effect needs the D12 re-gate (Strict). No model was called.
+- **B. The chat double bind, fixed at the source (chat prompt only).**
+  - Before: the D9 fact (`LISTING_SHOWN_ABOVE_RULE`) and the composer's authority line told the chat model both "never
+    say you cannot see the listing" and "never say you read it".
+  - Now both state positively what the reply has and lacks after a listing. The listing is on the owner's screen; the
+    reply has only Core's structural note; the items and their content stay with Quoky. When the answer needs what an
+    item says, the reply gives the exact command that fetches it (the D5/D9 command list) or asks the owner for that
+    detail. It never guesses, and it never sends the owner to show the listing again.
+  - The P1 guard stays as the safety net. ADR-0110 D4 holds: no content reaches the chat.

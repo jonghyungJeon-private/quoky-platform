@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (chat prompt, owner decision 2026-10-28).** After a listing, the chat prompt now says plainly what the reply
+  has (Quoky's note) and lacks (the items, which stay with Quoky), and that item content is reached with the exact
+  command. It no longer gives the two contradicting "never say" instructions.
 - **Changed (selector, owner decision 2026-10-28; read `nl-select.v73`, A6 `v71`, R2 `v72`, planner `agent-plan.v10`).**
   Rules 2, 3, 6 and 7 are one decision order, with no new example and a smaller prompt (read −610, A6 −626 characters).
   How-tos go to rule 3 (Quoky itself, then an unclear how-to that asks, then another app's own feature). A request that
