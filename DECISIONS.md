@@ -30736,3 +30736,5 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     may be followed by a particle, as before. An English name must end at a non-letter, allowing only a plural or
     possessive (as `aliasStarts`). The same catalog words are used and no new list is added. Simulation unchanged;
     0 breaks.
+    Residual (accepted, conservative): a Korean source alias that prefixes a longer word (e.g. 파일 in 파일럿) counts as
+    another source, so grounding is skipped and the selector's range stands.
