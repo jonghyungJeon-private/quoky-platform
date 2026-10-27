@@ -162,16 +162,24 @@ import { nlModeVocabularyText } from './action-entries';
  * part: the open help-scope question ("Open question …: 1. …; 2. …", its displayed option texts) with four rule-6 lines
  * and the output's optional `answer` (the option number a worded reply means). Rendered only when the owner's reply to
  * that question named no option by number or displayed text; otherwise v68 / v66 / v67 byte for byte. No word list,
- * no example. Pinned by `golden/nl-select.v69.prompts.json`. Not gated yet (one D12 gate with v68).
+ * no example. Pinned by `golden/nl-select.v69.prompts.json` (renamed to `nl-select.v70.prompts.json` with the v70 bump).
+ * v70 (read) / v68 (A6) / v69 (R2) (owner decision of 2026-10-27, "strengthen D4", after the Strict gates of 653e3a8f:
+ * ctx-d4-006 "the app's own settings" answered none in 3/3 runs, ctx-d4-005 "I meant through you" read as option 2 once)
+ * = v69 / v67 / v68 with the open-question rule lines rewritten: decide FIRST, before rules 2 and 3, whether the reply
+ * answers the question (a reply naming an option's meaning, Quoky's way or the app or device itself, its settings or its
+ * use, is that option), and the owner's "you" / "너" / "Quoky" mean Quoky. Only the open-question block changes; every
+ * prompt without an open question is byte-identical to v69 / v67 / v68. No example. Pinned by
+ * `golden/nl-select.v70.prompts.json`.
  */
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v69';
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v70';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
- * for byte (pinned by `golden/nl-select.v69.prompts.json`). v66 = v65 with the optional D1 / P7 parts of read v68.
- * v67 = v66 with the optional D4 open-question part of read v69.
+ * for byte (pinned by `golden/nl-select.v70.prompts.json`). v66 = v65 with the optional D1 / P7 parts of read v68.
+ * v67 = v66 with the optional D4 open-question part of read v69. v68 = v67 with the strengthened open-question lines of
+ * read v70.
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v67';
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v68';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -206,8 +214,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v67';
  * the read v65). v66 = the v48 R2 lines on top of v65 (the A6 prompt with the count follow-up clause; not the read v66).
  * v67 = the v48 R2 lines on top of v66 (the A6 prompt with the optional D1 / P7 parts; not the read v67).
  * v68 = the v48 R2 lines on top of v67 (the A6 prompt with the optional D4 open-question part; not the read v68).
+ * v69 = the v48 R2 lines on top of v68 (the strengthened open-question lines; not the read v69).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v68';
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v69';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -279,10 +288,12 @@ const EARLIER_SELECTION_RULES: readonly string[] = [
 
 /** D4: the rule lines shown only with an open question. */
 const OPEN_QUESTION_RULES: readonly string[] = [
-  '   "Open question" is the numbered question Quoky asked just before this message. When the message answers it in its',
-  '   own words instead of a number (it says which option it means), return {"entryId": "none", "args": {}, "ambiguity":',
-  '   "CLEAR", "alternatives": [], "answer": <that option\'s number>}. A message that does not answer it is routed as',
-  '   usual, with no "answer". Never write "answer" when no Open question is shown.',
+  '   "Open question" is the numbered question Quoky asked just before this message. Decide FIRST, before rules 2 and 3,',
+  '   whether the message answers it: a message that says in other words which option it means (Quoky\'s own way, or the',
+  '   app or device itself, its settings or its use) is that option: return {"entryId": "none", "args": {}, "ambiguity":',
+  '   "CLEAR", "alternatives": [], "answer": <that option\'s number>}. In the owner\'s words, "you", "너" and "Quoky" mean',
+  '   Quoky. A message that does not answer it (a new request, small talk) is routed as usual, with no "answer". Never',
+  '   write "answer" when no Open question is shown.',
 ];
 
 const OPEN_QUESTION_OPTION_MAX_CHARS = 120;

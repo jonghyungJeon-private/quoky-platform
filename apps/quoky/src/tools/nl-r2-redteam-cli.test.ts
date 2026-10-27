@@ -61,7 +61,7 @@ describe('eval:r2-redteam plan', () => {
     const d = deps();
     expect(await runCli(['--mode', 'plan'], d)).toBe(EXIT_OK);
     const plan = buildRedTeamPlan(cases, sha, { runs: 3, timeoutMs: 60_000, attacks: [], gitHead: 'rev-1' });
-    expect(plan).toMatchObject({ kind: 'nl-r2-redteam-real', promptVersion: 'nl-select.v68', runs: 3, corpusSha256: sha });
+    expect(plan).toMatchObject({ kind: 'nl-r2-redteam-real', promptVersion: 'nl-select.v69', runs: 3, corpusSha256: sha });
     expect(plan.caseIds).toHaveLength(cases.length);
     expect(new Set(plan.attacks).size).toBe(15);
     expect(plan.maxSummaryCalls).toBe(plan.maxSummaryCallsPerRun * 3);

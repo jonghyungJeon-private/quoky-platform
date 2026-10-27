@@ -30602,3 +30602,19 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
   - `eval:context --mode run` defaults to 3 runs. The gate passes only with at least 3 runs.
   - EACH run must reach at least 95% of its fully scored scenarios, with every hard check at 0 and no harness error.
   - The CLI prints each run's verdict, and a plan with fewer runs reports that the gate needs 3.
+- **D4 strengthened: read `nl-select.v70`, A6 `v68`, R2 `v69`** (owner decision of 2026-10-27).
+  - The open-question rule lines now say:
+    - decide FIRST, before rules 2 and 3, whether the reply answers the question. A reply that names an option's meaning
+      (Quoky's own way, or the app or device itself, its settings or its use) is that option;
+    - in the owner's words "you", "너" and "Quoky" mean Quoky.
+  - Only the open-question block changes. Every prompt without an open question is byte-identical, and the pinned
+    sha256 values are unchanged. No example is added.
+  - **Help-scope variance (`hs-jira-app`, `hs-slack-en`) is left as is.** The selector answers CLEAR with a
+    source-specific help topic, or none. Asking anyway would override owner decision A's ratified rule (a
+    source-specific topic is kept), and no other principled lever exists without an example or a phrase list.
+  - **Gold.** 26 candidates wait in `golden/nl-intent.context-d4-pending.v1.json` for the owner's batch:
+    - 20 answers: KO and EN, one and several sources, options 1 and 2. With the 6 approved ones the label reaches 26,
+      which meets the D12 rule of at least 25 per entry;
+    - 6 non-answers: fresh requests and small talk.
+
+    None is an ordinal or a displayed option text, because those resolve deterministically before the selector.

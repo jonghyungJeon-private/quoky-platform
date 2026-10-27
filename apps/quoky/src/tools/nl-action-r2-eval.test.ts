@@ -70,7 +70,7 @@ describe('eval:nl --mode r2 plan', () => {
     const d = deps();
     expect(await runCli(['--mode', 'r2', '--runs', '3'], d)).toBe(EXIT_OK);
     const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 3, concurrency: 4, gitHead: 'rev-1' });
-    expect(plan.promptVersion).toBe('nl-select.v68');
+    expect(plan.promptVersion).toBe('nl-select.v69');
     expect(plan).toMatchObject({ corpusSha256: sha256, runs: 3, itemR2: 'all', calls: corpus.cases.length * 3, gate: NL_ACTION_R2_EVAL_GATE });
     expect(digestOf(d.out)).toBe(computeActionPlanDigest(plan));
     expect(d.out.join('\n')).toContain(`at most ${corpus.cases.length * 3}`);
@@ -122,7 +122,7 @@ describe('eval:nl --mode r2 run (Strict)', () => {
     const d = deps();
     const code = await runCli(['--mode', 'r2', '--runs', '1', '--approved-plan-digest', digestOf(planned.out)], d);
     expect(d.created).toEqual(['haiku']);
-    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v68): PASSED in all 1 run(s)');
+    expect(d.out.join('\n')).toContain('R2 gate (nl-select.v69): PASSED in all 1 run(s)');
     expect(code).toBe(EXIT_OK);
     expect(d.written).toHaveLength(1);
     const report = d.written[0]?.contents ?? '';

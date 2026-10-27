@@ -317,6 +317,36 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
   });
 });
 
+describe('D4 strengthening candidates (nl-intent.context-d4-pending.v1.json, PENDING the owner D12 batch)', () => {
+  const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-d4-pending.v1.json', import.meta.url).pathname;
+
+  it('bring the open-question label to >= 25 answer golds, render the open question, and score as expected with a perfect selector', async () => {
+    const { corpus } = loadCorpus(pendingPath);
+    const approved = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).corpus.cases.filter((golden) => golden.expectAnswer !== undefined).length;
+    expect(approved + corpus.cases.filter((golden) => golden.expectAnswer !== undefined).length).toBeGreaterThanOrEqual(25);
+    const scored = new Set(loadScoredCorpus().corpus.cases.map((golden) => golden.id));
+    expect(corpus.cases.filter((golden) => scored.has(golden.id))).toEqual([]);
+    const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
+    const seen: string[] = [];
+    const provider = {
+      id: 'scripted',
+      capabilities: [Capability.INTENT_SELECTION],
+      isAvailable: async () => true,
+      execute: async (request: AiRequest) => {
+        seen.push(request.prompt);
+        const golden = byText.get(/<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '');
+        if (golden?.expectAnswer !== undefined) return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: golden.expectAnswer }), artifacts: [] };
+        return { text: golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args), artifacts: [] };
+      },
+    } as unknown as AiProvider;
+    const plan = buildPlan(corpus, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 });
+    const records = await runEvaluation({ corpus, plan, provider, now: () => NOW });
+    expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
+    expect(seen.every((prompt) => prompt.includes('\nOpen question (asked by Quoky just before this message): 1. '))).toBe(true);
+    expect(seen.some((prompt) => prompt.includes('Decide FIRST, before rules 2 and 3,'))).toBe(true);
+  });
+});
+
 describe('owner decision P-time (ii) in the scorers (Core\'s final outcome)', () => {
   it('a calendar output without a range after a held calendar listing scores with the held range; an explicit period wins', () => {
     const golden: NlEvalCase = { id: 'pt-1', text: '그 세미나 어디서 해?', prior: { entryId: 'todo.list', args: {}, earlier: [{ entryId: 'calendar.events', args: { range: 'next-week' }, turns: 1 }] }, expect: { entryId: 'calendar.events', args: { range: 'next-week', keyword: '세미나' } } };
