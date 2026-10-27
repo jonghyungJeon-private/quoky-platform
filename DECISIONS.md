@@ -30708,3 +30708,13 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     (fail-safe). A second read's period in another clause counts as well ("다다음 주 일정 보여주고 어제 메일도": left
     alone). Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression calendar-023, uat5r3-14 and uat5r3-15;
     0 breaks.
+  - **Codex delta review of 02fd5380 (third round; the rule is narrowed and closed).** The owner's period applies only
+    when all three conditions hold:
+    - (a) the read's OWN clauses state a period, with no negation or exclusion there and not inside an arg value;
+    - (b) across the whole message, without its negated or excluded clauses and arg values, exactly one distinct period
+      remains, and it is that same period;
+    - (c) the earlier conditions hold: `rangeIsItemDate`, no weekday, span or duration, not today or the default,
+      other dates, and the result validates.
+    "일정 보여주고 어제 메일도 알려줘" keeps `this-week`, because 어제 is the mail read's. The earlier scenarios stay as
+    tests. Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression calendar-023, uat5r3-14 and
+    uat5r3-15; 0 breaks.

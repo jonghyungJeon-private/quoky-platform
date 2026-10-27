@@ -65,6 +65,9 @@ describe('nlOwnerStatedRange', () => {
     // ("안 읽은 메일") is set aside, so the calendar's one period still counts.
     expect(final('다다음 주 일정 보여주고 어제 메일도 알려줘', { range: 'next-week' })).toEqual({ range: 'next-week' });
     expect(final('다다음 주 일정이랑 안 읽은 메일 보여줘', { range: 'next-week' })).toEqual({ range: 'week-after-next' });
+    // Codex delta review of 02fd5380: a period only another read's clause states is that read's ("어제" is the mail's).
+    expect(final('일정 보여주고 어제 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
+    expect(final('일정 보여주고 다다음 주 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
     // 3. Only calendar.events (`rangeIsItemDate`): a mail range is receipt time, so the selector decides.
     const mailText = '어제 회의 관련 메일 보여줘';
     const mail = selected(mailText, {}, undefined, 'mail.list');

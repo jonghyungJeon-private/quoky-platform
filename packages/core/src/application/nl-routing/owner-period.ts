@@ -11,8 +11,9 @@ import { resolveNlRange } from './symbolic-time';
  * validates again. "today" (the calendar default) and the entry's own default do not count as stated; a range naming the same dates is
  * kept as the selector wrote it; an invalid result keeps the selection. Only an entry whose range is the items' own date
  * (`rangeIsItemDate`: calendar.events); none of the read's own clauses (the whole message when it is one conjunct, else
- * those naming the entry) may hold an exclusion or negation marker; the one period is counted over the whole message
- * without its excluded or negated clauses and with the read's own arg values set aside (two periods: left alone). Pure.
+ * those naming the entry) may hold an exclusion or negation marker; those own clauses must state the one period, and it
+ * must be the only distinct period of the whole message without its excluded or negated clauses, the read's own arg
+ * values set aside in both (two periods, or a period only another read states: left alone). Pure.
  */
 export function nlOwnerStatedRange(selection: NlValidatedSelection, groundingText: string, ctx: NlValidationContext): NlValidatedSelection {
   const { entry } = selection;
@@ -29,7 +30,10 @@ export function nlOwnerStatedRange(selection: NlValidatedSelection, groundingTex
   // Codex delta review of 6cc157e6: the clause scoping above is for the exclusion check only. The periods are counted over
   // the WHOLE message without its excluded or negated clauses and without the read's own values, so a coordinated period
   // ("내일이랑 모레") is two periods and the selector's range stays.
-  const stated = nlStatedLabelPeriod(clauses.filter((clause) => !nlHasExclusionOrNegation(clause.text)).map(residue).join(' , '));
+  const whole = nlStatedLabelPeriod(clauses.filter((clause) => !nlHasExclusionOrNegation(clause.text)).map(residue).join(' , '));
+  // Codex delta review of 02fd5380 (narrowed, closed): the read's OWN clauses must state that same one period ("일정
+  // 보여주고 어제 메일도 알려줘": 어제 is the mail read's, and the calendar range stays).
+  const stated = whole !== undefined && nlStatedLabelPeriod(own.map(residue).join(' , ')) === whole ? whole : undefined;
   if (stated === undefined || stated === 'today' || stated === spec.default) return selection;
   const given = typeof selection.args[spec.name] === 'string' ? (selection.args[spec.name] as string) : typeof spec.default === 'string' ? spec.default : undefined;
   if (given === stated) return selection;
