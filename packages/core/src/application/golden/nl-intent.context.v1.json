@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "ADR-0120 D12 SUPPLEMENTAL scored corpus, selector-only (owner decision (가) option 1 of 2026-10-27): the 20 conversation-context cases of owner decisions D1 / D4 and context-eval fixes P7 / P10 (2026-10-26, nl-select.v68 / v69). Agent-drafted 2026-10-26, owner-approved as-is in the D12 batch of 2026-10-26; ctx-d1-005's text swapped by owner decision (나) of 2026-10-27 (ADR-0123 near duplicate). Scope: `eval:nl` (read) and `eval:nl --mode read-regression` score these cases together with nl-intent.v1.json, and they count in both gates (per-entry, overall and wrong captures; a D4 answer gold is its own label `open-question`). They are NOT part of the ADR-0121 Q11 one-step planner gold (Q11 auto-includes nl-intent.v1.json only; the planner does not yet receive the listing context, an S2 activation blocker in DECISIONS). ADR-0123 applies: the selector-RAG pool lint and the embedding audit check them (overlap only; they are not in the RAG experiment split). Same schema as nl-intent.v1.json plus: `prior.turns` (chat turns since the previous listing), `prior.earlier` (the latest selection of each other source; an output for an earlier entry is grounded against it), `openQuestion` (the help-scope question shown: sources, language) and `expectAnswer` (the option a worded reply means; `expect` stays `none`; an `answer` naming another option, or an `answer` on a case without `expectAnswer`, is a wrong capture). Rendered exactly as the runtime renders them.",
+  "description": "ADR-0120 D12 SUPPLEMENTAL scored corpus, selector-only (owner decision (가) option 1 of 2026-10-27): the 20 conversation-context cases of owner decisions D1 / D4 and context-eval fixes P7 / P10 (2026-10-26, nl-select.v68 / v69). Agent-drafted 2026-10-26, owner-approved as-is in the D12 batch of 2026-10-26; ctx-d1-005's text swapped by owner decision (나) of 2026-10-27, and ctx-p7-002's and ctx-d1-002's by the owner's pick of 2026-10-27 (ADR-0123 near duplicates; expectations and priors unchanged). Scope: `eval:nl` (read) and `eval:nl --mode read-regression` score these cases together with nl-intent.v1.json, and they count in both gates (per-entry, overall and wrong captures; a D4 answer gold is its own label `open-question`). They are NOT part of the ADR-0121 Q11 one-step planner gold (Q11 auto-includes nl-intent.v1.json only; the planner does not yet receive the listing context, an S2 activation blocker in DECISIONS). ADR-0123 applies: the selector-RAG pool lint and the embedding audit check them (overlap only; they are not in the RAG experiment split). Same schema as nl-intent.v1.json plus: `prior.turns` (chat turns since the previous listing), `prior.earlier` (the latest selection of each other source; an output for an earlier entry is grounded against it), `openQuestion` (the help-scope question shown: sources, language) and `expectAnswer` (the option a worded reply means; `expect` stays `none`; an `answer` naming another option, or an `answer` on a case without `expectAnswer`, is a wrong capture). Rendered exactly as the runtime renders them.",
   "promptVersion": "nl-select.v69",
   "cases": [
     {
@@ -21,7 +21,7 @@
     },
     {
       "id": "ctx-d1-002",
-      "text": "총 몇 통이야?",
+      "text": "그 메일들 개수가 어떻게 돼?",
       "prior": {
         "entryId": "mail.list",
         "args": {
@@ -36,7 +36,7 @@
           "count": true
         }
       },
-      "note": "D1: a count after two chat turns keeps the previous args and adds count [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+      "note": "D1: a count after two chat turns keeps the previous args and adds count [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26; text swapped from \"총 몇 통이야?\" by the owner's pick of 2026-10-27 (an ADR-0123 RAG-0 pair near copy of the read prompt example \"몇 건이야?\"); expectation and prior unchanged; the new text passes the pool n-gram lint, the local embedding audit and the RAG-0 example lint]"
     },
     {
       "id": "ctx-d1-003",
@@ -132,7 +132,7 @@
     },
     {
       "id": "ctx-p7-002",
-      "text": "아까 메일 중에 안 읽은 것만",
+      "text": "그 전에 보여준 메일 목록에서 아직 안 연 것만",
       "prior": {
         "entryId": "drive.files",
         "args": {},
@@ -153,7 +153,7 @@
           "unread": true
         }
       },
-      "note": "P7: naming the earlier source refines it [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26]"
+      "note": "P7: naming the earlier source refines it [agent-drafted 2026-10-26 for owner decision D1 / fix P7; owner-approved as-is in the D12 batch of 2026-10-26; text swapped from \"아까 메일 중에 안 읽은 것만\" by the owner's pick of 2026-10-27 (an ADR-0123 embedding near duplicate of the RAG pool's b1-mail-list-05 \"오늘 온 메일 중에 읽지 않은 것만\", cosine 0.8219 > tau 0.7941); expectation and prior unchanged; the new text passes the pool n-gram lint, the local embedding audit and the RAG-0 example lint]"
     },
     {
       "id": "ctx-p7-003",
