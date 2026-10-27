@@ -30718,3 +30718,15 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     "일정 보여주고 어제 메일도 알려줘" keeps `this-week`, because 어제 is the mail read's. The earlier scenarios stay as
     tests. Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression calendar-023, uat5r3-14 and
     uat5r3-15; 0 breaks.
+  - **Implementation note: fix-loop cap reached after 4 Codex rounds; scope narrowed to single-source messages;
+    residual: multi-source messages rely on the selector.** The orchestrator narrowed the scope on 2026-10-27, by the
+    quoky-ship §3 fix-loop rule, after Codex's 4th edge at 14e05d89. That edge was "일정 보여주고 어제 일정 관련 메일도
+    알려줘", where the clause naming the calendar is a mail request. The owner's period now applies ONLY when all hold:
+    - the message names no catalog source other than the read's own (the other read entries' existing catalog aliases
+      and source names, with the read's own values set aside; an alias the read's entry shares does not count);
+    - the message holds no exclusion or negation marker anywhere;
+    - with the read's own values set aside, the whole message states exactly one distinct period;
+    - the existing conditions (c) hold.
+    Several sources, several periods or a negation leave the selector's range alone ("내일 말고 모레 일정" now keeps it
+    too). All earlier scenarios stay as tests. Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression
+    calendar-023, uat5r3-14 and uat5r3-15; 0 breaks.

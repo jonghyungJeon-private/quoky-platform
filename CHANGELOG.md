@@ -106,6 +106,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   period. Weekdays, spans, "today" and a range with the same dates are left alone. After the Codex review it applies to
   calendar events only (`rangeIsItemDate`), never to an excluded or negated period ("내일 말고"), and never to a period
   inside the read's own values (a title keyword).
+  After four Codex rounds the scope is narrowed: single-source messages only, with no negation and exactly one period;
+  messages with several sources rely on the selector.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

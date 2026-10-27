@@ -57,17 +57,18 @@ describe('nlOwnerStatedRange', () => {
     expect(final('"다음 주 계획" 회의 찾아줘', { range: 'this-month', keyword: '다음 주 계획' })).toEqual({ range: 'this-month', keyword: '다음 주 계획' });
     // Codex delta review of 6cc157e6: periods are counted over the whole message (coordinated periods are two).
     expect(final('내일이랑 모레 일정 보여줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
-    // One part negated: "내일 말고" is its own (excluded) clause and is set aside, so the one period left, 모레, is stated.
-    // When the negation sits in the read's own clause ("내일 일정 말고 모레 거"), the selector's range stays (fail-safe).
-    expect(final('내일 말고 모레 일정 보여줘', { range: 'this-week' })).toEqual({ range: 'day-after-tomorrow' });
+    // Scope narrowed after four Codex rounds: any negation leaves the selector's range alone (one negated part too).
+    expect(final('내일 말고 모레 일정 보여줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
     expect(final('내일 일정 말고 모레 거 보여줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
-    // A second, unrelated read in another clause: its period counts too (two periods: left alone); a negated other clause
-    // ("안 읽은 메일") is set aside, so the calendar's one period still counts.
+    // Single-source messages only: another source named anywhere (by the catalog's own aliases) leaves the range alone.
     expect(final('다다음 주 일정 보여주고 어제 메일도 알려줘', { range: 'next-week' })).toEqual({ range: 'next-week' });
-    expect(final('다다음 주 일정이랑 안 읽은 메일 보여줘', { range: 'next-week' })).toEqual({ range: 'week-after-next' });
+    expect(final('다다음 주 일정이랑 안 읽은 메일 보여줘', { range: 'next-week' })).toEqual({ range: 'next-week' });
+    expect(final('다다음 주 일정이랑 지라 이슈 보여줘', { range: 'next-week' })).toEqual({ range: 'next-week' });
     // Codex delta review of 02fd5380: a period only another read's clause states is that read's ("어제" is the mail's).
     expect(final('일정 보여주고 어제 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
     expect(final('일정 보여주고 다다음 주 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
+    // Codex delta review of 14e05d89 (the 4th edge): the clause naming the calendar is a mail request.
+    expect(final('일정 보여주고 어제 일정 관련 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
     // 3. Only calendar.events (`rangeIsItemDate`): a mail range is receipt time, so the selector decides.
     const mailText = '어제 회의 관련 메일 보여줘';
     const mail = selected(mailText, {}, undefined, 'mail.list');
