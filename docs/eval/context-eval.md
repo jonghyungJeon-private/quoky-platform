@@ -197,6 +197,11 @@ help-scope reply is routed as usual again (number or displayed option text only)
 `golden/nl-intent.context-d4-pending.v1.json` for the dedicated D4 classifier; the scored context corpus is the 12 D1 /
 P7 cases. `hs-calendar-words` t2 is expected to fail again until that classifier lands (its expectation is unchanged).
 
+**Known-gap turn (owner decision of 2026-10-27).** `hs-calendar-words` turn 2 is marked `knownGap: true`, and the
+scenario's `knownGap` names D4. A scenario that misses only soft checks on its known-gap turns is reported as a known
+gap (`known gaps N` in the summary), outside the 95% rate. Hard checks on the turn still count. When D4 lands, the
+marks are removed, and the turn is re-scored as a normal turn against its unchanged expectation.
+
 ## Relation to `quoky-e2e`
 
 `quoky-e2e` (the live-channel skill) drives the owner's real service over Discord or Telegram with real connectors.

@@ -99,6 +99,17 @@ describe('context eval corpus (golden/context-eval.v1.json)', () => {
     expect(corpus.scenarios.filter((scenario) => scenario.source?.startsWith('owner-dm-')).length).toBeGreaterThanOrEqual(5);
   });
 
+  it('owner decision of 2026-10-27: hs-calendar-words turn 2 is the D4 known gap, with the feature\'s expectation unchanged', () => {
+    const words = corpus.scenarios.find((scenario) => scenario.id === 'hs-calendar-words') as ContextEvalScenario;
+    expect(words.knownGap).toContain('D4');
+    expect(words.turns.map((entry) => entry.knownGap === true)).toEqual([false, true]);
+    expect(words.turns[1]).toMatchObject({ text: 'Quoky로 하는 거', oracle: { entryId: 'none' }, expect: { entry: 'help.topic', asks: false } });
+    // Only that scenario carries a known-gap turn, and a known-gap turn needs its scenario's knownGap.
+    expect(corpus.scenarios.filter((scenario) => scenario.turns.some((entry) => entry.knownGap === true)).map((scenario) => scenario.id)).toEqual(['hs-calendar-words']);
+    const orphan = { ...corpus, scenarios: [{ ...words, knownGap: undefined }] } as unknown as typeof corpus;
+    expect(validateContextEvalCorpus(orphan, KNOWN).some((problem) => problem.includes('a known-gap turn needs'))).toBe(true);
+  });
+
   it('keeps the calendar undo as a known-gap scenario expecting an honest reply and no write, not the feature', () => {
     const gaps = corpus.scenarios.filter((scenario) => scenario.category === 'undo-external-known-gap');
     expect(gaps.length).toBeGreaterThanOrEqual(2);
@@ -390,6 +401,15 @@ describe('summary, gate and plan', () => {
     expect(gatePasses(summarize(passing))).toBe(true);
     expect(gatePasses(summarize([...passing, scoreScenario(scenario('d-1', 'undo-local'), [ok, hardFail], 'safety')]))).toBe(false);
     expect(gatePasses(summarize([...passing, scoreScenario(scenario('e-1', 'undo-local'), [], 'full', 'unstubbed-fetch')]))).toBe(false);
+    // Owner decision of 2026-10-27: soft misses on a known-gap turn are the known gap (outside the rate); a hard one counts.
+    const gap: ContextEvalScenario = { ...scenario('g-1', 'help-scope'), knownGap: 'D4', turns: [turn({ chat: false }), { ...turn({ chat: false }), knownGap: true }] };
+    const gapped = scoreScenario(gap, [ok, miss], 'full');
+    expect(gapped).toMatchObject({ pass: false, knownGapOnly: true });
+    expect(summarize([...passing, gapped])).toMatchObject({ fullScored: 20, passed: 19, knownGaps: 1, passRate: 0.95 });
+    expect(scoreScenario(gap, [ok, hardFail], 'full').knownGapOnly).toBeUndefined();
+    expect(gatePasses(summarize([...passing, scoreScenario(gap, [ok, hardFail], 'full')]))).toBe(false);
+    // A miss on an unmarked turn of the same scenario is a plain failure.
+    expect(scoreScenario(gap, [{ ...miss, turn: 1 }, ok], 'full').knownGapOnly).toBeUndefined();
     expect(formatSummary(summary).join('\n')).toContain('followup-refine');
     expect(HARD_CHECKS.every((name) => CONTEXT_EVAL_GATE.hard[name] === 0)).toBe(true);
   });

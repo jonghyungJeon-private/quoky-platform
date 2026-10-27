@@ -21,6 +21,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   selector, and a worded reply is routed as usual (a number or a displayed option text still answers it). The
   selector's `answer` field is gone, and prompt versions stay read v72 / A6 v70 / R2 v71 (byte-identical for every
   remaining input). The 34 D4 golds wait in `nl-intent.context-d4-pending.v1.json` for a dedicated classifier.
+- **Changed (eval, owner decision 2026-10-27).** A context-eval turn can be marked as the scenario's known gap.
+  `hs-calendar-words` t2, the D4 worded answer, keeps its expectation. Its soft misses are reported as a known gap,
+  outside the rate, until D4 lands; hard checks still count.
 - **Fixed (P1, #280 follow-up).** Right after Quoky shows a listing, a chat reply no longer tells the owner it cannot
   see, read or check that listing, and no longer sends them to show it again.
   - A new guard, `guardShownListingDenials`, works from Core's own record of what was shown: the previous turn's

@@ -30790,3 +30790,20 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
 - **S2 activation blocker, updated.** The blocker's context gate reuses the 12 D1 / P7 case ids. The D4 note becomes:
   D4 is not part of this merge; when the classifier lands, it answers a pending help-scope question before the router
   or the planner is asked, and it is tested at that boundary, not as a planner gold.
+
+### Owner decisions of 2026-10-27 — gates rerun on the new HEAD, `hs-calendar-words` t2 is a known gap (branch `claude/v5-context-fixes`)
+
+- **(1)** ① (`eval:nl` read) and ② (read-regression) are rerun on the new HEAD. The re-score of 32a2c81f is evidence
+  only, not the gate.
+- **(2) `hs-calendar-words` turn 2 ("Quoky로 하는 거") is a known gap until the D4 classifier lands.**
+  - It uses the calendar-undo mechanism: the scenario's `knownGap` names the gap. The turn's expectation (`help.topic`,
+    no question pending) is unchanged.
+  - The turn is marked `knownGap: true`; a known-gap turn needs its scenario's `knownGap`.
+  - A scenario that fails only on soft checks of its known-gap turns is reported as a known gap (`knownGaps`), outside
+    the 95% rate: it is neither a pass nor a failure. Hard checks on that turn still count and gate, and a miss on any
+    unmarked turn is a plain failure.
+  - The calendar-undo known gaps are unchanged: their honest-reply expectations pass and count as passes.
+  - Dry runs: deployed 37/37 plus 1 known gap; actions-local 54/54 plus 1 known gap; all hard checks 0.
+  - **When D4 lands**, the turn's `knownGap` mark (and the scenario's) is removed, and the turn is re-scored as a
+    normal turn against its unchanged expectation.
+- **(3)** The context eval (3 runs) is approved after ① and ② pass.

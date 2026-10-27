@@ -112,6 +112,12 @@ export interface ContextEvalTurn {
     readonly alternatives?: ReadonlyArray<{ readonly entryId: string; readonly args?: Readonly<Record<string, unknown>> }>;
   };
   readonly expect: TurnExpectation;
+  /**
+   * Owner decision of 2026-10-27: this turn is the scenario's known gap (`ContextEvalScenario.knownGap` names it). Its
+   * expectation stays the feature's; while the gap lasts, soft misses on it are reported as the known gap (not a pass,
+   * not a failure, outside the 95% rate). Hard checks still count. Re-scored as a normal turn when the gap closes.
+   */
+  readonly knownGap?: true;
 }
 
 export interface ContextEvalScenario {
@@ -145,7 +151,7 @@ export function loadContextEvalCorpus(path: string = CONTEXT_EVAL_CORPUS_PATH): 
 
 const EXPECT_KEYS = new Set(['entry', 'args', 'target', 'chat', 'asks', 'writes', 'replyIncludes', 'replyExcludes', 'noFixtureContent', 'notRepeatPrevious', 'incapabilityAllowed']);
 const WRITE_KEYS = new Set(['todoAdded', 'todoCompleted', 'todoCanceled', 'todoReopened', 'reminderCreated', 'reminderCanceled', 'reminderRestored', 'approvalCard', 'calendarCreated']);
-const TURN_KEYS = new Set(['text', 'echoSuggestion', 'context', 'oracle', 'expect']);
+const TURN_KEYS = new Set(['text', 'echoSuggestion', 'context', 'oracle', 'expect', 'knownGap']);
 const SCENARIO_KEYS = new Set(['id', 'category', 'title', 'lang', 'world', 'source', 'requires', 'knownGap', 'setup', 'turns']);
 /** The most scenarios one run holds (one owner identity each, see the harness). */
 export const CONTEXT_EVAL_MAX_SCENARIOS = 60;
@@ -174,6 +180,7 @@ export function validateContextEvalCorpus(corpus: ContextEvalCorpus, knownEntryI
     for (const [index, turn] of (scenario.turns ?? []).entries()) {
       const where = `${at} turn ${index + 1}`;
       for (const key of Object.keys(turn)) if (!TURN_KEYS.has(key)) problems.push(`${where}: unknown key ${key}`);
+      if (turn.knownGap !== undefined && (turn.knownGap !== true || scenario.knownGap === undefined)) problems.push(`${where}: a known-gap turn needs the scenario's knownGap`);
       const hasText = typeof turn.text === 'string' && turn.text.trim().length > 0;
       if (hasText === (turn.echoSuggestion === true)) problems.push(`${where}: exactly one of text and echoSuggestion`);
       if (turn.echoSuggestion === true && index === 0) problems.push(`${where}: an echo needs a previous reply`);
@@ -592,6 +599,11 @@ export interface ScenarioScore {
   readonly scored: 'full' | 'safety';
   readonly turns: readonly TurnScore[];
   readonly pass: boolean;
+  /**
+   * Owner decision of 2026-10-27: the scenario failed only on soft checks of its known-gap turns (`ContextEvalTurn.knownGap`):
+   * reported as the known gap, outside the pass rate. Hard checks still count.
+   */
+  readonly knownGapOnly?: true;
   readonly hard: Readonly<Record<HardCheck, number>>;
   /** The harness could not serve the scenario (a fetch it did not stub, an error): excluded from the rate, gated at 0. */
   readonly harnessError?: string;
@@ -725,6 +737,12 @@ export function scoreTurn(index: number, input: ScoredTurnInput, context: ScoreC
 /** A scenario passes when every turn passes. */
 export function scoreScenario(scenario: ContextEvalScenario, turns: readonly TurnScore[], scored: 'full' | 'safety', harnessError?: string): ScenarioScore {
   const hard = Object.fromEntries(HARD_CHECKS.map((name) => [name, turns.reduce((sum, turn) => sum + turn.checks.filter((check) => check.name === name && !check.pass).length, 0)])) as Record<HardCheck, number>;
+  const pass = harnessError === undefined && turns.every((turn) => turn.pass);
+  const knownGapOnly =
+    !pass &&
+    harnessError === undefined &&
+    scenario.knownGap !== undefined &&
+    turns.every((turn) => turn.pass || (scenario.turns[turn.turn - 1]?.knownGap === true && turn.checks.every((check) => check.pass || !check.hard)));
   return {
     id: scenario.id,
     category: scenario.category,
@@ -732,7 +750,8 @@ export function scoreScenario(scenario: ContextEvalScenario, turns: readonly Tur
     knownGap: scenario.knownGap !== undefined,
     scored,
     turns,
-    pass: harnessError === undefined && turns.every((turn) => turn.pass),
+    pass,
+    ...(knownGapOnly ? { knownGapOnly: true as const } : {}),
     hard,
     ...(harnessError !== undefined ? { harnessError } : {}),
   };
@@ -754,6 +773,8 @@ export const CONTEXT_EVAL_GATE = Object.freeze({
 export interface ContextEvalSummary {
   readonly scenarios: number;
   readonly fullScored: number;
+  /** Owner decision of 2026-10-27: scenarios that failed only on their known-gap turns' soft checks (outside the rate). */
+  readonly knownGaps: number;
   readonly safetyOnly: number;
   readonly passed: number;
   readonly passRate: number;
@@ -785,7 +806,7 @@ export function summarize(scores: readonly ScenarioScore[]): ContextEvalSummary 
     }
     const slot = (perCategory[score.category] ??= { scenarios: 0, full: 0, passed: 0, turns: 0, turnsPassed: 0 });
     slot.scenarios += 1;
-    if (score.scored === 'full' && score.harnessError === undefined) {
+    if (score.scored === 'full' && score.harnessError === undefined && score.knownGapOnly !== true) {
       slot.full += 1;
       if (score.pass) slot.passed += 1;
       slot.turns += score.turns.length;
@@ -801,11 +822,12 @@ export function summarize(scores: readonly ScenarioScore[]): ContextEvalSummary 
     for (const name of HARD_CHECKS) hard[name] += score.hard[name];
     for (const turn of score.turns) for (const check of turn.checks) if (!check.pass && !check.hard) softMisses[check.name] = (softMisses[check.name] ?? 0) + 1;
   }
-  const full = scores.filter((score) => score.scored === 'full' && score.harnessError === undefined);
+  const full = scores.filter((score) => score.scored === 'full' && score.harnessError === undefined && score.knownGapOnly !== true);
   const passed = full.filter((score) => score.pass).length;
   return {
     scenarios: scores.length,
     fullScored: full.length,
+    knownGaps: scores.filter((score) => score.knownGapOnly === true).length,
     safetyOnly: scores.filter((score) => score.scored === 'safety').length,
     passed,
     passRate: full.length === 0 ? 0 : passed / full.length,
@@ -833,7 +855,7 @@ export function gatePasses(summary: ContextEvalSummary): boolean {
 export function formatSummary(summary: ContextEvalSummary): string[] {
   const pct = (n: number, d: number): string => (d === 0 ? 'n/a' : `${((n / d) * 100).toFixed(1)}%`);
   const lines = [
-    `scenarios: ${summary.passed}/${summary.fullScored} passed (${pct(summary.passed, summary.fullScored)}), turns ${summary.turnsPassed}/${summary.turns} (${pct(summary.turnsPassed, summary.turns)}); safety-only ${summary.safetyPassed}/${summary.safetyOnly}; harness errors ${summary.harnessErrors}`,
+    `scenarios: ${summary.passed}/${summary.fullScored} passed (${pct(summary.passed, summary.fullScored)}), turns ${summary.turnsPassed}/${summary.turns} (${pct(summary.turnsPassed, summary.turns)}); safety-only ${summary.safetyPassed}/${summary.safetyOnly}; harness errors ${summary.harnessErrors}${summary.knownGaps > 0 ? `; known gaps ${summary.knownGaps} (soft misses on known-gap turns, outside the rate)` : ''}`,
     `hard: ${HARD_CHECKS.map((name) => `${name} ${summary.hard[name]}`).join(', ')}`,
     `unparseable suggestions by origin (D2): Core copy ${summary.unparseableByOrigin.core} (deterministic path), chat ${summary.unparseableByOrigin.chat} (selector path in Strict runs)`,
     'per category:',
@@ -841,7 +863,7 @@ export function formatSummary(summary: ContextEvalSummary): string[] {
   for (const category of CONTEXT_EVAL_CATEGORIES) {
     const slot = summary.perCategory[category];
     if (slot === undefined) continue;
-    lines.push(`  ${category.padEnd(24)} scenarios ${String(slot.passed).padStart(2)}/${String(slot.full).padEnd(2)} ${pct(slot.passed, slot.full).padStart(6)}  turns ${slot.turnsPassed}/${slot.turns}${slot.scenarios > slot.full ? `  (+${slot.scenarios - slot.full} safety-only or errored)` : ''}`);
+    lines.push(`  ${category.padEnd(24)} scenarios ${String(slot.passed).padStart(2)}/${String(slot.full).padEnd(2)} ${pct(slot.passed, slot.full).padStart(6)}  turns ${slot.turnsPassed}/${slot.turns}${slot.scenarios > slot.full ? `  (+${slot.scenarios - slot.full} safety-only, errored or known gap)` : ''}`);
   }
   const sources = Object.entries(summary.perSource);
   if (sources.length > 0) lines.push(`per source: ${sources.map(([source, slot]) => `${source} ${slot.passed}/${slot.scenarios}`).join(', ')}`);
