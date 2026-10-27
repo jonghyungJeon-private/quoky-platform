@@ -1,11 +1,24 @@
 import { nlStatedLabelPeriod } from './action-entries';
-import { nlClauseNamesEntry, nlClauses, nlClauseStringValues } from './clause-flags';
+import { nlClauseStringValues } from './clause-flags';
 import type { NlCatalogEntry } from './catalog';
 import { nlHasExclusionOrNegation } from './request-shape';
 import { normalizeForMatch } from './selection-input';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext } from './selection-validator';
 import { resolveNlRange } from './symbolic-time';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
+
+/**
+ * Codex delta review of 7503634d: whether normalized text names a catalog alias or source name, bounded by non-letters. The
+ * name must not follow a letter or digit (any Unicode punctuation, bracket, quote, space or the text start may precede it:
+ * "(메일)도", "“메일”도", "「메일」", "메일,"). A Korean name may be followed by anything (a particle: "메일도"); an English
+ * (ASCII) name must end at a non-letter, with only a plural or possessive allowed, as `aliasStarts` reads a token.
+ */
+function nlNamesCatalogWord(text: string, name: string): boolean {
+  // Unicode-mode pattern: only the syntax characters are escaped ("-" and other identity escapes are invalid there).
+  const escaped = name.replace(/[\\^$*+?.()|[\]{}/]/g, '\\$&').replace(/ /g, '\\s+');
+  const tail = /^[a-z0-9 .-]+$/u.test(name) ? "(?:s|['’]s)?(?![\\p{L}\\p{N}])" : '';
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}${tail}`, 'u').test(text);
+}
 
 /**
  * Owner decision of 2026-10-27 (range grounding; explicit periods always win), scope narrowed by the orchestrator after
@@ -28,16 +41,14 @@ export function nlOwnerStatedRange(selection: NlValidatedSelection, groundingTex
   const values = nlClauseStringValues(Object.fromEntries(Object.entries(selection.args).filter(([name]) => name !== spec.name))).sort((a, b) => b.length - a.length);
   // The read's own values are set aside first (a keyword "다음 주 계획" is a title, not a period nor a source name).
   const residueText = values.reduce((text, value) => text.split(value).join(' '), normalizeForMatch(groundingText));
-  const clauses = nlClauses(residueText);
   // Single-source messages only: another read entry named by a catalog alias or source name the read's own entry does not
   // share ("어제 일정 관련 메일" names mail) leaves the range to the selector.
   const ownNames = new Set([...entry.aliases, ...(entry.sourceNames ?? [])].map((name) => normalizeForMatch(name)));
-  const others = Object.values(NL_WAVE1_ENTRIES).filter((other): other is NlCatalogEntry => other !== undefined && other.id !== entry.id);
-  const named = (other: NlCatalogEntry): boolean => {
-    const names = { ...other, aliases: other.aliases.filter((alias) => !ownNames.has(normalizeForMatch(alias))), sourceNames: (other.sourceNames ?? []).filter((name) => !ownNames.has(normalizeForMatch(name))) };
-    return clauses.some((clause) => nlClauseNamesEntry(clause, names));
-  };
-  if (others.some(named)) return selection;
+  const otherNames = Object.values(NL_WAVE1_ENTRIES)
+    .filter((other): other is NlCatalogEntry => other !== undefined && other.id !== entry.id)
+    .flatMap((other) => [...other.aliases, ...(other.sourceNames ?? [])].map((name) => normalizeForMatch(name)))
+    .filter((name) => name.length > 0 && !ownNames.has(name));
+  if (otherNames.some((name) => nlNamesCatalogWord(residueText, name))) return selection;
   const stated = nlStatedLabelPeriod(residueText);
   if (stated === undefined || stated === 'today' || stated === spec.default) return selection;
   const given = typeof selection.args[spec.name] === 'string' ? (selection.args[spec.name] as string) : typeof spec.default === 'string' ? spec.default : undefined;

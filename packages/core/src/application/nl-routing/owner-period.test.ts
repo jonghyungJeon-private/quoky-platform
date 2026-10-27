@@ -69,6 +69,19 @@ describe('nlOwnerStatedRange', () => {
     expect(final('일정 보여주고 다다음 주 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
     // Codex delta review of 14e05d89 (the 4th edge): the clause naming the calendar is a mail request.
     expect(final('일정 보여주고 어제 일정 관련 메일도 알려줘', { range: 'this-week' })).toEqual({ range: 'this-week' });
+    // Codex delta review of 7503634d: a source name bounded by punctuation, brackets or quotes is still a source name.
+    for (const text of [
+      '일정 보여주고 어제 일정 관련 (메일)도 알려줘',
+      '일정 보여주고 어제 일정 관련 “메일”도 알려줘',
+      "일정 보여주고 어제 일정 관련 '메일'도 알려줘",
+      '일정 보여주고 어제 일정 관련 「메일」도 알려줘',
+      '어제 일정, 메일, 알려줘',
+      '어제 일정 (slack)에도 있어?',
+    ]) {
+      expect(final(text, { range: 'this-week' }), text).toEqual({ range: 'this-week' });
+    }
+    // A name inside another word is not that name; a calendar-only message with punctuation still grounds its period.
+    expect(final('(다다음 주) 일정 알려줘', { range: 'next-week' })).toEqual({ range: 'week-after-next' });
     // 3. Only calendar.events (`rangeIsItemDate`): a mail range is receipt time, so the selector decides.
     const mailText = '어제 회의 관련 메일 보여줘';
     const mail = selected(mailText, {}, undefined, 'mail.list');

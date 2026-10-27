@@ -30730,3 +30730,9 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     Several sources, several periods or a negation leave the selector's range alone ("내일 말고 모레 일정" now keeps it
     too). All earlier scenarios stay as tests. Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression
     calendar-023, uat5r3-14 and uat5r3-15; 0 breaks.
+  - **Codex delta review of 7503634d: source names bounded by punctuation.** The single-source check now matches a
+    catalog alias or source name that does not follow a letter or digit (`nlNamesCatalogWord`), so any Unicode
+    punctuation, bracket or quote may precede it: "(메일)도", "“메일”도", "'메일'도", "「메일」도", "메일,". A Korean name
+    may be followed by a particle, as before. An English name must end at a non-letter, allowing only a plural or
+    possessive (as `aliasStarts`). The same catalog words are used and no new list is added. Simulation unchanged;
+    0 breaks.
