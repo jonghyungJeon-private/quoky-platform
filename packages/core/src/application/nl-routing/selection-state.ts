@@ -61,12 +61,32 @@ export interface LastSelection extends StoredSelection {
    * {@link LAST_SELECTION_MAX_EARLIER}. Structure only, like the record itself.
    */
   readonly earlier?: readonly EarlierSelection[];
+  /** Codex P2 (2026-10-27): the local dates the listing's `range` resolved to when it was shown (P-time inheritance). */
+  readonly period?: HeldPeriod;
 }
 
 export interface EarlierSelection extends StoredSelection {
   readonly at: IsoTimestamp;
   /** The owner turns since this selection's listing (at least 1: a later listing came after it). */
   readonly turns: number;
+  readonly period?: HeldPeriod;
+}
+
+/**
+ * The local dates a listing's symbolic `range` resolved to when it was shown (`start` `YYYY-MM-DD` in the owner's time
+ * zone, `days` 1..31). Dates only, never a title or any item content (ADR-0110 D4). A held "tomorrow" listed at 23:55
+ * stays that date after midnight.
+ */
+export interface HeldPeriod {
+  readonly start: string;
+  readonly days: number;
+}
+
+function periodOf(value: unknown): HeldPeriod | undefined {
+  const record = recordOf(value);
+  const start = record.start;
+  const days = record.days;
+  return typeof start === 'string' && /^\d{4}-\d{2}-\d{2}$/u.test(start) && Number.isInteger(days) && (days as number) >= 1 && (days as number) <= 31 ? { start, days: days as number } : undefined;
 }
 
 /** P7: how many earlier selections of other sources `lastSelection` keeps. */
@@ -271,11 +291,13 @@ function lastSelectionOf(value: unknown, actorId: Id, now: IsoTimestamp): LastSe
   if (selection === undefined) return undefined;
   const turns = turnsOf(record.turns);
   const earlier = earlierOf(record.earlier, now, selection.entryId);
+  const period = periodOf(record.period);
   return {
     ...migrateStoredSelection(selection),
     at: record.at as IsoTimestamp,
     ...(turns > 0 ? { turns } : {}),
     ...(earlier.length > 0 ? { earlier } : {}),
+    ...(period !== undefined ? { period } : {}),
   };
 }
 
@@ -295,7 +317,8 @@ function earlierOf(value: unknown, now: IsoTimestamp, mainEntryId: NlWave1EntryI
     const source = nlSelectionSourceOf(selection.entryId);
     if (seen.has(source)) continue;
     seen.add(source);
-    out.push({ ...migrateStoredSelection(selection), at: record.at as IsoTimestamp, turns: Math.max(1, turnsOf(record.turns)) });
+    const period = periodOf(record.period);
+    out.push({ ...migrateStoredSelection(selection), at: record.at as IsoTimestamp, turns: Math.max(1, turnsOf(record.turns)), ...(period !== undefined ? { period } : {}) });
     if (out.length === LAST_SELECTION_MAX_EARLIER) break;
   }
   return out;
@@ -308,7 +331,7 @@ function earlierOf(value: unknown, now: IsoTimestamp, mainEntryId: NlWave1EntryI
 export function lastSelectionFor(entryId: string | null, last: LastSelection | undefined): LastSelection | undefined {
   if (last === undefined || entryId === null || last.entryId === entryId) return last;
   const earlier = last.earlier?.find((item) => item.entryId === entryId);
-  return earlier === undefined ? last : { entryId: earlier.entryId, args: earlier.args, at: earlier.at, turns: earlier.turns };
+  return earlier === undefined ? last : { entryId: earlier.entryId, args: earlier.args, at: earlier.at, turns: earlier.turns, ...(earlier.period !== undefined ? { period: earlier.period } : {}) };
 }
 
 /**
@@ -349,14 +372,14 @@ export function migrateStoredSelection(selection: StoredSelection): StoredSelect
  * selection of each other source as `earlier`: the replaced one and its own earlier ones, each one turn older, minus the
  * new selection's source. Only the same actor's fresh record carries over.
  */
-export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp, current?: unknown): Metadata {
+export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp, current?: unknown, period?: HeldPeriod): Metadata {
   const replaced = current === undefined ? undefined : lastSelectionOf(current, actorId, now);
   const earlier =
     replaced === undefined
       ? []
       : earlierOf(
           [
-            { entryId: replaced.entryId, args: replaced.args, at: replaced.at, turns: (replaced.turns ?? 0) + 1 },
+            { entryId: replaced.entryId, args: replaced.args, at: replaced.at, turns: (replaced.turns ?? 0) + 1, ...(replaced.period !== undefined ? { period: replaced.period } : {}) },
             ...(replaced.earlier ?? []).map((item) => ({ ...item, turns: item.turns + 1 })),
           ],
           now,
@@ -368,6 +391,7 @@ export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now
     args: { ...selection.args },
     at: now,
     ...(earlier.length > 0 ? { earlier: earlier.map(earlierRecord) } : {}),
+    ...(period !== undefined && periodOf(period) !== undefined ? { period: { start: period.start, days: period.days } } : {}),
   };
 }
 
@@ -386,11 +410,12 @@ export function agedLastSelectionRecord(current: unknown, actorId: Id, now: IsoT
     at: kept.at,
     turns: Math.min((kept.turns ?? 0) + 1, MAX_TURNS),
     ...(earlier.length > 0 ? { earlier } : {}),
+    ...(kept.period !== undefined ? { period: { ...kept.period } } : {}),
   };
 }
 
 function earlierRecord(item: EarlierSelection): Metadata {
-  return { entryId: item.entryId, args: { ...item.args }, at: item.at, turns: Math.min(item.turns, MAX_TURNS) };
+  return { entryId: item.entryId, args: { ...item.args }, at: item.at, turns: Math.min(item.turns, MAX_TURNS), ...(item.period !== undefined ? { period: { ...item.period } } : {}) };
 }
 
 /** The open question of this actor in this session, within 5 minutes. */

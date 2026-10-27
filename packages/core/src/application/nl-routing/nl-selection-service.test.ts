@@ -135,7 +135,7 @@ describe('NlSelectionService — grammar listings and lastSelection (ADR-0120 fo
   it('records a handler-supplied selection like a selection would (structure only, 30 minutes) and clears it', async () => {
     const h = harness();
     expect(await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'calendar.events', args: { range: 'this-week' } }, T0)).toBe(true);
-    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'this-week' }, at: T0 });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'this-week' }, period: { start: '2026-10-12', days: 7 }, at: T0 });
     await h.service.clearLastSelection({ id: 'sess-1' });
     expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
   });
@@ -400,7 +400,7 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
       command: { entryId: 'calendar.events', args: { range: 'tomorrow' }, range: { dayOffset: 1 }, language: 'ko' },
       basis: '기준: 내일 일정',
     });
-    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'tomorrow' }, at: T0 });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'tomorrow' }, period: { start: '2026-10-13', days: 1 }, at: T0 });
   });
 
   it('`none` is honest chat, and an entry the turn does not offer (an unconfigured source) is too', async () => {
@@ -452,6 +452,28 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     const today = await h.decide('오늘 면접 몇 시야?');
     expect(today).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { keyword: '면접' } } });
     expect((today as { command: { args: Record<string, unknown> } }).command.args).not.toHaveProperty('range');
+  });
+
+  it('Codex P2 (2026-10-27): the inherited period is the listing\'s own dates, never its symbol re-resolved after midnight', async () => {
+    const beforeMidnight = '2026-10-27T14:55:00.000Z' as never; // 23:55 Asia/Seoul
+    const afterMidnight = '2026-10-27T15:05:00.000Z' as never; // 00:05 Asia/Seoul, the next day
+    const h = harness({ script: [out('calendar.events', { range: 'tomorrow' }), out('calendar.events', { keyword: '면접' }), out('calendar.events', { keyword: '면접' })] });
+    expect(await h.decide('내일 일정 보여줘', { now: beforeMidnight })).toMatchObject({ command: { range: { startDate: { year: 2026, month: 10, day: 28 } } } });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'tomorrow' }, period: { start: '2026-10-28', days: 1 } });
+    // After midnight "tomorrow" would be 10-29: the listing showed 10-28, and that is what the follow-up reads.
+    const after = await h.decide('그 면접 어디서 해?', { now: afterMidnight });
+    expect(after).toMatchObject({ kind: 'execute', command: { args: { range: '2026-10-28', keyword: '면접' }, range: { startDate: { year: 2026, month: 10, day: 28 }, days: 1 } } });
+    // Before midnight the symbol still names the shown dates and is kept as written.
+    const same = harness({ script: [out('calendar.events', { range: 'tomorrow' }), out('calendar.events', { keyword: '면접' })] });
+    await same.decide('내일 일정 보여줘', { now: beforeMidnight });
+    expect(await same.decide('그 면접 어디서 해?', { now: '2026-10-27T14:58:00.000Z' as never })).toMatchObject({ command: { args: { range: 'tomorrow' } } });
+  });
+
+  it('Codex P2: a default-today listing shown before midnight is still that day after it', async () => {
+    const h = harness({ script: [out('calendar.events'), out('calendar.events', { keyword: '면접' })] });
+    await h.decide('일정 보여줘', { now: '2026-10-27T14:55:00.000Z' as never });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toMatchObject({ period: { start: '2026-10-27', days: 1 } });
+    expect(await h.decide('그 면접 몇 시였지?', { now: '2026-10-27T15:05:00.000Z' as never })).toMatchObject({ command: { args: { range: '2026-10-27' }, range: { startDate: { day: 27 } } } });
   });
 
   it('P-time (ii): without a held calendar listing nothing is inherited', async () => {

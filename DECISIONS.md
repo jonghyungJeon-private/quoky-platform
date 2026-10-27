@@ -30598,6 +30598,14 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     both `eval:nl` scorers apply it too, so they score Core's final read.
   - Strict run 2: `fr-calendar-part-keyword` t3 and `sc-calendar-todo-interview` t3 now read tomorrow even when the
     selector leaves the range out.
+  - Codex P2 fix (2026-10-27): the inherited period is the listing's own dates, not its symbolic range resolved again.
+    - `lastSelection` and each P7 earlier entry store the listing's resolved period, `period: { start: 'YYYY-MM-DD',
+      days }`. It holds dates only, no titles or content (ADR-0110 D4), and keeps the same 30-minute life.
+    - If the held symbolic range (or the entry's default) still resolves to those dates, Core inherits the symbol;
+      otherwise it inherits the stored dates (`YYYY-MM-DD` or `YYYY-MM-DD..YYYY-MM-DD`). A "내일" listing at 23:55 KST
+      is still 10-28 when the owner asks at 00:05.
+    - Not covered: a range the selector itself carries in a D1 follow-up across midnight (for example "그중에 오후 것만"
+      after 00:00) is still resolved against the current clock.
 - **The context gate: 3 runs, each passing** (owner decision of 2026-10-27, corrected the same day: NOT pooled).
   - `eval:context --mode run` defaults to 3 runs. The gate passes only with at least 3 runs.
   - EACH run must reach at least 95% of its fully scored scenarios, with every hard check at 0 and no harness error.

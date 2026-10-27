@@ -102,6 +102,7 @@ import {
   LAST_SELECTION_METADATA_KEY,
   NL_PENDING_METADATA_KEY,
   agedLastSelectionRecord,
+  type HeldPeriod,
   isActionPendingQuestion,
   lastSelectionFor,
   lastSelectionRecord,
@@ -119,8 +120,8 @@ import {
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
-import { NL_HELP_TOPICS } from './wave1-entries';
-import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
+import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
+import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -724,7 +725,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const stored = sanitizeStoredSelection(selection);
     if (stored === undefined) return false;
     try {
-      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(actorId, stored, now, current));
+      // Codex P2 (2026-10-27): the listing's dates as resolved now, so a later inheritance never re-resolves "tomorrow".
+      const period = heldPeriodOf(nlWave1Entry(stored.entryId), stored.args, now, this.deps.timeZone);
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(actorId, stored, now, current, period));
       return true;
     } catch (error) {
       this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
@@ -1339,7 +1342,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     };
     // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now, current));
+    // Codex P2 (2026-10-27): the dates this listing shows (its resolved range), kept for P-time inheritance.
+    const period = periodOfRange(selection.range);
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now, current, period));
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
@@ -2900,16 +2905,49 @@ const ANCHORED_UNDO = new RegExp(`^(?:되돌리기|${NL_ACTION_UNDO_COMMAND.repl
  */
 export function nlInheritHeldRange(
   selection: NlValidatedSelection,
-  held: { readonly entryId: string; readonly args: NlArgs },
+  held: { readonly entryId: string; readonly args: NlArgs; readonly period?: HeldPeriod },
   groundingText: string,
   ctx: NlValidationContext,
 ): NlValidatedSelection {
   const { entry } = selection;
   const spec = entry.args.find((candidate) => candidate.kind === 'range');
-  if (entry.inheritsHeldRange !== true || spec === undefined || held.entryId !== entry.id) return selection;
-  const heldRange = held.args[spec.name];
-  if (typeof heldRange !== 'string' || selection.args[spec.name] !== undefined) return selection;
+  if (entry.inheritsHeldRange !== true || spec === undefined || held.entryId !== entry.id || selection.args[spec.name] !== undefined) return selection;
+  const heldRange = typeof held.args[spec.name] === 'string' ? (held.args[spec.name] as string) : undefined;
+  if (heldRange === undefined && held.period === undefined) return selection;
   if (nlReminderPeriod(groundingText, nlWeekdayMentions(groundingText, entry.aliases)).kind !== 'none') return selection;
-  const again = validateSelection({ entryId: entry.id, args: { ...selection.args, [spec.name]: heldRange } }, ctx);
+  // Codex P2 (2026-10-27): the listing's own dates, never its symbol re-resolved on a later clock. The symbol is kept only
+  // while it still names exactly those dates ("내일" listed at 23:55 is a dated range after midnight).
+  let symbol = heldRange;
+  if (held.period !== undefined) {
+    const shown = heldRange ?? (typeof spec.default === 'string' ? spec.default : undefined);
+    const again = shown === undefined ? undefined : periodOfRange(resolveNlRange(shown, ctx.now, ctx.timeZone));
+    symbol = again !== undefined && again.start === held.period.start && again.days === held.period.days ? heldRange : dateSymbolOf(held.period);
+  }
+  if (symbol === undefined) return selection;
+  const grounded = { ...ctx, previousArgs: { ...(ctx.previousArgs ?? {}), [spec.name]: symbol } };
+  const again = validateSelection({ entryId: entry.id, args: { ...selection.args, [spec.name]: symbol } }, grounded);
   return again.ok ? again.value : selection;
+}
+
+/** The local dates a resolved range shows (`upcoming` starts now and is not a date span). */
+function periodOfRange(range: NlResolvedRange | undefined): HeldPeriod | undefined {
+  if (range === undefined || range.upcoming === true) return undefined;
+  const { year, month, day } = range.startDate;
+  return { start: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`, days: range.days };
+}
+
+/** The dates of a held listing as an explicit date symbol with its year (`YYYY-MM-DD` or `YYYY-MM-DD..YYYY-MM-DD`). */
+function dateSymbolOf(period: HeldPeriod): string {
+  if (period.days === 1) return period.start;
+  const [year, month, day] = period.start.split('-').map(Number) as [number, number, number];
+  const end = new Date(Date.UTC(year, month - 1, day + period.days - 1));
+  return `${period.start}..${end.toISOString().slice(0, 10)}`;
+}
+
+/** The dates a stored selection's range (or the entry's default range) resolves to now, for a grammar listing. */
+function heldPeriodOf(entry: NlCatalogEntry, args: NlArgs, now: IsoTimestamp, timeZone: string): HeldPeriod | undefined {
+  const spec = entry.args.find((candidate) => candidate.kind === 'range');
+  if (spec === undefined) return undefined;
+  const symbol = typeof args[spec.name] === 'string' ? (args[spec.name] as string) : typeof spec.default === 'string' ? spec.default : undefined;
+  return symbol === undefined ? undefined : periodOfRange(resolveNlRange(symbol, now, timeZone));
 }

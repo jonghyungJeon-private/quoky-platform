@@ -73,6 +73,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   corpus (`golden/nl-intent.context.v1.json`), scored with `nl-intent.v1.json` by `eval:nl` and read-regression (both
   files are bound in the digest). It is selector-only: the ADR-0121 Q11 planner gold is unchanged. An S2 activation
   blocker is recorded. `ctx-d1-005` is swapped to "주말에 뭐 하면 좋을까?".
+- **Fixed (Codex P2 on P-time (ii), 2026-10-27).** A calendar follow-up that names no period now inherits the dates the
+  held listing actually showed, not its symbolic range read again against the current clock.
+  - Before: a "내일" listing at 23:55 KST showed 10-28, and "그 면접 어디서 해?" at 00:05 read 10-29.
+  - `lastSelection` (and each P7 earlier entry) stores the listing's resolved period as `{ start, days }`: dates only,
+    no titles or content (ADR-0110 D4).
+  - When the symbolic range still resolves to the same dates it is kept; otherwise Core inherits the stored dates.
+  - A test moves the clock across midnight for a "tomorrow" listing and a default-today listing.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 
