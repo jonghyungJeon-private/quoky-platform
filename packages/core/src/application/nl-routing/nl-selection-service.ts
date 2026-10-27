@@ -1271,6 +1271,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     groundingText: string,
     note?: 'saved' | 'changed',
   ): Promise<NlSelectionDecision> {
+    // Owner decision P-time (ii), 2026-10-27: a read that refines or asks about the held listing of the same entry keeps
+    // that listing's period when the owner's words name none (`inheritHeldRange`).
+    selection = this.inheritHeldRange(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
     const { entry } = selection;
     // Only a wave-1 READ entry completes here (an A6 action entry has its own path and is never `lastSelection`).
     const entryId = entry.id;
@@ -1356,6 +1359,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const validated = validateSelection(option, this.validationContext(turn, '', option.args));
     if (!validated.ok) return undefined;
     return this.complete(validated.value, turn, readLastSelection(turn.session, turn.actor.id, turn.now), language, pending.groundingText ?? '');
+  }
+
+  /** Owner decision P-time (ii): {@link nlInheritHeldRange} with this turn's validation context; logs an inheritance. */
+  private inheritHeldRange(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    if (held === undefined) return selection;
+    const inherited = nlInheritHeldRange(selection, held, groundingText, this.validationContext(turn, groundingText, held.args, false, held.entryId));
+    if (inherited !== selection) this.log('info', 'nl_selection.range_inherited', { entryId: selection.entry.id });
+    return inherited;
   }
 
   /** A reply to the open numbered question: `1`, `2.`, `지라`, `담당` … or `undefined` when it is not an answer. */
@@ -2878,3 +2889,27 @@ export function isNlAnchoredUndoCommand(text: string): boolean {
 }
 
 const ANCHORED_UNDO = new RegExp(`^(?:되돌리기|${NL_ACTION_UNDO_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[.!]?$`, 'u');
+
+/**
+ * Owner decision P-time (ii), 2026-10-27: an entry that opts in (`inheritsHeldRange`, the calendar) whose validated selection
+ * left the range out, after a held listing of the same entry (`held`: `lastSelection` or an earlier one, P7) with a range,
+ * and whose owner's words name no date or period (the existing period parser `nlReminderPeriod`, never a phrase list): the
+ * held range is added and the selection validated again with `ctx` (whose previous args are the held listing's, so the
+ * range grounds as that listing's own). Anything else is returned unchanged (the same object); an explicit period always
+ * wins. Pure: the runtime and the eval scorers (Core's final outcome) use the same rule.
+ */
+export function nlInheritHeldRange(
+  selection: NlValidatedSelection,
+  held: { readonly entryId: string; readonly args: NlArgs },
+  groundingText: string,
+  ctx: NlValidationContext,
+): NlValidatedSelection {
+  const { entry } = selection;
+  const spec = entry.args.find((candidate) => candidate.kind === 'range');
+  if (entry.inheritsHeldRange !== true || spec === undefined || held.entryId !== entry.id) return selection;
+  const heldRange = held.args[spec.name];
+  if (typeof heldRange !== 'string' || selection.args[spec.name] !== undefined) return selection;
+  if (nlReminderPeriod(groundingText, nlWeekdayMentions(groundingText, entry.aliases)).kind !== 'none') return selection;
+  const again = validateSelection({ entryId: entry.id, args: { ...selection.args, [spec.name]: heldRange } }, ctx);
+  return again.ok ? again.value : selection;
+}

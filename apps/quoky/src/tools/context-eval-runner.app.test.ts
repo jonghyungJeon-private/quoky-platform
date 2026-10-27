@@ -187,6 +187,27 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(followUp.reply).not.toContain('찾지 못했어요');
   }, 120_000);
 
+  it('P-time (ii) over the real runtime: Strict run 2 sc-calendar-todo-interview t3 ("그 면접 몇 시였지?" → {keyword: 면접}) reads tomorrow', async () => {
+    world = await bootContextEvalWorld('deployed', {
+      select: async (request) => {
+        const owner = /<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '';
+        // As in run 2: t1 is selected as tomorrow's calendar; t3 leaves the range out.
+        if (owner.includes('면접')) return JSON.stringify({ entryId: 'calendar.events', args: { keyword: '면접' }, ambiguity: 'CLEAR', alternatives: [] });
+        if (owner.includes('내일 일정')) return JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
+        return JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+      },
+      chat: async () => '',
+      summarize: async () => '',
+    });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    await world.turn(owner, '내 할 일 보여줘', owner.dm);
+    const asked = await world.turn(owner, '그 면접 몇 시였지?', owner.dm);
+    expect(asked.selectorSaw?.previousEntry).toBe('todo.list');
+    expect(asked.reply).toContain('1차 면접_AI Agent_김하늘');
+    expect(asked.reply).not.toContain('오늘');
+  }, 120_000);
+
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {
     const records = await dryRun('deployed', { kind: 'none' });
     expect(records).toHaveLength(corpus.scenarios.length);

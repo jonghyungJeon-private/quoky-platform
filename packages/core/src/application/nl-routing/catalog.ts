@@ -214,6 +214,12 @@ export interface NlCatalogEntry {
   /** An exact command the owner can send instead (clarification fallback, honest-chat fact). */
   readonly usage: NlText;
   /**
+   * Owner decision P-time (ii) of 2026-10-27: a read of this entry that refines or asks about the held listing of the same
+   * entry (`lastSelection` or an earlier one, P7) inherits that listing's `range` when the owner's words name no date or
+   * period (the existing period parser, `nlReminderPeriod`) and the selection left the range out. Explicit periods win.
+   */
+  readonly inheritsHeldRange?: true;
+  /**
    * The names the owner and a chat reply use for this entry's external source ("jira", "캘린더"); the honest-chat guard
    * (ADR-0120 D9) recognizes a false "cannot access" claim about the source by them. Absent for Quoky's own data.
    */

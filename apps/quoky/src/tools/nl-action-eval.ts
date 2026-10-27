@@ -78,7 +78,7 @@ import {
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance, nlEvalOpenQuestionInput, nlEvalOpenQuestionOutcome, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
-import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
+import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, nlInheritHeldRange, parseNlRef, withLastRead } from '@quoky/core';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
@@ -883,11 +883,11 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   }
   const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
   const base = nlEvalPriorFor(golden.prior, output.entryId);
-  const validated = validateSelection(
-    { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(base !== undefined ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}) },
-  );
-  if (!validated.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
+  const ctx = { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true as const, ...(base !== undefined ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}) };
+  const checked = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
+  if (!checked.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
+  // Owner decision P-time (ii): Core's final read keeps the held listing's period when the owner names none.
+  const validated = { ok: true as const, value: base !== undefined ? nlInheritHeldRange(checked.value, base, prepared.groundingText, ctx) : checked.value };
   const got = validated.value.entry.id;
   const isAction = validated.value.entry.risk !== 'READ';
   const goldIsAction = expect !== 'none' && isNlActionEntryId(expect.entryId);

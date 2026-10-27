@@ -432,6 +432,34 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await h.decide('2')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } } });
   });
 
+  it('owner decision P-time (ii): a calendar question with no date or period inherits the held calendar listing\'s range; an explicit period wins', async () => {
+    const h = harness({
+      script: [
+        out('calendar.events', { range: 'tomorrow' }),
+        out('calendar.events', { keyword: '면접' }),
+        out('todo.list'),
+        out('calendar.events', { keyword: '면접' }),
+        out('calendar.events', { keyword: '면접' }),
+      ],
+    });
+    await h.decide('내일 일정 보여줘');
+    // The selector left the range out; the owner named no period: tomorrow is kept.
+    expect(await h.decide('그 면접 몇 시였지?')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'tomorrow', keyword: '면접' } } });
+    // After another listing in between, the earlier calendar listing (P7) is the held one.
+    await h.decide('내 할 일 보여줘');
+    expect(await h.decide('그 면접 어디서 해?')).toMatchObject({ kind: 'execute', command: { args: { range: 'tomorrow', keyword: '면접' } } });
+    // An explicit period wins: "오늘" is the owner's (today is the default, so canonical args omit it).
+    const today = await h.decide('오늘 면접 몇 시야?');
+    expect(today).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { keyword: '면접' } } });
+    expect((today as { command: { args: Record<string, unknown> } }).command.args).not.toHaveProperty('range');
+  });
+
+  it('P-time (ii): without a held calendar listing nothing is inherited', async () => {
+    const h = harness({ script: [out('calendar.events', { keyword: '면접' })] });
+    const decision = await h.decide('그 면접 몇 시였지?');
+    expect((decision as { command: { args: Record<string, unknown> } }).command.args).toEqual({ keyword: '면접' });
+  });
+
   it('NEEDS_CLARIFICATION asks one numbered question; "1" or "지라" resolves it deterministically (no second call)', async () => {
     for (const reply of ['1', '1번', '지라', '지라로']) {
       const h = harness({

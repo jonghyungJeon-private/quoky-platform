@@ -30,6 +30,7 @@ import {
   isNlCatalogEntryId,
   isNlWave1EntryId,
   nlHelpSourceScope,
+  nlInheritHeldRange,
   nlIsPastStatement,
   nlReadNotRequest,
   nlSelectionMeaning,
@@ -270,16 +271,16 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
   // P7: an output for an earlier selection's entry refines that one, as in the runtime (`lastSelectionFor`).
   const base = nlEvalPriorFor(golden.prior, output.entryId);
-  const validated = validateSelection(
-    { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, ...(base ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}), now, timeZone },
-  );
+  const ctx = { offered, groundingText: prepared.groundingText, ...(base ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}), now, timeZone };
+  const validated = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };
   }
-  const got = validated.value.entry.id;
-  const gotArgs = validated.value.args;
-  const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
+  // Owner decision P-time (ii): Core's final read keeps the held listing's period when the owner names none.
+  const final = base !== undefined ? nlInheritHeldRange(validated.value, base, prepared.groundingText, ctx) : validated.value;
+  const got = final.entry.id;
+  const gotArgs = final.args;
+  const defaulted = final.defaulted !== undefined ? { defaulted: final.defaulted } : {};
   // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
   if (nlHelpSourceScope({ entryId: got, args: gotArgs }, prepared.groundingText) !== undefined) return { id: golden.id, expected, outcome: 'clarify', got };
   if (golden.expect === 'none' && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { id: golden.id, expected, outcome: 'miss', got, gotArgs, ...defaulted };

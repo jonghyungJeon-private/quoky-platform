@@ -317,6 +317,17 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
   });
 });
 
+describe('owner decision P-time (ii) in the scorers (Core\'s final outcome)', () => {
+  it('a calendar output without a range after a held calendar listing scores with the held range; an explicit period wins', () => {
+    const golden: NlEvalCase = { id: 'pt-1', text: '그 세미나 어디서 해?', prior: { entryId: 'todo.list', args: {}, earlier: [{ entryId: 'calendar.events', args: { range: 'next-week' }, turns: 1 }] }, expect: { entryId: 'calendar.events', args: { range: 'next-week', keyword: '세미나' } } };
+    expect(scoreOutput(golden, answer('calendar.events', { keyword: '세미나' }), NOW).outcome).toBe('hit');
+    const explicit: NlEvalCase = { id: 'pt-2', text: '오늘 세미나 어디서 해?', prior: { entryId: 'calendar.events', args: { range: 'next-week' } }, expect: { entryId: 'calendar.events', args: { keyword: '세미나' } } };
+    expect(scoreOutput(explicit, answer('calendar.events', { keyword: '세미나' }), NOW).outcome).toBe('hit');
+    const regression = { id: 'pt-3', text: golden.text, prior: golden.prior, expect: golden.expect } as never;
+    expect(scoreReadRegression(regression, answer('calendar.events', { keyword: '세미나' }), NOW).outcome).toBe('hit');
+  });
+});
+
 describe('the supplemental context corpus (nl-intent.context.v1.json; owner decision (가) option 1, 2026-10-27)', () => {
   it('is scored by eval:nl and read-regression with nl-intent.v1.json, never by Q11; both files are bound in the corpus digest', () => {
     const main = loadCorpus();

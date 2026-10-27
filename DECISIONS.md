@@ -30585,3 +30585,16 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
   - `help.topic`'s English usage is "도움말" (a bare "help" is not a command).
   - An app test sends every quoted usage command over the production AppModule with the selector answering none: read
     entries under `deployed`, action entries under `actions-local`.
+- **P-time (ii): Core inherits the held calendar period** (owner decision of 2026-10-27, "the most stable and accurate
+  way").
+  - When all of these hold, Core adds the held listing's range and validates the read again:
+    - a `calendar.events` read (the entry opts in with `inheritsHeldRange`) refines or asks about the held calendar
+      listing (`lastSelection`, or an earlier calendar selection, P7);
+    - the selection left the range out;
+    - the owner's words name no date or period, as judged by the existing period parser (`nlReminderPeriod`), never by a
+      phrase list.
+  - An explicit period always wins ("오늘 면접 몇 시야?" stays today). Without a held calendar listing nothing changes.
+  - `nlInheritHeldRange` is pure and exported. The selection service applies it in `complete` (every executed read), and
+    both `eval:nl` scorers apply it too, so they score Core's final read.
+  - Strict run 2: `fr-calendar-part-keyword` t3 and `sc-calendar-todo-interview` t3 now read tomorrow even when the
+    selector leaves the range out.
