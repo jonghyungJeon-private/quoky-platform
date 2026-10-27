@@ -10,7 +10,8 @@ import { groundingWordIn, validateSelection, type NlValidationFailureReason } fr
 import { nlIsPastStatement } from '../nl-routing/statement-guard';
 import { nlClauseClaimsWrite } from '../nl-routing/write-clause';
 import { NL_ACTION_ENTRIES, nlIndexWording } from '../nl-routing/action-entries';
-import { aliasStarts, conjunctTokens, type ConjunctToken } from './conjuncts';
+import { aliasStarts, conjunctTokens } from './conjuncts';
+import { nlClauseGroundedFlagNames, nlClauseNamesEntry as clauseNamesEntry, nlClauses as planClauses, nlClauseStringValues as stringValues, type NlClause as PlanClause } from '../nl-routing/clause-flags';
 import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
 
@@ -325,8 +326,8 @@ function withClauseGroundedFlags(steps: readonly ValidatedAgentStep[], ctx: Agen
   const reads = steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
   return steps.map((step) => {
     if (step.kind !== 'read' || step.ref !== undefined) return step;
-    const specs = step.entry.args.filter((spec) => spec.kind === 'flag' && spec.flagGrounding !== undefined && step.args[spec.name] !== true);
-    if (specs.length === 0 || reads.filter((read) => read.entry.id === step.entry.id).length > 1) return step;
+    const flagged = step.entry.args.some((spec) => spec.kind === 'flag' && spec.flagGrounding !== undefined && step.args[spec.name] !== true);
+    if (!flagged || reads.filter((read) => read.entry.id === step.entry.id).length > 1) return step;
     const others = reads.filter((read) => read !== step);
     // Every read's value is set aside first: a word inside the step's own value is that value's (the keyword "주간회의" is an
     // event title, calendar-046), and one inside another read's value is that read's ("회의록 문서", also in a one-clause
@@ -337,23 +338,16 @@ function withClauseGroundedFlags(steps: readonly ValidatedAgentStep[], ctx: Agen
       // CA W1: a clause naming another planned read's entry is not this step's own.
       (clause) => !others.some((other) => other.entry.id !== step.entry.id && clauseNamesEntry({ ...clause, normalized: residue(clause) }, other.entry)),
     );
-    const plain = own.filter((clause) => !nlHasExclusionOrNegation(clause.text));
-    if (plain.length === 0 || plain.length !== own.length) return step;
-    const set = specs.filter((spec) => {
-      const flagWords = (spec.flagGrounding ?? []).map((word) => normalizeForMatch(word));
-      // CA W1 (review of f3e59814): only when the step's clauses name the entry by those words alone. Another alias of the
-      // entry ("일정", "캘린더", "스케줄": the catalog's own aliases that are not flag words) means the owner asked for the
-      // whole calendar ("이번 주 회의랑 연차 일정", "일정 전부 … 회의 포함해서").
-      const broader = step.entry.aliases.map((alias) => normalizeForMatch(alias)).filter((alias) => alias.length > 0 && !flagWords.includes(alias));
-      if (plain.some((clause) => broader.some((alias) => groundingWordIn(residue(clause), alias)))) return false;
-      return plain.some((clause) => flagWords.some((word) => groundingWordIn(residue(clause), word)));
-    });
+    // The exclusion / negation fail-safe and CA W1 (review of f3e59814: only when the step's clauses name the entry by
+    // its flag words alone; "일정", "캘린더" mean the whole calendar) live in the shared rule (`nlClauseGroundedFlagNames`),
+    // which the one-step selection path also applies (owner decision of 2026-10-27).
+    const set = nlClauseGroundedFlagNames(step.entry, step.args, own, residue);
     if (set.length === 0) return step;
     const args: Record<string, NlArgs[string]> = { ...step.args };
     const provenance: Record<string, AgentArgProvenance> = { ...step.provenance };
-    for (const spec of set) {
-      args[spec.name] = true;
-      provenance[spec.name] = { kind: 'literal', label: OWNER_TEXT_FLOW_LABEL };
+    for (const name of set) {
+      args[name] = true;
+      provenance[name] = { kind: 'literal', label: OWNER_TEXT_FLOW_LABEL };
     }
     return { ...step, args, provenance };
   });
@@ -409,35 +403,6 @@ export function agentUncoveredClauses(steps: readonly ValidatedAgentStep[], grou
   return out;
 }
 
-/** One conjunct of the owner's prose (the S2 boundaries, the verb connective included). */
-interface PlanClause {
-  readonly text: string;
-  readonly normalized: string;
-  readonly words: readonly ConjunctToken[];
-}
-
-function planClauses(groundingText: string): PlanClause[] {
-  const tokens = conjunctTokens(groundingText, { verbConnective: true });
-  const clauses = new Map<number, ConjunctToken[]>();
-  for (const token of tokens) if (!token.boundary) clauses.set(token.conjunct, [...(clauses.get(token.conjunct) ?? []), token]);
-  return [...clauses.values()].map((words) => {
-    const text = words.map((token) => token.text).join(' ').replace(/[,،]$/u, '');
-    return { text, normalized: normalizeForMatch(text), words };
-  });
-}
-
-/** Whether the clause names the entry by an alias or source name (a multi-word name as a phrase). */
-function clauseNamesEntry(clause: PlanClause, entry: NlCatalogEntry): boolean {
-  const all = [...entry.aliases, ...(entry.sourceNames ?? [])].map((alias) => normalizeForMatch(alias)).filter((name) => name.length > 0);
-  return (
-    clause.words.some((token) => all.some((name) => !name.includes(' ') && aliasStarts(token.word, name))) ||
-    all.some((name) => name.includes(' ') && ` ${clause.normalized} `.includes(` ${name}`))
-  );
-}
-
-function stringValues(args: Readonly<Record<string, unknown>>): string[] {
-  return Object.values(args).flatMap((value) => (typeof value === 'string' && value.length > 1 ? [normalizeForMatch(value)] : []));
-}
 
 /**
  * Whether a clause of the owner's prose asks for a write on an existing item: the A6 write entries' `actionGrounding` of

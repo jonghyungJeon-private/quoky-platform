@@ -97,6 +97,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   one-digit string ("1"–"4") is that option, and `"none"` is no answer (runtime and eval). The open-question lines now
   say that N is a JSON integer and that a non-answer leaves the field out. Prompts without an open question are
   byte-identical.
+- **Changed (owner decision 2026-10-27).** A one-step calendar read whose own words name the calendar by a meeting word
+  alone ("지난주에 무슨 회의 있었지?", "how many meetings …") gets `timedOnly`, by the same rule and catalog words as the
+  agent plan path (ADR-0121 S2 note 2). "일정" or "캘린더", an exclusion or negation, or the word inside an event title
+  leaves it off. The rule only turns the flag on.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

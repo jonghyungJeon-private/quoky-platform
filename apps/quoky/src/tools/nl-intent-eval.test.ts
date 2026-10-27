@@ -365,6 +365,16 @@ describe('owner decision P-time (ii) in the scorers (Core\'s final outcome)', ()
   });
 });
 
+describe('owner decision of 2026-10-27: the one-step timedOnly rule in both scorers (Core\'s final outcome)', () => {
+  it('a meeting question without the flag scores as the runtime completes it; "일정" keeps the whole calendar', () => {
+    const meeting: NlEvalCase = { id: 'to-1', text: '지난주에 무슨 회의 있었지?', expect: { entryId: 'calendar.events', args: { range: 'last-week', timedOnly: true } } };
+    expect(scoreOutput(meeting, answer('calendar.events', { range: 'last-week' }), NOW).outcome).toBe('hit');
+    expect(scoreReadRegression(meeting as never, answer('calendar.events', { range: 'last-week' }), NOW).outcome).toBe('hit');
+    const whole: NlEvalCase = { id: 'to-2', text: '이번 주 회의랑 연차 일정 보여줘', expect: { entryId: 'calendar.events', args: { range: 'this-week' } } };
+    expect(scoreOutput(whole, answer('calendar.events', { range: 'this-week' }), NOW).outcome).toBe('hit');
+  });
+});
+
 describe('the supplemental context corpus (nl-intent.context.v1.json; owner decision (가) option 1, 2026-10-27)', () => {
   it('is scored by eval:nl and read-regression with nl-intent.v1.json, never by Q11; both files are bound in the corpus digest', () => {
     const main = loadCorpus();

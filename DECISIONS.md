@@ -30655,3 +30655,15 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
   - The eval now counts these outputs as real reads or misreads. Re-scored on the archived raw outputs: cda61425 intent
     run 1 becomes a wrong capture (ctx-d4-034), run 2 gains a hit (ctx-d4-020), and ctx-d4-032 ×2 becomes `none`.
     24112d09 intent run 3 becomes a wrong capture (ctx-d4-032).
+- **`timedOnly` on the one-step selection path** (owner decision of 2026-10-27; closes the one-step question of ADR-0121
+  S2 note 2 of 2026-10-26).
+  - The plan validator's clause-grounded flag rule now also applies to the ADR-0120 one-step read, unchanged. It is
+    the same catalog vocabulary (`flagGrounding`, today calendar `CALENDAR_TIMED_ONLY_WORDS`) with the same exclusions:
+    a word inside a read's value, an exclusion or negation marker, and another name of the entry ("일정", "캘린더").
+    The one read is the only planned read, so its own clauses are the whole message when it is one conjunct, else the
+    conjuncts that name its entry. The rule only turns a flag ON, deterministically in Core, and validates again.
+  - The rule is one implementation: `nl-routing/clause-flags.ts` (`nlClauseGroundedFlagNames`), used by the plan
+    validator and by `nlOneStepClauseGroundedFlags`. The S2 conjuncts moved to `nl-routing/conjuncts.ts`
+    (`agent/conjuncts.ts` re-exports them); the agent boundary allows both pure files.
+  - The selection service applies it in `complete` after the P-time inheritance, and both `eval:nl` scorers apply it
+    too, so they score Core's final read. The D12 re-gate covers it.

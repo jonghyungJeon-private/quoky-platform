@@ -1146,6 +1146,26 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(late.calls[2]?.prompt).not.toContain('Open question');
   });
 
+  it('owner decision of 2026-10-27 (ADR-0121 S2 note 2 on the one-step path): a meeting word alone turns timedOnly on', async () => {
+    const run = async (text: string, args: Record<string, unknown>) => {
+      const h = harness({ script: [out('calendar.events', args)] });
+      return h.decide(text);
+    };
+    expect(await run('지난주에 무슨 회의 있었지?', { range: 'last-week' })).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'last-week', timedOnly: true } } });
+    expect(await run('how many meetings do I have this week?', { range: 'this-week', count: true })).toMatchObject({ command: { args: { range: 'this-week', count: true, timedOnly: true } } });
+    // Another name of the calendar ("일정") means the whole calendar; an exclusion or negation never sets it; a word inside
+    // the read's own value (an event title) is that value's.
+    for (const [text, args] of [
+      ['이번 주 회의랑 연차 일정 보여줘', { range: 'this-week' }],
+      ['내일 회의 말고 다른 거 있어?', { range: 'tomorrow' }],
+      ['다음 주 주간회의 언제야?', { range: 'next-week', keyword: '주간회의' }],
+    ] as const) {
+      const decided = await run(text, args);
+      expect(decided, text).toMatchObject({ kind: 'execute' });
+      expect((decided as { command: { args: Record<string, unknown> } }).command.args.timedOnly, text).toBeUndefined();
+    }
+  });
+
   it('owner decision of 2026-10-27: a quoted option number is that option, and "none" is no answer (the relaxed contract)', async () => {
     const quoted = harness({ script: [out('help.topic'), out('none', {}, { answer: '1' })] });
     await quoted.decide('슬랙에서 검색하는 방법 알려줘');

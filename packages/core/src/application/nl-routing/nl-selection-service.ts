@@ -122,6 +122,7 @@ import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
+import { nlOneStepClauseGroundedFlags } from './clause-flags';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -1277,6 +1278,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // Owner decision P-time (ii), 2026-10-27: a read that refines or asks about the held listing of the same entry keeps
     // that listing's period when the owner's words name none (`inheritHeldRange`).
     selection = this.inheritHeldRange(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
+    // Owner decision of 2026-10-27 (ADR-0121 S2 note 2 on the one-step path): a flag with catalog grounding words
+    // (calendar `timedOnly`) is turned on when the read's own clauses name the entry by those words alone.
+    selection = this.groundClauseFlags(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
     const { entry } = selection;
     // Only a wave-1 READ entry completes here (an A6 action entry has its own path and is never `lastSelection`).
     const entryId = entry.id;
@@ -1372,6 +1376,13 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const inherited = nlInheritHeldRange(selection, held, groundingText, this.validationContext(turn, groundingText, held.args, false, held.entryId));
     if (inherited !== selection) this.log('info', 'nl_selection.range_inherited', { entryId: selection.entry.id });
     return inherited;
+  }
+
+  /** Owner decision of 2026-10-27: {@link nlOneStepClauseGroundedFlags} with this turn's validation context; logs a flag set. */
+  private groundClauseFlags(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    const grounded = nlOneStepClauseGroundedFlags(selection, groundingText, this.validationContext(turn, groundingText, held?.args, false, held?.entryId));
+    if (grounded !== selection) this.log('info', 'nl_selection.flag_grounded', { entryId: selection.entry.id });
+    return grounded;
   }
 
   /** A reply to the open numbered question: `1`, `2.`, `지라`, `담당` … or `undefined` when it is not an answer. */
