@@ -253,6 +253,11 @@ describe('detectors (measurement only)', () => {
 
   it('suggestions: quoted segments that are neither the owner’s words, nor Quoky’s earlier replies, nor fixture content', () => {
     expect(quotedSegments('“다음 회의 언제야?” 또는 \'알림 1 취소\' 또는 「도움말」')).toEqual(['다음 회의 언제야?', '알림 1 취소', '도움말']);
+    // Strict run 2 (cy-undo-confirm-yes): a one-character quote pairs with its own closing mark; the text between two
+    // quotes is never a segment.
+    const run2 = '"응"만으로는 어떤 요청에 대한 답인지 알 수 없어요. 채팅 답변으로 "예"나 "응"을 보내도 아무 작업도 실행되지 않아요. `완료 처리: 2`';
+    expect(quotedSegments(run2)).toEqual(['완료 처리: 2']);
+    expect(quotedSegments('"a" and "할 일 추가: 보고서" and `x`')).toEqual(['할 일 추가: 보고서']);
     expect(quotedSegments('아래 문장을 보내 주세요.\n\n```\nNR26 프로젝트 20261029 릴리스 보여줘\n```')).toEqual(['NR26 프로젝트 20261029 릴리스 보여줘']);
     expect(extractSuggestions('앞선 답변에는 "이슈 5건"으로 나와 있었어요.', [], [], ['이슈 5건: 완료 1 · 할 일 4'])).toEqual([]);
     expect(instantiatePlaceholders('N번 메일 요약해줘')).toBe('1번 메일 요약해줘');

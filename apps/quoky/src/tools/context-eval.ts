@@ -410,8 +410,15 @@ export function findActionClaims(reply: string): string[] {
 /** Quoted segments of a reply, in reply order: a one-line code fence, "…", “…”, ‘…’, '…', 「…」 and `…`. */
 export function quotedSegments(reply: string): string[] {
   const found: Array<{ at: number; text: string }> = [];
-  for (const pattern of [/```[a-z]*\n([^`\n]{2,80})\n```/gu, /"([^"\n]{2,80})"/gu, /“([^”\n]{2,80})”/gu, /‘([^’\n]{2,80})’/gu, /「([^」\n]{2,80})」/gu, /`([^`\n]{2,80})`/gu, /(?<![\p{L}\p{N}])'([^'\n]{2,80})'(?![\p{L}\p{N}])/gu]) {
-    for (const match of reply.matchAll(pattern)) found.push({ at: match.index ?? 0, text: (match[1] as string).trim() });
+  // Quotes are paired in order (Strict run 2, cy-undo-confirm-yes): every span is matched whatever its length and only then
+  // filtered to 2-80 characters, so a short quote ("응") consumes its own closing mark and a match never starts at a
+  // closing quote (which paired the text BETWEEN two quotes as a "suggestion").
+  for (const pattern of [/```[a-z]*\n([^`\n]*)\n```/gu, /"([^"\n]*)"/gu, /“([^”\n]*)”/gu, /‘([^’\n]*)’/gu, /「([^」\n]*)」/gu, /`([^`\n]*)`/gu, /(?<![\p{L}\p{N}])'([^'\n]*)'(?![\p{L}\p{N}])/gu]) {
+    for (const match of reply.matchAll(pattern)) {
+      const text = (match[1] as string).trim();
+      const length = Array.from(text).length;
+      if (length >= 2 && length <= 80) found.push({ at: match.index ?? 0, text });
+    }
   }
   return found.sort((a, b) => a.at - b.at).map((entry) => entry.text);
 }
