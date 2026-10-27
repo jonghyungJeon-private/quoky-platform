@@ -961,10 +961,10 @@ export async function runReadRegression(input: {
   readonly provider: AiProvider;
   readonly now: () => string;
   readonly elapsed?: () => number;
-}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[] }>> {
+}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[]; error?: string; raw?: string }>> {
   const byId = new Map(input.cases.map((golden) => [golden.id, golden] as const));
   const clock = input.elapsed ?? Date.now;
-  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[] }> = [];
+  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[]; error?: string; raw?: string }> = [];
   for (let run = 1; run <= input.plan.runs; run += 1) {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
@@ -977,9 +977,18 @@ export async function runReadRegression(input: {
         const started = clock();
         try {
           const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs });
-          records.push({ run, id: golden.id, latencyMs: clock() - started, ...(await scoreReadRegressionInWorld(golden, result.text, input.now())) });
+          const scored = await scoreReadRegressionInWorld(golden, result.text, input.now());
+          // Like eval:nl read records: a non-hit keeps the raw output (bounded) and a malformed one says so.
+          records.push({
+            run,
+            id: golden.id,
+            latencyMs: clock() - started,
+            ...scored,
+            ...(scored.outcome === 'error' ? { error: 'malformed' } : {}),
+            ...(scored.outcome === 'hit' || scored.outcome === 'none' ? {} : { raw: result.text.slice(0, 2048) }),
+          });
         } catch {
-          records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started });
+          records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started, error: 'provider' });
         }
       }
     };

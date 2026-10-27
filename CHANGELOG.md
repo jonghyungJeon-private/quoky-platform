@@ -90,6 +90,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed (eval only, owner go-ahead 2026-10-27).** `eval:nl --mode read-regression` records keep Core's final args
   (`gotArgs`) on a hit, a miss, a wrong capture and an action capture, like `eval:nl` read records, so an A6 miss can be
   classified by argument. Scoring and the gate are unchanged.
+- **Changed (eval only, 2026-10-27).** Read-regression records also keep the raw output of a non-hit (bounded, like
+  `eval:nl` read) and the error kind (`malformed` or `provider`), so a malformed selector output, such as a quoted
+  `"answer": "1"`, can be read from the report. Scoring and the gate are unchanged.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 
