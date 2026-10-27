@@ -528,10 +528,14 @@ export function servedEntry(
   observation: Pick<TurnObservation, 'served' | 'session' | 'sessionBefore' | 'before' | 'after'>,
 ): { readonly entryId: string; readonly args: Readonly<Record<string, unknown>> } | undefined {
   const last = observation.served.at(-1);
-  if (last !== undefined) return { entryId: last.entryId, args: last.args };
   const before = observation.sessionBefore.lastSelection;
   const after = observation.session.lastSelection;
-  if (after !== undefined && JSON.stringify(before) !== JSON.stringify(after)) return { entryId: after.entryId, args: after.args };
+  const fresh = after !== undefined && JSON.stringify(before) !== JSON.stringify(after);
+  // Owner decision of 2026-10-28 (fix 3 of the 95386868 analysis): the args are Core's RESOLVED selection, the listing
+  // Core recorded this turn for the same entry (P9: a release that is a visible key is recorded as that project), not the
+  // raw command dispatched to the handler.
+  if (last !== undefined) return fresh && after.entryId === last.entryId ? { entryId: after.entryId, args: after.args } : { entryId: last.entryId, args: last.args };
+  if (fresh) return { entryId: after.entryId, args: after.args };
   // A grammar listing that records no selection but writes its own listing slot (the reminder list): that list's entry.
   // A write that merges its item into the slot (a created reminder) is not a listing.
   if (JSON.stringify(observation.before) !== JSON.stringify(observation.after)) return undefined;

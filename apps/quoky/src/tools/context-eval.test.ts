@@ -309,6 +309,12 @@ describe('detectors (measurement only)', () => {
     expect(servedEntry(observation({ served: [{ handlerId: 'h', entryId: 'todo.complete', args: { ref: '#2' } }] }))).toEqual({ entryId: 'todo.complete', args: { ref: '#2' } });
     expect(servedEntry(observation({ session: { lastListingSources: [], listedNow: [], lastSelection: { entryId: 'jira.issues', args: {}, at: 't2' } }, sessionBefore: { lastListingSources: [], listedNow: [], lastSelection: { entryId: 'jira.issues', args: {}, at: 't1' } } }))?.entryId).toBe('jira.issues');
     expect(servedEntry(observation({ session: { lastListingSources: ['reminder'], listedNow: ['reminder'] } }))?.entryId).toBe('reminder.list');
+    // Owner decision of 2026-10-28 (fix 3): a command Core resolved differently (P9: release NR26 → project NR26) is scored
+    // by the selection Core recorded this turn for the same entry; another entry's record or an unchanged one is not used.
+    const p9 = { served: [{ handlerId: 'h', entryId: 'jira.release', args: { release: 'NR26' } }], session: { lastListingSources: [], listedNow: [], lastSelection: { entryId: 'jira.release', args: { project: 'NR26' }, at: 't2' } } };
+    expect(servedEntry(observation(p9))).toEqual({ entryId: 'jira.release', args: { project: 'NR26' } });
+    expect(servedEntry(observation({ ...p9, sessionBefore: { lastListingSources: [], listedNow: [], lastSelection: p9.session.lastSelection } }))).toEqual({ entryId: 'jira.release', args: { release: 'NR26' } });
+    expect(servedEntry(observation({ ...p9, session: { ...p9.session, lastSelection: { entryId: 'jira.issues', args: {}, at: 't2' } } }))).toEqual({ entryId: 'jira.release', args: { release: 'NR26' } });
     expect(servedEntry(observation({ session: { lastListingSources: ['reminder'], listedNow: ['reminder'] }, after: { ...EMPTY, reminders: { r: { text: 'x', status: 'SCHEDULED' } } } }))).toBeUndefined();
     expect(awaitsAnswer(observation({ after: { ...EMPTY, anchors: { t: 'APPROVAL_PENDING' } } }))).toBe(true);
     expect(awaitsAnswer(observation({ after: { ...EMPTY, anchors: { t: 'SENT' } } }))).toBe(false);

@@ -30865,3 +30865,7 @@ The merge waits until EVERY Strict context run is at or above 95%.
   own message; examples, questions for other people, the User's own earlier words and terms being mentioned are written
   without quotes." The extractor and the D2 measurement are unchanged: by this contract, every quoted segment is a
   command.
+- **Fix 3, args are scored against Core's resolved selection.** On a turn that dispatched a command, the context eval
+  now scores the `lastSelection` Core recorded this turn for the same entry. It used to score the raw command the
+  handler received. For P9, the dispatched `{release: NR26}` is recorded as `{project: NR26}`. A record of another
+  entry, or one that did not change this turn, is not used. The served entry is unchanged.
