@@ -63,6 +63,10 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   - The 26 D4 strengthening golds (`ctx-d4-009`..`034`, read `nl-select.v70`) were approved as-is by the owner on
     2026-10-27 and moved in: 46 cases, and the `open-question` label has 26 answer golds (D12: at least 25). The
     ADR-0123 audit was regenerated locally: 0 entries flagged.
+- **D4 reordered (read `nl-select.v71`, A6 `v69`, R2 `v70`, 2026-10-27).** The Strict gates at 24112d09 both passed 2/3.
+  The open-question lines now put the non-answer categories before the answer format. Prompts without an open question
+  are byte-identical. `eval:nl` read-regression records now keep `gotArgs`, so the A6 calendar misses can be classified.
+  The calendar per-entry margin (read-regression run 1: 92/103) has no Core fix yet; the options wait on the owner.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.
