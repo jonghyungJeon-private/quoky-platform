@@ -1146,6 +1146,13 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(late.calls[2]?.prompt).not.toContain('Open question');
   });
 
+  it('owner decision of 2026-10-27 (range grounding): the one label-table period the owner states is the range Core runs', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
+    expect(await h.decide('다다음 주 일정 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'week-after-next' } } });
+    const weekday = harness({ script: [out('calendar.events', { range: 'next-thu' })] });
+    expect(await weekday.decide('목요일 일정 알려줘')).toMatchObject({ kind: 'execute', command: { args: { range: 'next-thu' } } });
+  });
+
   it('owner decision of 2026-10-27 (ADR-0121 S2 note 2 on the one-step path): a meeting word alone turns timedOnly on', async () => {
     const run = async (text: string, args: Record<string, unknown>) => {
       const h = harness({ script: [out('calendar.events', args)] });

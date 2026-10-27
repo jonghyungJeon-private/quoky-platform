@@ -66,7 +66,13 @@ These fix the hard failures of the first `eval:context` run that need no owner d
 - **D4 reordered (read `nl-select.v71`, A6 `v69`, R2 `v70`, 2026-10-27).** The Strict gates at 24112d09 both passed 2/3.
   The open-question lines now put the non-answer categories before the answer format. Prompts without an open question
   are byte-identical. `eval:nl` read-regression records now keep `gotArgs`, so the A6 calendar misses can be classified.
-  The calendar per-entry margin (read-regression run 1: 92/103) has no Core fix yet; the options wait on the owner.
+  The calendar per-entry margin (read-regression run 1: 92/103) was answered by the owner's decisions below.
+- **Owner decisions of 2026-10-27 after the cda61425 gates.** Three changes, each with its own commit:
+  - the answer contract is relaxed: the parser takes "1"–"4" and "none", and the prompt spells the format out (read
+    `nl-select.v72`, A6 `v70`, R2 `v71`);
+  - the clause-grounded `timedOnly` rule now runs on the one-step path;
+  - the owner's one stated label-table period wins over the selector's range.
+  Archive simulation (records with args): 0 golds and 0 archived hits broken.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.

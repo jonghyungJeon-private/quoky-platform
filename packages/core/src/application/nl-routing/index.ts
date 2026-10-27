@@ -21,6 +21,7 @@ export * from './read-statement';
 export * from './example-contamination';
 export * from './request-shape';
 export * from './clause-flags';
+export * from './owner-period';
 export * from './undo-confirm';
 export * from './last-turn';
 export * from './deictic-draft';

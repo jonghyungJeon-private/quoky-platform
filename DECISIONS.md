@@ -30667,3 +30667,23 @@ Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
     (`agent/conjuncts.ts` re-exports them); the agent boundary allows both pure files.
   - The selection service applies it in `complete` after the P-time inheritance, and both `eval:nl` scorers apply it
     too, so they score Core's final read. The D12 re-gate covers it.
+- **Range grounding: the owner's stated period wins** (owner decision of 2026-10-27; the "O1" option of the
+  24112d09 analysis).
+  - The rule fires when the owner's prose states exactly ONE period of the existing period-label table
+    (`nlRangeSymbolWords`, read longest first by `nlExpressedRangeSymbols`). It does not fire when the prose has a
+    weekday form, a span, a duration, another number with a time unit or a month name left once that period's words are
+    removed (`nlStatedLabelPeriod`).
+  - When it fires and the read's range names other dates, Core uses the owner's period and validates again
+    (`nlOwnerStatedRange`). The read's range is the selector's, or the entry's default when the selector left the range
+    out.
+  - Left alone:
+    - weekday and span expressions, so the uat5r4-16 class ("목요일 거는?") keeps the selector's this-thu;
+    - "today" and the entry's own default, which do not count as stated;
+    - a range that names the same dates;
+    - a result that does not validate.
+  - No new phrase list: the label table is the one `nlRangeLabel` already shows the owner.
+  - It applies to READ entries with a `range`. It runs in `complete` after the P-time inheritance, which never fires when
+    the owner states a period, so an explicit period still wins over an inherited one. Both `eval:nl` scorers apply it
+    too.
+  - Gold check: a perfect selector still hits every gold under both scorers at three clocks (10-22, 10-27 12:00 and
+    23:58 KST).

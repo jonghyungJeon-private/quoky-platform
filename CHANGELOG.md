@@ -101,6 +101,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   alone ("지난주에 무슨 회의 있었지?", "how many meetings …") gets `timedOnly`, by the same rule and catalog words as the
   agent plan path (ADR-0121 S2 note 2). "일정" or "캘린더", an exclusion or negation, or the word inside an event title
   leaves it off. The rule only turns the flag on.
+- **Changed (owner decision 2026-10-27).** When the owner states exactly one period of the existing period-label table
+  ("다다음 주", "이번 달 말까지", "다음 주말", "last week" …) and the selector read other dates, Core uses the owner's
+  period. Weekdays, spans, "today" and a range with the same dates are left alone.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

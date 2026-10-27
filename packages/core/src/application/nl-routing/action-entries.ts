@@ -1248,6 +1248,31 @@ export function nlReminderPeriod(text: string, weekdays?: readonly NlWeekdayMent
 }
 
 /**
+ * Owner decision of 2026-10-27 (range grounding): the ONE period of the existing period-label table (`nlRangeSymbolWords`:
+ * "다다음 주", "이번 달 말까지", "next weekend" …) the owner's prose states, or `undefined`. Left alone (undefined): no
+ * label period, two or more periods (a month-day date counts as one), any weekday form, and a span, duration, number
+ * with a time unit or month name left once that period's own words are removed ("10월 1일부터 7일까지", "내일 3시").
+ * No vocabulary of its own. Pure.
+ */
+export function nlStatedLabelPeriod(text: string): string | undefined {
+  const prose = withoutStructures(text);
+  if (nlWeekdayMentions(prose).length > 0) return undefined;
+  const symbols = nlExpressedRangeSymbols(prose);
+  if (symbols.length !== 1) return undefined;
+  const symbol = symbols[0] as string;
+  const words = nlRangeSymbolWords().filter(([candidate]) => candidate === symbol);
+  if (words.length === 0) return undefined;
+  let rest = ` ${normalizeForMatch(prose)} `;
+  const phrases = words.flatMap(([, ko, en]) => [normalizeForMatch(ko), normalizeForMatch(ko).replace(/\s+/gu, ''), normalizeForMatch(en)]).sort((a, b) => b.length - a.length);
+  for (const phrase of phrases) {
+    const latin = /^[a-z0-9 -]+$/u.test(phrase);
+    rest = rest.replace(new RegExp(latin ? `(?<![a-z0-9])${phrase.replace(/ /g, '\\s+')}(?![a-z0-9])` : `(?<![가-힣])${phrase.replace(/ /g, '\\s*')}`, 'gu'), ' ');
+  }
+  if (PERIOD_SPAN.test(rest) || PERIOD_DURATION.test(rest) || NUMBER_TIME_UNIT.test(rest) || EN_MONTH_NAME.test(rest)) return undefined;
+  return symbol;
+}
+
+/**
  * Codex P2 (2026-10-19): every arg name the catalog defines (read and action entries). A diagnostic names an arg only when
  * it is one of these; any other key the model generated is reported without its name, so nothing it wrote reaches a log.
  */

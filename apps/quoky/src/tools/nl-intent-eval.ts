@@ -32,6 +32,7 @@ import {
   nlHelpSourceScope,
   nlInheritHeldRange,
   nlOneStepClauseGroundedFlags,
+  nlOwnerStatedRange,
   nlIsPastStatement,
   nlReadNotRequest,
   nlSelectionMeaning,
@@ -280,7 +281,8 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   // Owner decision P-time (ii): Core's final read keeps the held listing's period when the owner names none.
   const inherited = base !== undefined ? nlInheritHeldRange(validated.value, base, prepared.groundingText, ctx) : validated.value;
   // Owner decision of 2026-10-27: the one-step clause-grounded flag (calendar `timedOnly`), as the runtime applies it.
-  const final = nlOneStepClauseGroundedFlags(inherited, prepared.groundingText, ctx);
+  // Owner decision of 2026-10-27 (range grounding): the one label-table period the owner states wins.
+  const final = nlOneStepClauseGroundedFlags(nlOwnerStatedRange(inherited, prepared.groundingText, ctx), prepared.groundingText, ctx);
   const got = final.entry.id;
   const gotArgs = final.args;
   const defaulted = final.defaulted !== undefined ? { defaulted: final.defaulted } : {};
