@@ -31020,3 +31020,8 @@ The merge waits until EVERY Strict context run is at or above 95%.
     exclusion and negation markers, plus the Korean short negation adverbs 안 / 못 as their own word before another
     word, or glued to a verb whose rest is a request form (a permissive -도 allowed). This is a closed grammatical class,
     not a phrase list. Over-reading only sends the turn to the selector.
+- **Codex review of 34080848..68acf4f6, P2 2 (fix 1): the shown-release pick applies the shared read-request vetoes.**
+  - "20261029 배포는 끝났다" after a matching listing settled the release.
+  - Before it settles, the pick now applies the vetoes of the selector path: `nlIsPastStatement` and `nlReadNotRequest`.
+    It also applies the request-shape veto `nlRequestVeto`: a statement, question, wish, report or conditional.
+  - Any veto sends the turn to the selector.

@@ -1174,6 +1174,9 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     // Codex review of 68acf4f6 P2: a grammatical negation without the light verb fails closed too.
     expect((await run('20261029 안 보여줘도 돼')).calls).toBe(1);
     expect((await run('20261029 안보여줘도 돼')).calls).toBe(1);
+    // Codex review of 68acf4f6 P2: a statement is not a request; the shared vetoes send it to the selector.
+    expect((await run('20261029 배포는 끝났다')).calls).toBe(1);
+    expect((await run('20261029 거 봤어')).calls).toBe(1);
     expect((await run('20261029 거 이슈 보여줘', { titles: [] })).calls).toBe(1);
     expect((await run('20261029 거 이슈 보여줘', { held: { project: 'NR26', release: '20261105' } })).calls).toBe(1);
   });

@@ -123,7 +123,7 @@ import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, 
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 import { nlOneStepClauseGroundedFlags } from './clause-flags';
-import { nlHasGrammaticalNegation } from './request-shape';
+import { nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
 import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
 import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
 
@@ -1397,7 +1397,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * release, shown just before: no chat turn in between) and exactly one of the owner's tokens (letters and digits, at
    * least 4, digits kept) occurs in exactly one shown release title (`shownItemTitles`), Core settles `jira.release` with
    * that project and the owner's token as the release (Core's lookup resolves it to the listed name), with no model call.
-   * Not with any grammatical negation or exclusion (fail-safe), and only when it validates. No word list. Else undefined.
+   * Not with any grammatical negation or exclusion, nor when a shared read-request veto fires (fail-safe), and only when it
+   * validates. No word list. Else undefined.
    */
   private pickShownRelease(turn: NlSelectionTurn, groundingText: string, original: NlSelectionTurn, last: LastSelection | undefined, language: 'ko' | 'en'): Promise<NlSelectionDecision> | undefined {
     const titles = original.shownItemTitles;
@@ -1417,6 +1418,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const token = groundingText.normalize('NFC').split(/[^\p{L}\p{N}]+/u).find((word) => word.toLowerCase() === best) ?? best;
     const validated = validateSelection({ entryId: 'jira.release', args: { ...last.args, release: token } }, this.validationContext(turn, groundingText, last.args, false, last.entryId));
     if (!validated.ok) return undefined;
+    // Codex review of 68acf4f6 P2: the shared read-request vetoes the selector path applies (a past statement, a read
+    // that is not a request) and the request-shape veto (a statement, question, wish, report …) send the turn to the
+    // selector instead ("20261029 배포는 끝났다").
+    if (nlIsPastStatement(groundingText) || nlReadNotRequest(groundingText, validated.value.args) !== undefined) return undefined;
+    if (nlRequestVeto(groundingText, validated.value.entry.aliases, NL_ACTION_WORDS) !== undefined) return undefined;
     this.log('info', 'nl_selection.shown_release_picked', { route: original.route });
     return this.complete(validated.value, original, last, language, groundingText);
   }
