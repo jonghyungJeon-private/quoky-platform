@@ -619,11 +619,15 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
   });
 
   it('a failed validation never guesses and never chats: it asks with the repaired candidate, or with the usage', async () => {
+    // Owner decision of 2026-10-28: one read option runs only when Core did not change it; this one was repaired, so it asks.
     const ungrounded = harness({ script: [out('jira.issues', { keyword: '결제' })] });
     const asked = await ungrounded.decide('내 지라 이슈 보여줘');
     expect(asked).toMatchObject({ kind: 'ask' });
     expect((asked as { text: string }).text).toContain('1. Jira 이슈 조회');
     expect(ungrounded.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'jira.issues', args: {} }] });
+    // The selector's own unchanged single option runs (owner decision 2026-10-28).
+    const lone = harness({ script: [out('jira.release', { project: 'OP26' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await lone.decide('OP26 릴리스 뭐 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
     const missing = harness({ script: [out('slack.search', {})] });
     expect(await missing.decide('슬랙 좀 봐줘')).toEqual({ kind: 'ask', entryId: expect.any(String), text: 'Slack 검색에서 무엇을 찾을지 정확히 모르겠어요. "Slack에서 배포 검색"처럼 말씀해 주세요.' });
   });
@@ -1236,9 +1240,9 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     const h = harness({ script: [out('help.topic', { topic: 'work-lookup' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
     expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
     expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
-    // Without a source named, a selector clarification on help stays the ordinary one-option question.
+    // Without a source named, a selector clarification on help has one read option: it runs (owner decision 2026-10-28).
     const plain = harness({ script: [out('help.topic', { topic: 'reminder' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
-    expect(await plain.decide('알림 어떻게 해')).toMatchObject({ kind: 'ask', text: expect.stringContaining('어떤 걸 찾으세요?') });
+    expect(await plain.decide('알림 어떻게 해')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'reminder' } } });
   });
 });
 

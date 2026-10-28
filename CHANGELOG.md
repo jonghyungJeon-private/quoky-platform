@@ -17,6 +17,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-28, ADR-0120 D7).** A question that would list only one read option no longer asks;
+  that read runs. A refused weekday, the help-scope question, no option, or an option Core had to change still ask.
 - **Added (eval, owner decision 2026-10-28).** `eval:nl --effort` and `eval:context --effort / --chat-effort`. Both
   efforts and the model names are bound into the plan digests.
 - **Changed (chat prompt, owner decision 2026-10-28).** After a listing, the chat prompt now says plainly what the reply

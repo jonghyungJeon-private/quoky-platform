@@ -1143,6 +1143,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
+    const optionChanged: boolean[] = [];
     let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
     let droppedAction = false;
     // Codex P2: a read alternative that failed validation (an unconfigured source) or was repaired keeps the choice open.
@@ -1164,7 +1165,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ') readCandidates.add(`${repaired.value.entry.id}|${sortedArgs(repaired.value.args)}`);
       if (index > 0 && (!repaired.ok || sortedArgs(repaired.value.args) !== sortedArgs(candidate.args))) openRead = true;
-      if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
+      if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) {
+        options.push(repaired.value);
+        // Owner decision of 2026-10-28: whether Core had to change this candidate (a repaired or ungrounded value dropped).
+        optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args));
+      }
     }
     // A refusal reached through the repair path is not kept in the cache either.
     if (weekdayRefused && cacheKey !== undefined) this.cache.delete(cacheKey);
@@ -1183,6 +1188,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (options.length === 1 && !weekdayRefused) {
       const scoped = await this.askHelpScope(options[0] as NlValidatedSelection, turn, language, prepared.groundingText, output.ambiguity === 'NEEDS_CLARIFICATION');
       if (scoped !== undefined) return scoped;
+      // Owner decision of 2026-10-28 (amends ADR-0120 D7; widens the v51 rule above, which needed a dropped action): a
+      // numbered question that would show only ONE read option asks nothing. That read runs: no write is possible from
+      // it. Still asked: a refused weekday (the hint names the week and day), the help-scope question (just above, owner
+      // decision A), no option at all (below), and an option Core had to CHANGE (a repaired candidate: Core dropped or
+      // replaced a value the selector gave, e.g. a keyword grounded only in pasted text). The red-team invariant holds:
+      // a hostile or ungrounded selection never runs a read by repair.
+      if (optionChanged[0] !== true) {
+        this.log('info', 'nl_selection.one_option_ran', { entryId: (options[0] as NlValidatedSelection).entry.id });
+        return this.complete(options[0] as NlValidatedSelection, turn, last, language, prepared.groundingText);
+      }
     }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.

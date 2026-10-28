@@ -30959,3 +30959,21 @@ The merge waits until EVERY Strict context run is at or above 95%.
   turn ran in the same conversation context. In `cd-dm-calendar-channel-question` (run 1), the listing was shown in
   the DM and the next turn is in a channel. The channel's own session holds no listing record (ADR-0118 D7), so "이
   대화에서는 확인할 수 없어요" is true there and is no longer counted.
+- **Fix 2: one read option runs, not asked (owner decision of 2026-10-28; ADR-0120 implementation note amending D7).**
+  - A numbered question that would show only ONE read option no longer asks: that read runs, since no write is possible
+    from it. This widens the v51 rule, which needed a dropped action candidate.
+  - Still asked:
+    - a refused weekday (the hint names the week and day);
+    - the help-scope question (owner decision A), which is checked first on the one option;
+    - zero options (the usage question);
+    - **an option Core had to change.** If the repaired candidate differs from what the selector gave (an ungrounded
+      value dropped, an out-of-set value not replaced), Core asks.
+  - The last exception narrows the owner's wording. It keeps the ratified red-team invariant (`nl-intent-dispatch`
+    adversarial sweep: a hostile selector naming a keyword grounded only in pasted text must never reach a handler).
+    Without it, Core's own repair (dropping the pasted keyword) turned an injection into a read of the owner's Jira.
+    Owner to confirm.
+  - Covered: the 2026-10-28 arm runs' one-option asks are all unchanged selector options. Examples: `fr-release-list-pick`
+    t1 "1. Jira 릴리스 조회", `cy-project-yes` t1, and t2's "1. Jira 이슈 조회".
+  - No gold changed. Tests that pinned one-option asks for unchanged options now expect the read: `nl-action-live4`
+    (lone NEEDS_CLARIFICATION, two reads of one entry, failed or repaired alternatives) and `nl-selection-service`
+    (a lone help clarification). Tests for changed options keep the ask.
