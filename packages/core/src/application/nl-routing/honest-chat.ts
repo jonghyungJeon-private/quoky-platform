@@ -395,11 +395,6 @@ const EN_INCAPABLE =
 
 const HELP_INDEX = /^(?:도움말|help)(?:[\s:：]|$)/iu;
 
-/** B2 label rule: whether `alias` occurs in the entry's own label (either language), as a word for an ASCII alias. */
-function labelNames(entry: NlCatalogEntry, alias: string): boolean {
-  return [entry.label.ko, entry.label.en].some((label) => namesAlias(label.toLowerCase(), alias.toLowerCase()));
-}
-
 /** B2: the lower-case values of a held listing: its string arg values, shown item words and titles (2+ characters). */
 function heldValuesOf(held: ShownListing): string[] {
   const args = Object.values(held.args).filter((value): value is string => typeof value === 'string');
@@ -478,19 +473,17 @@ export function guardFalseIncapabilityClaims(
       // Jira release read) are mentions of that source's topic. An ASCII alias must stand as a word ("pr" is not
       // "project"). Codex review of 68acf4f6 P2: an alias only names a topic, not a supported read ("회의 내용은 확인할
       // 수 없어요" can be true), so an alias-only denial is kept and only the entry's own read is appended, scoped by name.
-      // Owner decision of 2026-10-28 (B2, the label rule): an alias inside the entry's own label ("릴리스" in "Jira 릴리스
-      // 조회", "일정" in "캘린더 일정 조회") names what that read returns, so it is a source mention and is rewritten.
-      else if (entry.sourceNames !== undefined) {
-        const named = entry.aliases.filter((alias) => namesAlias(lower, alias.toLowerCase()));
-        if (named.some((alias) => labelNames(entry, alias))) hit.set(entry.id, entry);
-        else if (named.length > 0) aliasOnly.set(entry.id, entry);
-      }
+      // Owner decision of 2026-10-28 (B2) as narrowed by the Codex review of 672fb8f7 (P2): an alias inside the entry's own
+      // label, like any other alias, never deletes the sentence ("다른 사람의 비공개 일정은 확인할 수 없어요" can be true):
+      // the denial is kept verbatim and the entry's own read is appended.
+      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) aliasOnly.set(entry.id, entry);
     }
-    // Owner decision of 2026-10-28 (B2, union): a denial naming a value of the listing Core holds this turn (an arg value
-    // such as a project key, a shown item word or title) is about that read: rewritten with its usage.
+    // B2 (union), same narrowing: a denial naming a value of the listing Core holds this turn (an arg value such as a
+    // project key, a shown item word or title) keeps its sentence; that listing's read is appended.
     const held = options.held;
-    if (held !== undefined && heldValuesOf(held).some((value) => namesAlias(lower, value))) hit.set(held.entry.id, held.entry);
+    if (held !== undefined && !hit.has(held.entry.id) && heldValuesOf(held).some((value) => namesAlias(lower, value))) aliasOnly.set(held.entry.id, held.entry);
   }
+  for (const id of hit.keys()) aliasOnly.delete(id);
   if (hit.size === 0) {
     if (aliasOnly.size === 0) return unchanged;
     const scoped = [...aliasOnly.values()];

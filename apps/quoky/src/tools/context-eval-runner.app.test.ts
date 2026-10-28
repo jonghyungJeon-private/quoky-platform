@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { capabilityNouns } from './context-eval-cli';
-import { extractSuggestions, loadContextEvalCorpus, summarize } from './context-eval';
+import { extractSuggestions, findIncapabilityClaims, loadContextEvalCorpus, summarize } from './context-eval';
+import { NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, guardFalseIncapabilityClaims } from '@quoky/core';
 import { bootContextEvalWorld, type ContextEvalProfile, type ContextEvalWorld } from './context-eval-harness';
 import { CONTEXT_EVAL_STUB_CHAT, CONTEXT_EVAL_STUB_SUMMARY, ContextEvalRunner, type ScenarioRecord, type SelectionSource } from './context-eval-runner';
 
@@ -157,16 +158,28 @@ describe('context eval runner — dry, over the production AppModule', () => {
     chatReply = weather;
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
     chatReply = reply;
-    // Without a listing record (help ends the window), the shown-listing guard does not apply. The denial names "일정",
-    // which is in the calendar entry's label, so the D9 guard rewrites it (owner decision of 2026-10-28, B2 label rule).
+    // Without a listing record (help ends the window), the shown-listing guard does not apply. The denial names "일정" (a
+    // calendar alias): it is kept verbatim and the calendar read is appended, quoted (Codex review of 672fb8f7, P2).
     await world.turn(owner, '도움말', owner.dm);
     const unrelated = await world.turn(owner, '고마워', owner.dm);
-    expect(unrelated.reply).not.toBe(reply);
-    expect(unrelated.reply).toContain('바로 조회할 수 있어요');
+    expect(unrelated.reply.startsWith(reply)).toBe(true);
+    expect(unrelated.reply).toContain('"오늘 일정"');
+    expect(unrelated.reply).not.toContain('바로 조회할 수 있어요');
     // A true unrelated limitation is still kept as written.
     chatReply = weather;
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
   }, 120_000);
+
+  it('Codex review of 672fb8f7 (P2): a kept calendar denial with its quoted read appended is excused by the scorer (unchanged)', () => {
+    const reads = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
+    for (const denial of ['다른 사람의 비공개 일정은 확인할 수 없어요.', '회의 내용은 확인할 수 없어요.', '면접 일정은 확인할 수 없어요.']) {
+      const reply = guardFalseIncapabilityClaims(denial, reads, 'ko').text;
+      expect(reply.startsWith(denial), denial).toBe(true);
+      const suggestions = extractSuggestions(reply, [denial], []);
+      expect(suggestions, denial).toEqual(['오늘 일정']);
+      expect(findIncapabilityClaims(reply, capabilityNouns(), { handsCommand: suggestions.length > 0 }), denial).toEqual([]);
+    }
+  });
 
   it('owner decision of 2026-10-28 (B1) over the real runtime: only a runnable command keeps its quotes, and the scorer sees that reply', async () => {
     const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });

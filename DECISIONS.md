@@ -31110,3 +31110,14 @@ The merge waits until EVERY Strict context run is at or above 95%.
   10 s, the selector bound. The planner shares the selector's capability, now at high effort, and the owner allowed up to
   10 s. The app already passes the configured selection bound (`config.nlSelection.timeoutMs`, 10 s by default), so
   this aligns the fallback constant.
+- **Codex review of 672fb8f7, P2-a: B2 never deletes or replaces a denial sentence.**
+  - The label rule and the held-value rule replaced true limitations with a capability claim ("다른 사람의 비공개 일정은
+    확인할 수 없어요", an event's private transcript).
+  - A label-alias match or a held-value match now keeps the sentence verbatim and appends the matched entry's read (its
+    usage, as for any alias-only match). Only a source-name denial is still rewritten, as before B2.
+  - Scorer check: the context-eval false-incapability check is unchanged.
+    - It excuses a kept denial whose appended usage is a quoted command. Every calendar case is excused this way (tested).
+    - It does NOT excuse the two measured release sentences ("NR26 릴리스 내용은 여기서 직접 확인할 수 없어요", "현재
+      연결 상태나 릴리스 내용은 여기서 확인할 수 없어요"). The `jira.release` usage is deliberately unquoted
+      ("예: ABC 프로젝트 1.2.0 릴리스 보여줘", D2: Core copy quotes only deterministic commands), so the reply hands
+      no quoted command. Reported to the owner; the scorer is not changed.
