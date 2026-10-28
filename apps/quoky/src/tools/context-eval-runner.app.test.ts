@@ -314,6 +314,74 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(asked.reply).not.toContain('오늘');
   }, 120_000);
 
+  it('owner decision of 2026-10-29 over the real runtime: a stale bare yes or no after a served command gets the fixed notice and no chat call', async () => {
+    const answer = (entryId: string, args: Record<string, unknown> = {}) => JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] });
+    let selector = answer('jira.release', { project: '누리 운영 2026', release: '20261029' });
+    // The cy-question-then-other t3 reply of the failed run (a false state claim): it must never reach this turn.
+    const falseClaim = '대상은 누리 플랫폼 운영 2026(NR26)의 20261029 릴리스로 잡아 두었어요.';
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => falseClaim, summarize: async () => '' });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    const asked = await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    expect(asked.reply).toContain('맞나요');
+    selector = answer('calendar.events', { range: 'tomorrow' });
+    const served = await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    expect(served.served.at(-1)).toMatchObject({ entryId: 'calendar.events' });
+    selector = answer('none');
+    // D7: the other request ended the question, so "응" answers nothing: Core's notice, no chat call, nothing served.
+    const yes = await world.turn(owner, '응', owner.dm);
+    expect(yes.reply).toBe('지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요.');
+    expect(yes.chatPrompts).toEqual([]);
+    expect(yes.served).toEqual([]);
+    expect(yes.session.pending).toBeUndefined();
+    // A stale no, and English: the notice is not chat, so the next bare answer gets it again.
+    const no = await world.turn(owner, '아니', owner.dm);
+    expect(no.reply).toBe('지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요.');
+    expect(no.chatPrompts).toEqual([]);
+    const en = await world.turn(owner, 'yes', owner.dm);
+    expect(en.reply).toBe("There's no question waiting for an answer. Tell me what you'd like in a sentence.");
+    expect(en.chatPrompts).toEqual([]);
+    // A yes with more words is a new message, not a bare answer: it goes to chat as before.
+    const more = await world.turn(owner, '응 그리고 날씨는 어때?', owner.dm);
+    expect(more.chatPrompts).toHaveLength(1);
+    // After that chat reply the chat may have asked something itself: a bare yes goes to chat as before.
+    const afterChat = await world.turn(owner, '응', owner.dm);
+    expect(afterChat.chatPrompts).toHaveLength(1);
+  }, 120_000);
+
+  it('owner decision of 2026-10-29: an open confirmation is still answered by its yes or no; after a chat reply the yes still goes to chat', async () => {
+    const records = await dryRun('deployed', { kind: 'oracle' }, ['cy-project-yes', 'cy-project-no', 'fr-release-confirm-count-scope', 'cy-question-then-other', 'sc-confirm-chat-yes']);
+    const notice = '지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요.';
+    const byId = (id: string) => records.find((record) => record.score.id === id) as ScenarioRecord;
+    for (const record of records) expect(record.score.pass, record.score.id).toBe(true);
+    for (const id of ['cy-project-yes', 'cy-project-no', 'fr-release-confirm-count-scope']) {
+      expect(byId(id).turns[1]?.reply, id).not.toBe(notice);
+      expect(byId(id).turns[1]?.chat, id).toBe(false);
+    }
+    expect(byId('cy-project-yes').turns[1]?.entry).toBe('jira.release');
+    expect(byId('cy-question-then-other').turns[2]).toMatchObject({ chat: false, reply: notice });
+    // sc-confirm-chat-yes: confirm → weather chat → "응" stays on the chat path.
+    expect(byId('sc-confirm-chat-yes').turns[1]?.chat).toBe(true);
+    expect(byId('sc-confirm-chat-yes').turns[2]?.chat).toBe(true);
+    // The A6 undo confirmation (actions-local) still takes its own yes.
+    await world?.close();
+    world = undefined;
+    const [undo] = await dryRun('actions-local', { kind: 'oracle' }, ['cy-undo-confirm-yes']);
+    expect(undo?.score.pass).toBe(true);
+    expect(undo?.turns[3]?.reply).not.toBe(notice);
+    expect(undo?.turns[3]?.chat).toBe(false);
+  }, 120_000);
+
+  it('owner decision of 2026-10-29: the cy-question-then-other false state claim cannot occur, whatever the chat model would write', async () => {
+    world = await bootContextEvalWorld('deployed', { select: async () => '{}', chat: async () => '', summarize: async () => '' });
+    const falseClaim = '대상은 누리 플랫폼 운영 2026(NR26)의 20261029 릴리스로 잡아 두었어요.';
+    const chat = { id: 'scripted-chat', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: falseClaim, artifacts: [] }) } as never;
+    const runner = new ContextEvalRunner(world, corpus, { profile: 'deployed', selection: { kind: 'oracle' }, chat, capabilityNouns: capabilityNouns() });
+    const [record] = await runner.runAll(['cy-question-then-other'], 1);
+    expect(record?.score.hard['fabricated-action']).toBe(0);
+    expect(record?.score.pass).toBe(true);
+    expect(record?.turns[2]?.chat).toBe(false);
+  }, 120_000);
+
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {
     const records = await dryRun('deployed', { kind: 'none' });
     expect(records).toHaveLength(corpus.scenarios.length);

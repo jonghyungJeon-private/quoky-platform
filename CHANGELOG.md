@@ -17,6 +17,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-29).** A bare yes or no ("응", "아니", "yes") that no question is waiting for, right
+  after a reply that was not chat, gets Core's fixed notice ("지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해
+  주세요.") instead of a chat reply. Open questions, confirmations and approvals still take their yes or no, and after a
+  chat reply the yes still goes to chat.
 - **Changed (owner decision 2026-10-28).** Everyday and policy-sensitive chat replies run at medium effort instead of low. The context gate
   passed with it for the first time: 37/38, 38/38, 38/38, 0 hard failures.
 - **Changed (owner decision 2026-10-28).** In a chat reply, quotes and code marks stay only around a command the owner

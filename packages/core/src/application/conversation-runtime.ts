@@ -114,6 +114,7 @@ import { externalLastActionOf } from './nl-routing/last-action';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
+import { LAST_REPLY_METADATA_KEY, nlBareYesNo, readLastReply, renderNoOpenQuestion } from './nl-routing/last-reply';
 import type { MessageBody } from '../domain';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { nearMissActionSwitchPhrase, parseActionSwitchPhrase, renderActionSwitchHint, renderActionSwitchReply } from './nl-routing/action-switch';
@@ -1140,6 +1141,8 @@ export interface ConversationRuntimeDeps {
         | 'answerDeicticDraft'
         | 'recordLastTurn'
         | 'deicticWritesMode'
+        // Owner decision of 2026-10-29 (no new deps key): whether the last reply was chat, for a stale bare yes or no.
+        | 'recordLastReply'
       >
     >;
   /**
@@ -2402,6 +2405,7 @@ export class ConversationRuntime {
       this.holdNlShownItemWords(message, result);
       await this.settleNlLastSelection(message);
       await this.recordNlLastTurn(message);
+      await this.recordNlLastReply(message);
       this.startAfterReply(message);
       return result;
     } catch (err) {
@@ -2409,6 +2413,9 @@ export class ConversationRuntime {
       await this.settleNlLastSelection(message, true).catch(() => undefined);
       this.nlReplyKinds.set(message, { kind: 'note' });
       await this.recordNlLastTurn(message).catch(() => undefined);
+      // The sanitized error below is not a chat reply, whatever route the turn was on.
+      this.nlChatReplies.delete(message);
+      await this.recordNlLastReply(message).catch(() => undefined);
       const safe = toSafeError(err);
       this.deps.logger.error('inbound handling failed', {
         errorName: err instanceof Error ? err.name : typeof err,
@@ -3383,6 +3390,14 @@ export class ConversationRuntime {
       }
     }
 
+    // (C3) Owner decision of 2026-10-29 ("끊긴 확인 고치고 재측정"): a bare yes or no bound for chat with nothing waiting for
+    // it gets Core's fixed notice and no chat call. Every route above that answers a yes or no (the D7 question, the A6
+    // continuation and undo confirmations, approvals, anchors) has had its turn; after a chat reply the yes still goes to
+    // chat, which may have asked it.
+    if (this.isStaleBareYesNo(message, session, actor, intent, nlPending, lookup.pending !== null || lookup.override !== null || Boolean(lookup.connectorWrite) || applyAnchor !== null)) {
+      return this.respondComposed(message, session, outboundMessage(message.context, renderNoOpenQuestion(languageOf(message.text))));
+    }
+
     // Every remaining route (work surface, project registration, analysis, chat) never reaches a workspace,
     // git or command mutator, so an infrastructure failure renders the confirmed-not-applied wording instead
     // of the backstop's "변경 적용 여부를 확인할 수 없어요".
@@ -3409,6 +3424,8 @@ export class ConversationRuntime {
   private readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
   /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
   private readonly nlDeicticPrefix = new WeakMap<InboundMessage, string>();
+  /** Owner decision of 2026-10-29: turns answered by chat (GENERAL_CHAT / POLICY_SENSITIVE_CHAT), for `quoky.lastReply`. */
+  private readonly nlChatReplies = new WeakSet<InboundMessage>();
 
   /** A6 R5a: what a handler's reply was, for `quoky.lastTurn` (an echo, a to-do / reminder listing, a question, a note). */
   private static nlReplyKindOf(handled: TurnHandlerOutcome): { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' } {
@@ -3451,6 +3468,28 @@ export class ConversationRuntime {
       now: this.clock(),
       direct: isDirectConversation(message.context),
     });
+  }
+
+  /** Owner decision of 2026-10-29: write `quoky.lastReply` (whether this turn was answered by chat; nothing unless `active`). */
+  private async recordNlLastReply(message: InboundMessage): Promise<void> {
+    const nl = this.deps.nlSelection;
+    const facts = this.nlTurnFacts.get(message);
+    if (nl?.recordLastReply === undefined || nl.mode !== 'active' || facts === undefined) return;
+    await nl.recordLastReply({ id: facts.sessionId }, facts.actorId, this.nlChatReplies.has(message), this.clock());
+  }
+
+  /**
+   * Owner decision of 2026-10-29: this chat-bound turn is a stale bare yes or no. All of: selection is `active`; the turn
+   * is chat; no D7 question was open at its start (`takePending` ran and found none); no approval, override, connector-write
+   * or apply-preview anchor is open (`anchored`); the whole message, after input preparation, is a yes or no of the closed
+   * continuation reply set; and the fresh `quoky.lastReply` says Quoky's previous reply was NOT chat. No record (a new
+   * session, an expired one, selection not active before) keeps today's chat route.
+   */
+  private isStaleBareYesNo(message: InboundMessage, session: Session, actor: Actor, intent: Intent, nlPending: PendingQuestion | null | undefined, anchored: boolean): boolean {
+    if (this.deps.nlSelection?.mode !== 'active' || nlPending !== null || anchored) return false;
+    if (intent.type !== IntentType.CHAT || (intent.capability !== Capability.GENERAL_CHAT && intent.capability !== Capability.POLICY_SENSITIVE_CHAT)) return false;
+    if (nlBareYesNo(message.text, message.attachments?.length ?? 0, message.quotedRanges ?? []) === 'none') return false;
+    return readLastReply(session.metadata?.[LAST_REPLY_METADATA_KEY], actor.id, this.clock())?.chat === false;
   }
 
   /** An A6 question, refusal or (R5a) preview: its body, and its fixed history note when it shows the owner's items. */
@@ -3549,6 +3588,7 @@ export class ConversationRuntime {
   /** D1: mark that this turn is answered by chat (a general or policy-sensitive chat reply), so settle keeps the record. */
   private markNlChatTurn(message: InboundMessage, capability: Capability): void {
     if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return;
+    this.nlChatReplies.add(message);
     const turn = this.nlTurns.get(message);
     if (turn !== undefined && !turn.keep) turn.chat = true;
   }

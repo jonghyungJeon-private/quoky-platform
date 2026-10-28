@@ -31135,3 +31135,55 @@ The merge waits until EVERY Strict context run is at or above 95%.
 - **Owner decision of 2026-10-28 on the release-sentence scorer question: option 1.**
   - No new Core copy and no scorer change.
   - With chat at medium, the two release denials did not occur in 3 runs. If the gate runs show them, this is revisited.
+
+### Owner decision of 2026-10-29 — a stale bare yes or no gets Core's notice, not chat ("끊긴 확인 고치고 재측정"; branch `claude/v5-context-fixes`)
+
+ADR-0120 implementation note on D7 and D9. No ADR clause changes: D7 ("any reply ends the question") is kept as it is,
+and D9 still governs every turn that goes to chat.
+
+- **Problem.** Context eval `cy-question-then-other`: a one-option project confirmation, then "내일 일정 뭐있어" (served;
+  D7 ends the question), then "응". Nothing was served, which is correct, but the turn went to GENERAL_CHAT. In 1 of 3
+  runs the chat wrote "대상은 누리 플랫폼 운영 2026(NR26)의 20261029 릴리스로 잡아 두었어요." This is a false state claim, and
+  the scorer counted a hard `fabricated-action`.
+- **Decision (structural).** A stale "응" never reaches the chat model. Core answers it itself with a fixed notice, in
+  the turn's language (`languageOf`, as the neighbouring fixed notices):
+  - "지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요."
+  - "There's no question waiting for an answer. Tell me what you'd like in a sentence."
+  The notice claims no action and no held state. It says nothing about what Quoky cannot do, and quotes no command.
+- **When.** All of the following hold; otherwise the turn routes exactly as before.
+  - Selection is `active`.
+  - The turn is bound for chat (`IntentType.CHAT`, GENERAL_CHAT or POLICY_SENSITIVE_CHAT) after every earlier route and
+    after selection found nothing.
+  - No D7 question was open at the turn's start (`takePending` ran and returned none).
+  - No approval, credential override, connector-write anchor or apply-preview anchor is open. So the undo and A6
+    continuation confirmations, action questions, approvals and anchors keep answering their yes or no first.
+  - The whole message, after the usual input preparation (`prepareSelectionInput`: quoted text and code removed) and
+    with no attachment, is an approve or deny of the EXISTING closed set `interpretContinuationConfirmReply`. No new
+    phrase list or pattern (owner rule: no phrase-list fixes).
+  - Quoky's previous reply to this actor in this session was NOT chat. After a chat reply, the chat may have asked
+    something itself, so the yes still goes to chat (`sc-confirm-chat-yes`: confirm → weather chat → "응").
+- **Where.** In `ConversationRuntime`, step (C3): after the (C2) selection block and before `handleNonExecutionTurn`. It
+  is not in the selector decision path. `NlSelectionService.decide` and the selector eval gates are unchanged:
+  - `eval:nl` intent plan digest `f25a3121…` and read-regression `e8849453…`, before and after;
+  - `eval:agent-plan` `59b803c9394b…`, before and after, compared on the working tree at the same `gitHead`. The digest
+    binds `gitHead`, so it changes with the commit itself.
+- **"Previous reply was chat".** No existing record served: `quoky.lastTurn` (A6 R5a) is written only while
+  `QUOKY_NL_DEICTIC_WRITES` is not `off`, and it is off in the deployed profile. A new content-free session record,
+  through the existing field-scoped `SessionManager.updateMetadataEntry`:
+  - `Session.metadata['quoky.lastReply'] = { byActor: { [actorId]: { chat, at } } }`, in `nl-routing/last-reply.ts`;
+  - per actor, at most 64 actors, a 30-minute TTL (as `quoky.lastTurn`); expired, malformed or another actor's counts
+    as absent;
+  - written by `NlSelectionService.recordLastReply` after every turn while selection is `active` (no new deps key, the
+    `nlSelection` slot); never throws;
+  - `chat` is true when the runtime's existing chat marker ran (`markNlChatTurn`, the (E) fast path and the (F) work
+    path); an escaped error turn records `false`;
+  - an absent record (a new session, an expired one, selection not `active` before) never triggers the notice.
+- **Tests.**
+  - `last-reply.test.ts`: the record, the bare yes or no test and the notice.
+  - `context-eval-runner.app.test.ts`, over the production AppModule (deployed profile). Covered: a stale yes after a
+    served command (the notice, no chat call), a stale no, English, a yes with more words (chat), a yes after a chat
+    reply (chat), and `cy-project-yes`, `cy-project-no`, `fr-release-confirm-count-scope` and `sc-confirm-chat-yes`
+    unchanged. `cy-undo-confirm-yes` (actions-local) is also unchanged, and the measured false claim on
+    `cy-question-then-other` scores 0 `fabricated-action`.
+  - The golden scenarios and the scorer are not changed.
+- **Re-measure.** `eval:context` reruns on the new HEAD (the owner's "재측정").

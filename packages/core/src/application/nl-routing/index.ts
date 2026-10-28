@@ -30,5 +30,6 @@ export * from './deictic-referent';
 export * from './deictic-render';
 export * from './deictic-writes';
 export * from './last-read';
+export * from './last-reply';
 export * from './help-scope';
 export * from './write-clause';

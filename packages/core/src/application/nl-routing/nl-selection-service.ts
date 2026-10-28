@@ -62,6 +62,7 @@ import {
   type LastActionRecord,
 } from './last-action';
 import { LAST_READ_METADATA_KEY, readLastRead, withLastRead } from './last-read';
+import { LAST_REPLY_METADATA_KEY, withLastReply } from './last-reply';
 import {
   NL_ACTION_LOG_EVENT,
   NlActionCaps,
@@ -779,6 +780,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
       await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => agedLastSelectionRecord(current, actorId, now));
     } catch (error) {
       this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
+   * Owner decision of 2026-10-29: record whether this turn's reply came from chat (`quoky.lastReply`, content-free), so a
+   * next turn's bare yes or no can tell a chat's own question from a stale one. Only in `active`; never throws.
+   */
+  async recordLastReply(session: Pick<Session, 'id'>, actorId: string, chat: boolean, now: IsoTimestamp): Promise<void> {
+    if (this.mode !== 'active') return;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_REPLY_METADATA_KEY, (current) => withLastReply(current, actorId, { chat, at: now }, now));
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_REPLY_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
   }
 
