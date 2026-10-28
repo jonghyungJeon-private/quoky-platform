@@ -31102,8 +31102,8 @@ The merge waits until EVERY Strict context run is at or above 95%.
       the first time;
     - chat at low at the same HEAD: 38/38, 37/38, 36/38, with 2 hard failures.
   - `eval:context --chat-effort` now defaults to medium.
-  - `POLICY_SENSITIVE_CHAT` stays low, because the decision names GENERAL_CHAT only. The measured run set both through
-    `--chat-effort`. Owner to confirm.
+  - `POLICY_SENSITIVE_CHAT` also moves to `medium`, so production matches the measured run (`--chat-effort` set both
+    chat capabilities). Orchestrator decision under the owner's effort-tuning instruction, reported to the owner.
   - G7 keeps its frozen chat effort. `tools/g7/claude.mjs` already hard-codes `CLAUDE_EFFORT = 'low'` (part of the frozen
     harness hashes, unchanged). The G7 argv-parity test now builds the production argv at that frozen effort explicitly.
 - **Owner decision of 2026-10-28: the agent shadow bound is 10 s.** `AGENT_SHADOW_DEFAULT_TIMEOUT_MS` moves from 6 s to

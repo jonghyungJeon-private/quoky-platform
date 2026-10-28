@@ -359,8 +359,9 @@ export const DEFAULT_CLAUDE_INTENT_SELECTION_MODEL = 'haiku';
  */
 export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>> = {
   // Owner decision of 2026-10-28: medium (eval:context with chat medium passed the context gate, 37/38, 38/38, 38/38).
+  // The measured run raised both chat capabilities (`--chat-effort`), so policy-sensitive chat follows.
   [Capability.GENERAL_CHAT]: 'medium',
-  [Capability.POLICY_SENSITIVE_CHAT]: 'low',
+  [Capability.POLICY_SENSITIVE_CHAT]: 'medium',
   [Capability.READONLY_LOOKUP]: 'low',
   [Capability.SUMMARIZATION]: 'low',
   [Capability.DOCUMENT_ANALYSIS]: 'medium',

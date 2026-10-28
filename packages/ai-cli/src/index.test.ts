@@ -201,7 +201,7 @@ describe('ClaudeCliProvider', () => {
 
   it.each([
     [Capability.GENERAL_CHAT, 'medium'],
-    [Capability.POLICY_SENSITIVE_CHAT, 'low'],
+    [Capability.POLICY_SENSITIVE_CHAT, 'medium'],
     [Capability.READONLY_LOOKUP, 'low'],
     [Capability.SUMMARIZATION, 'low'],
     [Capability.DOCUMENT_ANALYSIS, 'medium'],
