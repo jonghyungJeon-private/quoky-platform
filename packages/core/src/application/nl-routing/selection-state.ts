@@ -69,6 +69,11 @@ export interface LastSelection extends StoredSelection {
    * parent listing (the top of a chain of narrowings). Structure only, like `args`. An item question searches the parent.
    */
   readonly parent?: NlArgs;
+  /**
+   * Codex review of 7f7e8d32: the opaque id of the turn that recorded this listing (the inbound message id), so state held
+   * for that listing elsewhere (the shown items' words, process memory only) attaches to exactly this record. Never content.
+   */
+  readonly turnId?: string;
 }
 
 export interface EarlierSelection extends StoredSelection {
@@ -299,6 +304,7 @@ function lastSelectionOf(value: unknown, actorId: Id, now: IsoTimestamp): LastSe
   const earlier = earlierOf(record.earlier, now, selection.entryId);
   const period = periodOf(record.period);
   const parent = record.parent === undefined ? undefined : argsOf(record.parent);
+  const turnId = typeof record.turnId === 'string' && record.turnId.length > 0 && record.turnId.length <= MAX_STRING ? record.turnId : undefined;
   return {
     ...migrateStoredSelection(selection),
     at: record.at as IsoTimestamp,
@@ -306,6 +312,7 @@ function lastSelectionOf(value: unknown, actorId: Id, now: IsoTimestamp): LastSe
     ...(earlier.length > 0 ? { earlier } : {}),
     ...(period !== undefined ? { period } : {}),
     ...(parent !== undefined ? { parent } : {}),
+    ...(turnId !== undefined ? { turnId } : {}),
   };
 }
 
@@ -380,7 +387,7 @@ export function migrateStoredSelection(selection: StoredSelection): StoredSelect
  * selection of each other source as `earlier`: the replaced one and its own earlier ones, each one turn older, minus the
  * new selection's source. Only the same actor's fresh record carries over.
  */
-export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp, current?: unknown, period?: HeldPeriod): Metadata {
+export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now: IsoTimestamp, current?: unknown, period?: HeldPeriod, turnId?: string): Metadata {
   const replaced = current === undefined ? undefined : lastSelectionOf(current, actorId, now);
   const earlier =
     replaced === undefined
@@ -409,6 +416,7 @@ export function lastSelectionRecord(actorId: Id, selection: StoredSelection, now
     ...(earlier.length > 0 ? { earlier: earlier.map(earlierRecord) } : {}),
     ...(period !== undefined && periodOf(period) !== undefined ? { period: { start: period.start, days: period.days } } : {}),
     ...(parent !== undefined ? { parent: { ...parent } } : {}),
+    ...(turnId !== undefined && turnId.length > 0 && turnId.length <= MAX_STRING ? { turnId } : {}),
   };
 }
 
@@ -429,6 +437,7 @@ export function agedLastSelectionRecord(current: unknown, actorId: Id, now: IsoT
     ...(earlier.length > 0 ? { earlier } : {}),
     ...(kept.period !== undefined ? { period: { ...kept.period } } : {}),
     ...(kept.parent !== undefined ? { parent: { ...kept.parent } } : {}),
+    ...(kept.turnId !== undefined ? { turnId: kept.turnId } : {}),
   };
 }
 

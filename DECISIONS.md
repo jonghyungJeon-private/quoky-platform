@@ -30945,3 +30945,10 @@ The merge waits until EVERY Strict context run is at or above 95%.
   validated against the parent with the other narrowing filters set aside. An ungrounded inherited filter no longer
   drops a restated one. Example: inherited `{partOfDay: afternoon, timedOnly: true}`, then "오후 면접은 몇 시야?" keeps
   `afternoon` and drops only `timedOnly`.
+- **Codex review of 7f7e8d32, P2 2 (fix 1): the held item words bind to the exact listing record.**
+  - `lastSelection` now carries the opaque id of the turn that recorded it (`turnId`, the inbound message id; never
+    content). The selection path and the grammar path both write it, and a chat turn keeps it.
+  - The runtime holds the item words with that same turn id. They attach only when the ids match
+    (`nlHeldItemWordsFor`).
+  - Before, the match was on completion time. With concurrent turns, a listing that finished after another could
+    overwrite the words and pass the other listing's time check. Mismatched words now never attach.

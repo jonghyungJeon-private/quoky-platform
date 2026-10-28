@@ -723,14 +723,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * equivalent as `lastSelection` (same record, same 30-minute TTL as a selection) so "그 중에 …" refines what the owner
    * saw. Only in `active`; a selection that is not a closed entry with bounded args is ignored. Never throws.
    */
-  async recordGrammarSelection(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, now: IsoTimestamp): Promise<boolean> {
+  async recordGrammarSelection(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, now: IsoTimestamp, turnId?: string): Promise<boolean> {
     if (this.mode !== 'active') return false;
     const stored = sanitizeStoredSelection(selection);
     if (stored === undefined) return false;
     try {
       // Codex P2 (2026-10-27): the listing's dates as resolved now, so a later inheritance never re-resolves "tomorrow".
       const period = heldPeriodOf(nlWave1Entry(stored.entryId), stored.args, now, this.deps.timeZone);
-      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(actorId, stored, now, current, period));
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(actorId, stored, now, current, period, turnId));
       return true;
     } catch (error) {
       this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
@@ -1347,7 +1347,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
     // Codex P2 (2026-10-27): the dates this listing shows (its resolved range), kept for P-time inheritance.
     const period = periodOfRange(selection.range);
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now, current, period));
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now, current, period, turn.turnId));
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };

@@ -3560,7 +3560,8 @@ export class ConversationRuntime {
     const facts = this.nlTurnFacts.get(message);
     if (turn?.keep !== true || facts === undefined) return;
     const words = nlShownItemWords(plainTextOf(outboundBody(result.reply)));
-    this.nlShownItems.set(`${facts.sessionId}|${facts.actorId}`, { at: this.clock(), words });
+    // Codex review of 7f7e8d32: bound to this turn's own listing record (its turn id), never to a completion time.
+    this.nlShownItems.set(`${facts.sessionId}|${facts.actorId}`, { turnId: message.id, words });
   }
 
   /** Mark that this turn wrote `lastSelection` (the selection service did), so the settle step keeps it. */
@@ -3860,8 +3861,8 @@ export class ConversationRuntime {
         }
       });
     // The item words Core held for this listing: only when they were taken at or after the listing was recorded.
-    const held = this.nlShownItems.get(`${session.id}|${actor.id}`);
-    const itemWords = held !== undefined && Date.parse(held.at) >= Date.parse(last.at) ? held.words : undefined;
+    // Codex review of 7f7e8d32: only the words taken from the very turn that recorded this listing attach (turn id match).
+    const itemWords = nlHeldItemWordsFor(this.nlShownItems.get(`${session.id}|${actor.id}`), last);
     return { shown: { entry, args: last.args, ...(itemWords !== undefined && itemWords.length > 0 ? { itemWords } : {}) }, rerunsListing };
   }
 
@@ -4519,7 +4520,7 @@ export class ConversationRuntime {
       this.deps.nlSelection?.mode === 'active' &&
       this.deps.nlSelection.recordGrammarSelection !== undefined
     ) {
-      if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock())) {
+      if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock(), message.id)) {
         this.keepNlLastSelection(message, session);
       }
     }
@@ -9921,13 +9922,25 @@ export function nlConfirmToRecord(handled: TurnHandlerOutcome): TurnHandlerReply
 
 /** Owner decision of 2026-10-28: a small in-memory map of shown item words (at most 256 sessions, oldest dropped first). */
 class BoundedShownItems {
-  private readonly map = new Map<string, { readonly at: IsoTimestamp; readonly words: readonly string[] }>();
-  get(key: string): { readonly at: IsoTimestamp; readonly words: readonly string[] } | undefined {
+  private readonly map = new Map<string, { readonly turnId: string; readonly words: readonly string[] }>();
+  get(key: string): { readonly turnId: string; readonly words: readonly string[] } | undefined {
     return this.map.get(key);
   }
-  set(key: string, value: { readonly at: IsoTimestamp; readonly words: readonly string[] }): void {
+  set(key: string, value: { readonly turnId: string; readonly words: readonly string[] }): void {
     this.map.delete(key);
     this.map.set(key, value);
     while (this.map.size > 256) this.map.delete(this.map.keys().next().value as string);
   }
+}
+
+/**
+ * Codex review of 7f7e8d32: the held item words attach to a `lastSelection` only when they were taken from the very turn
+ * that recorded it (the same turn id). Inbound turns run concurrently: a listing that finishes after another overwrites
+ * the held words, and a completion-time check would then attach them to the other listing's record. Pure.
+ */
+export function nlHeldItemWordsFor(
+  held: { readonly turnId: string; readonly words: readonly string[] } | undefined,
+  last: { readonly turnId?: string },
+): readonly string[] | undefined {
+  return held !== undefined && last.turnId !== undefined && held.turnId === last.turnId ? held.words : undefined;
 }
