@@ -31095,3 +31095,14 @@ The merge waits until EVERY Strict context run is at or above 95%.
     "내일 3시 회의". "NR26 프로젝트 20261029 릴리스 보여줘", "오늘 일정" and "도움말" keep theirs.
   - One runtime unit test changed its quoted example from "커밋해줘" to "테스트 돌려줘". That test's runtime registers no
     code-work handler that would claim "커밋해줘".
+- **Owner decision of 2026-10-28: GENERAL_CHAT runs at medium effort.**
+  - `DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[GENERAL_CHAT]` moves from `low` to `medium`.
+  - Evidence, eval:context at 8a22d019 with the selector on haiku high:
+    - chat at medium (`--chat-effort medium`): 37/38, 38/38, 38/38, 0 hard failures, so the context gate PASSED for
+      the first time;
+    - chat at low at the same HEAD: 38/38, 37/38, 36/38, with 2 hard failures.
+  - `eval:context --chat-effort` now defaults to medium.
+  - `POLICY_SENSITIVE_CHAT` stays low, because the decision names GENERAL_CHAT only. The measured run set both through
+    `--chat-effort`. Owner to confirm.
+  - G7 keeps its frozen chat effort. `tools/g7/claude.mjs` already hard-codes `CLAUDE_EFFORT = 'low'` (part of the frozen
+    harness hashes, unchanged). The G7 argv-parity test now builds the production argv at that frozen effort explicitly.

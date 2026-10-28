@@ -358,7 +358,8 @@ export const DEFAULT_CLAUDE_INTENT_SELECTION_MODEL = 'haiku';
  * Capabilities not listed here (e.g. TEST_EXECUTION) pass no `--effort` flag (CLI default; ADR-0092).
  */
 export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>> = {
-  [Capability.GENERAL_CHAT]: 'low',
+  // Owner decision of 2026-10-28: medium (eval:context with chat medium passed the context gate, 37/38, 38/38, 38/38).
+  [Capability.GENERAL_CHAT]: 'medium',
   [Capability.POLICY_SENSITIVE_CHAT]: 'low',
   [Capability.READONLY_LOOKUP]: 'low',
   [Capability.SUMMARIZATION]: 'low',
