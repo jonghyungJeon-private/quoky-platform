@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type AiProvider, type AiRequest, type NlSelectionDecision } from '@quoky/core';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { NL_ACTION_R2_EVAL_ENTRIES, NL_ACTION_R2_EVAL_GATE, buildActionPlan, computeActionPlanDigest, loadR2ActionCorpus, r2DiagnosticArgs, recordArgs, scoreActionDecision, summarizeActionR2, type NlActionCase, type NlActionRecord } from './nl-action-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatGateRuns, runCli, type CliDeps } from './nl-intent-eval-cli';
 
@@ -69,7 +70,7 @@ describe('eval:nl --mode r2 plan', () => {
   it('prints the plan: the R2 prompt v56, the corpus digest, runs, the call count, the gate; nothing is constructed', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'r2', '--runs', '3'], d)).toBe(EXIT_OK);
-    const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', effort: 'low', runs: 3, concurrency: 4, gitHead: 'rev-1' });
+    const plan = buildActionPlan('nl-action-r2-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low', runs: 3, concurrency: 4, gitHead: 'rev-1' });
     expect(plan.promptVersion).toBe('nl-select.v72');
     expect(plan).toMatchObject({ corpusSha256: sha256, runs: 3, itemR2: 'all', calls: corpus.cases.length * 3, gate: NL_ACTION_R2_EVAL_GATE });
     expect(digestOf(d.out)).toBe(computeActionPlanDigest(plan));

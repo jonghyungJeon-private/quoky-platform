@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSelectionPrompt, Capability, isNlActionEntryId, nlIsPastStatement, nlReadNotRequest, parseNlRef, prepareSelectionInput, resolveItemReference, validateSelection, type AiProvider, type AiRequest, type NlActionEntryId } from '@quoky/core';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import {
   NL_ACTION_EVAL_ENTRIES,
   buildActionPlan,
@@ -430,7 +431,7 @@ describe('eval:nl --mode action / read-regression (the Strict digest rule)', () 
     expect(await runCli(['--mode', 'action', '--approved-plan-digest', '0'.repeat(64)], deps)).toBe(EXIT_BLOCKED);
     expect(created).toEqual([]);
     const { corpus, sha256 } = loadActionCorpus();
-    const digest = computeActionPlanDigest(buildActionPlan('nl-action-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', effort: 'low', runs: 1, concurrency: 4 }));
+    const digest = computeActionPlanDigest(buildActionPlan('nl-action-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low', runs: 1, concurrency: 4 }));
     // The perfect selector still misses the request-form cost golds, so the gate may fail; the run itself completes.
     expect([EXIT_OK, EXIT_GATE_FAILED]).toContain(await runCli(['--mode', 'action', '--approved-plan-digest', digest], deps));
     expect(created).toEqual(['provider']);
