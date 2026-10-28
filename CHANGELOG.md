@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-28).** A chat sentence saying Quoky cannot check something is rewritten into the
+  read's usage when it names the read by a word of its own label ("릴리스", "일정"), or a value of the listing just shown
+  (a project key, an item). A denial about anything else ("회의 내용") is kept, with the read appended.
 - **Changed (owner decision 2026-10-28).** The selector waits up to 10 s, up from 6 s (8 s when cold).
   `QUOKY_NL_INTENT_TIMEOUT_MS` accepts 2000-10000. `eval:context` reports each selection call's latency and its p50
   and p95.

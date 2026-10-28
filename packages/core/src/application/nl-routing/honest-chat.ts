@@ -124,6 +124,11 @@ export interface HonestChatOptions {
    * and what they control. Absent: the fact and the guard are unchanged.
    */
   readonly controls?: NlControlScope;
+  /**
+   * Owner decision of 2026-10-28 (B2): the listing Core holds this turn (`lastSelection` with its turn-bound item words
+   * and titles). A denial naming one of its values (a project key, an item key or title) is about that read: rewritten.
+   */
+  readonly held?: ShownListing;
 }
 
 /**
@@ -389,6 +394,17 @@ const EN_INCAPABLE =
 
 const HELP_INDEX = /^(?:도움말|help)(?:[\s:：]|$)/iu;
 
+/** B2 label rule: whether `alias` occurs in the entry's own label (either language), as a word for an ASCII alias. */
+function labelNames(entry: NlCatalogEntry, alias: string): boolean {
+  return [entry.label.ko, entry.label.en].some((label) => namesAlias(label.toLowerCase(), alias.toLowerCase()));
+}
+
+/** B2: the lower-case values of a held listing: its string arg values, shown item words and titles (2+ characters). */
+function heldValuesOf(held: ShownListing): string[] {
+  const args = Object.values(held.args).filter((value): value is string => typeof value === 'string');
+  return [...new Set([...args, ...(held.itemWords ?? []), ...(held.itemTitles ?? [])].map((value) => value.normalize('NFC').toLowerCase().trim()))].filter((value) => value.length >= 2);
+}
+
 /** Whether a lower-case sentence names a catalog alias: a Hangul alias anywhere (a particle may follow), an ASCII one as a word. */
 function namesAlias(sentence: string, alias: string): boolean {
   if (alias.trim().length < 2) return false;
@@ -435,7 +451,7 @@ export function guardFalseIncapabilityClaims(
   if (options.controls !== undefined) {
     const control = guardFalseControlDenials(raw, language);
     if (control.guarded) {
-      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines);
+      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines, options.held !== undefined ? { held: options.held } : {});
       return { text: rest.text, guarded: true };
     }
   }
@@ -461,8 +477,18 @@ export function guardFalseIncapabilityClaims(
       // Jira release read) are mentions of that source's topic. An ASCII alias must stand as a word ("pr" is not
       // "project"). Codex review of 68acf4f6 P2: an alias only names a topic, not a supported read ("회의 내용은 확인할
       // 수 없어요" can be true), so an alias-only denial is kept and only the entry's own read is appended, scoped by name.
-      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) aliasOnly.set(entry.id, entry);
+      // Owner decision of 2026-10-28 (B2, the label rule): an alias inside the entry's own label ("릴리스" in "Jira 릴리스
+      // 조회", "일정" in "캘린더 일정 조회") names what that read returns, so it is a source mention and is rewritten.
+      else if (entry.sourceNames !== undefined) {
+        const named = entry.aliases.filter((alias) => namesAlias(lower, alias.toLowerCase()));
+        if (named.some((alias) => labelNames(entry, alias))) hit.set(entry.id, entry);
+        else if (named.length > 0) aliasOnly.set(entry.id, entry);
+      }
     }
+    // Owner decision of 2026-10-28 (B2, union): a denial naming a value of the listing Core holds this turn (an arg value
+    // such as a project key, a shown item word or title) is about that read: rewritten with its usage.
+    const held = options.held;
+    if (held !== undefined && heldValuesOf(held).some((value) => namesAlias(lower, value))) hit.set(held.entry.id, held.entry);
   }
   if (hit.size === 0) {
     if (aliasOnly.size === 0) return unchanged;
@@ -499,6 +525,11 @@ export interface ShownListing {
    * that names one of them refers to the listing. Never persisted, never sent anywhere (ADR-0110 D4).
    */
   readonly itemWords?: readonly string[];
+  /**
+   * Owner decision of 2026-10-28 (B2): the item titles Core showed in that listing (`nlShownItemTitles`), bound to the
+   * very turn that recorded it like the item words; process memory only (ADR-0110 D4).
+   */
+  readonly itemTitles?: readonly string[];
 }
 
 /** The word tokens of a text: letters and digits, lower-cased (NFC); everything else separates. */

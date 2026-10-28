@@ -3863,8 +3863,19 @@ export class ConversationRuntime {
       });
     // The item words Core held for this listing: only when they were taken at or after the listing was recorded.
     // Codex review of 7f7e8d32: only the words taken from the very turn that recorded this listing attach (turn id match).
-    const itemWords = nlHeldItemWordsFor(this.nlShownItems.get(`${session.id}|${actor.id}`), last);
-    return { shown: { entry, args: last.args, ...(itemWords !== undefined && itemWords.length > 0 ? { itemWords } : {}) }, rerunsListing };
+    const held = this.nlShownItems.get(`${session.id}|${actor.id}`);
+    const itemWords = nlHeldItemWordsFor(held, last);
+    // Owner decision of 2026-10-28 (B2): the shown titles, bound to the same listing record (turn id match).
+    const itemTitles = held === undefined ? undefined : nlHeldItemWordsFor({ turnId: held.turnId, words: held.titles }, last);
+    return {
+      shown: {
+        entry,
+        args: last.args,
+        ...(itemWords !== undefined && itemWords.length > 0 ? { itemWords } : {}),
+        ...(itemTitles !== undefined && itemTitles.length > 0 ? { itemTitles } : {}),
+      },
+      rerunsListing,
+    };
   }
 
   /** A handler's Class B probe, only when its catalog equivalent (if any) is offered this turn; never throws. */
@@ -9300,7 +9311,11 @@ export class ConversationRuntime {
       const language = languageOf(currentUserMessage);
       const listing = nlFacts.listing === undefined ? { text, guarded: false } : guardShownListingDenials(text, nlFacts.listing.shown, nlFacts.entries, language, nlFacts.listing.rerunsListing);
       if (listing.guarded) this.deps.logger.info('shown listing denial removed', { capability, entryId: nlFacts.listing?.shown.entry.id, ...(taskId ? { taskId } : {}) });
-      const incapable = guardFalseIncapabilityClaims(listing.text, nlFacts.entries, language, this.contributedHelpLines, controls !== undefined ? { controls } : {});
+      // Owner decision of 2026-10-28 (B2): the held listing's values (turn-bound) make a denial naming them false too.
+      const incapable = guardFalseIncapabilityClaims(listing.text, nlFacts.entries, language, this.contributedHelpLines, {
+        ...(controls !== undefined ? { controls } : {}),
+        ...(nlFacts.listing !== undefined ? { held: nlFacts.listing.shown } : {}),
+      });
       if (!incapable.guarded) return listing;
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };

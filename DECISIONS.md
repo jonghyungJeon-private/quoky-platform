@@ -31063,3 +31063,19 @@ The merge waits until EVERY Strict context run is at or above 95%.
     `QuokyCore.handleInboundMessage` calls `sendTyping` before the runtime runs; Discord refreshes it under its ~10 s
     TTL and Telegram re-sends `sendChatAction` under its ~5 s TTL, both capped at about 2 minutes. Nothing new is sent.
     A "답변 생각 중…" message edited in place would be a new outbound behaviour (CA and ADR); it is proposed, not built.
+- **Owner decision of 2026-10-28 (B2): which alias-only denials are false. The label rule, plus held values.**
+  - **Label rule.** In the D9 guard (`guardFalseIncapabilityClaims`), a source entry's alias that occurs in that entry's
+    own label (Korean or English) names what the read returns. It counts as a source mention, so the denial is
+    rewritten. Examples: "릴리스" in "Jira 릴리스 조회", "일정" in "캘린더 일정 조회", "PR" in "GitHub 이슈·PR 조회". Any
+    other alias keeps the denial and appends the entry's read (the P2-1 behaviour): "회의 내용은 확인할 수 없어요" is
+    kept.
+  - **Union with held values.** A denial naming a value of the listing Core holds this turn is about that read and is
+    rewritten with its usage. The values are the string arg values (a project key) and the shown item words and titles.
+    They are bound to the same listing record by turn id, process memory only.
+  - Order in the runtime: the shown-listing guard still runs first. A denial that names a shown item is dropped there,
+    as before, so the held-value rule rewrites what that guard leaves.
+  - Tests:
+    - rewritten: both measured sentences ("NR26 릴리스 내용은 여기서 직접 확인할 수 없어요", "현재 연결 상태나 릴리스
+      내용은 여기서 확인할 수 없어요"), "면접 일정은 확인할 수 없어요" and a shown issue key;
+    - kept: "회의 내용은 확인할 수 없어요".
+  - The P2-1 tests that pinned the kept "일정" denial now expect the rewrite.

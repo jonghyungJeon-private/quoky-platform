@@ -504,24 +504,35 @@ describe('receipts: lastAction, the echo label and the delivery binding', () => 
   });
 });
 
-describe('honest chat D9 guard: catalog aliases are topic mentions (owner-approved fix of 2026-10-28; Codex review P2)', () => {
-  it('a denial naming a source entry only by its alias is kept, with that read appended; an ASCII alias counts only as a word', () => {
-    const reply = '지금 릴리스 조회가 가능한지, 그리고 결과가 어떤지는 이 답변에서는 확인할 수 없어요.';
-    const guarded = guardFalseIncapabilityClaims(reply, READS, 'ko');
-    expect(guarded.guarded).toBe(true);
-    expect(guarded.text.startsWith(reply)).toBe(true);
-    expect(guarded.text).toContain(NL_WAVE1_ENTRIES['jira.release'].usage.ko);
-    // Codex review of 68acf4f6 P2: a true limitation about a topic word stays true; no capability claim replaces it.
+describe('honest chat D9 guard: catalog aliases (owner decisions of 2026-10-28: the label rule and held values)', () => {
+  const rewritten = (text: string, options = {}) => guardFalseIncapabilityClaims(text, READS, 'ko', [], options).text.includes('바로 조회할 수 있어요');
+  it('an alias inside the entry label is a source mention (rewritten); any other alias keeps the denial with the scoped read appended', () => {
+    // The two measured false denials (fr-release-list-pick t1, cy-question-then-other t3): "릴리스" is in "Jira 릴리스 조회".
+    expect(rewritten('NR26 릴리스 내용은 여기서 직접 확인할 수 없어요.')).toBe(true);
+    expect(rewritten('현재 연결 상태나 릴리스 내용은 여기서 확인할 수 없어요.')).toBe(true);
+    // "일정" is in "캘린더 일정 조회".
+    expect(rewritten('면접 일정은 확인할 수 없어요.')).toBe(true);
+    // "회의" is a calendar alias but not in its label: the true denial is kept, with only the calendar read appended.
     const meeting = guardFalseIncapabilityClaims('회의 내용은 확인할 수 없어요.', READS, 'ko');
     expect(meeting.text.startsWith('회의 내용은 확인할 수 없어요.')).toBe(true);
     expect(meeting.text).not.toContain('바로 조회할 수 있어요');
     expect(meeting.text).toContain(NL_WAVE1_ENTRIES['calendar.events'].usage.ko);
     // A source name keeps the replacement unchanged.
-    expect(guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요.', READS, 'ko').text).toContain('바로 조회할 수 있어요');
-    // "pr" is a GitHub alias, but not inside "project"; an alias of an entry with no source names is not a source.
+    expect(rewritten('캘린더는 확인할 수 없어요.')).toBe(true);
+    // "pr" is a GitHub alias (and in its label), but not inside "project"; an entry with no source names is not a source.
     expect(guardFalseIncapabilityClaims('That project data is something I cannot see from here.', READS, 'en')).toEqual({ text: 'That project data is something I cannot see from here.', guarded: false });
-    expect(guardFalseIncapabilityClaims('I cannot see your PRs from here.', READS, 'en').guarded).toBe(true);
+    expect(guardFalseIncapabilityClaims('I cannot see your PRs from here.', READS, 'en').text).toContain('Quoky can read these for you');
     expect(guardFalseIncapabilityClaims('브리핑 내용은 이 답변에서 확인할 수 없어요.', READS, 'ko').guarded).toBe(false);
+  });
+
+  it('a denial naming a value of the listing Core holds this turn (a project key, a shown item key or title) is rewritten', () => {
+    const held = { entry: NL_WAVE1_ENTRIES['jira.issues'], args: { project: 'NR26' }, itemWords: ['결제', '오류'], itemTitles: ['NR26-11 결제 오류 수정'] };
+    expect(rewritten('NR26-11 상세는 제가 확인할 수 없어요.', { held })).toBe(true);
+    expect(rewritten('NR26-11 상세는 제가 확인할 수 없어요.')).toBe(false);
+    expect(rewritten('NR26 쪽은 제가 확인할 수 없어요.', { held })).toBe(true);
+    expect(guardFalseIncapabilityClaims('NR26-11 상세는 제가 확인할 수 없어요.', READS, 'ko', [], { held }).text).toContain(NL_WAVE1_ENTRIES['jira.issues'].usage.ko);
+    // A true limitation that names none of them is kept.
+    expect(rewritten('실시간 날씨는 확인할 수 없어요.', { held })).toBe(false);
   });
 });
 
