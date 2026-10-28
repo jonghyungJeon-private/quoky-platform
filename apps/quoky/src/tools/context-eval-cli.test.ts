@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
 import { CONTEXT_EVAL_CONFIGURED_READS, EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_INVALID, EXIT_OK, EXIT_USAGE, capabilityNouns, parseArguments, runCli, type ContextEvalDeps, type RunInput } from './context-eval-cli';
 import { loadContextEvalCorpus, scoreScenario, type ContextEvalCorpus } from './context-eval';
@@ -110,8 +111,10 @@ describe('context eval CLI — plan and the Strict boundary', () => {
     const d = deps();
     expect(await runCli(['--mode', 'run', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--approved-plan-digest', digestOf(plan.out)], d)).toBe(EXIT_OK);
     // Owner decision of 2026-10-28 (cost study P0): the effort reaches the provider and is bound into the digest.
-    expect(d.createSelectionProvider).toHaveBeenCalledWith('haiku', 'low');
-    expect(plan.out.join('\n')).toContain('"selectionEffort": "low"');
+    // The default is the adapter's selection effort (high since the owner decision of 2026-10-28).
+    const selectionDefault = DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low';
+    expect(d.createSelectionProvider).toHaveBeenCalledWith('haiku', selectionDefault);
+    expect(plan.out.join('\n')).toContain(`"selectionEffort": "${selectionDefault}"`);
     const medium = deps();
     await runCli(['--mode', 'plan', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--effort', 'medium'], medium);
     expect(digestOf(medium.out)).not.toBe(digestOf(plan.out));
