@@ -504,12 +504,20 @@ describe('receipts: lastAction, the echo label and the delivery binding', () => 
   });
 });
 
-describe('honest chat D9 guard: catalog aliases are source mentions (owner-approved fix of 2026-10-28)', () => {
-  it('a denial naming a source entry by its alias offers that read; an ASCII alias counts only as a word', () => {
+describe('honest chat D9 guard: catalog aliases are topic mentions (owner-approved fix of 2026-10-28; Codex review P2)', () => {
+  it('a denial naming a source entry only by its alias is kept, with that read appended; an ASCII alias counts only as a word', () => {
     const reply = '지금 릴리스 조회가 가능한지, 그리고 결과가 어떤지는 이 답변에서는 확인할 수 없어요.';
     const guarded = guardFalseIncapabilityClaims(reply, READS, 'ko');
     expect(guarded.guarded).toBe(true);
+    expect(guarded.text.startsWith(reply)).toBe(true);
     expect(guarded.text).toContain(NL_WAVE1_ENTRIES['jira.release'].usage.ko);
+    // Codex review of 68acf4f6 P2: a true limitation about a topic word stays true; no capability claim replaces it.
+    const meeting = guardFalseIncapabilityClaims('회의 내용은 확인할 수 없어요.', READS, 'ko');
+    expect(meeting.text.startsWith('회의 내용은 확인할 수 없어요.')).toBe(true);
+    expect(meeting.text).not.toContain('바로 조회할 수 있어요');
+    expect(meeting.text).toContain(NL_WAVE1_ENTRIES['calendar.events'].usage.ko);
+    // A source name keeps the replacement unchanged.
+    expect(guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요.', READS, 'ko').text).toContain('바로 조회할 수 있어요');
     // "pr" is a GitHub alias, but not inside "project"; an alias of an entry with no source names is not a source.
     expect(guardFalseIncapabilityClaims('That project data is something I cannot see from here.', READS, 'en')).toEqual({ text: 'That project data is something I cannot see from here.', guarded: false });
     expect(guardFalseIncapabilityClaims('I cannot see your PRs from here.', READS, 'en').guarded).toBe(true);

@@ -157,12 +157,13 @@ describe('context eval runner — dry, over the production AppModule', () => {
     chatReply = weather;
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
     chatReply = reply;
-    // Without a listing record (help ends the window), the shown-listing guard does not apply; the denial names the
-    // calendar by its catalog alias ("일정"), so the D9 guard offers the read (owner-approved fix of 2026-10-28).
+    // Without a listing record (help ends the window), the shown-listing guard does not apply. The denial names the
+    // calendar only by a catalog alias ("일정"), so it is kept as written (Codex review of 68acf4f6 P2); only the calendar
+    // read is appended, scoped by its label.
     await world.turn(owner, '도움말', owner.dm);
     const unrelated = await world.turn(owner, '고마워', owner.dm);
-    expect(unrelated.reply).not.toBe(reply);
-    expect(unrelated.reply).toContain('바로 조회할 수 있어요');
+    expect(unrelated.reply.startsWith(reply)).toBe(true);
+    expect(unrelated.reply).not.toContain('바로 조회할 수 있어요');
     // A true unrelated limitation is still kept as written.
     chatReply = weather;
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);

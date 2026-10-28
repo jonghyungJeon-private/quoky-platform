@@ -451,17 +451,28 @@ export function guardFalseIncapabilityClaims(
   const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]).filter((command) => !HELP_INDEX.test(command));
   if (commands.some((command) => text.includes(command))) return unchanged;
   const hit = new Map<string, NlCatalogEntry>();
+  const aliasOnly = new Map<string, NlCatalogEntry>();
   for (const sentence of text.split(/(?<=[.!?。])\s+|\n+/u)) {
     if (!KO_INCAPABLE.test(sentence) && !EN_INCAPABLE.test(sentence)) continue;
     const lower = sentence.toLowerCase();
     for (const entry of entries) {
       if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) hit.set(entry.id, entry);
       // Owner-approved fix of 2026-10-28 (cy-question-then-other): a source entry's own catalog aliases ("릴리스" for the
-      // Jira release read) are mentions of that source too. An ASCII alias must stand as a word ("pr" is not "project").
-      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) hit.set(entry.id, entry);
+      // Jira release read) are mentions of that source's topic. An ASCII alias must stand as a word ("pr" is not
+      // "project"). Codex review of 68acf4f6 P2: an alias only names a topic, not a supported read ("회의 내용은 확인할
+      // 수 없어요" can be true), so an alias-only denial is kept and only the entry's own read is appended, scoped by name.
+      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) aliasOnly.set(entry.id, entry);
     }
   }
-  if (hit.size === 0) return unchanged;
+  if (hit.size === 0) {
+    if (aliasOnly.size === 0) return unchanged;
+    const scoped = [...aliasOnly.values()];
+    const note =
+      language === 'en'
+        ? ['For reference, what Quoky can read:', ...scoped.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`)]
+        : ['참고로 Quoky가 조회할 수 있는 범위는 이거예요:', ...scoped.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)];
+    return { text: [text.trimEnd(), '', ...note].join('\n'), guarded: true };
+  }
   const offers = [...hit.values()];
   if (language === 'en') {
     return {

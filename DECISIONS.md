@@ -31007,3 +31007,10 @@ The merge waits until EVERY Strict context run is at or above 95%.
   - At least one other option must remain. If every option is a date reading, nothing is dropped. The rest is decided as
     before: one unchanged read option runs (fix 2), two or more ask.
   - No word list. No gold changed.
+- **Codex review of 34080848..68acf4f6, P2 1 (fix 4): an alias-only denial is kept.**
+  - A catalog alias names a topic, not a supported read. "회의 내용은 확인할 수 없어요" can be true; turning it into
+    "바로 조회할 수 있어요" made a false capability claim.
+  - When a denial names a source entry only by an alias, the reply is kept word for word. Only that entry's own read is
+    appended, scoped by its label and usage ("참고로 Quoky가 조회할 수 있는 범위는 이거예요: - 캘린더 일정 조회: …").
+  - A denial naming a source name is replaced as before.
+  - The two tests changed by fix 4 now pin the kept denial.

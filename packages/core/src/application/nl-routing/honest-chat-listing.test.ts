@@ -40,11 +40,13 @@ describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', ()
     const named = guardFalseIncapabilityClaims('죄송하지만 캘린더를 확인할 수 없어요.', CONFIGURED, 'ko');
     expect(named.guarded).toBe(true);
     expect(named.text).toContain('- 캘린더 일정 조회: "오늘 일정"');
-    // Owner-approved fix of 2026-10-28: the live reply names the calendar by its catalog alias ("일정"), which is a source
-    // mention too, so it is replaced. A sentence naming no source or alias is still kept.
+    // Codex review of 68acf4f6 P2: the live reply names the calendar only by a catalog alias ("일정"), a topic, not a source
+    // name: the honest denial is kept word for word, and only the calendar read is appended, scoped by its own label.
     const live = '내일 면접 일정은 제가 직접 확인할 수 없어서 일반적인 질문을 드릴게요.';
-    expect(guardFalseIncapabilityClaims(live, CONFIGURED, 'ko')).toMatchObject({ guarded: true });
-    expect(guardFalseIncapabilityClaims(live, CONFIGURED, 'ko').text).toContain('- 캘린더 일정 조회: "오늘 일정"');
+    const kept = guardFalseIncapabilityClaims(live, CONFIGURED, 'ko');
+    expect(kept.text.startsWith(live)).toBe(true);
+    expect(kept.text).toContain('- 캘린더 일정 조회: "오늘 일정"');
+    expect(kept.text).not.toContain('바로 조회할 수 있어요');
     const plain = '내일 면접이 있는지는 제가 직접 확인할 수 없어서 일반적인 질문을 드릴게요.';
     expect(guardFalseIncapabilityClaims(plain, CONFIGURED, 'ko')).toEqual({ text: plain, guarded: false });
   });
