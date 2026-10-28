@@ -18,8 +18,8 @@ import { NL_SELECTION_TIMEOUT_MS } from '@quoky/core';
  *   live; after a Class B grammar has answered, one background selection runs for the agreement log only.
  * - `QUOKY_NL_INTENT_MODEL`: the Claude CLI `--model` of a selection call (an alias such as `haiku`, or a full model name);
  *   default `haiku`. Adapter configuration only: Core never sees it.
- * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 8000;
- *   default `NL_SELECTION_TIMEOUT_MS` (6 s).
+ * - `QUOKY_NL_INTENT_TIMEOUT_MS` (ADR-0120 amendment A3): the per-call selection bound, an integer from 2000 to 10000
+ *   (owner decision of 2026-10-28); default `NL_SELECTION_TIMEOUT_MS` (10 s).
  * - `QUOKY_NL_ACTIONS` (ADR-0120 amendment A6-D8): exactly `off`, `shadow`, `local` or `external`; default `off` (no action
  *   entry is ever offered and every prompt and reply is byte-identical to `nl-select.v73` (the read prompt)). Any other value requires
  *   `QUOKY_NL_INTENT_MODE=active` (`NL_ACTIONS_REQUIRES_ACTIVE`, a startup refusal); the composition root always builds
@@ -88,11 +88,12 @@ const ACTION_LEVELS: readonly NlActionsConfig[] = ['off', 'shadow', 'local', 'ex
 /** The `QUOKY_CLAUDE_MODEL` shape (an alias or a full model name). */
 const CLAUDE_MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/;
 const TIMEOUT_MIN_MS = 2_000;
-const TIMEOUT_MAX_MS = 8_000;
+/** Owner decision of 2026-10-28: the upper limit is 10 s (was 8 s). */
+const TIMEOUT_MAX_MS = 10_000;
 
 /**
  * The `QUOKY_NL_INTENT_TIMEOUT_MS` rule (amendment A3), shared with the evaluation CLI: a whole number of milliseconds
- * from 2000 to 8000 written as plain digits. Returns the value, or `undefined` when the text does not satisfy it.
+ * from 2000 to 10000 written as plain digits. Returns the value, or `undefined` when the text does not satisfy it.
  */
 export function parseNlIntentTimeoutMs(raw: string): number | undefined {
   if (!/^[0-9]+$/.test(raw)) return undefined;

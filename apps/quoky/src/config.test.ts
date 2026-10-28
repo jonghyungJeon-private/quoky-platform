@@ -539,7 +539,7 @@ describe('loadConfig — egress guard (ADR-0121 S0)', () => {
 
 describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
   it('defaults to off with the haiku selection model, and accepts exactly off, shadow or active', () => {
-    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 6000, actions: 'off', deicticWrites: 'off', itemR2: 'off' });
+    expect(loadConfig(env({})).nlSelection).toEqual({ mode: 'off', model: 'haiku', grammarYield: false, phase: 'a', timeoutMs: 10000, actions: 'off', deicticWrites: 'off', itemR2: 'off' });
     expect(loadConfig(env({})).ai.intentSelectionModel).toBe('haiku');
     for (const mode of ['off', 'shadow', 'active'] as const) {
       expect(loadConfig(env({ QUOKY_NL_INTENT_MODE: mode })).nlSelection.mode).toBe(mode);
@@ -605,10 +605,11 @@ describe('loadConfig — natural-language selection (ADR-0120 D11, D2)', () => {
     expect(() => loadConfig(env({ QUOKY_NL_INTENT_MODE: value }))).toThrow(/^NL_INTENT_MODE_INVALID$/);
   });
 
-  it('QUOKY_NL_INTENT_TIMEOUT_MS defaults to 6 s and accepts a whole number from 2000 to 8000 (amendment A3)', () => {
-    expect(loadConfig(env({})).nlSelection.timeoutMs).toBe(6000);
+  it('QUOKY_NL_INTENT_TIMEOUT_MS defaults to 10 s and accepts a whole number from 2000 to 10000 (amendment A3; owner decision 2026-10-28)', () => {
+    expect(loadConfig(env({})).nlSelection.timeoutMs).toBe(10000);
     expect(loadConfig(env({ QUOKY_NL_INTENT_TIMEOUT_MS: '5000' })).nlSelection.timeoutMs).toBe(5000);
-    for (const value of ['1999', '8001', 'abc', '5.5']) {
+    expect(loadConfig(env({ QUOKY_NL_INTENT_TIMEOUT_MS: '10000' })).nlSelection.timeoutMs).toBe(10000);
+    for (const value of ['1999', '10001', 'abc', '5.5']) {
       expect(() => loadConfig(env({ QUOKY_NL_INTENT_TIMEOUT_MS: value })), value).toThrow(/^NL_INTENT_TIMEOUT_INVALID$/);
     }
   });

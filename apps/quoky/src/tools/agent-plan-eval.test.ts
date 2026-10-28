@@ -437,14 +437,14 @@ describe('plan digest', () => {
     expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v10', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v10', callTimeoutMs: 10000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('rejects out-of-range options', () => {
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, runs: 6 })).toThrow(/runs/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, concurrency: 0 })).toThrow(/concurrency/);
-    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, timeoutMs: 9000 })).toThrow(/timeoutMs/);
+    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, timeoutMs: 10001 })).toThrow(/timeoutMs/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, model: '--x' })).toThrow(/model/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, effort: '--x' })).toThrow(/effort/);
   });

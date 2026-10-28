@@ -121,6 +121,21 @@ describe('context eval CLI — plan and the Strict boundary', () => {
     expect(JSON.parse(d.reports[0] as string).plan.digest).toBe(digestOf(plan.out));
   });
 
+  it('owner decision of 2026-10-28: the report records each selection call latency (ms, content-free) and its p50 / p95', async () => {
+    const plan = deps();
+    await runCli(['--mode', 'plan', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions'], plan);
+    // A stub clock that moves 7 ms per read: every call reads it twice, so each call takes 7 ms.
+    let clock = 0;
+    const d = deps({ elapsed: () => (clock += 7) });
+    expect(await runCli(['--mode', 'run', '--scenarios', 'fr-jira-keyword-count,lc-interview-questions', '--approved-plan-digest', digestOf(plan.out)], d)).toBe(EXIT_OK);
+    const latency = JSON.parse(d.reports[0] as string).selectionLatency;
+    expect(latency).toMatchObject({ calls: 6, boundMs: 10_000, overBound: 0, timeouts: 0 });
+    expect(latency.callsMs).toHaveLength(6);
+    expect(latency.callsMs.every((call: { ms: number; outcome: string }) => Number.isInteger(call.ms) && call.outcome === 'ok')).toBe(true);
+    expect(latency).toMatchObject({ p50: 7, p95: 7, max: 7 });
+    expect(d.out.join('\n')).toMatch(/selection latency: p50 \d+ ms, p95 \d+ ms, max \d+ ms over 6 calls; 0 over the 10000 ms bound, 0 timeouts/);
+  });
+
   it('owner decision 2026-10-27: the gate is per run, never pooled, and needs 3 runs', async () => {
     const scenarios = 'fr-jira-keyword-count,lc-interview-questions';
     // One scenario failing in run 2 only: 5 of 6 pooled (83%) and runs 1 and 3 at 100% — the gate fails on run 2 alone.

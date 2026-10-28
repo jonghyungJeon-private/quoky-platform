@@ -731,9 +731,10 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
         service.startedAtMs = savedStart;
         service.lastCompletedAtMs = savedLast;
       }
-      // The configured bound is an integer 2000..8000 ms; anything else is a startup error.
+      // The configured bound is an integer 2000..10000 ms (owner decision of 2026-10-28); anything else is a startup error.
       expect(parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: '2000' }).timeoutMs).toBe(2000);
-      for (const bad of ['1999', '8001', '5e3', '6 s']) expect(() => parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: bad })).toThrow();
+      expect(parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: '10000' }).timeoutMs).toBe(10000);
+      for (const bad of ['1999', '10001', '5e3', '6 s']) expect(() => parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: bad })).toThrow();
     });
 
     it('Phase c-shadow: Phase A stays live (the grammar answers), selection runs once after the reply and only an agreement line is logged', async () => {

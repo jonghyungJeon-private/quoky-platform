@@ -31048,3 +31048,18 @@ The merge waits until EVERY Strict context run is at or above 95%.
     (high).
   - The plan records it as `effort`, and the run's provider uses it. The D12 agent-plan gate rerun is therefore bound to
     the effort it runs at, like `eval:nl` and `eval:context`.
+- **Owner decision of 2026-10-28 (amends ADR-0120 amendment A3): the selector bound is 10 s.**
+  - `NL_SELECTION_TIMEOUT_MS` goes from 6 s to 10 s. The cold-start bound `NL_SELECTION_COLD_TIMEOUT_MS` goes from 8 s to
+    10 s, so it stays at most 10 s and equals the default.
+  - The allowed range of `QUOKY_NL_INTENT_TIMEOUT_MS` widens from 2000-8000 to 2000-10000. This also applies to the eval
+    CLIs' `--timeout-ms`, the config preflight message and `.env.example`. The eval CLIs default to the runtime bound,
+    so the `eval:nl`, `eval:agent-plan` and `nl-action` plans now carry 10000 ms.
+  - Evidence: haiku high timed out on 8 of 263 selection calls at 6 s (eval:context, 8a22d019).
+  - Not changed: the agent shadow planner's own bound (`AGENT_SHADOW_DEFAULT_TIMEOUT_MS`, 6 s). The planner shares the
+    selector's capability and now runs at high effort. Owner to decide.
+  - `eval:context` now records each selection call's wall time and outcome (`selectionLatency.callsMs`, content-free)
+    with p50, p95, max, over-bound and timeouts, so the next gate can report them.
+  - Progress notice: Quoky already shows the platform's typing indicator for the whole turn, selection included.
+    `QuokyCore.handleInboundMessage` calls `sendTyping` before the runtime runs; Discord refreshes it under its ~10 s
+    TTL and Telegram re-sends `sendChatAction` under its ~5 s TTL, both capped at about 2 minutes. Nothing new is sent.
+    A "답변 생각 중…" message edited in place would be a new outbound behaviour (CA and ADR); it is proposed, not built.

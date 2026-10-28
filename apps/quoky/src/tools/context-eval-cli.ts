@@ -26,6 +26,7 @@ import {
   NL_ACTION_PROMPT_VERSION,
   NL_ACTION_R2_PROMPT_VERSION,
   NL_SELECTION_PROMPT_VERSION,
+  NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   NL_CATALOG_ENTRY_IDS,
   NL_ACTION_ENTRY_IDS,
@@ -41,6 +42,8 @@ import {
   outageAlsoSeenNote,
   printInvalidRun,
   providerCanary,
+  summarizeLatency,
+  timeEvalProvider,
   type CanaryResult,
   type ProviderOutageReport,
 } from './eval-provider-guard';
@@ -188,6 +191,8 @@ export interface ContextEvalDeps {
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Boots one world per run and runs the scenarios (tests inject it; production uses the real harness). */
   readonly runScenarios?: (input: RunInput) => Promise<ScenarioRecord[]>;
+  /** Tests only: a monotonic millisecond clock for the per-call selection latency (default `performance.now`). */
+  readonly elapsed?: () => number;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -338,7 +343,9 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
     deps.stderr('BLOCKED: the selection provider is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardEvalProvider(selector, {
+  // Owner decision of 2026-10-28: every selection call is timed (wall ms and outcome only) for the gate's p50 / p95.
+  const timed = timeEvalProvider(selector, deps.elapsed ?? (() => performance.now()));
+  const guard = guardEvalProvider(timed.provider, {
     concurrency: 1,
     maxCalls: plan.maxSelectionCalls,
     canary: deps.canary !== undefined ? () => (deps.canary as (provider: AiProvider) => Promise<CanaryResult>)(selector) : providerCanary(selector, undefined, Capability.INTENT_SELECTION),
@@ -379,6 +386,8 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   await chatGuard?.settle();
   const outage: ProviderOutageReport = guard.report();
   const chatOutage = chatGuard?.report();
+  const timedCalls = timed.calls();
+  const selectionLatency = { ...summarizeLatency(timedCalls, NL_SELECTION_TIMEOUT_MS), callsMs: timedCalls };
   const invalidReason = outage.invalidReason ?? chatOutage?.invalidReason;
   const summaries = summariesOf(records, plan.runs);
   const hard = Object.fromEntries(HARD_CHECKS.map((name) => [name, summaries.reduce((sum, summary) => sum + summary.hard[name], 0)]));
@@ -388,13 +397,14 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   const overBound = counts.refused > 0 || (chatCounts?.refused ?? 0) > 0;
   if (invalidReason !== undefined && hardFailureTotal(hard) === 0) {
     printInvalidRun(deps.stdout, 'context gate', plan.runs, chatOutage?.invalidReason !== undefined && outage.invalidReason === undefined ? chatOutage : outage, hard);
-    const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), verdict: `INVALID (provider unavailable: ${invalidReason})`, hardFailures: hard, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, records }, null, 2)}\n`);
+    const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), verdict: `INVALID (provider unavailable: ${invalidReason})`, hardFailures: hard, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, selectionLatency, records }, null, 2)}\n`);
     deps.stdout(`results written to ${path}`);
     return EXIT_INVALID;
   }
   report(deps, summaries);
   deps.stdout(`selection: ${counts.ok} answered, ${counts.failed} failed, ${counts.refused} refused over the bound (bound ${plan.maxSelectionCalls})${overBound ? '  BOUND EXCEEDED: the evaluation fails' : ''}`);
   deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(`selection latency: p50 ${selectionLatency.p50} ms, p95 ${selectionLatency.p95} ms, max ${selectionLatency.max} ms over ${selectionLatency.calls} calls; ${selectionLatency.overBound} over the ${selectionLatency.boundMs} ms bound, ${selectionLatency.timeouts} timeouts`);
   if (chatCounts !== undefined && chatOutage !== undefined) {
     deps.stdout(`chat: ${chatCounts.ok} answered, ${chatCounts.failed} failed, ${chatCounts.refused} refused over the bound (bound ${plan.maxChatCalls})`);
     deps.stdout(formatProviderOutcomes(chatOutage));
@@ -406,7 +416,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   deps.stdout(
     `context gate (${CONTEXT_EVAL_GATE.runs} runs; EACH run >= ${plan.gate.scenarioPassRate * 100}% scenarios, 0 hard failures, 0 harness errors): ${passed ? 'PASSED' : `FAILED${enoughRuns ? '' : ` (the gate needs ${CONTEXT_EVAL_GATE.runs} runs; this plan has ${plan.runs})`}${invalidReason !== undefined ? ` ${outageAlsoSeenNote(invalidReason)}` : ''}`}`,
   );
-  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, records }, null, 2)}\n`);
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, selectionLatency, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return passed ? EXIT_OK : EXIT_GATE_FAILED;
 }

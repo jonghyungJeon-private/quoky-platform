@@ -141,7 +141,7 @@ import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
  * - `active`: the decision is acted on — an executable read, one numbered question, or honest chat.
  *
  * One call per message at most, through the `CapabilityRouter` for `Capability.INTENT_SELECTION` with no session context
- * (the owner's chat-tier choice does not apply, D2); a 6 s default bound (ADR-0120 amendment A3, configurable via
+ * (the owner's chat-tier choice does not apply, D2); a 10 s default bound (ADR-0120 amendment A3 as amended by the owner decision of 2026-10-28, configurable via
  * `QUOKY_NL_INTENT_TIMEOUT_MS`) and no retry (D3). Before any call the complete request
  * — the prepared text and the previous selection's args — passes the credential guard; a credential-shaped value skips
  * selection with no call (D3 pre-egress guard). The cache is in memory only: per actor, 10 minutes, 256 entries.
@@ -167,9 +167,13 @@ export interface SelectionCallMeta {
   readonly boundMs: number;
 }
 
-export const NL_SELECTION_TIMEOUT_MS = 6_000;
-/** Cold-start bound: the configured upper limit of `QUOKY_NL_INTENT_TIMEOUT_MS`; never exceeded. */
-export const NL_SELECTION_COLD_TIMEOUT_MS = 8_000;
+/**
+ * Owner decision of 2026-10-28 (amends ADR-0120 amendment A3): 10 s, raised from 6 s for the high-effort selector (haiku
+ * high timed out on 8 of 263 selection calls at 6 s, eval:context at 8a22d019).
+ */
+export const NL_SELECTION_TIMEOUT_MS = 10_000;
+/** Cold-start bound: the configured upper limit of `QUOKY_NL_INTENT_TIMEOUT_MS` (10 s since 2026-10-28); never exceeded. */
+export const NL_SELECTION_COLD_TIMEOUT_MS = 10_000;
 /** The cold window: the first 180 s after the process starts. */
 export const NL_SELECTION_COLD_START_MS = 180_000;
 /** The cold window after idling: more than 30 min since the last completed selector call. */
@@ -2511,7 +2515,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * The selector bound at `nowMs`: the configured bound (default 6 s), raised to 8 s (the configured upper limit, never
+   * The selector bound at `nowMs`: the configured bound (default 10 s), raised to 10 s (the configured upper limit, never
    * more) while the process is younger than 180 s or the last completed selector call is more than 30 min old.
    * Content-free; sends nothing.
    */

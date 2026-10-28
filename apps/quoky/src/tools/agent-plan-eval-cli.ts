@@ -62,7 +62,7 @@ Strict:   pnpm eval:agent-plan -- --mode run [options] --approved-plan-digest <s
 
 Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --effort <${CLAUDE_EFFORT_LEVEL_NAMES.join('|')}, default the adapter's selection effort ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low'}; bound into the digest>
          --runs <1-5, default 1>  --concurrency <1-8, default 4>
-         --timeout-ms <2000-8000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
+         --timeout-ms <2000-10000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
 Gate:            >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives POOLED over all runs (owner decision 2026-10-26), AND in every run:
                  >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
@@ -198,7 +198,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     }
     const flag = parsed.options['--timeout-ms'];
     const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
-    if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+    if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
     const loaded = deps.load();
     const problems = validateAgentPlanCorpus(loaded.corpus, loaded.oneStep);
     cases = agentPlanEvalCases(loaded.corpus, loaded.oneStep);

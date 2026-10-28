@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
 import { loadReadRegressionCorpus, loadScoredReadRegressionCorpus, readRegressionPrompt, scoreReadRegression } from './nl-action-eval';
 import { NL_EVAL_CONTEXT_CORPUS_PATH, buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
@@ -104,10 +105,10 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     const records = [
       { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 100 },
       { run: 1, id: 'b', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 300 },
-      { run: 1, id: 'c', expected: 'none', outcome: 'none' as const, latencyMs: 6500 },
+      { run: 1, id: 'c', expected: 'none', outcome: 'none' as const, latencyMs: 10500 },
     ];
     const passed = summarize(records);
-    expect(passed).toMatchObject({ overall: 1, wrongCaptures: 0, gatePassed: true, latency: { p50: 300, p95: 6500, overRuntimeBound: 1 } });
+    expect(passed).toMatchObject({ overall: 1, wrongCaptures: 0, gatePassed: true, latency: { p50: 300, p95: 10500, overRuntimeBound: 1 } });
     expect(summarize([...records, { run: 1, id: 'd', expected: 'none', outcome: 'wrong-capture', latencyMs: 1 }]).gatePassed).toBe(false);
     expect(summarize([...records, { run: 1, id: 'e', expected: 'jira.issues', outcome: 'miss', latencyMs: 1 }]).gatePassed).toBe(false);
   });
@@ -163,20 +164,20 @@ describe('nl-intent evaluation timeout option (ADR-0120 A3)', () => {
 
   it('the plan carries a custom callTimeoutMs and defaults to the runtime bound', () => {
     expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 5000 }).callTimeoutMs).toBe(5000);
-    expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 8000 }).callTimeoutMs).toBe(8000);
+    expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 10000 }).callTimeoutMs).toBe(10000);
     expect(buildPlan(CORPUS, 'sha', base).callTimeoutMs).toBe(NL_SELECTION_TIMEOUT_MS);
   });
 
-  it('rejects a timeout outside 2000..8000 or not an integer', () => {
-    for (const timeoutMs of [1999, 8001, 5.5, Number.NaN]) {
-      expect(() => buildPlan(CORPUS, 'sha', { ...base, timeoutMs }), String(timeoutMs)).toThrow('timeoutMs must be an integer 2000..8000');
+  it('rejects a timeout outside 2000..10000 or not an integer (owner decision of 2026-10-28)', () => {
+    for (const timeoutMs of [1999, 10001, 5.5, Number.NaN]) {
+      expect(() => buildPlan(CORPUS, 'sha', { ...base, timeoutMs }), String(timeoutMs)).toThrow('timeoutMs must be an integer 2000..10000');
     }
   });
 
   it('counts over-bound calls against the plan value, not the constant', () => {
     const records = [
       { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 3000 },
-      { run: 1, id: 'b', expected: 'none', outcome: 'none' as const, latencyMs: 7000 },
+      { run: 1, id: 'b', expected: 'none', outcome: 'none' as const, latencyMs: 11000 },
     ];
     expect(summarize(records, 6000).latency).toMatchObject({ boundMs: 6000, overRuntimeBound: 1 });
     expect(summarize(records, 2000).latency).toMatchObject({ boundMs: 2000, overRuntimeBound: 2 });
@@ -240,7 +241,7 @@ describe('nl-intent evaluation CLI (Strict digest gate)', () => {
     expect(await runCli(['--mode', 'plan', '--per-entry', '1'], planned)).toBe(EXIT_OK);
     const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(planned.out.join('\n'))?.[1];
     // Owner decision of 2026-10-28: the default selector effort is the adapter's, now high.
-    expect(digest).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', effort: 'high', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    expect(digest).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
     // Owner decision of 2026-10-28 (cost study P0): --effort is bound into the digest, and an unknown level is a usage error.
     const medium = deps(created);
     expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--effort', 'medium'], medium)).toBe(EXIT_OK);
@@ -272,7 +273,7 @@ describe('nl-intent evaluation CLI timeout flag (ADR-0120 A3)', () => {
 
   it('falls back to a valid QUOKY_NL_INTENT_TIMEOUT_MS, ignores an invalid one, and the flag wins', () => {
     expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(3000);
-    expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '8001' }).timeoutMs).toBeUndefined();
+    expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '10001' }).timeoutMs).toBeUndefined();
     expect(planOptions({ '--timeout-ms': '4000' }, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(4000);
     expect(planOptions({}, {}).timeoutMs).toBeUndefined();
   });

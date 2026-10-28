@@ -122,7 +122,7 @@ Options: --model <claude model alias or full model id (recommended: a full id pi
          --effort <${CLAUDE_EFFORT_LEVEL_NAMES.join('|')}, default the adapter's selection effort ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low'}; bound into the digest>
          --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
-         --timeout-ms <2000-8000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
+         --timeout-ms <2000-10000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
 Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} data-read wrong captures, help.topic captures <= ceil(${NL_EVAL_GATE.helpCaptureRate * 100}% of the negatives) (owner decision 2026-10-22).
 
 A6 (ADR-0120 amendment A6):
@@ -213,7 +213,7 @@ export function planOptions(
   let timeoutMs: number | undefined;
   if (flag !== undefined) {
     timeoutMs = parseNlIntentTimeoutMs(flag);
-    if (timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+    if (timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
   } else if (env.QUOKY_NL_INTENT_TIMEOUT_MS !== undefined) {
     timeoutMs = parseNlIntentTimeoutMs(env.QUOKY_NL_INTENT_TIMEOUT_MS);
   }
@@ -408,7 +408,7 @@ export interface ActionCliDeps {
 export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', options: Readonly<Record<string, string>>, deps: CliDeps & ActionCliDeps): Promise<number> {
   const flag = options['--timeout-ms'];
   const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
-  if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+  if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
   const settings = {
     model: options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
     effort: selectionEffort(options),

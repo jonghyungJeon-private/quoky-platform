@@ -954,7 +954,7 @@ export function buildAgentPlanEvalPlan(
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
   if (!/^[a-z]{2,8}$/.test(options.effort)) throw new Error('invalid effort');
   if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
-    throw new Error('timeoutMs must be an integer 2000..8000');
+    throw new Error('timeoutMs must be an integer 2000..10000');
   }
   const selected = cases.filter((golden) => golden.status === 'approved' || options.includePending);
   if (selected.length === 0) throw new Error('no case selected');

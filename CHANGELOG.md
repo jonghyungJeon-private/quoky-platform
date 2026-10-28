@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-28).** The selector waits up to 10 s, up from 6 s (8 s when cold).
+  `QUOKY_NL_INTENT_TIMEOUT_MS` accepts 2000-10000. `eval:context` reports each selection call's latency and its p50
+  and p95.
 - **Changed (owner decision 2026-10-28).** The natural-language selector (and the agent planner, which shares its
   capability) now runs haiku at high effort instead of low. eval:context: 36-38/38 against 30-32/38. Timeouts rose to
   about 3% of selection calls at the unchanged 6 s bound.

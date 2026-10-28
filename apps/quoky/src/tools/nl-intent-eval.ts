@@ -157,7 +157,7 @@ export interface NlEvalPlanOptions {
   readonly perEntry: number;
   readonly runs: number;
   readonly concurrency: number;
-  /** The per-call bound (`QUOKY_NL_INTENT_TIMEOUT_MS` rule: 2000..8000). Default {@link NL_EVAL_RUNTIME_TIMEOUT_MS}. */
+  /** The per-call bound (`QUOKY_NL_INTENT_TIMEOUT_MS` rule: 2000..10000). Default {@link NL_EVAL_RUNTIME_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
   /** Owner decision of 2026-10-28 (cost study P0): the selector's reasoning effort, bound into the digest when given. */
   readonly effort?: string;
@@ -187,7 +187,7 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
   if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
-    throw new Error('timeoutMs must be an integer 2000..8000');
+    throw new Error('timeoutMs must be an integer 2000..10000');
   }
   const counts = new Map<string, number>();
   const caseIds: string[] = [];

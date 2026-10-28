@@ -274,22 +274,23 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
       return h;
     }
 
-    it('uses 8000 ms during the first 180 s, then the configured bound; timeout still falls back with no retry and logs content-free timing', async () => {
+    it('uses the cold bound during the first 180 s, then the configured bound; timeout still falls back with no retry and logs content-free timing', async () => {
       vi.useFakeTimers();
       try {
         vi.setSystemTime(1_000_000);
-        const h = timed();
+        // Owner decision of 2026-10-28: the default bound and the cold bound are both 10 s; a configured 6 s shows the window.
+        const h = timed(6_000);
         vi.setSystemTime(1_000_000 + 60_000);
-        expect(await boundAt(h, () => undefined)).toBe(8_000);
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
         expect(h.calls).toHaveLength(1);
         const line = h.logs.find((log) => log.event === 'nl_selection.decided')!;
-        expect(line.fields).toMatchObject({ outcome: 'unavailable', cause: 'timeout', boundMs: 8_000, sinceStartMs: 60_000, idleMs: 60_000 });
+        expect(line.fields).toMatchObject({ outcome: 'unavailable', cause: 'timeout', boundMs: NL_SELECTION_COLD_TIMEOUT_MS, sinceStartMs: 60_000, idleMs: 60_000 });
         expect(typeof line.fields!.promptChars).toBe('number');
         expect(JSON.stringify(line.fields)).not.toContain('지라');
         // The timeout is not a completed call: idle still counts from start. 200 s after start with no completed call is
         // idle 200 s (< 30 min) and past the start window: the configured 6 s.
         vi.setSystemTime(1_000_000 + 200_000);
-        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_TIMEOUT_MS);
+        expect(await boundAt(h, () => undefined)).toBe(6_000);
       } finally {
         vi.useRealTimers();
       }
@@ -337,19 +338,21 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
       }
     });
 
-    it('a configured bound below 6 s stays as configured outside the windows; a bound of 8000 stays 8000', async () => {
+    it('a configured bound below the default stays as configured outside the windows; the 10 s maximum stays 10 s (owner decision 2026-10-28)', async () => {
       vi.useFakeTimers();
       try {
         vi.setSystemTime(0);
         const small = timed(3_000);
         vi.setSystemTime(200_000);
         expect(await boundAt(small, () => undefined)).toBe(3_000);
-        const max = timed(8_000);
+        const max = timed(10_000);
         vi.setSystemTime(400_000);
-        expect(await boundAt(max, () => undefined)).toBe(8_000);
+        expect(await boundAt(max, () => undefined)).toBe(10_000);
         const cold = timed(3_000);
         vi.setSystemTime(400_000 + 1_000);
-        expect(await boundAt(cold, () => undefined)).toBe(8_000);
+        expect(await boundAt(cold, () => undefined)).toBe(10_000);
+        expect(NL_SELECTION_TIMEOUT_MS).toBe(10_000);
+        expect(NL_SELECTION_COLD_TIMEOUT_MS).toBe(10_000);
       } finally {
         vi.useRealTimers();
       }

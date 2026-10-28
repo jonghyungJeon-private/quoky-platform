@@ -126,7 +126,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.NL_ITEM_R2_REQUIRES_ACTIONS]: 'QUOKY_NL_ITEM_R2 other than "off" needs QUOKY_NL_ACTIONS other than "off".',
   [QuokyConfigErrorCode.WORK_TEXT_VENDOR_ALLOWED_INVALID]: 'QUOKY_WORK_TEXT_VENDOR_ALLOWED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.NL_INTENT_TIMEOUT_INVALID]:
-    'QUOKY_NL_INTENT_TIMEOUT_MS must be unset or a whole number of milliseconds from 2000 to 8000.',
+    'QUOKY_NL_INTENT_TIMEOUT_MS must be unset or a whole number of milliseconds from 2000 to 10000.',
   // ADR-0122 channel grants. Names and shapes only, never a value.
   [QuokyConfigErrorCode.CHANNEL_GRANTS_INVALID]: 'QUOKY_CHANNEL_GRANTS must be unset (off), "enforce", or "off" (exactly, lowercase).',
   [QuokyConfigErrorCode.CHANNEL_GRANTS_SEED_INVALID]:
