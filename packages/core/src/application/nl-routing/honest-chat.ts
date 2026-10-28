@@ -3,6 +3,7 @@ import { renderRestate } from './nl-action-policy';
 import { ACTION_SWITCH_PHRASES, renderActionSwitchHint, type NlActionSwitchState } from './action-switch';
 import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNlTimeExpression } from './action-entries';
 import { isNlTimeWord } from './symbolic-time';
+import { nlIsRequestForm } from './request-shape';
 
 /**
  * Honest chat after selection (ADR-0120 D9). When the selector finds no entry (or cannot run), the chat turn carries
@@ -659,4 +660,44 @@ export function guardShownListingDenials(
   if (!removed) return { text, guarded: false };
   const rest = kept.join('').trim();
   return { text: rest.length === 0 ? renderShownListingAsk(language) : rest, guarded: true };
+}
+
+// ── Owner decision of 2026-10-28 (B1, amends the D2 copy rule): quotes and code marks only around a runnable command ──
+
+/** The quote and inline-code pairs a chat reply may use around a command (a fenced code block is left alone). */
+const QUOTE_SPAN = /"([^"\n]{1,200})"|“([^”\n]{1,200})”|「([^」\n]{1,200})」|『([^』\n]{1,200})』|(?<!`)`([^`\n]{1,200})`(?!`)/gu;
+
+/**
+ * B1: whether a span reads as a request to Quoky about one of the offered sources: it names an offered entry's catalog
+ * alias or source name, and its last word is in a request form (`nlIsRequestForm`). No vocabulary of its own. Pure.
+ */
+export function nlSpanRequestsOfferedSource(span: string, entries: readonly NlCatalogEntry[]): boolean {
+  const lower = span.normalize('NFC').toLowerCase();
+  const names = entries.flatMap((entry) => [...entry.aliases, ...(entry.sourceNames ?? [])]);
+  if (!names.some((name) => namesAlias(lower, name.normalize('NFC').toLowerCase()))) return false;
+  const last = span.trim().split(/\s+/u).at(-1) ?? '';
+  return nlIsRequestForm(last);
+}
+
+/**
+ * B1: every quoted or inline-code span of a chat reply that `runnable` does not accept keeps its text and loses its
+ * quote marks, so a quote is only ever around a command the owner can send. Returns the text and how many spans lost
+ * their marks. Fenced code blocks are not touched. Pure.
+ */
+export function nlUnquoteNonCommands(reply: string, runnable: (span: string) => boolean): { readonly text: string; readonly unquoted: number } {
+  let unquoted = 0;
+  const fences = reply.split(/(```[\s\S]*?```)/u);
+  const text = fences
+    .map((part) =>
+      part.startsWith('```')
+        ? part
+        : part.replace(QUOTE_SPAN, (whole, ...groups: unknown[]) => {
+            const span = (groups.slice(0, 5).find((group) => typeof group === 'string') as string | undefined) ?? '';
+            if (span.trim() === '' || runnable(span.trim())) return whole;
+            unquoted += 1;
+            return span;
+          }),
+    )
+    .join('');
+  return { text, unquoted };
 }

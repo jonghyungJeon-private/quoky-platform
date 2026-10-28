@@ -31079,3 +31079,19 @@ The merge waits until EVERY Strict context run is at or above 95%.
       내용은 여기서 확인할 수 없어요"), "면접 일정은 확인할 수 없어요" and a shown issue key;
     - kept: "회의 내용은 확인할 수 없어요".
   - The P2-1 tests that pinned the kept "일정" denial now expect the rewrite.
+- **Owner decision of 2026-10-28 (B1, amends the D2 copy rule): quote marks only around a runnable command.**
+  - Core checks every quoted or inline-code span in the chat model's own text (`"…"`, `“…”`, `「…」`, `『…』`, `` `…` ``;
+    fenced code blocks are left alone). The span keeps its marks when either holds:
+    - **(a) The grammar path runs it.** The span, sent alone in a DM, is handled without a model when the intent
+      classifier gives it a non-chat intent (`IntentClassifier.textIntent`, the same pure rules split out), when it is a
+      conversation or action-switch control phrase, or when a turn handler's pure `surfaceClaim` claims it.
+    - **(b) It is a request about an offered source.** It names an offered entry's catalog alias or source name, and its
+      last word is in a request form (`nlIsRequestForm`).
+  - Any other span keeps its text and loses its marks. No phrase list, no model call.
+  - The check runs before the claim guards, so Core's own copy (a notice, a usage line) is never touched. A changed
+    reply is not flagged `model-reply`.
+  - The context-eval scorer already reads the reply the owner sees (`observation.reply`), so the unparseable-suggestion
+    count follows. The four measured spans lose their quotes: "아니오", "내일 오후 3시 주간 회의", "weekly meeting" and
+    "내일 3시 회의". "NR26 프로젝트 20261029 릴리스 보여줘", "오늘 일정" and "도움말" keep theirs.
+  - One runtime unit test changed its quoted example from "커밋해줘" to "테스트 돌려줘". That test's runtime registers no
+    code-work handler that would claim "커밋해줘".

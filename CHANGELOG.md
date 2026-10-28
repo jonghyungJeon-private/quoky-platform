@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-28).** In a chat reply, quotes and code marks stay only around a command the owner
+  can send: one Core's grammar runs, or a request naming a connected source. Any other quoted text keeps its words
+  without the marks.
 - **Changed (owner decision 2026-10-28).** A chat sentence saying Quoky cannot check something is rewritten into the
   read's usage when it names the read by a word of its own label ("릴리스", "일정"), or a value of the listing just shown
   (a project key, an item). A denial about anything else ("회의 내용") is kept, with the read appended.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LISTING_SHOWN_ABOVE_RULE, guardFalseIncapabilityClaims, guardShownListingDenials, nlShownItemTitles, nlShownItemWords, renderConfiguredSourcesFact, renderShownListingAsk } from './honest-chat';
+import { LISTING_SHOWN_ABOVE_RULE, guardFalseIncapabilityClaims, guardShownListingDenials, nlShownItemTitles, nlShownItemWords, nlSpanRequestsOfferedSource, nlUnquoteNonCommands, renderConfiguredSourcesFact, renderShownListingAsk } from './honest-chat';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // Owner DM 2026-10-22: after Quoky listed tomorrow's events, the next message went to chat (selection `none`), which said
@@ -125,5 +125,26 @@ describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', ()
       expect(renderShownListingAsk('en')).toContain('The list Quoky showed above is on your screen');
       expect(renderShownListingAsk('ko')).not.toMatch(/"/u);
     });
+  });
+});
+
+describe('owner decision of 2026-10-28 (B1): quote marks only around a runnable command', () => {
+  const entries = [NL_WAVE1_ENTRIES['jira.release'], NL_WAVE1_ENTRIES['calendar.events']];
+  it('a span names an offered source and ends in a request form, or it does not', () => {
+    expect(nlSpanRequestsOfferedSource('NR26 프로젝트 20261029 릴리스 보여줘', entries)).toBe(true);
+    expect(nlSpanRequestsOfferedSource('show my calendar today', entries)).toBe(false);
+    for (const span of ['아니오', '내일 오후 3시 주간 회의', 'weekly meeting', '내일 3시 회의']) expect(nlSpanRequestsOfferedSource(span, entries), span).toBe(false);
+    // A source not offered this turn does not count.
+    expect(nlSpanRequestsOfferedSource('메일 보여줘', entries)).toBe(false);
+  });
+
+  it('every quoted or inline-code span the check refuses keeps its text and loses its marks; a fenced block is untouched', () => {
+    const keep = (span: string): boolean => span === '오늘 일정';
+    const reply = '"오늘 일정"이라고 보내 주세요. “아니오”는 답이 아니고, 「내일 3시 회의」나 `weekly meeting`도 명령이 아니에요.\n```\n"코드"\n```';
+    expect(nlUnquoteNonCommands(reply, keep)).toEqual({
+      text: '"오늘 일정"이라고 보내 주세요. 아니오는 답이 아니고, 내일 3시 회의나 weekly meeting도 명령이 아니에요.\n```\n"코드"\n```',
+      unquoted: 3,
+    });
+    expect(nlUnquoteNonCommands('따옴표 없는 답', () => false)).toEqual({ text: '따옴표 없는 답', unquoted: 0 });
   });
 });

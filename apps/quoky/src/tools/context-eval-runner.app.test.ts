@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { capabilityNouns } from './context-eval-cli';
-import { loadContextEvalCorpus, summarize } from './context-eval';
+import { extractSuggestions, loadContextEvalCorpus, summarize } from './context-eval';
 import { bootContextEvalWorld, type ContextEvalProfile, type ContextEvalWorld } from './context-eval-harness';
 import { CONTEXT_EVAL_STUB_CHAT, CONTEXT_EVAL_STUB_SUMMARY, ContextEvalRunner, type ScenarioRecord, type SelectionSource } from './context-eval-runner';
 
@@ -166,6 +166,25 @@ describe('context eval runner — dry, over the production AppModule', () => {
     // A true unrelated limitation is still kept as written.
     chatReply = weather;
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
+  }, 120_000);
+
+  it('owner decision of 2026-10-28 (B1) over the real runtime: only a runnable command keeps its quotes, and the scorer sees that reply', async () => {
+    const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    // The four measured spans (cy-project-yes t2, kg-calendar-undo-after-todo t1, kg-calendar-undo-en t1,
+    // lc-interview-questions t2) and three commands: a selector-routed release read and two grammar commands.
+    const lost = ['아니오', '내일 오후 3시 주간 회의', 'weekly meeting', '내일 3시 회의'];
+    const kept = ['NR26 프로젝트 20261029 릴리스 보여줘', '오늘 일정', '도움말'];
+    const chat = [...lost, ...kept].map((span) => `- "${span}"`).join('\n');
+    world = await bootContextEvalWorld('deployed', { select: async () => none, chat: async () => chat, summarize: async () => '' });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    const turn = await world.turn(owner, '뭐라고 보내면 돼?', owner.dm);
+    for (const span of lost) {
+      expect(turn.reply, span).toContain(`- ${span}`);
+      expect(turn.reply, span).not.toContain(`"${span}"`);
+    }
+    for (const span of kept) expect(turn.reply, span).toContain(`"${span}"`);
+    // The scorer reads the reply the owner sees: only the kept commands are suggestions to probe.
+    expect(extractSuggestions(turn.reply, ['뭐라고 보내면 돼?'], [])).toEqual(kept);
   }, 120_000);
 
   it('owner decision of 2026-10-28 over the real runtime: a denial naming an item Core showed is dropped; nothing of it reaches chat', async () => {

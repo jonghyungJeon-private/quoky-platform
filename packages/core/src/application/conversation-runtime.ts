@@ -88,6 +88,7 @@ import {
 import {
   NON_ABSOLUTE_REGISTRATION_KIND,
   POLICY_SENSITIVE_CHAT_KIND,
+  IntentClassifier,
   chatIntentOf,
   detectProjectRegistration,
   externalActionRequestOf,
@@ -100,6 +101,8 @@ import {
   guardShownListingDenials,
   nlShownItemTitles,
   nlShownItemWords,
+  nlSpanRequestsOfferedSource,
+  nlUnquoteNonCommands,
   renderConfiguredSourcesFact,
   renderControlCommandsFact,
   type NlControlScope,
@@ -9281,6 +9284,48 @@ export class ConversationRuntime {
    * content-free (domain only).
    */
   private guardChatReply(
+    capability: Capability,
+    text: string,
+    currentUserMessage: string,
+    taskId?: Id,
+    nlFacts?: NlChatFacts,
+    controls?: NlControlScope,
+  ): { readonly text: string; readonly guarded: boolean } {
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT && capability !== Capability.IMAGE_UNDERSTANDING) {
+      return this.guardChatReplyClaims(capability, text, currentUserMessage, taskId, nlFacts, controls);
+    }
+    // Owner decision of 2026-10-28 (B1, amends the D2 copy rule): in the chat model's own text, a quoted or code span keeps
+    // its marks only when it is a command the owner can send: the grammar path claims it, or it names an offered source
+    // and ends in a request form. It runs before the claim guards, so Core's own copy (a notice, a usage line) is never
+    // touched.
+    const entries = nlFacts?.entries ?? [];
+    const unquoted = nlUnquoteNonCommands(text, (span) => this.nlGrammarRuns(span) || nlSpanRequestsOfferedSource(span, entries));
+    if (unquoted.unquoted > 0) this.deps.logger.info('chat quote marks removed', { capability, spans: unquoted.unquoted, ...(taskId ? { taskId } : {}) });
+    const claims = this.guardChatReplyClaims(capability, unquoted.text, currentUserMessage, taskId, nlFacts, controls);
+    return unquoted.unquoted > 0 ? { text: claims.text, guarded: true } : claims;
+  }
+
+  /**
+   * Owner decision of 2026-10-28 (B1): whether Core's grammar path answers `span` sent alone in a DM, without a model:
+   * the intent classifier gives it a non-chat intent, it is a control phrase (conversation or action switch), or a turn
+   * handler's pure claim (`surfaceClaim`, the same parser `handle` uses) claims it. Synchronous, pure, never throws.
+   */
+  private nlGrammarRuns(span: string): boolean {
+    if (parseActionSwitchPhrase(span) !== undefined || detectConversationControl(span) !== null) return true;
+    if (IntentClassifier.textIntent(span).type !== IntentType.CHAT) return true;
+    const now = this.clock();
+    const message: InboundMessage = { id: 'quote-check', text: span, context: { platform: 'quote-check', channelId: 'quote-check', userId: 'quote-check', direct: true }, receivedAt: now };
+    return this.turnHandlerRegistry.some((handler) => {
+      if (typeof handler.surfaceClaim !== 'function') return false;
+      try {
+        return handler.surfaceClaim({ message, now }) !== null;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private guardChatReplyClaims(
     capability: Capability,
     text: string,
     currentUserMessage: string,
