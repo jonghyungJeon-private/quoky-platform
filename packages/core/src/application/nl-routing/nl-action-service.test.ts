@@ -540,6 +540,37 @@ describe('honest chat D9 guard: catalog aliases and held values keep the denial 
   });
 });
 
+describe('honest chat D9 guard: the source-name rewrite acts per sentence (Codex delta review of 454e7eb9, P2)', () => {
+  const calendarUsage = NL_WAVE1_ENTRIES['calendar.events'].usage.ko;
+  const count = (text: string, part: string): number => text.split(part).length - 1;
+  it('only the sentence naming the source is rewritten; a true denial beside it is kept verbatim; guidance is never doubled', () => {
+    const out = guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요. 다른 사람의 비공개 일정은 확인할 수 없어요.', READS, 'ko');
+    expect(out.guarded).toBe(true);
+    expect(out.text).not.toContain('캘린더는 확인할 수 없어요.');
+    expect(out.text).toContain('바로 조회할 수 있어요');
+    expect(out.text).toContain('다른 사람의 비공개 일정은 확인할 수 없어요.');
+    // The calendar read is offered once: the alias denial's appended guidance is the same entry, so it is not repeated.
+    expect(count(out.text, calendarUsage)).toBe(1);
+    expect(out.text).not.toContain('참고로');
+  });
+
+  it('another source named only by an alias is appended once; two source-name sentences offer each source once', () => {
+    const mixed = guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요. 릴리스 내용도 확인할 수 없어요. 회의 내용도 확인할 수 없어요.', READS, 'ko');
+    expect(mixed.text).toContain('릴리스 내용도 확인할 수 없어요.');
+    expect(mixed.text).toContain('회의 내용도 확인할 수 없어요.');
+    expect(count(mixed.text, calendarUsage)).toBe(1);
+    expect(count(mixed.text, NL_WAVE1_ENTRIES['jira.release'].usage.ko)).toBe(1);
+    const twice = guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요.\n그리고 캘린더 일정도 볼 수 없어요.', READS, 'ko');
+    expect(count(twice.text, calendarUsage)).toBe(1);
+    expect(count(twice.text, '바로 조회할 수 있어요')).toBe(1);
+    // A sentence that is not a denial is kept around the rewritten one.
+    const around = guardFalseIncapabilityClaims('안녕하세요. 캘린더는 확인할 수 없어요. 다른 질문이 있으면 말씀해 주세요.', READS, 'ko');
+    expect(around.text.startsWith('안녕하세요.')).toBe(true);
+    expect(around.text).toContain('다른 질문이 있으면 말씀해 주세요.');
+    expect(around.text).not.toContain('캘린더는 확인할 수 없어요.');
+  });
+});
+
 describe('honest chat (A6-D6): no command phrases for offered action families, and the stale-command guard', () => {
   it('drops "reply with the exact command" only when action entries are offered', () => {
     const help = ['- 할 일: "할 일 추가: 내용", "완료 처리: 번호"'];

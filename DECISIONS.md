@@ -31124,3 +31124,14 @@ The merge waits until EVERY Strict context run is at or above 95%.
 - **Codex review of 672fb8f7, P2-b: B1 fails closed on long spans.** A quoted or inline-code span is now matched
   whatever its length. A span over 200 characters loses its marks without the runnability check being asked. Before,
   the pattern skipped such spans and they kept their quotes.
+- **Codex delta review of 454e7eb9, P2: the source-name rewrite acts per sentence.**
+  - Problem: any source-name hit replaced the whole reply. "캘린더는 확인할 수 없어요. 다른 사람의 비공개 일정은 확인할
+    수 없어요." lost its true private-calendar denial.
+  - Now only a denial sentence that itself names a source is replaced in place, by the offer of the sources not offered
+    yet; when there are none, it is dropped.
+  - Every other sentence is kept verbatim. A denial naming a source only by an alias or a held value gets the matched read
+    appended once at the end (B2), unless that entry was already offered. No guidance appears twice.
+  - This is the last round on this guard (fix-loop discipline).
+- **Owner decision of 2026-10-28 on the release-sentence scorer question: option 1.**
+  - No new Core copy and no scorer change.
+  - With chat at medium, the two release denials did not occur in 3 runs. If the gate runs show them, this is revisited.

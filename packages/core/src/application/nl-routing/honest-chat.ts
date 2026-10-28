@@ -462,51 +462,53 @@ export function guardFalseIncapabilityClaims(
   // The help index ("도움말", "help") is a deflection, not an action command: naming it does not make a denial true.
   const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]).filter((command) => !HELP_INDEX.test(command));
   if (commands.some((command) => text.includes(command))) return unchanged;
-  const hit = new Map<string, NlCatalogEntry>();
-  const aliasOnly = new Map<string, NlCatalogEntry>();
-  for (const sentence of text.split(/(?<=[.!?。])\s+|\n+/u)) {
+  // Codex delta review of 454e7eb9 (P2): the source-name rewrite acts PER SENTENCE. Only a denial sentence that itself
+  // names a source is replaced by that source's offer; every other sentence is kept verbatim, and a denial naming a source
+  // only by an alias or a held value gets the matched read appended once at the end (B2). No guidance is given twice.
+  const parts = text.split(/((?<=[.!?。])[^\S\n]+|\n+)/u);
+  const offered = new Set<string>();
+  const appended = new Map<string, NlCatalogEntry>();
+  let changed = false;
+  const offerBlock = (fresh: readonly NlCatalogEntry[]): string =>
+    language === 'en'
+      ? ['Quoky can read these for you. Ask like this:', ...fresh.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`)].join('\n')
+      : ['Quoky가 연결되어 있어서 바로 조회할 수 있어요. 이렇게 말씀해 주세요:', ...fresh.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)].join('\n');
+  for (let index = 0; index < parts.length; index += 2) {
+    const sentence = parts[index] ?? '';
     if (!KO_INCAPABLE.test(sentence) && !EN_INCAPABLE.test(sentence)) continue;
     const lower = sentence.toLowerCase();
+    const named: NlCatalogEntry[] = [];
     for (const entry of entries) {
-      if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) hit.set(entry.id, entry);
-      // Owner-approved fix of 2026-10-28 (cy-question-then-other): a source entry's own catalog aliases ("릴리스" for the
-      // Jira release read) are mentions of that source's topic. An ASCII alias must stand as a word ("pr" is not
-      // "project"). Codex review of 68acf4f6 P2: an alias only names a topic, not a supported read ("회의 내용은 확인할
-      // 수 없어요" can be true), so an alias-only denial is kept and only the entry's own read is appended, scoped by name.
-      // Owner decision of 2026-10-28 (B2) as narrowed by the Codex review of 672fb8f7 (P2): an alias inside the entry's own
-      // label, like any other alias, never deletes the sentence ("다른 사람의 비공개 일정은 확인할 수 없어요" can be true):
-      // the denial is kept verbatim and the entry's own read is appended.
-      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) aliasOnly.set(entry.id, entry);
+      if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) named.push(entry);
+      // Owner-approved fix of 2026-10-28 (cy-question-then-other), narrowed by the Codex reviews of 68acf4f6 and 672fb8f7:
+      // a source entry's catalog alias (an ASCII alias only as a word: "pr" is not "project") names a topic, not a
+      // supported read ("다른 사람의 비공개 일정은 확인할 수 없어요" can be true): the sentence is kept and the read appended.
+      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) appended.set(entry.id, entry);
     }
     // B2 (union), same narrowing: a denial naming a value of the listing Core holds this turn (an arg value such as a
     // project key, a shown item word or title) keeps its sentence; that listing's read is appended.
     const held = options.held;
-    if (held !== undefined && !hit.has(held.entry.id) && heldValuesOf(held).some((value) => namesAlias(lower, value))) aliasOnly.set(held.entry.id, held.entry);
+    if (named.length === 0 && held !== undefined && heldValuesOf(held).some((value) => namesAlias(lower, value))) appended.set(held.entry.id, held.entry);
+    if (named.length === 0) continue;
+    // This sentence names a source itself: it is replaced by the offer of the sources not offered yet (or dropped).
+    const fresh = named.filter((entry) => !offered.has(entry.id));
+    for (const entry of fresh) offered.add(entry.id);
+    parts[index] = fresh.length > 0 ? offerBlock(fresh) : '';
+    changed = true;
   }
-  for (const id of hit.keys()) aliasOnly.delete(id);
-  if (hit.size === 0) {
-    if (aliasOnly.size === 0) return unchanged;
-    const scoped = [...aliasOnly.values()];
-    const note =
-      language === 'en'
-        ? ['For reference, what Quoky can read:', ...scoped.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`)]
-        : ['참고로 Quoky가 조회할 수 있는 범위는 이거예요:', ...scoped.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)];
-    return { text: [text.trimEnd(), '', ...note].join('\n'), guarded: true };
-  }
-  const offers = [...hit.values()];
-  if (language === 'en') {
-    return {
-      text: [
-        'Quoky can read these for you. Ask like this:',
-        ...offers.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`),
-      ].join('\n'),
-      guarded: true,
-    };
-  }
-  return {
-    text: ['Quoky가 연결되어 있어서 바로 조회할 수 있어요. 이렇게 말씀해 주세요:', ...offers.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)].join('\n'),
-    guarded: true,
-  };
+  const scoped = [...appended.values()].filter((entry) => !offered.has(entry.id));
+  if (!changed && scoped.length === 0) return unchanged;
+  const body = parts
+    .join('')
+    .replace(/[^\S\n]+\n/gu, '\n')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+  if (scoped.length === 0) return { text: body, guarded: true };
+  const note =
+    language === 'en'
+      ? ['For reference, what Quoky can read:', ...scoped.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`)]
+      : ['참고로 Quoky가 조회할 수 있는 범위는 이거예요:', ...scoped.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)];
+  return { text: [body, '', ...note].join('\n'), guarded: true };
 }
 
 /** The listing the previous turn showed, from Core's own record of it (`lastSelection`): its entry and canonical args. */
