@@ -100,6 +100,16 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(record?.turns[1]?.reply).not.toContain('확인할 수 없어요');
   }, 120_000);
 
+  it('owner-approved fix of 2026-10-28: a listing shown in the DM is not "just above" in a channel turn (the #280 measurement)', async () => {
+    world = await bootContextEvalWorld('deployed', { select: async () => '{}', chat: async () => '', summarize: async () => '' });
+    // The Strict 34080848 run-1 reply: true in the channel, whose own session holds no listing record (ADR-0118 D7).
+    const reply = '"그 면접 기준"이 어떤 면접인지 이 대화에서는 확인할 수 없어요. 면접 기준 내용을 알려 주시면 질문을 정리해 드릴게요.';
+    const chat = { id: 'scripted-chat', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: reply, artifacts: [] }) } as never;
+    const runner = new ContextEvalRunner(world, corpus, { profile: 'deployed', selection: { kind: 'oracle' }, chat, capabilityNouns: capabilityNouns() });
+    const [record] = await runner.runAll(['cd-dm-calendar-channel-question'], 1);
+    expect(record?.score.hard['false-incapability']).toBe(0);
+  }, 120_000);
+
   it('the shown-listing guard over the real runtime: a denial of the listing and a re-run of it are dropped, the rest kept', async () => {
     const calendarTomorrow = JSON.stringify({ entryId: 'calendar.events', args: { range: 'tomorrow' }, ambiguity: 'CLEAR', alternatives: [] });
     const none = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });

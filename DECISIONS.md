@@ -30952,3 +30952,10 @@ The merge waits until EVERY Strict context run is at or above 95%.
     (`nlHeldItemWordsFor`).
   - Before, the match was on completion time. With concurrent turns, a listing that finished after another could
     overwrite the words and pass the other listing's time check. Mismatched words now never attach.
+
+### Owner-approved fixes of 2026-10-28 after the 34080848 Strict context run (branch `claude/v5-context-fixes`)
+
+- **Fix 3 (scorer): the #280 measurement holds within one conversation.** `listingShown` applies only when the previous
+  turn ran in the same conversation context. In `cd-dm-calendar-channel-question` (run 1), the listing was shown in
+  the DM and the next turn is in a channel. The channel's own session holds no listing record (ADR-0118 D7), so "이
+  대화에서는 확인할 수 없어요" is true there and is no longer counted.

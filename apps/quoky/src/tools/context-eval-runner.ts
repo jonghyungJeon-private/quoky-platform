@@ -271,7 +271,10 @@ export class ContextEvalRunner {
         const unparseable = (suggestions[position] ?? []).filter((suggestion) => verdicts.get(`${isChat(suggestion) ? 'chat' : 'core'}\u0000${suggestion}`) === false);
         const unparseableChat = unparseable.filter((suggestion) => (chatWritten[position] ?? []).includes(suggestion));
         const priorObservation = observations.slice(0, position).filter((entry): entry is TurnObservation => entry !== undefined).at(-1);
-        const listingShown = position > 0 ? listingOf(observations[position - 1]) : undefined;
+        // Owner-approved fix of 2026-10-28: the #280 condition holds only within one conversation. A listing shown in the DM
+        // is not "just above" in a channel (its own session holds no listing record, ADR-0118 D7), so it is not applied there.
+        const sameContext = position > 0 && (scenario.turns[position - 1]?.context ?? 'dm') === (turn.context ?? 'dm');
+        const listingShown = sameContext ? listingOf(observations[position - 1]) : undefined;
         const score = scoreTurn(
           position + 1,
           {
