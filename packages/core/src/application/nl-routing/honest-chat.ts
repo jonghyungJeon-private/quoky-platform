@@ -658,7 +658,9 @@ export function guardShownListingDenials(
 // ── Owner decision of 2026-10-28 (B1, amends the D2 copy rule): quotes and code marks only around a runnable command ──
 
 /** The quote and inline-code pairs a chat reply may use around a command (a fenced code block is left alone). */
-const QUOTE_SPAN = /"([^"\n]{1,200})"|“([^”\n]{1,200})”|「([^」\n]{1,200})」|『([^』\n]{1,200})』|(?<!`)`([^`\n]{1,200})`(?!`)/gu;
+const QUOTE_SPAN = /"([^"\n]+)"|“([^”\n]+)”|「([^」\n]+)」|『([^』\n]+)』|(?<!`)`([^`\n]+)`(?!`)/gu;
+/** Codex review of 672fb8f7 (P2-b): a span longer than this is never a command; it loses its marks unchecked (fail closed). */
+const QUOTE_SPAN_MAX_CHARS = 200;
 
 /**
  * B1: whether a span reads as a request to Quoky about one of the offered sources: it names an offered entry's catalog
@@ -686,7 +688,8 @@ export function nlUnquoteNonCommands(reply: string, runnable: (span: string) => 
         ? part
         : part.replace(QUOTE_SPAN, (whole, ...groups: unknown[]) => {
             const span = (groups.slice(0, 5).find((group) => typeof group === 'string') as string | undefined) ?? '';
-            if (span.trim() === '' || runnable(span.trim())) return whole;
+            if (span.trim() === '') return whole;
+            if (span.length <= QUOTE_SPAN_MAX_CHARS && runnable(span.trim())) return whole;
             unquoted += 1;
             return span;
           }),

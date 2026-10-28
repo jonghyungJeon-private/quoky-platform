@@ -145,5 +145,12 @@ describe('owner decision of 2026-10-28 (B1): quote marks only around a runnable 
       unquoted: 3,
     });
     expect(nlUnquoteNonCommands('따옴표 없는 답', () => false)).toEqual({ text: '따옴표 없는 답', unquoted: 0 });
+    // Codex review of 672fb8f7 (P2-b): a span over 200 characters loses its marks without the check being asked.
+    const long = '가'.repeat(201);
+    let asked = 0;
+    expect(nlUnquoteNonCommands(`"${long}" 그리고 \`${long}\``, () => { asked += 1; return true; })).toEqual({ text: `${long} 그리고 ${long}`, unquoted: 2 });
+    expect(asked).toBe(0);
+    const atCap = '나'.repeat(200);
+    expect(nlUnquoteNonCommands(`"${atCap}"`, () => true)).toEqual({ text: `"${atCap}"`, unquoted: 0 });
   });
 });

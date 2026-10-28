@@ -31121,3 +31121,6 @@ The merge waits until EVERY Strict context run is at or above 95%.
       연결 상태나 릴리스 내용은 여기서 확인할 수 없어요"). The `jira.release` usage is deliberately unquoted
       ("예: ABC 프로젝트 1.2.0 릴리스 보여줘", D2: Core copy quotes only deterministic commands), so the reply hands
       no quoted command. Reported to the owner; the scorer is not changed.
+- **Codex review of 672fb8f7, P2-b: B1 fails closed on long spans.** A quoted or inline-code span is now matched
+  whatever its length. A span over 200 characters loses its marks without the runnability check being asked. Before,
+  the pattern skipped such spans and they kept their quotes.
