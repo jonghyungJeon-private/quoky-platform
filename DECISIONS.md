@@ -31106,3 +31106,7 @@ The merge waits until EVERY Strict context run is at or above 95%.
     `--chat-effort`. Owner to confirm.
   - G7 keeps its frozen chat effort. `tools/g7/claude.mjs` already hard-codes `CLAUDE_EFFORT = 'low'` (part of the frozen
     harness hashes, unchanged). The G7 argv-parity test now builds the production argv at that frozen effort explicitly.
+- **Owner decision of 2026-10-28: the agent shadow bound is 10 s.** `AGENT_SHADOW_DEFAULT_TIMEOUT_MS` moves from 6 s to
+  10 s, the selector bound. The planner shares the selector's capability, now at high effort, and the owner allowed up to
+  10 s. The app already passes the configured selection bound (`config.nlSelection.timeoutMs`, 10 s by default), so
+  this aligns the fallback constant.

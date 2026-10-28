@@ -5,7 +5,8 @@ import { ACTION_SWITCH_METADATA_KEY } from '../nl-routing/action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
-import { AGENT_SHADOW_LOG_EVENT, AgentModeError, AgentRunService, type AgentMode, type AgentShadowLive, type AgentShadowTurn } from './agent-run-service';
+import { AGENT_SHADOW_DEFAULT_TIMEOUT_MS, AGENT_SHADOW_LOG_EVENT, AgentModeError, AgentRunService, type AgentMode, type AgentShadowLive, type AgentShadowTurn } from './agent-run-service';
+import { NL_SELECTION_TIMEOUT_MS } from '../nl-routing/nl-selection-service';
 
 // ADR-0121 D1 / D7 (stage S2 P1): AgentRunService in `off` and `shadow` with a scripted planner (no model): one
 // INTENT_SELECTION call and nothing else (0 connector reads, 0 M2 calls), the caps, the in-flight drop, the abort, the
@@ -443,5 +444,12 @@ describe('AgentRunService — shadow, rule 7 (write clause left by a read plan)'
     await h.service.runShadow(turn(h, { text: '내일 일정 보여주고 내일 9시에 출발 리마인드 해줘' }, { kind: 'execute', source: 'personal-data', entryId: 'calendar.events', args: { range: 'tomorrow' } }), async () => CHAT);
     expect(shadowLines(h)).toEqual([expect.objectContaining({ outcome: 'none', noneReason: 'write-clause', validator: 'ok' })]);
     expect(JSON.stringify(shadowLines(h))).not.toMatch(/출발|리마인드/u);
+  });
+});
+
+describe('owner decision of 2026-10-28: the agent shadow bound', () => {
+  it('is 10 s, the same as the selector bound (the planner shares its capability at high effort)', () => {
+    expect(AGENT_SHADOW_DEFAULT_TIMEOUT_MS).toBe(10_000);
+    expect(AGENT_SHADOW_DEFAULT_TIMEOUT_MS).toBe(NL_SELECTION_TIMEOUT_MS);
   });
 });
