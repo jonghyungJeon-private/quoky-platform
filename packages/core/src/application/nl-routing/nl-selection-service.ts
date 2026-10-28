@@ -1416,6 +1416,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const only = lowerTitles[[...matched][0] as number] as string;
     const best = tokens.filter((token) => only.includes(token)).sort((a, b) => b.length - a.length)[0] as string;
     const token = groundingText.normalize('NFC').split(/[^\p{L}\p{N}]+/u).find((word) => word.toLowerCase() === best) ?? best;
+    // Codex delta review of d51aa6ac (fix-loop cap, fail-closed): any whitespace word other than the one holding the
+    // matched release token that BEGINS with the negation adverb syllables 안 / 못 refuses the shortcut ("안보여줘도돼",
+    // "못보겠네"). It over-reads ("안내", "안건") on purpose: those turns only go to the selector.
+    const negatorWord = groundingText.normalize('NFC').split(/\s+/u).some((raw) => {
+      const word = raw.replace(/^[^\p{L}\p{N}]+/u, '');
+      return /^(?:안|못)/u.test(word) && !word.toLowerCase().includes(best);
+    });
+    if (negatorWord) return undefined;
     const validated = validateSelection({ entryId: 'jira.release', args: { ...last.args, release: token } }, this.validationContext(turn, groundingText, last.args, false, last.entryId));
     if (!validated.ok) return undefined;
     // Codex review of 68acf4f6 P2: the shared read-request vetoes the selector path applies (a past statement, a read

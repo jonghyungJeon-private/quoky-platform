@@ -31025,3 +31025,7 @@ The merge waits until EVERY Strict context run is at or above 95%.
   - Before it settles, the pick now applies the vetoes of the selector path: `nlIsPastStatement` and `nlReadNotRequest`.
     It also applies the request-shape veto `nlRequestVeto`: a statement, question, wish, report or conditional.
   - Any veto sends the turn to the selector.
+- **Codex delta review, negation P2 round 2 (the fix-loop cap; fail-closed, not more precise).** On the shown-release
+  pick only, any whitespace word other than the one holding the matched release token that BEGINS with 안 or 못 refuses
+  the shortcut. This covers attached forms ("안보여줘도돼", "못보겠네"). It also refuses "안내" and "안건" on purpose;
+  those turns only go to the selector. `nlHasGrammaticalNegation` stays as well.
