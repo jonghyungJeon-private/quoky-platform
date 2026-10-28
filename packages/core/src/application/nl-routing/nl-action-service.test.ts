@@ -504,6 +504,19 @@ describe('receipts: lastAction, the echo label and the delivery binding', () => 
   });
 });
 
+describe('honest chat D9 guard: catalog aliases are source mentions (owner-approved fix of 2026-10-28)', () => {
+  it('a denial naming a source entry by its alias offers that read; an ASCII alias counts only as a word', () => {
+    const reply = '지금 릴리스 조회가 가능한지, 그리고 결과가 어떤지는 이 답변에서는 확인할 수 없어요.';
+    const guarded = guardFalseIncapabilityClaims(reply, READS, 'ko');
+    expect(guarded.guarded).toBe(true);
+    expect(guarded.text).toContain(NL_WAVE1_ENTRIES['jira.release'].usage.ko);
+    // "pr" is a GitHub alias, but not inside "project"; an alias of an entry with no source names is not a source.
+    expect(guardFalseIncapabilityClaims('That project data is something I cannot see from here.', READS, 'en')).toEqual({ text: 'That project data is something I cannot see from here.', guarded: false });
+    expect(guardFalseIncapabilityClaims('I cannot see your PRs from here.', READS, 'en').guarded).toBe(true);
+    expect(guardFalseIncapabilityClaims('브리핑 내용은 이 답변에서 확인할 수 없어요.', READS, 'ko').guarded).toBe(false);
+  });
+});
+
 describe('honest chat (A6-D6): no command phrases for offered action families, and the stale-command guard', () => {
   it('drops "reply with the exact command" only when action entries are offered', () => {
     const help = ['- 할 일: "할 일 추가: 내용", "완료 처리: 번호"'];
@@ -514,6 +527,8 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
     expect(renderConfiguredSourcesFact(READS, help)).toContain(QUOTES_ARE_COMMANDS_RULE);
     expect(renderConfiguredSourcesFact(ALL, help)).toContain(QUOTES_ARE_COMMANDS_RULE);
     expect(renderConfiguredSourcesFact(READS, [])).toContain(QUOTES_ARE_COMMANDS_RULE);
+    // Owner-approved fix of 2026-10-28: both ways, a command to send is always quoted or in code.
+    expect(QUOTES_ARE_COMMANDS_RULE).toContain('is always written in quotes or code marks');
     expect(renderConfiguredSourcesFact(READS, help)).toContain('a yes, a no or a number sent to a chat reply runs nothing.');
     // The A6 variant keeps its own sentence (unchanged).
     expect(renderConfiguredSourcesFact(ALL, help)).not.toContain(NO_YES_NO_OFFER_RULE);

@@ -91,10 +91,12 @@ export function renderConfiguredSourcesFact(
  * Owner decision of 2026-10-28 (fix 2 of the 95386868 context analysis; the chat-prompt option, because a structural
  * extractor cannot tell a quoted command from a quoted example, question, paraphrase or mention without a word list):
  * in a chat reply, quotes and code marks hold only a command the User can send to Quoky as its own message.
+ * Owner-approved fix of 2026-10-28 (cy-question-then-other): both ways, so a command to send is always quoted or in code.
  */
 export const QUOTES_ARE_COMMANDS_RULE =
-  'In a chat reply, quotes and code marks hold only a command the User can send to Quoky as its own message; examples, ' +
-  "questions for other people, the User's own earlier words and terms being mentioned are written without quotes.";
+  'In a chat reply, a command the User can send to Quoky as its own message is always written in quotes or code marks, ' +
+  "and quotes and code marks hold only such a command; examples, questions for other people, the User's own earlier " +
+  'words and terms being mentioned are written without quotes.';
 
 /**
  * Context eval 2026-10-26 (P8): the A6-D6 yes/no sentence for the plain fact too. A chat reply runs nothing, and Core
@@ -387,6 +389,15 @@ const EN_INCAPABLE =
 
 const HELP_INDEX = /^(?:도움말|help)(?:[\s:：]|$)/iu;
 
+/** Whether a lower-case sentence names a catalog alias: a Hangul alias anywhere (a particle may follow), an ASCII one as a word. */
+function namesAlias(sentence: string, alias: string): boolean {
+  if (alias.trim().length < 2) return false;
+  if (!/^[a-z0-9 '-]+$/u.test(alias)) return sentence.includes(alias);
+  // Unicode-mode pattern: only the syntax characters are escaped ("-" is an invalid identity escape there).
+  const escaped = alias.replace(/[\\^$*+?.()|[\]{}/]/g, '\\$&').replace(/ /g, '\\s+');
+  return new RegExp(`(?<![a-z0-9])${escaped}(?:s|['’]s)?(?![a-z0-9])`, 'u').test(sentence);
+}
+
 /** The quoted command examples of the help lines and the entries' usage (`"할 일 추가: 내용"` → `할 일 추가: 내용`, and its head). */
 function quotedCommandsOf(lines: readonly string[]): string[] {
   const commands = new Set<string>();
@@ -445,6 +456,9 @@ export function guardFalseIncapabilityClaims(
     const lower = sentence.toLowerCase();
     for (const entry of entries) {
       if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) hit.set(entry.id, entry);
+      // Owner-approved fix of 2026-10-28 (cy-question-then-other): a source entry's own catalog aliases ("릴리스" for the
+      // Jira release read) are mentions of that source too. An ASCII alias must stand as a word ("pr" is not "project").
+      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) hit.set(entry.id, entry);
     }
   }
   if (hit.size === 0) return unchanged;

@@ -157,10 +157,15 @@ describe('context eval runner — dry, over the production AppModule', () => {
     chatReply = weather;
     expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
     chatReply = reply;
-    // Without a listing record (help ends the window), the reply is left as it is.
+    // Without a listing record (help ends the window), the shown-listing guard does not apply; the denial names the
+    // calendar by its catalog alias ("일정"), so the D9 guard offers the read (owner-approved fix of 2026-10-28).
     await world.turn(owner, '도움말', owner.dm);
     const unrelated = await world.turn(owner, '고마워', owner.dm);
-    expect(unrelated.reply).toBe(reply);
+    expect(unrelated.reply).not.toBe(reply);
+    expect(unrelated.reply).toContain('바로 조회할 수 있어요');
+    // A true unrelated limitation is still kept as written.
+    chatReply = weather;
+    expect((await world.turn(owner, '내일 날씨 어때?', owner.dm)).reply).toBe(weather);
   }, 120_000);
 
   it('owner decision of 2026-10-28 over the real runtime: a denial naming an item Core showed is dropped; nothing of it reaches chat', async () => {

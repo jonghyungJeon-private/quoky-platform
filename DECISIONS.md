@@ -30986,3 +30986,14 @@ The merge waits until EVERY Strict context run is at or above 95%.
     (ADR-0110 D4), bound to the listing turn's own id, and are never persisted or sent.
   - Falls through to the selector when a token is in two or more titles or in none, the message has an exclusion or
     negation, no titles are held for that record, or the result fails validation. No word list.
+- **Fix 4: commands to send are always quoted, and the D9 guard reads catalog aliases (owner-approved fix of 2026-10-28;
+  `cy-question-then-other` t3).**
+  - The chat prompt's quote rule now works both ways: a command the owner can send to Quoky is always written in quotes
+    or code marks, and quotes and code marks hold only such a command. The run-2 reply gave a command unquoted, so the
+    "a command was handed" exemption could not see it. This changes the chat prompt, so the `eval:context` plan digest
+    moves (expected).
+  - The Core D9 guard (`guardFalseIncapabilityClaims`) treats a source entry's own catalog aliases as mentions of that
+    source, next to its source names ("릴리스 조회가 … 확인할 수 없어요" names the Jira release read). Only entries
+    that have source names count. An ASCII alias must stand as a word ("pr" is not inside "project"). No word is added.
+  - Effect on existing tests: a denial naming the calendar as "일정" is now replaced by the calendar offer (two tests
+    updated). The shown-listing guard still runs first and keeps its own behavior.

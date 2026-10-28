@@ -17,6 +17,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (chat prompt and D9 guard, owner-approved fix 2026-10-28).** Chat writes every command to send in quotes or
+  code. A chat sentence saying Quoky cannot check a connected source now also counts when it names the source by a
+  catalog alias ("릴리스", "일정"); the reply then offers that read.
 - **Added (owner-approved fix 2026-10-28).** After a Jira release list, a follow-up that names exactly one listed
   release by a word or number in its title ("20261029 거 이슈 보여줘") reads that release with no model call.
 - **Changed (owner decision 2026-10-28, ADR-0120 D7).** A question that would list only one read option no longer asks;

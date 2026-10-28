@@ -36,13 +36,17 @@ describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', ()
     expect(renderConfiguredSourcesFact([NL_WAVE1_ENTRIES['help.topic']])).toBeUndefined();
   });
 
-  it('the false-incapability guard is unchanged: a sentence naming a configured source is replaced, others are kept (no word list added)', () => {
+  it('the false-incapability guard: a sentence naming a configured source (or its catalog alias) is replaced, others are kept (no word list added)', () => {
     const named = guardFalseIncapabilityClaims('죄송하지만 캘린더를 확인할 수 없어요.', CONFIGURED, 'ko');
     expect(named.guarded).toBe(true);
     expect(named.text).toContain('- 캘린더 일정 조회: "오늘 일정"');
-    // The live reply named no source, so the guard (a narrow backstop) keeps it; the fact above is the fix.
+    // Owner-approved fix of 2026-10-28: the live reply names the calendar by its catalog alias ("일정"), which is a source
+    // mention too, so it is replaced. A sentence naming no source or alias is still kept.
     const live = '내일 면접 일정은 제가 직접 확인할 수 없어서 일반적인 질문을 드릴게요.';
-    expect(guardFalseIncapabilityClaims(live, CONFIGURED, 'ko')).toEqual({ text: live, guarded: false });
+    expect(guardFalseIncapabilityClaims(live, CONFIGURED, 'ko')).toMatchObject({ guarded: true });
+    expect(guardFalseIncapabilityClaims(live, CONFIGURED, 'ko').text).toContain('- 캘린더 일정 조회: "오늘 일정"');
+    const plain = '내일 면접이 있는지는 제가 직접 확인할 수 없어서 일반적인 질문을 드릴게요.';
+    expect(guardFalseIncapabilityClaims(plain, CONFIGURED, 'ko')).toEqual({ text: plain, guarded: false });
   });
 
   describe('the shown-listing guard (context eval 2026-10-26): works from the record of what was shown, not from the reply words', () => {
