@@ -1,6 +1,6 @@
 ---
 name: quoky-ship
-description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크(quoky-e2e) → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
+description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택(Codex 레인이 열려 있으면 Codex 병행 작업 포함)을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크(quoky-e2e) → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
 ---
 
 # Quoky Ship (side-job + Quoky 출하 절차)
@@ -33,6 +33,26 @@ description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 �
   - 커밋은 conventional 형식으로 하고 `Co-Authored-By` 트레일러를 넣지 않는다. push 는 하지 않는다.
   - 토큰처럼 생긴 리터럴을 쓰지 않는다. 테스트의 가짜 키는 조각을 이어 만든다.
   - Core 에 provider·platform 분기를 넣지 않는다.
+
+## 1.5 Codex 병행 작업 (소유자 지시 2026-10-28)
+
+Codex 레인이 열려 있으면(token-budget §3.5, `bash ~/.claude/skills/token-budget/scripts/codex-usage.sh` exit 0 = Codex 5h < 90% 그리고 7d < 95%) Claude 에이전트와 **함께** Codex 에도 작업을 나눠 준다. Codex 만 쓰지 않는다. 주 구현·판단은 Claude 에이전트가 맡는다.
+
+- **언제 확인하나**: 웨이브 착수 때, 그리고 Codex 에 작업을 하나 줄 때마다. 닫혀 있으면 그 작업은 Claude 에이전트가 맡는다.
+- **맡겨도 되는 Quoky 작업**(Claude 작업과 파일이 겹치지 않을 것):
+  - 명세가 확정된 I·M 구현, 테스트 행, 골든 fixture 재생성(소유자 승인 골든에 한함), DECISIONS/CHANGELOG/CURRENT_STATE 초안
+  - 평가 결과 파일(`data/eval/*.json`)의 오프라인 실패 분류, 코드 경로 조사
+- **맡기지 않는 것**: J1·J2(새 경계·쓰기·권한 경로·ADR 해석), §7 Strict 항목 전부(모델 호출 평가, `.env.local`, live UAT, 배포·재시작), push·PR·merge, 전체 `pnpm test`, 소유자 결정이 필요한 골든·정책 변경.
+- **실행**: Codex 전용 worktree `claude/<wave>-<task>-codex` 를 Claude 작업 브랜치의 현재 HEAD 에서 만들고,
+  `codex exec -s workspace-write -C <codex worktree> -o <scratchpad>/codex-<task>.md "<지시문>"` 을 Bash `run_in_background` 로 돌린다. 끝나면 오케스트레이터가 Codex 커밋을 Claude 작업 브랜치로 cherry-pick 한다.
+- **지시문에 반드시 넣을 것**(§1 구현 에이전트 지시와 같은 규칙):
+  - `AGENTS.md` loading router, 관련 ADR 조항, 바꿀 파일 범위(이 밖은 건드리지 않는다)
+  - Node 22 PATH 줄(§2), 대상 테스트만(`pnpm vitest run <파일>`), 전체 suite 금지
+  - 단어 목록·하드코딩·골드 맞추기 금지, 실제 제3자 이름 금지, 토큰처럼 생긴 리터럴 금지
+  - conventional 커밋, `Co-Authored-By` 트레일러 금지, push 금지, 모델 호출 평가 금지
+  - 마지막 메시지 형식: `커밋 목록 · 바꾼 파일 · 대상 테스트 결과 · 미해결점`
+- **리뷰**: Codex 가 쓴 커밋은 §3 의 Codex 리뷰 대신 Claude 리뷰어(J3 이상, 경계면 J2)가 독립 리뷰한다. 같은 PR 의 Claude 작성분은 지금처럼 Codex 리뷰를 받는다. 오프라인 검증(§2)은 합친 브랜치에서 한 번 한다.
+- **보고**(§8): `Codex · <작업> · 결과 · 레인 값(5h%/7d%)` 을 에이전트 목록에 같이 남긴다.
 
 ## 2. 오프라인 검증 (worktree 안에서)
 
