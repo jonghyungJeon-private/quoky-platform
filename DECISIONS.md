@@ -31014,3 +31014,9 @@ The merge waits until EVERY Strict context run is at or above 95%.
     appended, scoped by its label and usage ("참고로 Quoky가 조회할 수 있는 범위는 이거예요: - 캘린더 일정 조회: …").
   - A denial naming a source name is replaced as before.
   - The two tests changed by fix 4 now pin the kept denial.
+- **Codex review of 34080848..68acf4f6, P2 3 (fix 1): the shown-release pick fails closed on any grammatical negation.**
+  - "20261029 안 보여줘도 돼" settled the release: the shared negators scope 안 to the light verb only.
+  - New `nlHasGrammaticalNegation` (request-shape), scope-free, used only by this no-model shortcut. It is the shared
+    exclusion and negation markers, plus the Korean short negation adverbs 안 / 못 as their own word before another
+    word, or glued to a verb whose rest is a request form (a permissive -도 allowed). This is a closed grammatical class,
+    not a phrase list. Over-reading only sends the turn to the selector.

@@ -123,7 +123,7 @@ import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, 
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 import { nlOneStepClauseGroundedFlags } from './clause-flags';
-import { nlHasExclusionOrNegation } from './request-shape';
+import { nlHasGrammaticalNegation } from './request-shape';
 import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
 import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
 
@@ -1397,13 +1397,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * release, shown just before: no chat turn in between) and exactly one of the owner's tokens (letters and digits, at
    * least 4, digits kept) occurs in exactly one shown release title (`shownItemTitles`), Core settles `jira.release` with
    * that project and the owner's token as the release (Core's lookup resolves it to the listed name), with no model call.
-   * Not with an exclusion or negation in the message (fail-safe), and only when it validates. No word list. Else undefined.
+   * Not with any grammatical negation or exclusion (fail-safe), and only when it validates. No word list. Else undefined.
    */
   private pickShownRelease(turn: NlSelectionTurn, groundingText: string, original: NlSelectionTurn, last: LastSelection | undefined, language: 'ko' | 'en'): Promise<NlSelectionDecision> | undefined {
     const titles = original.shownItemTitles;
     if (titles === undefined || titles.length === 0 || last === undefined || last.entryId !== 'jira.release' || (last.turns ?? 0) > 0) return undefined;
     if (typeof last.args.project !== 'string' || last.args.release !== undefined) return undefined;
-    if (!turn.entries.some((entry) => entry.id === 'jira.release') || nlHasExclusionOrNegation(groundingText)) return undefined;
+    if (!turn.entries.some((entry) => entry.id === 'jira.release')) return undefined;
+    // Codex review of 68acf4f6 P2: fail closed on any grammatical negation ("20261029 안 보여줘도 돼"), scope-free and
+    // independent of the light-verb condition.
+    if (nlHasGrammaticalNegation(groundingText)) return undefined;
     const lowerTitles = titles.map((title) => title.normalize('NFC').toLowerCase());
     const tokens = [...new Set(groundingText.normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 4))];
     // Exactly one shown title is named, by any of the owner's tokens; the longest token naming it is the release value.

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlFrameIsCopularReference, nlFrameIsElliptical, nlRequestVeto } from './request-shape';
+import { nlFrameIsCopularReference, nlFrameIsElliptical, nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
 import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
 import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';
@@ -878,5 +878,16 @@ describe('CA review of 2026-10-19: colon labels act only as the owner\'s own com
     // Codex P2: an explicit request label keeps a titled colon in its content; a bare label with a second key is pasted.
     expect(check('todo.add', { title: '회의: 안건 정리' }, '할 일 추가해줘: 회의: 안건 정리')).toMatchObject({ ok: true });
     expect(check('todo.add', { title: '회의: 안건 정리' }, '할 일: 회의: 안건 정리')).toMatchObject({ ok: false, reason: 'not-request', arg: 'reported' });
+  });
+});
+
+describe('nlHasGrammaticalNegation (Codex review of 68acf4f6 P2): scope-free, independent of the light verb', () => {
+  it('reads 안/못 as a word or glued to a request form, on top of the shared markers', () => {
+    for (const text of ['20261029 안 보여줘도 돼', '20261029 못 보여줘', '20261029 안보여줘도 돼', '20261029 말고', '20261029 보여주지 마', "don't show 20261029"]) {
+      expect(nlHasGrammaticalNegation(text), text).toBe(true);
+    }
+    for (const text of ['20261029 거 이슈 보여줘', 'show the 20261029 issues', '안건 20261029 보여줘']) {
+      expect(nlHasGrammaticalNegation(text), text).toBe(false);
+    }
   });
 });
