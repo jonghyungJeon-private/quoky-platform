@@ -113,6 +113,12 @@ describe('owner decision of 2026-10-28: an item question after a narrowed listin
     expect(search('오후 면접은 몇 시야?', { range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' })).toEqual({ range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' });
   });
 
+  it('Codex review of 7f7e8d32: grounding is per filter; a restated filter stays when another inherited one is ungrounded', () => {
+    const two = { entryId: 'calendar.events', args: { range: 'tomorrow', partOfDay: 'afternoon', timedOnly: true as never }, parent: { range: 'tomorrow' } };
+    expect(search('오후 면접은 몇 시야?', { range: 'tomorrow', partOfDay: 'afternoon', timedOnly: true, keyword: '면접' }, two as never)).toEqual({ range: 'tomorrow', partOfDay: 'afternoon', keyword: '면접' });
+    expect(search('면접은 몇 시였지?', { range: 'tomorrow', partOfDay: 'afternoon', timedOnly: true, keyword: '면접' }, two as never)).toEqual({ range: 'tomorrow', keyword: '면접' });
+  });
+
   it('leaves a non-item follow-up, an unnarrowed listing and the same keyword alone', () => {
     expect(search('몇 개야?', { range: 'tomorrow', partOfDay: 'afternoon', count: true })).toEqual({ range: 'tomorrow', partOfDay: 'afternoon', count: true });
     expect(search('면접은 몇 시였지?', { range: 'tomorrow', keyword: '면접' }, { entryId: 'calendar.events', args: { range: 'tomorrow' } })).toEqual({ range: 'tomorrow', keyword: '면접' });

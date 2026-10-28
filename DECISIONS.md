@@ -30941,3 +30941,7 @@ The merge waits until EVERY Strict context run is at or above 95%.
     as written. The help text says so.
   - Real token counts are not recorded. The Claude CLI's print mode returns text only, and reading usage would need
     its JSON output format, which is a provider change left out of this branch.
+- **Codex review of 7f7e8d32, P2 1 (fix 4): grounding is decided per narrowing filter.** Each narrowing filter is now
+  validated against the parent with the other narrowing filters set aside. An ungrounded inherited filter no longer
+  drops a restated one. Example: inherited `{partOfDay: afternoon, timedOnly: true}`, then "오후 면접은 몇 시야?" keeps
+  `afternoon` and drops only `timedOnly`.

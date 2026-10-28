@@ -84,8 +84,15 @@ export function nlSearchParentListing(
   const narrowing = Object.keys(held.args).filter((name) => parent[name] !== held.args[name] && selection.args[name] === held.args[name]);
   if (narrowing.length === 0) return selection;
   const parentCtx: NlValidationContext = { ...ctx, previousArgs: parent, previousEntryId: entry.id as never };
-  const stated = validateSelection({ entryId: entry.id, args: selection.args }, parentCtx);
-  const carried = narrowing.filter((name) => !stated.ok || stated.value.args[name] !== selection.args[name]);
+  // Codex review of 7f7e8d32: grounding is decided PER narrowing filter. Each one is validated against the parent with
+  // the other narrowing filters set aside, so an ungrounded inherited filter (timedOnly) never takes a restated one
+  // ("오후 면접은?": afternoon) down with it.
+  const without = (keep: string): Record<string, NlArgs[string]> =>
+    Object.fromEntries(Object.entries(selection.args).filter(([name]) => name === keep || !narrowing.includes(name)));
+  const carried = narrowing.filter((name) => {
+    const alone = validateSelection({ entryId: entry.id, args: without(name) }, parentCtx);
+    return !alone.ok || alone.value.args[name] !== selection.args[name];
+  });
   if (carried.length === 0) return selection;
   const args: Record<string, NlArgs[string]> = {};
   for (const [name, value] of Object.entries(selection.args)) if (!carried.includes(name)) args[name] = value;
