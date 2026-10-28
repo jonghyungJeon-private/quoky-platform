@@ -31029,3 +31029,17 @@ The merge waits until EVERY Strict context run is at or above 95%.
   pick only, any whitespace word other than the one holding the matched release token that BEGINS with 안 or 못 refuses
   the shortcut. This covers attached forms ("안보여줘도돼", "못보겠네"). It also refuses "안내" and "안건" on purpose;
   those turns only go to the selector. `nlHasGrammaticalNegation` stays as well.
+- **Owner decision of 2026-10-28 (ADR-0120 implementation note on D2): the selector runs at haiku HIGH effort.**
+  - `DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[INTENT_SELECTION]` moves from `low` to `high`. The model stays haiku.
+  - Evidence, eval:context (deployed):
+    - at 8a22d019, haiku high scored 38/38, 37/38 and 36/38;
+    - at 34080848, haiku low scored 30-32 of 38.
+  - The capability is shared, so the agent planner (`INTENT_SELECTION`) also runs at high.
+  - The eval CLIs (`eval:nl` intent and read-regression, `eval:context`, `eval:agent-plan`) take the adapter default.
+    `eval:nl` and `eval:context` bind the effort into their plan digests. The D12 gates (intent, read-regression,
+    agent-plan) are rerun on haiku high before merge.
+  - The ADR-0123 RAG plan pins `selector.effort: 'low'` in its digest. Its transport now passes that effort explicitly,
+    so a frozen plan still measures what it states.
+  - Latency risk: at 8a22d019, haiku high timed out on 8 of 263 selection calls (4/263 at 34080848). Haiku low timed
+    out on 0-1 per run. The bound is unchanged: 6 s warm (`NL_SELECTION_TIMEOUT_MS`), 8 s cold, configurable from 2 to
+    8 s.

@@ -75,7 +75,7 @@ describe('ClaudeCliProvider', () => {
     expect(res.artifacts?.[0]?.kind).toBe(ArtifactKind.MARKDOWN_REPORT);
   });
 
-  it('ADR-0120 D2: serves INTENT_SELECTION with the selection model (haiku by default), low effort, no tools, the chat isolation', async () => {
+  it('ADR-0120 D2: serves INTENT_SELECTION with the selection model (haiku by default), high effort (owner decision 2026-10-28), no tools, the chat isolation', async () => {
     const calls: Array<{ args: string[]; opts: CliRunOptions }> = [];
     const runner: CliRunner = async (_bin, args, opts) => {
       calls.push({ args, opts });
@@ -84,7 +84,7 @@ describe('ClaudeCliProvider', () => {
     const claude = new ClaudeCliProvider('claude', { runner });
     expect(claude.capabilities).toContainEqual({ capability: Capability.INTENT_SELECTION, priority: 50 });
     const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'route this', timeoutMs: 4000 });
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high', '--tools', '']);
     expect(calls[0]?.opts.timeoutMs).toBe(4000);
     // Not a chat capability: the JSON passes through without the chat hygiene rewriting it.
     expect(res.text).toBe('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}');

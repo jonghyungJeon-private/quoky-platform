@@ -367,8 +367,9 @@ export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capabi
   [Capability.CODE_REVIEW]: 'medium',
   [Capability.ARCHITECTURE_PLANNING]: 'high',
   [Capability.CODE_IMPLEMENTATION]: 'high',
-  // ADR-0120 D2: one schema-only routing call, as fast as the model allows.
-  [Capability.INTENT_SELECTION]: 'low',
+  // ADR-0120 D2: one schema-only routing call. Owner decision of 2026-10-28 (ADR-0120 implementation note): high effort,
+  // measured on eval:context (haiku high 38/38, 37/38, 36/38 against haiku low 30-32 of 38).
+  [Capability.INTENT_SELECTION]: 'high',
 };
 
 export interface ClaudeCliProviderOptions extends CliProviderOptions {

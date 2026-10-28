@@ -68,7 +68,9 @@ export type RagSelectorTransport = ReturnType<typeof createSelectorTransport>;
 /** The production wiring: the Claude CLI at the plan's selector model, the plan's ledger budget, the fixed rate caps. */
 export function createClaudeSelectorTransport(options: { readonly model: string; readonly budget: number; readonly scoring: ReadonlyMap<string, ScoringCase>; readonly now: () => string }): RagSelectorTransport {
   return createSelectorTransport({
-    provider: new ClaudeCliProvider('claude', { intentSelectionModel: options.model }),
+    // The RAG plan pins the selector at low effort (`selector.effort`, part of its digest): kept explicit here so the adapter
+    // default (high since the owner decision of 2026-10-28) never changes what a frozen plan measures.
+    provider: new ClaudeCliProvider('claude', { intentSelectionModel: options.model, effortByCapability: { [Capability.INTENT_SELECTION]: 'low' } }),
     ledger: new TrafficLedger(options.budget),
     gate: new RateGate(),
     scoring: options.scoring,
