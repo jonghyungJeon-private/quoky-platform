@@ -17,6 +17,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner-approved fix 2026-10-28).** When the owner wrote no date, Core no longer offers a date reading of a
+  number ("20261022") next to the release it names; the release read runs.
 - **Changed (chat prompt and D9 guard, owner-approved fix 2026-10-28).** Chat writes every command to send in quotes or
   code. A chat sentence saying Quoky cannot check a connected source now also counts when it names the source by a
   catalog alias ("릴리스", "일정"); the reply then offers that read.

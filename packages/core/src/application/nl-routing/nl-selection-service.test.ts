@@ -1175,6 +1175,28 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect((await run('20261029 거 이슈 보여줘', { held: { project: 'NR26', release: '20261105' } })).calls).toBe(1);
   });
 
+  it('owner-approved fix of 2026-10-28 (a8-09, a8-27): with no period in the owner words, a date-range-only option is dropped', async () => {
+    const hedge = (primary: [string, Record<string, unknown>], alternative: [string, Record<string, unknown>]) =>
+      out(primary[0], primary[1], { ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: alternative[0], args: alternative[1] }] });
+    // a8-09: the release read against a due-date reading of the bare 8-digit name.
+    const release = harness({ script: [hedge(['jira.release', { release: '20261022' }], ['jira.issues', { window: 'due', range: '2026-10-22' }])] });
+    expect(await release.decide('20261022 배포 예정 항목 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '20261022' } } });
+    expect(release.logs.some((log) => log.event === 'nl_selection.date_only_option_dropped')).toBe(true);
+    // a8-27 shape, the date reading named first: it is still the one dropped.
+    const calendar = harness({ script: [hedge(['calendar.events', { range: '2026-10-15' }], ['jira.release', { release: '20261015' }])] });
+    expect(await calendar.decide('20261015 거 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '20261015' } } });
+    // The owner wrote a date form: both readings stay and Core asks.
+    const dated = harness({ script: [hedge(['jira.release', { release: '20261022' }], ['calendar.events', { range: '2026-10-22' }])] });
+    expect(await dated.decide('20261022 릴리스랑 10월 22일 거 보여줘')).toMatchObject({ kind: 'ask' });
+    // A date option carrying owner text of its own (a title keyword) is not date-only: Core asks.
+    const titled = harness({ script: [hedge(['jira.release', { release: '20261022' }], ['calendar.events', { range: '2026-10-22', keyword: '배포' }])] });
+    expect(await titled.decide('20261022 배포 보여줘')).toMatchObject({ kind: 'ask' });
+    // Only date readings: nothing is dropped (the usual question or read).
+    const onlyDates = harness({ script: [hedge(['calendar.events', { range: '2026-10-22' }], ['mail.list', { range: '2026-10-22' }])] });
+    await onlyDates.decide('20261022 거 보여줘');
+    expect(onlyDates.logs.some((log) => log.event === 'nl_selection.date_only_option_dropped')).toBe(false);
+  });
+
   it('owner decision of 2026-10-27 (range grounding): the one label-table period the owner states is the range Core runs', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
     expect(await h.decide('다다음 주 일정 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'week-after-next' } } });

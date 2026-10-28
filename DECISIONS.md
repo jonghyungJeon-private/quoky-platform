@@ -30997,3 +30997,13 @@ The merge waits until EVERY Strict context run is at or above 95%.
     that have source names count. An ASCII alias must stand as a word ("pr" is not inside "project"). No word is added.
   - Effect on existing tests: a denial naming the calendar as "일정" is now replaced by the calendar offer (two tests
     updated). The shown-listing guard still runs first and keeps its own behavior.
+- **Fix 5: a date-range-only option is dropped when the owner wrote no date form (owner-approved fix of 2026-10-28;
+  `eval:nl` a8-09, a8-27).**
+  - In a numbered question, Core drops an option that rests only on a date range the selector read into the owner's
+    words. It does so when the owner's words name no period at all, by the existing period reader (`nlNamesPeriod`). A
+    bare 8-digit release name ("20261022") is not a period form there.
+  - "Date-range-only": the selector gave the option's range arg a value that is not the held listing's own, and the
+    option carries no owner text of its own (no keyword-kind value). Enum qualifiers (a Jira `window`) do not count.
+  - At least one other option must remain. If every option is a date reading, nothing is dropped. The rest is decided as
+    before: one unchanged read option runs (fix 2), two or more ask.
+  - No word list. No gold changed.

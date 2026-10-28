@@ -1154,6 +1154,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
     const optionChanged: boolean[] = [];
+    const dateOnly: boolean[] = [];
     let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
     let droppedAction = false;
     // Codex P2: a read alternative that failed validation (an unconfigured source) or was repaired keeps the choice open.
@@ -1179,6 +1180,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
         options.push(repaired.value);
         // Owner decision of 2026-10-28: whether Core had to change this candidate (a repaired or ungrounded value dropped).
         optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args));
+        dateOnly.push(isDateRangeOnlyReading(repaired.value, candidate.args, own?.args));
+      }
+    }
+    // Owner-approved fix of 2026-10-28 (a8-09, a8-27): when the owner's words name no period at all (`nlNamesPeriod`, the
+    // existing period reader; a bare 8-digit release name such as "20261022" is not one), an option that rests only on a
+    // date range the selector read into them is dropped, as long as another option remains. The rest is decided as usual
+    // (one unchanged read option runs; see below).
+    if (dateOnly.includes(true) && dateOnly.includes(false) && !nlNamesPeriod(prepared.groundingText)) {
+      for (let index = options.length - 1; index >= 0; index -= 1) {
+        if (dateOnly[index] !== true) continue;
+        this.log('info', 'nl_selection.date_only_option_dropped', { entryId: (options[index] as NlValidatedSelection).entry.id });
+        options.splice(index, 1);
+        optionChanged.splice(index, 1);
       }
     }
     // A refusal reached through the repair path is not kept in the cache either.
@@ -3009,4 +3023,15 @@ function heldPeriodOf(entry: NlCatalogEntry, args: NlArgs, now: IsoTimestamp, ti
   if (spec === undefined) return undefined;
   const symbol = typeof args[spec.name] === 'string' ? (args[spec.name] as string) : typeof spec.default === 'string' ? spec.default : undefined;
   return symbol === undefined ? undefined : periodOfRange(resolveNlRange(symbol, now, timeZone));
+}
+
+/**
+ * Owner-approved fix of 2026-10-28 (a8-09, a8-27): whether a validated read option rests only on a date range: the
+ * selector gave its range arg a value that is not the held listing's own, and the option carries no owner text of its
+ * own (no keyword-kind value). Enum qualifiers (a Jira `window`) do not count as owner text. Pure.
+ */
+function isDateRangeOnlyReading(option: NlValidatedSelection, given: NlArgs, held: NlArgs | undefined): boolean {
+  const ranges = option.entry.args.filter((spec) => spec.kind === 'range' && given[spec.name] !== undefined && given[spec.name] !== held?.[spec.name]);
+  if (ranges.length === 0) return false;
+  return !option.entry.args.some((spec) => spec.kind === 'keyword' && option.args[spec.name] !== undefined);
 }
