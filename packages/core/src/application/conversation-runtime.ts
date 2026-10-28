@@ -98,6 +98,7 @@ import {
   guardFalseControlDenials,
   guardFalseIncapabilityClaims,
   guardShownListingDenials,
+  nlShownItemTitles,
   nlShownItemWords,
   renderConfiguredSourcesFact,
   renderControlCommandsFact,
@@ -3559,9 +3560,9 @@ export class ConversationRuntime {
     const turn = this.nlTurns.get(message);
     const facts = this.nlTurnFacts.get(message);
     if (turn?.keep !== true || facts === undefined) return;
-    const words = nlShownItemWords(plainTextOf(outboundBody(result.reply)));
+    const text = plainTextOf(outboundBody(result.reply));
     // Codex review of 7f7e8d32: bound to this turn's own listing record (its turn id), never to a completion time.
-    this.nlShownItems.set(`${facts.sessionId}|${facts.actorId}`, { turnId: message.id, words });
+    this.nlShownItems.set(`${facts.sessionId}|${facts.actorId}`, { turnId: message.id, words: nlShownItemWords(text), titles: nlShownItemTitles(text) });
   }
 
   /** Mark that this turn wrote `lastSelection` (the selection service did), so the settle step keeps it. */
@@ -4128,7 +4129,12 @@ export class ConversationRuntime {
     // #280 follow-up: the listing the previous turn showed, read before this turn's selection changes the record.
     const shownListing = this.nlShownListing(message, session, actor, catalog);
     const chat = await this.nlChatProvider(intent, session, actor);
+    // Owner-approved fix of 2026-10-28: the titles Core showed in the held listing, only when bound to its very record.
+    const heldListing = readLastSelection(session, actor.id, this.clock());
+    const heldItems = heldListing === undefined ? undefined : this.nlShownItems.get(`${session.id}|${actor.id}`);
+    const shownTitles = heldListing !== undefined && heldItems !== undefined && nlHeldItemWordsFor({ turnId: heldItems.turnId, words: heldItems.titles }, heldListing);
     const decision = await nl.decide({
+      ...(shownTitles !== undefined && shownTitles !== false && shownTitles.length > 0 ? { shownItemTitles: shownTitles } : {}),
       ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
       entryHelpTopics: this.nlEntryHelpTopics(catalog),
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
@@ -9922,11 +9928,11 @@ export function nlConfirmToRecord(handled: TurnHandlerOutcome): TurnHandlerReply
 
 /** Owner decision of 2026-10-28: a small in-memory map of shown item words (at most 256 sessions, oldest dropped first). */
 class BoundedShownItems {
-  private readonly map = new Map<string, { readonly turnId: string; readonly words: readonly string[] }>();
-  get(key: string): { readonly turnId: string; readonly words: readonly string[] } | undefined {
+  private readonly map = new Map<string, { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] }>();
+  get(key: string): { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] } | undefined {
     return this.map.get(key);
   }
-  set(key: string, value: { readonly turnId: string; readonly words: readonly string[] }): void {
+  set(key: string, value: { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] }): void {
     this.map.delete(key);
     this.map.set(key, value);
     while (this.map.size > 256) this.map.delete(this.map.keys().next().value as string);

@@ -30977,3 +30977,12 @@ The merge waits until EVERY Strict context run is at or above 95%.
   - No gold changed. Tests that pinned one-option asks for unchanged options now expect the read: `nl-action-live4`
     (lone NEEDS_CLARIFICATION, two reads of one entry, failed or repaired alternatives) and `nl-selection-service`
     (a lone help clarification). Tests for changed options keep the ask.
+- **Fix 1: pick a release by its listed title (owner-approved fix of 2026-10-28; `fr-release-list-pick` t2).**
+  - When the held record is a Jira release LIST (`jira.release` with a project and no release, shown just before) and
+    exactly one shown release title contains one of the owner's tokens, Core settles `jira.release` with that project and
+    the token as the release, with no model call. Tokens are runs of letters and digits, 4 or more long; digit-only
+    tokens are kept ("20261029" names "배포일_20261029(목)").
+  - The titles are each list line up to its first ` · `. They are held in process memory only with the item words
+    (ADR-0110 D4), bound to the listing turn's own id, and are never persisted or sent.
+  - Falls through to the selector when a token is in two or more titles or in none, the message has an exclusion or
+    negation, no titles are held for that record, or the result fails validation. No word list.

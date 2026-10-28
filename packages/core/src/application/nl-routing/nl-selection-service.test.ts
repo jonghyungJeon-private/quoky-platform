@@ -1149,6 +1149,32 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(worded.calls).toHaveLength(1);
   });
 
+  it('owner-approved fix of 2026-10-28: a token naming exactly one shown release title settles it on the held project', async () => {
+    const titles = ['배포일_20261029(목)', '배포일_20261105(목)', '비정기 배포'];
+    const run = async (text: string, extra: { titles?: readonly string[]; held?: Record<string, unknown> } = {}) => {
+      const h = harness({ script: [out('jira.issues', { project: 'NR26' })] });
+      const decided = await h.service.decide({
+        text,
+        attachmentCount: 0,
+        session: { ...h.session, metadata: { [LAST_SELECTION_METADATA_KEY]: { actorId: 'owner', entryId: 'jira.release', args: extra.held ?? { project: 'NR26' }, at: T0 } } },
+        actor: h.actor(),
+        now: at(1000),
+        entries: ALL,
+        route: 'chat',
+        chatProviderId: 'scripted-selector',
+        ...(extra.titles === undefined ? { shownItemTitles: titles } : extra.titles.length > 0 ? { shownItemTitles: extra.titles } : {}),
+      });
+      return { decided, calls: h.calls.length };
+    };
+    expect(await run('20261029 거 이슈 보여줘')).toMatchObject({ decided: { kind: 'execute', command: { entryId: 'jira.release', args: { project: 'NR26', release: '20261029' } } }, calls: 0 });
+    // Fail-safe: a token in two shown titles, a negation, no shown titles, or a held single release go to the selector.
+    expect((await run('배포일 거 이슈 보여줘')).calls).toBe(1);
+    expect((await run('2026 거 이슈 보여줘')).calls).toBe(1);
+    expect((await run('20261029 말고 다른 거 이슈 보여줘')).calls).toBe(1);
+    expect((await run('20261029 거 이슈 보여줘', { titles: [] })).calls).toBe(1);
+    expect((await run('20261029 거 이슈 보여줘', { held: { project: 'NR26', release: '20261105' } })).calls).toBe(1);
+  });
+
   it('owner decision of 2026-10-27 (range grounding): the one label-table period the owner states is the range Core runs', async () => {
     const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
     expect(await h.decide('다다음 주 일정 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'week-after-next' } } });

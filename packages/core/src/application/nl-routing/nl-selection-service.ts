@@ -123,6 +123,7 @@ import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, 
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 import { nlOneStepClauseGroundedFlags } from './clause-flags';
+import { nlHasExclusionOrNegation } from './request-shape';
 import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
 import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
 
@@ -242,6 +243,11 @@ export interface NlSelectionTurn {
    * id so a line joins its turn (the app's logger also appends the per-turn `cid`). Opaque; never content.
    */
   readonly turnId?: string;
+  /**
+   * Owner-approved fix of 2026-10-28: the item titles Core itself showed in the held listing (`lastSelection`), taken from
+   * the very turn that recorded it (process memory only, never persisted or sent; ADR-0110 D4). Absent: none known.
+   */
+  readonly shownItemTitles?: readonly string[];
   /** ADR-0120 A6: the platform marked part of the text as code (`InboundMessage.formatting.code`); never an action. */
   readonly codeFormatted?: boolean;
   /**
@@ -1038,6 +1044,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.logAgreement(turn, { outcome: 'fallback', reason: prepared.skip });
       return { kind: 'skip', reason: prepared.skip };
     }
+    // Owner-approved fix of 2026-10-28 (fr-release-list-pick t2): a follow-up that names exactly one release Core just
+    // listed, by a token of its shown title ("20261029 거 이슈 보여줘" after "배포일_20261029(목)"), is that release.
+    const picked = this.pickShownRelease(effective, prepared.groundingText, turn, last, language);
+    if (picked !== undefined) return picked;
     // Owner request of 2026-10-27 (a8-25): a message that is nothing but Jira release-page links is `jira.release` with
     // no args (the link is the release), read by the existing link parser with no model call.
     const linkOnly = this.releaseLinkOnly(effective, prepared.groundingText, turn, last, language);
@@ -1366,6 +1376,32 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
+  }
+
+  /**
+   * Owner-approved fix of 2026-10-28: when the held listing is a Jira release LIST (`jira.release` with a project and no
+   * release, shown just before: no chat turn in between) and exactly one of the owner's tokens (letters and digits, at
+   * least 4, digits kept) occurs in exactly one shown release title (`shownItemTitles`), Core settles `jira.release` with
+   * that project and the owner's token as the release (Core's lookup resolves it to the listed name), with no model call.
+   * Not with an exclusion or negation in the message (fail-safe), and only when it validates. No word list. Else undefined.
+   */
+  private pickShownRelease(turn: NlSelectionTurn, groundingText: string, original: NlSelectionTurn, last: LastSelection | undefined, language: 'ko' | 'en'): Promise<NlSelectionDecision> | undefined {
+    const titles = original.shownItemTitles;
+    if (titles === undefined || titles.length === 0 || last === undefined || last.entryId !== 'jira.release' || (last.turns ?? 0) > 0) return undefined;
+    if (typeof last.args.project !== 'string' || last.args.release !== undefined) return undefined;
+    if (!turn.entries.some((entry) => entry.id === 'jira.release') || nlHasExclusionOrNegation(groundingText)) return undefined;
+    const lowerTitles = titles.map((title) => title.normalize('NFC').toLowerCase());
+    const tokens = [...new Set(groundingText.normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 4))];
+    // Exactly one shown title is named, by any of the owner's tokens; the longest token naming it is the release value.
+    const matched = new Set(tokens.flatMap((token) => lowerTitles.flatMap((title, index) => (title.includes(token) ? [index] : []))));
+    if (matched.size !== 1) return undefined;
+    const only = lowerTitles[[...matched][0] as number] as string;
+    const best = tokens.filter((token) => only.includes(token)).sort((a, b) => b.length - a.length)[0] as string;
+    const token = groundingText.normalize('NFC').split(/[^\p{L}\p{N}]+/u).find((word) => word.toLowerCase() === best) ?? best;
+    const validated = validateSelection({ entryId: 'jira.release', args: { ...last.args, release: token } }, this.validationContext(turn, groundingText, last.args, false, last.entryId));
+    if (!validated.ok) return undefined;
+    this.log('info', 'nl_selection.shown_release_picked', { route: original.route });
+    return this.complete(validated.value, original, last, language, groundingText);
   }
 
   /** a8-25: `jira.release` with no args for a link-only message, when the entry is offered and validates; else undefined. */

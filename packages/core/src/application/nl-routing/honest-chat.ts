@@ -503,6 +503,22 @@ export function nlShownItemWords(reply: string): string[] {
 }
 
 /**
+ * Owner-approved fix of 2026-10-28 (pick a release by its listed title): the item titles of a listing reply Core rendered,
+ * from its own list structure only: each list-item line ("- ", "1. ", "1) ") up to its first " · " field separator, as
+ * written (digits kept). Local and pure; held in process memory only, like the item words (ADR-0110 D4).
+ */
+export function nlShownItemTitles(reply: string): string[] {
+  const titles: string[] = [];
+  for (const line of reply.split(/\r?\n/u)) {
+    const item = /^\s*(?:[-*•]|\d{1,3}[.)])\s+(.*)$/u.exec(line)?.[1];
+    if (item === undefined) continue;
+    const title = item.split(' · ')[0]?.trim() ?? '';
+    if (title.length > 0) titles.push(title);
+  }
+  return titles;
+}
+
+/**
  * Whether a sentence names one of the shown items' words, with the incapability phrase itself set aside first (so a
  * title word such as "확인" never matches "확인할 수 없어요"). A Korean word may carry a particle ("면접이" names "면접");
  * an English word may be the item word's short form ("doc" names "document"). Pure.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LISTING_SHOWN_ABOVE_RULE, guardFalseIncapabilityClaims, guardShownListingDenials, nlShownItemWords, renderConfiguredSourcesFact, renderShownListingAsk } from './honest-chat';
+import { LISTING_SHOWN_ABOVE_RULE, guardFalseIncapabilityClaims, guardShownListingDenials, nlShownItemTitles, nlShownItemWords, renderConfiguredSourcesFact, renderShownListingAsk } from './honest-chat';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // Owner DM 2026-10-22: after Quoky listed tomorrow's events, the next message went to chat (selection `none`), which said
@@ -107,6 +107,11 @@ describe('honest chat — a listing Quoky just showed (owner DM 2026-10-22)', ()
       // The incapability phrase itself never matches an item word ("확인" in a title).
       const titled = { ...calendar, itemWords: nlShownItemWords('- 09:00 배포 확인') };
       expect(guardShownListingDenials(weather, titled, CONFIGURED, 'ko')).toEqual({ text: weather, guarded: false });
+    });
+
+    it('owner-approved fix of 2026-10-28: the shown item titles are each list line up to its first field separator, digits kept', () => {
+      const releases = '**누리 플랫폼 운영 2026 (NR26) 릴리스** (미출시 2 · 출시 1)\n- 배포일_20261029(목) · 미출시 · 2026-10-29\n- 비정기 배포 · 미출시\n릴리스 이름을 말씀하시면 그 릴리스의 이슈를 보여드릴게요.';
+      expect(nlShownItemTitles(releases)).toEqual(['배포일_20261029(목)', '비정기 배포']);
     });
 
     it('a reply left empty gets the fixed ask (KO and EN), never a command to show the listing again', () => {

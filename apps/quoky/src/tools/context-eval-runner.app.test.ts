@@ -100,6 +100,24 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(record?.turns[1]?.reply).not.toContain('확인할 수 없어요');
   }, 120_000);
 
+  it('owner-approved fix of 2026-10-28: "20261029 거 이슈 보여줘" after the NR26 release list settles that listed release, with no model call', async () => {
+    let selector = JSON.stringify({ entryId: 'jira.release', args: { project: 'NR26' }, ambiguity: 'CLEAR', alternatives: [] });
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => '', summarize: async () => '' });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    const list = await world.turn(owner, 'NR26 릴리스 뭐 있어?', owner.dm);
+    expect(list.reply).toContain('배포일_20261029(목)');
+    // A hedging selector (jira.issues vs jira.release) would ask; Core settles the listed release before any call.
+    selector = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [] });
+    const pick = await world.turn(owner, '20261029 거 이슈 보여줘', owner.dm);
+    expect(pick.selectionCalls).toBe(0);
+    expect(pick.served.at(-1)).toMatchObject({ entryId: 'jira.release', args: { project: 'NR26', release: '20261029' } });
+    // A token naming no listed title, or a negation, is left to the selector.
+    await world.turn(owner, 'NR26 릴리스 뭐 있어?', owner.dm);
+    selector = JSON.stringify({ entryId: 'jira.issues', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+    const other = await world.turn(owner, '19990101 거 이슈 보여줘', owner.dm);
+    expect(other.selectionCalls).toBe(1);
+  }, 120_000);
+
   it('owner-approved fix of 2026-10-28: a listing shown in the DM is not "just above" in a channel turn (the #280 measurement)', async () => {
     world = await bootContextEvalWorld('deployed', { select: async () => '{}', chat: async () => '', summarize: async () => '' });
     // The Strict 34080848 run-1 reply: true in the channel, whose own session holds no listing record (ADR-0118 D7).
@@ -225,11 +243,17 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(listing.reply).not.toContain('찾지 못했어요');
     expect(listing.session.lastSelection).toMatchObject({ entryId: 'jira.release', args: { project: 'NR26' } });
     expect(listing.session.lastSelection?.args).not.toHaveProperty('release');
-    // The follow-up's selector now sees the project as the previous selection.
+    // The follow-up names a listed release (owner-approved fix of 2026-10-28): Core settles it on the recorded project,
+    // with no selector call.
     selector = JSON.stringify({ entryId: 'jira.release', args: { project: 'NR26', release: '20261029' }, ambiguity: 'CLEAR', alternatives: [] });
     const followUp = await world.turn(owner, '20261029 거 이슈 보여줘', owner.dm);
-    expect(followUp.selectorSaw?.previousEntry).toBe('jira.release');
+    expect(followUp.selectionCalls).toBe(0);
+    expect(followUp.served.at(-1)).toMatchObject({ entryId: 'jira.release', args: { project: 'NR26', release: '20261029' } });
     expect(followUp.reply).not.toContain('찾지 못했어요');
+    // A follow-up that names no listed release goes to the selector, which sees the project as the previous selection.
+    await world.turn(owner, 'NR26 릴리스 뭐 있어?', owner.dm);
+    const free = await world.turn(owner, '그 중에 미출시만 보여줘', owner.dm);
+    expect(free.selectorSaw?.previousEntry).toBe('jira.release');
   }, 120_000);
 
   it('P-time (ii) over the real runtime: Strict run 2 sc-calendar-todo-interview t3 ("그 면접 몇 시였지?" → {keyword: 면접}) reads tomorrow', async () => {
