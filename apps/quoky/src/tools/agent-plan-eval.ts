@@ -833,6 +833,8 @@ function askCaseProblems(at: string, expect: AgentPlanAskExpect, golden: AgentPl
 
 export interface AgentPlanEvalOptions {
   readonly model: string;
+  /** Owner decision of 2026-10-28: the planner's reasoning effort (a Claude `--effort` level), bound into the digest. */
+  readonly effort: string;
   readonly runs: number;
   readonly concurrency: number;
   readonly timeoutMs?: number;
@@ -852,6 +854,8 @@ export interface AgentPlanEvalPlan {
   readonly oneStepCorpusSha256: string;
   readonly gitHead: string;
   readonly model: string;
+  /** The planner's reasoning effort (owner decision of 2026-10-28: bound into the digest). */
+  readonly effort: string;
   readonly runs: number;
   readonly concurrency: number;
   /** The per-call bound (the runtime's selection bound); a call over it is a timeout and counts as over the bound. */
@@ -948,6 +952,7 @@ export function buildAgentPlanEvalPlan(
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
+  if (!/^[a-z]{2,8}$/.test(options.effort)) throw new Error('invalid effort');
   if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
     throw new Error('timeoutMs must be an integer 2000..8000');
   }
@@ -966,6 +971,7 @@ export function buildAgentPlanEvalPlan(
     oneStepCorpusSha256: hashes.oneStepCorpusSha256,
     gitHead: options.gitHead,
     model: options.model,
+    effort: options.effort,
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS,

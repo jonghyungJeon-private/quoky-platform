@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
+import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
 import {
   AGENT_PLAN_NEGATIVE_FAMILIES,
   AGENT_PLAN_POSITIVE_FAMILIES,
@@ -39,7 +40,7 @@ const CASES = agentPlanEvalCases(CORPUS, ONE_STEP);
 const NEW = CORPUS.cases;
 const READS = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 
-const OPTIONS: AgentPlanEvalOptions = { model: 'haiku', runs: 3, concurrency: 4, includePending: false, gitHead: 'a'.repeat(40) };
+const OPTIONS: AgentPlanEvalOptions = { model: 'haiku', effort: 'high', runs: 3, concurrency: 4, includePending: false, gitHead: 'a'.repeat(40) };
 const HASHES = { corpusSha256: LOADED.sha256, oneStepCorpusSha256: LOADED.oneStepSha256 };
 
 const steps = (value: unknown): string => JSON.stringify({ steps: value, ambiguity: 'CLEAR' });
@@ -402,11 +403,13 @@ describe('hostile planner output never reaches the report (Codex P2)', () => {
 describe('plan digest', () => {
   const digest = (options: Partial<AgentPlanEvalOptions> = {}, hashes = HASHES) => computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, hashes, FIXTURE, { ...OPTIONS, ...options }));
 
-  it('is stable for the same inputs and binds model, runs, concurrency, timeout, git HEAD, both corpora and --include-pending', () => {
+  it('is stable for the same inputs and binds model, effort, runs, concurrency, timeout, git HEAD, both corpora and --include-pending', () => {
     expect(digest()).toBe(digest());
     const base = digest();
     for (const changed of [
       digest({ model: 'sonnet' }),
+      // Owner decision of 2026-10-28: the planner's effort is bound into the digest.
+      digest({ effort: 'low' }),
       digest({ runs: 2 }),
       digest({ concurrency: 2 }),
       digest({ timeoutMs: 7000 }),
@@ -443,6 +446,7 @@ describe('plan digest', () => {
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, concurrency: 0 })).toThrow(/concurrency/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, timeoutMs: 9000 })).toThrow(/timeoutMs/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, model: '--x' })).toThrow(/model/);
+    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, effort: '--x' })).toThrow(/effort/);
   });
 });
 
@@ -495,12 +499,21 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
   }
   const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
 
+  it('owner decision of 2026-10-28: --effort is bound into the digest, and an unknown level is a usage error', async () => {
+    const medium = deps([]);
+    expect(await runCli(['--mode', 'plan', '--runs', '3', '--effort', 'medium'], medium)).toBe(EXIT_OK);
+    expect(digestOf(medium.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, effort: 'medium' })));
+    expect(await runCli(['--mode', 'plan', '--runs', '3', '--effort', 'huge'], deps([]))).toBe(EXIT_USAGE);
+  });
+
   it('plan is offline: it prints the digest, the prompt binding and the call bound, and constructs nothing', async () => {
     const created: string[] = [];
     const planned = deps(created);
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
-    expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
+    // The CLI's default effort is the adapter's selection effort (owner decision of 2026-10-28: bound into the digest).
+    const cliDefault = { ...OPTIONS, effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low' };
+    expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, cliDefault)));
     expect(text).toContain('"promptVersion": "agent-plan.v10"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);

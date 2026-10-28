@@ -31043,3 +31043,8 @@ The merge waits until EVERY Strict context run is at or above 95%.
   - Latency risk: at 8a22d019, haiku high timed out on 8 of 263 selection calls (4/263 at 34080848). Haiku low timed
     out on 0-1 per run. The bound is unchanged: 6 s warm (`NL_SELECTION_TIMEOUT_MS`), 8 s cold, configurable from 2 to
     8 s.
+- **Owner decision of 2026-10-28: `eval:agent-plan` binds the planner's effort into its plan digest.**
+  - The new `--effort` option takes a Claude `--effort` level. It defaults to the adapter's `INTENT_SELECTION` effort
+    (high).
+  - The plan records it as `effort`, and the run's provider uses it. The D12 agent-plan gate rerun is therefore bound to
+    the effort it runs at, like `eval:nl` and `eval:context`.
