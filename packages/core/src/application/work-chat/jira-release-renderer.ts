@@ -264,7 +264,8 @@ export function renderReleaseDmOnly(what: 'all' | 'list'): MessageBody {
 export function renderReleaseUsage(ignoredLink = false): MessageBody {
   return fit([
     ...(ignoredLink ? [{ text: renderIgnoredLinkNote() as MessagePart }] : []),
-    { text: '어느 릴리스를 볼까요? "ABC 프로젝트 1.2.0 릴리스 보여줘"처럼 프로젝트와 릴리스 이름을 말씀하시거나, 설정된 Jira 사이트의 릴리스 링크를 보내 주세요.' },
+    // D2 (2026-10-26): no quoted command — a release is chosen by the selector, so the example is words, not a command.
+    { text: '어느 릴리스를 볼까요? 프로젝트와 릴리스 이름을 함께 말씀하시거나(예: ABC 프로젝트 1.2.0 릴리스), 설정된 Jira 사이트의 릴리스 링크를 보내 주세요.' },
   ]);
 }
 

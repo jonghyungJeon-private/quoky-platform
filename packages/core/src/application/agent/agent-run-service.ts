@@ -50,8 +50,11 @@ export const AGENT_PROFILE_ID = 'quoky.read-agent';
 /** ADR-0121 D7 per-actor run caps (a shadow plan counts as a run). */
 export const AGENT_SHADOW_MAX_PER_HOUR = 30;
 export const AGENT_SHADOW_MAX_PER_DAY = 150;
-/** The bound of a shadow job when none is configured (the ADR-0120 A3 selection bound). */
-export const AGENT_SHADOW_DEFAULT_TIMEOUT_MS = 6_000;
+/**
+ * The bound of a shadow job when none is configured: the ADR-0120 A3 selection bound, 10 s since the owner decision of
+ * 2026-10-28 (the planner shares the selector's capability at high effort). The app passes the configured selection bound.
+ */
+export const AGENT_SHADOW_DEFAULT_TIMEOUT_MS = 10_000;
 export const AGENT_SHADOW_LOG_EVENT = 'agent_run.shadow';
 
 const HOUR_MS = 3_600_000;

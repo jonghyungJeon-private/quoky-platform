@@ -63,8 +63,11 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * v8 -> v9 (owner decision of 2026-10-26: a list read and the summary of its Nth item in one reply): rule 9's "return none
  * for a request to summarize one item of a list" is replaced by the position reference (`"at": N`, take 1, then a
  * summarize step), with the id fields of the item-summary sources; a request about an item of a list the plan does not
- * read stays none. No example added or changed. */
-export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v9';
+ * read stays none. No example added or changed.
+ *
+ * v9 -> v10 (owner decision of 2026-10-28): the embedded read rules are `nl-select.v73` (the rule-conflict cleanup of
+ * rules 2, 3, 6 and 7); no planner rule or example changed, so the version moves with the bytes (as v3 -> v4 did). */
+export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v10';
 
 export interface AgentPlanPromptInput {
   /** The offered entries; only `READ` entries are shown to the planner. */

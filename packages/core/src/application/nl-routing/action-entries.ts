@@ -309,6 +309,17 @@ export function nlHasLastWord(groundingText: string): boolean {
   return hasLastWord(groundingText);
 }
 
+/**
+ * Whether the owner's words point at ONE listed item by their own words, as an item `ref` is grounded (A6-D2): a deictic
+ * pronoun (그거 / 이거 / 저거 …, it / that / this), 마지막 / last, or an ordinal. The recency words (방금 / 아까) are left
+ * out: they date a listing as easily as an item ("아까 메일 전체 다시 보여줘"). Closed vocabularies only, no new list.
+ */
+export function nlPointsAtListedItem(groundingText: string): boolean {
+  const text = normalizeForMatch(groundingText);
+  const pronoun = DEICTIC_KO.some((word) => !(RECENCY_KO as readonly string[]).includes(word) && text.includes(word)) || DEICTIC_EN.some((word) => latinWordIn(text, word));
+  return pronoun || hasLastWord(groundingText) || nlOrdinalsIn(groundingText).length > 0;
+}
+
 /** Whether the owner's words carry a recency word ({@link NL_RECENCY_WORDS}; Korean inside a token, as every deictic). */
 export function nlHasRecencyWord(groundingText: string): boolean {
   const text = normalizeForMatch(groundingText);
@@ -1245,6 +1256,31 @@ export function nlReminderPeriod(text: string, weekdays?: readonly NlWeekdayMent
   const symbol = supportedReminderPeriod(symbols, days);
   if (symbol === undefined || hasReminderTimeExpression(withoutSupportedPeriodForms(prose))) return { kind: 'unsupported' };
   return days.length === 1 ? { kind: 'supported', symbol, weekday: days[0] as NlWeekdayMention } : { kind: 'supported', symbol };
+}
+
+/**
+ * Owner decision of 2026-10-27 (range grounding): the ONE period of the existing period-label table (`nlRangeSymbolWords`:
+ * "다다음 주", "이번 달 말까지", "next weekend" …) the owner's prose states, or `undefined`. Left alone (undefined): no
+ * label period, two or more periods (a month-day date counts as one), any weekday form, and a span, duration, number
+ * with a time unit or month name left once that period's own words are removed ("10월 1일부터 7일까지", "내일 3시").
+ * No vocabulary of its own. Pure.
+ */
+export function nlStatedLabelPeriod(text: string): string | undefined {
+  const prose = withoutStructures(text);
+  if (nlWeekdayMentions(prose).length > 0) return undefined;
+  const symbols = nlExpressedRangeSymbols(prose);
+  if (symbols.length !== 1) return undefined;
+  const symbol = symbols[0] as string;
+  const words = nlRangeSymbolWords().filter(([candidate]) => candidate === symbol);
+  if (words.length === 0) return undefined;
+  let rest = ` ${normalizeForMatch(prose)} `;
+  const phrases = words.flatMap(([, ko, en]) => [normalizeForMatch(ko), normalizeForMatch(ko).replace(/\s+/gu, ''), normalizeForMatch(en)]).sort((a, b) => b.length - a.length);
+  for (const phrase of phrases) {
+    const latin = /^[a-z0-9 -]+$/u.test(phrase);
+    rest = rest.replace(new RegExp(latin ? `(?<![a-z0-9])${phrase.replace(/ /g, '\\s+')}(?![a-z0-9])` : `(?<![가-힣])${phrase.replace(/ /g, '\\s*')}`, 'gu'), ' ');
+  }
+  if (PERIOD_SPAN.test(rest) || PERIOD_DURATION.test(rest) || NUMBER_TIME_UNIT.test(rest) || EN_MONTH_NAME.test(rest)) return undefined;
+  return symbol;
 }
 
 /**

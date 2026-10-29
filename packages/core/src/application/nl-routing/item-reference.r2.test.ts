@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { findAnyListingByReply, withLabelledListing, withListing, withListingReplies, readListingRecord, type ListingItem, type ListingSource } from '../last-listing';
 import { parseNlRef, type NlRef } from './action-entries';
 import type { NlActionEntryId, NlItemSource } from './catalog';
-import { hasReferenceRecord, renderReferenceContext, resolveItemReference, type NlReferenceState } from './item-reference';
+import { hasReferenceRecord, renderReferenceContext, resolveItemReference, resolveUndo, type NlReferenceState } from './item-reference';
+import type { LastActionView } from './last-action';
 import { LAST_READ_TTL_MS, readLastRead, withLastRead, type LastReadRecord } from './last-read';
 
 const ACTOR = 'a-1';
@@ -188,6 +189,21 @@ describe('resolveItemReference item.summarize jira and slack', () => {
       const st = state(one, 20_000, { lastRead: read });
       expect(resolve('jira', ref('this'), '그거 요약해줘', st)).toMatchObject({ outcome: 'ambiguous', candidates: [JIRA_ITEMS[0]] });
       expect(resolve('jira', ref('recent'), '방금 거 요약해줘', st)).toMatchObject({ kind: 'resolved', target: { source: 'jira', id: 'PROJ-12:10012' } });
+    });
+
+    it('Codex P2 (2026-10-27): an external-write receipt (a Jira / Slack write) is never an item candidate; lastRead stands, and the undo still sees the write', () => {
+      const receipt = { record: { entryId: 'external.write', source: 'jira', itemId: '8f1c2d3e-receipt', at: at(20_000), undoable: false, undone: false, echoReplyIds: [], outcome: 'SENT' }, fresh: true } as unknown as LastActionView;
+      const read = lastRead('jira', 'PROJ-14:10014', 5 * 1000, { label: 2 });
+      // The newer receipt does not override the valid lastRead.
+      for (const value of ['recent', 'this'] as const) {
+        expect(resolve('jira', ref(value), '방금 지라 그거 요약해줘', state(undefined, 30_000, { lastRead: read, lastAction: receipt })), value).toMatchObject({ kind: 'resolved', target: { source: 'jira', id: 'PROJ-14:10014' } });
+        // Without a lastRead nothing resolves to the receipt id.
+        const alone = resolve('jira', ref(value), '방금 지라 그거 요약해줘', state(undefined, 30_000, { lastAction: receipt }));
+        expect(JSON.stringify(alone), value).not.toContain('8f1c2d3e-receipt');
+        expect(alone.kind, value).toBe('unresolved');
+      }
+      // The same record is still the last action for "되돌려줘" (the honest external copy, never an older item).
+      expect(resolveUndo({ lastAction: receipt })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'jira', outcome: 'SENT' } });
     });
 
     it('a lastRead of jira is ignored for a slack entry', () => {

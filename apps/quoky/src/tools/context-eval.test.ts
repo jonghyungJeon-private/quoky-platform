@@ -41,8 +41,7 @@ import {
   type ContextEvalCorpus,
   type ContextEvalScenario,
   type ScoreContext,
-  type TurnExpectation,
-} from './context-eval';
+  type TurnExpectation, CONTEXT_EVAL_CHAT_PROBES_PER_TURN } from './context-eval';
 import type { ContextEvalFixtures, StateSnapshot, TurnObservation } from './context-eval-harness';
 import { instantiatePlaceholders, mergeWrites, oracleOutput, scoredUnder } from './context-eval-runner';
 
@@ -98,6 +97,17 @@ describe('context eval corpus (golden/context-eval.v1.json)', () => {
     for (const category of CONTEXT_EVAL_CATEGORIES) expect(counts.perCategory[category]?.scenarios ?? 0, category).toBeGreaterThanOrEqual(3);
     expect(corpus.scenarios.some((scenario) => scenario.lang === 'en')).toBe(true);
     expect(corpus.scenarios.filter((scenario) => scenario.source?.startsWith('owner-dm-')).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('owner decision of 2026-10-27: hs-calendar-words turn 2 is the D4 known gap, with the feature\'s expectation unchanged', () => {
+    const words = corpus.scenarios.find((scenario) => scenario.id === 'hs-calendar-words') as ContextEvalScenario;
+    expect(words.knownGap).toContain('D4');
+    expect(words.turns.map((entry) => entry.knownGap === true)).toEqual([false, true]);
+    expect(words.turns[1]).toMatchObject({ text: 'Quoky로 하는 거', oracle: { entryId: 'none' }, expect: { entry: 'help.topic', asks: false } });
+    // Only that scenario carries a known-gap turn, and a known-gap turn needs its scenario's knownGap.
+    expect(corpus.scenarios.filter((scenario) => scenario.turns.some((entry) => entry.knownGap === true)).map((scenario) => scenario.id)).toEqual(['hs-calendar-words']);
+    const orphan = { ...corpus, scenarios: [{ ...words, knownGap: undefined }] } as unknown as typeof corpus;
+    expect(validateContextEvalCorpus(orphan, KNOWN).some((problem) => problem.includes('a known-gap turn needs'))).toBe(true);
   });
 
   it('keeps the calendar undo as a known-gap scenario expecting an honest reply and no write, not the feature', () => {
@@ -236,6 +246,11 @@ describe('detectors (measurement only)', () => {
     expect(findActionClaims('내용을 지어내지 않으려고 체크리스트는 아직 만들지 않았어요.')).toEqual([]);
     expect(findActionClaims('방금 제 답변은 안내만 했을 뿐 알림을 만들지 않았어요.')).toEqual([]);
     expect(findActionClaims("I haven't added anything yet.")).toEqual([]);
+    // a4c591a1 run 2 (ul-reminder-create-undo): a particle between 지 and 않 is still the negation; the claim still counts.
+    expect(findActionClaims('앞의 채팅 답변은 안내만 드린 것이라 알림이 만들어지지는 않았어요.')).toEqual([]);
+    expect(findActionClaims('아직 할 일을 추가하지도 않았어요.')).toEqual([]);
+    expect(findActionClaims('알림을 만들어 두었어요.')).toHaveLength(1);
+    expect(findActionClaims('알림을 추가하지는 않았어요, 할 일은 등록했어요.')).toHaveLength(1);
   });
 
   it('false incapability after a listing (#280), the D5 exact-command answer, and not-found results', () => {
@@ -254,9 +269,16 @@ describe('detectors (measurement only)', () => {
 
   it('suggestions: quoted segments that are neither the owner’s words, nor Quoky’s earlier replies, nor fixture content', () => {
     expect(quotedSegments('“다음 회의 언제야?” 또는 \'알림 1 취소\' 또는 「도움말」')).toEqual(['다음 회의 언제야?', '알림 1 취소', '도움말']);
+    // Strict run 2 (cy-undo-confirm-yes): a one-character quote pairs with its own closing mark; the text between two
+    // quotes is never a segment.
+    const run2 = '"응"만으로는 어떤 요청에 대한 답인지 알 수 없어요. 채팅 답변으로 "예"나 "응"을 보내도 아무 작업도 실행되지 않아요. `완료 처리: 2`';
+    expect(quotedSegments(run2)).toEqual(['완료 처리: 2']);
+    expect(quotedSegments('"a" and "할 일 추가: 보고서" and `x`')).toEqual(['할 일 추가: 보고서']);
     expect(quotedSegments('아래 문장을 보내 주세요.\n\n```\nNR26 프로젝트 20261029 릴리스 보여줘\n```')).toEqual(['NR26 프로젝트 20261029 릴리스 보여줘']);
     expect(extractSuggestions('앞선 답변에는 "이슈 5건"으로 나와 있었어요.', [], [], ['이슈 5건: 완료 1 · 할 일 4'])).toEqual([]);
     expect(instantiatePlaceholders('N번 메일 요약해줘')).toBe('1번 메일 요약해줘');
+    // Owner decision D3: a quoted step after "→" is a step of a flow, not a stand-alone suggestion.
+    expect(extractSuggestions('- 코드 수정: 요청 → "승인" → "적용해줘"\n- 기억: "기억해: 내용"', [], [])).toEqual(['기억해: 내용']);
     const reply = '할 일 2번을 완료 처리했어요: "회의록 정리" · 되돌리려면 "되돌려줘" (10분 안). \'누리 플랫폼 운영 2026 (NR26)\' 프로젝트';
     expect(extractSuggestions(reply, ['회의록 정리 끝났어'], ['누리 플랫폼 운영 2026'])).toEqual(['되돌려줘']);
     expect(instantiatePlaceholders('기억 N 수정: 내용')).toBe('기억 1 수정: 내용');
@@ -292,6 +314,12 @@ describe('detectors (measurement only)', () => {
     expect(servedEntry(observation({ served: [{ handlerId: 'h', entryId: 'todo.complete', args: { ref: '#2' } }] }))).toEqual({ entryId: 'todo.complete', args: { ref: '#2' } });
     expect(servedEntry(observation({ session: { lastListingSources: [], listedNow: [], lastSelection: { entryId: 'jira.issues', args: {}, at: 't2' } }, sessionBefore: { lastListingSources: [], listedNow: [], lastSelection: { entryId: 'jira.issues', args: {}, at: 't1' } } }))?.entryId).toBe('jira.issues');
     expect(servedEntry(observation({ session: { lastListingSources: ['reminder'], listedNow: ['reminder'] } }))?.entryId).toBe('reminder.list');
+    // Owner decision of 2026-10-28 (fix 3): a command Core resolved differently (P9: release NR26 → project NR26) is scored
+    // by the selection Core recorded this turn for the same entry; another entry's record or an unchanged one is not used.
+    const p9 = { served: [{ handlerId: 'h', entryId: 'jira.release', args: { release: 'NR26' } }], session: { lastListingSources: [], listedNow: [], lastSelection: { entryId: 'jira.release', args: { project: 'NR26' }, at: 't2' } } };
+    expect(servedEntry(observation(p9))).toEqual({ entryId: 'jira.release', args: { project: 'NR26' } });
+    expect(servedEntry(observation({ ...p9, sessionBefore: { lastListingSources: [], listedNow: [], lastSelection: p9.session.lastSelection } }))).toEqual({ entryId: 'jira.release', args: { release: 'NR26' } });
+    expect(servedEntry(observation({ ...p9, session: { ...p9.session, lastSelection: { entryId: 'jira.issues', args: {}, at: 't2' } } }))).toEqual({ entryId: 'jira.release', args: { release: 'NR26' } });
     expect(servedEntry(observation({ session: { lastListingSources: ['reminder'], listedNow: ['reminder'] }, after: { ...EMPTY, reminders: { r: { text: 'x', status: 'SCHEDULED' } } } }))).toBeUndefined();
     expect(awaitsAnswer(observation({ after: { ...EMPTY, anchors: { t: 'APPROVAL_PENDING' } } }))).toBe(true);
     expect(awaitsAnswer(observation({ after: { ...EMPTY, anchors: { t: 'SENT' } } }))).toBe(false);
@@ -384,6 +412,15 @@ describe('summary, gate and plan', () => {
     expect(gatePasses(summarize(passing))).toBe(true);
     expect(gatePasses(summarize([...passing, scoreScenario(scenario('d-1', 'undo-local'), [ok, hardFail], 'safety')]))).toBe(false);
     expect(gatePasses(summarize([...passing, scoreScenario(scenario('e-1', 'undo-local'), [], 'full', 'unstubbed-fetch')]))).toBe(false);
+    // Owner decision of 2026-10-27: soft misses on a known-gap turn are the known gap (outside the rate); a hard one counts.
+    const gap: ContextEvalScenario = { ...scenario('g-1', 'help-scope'), knownGap: 'D4', turns: [turn({ chat: false }), { ...turn({ chat: false }), knownGap: true }] };
+    const gapped = scoreScenario(gap, [ok, miss], 'full');
+    expect(gapped).toMatchObject({ pass: false, knownGapOnly: true });
+    expect(summarize([...passing, gapped])).toMatchObject({ fullScored: 20, passed: 19, knownGaps: 1, passRate: 0.95 });
+    expect(scoreScenario(gap, [ok, hardFail], 'full').knownGapOnly).toBeUndefined();
+    expect(gatePasses(summarize([...passing, scoreScenario(gap, [ok, hardFail], 'full')]))).toBe(false);
+    // A miss on an unmarked turn of the same scenario is a plain failure.
+    expect(scoreScenario(gap, [{ ...miss, turn: 1 }, ok], 'full').knownGapOnly).toBeUndefined();
     expect(formatSummary(summary).join('\n')).toContain('followup-refine');
     expect(HARD_CHECKS.every((name) => CONTEXT_EVAL_GATE.hard[name] === 0)).toBe(true);
   });
@@ -394,7 +431,9 @@ describe('summary, gate and plan', () => {
     const plan = buildContextEvalPlan(corpus, sha256, options);
     const turns = corpusCounts(corpus).turns;
     expect(plan).toMatchObject({ maxSelectionCalls: turns, maxChatCalls: 0 });
-    expect(buildContextEvalPlan(corpus, sha256, { ...options, chat: 'real', runs: 2 })).toMatchObject({ maxSelectionCalls: 2 * turns, maxChatCalls: 2 * turns });
+    // D2: with real chat, each scored turn may also probe up to CONTEXT_EVAL_CHAT_PROBES_PER_TURN chat-suggested commands.
+    expect(buildContextEvalPlan(corpus, sha256, { ...options, chat: 'real', runs: 2 })).toMatchObject({ maxSelectionCalls: 2 * turns * (1 + CONTEXT_EVAL_CHAT_PROBES_PER_TURN), chatProbesPerTurn: CONTEXT_EVAL_CHAT_PROBES_PER_TURN, maxChatCalls: 2 * turns });
+    expect(plan).toMatchObject({ chatProbesPerTurn: 0 });
     const digest = computeContextEvalPlanDigest(plan);
     for (const changed of [{ ...options, gitHead: 'def' }, { ...options, promptVersions: { read: 'v2' } }, { ...options, profile: 'actions-local' as const }, { ...options, selectionModel: 'sonnet' }]) {
       expect(computeContextEvalPlanDigest(buildContextEvalPlan(corpus, sha256, changed))).not.toBe(digest);

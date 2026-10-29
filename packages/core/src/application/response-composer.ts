@@ -306,8 +306,10 @@ const HELP_CAPABILITY_LINES: readonly string[] = [
   '- 등록한 프로젝트 분석·설명과 코드 리뷰',
   '- 코드 수정: 파일 경로와 함께 요청 → "승인" → 미리보기 확인 → "적용해줘" → "승인" → "패치 만들어줘" → "패치 적용해줘"',
   '- 비밀 값처럼 보여 AI에게 보내지 않은 파일은 "그래도 보내줘"라고 하면 그 파일만 이번 한 번 보내요. 토큰·개인 키 형태나 .env 같은 비밀 파일은 보낼 수 없어요.',
-  `- 여러 파일·새 파일: 한 요청에 파일 경로를 ${MAX_CHANGE_SET_FILES}개까지 적을 수 있어요. 없는 파일은 "새 파일 만들어줘"처럼 요청해야 새로 만들어요.`,
-  '- 적용 후 검증: "테스트 실행해줘" 또는 "타입체크 실행해줘"',
+  // Owner decision D3 (2026-10-26, context eval): steps of the code-change flow are shown as steps (after "→" or inside
+  // the request), never as stand-alone commands: "새 파일" is a part of the request, and the checks follow an apply.
+  `- 여러 파일·새 파일: 한 요청에 파일 경로를 ${MAX_CHANGE_SET_FILES}개까지 적을 수 있어요. 없는 파일은 같은 요청에 새 파일·파일 생성처럼 만들라는 말을 함께 적어야 새로 만들어요.`,
+  '- 적용 후 검증: 코드 수정을 적용한 다음 → "테스트 실행해줘" 또는 "타입체크 실행해줘"',
   '- 로컬 커밋: 적용 후 "커밋해줘" → "승인" → "커밋 실행" (main/master 브랜치에는 커밋하지 않아요)',
 ];
 const HELP_CONTROL_LINES: readonly string[] = [

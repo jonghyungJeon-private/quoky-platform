@@ -304,7 +304,8 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     // ADR-0120 follow-up: a listing this grammar answered is also its catalog selection (a failure shows no listing).
     if (outcome === null || outcome.kind === 'write-draft') return outcome;
     if (outcome.kind !== 'summarize' && outcome.status === 'FAILED') return outcome;
-    const nlSelection = nlSelectionForWorkChatCommand(command);
+    // P9: the listing Core actually answered (a reinterpreted release) wins over the command's own catalog equivalent.
+    const nlSelection = outcome.nlSelection ?? nlSelectionForWorkChatCommand(command);
     return nlSelection === null ? outcome : { ...outcome, nlSelection };
   }
 
@@ -381,6 +382,8 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         ...(outcome.action !== undefined ? { nlAction: outcome.action } : {}),
         ...(outcome.listing !== undefined ? { nlListing: outcome.listing } : {}),
         ...(outcome.confirm !== undefined ? { nlConfirm: { selection: outcome.confirm, language } } : {}),
+        // P9: the listing actually shown (a release value read as a visible project key) becomes `lastSelection`.
+        ...(outcome.resolved !== undefined ? { nlSelection: outcome.resolved } : {}),
       };
       return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
     }

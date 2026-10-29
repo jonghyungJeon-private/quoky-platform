@@ -97,6 +97,8 @@ function lastReplySlot(input: DeicticReferentInput): ListingSlot | undefined {
 function lastActionItem(input: DeicticReferentInput, source?: 'todo' | 'reminder'): DeicticReferentRef | undefined {
   const last = input.state.lastAction;
   if (last === undefined || !last.fresh || last.record.undone || last.record.entryId === 'action.undo') return undefined;
+  // An external write is not a local item (ADR-0112 amendment 1 S3; context eval 2026-10-26, P4).
+  if (last.record.source !== 'todo' && last.record.source !== 'reminder') return undefined;
   if (source !== undefined && last.record.source !== source) return undefined;
   return { kind: 'item.local', source: last.record.source, itemId: last.record.itemId, ...(last.record.label !== undefined ? { label: last.record.label } : {}) };
 }
@@ -117,9 +119,10 @@ export function resolveDeicticReferent(input: DeicticReferentInput): DeicticReso
   const reply = state.replyTo;
   if (reply !== undefined) {
     const last = state.lastAction;
-    if (last !== undefined && last.record.echoReplyIds.includes(reply.messageId)) {
+    const lastSource = last?.record.source;
+    if (last !== undefined && (lastSource === 'todo' || lastSource === 'reminder') && last.record.echoReplyIds.includes(reply.messageId)) {
       if (last.record.undone || last.record.entryId === 'action.undo') return { kind: 'refuse', reason: 'not-found' };
-      return { kind: 'resolved', referent: { kind: 'item.local', source: last.record.source, itemId: last.record.itemId, ...(last.record.label !== undefined ? { label: last.record.label } : {}) }, path: 'reply-to' };
+      return { kind: 'resolved', referent: { kind: 'item.local', source: lastSource, itemId: last.record.itemId, ...(last.record.label !== undefined ? { label: last.record.label } : {}) }, path: 'reply-to' };
     }
     const listing = reply.listing;
     if (listing?.kind === 'expired') return { kind: 'refuse', reason: 'not-found' };

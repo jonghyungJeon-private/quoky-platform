@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
-import { CANARY_CLAUSE, CANARY_PLAN_LINE, TOTAL_CANARY_CALLS, EXIT_INVALID_PROVIDER, MAX_CANARY_CALLS, ProviderOutageAbort, formatProviderOutcomes, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds } from './eval-provider-guard';
+import { CANARY_CLAUSE, CANARY_PLAN_LINE, TOTAL_CANARY_CALLS, EXIT_INVALID_PROVIDER, MAX_CANARY_CALLS, ProviderOutageAbort, formatProviderOutcomes, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds, summarizeLatency, timeEvalProvider } from './eval-provider-guard';
 import { EXIT_INVALID as EXIT_INVALID_NL, runCli as runNlCli, type CliDeps } from './nl-intent-eval-cli';
 import { EXIT_INVALID as EXIT_INVALID_PLAN, runCli as runAgentPlanCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 import { loadAgentPlanCorpus } from './agent-plan-eval';
@@ -609,5 +609,32 @@ describe('final canary (CA final round W1)', () => {
     await tail.settle();
     expect(tail.report().tripped).toBeUndefined();
     expect(tail.report().invalidReason).toBeUndefined();
+  });
+});
+
+describe('timeEvalProvider / summarizeLatency (owner decision of 2026-10-28)', () => {
+  it('times every call with its outcome only, and summarizes p50 / p95 / max and the calls over the bound', async () => {
+    let now = 0;
+    let next = 0;
+    const answers = [100, 300, 12_000];
+    const inner: AiProvider = {
+      id: 'scripted',
+      capabilities: [],
+      isAvailable: async () => true,
+      execute: async () => {
+        now += answers[next] as number;
+        next += 1;
+        if (next === 3) throw new AiProviderError(AiFailureKind.TIMEOUT, 'slow');
+        return { text: 'secret answer', artifacts: [] };
+      },
+    };
+    const timed = timeEvalProvider(inner, () => now);
+    await timed.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: 'secret prompt' });
+    await timed.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: 'secret prompt' });
+    await expect(timed.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: 'secret prompt' })).rejects.toThrow();
+    expect(timed.calls()).toEqual([{ ms: 100, outcome: 'ok' }, { ms: 300, outcome: 'ok' }, { ms: 12_000, outcome: 'timeout' }]);
+    expect(JSON.stringify(timed.calls())).not.toContain('secret');
+    expect(summarizeLatency(timed.calls(), 10_000)).toEqual({ calls: 3, p50: 300, p95: 12_000, max: 12_000, boundMs: 10_000, overBound: 1, timeouts: 1 });
+    expect(summarizeLatency([], 10_000)).toMatchObject({ calls: 0, p50: 0, p95: 0, max: 0 });
   });
 });

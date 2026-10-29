@@ -55,6 +55,25 @@ export function nlHasExclusionOrNegation(prose: string): boolean {
   return EXCLUSION_KO.test(text) || NEGATION_KO.test(text) || VERB_NEGATION_KO.test(text) || EXCLUSION_EN.test(text) || NEGATION_EN.test(text);
 }
 
+/**
+ * Codex review of 68acf4f6 P2: whether the prose holds ANY grammatical negation, read without scope and without the light-verb
+ * condition, for fail-closed callers that settle a request with no model call (the shown-release pick). On top of
+ * {@link nlHasExclusionOrNegation}: the Korean short-form negation adverbs 안 / 못 (a closed grammatical class) standing
+ * as their own word before another word ("안 보여줘도 돼"), or glued to a verb whose rest is a request form, with a
+ * permissive -도 allowed ("안보여줘도"). Over-reading ("안내해줘") only sends the turn to the selector. Pure.
+ */
+export function nlHasGrammaticalNegation(prose: string): boolean {
+  if (nlHasExclusionOrNegation(prose)) return true;
+  const text = normalizeForMatch(prose);
+  if (/(?:^|\s)(?:안|못)\s+\p{L}/u.test(text)) return true;
+  return text.split(/\s+/u).some((raw) => {
+    const word = raw.replace(WORD_NOISE, '');
+    if (!/^(?:안|못)\p{Script=Hangul}/u.test(word)) return false;
+    const rest = word.slice(1);
+    return nlIsRequestForm(rest) || (rest.endsWith('도') && nlIsRequestForm(rest.slice(0, -1)));
+  });
+}
+
 /** A negator that spans a clause boundary of the split below ("필요 | 없어"); "하지 | 마" is the scoped verb negator. */
 const SPANNING_NEGATION = /필요\s*없|안\s*(?:해|하|되|돼|됐|할|함)/u;
 const EXAMPLE_FRAME = /예를\s*들어|예컨대|for example|e\.g\./u;

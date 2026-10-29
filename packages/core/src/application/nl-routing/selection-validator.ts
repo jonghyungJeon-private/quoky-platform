@@ -31,6 +31,7 @@ import {
   NL_RECENCY_WORDS,
   nlFrameExpressesAction,
   nlHasLastWord,
+  nlPointsAtListedItem,
   withoutSpan,
   withoutStructures,
   isNlRefGrounded,
@@ -152,7 +153,13 @@ export type NlValidationFailureReason =
    * caller asks a confirmation of the inferred action ("할 일 3번도 완료할까요?") or, with nothing to infer it from, the turn
    * is chat.
    */
-  | 'elliptical';
+  | 'elliptical'
+  /**
+   * Fix of 2026-10-29 (uat5r6-07): a READ that repeats the listing just shown (the previous selection's
+   * entry and args, unchanged) while the owner's words ask for a listed item's content and point at one item
+   * ({@link repeatsShownListing}). The request is about the shown items, not a re-list: the turn is chat.
+   */
+  | 'repeats-listing';
 
 export interface NlValidatedSelection {
   readonly entry: NlCatalogEntry;
@@ -209,6 +216,11 @@ export interface NlValidationContext {
    * owner's prose before the request-shape vetoes read it. Spans are still grounded in the whole prose.
    */
   readonly requestFrame?: (prose: string) => string;
+  /**
+   * An agent plan's read step that a later step reads from by reference (ADR-0121 D2): the listing is that step's input,
+   * not the turn's answer, so the `repeats-listing` rule (2026-10-29) does not apply to it.
+   */
+  readonly listingFeedsLaterStep?: true;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -827,6 +839,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       };
     }
   }
+  // Fix of 2026-10-29 (uat5r6-07): the listing just shown, again, for a request about one shown item.
+  if (entry.risk === 'READ' && repeatsShownListing(entry, args, ctx, mentions)) return { ok: false, reason: 'repeats-listing', entryId };
   const openAmbiguity = (entry.ambiguity ?? []).find((key) => key.openWhen(args) && args[key.arg] === undefined);
   return {
     ok: true,
@@ -838,6 +852,43 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
       ...(defaulted.length > 0 ? { defaulted: Object.freeze([...defaulted]) } : {}),
     },
   };
+}
+
+/**
+ * Fix of 2026-10-29 (uat5r6-07, "그거 요약해줘" after a mail listing answered with the same `mail.list`): a
+ * READ that only repeats the listing the owner was just shown, while the owner's words ask for a listed item's content
+ * (a summary or content word of the `item.summarize` check of A6-D1 owner decision 5; a full-text word is left out, it may
+ * ask for the whole listing) and point at one item
+ * (`nlPointsAtListedItem`: a deictic pronoun, 마지막 / last, an ordinal), is not a re-list request. Structural:
+ * - the same entry as the previous selection (`previousEntryId`; absent, the rule never applies), and the read is the
+ *   answer itself (an agent plan's listing that a later step reads by reference is that step's input);
+ * - the same canonical args. A read with no period of its own that would inherit the held listing's period (P-time (ii),
+ *   `inheritsHeldRange`, the owner naming none) is the same listing too;
+ * - fail-safe: any negation or exclusion marker in the owner's prose ("요약 말고 다시 보여줘") leaves the read alone, and
+ *   pasted structures ground nothing.
+ * - words naming the entry (an alias or source name) leave the read alone: they may ask for the list itself.
+ * A refresh ("메일 다시 보여줘", "안 읽은 메일 다시") asks for no content and still re-lists. Pure.
+ */
+function repeatsShownListing(entry: NlCatalogEntry, args: Readonly<Record<string, NlArgValue>>, ctx: NlValidationContext, mentions: readonly NlWeekdayMention[]): boolean {
+  if (ctx.listingFeedsLaterStep === true || ctx.previousEntryId !== entry.id || ctx.previousArgs === undefined) return false;
+  const prose = withoutStructures(ctx.groundingText);
+  // Codex final review of 53e0040b (P2): a full-text word (전체 / whole) may ask for the whole listing ("그거 전체 목록 다시
+  // 보여줘", "show this whole list again"), so only a summary or content word asks for an item's content here.
+  const lower = normalizeForMatch(prose);
+  const asksContent = [...NL_MODE_SUMMARY_WORDS, ...NL_CONTENT_WORDS].some((word) => groundingWordIn(lower, normalizeForMatch(word)));
+  if (!asksContent || !nlPointsAtListedItem(prose) || nlHasExclusionOrNegation(prose)) return false;
+  // Codex review of 49a2a3d0 (P2): words naming the listing's own source ("그거 전체 메일 목록 다시 보여줘", "show this whole
+  // mail list again") may ask for the list itself, so the read is left alone (fail-safe: today's re-list).
+  if ([...entry.aliases, ...(entry.sourceNames ?? [])].some((name) => groundingWordIn(lower, normalizeForMatch(name)))) return false;
+  const previous: Record<string, NlArgValue> = { ...ctx.previousArgs };
+  const rangeSpec = entry.args.find((spec) => spec.kind === 'range');
+  if (rangeSpec !== undefined && entry.inheritsHeldRange === true && args[rangeSpec.name] === undefined && nlReminderPeriod(prose, mentions).kind === 'none') {
+    delete previous[rangeSpec.name];
+  }
+  const now = canonicalArgs(entry, args);
+  const before = canonicalArgs(entry, previous);
+  const names = Object.keys(now);
+  return names.length === Object.keys(before).length && names.every((name) => now[name] === before[name]);
 }
 
 /** A closed particle glued after a name ("월요일이 보낸", "Sun한테서"). */

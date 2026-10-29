@@ -322,6 +322,8 @@ export type ConnectorWriteStep =
       readonly operation: ConnectorWriteOperation;
       readonly outcome: ConnectorWriteOutcome;
       readonly preview: ConnectorWritePreview;
+      /** The write's receipt id when one was prepared (ADR-0112 amendment 1 S3: `lastAction.itemId`). */
+      readonly receiptId?: Id;
     }
   /** A repeated execution phrase after the write already ran (or while it may be in flight): nothing is sent again. */
   | {
@@ -1218,6 +1220,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     await this.reconcileOnce(input.now);
     const executor = new ConnectorWriteExecutor({ receipts: this.deps.receipts, now: () => input.now, newId: this.deps.newId });
     let outcome: ConnectorWriteOutcome;
+    let receiptId: Id | undefined;
     // Whether the writer was ever called: the executor validates the request and writes the PREPARED receipt first,
     // so a throw before this flips is provably "nothing was sent".
     let sendStarted = false;
@@ -1242,6 +1245,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         { actorId: input.actor.id, idempotencyKey: `cwr:${approvalId}`, connector, operation, target, payloadSha256 },
         sendOnce,
       );
+      receiptId = result.receipt?.id;
       if (!result.executed) {
         // A receipt already existed for this approval: nothing was sent now (whatever its status).
         const status = result.receipt.status === 'PREPARED' ? 'UNCERTAIN' : result.receipt.status;
@@ -1280,7 +1284,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       this.log('warn', 'connector_write.outcome_save_failed', { errorName: error instanceof Error ? error.name : 'unknown' });
     }
     this.log('info', 'connector_write.executed', { operation, status: outcome.status });
-    return { kind: 'outcome', operation, outcome, preview };
+    return { kind: 'outcome', operation, outcome, preview, ...(receiptId !== undefined ? { receiptId } : {}) };
   }
 
   /**

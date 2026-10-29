@@ -254,9 +254,10 @@ describe('selection prompt — S1 narrowing follow-up rule', () => {
   it('tells the selector that a narrowing follow-up with no previous selection is a clarification, never CLEAR or none', async () => {
     const { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } = await import('./selection-prompt');
     const prompt = buildSelectionPrompt({ entries: ALL, text: '그 중에 스크럼만' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v67');
-    expect(prompt).toContain('A narrowing follow-up');
-    expect(prompt).toContain('never CLEAR, never none');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v73');
+    // v73: rule 7 covers it (a period or a reference with Previous selection none does not settle one entry).
+    expect(prompt).toContain('names only a period or a reference with Previous selection none ("이번 주 거", "그 중에 X만", "among those, only X");');
+    expect(prompt).toContain('never CLEAR and never none');
     expect(prompt.split('\n').filter((line) => line.startsWith('Previous selection:')).at(-1)).toBe('Previous selection: none');
   });
 });

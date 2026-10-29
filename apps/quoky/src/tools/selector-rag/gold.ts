@@ -8,7 +8,13 @@ import { prepareSelectionInput } from '@quoky/core';
 export const GOLDEN_DIR = resolve(__dirname, '../../../../../packages/core/src/application/golden');
 export const KNOWN_FINDINGS_PATH = resolve(__dirname, '../../../../../packages/core/src/application/nl-routing/example-contamination.known.v1.json');
 export const CALIBRATION_POSITIVES_PATH = resolve(__dirname, '../../../../../apps/quoky/src/tools/selector-rag/calibration-positives.v1.json');
-export const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json'] as const;
+export const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-intent.context.v1.json'] as const;
+/**
+ * Owner decision (나) of 2026-10-27: the supplemental selector-only context corpus is checked by the pool lint and the
+ * embedding audit (overlap only); it is not in the experiment split (`experimentCases`), so the A0/A1 arms and their
+ * dev / held-out membership are unchanged.
+ */
+export const OVERLAP_ONLY_GOLD_FILES: ReadonlySet<string> = new Set(['nl-intent.context.v1.json']);
 
 export type Corpus = 'read' | 'action';
 
@@ -22,11 +28,13 @@ export interface GoldCase {
   readonly corpus: Corpus;
   readonly previous?: string;
   readonly expect?: { readonly entryId?: unknown; readonly args?: unknown };
+  /** A case of an {@link OVERLAP_ONLY_GOLD_FILES} corpus: linted and audited, never split or scored by the experiment. */
+  readonly overlapOnly?: true;
 }
 
 export interface GoldSet {
   readonly cases: readonly GoldCase[];
-  /** sha256 over the four corpus files in their fixed order. */
+  /** sha256 over the corpus files in their fixed order ({@link GOLD_FILES}). */
   readonly sha256: string;
 }
 
@@ -56,7 +64,8 @@ export function loadGold(dir: string = GOLDEN_DIR): GoldSet {
   for (const file of GOLD_FILES) {
     const raw = readFileSync(resolve(dir, file), 'utf8');
     hash.update(raw);
-    const corpus: Corpus = file === 'nl-intent.v1.json' ? 'read' : 'action';
+    const corpus: Corpus = file === 'nl-intent.v1.json' || file === 'nl-intent.context.v1.json' ? 'read' : 'action';
+    const overlapOnly = OVERLAP_ONLY_GOLD_FILES.has(file);
     for (const golden of (JSON.parse(raw) as { cases: RawCase[] }).cases) {
       if (seen.has(golden.id)) continue;
       seen.add(golden.id);
@@ -71,10 +80,16 @@ export function loadGold(dir: string = GOLDEN_DIR): GoldSet {
         corpus,
         ...(previousParts.length > 0 ? { previous: previousParts.join(' ') } : {}),
         ...(typeof golden.expect === 'object' && golden.expect !== null ? { expect: golden.expect as GoldCase['expect'] } : {}),
+        ...(overlapOnly ? { overlapOnly: true as const } : {}),
       });
     }
   }
   return { cases, sha256: hash.digest('hex') };
+}
+
+/** The gold cases the experiment splits and scores (every case but the overlap-only ones). */
+export function experimentCases(gold: GoldSet): readonly GoldCase[] {
+  return gold.cases.filter((golden) => golden.overlapOnly !== true);
 }
 
 export interface KnownFinding {

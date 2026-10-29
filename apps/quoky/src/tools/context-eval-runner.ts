@@ -8,10 +8,14 @@
  *   of context handling (pending answers, reference binding, carry-over, honest copy, writes) on its own;
  * - `none` (dry, no model): the selector always answers none, i.e. the deterministic path alone (a provider outage).
  *
- * Chat is a fixed stub unless a real chat provider is given. Setup messages and the suggestion probes never reach a model.
+ * Chat is a fixed stub unless a real chat provider is given. Setup messages never reach a model. Suggestion probes
+ * (owner decision D2, 2026-10-26): a command in Core's own copy is probed on the deterministic path only (the selector
+ * answers none); a command the chat model suggested is probed with the real selector in a Strict run (`real`), at most
+ * {@link CONTEXT_EVAL_CHAT_PROBES_PER_TURN} per reply, and on the deterministic path otherwise. Never the chat model.
  */
 import type { AiProvider, AiRequest } from '@quoky/core';
 import {
+  CONTEXT_EVAL_CHAT_PROBES_PER_TURN,
   type WriteExpectation,
   awaitsAnswer,
   consumeWrites,
@@ -65,6 +69,10 @@ export interface TurnRecord {
   readonly reply?: string;
   readonly suggestions: readonly string[];
   readonly unparseable: readonly string[];
+  /** D2: the subset of `suggestions` the chat model wrote (probed with the real selector in Strict runs). */
+  readonly chatSuggestions?: readonly string[];
+  /** D2: chat-suggested commands beyond the per-reply probe bound (reported, not probed). */
+  readonly unprobed?: readonly string[];
   readonly failed: readonly string[];
 }
 
@@ -138,17 +146,35 @@ export class ContextEvalRunner {
     private readonly options: RunnerOptions,
   ) {}
 
-  private providers(turn: ContextEvalTurn | undefined, mode: 'scored' | 'quiet'): ContextEvalProviders {
+  /** The chat model's raw replies of the current turn (D2: which suggestions the chat model wrote). */
+  private chatOutputs: string[] = [];
+
+  private providers(turn: ContextEvalTurn | undefined, mode: 'scored' | 'quiet' | 'probe-selector'): ContextEvalProviders {
     const { selection, chat } = this.options;
     const stubChat = async (): Promise<string> => CONTEXT_EVAL_STUB_CHAT;
     if (mode === 'quiet') return { select: async () => NONE, chat: stubChat, summarize: async () => CONTEXT_EVAL_STUB_SUMMARY };
+    // D2: a chat-suggested command is probed through the real selector (a Strict run); chat stays the stub.
+    if (mode === 'probe-selector') {
+      return {
+        select: async (request: AiRequest) => (selection.kind === 'real' ? (await selection.provider.execute(request)).text : NONE),
+        chat: stubChat,
+        summarize: async () => CONTEXT_EVAL_STUB_SUMMARY,
+      };
+    }
     return {
       select: async (request: AiRequest) => {
         if (selection.kind === 'oracle') return oracleOutput(turn);
         if (selection.kind === 'none') return NONE;
         return (await selection.provider.execute(request)).text;
       },
-      chat: chat === undefined ? stubChat : async (request: AiRequest) => (await chat.execute(request)).text,
+      chat:
+        chat === undefined
+          ? stubChat
+          : async (request: AiRequest) => {
+              const text = (await chat.execute(request)).text;
+              this.chatOutputs.push(text);
+              return text;
+            },
       summarize: async () => CONTEXT_EVAL_STUB_SUMMARY,
     };
   }
@@ -166,6 +192,9 @@ export class ContextEvalRunner {
     const ownerTextsAt: string[][] = [];
     const offered: string[][] = [];
     const suggestions: string[][] = [];
+    const chatWritten: string[][] = [];
+    const unprobedAt: string[][] = [];
+    const chatTexts: string[][] = [];
     const verdicts = new Map<string, boolean>();
     try {
       try {
@@ -193,9 +222,11 @@ export class ContextEvalRunner {
           ownerTexts.push(text);
           ownerTextsAt.push([...ownerTexts]);
           world.providers = this.providers(turn, 'scored');
+          this.chatOutputs = [];
           const observation = await world.turn(owner, text, turn.context === 'channel' ? owner.channel : owner.dm);
           if (observation.blockedFetches.length > 0) harnessError = 'unstubbed-fetch';
           observations.push(observation);
+          chatTexts[observations.length - 1] = [...this.chatOutputs];
         }
         // A reply's suggestions are judged against the owner's words up to that turn: a later echo of a suggestion is not the
         // owner's earlier wording, so it still gets probed.
@@ -205,11 +236,24 @@ export class ContextEvalRunner {
         const earlierReplies = (position: number): string[] => observations.slice(0, position).flatMap((entry) => (entry === undefined ? [] : [entry.reply]));
         for (const [position, observation] of observations.entries()) offered.push(observation === undefined ? [] : extractSuggestions(observation.reply, ownerTextsAt[position] ?? [], fixtureTexts, earlierReplies(position)));
         for (const [position, observation] of observations.entries()) suggestions.push(observation === undefined || awaitsAnswer(observation) ? [] : (offered[position] ?? []));
-        for (const suggestion of suggestions.flat()) {
-          if (verdicts.has(suggestion)) continue;
-          world.providers = this.providers(undefined, 'quiet');
-          const probe = await world.turn(owner, instantiatePlaceholders(suggestion), world.freshDm());
-          verdicts.set(suggestion, probe.chatPrompts.length === 0);
+        // D2: a suggestion the chat model wrote (it appears in that turn's raw chat reply) vs Core's own fixed copy.
+        const compact = (text: string): string => text.normalize('NFC').replace(/\s+/g, ' ').trim();
+        for (const [position, observation] of observations.entries()) {
+          const raw = (chatTexts[position] ?? []).map(compact);
+          const fromChat = observation !== undefined && observation.chatPrompts.length > 0 ? (suggestions[position] ?? []).filter((suggestion) => raw.some((reply) => reply.includes(compact(suggestion)))) : [];
+          chatWritten.push(fromChat.slice(0, CONTEXT_EVAL_CHAT_PROBES_PER_TURN));
+          unprobedAt.push(fromChat.slice(CONTEXT_EVAL_CHAT_PROBES_PER_TURN));
+        }
+        for (const [position, list] of suggestions.entries()) {
+          for (const suggestion of list) {
+            if ((unprobedAt[position] ?? []).includes(suggestion)) continue;
+            const viaSelector = (chatWritten[position] ?? []).includes(suggestion) && this.options.selection.kind === 'real';
+            const key = `${viaSelector ? 'chat' : 'core'}\u0000${suggestion}`;
+            if (verdicts.has(key)) continue;
+            world.providers = this.providers(undefined, viaSelector ? 'probe-selector' : 'quiet');
+            const probe = await world.turn(owner, instantiatePlaceholders(suggestion), world.freshDm());
+            verdicts.set(key, probe.chatPrompts.length === 0);
+          }
         }
       } catch (error) {
         // A throw mid-scenario still scores the turns it observed: a hard failure seen before the throw is kept (hard
@@ -223,9 +267,14 @@ export class ContextEvalRunner {
       const records: TurnRecord[] = [];
       for (const [position, turn] of scenario.turns.slice(0, observations.length).entries()) {
         const observation = observations[position];
-        const unparseable = (suggestions[position] ?? []).filter((suggestion) => verdicts.get(suggestion) === false);
+        const isChat = (suggestion: string): boolean => (chatWritten[position] ?? []).includes(suggestion) && this.options.selection.kind === 'real';
+        const unparseable = (suggestions[position] ?? []).filter((suggestion) => verdicts.get(`${isChat(suggestion) ? 'chat' : 'core'}\u0000${suggestion}`) === false);
+        const unparseableChat = unparseable.filter((suggestion) => (chatWritten[position] ?? []).includes(suggestion));
         const priorObservation = observations.slice(0, position).filter((entry): entry is TurnObservation => entry !== undefined).at(-1);
-        const listingShown = position > 0 ? listingOf(observations[position - 1]) : undefined;
+        // Owner-approved fix of 2026-10-28: the #280 condition holds only within one conversation. A listing shown in the DM
+        // is not "just above" in a channel (its own session holds no listing record, ADR-0118 D7), so it is not applied there.
+        const sameContext = position > 0 && (scenario.turns[position - 1]?.context ?? 'dm') === (turn.context ?? 'dm');
+        const listingShown = sameContext ? listingOf(observations[position - 1]) : undefined;
         const score = scoreTurn(
           position + 1,
           {
@@ -233,6 +282,7 @@ export class ContextEvalRunner {
             observation,
             ...(priorObservation !== undefined ? { previousReply: priorObservation.reply, previousReplyWasChat: priorObservation.chatPrompts.length > 0 } : {}),
             unparseable,
+            unparseableChat,
             cardSeenBefore: cardSeen,
             suggestions: offered[position] ?? [],
             scenarioWrites,
@@ -255,6 +305,8 @@ export class ContextEvalRunner {
           ...(observation !== undefined ? { reply: observation.reply.slice(0, 2000) } : {}),
           suggestions: suggestions[position] ?? [],
           unparseable,
+          ...((chatWritten[position] ?? []).length > 0 ? { chatSuggestions: chatWritten[position] } : {}),
+          ...((unprobedAt[position] ?? []).length > 0 ? { unprobed: unprobedAt[position] } : {}),
           failed: score.checks.filter((check) => !check.pass).map((check) => `${check.name}${check.detail !== undefined ? `: ${check.detail}` : ''}`),
         });
       }

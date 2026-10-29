@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSelectionPrompt } from '@quoky/core';
-import { loadGold } from './gold';
+import { experimentCases, loadGold } from './gold';
 import { contextOfCase, loadScoringCases, promptContextOf, scoreExact } from './score';
 import { NL_ACTION_EVAL_ENTRIES, decideActionCase } from '../nl-action-eval';
 import { Capability, type AiProvider } from '@quoky/core';
@@ -14,7 +14,7 @@ const gold = loadGold();
 
 describe('scoring cases', () => {
   it('cover every gold case the harness splits, each in the corpus the gold file says', () => {
-    for (const golden of gold.cases) {
+    for (const golden of experimentCases(gold)) {
       const found = scoring.get(golden.id);
       expect(found, golden.id).toBeDefined();
       expect(found?.corpus, golden.id).toBe(golden.corpus);
@@ -113,7 +113,7 @@ describe('pre-selector cases (Core answers them before any selector prompt)', ()
   it('every case of the full real dev and held-out splits either has a context or is a recorded pre-selector case', async () => {
     const { splitCases } = await import('./split');
     const { preSelectorCaseIds } = await import('./score');
-    const split = splitCases(gold.cases.map((golden) => ({ id: golden.id, entry: golden.entry })));
+    const split = splitCases(experimentCases(gold).map((golden) => ({ id: golden.id, entry: golden.entry })));
     const ids = [...split.dev, ...split.heldOut];
     const pre = new Set(await preSelectorCaseIds(scoring, ids, NOW));
     expect([...pre]).toEqual(expect.arrayContaining(['a6-reference-todo.complete-032', 'a6-reference-todo.complete-033']));

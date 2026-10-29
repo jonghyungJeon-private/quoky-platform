@@ -135,7 +135,7 @@ describe('NlSelectionService — grammar listings and lastSelection (ADR-0120 fo
   it('records a handler-supplied selection like a selection would (structure only, 30 minutes) and clears it', async () => {
     const h = harness();
     expect(await h.service.recordGrammarSelection({ id: 'sess-1' }, 'owner', { entryId: 'calendar.events', args: { range: 'this-week' } }, T0)).toBe(true);
-    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'this-week' }, at: T0 });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'this-week' }, period: { start: '2026-10-12', days: 7 }, at: T0 });
     await h.service.clearLastSelection({ id: 'sess-1' });
     expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toBeUndefined();
   });
@@ -274,22 +274,23 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
       return h;
     }
 
-    it('uses 8000 ms during the first 180 s, then the configured bound; timeout still falls back with no retry and logs content-free timing', async () => {
+    it('uses the cold bound during the first 180 s, then the configured bound; timeout still falls back with no retry and logs content-free timing', async () => {
       vi.useFakeTimers();
       try {
         vi.setSystemTime(1_000_000);
-        const h = timed();
+        // Owner decision of 2026-10-28: the default bound and the cold bound are both 10 s; a configured 6 s shows the window.
+        const h = timed(6_000);
         vi.setSystemTime(1_000_000 + 60_000);
-        expect(await boundAt(h, () => undefined)).toBe(8_000);
+        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_COLD_TIMEOUT_MS);
         expect(h.calls).toHaveLength(1);
         const line = h.logs.find((log) => log.event === 'nl_selection.decided')!;
-        expect(line.fields).toMatchObject({ outcome: 'unavailable', cause: 'timeout', boundMs: 8_000, sinceStartMs: 60_000, idleMs: 60_000 });
+        expect(line.fields).toMatchObject({ outcome: 'unavailable', cause: 'timeout', boundMs: NL_SELECTION_COLD_TIMEOUT_MS, sinceStartMs: 60_000, idleMs: 60_000 });
         expect(typeof line.fields!.promptChars).toBe('number');
         expect(JSON.stringify(line.fields)).not.toContain('지라');
         // The timeout is not a completed call: idle still counts from start. 200 s after start with no completed call is
         // idle 200 s (< 30 min) and past the start window: the configured 6 s.
         vi.setSystemTime(1_000_000 + 200_000);
-        expect(await boundAt(h, () => undefined)).toBe(NL_SELECTION_TIMEOUT_MS);
+        expect(await boundAt(h, () => undefined)).toBe(6_000);
       } finally {
         vi.useRealTimers();
       }
@@ -337,19 +338,21 @@ describe('NlSelectionService — modes and the D3 call contract', () => {
       }
     });
 
-    it('a configured bound below 6 s stays as configured outside the windows; a bound of 8000 stays 8000', async () => {
+    it('a configured bound below the default stays as configured outside the windows; the 10 s maximum stays 10 s (owner decision 2026-10-28)', async () => {
       vi.useFakeTimers();
       try {
         vi.setSystemTime(0);
         const small = timed(3_000);
         vi.setSystemTime(200_000);
         expect(await boundAt(small, () => undefined)).toBe(3_000);
-        const max = timed(8_000);
+        const max = timed(10_000);
         vi.setSystemTime(400_000);
-        expect(await boundAt(max, () => undefined)).toBe(8_000);
+        expect(await boundAt(max, () => undefined)).toBe(10_000);
         const cold = timed(3_000);
         vi.setSystemTime(400_000 + 1_000);
-        expect(await boundAt(cold, () => undefined)).toBe(8_000);
+        expect(await boundAt(cold, () => undefined)).toBe(10_000);
+        expect(NL_SELECTION_TIMEOUT_MS).toBe(10_000);
+        expect(NL_SELECTION_COLD_TIMEOUT_MS).toBe(10_000);
       } finally {
         vi.useRealTimers();
       }
@@ -400,13 +403,86 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
       command: { entryId: 'calendar.events', args: { range: 'tomorrow' }, range: { dayOffset: 1 }, language: 'ko' },
       basis: '기준: 내일 일정',
     });
-    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'tomorrow' }, at: T0 });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toEqual({ actorId: 'owner', entryId: 'calendar.events', args: { range: 'tomorrow' }, period: { start: '2026-10-13', days: 1 }, at: T0 });
   });
 
   it('`none` is honest chat, and an entry the turn does not offer (an unconfigured source) is too', async () => {
     const h = harness({ script: [NONE, out('mail.list', { unread: true })] });
     expect(await h.decide('안녕')).toEqual({ kind: 'none' });
     expect(await h.decide('안 읽은 메일', { entries: [NL_WAVE1_ENTRIES['jira.issues']] })).toEqual({ kind: 'none' });
+  });
+
+  it('Codex P2 (2026-10-27): each clarification candidate is grounded against its own listing (P7 history), so an earlier listing keeps its carried keyword', async () => {
+    const h = harness({
+      script: [
+        out('calendar.events', { range: 'this-week', keyword: '스크럼' }),
+        out('jira.issues', { keyword: '청구서' }),
+        JSON.stringify({ entryId: 'jira.issues', args: { keyword: '청구서', count: true }, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } }] }),
+      ],
+    });
+    await h.decide('이번 주 스크럼 일정');
+    await h.decide('청구서 지라 이슈');
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'jira.issues', earlier: [{ entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼' } }] });
+    expect((await h.decide('몇 개야?')).kind).toBe('ask');
+    // Both options keep their own listing's args: the calendar option is the 스크럼 listing, not the broader calendar.
+    expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({
+      options: [
+        { entryId: 'jira.issues', args: { keyword: '청구서', count: true } },
+        { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } },
+      ],
+    });
+    // Choosing the calendar option counts the 스크럼 listing.
+    expect(await h.decide('2')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'this-week', keyword: '스크럼', count: true } } });
+  });
+
+  it('owner decision P-time (ii): a calendar question with no date or period inherits the held calendar listing\'s range; an explicit period wins', async () => {
+    const h = harness({
+      script: [
+        out('calendar.events', { range: 'tomorrow' }),
+        out('calendar.events', { keyword: '면접' }),
+        out('todo.list'),
+        out('calendar.events', { keyword: '면접' }),
+        out('calendar.events', { keyword: '면접' }),
+      ],
+    });
+    await h.decide('내일 일정 보여줘');
+    // The selector left the range out; the owner named no period: tomorrow is kept.
+    expect(await h.decide('그 면접 몇 시였지?')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'tomorrow', keyword: '면접' } } });
+    // After another listing in between, the earlier calendar listing (P7) is the held one.
+    await h.decide('내 할 일 보여줘');
+    expect(await h.decide('그 면접 어디서 해?')).toMatchObject({ kind: 'execute', command: { args: { range: 'tomorrow', keyword: '면접' } } });
+    // An explicit period wins: "오늘" is the owner's (today is the default, so canonical args omit it).
+    const today = await h.decide('오늘 면접 몇 시야?');
+    expect(today).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { keyword: '면접' } } });
+    expect((today as { command: { args: Record<string, unknown> } }).command.args).not.toHaveProperty('range');
+  });
+
+  it('Codex P2 (2026-10-27): the inherited period is the listing\'s own dates, never its symbol re-resolved after midnight', async () => {
+    const beforeMidnight = '2026-10-27T14:55:00.000Z' as never; // 23:55 Asia/Seoul
+    const afterMidnight = '2026-10-27T15:05:00.000Z' as never; // 00:05 Asia/Seoul, the next day
+    const h = harness({ script: [out('calendar.events', { range: 'tomorrow' }), out('calendar.events', { keyword: '면접' }), out('calendar.events', { keyword: '면접' })] });
+    expect(await h.decide('내일 일정 보여줘', { now: beforeMidnight })).toMatchObject({ command: { range: { startDate: { year: 2026, month: 10, day: 28 } } } });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toMatchObject({ args: { range: 'tomorrow' }, period: { start: '2026-10-28', days: 1 } });
+    // After midnight "tomorrow" would be 10-29: the listing showed 10-28, and that is what the follow-up reads.
+    const after = await h.decide('그 면접 어디서 해?', { now: afterMidnight });
+    expect(after).toMatchObject({ kind: 'execute', command: { args: { range: '2026-10-28', keyword: '면접' }, range: { startDate: { year: 2026, month: 10, day: 28 }, days: 1 } } });
+    // Before midnight the symbol still names the shown dates and is kept as written.
+    const same = harness({ script: [out('calendar.events', { range: 'tomorrow' }), out('calendar.events', { keyword: '면접' })] });
+    await same.decide('내일 일정 보여줘', { now: beforeMidnight });
+    expect(await same.decide('그 면접 어디서 해?', { now: '2026-10-27T14:58:00.000Z' as never })).toMatchObject({ command: { args: { range: 'tomorrow' } } });
+  });
+
+  it('Codex P2: a default-today listing shown before midnight is still that day after it', async () => {
+    const h = harness({ script: [out('calendar.events'), out('calendar.events', { keyword: '면접' })] });
+    await h.decide('일정 보여줘', { now: '2026-10-27T14:55:00.000Z' as never });
+    expect(h.session.metadata?.[LAST_SELECTION_METADATA_KEY]).toMatchObject({ period: { start: '2026-10-27', days: 1 } });
+    expect(await h.decide('그 면접 몇 시였지?', { now: '2026-10-27T15:05:00.000Z' as never })).toMatchObject({ command: { args: { range: '2026-10-27' }, range: { startDate: { day: 27 } } } });
+  });
+
+  it('P-time (ii): without a held calendar listing nothing is inherited', async () => {
+    const h = harness({ script: [out('calendar.events', { keyword: '면접' })] });
+    const decision = await h.decide('그 면접 몇 시였지?');
+    expect((decision as { command: { args: Record<string, unknown> } }).command.args).toEqual({ keyword: '면접' });
   });
 
   it('NEEDS_CLARIFICATION asks one numbered question; "1" or "지라" resolves it deterministically (no second call)', async () => {
@@ -546,11 +622,15 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
   });
 
   it('a failed validation never guesses and never chats: it asks with the repaired candidate, or with the usage', async () => {
+    // Owner decision of 2026-10-28: one read option runs only when Core did not change it; this one was repaired, so it asks.
     const ungrounded = harness({ script: [out('jira.issues', { keyword: '결제' })] });
     const asked = await ungrounded.decide('내 지라 이슈 보여줘');
     expect(asked).toMatchObject({ kind: 'ask' });
     expect((asked as { text: string }).text).toContain('1. Jira 이슈 조회');
     expect(ungrounded.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'jira.issues', args: {} }] });
+    // The selector's own unchanged single option runs (owner decision 2026-10-28).
+    const lone = harness({ script: [out('jira.release', { project: 'OP26' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await lone.decide('OP26 릴리스 뭐 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { project: 'OP26' } } });
     const missing = harness({ script: [out('slack.search', {})] });
     expect(await missing.decide('슬랙 좀 봐줘')).toEqual({ kind: 'ask', entryId: expect.any(String), text: 'Slack 검색에서 무엇을 찾을지 정확히 모르겠어요. "Slack에서 배포 검색"처럼 말씀해 주세요.' });
   });
@@ -571,6 +651,15 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     });
     expect(await h.decide('몇 개야?', { now: at(120_000) })).toMatchObject({ kind: 'execute', command: { args: { keyword: '위클리카', count: true } } });
     expect(h.calls[1]!.prompt).toContain('Previous selection: {"entryId":"jira.issues","args":{"role":"either","window":"created","range":"today"}}');
+  });
+
+  it('fix of 2026-10-29 (uat5r6-07): the listing just shown, repeated for a pointed content request, is chat; a refresh re-lists', async () => {
+    const h = harness({ script: [out('mail.list'), out('mail.list'), out('mail.list')] });
+    expect(await h.decide('메일 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'mail.list', args: {} } });
+    expect(await h.decide('그거 요약해줘', { now: at(60_000) })).toEqual({ kind: 'none' });
+    expect(h.logs.some((log) => log.event === 'nl_selection.repeats_listing')).toBe(true);
+    // The listing is kept (D1): a refresh asks for no content and still re-lists.
+    expect(await h.decide('메일 다시 보여줘', { now: at(120_000) })).toMatchObject({ kind: 'execute', command: { entryId: 'mail.list', args: {} } });
   });
 
   it('CA review: a jira.release fallback names the default in the basis line ("내 담당"); a Jira status fallback with a window says 미해결', async () => {
@@ -1050,6 +1139,114 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(h.calls).toHaveLength(2);
   });
 
+  it('D4 moved to the next merge (owner decision of 2026-10-27): a worded reply to the help-scope question is routed as usual, with no open question shown', async () => {
+    const h = harness({ script: [out('help.topic'), NONE] });
+    await h.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await h.decide('퀴키로 하는 쪽')).toEqual({ kind: 'none' });
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1]?.prompt).not.toContain('Open question');
+    // An `answer` field is outside the router's contract again: the output is malformed and nothing is answered.
+    const stray = harness({ script: [out('help.topic'), out('none', {}, { answer: 1 })] });
+    await stray.decide('슬랙에서 검색하는 방법 알려줘');
+    expect(await stray.decide('퀴키로 하는 쪽')).toEqual({ kind: 'unavailable' });
+  });
+
+  it('a8-25 (2026-10-27): a link-only message is jira.release with no args, with no selector call', async () => {
+    const h = harness({ script: [] });
+    expect(await h.decide('https://example.atlassian.net/browse/OP26/fixforversion/16555')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: {} } });
+    expect(h.calls).toHaveLength(0);
+    // A link with words goes to the selector as before.
+    const worded = harness({ script: [out('jira.release')] });
+    await worded.decide('https://example.atlassian.net/browse/OP26/fixforversion/16555 이거 몇 개야?');
+    expect(worded.calls).toHaveLength(1);
+  });
+
+  it('owner-approved fix of 2026-10-28: a token naming exactly one shown release title settles it on the held project', async () => {
+    const titles = ['배포일_20261029(목)', '배포일_20261105(목)', '비정기 배포'];
+    const run = async (text: string, extra: { titles?: readonly string[]; held?: Record<string, unknown> } = {}) => {
+      const h = harness({ script: [out('jira.issues', { project: 'NR26' })] });
+      const decided = await h.service.decide({
+        text,
+        attachmentCount: 0,
+        session: { ...h.session, metadata: { [LAST_SELECTION_METADATA_KEY]: { actorId: 'owner', entryId: 'jira.release', args: extra.held ?? { project: 'NR26' }, at: T0 } } },
+        actor: h.actor(),
+        now: at(1000),
+        entries: ALL,
+        route: 'chat',
+        chatProviderId: 'scripted-selector',
+        ...(extra.titles === undefined ? { shownItemTitles: titles } : extra.titles.length > 0 ? { shownItemTitles: extra.titles } : {}),
+      });
+      return { decided, calls: h.calls.length };
+    };
+    expect(await run('20261029 거 이슈 보여줘')).toMatchObject({ decided: { kind: 'execute', command: { entryId: 'jira.release', args: { project: 'NR26', release: '20261029' } } }, calls: 0 });
+    // Fail-safe: a token in two shown titles, a negation, no shown titles, or a held single release go to the selector.
+    expect((await run('배포일 거 이슈 보여줘')).calls).toBe(1);
+    expect((await run('2026 거 이슈 보여줘')).calls).toBe(1);
+    expect((await run('20261029 말고 다른 거 이슈 보여줘')).calls).toBe(1);
+    // Codex review of 68acf4f6 P2: a grammatical negation without the light verb fails closed too.
+    expect((await run('20261029 안 보여줘도 돼')).calls).toBe(1);
+    expect((await run('20261029 안보여줘도 돼')).calls).toBe(1);
+    // Codex delta review (fix-loop cap): any other word beginning with 안 / 못 refuses the shortcut, attached forms too;
+    // a word such as "안내" only falls through to the selector.
+    expect((await run('20261029 안보여줘도돼')).calls).toBe(1);
+    expect((await run('20261029 못보겠네')).calls).toBe(1);
+    expect((await run('20261029 거 이슈 안내해줘')).calls).toBe(1);
+    // Codex review of 68acf4f6 P2: a statement is not a request; the shared vetoes send it to the selector.
+    expect((await run('20261029 배포는 끝났다')).calls).toBe(1);
+    expect((await run('20261029 거 봤어')).calls).toBe(1);
+    expect((await run('20261029 거 이슈 보여줘', { titles: [] })).calls).toBe(1);
+    expect((await run('20261029 거 이슈 보여줘', { held: { project: 'NR26', release: '20261105' } })).calls).toBe(1);
+  });
+
+  it('owner-approved fix of 2026-10-28 (a8-09, a8-27): with no period in the owner words, a date-range-only option is dropped', async () => {
+    const hedge = (primary: [string, Record<string, unknown>], alternative: [string, Record<string, unknown>]) =>
+      out(primary[0], primary[1], { ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: alternative[0], args: alternative[1] }] });
+    // a8-09: the release read against a due-date reading of the bare 8-digit name.
+    const release = harness({ script: [hedge(['jira.release', { release: '20261022' }], ['jira.issues', { window: 'due', range: '2026-10-22' }])] });
+    expect(await release.decide('20261022 배포 예정 항목 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '20261022' } } });
+    expect(release.logs.some((log) => log.event === 'nl_selection.date_only_option_dropped')).toBe(true);
+    // a8-27 shape, the date reading named first: it is still the one dropped.
+    const calendar = harness({ script: [hedge(['calendar.events', { range: '2026-10-15' }], ['jira.release', { release: '20261015' }])] });
+    expect(await calendar.decide('20261015 거 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '20261015' } } });
+    // The owner wrote a date form: both readings stay and Core asks.
+    const dated = harness({ script: [hedge(['jira.release', { release: '20261022' }], ['calendar.events', { range: '2026-10-22' }])] });
+    expect(await dated.decide('20261022 릴리스랑 10월 22일 거 보여줘')).toMatchObject({ kind: 'ask' });
+    // A date option carrying owner text of its own (a title keyword) is not date-only: Core asks.
+    const titled = harness({ script: [hedge(['jira.release', { release: '20261022' }], ['calendar.events', { range: '2026-10-22', keyword: '배포' }])] });
+    expect(await titled.decide('20261022 배포 보여줘')).toMatchObject({ kind: 'ask' });
+    // Only date readings: nothing is dropped (the usual question or read).
+    const onlyDates = harness({ script: [hedge(['calendar.events', { range: '2026-10-22' }], ['mail.list', { range: '2026-10-22' }])] });
+    await onlyDates.decide('20261022 거 보여줘');
+    expect(onlyDates.logs.some((log) => log.event === 'nl_selection.date_only_option_dropped')).toBe(false);
+  });
+
+  it('owner decision of 2026-10-27 (range grounding): the one label-table period the owner states is the range Core runs', async () => {
+    const h = harness({ script: [out('calendar.events', { range: 'next-week' })] });
+    expect(await h.decide('다다음 주 일정 알려줘')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'week-after-next' } } });
+    const weekday = harness({ script: [out('calendar.events', { range: 'next-thu' })] });
+    expect(await weekday.decide('목요일 일정 알려줘')).toMatchObject({ kind: 'execute', command: { args: { range: 'next-thu' } } });
+  });
+
+  it('owner decision of 2026-10-27 (ADR-0121 S2 note 2 on the one-step path): a meeting word alone turns timedOnly on', async () => {
+    const run = async (text: string, args: Record<string, unknown>) => {
+      const h = harness({ script: [out('calendar.events', args)] });
+      return h.decide(text);
+    };
+    expect(await run('지난주에 무슨 회의 있었지?', { range: 'last-week' })).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { range: 'last-week', timedOnly: true } } });
+    expect(await run('how many meetings do I have this week?', { range: 'this-week', count: true })).toMatchObject({ command: { args: { range: 'this-week', count: true, timedOnly: true } } });
+    // Another name of the calendar ("일정") means the whole calendar; an exclusion or negation never sets it; a word inside
+    // the read's own value (an event title) is that value's.
+    for (const [text, args] of [
+      ['이번 주 회의랑 연차 일정 보여줘', { range: 'this-week' }],
+      ['내일 회의 말고 다른 거 있어?', { range: 'tomorrow' }],
+      ['다음 주 주간회의 언제야?', { range: 'next-week', keyword: '주간회의' }],
+    ] as const) {
+      const decided = await run(text, args);
+      expect(decided, text).toMatchObject({ kind: 'execute' });
+      expect((decided as { command: { args: Record<string, unknown> } }).command.args.timedOnly, text).toBeUndefined();
+    }
+  });
+
   it('CA review W2: a topic the selector named but Core dropped as out of set is not a general help: no help-scope question', async () => {
     const h = harness({ script: [out('help.topic', { topic: 'slack' })] });
     expect(await h.decide('너 슬랙 볼 수 있어?')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
@@ -1114,9 +1311,9 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     const h = harness({ script: [out('help.topic', { topic: 'work-lookup' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
     expect(await h.decide('슬랙에서 검색하는 방법 알려줘')).toEqual({ kind: 'ask', text: QUESTION, entryId: 'help.topic' });
     expect(await h.decide('1')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'work-lookup' } } });
-    // Without a source named, a selector clarification on help stays the ordinary one-option question.
+    // Without a source named, a selector clarification on help has one read option: it runs (owner decision 2026-10-28).
     const plain = harness({ script: [out('help.topic', { topic: 'reminder' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
-    expect(await plain.decide('알림 어떻게 해')).toMatchObject({ kind: 'ask', text: expect.stringContaining('어떤 걸 찾으세요?') });
+    expect(await plain.decide('알림 어떻게 해')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: { topic: 'reminder' } } });
   });
 });
 

@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { NL_ACTION_UNDO_COMMAND, NL_ACTION_UNDO_HINT } from '../work-chat/work-chat-renderer';
 import { Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
 import { LAST_LISTING_METADATA_KEY, withLabelledListing, withListing } from '../last-listing';
 import { NL_ACTION_ENTRIES } from './action-entries';
 import { ACTION_SWITCH_METADATA_KEY, NlActionSwitch } from './action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { NO_YES_NO_OFFER_RULE, QUOTES_ARE_COMMANDS_RULE, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
 import { NL_ACTION_LOG_EVENT, NlActionCaps, renderGarbledAction, type NlActionLevel } from './nl-action-policy';
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
@@ -237,8 +238,8 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const base = { actorId: 'owner', text: '메일함', previous: undefined, entryIds: ['mail.list'] };
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v67');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v65');
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v73');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v71');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
@@ -339,6 +340,59 @@ describe('references, questions and the audit line', () => {
     expect(w.calls).toHaveLength(0);
   });
 
+  it('owner decision P3 (a): the exact command the undo hint prints is a fixed undo command too (no selector call)', async () => {
+    expect(NL_ACTION_UNDO_HINT).toBe(`되돌리려면 "${NL_ACTION_UNDO_COMMAND}" (10분 안)`);
+    for (const text of [NL_ACTION_UNDO_COMMAND, `${NL_ACTION_UNDO_COMMAND}.`, `  ${NL_ACTION_UNDO_COMMAND}!  `]) {
+      const w = world({ script: [] });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+      const decision = await w.service.decideAnchoredUndo({ direct: true, text, session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+      expect(decision, text).toMatchObject({ kind: 'execute', command: { entryId: 'action.undo', undo: { entryId: 'todo.add' } } });
+      expect(w.calls, text).toHaveLength(0);
+    }
+    // Only the whole printed command: any other wording stays with the selector (no phrase list).
+    for (const text of ['아니 그거 되돌려줘', '되돌려 줘', '방금 거 되돌려줘', '되돌려줘요', '"되돌려줘"']) {
+      const w = world({ script: [] });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+      expect(await w.service.decideAnchoredUndo({ direct: true, text, session: w.session(), actor: w.actor(), now: at(1), entries: ALL }), text).toBeUndefined();
+    }
+    // The same resolution as a selected undo: a reply to an older echo asks; an already undone action is not undone again.
+    const older = world({ script: [] });
+    older.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: ['echo-new'] }, at(0)));
+    expect((await older.service.decideAnchoredUndo({ direct: true, text: NL_ACTION_UNDO_COMMAND, replyToMessageId: 'echo-old', session: older.session(), actor: older.actor(), now: at(1), entries: ALL }))?.kind).toBe('ask');
+    // In a channel it is DM-only, like 되돌리기.
+    const channel = world({ script: [] });
+    channel.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
+    expect(await channel.service.decideAnchoredUndo({ direct: false, text: NL_ACTION_UNDO_COMMAND, session: channel.session(), actor: channel.actor(), now: at(1), entries: ALL })).toEqual({ kind: 'ask', entryId: 'action.undo', text: '이 작업은 DM에서만 해요. 아무것도 바꾸지 않았어요.' });
+  });
+
+  it('CA review P2-2: the printed "되돌려줘" does nothing exactly like 되돌리기 at level shadow, with the kill switch stopped, and at off', async () => {
+    const record = { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] } as const;
+    const cases: Array<[string, () => Promise<World>]> = [
+      ['level shadow', async () => world({ level: 'shadow', script: [] })],
+      [
+        'kill switch stopped',
+        async () => {
+          const w = world({ level: 'local', script: [] });
+          await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);
+          return w;
+        },
+      ],
+      ['level off', async () => world({ level: 'off', script: [] })],
+    ];
+    for (const [name, make] of cases) {
+      for (const text of ['되돌리기', NL_ACTION_UNDO_COMMAND]) {
+        const w = await make();
+        w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', record, at(0)));
+        const before = JSON.stringify(w.session().metadata);
+        const decision = await w.service.decideAnchoredUndo({ direct: true, text, session: w.session(), actor: w.actor(), now: at(1), entries: ALL });
+        expect(decision, `${name}: ${text}`).toBeUndefined();
+        expect(w.calls, `${name}: ${text}`).toHaveLength(0);
+        // Nothing is undone or written: the last action stays exactly as it was.
+        expect(JSON.stringify(w.session().metadata), `${name}: ${text}`).toBe(before);
+      }
+    }
+  });
+
   it('A6-D3a amendment 1 (CA round 3): the anchored 되돌리기 is DM-only while ADR-0122 enforcement is off', async () => {
     const w = world({ script: [] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: [] }, at(0)));
@@ -425,6 +479,17 @@ describe('shadow (A6-D8): the decision is logged, nothing acts, nothing is writt
 });
 
 describe('receipts: lastAction, the echo label and the delivery binding', () => {
+  it('an approved connector write becomes the not-undoable last action, replacing an older to-do; nothing while off (P4)', async () => {
+    const w = world({ script: [] });
+    const message = { id: 'in-1', context: { platform: 'test', channelId: 'dm' } };
+    await w.service.recordActionReceipt({ session: w.session(), actor: w.actor(), message, now: at(0), action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: 'todo-7', label: 7, version: at(0), undoable: true } });
+    await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', undoable: false, outcome: 'SENT', requestId: 'in-2' } } });
+    const off = world({ level: 'off', script: [] });
+    await off.service.recordExternalWrite({ session: off.session(), actor: off.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
+    expect(off.session().metadata).toBeUndefined();
+  });
+
   it('records an executed action and binds the echo ids after delivery; nothing while off', async () => {
     const w = world({ script: [] });
     const message = { id: 'in-1', context: { platform: 'test', channelId: 'dm' } };
@@ -439,10 +504,88 @@ describe('receipts: lastAction, the echo label and the delivery binding', () => 
   });
 });
 
+describe('honest chat D9 guard: catalog aliases and held values keep the denial (Codex review of 672fb8f7, P2)', () => {
+  const guard = (text: string, options = {}) => guardFalseIncapabilityClaims(text, READS, 'ko', [], options);
+  const keptWith = (text: string, usage: string, options = {}): void => {
+    const out = guard(text, options);
+    expect(out.guarded, text).toBe(true);
+    expect(out.text.startsWith(text), text).toBe(true);
+    expect(out.text, text).not.toContain('바로 조회할 수 있어요');
+    expect(out.text, text).toContain(usage);
+  };
+  it('a denial naming a source entry by an alias (in its label or not) is kept verbatim, with that read appended', () => {
+    // The two measured sentences (fr-release-list-pick t1, cy-question-then-other t3).
+    keptWith('NR26 릴리스 내용은 여기서 직접 확인할 수 없어요.', NL_WAVE1_ENTRIES['jira.release'].usage.ko);
+    keptWith('현재 연결 상태나 릴리스 내용은 여기서 확인할 수 없어요.', NL_WAVE1_ENTRIES['jira.release'].usage.ko);
+    // True limitations stay: another person's private calendar, a meeting's contents.
+    keptWith('다른 사람의 비공개 일정은 확인할 수 없어요.', NL_WAVE1_ENTRIES['calendar.events'].usage.ko);
+    keptWith('회의 내용은 확인할 수 없어요.', NL_WAVE1_ENTRIES['calendar.events'].usage.ko);
+    keptWith('면접 일정은 확인할 수 없어요.', NL_WAVE1_ENTRIES['calendar.events'].usage.ko);
+    // A source name keeps the pre-B2 replacement unchanged.
+    expect(guard('캘린더는 확인할 수 없어요.').text).toContain('바로 조회할 수 있어요');
+    // "pr" is a GitHub alias, but not inside "project"; an entry with no source names is not a source.
+    expect(guardFalseIncapabilityClaims('That project data is something I cannot see from here.', READS, 'en')).toEqual({ text: 'That project data is something I cannot see from here.', guarded: false });
+    expect(guardFalseIncapabilityClaims('I cannot see your PRs from here.', READS, 'en').text.startsWith('I cannot see your PRs from here.')).toBe(true);
+    expect(guard('브리핑 내용은 이 답변에서 확인할 수 없어요.').guarded).toBe(false);
+  });
+
+  it('a denial naming a value of the listing Core holds this turn is kept verbatim, with that read appended', () => {
+    const held = { entry: NL_WAVE1_ENTRIES['jira.issues'], args: { project: 'NR26' }, itemWords: ['결제', '오류'], itemTitles: ['NR26-11 결제 오류 수정'] };
+    keptWith('NR26-11 상세는 제가 확인할 수 없어요.', NL_WAVE1_ENTRIES['jira.issues'].usage.ko, { held });
+    expect(guard('NR26-11 상세는 제가 확인할 수 없어요.').guarded).toBe(false);
+    // A calendar item's private transcript stays a true limitation.
+    const calendar = { entry: NL_WAVE1_ENTRIES['calendar.events'], args: { range: 'tomorrow' }, itemTitles: ['주간 회의'] };
+    keptWith('주간 회의 녹취록은 확인할 수 없어요.', NL_WAVE1_ENTRIES['calendar.events'].usage.ko, { held: calendar });
+    expect(guard('실시간 날씨는 확인할 수 없어요.', { held }).guarded).toBe(false);
+  });
+});
+
+describe('honest chat D9 guard: the source-name rewrite acts per sentence (Codex delta review of 454e7eb9, P2)', () => {
+  const calendarUsage = NL_WAVE1_ENTRIES['calendar.events'].usage.ko;
+  const count = (text: string, part: string): number => text.split(part).length - 1;
+  it('only the sentence naming the source is rewritten; a true denial beside it is kept verbatim; guidance is never doubled', () => {
+    const out = guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요. 다른 사람의 비공개 일정은 확인할 수 없어요.', READS, 'ko');
+    expect(out.guarded).toBe(true);
+    expect(out.text).not.toContain('캘린더는 확인할 수 없어요.');
+    expect(out.text).toContain('바로 조회할 수 있어요');
+    expect(out.text).toContain('다른 사람의 비공개 일정은 확인할 수 없어요.');
+    // The calendar read is offered once: the alias denial's appended guidance is the same entry, so it is not repeated.
+    expect(count(out.text, calendarUsage)).toBe(1);
+    expect(out.text).not.toContain('참고로');
+  });
+
+  it('another source named only by an alias is appended once; two source-name sentences offer each source once', () => {
+    const mixed = guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요. 릴리스 내용도 확인할 수 없어요. 회의 내용도 확인할 수 없어요.', READS, 'ko');
+    expect(mixed.text).toContain('릴리스 내용도 확인할 수 없어요.');
+    expect(mixed.text).toContain('회의 내용도 확인할 수 없어요.');
+    expect(count(mixed.text, calendarUsage)).toBe(1);
+    expect(count(mixed.text, NL_WAVE1_ENTRIES['jira.release'].usage.ko)).toBe(1);
+    const twice = guardFalseIncapabilityClaims('캘린더는 확인할 수 없어요.\n그리고 캘린더 일정도 볼 수 없어요.', READS, 'ko');
+    expect(count(twice.text, calendarUsage)).toBe(1);
+    expect(count(twice.text, '바로 조회할 수 있어요')).toBe(1);
+    // A sentence that is not a denial is kept around the rewritten one.
+    const around = guardFalseIncapabilityClaims('안녕하세요. 캘린더는 확인할 수 없어요. 다른 질문이 있으면 말씀해 주세요.', READS, 'ko');
+    expect(around.text.startsWith('안녕하세요.')).toBe(true);
+    expect(around.text).toContain('다른 질문이 있으면 말씀해 주세요.');
+    expect(around.text).not.toContain('캘린더는 확인할 수 없어요.');
+  });
+});
+
 describe('honest chat (A6-D6): no command phrases for offered action families, and the stale-command guard', () => {
   it('drops "reply with the exact command" only when action entries are offered', () => {
     const help = ['- 할 일: "할 일 추가: 내용", "완료 처리: 번호"'];
     expect(renderConfiguredSourcesFact(READS, help)).toContain('reply with the exact command to send.');
+    // Context eval 2026-10-26 (P8): the plain fact also forbids yes/no offers (a yes to a chat reply runs nothing).
+    expect(renderConfiguredSourcesFact(READS, help)).toContain(NO_YES_NO_OFFER_RULE);
+    // Owner decision of 2026-10-28 (fix 2): quotes and code marks are reserved for commands, with or without action entries.
+    expect(renderConfiguredSourcesFact(READS, help)).toContain(QUOTES_ARE_COMMANDS_RULE);
+    expect(renderConfiguredSourcesFact(ALL, help)).toContain(QUOTES_ARE_COMMANDS_RULE);
+    expect(renderConfiguredSourcesFact(READS, [])).toContain(QUOTES_ARE_COMMANDS_RULE);
+    // Owner-approved fix of 2026-10-28: both ways, a command to send is always quoted or in code.
+    expect(QUOTES_ARE_COMMANDS_RULE).toContain('is always written in quotes or code marks');
+    expect(renderConfiguredSourcesFact(READS, help)).toContain('a yes, a no or a number sent to a chat reply runs nothing.');
+    // The A6 variant keeps its own sentence (unchanged).
+    expect(renderConfiguredSourcesFact(ALL, help)).not.toContain(NO_YES_NO_OFFER_RULE);
     const fact = renderConfiguredSourcesFact(ALL, help) ?? '';
     expect(fact).toContain('Quoky does these actions itself when the User asks in plain words');
     expect(fact).toContain('never tells the User to type a fixed command phrase');

@@ -1,0 +1,407 @@
+{
+  "version": 1,
+  "description": "D4 gold cases for the dedicated D4 classifier (owner decision of 2026-10-27, after the 32a2c81f gates: D4 moves to the next merge as a small classifier call answering 1 / 2 / neither, outside the router prompt, with its own eval and gate). NOT scored by eval:nl or read-regression (the router no longer sees the open question). The 34 cases keep their owner approvals in their notes: ctx-d4-001..008 approved in the D12 batch of 2026-10-26, ctx-d4-009..034 in the D12 batch of 2026-10-27. Schema as nl-intent.context.v1.json plus `openQuestion` (the help-scope question shown: sources, language) and `expectAnswer` (the option a worded reply means; absent = not an answer; `expect` is the router's reading otherwise).",
+  "cases": [
+    {
+      "id": "ctx-d4-001",
+      "text": "퀴키한테 물어보는 방법 말이야",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "D4: a worded answer naming Quoky's way is option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-002",
+      "text": "아니 슬랙 앱에서 직접 하는 거",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "D4: a worded answer naming the app itself is option 2 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-003",
+      "text": "너로 찾는 거",
+      "openQuestion": {
+        "sources": "지라",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "D4: \"you\" means Quoky: option 1 [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-004",
+      "text": "앱 설정 쪽이야",
+      "openQuestion": {
+        "sources": [
+          "구글 캘린더",
+          "지메일"
+        ],
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "D4: the several-source question, the app side [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-005",
+      "text": "I meant through you",
+      "openQuestion": {
+        "sources": "Slack",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "D4 (EN): option 1 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-006",
+      "text": "the app's own settings",
+      "openQuestion": {
+        "sources": "Confluence",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "D4 (EN): option 2 in other words [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-007",
+      "text": "그건 됐고 내일 일정 알려줘",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "tomorrow"
+        }
+      },
+      "note": "D4: a new request after the question is no answer: routed as usual, no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-008",
+      "text": "고마워",
+      "openQuestion": {
+        "sources": "지라",
+        "language": "ko"
+      },
+      "expect": "none",
+      "note": "D4: small talk after the question is no answer [agent-drafted 2026-10-26 for owner decision D4 / fix P10; owner-approved as-is in the D12 batch of 2026-10-26]"
+    },
+    {
+      "id": "ctx-d4-009",
+      "text": "퀴키로 찾는 쪽이요",
+      "openQuestion": {
+        "sources": "드라이브",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "KO, single source, option 1 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-010",
+      "text": "여기서 조회하는 방법 말한 거야",
+      "openQuestion": {
+        "sources": "메일",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "KO, option 1 (here = Quoky) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-011",
+      "text": "네가 대신 찾아주는 거",
+      "openQuestion": {
+        "sources": "깃허브",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "KO, option 1 (you = Quoky) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-012",
+      "text": "앱 말고 여기서 물어보는 법",
+      "openQuestion": {
+        "sources": "캘린더",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "KO, option 1, contrasts the app [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-013",
+      "text": "채팅으로 검색하는 방법",
+      "openQuestion": {
+        "sources": "컨플루언스",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "KO, option 1 (this chat) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-014",
+      "text": "Quoky 기능 얘기야",
+      "openQuestion": {
+        "sources": [
+          "지라",
+          "메일"
+        ],
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "KO, several sources, option 1 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-015",
+      "text": "앱 안에서 직접 하는 방법",
+      "openQuestion": {
+        "sources": "깃허브",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "KO, option 2 (inside the app) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-016",
+      "text": "슬랙 자체 기능이 궁금했어",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "KO, option 2 (the app's own feature) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-017",
+      "text": "구글 캘린더 앱에서 하는 법",
+      "openQuestion": {
+        "sources": "구글 캘린더",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "KO, option 2 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-018",
+      "text": "그 앱 설정 얘기였어",
+      "openQuestion": {
+        "sources": [
+          "지메일",
+          "드라이브"
+        ],
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "KO, several sources, option 2 (settings) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-019",
+      "text": "드라이브 사이트에서 직접 찾는 거",
+      "openQuestion": {
+        "sources": "드라이브",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "KO, option 2 (the site itself) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-020",
+      "text": "컨플루언스 화면에서 하는 법이요",
+      "openQuestion": {
+        "sources": "컨플루언스",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "KO, option 2 (the app's screen) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-021",
+      "text": "the Quoky way please",
+      "openQuestion": {
+        "sources": "Jira",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "EN, option 1 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-022",
+      "text": "asking you to look things up",
+      "openQuestion": {
+        "sources": "Gmail",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "EN, option 1 (you = Quoky) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-023",
+      "text": "searching from this chat",
+      "openQuestion": {
+        "sources": "Google Drive",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "EN, option 1 (this chat) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-024",
+      "text": "through this assistant",
+      "openQuestion": {
+        "sources": [
+          "GitHub",
+          "Confluence"
+        ],
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "EN, several sources, option 1 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-025",
+      "text": "inside the Jira app itself",
+      "openQuestion": {
+        "sources": "Jira",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "EN, option 2 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-026",
+      "text": "how Slack works on its own",
+      "openQuestion": {
+        "sources": "Slack",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "EN, option 2 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-027",
+      "text": "I meant using Google Calendar directly",
+      "openQuestion": {
+        "sources": "Google Calendar",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "EN, option 2 [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-028",
+      "text": "configuring Gmail and Drive themselves",
+      "openQuestion": {
+        "sources": [
+          "Gmail",
+          "Google Drive"
+        ],
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "EN, several sources, option 2 (settings) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-029",
+      "text": "그건 됐고 스크럼 언제 잡혀 있어?",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "keyword": "스크럼"
+        }
+      },
+      "note": "not an answer: a fresh request after the question [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-030",
+      "text": "점심 먹었어?",
+      "openQuestion": {
+        "sources": "지라",
+        "language": "ko"
+      },
+      "expect": "none",
+      "note": "not an answer: small talk [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-031",
+      "text": "안 읽은 메일 있는지 봐줘",
+      "openQuestion": {
+        "sources": "깃허브",
+        "language": "ko"
+      },
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "unread": true
+        }
+      },
+      "note": "not an answer: a fresh request about another source [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-032",
+      "text": "cool, thanks",
+      "openQuestion": {
+        "sources": "Slack",
+        "language": "en"
+      },
+      "expect": "none",
+      "note": "not an answer: small talk (EN) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-033",
+      "text": "anything in Slack about the outage?",
+      "openQuestion": {
+        "sources": "Confluence",
+        "language": "en"
+      },
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "outage"
+        }
+      },
+      "note": "not an answer: a fresh request (EN) [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    },
+    {
+      "id": "ctx-d4-034",
+      "text": "음 잘 모르겠네",
+      "openQuestion": {
+        "sources": "드라이브",
+        "language": "ko"
+      },
+      "expect": "none",
+      "note": "not an answer: undecided [agent-drafted 2026-10-27 for the D4 strengthening (owner decision of 2026-10-27); owner-approved as-is in the D12 batch of 2026-10-27]"
+    }
+  ]
+}

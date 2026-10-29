@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { Capability, NL_SELECTION_TIMEOUT_MS, type AiProvider, type AiRequest } from '@quoky/core';
-import { buildPlan, computePlanDigest, loadCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
+import { loadReadRegressionCorpus, loadScoredReadRegressionCorpus, readRegressionPrompt, scoreReadRegression } from './nl-action-eval';
+import { NL_EVAL_CONTEXT_CORPUS_PATH, buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, runEvaluation, scoreGrammarSide, scoreOutput, scoreSelectorSide, summarize, userVisibleMeaning, type NlEvalCase, type NlEvalCorpus } from './nl-intent-eval';
 import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, formatSummary, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // ADR-0120 D12 evaluation harness, offline: plan and digest, exact-match scoring after Core validation, the gate, and the
@@ -30,6 +33,13 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     expect(scoreOutput(CASES[3]!, answer('none'), NOW).outcome).toBe('none');
     expect(scoreOutput(CASES[4]!, answer('jira.issues'), NOW).outcome).toBe('wrong-capture');
     expect(scoreOutput(CASES[4]!, 'I would create it', NOW).outcome).toBe('error');
+  });
+
+  it('the shown listing repeated for a pointed content request scores as the runtime answers it, `none` (uat5r6-07)', () => {
+    const pointed: NlEvalCase = { id: 'uat5r6-07', text: '그거 요약해줘', prior: { entryId: 'mail.list', args: {} }, expect: 'none' };
+    expect(scoreOutput(pointed, answer('mail.list'), NOW)).toMatchObject({ outcome: 'none', got: 'none' });
+    const refresh: NlEvalCase = { id: 'refresh', text: '메일 다시 보여줘', prior: { entryId: 'mail.list', args: {} }, expect: { entryId: 'mail.list', args: {} } };
+    expect(scoreOutput(refresh, answer('mail.list'), NOW).outcome).toBe('hit');
   });
 
   it('A7: a capture of a clear past-tense statement scores as the runtime answers it, `none`', () => {
@@ -102,10 +112,10 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     const records = [
       { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 100 },
       { run: 1, id: 'b', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 300 },
-      { run: 1, id: 'c', expected: 'none', outcome: 'none' as const, latencyMs: 6500 },
+      { run: 1, id: 'c', expected: 'none', outcome: 'none' as const, latencyMs: 10500 },
     ];
     const passed = summarize(records);
-    expect(passed).toMatchObject({ overall: 1, wrongCaptures: 0, gatePassed: true, latency: { p50: 300, p95: 6500, overRuntimeBound: 1 } });
+    expect(passed).toMatchObject({ overall: 1, wrongCaptures: 0, gatePassed: true, latency: { p50: 300, p95: 10500, overRuntimeBound: 1 } });
     expect(summarize([...records, { run: 1, id: 'd', expected: 'none', outcome: 'wrong-capture', latencyMs: 1 }]).gatePassed).toBe(false);
     expect(summarize([...records, { run: 1, id: 'e', expected: 'jira.issues', outcome: 'miss', latencyMs: 1 }]).gatePassed).toBe(false);
   });
@@ -161,20 +171,20 @@ describe('nl-intent evaluation timeout option (ADR-0120 A3)', () => {
 
   it('the plan carries a custom callTimeoutMs and defaults to the runtime bound', () => {
     expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 5000 }).callTimeoutMs).toBe(5000);
-    expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 8000 }).callTimeoutMs).toBe(8000);
+    expect(buildPlan(CORPUS, 'sha', { ...base, timeoutMs: 10000 }).callTimeoutMs).toBe(10000);
     expect(buildPlan(CORPUS, 'sha', base).callTimeoutMs).toBe(NL_SELECTION_TIMEOUT_MS);
   });
 
-  it('rejects a timeout outside 2000..8000 or not an integer', () => {
-    for (const timeoutMs of [1999, 8001, 5.5, Number.NaN]) {
-      expect(() => buildPlan(CORPUS, 'sha', { ...base, timeoutMs }), String(timeoutMs)).toThrow('timeoutMs must be an integer 2000..8000');
+  it('rejects a timeout outside 2000..10000 or not an integer (owner decision of 2026-10-28)', () => {
+    for (const timeoutMs of [1999, 10001, 5.5, Number.NaN]) {
+      expect(() => buildPlan(CORPUS, 'sha', { ...base, timeoutMs }), String(timeoutMs)).toThrow('timeoutMs must be an integer 2000..10000');
     }
   });
 
   it('counts over-bound calls against the plan value, not the constant', () => {
     const records = [
       { run: 1, id: 'a', expected: 'jira.issues', outcome: 'hit' as const, latencyMs: 3000 },
-      { run: 1, id: 'b', expected: 'none', outcome: 'none' as const, latencyMs: 7000 },
+      { run: 1, id: 'b', expected: 'none', outcome: 'none' as const, latencyMs: 11000 },
     ];
     expect(summarize(records, 6000).latency).toMatchObject({ boundMs: 6000, overRuntimeBound: 1 });
     expect(summarize(records, 2000).latency).toMatchObject({ boundMs: 2000, overRuntimeBound: 2 });
@@ -237,7 +247,13 @@ describe('nl-intent evaluation CLI (Strict digest gate)', () => {
     const planned = deps(created);
     expect(await runCli(['--mode', 'plan', '--per-entry', '1'], planned)).toBe(EXIT_OK);
     const digest = /plan digest \(sha256\): ([0-9a-f]{64})/.exec(planned.out.join('\n'))?.[1];
-    expect(digest).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    // Owner decision of 2026-10-28: the default selector effort is the adapter's, now high.
+    expect(digest).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    // Owner decision of 2026-10-28 (cost study P0): --effort is bound into the digest, and an unknown level is a usage error.
+    const medium = deps(created);
+    expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--effort', 'medium'], medium)).toBe(EXIT_OK);
+    expect(/plan digest \(sha256\): ([0-9a-f]{64})/.exec(medium.out.join('\n'))?.[1]).toBe(computePlanDigest(buildPlan(CORPUS, 'corpus-sha', { model: 'haiku', effort: 'medium', entries: [], includeNegatives: true, perEntry: 1, runs: 1, concurrency: 4 })));
+    expect(await runCli(['--mode', 'plan', '--effort', 'turbo'], deps(created))).toBe(EXIT_USAGE);
     expect(await runCli(['--mode', 'run', '--per-entry', '1'], deps(created))).toBe(EXIT_USAGE);
     expect(await runCli(['--mode', 'run', '--per-entry', '1', '--approved-plan-digest', 'f'.repeat(64)], deps(created))).toBe(EXIT_BLOCKED);
     expect(await runCli(['--mode', 'run', '--per-entry', '2', '--approved-plan-digest', digest as string], deps(created))).toBe(EXIT_BLOCKED);
@@ -264,7 +280,7 @@ describe('nl-intent evaluation CLI timeout flag (ADR-0120 A3)', () => {
 
   it('falls back to a valid QUOKY_NL_INTENT_TIMEOUT_MS, ignores an invalid one, and the flag wins', () => {
     expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(3000);
-    expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '8001' }).timeoutMs).toBeUndefined();
+    expect(planOptions({}, { QUOKY_NL_INTENT_TIMEOUT_MS: '10001' }).timeoutMs).toBeUndefined();
     expect(planOptions({ '--timeout-ms': '4000' }, { QUOKY_NL_INTENT_TIMEOUT_MS: '3000' }).timeoutMs).toBe(4000);
     expect(planOptions({}, {}).timeoutMs).toBeUndefined();
   });
@@ -313,5 +329,105 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
     // -018 was already not exact) and user-visible 226 → 221. The owner's relabel of 2026-10-21 (the item type `kind` on 29
     // one-step cases) moves exact 204 → 193 and user-visible 221 → 210: eleven are grammar-tagged and the frozen my-items grammar answers both types.
     expect(scoreGrammarSide(real, NOW)).toEqual({ positives: 248, exact: 193, entry: 243, userVisible: 210, wrongCaptures: 0 });
+  });
+});
+
+describe('D4 moves to the next merge (owner decision of 2026-10-27): its golds wait for the dedicated classifier', () => {
+  it('the 34 ctx-d4 cases are pending with their owner approvals, none is scored, and no scored case carries an open question', () => {
+    const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-intent.context-d4-pending.v1.json', import.meta.url).pathname;
+    const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as { cases: Array<{ id: string; note?: string; openQuestion?: unknown }> };
+    expect(pending.cases).toHaveLength(34);
+    expect(pending.cases.every((golden) => /^ctx-d4-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true && golden.openQuestion !== undefined)).toBe(true);
+    const scored = loadScoredCorpus().corpus.cases;
+    expect(scored.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
+    expect(scored.filter((golden) => 'openQuestion' in golden || 'expectAnswer' in golden)).toEqual([]);
+    expect(loadScoredReadRegressionCorpus().cases.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
+  });
+});
+
+describe('owner decision P-time (ii) in the scorers (Core\'s final outcome)', () => {
+  it('a calendar output without a range after a held calendar listing scores with the held range; an explicit period wins', () => {
+    const golden: NlEvalCase = { id: 'pt-1', text: '그 세미나 어디서 해?', prior: { entryId: 'todo.list', args: {}, earlier: [{ entryId: 'calendar.events', args: { range: 'next-week' }, turns: 1 }] }, expect: { entryId: 'calendar.events', args: { range: 'next-week', keyword: '세미나' } } };
+    expect(scoreOutput(golden, answer('calendar.events', { keyword: '세미나' }), NOW).outcome).toBe('hit');
+    const explicit: NlEvalCase = { id: 'pt-2', text: '오늘 세미나 어디서 해?', prior: { entryId: 'calendar.events', args: { range: 'next-week' } }, expect: { entryId: 'calendar.events', args: { keyword: '세미나' } } };
+    expect(scoreOutput(explicit, answer('calendar.events', { keyword: '세미나' }), NOW).outcome).toBe('hit');
+    const regression = { id: 'pt-3', text: golden.text, prior: golden.prior, expect: golden.expect } as never;
+    expect(scoreReadRegression(regression, answer('calendar.events', { keyword: '세미나' }), NOW).outcome).toBe('hit');
+  });
+});
+
+describe('a8-25 (2026-10-27): a link-only message is Core\'s jira.release in both scorers, whatever the selector said', () => {
+  it('scores the link-only gold as a hit even when the selector answered none', () => {
+    const golden: NlEvalCase = { id: 'link-1', text: 'https://example.atlassian.net/browse/OP26/fixforversion/16555', expect: { entryId: 'jira.release', args: {} } };
+    expect(scoreOutput(golden, answer('none'), NOW).outcome).toBe('hit');
+    expect(scoreReadRegression(golden as never, answer('none'), NOW).outcome).toBe('hit');
+    expect(scoreOutput({ ...golden, text: `${golden.text} 이거 뭐야` }, answer('none'), NOW).outcome).toBe('miss');
+  });
+});
+
+describe('owner decision of 2026-10-27: the one-step timedOnly rule in both scorers (Core\'s final outcome)', () => {
+  it('a meeting question without the flag scores as the runtime completes it; "일정" keeps the whole calendar', () => {
+    const meeting: NlEvalCase = { id: 'to-1', text: '지난주에 무슨 회의 있었지?', expect: { entryId: 'calendar.events', args: { range: 'last-week', timedOnly: true } } };
+    expect(scoreOutput(meeting, answer('calendar.events', { range: 'last-week' }), NOW).outcome).toBe('hit');
+    expect(scoreReadRegression(meeting as never, answer('calendar.events', { range: 'last-week' }), NOW).outcome).toBe('hit');
+    const whole: NlEvalCase = { id: 'to-2', text: '이번 주 회의랑 연차 일정 보여줘', expect: { entryId: 'calendar.events', args: { range: 'this-week' } } };
+    expect(scoreOutput(whole, answer('calendar.events', { range: 'this-week' }), NOW).outcome).toBe('hit');
+  });
+});
+
+describe('the supplemental context corpus (nl-intent.context.v1.json; owner decision (가) option 1, 2026-10-27)', () => {
+  it('is scored by eval:nl and read-regression with nl-intent.v1.json, never by Q11; both files are bound in the corpus digest', () => {
+    const main = loadCorpus();
+    const context = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH);
+    const scored = loadScoredCorpus();
+    expect(scored.corpus.cases.map((golden) => golden.id)).toEqual([...main.corpus.cases, ...context.corpus.cases].map((golden) => golden.id));
+    expect(scored.sha256).not.toBe(main.sha256);
+    expect(loadScoredReadRegressionCorpus().cases.map((golden) => golden.id)).toEqual(scored.corpus.cases.map((golden) => golden.id));
+    expect(loadScoredReadRegressionCorpus().sha256).toBe(scored.sha256);
+    // The default plan covers the 46 context cases (the gate counts them).
+    const plan = buildPlan(scored.corpus, scored.sha256, { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 3, concurrency: 2 });
+    expect(context.corpus.cases.every((golden) => plan.caseIds.includes(golden.id))).toBe(true);
+    // Q11 auto-includes nl-intent.v1.json only.
+    expect(main.corpus.cases.some((golden) => golden.id.startsWith('ctx-'))).toBe(false);
+  });
+
+  it('render the chat-turn age and the earlier selections, never an open question, and every gold is reachable after Core validation (eval:nl and read-regression)', async () => {
+    const { corpus } = loadCorpus(NL_EVAL_CONTEXT_CORPUS_PATH);
+    expect(corpus.cases).toHaveLength(12);
+    expect(corpus.cases.every((golden) => golden.note?.includes('owner-approved') === true)).toBe(true);
+    expect(corpus.cases.find((golden) => golden.id === 'ctx-d1-005')).toMatchObject({ text: '주말에 뭐 하면 좋을까?', expect: 'none', prior: { entryId: 'calendar.events', args: { range: 'today' }, turns: 1 } });
+    const byText = new Map(corpus.cases.map((golden) => [golden.text, golden] as const));
+    const seen: string[] = [];
+    const provider = {
+      id: 'scripted',
+      capabilities: [Capability.INTENT_SELECTION],
+      isAvailable: async () => true,
+      execute: async (request: AiRequest) => {
+        seen.push(request.prompt);
+        const message = /<<<\n([\s\S]*)\n>>>$/.exec(request.prompt)?.[1] ?? '';
+        const golden = byText.get(message);
+        return { text: golden === undefined || golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args), artifacts: [] };
+      },
+    } as unknown as AiProvider;
+    const plan = buildPlan(corpus, 'sha', { model: 'haiku', entries: [], includeNegatives: true, perEntry: 0, runs: 1, concurrency: 1 });
+    const records = await runEvaluation({ corpus, plan, provider, now: () => NOW });
+    expect(records.filter((record) => record.outcome !== 'hit' && record.outcome !== 'none')).toEqual([]);
+    expect(seen.some((prompt) => prompt.includes('(shown 2 turns ago; only chat replies since)'))).toBe(true);
+    expect(seen.some((prompt) => prompt.includes('\nEarlier selections (newest first): {"entryId":"calendar.events","args":{"range":"next-week"}} (shown 1 turn ago)\n'))).toBe(true);
+    expect(seen.some((prompt) => prompt.includes('Open question'))).toBe(false);
+    // The router's output contract has no `answer` any more: an output with one is malformed (D4 is the classifier's).
+    const plain = corpus.cases.find((golden) => golden.expect === 'none') as NlEvalCase;
+    expect(scoreOutput(plain, JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [], answer: 1 }), NOW).outcome).toBe('error');
+    // read-regression (A6 entries offered) renders and scores the same cases the same way.
+    const regression = loadReadRegressionCorpus(NL_EVAL_CONTEXT_CORPUS_PATH).cases;
+    expect(regression).toHaveLength(12);
+    for (const golden of regression) {
+      const prompt = readRegressionPrompt(golden, NOW as never) ?? '';
+      if (golden.prior?.turns !== undefined) expect(prompt, golden.id).toContain('only chat replies since)');
+      if (golden.prior?.earlier !== undefined) expect(prompt, golden.id).toContain('\nEarlier selections (newest first): ');
+      expect(prompt, golden.id).not.toContain('Open question');
+      const raw = golden.expect === 'none' ? answer('none') : answer(golden.expect.entryId, golden.expect.args);
+      expect(['hit', 'none'], golden.id).toContain(scoreReadRegression(golden, raw, NOW).outcome);
+    }
   });
 });

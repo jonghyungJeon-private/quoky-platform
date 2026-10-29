@@ -45,6 +45,20 @@ export function hasJiraReleaseLink(text: string): boolean {
 }
 
 /**
+ * Owner request of 2026-10-27 (a8-25, a pasted fix-version URL read as none): whether the owner's message is nothing but
+ * Jira release-page links (a version id on the path), as parsed above: every URL in it is such a link, and no letter or
+ * digit is left once they are removed. Then Core reads the message as `jira.release` with no args (the link is the
+ * release), with no model call. Pure, structural: the parser above, no word list.
+ */
+export function isJiraReleaseLinkOnly(text: string): boolean {
+  const normalized = text.normalize('NFC');
+  const urls = [...normalized.matchAll(URL_CANDIDATE)].map((match) => match[0].replace(TRAILING_PUNCTUATION, ''));
+  if (urls.length === 0 || urls.length > MAX_LINKS) return false;
+  if (!urls.every((url) => parseOne(url)?.versionId !== undefined)) return false;
+  return !/[\p{L}\p{N}]/u.test(normalized.replace(URL_CANDIDATE, ' '));
+}
+
+/**
  * The first link whose host is exactly the configured site host (case-insensitive), or `undefined`. A link on any
  * other host is ignored: it is never fetched and contributes nothing.
  */

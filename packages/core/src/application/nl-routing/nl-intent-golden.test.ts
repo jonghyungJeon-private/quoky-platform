@@ -14,7 +14,17 @@ export interface NlIntentCase {
   readonly id: string;
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
-  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  readonly prior?: {
+    readonly entryId: string;
+    readonly args: NlArgs;
+    /** Owner decision D1: chat turns since the previous listing. */
+    readonly turns?: number;
+    /** P7: the latest selection of each other source. */
+    readonly earlier?: readonly { readonly entryId: string; readonly args: NlArgs; readonly turns: number }[];
+  };
+  /** Owner decision D4: the help-scope question shown, and the option a worded reply means (`expect` stays `none`). */
+  readonly openQuestion?: { readonly sources: string | readonly string[]; readonly language: 'ko' | 'en' };
+  readonly expectAnswer?: number;
   readonly channel?: boolean;
   readonly note?: string;
   /** S1: the frozen Class B grammar that answers it in Phase A (production flags); checked by the app dispatch test. */
@@ -67,10 +77,12 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
         problems.push(`${golden.id}: skipped (${prepared.skip})`);
         continue;
       }
+      // P7: a gold for an earlier selection's entry is grounded against that earlier selection, as the runtime does.
+      const base = golden.prior?.entryId === golden.expect.entryId ? golden.prior : (golden.prior?.earlier?.find((item) => item.entryId === golden.expect.entryId) ?? golden.prior);
       const result = validateSelection(golden.expect, {
         offered,
         groundingText: prepared.groundingText,
-        ...(golden.prior !== undefined ? { previousArgs: golden.prior.args } : {}),
+        ...(base !== undefined ? { previousArgs: base.args } : {}),
         now: NOW,
         timeZone: 'Asia/Seoul',
       });
@@ -90,6 +102,50 @@ describe('nl-intent.v1.json (ADR-0120 D12)', () => {
 
   it('keeps every negative and positive within the selection input bound (no case is skipped as too long)', () => {
     for (const golden of corpus.cases) expect(prepareSelectionInput(golden.text)).not.toEqual({ skip: 'too-long' });
+  });
+});
+
+// Owner decision (가) option 1 (2026-10-27): the supplemental selector-only context corpus, scored with nl-intent.v1.json by
+// eval:nl and read-regression (never by the ADR-0121 Q11 planner gold).
+const context = JSON.parse(readFileSync(new URL('../golden/nl-intent.context.v1.json', import.meta.url), 'utf8')) as { version: number; cases: NlIntentCase[] };
+
+describe('nl-intent.context.v1.json (D1 / P7, supplemental scored corpus; D4 moved to its pending file)', () => {
+  it('has 12 cases, ids unique across both scored corpora, and every case carries the context it tests', () => {
+    expect(context.version).toBe(1);
+    expect(context.cases).toHaveLength(12);
+    const ids = [...corpus.cases, ...context.cases].map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const golden of context.cases) {
+      const carries = golden.prior?.turns !== undefined || golden.prior?.earlier !== undefined;
+      expect(carries, golden.id).toBe(true);
+      expect(golden.openQuestion, golden.id).toBeUndefined();
+      expect(golden.expectAnswer, golden.id).toBeUndefined();
+    }
+  });
+
+  it('every expectation is canonical for the validator, grounded like the runtime grounds it (P7: against the earlier selection)', () => {
+    const offered = new Map(ALL.map((entry) => [entry.id, entry] as const));
+    const problems: string[] = [];
+    for (const golden of context.cases) {
+      for (const prior of [golden.prior, ...(golden.prior?.earlier ?? [])]) if (prior !== undefined && !isNlCatalogEntryId(prior.entryId)) problems.push(`${golden.id}: prior entry`);
+      if (golden.expect === 'none') continue;
+      const prepared = prepareSelectionInput(golden.text);
+      if ('skip' in prepared) {
+        problems.push(`${golden.id}: skipped`);
+        continue;
+      }
+      const target = golden.expect.entryId;
+      const base = golden.prior?.entryId === target ? golden.prior : (golden.prior?.earlier?.find((item) => item.entryId === target) ?? golden.prior);
+      const result = validateSelection(golden.expect, { offered, groundingText: prepared.groundingText, ...(base !== undefined ? { previousArgs: base.args } : {}), now: NOW, timeZone: 'Asia/Seoul' });
+      if (!result.ok) problems.push(`${golden.id}: ${result.reason} ${result.arg ?? ''}`);
+      else if (JSON.stringify(sorted(result.value.args)) !== JSON.stringify(sorted(golden.expect.args))) problems.push(`${golden.id}: not canonical`);
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('no case text is copied into the selection prompt', () => {
+    const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
+    expect(context.cases.filter((golden) => golden.text.trim().length >= 8 && prompt.includes(golden.text.trim())).map((golden) => golden.id)).toEqual([]);
   });
 });
 

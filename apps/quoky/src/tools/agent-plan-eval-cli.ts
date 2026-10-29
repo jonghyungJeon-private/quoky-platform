@@ -1,7 +1,7 @@
 /**
  * ADR-0121 D11 plan-exactness evaluation CLI (stage S2 P2):
  *
- *   pnpm eval:agent-plan -- --mode plan [--model haiku] [--runs N] [--concurrency N] [--timeout-ms N] [--include-pending]
+ *   pnpm eval:agent-plan -- --mode plan [--model haiku] [--effort high] [--runs N] [--concurrency N] [--timeout-ms N] [--include-pending]
  *   pnpm eval:agent-plan -- --mode run  <the same options> --approved-plan-digest <sha256 from plan>
  *
  * `plan` is offline: it checks the corpus (`golden/agent-plan.v1.json` with every `nl-intent.v1.json` case as one-step
@@ -18,8 +18,8 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
-import type { AiProvider } from '@quoky/core';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
+import { Capability, type AiProvider } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
   AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS,
@@ -60,8 +60,9 @@ const HELP = `Agent plan exactness evaluation (ADR-0121 D11, stage S2 P2)
 Offline:  pnpm eval:agent-plan -- --mode plan [options]
 Strict:   pnpm eval:agent-plan -- --mode run [options] --approved-plan-digest <sha256 from plan>
 
-Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
-         --timeout-ms <2000-8000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
+Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --effort <${CLAUDE_EFFORT_LEVEL_NAMES.join('|')}, default the adapter's selection effort ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low'}; bound into the digest>
+         --runs <1-5, default 1>  --concurrency <1-8, default 4>
+         --timeout-ms <2000-10000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
 Gate:            >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives POOLED over all runs (owner decision 2026-10-26), AND in every run:
                  >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
@@ -72,7 +73,7 @@ Provider outage: 5 provider failures in a row, 10 timeouts in a row, or provider
                  further calls; the run is INVALID (provider unavailable: <reason>), exit 5, never PASSED or FAILED.
 `;
 
-const VALUE_OPTIONS = new Set(['--mode', '--model', '--runs', '--concurrency', '--timeout-ms', '--approved-plan-digest']);
+const VALUE_OPTIONS = new Set(['--mode', '--model', '--effort', '--runs', '--concurrency', '--timeout-ms', '--approved-plan-digest']);
 const FLAG_OPTIONS = new Set(['--include-pending']);
 
 export class UsageError extends Error {}
@@ -102,6 +103,13 @@ export function parseArguments(argv: readonly string[]): { mode: 'plan' | 'run' 
   return { mode, options, includePending };
 }
 
+/** Owner decision of 2026-10-28: the planner's effort, `--effort`, default the adapter's selection effort; a usage error otherwise. */
+function plannerEffort(value: string | undefined): string {
+  const effort = value ?? DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low';
+  if (!(CLAUDE_EFFORT_LEVEL_NAMES as readonly string[]).includes(effort)) throw new UsageError(`--effort must be one of ${CLAUDE_EFFORT_LEVEL_NAMES.join(', ')}`);
+  return effort;
+}
+
 function integer(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   if (!/^\d+$/.test(value)) throw new UsageError('a numeric option is not a non-negative integer');
@@ -116,7 +124,7 @@ export interface AgentPlanCliDeps {
   readonly load: typeof loadAgentPlanCorpus;
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
-  readonly createProvider: (model: string) => AiProvider;
+  readonly createProvider: (model: string, effort?: string) => AiProvider;
   /** The outage guard's canary (one tiny call through the same provider); tests inject it. */
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Tests only: monotonic milliseconds for the latency of each call. */
@@ -139,7 +147,8 @@ export function defaultDeps(): AgentPlanCliDeps {
       writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' });
       return path;
     },
-    createProvider: (model) => new ClaudeCliProvider('claude', { intentSelectionModel: model }),
+    createProvider: (model, effort) =>
+      new ClaudeCliProvider('claude', { intentSelectionModel: model, ...(effort !== undefined ? { effortByCapability: { [Capability.INTENT_SELECTION]: effort as ClaudeEffortLevel } } : {}) }),
   };
 }
 
@@ -189,7 +198,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     }
     const flag = parsed.options['--timeout-ms'];
     const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
-    if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+    if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
     const loaded = deps.load();
     const problems = validateAgentPlanCorpus(loaded.corpus, loaded.oneStep);
     cases = agentPlanEvalCases(loaded.corpus, loaded.oneStep);
@@ -199,6 +208,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     if (problems.length > 0) return EXIT_GATE_FAILED;
     plan = buildAgentPlanEvalPlan(cases, { corpusSha256: loaded.sha256, oneStepCorpusSha256: loaded.oneStepSha256 }, loaded.corpus.fixture, {
       model: parsed.options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
+      effort: plannerEffort(parsed.options['--effort']),
       runs: integer(parsed.options['--runs'], 1),
       concurrency: integer(parsed.options['--concurrency'], 4),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -227,7 +237,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const provider = deps.createProvider(plan.model);
+  const provider = deps.createProvider(plan.model, plan.effort);
   if (!(await provider.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;

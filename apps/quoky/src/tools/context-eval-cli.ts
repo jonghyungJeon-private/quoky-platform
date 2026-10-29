@@ -20,12 +20,13 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
 import {
   Capability,
   NL_ACTION_PROMPT_VERSION,
   NL_ACTION_R2_PROMPT_VERSION,
   NL_SELECTION_PROMPT_VERSION,
+  NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   NL_CATALOG_ENTRY_IDS,
   NL_ACTION_ENTRY_IDS,
@@ -41,12 +42,15 @@ import {
   outageAlsoSeenNote,
   printInvalidRun,
   providerCanary,
+  summarizeLatency,
+  timeEvalProvider,
   type CanaryResult,
   type ProviderOutageReport,
 } from './eval-provider-guard';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import { countingProvider } from './nl-r2-redteam-cli';
 import {
+  CONTEXT_EVAL_GATE,
   HARD_CHECKS,
   buildContextEvalPlan,
   computeContextEvalPlanDigest,
@@ -105,14 +109,23 @@ Strict:   pnpm eval:context -- --mode run [options] --approved-plan-digest <sha2
 Dry:      pnpm eval:context -- --mode dry [--profile P] [--selector oracle|none] [--scenarios id,id]   (no model call)
 
 Options: --profile ${CONTEXT_EVAL_PROFILE_NAMES.join('|')} (default deployed)  --model <selection model, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>
-         --chat stub|real (default stub)  --chat-model <alias, default: the Claude CLI default>  --runs <1-5, default 1>  --scenarios <id,id,...>
+         --chat stub|real (default stub)  --chat-model <alias or full model id, default ${DEFAULT_CLAUDE_MODEL}>  --runs <1-5, default 3>  --scenarios <id,id,...>
+         --effort <${CLAUDE_EFFORT_LEVEL_NAMES.join('|')}: the selector's, default ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low'}>  --chat-effort <same levels: the chat model's, default ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.GENERAL_CHAT] ?? 'low'}>
+         Both efforts and the full model names are bound into the digest (owner decision 2026-10-28; a full model id pins the model).
 Gate (owner decision 2026-10-26): >= 95% of the fully scored scenarios pass in every run; 0 of each hard check (${HARD_CHECKS.join(', ')}); 0 harness errors.
 Provider outage: the eval:nl guard; an outage with no hard failure observed is INVALID (exit 5), never PASSED or FAILED.
 `;
 
-const OPTIONS = new Set(['--mode', '--profile', '--model', '--chat', '--chat-model', '--runs', '--scenarios', '--selector', '--approved-plan-digest']);
+const OPTIONS = new Set(['--mode', '--profile', '--model', '--chat', '--chat-model', '--runs', '--scenarios', '--selector', '--approved-plan-digest', '--effort', '--chat-effort']);
 
 export class UsageError extends Error {}
+
+/** Owner decision of 2026-10-28 (cost study P0): a reasoning effort option, validated; default the adapter's own policy. */
+function effortOf(value: string | undefined, fallback: string | undefined, name: string): string {
+  const effort = value ?? fallback ?? 'low';
+  if (!(CLAUDE_EFFORT_LEVEL_NAMES as readonly string[]).includes(effort)) throw new UsageError(`${name} must be one of ${CLAUDE_EFFORT_LEVEL_NAMES.join(', ')}`);
+  return effort;
+}
 
 export type ContextEvalMode = 'plan' | 'run' | 'dry' | 'help';
 
@@ -173,11 +186,13 @@ export interface ContextEvalDeps {
   readonly loadCorpus: () => { corpus: ContextEvalCorpus; sha256: string };
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
-  readonly createSelectionProvider: (model: string) => AiProvider;
-  readonly createChatProvider: (model: string | undefined) => AiProvider;
+  readonly createSelectionProvider: (model: string, effort?: string) => AiProvider;
+  readonly createChatProvider: (model: string | undefined, effort?: string) => AiProvider;
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
   /** Boots one world per run and runs the scenarios (tests inject it; production uses the real harness). */
   readonly runScenarios?: (input: RunInput) => Promise<ScenarioRecord[]>;
+  /** Tests only: a monotonic millisecond clock for the per-call selection latency (default `performance.now`). */
+  readonly elapsed?: () => number;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -195,8 +210,13 @@ export function defaultDeps(): ContextEvalDeps {
       writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' });
       return path;
     },
-    createSelectionProvider: (model) => new ClaudeCliProvider('claude', { intentSelectionModel: model }),
-    createChatProvider: (model) => new ClaudeCliProvider('claude', model !== undefined ? { model } : {}),
+    createSelectionProvider: (model, effort) =>
+      new ClaudeCliProvider('claude', { intentSelectionModel: model, ...(effort !== undefined ? { effortByCapability: { [Capability.INTENT_SELECTION]: effort as ClaudeEffortLevel } } : {}) }),
+    createChatProvider: (model, effort) =>
+      new ClaudeCliProvider('claude', {
+        ...(model !== undefined ? { model } : {}),
+        ...(effort !== undefined ? { effortByCapability: { [Capability.GENERAL_CHAT]: effort as ClaudeEffortLevel, [Capability.POLICY_SENSITIVE_CHAT]: effort as ClaudeEffortLevel } } : {}),
+      }),
   };
 }
 
@@ -271,9 +291,13 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
       profile,
       promptVersions: promptVersions(),
       selectionModel: parsed.options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
+      selectionEffort: effortOf(parsed.options['--effort'], DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION], '--effort'),
       chat: parsed.options['--chat'] === 'real' ? 'real' : 'stub',
-      ...(parsed.options['--chat-model'] !== undefined ? { chatModel: parsed.options['--chat-model'] } : {}),
-      runs: integer(parsed.options['--runs'], 1),
+      // Owner decision of 2026-10-28: the effective chat model (the adapter default when none is named) and effort.
+      chatModel: parsed.options['--chat-model'] ?? DEFAULT_CLAUDE_MODEL,
+      chatEffort: effortOf(parsed.options['--chat-effort'], DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.GENERAL_CHAT], '--chat-effort'),
+      // Owner decision 2026-10-27: a gate is 3 runs (the default); fewer runs never pass it.
+      runs: integer(parsed.options['--runs'], CONTEXT_EVAL_GATE.runs),
       scenarioIds,
       gitHead: (deps.gitHead ?? defaultGitHead)(),
     });
@@ -302,7 +326,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
     deps.stdout(`plan digest (sha256): ${digest}`);
     const cost = plan.maxSelectionCalls * COST_PER_SELECTION_CALL_USD + plan.maxChatCalls * COST_PER_CHAT_CALL_USD;
     deps.stdout(
-      `model calls this plan authorises: at most ${plan.maxSelectionCalls} selection call(s) (${plan.selectionModel})` +
+      `model calls this plan authorises: at most ${plan.maxSelectionCalls} selection call(s) (${plan.selectionModel}${plan.chatProbesPerTurn > 0 ? `; one per scored turn plus up to ${plan.chatProbesPerTurn} probes of chat-suggested commands per turn, owner decision D2` : ''})` +
         (plan.maxChatCalls > 0 ? ` and ${plan.maxChatCalls} chat call(s)` : ' and 0 chat calls (stub)') +
         `, plus ${CANARY_CLAUSE}${plan.maxChatCalls > 0 ? ' per provider' : ''}; estimated cost at most ~$${cost.toFixed(2)} (assumes ~$${COST_PER_SELECTION_CALL_USD}/selection call, ~$${COST_PER_CHAT_CALL_USD}/chat call)`,
     );
@@ -314,12 +338,14 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const selector = deps.createSelectionProvider(plan.selectionModel);
+  const selector = deps.createSelectionProvider(plan.selectionModel, plan.selectionEffort);
   if (!(await selector.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the selection provider is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardEvalProvider(selector, {
+  // Owner decision of 2026-10-28: every selection call is timed (wall ms and outcome only) for the gate's p50 / p95.
+  const timed = timeEvalProvider(selector, deps.elapsed ?? (() => performance.now()));
+  const guard = guardEvalProvider(timed.provider, {
     concurrency: 1,
     maxCalls: plan.maxSelectionCalls,
     canary: deps.canary !== undefined ? () => (deps.canary as (provider: AiProvider) => Promise<CanaryResult>)(selector) : providerCanary(selector, undefined, Capability.INTENT_SELECTION),
@@ -329,7 +355,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   let chatGuard: ReturnType<typeof guardEvalProvider> | undefined;
   let chatCounting: ReturnType<typeof countingProvider> | undefined;
   if (plan.chat === 'real') {
-    const chat = deps.createChatProvider(plan.chatModel);
+    const chat = deps.createChatProvider(plan.chatModel, plan.chatEffort);
     if (!(await chat.isAvailable().catch(() => false))) {
       deps.stderr('BLOCKED: the chat provider is not available; nothing was executed');
       return EXIT_BLOCKED;
@@ -360,6 +386,8 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   await chatGuard?.settle();
   const outage: ProviderOutageReport = guard.report();
   const chatOutage = chatGuard?.report();
+  const timedCalls = timed.calls();
+  const selectionLatency = { ...summarizeLatency(timedCalls, NL_SELECTION_TIMEOUT_MS), callsMs: timedCalls };
   const invalidReason = outage.invalidReason ?? chatOutage?.invalidReason;
   const summaries = summariesOf(records, plan.runs);
   const hard = Object.fromEntries(HARD_CHECKS.map((name) => [name, summaries.reduce((sum, summary) => sum + summary.hard[name], 0)]));
@@ -369,20 +397,26 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
   const overBound = counts.refused > 0 || (chatCounts?.refused ?? 0) > 0;
   if (invalidReason !== undefined && hardFailureTotal(hard) === 0) {
     printInvalidRun(deps.stdout, 'context gate', plan.runs, chatOutage?.invalidReason !== undefined && outage.invalidReason === undefined ? chatOutage : outage, hard);
-    const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), verdict: `INVALID (provider unavailable: ${invalidReason})`, hardFailures: hard, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, records }, null, 2)}\n`);
+    const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), verdict: `INVALID (provider unavailable: ${invalidReason})`, hardFailures: hard, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, selectionLatency, records }, null, 2)}\n`);
     deps.stdout(`results written to ${path}`);
     return EXIT_INVALID;
   }
   report(deps, summaries);
   deps.stdout(`selection: ${counts.ok} answered, ${counts.failed} failed, ${counts.refused} refused over the bound (bound ${plan.maxSelectionCalls})${overBound ? '  BOUND EXCEEDED: the evaluation fails' : ''}`);
   deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(`selection latency: p50 ${selectionLatency.p50} ms, p95 ${selectionLatency.p95} ms, max ${selectionLatency.max} ms over ${selectionLatency.calls} calls; ${selectionLatency.overBound} over the ${selectionLatency.boundMs} ms bound, ${selectionLatency.timeouts} timeouts`);
   if (chatCounts !== undefined && chatOutage !== undefined) {
     deps.stdout(`chat: ${chatCounts.ok} answered, ${chatCounts.failed} failed, ${chatCounts.refused} refused over the bound (bound ${plan.maxChatCalls})`);
     deps.stdout(formatProviderOutcomes(chatOutage));
   }
-  const passed = !overBound && summaries.every((summary) => gatePasses(summary));
-  deps.stdout(`context gate (>= ${plan.gate.scenarioPassRate * 100}% scenarios, 0 hard failures, 0 harness errors, every run): ${passed ? 'PASSED' : `FAILED${invalidReason !== undefined ? ` ${outageAlsoSeenNote(invalidReason)}` : ''}`}`);
-  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, records }, null, 2)}\n`);
+  // Owner decision 2026-10-27 (not pooled): at least CONTEXT_EVAL_GATE.runs runs, and EACH run passes on its own.
+  const enoughRuns = plan.runs >= CONTEXT_EVAL_GATE.runs;
+  const passed = enoughRuns && !overBound && summaries.every((summary) => gatePasses(summary));
+  for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}: ${gatePasses(summary) ? 'meets' : 'misses'} the per-run bar`);
+  deps.stdout(
+    `context gate (${CONTEXT_EVAL_GATE.runs} runs; EACH run >= ${plan.gate.scenarioPassRate * 100}% scenarios, 0 hard failures, 0 harness errors): ${passed ? 'PASSED' : `FAILED${enoughRuns ? '' : ` (the gate needs ${CONTEXT_EVAL_GATE.runs} runs; this plan has ${plan.runs})`}${invalidReason !== undefined ? ` ${outageAlsoSeenNote(invalidReason)}` : ''}`}`,
+  );
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, finishedAt: deps.now(), summaries, providerOutcomes: { selection: outage, ...(chatOutage !== undefined ? { chat: chatOutage } : {}) }, selectionLatency, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return passed ? EXIT_OK : EXIT_GATE_FAILED;
 }

@@ -50,8 +50,19 @@ import {
   type NlReferenceState,
   type NlResolutionOutcome,
 } from './item-reference';
-import { LAST_ACTION_METADATA_KEY, readLastAction, withLastAction, withLastActionEcho, type LastActionRecord } from './last-action';
+import {
+  LAST_ACTION_METADATA_KEY,
+  isLastActionExternalSource,
+  readLastAction,
+  withLastAction,
+  withLastActionEcho,
+  type LastActionEntryId,
+  type LastActionExternalOutcome,
+  type LastActionExternalSource,
+  type LastActionRecord,
+} from './last-action';
 import { LAST_READ_METADATA_KEY, readLastRead, withLastRead } from './last-read';
+import { LAST_REPLY_METADATA_KEY, nextLastReply, withLastReply } from './last-reply';
 import {
   NL_ACTION_LOG_EVENT,
   NlActionCaps,
@@ -91,7 +102,10 @@ import {
   INTERPRETATION_PREFERENCES_METADATA_KEY,
   LAST_SELECTION_METADATA_KEY,
   NL_PENDING_METADATA_KEY,
+  agedLastSelectionRecord,
+  type HeldPeriod,
   isActionPendingQuestion,
+  lastSelectionFor,
   lastSelectionRecord,
   pendingQuestionRecord,
   readInterpretationPreference,
@@ -105,9 +119,14 @@ import {
   type StoredSelection,
 } from './selection-state';
 import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
-import { NL_HELP_TOPICS } from './wave1-entries';
-import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
+import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
+import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
+import { nlOneStepClauseGroundedFlags } from './clause-flags';
+import { nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
+import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
+import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -123,7 +142,7 @@ import { nlKeywordHasWeekdayForm, nlWeekdayMentions } from './symbolic-time';
  * - `active`: the decision is acted on — an executable read, one numbered question, or honest chat.
  *
  * One call per message at most, through the `CapabilityRouter` for `Capability.INTENT_SELECTION` with no session context
- * (the owner's chat-tier choice does not apply, D2); a 6 s default bound (ADR-0120 amendment A3, configurable via
+ * (the owner's chat-tier choice does not apply, D2); a 10 s default bound (ADR-0120 amendment A3 as amended by the owner decision of 2026-10-28, configurable via
  * `QUOKY_NL_INTENT_TIMEOUT_MS`) and no retry (D3). Before any call the complete request
  * — the prepared text and the previous selection's args — passes the credential guard; a credential-shaped value skips
  * selection with no call (D3 pre-egress guard). The cache is in memory only: per actor, 10 minutes, 256 entries.
@@ -149,9 +168,13 @@ export interface SelectionCallMeta {
   readonly boundMs: number;
 }
 
-export const NL_SELECTION_TIMEOUT_MS = 6_000;
-/** Cold-start bound: the configured upper limit of `QUOKY_NL_INTENT_TIMEOUT_MS`; never exceeded. */
-export const NL_SELECTION_COLD_TIMEOUT_MS = 8_000;
+/**
+ * Owner decision of 2026-10-28 (amends ADR-0120 amendment A3): 10 s, raised from 6 s for the high-effort selector (haiku
+ * high timed out on 8 of 263 selection calls at 6 s, eval:context at 8a22d019).
+ */
+export const NL_SELECTION_TIMEOUT_MS = 10_000;
+/** Cold-start bound: the configured upper limit of `QUOKY_NL_INTENT_TIMEOUT_MS` (10 s since 2026-10-28); never exceeded. */
+export const NL_SELECTION_COLD_TIMEOUT_MS = 10_000;
 /** The cold window: the first 180 s after the process starts. */
 export const NL_SELECTION_COLD_START_MS = 180_000;
 /** The cold window after idling: more than 30 min since the last completed selector call. */
@@ -225,6 +248,11 @@ export interface NlSelectionTurn {
    * id so a line joins its turn (the app's logger also appends the per-turn `cid`). Opaque; never content.
    */
   readonly turnId?: string;
+  /**
+   * Owner-approved fix of 2026-10-28: the item titles Core itself showed in the held listing (`lastSelection`), taken from
+   * the very turn that recorded it (process memory only, never persisted or sent; ADR-0110 D4). Absent: none known.
+   */
+  readonly shownItemTitles?: readonly string[];
   /** ADR-0120 A6: the platform marked part of the text as code (`InboundMessage.formatting.code`); never an action. */
   readonly codeFormatted?: boolean;
   /**
@@ -299,7 +327,7 @@ export interface NlSelectionServiceDeps {
   readonly elapsed?: () => number;
   /**
    * ADR-0120 amendment A6 (`QUOKY_NL_ACTIONS`, default `off`). Absent or `off`: no action entry is ever offered, no A6
-   * record is written and every prompt and reply is byte-identical to `nl-select.v67` (the read prompt). Any other level requires mode
+   * record is written and every prompt and reply is byte-identical to `nl-select.v73` (the read prompt). Any other level requires mode
    * `active`; `local` and `external` require the kill switch (the constructor throws otherwise).
    */
   readonly actions?: {
@@ -706,12 +734,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * equivalent as `lastSelection` (same record, same 30-minute TTL as a selection) so "그 중에 …" refines what the owner
    * saw. Only in `active`; a selection that is not a closed entry with bounded args is ignored. Never throws.
    */
-  async recordGrammarSelection(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, now: IsoTimestamp): Promise<boolean> {
+  async recordGrammarSelection(session: Pick<Session, 'id'>, actorId: string, selection: NlGrammarSelection, now: IsoTimestamp, turnId?: string): Promise<boolean> {
     if (this.mode !== 'active') return false;
     const stored = sanitizeStoredSelection(selection);
     if (stored === undefined) return false;
     try {
-      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(actorId, stored, now));
+      // Codex P2 (2026-10-27): the listing's dates as resolved now, so a later inheritance never re-resolves "tomorrow".
+      const period = heldPeriodOf(nlWave1Entry(stored.entryId), stored.args, now, this.deps.timeZone);
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(actorId, stored, now, current, period, turnId));
       return true;
     } catch (error) {
       this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
@@ -740,9 +770,41 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (chat, help, an approval, a write
-   * preview) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older, unrelated
-   * listing. Only in `active`; never throws.
+   * Owner decision D1 (2026-10-26, reversing ADR-0120 follow-up 2 for chat turns): a turn answered by chat keeps the
+   * previous listing's follow-up window, one turn older (`turns`), within its own 30 minutes, so "그중에 …" still refines
+   * it after small talk; the selector is told how many chat turns came after it. Only in `active`; never throws.
+   */
+  async keepLastSelectionAcrossChat(session: Pick<Session, 'id'>, actorId: string, now: IsoTimestamp): Promise<void> {
+    if (this.mode !== 'active') return;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_SELECTION_METADATA_KEY, (current) => agedLastSelectionRecord(current, actorId, now));
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_SELECTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
+   * Owner decision of 2026-10-29: record whether this turn's reply came from chat (`quoky.lastReply`, content-free), so a
+   * next turn's bare yes or no can tell a chat's own question from a stale one. `closedQuestion` (owner decision of
+   * 2026-10-29, "1번 진행"): this turn took the actor's open D7 question at its start; a chat reply then keeps the time the
+   * question was closed unanswered (`nextLastReply`). Only in `active`; never throws.
+   */
+  async recordLastReply(session: Pick<Session, 'id'>, actorId: string, chat: boolean, now: IsoTimestamp, closedQuestion = false): Promise<void> {
+    if (this.mode !== 'active') return;
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: session.id }, LAST_REPLY_METADATA_KEY, (current) =>
+        withLastReply(current, actorId, nextLastReply(current, actorId, chat, closedQuestion, now), now),
+      );
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_REPLY_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
+   * ADR-0120 follow-up: a turn answered by something with no catalog equivalent (help, an approval, a write preview, a
+   * clarification) ends the previous listing's follow-up window, so a later "그 중에 …" never binds to an older,
+   * unrelated listing; a chat turn keeps it (owner decision D1, {@link keepLastSelectionAcrossChat}). Only in `active`;
+   * never throws.
    */
   async clearLastSelection(session: Pick<Session, 'id'>): Promise<void> {
     if (this.mode !== 'active') return;
@@ -778,7 +840,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   /**
    * A6-D8/D3: whether the A6 entries may be offered to the selector for this actor right now: mode `active`, a level other
    * than `off` and the kill switch running. False means the runtime drops every action entry from the catalog, so the
-   * prompt is `nl-select.v67` (the read prompt) byte for byte.
+   * prompt is `nl-select.v73` (the read prompt) byte for byte.
    */
   actionsOffered(actor: Pick<Actor, 'metadata'>): boolean {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return false;
@@ -819,14 +881,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`. The same resolution as a selected
-   * undo, with no selector call. `undefined` when the text is not the phrase or actions are not acting.
+   * Owner decision 8: the anchored `되돌리기`, the provider-down twin of `action.undo`, and (owner decision P3 (a),
+   * 2026-10-26, amending decision 8) the exact command the undo hint prints (`NL_ACTION_UNDO_COMMAND`, "되돌려줘"). The
+   * same resolution as a selected undo, with no selector call. `undefined` when the text is not one of the two fixed
+   * commands or actions are not acting.
    */
   async decideAnchoredUndo(
     turn: Pick<NlSelectionTurn, 'text' | 'session' | 'actor' | 'now' | 'entries' | 'replyToMessageId' | 'turnId' | 'quotedRanges' | 'codeFormatted' | 'direct' | 'surfaceEnforced'>,
   ): Promise<NlSelectionDecision | undefined> {
     // The anchored phrase is the whole message on one line and meets the same plain-line eligibility as any action.
-    if (!/^되돌리기[.!]?$/u.test(turn.text.normalize('NFC').trim())) return undefined;
+    if (!isNlAnchoredUndoCommand(turn.text)) return undefined;
     if (nlActionInputRefusal(turn.text, turn.text, markedMaterial(turn)) !== undefined) return undefined;
     if (!this.actionsActing(turn.actor) || !turn.entries.some((entry) => entry.id === 'action.undo')) return undefined;
     // A6-D3a amendment 1 (CA round 3): the same DM-only guard as a selected local write.
@@ -880,6 +944,42 @@ export class NlSelectionService implements TurnDeliveryObserver {
       await this.recordReceipt(input);
     } catch (error) {
       this.log('warn', 'nl_action.record_failed', { errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
+
+  /**
+   * ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): every outcome of an approved connector write becomes this
+   * actor's last action, with `itemId` = its receipt id, never undoable until the R3 undo writers act, so a plain
+   * "되돌려줘" after it answers with that family's copy and never undoes an older to-do or reminder. Content-free (ids,
+   * the family, the outcome, the time). Same gate as every lastAction write (mode `active`, `QUOKY_NL_ACTIONS` not off);
+   * best-effort, never throws.
+   */
+  async recordExternalWrite(input: {
+    readonly session: Pick<Session, 'id'>;
+    readonly actor: Pick<Actor, 'id'>;
+    readonly message: { readonly id: string };
+    readonly now: IsoTimestamp;
+    readonly source: LastActionExternalSource;
+    readonly entryId: LastActionEntryId;
+    readonly receiptId: string;
+    readonly outcome: LastActionExternalOutcome;
+  }): Promise<void> {
+    if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
+    const record: LastActionRecord = {
+      entryId: input.entryId,
+      source: input.source,
+      itemId: input.receiptId,
+      at: input.now,
+      undoable: false,
+      undone: false,
+      outcome: input.outcome,
+      requestId: input.message.id,
+      echoReplyIds: [],
+    };
+    try {
+      await this.deps.sessions.updateMetadataEntry({ id: input.session.id }, LAST_ACTION_METADATA_KEY, (current) => withLastAction(current, input.actor.id, record, input.now));
+    } catch (error) {
+      this.log('warn', 'nl_selection.session_write_failed', { key: LAST_ACTION_METADATA_KEY, errorName: error instanceof Error ? error.name : typeof error });
     }
   }
 
@@ -966,6 +1066,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       this.logAgreement(turn, { outcome: 'fallback', reason: prepared.skip });
       return { kind: 'skip', reason: prepared.skip };
     }
+    // Owner-approved fix of 2026-10-28 (fr-release-list-pick t2): a follow-up that names exactly one release Core just
+    // listed, by a token of its shown title ("20261029 거 이슈 보여줘" after "배포일_20261029(목)"), is that release.
+    const picked = this.pickShownRelease(effective, prepared.groundingText, turn, last, language);
+    if (picked !== undefined) return picked;
+    // Owner request of 2026-10-27 (a8-25): a message that is nothing but Jira release-page links is `jira.release` with
+    // no args (the link is the release), read by the existing link parser with no model call.
+    const linkOnly = this.releaseLinkOnly(effective, prepared.groundingText, turn, last, language);
+    if (linkOnly !== undefined) return linkOnly;
     const selected = await this.select(effective, prepared, last, undefined, reference);
     if (selected.kind === 'egress-refused') {
       this.log('info', 'nl_selection.skipped', { reason: selected.reason, route: turn.route });
@@ -1011,6 +1119,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
     cacheKey?: string,
   ): Promise<NlSelectionDecision> {
     if (output.entryId === null) return { kind: 'none' };
+    // P7: an output for an earlier listing's entry refines that listing (its args may be carried), not the last one. The
+    // whole history is kept: each clarification candidate is grounded against its own listing (Codex P2, below).
+    const history = last;
+    last = lastSelectionFor(output.entryId, history);
     // A7: a clear past-tense statement is not a request, whatever read the selector named (message-level, once,
     // before any candidate is validated): like a selector `none`, the turn is chat, never a question.
     if (!isNlActionEntryId(output.entryId) && nlIsPastStatement(prepared.groundingText)) {
@@ -1028,6 +1140,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
+    // Fix of 2026-10-29 (uat5r6-07): the listing just shown, again, for a request about one shown item's
+    // content is not a re-list (`repeats-listing`): like a selector `none`, the turn is chat, never a question or a repair.
+    if (!main.ok && main.reason === 'repeats-listing') {
+      this.log('info', 'nl_selection.repeats_listing', { entryId: output.entryId });
+      return { kind: 'none' };
+    }
     // Owner decision of 2026-10-19, bounded: a period outside the entry's closed set (a span, a duration, a month, a
     // day-only or past date) is never filtered with and never dropped: the fixed restate of the set asks (content-free).
     if (!main.ok && main.reason === 'unsupported-period' && main.entryId !== undefined) {
@@ -1063,6 +1181,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // D7: two candidates or a failed validation ask one numbered question, never chat and never a guess. A6: an action
     // candidate is never a numbered option (only READ entries are stored as options).
     const options: NlValidatedSelection[] = [];
+    const optionChanged: boolean[] = [];
+    const dateOnly: boolean[] = [];
     let weekdayRefused = isWeekdayRefusal(main, output.args, ctx);
     let droppedAction = false;
     // Codex P2: a read alternative that failed validation (an unconfigured source) or was repaired keeps the choice open.
@@ -1073,13 +1193,35 @@ export class NlSelectionService implements TurnDeliveryObserver {
         droppedAction = true;
         continue;
       }
-      const repaired = validateWithRepair(candidate, ctx);
+      // Codex P2 (2026-10-27): every candidate is validated against ITS OWN listing in the history (`lastSelectionFor`), so
+      // an alternative for an earlier listing keeps that listing's carried args (a keyword, a period) instead of being
+      // validated against the primary candidate's listing and losing them.
+      const own = lastSelectionFor(candidate.entryId, history);
+      const candidateCtx = index === 0 ? ctx : this.validationContext(turn, prepared.groundingText, own?.args, false, own?.entryId);
+      const repaired = validateWithRepair(candidate, candidateCtx);
       // A repair that drops another arg and then loses the owner's weekday ("지난주 수" with a future mail range) is asked
       // with the weekday hint as well.
       if (index === 0 && isWeekdayRefusal(repaired, candidate.args, ctx)) weekdayRefused = true;
       if (repaired.ok && repaired.value.entry.risk === 'READ') readCandidates.add(`${repaired.value.entry.id}|${sortedArgs(repaired.value.args)}`);
       if (index > 0 && (!repaired.ok || sortedArgs(repaired.value.args) !== sortedArgs(candidate.args))) openRead = true;
-      if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) options.push(repaired.value);
+      if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) {
+        options.push(repaired.value);
+        // Owner decision of 2026-10-28: whether Core had to change this candidate (a repaired or ungrounded value dropped).
+        optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args));
+        dateOnly.push(isDateRangeOnlyReading(repaired.value, candidate.args, own?.args));
+      }
+    }
+    // Owner-approved fix of 2026-10-28 (a8-09, a8-27): when the owner's words name no period at all (`nlNamesPeriod`, the
+    // existing period reader; a bare 8-digit release name such as "20261022" is not one), an option that rests only on a
+    // date range the selector read into them is dropped, as long as another option remains. The rest is decided as usual
+    // (one unchanged read option runs; see below).
+    if (dateOnly.includes(true) && dateOnly.includes(false) && !nlNamesPeriod(prepared.groundingText)) {
+      for (let index = options.length - 1; index >= 0; index -= 1) {
+        if (dateOnly[index] !== true) continue;
+        this.log('info', 'nl_selection.date_only_option_dropped', { entryId: (options[index] as NlValidatedSelection).entry.id });
+        options.splice(index, 1);
+        optionChanged.splice(index, 1);
+      }
     }
     // A refusal reached through the repair path is not kept in the cache either.
     if (weekdayRefused && cacheKey !== undefined) this.cache.delete(cacheKey);
@@ -1098,6 +1240,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (options.length === 1 && !weekdayRefused) {
       const scoped = await this.askHelpScope(options[0] as NlValidatedSelection, turn, language, prepared.groundingText, output.ambiguity === 'NEEDS_CLARIFICATION');
       if (scoped !== undefined) return scoped;
+      // Owner decision of 2026-10-28 (amends ADR-0120 D7; widens the v51 rule above, which needed a dropped action): a
+      // numbered question that would show only ONE read option asks nothing. That read runs: no write is possible from
+      // it. Still asked: a refused weekday (the hint names the week and day), the help-scope question (just above, owner
+      // decision A), no option at all (below), and an option Core had to CHANGE (a repaired candidate: Core dropped or
+      // replaced a value the selector gave, e.g. a keyword grounded only in pasted text). The red-team invariant holds:
+      // a hostile or ungrounded selection never runs a read by repair.
+      if (optionChanged[0] !== true) {
+        this.log('info', 'nl_selection.one_option_ran', { entryId: (options[0] as NlValidatedSelection).entry.id });
+        return this.complete(options[0] as NlValidatedSelection, turn, last, language, prepared.groundingText);
+      }
     }
     if (options.length === 0) {
       // An entry that is not offered (an unconfigured source) or not in the catalog is honest chat's to explain.
@@ -1184,6 +1336,17 @@ export class NlSelectionService implements TurnDeliveryObserver {
     groundingText: string,
     note?: 'saved' | 'changed',
   ): Promise<NlSelectionDecision> {
+    // Owner decision P-time (ii), 2026-10-27: a read that refines or asks about the held listing of the same entry keeps
+    // that listing's period when the owner's words name none (`inheritHeldRange`).
+    // Owner decision of 2026-10-28 (amends the inheritance rule): an item question after a narrowed listing searches the
+    // full parent listing (the narrowing the owner only carried over is dropped first).
+    selection = this.searchParentListing(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
+    selection = this.inheritHeldRange(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
+    // Owner decision of 2026-10-27 (range grounding): the one label-table period the owner states wins over another range.
+    selection = this.groundOwnerRange(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
+    // Owner decision of 2026-10-27 (ADR-0121 S2 note 2 on the one-step path): a flag with catalog grounding words
+    // (calendar `timedOnly`) is turned on when the read's own clauses name the entry by those words alone.
+    selection = this.groundClauseFlags(selection, turn, lastSelectionFor(selection.entry.id, last), groundingText);
     const { entry } = selection;
     // Only a wave-1 READ entry completes here (an A6 action entry has its own path and is never `lastSelection`).
     const entryId = entry.id;
@@ -1249,10 +1412,93 @@ export class NlSelectionService implements TurnDeliveryObserver {
     };
     // A transient arg (a pick of one listed item) answers this turn only and never becomes the follow-up's base.
     const stored = Object.fromEntries(Object.entries(args).filter(([name]) => entry.args.find((spec) => spec.name === name)?.transient !== true));
-    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, () => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now));
+    // Codex P2 (2026-10-27): the dates this listing shows (its resolved range), kept for P-time inheritance.
+    const period = periodOfRange(selection.range);
+    await this.writeSession(turn, LAST_SELECTION_METADATA_KEY, (current) => lastSelectionRecord(turn.actor.id, { entryId, args: stored }, turn.now, current, period, turn.turnId));
     const described = entry.describe?.(args, selection.range, language, selection.defaulted !== undefined ? { defaulted: selection.defaulted } : undefined);
     const basis = described === undefined ? undefined : renderBasis(described, language, basisNote);
     return { kind: 'execute', command, ...(basis !== undefined ? { basis } : {}) };
+  }
+
+  /**
+   * Owner-approved fix of 2026-10-28: when the held listing is a Jira release LIST (`jira.release` with a project and no
+   * release, shown just before: no chat turn in between) and exactly one of the owner's tokens (letters and digits, at
+   * least 4, digits kept) occurs in exactly one shown release title (`shownItemTitles`), Core settles `jira.release` with
+   * that project and the owner's token as the release (Core's lookup resolves it to the listed name), with no model call.
+   * Not with any grammatical negation or exclusion, nor when a shared read-request veto fires (fail-safe), and only when it
+   * validates. No word list. Else undefined.
+   */
+  private pickShownRelease(turn: NlSelectionTurn, groundingText: string, original: NlSelectionTurn, last: LastSelection | undefined, language: 'ko' | 'en'): Promise<NlSelectionDecision> | undefined {
+    const titles = original.shownItemTitles;
+    if (titles === undefined || titles.length === 0 || last === undefined || last.entryId !== 'jira.release' || (last.turns ?? 0) > 0) return undefined;
+    if (typeof last.args.project !== 'string' || last.args.release !== undefined) return undefined;
+    if (!turn.entries.some((entry) => entry.id === 'jira.release')) return undefined;
+    // Codex review of 68acf4f6 P2: fail closed on any grammatical negation ("20261029 안 보여줘도 돼"), scope-free and
+    // independent of the light-verb condition.
+    if (nlHasGrammaticalNegation(groundingText)) return undefined;
+    const lowerTitles = titles.map((title) => title.normalize('NFC').toLowerCase());
+    const tokens = [...new Set(groundingText.normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((token) => token.length >= 4))];
+    // Exactly one shown title is named, by any of the owner's tokens; the longest token naming it is the release value.
+    const matched = new Set(tokens.flatMap((token) => lowerTitles.flatMap((title, index) => (title.includes(token) ? [index] : []))));
+    if (matched.size !== 1) return undefined;
+    const only = lowerTitles[[...matched][0] as number] as string;
+    const best = tokens.filter((token) => only.includes(token)).sort((a, b) => b.length - a.length)[0] as string;
+    const token = groundingText.normalize('NFC').split(/[^\p{L}\p{N}]+/u).find((word) => word.toLowerCase() === best) ?? best;
+    // Codex delta review of d51aa6ac (fix-loop cap, fail-closed): any whitespace word other than the one holding the
+    // matched release token that BEGINS with the negation adverb syllables 안 / 못 refuses the shortcut ("안보여줘도돼",
+    // "못보겠네"). It over-reads ("안내", "안건") on purpose: those turns only go to the selector.
+    const negatorWord = groundingText.normalize('NFC').split(/\s+/u).some((raw) => {
+      const word = raw.replace(/^[^\p{L}\p{N}]+/u, '');
+      return /^(?:안|못)/u.test(word) && !word.toLowerCase().includes(best);
+    });
+    if (negatorWord) return undefined;
+    const validated = validateSelection({ entryId: 'jira.release', args: { ...last.args, release: token } }, this.validationContext(turn, groundingText, last.args, false, last.entryId));
+    if (!validated.ok) return undefined;
+    // Codex review of 68acf4f6 P2: the shared read-request vetoes the selector path applies (a past statement, a read
+    // that is not a request) and the request-shape veto (a statement, question, wish, report …) send the turn to the
+    // selector instead ("20261029 배포는 끝났다").
+    if (nlIsPastStatement(groundingText) || nlReadNotRequest(groundingText, validated.value.args) !== undefined) return undefined;
+    if (nlRequestVeto(groundingText, validated.value.entry.aliases, NL_ACTION_WORDS) !== undefined) return undefined;
+    this.log('info', 'nl_selection.shown_release_picked', { route: original.route });
+    return this.complete(validated.value, original, last, language, groundingText);
+  }
+
+  /** a8-25: `jira.release` with no args for a link-only message, when the entry is offered and validates; else undefined. */
+  private releaseLinkOnly(turn: NlSelectionTurn, groundingText: string, original: NlSelectionTurn, last: LastSelection | undefined, language: 'ko' | 'en'): Promise<NlSelectionDecision> | undefined {
+    if (!isJiraReleaseLinkOnly(groundingText) || !turn.entries.some((entry) => entry.id === 'jira.release')) return undefined;
+    const validated = validateSelection({ entryId: 'jira.release', args: {} }, this.validationContext(turn, groundingText, undefined));
+    if (!validated.ok) return undefined;
+    this.log('info', 'nl_selection.release_link_only', { route: original.route });
+    return this.complete(validated.value, original, last, language, groundingText);
+  }
+
+  /** Owner decision P-time (ii): {@link nlInheritHeldRange} with this turn's validation context; logs an inheritance. */
+  private inheritHeldRange(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    if (held === undefined) return selection;
+    const inherited = nlInheritHeldRange(selection, held, groundingText, this.validationContext(turn, groundingText, held.args, false, held.entryId));
+    if (inherited !== selection) this.log('info', 'nl_selection.range_inherited', { entryId: selection.entry.id });
+    return inherited;
+  }
+
+  /** Owner decision of 2026-10-28: {@link nlSearchParentListing} with this turn's validation context; logs a widened read. */
+  private searchParentListing(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    const widened = nlSearchParentListing(selection, held, this.validationContext(turn, groundingText, held?.args, false, held?.entryId));
+    if (widened !== selection) this.log('info', 'nl_selection.parent_listing_searched', { entryId: selection.entry.id });
+    return widened;
+  }
+
+  /** Owner decision of 2026-10-27: {@link nlOwnerStatedRange} with this turn's validation context; logs a replaced range. */
+  private groundOwnerRange(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    const grounded = nlOwnerStatedRange(selection, groundingText, this.validationContext(turn, groundingText, held?.args, false, held?.entryId));
+    if (grounded !== selection) this.log('info', 'nl_selection.range_from_owner', { entryId: selection.entry.id });
+    return grounded;
+  }
+
+  /** Owner decision of 2026-10-27: {@link nlOneStepClauseGroundedFlags} with this turn's validation context; logs a flag set. */
+  private groundClauseFlags(selection: NlValidatedSelection, turn: NlSelectionTurn, held: LastSelection | undefined, groundingText: string): NlValidatedSelection {
+    const grounded = nlOneStepClauseGroundedFlags(selection, groundingText, this.validationContext(turn, groundingText, held?.args, false, held?.entryId));
+    if (grounded !== selection) this.log('info', 'nl_selection.flag_grounded', { entryId: selection.entry.id });
+    return grounded;
   }
 
   /** A reply to the open numbered question: `1`, `2.`, `지라`, `담당` … or `undefined` when it is not an answer. */
@@ -1742,7 +1988,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
    */
   private undoTargetMismatch(groundingText: string, reference: NlReferenceState, base: Omit<NlActionAudit, 'resolution' | 'result'>, language: 'ko' | 'en', shadow: boolean): NlSelectionDecision | undefined {
     const record = reference.lastAction?.record;
-    if (record === undefined) return undefined;
+    // An external write is answered by the undo itself (P4); its words never pick an older local item.
+    if (record === undefined || isLastActionExternalSource(record.source)) return undefined;
     const named = nlNamedItemSources(groundingText);
     const numbers = [...nlNumeralsIn(groundingText), ...nlOrdinalsIn(groundingText)];
     const otherSource = named.size > 1 || (named.size === 1 && !named.has(record.source));
@@ -1782,7 +2029,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (resolved.kind === 'unresolved') {
       const audit: NlActionAudit = { ...base, resolution: resolved.outcome === 'stale' ? 'stale' : 'none', result: 'refused', reason: resolved.outcome };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
-      return this.actionAnswer(audit, renderUndoUnresolved(resolved.outcome, language));
+      return this.actionAnswer(audit, renderUndoUnresolved(resolved.outcome, language, resolved.external));
     }
     const audit: NlActionAudit = { ...base, resolution: 'resolved', target: resolved.target, result: 'undone' };
     if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
@@ -2013,7 +2260,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (!same) {
         return this.actionAnswer(
           { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'none', result: 'refused', reason: 'undo-changed', ...correlationOf(turn) },
-          renderUndoUnresolved(resolved.kind === 'unresolved' ? resolved.outcome : 'echo-mismatch', language),
+          renderUndoUnresolved(resolved.kind === 'unresolved' ? resolved.outcome : 'echo-mismatch', language, resolved.kind === 'unresolved' ? resolved.external : undefined),
         );
       }
       return this.decideUndo(turn, language, 0, 'none', reference);
@@ -2163,9 +2410,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // A7: the shadow sees what active would do: a clear past-tense statement is `none`.
     if (output.entryId !== null && !isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) outcome = 'none';
     else if (output.entryId !== null) {
-      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId));
+      const base = lastSelectionFor(output.entryId, last);
+      const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, base?.args, false, base?.entryId));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
-      if (!validated.ok) outcome = 'INVALID';
+      // The shadow sees what active would do: a repeated listing for a content request is `none` (2026-10-29).
+      if (!validated.ok) outcome = validated.reason === 'repeats-listing' ? 'none' : 'INVALID';
       else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
     }
     if (turn.grammar !== undefined) {
@@ -2198,7 +2447,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
   private prepare(turn: NlSelectionTurn, last: LastSelection | undefined): PreparedSelectionInput | { readonly skip: NlSelectionSkipReason } {
     const prepared = prepareSelectionInput(turn.text, turn.attachmentCount, turn.quotedRanges ?? []);
     if ('skip' in prepared) return prepared;
-    const previousStrings = last === undefined ? [] : Object.values(last.args).filter((value): value is string => typeof value === 'string');
+    const previousStrings = (last === undefined ? [] : [last, ...(last.earlier ?? [])]).flatMap((selection) =>
+      Object.values(selection.args).filter((value): value is string => typeof value === 'string'),
+    );
     if ([prepared.text, ...previousStrings].some((value) => containsCredentialMaterial(value))) return { skip: 'credential' };
     return prepared;
   }
@@ -2212,7 +2463,15 @@ export class NlSelectionService implements TurnDeliveryObserver {
   ): Promise<SelectOutcome> {
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
-    const previous = last === undefined ? undefined : { entryId: last.entryId, args: last.args };
+    const previous =
+      last === undefined
+        ? undefined
+        : {
+            entryId: last.entryId,
+            args: last.args,
+            ...(last.turns !== undefined && last.turns > 0 ? { turns: last.turns } : {}),
+            ...(last.earlier !== undefined && last.earlier.length > 0 ? { earlier: last.earlier.map((item) => ({ entryId: item.entryId, args: item.args, turns: item.turns })) } : {}),
+          };
     // D6/D8 first, before the cache: the request may only go where this turn's chat would have gone.
     if (turn.chatProviderId === undefined) return { kind: 'egress-refused', reason: 'chat-provider-unknown' };
     let provider: AiProvider;
@@ -2281,7 +2540,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
-   * The selector bound at `nowMs`: the configured bound (default 6 s), raised to 8 s (the configured upper limit, never
+   * The selector bound at `nowMs`: the configured bound (default 10 s), raised to 10 s (the configured upper limit, never
    * more) while the process is younger than 180 s or the last completed selector call is more than 30 min old.
    * Content-free; sends nothing.
    */
@@ -2477,7 +2736,8 @@ function isAmbiguityValueGrounded(key: NlAmbiguityKey, value: string, groundingT
 export function nlSelectionCacheKey(input: {
   readonly actorId: string;
   readonly text: string;
-  readonly previous: { readonly entryId: string; readonly args: NlArgs } | undefined;
+  /** D1 / P7: the chat turns since it and the earlier selections are part of the prompt, so part of the key. */
+  readonly previous: { readonly entryId: string; readonly args: NlArgs; readonly turns?: number; readonly earlier?: readonly unknown[] } | undefined;
   readonly entryIds: readonly string[];
   readonly promptVersion: string;
 }): string {
@@ -2741,4 +3001,83 @@ export const DEICTIC_BLOCKING_FAILURES: ReadonlySet<string> = new Set(['unknown-
 /** A6: the platform marked part of the message as quoted or as code: material, never one plain instruction. */
 function markedMaterial(turn: Pick<NlSelectionTurn, 'quotedRanges' | 'codeFormatted'>): boolean {
   return (turn.quotedRanges ?? []).length > 0 || turn.codeFormatted === true;
+}
+
+/**
+ * A6 decision 8 (amended by owner decision P3 (a), 2026-10-26): the fixed undo commands, each the whole message on one
+ * line: `되돌리기` and the command the undo hint prints. Built from the hint's own constant, never a phrase list.
+ */
+/** Whether `text` is one of the fixed undo commands of {@link ANCHORED_UNDO} (the whole message; for the red-team oracle). */
+export function isNlAnchoredUndoCommand(text: string): boolean {
+  return ANCHORED_UNDO.test(text.normalize('NFC').trim());
+}
+
+const ANCHORED_UNDO = new RegExp(`^(?:되돌리기|${NL_ACTION_UNDO_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[.!]?$`, 'u');
+
+/**
+ * Owner decision P-time (ii), 2026-10-27: an entry that opts in (`inheritsHeldRange`, the calendar) whose validated selection
+ * left the range out, after a held listing of the same entry (`held`: `lastSelection` or an earlier one, P7) with a range,
+ * and whose owner's words name no date or period (the existing period parser `nlReminderPeriod`, never a phrase list): the
+ * held range is added and the selection validated again with `ctx` (whose previous args are the held listing's, so the
+ * range grounds as that listing's own). Anything else is returned unchanged (the same object); an explicit period always
+ * wins. Pure: the runtime and the eval scorers (Core's final outcome) use the same rule.
+ */
+export function nlInheritHeldRange(
+  selection: NlValidatedSelection,
+  held: { readonly entryId: string; readonly args: NlArgs; readonly period?: HeldPeriod },
+  groundingText: string,
+  ctx: NlValidationContext,
+): NlValidatedSelection {
+  const { entry } = selection;
+  const spec = entry.args.find((candidate) => candidate.kind === 'range');
+  if (entry.inheritsHeldRange !== true || spec === undefined || held.entryId !== entry.id || selection.args[spec.name] !== undefined) return selection;
+  const heldRange = typeof held.args[spec.name] === 'string' ? (held.args[spec.name] as string) : undefined;
+  if (heldRange === undefined && held.period === undefined) return selection;
+  if (nlReminderPeriod(groundingText, nlWeekdayMentions(groundingText, entry.aliases)).kind !== 'none') return selection;
+  // Codex P2 (2026-10-27): the listing's own dates, never its symbol re-resolved on a later clock. The symbol is kept only
+  // while it still names exactly those dates ("내일" listed at 23:55 is a dated range after midnight).
+  let symbol = heldRange;
+  if (held.period !== undefined) {
+    const shown = heldRange ?? (typeof spec.default === 'string' ? spec.default : undefined);
+    const again = shown === undefined ? undefined : periodOfRange(resolveNlRange(shown, ctx.now, ctx.timeZone));
+    symbol = again !== undefined && again.start === held.period.start && again.days === held.period.days ? heldRange : dateSymbolOf(held.period);
+  }
+  if (symbol === undefined) return selection;
+  const grounded = { ...ctx, previousArgs: { ...(ctx.previousArgs ?? {}), [spec.name]: symbol } };
+  const again = validateSelection({ entryId: entry.id, args: { ...selection.args, [spec.name]: symbol } }, grounded);
+  return again.ok ? again.value : selection;
+}
+
+/** The local dates a resolved range shows (`upcoming` starts now and is not a date span). */
+function periodOfRange(range: NlResolvedRange | undefined): HeldPeriod | undefined {
+  if (range === undefined || range.upcoming === true) return undefined;
+  const { year, month, day } = range.startDate;
+  return { start: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`, days: range.days };
+}
+
+/** The dates of a held listing as an explicit date symbol with its year (`YYYY-MM-DD` or `YYYY-MM-DD..YYYY-MM-DD`). */
+function dateSymbolOf(period: HeldPeriod): string {
+  if (period.days === 1) return period.start;
+  const [year, month, day] = period.start.split('-').map(Number) as [number, number, number];
+  const end = new Date(Date.UTC(year, month - 1, day + period.days - 1));
+  return `${period.start}..${end.toISOString().slice(0, 10)}`;
+}
+
+/** The dates a stored selection's range (or the entry's default range) resolves to now, for a grammar listing. */
+function heldPeriodOf(entry: NlCatalogEntry, args: NlArgs, now: IsoTimestamp, timeZone: string): HeldPeriod | undefined {
+  const spec = entry.args.find((candidate) => candidate.kind === 'range');
+  if (spec === undefined) return undefined;
+  const symbol = typeof args[spec.name] === 'string' ? (args[spec.name] as string) : typeof spec.default === 'string' ? spec.default : undefined;
+  return symbol === undefined ? undefined : periodOfRange(resolveNlRange(symbol, now, timeZone));
+}
+
+/**
+ * Owner-approved fix of 2026-10-28 (a8-09, a8-27): whether a validated read option rests only on a date range: the
+ * selector gave its range arg a value that is not the held listing's own, and the option carries no owner text of its
+ * own (no keyword-kind value). Enum qualifiers (a Jira `window`) do not count as owner text. Pure.
+ */
+function isDateRangeOnlyReading(option: NlValidatedSelection, given: NlArgs, held: NlArgs | undefined): boolean {
+  const ranges = option.entry.args.filter((spec) => spec.kind === 'range' && given[spec.name] !== undefined && given[spec.name] !== held?.[spec.name]);
+  if (ranges.length === 0) return false;
+  return !option.entry.args.some((spec) => spec.kind === 'keyword' && option.args[spec.name] !== undefined);
 }

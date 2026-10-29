@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectPolicySensitiveChat, isPersonalScheduleQuestion } from '../intent-classifier';
+import { renderConnectorWriteUsage } from '../connector-writes/connector-write-copy';
 import {
   CALENDAR_NEXT_EVENT_LOOKAHEAD_DAYS,
   extractSpan,
@@ -264,5 +265,24 @@ describe('live test 2 (C01, D02): a local to-do / reminder request is not a cale
     '알림으로 걸어둔 내일 3시 회의 취소해줘',
   ])('counter-case: "%s" stays a calendar write', (text) => {
     expect(parseCalendarQuestion(text)?.kind).toBe('write-refused');
+  });
+});
+
+describe('calendar field changes (context eval 2026-10-26, P2)', () => {
+  it('a meeting rename / relocate in the parser\'s own shape is classified as a write; other field-like asks stay chat', () => {
+    for (const text of ['내일 3시 회의 제목을 주간 회의로 바꿔줘', '내일 3시 회의의 장소를 3층 회의실로 바꿔줘', '금요일 10시 미팅 위치를 본사로 옮겨줘']) {
+      expect(isCalendarWriteRequest(text), text).toBe(true);
+    }
+    for (const text of ['오늘 회의 내용을 표로 바꿔줘', '오늘 회의록 제목을 결산으로 바꿔줘', '파일 제목을 보고서로 바꿔줘', '"내일 3시 회의 제목을 주간 회의로 바꿔줘"를 영어로 번역해줘']) {
+      expect(isCalendarWriteRequest(text), text).toBe(false);
+    }
+  });
+
+  it('every example of Core\'s own calendar usage copy is classified as a write (no suggestion the grammar cannot take)', () => {
+    for (const topic of ['calendar-create', 'calendar-change'] as const) {
+      const examples = [...renderConnectorWriteUsage(topic).matchAll(/"([^"]+)"/gu)].map((match) => match[1] as string);
+      expect(examples.length, topic).toBeGreaterThan(0);
+      for (const example of examples) expect(isCalendarWriteRequest(example), example).toBe(true);
+    }
   });
 });

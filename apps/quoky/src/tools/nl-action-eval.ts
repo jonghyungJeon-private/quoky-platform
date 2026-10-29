@@ -76,9 +76,9 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
-import { NL_EVAL_HELP_ENTRY, helpCaptureAllowance } from './nl-intent-eval';
+import { NL_EVAL_HELP_ENTRY, NL_EVAL_RELEASE_LINK_OUTPUT, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
-import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, parseNlRef, withLastRead } from '@quoky/core';
+import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, isJiraReleaseLinkOnly, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
 
 export const NL_ACTION_EVAL_GATE = Object.freeze({
   overall: 0.95,
@@ -701,6 +701,8 @@ export interface NlActionPlan {
   readonly promptSha256: string;
   readonly corpusSha256: string;
   readonly model: string;
+  /** The selector's reasoning effort (`--effort`), when the CLI set it (owner decision of 2026-10-28). */
+  readonly effort?: string;
   readonly runs: number;
   readonly concurrency: number;
   readonly callTimeoutMs: number;
@@ -724,7 +726,7 @@ export function buildActionPlan(
   kind: NlActionEvalKind,
   caseIds: readonly string[],
   corpusSha256: string,
-  options: { readonly model: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
+  options: { readonly model: string; readonly effort?: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
 ): NlActionPlan {
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
@@ -736,6 +738,7 @@ export function buildActionPlan(
     promptSha256: r2 ? actionPromptSha256(NL_ACTION_R2_EVAL_ENTRIES) : actionPromptSha256(),
     corpusSha256,
     model: options.model,
+    ...(options.effort !== undefined ? { effort: options.effort } : {}),
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
@@ -823,7 +826,8 @@ export interface NlReadRegressionCase {
   readonly id: string;
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
-  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  /** The previous selection, with D1 `turns` and P7 `earlier` as `eval:nl` renders them (`NlEvalCase.prior`). */
+  readonly prior?: NlEvalCase['prior'];
   /** The case was asked in a channel (the scorer's snapshot lookup answers as the runtime does there). */
   readonly channel?: boolean;
   /**
@@ -868,28 +872,34 @@ export function scoreReadRegression(golden: NlReadRegressionCase, raw: string, n
   const expect = golden.a6Relabel ?? golden.expect;
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return { outcome: 'skipped', relabeled };
-  const output = parseSelectionOutput(raw);
+  // a8-25 (2026-10-27): a link-only message is `jira.release` with no args in Core, with no model call (the runtime's rule).
+  const output = isJiraReleaseLinkOnly(prepared.groundingText) ? NL_EVAL_RELEASE_LINK_OUTPUT : parseSelectionOutput(raw);
   if (output === null) return { outcome: 'error', relabeled };
   if (output.entryId === null) return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
   if (!isNlActionEntryId(output.entryId) && (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined)) {
     return { outcome: expect === 'none' ? 'none' : 'miss', relabeled, got: 'none' };
   }
   const offered = new Map(NL_ACTION_EVAL_ENTRIES.map((entry) => [entry.id, entry] as const));
-  const validated = validateSelection(
-    { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true, ...(golden.prior !== undefined ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}) },
-  );
-  if (!validated.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
+  const base = nlEvalPriorFor(golden.prior, output.entryId);
+  const ctx = { offered, groundingText: prepared.groundingText, now, timeZone: 'Asia/Seoul', actions: true as const, ...(base !== undefined ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}) };
+  const checked = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
+  if (!checked.ok || output.ambiguity !== 'CLEAR') return { outcome: 'clarify', relabeled, got: output.entryId };
+  // Owner decision P-time (ii): Core's final read keeps the held listing's period when the owner names none.
+  const inherited = base !== undefined ? nlInheritHeldRange(checked.value, base, prepared.groundingText, ctx) : checked.value;
+  // Owner decision of 2026-10-27: the one-step clause-grounded flag (calendar `timedOnly`), as the runtime applies it.
+  // Owner decision of 2026-10-27 (range grounding): the one label-table period the owner states wins.
+  const validated = { ok: true as const, value: nlOneStepClauseGroundedFlags(nlOwnerStatedRange(inherited, prepared.groundingText, ctx), prepared.groundingText, ctx) };
   const got = validated.value.entry.id;
   const isAction = validated.value.entry.risk !== 'READ';
   const goldIsAction = expect !== 'none' && isNlActionEntryId(expect.entryId);
-  if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got };
+  const gotArgs = validated.value.args;
+  if (isAction && !goldIsAction) return { outcome: 'action-capture', relabeled, got, gotArgs };
   // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
   if (nlHelpSourceScope({ entryId: got, args: validated.value.args }, prepared.groundingText) !== undefined) return { outcome: 'clarify', relabeled, got };
-  if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got };
-  if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got };
+  if (expect === 'none' && golden.a6Relabel === undefined && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { outcome: 'miss', relabeled, got, gotArgs };
+  if (expect === 'none') return { outcome: 'wrong-capture', relabeled, got, gotArgs };
   const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
-  return got === expect.entryId && canonical(validated.value.args) === canonical(expect.args) ? { outcome: 'hit', relabeled, got, ...defaulted } : { outcome: 'miss', relabeled, got, gotArgs: validated.value.args, ...defaulted };
+  return { outcome: got === expect.entryId && canonical(gotArgs) === canonical(expect.args) ? 'hit' : 'miss', relabeled, got, gotArgs, ...defaulted };
 }
 
 /**
@@ -901,16 +911,33 @@ export async function scoreReadRegressionInWorld(
   golden: NlReadRegressionCase,
   raw: string,
   now: string,
-): Promise<{ readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly equivalent?: true; readonly defaulted?: readonly string[] }> {
-  const { gotArgs, ...scored } = scoreReadRegression(golden, raw, now);
+): Promise<{ readonly outcome: NlReadRegressionOutcome; readonly relabeled: boolean; readonly got?: string; readonly gotArgs?: NlArgs; readonly equivalent?: true; readonly defaulted?: readonly string[] }> {
+  const scored = scoreReadRegression(golden, raw, now);
   const expect = golden.a6Relabel ?? golden.expect;
-  if (scored.outcome !== 'miss' || expect === 'none' || expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || gotArgs === undefined) return scored;
-  return (await sameJiraReleaseOutcome(golden.text, gotArgs, expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
+  if (scored.outcome !== 'miss' || expect === 'none' || expect.entryId !== 'jira.release' || scored.got !== 'jira.release' || scored.gotArgs === undefined) return scored;
+  return (await sameJiraReleaseOutcome(golden.text, scored.gotArgs, expect.args, { channel: golden.channel === true })) ? { ...scored, outcome: 'hit', equivalent: true } : scored;
 }
 
 export function loadReadRegressionCorpus(path: string = NL_INTENT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
   const text = readFileSync(path, 'utf8');
   return { cases: (JSON.parse(text) as { cases: NlReadRegressionCase[] }).cases, sha256: createHash('sha256').update(text).digest('hex') };
+}
+
+/** The supplemental selector-only context corpus (owner decision (가) option 1, 2026-10-27). */
+export const NL_INTENT_CONTEXT_CORPUS_PATH = resolve(GOLDEN_DIR, 'nl-intent.context.v1.json');
+
+/**
+ * The read-regression gate's cases: `nl-intent.v1.json` then the supplemental context corpus (both scored; a duplicate id is
+ * an error). `sha256` binds both files exactly like `loadScoredCorpus` (`nl-intent-eval.ts`).
+ */
+export function loadScoredReadRegressionCorpus(mainPath: string = NL_INTENT_CORPUS_PATH, contextPath: string = NL_INTENT_CONTEXT_CORPUS_PATH): { cases: NlReadRegressionCase[]; sha256: string } {
+  const main = loadReadRegressionCorpus(mainPath);
+  const context = loadReadRegressionCorpus(contextPath);
+  const ids = new Set(main.cases.map((golden) => golden.id));
+  const clash = context.cases.find((golden) => ids.has(golden.id));
+  if (clash !== undefined) throw new Error(`case ${clash.id} is in both scored corpora`);
+  const sha256 = createHash('sha256').update(`nl-intent.v1.json:${main.sha256}\nnl-intent.context.v1.json:${context.sha256}\n`).digest('hex');
+  return { cases: [...main.cases, ...context.cases], sha256 };
 }
 
 /**
@@ -924,7 +951,7 @@ export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimes
     entries: NL_ACTION_EVAL_ENTRIES,
     text: prepared.text,
     actions: { referenceContext: golden.context === undefined ? 'none' : renderReferenceContext(readRegressionReferenceState(golden.context, now)) },
-    ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } } : {}),
+    ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: priorPromptInput(golden.prior) } : {}),
   });
 }
 
@@ -934,10 +961,10 @@ export async function runReadRegression(input: {
   readonly provider: AiProvider;
   readonly now: () => string;
   readonly elapsed?: () => number;
-}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; equivalent?: true; defaulted?: readonly string[] }>> {
+}): Promise<Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[]; error?: string; raw?: string }>> {
   const byId = new Map(input.cases.map((golden) => [golden.id, golden] as const));
   const clock = input.elapsed ?? Date.now;
-  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; equivalent?: true; defaulted?: readonly string[] }> = [];
+  const records: Array<{ run: number; id: string; outcome: NlReadRegressionOutcome; relabeled: boolean; latencyMs: number; got?: string; gotArgs?: NlArgs; equivalent?: true; defaulted?: readonly string[]; error?: string; raw?: string }> = [];
   for (let run = 1; run <= input.plan.runs; run += 1) {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
@@ -950,9 +977,18 @@ export async function runReadRegression(input: {
         const started = clock();
         try {
           const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs });
-          records.push({ run, id: golden.id, latencyMs: clock() - started, ...(await scoreReadRegressionInWorld(golden, result.text, input.now())) });
+          const scored = await scoreReadRegressionInWorld(golden, result.text, input.now());
+          // Like eval:nl read records: a non-hit keeps the raw output (bounded) and a malformed one says so.
+          records.push({
+            run,
+            id: golden.id,
+            latencyMs: clock() - started,
+            ...scored,
+            ...(scored.outcome === 'error' ? { error: 'malformed' } : {}),
+            ...(scored.outcome === 'hit' || scored.outcome === 'none' ? {} : { raw: result.text.slice(0, 2048) }),
+          });
         } catch {
-          records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started });
+          records.push({ run, id: golden.id, outcome: 'error', relabeled: golden.a6Relabel !== undefined, latencyMs: clock() - started, error: 'provider' });
         }
       }
     };

@@ -30,6 +30,10 @@ import {
   isNlCatalogEntryId,
   isNlWave1EntryId,
   nlHelpSourceScope,
+  isJiraReleaseLinkOnly,
+  nlInheritHeldRange,
+  nlOneStepClauseGroundedFlags,
+  nlOwnerStatedRange,
   nlIsPastStatement,
   nlReadNotRequest,
   nlSelectionMeaning,
@@ -39,6 +43,7 @@ import {
   type AiProvider,
   type NlArgs,
   type NlCatalogEntry,
+  type NlPreviousSelectionInput,
 } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
@@ -67,7 +72,16 @@ export interface NlEvalCase {
   readonly id: string;
   readonly text: string;
   readonly expect: 'none' | { readonly entryId: string; readonly args: NlArgs };
-  readonly prior?: { readonly entryId: string; readonly args: NlArgs };
+  /**
+   * The previous selection. `turns` (owner decision D1: chat turns since its listing) and `earlier` (P7: the latest
+   * selection of each other source) are rendered exactly as the runtime renders them; absent, the prompt is unchanged.
+   */
+  readonly prior?: {
+    readonly entryId: string;
+    readonly args: NlArgs;
+    readonly turns?: number;
+    readonly earlier?: readonly { readonly entryId: string; readonly args: NlArgs; readonly turns: number }[];
+  };
   readonly channel?: boolean;
   readonly note?: string;
   /** S1: the frozen Class B grammar that answers this case in Phase A (the grammar-handled subset of the report). */
@@ -79,6 +93,20 @@ export interface NlEvalCase {
    * these entries and `none`. See the scoring notes above.
    */
   readonly clarify?: NlEvalClarifyGold;
+}
+
+/** a8-25: Core's own reading of a link-only message (`isJiraReleaseLinkOnly`), as a selector output. */
+export const NL_EVAL_RELEASE_LINK_OUTPUT = { entryId: 'jira.release', args: {}, ambiguity: 'CLEAR', alternatives: [] } as const;
+
+/** A case's expected label: its entry, or `none`. */
+export function nlEvalExpectedLabel(golden: Pick<NlEvalCase, 'expect'>): string {
+  return golden.expect === 'none' ? 'none' : golden.expect.entryId;
+}
+
+/** P7: the stored selection an output for `entryId` refines (the runtime's `lastSelectionFor`, over a case's prior). */
+export function nlEvalPriorFor(prior: NlEvalCase['prior'], entryId: string): { readonly entryId: string; readonly args: NlArgs } | undefined {
+  if (prior === undefined || prior.entryId === entryId) return prior;
+  return prior.earlier?.find((item) => item.entryId === entryId) ?? prior;
 }
 
 /** A clarification gold: the entries the question is between (besides `none`) and the owner batch that set it. */
@@ -99,6 +127,27 @@ export function loadCorpus(path: string = NL_EVAL_CORPUS_PATH): { corpus: NlEval
   return { corpus: JSON.parse(text) as NlEvalCorpus, sha256: createHash('sha256').update(text).digest('hex') };
 }
 
+/**
+ * Owner decision (가) option 1 (2026-10-27): the selector-only SUPPLEMENTAL scored corpus of the D1 / P7 / D4 context cases.
+ * Not part of the ADR-0121 Q11 one-step planner gold (Q11 auto-includes `nl-intent.v1.json` only).
+ */
+export const NL_EVAL_CONTEXT_CORPUS_PATH = resolve(__dirname, '../../../../packages/core/src/application/golden/nl-intent.context.v1.json');
+
+/**
+ * The scored read corpus of the D12 gate: `nl-intent.v1.json` then the supplemental context corpus, every case once (a
+ * duplicate id is an error). `sha256` binds both files: sha256 over `nl-intent.v1.json:<sha>\n` and
+ * `nl-intent.context.v1.json:<sha>\n`.
+ */
+export function loadScoredCorpus(mainPath: string = NL_EVAL_CORPUS_PATH, contextPath: string = NL_EVAL_CONTEXT_CORPUS_PATH): { corpus: NlEvalCorpus; sha256: string } {
+  const main = loadCorpus(mainPath);
+  const context = loadCorpus(contextPath);
+  const ids = new Set(main.corpus.cases.map((golden) => golden.id));
+  const clash = context.corpus.cases.find((golden) => ids.has(golden.id));
+  if (clash !== undefined) throw new Error(`case ${clash.id} is in both scored corpora`);
+  const sha256 = createHash('sha256').update(`nl-intent.v1.json:${main.sha256}\nnl-intent.context.v1.json:${context.sha256}\n`).digest('hex');
+  return { corpus: { version: main.corpus.version, cases: [...main.corpus.cases, ...context.corpus.cases] }, sha256 };
+}
+
 export interface NlEvalPlanOptions {
   readonly model: string;
   /** Restrict to these entries (and, with `includeNegatives`, the negatives). Empty = all. */
@@ -108,8 +157,10 @@ export interface NlEvalPlanOptions {
   readonly perEntry: number;
   readonly runs: number;
   readonly concurrency: number;
-  /** The per-call bound (`QUOKY_NL_INTENT_TIMEOUT_MS` rule: 2000..8000). Default {@link NL_EVAL_RUNTIME_TIMEOUT_MS}. */
+  /** The per-call bound (`QUOKY_NL_INTENT_TIMEOUT_MS` rule: 2000..10000). Default {@link NL_EVAL_RUNTIME_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
+  /** Owner decision of 2026-10-28 (cost study P0): the selector's reasoning effort, bound into the digest when given. */
+  readonly effort?: string;
 }
 
 export interface NlEvalPlan {
@@ -119,6 +170,8 @@ export interface NlEvalPlan {
   readonly promptSha256: string;
   readonly corpusSha256: string;
   readonly model: string;
+  /** The selector's reasoning effort (`--effort`), when the CLI set it (owner decision of 2026-10-28). */
+  readonly effort?: string;
   readonly runs: number;
   readonly concurrency: number;
   /** The per-call bound (the runtime's selection bound). */
@@ -134,12 +187,12 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
   if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
-    throw new Error('timeoutMs must be an integer 2000..8000');
+    throw new Error('timeoutMs must be an integer 2000..10000');
   }
   const counts = new Map<string, number>();
   const caseIds: string[] = [];
   for (const golden of corpus.cases) {
-    const group = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+    const group = nlEvalExpectedLabel(golden);
     const wanted = group === 'none' ? options.includeNegatives : options.entries.length === 0 || options.entries.includes(group);
     if (!wanted) continue;
     const seen = counts.get(group) ?? 0;
@@ -153,6 +206,7 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
     promptSha256: createHash('sha256').update(buildSelectionPrompt({ entries: ALL_ENTRIES, text: '' })).digest('hex'),
     corpusSha256,
     model: options.model,
+    ...(options.effort !== undefined ? { effort: options.effort } : {}),
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_EVAL_RUNTIME_TIMEOUT_MS,
@@ -187,25 +241,33 @@ const ALL_ENTRIES: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => 
 
 /** Score one raw selector output for one case (exported for the offline tests). */
 export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZone = 'Asia/Seoul'): Omit<NlEvalRecord, 'run' | 'latencyMs'> {
-  const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+  const expected = nlEvalExpectedLabel(golden);
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return { id: golden.id, expected, outcome: 'skipped' };
-  const output = parseSelectionOutput(raw);
+  // a8-25 (2026-10-27): a link-only message is `jira.release` with no args in Core, with no model call (the runtime's rule).
+  const output = isJiraReleaseLinkOnly(prepared.groundingText) ? NL_EVAL_RELEASE_LINK_OUTPUT : parseSelectionOutput(raw);
   if (output === null) return { id: golden.id, expected, outcome: 'error', error: 'malformed' };
   if (output.entryId === null) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   // A7: the runtime answers a clear past-tense statement as `none` (chat), message-level, before validation.
   if (nlIsPastStatement(prepared.groundingText) || nlReadNotRequest(prepared.groundingText, output.args) !== undefined) return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   const offered = new Map(ALL_ENTRIES.map((entry) => [entry.id, entry] as const));
-  const validated = validateSelection(
-    { entryId: output.entryId, args: output.args },
-    { offered, groundingText: prepared.groundingText, ...(golden.prior ? { previousArgs: golden.prior.args, ...(isNlCatalogEntryId(golden.prior.entryId) ? { previousEntryId: golden.prior.entryId } : {}) } : {}), now, timeZone },
-  );
+  // P7: an output for an earlier selection's entry refines that one, as in the runtime (`lastSelectionFor`).
+  const base = nlEvalPriorFor(golden.prior, output.entryId);
+  const ctx = { offered, groundingText: prepared.groundingText, ...(base ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}), now, timeZone };
+  const validated = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
+  // Fix of 2026-10-29 (uat5r6-07): the runtime answers the listing just shown, repeated for a content request, as `none`.
+  if (!validated.ok && validated.reason === 'repeats-listing') return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };
   }
-  const got = validated.value.entry.id;
-  const gotArgs = validated.value.args;
-  const defaulted = validated.value.defaulted !== undefined ? { defaulted: validated.value.defaulted } : {};
+  // Owner decision P-time (ii): Core's final read keeps the held listing's period when the owner names none.
+  const inherited = base !== undefined ? nlInheritHeldRange(validated.value, base, prepared.groundingText, ctx) : validated.value;
+  // Owner decision of 2026-10-27: the one-step clause-grounded flag (calendar `timedOnly`), as the runtime applies it.
+  // Owner decision of 2026-10-27 (range grounding): the one label-table period the owner states wins.
+  const final = nlOneStepClauseGroundedFlags(nlOwnerStatedRange(inherited, prepared.groundingText, ctx), prepared.groundingText, ctx);
+  const got = final.entry.id;
+  const gotArgs = final.args;
+  const defaulted = final.defaulted !== undefined ? { defaulted: final.defaulted } : {};
   // Owner decision A (2026-10-22): Core asks the help-scope question instead of running this read (its final outcome).
   if (nlHelpSourceScope({ entryId: got, args: gotArgs }, prepared.groundingText) !== undefined) return { id: golden.id, expected, outcome: 'clarify', got };
   if (golden.expect === 'none' && golden.clarify !== undefined && golden.clarify.between.includes(got)) return { id: golden.id, expected, outcome: 'miss', got, gotArgs, ...defaulted };
@@ -387,7 +449,7 @@ export async function runEvaluation(input: {
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
         const prepared = prepareSelectionInput(golden.text);
-        const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
+        const expected = nlEvalExpectedLabel(golden);
         if ('skip' in prepared) {
           const record: NlEvalRecord = { run, id: golden.id, expected, outcome: 'skipped', latencyMs: 0 };
           records.push(record);
@@ -398,7 +460,7 @@ export async function runEvaluation(input: {
           entries: ALL_ENTRIES,
           text: prepared.text,
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
-            ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } }
+            ? { previous: priorPromptInput(golden.prior) }
             : {}),
         });
         const started = clock();
@@ -521,4 +583,15 @@ export function formatSideScore(label: string, score: NlSideScore): string {
 /** Owner decision A (2026-10-22): the ids of the clarification golds of a corpus (for `summarize`). */
 export function clarifyCaseIdsOf(corpus: NlEvalCorpus): ReadonlySet<string> {
   return new Set(corpus.cases.filter((golden) => golden.clarify !== undefined).map((golden) => golden.id));
+}
+
+/** The prior as the selection prompt takes it (D1 `turns` and P7 `earlier` only when present, wave-1 entries only). */
+export function priorPromptInput(prior: NonNullable<NlEvalCase['prior']>): NlPreviousSelectionInput {
+  const earlier = (prior.earlier ?? []).filter((item) => isNlWave1EntryId(item.entryId));
+  return {
+    entryId: prior.entryId as NlPreviousSelectionInput['entryId'],
+    args: prior.args,
+    ...(prior.turns !== undefined && prior.turns > 0 ? { turns: prior.turns } : {}),
+    ...(earlier.length > 0 ? { earlier: earlier.map((item) => ({ entryId: item.entryId as NlPreviousSelectionInput['entryId'], args: item.args, turns: item.turns })) } : {}),
+  };
 }

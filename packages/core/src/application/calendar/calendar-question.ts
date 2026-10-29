@@ -1,5 +1,6 @@
 import type { IsoTimestamp } from '../../domain';
 import { calendarWindowForDays } from '../../ports/calendar-window';
+import { CALENDAR_RELOCATE, CALENDAR_RENAME } from './calendar-field-change';
 import { detectReplyLanguage } from '../chat-policy/chat-response-policy';
 import { detectExternalActionRequest, isPersonalScheduleQuestion } from '../intent-classifier';
 import { containsGroundingWord, leavesUnexpressedContent } from '../nl-routing/grammar-residual';
@@ -166,6 +167,22 @@ const CHANGE_KO = new RegExp(
   String.raw`${CREATE_TIME_KO}[^.!?？\n]{0,30}?${CREATE_NOUN_KO}(?:\s*(?:을|를|은|는|도|좀))?\s*(?:${CHANGE_MOVE_TARGET_KO})?${WRITE_VERB_KO}`,
   'u',
 );
+/**
+ * Context eval 2026-10-26 (P2): a field change of a meeting named by a day/time phrase ("내일 3시 회의 제목을 주간 회의로
+ * 바꿔줘", "내일 3시 회의 장소를 3층으로 바꿔줘"). The change is the parser's own RENAME / RELOCATE shape (shared, no phrase
+ * set of its own), and like CHANGE_KO it must follow the meeting noun directly (only a space or 의 in between), so "오늘
+ * 회의록 제목을 …" or "오늘 회의 내용을 표로 바꿔줘" stay chat.
+ */
+const MEETING_REF_KO = new RegExp(String.raw`${CREATE_TIME_KO}[^.!?？\n]{0,30}?${CREATE_NOUN_KO}`, 'u');
+function isMeetingFieldChange(clause: string): boolean {
+  const meeting = MEETING_REF_KO.exec(clause);
+  if (meeting === null) return false;
+  const after = clause.slice(meeting.index + meeting[0].length);
+  const gap = /^(?:\s*의\s*|\s+)/u.exec(after);
+  if (gap === null) return false;
+  const tail = after.slice(gap[0].length);
+  return CALENDAR_RENAME.exec(tail)?.index === 0 || CALENDAR_RELOCATE.exec(tail)?.index === 0;
+}
 const WRITE_EN =
   /(?:^|[.!?]\s+)(?:(?:please|can\s+you|could\s+you|would\s+you)\s+)*(?:move|reschedule|cancel|delete|remove|push\s+back|postpone)\b[^.!?\n]{0,40}\b(?:calendar|meetings?|appointments?|events?)\b/iu;
 /** A cron / code / job "schedule" is not the owner's calendar (mirrors the ADR-0098 calendar external-action blocker). */
@@ -199,7 +216,7 @@ function clauseIsWriteRequest(rawClause: string): boolean {
   // 할 일 취소해줘", "모레 3시 알림으로 … 통화 등록해줘") is a local-list request, not a calendar write.
   if (nlLocalListTarget(clause) !== undefined) return false;
   if (detectExternalActionRequest(clause)?.kind === 'calendar') return true;
-  return WRITE_KO.test(clause) || CREATE_KO.test(clause) || CHANGE_KO.test(clause) || WRITE_EN.test(clause);
+  return WRITE_KO.test(clause) || CREATE_KO.test(clause) || CHANGE_KO.test(clause) || isMeetingFieldChange(clause) || WRITE_EN.test(clause);
 }
 
 /** Whether the message asks Quoky to create, move or delete a calendar event (refused while calendar writes are off). */

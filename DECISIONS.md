@@ -30353,3 +30353,977 @@ Durable memory is the owner's personal content (ADR-0110 D4; MSIT guidance), so 
 `localOnlyProviderSelector`, exactly like the curated-example scorer (ADR-0107 D6). An embedding provider that does not
 declare `LOCAL` execution (for example an Ollama model whose name contains `cloud`) is treated as absent: the scorer
 degrades to lexical recall and never falls back to a remote model. No decision changes; this closes an implementation gap.
+### Context eval fixes — implementation notes for P1 and P4 (2026-10-26, branch `claude/v5-context-fixes`)
+
+Source: the first `eval:context` Strict run and its classification (`docs/eval/context-eval-baseline-2026-10-26.md`).
+
+- **P1 amends the #280 note's "guard unchanged".**
+  - The D9 false-incapability guard itself is unchanged. A second, structural guard (`guardShownListingDenials`) runs
+    first, and only right after a listing. It works from Core's own record of what was shown: the previous turn's
+    `lastSelection` entry and args, read before this turn's selection.
+  - It drops sentences with the D9 read-incapability patterns that do not name another offered source.
+  - It drops sentences quoting a command that the handlers' pure Class B probes map to exactly that listing (same entry,
+    same canonical args).
+  - No word list is added, which keeps the #280 condition "not extended with words".
+  - ADR-0110 D4 is unchanged: the guard only removes sentences and reads no content.
+  - **CA review P1-1 (2026-10-27): the reference condition.** As built, the guard dropped any read-incapability sentence
+    that named no other source, whether or not it was about the listing. Since D1 keeps the record across chat turns for
+    up to 30 minutes, a true, unrelated limitation was deleted: calendar listing, then "내일 날씨 어때?", and "실시간 날씨는
+    확인할 수 없어요." was replaced by the listing ask.
+    - Now a denial is dropped only when it refers to the shown listing: it names that entry's own catalog words (source
+      names, aliases (the list nouns the D9 guard also uses), label), or it names Quoky (or "above") as the one that
+      showed a list. It must also name no other offered source.
+    - Every other sentence is left to the D9 guard.
+    - **Turn age.** The CA suggested limiting the guard to turns 0. It is kept while the record is held, but only with
+      the reference condition. Under D1 the listing is still on the owner's screen and is still the follow-up context,
+      so a denial that refers to it is just as false one chat turn later. An unrelated sentence is never touched at any
+      age.
+    - Tests: an unrelated limitation is kept right after a listing and at turns ≥ 1; a referencing denial is dropped at
+      turns 1.
+- **P4 implements ADR-0112 amendment 1 S3 now, for the not-yet-undoable state** (Accepted 2026-10-15; amendment 2;
+  S9).
+  - `LastActionSource` gains `slack`, `jira` and `calendar`.
+  - Every outcome (SENT, UNCERTAIN, NOT_SENT) of an approved connector write is recorded as this actor's last action:
+    - `itemId` is the write's receipt id, passed on the flow's `outcome` step as an additive `receiptId`;
+    - `entryId` is `calendar.create` or `slack.post` where a catalog id exists, else `external.write`;
+    - the outcome is kept;
+    - the record never holds content.
+  - Until the R3 undo writers act, such a record is never undoable, and a stored flag cannot change that. "되돌려줘"
+    (selected, anchored `되돌리기` or confirmed) answers with the family's fixed copy:
+    - Slack SENT: the ADR's own sentence "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워 주세요.";
+    - Slack NOT_SENT: the ADR's own sentence "보낸 메시지가 없어서 되돌릴 게 없어요." (verbatim since CA review P2-1; the first
+      version said "방금 Slack 글은 보내지 않아서 …", which did not match S3);
+    - everything else is the **S3 copy amendment of 2026-10-27** (S3 defines no sentence for it):
+      - calendar and Jira SENT: the Slack shape ("캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐
+        주세요.", "Jira 변경 …");
+      - calendar and Jira NOT_SENT: "방금 캘린더 일정 변경은 적용되지 않아서 되돌릴 게 없어요." (likewise Jira), because
+        "보낸 메시지" names a message and these writes are not messages;
+      - every UNCERTAIN, Slack included (S3 gives only the meaning: the result is unknown, check it there): "방금 <thing>은
+        결과를 확인하지 못해서 되돌리지 않을게요. <place>에서 직접 확인해 주세요."
+      - English mirrors.
+  - It never resolves to an older to-do or reminder, either by undo or by "방금 거" / deictic recency.
+  - The calendar undo writer itself stays R3 (owner decision). The same gate applies as for every lastAction write:
+    mode `active` and `QUOKY_NL_ACTIONS` not off.
+
+### Owner decision D1 and fix P7 — the listing context survives a chat turn (2026-10-26, branch `claude/v5-context-fixes`)
+
+Source: owner decisions D1–D4 of 2026-10-26 on the context-eval classification (`docs/eval/context-eval-baseline-2026-10-26.md`).
+
+- **D1 reverses ADR-0120 follow-up 2 (2026-10-12; restated in the R4/R5 notes) for a turn answered by chat.**
+  - Before: a turn answered by chat, help, an approval, a write preview or a clarification cleared `lastSelection`.
+  - Now: a turn answered by chat (`GENERAL_CHAT` or `POLICY_SENSITIVE_CHAT`) keeps the record one turn older
+    (`turns` + 1). Its own `at` and 30-minute TTL do not move. Help, an approval, a write preview, a clarification
+    question, an A6 action decision and an error turn still clear it, as before.
+  - The selector is told how old the record is: `Previous selection: {…} (shown N turns ago; only chat replies since)`.
+    Three rule-6 lines say that a narrowing, a count or a question about one of its items still refines that list, and
+    that a message naming another source, period or topic takes none of its args. The intent is that a stale binding
+    stays a question, not a guess.
+- **P7: the latest selection of each other source.**
+  - `lastSelection` gains `earlier`: when a new selection of another source replaces it, the replaced selection (and its
+    own earlier ones), one turn older, minus the new source. One per source (the entry id's prefix, so both Jira entries
+    are `jira`), at most 3, newest first, each within its own 30 minutes.
+  - The prompt shows them as `Earlier selections (newest first): {…} (shown N turns ago); …`, with four rule-6 lines.
+  - An output for an earlier entry is validated against that earlier selection's args (`lastSelectionFor`), so its
+    carried period grounds as a follow-up's period does. Any other output keeps today's grounding.
+- **Structure only.** Entry ids, canonical args and turn counts, exactly like `lastSelection` today. No item, title or
+  event text; ADR-0110 D4 is unchanged. No word list, no example.
+- **Prompt versions.** Read `nl-select.v68`, A6 `v66`, R2 `v67`.
+  - The new parts are rendered only when Core passes them (`turns` ≥ 1, `earlier` not empty). Every other prompt is
+    v67 / v65 / v66 byte for byte, so the pinned sha256 values are unchanged.
+  - The golden prompt pin moves to `golden/nl-select.v68.prompts.json`: the v67 cases plus three `context-*` cases.
+  - The planner (`agent-plan.v9`) never passes the new parts, so its bytes and version are unchanged.
+- **The D12 gate is not run** (no model call in this change). It is prepared offline:
+  - `eval:nl` scores a `prior.turns` / `prior.earlier` exactly as the runtime renders them.
+  - Twelve agent-drafted candidates wait in `golden/nl-intent.context-pending.v1.json` for the owner's batch approval
+    (ADR-0120 D12; ADR-0098 D7). They are new phrasings, not copied from the context eval or a prompt example.
+  - The plan and the commands are in `docs/eval/context-eval.md` ("D12 gate for read v68 / v69").
+
+### Owner decision D4 and fix P10 — a worded answer to the help-scope question (2026-10-26, branch `claude/v5-context-fixes`)
+
+- **D4 amends owner decision A (2026-10-22, with Codex P2):** "the two options are answered only by their displayed
+  texts". A number, an ordinal or a displayed option text is still resolved deterministically, with no model call
+  (`resolveChoice`, unchanged). A cancel and an out-of-range number are also unchanged.
+- **Any other reply** goes to this turn's one selection call with the question shown: `Open question (asked by Quoky
+  just before this message): 1. <option 1>; 2. <option 2>`. These are the displayed option texts, in the language the
+  question was asked in. Four rule-6 lines come with it.
+  - The selector may add `"answer": N` to its output (an integer 1–4; the parser rejects anything else).
+  - Core reads `answer` only when it showed an open question. Option 1 runs the stored help selection; the last option is
+    the app itself and gets its fixed reply. An unknown option is ignored.
+  - Without `answer` the reply is routed as usual, as before. The question ends with that turn either way.
+  - The call bypasses the selection cache. No word or phrase list is added: the selector interprets the reply.
+- **Prompt versions:** read `nl-select.v69`, A6 `v67`, R2 `v68`. The open question is rendered only in that one case;
+  every other prompt is v68 / v66 / v67 byte for byte. The golden pin is `golden/nl-select.v69.prompts.json`, with two
+  `open-question-*` cases.
+- **One D12 gate covers v68 and v69.** It is not run. `eval:nl` renders `openQuestion` and scores `expectAnswer` (a
+  wrong option is a wrong capture; an `answer` to a non-answer is a wrong capture). Eight D4 candidates have joined the
+  D1 / P7 ones in `golden/nl-intent.context-pending.v1.json`, pending the owner's batch.
+- **Context eval.** The `hs-calendar-words` t2 oracle now answers `{"entryId": "none", "answer": 1}`, the ideal
+  selector under D4; dry mode only.
+
+### Owner decision P3 (a) — amendment to A6 decision 8: the fixed undo command adds "되돌려줘" (2026-10-26, branch `claude/v5-context-fixes`)
+
+- **Decision (owner, 2026-10-26, option (a) of D2/P3).** The undo hint keeps the owner's wording of 2026-10-16
+  (`되돌리려면 "되돌려줘" (10분 안)`). The deterministic path also accepts that exact printed command, so Core's own copy
+  never suggests a sentence that only the selector parses (D2).
+- **A6 decision 8 is amended.** The fixed undo commands are now `되돌리기` and `되돌려줘`.
+  - `되돌려줘` is the hint's own constant, `NL_ACTION_UNDO_COMMAND` (`work-chat-renderer.ts`), and the hint is built from
+    it, so the printed command and the accepted one cannot drift apart.
+  - It is a command, not a phrase list: the whole message on one line, with an optional `.` or `!`, under the same
+    plain-line eligibility, DM-only rule, kill switch and resolution as `되돌리기` (`decideAnchoredUndo`). There is no
+    selector call.
+  - Any other wording ("아니 그거 되돌려줘", "되돌려 줘", "되돌려줘요") stays with the selector, as before.
+- **Context eval dry (oracle).** deployed 38/38 and actions-local 55/55. Every hard check is at 0, including
+  unparseable-suggestion (actions-local had 10 before).
+
+### The 20 D1 / P7 / D4 golds — approved, not yet moved into `nl-intent.v1.json` (2026-10-26, branch `claude/v5-context-fixes`)
+
+- **Approved.** The owner approved all 20 candidates as-is on 2026-10-26. The approval is recorded in each case's note
+  and in the file's description (`golden/nl-intent.context-pending.v1.json`).
+- **The move is stopped: it would change two settled gates.** `nl-intent.v1.json` is not only the D12 corpus.
+  1. **ADR-0121 S2 Q11 (`agent-plan.v1.json`).** The one-step planner gold is every `nl-intent.v1.json` case, by id, in
+     order (`references every nl-intent.v1.json case … (Q11)`).
+     - The planner's input carries the previous selection only. It never sees `turns`, `earlier` or the open question.
+     - A D4 answer gold has no plan form at all.
+     - Moving the cases therefore needs one of two things: a Q11 amendment (context-state cases are selector-only), or a
+       planner prompt change (`agent-plan.v10` and its own gate).
+  2. **ADR-0123 (selector-RAG pool).** Every gold case is linted against the example pool, and the committed embedding
+     audit is bound to the gold digest.
+     - With the 20 cases the lint flags `ctx-d1-005` ("점심 메뉴 추천해줘") as a near duplicate of the pool's
+       `b1-none-03`.
+     - The audit record goes stale. It is regenerated by `pnpm eval:rag -- --mode dry-run --write-audit true`, which
+       runs the local embedding model.
+- **What is done meanwhile.** `eval:nl` and `eval:nl --mode read-regression` both render and score `prior.turns`,
+  `prior.earlier`, `openQuestion` and `expectAnswer` through shared helpers (`nl-intent-eval.ts`). The corpus schema test
+  grounds a P7 gold against its earlier selection. When the owner decides the two points above, the move is mechanical.
+
+### Owner decisions (가) and (나) of 2026-10-27 — a supplemental scored context corpus, the S2 activation blocker, and the ADR-0123 checks (branch `claude/v5-context-fixes`)
+
+Made after a Codex consult. This section supersedes the "approved, not yet moved" note above.
+
+- **(가) = option 1: a selector-only supplemental scored corpus.**
+  - The 20 approved D1 / P7 / D4 cases are `golden/nl-intent.context.v1.json`.
+  - `eval:nl` (read) and `eval:nl --mode read-regression` score it together with `nl-intent.v1.json`, through
+    `loadScoredCorpus` and `loadScoredReadRegressionCorpus`. Every case counts in both gates: overall, per entry (a D4
+    answer gold is the label `open-question`) and wrong captures.
+  - The corpus digest of both plans binds both files: sha256 over `nl-intent.v1.json:<sha>\n` and
+    `nl-intent.context.v1.json:<sha>\n`. A case id in both files is an error.
+  - **Scope.** Selector-only. ADR-0121 Q11 is untouched: the one-step planner gold auto-includes `nl-intent.v1.json`
+    only, and the planner gold does not include this corpus.
+- **Hard S2 activation blocker (ADR-0121).** S2 must not leave `shadow` until both of these hold:
+  1. The planner receives the same bounded, structural listing context as the selector: the turn age (`turns`), the
+     latest listing of each other source (`earlier`), and the same retention and expiry (30 minutes per selection, at
+     most 3 earlier sources, cleared by the same non-chat turns).
+  2. The planner passes both gates:
+     - a dedicated context gate that reuses these 20 case ids, plus multi-step context cases;
+     - the full 3-run planner gate (pooled ≥ 95%, per-run rules unchanged).
+
+  D4 option answers resolve before planning: they are dialogue control, not a read plan. D4 is tested at S2's routing
+  boundary (a pending help-scope question is answered before the planner is asked), not as a planner gold.
+- **(나) = swap and regenerate.**
+  - `ctx-d1-005`'s text is now "주말에 뭐 하면 좋을까?" (was "점심 메뉴 추천해줘", a near duplicate of the pool's
+    `b1-none-03` "저녁 메뉴 추천해줘"). The expectation (`none`) and the prior are unchanged. The owner's approval of the
+    swap is recorded in the case note.
+- **ADR-0123 checks on all 20 cases.**
+  - The pool n-gram lint (`pnpm eval:rag -- --mode lint`, with the corpus added to the lint gold): 0 findings after the
+    swap.
+  - The embedding audit was regenerated with the LOCAL embedder only (Ollama on loopback, `nomic-embed-text-v2-moe`, no
+    remote call). It flags one pair: pool `b1-mail-list-05` "오늘 온 메일 중에 읽지 않은 것만" ~ `ctx-p7-002` "아까 메일 중에 안
+    읽은 것만", cosine 0.8219 against tau 0.7941. A flagged pair fails the audit, and the RAG plan then drops the
+    retrieval model.
+  - The static prompt-example lint (RAG-0 ratchet, `example-contamination.test.ts`), with this corpus added: one new
+    finding, the read prompt example "몇 건이야?" ~ `ctx-d1-002` "총 몇 통이야?" (token 0.74, char3 0.66, contain 0.88). The
+    ratchet's rule is to rewrite the example and never the gold. That is a prompt byte change.
+  - Neither finding was edited, as the owner asked. Wiring the corpus into the ADR-0123 gold files (lint and audit) and
+    the RAG-0 lint therefore waits for the owner's choice on these two pairs. The committed audit record is unchanged
+    meanwhile.
+  - The local Ollama is now 0.40.11, and the committed space id says 0.40.8. Any regeneration therefore also moves the
+    space id that an approved RAG plan binds.
+
+### ADR-0123 audit regenerated for the supplemental context corpus (2026-10-27, branch `claude/v5-context-fixes`)
+
+- **Texts.** The owner picked the replacement texts on 2026-10-27, and each case's note records the pick:
+  - `ctx-p7-002` "그 전에 보여준 메일 목록에서 아직 안 연 것만";
+  - `ctx-d1-002` "그 메일들 개수가 어떻게 돼?".
+
+  They resolve the two near pairs of the section above.
+- **Wiring.** `nl-intent.context.v1.json` is in the ADR-0123 gold files as overlap-only (`OVERLAP_ONLY_GOLD_FILES`):
+  - the pool n-gram lint and the embedding audit check it;
+  - it is not in the experiment split, so the dev / held-out membership and `splitSha256` are unchanged;
+  - the RAG-0 prompt-example lint (`example-contamination.test.ts`) reads it too.
+- **Audit record.** Regenerated with `pnpm eval:rag -- --mode dry-run --write-audit true`, with the LOCAL Ollama on loopback
+  only and no remote call.
+  - Pool lint: 0 findings. Flagged pairs: 0. tau 0.7941 and tau_low 0.7441 are unchanged. Held-out low stratum: 98.6%.
+  - The gold digest moves because the gold files changed.
+  - **The space id moves from `@ollama0.40.8` to `@ollama0.40.11`** (same model digest `ff9c2f10ef5e`). The owner accepted
+    this on 2026-10-27, the same as the 0.40.5 → 0.40.6 regeneration. On the old gold set, the 0.40.11 run reproduces the
+    committed metrics exactly; only the id differs.
+  - The tau calibration's seeded random gold-gold negatives change with the larger gold set: 375 → 345 pairs, one at 0.837
+    (false-positive rate 0.29%). tau comes from the positives and is unchanged, and this rate is not a gate.
+  - No RAG plan is live: phase 1 ended with "no measured gain", and the old plan digests are already stale. A reopened
+    experiment approves a new plan digest anyway.
+
+### Owner decisions of 2026-10-27 after Strict context run 2 — implementation notes (branch `claude/v5-context-fixes`)
+
+Source: `docs/eval/context-eval-run2-2026-10-27.md`. One commit each.
+
+- **D2 in the eval.**
+  - A command the chat model wrote (it appears in that turn's raw chat reply) is probed with the real selector in a
+    Strict run, at most 3 per reply.
+  - Core's fixed copy stays deterministic-only: the selector answers none.
+  - The two origins are reported apart. Both count toward the `unparseable-suggestion` hard check.
+- **Quote pairing.** Quoted spans are matched in order and only then length-filtered, so the text between two quotes is
+  never a "suggestion".
+- **P9.** With no project named, a `jira.release` release value that is exactly one visible project key (the
+  connector's own project listing, case aside) is that project: the answer is its release list.
+  - The listing actually shown (`{project: KEY}`) becomes `lastSelection`, so a follow-up refines the project.
+  - Structure only: no word list, and never a guess (a key no visible project has stays a release). In a channel the
+    list stays DM-only.
+- **D2 for Core's copy.** Core's fixed copy quotes only commands that resolve deterministically.
+  - `jira.release` and `brief.today` are chosen by the selector only, so their usage is an unquoted example ("예: …").
+    The D9 sources fact describes such an entry as "no fixed command: ask in your own words, e.g. …".
+  - The release-usage reply and the brief DM-only reply no longer quote a sentence to send.
+  - `help.topic`'s English usage is "도움말" (a bare "help" is not a command).
+  - An app test sends every quoted usage command over the production AppModule with the selector answering none: read
+    entries under `deployed`, action entries under `actions-local`.
+- **P-time (ii): Core inherits the held calendar period** (owner decision of 2026-10-27, "the most stable and accurate
+  way").
+  - When all of these hold, Core adds the held listing's range and validates the read again:
+    - a `calendar.events` read (the entry opts in with `inheritsHeldRange`) refines or asks about the held calendar
+      listing (`lastSelection`, or an earlier calendar selection, P7);
+    - the selection left the range out;
+    - the owner's words name no date or period, as judged by the existing period parser (`nlReminderPeriod`), never by a
+      phrase list.
+  - An explicit period always wins ("오늘 면접 몇 시야?" stays today). Without a held calendar listing nothing changes.
+  - `nlInheritHeldRange` is pure and exported. The selection service applies it in `complete` (every executed read), and
+    both `eval:nl` scorers apply it too, so they score Core's final read.
+  - Strict run 2: `fr-calendar-part-keyword` t3 and `sc-calendar-todo-interview` t3 now read tomorrow even when the
+    selector leaves the range out.
+  - Codex P2 fix (2026-10-27): the inherited period is the listing's own dates, not its symbolic range resolved again.
+    - `lastSelection` and each P7 earlier entry store the listing's resolved period, `period: { start: 'YYYY-MM-DD',
+      days }`. It holds dates only, no titles or content (ADR-0110 D4), and keeps the same 30-minute life.
+    - If the held symbolic range (or the entry's default) still resolves to those dates, Core inherits the symbol;
+      otherwise it inherits the stored dates (`YYYY-MM-DD` or `YYYY-MM-DD..YYYY-MM-DD`). A "내일" listing at 23:55 KST
+      is still 10-28 when the owner asks at 00:05.
+    - Not covered: a range the selector itself carries in a D1 follow-up across midnight (for example "그중에 오후 것만"
+      after 00:00) is still resolved against the current clock.
+- **The context gate: 3 runs, each passing** (owner decision of 2026-10-27, corrected the same day: NOT pooled).
+  - `eval:context --mode run` defaults to 3 runs. The gate passes only with at least 3 runs.
+  - EACH run must reach at least 95% of its fully scored scenarios, with every hard check at 0 and no harness error.
+  - The CLI prints each run's verdict, and a plan with fewer runs reports that the gate needs 3.
+- **D4 strengthened: read `nl-select.v70`, A6 `v68`, R2 `v69`** (owner decision of 2026-10-27).
+  - The open-question rule lines now say:
+    - decide FIRST, before rules 2 and 3, whether the reply answers the question. A reply that names an option's meaning
+      (Quoky's own way, or the app or device itself, its settings or its use) is that option;
+    - in the owner's words "you", "너" and "Quoky" mean Quoky.
+  - Only the open-question block changes. Every prompt without an open question is byte-identical, and the pinned
+    sha256 values are unchanged. No example is added.
+  - **Help-scope variance (`hs-jira-app`, `hs-slack-en`) is left as is.** The selector answers CLEAR with a
+    source-specific help topic, or none. Asking anyway would override owner decision A's ratified rule (a
+    source-specific topic is kept), and no other principled lever exists without an example or a phrase list.
+  - **Gold.** 26 candidates wait in `golden/nl-intent.context-d4-pending.v1.json` for the owner's batch:
+    - 20 answers: KO and EN, one and several sources, options 1 and 2. With the 6 approved ones the label reaches 26,
+      which meets the D12 rule of at least 25 per entry;
+    - 6 non-answers: fresh requests and small talk.
+
+    None is an ordinal or a displayed option text, because those resolve deterministically before the selector.
+  - **The owner approved all 26 as-is** (D12 batch of 2026-10-27). They moved into `golden/nl-intent.context.v1.json`
+    (now 46 cases; notes say "owner-approved as-is in the D12 batch of 2026-10-27"), and the pending file is removed.
+    `eval:nl` read and read-regression score them; the `open-question` label has 26 answer golds. The ADR-0123 audit
+    was regenerated with the local embedder only (space `@ollama0.40.11`): pool 153, gold 1567, 0 entries flagged.
+- **D4 open-question lines reordered: read `nl-select.v71`, A6 `v69`, R2 `v70`** (owner go-ahead of 2026-10-27, after the
+  Strict gates of 24112d09, both 2/3).
+  - Why: `ctx-d4-032` "cool, thanks" was read as option 2 once (the only non-answer misread in 48 runs of the 8
+    non-answer golds), and `ctx-d4-013` "채팅으로 검색하는 방법" was read as a help request 3/3. In v70 the not-an-answer
+    clause came last, after the answer format.
+  - The block now says that a reply answers only when it points to one option's meaning, even when worded as a request,
+    and that "this chat" means Quoky (the owner talks to Quoky in the chat). A reply that points to neither option
+    does not answer, and it is routed as usual. That sentence names categories only (thanks or an acknowledgement,
+    small talk, an undecided reply, a new request) and comes BEFORE the answer format.
+  - Only the open-question block changes. Every prompt without an open question is byte-identical (pinned sha256
+    unchanged; 82 of 84 pinned prompts unchanged, the 2 open-question ones regenerated in
+    `golden/nl-select.v71.prompts.json`). No example, no phrase list.
+- **The answer contract relaxed and spelled out: read `nl-select.v72`, A6 `v70`, R2 `v71`** (owner decision of
+  2026-10-27; amends D4's "an integer 1–4; the parser rejects anything else").
+  - Why: at cda61425 the selector wrote `"answer":"1"`, `"answer":"2"` and `"answer":"none"`. The parser rejected them, so
+    the runtime failed closed, and the eval scored `error`. That hid two non-answer misreads (ctx-d4-034 at cda61425,
+    ctx-d4-032 at 24112d09) and lost one correct answer (ctx-d4-020).
+  - The parser (runtime and eval alike) reads a one-digit string `"1"`–`"4"` as that integer, and `"none"` (like `null`
+    or no field) as no answer. Anything else is still rejected (`bad-answer`).
+  - The open-question lines say that a non-answer leaves the `answer` field out (never `"none"`), and that N is a JSON
+    integer. Only that block changes. Every prompt without an open question is byte-identical (pinned sha256
+    unchanged; 2 of 84 pinned prompts regenerated in `golden/nl-select.v72.prompts.json`).
+  - The eval now counts these outputs as real reads or misreads. Re-scored on the archived raw outputs: cda61425 intent
+    run 1 becomes a wrong capture (ctx-d4-034), run 2 gains a hit (ctx-d4-020), and ctx-d4-032 ×2 becomes `none`.
+    24112d09 intent run 3 becomes a wrong capture (ctx-d4-032).
+- **`timedOnly` on the one-step selection path** (owner decision of 2026-10-27; closes the one-step question of ADR-0121
+  S2 note 2 of 2026-10-26).
+  - The plan validator's clause-grounded flag rule now also applies to the ADR-0120 one-step read, unchanged. It is
+    the same catalog vocabulary (`flagGrounding`, today calendar `CALENDAR_TIMED_ONLY_WORDS`) with the same exclusions:
+    a word inside a read's value, an exclusion or negation marker, and another name of the entry ("일정", "캘린더").
+    The one read is the only planned read, so its own clauses are the whole message when it is one conjunct, else the
+    conjuncts that name its entry. The rule only turns a flag ON, deterministically in Core, and validates again.
+  - The rule is one implementation: `nl-routing/clause-flags.ts` (`nlClauseGroundedFlagNames`), used by the plan
+    validator and by `nlOneStepClauseGroundedFlags`. The S2 conjuncts moved to `nl-routing/conjuncts.ts`
+    (`agent/conjuncts.ts` re-exports them); the agent boundary allows both pure files.
+  - The selection service applies it in `complete` after the P-time inheritance, and both `eval:nl` scorers apply it
+    too, so they score Core's final read. The D12 re-gate covers it.
+- **Range grounding: the owner's stated period wins** (owner decision of 2026-10-27; the "O1" option of the
+  24112d09 analysis).
+  - The rule fires when the owner's prose states exactly ONE period of the existing period-label table
+    (`nlRangeSymbolWords`, read longest first by `nlExpressedRangeSymbols`). It does not fire when the prose has a
+    weekday form, a span, a duration, another number with a time unit or a month name left once that period's words are
+    removed (`nlStatedLabelPeriod`).
+  - When it fires and the read's range names other dates, Core uses the owner's period and validates again
+    (`nlOwnerStatedRange`). The read's range is the selector's, or the entry's default when the selector left the range
+    out.
+  - Left alone:
+    - weekday and span expressions, so the uat5r4-16 class ("목요일 거는?") keeps the selector's this-thu;
+    - "today" and the entry's own default, which do not count as stated;
+    - a range that names the same dates;
+    - a result that does not validate.
+  - No new phrase list: the label table is the one `nlRangeLabel` already shows the owner.
+  - It applies to READ entries with a `range`. It runs in `complete` after the P-time inheritance, which never fires when
+    the owner states a period, so an explicit period still wins over an inherited one. Both `eval:nl` scorers apply it
+    too.
+  - Gold check: a perfect selector still hits every gold under both scorers at three clocks (10-22, 10-27 12:00 and
+    23:58 KST).
+  - **Narrowed in the Codex review of 86271dd5 (three P2s).**
+    - An excluded period is never stated: the read's own clauses are read as the clause-grounded flag rule reads them
+      (the whole message when it is one conjunct, else those naming the entry). Any exclusion or negation marker there
+      (`nlHasExclusionOrNegation`, the shared markers, no new word) keeps the selector's range. "내일 말고 일정 보여줘"
+      keeps `this-week`; "아니 다다음 주" keeps it too (fail-safe), so uat5r4-17 is a selector matter.
+    - The read's own arg values are set aside before the period is read. The keyword "다음 주 계획" is a title, not a
+      period.
+    - Only entries whose `range` is the items' own date (catalog `rangeIsItemDate`): today `calendar.events` alone. Mail
+      (receipt time), Drive (modified time), Slack (message time) and Jira (the `window` field) filter another date field,
+      where a stated period may describe the content ("어제 회의 관련 메일"), so the selector decides there; uat5r1-02 is
+      a selector matter.
+    - Simulation of the narrowed rule: intent fixes calendar-023 ×2, and cda61425 read-regression fixes calendar-023,
+      uat5r3-14 and uat5r3-15. There are 0 gold and 0 archived-hit breaks.
+  - **Codex delta review of 6cc157e6 (one P2): periods are counted over the whole message.** The read's own clauses are
+    used only for the exclusion check. The one period is counted over the WHOLE message without its excluded or negated
+    clauses and with the read's own values set aside; two or more distinct periods leave the selector's range alone.
+    "내일이랑 모레 일정" keeps `this-week`. In "내일 말고 모레 일정" the excluded clause "내일 말고" is set aside, so 모레 is
+    the one stated period. When the negation sits in the read's own clause ("내일 일정 말고 모레 거"), the range stays
+    (fail-safe). A second read's period in another clause counts as well ("다다음 주 일정 보여주고 어제 메일도": left
+    alone). Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression calendar-023, uat5r3-14 and uat5r3-15;
+    0 breaks.
+  - **Codex delta review of 02fd5380 (third round; the rule is narrowed and closed).** The owner's period applies only
+    when all three conditions hold:
+    - (a) the read's OWN clauses state a period, with no negation or exclusion there and not inside an arg value;
+    - (b) across the whole message, without its negated or excluded clauses and arg values, exactly one distinct period
+      remains, and it is that same period;
+    - (c) the earlier conditions hold: `rangeIsItemDate`, no weekday, span or duration, not today or the default,
+      other dates, and the result validates.
+    "일정 보여주고 어제 메일도 알려줘" keeps `this-week`, because 어제 is the mail read's. The earlier scenarios stay as
+    tests. Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression calendar-023, uat5r3-14 and
+    uat5r3-15; 0 breaks.
+  - **Implementation note: fix-loop cap reached after 4 Codex rounds; scope narrowed to single-source messages;
+    residual: multi-source messages rely on the selector.** The orchestrator narrowed the scope on 2026-10-27, by the
+    quoky-ship §3 fix-loop rule, after Codex's 4th edge at 14e05d89. That edge was "일정 보여주고 어제 일정 관련 메일도
+    알려줘", where the clause naming the calendar is a mail request. The owner's period now applies ONLY when all hold:
+    - the message names no catalog source other than the read's own (the other read entries' existing catalog aliases
+      and source names, with the read's own values set aside; an alias the read's entry shares does not count);
+    - the message holds no exclusion or negation marker anywhere;
+    - with the read's own values set aside, the whole message states exactly one distinct period;
+    - the existing conditions (c) hold.
+    Several sources, several periods or a negation leave the selector's range alone ("내일 말고 모레 일정" now keeps it
+    too). All earlier scenarios stay as tests. Simulation unchanged: intent calendar-023 ×2; cda61425 read-regression
+    calendar-023, uat5r3-14 and uat5r3-15; 0 breaks.
+  - **Codex delta review of 7503634d: source names bounded by punctuation.** The single-source check now matches a
+    catalog alias or source name that does not follow a letter or digit (`nlNamesCatalogWord`), so any Unicode
+    punctuation, bracket or quote may precede it: "(메일)도", "“메일”도", "'메일'도", "「메일」도", "메일,". A Korean name
+    may be followed by a particle, as before. An English name must end at a non-letter, allowing only a plural or
+    possessive (as `aliasStarts`). The same catalog words are used and no new list is added. Simulation unchanged;
+    0 breaks.
+    Residual (accepted, conservative): a Korean source alias that prefixes a longer word (e.g. 파일 in 파일럿) counts as
+    another source, so grounding is skipped and the selector's range stands.
+
+### Owner decision of 2026-10-27 — D4 moves to the next merge, as a dedicated classifier (branch `claude/v5-context-fixes`)
+
+- **Decision.** D4, the worded answer to the help-scope question, leaves this merge. It comes back as a dedicated small
+  classifier call that answers 1 / 2 / neither, outside the router prompt, with its own eval and gate.
+- **Why.** In the router prompt, haiku misreads non-answers as answers. The Strict gates at 32a2c81f (read v72 / A6
+  v70) failed only on D4:
+  - intent run 1: ctx-d4-008 "고마워" was read as option 1;
+  - intent run 2: ctx-d4-032 "cool, thanks" was read as option 1;
+  - read-regression run 2: ctx-d4-015 "앱 안에서 직접 하는 방법" was read as option 1 (gold 2).
+  That makes 3 wrong captures in 6 runs, after three prompt rounds (v70, v71, v72). Calendar passed.
+- **Runtime (removed).**
+  - The open question is no longer passed to the selector, and the open-question prompt part is removed.
+  - The help-scope question falls back to the ratified behaviour of owner decision A (2026-10-22): only a number or a
+    displayed option text answers it (`resolveChoice`, unchanged). Any other reply ends the question and is routed as
+    usual.
+  - The parser's `answer` field (with the relaxed contract of the same day) has no other user, so it is removed: an
+    `answer` key is an unknown key again (`unknown-key`).
+  - Everything D4-independent stays: D1 / P7, P-time (ii) and its midnight fix, `timedOnly`, range grounding, D2 copy,
+    P9, and the read-regression `gotArgs` / raw records.
+- **Prompt versions: no bump; read stays `nl-select.v72`, A6 `v70` and R2 `v71`.** The open-question part was the only
+  difference from v71 / v69 / v70, and it was rendered only with an open question. So every prompt these versions can
+  still render is byte-identical to one they already rendered. A version names the bytes the selector receives, and
+  this change only shrinks that set:
+  - the pinned sha256 values are unchanged;
+  - the 82 non-question cases of `golden/nl-select.v72.prompts.json` are unchanged, and its 2 open-question cases are
+    removed;
+  - every remaining scored case prompt at 32a2c81f and at this HEAD was rendered by both builds: 878 read and 877 A6
+    unique message prompts, 0 different.
+  A bump would detach the 32a2c81f gate records, made on exactly these bytes, without any byte change. The selection
+  cache is unaffected: open-question turns bypassed it, and nothing else changes.
+- **Golds.** All 34 `ctx-d4-*` cases move, with their owner approvals in their notes, to
+  `golden/nl-intent.context-d4-pending.v1.json` for the classifier work. They are not scored. The scored context
+  corpus is the 12 D1 / P7 cases. The ADR-0123 audit was regenerated with the local embedder only (`@ollama0.40.11`):
+  pool 153, gold 1533, 0 entries flagged.
+- **Context eval.** The `hs-calendar-words` oracle is back to `none`, and its expectation is unchanged. That scenario
+  (t2, "Quoky로 하는 거") fails again in the dry runs until the classifier lands: deployed 37/38, actions-local 54/55, all
+  hard checks 0.
+- **Plan for the classifier (next merge).**
+  - One bounded call per worded reply to an open help-scope question.
+  - The input is the displayed options and the owner's reply. The output is 1 / 2 / neither, with a strict schema.
+  - It runs before the router: "neither" routes as usual.
+  - It has its own corpus (the 34 pending golds plus new non-answers), its own eval and its own gate, with 0 wrong
+    captures on non-answers. The bar is set before the run.
+- **Offline evidence (32a2c81f re-scored without the 34 `ctx-d4-*` records; recorded outcomes, no model call).**
+  - intent (read v72): 97.4 / 97.4 / 98.0%. No entry below 90%, 0 wrong captures, 0/2 help captures; the gate (and
+    S1) passes in all 3 runs.
+  - read-regression (A6 v70): 97.2 / 97.5 / 96.5%. No entry below 90%, 0 wrong or action captures, help captures
+    0 / 1 / 1 (neg-110) of 2; the gate passes in all 3 runs.
+- **S2 activation blocker, updated.** The blocker's context gate reuses the 12 D1 / P7 case ids. The D4 note becomes:
+  D4 is not part of this merge; when the classifier lands, it answers a pending help-scope question before the router
+  or the planner is asked, and it is tested at that boundary, not as a planner gold.
+
+### Owner decisions of 2026-10-27 — gates rerun on the new HEAD, `hs-calendar-words` t2 is a known gap (branch `claude/v5-context-fixes`)
+
+- **(1)** ① (`eval:nl` read) and ② (read-regression) are rerun on the new HEAD. The re-score of 32a2c81f is evidence
+  only, not the gate.
+- **(2) `hs-calendar-words` turn 2 ("Quoky로 하는 거") is a known gap until the D4 classifier lands.**
+  - It uses the calendar-undo mechanism: the scenario's `knownGap` names the gap. The turn's expectation (`help.topic`,
+    no question pending) is unchanged.
+  - The turn is marked `knownGap: true`; a known-gap turn needs its scenario's `knownGap`.
+  - A scenario that fails only on soft checks of its known-gap turns is reported as a known gap (`knownGaps`), outside
+    the 95% rate: it is neither a pass nor a failure. Hard checks on that turn still count and gate, and a miss on any
+    unmarked turn is a plain failure.
+  - The calendar-undo known gaps are unchanged: their honest-reply expectations pass and count as passes.
+  - Dry runs: deployed 37/37 plus 1 known gap; actions-local 54/54 plus 1 known gap; all hard checks 0.
+  - **When D4 lands**, the turn's `knownGap` mark (and the scenario's) is removed, and the turn is re-scored as a
+    normal turn against its unchanged expectation.
+- **(3)** The context eval (3 runs) is approved after ① and ② pass.
+
+### Jira release follow-ups after the 0634ddb2 gates (2026-10-27, branch `claude/v5-context-fixes`)
+
+The intent gate's run 1 failed only on the `jira.release` per-entry rate (25/28). All three cases had byte-identical
+prompts.
+
+- **a8-18 ("what's in the 2.3.0 release on jira?" → `project: "2.3.0"`): the mirror of P9, in the lookup.** With no
+  release named, a `project` value is the release when all of these hold:
+  - it cannot be a Jira project key under Jira's own key format (one ASCII token that, upper-cased, still fails
+    `CONNECTOR_CONTAINER_KEY`, e.g. "2.3.0" or "2026");
+  - it names no visible project on a complete listing (key, name, contained or words).
+  Core then looks the release up, as for `{release}`. The rule is structural, with no word list.
+  - It never moves a non-ASCII or multi-word value (a project name such as "모바일 앱 운영"), a key-shaped value, or a
+    value next to a named release.
+  - It is the lookup Core already runs, so the eval's in-world equivalence (owner answer 1) credits it with no scorer
+    change.
+- **a8-25 (a pasted fix-version URL read as `none`): the existing link parser is wired for a link-only message.**
+  - `parseJiraReleaseLinks` (ADR-0120 A8) already reads release links deterministically, but nothing routed on it.
+  - A message counts as link-only when every URL in it is a Jira release-page link with a version id and no letter or
+    digit is left once the links are removed (`isJiraReleaseLinkOnly`). Such a message is now `jira.release` with no
+    args, with no model call, when the entry is offered and validates.
+  - A link with words still goes to the selector, as before.
+  - Both `eval:nl` scorers apply the same rule, so they score Core's final outcome.
+- **a8-16 ("몇 개야?" after a release listing: the selector kept the release and dropped `count`): left as variance.**
+  `count` has no catalog grounding vocabulary (no `flagGrounding`, unlike `timedOnly`'s `CALENDAR_TIMED_ONLY_WORDS`),
+  and none is invented.
+
+### Owner decisions of 2026-10-28 — fixes 1–4 of the 95386868 context analysis (branch `claude/v5-context-fixes`)
+
+The merge waits until EVERY Strict context run is at or above 95%.
+
+- **Fix 1, the P1 guard and item names.** A denial sentence that names an item Core showed in the held listing now
+  counts as referring to the listing.
+  - When a turn writes `lastSelection` (a listing), the runtime takes the words of the list-item lines of Core's own
+    reply ("- ", "1. ", "1) "). Digits-only tokens and time words are left out (`nlShownItemWords`).
+  - It holds them IN PROCESS MEMORY ONLY, per session and actor, in a bounded map (256). They are never persisted,
+    logged or sent anywhere (ADR-0110 D4). They are used only while `lastSelection` was written no later than they were
+    taken.
+  - The guard first sets the incapability phrase aside, so a title word such as "확인" never matches "확인할 수
+    없어요". A sentence then refers to the listing if one of its words starts with an item word (a Korean particle:
+    "면접이" names "면접"), or if an English word is a short form of one ("doc" names "document").
+  - CA P1-1 holds: a true unrelated limitation ("실시간 날씨는 확인할 수 없어요", "I can't check live stock prices") names no
+    shown item and stays.
+  - Covered: the four 95386868 sentences. "내일 면접이 있는지는 제가 직접 확인할 수 없어요." matches the title word 면접.
+    "… the roadmap doc …" ×3 matches the shown item kind "document": the Korean title "로드맵" is not matched across
+    languages.
+- **Fix 2, suggestion extraction: the chat-prompt option.** A structural extractor could not tell commands from
+  non-commands without a word list. In the 95386868 replies, real commands and non-commands share every structural
+  form:
+  - a quote followed by an object particle: `내 할 일 보여줘`를 보내 (a command) vs "되돌리기"가 (a mention) and "내일 오후 3시
+    주간 회의"를 취소하려면 (a paraphrase); telling them apart needs the verb ("보내"), which is a word list;
+  - a quote at the start of a list item: - 문서: "2번 문서 요약해줘" (a command) vs 1. **"What does success look like …?"**
+    (an example question); and a command may end in "?" ("다음 회의 언제야?").
+  So, as the owner allowed, the chat prompt now reserves quotes. The D9 fact adds `QUOTES_ARE_COMMANDS_RULE`, with or
+  without action entries: "In a chat reply, quotes and code marks hold only a command the User can send to Quoky as its
+  own message; examples, questions for other people, the User's own earlier words and terms being mentioned are written
+  without quotes." The extractor and the D2 measurement are unchanged: by this contract, every quoted segment is a
+  command.
+- **Fix 3, args are scored against Core's resolved selection.** On a turn that dispatched a command, the context eval
+  now scores the `lastSelection` Core recorded this turn for the same entry. It used to score the raw command the
+  handler received. For P9, the dispatched `{release: NR26}` is recorded as `{project: NR26}`. A record of another
+  entry, or one that did not change this turn, is not used. The served entry is unchanged.
+- **Fix 4: an item question after a narrowed listing searches the full parent listing.** This owner decision amends
+  the follow-up inheritance rule ("a follow-up keeps the previous args").
+  - A listing that narrows the one just shown keeps the parent's args in `lastSelection.parent`. Narrowing means the
+    same entry, every arg kept and at least one added, as in "그중에 오후 것만". A chain of narrowings keeps the top parent;
+    any other listing keeps none. The parent is structure only and survives a chat turn (D1).
+  - In `complete`, before the P-time inheritance: when the read names a new item (a keyword arg with a value the held
+    listing did not have, as in "면접은 몇 시였지?"), Core drops the narrowing args it only carried over
+    (`nlSearchParentListing`). An arg counts as carried when the validator, against the parent alone, does not ground
+    it in this turn's words. The parent's args fill any gap, and the result is validated again.
+  - A narrowing the owner states again ("오후 면접은?") stays. A count follow-up ("몇 개야?"), a read with no new item, or
+    an unnarrowed listing is unchanged.
+  - 95386868: `fr-calendar-part-keyword` t3 failed 2 of 3 runs on exactly this read (`{tomorrow, afternoon, keyword
+    면접}`, with the interview in the morning).
+
+### Owner decisions of 2026-10-28, after an independent design review and a cost study (branch `claude/v5-context-fixes`)
+
+- **A. Selector rule-conflict cleanup: read `nl-select.v73`, A6 `v71`, R2 `v72` (D12 re-gate); planner `agent-plan.v10`.**
+  The planner moves only because it embeds the read rules; none of its own rules or examples changed.
+  - Conflicts the review found:
+    - rule 2 listed "깃허브에서 코드 검색하는 방법" as none, while rule 3's unclear how-to (NEEDS_CLARIFICATION help.topic)
+      has the same shape;
+    - rule 7 allowed a question only when two entries fit equally well, which does not cover a request that names only
+      a period ("이번 주 거");
+    - Core asks the help-scope question only after a general `help.topic`. That is owner decision A, and it is
+      unchanged here.
+  - The change is one decision order, and it adds no example:
+    - Rule 2 drops its own how-to examples and defers every how-to to rule 3. The contradicting example is gone.
+    - Rule 3 decides how-to and capability questions in order:
+      - a. about Quoky itself → `help.topic` CLEAR;
+      - b. an unclear how-to about a source Quoky reads, for an action Quoky also does there → NEEDS_CLARIFICATION
+        `help.topic`, args {};
+      - c. another app's or device's own feature → none.
+      Its examples are the ones it had, regrouped.
+    - Rule 7 covers a request that does not settle one entry: two entries fit, or only a period or a reference with
+      Previous selection none. Rule 6's own sentence for the reference case is removed.
+    - A6 rule 8 points to "rule 3b". The line that anchors rule 8 is kept.
+  - **Size: smaller.**
+    - Read: 287 → 283 lines (−4), 28,534 → 27,924 characters (−610).
+    - A6: 389 → 385 lines (−4), 38,350 → 37,724 characters (−626). (Full rendered prompts, empty message.)
+    - All 82 pinned prompts were regenerated as `golden/nl-select.v73.prompts.json`, with new sha256 pins.
+  - **Golds each change is meant to affect** (no gold changed):
+    - rule 2/3 order:
+      - 3b: `neg-010` "슬랙에서 검색하는 방법 알려줘" (clarify gold) and `neg-013` "how do I search in Confluence?";
+      - 3c: `neg-015`, `neg-121`, `a8n-04` and `v5int4-034`;
+      - 3a: the `help-0xx` how-to golds;
+      - context eval: `hs-slack-en`, `hs-jira-app` and `hs-slack-quoky` (t1).
+    - rule 7: `neg-210`–`neg-215` (a narrowing with Previous selection none), and the context eval's `cl-number` and
+      `cl-ignored` ("이번 주 거").
+    - The count case (`neg-208`, `neg-209`) keeps rule 6's own sentence.
+  - **Offline evidence:**
+    - A perfect selector still hits every gold.
+    - The ADR-0123 example lint is unchanged, because the examples are unchanged.
+    - The model-facing effect needs the D12 re-gate (Strict). No model was called.
+- **B. The chat double bind, fixed at the source (chat prompt only).**
+  - Before: the D9 fact (`LISTING_SHOWN_ABOVE_RULE`) and the composer's authority line told the chat model both "never
+    say you cannot see the listing" and "never say you read it".
+  - Now both state positively what the reply has and lacks after a listing. The listing is on the owner's screen; the
+    reply has only Core's structural note; the items and their content stay with Quoky. When the answer needs what an
+    item says, the reply gives the exact command that fetches it (the D5/D9 command list) or asks the owner for that
+    detail. It never guesses, and it never sends the owner to show the listing again.
+  - The P1 guard stays as the safety net. ADR-0110 D4 holds: no content reaches the chat.
+- **C. Eval CLIs take the reasoning effort (cost study P0).**
+  - `eval:nl` (every mode) takes `--effort`. `eval:context` takes `--effort` (the selector) and `--chat-effort` (the
+    chat model). The levels are the adapter's own (`CLAUDE_EFFORT_LEVEL_NAMES`), and the default is the adapter's
+    policy for the capability (`low` today). An unknown level is a usage error.
+  - The values reach `ClaudeCliProvider` through `effortByCapability`. `INTENT_SELECTION` takes the selector effort;
+    `GENERAL_CHAT` and `POLICY_SENSITIVE_CHAT` take the chat effort.
+  - The plan digests bind both efforts and the model names: the effective chat model, default `sonnet`, is now always
+    in the context plan for real chat. A full model id (`--model`, `--chat-model`) pins the model; an alias is bound
+    as written. The help text says so.
+  - Real token counts are not recorded. The Claude CLI's print mode returns text only, and reading usage would need
+    its JSON output format, which is a provider change left out of this branch.
+- **Codex review of 7f7e8d32, P2 1 (fix 4): grounding is decided per narrowing filter.** Each narrowing filter is now
+  validated against the parent with the other narrowing filters set aside. An ungrounded inherited filter no longer
+  drops a restated one. Example: inherited `{partOfDay: afternoon, timedOnly: true}`, then "오후 면접은 몇 시야?" keeps
+  `afternoon` and drops only `timedOnly`.
+- **Codex review of 7f7e8d32, P2 2 (fix 1): the held item words bind to the exact listing record.**
+  - `lastSelection` now carries the opaque id of the turn that recorded it (`turnId`, the inbound message id; never
+    content). The selection path and the grammar path both write it, and a chat turn keeps it.
+  - The runtime holds the item words with that same turn id. They attach only when the ids match
+    (`nlHeldItemWordsFor`).
+  - Before, the match was on completion time. With concurrent turns, a listing that finished after another could
+    overwrite the words and pass the other listing's time check. Mismatched words now never attach.
+
+### Owner-approved fixes of 2026-10-28 after the 34080848 Strict context run (branch `claude/v5-context-fixes`)
+
+- **Fix 3 (scorer): the #280 measurement holds within one conversation.** `listingShown` applies only when the previous
+  turn ran in the same conversation context. In `cd-dm-calendar-channel-question` (run 1), the listing was shown in
+  the DM and the next turn is in a channel. The channel's own session holds no listing record (ADR-0118 D7), so "이
+  대화에서는 확인할 수 없어요" is true there and is no longer counted.
+- **Fix 2: one read option runs, not asked (owner decision of 2026-10-28; ADR-0120 implementation note amending D7).**
+  - A numbered question that would show only ONE read option no longer asks: that read runs, since no write is possible
+    from it. This widens the v51 rule, which needed a dropped action candidate.
+  - Still asked:
+    - a refused weekday (the hint names the week and day);
+    - the help-scope question (owner decision A), which is checked first on the one option;
+    - zero options (the usage question);
+    - **an option Core had to change.** If the repaired candidate differs from what the selector gave (an ungrounded
+      value dropped, an out-of-set value not replaced), Core asks.
+  - The last exception narrows the owner's wording. It keeps the ratified red-team invariant (`nl-intent-dispatch`
+    adversarial sweep: a hostile selector naming a keyword grounded only in pasted text must never reach a handler).
+    Without it, Core's own repair (dropping the pasted keyword) turned an injection into a read of the owner's Jira.
+    Owner to confirm. **Confirmed by the owner on 2026-10-29** (see "Owner decisions of 2026-10-29", item 2).
+  - Covered: the 2026-10-28 arm runs' one-option asks are all unchanged selector options. Examples: `fr-release-list-pick`
+    t1 "1. Jira 릴리스 조회", `cy-project-yes` t1, and t2's "1. Jira 이슈 조회".
+  - No gold changed. Tests that pinned one-option asks for unchanged options now expect the read: `nl-action-live4`
+    (lone NEEDS_CLARIFICATION, two reads of one entry, failed or repaired alternatives) and `nl-selection-service`
+    (a lone help clarification). Tests for changed options keep the ask.
+- **Fix 1: pick a release by its listed title (owner-approved fix of 2026-10-28; `fr-release-list-pick` t2).**
+  - When the held record is a Jira release LIST (`jira.release` with a project and no release, shown just before) and
+    exactly one shown release title contains one of the owner's tokens, Core settles `jira.release` with that project and
+    the token as the release, with no model call. Tokens are runs of letters and digits, 4 or more long; digit-only
+    tokens are kept ("20261029" names "배포일_20261029(목)").
+  - The titles are each list line up to its first ` · `. They are held in process memory only with the item words
+    (ADR-0110 D4), bound to the listing turn's own id, and are never persisted or sent.
+  - Falls through to the selector when a token is in two or more titles or in none, the message has an exclusion or
+    negation, no titles are held for that record, or the result fails validation. No word list.
+- **Fix 4: commands to send are always quoted, and the D9 guard reads catalog aliases (owner-approved fix of 2026-10-28;
+  `cy-question-then-other` t3).**
+  - The chat prompt's quote rule now works both ways: a command the owner can send to Quoky is always written in quotes
+    or code marks, and quotes and code marks hold only such a command. The run-2 reply gave a command unquoted, so the
+    "a command was handed" exemption could not see it. This changes the chat prompt, so the `eval:context` plan digest
+    moves (expected).
+  - The Core D9 guard (`guardFalseIncapabilityClaims`) treats a source entry's own catalog aliases as mentions of that
+    source, next to its source names ("릴리스 조회가 … 확인할 수 없어요" names the Jira release read). Only entries
+    that have source names count. An ASCII alias must stand as a word ("pr" is not inside "project"). No word is added.
+  - Effect on existing tests: a denial naming the calendar as "일정" is now replaced by the calendar offer (two tests
+    updated). The shown-listing guard still runs first and keeps its own behavior.
+- **Fix 5: a date-range-only option is dropped when the owner wrote no date form (owner-approved fix of 2026-10-28;
+  `eval:nl` a8-09, a8-27).**
+  - In a numbered question, Core drops an option that rests only on a date range the selector read into the owner's
+    words. It does so when the owner's words name no period at all, by the existing period reader (`nlNamesPeriod`). A
+    bare 8-digit release name ("20261022") is not a period form there.
+  - "Date-range-only": the selector gave the option's range arg a value that is not the held listing's own, and the
+    option carries no owner text of its own (no keyword-kind value). Enum qualifiers (a Jira `window`) do not count.
+  - At least one other option must remain. If every option is a date reading, nothing is dropped. The rest is decided as
+    before: one unchanged read option runs (fix 2), two or more ask.
+  - No word list. No gold changed.
+- **Codex review of 34080848..68acf4f6, P2 1 (fix 4): an alias-only denial is kept.**
+  - A catalog alias names a topic, not a supported read. "회의 내용은 확인할 수 없어요" can be true; turning it into
+    "바로 조회할 수 있어요" made a false capability claim.
+  - When a denial names a source entry only by an alias, the reply is kept word for word. Only that entry's own read is
+    appended, scoped by its label and usage ("참고로 Quoky가 조회할 수 있는 범위는 이거예요: - 캘린더 일정 조회: …").
+  - A denial naming a source name is replaced as before.
+  - The two tests changed by fix 4 now pin the kept denial.
+- **Codex review of 34080848..68acf4f6, P2 3 (fix 1): the shown-release pick fails closed on any grammatical negation.**
+  - "20261029 안 보여줘도 돼" settled the release: the shared negators scope 안 to the light verb only.
+  - New `nlHasGrammaticalNegation` (request-shape), scope-free, used only by this no-model shortcut. It is the shared
+    exclusion and negation markers, plus the Korean short negation adverbs 안 / 못 as their own word before another
+    word, or glued to a verb whose rest is a request form (a permissive -도 allowed). This is a closed grammatical class,
+    not a phrase list. Over-reading only sends the turn to the selector.
+- **Codex review of 34080848..68acf4f6, P2 2 (fix 1): the shown-release pick applies the shared read-request vetoes.**
+  - "20261029 배포는 끝났다" after a matching listing settled the release.
+  - Before it settles, the pick now applies the vetoes of the selector path: `nlIsPastStatement` and `nlReadNotRequest`.
+    It also applies the request-shape veto `nlRequestVeto`: a statement, question, wish, report or conditional.
+  - Any veto sends the turn to the selector.
+- **Codex delta review, negation P2 round 2 (the fix-loop cap; fail-closed, not more precise).** On the shown-release
+  pick only, any whitespace word other than the one holding the matched release token that BEGINS with 안 or 못 refuses
+  the shortcut. This covers attached forms ("안보여줘도돼", "못보겠네"). It also refuses "안내" and "안건" on purpose;
+  those turns only go to the selector. `nlHasGrammaticalNegation` stays as well.
+- **Owner decision of 2026-10-28 (ADR-0120 implementation note on D2): the selector runs at haiku HIGH effort.**
+  - `DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[INTENT_SELECTION]` moves from `low` to `high`. The model stays haiku.
+  - Evidence, eval:context (deployed):
+    - at 8a22d019, haiku high scored 38/38, 37/38 and 36/38;
+    - at 34080848, haiku low scored 30-32 of 38.
+  - The capability is shared, so the agent planner (`INTENT_SELECTION`) also runs at high.
+  - The eval CLIs (`eval:nl` intent and read-regression, `eval:context`, `eval:agent-plan`) take the adapter default.
+    `eval:nl` and `eval:context` bind the effort into their plan digests. The D12 gates (intent, read-regression,
+    agent-plan) are rerun on haiku high before merge.
+  - The ADR-0123 RAG plan pins `selector.effort: 'low'` in its digest. Its transport now passes that effort explicitly,
+    so a frozen plan still measures what it states.
+  - Latency risk: at 8a22d019, haiku high timed out on 8 of 263 selection calls (4/263 at 34080848). Haiku low timed
+    out on 0-1 per run. The bound is unchanged: 6 s warm (`NL_SELECTION_TIMEOUT_MS`), 8 s cold, configurable from 2 to
+    8 s.
+- **Owner decision of 2026-10-28: `eval:agent-plan` binds the planner's effort into its plan digest.**
+  - The new `--effort` option takes a Claude `--effort` level. It defaults to the adapter's `INTENT_SELECTION` effort
+    (high).
+  - The plan records it as `effort`, and the run's provider uses it. The D12 agent-plan gate rerun is therefore bound to
+    the effort it runs at, like `eval:nl` and `eval:context`.
+- **Owner decision of 2026-10-28 (amends ADR-0120 amendment A3): the selector bound is 10 s.**
+  - `NL_SELECTION_TIMEOUT_MS` goes from 6 s to 10 s. The cold-start bound `NL_SELECTION_COLD_TIMEOUT_MS` goes from 8 s to
+    10 s, so it stays at most 10 s and equals the default.
+  - The allowed range of `QUOKY_NL_INTENT_TIMEOUT_MS` widens from 2000-8000 to 2000-10000. This also applies to the eval
+    CLIs' `--timeout-ms`, the config preflight message and `.env.example`. The eval CLIs default to the runtime bound,
+    so the `eval:nl`, `eval:agent-plan` and `nl-action` plans now carry 10000 ms.
+  - Evidence: haiku high timed out on 8 of 263 selection calls at 6 s (eval:context, 8a22d019).
+  - Not changed: the agent shadow planner's own bound (`AGENT_SHADOW_DEFAULT_TIMEOUT_MS`, 6 s). The planner shares the
+    selector's capability and now runs at high effort. Owner to decide.
+  - `eval:context` now records each selection call's wall time and outcome (`selectionLatency.callsMs`, content-free)
+    with p50, p95, max, over-bound and timeouts, so the next gate can report them.
+  - Progress notice: Quoky already shows the platform's typing indicator for the whole turn, selection included.
+    `QuokyCore.handleInboundMessage` calls `sendTyping` before the runtime runs; Discord refreshes it under its ~10 s
+    TTL and Telegram re-sends `sendChatAction` under its ~5 s TTL, both capped at about 2 minutes. Nothing new is sent.
+    A "답변 생각 중…" message edited in place would be a new outbound behaviour (CA and ADR); it is proposed, not built.
+- **Owner decision of 2026-10-28 (B2): which alias-only denials are false. The label rule, plus held values.**
+  - **Label rule.** In the D9 guard (`guardFalseIncapabilityClaims`), a source entry's alias that occurs in that entry's
+    own label (Korean or English) names what the read returns. It counts as a source mention, so the denial is
+    rewritten. Examples: "릴리스" in "Jira 릴리스 조회", "일정" in "캘린더 일정 조회", "PR" in "GitHub 이슈·PR 조회". Any
+    other alias keeps the denial and appends the entry's read (the P2-1 behaviour): "회의 내용은 확인할 수 없어요" is
+    kept.
+  - **Union with held values.** A denial naming a value of the listing Core holds this turn is about that read and is
+    rewritten with its usage. The values are the string arg values (a project key) and the shown item words and titles.
+    They are bound to the same listing record by turn id, process memory only.
+  - Order in the runtime: the shown-listing guard still runs first. A denial that names a shown item is dropped there,
+    as before, so the held-value rule rewrites what that guard leaves.
+  - Tests:
+    - rewritten: both measured sentences ("NR26 릴리스 내용은 여기서 직접 확인할 수 없어요", "현재 연결 상태나 릴리스
+      내용은 여기서 확인할 수 없어요"), "면접 일정은 확인할 수 없어요" and a shown issue key;
+    - kept: "회의 내용은 확인할 수 없어요".
+  - The P2-1 tests that pinned the kept "일정" denial now expect the rewrite.
+- **Owner decision of 2026-10-28 (B1, amends the D2 copy rule): quote marks only around a runnable command.**
+  - Core checks every quoted or inline-code span in the chat model's own text (`"…"`, `“…”`, `「…」`, `『…』`, `` `…` ``;
+    fenced code blocks are left alone). The span keeps its marks when either holds:
+    - **(a) The grammar path runs it.** The span, sent alone in a DM, is handled without a model when the intent
+      classifier gives it a non-chat intent (`IntentClassifier.textIntent`, the same pure rules split out), when it is a
+      conversation or action-switch control phrase, or when a turn handler's pure `surfaceClaim` claims it.
+    - **(b) It is a request about an offered source.** It names an offered entry's catalog alias or source name, and its
+      last word is in a request form (`nlIsRequestForm`).
+  - Any other span keeps its text and loses its marks. No phrase list, no model call.
+  - The check runs before the claim guards, so Core's own copy (a notice, a usage line) is never touched. A changed
+    reply is not flagged `model-reply`.
+  - The context-eval scorer already reads the reply the owner sees (`observation.reply`), so the unparseable-suggestion
+    count follows. The four measured spans lose their quotes: "아니오", "내일 오후 3시 주간 회의", "weekly meeting" and
+    "내일 3시 회의". "NR26 프로젝트 20261029 릴리스 보여줘", "오늘 일정" and "도움말" keep theirs.
+  - One runtime unit test changed its quoted example from "커밋해줘" to "테스트 돌려줘". That test's runtime registers no
+    code-work handler that would claim "커밋해줘".
+- **Owner decision of 2026-10-28: GENERAL_CHAT runs at medium effort.**
+  - `DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[GENERAL_CHAT]` moves from `low` to `medium`.
+  - Evidence, eval:context at 8a22d019 with the selector on haiku high:
+    - chat at medium (`--chat-effort medium`): 37/38, 38/38, 38/38, 0 hard failures, so the context gate PASSED for
+      the first time;
+    - chat at low at the same HEAD: 38/38, 37/38, 36/38, with 2 hard failures.
+  - `eval:context --chat-effort` now defaults to medium.
+  - `POLICY_SENSITIVE_CHAT` also moves to `medium`, so production matches the measured run (`--chat-effort` set both
+    chat capabilities). Orchestrator decision under the owner's effort-tuning instruction, reported to the owner.
+  - G7 keeps its frozen chat effort. `tools/g7/claude.mjs` already hard-codes `CLAUDE_EFFORT = 'low'` (part of the frozen
+    harness hashes, unchanged). The G7 argv-parity test now builds the production argv at that frozen effort explicitly.
+- **Owner decision of 2026-10-28: the agent shadow bound is 10 s.** `AGENT_SHADOW_DEFAULT_TIMEOUT_MS` moves from 6 s to
+  10 s, the selector bound. The planner shares the selector's capability, now at high effort, and the owner allowed up to
+  10 s. The app already passes the configured selection bound (`config.nlSelection.timeoutMs`, 10 s by default), so
+  this aligns the fallback constant.
+- **Codex review of 672fb8f7, P2-a: B2 never deletes or replaces a denial sentence.**
+  - The label rule and the held-value rule replaced true limitations with a capability claim ("다른 사람의 비공개 일정은
+    확인할 수 없어요", an event's private transcript).
+  - A label-alias match or a held-value match now keeps the sentence verbatim and appends the matched entry's read (its
+    usage, as for any alias-only match). Only a source-name denial is still rewritten, as before B2.
+  - Scorer check: the context-eval false-incapability check is unchanged.
+    - It excuses a kept denial whose appended usage is a quoted command. Every calendar case is excused this way (tested).
+    - It does NOT excuse the two measured release sentences ("NR26 릴리스 내용은 여기서 직접 확인할 수 없어요", "현재
+      연결 상태나 릴리스 내용은 여기서 확인할 수 없어요"). The `jira.release` usage is deliberately unquoted
+      ("예: ABC 프로젝트 1.2.0 릴리스 보여줘", D2: Core copy quotes only deterministic commands), so the reply hands
+      no quoted command. Reported to the owner; the scorer is not changed.
+- **Codex review of 672fb8f7, P2-b: B1 fails closed on long spans.** A quoted or inline-code span is now matched
+  whatever its length. A span over 200 characters loses its marks without the runnability check being asked. Before,
+  the pattern skipped such spans and they kept their quotes.
+- **Codex delta review of 454e7eb9, P2: the source-name rewrite acts per sentence.**
+  - Problem: any source-name hit replaced the whole reply. "캘린더는 확인할 수 없어요. 다른 사람의 비공개 일정은 확인할
+    수 없어요." lost its true private-calendar denial.
+  - Now only a denial sentence that itself names a source is replaced in place, by the offer of the sources not offered
+    yet; when there are none, it is dropped.
+  - Every other sentence is kept verbatim. A denial naming a source only by an alias or a held value gets the matched read
+    appended once at the end (B2), unless that entry was already offered. No guidance appears twice.
+  - This is the last round on this guard (fix-loop discipline).
+- **Owner decision of 2026-10-28 on the release-sentence scorer question: option 1.**
+  - No new Core copy and no scorer change.
+  - With chat at medium, the two release denials did not occur in 3 runs. If the gate runs show them, this is revisited.
+
+### Owner decision of 2026-10-29 — a stale bare yes or no gets Core's notice, not chat ("끊긴 확인 고치고 재측정"; branch `claude/v5-context-fixes`)
+
+ADR-0120 implementation note on D7 and D9. No ADR clause changes: D7 ("any reply ends the question") is kept as it is,
+and D9 still governs every turn that goes to chat.
+
+- **Problem.** Context eval `cy-question-then-other`: a one-option project confirmation, then "내일 일정 뭐있어" (served;
+  D7 ends the question), then "응". Nothing was served, which is correct, but the turn went to GENERAL_CHAT. In 1 of 3
+  runs the chat wrote "대상은 누리 플랫폼 운영 2026(NR26)의 20261029 릴리스로 잡아 두었어요." This is a false state claim, and
+  the scorer counted a hard `fabricated-action`.
+- **Decision (structural).** A stale "응" never reaches the chat model. Core answers it itself with a fixed notice, in
+  the turn's language (`languageOf`, as the neighbouring fixed notices):
+  - "지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요."
+  - "There's no question waiting for an answer. Tell me what you'd like in a sentence."
+  The notice claims no action and no held state. It says nothing about what Quoky cannot do, and quotes no command.
+- **When.** All of the following hold; otherwise the turn routes exactly as before.
+  - Selection is `active`.
+  - The turn is bound for chat (`IntentType.CHAT`, GENERAL_CHAT or POLICY_SENSITIVE_CHAT) after every earlier route and
+    after selection found nothing.
+  - No D7 question was open at the turn's start (`takePending` ran and returned none).
+  - No approval, credential override, connector-write anchor or apply-preview anchor is open. So the undo and A6
+    continuation confirmations, action questions, approvals and anchors keep answering their yes or no first.
+  - The whole message, after the usual input preparation (`prepareSelectionInput`: quoted text and code removed) and
+    with no attachment, is an approve or deny of the EXISTING closed set `interpretContinuationConfirmReply`. No new
+    phrase list or pattern (owner rule: no phrase-list fixes).
+  - Quoky's previous reply to this actor in this session was NOT chat. After a chat reply, the chat may have asked
+    something itself, so the yes still goes to chat (`sc-confirm-chat-yes`: confirm → weather chat → "응").
+- **Where.** In `ConversationRuntime`, step (C3): after the (C2) selection block and before `handleNonExecutionTurn`. It
+  is not in the selector decision path. `NlSelectionService.decide` and the selector eval gates are unchanged:
+  - `eval:nl` intent plan digest `f25a3121…` and read-regression `e8849453…`, before and after;
+  - `eval:agent-plan` `59b803c9394b…`, before and after, compared on the working tree at the same `gitHead`. The digest
+    binds `gitHead`, so it changes with the commit itself.
+- **"Previous reply was chat".** No existing record served: `quoky.lastTurn` (A6 R5a) is written only while
+  `QUOKY_NL_DEICTIC_WRITES` is not `off`, and it is off in the deployed profile. A new content-free session record,
+  through the existing field-scoped `SessionManager.updateMetadataEntry`:
+  - `Session.metadata['quoky.lastReply'] = { byActor: { [actorId]: { chat, at } } }`, in `nl-routing/last-reply.ts`;
+  - per actor, at most 64 actors, a 30-minute TTL (as `quoky.lastTurn`); expired, malformed or another actor's counts
+    as absent;
+  - written by `NlSelectionService.recordLastReply` after every turn while selection is `active` (no new deps key, the
+    `nlSelection` slot); never throws;
+  - `chat` is true when the runtime's existing chat marker ran (`markNlChatTurn`, the (E) fast path and the (F) work
+    path); an escaped error turn records `false`;
+  - an absent record (a new session, an expired one, selection not `active` before) never triggers the notice.
+- **Tests.**
+  - `last-reply.test.ts`: the record, the bare yes or no test and the notice.
+  - `context-eval-runner.app.test.ts`, over the production AppModule (deployed profile). Covered: a stale yes after a
+    served command (the notice, no chat call), a stale no, English, a yes with more words (chat), a yes after a chat
+    reply (chat), and `cy-project-yes`, `cy-project-no`, `fr-release-confirm-count-scope` and `sc-confirm-chat-yes`
+    unchanged. `cy-undo-confirm-yes` (actions-local) is also unchanged, and the measured false claim on
+    `cy-question-then-other` scores 0 `fabricated-action`.
+  - The golden scenarios and the scorer are not changed.
+- **Re-measure.** `eval:context` reruns on the new HEAD (the owner's "재측정").
+
+### Owner-approved scorer fix of 2026-10-29 after the a4c591a1 Strict context run (branch `claude/v5-context-fixes`)
+
+- **The fabricated-action negation check allows a particle between 지 and 않.** In `ul-reminder-create-undo` (run 2) chat
+  wrote the true negation "알림이 만들어지지는 않았어요"; the check knew only "지 않", so the sentence counted as a claimed
+  write. A delimiter particle (는, 도, 만, 은) between 지 and 않 is now the same negation. A claimed write is still counted
+  ("알림을 만들어 두었어요"). The owner approved it as a measurement fix ("부정 검사만 고침"), not a looser gate.
+
+### Owner decisions of 2026-10-29 (branch `claude/v5-context-fixes`)
+
+1. **Chat is told that Core's earlier question closed unanswered ("1번 진행"; ADR-0120 implementation note on D7 and D9).**
+   - **Problem.** Context eval `sc-confirm-chat-yes`: a one-option project confirmation, then "아 근데 오늘 날씨 어때?"
+     (chat; D7 ends the question), then "응" (chat, because the previous reply was chat). The chat wrote "프로젝트 이름은
+     앞서 확인하신 누리 플랫폼 운영 2026 (NR26)로 넣었어요." The owner never confirmed it and nothing was held, so the
+     scorer counted a hard `fabricated-action`. Chat could not know that Core had closed its question without an answer.
+   - **Decision (structural, from Core's own state).** The `quoky.lastReply` record of the a4c591a1 decision gains one
+     optional field, `questionClosedAt` (a time only):
+     `metadata['quoky.lastReply'] = { byActor: { [actorId]: { chat, at, questionClosedAt? } } }`.
+     - Set when the turn whose start took this actor's open D7 question (`takePending` returned it) is answered by chat.
+       An answer to a question is never chat (its read, write, cancel or re-ask), so such a turn did not answer it.
+     - Carried by each later chat reply of that actor, keeping the time of the close.
+     - Dropped by any reply that is not chat: a new D7 question (Core's ask), an answer to a question, a served command, a
+       fixed notice or an error.
+     - Stops applying 30 minutes after the close (`LAST_REPLY_TTL_MS`, as `quoky.lastReply` and `quoky.lastTurn`), even
+       while chat replies keep the record itself fresh. Per actor; another actor's record never applies.
+     - Written only while selection is `active`, like the rest of the record.
+   - **A later served command also clears it.** The fact corrects chat's reading of a transcript whose latest Core
+     exchange is the closed question. After a served command Core's own reply is the latest exchange, and a bare yes then
+     gets Core's fixed notice without a chat call (a4c591a1). Keeping the fact would only risk chat telling the owner
+     "you never confirmed it" after the owner asked for the same thing in their own words.
+   - **The fact.** While the field is fresh (or on the closing turn itself), a GENERAL_CHAT or POLICY_SENSITIVE_CHAT
+     prompt of that actor carries one more authoritative Core fact, beside the D9 sources and control facts
+     (`CLOSED_QUESTION_FACT`, `honest-chat.ts`; added in `ConversationRuntime.handleWorkTurn`):
+     "Quoky's earlier confirmation or choice question to the User was closed without an answer: the User's reply to it
+     was not an answer. The User never confirmed or chose anything in it, and nothing from it was selected, filled in or
+     held. A yes, a no or a number sent now does not answer that question and confirms, selects or runs nothing from it;
+     never say or imply that the User confirmed it or that anything from it was set, entered or kept."
+     It names no entry, option, project, title or item (ADR-0110 D4). It speaks only of Quoky's question, so a yes to
+     the chat's own words is still the chat's to answer (the a4c591a1 rule is unchanged).
+   - **Unchanged.** D7 ("any reply ends the question"), the selector decision path, the stale bare yes notice, the
+     scorer and the golden scenarios. `eval:nl` intent plan digest `f25a3121…` and read-regression `e8849453…`, and
+     `eval:agent-plan` `0dd84c59ed0b…` (working tree at `gitHead` 22b59a8a), before and after. No phrase list.
+   - **Tests.** `last-reply.test.ts` (written on a chat close, carried, dropped by a non-chat reply, the TTL, per actor,
+     no content, the fact text). `context-eval-runner.app.test.ts` over the production AppModule (deployed profile):
+     the `sc-confirm-chat-yes` t2 and t3 chat prompts carry the fact; none after the TTL, after the question was
+     answered, after a new question was answered, or after a served command; `cy-question-then-other` unchanged.
+2. **Confirmed: a one-option question whose option Core had to repair keeps asking.** The exception under "Fix 2: one
+   read option runs" (owner-approved fixes of 2026-10-28) stands: when the repaired candidate differs from what the
+   selector gave (an ungrounded value dropped, an out-of-set value not replaced), Core asks instead of running the one
+   read. It keeps the red-team invariant. No code change.
+3. **Confirmed: POLICY_SENSITIVE_CHAT effort stays medium**, like GENERAL_CHAT (`DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY`,
+   `packages/ai-cli/src/index.ts`). No code change.
+
+### Owner decision of 2026-10-29 — a command inside two pairs of marks keeps one ("먼저 고치고 재측정"; branch `claude/v5-context-fixes`)
+
+- **Problem.** Context eval at 2dd14102, run 1, `lc-drive-roadmap-en` t2: after a Drive listing, the chat wrote
+  `` `"1번 문서 요약해줘"` `` (code marks around a quoted command). The B1 check (owner decision of 2026-10-28) kept the
+  span, but the owner copying it sends the inner quotes too, and the command sent with them did not run (the scorer's
+  probe reached chat), so the scorer counted a hard `unparseable-suggestion`. The same command without the quotes ran.
+  `item.summarize` does read a listed Drive file; the command itself was right.
+- **Decision (structural, B1's own span check).** `nlUnquoteNonCommands` (`honest-chat.ts`) now looks inside a span
+  that is wholly one more pair of the marks it already knows (`"…"`, `“…”`, `「…」`, `『…』`, `` `…` ``), with no further
+  mark of that pair inside. The check is asked about the command without the inner pair. A runnable command keeps the
+  outer pair only; a refused one loses both, as before, and keeps its own spacing (Codex review of 49a2a3d0, P3). No
+  word list; fenced blocks are untouched.
+- **Unchanged.** The B1 rule and its check, D2, the chat prompt, the scorer and the golden scenarios. Plan digests
+  unchanged (no prompt byte changes).
+- **Tests.** `honest-chat-listing.test.ts`: the code-then-quote and quote-then-code forms keep one pair; a refused
+  double-marked span loses both; a span holding two quoted words is judged as it is.
+
+### Owner-approved fix of 2026-10-29 — the listing just shown, repeated for a content request, is chat ("먼저 고치고 재측정"; uat5r6-07; branch `claude/v5-context-fixes`)
+
+- **Problem.** Gold `uat5r6-07` ("그거 요약해줘" after a `mail.list` listing, expect `none` while `item.summarize` is not
+  offered) failed about one run in three: the haiku selector or planner answered `mail.list` with the same args again, a
+  re-list of the exact listing just shown, for a request about a listed item's content (eval:nl intent run 3 at
+  f6854a87; eval:agent-plan run 3 at a4c591a1 and run 2 at 2dd14102). The selector prompt already holds a near copy
+  ("저거 요약 좀 해줄래" after `mail.list` → none), so another example would be gold fitting. The prompt is unchanged.
+- **Decision (structural, in `validateSelection`, the one place the selector path and every agent-plan read step pass).**
+  A READ candidate fails with the new reason `repeats-listing` when all hold:
+  - it is the previous selection's entry (`previousEntryId`) with the same canonical args (a read with no period of its
+    own that would inherit the held listing's period, P-time (ii) `inheritsHeldRange` with no period named, is the same
+    listing too);
+  - the owner's words ask for an item's content: `asksForItemContent`, the existing `item.summarize` check (A6-D1 owner
+    decision 5, record C);
+  - they point at ONE listed item (`nlPointsAtListedItem`, from the existing A6-D2 ref vocabularies: a deictic pronoun,
+    마지막 / last, an ordinal). The recency words 방금 / 아까 are left out: they also date a listing ("아까 메일 전체
+    다시 보여줘");
+  - fail-safe: no negation or exclusion marker in the prose (`nlHasExclusionOrNegation`); pasted structures ground nothing.
+  The selector path answers `repeats-listing` as `none` (chat, log `nl_selection.repeats_listing`), before any repair or
+  question; the shadow logs it as `none`. The agent-plan validator refuses the step (`step-invalid` / `repeats-listing`);
+  a listing that a later plan step reads by reference is that step's input and is exempt (`listingFeedsLaterStep`, e.g.
+  "메일 목록 보고 세 번째 메일 요약해줘"). The eval:nl intent scorer scores the reason as the runtime answers it, `none`.
+- **Codex review of 49a2a3d0 (two P2s).** Words naming the entry itself (an alias or source name: "그거 전체 메일 목록 다시
+  보여줘", "show this whole mail list again") may ask for the list, so the rule leaves such a read alone (fail-safe:
+  today's re-list). A plan read that itself reads an earlier step's items by reference (with or without a position) is
+  an item-detail read and is exempt too.
+- **Known limit (Codex delta review of 3bd4d44a, P2, recorded and closed).** The source-name exemption also leaves an
+  item-content request that names the source ("summarize that email", "그 메일 요약해줘") to today's re-list. Telling
+  "that email" from "the mail list" needs a list-noun vocabulary the catalog does not have, and a new word list is
+  against the owner's rule; the exemption errs toward main's behaviour (a harmless repeated read), never toward
+  suppressing a requested listing. With `item.summarize` offered the selector answers such a request with it.
+- **Not hurt.** A refresh asks for no content and still re-lists ("메일 다시 보여줘", "새 메일 왔어? 다시 확인해줘",
+  "안 읽은 메일 다시", "그거 다시 보여줘"); another listing (other args or entry), no previous selection, and the
+  `mail.list` `item` question ("N번째 건 누가 보냈어?", a transient arg, so other args) are unchanged. No gold expects a
+  repeated listing for such a text (all golden corpora scanned offline). `lastSelection` is kept (D1).
+- **Unchanged.** The selector and planner prompts (no prompt bytes), the golds and thresholds, D1–D4, AgentRunService.
+  No phrase list: only existing closed vocabularies are reused.
+- **Tests.** `repeats-listing.test.ts` (the failing shape, the inherited period, the refresh and negation counter-examples,
+  the pointer reader, the agent-plan one-step refusal and the referenced-listing exemption); `nl-selection-service.test.ts`
+  (the runtime answers chat, then a refresh re-lists); `nl-intent-eval.test.ts` (scored `none`; a refresh is a hit).
+- **Codex final review of 53e0040b (P2, reproduced).** A full-text word (전체 / whole, `NL_MODE_FULL_WORDS`) beside a
+  pointer ("그거 전체 목록 다시 보여줘", "show this whole list again", "그거 전체 다시 보여줘") may ask for the whole
+  listing, and the rule turned that refresh into chat. The rule now reads only the summary and content words
+  (`NL_MODE_SUMMARY_WORDS`, `NL_CONTENT_WORDS`) as an item-content request; `asksForItemContent` itself (the
+  `item.summarize` grounding) is unchanged. This only narrows the rule toward main's behaviour. No gold or context-eval
+  turn has a pointer with a full-text word and no summary or content word (scanned offline: nl-intent, agent-plan,
+  nl-intent.context, the 186 context-eval texts), so the measured runs of 1c236738 are unaffected; `uat5r6-07`
+  ("그거 요약해줘") is still caught.
+- **Owner decision of 2026-10-29 — the intent gate miss of 1c236738 is recorded as a known variance ("예외 기록 후
+  병합").** Measurement at 1c236738: suite 550 files / 17,800 tests; eval:context 3/3 runs (0 hard); read-regression 3/3;
+  agent-plan 3/3 (`uat5r6-07` absent in all runs); intent 2/3: run 3 answered gold `neg-100` ("summarize document 1"
+  after a `drive.files` listing, expect `none` while `item.summarize` is hidden) with `drive.files {}` again (also once
+  at 95386868; about 2 of 69 archived intent runs). Same selector prompt digest as 2dd14102; the rule above does not
+  read a bare number, so this path is unchanged by the branch. With `item.summarize` offered (read-regression, the
+  deployed catalog) the same text was `item.summarize {source: drive, ref: #1, mode: summary}` in 3/3 runs. The owner
+  approved this one gate exception; the gate, its thresholds and the gold are unchanged.
+  - Tried and reverted: reading one bare number (`nlNumeralsIn`) as an item pointer. Codex review (two P2s, reproduced)
+    showed it reads quantities, pages and argument digits as an item ("Show the whole list of 10 again", "상위 5개 전체
+    다시 보여줘", "Summarize the list in 5 pages", "Q3 전체 다시 보여줘" after `drive.files {name: Q3}`) and turned
+    legitimate re-lists into chat. Telling "document 1" from "list of 10" needs a list-noun vocabulary, against the
+    owner's rule.
+  - Outside references read for this (owner request; code or official docs only): block/buzz (`crates/buzz-agent/src/
+    agent.rs` preflight rejects an unknown tool and returns the error to the model), openclaw/openclaw
+    (`docs/concepts/agent-loop.md` schema validation of tool args; `docs/tools/loop-detection.md` blocks the exact same
+    call repeated and gives the model one recovery turn), Rasa (`rasa_sdk/knowledge_base/utils.py` resolves a mention
+    only against `listed_items`), Alexa `AMAZON.SelectIntent` (`ListPosition` tied to the shown items). None parses bare
+    numbers deterministically; they keep the item action visible to the model, as the deployed catalog does.
+  - Backlog candidate (not started): when the selector repeats the listing just shown, ask the model once whether an
+    item action fits instead of refusing (the Buzz / OpenClaw one-recovery pattern); a prompt and model-call change that
+    needs its own design, review and full measurement.

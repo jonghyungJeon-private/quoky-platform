@@ -314,7 +314,9 @@ const jiraRelease: NlCatalogEntry = {
     { name: 'scope', kind: 'enum', values: ['mine', 'all'], default: 'mine', valueGrounding: { all: JIRA_SCOPE_ALL_WORDS }, ungroundedFallsBackToDefault: true, description: 'all ONLY when the owner explicitly asks for every assignee (전체, 모든 담당, 담당 상관없이, all assignees); words for every item (다, 전부, all of them) are not every assignee. Default mine = the owner\'s own issues. Every assignee with no release, project or link named: NEEDS_CLARIFICATION.' },
     COUNT,
   ],
-  usage: { ko: '"ABC 프로젝트 1.2.0 릴리스 보여줘"', en: '"ABC 프로젝트 1.2.0 릴리스 보여줘"' },
+  // Owner decision D2 (2026-10-26): Core's copy quotes only commands that resolve deterministically. A release is chosen by
+  // the selector (A8), so its usage is an unquoted example of words, never a quoted command to send.
+  usage: { ko: '예: ABC 프로젝트 1.2.0 릴리스 보여줘', en: 'e.g. ABC 프로젝트 1.2.0 릴리스 보여줘' },
   sourceNames: ['jira', '지라'],
   normalize(args: Record<string, NlArgValue>, groundingText?: string, previousArgs?: NlArgs): void {
     normalizeJiraReleaseArgs(args, groundingText, previousArgs);
@@ -439,6 +441,9 @@ const calendarEvents: NlCatalogEntry = {
   id: 'calendar.events',
   risk: 'READ',
   dmOnly: false,
+  // Owner decision P-time (ii), 2026-10-27: "그 면접 몇 시였지?" after tomorrow's listing reads tomorrow, not today.
+  inheritsHeldRange: true,
+  rangeIsItemDate: true,
   label: { ko: '캘린더 일정 조회', en: 'Calendar events' },
   aliases: ['calendar', '캘린더', '일정', '스케줄', '달력', '회의', '미팅'],
   description: {
@@ -598,7 +603,8 @@ const briefToday: NlCatalogEntry = {
     ko: '지금 오늘의 종합 브리핑(일정·알림·할 일을 한 번에, 하루 요약, 하루를 한눈에 보기). 한 소스만 묻는 경우는 아님.',
   },
   args: [],
-  usage: { ko: '"오늘 브리핑해줘"', en: '"오늘 브리핑해줘"' },
+  // D2: the brief is chosen by the selector only (no deterministic grammar), so its usage is an unquoted example.
+  usage: { ko: '예: 오늘 브리핑해줘', en: 'e.g. 오늘 브리핑해줘' },
 };
 
 /** The help topics `help.topic` accepts: the ADR-0104 index ids plus `mail`, `drive` and `all`. */
@@ -641,7 +647,8 @@ const helpTopic: NlCatalogEntry = {
       description: 'The Quoky feature asked about: todo, todo.complete, reminder, calendar, mail, drive, work-lookup (Jira/GitHub/Slack/Confluence lookups), memory, feedback, branch, commit, project, model, connector-write; all for "which things are you able to help with".',
     },
   ],
-  usage: { ko: '"도움말"', en: '"help"' },
+  // D2: "도움말" is the deterministic help command in both languages (a bare "help" is not).
+  usage: { ko: '"도움말"', en: '"도움말"' },
 };
 
 export const NL_WAVE1_ENTRIES: Readonly<Record<NlWave1EntryId, NlCatalogEntry>> = Object.freeze({

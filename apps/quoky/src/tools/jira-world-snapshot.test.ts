@@ -80,7 +80,7 @@ describe('a8-12 and a8-08: the observed selector outputs', () => {
     // "차란차" alone names five visible projects (the ambiguous list), not the gold's confirmation question.
     const raw = answer('jira.release', { project: '차란차' });
     expect(scoreReadRegression(golden('a8-12'), raw, NOW).outcome).toBe('miss');
-    expect(await scoreReadRegressionInWorld(golden('a8-12'), raw, NOW)).toEqual({ outcome: 'miss', relabeled: false, got: 'jira.release' });
+    expect(await scoreReadRegressionInWorld(golden('a8-12'), raw, NOW)).toEqual({ outcome: 'miss', relabeled: false, got: 'jira.release', gotArgs: { project: '차란차' } });
   });
 });
 

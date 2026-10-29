@@ -166,3 +166,7 @@ The deployed dry baseline is unchanged at 35/38. Actions-local + oracle moved fr
 - One wrong write remains: the calendar-write undo (P4).
 - `of-todo-third-en` failed before because of equal createdAt stamps (the shown order differed from setup). It now
   passes its target.
+
+## Addendum: Strict run 2 (2026-10-27)
+
+Run 2 at `653e3a8f` scored 27/38. Its classification and the next fixes are in `context-eval-run2-2026-10-27.md`.

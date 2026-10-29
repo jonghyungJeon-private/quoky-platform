@@ -55,7 +55,7 @@ Under the default profile, 17 scenarios require A6 actions (`requires: actions` 
 | `false-incapability` | Right after a listing, in a reply about that listing (it names the listing's own catalog nouns, or Quoky as the one that showed it), a sentence saying the reply cannot see, read or check something is false unless it names another source (#280, owner decision 2026-10-22). Elsewhere, a sentence saying Quoky cannot see, check, read or reach a configured source, or cannot add, complete, cancel or undo one of its own to-dos or reminders, is false. The exception is a reply that hands the owner a command to send: that is the ratified D5/D9 answer of a chat reply, which cannot run commands itself. Not this claim: a past outcome ("찾지 못했어요" = not found), true limits ("보낼 수 없어요"; GitHub and Confluence are not configured in the world), and a turn whose honest answer is "cannot" (`incapabilityAllowed`: the known gap, a DM-only refusal, the help-scope "2"). |
 | `fabricated-action` | A chat reply that claims a completed write on a turn that wrote nothing. A negated form ("만들지 않았어요") is not a claim. |
 | `remote-leak` | A protected fixture string (calendar title or location; mail sender, subject, snippet or body; Drive name or text) that the owner did not type, inside a REMOTE selection, chat or other prompt. Summary prompts are exempt: they exist only for the owner's explicit one-item read, whose body goes to the chat tier by design and the reply says so. |
-| `unparseable-suggestion` | A command Quoky's reply quotes that the deterministic command path cannot parse, i.e. it falls to chat. The runner sends each quoted suggestion alone in a fresh DM with the selector answering none, after filling template placeholders (`N`, `N번`, `번호`, `<…>`). Quoted text includes one-line code fences. Segments that quote the owner, Quoky's own earlier replies or fixture content are not suggestions. Replies that leave the conversation waiting for an answer (a pending question, a choice, an approval) suggest in-context answers; those are tested by the echo scenarios instead. |
+| `unparseable-suggestion` | A command Quoky's reply quotes that the deterministic command path cannot parse, i.e. it falls to chat. The runner sends each quoted suggestion alone in a fresh DM, after filling template placeholders (`N`, `N번`, `번호`, `<…>`). Owner decision D2 (2026-10-26): a command in Core's own fixed copy must parse on the deterministic path (the selector answers none); a command the chat model wrote (it appears in that turn's raw chat reply) is probed with the real selector in a Strict run, at most 3 per reply (any beyond are reported as unprobed), and on the deterministic path in a dry run. The report counts the two origins apart (`unparseable suggestions by origin`); both count toward the hard check. Quoted text includes one-line code fences. Segments that quote the owner, Quoky's own earlier replies or fixture content are not suggestions. A quoted step after "→" on its line is a step of a flow (owner decision D3, 2026-10-26: the help index shows flow steps as steps), answered in its flow and not probed alone. Replies that leave the conversation waiting for an answer (a pending question, a choice, an approval) suggest in-context answers; those are tested by the echo scenarios instead. |
 
 The detectors are measurement, never routing: they read the reply after the fact and change nothing in the product.
 Their vocabulary comes from Core's catalog: the source names and aliases of the configured reads, and the aliases of
@@ -93,7 +93,7 @@ pnpm eval:context -- --mode dry  [--profile P] [--selector oracle|none] [--scena
   - the corpus sha256;
   - the git revision;
   - the profile and its env;
-  - the prompt versions (`nl-select.v67` read, `v65` A6, `v66` R2);
+  - the prompt versions (`nl-select.v73` read, `v71` A6, `v72` R2);
   - the selection model;
   - the chat mode and chat model;
   - the runs;
@@ -117,8 +117,9 @@ pnpm eval:context -- --mode dry  [--profile P] [--selector oracle|none] [--scena
   - `--selector none` uses the deterministic path alone, the provider-outage view.
   - It runs in about 2 s for the whole corpus.
 
-**Cost (estimate).** The deployed profile with `--chat real`, one run, is capped at 138 selection calls and 138 chat
-calls, about $10 at the printed per-call assumptions. In practice about 85 turns reach the selector and about 41 reach
+**Cost (estimate).** The deployed profile with `--chat real`, one run, is capped at 552 selection calls (138 turns plus
+up to 3 chat-suggestion probes per turn, D2) and 138 chat calls; the CLI prints the cost bound at its per-call
+assumptions. Chat replies that suggest a command are few (5 in run 2), so the probes add only a handful of real calls. In practice about 85 turns reach the selector and about 41 reach
 chat (dry count), so expect about $1.3 for selection and about $2.5 for chat, roughly $4. With `--chat stub` it is capped
 at about $2 and expected at about $1.3. The canaries (up to 4 per provider) are extra.
 
@@ -126,9 +127,11 @@ at about $2 and expected at about $1.3. The canaries (up to 4 per provider) are 
 `--profile actions-local --chat real` for the promotion candidate. With `--chat stub` the honesty checks only see Core's
 deterministic copy: a chat stub reply passes them by construction.
 
-## Gate (owner decision 2026-10-26)
+## Gate (owner decisions 2026-10-26 and 2026-10-27)
 
-- At least 95% of the fully scored scenarios pass, in every run.
+- **3 runs** (the `--runs` default; a plan with fewer runs can never pass), and **EACH run** passes on its own. The
+  gate is not pooled across runs (owner decision 2026-10-27, as corrected the same day).
+- In every run, at least 95% of the fully scored scenarios pass.
 - Each hard check is at 0: wrong writes, writes without a card, false incapability claims, fabricated action claims,
   remote leaks and unparseable suggestions.
 - Harness errors are at 0. A fixture the world did not stub, or a setup message that reached a model, makes the
@@ -160,6 +163,44 @@ What the oracle rows fail on (Core-side, measured without a model):
 - **The help index lists flow steps that do not parse alone** (`se-help-first-command`): "새 파일 만들어줘", "테스트
   실행해줘", "타입체크 실행해줘".
 - **A worded help-scope answer is not recognised** (`hs-calendar-words`): "Quoky로 하는 거" falls to chat.
+
+## D12 gate for read v68 / v69 (owner decisions D1, D4; fixes P7, P10; prepared offline, not run)
+
+The D1 / P7 change (v68) adds two optional parts to the selector prompt: the previous selection's chat-turn age and
+the earlier selections of other sources. The D4 / P10 change (v69) adds a third: the open help-scope question, which is
+shown when the owner's reply named no option, with the output's optional `answer`. Without them every prompt is
+v67 / v65 / v66 byte for byte. The gate is
+therefore two Strict steps, both owner-approved by plan digest. No model was called to prepare them.
+
+1. **Regression (byte-identical prompts, new version label).** Re-run the existing gates under the new versions:
+   ```bash
+   pnpm -s build
+   pnpm eval:nl -- --mode plan --runs 3                     # read v69 over nl-intent.v1.json
+   pnpm eval:nl -- --mode read-regression --runs 3          # A6 v67, read cases with the A6 entries offered
+   ```
+   The bar is the ADR-0120 D12 gate (≥95% overall, ≥90% per entry, 0 wrong captures, 3 stable runs).
+2. **The new parts.**
+   - The 20 owner-approved cases (D1, P7, D4; `ctx-d1-005` swapped on 2026-10-27) are the supplemental scored corpus
+     `packages/core/src/application/golden/nl-intent.context.v1.json`. Step 1's two plans already include it: its cases
+     count in both gates, and the corpus digest binds both files. It is selector-only: not part of the ADR-0121 Q11
+     planner gold. `eval:nl` and read-regression render `prior.turns`, `prior.earlier` and `openQuestion` exactly as the
+     runtime does, and score `expectAnswer`.
+   - Then the context eval, Strict, for the end-to-end view (`sc-jira-chat-refine`, `fr-todo-status-count` t3,
+     `lc-interview-exists-then-time` t3, `sc-calendar-todo-interview` t3, `hs-calendar-words` t2):
+     ```bash
+     pnpm eval:context -- --mode plan --profile deployed --chat real          # 3 runs (the gate)
+     ```
+
+**Update (owner decision of 2026-10-27, after the 32a2c81f gates): D4 moves to the next merge.** The open question is no
+longer shown to the selector (read v72 / A6 v70 / R2 v71 now render only their no-open-question bytes), and a worded
+help-scope reply is routed as usual again (number or displayed option text only). The 34 `ctx-d4-*` golds wait in
+`golden/nl-intent.context-d4-pending.v1.json` for the dedicated D4 classifier; the scored context corpus is the 12 D1 /
+P7 cases. `hs-calendar-words` t2 is expected to fail again until that classifier lands (its expectation is unchanged).
+
+**Known-gap turn (owner decision of 2026-10-27).** `hs-calendar-words` turn 2 is marked `knownGap: true`, and the
+scenario's `knownGap` names D4. A scenario that misses only soft checks on its known-gap turns is reported as a known
+gap (`known gaps N` in the summary), outside the 95% rate. Hard checks on the turn still count. When D4 lands, the
+marks are removed, and the turn is re-scored as a normal turn against its unchanged expectation.
 
 ## Relation to `quoky-e2e`
 

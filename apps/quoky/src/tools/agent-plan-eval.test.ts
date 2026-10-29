@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
+import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
 import {
   AGENT_PLAN_NEGATIVE_FAMILIES,
   AGENT_PLAN_POSITIVE_FAMILIES,
@@ -39,7 +40,7 @@ const CASES = agentPlanEvalCases(CORPUS, ONE_STEP);
 const NEW = CORPUS.cases;
 const READS = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 
-const OPTIONS: AgentPlanEvalOptions = { model: 'haiku', runs: 3, concurrency: 4, includePending: false, gitHead: 'a'.repeat(40) };
+const OPTIONS: AgentPlanEvalOptions = { model: 'haiku', effort: 'high', runs: 3, concurrency: 4, includePending: false, gitHead: 'a'.repeat(40) };
 const HASHES = { corpusSha256: LOADED.sha256, oneStepCorpusSha256: LOADED.oneStepSha256 };
 
 const steps = (value: unknown): string => JSON.stringify({ steps: value, ambiguity: 'CLEAR' });
@@ -402,11 +403,13 @@ describe('hostile planner output never reaches the report (Codex P2)', () => {
 describe('plan digest', () => {
   const digest = (options: Partial<AgentPlanEvalOptions> = {}, hashes = HASHES) => computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, hashes, FIXTURE, { ...OPTIONS, ...options }));
 
-  it('is stable for the same inputs and binds model, runs, concurrency, timeout, git HEAD, both corpora and --include-pending', () => {
+  it('is stable for the same inputs and binds model, effort, runs, concurrency, timeout, git HEAD, both corpora and --include-pending', () => {
     expect(digest()).toBe(digest());
     const base = digest();
     for (const changed of [
       digest({ model: 'sonnet' }),
+      // Owner decision of 2026-10-28: the planner's effort is bound into the digest.
+      digest({ effort: 'low' }),
       digest({ runs: 2 }),
       digest({ concurrency: 2 }),
       digest({ timeoutMs: 7000 }),
@@ -427,22 +430,23 @@ describe('plan digest', () => {
     expect(approved.caseIds).toHaveLength(approvedCount);
     expect(pending.caseIds).toHaveLength(873 + NEW.length);
     // The read + write probe bound (owner-ratified 2026-10-26): one more call for each case of two or more conjuncts.
-    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v65', maxCallsPerRun: expect.any(Number) });
+    expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v71', maxCallsPerRun: expect.any(Number) });
     expect(approved.readWriteProbe.maxCallsPerRun).toBeGreaterThan(0);
     expect(approved.readWriteProbe.maxCallsPerRun).toBeLessThan(approvedCount);
     expect(approved.maxCalls).toBe((approvedCount + approved.readWriteProbe.maxCallsPerRun) * 3);
     expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
-    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v9', callTimeoutMs: 6000, fixture: FIXTURE });
+    expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v10', callTimeoutMs: 10000, fixture: FIXTURE });
     expect(approved.promptSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('rejects out-of-range options', () => {
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, runs: 6 })).toThrow(/runs/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, concurrency: 0 })).toThrow(/concurrency/);
-    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, timeoutMs: 9000 })).toThrow(/timeoutMs/);
+    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, timeoutMs: 10001 })).toThrow(/timeoutMs/);
     expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, model: '--x' })).toThrow(/model/);
+    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, effort: '--x' })).toThrow(/effort/);
   });
 });
 
@@ -495,17 +499,26 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
   }
   const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] as string;
 
+  it('owner decision of 2026-10-28: --effort is bound into the digest, and an unknown level is a usage error', async () => {
+    const medium = deps([]);
+    expect(await runCli(['--mode', 'plan', '--runs', '3', '--effort', 'medium'], medium)).toBe(EXIT_OK);
+    expect(digestOf(medium.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, effort: 'medium' })));
+    expect(await runCli(['--mode', 'plan', '--runs', '3', '--effort', 'huge'], deps([]))).toBe(EXIT_USAGE);
+  });
+
   it('plan is offline: it prints the digest, the prompt binding and the call bound, and constructs nothing', async () => {
     const created: string[] = [];
     const planned = deps(created);
     expect(await runCli(['--mode', 'plan', '--runs', '3'], planned)).toBe(EXIT_OK);
     const text = planned.out.join('\n');
-    expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS)));
-    expect(text).toContain('"promptVersion": "agent-plan.v9"');
+    // The CLI's default effort is the adapter's selection effort (owner decision of 2026-10-28: bound into the digest).
+    const cliDefault = { ...OPTIONS, effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low' };
+    expect(digestOf(planned.out)).toBe(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, cliDefault)));
+    expect(text).toContain('"promptVersion": "agent-plan.v10"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
     const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v65\) x 3 run\(s\)/.exec(text);
+    const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v71\) x 3 run\(s\)/.exec(text);
     expect(bound).not.toBeNull();
     const [, total, planner, probes] = (bound as RegExpExecArray).map(Number);
     expect(planner).toBe(approvedCount);
@@ -587,7 +600,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--runs', '3', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
     expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 678/678 (100.0%)  ask: 12/12');
-    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v9): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
+    expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v10): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
     const today = { ...deps(created), load: () => unapproved };

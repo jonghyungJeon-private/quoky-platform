@@ -1947,6 +1947,7 @@
    "title": "캘린더에서 일정 찾는 방법 → 번호 대신 말로 답함",
    "lang": "ko",
    "world": "office",
+   "knownGap": "D4 (a worded answer to the help-scope question) moved to the next merge as a dedicated classifier (owner decision of 2026-10-27); turn 2 keeps the feature's expectation and is re-scored as a normal turn when D4 lands",
    "turns": [
     {
      "text": "캘린더에서 일정 찾는 방법 알려줘",
@@ -1960,6 +1961,7 @@
     },
     {
      "text": "Quoky로 하는 거",
+     "knownGap": true,
      "oracle": {
       "entryId": "none"
      },

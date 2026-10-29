@@ -341,6 +341,9 @@ export type ClaudeEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 const CLAUDE_EFFORT_LEVELS: readonly ClaudeEffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** The Claude effort levels, in order (eval CLIs validate `--effort` against them; owner decision of 2026-10-28). */
+export const CLAUDE_EFFORT_LEVEL_NAMES: readonly ClaudeEffortLevel[] = CLAUDE_EFFORT_LEVELS;
+
 export const DEFAULT_CLAUDE_MODEL = 'sonnet';
 
 /**
@@ -355,8 +358,10 @@ export const DEFAULT_CLAUDE_INTENT_SELECTION_MODEL = 'haiku';
  * Capabilities not listed here (e.g. TEST_EXECUTION) pass no `--effort` flag (CLI default; ADR-0092).
  */
 export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>> = {
-  [Capability.GENERAL_CHAT]: 'low',
-  [Capability.POLICY_SENSITIVE_CHAT]: 'low',
+  // Owner decision of 2026-10-28: medium (eval:context with chat medium passed the context gate, 37/38, 38/38, 38/38).
+  // The measured run raised both chat capabilities (`--chat-effort`), so policy-sensitive chat follows.
+  [Capability.GENERAL_CHAT]: 'medium',
+  [Capability.POLICY_SENSITIVE_CHAT]: 'medium',
   [Capability.READONLY_LOOKUP]: 'low',
   [Capability.SUMMARIZATION]: 'low',
   [Capability.DOCUMENT_ANALYSIS]: 'medium',
@@ -364,8 +369,9 @@ export const DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY: Readonly<Partial<Record<Capabi
   [Capability.CODE_REVIEW]: 'medium',
   [Capability.ARCHITECTURE_PLANNING]: 'high',
   [Capability.CODE_IMPLEMENTATION]: 'high',
-  // ADR-0120 D2: one schema-only routing call, as fast as the model allows.
-  [Capability.INTENT_SELECTION]: 'low',
+  // ADR-0120 D2: one schema-only routing call. Owner decision of 2026-10-28 (ADR-0120 implementation note): high effort,
+  // measured on eval:context (haiku high 38/38, 37/38, 36/38 against haiku low 30-32 of 38).
+  [Capability.INTENT_SELECTION]: 'high',
 };
 
 export interface ClaudeCliProviderOptions extends CliProviderOptions {

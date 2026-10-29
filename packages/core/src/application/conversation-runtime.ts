@@ -67,7 +67,7 @@ import {
   mentionsConnectorWriteExecutionStep,
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
-import { isDirectConversation, messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
+import { isDirectConversation, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from './message-rendering';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
@@ -88,18 +88,34 @@ import {
 import {
   NON_ABSOLUTE_REGISTRATION_KIND,
   POLICY_SENSITIVE_CHAT_KIND,
+  IntentClassifier,
   chatIntentOf,
   detectProjectRegistration,
   externalActionRequestOf,
   type IntentClassifyContext,
 } from './intent-classifier';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
-import { guardFalseControlDenials, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, renderControlCommandsFact, type NlControlScope } from './nl-routing/honest-chat';
+import {
+  guardFalseControlDenials,
+  guardFalseIncapabilityClaims,
+  guardShownListingDenials,
+  nlShownItemTitles,
+  nlShownItemWords,
+  nlSpanRequestsOfferedSource,
+  nlUnquoteNonCommands,
+  CLOSED_QUESTION_FACT,
+  renderConfiguredSourcesFact,
+  renderControlCommandsFact,
+  type NlControlScope,
+  type ShownListing,
+} from './nl-routing/honest-chat';
 import { languageOf, type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from './nl-routing/nl-selection-service';
 import { readLastSelection } from './nl-routing/selection-state';
+import { externalLastActionOf } from './nl-routing/last-action';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
+import { LAST_REPLY_METADATA_KEY, nlBareYesNo, readClosedQuestion, readLastReply, renderNoOpenQuestion } from './nl-routing/last-reply';
 import type { MessageBody } from '../domain';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { nearMissActionSwitchPhrase, parseActionSwitchPhrase, renderActionSwitchHint, renderActionSwitchReply } from './nl-routing/action-switch';
@@ -1103,6 +1119,8 @@ export interface ConversationRuntimeDeps {
         // Owner decision B (2026-10-22): a handler reply that asks to confirm one read keeps it as the open question.
         | 'recordConfirmQuestion'
         | 'clearLastSelection'
+        // Owner decision D1 (2026-10-26): a chat turn keeps `lastSelection`, one turn older.
+        | 'keepLastSelectionAcrossChat'
         | 'yieldsToSelection'
         | 'grammarYieldEnabled'
         | 'phaseCEnabled'
@@ -1116,12 +1134,16 @@ export interface ConversationRuntimeDeps {
         | 'decideAnchoredUndo'
         | 'answerActionPending'
         | 'recordActionReceipt'
+        // Context eval 2026-10-26 (P4): an approved connector write becomes the (not undoable) last action.
+        | 'recordExternalWrite'
         | 'logActionUnserved'
         | 'actionsStillActing'
         // ADR-0120 amendment A6 R5a (no new deps key): deictic writes; inert while QUOKY_NL_DEICTIC_WRITES is off.
         | 'answerDeicticDraft'
         | 'recordLastTurn'
         | 'deicticWritesMode'
+        // Owner decision of 2026-10-29 (no new deps key): whether the last reply was chat, for a stale bare yes or no.
+        | 'recordLastReply'
       >
     >;
   /**
@@ -1151,6 +1173,12 @@ export interface ConversationRuntimeDeps {
 /** ADR-0120 D9: what the chat turn after a `none` (or unavailable) selection carries — the configured entries. */
 interface NlChatFacts {
   readonly entries: readonly NlCatalogEntry[];
+  /**
+   * #280 follow-up: the listing the previous turn showed (Core's own `lastSelection` record, read at the start of this
+   * turn) and whether a quoted command re-runs exactly that listing (the handlers' pure Class B probes). Absent when no
+   * offered listing was shown.
+   */
+  readonly listing?: { readonly shown: ShownListing; readonly rerunsListing: (segment: string) => boolean };
 }
 
 /**
@@ -2375,8 +2403,10 @@ export class ConversationRuntime {
       // A6 R5a §3.2 `none`: a turn that ended an unanswered preview says so before its own reply.
       const prefix = this.nlDeicticPrefix.get(message);
       if (prefix !== undefined) result = { ...result, reply: withOutboundBody(result.reply, messageBody(prefix, '\n', outboundBody(result.reply))) };
+      this.holdNlShownItemWords(message, result);
       await this.settleNlLastSelection(message);
       await this.recordNlLastTurn(message);
+      await this.recordNlLastReply(message);
       this.startAfterReply(message);
       return result;
     } catch (err) {
@@ -2384,6 +2414,9 @@ export class ConversationRuntime {
       await this.settleNlLastSelection(message, true).catch(() => undefined);
       this.nlReplyKinds.set(message, { kind: 'note' });
       await this.recordNlLastTurn(message).catch(() => undefined);
+      // The sanitized error below is not a chat reply, whatever route the turn was on.
+      this.nlChatReplies.delete(message);
+      await this.recordNlLastReply(message).catch(() => undefined);
       const safe = toSafeError(err);
       this.deps.logger.error('inbound handling failed', {
         errorName: err instanceof Error ? err.name : typeof err,
@@ -2417,6 +2450,9 @@ export class ConversationRuntime {
     // ADR-0120 D7: an open selection question ends with this owner turn whatever route answers it; selection below gets
     // the question only when the turn reaches it (`active` only; nothing is written when there is none).
     const nlPending = this.deps.nlSelection?.takePending ? await this.deps.nlSelection.takePending(session, actor.id, this.clock()) : undefined;
+    // Owner decision of 2026-10-29 ("1번 진행"): this turn ended this actor's open question; if chat answers the turn, the
+    // question was closed without an answer (an answer is never chat), see `quoky.lastReply` `questionClosedAt`.
+    if (nlPending !== undefined && nlPending !== null) this.nlClosedQuestions.add(message);
     // ADR-0120 follow-up: `lastSelection` must describe the listing of the LAST turn only; see `settleNlLastSelection`.
     if (this.deps.nlSelection?.mode === 'active' && session.metadata?.[LAST_SELECTION_METADATA_KEY] !== undefined) {
       this.nlTurns.set(message, { sessionId: session.id, keep: false });
@@ -3358,6 +3394,14 @@ export class ConversationRuntime {
       }
     }
 
+    // (C3) Owner decision of 2026-10-29 ("끊긴 확인 고치고 재측정"): a bare yes or no bound for chat with nothing waiting for
+    // it gets Core's fixed notice and no chat call. Every route above that answers a yes or no (the D7 question, the A6
+    // continuation and undo confirmations, approvals, anchors) has had its turn; after a chat reply the yes still goes to
+    // chat, which may have asked it.
+    if (this.isStaleBareYesNo(message, session, actor, intent, nlPending, lookup.pending !== null || lookup.override !== null || Boolean(lookup.connectorWrite) || applyAnchor !== null)) {
+      return this.respondComposed(message, session, outboundMessage(message.context, renderNoOpenQuestion(languageOf(message.text))));
+    }
+
     // Every remaining route (work surface, project registration, analysis, chat) never reaches a workspace,
     // git or command mutator, so an infrastructure failure renders the confirmed-not-applied wording instead
     // of the backstop's "변경 적용 여부를 확인할 수 없어요".
@@ -3371,14 +3415,23 @@ export class ConversationRuntime {
   /** Turns (by message object) for which the Class B listing grammars may yield to selection (amendment A2). */
   private readonly nlYield = new WeakSet<InboundMessage>();
 
-  /** Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. */
-  private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean }>();
+  /**
+   * Per turn (by message object): a previous `lastSelection` exists and this turn has not yet replaced it. `chat`: the turn
+   * was answered by chat, which keeps the record one turn older (owner decision D1) instead of clearing it.
+   */
+  private readonly nlTurns = new WeakMap<InboundMessage, { sessionId: Id; keep: boolean; chat?: boolean }>();
+  /** Owner decision of 2026-10-28: the shown listing's item words per `sessionId|actorId` (process memory only, bounded). */
+  private readonly nlShownItems = new BoundedShownItems();
   /** A6 R5a: who and where each turn is (and its SHORT_TERM user record), for `quoky.lastTurn`. */
   private readonly nlTurnFacts = new WeakMap<InboundMessage, { readonly sessionId: Id; readonly actorId: Id; readonly memoryId?: Id }>();
   /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
   private readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
   /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
   private readonly nlDeicticPrefix = new WeakMap<InboundMessage, string>();
+  /** Owner decision of 2026-10-29: turns answered by chat (GENERAL_CHAT / POLICY_SENSITIVE_CHAT), for `quoky.lastReply`. */
+  private readonly nlChatReplies = new WeakSet<InboundMessage>();
+  /** Owner decision of 2026-10-29 ("1번 진행"): turns whose start took the actor's open D7 question (`takePending`). */
+  private readonly nlClosedQuestions = new WeakSet<InboundMessage>();
 
   /** A6 R5a: what a handler's reply was, for `quoky.lastTurn` (an echo, a to-do / reminder listing, a question, a note). */
   private static nlReplyKindOf(handled: TurnHandlerOutcome): { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' } {
@@ -3421,6 +3474,41 @@ export class ConversationRuntime {
       now: this.clock(),
       direct: isDirectConversation(message.context),
     });
+  }
+
+  /** Owner decision of 2026-10-29: write `quoky.lastReply` (whether this turn was answered by chat; nothing unless `active`). */
+  private async recordNlLastReply(message: InboundMessage): Promise<void> {
+    const nl = this.deps.nlSelection;
+    const facts = this.nlTurnFacts.get(message);
+    if (nl?.recordLastReply === undefined || nl.mode !== 'active' || facts === undefined) return;
+    await nl.recordLastReply({ id: facts.sessionId }, facts.actorId, this.nlChatReplies.has(message), this.clock(), this.nlClosedQuestions.has(message));
+  }
+
+  /**
+   * Owner decision of 2026-10-29 ("1번 진행", context eval `sc-confirm-chat-yes`): this chat turn follows an open D7 question
+   * Core closed without an answer, so its prompt carries {@link CLOSED_QUESTION_FACT}. Either this very turn took the
+   * actor's question (and is chat, so it did not answer it), or the actor's fresh `quoky.lastReply` holds
+   * `questionClosedAt` (every reply since was chat). Only in `active`, only for GENERAL_CHAT / POLICY_SENSITIVE_CHAT.
+   */
+  private closedQuestionFact(message: InboundMessage, session: Session, actor: Actor, capability: Capability): string | undefined {
+    if (this.deps.nlSelection?.mode !== 'active') return undefined;
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return undefined;
+    const closed = this.nlClosedQuestions.has(message) || readClosedQuestion(session.metadata?.[LAST_REPLY_METADATA_KEY], actor.id, this.clock());
+    return closed ? CLOSED_QUESTION_FACT : undefined;
+  }
+
+  /**
+   * Owner decision of 2026-10-29: this chat-bound turn is a stale bare yes or no. All of: selection is `active`; the turn
+   * is chat; no D7 question was open at its start (`takePending` ran and found none); no approval, override, connector-write
+   * or apply-preview anchor is open (`anchored`); the whole message, after input preparation, is a yes or no of the closed
+   * continuation reply set; and the fresh `quoky.lastReply` says Quoky's previous reply was NOT chat. No record (a new
+   * session, an expired one, selection not active before) keeps today's chat route.
+   */
+  private isStaleBareYesNo(message: InboundMessage, session: Session, actor: Actor, intent: Intent, nlPending: PendingQuestion | null | undefined, anchored: boolean): boolean {
+    if (this.deps.nlSelection?.mode !== 'active' || nlPending !== null || anchored) return false;
+    if (intent.type !== IntentType.CHAT || (intent.capability !== Capability.GENERAL_CHAT && intent.capability !== Capability.POLICY_SENSITIVE_CHAT)) return false;
+    if (nlBareYesNo(message.text, message.attachments?.length ?? 0, message.quotedRanges ?? []) === 'none') return false;
+    return readLastReply(session.metadata?.[LAST_REPLY_METADATA_KEY], actor.id, this.clock())?.chat === false;
   }
 
   /** An A6 question, refusal or (R5a) preview: its body, and its fixed history note when it shows the owner's items. */
@@ -3498,14 +3586,45 @@ export class ConversationRuntime {
 
   /**
    * ADR-0120 follow-up: after a turn, a `lastSelection` that this turn did not itself write or record (a selection, or a
-   * handler's grammar listing) is cleared — a turn answered by chat, help, an approval, a write preview or a clarification
-   * question has no catalog equivalent, so a later "그 중에 …" must not bind to an older, unrelated listing.
+   * handler's grammar listing) is cleared — a turn answered by help, an approval, a write preview or a clarification
+   * question has no catalog equivalent, so a later "그 중에 …" must not bind to an older, unrelated listing. Owner
+   * decision D1 (2026-10-26) reverses follow-up 2 for a turn answered by chat: the record stays, one turn older, within
+   * its own 30 minutes, and the selector is told how many chat turns came after it.
    */
   private async settleNlLastSelection(message: InboundMessage, failed = false): Promise<void> {
     const turn = this.nlTurns.get(message);
     if (turn === undefined || (turn.keep && !failed)) return;
     this.nlTurns.delete(message);
+    const facts = this.nlTurnFacts.get(message);
+    const keep = this.deps.nlSelection?.keepLastSelectionAcrossChat;
+    if (turn.chat === true && !failed && facts !== undefined && keep !== undefined) {
+      await keep.call(this.deps.nlSelection, { id: turn.sessionId }, facts.actorId, this.clock());
+      return;
+    }
     await this.deps.nlSelection?.clearLastSelection?.({ id: turn.sessionId });
+  }
+
+  /** D1: mark that this turn is answered by chat (a general or policy-sensitive chat reply), so settle keeps the record. */
+  private markNlChatTurn(message: InboundMessage, capability: Capability): void {
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return;
+    this.nlChatReplies.add(message);
+    const turn = this.nlTurns.get(message);
+    if (turn !== undefined && !turn.keep) turn.chat = true;
+  }
+
+  /**
+   * Owner decision of 2026-10-28 (fix 1 of the 95386868 context analysis): when this turn wrote `lastSelection` (it showed
+   * a listing), the words of the items Core itself rendered in that reply are held IN PROCESS MEMORY ONLY, per session and
+   * actor, for the shown-listing guard (`ShownListing.itemWords`). They are never persisted, logged or sent anywhere
+   * (ADR-0110 D4), and they are used only while `lastSelection` still names the same entry, within its own 30 minutes.
+   */
+  private holdNlShownItemWords(message: InboundMessage, result: TurnResult): void {
+    const turn = this.nlTurns.get(message);
+    const facts = this.nlTurnFacts.get(message);
+    if (turn?.keep !== true || facts === undefined) return;
+    const text = plainTextOf(outboundBody(result.reply));
+    // Codex review of 7f7e8d32: bound to this turn's own listing record (its turn id), never to a completion time.
+    this.nlShownItems.set(`${facts.sessionId}|${facts.actorId}`, { turnId: message.id, words: nlShownItemWords(text), titles: nlShownItemTitles(text) });
   }
 
   /** Mark that this turn wrote `lastSelection` (the selection service did), so the settle step keeps it. */
@@ -3775,6 +3894,52 @@ export class ConversationRuntime {
     return { kind: 'continue', ...(early !== undefined ? { early } : {}) };
   }
 
+  /**
+   * #280 follow-up: the offered READ listing Core still holds as `lastSelection` (right after the listing, and, since owner
+   * decision D1, across chat turns within its 30 minutes; any other turn clears it), with a predicate telling whether a
+   * quoted command maps to exactly that listing (same entry and canonical args) through the handlers' own pure Class B
+   * probes. The guard drops only denials that refer to this listing (CA review P1-1), so a held record never deletes an
+   * unrelated true limitation. No read, no write, no provider.
+   */
+  private nlShownListing(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    catalog: ReadonlyMap<string, { readonly entry: NlCatalogEntry }>,
+  ): { readonly shown: ShownListing; readonly rerunsListing: (segment: string) => boolean } | undefined {
+    const now = this.clock();
+    const last = readLastSelection(session, actor.id, now);
+    const entry = last === undefined ? undefined : catalog.get(last.entryId)?.entry;
+    if (last === undefined || entry === undefined || entry.risk !== 'READ') return undefined;
+    const canonical = (args: Readonly<Record<string, unknown>>): string => JSON.stringify(Object.keys(args).sort().map((key) => [key, args[key]]));
+    const shownArgs = canonical(last.args);
+    const rerunsListing = (segment: string): boolean =>
+      this.turnHandlerRegistry.some((handler) => {
+        if (typeof handler.classBProbe !== 'function') return false;
+        try {
+          const probe = handler.classBProbe({ message: { ...message, id: `${message.id}:listing-probe`, text: segment }, now });
+          return probe?.selection !== undefined && probe.selection.entryId === entry.id && canonical(probe.selection.args) === shownArgs;
+        } catch {
+          return false;
+        }
+      });
+    // The item words Core held for this listing: only when they were taken at or after the listing was recorded.
+    // Codex review of 7f7e8d32: only the words taken from the very turn that recorded this listing attach (turn id match).
+    const held = this.nlShownItems.get(`${session.id}|${actor.id}`);
+    const itemWords = nlHeldItemWordsFor(held, last);
+    // Owner decision of 2026-10-28 (B2): the shown titles, bound to the same listing record (turn id match).
+    const itemTitles = held === undefined ? undefined : nlHeldItemWordsFor({ turnId: held.turnId, words: held.titles }, last);
+    return {
+      shown: {
+        entry,
+        args: last.args,
+        ...(itemWords !== undefined && itemWords.length > 0 ? { itemWords } : {}),
+        ...(itemTitles !== undefined && itemTitles.length > 0 ? { itemTitles } : {}),
+      },
+      rerunsListing,
+    };
+  }
+
   /** A handler's Class B probe, only when its catalog equivalent (if any) is offered this turn; never throws. */
   private nlClassBProbe(handler: ConversationTurnHandler, ctx: TurnHandlerContext): NlClassBProbe | null {
     if (typeof handler.classBProbe !== 'function') return null;
@@ -4034,8 +4199,15 @@ export class ConversationRuntime {
     const nl = this.deps.nlSelection as Pick<NlSelectionService, 'mode' | 'decide'>;
     const catalog = this.nlCatalog(actor);
     const entries = [...catalog.values()].map((owned) => owned.entry);
+    // #280 follow-up: the listing the previous turn showed, read before this turn's selection changes the record.
+    const shownListing = this.nlShownListing(message, session, actor, catalog);
     const chat = await this.nlChatProvider(intent, session, actor);
+    // Owner-approved fix of 2026-10-28: the titles Core showed in the held listing, only when bound to its very record.
+    const heldListing = readLastSelection(session, actor.id, this.clock());
+    const heldItems = heldListing === undefined ? undefined : this.nlShownItems.get(`${session.id}|${actor.id}`);
+    const shownTitles = heldListing !== undefined && heldItems !== undefined && nlHeldItemWordsFor({ turnId: heldItems.turnId, words: heldItems.titles }, heldListing);
     const decision = await nl.decide({
+      ...(shownTitles !== undefined && shownTitles !== false && shownTitles.length > 0 ? { shownItemTitles: shownTitles } : {}),
       ...(chat !== undefined ? { chatProviderId: chat.id, chatProviderLocality: chat.locality } : {}),
       entryHelpTopics: this.nlEntryHelpTopics(catalog),
       ...(nlPending !== undefined ? { pending: nlPending } : {}),
@@ -4058,7 +4230,7 @@ export class ConversationRuntime {
     if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode === 'shadow') this.queueAgentShadow(message, session, actor, entries, decision, chat, route, nlPending);
     // A6-D6: the honest-chat fact names the action families only while they act (shadow keeps today's fact).
     const factEntries = this.deps.nlSelection?.actionsActing?.(actor) === true ? entries : entries.filter((entry) => entry.risk === 'READ');
-    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries } : undefined;
+    const honest = nl.mode === 'active' && factEntries.length > 0 ? { entries: factEntries, ...(shownListing !== undefined ? { listing: shownListing } : {}) } : undefined;
     switch (decision.kind) {
       case 'skip':
         // Phase C: the grammar is the fallback when selection did not run (shadow included: the grammar answers).
@@ -4169,6 +4341,7 @@ export class ConversationRuntime {
 
     // (E) Fast path — conversational, no Task needed.
     if (!intent.requiresWork) {
+      this.markNlChatTurn(message, intent.capability);
       const provider = await this.deps.router.select(intent.capability, { sessionId: session.id, actorId: actor.id });
       const raw = await provider.execute({ capability: intent.capability, prompt: message.text });
       const guard = this.guardChatReply(intent.capability, raw.text, message.text);
@@ -4426,7 +4599,7 @@ export class ConversationRuntime {
       this.deps.nlSelection?.mode === 'active' &&
       this.deps.nlSelection.recordGrammarSelection !== undefined
     ) {
-      if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock())) {
+      if (await this.deps.nlSelection.recordGrammarSelection(session, actor.id, handled.nlSelection, this.clock(), message.id)) {
         this.keepNlLastSelection(message, session);
       }
     }
@@ -4824,7 +4997,14 @@ export class ConversationRuntime {
             ? undefined
             : () => this.surfaceStillAllows(message.context, actor, writeGroups);
           try {
-            return respond(await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck));
+            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck);
+            // ADR-0112 amendment 1 S3 (context eval P4): every outcome of the write is the last action (receipt id), so
+            // "되돌려줘" answers about it and never reaches an older to-do or reminder.
+            if (executed.kind === 'outcome') {
+              const { source, entryId } = externalLastActionOf(anchor.family, executed.operation);
+              await this.deps.nlSelection?.recordExternalWrite?.({ session, actor, message, now: this.clock(), source, entryId, receiptId: executed.receiptId ?? view.taskId, outcome: executed.outcome.status });
+            }
+            return respond(executed);
           } catch (error) {
             if (!(error instanceof SurfaceDeniedError)) throw error;
             return this.surfaceDeniedTurn(message, session, error.decision);
@@ -8859,6 +9039,7 @@ export class ConversationRuntime {
   ): Promise<TurnResult> {
     // Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them; the guard keeps them).
     const controls = isDirectConversation(message.context) ? this.switchScope() : undefined;
+    this.markNlChatTurn(message, intent.capability);
     let task = await this.deps.tasks.createTask(intent, message.context, {
       requestText: message.text,
       actorId: actor.id,
@@ -8944,7 +9125,10 @@ export class ConversationRuntime {
           : controls !== undefined && (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT)
           ? renderControlCommandsFact(controls)
           : undefined;
-      const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
+      // Owner decision of 2026-10-29 ("1번 진행"): the closed-question fact, beside the D9 / control facts.
+      const closedFact = this.closedQuestionFact(message, session, actor, capability);
+      const chatFacts = [sourcesFact, closedFact].filter((fact): fact is string => fact !== undefined);
+      const nlComposition = chatFacts.length === 0 ? undefined : { additionalCurrentFacts: chatFacts };
       const promptSpec =
         nlComposition === undefined
           ? this.deps.promptComposer.compose(task, bundle, readout)
@@ -9132,6 +9316,9 @@ export class ConversationRuntime {
       });
       await this.deps.tasks.transition(task, TaskStatus.FAILED);
       this.deps.logger.error('work turn failed', { taskId: task.id, runId: run.id, kind: failure.kind });
+      // Codex review P2 of 31dd36e9: the fixed error below is not a chat reply, so `quoky.lastReply` records a non-chat
+      // turn (ending any closed-question fact) even though the turn was marked chat before the provider call.
+      this.nlChatReplies.delete(message);
       const reply = this.deps.composer.composeError(message.context, failure.userMessage);
       return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(providerId) };
     }
@@ -9169,6 +9356,48 @@ export class ConversationRuntime {
     nlFacts?: NlChatFacts,
     controls?: NlControlScope,
   ): { readonly text: string; readonly guarded: boolean } {
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT && capability !== Capability.IMAGE_UNDERSTANDING) {
+      return this.guardChatReplyClaims(capability, text, currentUserMessage, taskId, nlFacts, controls);
+    }
+    // Owner decision of 2026-10-28 (B1, amends the D2 copy rule): in the chat model's own text, a quoted or code span keeps
+    // its marks only when it is a command the owner can send: the grammar path claims it, or it names an offered source
+    // and ends in a request form. It runs before the claim guards, so Core's own copy (a notice, a usage line) is never
+    // touched.
+    const entries = nlFacts?.entries ?? [];
+    const unquoted = nlUnquoteNonCommands(text, (span) => this.nlGrammarRuns(span) || nlSpanRequestsOfferedSource(span, entries));
+    if (unquoted.unquoted > 0) this.deps.logger.info('chat quote marks removed', { capability, spans: unquoted.unquoted, ...(taskId ? { taskId } : {}) });
+    const claims = this.guardChatReplyClaims(capability, unquoted.text, currentUserMessage, taskId, nlFacts, controls);
+    return unquoted.unquoted > 0 ? { text: claims.text, guarded: true } : claims;
+  }
+
+  /**
+   * Owner decision of 2026-10-28 (B1): whether Core's grammar path answers `span` sent alone in a DM, without a model:
+   * the intent classifier gives it a non-chat intent, it is a control phrase (conversation or action switch), or a turn
+   * handler's pure claim (`surfaceClaim`, the same parser `handle` uses) claims it. Synchronous, pure, never throws.
+   */
+  private nlGrammarRuns(span: string): boolean {
+    if (parseActionSwitchPhrase(span) !== undefined || detectConversationControl(span) !== null) return true;
+    if (IntentClassifier.textIntent(span).type !== IntentType.CHAT) return true;
+    const now = this.clock();
+    const message: InboundMessage = { id: 'quote-check', text: span, context: { platform: 'quote-check', channelId: 'quote-check', userId: 'quote-check', direct: true }, receivedAt: now };
+    return this.turnHandlerRegistry.some((handler) => {
+      if (typeof handler.surfaceClaim !== 'function') return false;
+      try {
+        return handler.surfaceClaim({ message, now }) !== null;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private guardChatReplyClaims(
+    capability: Capability,
+    text: string,
+    currentUserMessage: string,
+    taskId?: Id,
+    nlFacts?: NlChatFacts,
+    controls?: NlControlScope,
+  ): { readonly text: string; readonly guarded: boolean } {
     if (
       capability !== Capability.GENERAL_CHAT &&
       capability !== Capability.POLICY_SENSITIVE_CHAT &&
@@ -9187,8 +9416,17 @@ export class ConversationRuntime {
         this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
         return { text: control.text, guarded: true };
       }
-      const incapable = guardFalseIncapabilityClaims(text, nlFacts.entries, languageOf(currentUserMessage), this.contributedHelpLines, controls !== undefined ? { controls } : {});
-      if (!incapable.guarded) return { text, guarded: false };
+      // #280 follow-up: right after a listing, a denial of that listing or a re-run of it is dropped first (from Core's
+      // record of what was shown, not from the reply's words); the D9 guard then judges what is left.
+      const language = languageOf(currentUserMessage);
+      const listing = nlFacts.listing === undefined ? { text, guarded: false } : guardShownListingDenials(text, nlFacts.listing.shown, nlFacts.entries, language, nlFacts.listing.rerunsListing);
+      if (listing.guarded) this.deps.logger.info('shown listing denial removed', { capability, entryId: nlFacts.listing?.shown.entry.id, ...(taskId ? { taskId } : {}) });
+      // Owner decision of 2026-10-28 (B2): the held listing's values (turn-bound) make a denial naming them false too.
+      const incapable = guardFalseIncapabilityClaims(listing.text, nlFacts.entries, language, this.contributedHelpLines, {
+        ...(controls !== undefined ? { controls } : {}),
+        ...(nlFacts.listing !== undefined ? { held: nlFacts.listing.shown } : {}),
+      });
+      if (!incapable.guarded) return listing;
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
       return { text: incapable.text, guarded: true };
     }
@@ -9811,4 +10049,29 @@ interface NlEarlySelection {
 export function nlConfirmToRecord(handled: TurnHandlerOutcome): TurnHandlerReply['nlConfirm'] {
   if (handled.kind === 'summarize' || handled.kind === 'write-draft' || handled.status === 'FAILED') return undefined;
   return handled.nlConfirm;
+}
+
+/** Owner decision of 2026-10-28: a small in-memory map of shown item words (at most 256 sessions, oldest dropped first). */
+class BoundedShownItems {
+  private readonly map = new Map<string, { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] }>();
+  get(key: string): { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] } | undefined {
+    return this.map.get(key);
+  }
+  set(key: string, value: { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] }): void {
+    this.map.delete(key);
+    this.map.set(key, value);
+    while (this.map.size > 256) this.map.delete(this.map.keys().next().value as string);
+  }
+}
+
+/**
+ * Codex review of 7f7e8d32: the held item words attach to a `lastSelection` only when they were taken from the very turn
+ * that recorded it (the same turn id). Inbound turns run concurrently: a listing that finishes after another overwrites
+ * the held words, and a completion-time check would then attach them to the other listing's record. Pure.
+ */
+export function nlHeldItemWordsFor(
+  held: { readonly turnId: string; readonly words: readonly string[] } | undefined,
+  last: { readonly turnId?: string },
+): readonly string[] | undefined {
+  return held !== undefined && last.turnId !== undefined && held.turnId === last.turnId ? held.words : undefined;
 }

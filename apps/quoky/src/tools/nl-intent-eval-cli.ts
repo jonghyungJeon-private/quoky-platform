@@ -1,7 +1,7 @@
 /**
  * Natural-language selection evaluation CLI (ADR-0120 D12).
  *
- *   pnpm eval:nl -- --mode plan [--model haiku] [--entries jira.issues,help.topic] [--negatives true|false] [--per-entry N] [--runs N] [--concurrency N]
+ *   pnpm eval:nl -- --mode plan [--model haiku] [--effort low] [--entries jira.issues,help.topic] [--negatives true|false] [--per-entry N] [--runs N] [--concurrency N]
  *   pnpm eval:nl -- --mode run  <the same options> --approved-plan-digest <sha256 from plan>
  *   (or: pnpm --filter @quoky/app nl-eval -- …)
  *
@@ -26,7 +26,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ClaudeCliProvider, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL } from '@quoky/ai-cli';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
 import { Capability, type AiProvider } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import {
@@ -53,6 +53,7 @@ import {
   loadActionCorpus,
   loadR2ActionCorpus,
   loadReadRegressionCorpus,
+  loadScoredReadRegressionCorpus,
   runActionEvaluation,
   runReadRegression,
   scoreActionGrammarSide,
@@ -68,6 +69,7 @@ import {
   buildPlan,
   computePlanDigest,
   loadCorpus,
+  loadScoredCorpus,
   runEvaluation,
   summarize,
   clarifyCaseIdsOf,
@@ -116,9 +118,11 @@ const HELP = `Natural-language selection evaluation (ADR-0120 D12)
 Offline:  pnpm eval:nl -- --mode plan [options]
 Strict:   pnpm eval:nl -- --mode run [options] --approved-plan-digest <sha256 from plan>
 
-Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>  --entries <id,id,...>  --negatives true|false (default true)
+Options: --model <claude model alias or full model id (recommended: a full id pins the model in the digest), default ${DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}>
+         --effort <${CLAUDE_EFFORT_LEVEL_NAMES.join('|')}, default the adapter's selection effort ${DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low'}; bound into the digest>
+         --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
-         --timeout-ms <2000-8000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
+         --timeout-ms <2000-10000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
 Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} data-read wrong captures, help.topic captures <= ceil(${NL_EVAL_GATE.helpCaptureRate * 100}% of the negatives) (owner decision 2026-10-22).
 
 A6 (ADR-0120 amendment A6):
@@ -153,6 +157,7 @@ const OPTIONS = new Set([
   '--concurrency',
   '--timeout-ms',
   '--approved-plan-digest',
+  '--effort',
 ]);
 
 export class UsageError extends Error {}
@@ -188,6 +193,16 @@ function integer(value: string | undefined, fallback: number): number {
   return Number(value);
 }
 
+/**
+ * Owner decision of 2026-10-28 (cost study P0): the selector's reasoning effort, `--effort low|medium|high|xhigh|max`;
+ * default the adapter's own policy for an `INTENT_SELECTION` call. Always bound into the plan digest.
+ */
+export function selectionEffort(options: Readonly<Record<string, string>>): string {
+  const effort = options['--effort'] ?? DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low';
+  if (!(CLAUDE_EFFORT_LEVEL_NAMES as readonly string[]).includes(effort)) throw new UsageError(`--effort must be one of ${CLAUDE_EFFORT_LEVEL_NAMES.join(', ')}`);
+  return effort;
+}
+
 export function planOptions(
   options: Readonly<Record<string, string>>,
   env: NodeJS.ProcessEnv = process.env,
@@ -198,13 +213,14 @@ export function planOptions(
   let timeoutMs: number | undefined;
   if (flag !== undefined) {
     timeoutMs = parseNlIntentTimeoutMs(flag);
-    if (timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+    if (timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
   } else if (env.QUOKY_NL_INTENT_TIMEOUT_MS !== undefined) {
     timeoutMs = parseNlIntentTimeoutMs(env.QUOKY_NL_INTENT_TIMEOUT_MS);
   }
   return {
     timeoutMs,
     model: options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
+    effort: selectionEffort(options),
     entries: (options['--entries'] ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
     includeNegatives: negatives === 'true',
     perEntry: integer(options['--per-entry'], 0),
@@ -222,7 +238,7 @@ export interface CliDeps {
   readonly loadCorpus: () => { corpus: NlEvalCorpus; sha256: string };
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
-  readonly createProvider: (model: string) => AiProvider;
+  readonly createProvider: (model: string, effort?: string) => AiProvider;
   /** The outage guard's canary (one tiny call through the same provider); tests inject it, production calls the provider. */
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
 }
@@ -234,7 +250,8 @@ export function defaultDeps(): CliDeps {
     stdout: (line) => process.stdout.write(`${line}\n`),
     stderr: (line) => process.stderr.write(`${line}\n`),
     now: () => new Date().toISOString(),
-    loadCorpus: () => loadCorpus(),
+    // Owner decision (가) option 1 (2026-10-27): the D12 read gate scores the supplemental context corpus too.
+    loadCorpus: () => loadScoredCorpus(),
     writeReport: (fileName, contents) => {
       const dir = resolve(repoRoot, 'data/eval');
       mkdirSync(dir, { recursive: true });
@@ -242,7 +259,8 @@ export function defaultDeps(): CliDeps {
       writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' });
       return path;
     },
-    createProvider: (model) => new ClaudeCliProvider('claude', { intentSelectionModel: model }),
+    createProvider: (model, effort) =>
+      new ClaudeCliProvider('claude', { intentSelectionModel: model, ...(effort !== undefined ? { effortByCapability: { [Capability.INTENT_SELECTION]: effort as ClaudeEffortLevel } } : {}) }),
   };
 }
 
@@ -329,7 +347,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const provider = deps.createProvider(plan.model);
+  const provider = deps.createProvider(plan.model, plan.effort);
   if (!(await provider.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
@@ -390,9 +408,10 @@ export interface ActionCliDeps {
 export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', options: Readonly<Record<string, string>>, deps: CliDeps & ActionCliDeps): Promise<number> {
   const flag = options['--timeout-ms'];
   const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
-  if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 8000');
+  if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
   const settings = {
     model: options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
+    effort: selectionEffort(options),
     runs: integer(options['--runs'], 1),
     concurrency: integer(options['--concurrency'], 4),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -427,7 +446,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
       deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
       return EXIT_BLOCKED;
     }
-    const provider = deps.createProvider(plan.model);
+    const provider = deps.createProvider(plan.model, plan.effort);
     if (!(await provider.isAvailable().catch(() => false))) {
       deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
       return EXIT_BLOCKED;
@@ -448,7 +467,8 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     deps.stdout(`results written to ${path}`);
     return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
   }
-  const { cases, sha256 } = (deps.loadReadRegressionCorpus ?? loadReadRegressionCorpus)();
+  // Owner decision (가) option 1 (2026-10-27): read-regression scores the supplemental context corpus too.
+  const { cases, sha256 } = (deps.loadReadRegressionCorpus ?? loadScoredReadRegressionCorpus)();
   let plan: ReturnType<typeof buildActionPlan>;
   try {
     plan = buildActionPlan('nl-read-regression', cases.map((golden) => golden.id), sha256, settings);
@@ -469,7 +489,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const provider = deps.createProvider(plan.model);
+  const provider = deps.createProvider(plan.model, plan.effort);
   if (!(await provider.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
@@ -545,7 +565,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const provider = deps.createProvider(plan.model);
+  const provider = deps.createProvider(plan.model, plan.effort);
   if (!(await provider.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;

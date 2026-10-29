@@ -109,13 +109,13 @@ describe('agent-plan.v9 prompt', () => {
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v9');
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v10');
     const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });
 
-const PINNED_SHA256 = '5e837034a9e46062b8e5a675e8901d5be863d8e423f22a01959af3ac1cdb720c';
+const PINNED_SHA256 = '7a091783679f54145e1cab9f5aa3467fb4493ee10370c78acda219588cfe604f';
 
 describe('agent-plan.v9: the position reference sentence (owner decision of 2026-10-26)', () => {
   it('names every item-summary source\'s entries with their own id field, and only those', () => {

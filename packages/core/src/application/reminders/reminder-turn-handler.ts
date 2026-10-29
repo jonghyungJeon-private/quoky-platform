@@ -46,8 +46,8 @@ export const ON_DEMAND_BRIEF_HISTORY_NOTE = '[오늘의 브리핑 응답 — 브
 /** ADR-0117 D4 (amended by ADR-0120): the on-demand brief is answered only in the owner's DM. */
 export function renderBriefDmOnly(language: 'ko' | 'en'): string {
   return language === 'en'
-    ? "Today's brief is shown only in a direct message. Send me \"today's brief\" in a DM."
-    : '오늘의 브리핑은 DM에서만 보여 드려요. 저에게 DM으로 "오늘 브리핑해줘"라고 보내 주세요.';
+    ? "Today's brief is shown only in a direct message. Ask me for today's brief in a DM."
+    : '오늘의 브리핑은 DM에서만 보여 드려요. 저에게 DM으로 오늘 브리핑을 요청해 주세요.';
 }
 
 /** Help lines while reminders are on (ADR-0096 D6; each well under the composer's 120-char bound). */

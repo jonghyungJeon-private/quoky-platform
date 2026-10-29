@@ -682,6 +682,14 @@ export class IntentClassifier {
 
   constructor(private readonly router: CapabilityRouter) {}
 
+  /**
+   * Owner decision of 2026-10-28 (B1, the chat quote check): the intent this classifier gives a bare text, as with an
+   * active project (a code/test/analysis command is work there). Synchronous and pure; the same rules as `classify`.
+   */
+  static textIntent(text: string): Intent {
+    return IntentClassifier.textIntentOf(text);
+  }
+
   async classify(message: InboundMessage, ctx?: IntentClassifyContext): Promise<Intent> {
     const intent = this.classifyText(message);
     if (ctx?.hasActiveProject === false && IntentClassifier.isBareProjectKeywordMatch(message.text.trim(), intent)) {
@@ -729,7 +737,11 @@ export class IntentClassifier {
 
   private classifyText(message: InboundMessage): Intent {
     void this.router;
-    const text = message.text.trim();
+    return IntentClassifier.textIntentOf(message.text);
+  }
+
+  private static textIntentOf(raw: string): Intent {
+    const text = raw.trim();
 
     if (IntentClassifier.isPersonalWorkSurface(text)) {
       return {

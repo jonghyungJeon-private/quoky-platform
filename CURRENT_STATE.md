@@ -32,6 +32,55 @@ Next: a separate session prepares the G7 case file (`tools/g7/cases.mjs` format)
 seed and the recipient model on the run day; then the G7 run on a separate Strict yes, G8, G9, a security review and
 the A3b ratification.
 
+### Context eval fixes — P1/P2/P8/P4 (2026-10-26, branch `claude/v5-context-fixes`, not merged)
+
+These fix the hard failures of the first `eval:context` run that need no owner decision
+(`docs/eval/context-eval-baseline-2026-10-26.md`).
+- **P1.** A shown-listing guard: right after a listing, a denial of that listing or a re-run of it is dropped from the
+  chat reply. It works structurally from `lastSelection` and the handlers' Class B probes. The rule sentence is
+  strengthened.
+- **P2.** The write classification reuses the parser's rename and relocate shapes, so the calendar usage copy's rename
+  example parses deterministically.
+- **P8.** The plain D9 fact carries the A6 yes/no rule: no yes/no offers, and no asking for an answer to an earlier,
+  closed question.
+- **P4.** Following ADR-0112 amendment 1 S3, every approved connector write outcome becomes the last action (source
+  `slack`, `jira` or `calendar`, plus the receipt id). It is not undoable until R3, so "되돌려줘" answers with the family's
+  copy and never cancels an older to-do (actions-local dry: wrong-write 1 → 0).
+- **P5 (D3).** The help index shows flow steps as steps ("→"), and the new-file create wording as part of the request
+  (the flow's own create markers, unquoted).
+- **P6 + P7 (D1).** A chat turn keeps `lastSelection` one turn older (follow-up 2 reversed for chat), and it also keeps
+  the latest selection of each other source. The selector prompt shows both only when present (read `nl-select.v68`, A6
+  `v66`, R2 `v67`; otherwise byte-identical). **The D12 gate is not run**: it is prepared offline (12 pending gold
+  candidates, `docs/eval/context-eval.md` "D12 gate for read v68 / v69"), and the owner's Strict run comes next.
+- **P10 (D4).** A worded reply to the help-scope question goes to the selector with the question shown; its `answer` picks
+  the option (read `nl-select.v69`, A6 `v67`, R2 `v68`; same D12 gate, not run). 8 more pending candidates (20 in all).
+- **The 20 D1 / P7 / D4 golds** form the supplemental scored corpus `nl-intent.context.v1.json` (owner decision (가),
+  2026-10-27). `eval:nl` read and read-regression score it, Q11 does not, and `ctx-d1-005` was swapped (decision (나)).
+  - S2 activation blocker recorded: the planner needs the same listing context and must pass both gates.
+  - The ADR-0123 near pairs were resolved by the owner's text picks (`ctx-p7-002`, `ctx-d1-002`, 2026-10-27). The corpus is
+    in the ADR-0123 lint and audit gold (overlap only), and the audit was regenerated with the local embedder (space id
+    `@ollama0.40.11`, accepted).
+  - The 26 D4 strengthening golds (`ctx-d4-009`..`034`, read `nl-select.v70`) were approved as-is by the owner on
+    2026-10-27 and moved in: 46 cases, and the `open-question` label has 26 answer golds (D12: at least 25). The
+    ADR-0123 audit was regenerated locally: 0 entries flagged.
+- **D4 reordered (read `nl-select.v71`, A6 `v69`, R2 `v70`, 2026-10-27).** The Strict gates at 24112d09 both passed 2/3.
+  The open-question lines now put the non-answer categories before the answer format. Prompts without an open question
+  are byte-identical. `eval:nl` read-regression records now keep `gotArgs`, so the A6 calendar misses can be classified.
+  The calendar per-entry margin (read-regression run 1: 92/103) was answered by the owner's decisions below.
+- **Owner decisions of 2026-10-27 after the cda61425 gates.** Three changes, each with its own commit:
+  - the answer contract is relaxed: the parser takes "1"–"4" and "none", and the prompt spells the format out (read
+    `nl-select.v72`, A6 `v70`, R2 `v71`);
+  - the clause-grounded `timedOnly` rule now runs on the one-step path;
+  - the owner's one stated label-table period wins over the selector's range.
+  Archive simulation (records with args): 0 golds and 0 archived hits broken.
+- **D4 moves to the next merge (owner decision 2026-10-27).** The 32a2c81f gates failed only on D4: 3 wrong captures in
+  6 runs. The open question is removed from the router, and the 34 D4 golds are pending for a dedicated classifier.
+  Re-scored without them, 32a2c81f passes both gates in all 3 runs. `hs-calendar-words` fails in the dry runs until
+  the classifier lands.
+- **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
+  "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
+  hard checks at 0.
+
 ### Multi-turn context eval — built, not run with a model (2026-10-26, branch `claude/v5-context-eval`)
 
 Owner priority (2026-10-26): conversation-context continuity is the top quality criterion; measure first, then fix gaps in

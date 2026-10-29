@@ -373,3 +373,61 @@ export function printInvalidRun(stdout: (line: string) => void, gateLabel: strin
   if (Object.keys(hardFailures).length > 0) stdout(`hard failures among the answered calls: ${formatHardFailures(hardFailures)}`);
   stdout(`${gateLabel}: ${verdict}; the scores of this run are not reported (re-run after the provider recovers)`);
 }
+
+/** One timed provider call: its wall time in ms and a content-free outcome. */
+export interface TimedCall {
+  readonly ms: number;
+  readonly outcome: 'ok' | 'timeout' | 'failed';
+}
+
+/** p50 / p95 / max over the timed calls (nearest rank), and how many went over `boundMs`. Content-free. */
+export interface LatencySummary {
+  readonly calls: number;
+  readonly p50: number;
+  readonly p95: number;
+  readonly max: number;
+  readonly boundMs: number;
+  readonly overBound: number;
+  readonly timeouts: number;
+}
+
+export function summarizeLatency(calls: readonly TimedCall[], boundMs: number): LatencySummary {
+  const sorted = calls.map((call) => call.ms).sort((a, b) => a - b);
+  const rank = (q: number): number => (sorted.length === 0 ? 0 : (sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))] as number));
+  return {
+    calls: sorted.length,
+    p50: rank(0.5),
+    p95: rank(0.95),
+    max: sorted.at(-1) ?? 0,
+    boundMs,
+    overBound: sorted.filter((ms) => ms > boundMs).length,
+    timeouts: calls.filter((call) => call.outcome === 'timeout').length,
+  };
+}
+
+/**
+ * Owner decision of 2026-10-28: time every call of an eval provider (wall ms, outcome only; never a prompt or an answer),
+ * so a gate report can give p50 / p95 of the selection latency. `elapsed` is a monotonic millisecond clock.
+ */
+export function timeEvalProvider(provider: AiProvider, elapsed: () => number): { readonly provider: AiProvider; readonly calls: () => readonly TimedCall[] } {
+  const calls: TimedCall[] = [];
+  const wrapped: AiProvider = {
+    id: provider.id,
+    ...(provider.family !== undefined ? { family: provider.family } : {}),
+    ...(provider.executionLocality !== undefined ? { executionLocality: provider.executionLocality } : {}),
+    capabilities: provider.capabilities,
+    isAvailable: () => provider.isAvailable(),
+    execute: async (request) => {
+      const start = elapsed();
+      try {
+        const result = await provider.execute(request);
+        calls.push({ ms: Math.round(elapsed() - start), outcome: 'ok' });
+        return result;
+      } catch (error) {
+        calls.push({ ms: Math.round(elapsed() - start), outcome: providerFailureReason(error) === 'timeout' ? 'timeout' : 'failed' });
+        throw error;
+      }
+    },
+  };
+  return { provider: wrapped, calls: () => [...calls] };
+}

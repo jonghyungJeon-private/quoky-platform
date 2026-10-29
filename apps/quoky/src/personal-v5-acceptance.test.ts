@@ -731,9 +731,10 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
         service.startedAtMs = savedStart;
         service.lastCompletedAtMs = savedLast;
       }
-      // The configured bound is an integer 2000..8000 ms; anything else is a startup error.
+      // The configured bound is an integer 2000..10000 ms (owner decision of 2026-10-28); anything else is a startup error.
       expect(parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: '2000' }).timeoutMs).toBe(2000);
-      for (const bad of ['1999', '8001', '5e3', '6 s']) expect(() => parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: bad })).toThrow();
+      expect(parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: '10000' }).timeoutMs).toBe(10000);
+      for (const bad of ['1999', '10001', '5e3', '6 s']) expect(() => parseNlSelectionConfig({ QUOKY_NL_INTENT_TIMEOUT_MS: bad })).toThrow();
     });
 
     it('Phase c-shadow: Phase A stays live (the grammar answers), selection runs once after the reply and only an agreement line is logged', async () => {
@@ -1301,7 +1302,7 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
       });
     });
 
-    it('5 and the chain: the search slot no longer swallows the clause (keyword 배포), and a reference after a chat turn asks instead of guessing', async () => {
+    it('5 and the chain: the search slot no longer swallows the clause (keyword 배포); after a chat turn the selector sees the search and its age (D1), and a question turn ends it', async () => {
       await withPhase('a', 'active', async () => {
         const ctx = context();
         selectorAnswer = answer('slack.search', { keyword: '배포' });
@@ -1315,17 +1316,21 @@ describe('Personal v5 - integration acceptance (INT-4) over the production AppMo
         expect(search.result.reply.text).toContain('slack 위클리카 정산 화면');
         expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'slack.search', args: { keyword: '배포' } });
 
-        // An intervening chat turn ends the follow-up window (ADR-0120 follow-up 2: a turn with no catalog equivalent clears it).
+        // Owner decision D1 (2026-10-26, reversing follow-up 2 for chat): an intervening chat turn keeps the follow-up
+        // window, one turn older.
         selectorAnswer = none;
         expect((await turnOf('고마워', ctx)).result.reply.text).toBe(CHAT_REPLY);
-        expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toBeUndefined();
+        expect((await sessions.openForContext(ctx, ownerActor.id)).metadata?.[core.LAST_SELECTION_METADATA_KEY]).toMatchObject({ entryId: 'slack.search', turns: 1 });
 
-        // "그 중에 …" and "아까 찾은 것 중 …" then reach the selector with no previous selection; the prompt rule (v17 rule 6)
-        // makes it a numbered question, never a guess and never a read.
-        for (const text of ['그 중에 프로덕션만', '아까 찾은 것 중 첫 번째 거 자세히']) {
+        // "그 중에 …" reaches the selector with the search and its age; a selector question is still a question, never a
+        // guess and never a read, and that question turn ends the window: "아까 찾은 것 중 …" then has no previous selection.
+        for (const [text, previous] of [
+          ['그 중에 프로덕션만', 'Previous selection: {"entryId":"slack.search","args":{"keyword":"배포"}} (shown 1 turn ago; only chat replies since)'],
+          ['아까 찾은 것 중 첫 번째 거 자세히', 'Previous selection: none'],
+        ] as const) {
           selectorAnswer = JSON.stringify({ entryId: 'slack.search', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'confluence.search', args: {} }] });
           const asked = await turnOf(text, ctx);
-          expect(asked.requests.find((request) => request.capability === SELECTION)?.prompt, text).toContain('Previous selection: none');
+          expect(asked.requests.find((request) => request.capability === SELECTION)?.prompt, text).toContain(previous);
           expect(asked.connectors, text).toEqual([]);
           expect(asked.served, text).toEqual([]);
           expect(asked.result.reply.text, text).not.toBe(CHAT_REPLY);

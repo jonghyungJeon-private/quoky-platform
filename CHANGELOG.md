@@ -15,6 +15,160 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   and non-loopback daemons.
 - **Tests.** A `REMOTE` or undeclared embedder is never called and writes no vectors for memory text; recall equals
   lexical recall. No model call.
+## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
+
+- **Fixed (owner decision 2026-10-29).** A command the chat reply wraps in both code marks and quotes (`"1번 문서
+  요약해줘"` in code) keeps only one pair, so the owner can copy it and send it as it is.
+- **Changed (owner decision 2026-10-29).** When Core closes its own confirmation or choice question because the owner's
+  reply was not an answer, the chat replies that follow (for 30 minutes, until Core replies with anything else) are
+  told, without any item content, that the question was never confirmed, nothing from it was held, and a yes now
+  confirms nothing. Owner also confirmed: a one-option question whose option Core had to repair keeps asking, and
+  policy-sensitive chat stays at medium effort.
+- **Changed (owner decision 2026-10-29).** A bare yes or no ("응", "아니", "yes") that no question is waiting for, right
+  after a reply that was not chat, gets Core's fixed notice ("지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해
+  주세요.") instead of a chat reply. Open questions, confirmations and approvals still take their yes or no, and after a
+  chat reply the yes still goes to chat.
+- **Changed (owner decision 2026-10-28).** Everyday and policy-sensitive chat replies run at medium effort instead of low. The context gate
+  passed with it for the first time: 37/38, 38/38, 38/38, 0 hard failures.
+- **Changed (owner decision 2026-10-28).** In a chat reply, quotes and code marks stay only around a command the owner
+  can send: one Core's grammar runs, or a request naming a connected source. Any other quoted text keeps its words
+  without the marks.
+- **Changed (owner decision 2026-10-28, narrowed by review).** A chat sentence saying Quoky cannot check something it
+  names by a catalog word or by a value of the listing just shown is kept as written, and the read Quoky can do is
+  appended. Only a sentence naming the connected source itself is replaced.
+- **Changed (owner decision 2026-10-28).** The selector waits up to 10 s, up from 6 s (8 s when cold).
+  `QUOKY_NL_INTENT_TIMEOUT_MS` accepts 2000-10000. `eval:context` reports each selection call's latency and its p50
+  and p95.
+- **Changed (owner decision 2026-10-28).** The natural-language selector (and the agent planner, which shares its
+  capability) now runs haiku at high effort instead of low. eval:context: 36-38/38 against 30-32/38. Timeouts rose to
+  about 3% of selection calls at the unchanged 6 s bound.
+- **Changed (owner-approved fix 2026-10-28).** When the owner wrote no date, Core no longer offers a date reading of a
+  number ("20261022") next to the release it names; the release read runs.
+- **Changed (chat prompt and D9 guard, owner-approved fix 2026-10-28).** Chat writes every command to send in quotes or
+  code. When a chat sentence says Quoky cannot check something it names only by a catalog alias ("릴리스", "일정"), the
+  sentence is kept and that source's own read is appended. A sentence naming the source itself is replaced as before.
+- **Added (owner-approved fix 2026-10-28).** After a Jira release list, a follow-up that names exactly one listed
+  release by a word or number in its title ("20261029 거 이슈 보여줘") reads that release with no model call.
+- **Changed (owner decision 2026-10-28, ADR-0120 D7).** A question that would list only one read option no longer asks;
+  that read runs. A refused weekday, the help-scope question, no option, or an option Core had to change still ask.
+- **Added (eval, owner decision 2026-10-28).** `eval:nl --effort` and `eval:context --effort / --chat-effort`. Both
+  efforts and the model names are bound into the plan digests.
+- **Changed (chat prompt, owner decision 2026-10-28).** After a listing, the chat prompt now says plainly what the reply
+  has (Quoky's note) and lacks (the items, which stay with Quoky), and that item content is reached with the exact
+  command. It no longer gives the two contradicting "never say" instructions.
+- **Changed (selector, owner decision 2026-10-28; read `nl-select.v73`, A6 `v71`, R2 `v72`, planner `agent-plan.v10`).**
+  Rules 2, 3, 6 and 7 are one decision order, with no new example and a smaller prompt (read −610, A6 −626 characters).
+  How-tos go to rule 3 (Quoky itself, then an unclear how-to that asks, then another app's own feature). A request that
+  names only a period or a reference with nothing before it asks which list.
+- **Changed (owner decision 2026-10-28).** After "그중에 오후 것만", a question about an item ("면접은 몇 시였지?") searches
+  the whole earlier listing (tomorrow), not only the afternoon. A narrowing restated by the owner stays.
+- **Changed (chat prompt, owner decision 2026-10-28).** Chat replies keep quotes and code marks for commands to send.
+  Examples, questions for others, paraphrases and mentioned words are written without quotes.
+- **Fixed (P1 guard, owner decision 2026-10-28).** Right after a listing, a chat sentence denying that it can see an item
+  Quoky showed ("내일 면접이 있는지는 확인할 수 없어요", "I can't see what's in the roadmap doc") is dropped too. The item
+  words are taken from Quoky's own listing reply and held in process memory only.
+- **Fixed (Jira release, 2026-10-27).** With no release named, a project value that cannot be a Jira key and names no
+  visible project ("2.3.0") is read as the release, the mirror of P9.
+- **Changed (Jira release, 2026-10-27).** A message that is nothing but Jira release-page links is read as the release
+  link deterministically, with no model call. The existing link parser does this; no word list is added.
+- **Removed (owner decision 2026-10-27): D4 moves to the next merge.** The help-scope question no longer reaches the
+  selector, and a worded reply is routed as usual (a number or a displayed option text still answers it). The
+  selector's `answer` field is gone, and prompt versions stay read v72 / A6 v70 / R2 v71 (byte-identical for every
+  remaining input). The 34 D4 golds wait in `nl-intent.context-d4-pending.v1.json` for a dedicated classifier.
+- **Changed (eval, owner decision 2026-10-27).** A context-eval turn can be marked as the scenario's known gap.
+  `hs-calendar-words` t2, the D4 worded answer, keeps its expectation. Its soft misses are reported as a known gap,
+  outside the rate, until D4 lands; hard checks still count.
+- **Fixed (P1, #280 follow-up).** Right after Quoky shows a listing, a chat reply no longer tells the owner it cannot
+  see, read or check that listing, and no longer sends them to show it again.
+  - A new guard, `guardShownListingDenials`, works from Core's own record of what was shown: the previous turn's
+    `lastSelection` entry and args.
+  - It drops sentences with the D9 read-incapability patterns that do not name another source.
+  - It also drops sentences quoting a command that the handlers' pure Class B probes map to exactly that listing.
+  - It needs no word list, so the calendar "일정" reply is covered without adding a noun.
+  - The listing rule sentence and the composer's authority line are strengthened.
+  - No content reaches the remote model (ADR-0110 D4); the guard only removes sentences.
+- **Fixed (P2).** The calendar usage example "내일 3시 회의 제목을 주간 회의로 바꿔줘" is now classified as a write and
+  parsed deterministically; before, it fell to chat.
+  - The parser's rename and relocate shapes moved to `calendar/calendar-field-change.ts`, and the write classification
+    (`isCalendarWriteRequest`) reuses them for a meeting named by a day or time phrase. There is no new phrase set.
+  - "오늘 회의 내용을 표로 바꿔줘" and "회의록 제목을 …" stay chat.
+  - A test checks that every example in Core's calendar usage copy is classified as a write.
+- **Fixed (P8).** The plain honest-chat fact, used when no action family is offered (A6 `shadow` today), now carries
+  the A6 yes/no rule (`NO_YES_NO_OFFER_RULE`): a chat reply never offers a yes/no and never asks the owner to answer an
+  earlier Quoky question with yes, no or a number. Context eval: chat invited "응/아니" for a question Core had already
+  closed, so the owner's "응" ran nothing. The A6 variant is unchanged.
+- **Fixed (P4).** After a calendar or other approved connector write, "되돌려줘" no longer cancels an earlier local to-do.
+  - This implements the `lastAction` part of ADR-0112 amendment 1 S3.
+  - Every outcome of the write is recorded as the last action, with source `slack`, `jira` or `calendar` and the
+    receipt id. It is never undoable until R3.
+  - The undo answers with that family's fixed copy (Slack: "Slack 글 되돌리기는 아직 켜지지 않았어요. Slack에서 직접 지워
+    주세요."; Slack NOT_SENT: "보낸 메시지가 없어서 되돌릴 게 없어요.", both verbatim from S3; the calendar, Jira and UNCERTAIN
+    sentences are an explicit S3 copy amendment) and writes nothing.
+  - "방금 거" does not reach back to the older item either.
+- **Changed (P5, owner decision D3 2026-10-26).** The help index shows the code-change flow steps as steps, not as
+  stand-alone commands.
+  - A new file needs create wording in the same request: "없는 파일은 같은 요청에 새 파일·파일 생성처럼 만들라는 말을 함께
+    적어야 새로 만들어요". These are the flow's own create markers (새 파일, 파일 생성/추가, 파일 … 만들어 줘).
+  - The checks follow an apply: 코드 수정을 적용한 다음 → "테스트 실행해줘" 또는 "타입체크 실행해줘".
+  - The context eval treats a quoted step after "→" as a flow step, not a suggestion to probe alone.
+- **Changed (P6 + P7, owner decision D1 2026-10-26; selector prompt read `nl-select.v68`, A6 `v66`, R2 `v67`; D12 gate
+  pending).** The listing context now survives small talk and a topic switch.
+  - A turn answered by chat keeps `lastSelection`, one turn older, within its 30 minutes. This reverses ADR-0120
+    follow-up 2 for chat turns. Help, approvals, write previews, clarifications and errors still end it.
+  - The selector sees the previous selection's age ("shown N turns ago; only chat replies since") and the latest
+    selection of each other source ("Earlier selections"), structure only. A follow-up about an earlier list (an event
+    after a to-do list) refines that list, with its period carried.
+  - Without the new parts the prompts are byte-identical to v67 / v65 / v66. Their D12 golds are in the supplemental
+    scored corpus (`golden/nl-intent.context.v1.json`); `eval:nl` renders the new parts as the runtime does.
+- **Changed (P10, owner decision D4 2026-10-26; read `nl-select.v69`, A6 `v67`, R2 `v68`; D12 gate pending).** A worded
+  answer to the help-scope question ("Quoky로 하는 거") is understood.
+  - A number or a displayed option still resolves without a model.
+  - Any other reply reaches this turn's selection call with the question's displayed options. The selector may answer
+    `"answer": N`, which Core reads only then: 1 runs the help, 2 gives the app-itself reply.
+  - No phrase list is added. The prompt is otherwise byte-identical. Eight D4 gold candidates are pending.
+- **Changed (P3, owner decision 2026-10-26, amending A6 decision 8).** The undo hint's command "되돌려줘" is a fixed,
+  deterministic undo command beside "되돌리기". It is the hint's own constant: the whole message only, with the same
+  rules as "되돌리기" and no selector call. The hint's wording is unchanged. Context eval dry: actions-local
+  unparseable-suggestion 10 → 0.
+- **Changed (eval, owner decisions (가) and (나) of 2026-10-27).** The 20 approved D1 / P7 / D4 cases are a supplemental scored
+  corpus (`golden/nl-intent.context.v1.json`), scored with `nl-intent.v1.json` by `eval:nl` and read-regression (both
+  files are bound in the digest). It is selector-only: the ADR-0121 Q11 planner gold is unchanged. An S2 activation
+  blocker is recorded. `ctx-d1-005` is swapped to "주말에 뭐 하면 좋을까?".
+- **Fixed (Codex P2 on P-time (ii), 2026-10-27).** A calendar follow-up that names no period now inherits the dates the
+  held listing actually showed, not its symbolic range read again against the current clock.
+  - Before: a "내일" listing at 23:55 KST showed 10-28, and "그 면접 어디서 해?" at 00:05 read 10-29.
+  - `lastSelection` (and each P7 earlier entry) stores the listing's resolved period as `{ start, days }`: dates only,
+    no titles or content (ADR-0110 D4).
+  - When the symbolic range still resolves to the same dates it is kept; otherwise Core inherits the stored dates.
+  - A test moves the clock across midnight for a "tomorrow" listing and a default-today listing.
+- **Changed (eval, owner D12 batch of 2026-10-27).** The 26 D4 strengthening golds (`ctx-d4-009`..`034`) are approved
+  as-is and scored in `golden/nl-intent.context.v1.json` (46 cases); the `open-question` label has 26 answer golds. The
+  ADR-0123 audit was regenerated with the local embedder (0 entries flagged).
+- **Changed (D4, read `nl-select.v71`, A6 `v69`, R2 `v70`; owner go-ahead 2026-10-27).** The open-question lines say
+  that a reply answers only when it points to one option's meaning (even when worded as a request; "this chat" means
+  Quoky), and that a reply pointing to neither option (thanks, small talk, undecided, a new request) is no answer. That
+  sentence now comes before the answer format. Prompts without an open question are byte-identical.
+- **Changed (eval only, owner go-ahead 2026-10-27).** `eval:nl --mode read-regression` records keep Core's final args
+  (`gotArgs`) on a hit, a miss, a wrong capture and an action capture, like `eval:nl` read records, so an A6 miss can be
+  classified by argument. Scoring and the gate are unchanged.
+- **Changed (eval only, 2026-10-27).** Read-regression records also keep the raw output of a non-hit (bounded, like
+  `eval:nl` read) and the error kind (`malformed` or `provider`), so a malformed selector output, such as a quoted
+  `"answer": "1"`, can be read from the report. Scoring and the gate are unchanged.
+- **Changed (owner decision 2026-10-27; read `nl-select.v72`, A6 `v70`, R2 `v71`).** A selector `answer` written as a
+  one-digit string ("1"–"4") is that option, and `"none"` is no answer (runtime and eval). The open-question lines now
+  say that N is a JSON integer and that a non-answer leaves the field out. Prompts without an open question are
+  byte-identical.
+- **Changed (owner decision 2026-10-27).** A one-step calendar read whose own words name the calendar by a meeting word
+  alone ("지난주에 무슨 회의 있었지?", "how many meetings …") gets `timedOnly`, by the same rule and catalog words as the
+  agent plan path (ADR-0121 S2 note 2). "일정" or "캘린더", an exclusion or negation, or the word inside an event title
+  leaves it off. The rule only turns the flag on.
+- **Changed (owner decision 2026-10-27).** When the owner states exactly one period of the existing period-label table
+  ("다다음 주", "이번 달 말까지", "다음 주말", "last week" …) and the selector read other dates, Core uses the owner's
+  period. Weekdays, spans, "today" and a range with the same dates are left alone. After the Codex review it applies to
+  calendar events only (`rangeIsItemDate`), never to an excluded or negated period ("내일 말고"), and never to a period
+  inside the read's own values (a title keyword).
+  After four Codex rounds the scope is narrowed: single-source messages only, with no negation and exactly one period;
+  messages with several sources rely on the selector.
 
 ## Unreleased — ADR-0121 G7 preparation: the A3b payload definition and the G7 harness (no run)
 

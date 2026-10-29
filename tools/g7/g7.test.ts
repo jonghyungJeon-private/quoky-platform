@@ -9,7 +9,7 @@ import { PAYLOAD_VERSION, WITHHELD, dropReason, durationText, finishPayload, fla
 // @ts-expect-error plain ESM harness module
 import { buildClassifierBody, buildClassifierMessage, buildTopicListSchema, checkKeep, titlesToSend } from './classify.mjs';
 // @ts-expect-error plain ESM harness module
-import { LIST_CLOSE, LIST_OPEN, buildArmBInput, buildArmCInput, claudeArgv, claudeEnv, normalizeOutput, withCorrection } from './claude.mjs';
+import { CLAUDE_EFFORT, LIST_CLOSE, LIST_OPEN, buildArmBInput, buildArmCInput, claudeArgv, claudeEnv, normalizeOutput, withCorrection } from './claude.mjs';
 // @ts-expect-error plain ESM harness module
 import { binomialUpperP, blindOrder, checkAbLabels, decideG7, pairs, remapOutput, renderArmB, rerenderArmA, seedMatchesRunDate } from './blind.mjs';
 // @ts-expect-error plain ESM harness module
@@ -245,7 +245,10 @@ describe('A3b-D5 classifier request and guard', () => {
 
 describe('the recipient request (production-equivalent, tool-less)', () => {
   it('uses exactly the ClaudeCliProvider chat argv, with `--tools ""` last', () => {
-    const production = new ClaudeCliProvider('claude', { model: 'sonnet' }).buildArgs({ capability: Capability.GENERAL_CHAT });
+    // G7 is frozen at the chat effort it was sealed with (CLAUDE_EFFORT, low); the production default moved to medium on
+    // 2026-10-28, so the production argv is built at that frozen effort explicitly.
+    expect(CLAUDE_EFFORT).toBe('low');
+    const production = new ClaudeCliProvider('claude', { model: 'sonnet', effortByCapability: { [Capability.GENERAL_CHAT]: CLAUDE_EFFORT } }).buildArgs({ capability: Capability.GENERAL_CHAT });
     expect(claudeArgv('sonnet')).toEqual(production);
     expect(claudeArgv('claude-sonnet-4-5').slice(-2)).toEqual(['--tools', '']);
     expect(() => claudeArgv('sonnet; rm -rf /')).toThrow();

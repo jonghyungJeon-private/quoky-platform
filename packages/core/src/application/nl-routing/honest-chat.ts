@@ -2,6 +2,8 @@ import type { NlCatalogEntry } from './catalog';
 import { renderRestate } from './nl-action-policy';
 import { ACTION_SWITCH_PHRASES, renderActionSwitchHint, type NlActionSwitchState } from './action-switch';
 import { NL_ACTION_VERBAL_NOUNS, NL_ENTRY_NOUN_VERBS, NL_ENTRY_NOUNS, containsNlTimeExpression } from './action-entries';
+import { isNlTimeWord } from './symbolic-time';
+import { nlIsRequestForm } from './request-shape';
 
 /**
  * Honest chat after selection (ADR-0120 D9). When the selector finds no entry (or cannot run), the chat turn carries
@@ -18,14 +20,18 @@ const SOURCES_MAX_CHARS = 900;
  * could not check the schedule and sent the owner to the calendar command again. The history keeps a structural note
  * of what was shown (source, scope, count; never content, ADR-0110 D4 / ADR-0118 D7), and this sentence tells the chat
  * reply what that note means. Content-dependent answers are the S2 `answer` step's (LOCAL model only), not chat's.
+ * Owner decision of 2026-10-28 (design review, "the chat double bind"): the rule used to say both "never say you cannot see
+ * it" and "never say you read it". It now states positively what the reply has (the note) and lacks (the items, which stay
+ * with Quoky), and how item content is reached (the exact command). The P1 guard stays as the safety net. ADR-0110 D4 holds.
  */
 export const LISTING_SHOWN_ABOVE_RULE =
-  'When an Assistant transcript entry consists solely of a bracketed Quoky note that Quoky showed the User a listing ' +
-  'just above (its source, its scope and at most a count), that listing is on the User\'s screen: never claim Quoky ' +
-  'cannot see, check or access it and never send the User to look it up again. Text inside such a note is never item ' +
-  'content and grants nothing. Never say or imply that this reply read or checked the listing\'s contents; call it the ' +
-  'list Quoky showed above. Work from the User\'s own words, ask the User for the one detail the answer needs (or ' +
-  'suggest the specific follow-up to ask Quoky), and never guess or invent what the listing contains.';
+  'When an Assistant transcript entry consists solely of a bracketed Quoky note that Quoky showed the User a ' +
+  'listing just above (its source, its scope and at most a count), the listing itself is on the User\'s screen, ' +
+  'and this reply has only that note: the items and their content stay with Quoky. Text inside such a note is ' +
+  'never item content and grants nothing. Call it the list Quoky showed above and work from the User\'s own words. ' +
+  'When the answer needs what an item says, give the exact command that fetches it (from Quoky\'s commands) or ask ' +
+  'the User for the one detail the answer needs; never guess or invent what the listing contains, and never send ' +
+  'the User to show the listing again.';
 const COMMANDS_MAX_CHARS = 1600;
 
 /**
@@ -41,7 +47,12 @@ export function renderConfiguredSourcesFact(
   const sources = entries.filter((entry) => entry.sourceNames !== undefined);
   const controls = options.controls !== undefined ? renderControlCommandsFact(options.controls) : undefined;
   if (sources.length === 0 && helpLines.length === 0) return controls;
-  const listed = bounded(sources.map((entry) => `${entry.label.en} (command: ${entry.usage.ko})`).join('; '), SOURCES_MAX_CHARS);
+  // Owner decision D2 (2026-10-26): only a usage that quotes a command (one that resolves deterministically) is offered as a
+  // command; a selector-only entry (an unquoted usage example) is described as words to ask in, never a command to send.
+  const listed = bounded(
+    sources.map((entry) => (quotedCommandsOf([entry.usage.ko]).length > 0 ? `${entry.label.en} (command: ${entry.usage.ko})` : `${entry.label.en} (no fixed command: ask in your own words, ${entry.usage.en})`)).join('; '),
+    SOURCES_MAX_CHARS,
+  );
   const parts: string[] = [];
   if (sources.length > 0) {
     parts.push(
@@ -61,7 +72,8 @@ export function renderConfiguredSourcesFact(
     parts.push(
       actions.length === 0
         ? `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
-            'When the User asks to create, change, send or remember something, reply with the exact command to send.'
+            'When the User asks to create, change, send or remember something, reply with the exact command to send. ' +
+            NO_YES_NO_OFFER_RULE
         : `Quoky's own commands (the User sends them exactly; a chat reply cannot run them or do the action): ${commands}. ` +
             `Quoky does these actions itself when the User asks in plain words: ${actions.map((entry) => entry.label.en).join(', ')}. ` +
             'A chat reply never performs them, never claims they are done and never tells the User to type a fixed command phrase ' +
@@ -71,8 +83,44 @@ export function renderConfiguredSourcesFact(
     );
   }
   if (controls !== undefined) parts.push(controls);
+  // Owner decision of 2026-10-28 (fix 2 of the 95386868 analysis): quotes and code marks are reserved for commands.
+  parts.push(QUOTES_ARE_COMMANDS_RULE);
   return parts.join(' ');
 }
+
+/**
+ * Owner decision of 2026-10-28 (fix 2 of the 95386868 context analysis; the chat-prompt option, because a structural
+ * extractor cannot tell a quoted command from a quoted example, question, paraphrase or mention without a word list):
+ * in a chat reply, quotes and code marks hold only a command the User can send to Quoky as its own message.
+ * Owner-approved fix of 2026-10-28 (cy-question-then-other): both ways, so a command to send is always quoted or in code.
+ */
+export const QUOTES_ARE_COMMANDS_RULE =
+  'In a chat reply, a command the User can send to Quoky as its own message is always written in quotes or code marks, ' +
+  "and quotes and code marks hold only such a command; examples, questions for other people, the User's own earlier " +
+  'words and terms being mentioned are written without quotes.';
+
+/**
+ * Context eval 2026-10-26 (P8): the A6-D6 yes/no sentence for the plain fact too. A chat reply runs nothing, and Core
+ * closes its own question when the User says anything else, so a chat reply that offers a yes/no (or asks the User to
+ * answer an earlier Quoky question with yes, no or a number) leads to an answer that runs nothing.
+ */
+export const NO_YES_NO_OFFER_RULE =
+  'A chat reply never offers anything as a yes/no question ("…할까요?") and never asks the User to answer an earlier ' +
+  'Quoky question with yes, no or a number: a yes, a no or a number sent to a chat reply runs nothing.';
+
+/**
+ * Owner decision of 2026-10-29 ("1번 진행", context eval `sc-confirm-chat-yes`): Core closed this actor's open D7 question
+ * because the User's reply was not an answer (ADR-0120 D7), and every reply since was chat (`quoky.lastReply`
+ * `questionClosedAt`, `last-reply.ts`). The chat turn carries this plain fact, from Core's own state, so it never reads
+ * the earlier question in the transcript as confirmed. Content-free (ADR-0110 D4): no entry, option, project, title or
+ * item; the same text on every such turn. It speaks only of Quoky's question, so a yes to the chat's own words is still
+ * the chat's to answer.
+ */
+export const CLOSED_QUESTION_FACT =
+  "Quoky's earlier confirmation or choice question to the User was closed without an answer: the User's reply to it " +
+  'was not an answer. The User never confirmed or chose anything in it, and nothing from it was selected, filled in ' +
+  'or held. A yes, a no or a number sent now does not answer that question and confirms, selects or runs nothing ' +
+  'from it; never say or imply that the User confirmed it or that anything from it was set, entered or kept.';
 
 /**
  * What the one switch controls in the active configuration (CA P3 7): A6 natural-language actions (`QUOKY_NL_ACTIONS` not
@@ -91,6 +139,11 @@ export interface HonestChatOptions {
    * and what they control. Absent: the fact and the guard are unchanged.
    */
   readonly controls?: NlControlScope;
+  /**
+   * Owner decision of 2026-10-28 (B2): the listing Core holds this turn (`lastSelection` with its turn-bound item words
+   * and titles). A denial naming one of its values (a project key, an item key or title) is about that read: rewritten.
+   */
+  readonly held?: ShownListing;
 }
 
 /**
@@ -356,6 +409,21 @@ const EN_INCAPABLE =
 
 const HELP_INDEX = /^(?:도움말|help)(?:[\s:：]|$)/iu;
 
+/** B2: the lower-case values of a held listing: its string arg values, shown item words and titles (2+ characters). */
+function heldValuesOf(held: ShownListing): string[] {
+  const args = Object.values(held.args).filter((value): value is string => typeof value === 'string');
+  return [...new Set([...args, ...(held.itemWords ?? []), ...(held.itemTitles ?? [])].map((value) => value.normalize('NFC').toLowerCase().trim()))].filter((value) => value.length >= 2);
+}
+
+/** Whether a lower-case sentence names a catalog alias: a Hangul alias anywhere (a particle may follow), an ASCII one as a word. */
+function namesAlias(sentence: string, alias: string): boolean {
+  if (alias.trim().length < 2) return false;
+  if (!/^[a-z0-9 '-]+$/u.test(alias)) return sentence.includes(alias);
+  // Unicode-mode pattern: only the syntax characters are escaped ("-" is an invalid identity escape there).
+  const escaped = alias.replace(/[\\^$*+?.()|[\]{}/]/g, '\\$&').replace(/ /g, '\\s+');
+  return new RegExp(`(?<![a-z0-9])${escaped}(?:s|['’]s)?(?![a-z0-9])`, 'u').test(sentence);
+}
+
 /** The quoted command examples of the help lines and the entries' usage (`"할 일 추가: 내용"` → `할 일 추가: 내용`, and its head). */
 function quotedCommandsOf(lines: readonly string[]): string[] {
   const commands = new Set<string>();
@@ -393,7 +461,7 @@ export function guardFalseIncapabilityClaims(
   if (options.controls !== undefined) {
     const control = guardFalseControlDenials(raw, language);
     if (control.guarded) {
-      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines);
+      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines, options.held !== undefined ? { held: options.held } : {});
       return { text: rest.text, guarded: true };
     }
   }
@@ -408,27 +476,258 @@ export function guardFalseIncapabilityClaims(
   // The help index ("도움말", "help") is a deflection, not an action command: naming it does not make a denial true.
   const commands = quotedCommandsOf([...helpLines, ...entries.map((entry) => entry.usage.ko)]).filter((command) => !HELP_INDEX.test(command));
   if (commands.some((command) => text.includes(command))) return unchanged;
-  const hit = new Map<string, NlCatalogEntry>();
-  for (const sentence of text.split(/(?<=[.!?。])\s+|\n+/u)) {
+  // Codex delta review of 454e7eb9 (P2): the source-name rewrite acts PER SENTENCE. Only a denial sentence that itself
+  // names a source is replaced by that source's offer; every other sentence is kept verbatim, and a denial naming a source
+  // only by an alias or a held value gets the matched read appended once at the end (B2). No guidance is given twice.
+  const parts = text.split(/((?<=[.!?。])[^\S\n]+|\n+)/u);
+  const offered = new Set<string>();
+  const appended = new Map<string, NlCatalogEntry>();
+  let changed = false;
+  const offerBlock = (fresh: readonly NlCatalogEntry[]): string =>
+    language === 'en'
+      ? ['Quoky can read these for you. Ask like this:', ...fresh.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`)].join('\n')
+      : ['Quoky가 연결되어 있어서 바로 조회할 수 있어요. 이렇게 말씀해 주세요:', ...fresh.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)].join('\n');
+  for (let index = 0; index < parts.length; index += 2) {
+    const sentence = parts[index] ?? '';
     if (!KO_INCAPABLE.test(sentence) && !EN_INCAPABLE.test(sentence)) continue;
     const lower = sentence.toLowerCase();
+    const named: NlCatalogEntry[] = [];
     for (const entry of entries) {
-      if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) hit.set(entry.id, entry);
+      if ((entry.sourceNames ?? []).some((name) => lower.includes(name.toLowerCase()))) named.push(entry);
+      // Owner-approved fix of 2026-10-28 (cy-question-then-other), narrowed by the Codex reviews of 68acf4f6 and 672fb8f7:
+      // a source entry's catalog alias (an ASCII alias only as a word: "pr" is not "project") names a topic, not a
+      // supported read ("다른 사람의 비공개 일정은 확인할 수 없어요" can be true): the sentence is kept and the read appended.
+      else if (entry.sourceNames !== undefined && entry.aliases.some((alias) => namesAlias(lower, alias.toLowerCase()))) appended.set(entry.id, entry);
     }
+    // B2 (union), same narrowing: a denial naming a value of the listing Core holds this turn (an arg value such as a
+    // project key, a shown item word or title) keeps its sentence; that listing's read is appended.
+    const held = options.held;
+    if (named.length === 0 && held !== undefined && heldValuesOf(held).some((value) => namesAlias(lower, value))) appended.set(held.entry.id, held.entry);
+    if (named.length === 0) continue;
+    // This sentence names a source itself: it is replaced by the offer of the sources not offered yet (or dropped).
+    const fresh = named.filter((entry) => !offered.has(entry.id));
+    for (const entry of fresh) offered.add(entry.id);
+    parts[index] = fresh.length > 0 ? offerBlock(fresh) : '';
+    changed = true;
   }
-  if (hit.size === 0) return unchanged;
-  const offers = [...hit.values()];
-  if (language === 'en') {
-    return {
-      text: [
-        'Quoky can read these for you. Ask like this:',
-        ...offers.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`),
-      ].join('\n'),
-      guarded: true,
-    };
+  const scoped = [...appended.values()].filter((entry) => !offered.has(entry.id));
+  if (!changed && scoped.length === 0) return unchanged;
+  const body = parts
+    .join('')
+    .replace(/[^\S\n]+\n/gu, '\n')
+    .replace(/\n{3,}/gu, '\n\n')
+    .trim();
+  if (scoped.length === 0) return { text: body, guarded: true };
+  const note =
+    language === 'en'
+      ? ['For reference, what Quoky can read:', ...scoped.map((entry) => `- ${entry.label.en}: ${entry.usage.en}`)]
+      : ['참고로 Quoky가 조회할 수 있는 범위는 이거예요:', ...scoped.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)];
+  return { text: [body, '', ...note].join('\n'), guarded: true };
+}
+
+/** The listing the previous turn showed, from Core's own record of it (`lastSelection`): its entry and canonical args. */
+export interface ShownListing {
+  readonly entry: NlCatalogEntry;
+  readonly args: Readonly<Record<string, unknown>>;
+  /**
+   * Owner decision of 2026-10-28 (fix 1 of the 95386868 analysis): the words of the items Core itself showed in that
+   * listing (`nlShownItemWords` over Core's own reply), held in process memory only for the listing's lifetime. A denial
+   * that names one of them refers to the listing. Never persisted, never sent anywhere (ADR-0110 D4).
+   */
+  readonly itemWords?: readonly string[];
+  /**
+   * Owner decision of 2026-10-28 (B2): the item titles Core showed in that listing (`nlShownItemTitles`), bound to the
+   * very turn that recorded it like the item words; process memory only (ADR-0110 D4).
+   */
+  readonly itemTitles?: readonly string[];
+}
+
+/** The word tokens of a text: letters and digits, lower-cased (NFC); everything else separates. */
+function wordTokens(text: string): string[] {
+  return text.normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((token) => token.length > 0);
+}
+
+/** A word long enough to identify an item: two Hangul syllables or three Latin letters, not only digits. */
+function isItemWord(token: string): boolean {
+  if (/^\p{N}+$/u.test(token)) return false;
+  return /\p{Script=Hangul}/u.test(token) ? token.length >= 2 : token.length >= 3;
+}
+
+/**
+ * Owner decision of 2026-10-28: the item words of a listing reply Core rendered, from its own list structure only: the
+ * lines that start a list item ("- ", "1. ", "1) "). Their words, without digits-only tokens and time words
+ * (`isNlTimeWord`: dates, weekdays, clock times). No vocabulary of its own. Local and pure.
+ */
+export function nlShownItemWords(reply: string): string[] {
+  const words = new Set<string>();
+  for (const line of reply.split(/\r?\n/u)) {
+    const item = /^\s*(?:[-*•]|\d{1,3}[.)])\s+(.*)$/u.exec(line)?.[1];
+    if (item === undefined) continue;
+    for (const token of wordTokens(item)) if (isItemWord(token) && !isNlTimeWord(token)) words.add(token);
   }
-  return {
-    text: ['Quoky가 연결되어 있어서 바로 조회할 수 있어요. 이렇게 말씀해 주세요:', ...offers.map((entry) => `- ${entry.label.ko}: ${entry.usage.ko}`)].join('\n'),
-    guarded: true,
-  };
+  return [...words];
+}
+
+/**
+ * Owner-approved fix of 2026-10-28 (pick a release by its listed title): the item titles of a listing reply Core rendered,
+ * from its own list structure only: each list-item line ("- ", "1. ", "1) ") up to its first " · " field separator, as
+ * written (digits kept). Local and pure; held in process memory only, like the item words (ADR-0110 D4).
+ */
+export function nlShownItemTitles(reply: string): string[] {
+  const titles: string[] = [];
+  for (const line of reply.split(/\r?\n/u)) {
+    const item = /^\s*(?:[-*•]|\d{1,3}[.)])\s+(.*)$/u.exec(line)?.[1];
+    if (item === undefined) continue;
+    const title = item.split(' · ')[0]?.trim() ?? '';
+    if (title.length > 0) titles.push(title);
+  }
+  return titles;
+}
+
+/**
+ * Whether a sentence names one of the shown items' words, with the incapability phrase itself set aside first (so a
+ * title word such as "확인" never matches "확인할 수 없어요"). A Korean word may carry a particle ("면접이" names "면접");
+ * an English word may be the item word's short form ("doc" names "document"). Pure.
+ */
+function namesShownItem(sentence: string, itemWords: readonly string[]): boolean {
+  if (itemWords.length === 0) return false;
+  const rest = sentence.replace(KO_INCAPABLE, ' ').replace(EN_INCAPABLE, ' ');
+  return wordTokens(rest).filter(isItemWord).some((token) => itemWords.some((word) => token.startsWith(word) || (!/\p{Script=Hangul}/u.test(token) && word.startsWith(token))));
+}
+
+/** Quoted segments of a reply ("…", “…”, ‘…’, `…`, '…' around a whole phrase). */
+const QUOTED_SEGMENT = /"([^"\n]{2,80})"|“([^”\n]{2,80})”|‘([^’\n]{2,80})’|`([^`\n]{2,80})`|(?<![\p{L}\p{N}])'([^'\n]{2,80})'(?![\p{L}\p{N}])/gu;
+
+/**
+ * A sentence that names Quoky (or "above") as the one that showed a list: the reference the #280 note itself gives the
+ * chat reply ("the list Quoky showed above"). A closed form of Quoky's own act, not a phrase list for the owner's words.
+ */
+const SHOWN_BY_QUOKY = /(?:quoky|퀴키|위에서?|above)[^.!?\n]{0,24}?(?:보여|보여\s*드|show(?:ed|n)|list(?:ed)?)/iu;
+
+/** The Korean and English copy that closes a reply whose every sentence denied or re-ran the listing shown above. */
+export function renderShownListingAsk(language: 'ko' | 'en'): string {
+  return language === 'en'
+    ? 'The list Quoky showed above is on your screen. Tell me which item to work from, or the detail the answer needs, and I will continue.'
+    : '위에 보여드린 목록은 화면에 그대로 있어요. 어떤 항목을 기준으로 할지, 또는 필요한 내용을 알려 주시면 이어서 도와드릴게요.';
+}
+
+/**
+ * #280 follow-up (context eval 2026-10-26, owner decision of 2026-10-22): right after Quoky showed a listing, a chat reply
+ * must not tell the owner it cannot see, read or check that listing, and must not send them to show it again. The guard
+ * works from Core's own record of what was shown (`listing`: the entry and args of the previous turn's selection), never
+ * from the words of the reply:
+ *  - a sentence stating a read / see / check incapability (the same closed patterns as the D9 guard) is dropped ONLY when
+ *    it refers to the listing shown (CA review P1-1, 2026-10-27): it names that listing's own entry (its source names,
+ *    its catalog aliases, the list nouns the D9 guard also uses, or its label), or it names Quoky as the one that showed
+ *    a list above ({@link SHOWN_BY_QUOKY}); and it names no OTHER offered source (the D9 guard judges that one). Every
+ *    other sentence is left to the D9 guard: "실시간 날씨는 확인할 수 없어요." right after a calendar listing is true and stays;
+ *  - a sentence quoting a command that Core's own grammar maps to the very listing shown (same entry, same canonical
+ *    args; `rerunsListing`, supplied by the runtime from the handlers' pure Class B probes) is dropped;
+ *  - every other sentence is kept as written. A reply left empty gets the fixed ask above.
+ * Nothing here reads, stores or sends item content (ADR-0110 D4): it only removes sentences. Pure.
+ */
+export function guardShownListingDenials(
+  text: string,
+  listing: ShownListing,
+  offered: readonly NlCatalogEntry[],
+  language: 'ko' | 'en',
+  rerunsListing: (segment: string) => boolean = () => false,
+): FalseIncapabilityGuardResult {
+  if (typeof text !== 'string' || text.trim() === '') return { text, guarded: false };
+  const ownNames = new Set((listing.entry.sourceNames ?? []).map((name) => name.toLowerCase()));
+  // The words that name the listing shown: the catalog's own words for its entry (no list of this guard's own).
+  const ownWords = [...ownNames, ...listing.entry.aliases, listing.entry.label.ko, listing.entry.label.en]
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length >= 2);
+  const refersToListing = (lower: string): boolean => ownWords.some((word) => lower.includes(word)) || SHOWN_BY_QUOKY.test(lower);
+  const otherNames = offered
+    .filter((entry) => entry.id !== listing.entry.id)
+    .flatMap((entry) => entry.sourceNames ?? [])
+    .map((name) => name.toLowerCase())
+    .filter((name) => !ownNames.has(name));
+  const parts = text.split(/((?<=[.!?。？])\s+|\n+)/u);
+  const kept: string[] = [];
+  let removed = false;
+  for (let index = 0; index < parts.length; index += 2) {
+    const sentence = parts[index] ?? '';
+    const separator = parts[index + 1] ?? '';
+    const lower = sentence.toLowerCase();
+    const denies =
+      (KO_INCAPABLE.test(sentence) || EN_INCAPABLE.test(sentence)) &&
+      (refersToListing(lower) || namesShownItem(sentence, listing.itemWords ?? [])) &&
+      !otherNames.some((name) => lower.includes(name));
+    const reruns = [...sentence.matchAll(QUOTED_SEGMENT)].some((match) => {
+      const segment = (match.slice(1).find((group) => group !== undefined) ?? '').trim();
+      return segment.length > 0 && rerunsListing(segment);
+    });
+    if (denies || reruns) {
+      removed = true;
+      continue;
+    }
+    kept.push(sentence, separator);
+  }
+  if (!removed) return { text, guarded: false };
+  const rest = kept.join('').trim();
+  return { text: rest.length === 0 ? renderShownListingAsk(language) : rest, guarded: true };
+}
+
+// ── Owner decision of 2026-10-28 (B1, amends the D2 copy rule): quotes and code marks only around a runnable command ──
+
+/** The quote and inline-code pairs a chat reply may use around a command (a fenced code block is left alone). */
+const QUOTE_SPAN = /"([^"\n]+)"|“([^”\n]+)”|「([^」\n]+)」|『([^』\n]+)』|(?<!`)`([^`\n]+)`(?!`)/gu;
+/** Codex review of 672fb8f7 (P2-b): a span longer than this is never a command; it loses its marks unchecked (fail closed). */
+const QUOTE_SPAN_MAX_CHARS = 200;
+/** The opening mark of each pair `QUOTE_SPAN` knows, with its closing mark. */
+const PAIRED_MARKS: Readonly<Record<string, string>> = { '"': '"', '“': '”', '「': '」', '『': '』', '`': '`' };
+
+/** A span wholly inside one more pair of marks (`"1번 문서 요약해줘"`) without that pair (its spacing kept); any other span as it is. */
+function withoutInnerMarks(span: string): string {
+  const open = span.charAt(0);
+  const close = PAIRED_MARKS[open];
+  if (close === undefined || span.length <= 2 || !span.endsWith(close)) return span;
+  const inner = span.slice(1, -1);
+  return inner.includes(open) || inner.includes(close) || inner.trim() === '' ? span : inner;
+}
+
+/**
+ * B1: whether a span reads as a request to Quoky about one of the offered sources: it names an offered entry's catalog
+ * alias or source name, and its last word is in a request form (`nlIsRequestForm`). No vocabulary of its own. Pure.
+ */
+export function nlSpanRequestsOfferedSource(span: string, entries: readonly NlCatalogEntry[]): boolean {
+  const lower = span.normalize('NFC').toLowerCase();
+  const names = entries.flatMap((entry) => [...entry.aliases, ...(entry.sourceNames ?? [])]);
+  if (!names.some((name) => namesAlias(lower, name.normalize('NFC').toLowerCase()))) return false;
+  const last = span.trim().split(/\s+/u).at(-1) ?? '';
+  return nlIsRequestForm(last);
+}
+
+/**
+ * B1: every quoted or inline-code span of a chat reply that `runnable` does not accept keeps its text and loses its
+ * quote marks, so a quote is only ever around a command the owner can send. Returns the text and how many spans lost
+ * their marks. Fenced code blocks are not touched. Pure.
+ *
+ * Context eval of 2dd14102 (run 1, `lc-drive-roadmap-en` t2): a command inside two pairs of marks (`"1번 문서 요약해줘"`)
+ * hands the owner the inner quotes too, and the command sent with them did not run. Such a span keeps one pair only.
+ */
+export function nlUnquoteNonCommands(reply: string, runnable: (span: string) => boolean): { readonly text: string; readonly unquoted: number } {
+  let unquoted = 0;
+  const fences = reply.split(/(```[\s\S]*?```)/u);
+  const text = fences
+    .map((part) =>
+      part.startsWith('```')
+        ? part
+        : part.replace(QUOTE_SPAN, (whole, ...groups: unknown[]) => {
+            const span = (groups.slice(0, 5).find((group) => typeof group === 'string') as string | undefined) ?? '';
+            if (span.trim() === '') return whole;
+            const inner = withoutInnerMarks(span.trim());
+            const nested = inner !== span.trim();
+            // Codex review of 49a2a3d0 (P3): the check reads the trimmed command; a refused span keeps its own spacing.
+            const command = inner.trim();
+            if (command.length <= QUOTE_SPAN_MAX_CHARS && runnable(command)) return nested ? `${whole.charAt(0)}${command}${whole.charAt(whole.length - 1)}` : whole;
+            unquoted += 1;
+            return nested ? inner : span;
+          }),
+    )
+    .join('');
+  return { text, unquoted };
 }

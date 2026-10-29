@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildSelectionPrompt, Capability, isNlActionEntryId, nlIsPastStatement, nlReadNotRequest, parseNlRef, prepareSelectionInput, resolveItemReference, validateSelection, type AiProvider, type AiRequest, type NlActionEntryId } from '@quoky/core';
+import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import {
   NL_ACTION_EVAL_ENTRIES,
   buildActionPlan,
@@ -14,6 +15,7 @@ import {
   scoreActionDecision,
   scoreActionGrammarSide,
   scoreReadRegression,
+  scoreReadRegressionInWorld,
   summarizeAction,
   summarizeReadRegression,
   validateActionCorpus,
@@ -370,6 +372,29 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
   });
 });
 
+describe('read regression records keep the final args like eval:nl (owner go-ahead 2026-10-27, eval only)', () => {
+  it('a hit, a miss, a wrong capture and an action capture carry gotArgs; none and clarify carry none', async () => {
+    const read = { id: 'c1', text: '다다음 주 일정 알려줘', expect: { entryId: 'calendar.events', args: { range: 'week-after-next' } } } as const;
+    expect(scoreReadRegression(read, answer('calendar.events', { range: 'week-after-next' }), NOW)).toMatchObject({ outcome: 'hit', gotArgs: { range: 'week-after-next' } });
+    expect(scoreReadRegression(read, answer('calendar.events', { range: 'week-after-next', keyword: '일정' }), NOW)).toMatchObject({ outcome: 'miss', gotArgs: { range: 'week-after-next', keyword: '일정' } });
+    expect(await scoreReadRegressionInWorld(read, answer('calendar.events', { range: 'week-after-next', keyword: '일정' }), NOW)).toMatchObject({ outcome: 'miss', gotArgs: { range: 'week-after-next', keyword: '일정' } });
+    expect(scoreReadRegression({ id: 'n1', text: '오늘 날씨 좋다', expect: 'none' }, answer('todo.list'), NOW)).toMatchObject({ outcome: 'wrong-capture', gotArgs: {} });
+    expect(scoreReadRegression({ id: 'n2', text: '보고서 할 일 추가해줘', expect: 'none' }, answer('todo.add', { title: '보고서' }), NOW)).toMatchObject({ outcome: 'action-capture', gotArgs: { title: '보고서' } });
+    expect(scoreReadRegression(read, answer('none'), NOW)).not.toHaveProperty('gotArgs');
+  });
+
+  it('a malformed output keeps its raw text and says so, like eval:nl read records (an "answer" outside the contract)', async () => {
+    const thanks = { id: 'oq-1', text: '음 잘 모르겠네', openQuestion: { sources: '드라이브', language: 'ko' }, expect: 'none' } as const;
+    const read = { id: 'c2', text: '내 할 일 보여줘', expect: { entryId: 'todo.list', args: {} } } as const;
+    const malformed = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[],"answer":"1번"}';
+    const plan = buildActionPlan('nl-read-regression', ['oq-1', 'c2'], 'sha', { model: 'haiku', runs: 1, concurrency: 1 });
+    const records = await runReadRegression({ cases: [thanks as never, read], plan, provider: provider((request) => (request.prompt.includes('음 잘 모르겠네') ? malformed : answer('todo.list'))), now: () => NOW });
+    expect(records.find((record) => record.id === 'oq-1')).toMatchObject({ outcome: 'error', error: 'malformed', raw: malformed });
+    expect(records.find((record) => record.id === 'c2')).toMatchObject({ outcome: 'hit' });
+    expect(records.find((record) => record.id === 'c2')).not.toHaveProperty('raw');
+  });
+});
+
 describe('eval:nl --mode action / read-regression (the Strict digest rule)', () => {
   function cli(created: string[]): CliDeps & { out: string[]; err: string[] } {
     const out: string[] = [];
@@ -406,7 +431,7 @@ describe('eval:nl --mode action / read-regression (the Strict digest rule)', () 
     expect(await runCli(['--mode', 'action', '--approved-plan-digest', '0'.repeat(64)], deps)).toBe(EXIT_BLOCKED);
     expect(created).toEqual([]);
     const { corpus, sha256 } = loadActionCorpus();
-    const digest = computeActionPlanDigest(buildActionPlan('nl-action-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', runs: 1, concurrency: 4 }));
+    const digest = computeActionPlanDigest(buildActionPlan('nl-action-eval', corpus.cases.map((golden) => golden.id), sha256, { model: 'haiku', effort: DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY[Capability.INTENT_SELECTION] ?? 'low', runs: 1, concurrency: 4 }));
     // The perfect selector still misses the request-form cost golds, so the gate may fail; the run itself completes.
     expect([EXIT_OK, EXIT_GATE_FAILED]).toContain(await runCli(['--mode', 'action', '--approved-plan-digest', digest], deps));
     expect(created).toEqual(['provider']);

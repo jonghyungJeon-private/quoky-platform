@@ -163,6 +163,14 @@ describe('strict output parser (ADR-0120 D3)', () => {
     });
   });
 
+  it('D4 moved out of the router (owner decision of 2026-10-27): an `answer` key is an unknown key again', () => {
+    const none = '{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]';
+    for (const value of ['1', '"1"', 'null', '"none"']) {
+      expect(parseSelectionOutput(`${none},"answer":${value}}`), value).toBeNull();
+      expect(nlSelectionParseFailure(`${none},"answer":${value}}`), value).toBe('unknown-key');
+    }
+  });
+
   it('rejects unknown keys, prose, a third alternative, nested args, a bad ambiguity and output over 2 KB', () => {
     for (const raw of [
       ok.replace('"alternatives"', '"reason":"x","alternatives"'),

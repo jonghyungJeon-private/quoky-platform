@@ -11101,9 +11101,11 @@ describe('ADR-0104 DET-1 — internal-action claim guard on chat replies', () =>
   });
 
   it('a claim-free chat reply passes through unchanged and logs nothing', async () => {
-    const h = chatRuntime('커밋하려면 "커밋해줘"라고 보내 주세요.', Capability.GENERAL_CHAT, true);
-    const result = await h.runtime.handle(messageOf('커밋 어떻게 해?'));
-    expect(result.reply.text).toBe('커밋하려면 "커밋해줘"라고 보내 주세요.');
+    // Owner decision of 2026-10-28 (B1): the quoted span is a command this runtime's grammar path runs (RUN_TESTS), so
+    // its quote marks stay.
+    const h = chatRuntime('테스트하려면 "테스트 돌려줘"라고 보내 주세요.', Capability.GENERAL_CHAT, true);
+    const result = await h.runtime.handle(messageOf('테스트 어떻게 해?'));
+    expect(result.reply.text).toBe('테스트하려면 "테스트 돌려줘"라고 보내 주세요.');
     expect(h.calls.loggerInfoCalls.some((c) => c.message === 'internal action claim replaced')).toBe(false);
   });
 

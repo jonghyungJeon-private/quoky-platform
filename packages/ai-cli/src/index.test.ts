@@ -66,7 +66,8 @@ describe('ClaudeCliProvider', () => {
       prompt: PROMPT,
     });
     expect(calls[0]?.bin).toBe('claude');
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
+    // Owner decision of 2026-10-28: GENERAL_CHAT runs at medium effort.
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium', '--tools', '']);
     expect(calls[0]?.opts.input).toContain('do the thing');
     expect(calls[0]?.opts.cwd).toBeTruthy();
     // ADR-0121 S0 L1: exactly the non-essential-traffic switch, nothing else.
@@ -75,7 +76,7 @@ describe('ClaudeCliProvider', () => {
     expect(res.artifacts?.[0]?.kind).toBe(ArtifactKind.MARKDOWN_REPORT);
   });
 
-  it('ADR-0120 D2: serves INTENT_SELECTION with the selection model (haiku by default), low effort, no tools, the chat isolation', async () => {
+  it('ADR-0120 D2: serves INTENT_SELECTION with the selection model (haiku by default), high effort (owner decision 2026-10-28), no tools, the chat isolation', async () => {
     const calls: Array<{ args: string[]; opts: CliRunOptions }> = [];
     const runner: CliRunner = async (_bin, args, opts) => {
       calls.push({ args, opts });
@@ -84,7 +85,7 @@ describe('ClaudeCliProvider', () => {
     const claude = new ClaudeCliProvider('claude', { runner });
     expect(claude.capabilities).toContainEqual({ capability: Capability.INTENT_SELECTION, priority: 50 });
     const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'route this', timeoutMs: 4000 });
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high', '--tools', '']);
     expect(calls[0]?.opts.timeoutMs).toBe(4000);
     // Not a chat capability: the JSON passes through without the chat hygiene rewriting it.
     expect(res.text).toBe('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}');
@@ -199,8 +200,8 @@ describe('ClaudeCliProvider', () => {
   };
 
   it.each([
-    [Capability.GENERAL_CHAT, 'low'],
-    [Capability.POLICY_SENSITIVE_CHAT, 'low'],
+    [Capability.GENERAL_CHAT, 'medium'],
+    [Capability.POLICY_SENSITIVE_CHAT, 'medium'],
     [Capability.READONLY_LOOKUP, 'low'],
     [Capability.SUMMARIZATION, 'low'],
     [Capability.DOCUMENT_ANALYSIS, 'medium'],
@@ -231,7 +232,7 @@ describe('ClaudeCliProvider', () => {
   it('treats an explicit undefined effort override as the default instead of throwing', async () => {
     const options = { effortByCapability: { [Capability.GENERAL_CHAT]: undefined } };
     expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(7, 9))
-      .toEqual(['--effort', 'low']);
+      .toEqual(['--effort', 'medium']);
   });
 
   it('isolates every run from the owner\'s Claude Code environment (QA-V2-002: no MCP/connectors, settings, session history)', async () => {
@@ -1336,7 +1337,7 @@ describe('Provider regression through the contained runner', () => {
     });
     expect(probe.spawns).toHaveLength(1);
     expect(probe.spawns[0]?.bin).toBe('claude');
-    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'low', '--tools', '']);
+    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium', '--tools', '']);
     expect(probe.spawns[0]?.options.cwd).toBe(tmpdir()); // Claude's neutral-cwd contract
     expect(probe.spawns[0]?.options.shell).toBe(false);
     expect(probe.stdinWrites).toEqual([PROMPT]); // prompt on stdin, never argv

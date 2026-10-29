@@ -7,7 +7,7 @@ import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { NL_WAVE1_ENTRIES, jiraKeywordCarriesQualifier, nlWave1Entry } from '../nl-routing/wave1-entries';
 import type { NlCatalogEntry } from '../nl-routing/catalog';
-import { hasJiraReleaseLink, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
+import { hasJiraReleaseLink, isJiraReleaseLinkOnly, normalizeSiteHost, parseJiraReleaseLinks, releaseLinkOnSite } from './jira-release-link';
 import { fuzzyProjects, lookupJiraRelease, nearProjectsOfJoined, splitKeyFromRelease, stripRedundantProjectKey, matchProjects, matchRelease, nearbyReleases, stripReleaseWords, type ReleaseLookupCommand } from './jira-release-lookup';
 import { releasesInListOrder, renderReleaseIssues, renderReleaseList } from './jira-release-renderer';
 import { detectWorkChatCommand } from './work-chat-command';
@@ -139,6 +139,51 @@ describe('lookupJiraRelease (A8): resolve what the owner named, read the release
     const both = await run({ project: '차란차 운영', release: '없는버전' });
     expect(both.text).toContain('여러 개예요');
     expect(both.queries.some((query) => query.query === 'release-items')).toBe(false);
+  });
+
+  it('P9 (owner decision 2026-10-27): with no project, a release value that is exactly one visible project key is that project\'s release list', async () => {
+    const asKey = await run({ release: 'OP26' });
+    const asList = await run({ project: 'OP26' });
+    expect(asKey.text).toBe(asList.text);
+    expect(asKey.result).toMatchObject({ kind: 'body', asProject: 'OP26' });
+    // Case aside (the owner's own spelling), still only a visible key.
+    expect((await run({ release: 'op26' })).result).toMatchObject({ kind: 'body', asProject: 'OP26' });
+    // A key-shaped value that no visible project has stays a release; a release name never reads as a project.
+    expect((await run({ release: 'ZZ99' })).result).not.toHaveProperty('asProject');
+    expect((await run({ release: '20261015' })).result).not.toHaveProperty('asProject');
+    // With a project named, the release stays a release.
+    expect((await run({ release: 'OP25', project: 'OP26' })).result).not.toHaveProperty('asProject');
+    // In a channel the reinterpreted list is DM-only, like any release list.
+    const fake = connector();
+    const channel = await lookupJiraRelease({ connector: fake.provider, command: { scope: 'mine', links: [], release: 'OP26' }, identity: 'acc-1', siteHost: SITE, inChannel: true });
+    expect(channel.kind === 'body' ? plainTextOf(channel.body) : '').toContain('프로젝트·릴리스 목록은 DM에서만');
+  });
+
+  it('a8-25 (2026-10-27): a message that is nothing but Jira release-page links is link-only; anything else is not', () => {
+    for (const text of [`https://${SITE}/browse/OP26/fixforversion/16555`, `${LINK}`, `<${LINK}>`, `${LINK} ${LINK}.`, `  ${LINK} !`]) expect(isJiraReleaseLinkOnly(text), text).toBe(true);
+    for (const text of [
+      `${LINK} 이거 보여줘`,
+      `how many in ${LINK}`,
+      `https://${SITE}/projects/OP26`,
+      `https://${SITE}/browse/OP26-123`,
+      `${LINK} https://example.com/x`,
+      '릴리스 보여줘',
+      '',
+    ]) expect(isJiraReleaseLinkOnly(text), text).toBe(false);
+  });
+
+  it('P9 mirror (2026-10-27, a8-18): with no release, a project value that cannot be a Jira key and names no visible project is the release', async () => {
+    const asProject = await run({ project: '2.3.0' });
+    const asRelease = await run({ release: '2.3.0' });
+    expect(asProject.text).toBe(asRelease.text);
+    expect(asProject.queries.map((query) => query.query)).toEqual(['containers', 'release-items']);
+    expect(asProject.queries.at(-1)?.params).toEqual({ releaseName: '2.3.0', limit: 20 });
+    expect((await run({ project: '20261015' })).queries.at(-1)?.params).toEqual({ releaseName: '20261015', limit: 20 });
+    // Never moved: a key-shaped value, a visible project, a non-ASCII or multi-word name, or with a release named.
+    expect((await run({ project: 'ZZ99' })).queries.map((query) => query.query)).not.toContain('release-items');
+    expect((await run({ project: '없는 프로젝트' })).queries.map((query) => query.query)).not.toContain('release-items');
+    expect((await run({ project: 'Mobile App' })).queries.map((query) => query.query)).not.toContain('release-items');
+    expect((await run({ project: '2026', release: '20261015' })).queries.at(-1)?.params).not.toEqual({ releaseName: '2026', limit: 20 });
   });
 
   it('owner sentence 4: a project and no release is the project release list', async () => {

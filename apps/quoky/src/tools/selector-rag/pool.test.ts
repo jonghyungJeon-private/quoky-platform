@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { AUDIT_RECORD_PATH, type AuditRecord } from '../selector-rag-cli';
 import { calibrateTau, recordId, spaceIdOf } from './embed';
-import { loadGold } from './gold';
+import { experimentCases, loadGold } from './gold';
 import { poolOutput, approvedEntries, checkPool, coverageOf, entryProblems, identifierProblems, loadPoolFile, poolDigest, type PoolEntry } from './pool';
 import { outputEntryId, drawSwap, retrieveRandomK, retrieveTopK, subsample, type PoolVector } from './retrieve';
 import { splitCases } from './split';
@@ -65,7 +65,7 @@ describe('ADR-0123 pool batch 1', () => {
 
   it('the committed audit record is fresh for this pool, gold and split (a stale audit fails the suite)', () => {
     const audit = JSON.parse(readFileSync(AUDIT_RECORD_PATH, 'utf8')) as AuditRecord;
-    const split = splitCases(gold.cases.map((golden) => ({ id: golden.id, entry: golden.entry })));
+    const split = splitCases(experimentCases(gold).map((golden) => ({ id: golden.id, entry: golden.entry })));
     // the audit binds the owner-approved entries (what a plan may use); a pending batch does not move it
     expect(audit.poolDigest).toBe(poolDigest(approvedEntries(pool)));
     expect(audit.goldDigest).toBe(gold.sha256);
