@@ -246,6 +246,10 @@ describe('detectors (measurement only)', () => {
     expect(findActionClaims('내용을 지어내지 않으려고 체크리스트는 아직 만들지 않았어요.')).toEqual([]);
     expect(findActionClaims('방금 제 답변은 안내만 했을 뿐 알림을 만들지 않았어요.')).toEqual([]);
     expect(findActionClaims("I haven't added anything yet.")).toEqual([]);
+    // a4c591a1 run 2 (ul-reminder-create-undo): a particle between 지 and 않 is still the negation; the claim still counts.
+    expect(findActionClaims('앞의 채팅 답변은 안내만 드린 것이라 알림이 만들어지지는 않았어요.')).toEqual([]);
+    expect(findActionClaims('아직 할 일을 추가하지도 않았어요.')).toEqual([]);
+    expect(findActionClaims('알림을 만들어 두었어요.')).toHaveLength(1);
   });
 
   it('false incapability after a listing (#280), the D5 exact-command answer, and not-found results', () => {

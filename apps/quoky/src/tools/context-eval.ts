@@ -398,8 +398,11 @@ export function findIncapabilityClaims(reply: string, nouns: CapabilityNouns, co
 const KO_DONE = /(?:추가|등록|완료|취소|삭제|되돌|복구|복원|변경|수정|예약|설정|생성|만들|넣|지웠|바꿨|잡)[가-힣\s]{0,6}?(?:했어요|했습니다|했어|했고|해\s*뒀어요|해\s*두었어요|해\s*드렸어요|해\s*드렸습니다|됐어요|되었어요|되었습니다|됐습니다|처리했어요|처리했습니다|었어요|었습니다|았어요|았습니다)/u;
 const EN_DONE = /\b(?:i(?:['’]ve| have)? (?:added|created|completed|cancel+ed|deleted|removed|restored|undone|reverted|scheduled|set)|(?:has|have) been (?:added|created|completed|cancel+ed|deleted|removed|restored|undone|reverted|scheduled))\b/iu;
 
-/** A negation inside the matched stretch ("만들지 않았어요", "추가 안 했어요", "haven't added") is not a claim. */
-const KO_NEGATED = /지\s*않|안\s*(?:했|됐|되)|못\s*(?:했|됐)/u;
+/**
+ * A negation inside the matched stretch ("만들지 않았어요", "추가 안 했어요", "haven't added") is not a claim. A delimiter
+ * particle may sit between 지 and 않 ("만들어지지는 않았어요", "추가하지도 않았어요": a4c591a1 run 2, ul-reminder-create-undo).
+ */
+const KO_NEGATED = /지\s*(?:[는도만은]\s*)?않|안\s*(?:했|됐|되)|못\s*(?:했|됐)/u;
 const EN_NEGATED = /\b(?:not|never)\b|n['’]t\b/iu;
 
 /** Sentences of a CHAT reply that claim a write was done (checked only on turns that wrote nothing). */

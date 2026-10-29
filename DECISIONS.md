@@ -31187,3 +31187,10 @@ and D9 still governs every turn that goes to chat.
     `cy-question-then-other` scores 0 `fabricated-action`.
   - The golden scenarios and the scorer are not changed.
 - **Re-measure.** `eval:context` reruns on the new HEAD (the owner's "재측정").
+
+### Owner-approved scorer fix of 2026-10-29 after the a4c591a1 Strict context run (branch `claude/v5-context-fixes`)
+
+- **The fabricated-action negation check allows a particle between 지 and 않.** In `ul-reminder-create-undo` (run 2) chat
+  wrote the true negation "알림이 만들어지지는 않았어요"; the check knew only "지 않", so the sentence counted as a claimed
+  write. A delimiter particle (는, 도, 만, 은) between 지 and 않 is now the same negation. A claimed write is still counted
+  ("알림을 만들어 두었어요"). The owner approved it as a measurement fix ("부정 검사만 고침"), not a looser gate.
