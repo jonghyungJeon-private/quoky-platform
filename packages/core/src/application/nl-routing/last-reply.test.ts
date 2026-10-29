@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Actor, Session } from '../../domain';
-import { LAST_REPLY_METADATA_KEY, LAST_REPLY_TTL_MS, nlBareYesNo, readLastReply, renderNoOpenQuestion, withLastReply } from './last-reply';
+import { LAST_REPLY_METADATA_KEY, LAST_REPLY_TTL_MS, nextLastReply, nlBareYesNo, readClosedQuestion, readLastReply, renderNoOpenQuestion, withLastReply } from './last-reply';
+import { CLOSED_QUESTION_FACT } from './honest-chat';
 import { NlSelectionService, type NlIntentMode } from './nl-selection-service';
 
 // Owner decision of 2026-10-29: the `quoky.lastReply` record, the bare yes / no test and the fixed notice. The runtime
@@ -37,6 +38,80 @@ describe('quoky.lastReply record', () => {
     const actors = Object.keys((value as { byActor: object }).byActor);
     expect(actors).toHaveLength(64);
     expect(actors).toContain('actor-69');
+  });
+});
+
+describe('quoky.lastReply questionClosedAt — an open D7 question closed without an answer (owner decision of 2026-10-29, "1번 진행")', () => {
+  // One turn's write, as `NlSelectionService.recordLastReply` does it.
+  const reply = (current: unknown, actorId: string, chat: boolean, closedQuestion: boolean, now: string) =>
+    withLastReply(current, actorId, nextLastReply(current, actorId, chat, closedQuestion, now), now);
+
+  it('is written when the turn that took the open question is answered by chat, and read back for that actor', () => {
+    const value = reply(undefined, 'owner', true, true, T0);
+    expect(value).toEqual({ byActor: { owner: { chat: true, at: T0, questionClosedAt: T0 } } });
+    expect(readClosedQuestion(value, 'owner', T0)).toBe(true);
+    expect(readClosedQuestion(value, 'owner', at(60_000))).toBe(true);
+  });
+
+  it('is carried by later chat replies, keeping the time of the close', () => {
+    let value = reply(undefined, 'owner', true, true, T0);
+    value = reply(value, 'owner', true, false, at(60_000));
+    value = reply(value, 'owner', true, false, at(120_000));
+    expect(readLastReply(value, 'owner', at(120_000))).toEqual({ chat: true, at: at(120_000), questionClosedAt: T0 });
+    expect(readClosedQuestion(value, 'owner', at(120_000))).toBe(true);
+  });
+
+  it('is never set when the turn that took the question was not chat (an answer, a served command, a new question)', () => {
+    expect(reply(undefined, 'owner', false, true, T0)).toEqual({ byActor: { owner: { chat: false, at: T0 } } });
+    expect(readClosedQuestion(reply(undefined, 'owner', false, true, T0), 'owner', T0)).toBe(false);
+    // A chat turn with no question taken and nothing held sets nothing.
+    expect(readClosedQuestion(reply(undefined, 'owner', true, false, T0), 'owner', T0)).toBe(false);
+  });
+
+  it('is dropped by any reply that is not chat: a new D7 question, an answer, a served command, a notice or an error', () => {
+    const closed = reply(undefined, 'owner', true, true, T0);
+    const next = reply(closed, 'owner', false, false, at(1000));
+    expect(readLastReply(next, 'owner', at(1000))).toEqual({ chat: false, at: at(1000) });
+    expect(readClosedQuestion(next, 'owner', at(1000))).toBe(false);
+    // ...and a chat reply after that does not bring it back.
+    expect(readClosedQuestion(reply(next, 'owner', true, false, at(2000)), 'owner', at(2000))).toBe(false);
+  });
+
+  it('stops applying 30 minutes after the close, even while chat replies keep the record itself fresh', () => {
+    let value = reply(undefined, 'owner', true, true, T0);
+    value = reply(value, 'owner', true, false, at(LAST_REPLY_TTL_MS - 1000));
+    expect(readClosedQuestion(value, 'owner', at(LAST_REPLY_TTL_MS - 1))).toBe(true);
+    expect(readClosedQuestion(value, 'owner', at(LAST_REPLY_TTL_MS))).toBe(false);
+    // The next chat reply after the TTL does not carry the expired close.
+    const after = reply(value, 'owner', true, false, at(LAST_REPLY_TTL_MS + 1000));
+    expect(readLastReply(after, 'owner', at(LAST_REPLY_TTL_MS + 1000))).toEqual({ chat: true, at: at(LAST_REPLY_TTL_MS + 1000) });
+    // A malformed close time counts as absent.
+    expect(readClosedQuestion({ byActor: { owner: { chat: true, at: T0, questionClosedAt: 'soon' } } }, 'owner', T0)).toBe(false);
+  });
+
+  it('is scoped per actor: another actor neither sees nor clears it', () => {
+    let value = reply(undefined, 'owner', true, true, T0);
+    expect(readClosedQuestion(value, 'guest', T0)).toBe(false);
+    value = reply(value, 'guest', false, false, at(1000));
+    expect(readClosedQuestion(value, 'owner', at(1000))).toBe(true);
+    expect(readClosedQuestion(value, 'guest', at(1000))).toBe(false);
+  });
+
+  it('holds no content: only booleans and times', () => {
+    const value = reply(reply(undefined, 'owner', true, true, T0), 'owner', true, false, at(1000)) as { byActor: Record<string, Record<string, unknown>> };
+    expect(Object.keys(value.byActor.owner ?? {}).sort()).toEqual(['at', 'chat', 'questionClosedAt']);
+    for (const field of Object.values(value.byActor.owner ?? {})) expect(typeof field === 'boolean' || !Number.isNaN(Date.parse(String(field)))).toBe(true);
+  });
+});
+
+describe('CLOSED_QUESTION_FACT', () => {
+  it('states the close, the missing confirmation, that nothing was held and that a yes confirms nothing; no content', () => {
+    expect(CLOSED_QUESTION_FACT).toContain('closed without an answer');
+    expect(CLOSED_QUESTION_FACT).toContain('never confirmed');
+    expect(CLOSED_QUESTION_FACT).toContain('nothing from it was selected, filled in or held');
+    expect(CLOSED_QUESTION_FACT).toContain('A yes, a no or a number sent now does not answer that question');
+    // A fixed English sentence: no Hangul, no digit, no quote or code mark (an apostrophe only inside a word), no braces.
+    expect(CLOSED_QUESTION_FACT).not.toMatch(/[\p{Script=Hangul}\d"“”‘`{}<>\[\]]|(?<!\p{L})'|'(?!\p{L})/u);
   });
 });
 
@@ -114,8 +189,19 @@ describe('NlSelectionService.recordLastReply', () => {
     for (const mode of ['shadow', 'off'] as const) {
       const other = service(mode);
       await other.svc.recordLastReply({ id: 'sess-r' }, 'owner', false, T0);
+      await other.svc.recordLastReply({ id: 'sess-r' }, 'owner', true, T0, true);
       expect(other.writes(), mode).toBe(0);
     }
+  });
+
+  it('owner decision of 2026-10-29 ("1번 진행"): a chat reply to the turn that took the question writes the close; a non-chat reply drops it', async () => {
+    const active = service('active');
+    await active.svc.recordLastReply({ id: 'sess-r' }, 'owner', true, T0, true);
+    expect(active.session().metadata?.[LAST_REPLY_METADATA_KEY]).toEqual({ byActor: { owner: { chat: true, at: T0, questionClosedAt: T0 } } });
+    await active.svc.recordLastReply({ id: 'sess-r' }, 'owner', true, at(1000));
+    expect(readClosedQuestion(active.session().metadata?.[LAST_REPLY_METADATA_KEY], 'owner', at(1000))).toBe(true);
+    await active.svc.recordLastReply({ id: 'sess-r' }, 'owner', false, at(2000));
+    expect(active.session().metadata?.[LAST_REPLY_METADATA_KEY]).toEqual({ byActor: { owner: { chat: false, at: at(2000) } } });
   });
 
   it('never throws on a failed write', async () => {

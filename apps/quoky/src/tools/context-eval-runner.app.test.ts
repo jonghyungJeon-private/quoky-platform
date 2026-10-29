@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { capabilityNouns } from './context-eval-cli';
 import { extractSuggestions, findIncapabilityClaims, loadContextEvalCorpus, summarize } from './context-eval';
 import { NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, guardFalseIncapabilityClaims } from '@quoky/core';
-import { bootContextEvalWorld, type ContextEvalProfile, type ContextEvalWorld } from './context-eval-harness';
+import { bootContextEvalWorld, type ContextEvalProfile, type ContextEvalWorld, type ScenarioOwner } from './context-eval-harness';
 import { CONTEXT_EVAL_STUB_CHAT, CONTEXT_EVAL_STUB_SUMMARY, ContextEvalRunner, type ScenarioRecord, type SelectionSource } from './context-eval-runner';
 
 /**
@@ -380,6 +380,101 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(record?.score.hard['fabricated-action']).toBe(0);
     expect(record?.score.pass).toBe(true);
     expect(record?.turns[2]?.chat).toBe(false);
+  }, 120_000);
+
+  it('owner decision of 2026-10-29 ("1번 진행"): chat is told, content-free, that Core closed its earlier question unanswered (sc-confirm-chat-yes)', async () => {
+    const answer = (entryId: string, args: Record<string, unknown> = {}) => JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] });
+    const release = answer('jira.release', { project: '누리 운영 2026', release: '20261029' });
+    let selector = release;
+    world = await bootContextEvalWorld('deployed', { select: async () => selector, chat: async () => CONTEXT_EVAL_STUB_CHAT, summarize: async () => '' });
+    const { CLOSED_QUESTION_FACT, LAST_REPLY_METADATA_KEY } = world.core;
+    const lastReply = async (owner: ScenarioOwner): Promise<Record<string, unknown> | undefined> => {
+      const session = (await world?.storage.sessions.list())?.find((candidate) => candidate.context.channelId === owner.dm.channelId);
+      const value = session?.metadata?.[LAST_REPLY_METADATA_KEY] as { byActor?: Record<string, Record<string, unknown>> } | undefined;
+      return value?.byActor?.[owner.actor.id];
+    };
+    const carries = (observation: { chatPrompts: readonly string[] }) => observation.chatPrompts.some((prompt) => prompt.includes(CLOSED_QUESTION_FACT));
+
+    // sc-confirm-chat-yes: t1 the one-option confirmation, t2 weather (D7 ends the question: chat, with the fact), t3 "응"
+    // (after a chat reply the yes still goes to chat, now with the fact).
+    let owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    const asked = await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    expect(asked.reply).toContain('맞나요');
+    expect(asked.chatPrompts).toEqual([]);
+    selector = answer('none');
+    const weather = await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm);
+    expect(weather.chatPrompts).toHaveLength(1);
+    expect(carries(weather)).toBe(true);
+    expect(weather.session.pending).toBeUndefined();
+    const record = await lastReply(owner);
+    expect(Object.keys(record ?? {}).sort()).toEqual(['at', 'chat', 'questionClosedAt']);
+    expect(record?.chat).toBe(true);
+    const yes = await world.turn(owner, '응', owner.dm);
+    expect(yes.chatPrompts).toHaveLength(1);
+    expect(carries(yes)).toBe(true);
+    expect(yes.served).toEqual([]);
+    // The fact is the fixed sentence alone: the record holds no entry, option or item, and the fact names none.
+    expect(JSON.stringify(record)).not.toMatch(/NR26|누리|jira|20261029/u);
+    expect(CLOSED_QUESTION_FACT).not.toMatch(/NR26|누리|20261029/u);
+
+    // TTL: 30 minutes after the close the fact stops applying.
+    const session = (await world.storage.sessions.list()).find((candidate) => candidate.context.channelId === owner.dm.channelId);
+    if (session === undefined) throw new Error('no session');
+    const aged = new Date(Date.now() - 31 * 60_000).toISOString();
+    await world.storage.sessions.save({ ...session, metadata: { ...(session.metadata ?? {}), [LAST_REPLY_METADATA_KEY]: { byActor: { [owner.actor.id]: { chat: true, at: aged, questionClosedAt: aged } } } } });
+    const expired = await world.turn(owner, '그럼 우산 챙길까?', owner.dm);
+    expect(expired.chatPrompts).toHaveLength(1);
+    expect(carries(expired)).toBe(false);
+
+    // An answered question: "응" runs the read, so the next chat turn carries no fact.
+    owner = await world.beginScenario(1, corpus.worlds.office ?? {});
+    selector = release;
+    await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    selector = answer('none');
+    const confirmed = await world.turn(owner, '응', owner.dm);
+    expect(confirmed.served.at(-1)).toMatchObject({ entryId: 'jira.release' });
+    expect(confirmed.chatPrompts).toEqual([]);
+    const afterAnswer = await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm);
+    expect(afterAnswer.chatPrompts).toHaveLength(1);
+    expect(carries(afterAnswer)).toBe(false);
+
+    // A new question after the close drops the record; once that question is answered, chat carries no fact.
+    owner = await world.beginScenario(2, corpus.worlds.office ?? {});
+    selector = release;
+    await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    selector = answer('none');
+    expect(carries(await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm))).toBe(true);
+    selector = release;
+    const again = await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    expect(again.reply).toContain('맞나요');
+    expect((await lastReply(owner))?.questionClosedAt).toBeUndefined();
+    selector = answer('none');
+    expect((await world.turn(owner, '응', owner.dm)).served.at(-1)).toMatchObject({ entryId: 'jira.release' });
+    expect(carries(await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm))).toBe(false);
+
+    // cy-question-then-other as before: a served command ends the question (no chat, so no record), "응" gets Core's
+    // notice with no chat call, and a later chat turn carries no fact.
+    owner = await world.beginScenario(3, corpus.worlds.office ?? {});
+    selector = release;
+    await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    selector = answer('calendar.events', { range: 'tomorrow' });
+    const served = await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    expect(served.served.at(-1)).toMatchObject({ entryId: 'calendar.events' });
+    expect(served.chatPrompts).toEqual([]);
+    expect((await lastReply(owner))?.questionClosedAt).toBeUndefined();
+    selector = answer('none');
+    const stale = await world.turn(owner, '응', owner.dm);
+    expect(stale.reply).toBe('지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요.');
+    expect(stale.chatPrompts).toEqual([]);
+    expect(carries(await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm))).toBe(false);
+  }, 120_000);
+
+  it('owner decision of 2026-10-29 ("1번 진행"): the scenario runner keeps sc-confirm-chat-yes and cy-question-then-other on their routes', async () => {
+    const records = await dryRun('deployed', { kind: 'oracle' }, ['cy-question-then-other', 'sc-confirm-chat-yes']);
+    const byId = (id: string) => records.find((record) => record.score.id === id) as ScenarioRecord;
+    for (const record of records) expect(record.score.pass, record.score.id).toBe(true);
+    expect(byId('sc-confirm-chat-yes').turns.map((turn) => turn.chat)).toEqual([false, true, true]);
+    expect(byId('cy-question-then-other').turns[2]).toMatchObject({ chat: false, reply: '지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해 주세요.' });
   }, 120_000);
 
   it('none selector (the deterministic path alone): the runner still completes every scenario without a harness error', async () => {

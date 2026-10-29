@@ -103,6 +103,7 @@ import {
   nlShownItemWords,
   nlSpanRequestsOfferedSource,
   nlUnquoteNonCommands,
+  CLOSED_QUESTION_FACT,
   renderConfiguredSourcesFact,
   renderControlCommandsFact,
   type NlControlScope,
@@ -114,7 +115,7 @@ import { externalLastActionOf } from './nl-routing/last-action';
 import { renderAgentSwitchReply, type AgentRunService } from './agent/agent-run-service';
 import { renderActionStopped, renderActionUnavailable, type NlActionAudit } from './nl-routing/nl-action-policy';
 import type { LastTurnReplyKind } from './nl-routing/last-turn';
-import { LAST_REPLY_METADATA_KEY, nlBareYesNo, readLastReply, renderNoOpenQuestion } from './nl-routing/last-reply';
+import { LAST_REPLY_METADATA_KEY, nlBareYesNo, readClosedQuestion, readLastReply, renderNoOpenQuestion } from './nl-routing/last-reply';
 import type { MessageBody } from '../domain';
 import { LAST_SELECTION_METADATA_KEY, isActionPendingQuestion, type PendingQuestion } from './nl-routing/selection-state';
 import { nearMissActionSwitchPhrase, parseActionSwitchPhrase, renderActionSwitchHint, renderActionSwitchReply } from './nl-routing/action-switch';
@@ -2449,6 +2450,9 @@ export class ConversationRuntime {
     // ADR-0120 D7: an open selection question ends with this owner turn whatever route answers it; selection below gets
     // the question only when the turn reaches it (`active` only; nothing is written when there is none).
     const nlPending = this.deps.nlSelection?.takePending ? await this.deps.nlSelection.takePending(session, actor.id, this.clock()) : undefined;
+    // Owner decision of 2026-10-29 ("1번 진행"): this turn ended this actor's open question; if chat answers the turn, the
+    // question was closed without an answer (an answer is never chat), see `quoky.lastReply` `questionClosedAt`.
+    if (nlPending !== undefined && nlPending !== null) this.nlClosedQuestions.add(message);
     // ADR-0120 follow-up: `lastSelection` must describe the listing of the LAST turn only; see `settleNlLastSelection`.
     if (this.deps.nlSelection?.mode === 'active' && session.metadata?.[LAST_SELECTION_METADATA_KEY] !== undefined) {
       this.nlTurns.set(message, { sessionId: session.id, keep: false });
@@ -3426,6 +3430,8 @@ export class ConversationRuntime {
   private readonly nlDeicticPrefix = new WeakMap<InboundMessage, string>();
   /** Owner decision of 2026-10-29: turns answered by chat (GENERAL_CHAT / POLICY_SENSITIVE_CHAT), for `quoky.lastReply`. */
   private readonly nlChatReplies = new WeakSet<InboundMessage>();
+  /** Owner decision of 2026-10-29 ("1번 진행"): turns whose start took the actor's open D7 question (`takePending`). */
+  private readonly nlClosedQuestions = new WeakSet<InboundMessage>();
 
   /** A6 R5a: what a handler's reply was, for `quoky.lastTurn` (an echo, a to-do / reminder listing, a question, a note). */
   private static nlReplyKindOf(handled: TurnHandlerOutcome): { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' } {
@@ -3475,7 +3481,20 @@ export class ConversationRuntime {
     const nl = this.deps.nlSelection;
     const facts = this.nlTurnFacts.get(message);
     if (nl?.recordLastReply === undefined || nl.mode !== 'active' || facts === undefined) return;
-    await nl.recordLastReply({ id: facts.sessionId }, facts.actorId, this.nlChatReplies.has(message), this.clock());
+    await nl.recordLastReply({ id: facts.sessionId }, facts.actorId, this.nlChatReplies.has(message), this.clock(), this.nlClosedQuestions.has(message));
+  }
+
+  /**
+   * Owner decision of 2026-10-29 ("1번 진행", context eval `sc-confirm-chat-yes`): this chat turn follows an open D7 question
+   * Core closed without an answer, so its prompt carries {@link CLOSED_QUESTION_FACT}. Either this very turn took the
+   * actor's question (and is chat, so it did not answer it), or the actor's fresh `quoky.lastReply` holds
+   * `questionClosedAt` (every reply since was chat). Only in `active`, only for GENERAL_CHAT / POLICY_SENSITIVE_CHAT.
+   */
+  private closedQuestionFact(message: InboundMessage, session: Session, actor: Actor, capability: Capability): string | undefined {
+    if (this.deps.nlSelection?.mode !== 'active') return undefined;
+    if (capability !== Capability.GENERAL_CHAT && capability !== Capability.POLICY_SENSITIVE_CHAT) return undefined;
+    const closed = this.nlClosedQuestions.has(message) || readClosedQuestion(session.metadata?.[LAST_REPLY_METADATA_KEY], actor.id, this.clock());
+    return closed ? CLOSED_QUESTION_FACT : undefined;
   }
 
   /**
@@ -9106,7 +9125,10 @@ export class ConversationRuntime {
           : controls !== undefined && (capability === Capability.GENERAL_CHAT || capability === Capability.POLICY_SENSITIVE_CHAT)
           ? renderControlCommandsFact(controls)
           : undefined;
-      const nlComposition = sourcesFact === undefined ? undefined : { additionalCurrentFacts: [sourcesFact] };
+      // Owner decision of 2026-10-29 ("1번 진행"): the closed-question fact, beside the D9 / control facts.
+      const closedFact = this.closedQuestionFact(message, session, actor, capability);
+      const chatFacts = [sourcesFact, closedFact].filter((fact): fact is string => fact !== undefined);
+      const nlComposition = chatFacts.length === 0 ? undefined : { additionalCurrentFacts: chatFacts };
       const promptSpec =
         nlComposition === undefined
           ? this.deps.promptComposer.compose(task, bundle, readout)

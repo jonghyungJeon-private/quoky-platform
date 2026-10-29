@@ -109,6 +109,20 @@ export const NO_YES_NO_OFFER_RULE =
   'Quoky question with yes, no or a number: a yes, a no or a number sent to a chat reply runs nothing.';
 
 /**
+ * Owner decision of 2026-10-29 ("1번 진행", context eval `sc-confirm-chat-yes`): Core closed this actor's open D7 question
+ * because the User's reply was not an answer (ADR-0120 D7), and every reply since was chat (`quoky.lastReply`
+ * `questionClosedAt`, `last-reply.ts`). The chat turn carries this plain fact, from Core's own state, so it never reads
+ * the earlier question in the transcript as confirmed. Content-free (ADR-0110 D4): no entry, option, project, title or
+ * item; the same text on every such turn. It speaks only of Quoky's question, so a yes to the chat's own words is still
+ * the chat's to answer.
+ */
+export const CLOSED_QUESTION_FACT =
+  "Quoky's earlier confirmation or choice question to the User was closed without an answer: the User's reply to it " +
+  'was not an answer. The User never confirmed or chose anything in it, and nothing from it was selected, filled in ' +
+  'or held. A yes, a no or a number sent now does not answer that question and confirms, selects or runs nothing ' +
+  'from it; never say or imply that the User confirmed it or that anything from it was set, entered or kept.';
+
+/**
  * What the one switch controls in the active configuration (CA P3 7): A6 natural-language actions (`QUOKY_NL_ACTIONS` not
  * off), the multi-step agent (`QUOKY_AGENT_MODE` not off) and the channel permissions (`QUOKY_CHANNEL_GRANTS=enforce`).
  */

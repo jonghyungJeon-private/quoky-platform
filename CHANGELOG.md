@@ -17,6 +17,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Changed (owner decision 2026-10-29).** When Core closes its own confirmation or choice question because the owner's
+  reply was not an answer, the chat replies that follow (for 30 minutes, until Core replies with anything else) are
+  told, without any item content, that the question was never confirmed, nothing from it was held, and a yes now
+  confirms nothing. Owner also confirmed: a one-option question whose option Core had to repair keeps asking, and
+  policy-sensitive chat stays at medium effort.
 - **Changed (owner decision 2026-10-29).** A bare yes or no ("응", "아니", "yes") that no question is waiting for, right
   after a reply that was not chat, gets Core's fixed notice ("지금 답을 기다리는 질문이 없어요. 원하시는 걸 문장으로 말씀해
   주세요.") instead of a chat reply. Open questions, confirmations and approvals still take their yes or no, and after a
