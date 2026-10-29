@@ -680,13 +680,13 @@ const QUOTE_SPAN_MAX_CHARS = 200;
 /** The opening mark of each pair `QUOTE_SPAN` knows, with its closing mark. */
 const PAIRED_MARKS: Readonly<Record<string, string>> = { '"': '"', '“': '”', '「': '」', '『': '』', '`': '`' };
 
-/** A span wholly inside one more pair of marks (`"1번 문서 요약해줘"`) without that pair; any other span as it is. */
+/** A span wholly inside one more pair of marks (`"1번 문서 요약해줘"`) without that pair (its spacing kept); any other span as it is. */
 function withoutInnerMarks(span: string): string {
   const open = span.charAt(0);
   const close = PAIRED_MARKS[open];
   if (close === undefined || span.length <= 2 || !span.endsWith(close)) return span;
   const inner = span.slice(1, -1);
-  return inner.includes(open) || inner.includes(close) || inner.trim() === '' ? span : inner.trim();
+  return inner.includes(open) || inner.includes(close) || inner.trim() === '' ? span : inner;
 }
 
 /**
@@ -719,10 +719,13 @@ export function nlUnquoteNonCommands(reply: string, runnable: (span: string) => 
         : part.replace(QUOTE_SPAN, (whole, ...groups: unknown[]) => {
             const span = (groups.slice(0, 5).find((group) => typeof group === 'string') as string | undefined) ?? '';
             if (span.trim() === '') return whole;
-            const bare = withoutInnerMarks(span.trim());
-            if (bare.length <= QUOTE_SPAN_MAX_CHARS && runnable(bare)) return bare === span.trim() ? whole : `${whole.charAt(0)}${bare}${whole.charAt(whole.length - 1)}`;
+            const inner = withoutInnerMarks(span.trim());
+            const nested = inner !== span.trim();
+            // Codex review of 49a2a3d0 (P3): the check reads the trimmed command; a refused span keeps its own spacing.
+            const command = inner.trim();
+            if (command.length <= QUOTE_SPAN_MAX_CHARS && runnable(command)) return nested ? `${whole.charAt(0)}${command}${whole.charAt(whole.length - 1)}` : whole;
             unquoted += 1;
-            return bare === span.trim() ? span : bare;
+            return nested ? inner : span;
           }),
     )
     .join('');

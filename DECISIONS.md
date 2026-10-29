@@ -31250,7 +31250,8 @@ and D9 still governs every turn that goes to chat.
 - **Decision (structural, B1's own span check).** `nlUnquoteNonCommands` (`honest-chat.ts`) now looks inside a span
   that is wholly one more pair of the marks it already knows (`"…"`, `“…”`, `「…」`, `『…』`, `` `…` ``), with no further
   mark of that pair inside. The check is asked about the command without the inner pair. A runnable command keeps the
-  outer pair only; a refused one loses both, as before. No word list; fenced blocks are untouched.
+  outer pair only; a refused one loses both, as before, and keeps its own spacing (Codex review of 49a2a3d0, P3). No
+  word list; fenced blocks are untouched.
 - **Unchanged.** The B1 rule and its check, D2, the chat prompt, the scorer and the golden scenarios. Plan digests
   unchanged (no prompt byte changes).
 - **Tests.** `honest-chat-listing.test.ts`: the code-then-quote and quote-then-code forms keep one pair; a refused
@@ -31278,6 +31279,10 @@ and D9 still governs every turn that goes to chat.
   question; the shadow logs it as `none`. The agent-plan validator refuses the step (`step-invalid` / `repeats-listing`);
   a listing that a later plan step reads by reference is that step's input and is exempt (`listingFeedsLaterStep`, e.g.
   "메일 목록 보고 세 번째 메일 요약해줘"). The eval:nl intent scorer scores the reason as the runtime answers it, `none`.
+- **Codex review of 49a2a3d0 (two P2s).** Words naming the entry itself (an alias or source name: "그거 전체 메일 목록 다시
+  보여줘", "show this whole mail list again") may ask for the list, so the rule leaves such a read alone (fail-safe:
+  today's re-list). A plan read that itself reads an earlier step's items by reference (with or without a position) is
+  an item-detail read and is exempt too.
 - **Not hurt.** A refresh asks for no content and still re-lists ("메일 다시 보여줘", "새 메일 왔어? 다시 확인해줘",
   "안 읽은 메일 다시", "그거 다시 보여줘"); another listing (other args or entry), no previous selection, and the
   `mail.list` `item` question ("N번째 건 누가 보냈어?", a transient arg, so other args) are unchanged. No gold expects a

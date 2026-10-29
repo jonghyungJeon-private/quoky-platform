@@ -866,12 +866,17 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
  *   `inheritsHeldRange`, the owner naming none) is the same listing too;
  * - fail-safe: any negation or exclusion marker in the owner's prose ("요약 말고 다시 보여줘") leaves the read alone, and
  *   pasted structures ground nothing.
+ * - words naming the entry (an alias or source name) leave the read alone: they may ask for the list itself.
  * A refresh ("메일 다시 보여줘", "안 읽은 메일 다시") asks for no content and still re-lists. Pure.
  */
 function repeatsShownListing(entry: NlCatalogEntry, args: Readonly<Record<string, NlArgValue>>, ctx: NlValidationContext, mentions: readonly NlWeekdayMention[]): boolean {
   if (ctx.listingFeedsLaterStep === true || ctx.previousEntryId !== entry.id || ctx.previousArgs === undefined) return false;
   const prose = withoutStructures(ctx.groundingText);
   if (!asksForItemContent(prose) || !nlPointsAtListedItem(prose) || nlHasExclusionOrNegation(prose)) return false;
+  // Codex review of 49a2a3d0 (P2): words naming the listing's own source ("그거 전체 메일 목록 다시 보여줘", "show this whole
+  // mail list again") may ask for the list itself, so the read is left alone (fail-safe: today's re-list).
+  const lower = normalizeForMatch(prose);
+  if ([...entry.aliases, ...(entry.sourceNames ?? [])].some((name) => groundingWordIn(lower, normalizeForMatch(name)))) return false;
   const previous: Record<string, NlArgValue> = { ...ctx.previousArgs };
   const rangeSpec = entry.args.find((spec) => spec.kind === 'range');
   if (rangeSpec !== undefined && entry.inheritsHeldRange === true && args[rangeSpec.name] === undefined && nlReminderPeriod(prose, mentions).kind === 'none') {

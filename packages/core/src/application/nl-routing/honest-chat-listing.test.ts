@@ -162,5 +162,8 @@ describe('owner decision of 2026-10-28 (B1): quote marks only around a runnable 
     expect(nlUnquoteNonCommands('`"내일 3시 회의"`', keep)).toEqual({ text: '내일 3시 회의', unquoted: 1 });
     // A span with more than one inner pair is not one quoted command: it is judged as it is.
     expect(nlUnquoteNonCommands('`"a" 그리고 "b"`', keep)).toEqual({ text: '"a" 그리고 "b"', unquoted: 1 });
+    // Codex review of 49a2a3d0 (P3): the check reads the trimmed command; a refused span keeps its own spacing.
+    expect(nlUnquoteNonCommands('`"  x  "`', () => false)).toEqual({ text: '  x  ', unquoted: 1 });
+    expect(nlUnquoteNonCommands('`" 1번 문서 요약해줘 "`', keep)).toEqual({ text: '`1번 문서 요약해줘`', unquoted: 0 });
   });
 });

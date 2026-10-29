@@ -44,6 +44,9 @@ describe('repeats-listing: the shown listing again, for a content request about 
     // A content word with no item pointer, or only a recency word (it dates the listing too).
     expect(check('메일 전체 다시 보여줘', {}).ok).toBe(true);
     expect(check('아까 메일 전체 다시 보여줘', {}).ok).toBe(true);
+    // Codex review of 49a2a3d0 (P2): words naming the listing's own source may ask for the list itself.
+    expect(check('그거 전체 메일 목록 다시 보여줘', {}).ok).toBe(true);
+    expect(check('Show this whole mail list again', {}).ok).toBe(true);
     // Fail-safe: a negation or exclusion marker.
     expect(check('그거 요약 말고 목록 다시 보여줘', {}).ok).toBe(true);
     // Another listing, another entry, or no previous selection.
@@ -84,5 +87,22 @@ describe('repeats-listing: the shown listing again, for a content request about 
       { offered, groundingText: '메일 목록 보고 세 번째 메일 요약해줘', now: NOW, timeZone: 'Asia/Seoul', direct: true, previousArgs: {}, previousEntryId: 'mail.list' },
     );
     expect(pointed.ok).toBe(true);
+    // Codex review of 49a2a3d0 (P2): a read that itself reads an earlier step's items by reference (no position) is an
+    // item-detail read, not a repeat of the shown listing.
+    const detail = validateAgentPlan(
+      {
+        kind: 'steps',
+        form: 'steps',
+        steps: [
+          { kind: 'read', entryId: 'mail.list', args: {} },
+          { kind: 'read', entryId: 'mail.list', args: {}, ref: { step: 1, field: 'messageIds', take: 10 } },
+          { kind: 'summarize', from: [2], schema: 'digest.v1' },
+        ],
+        ambiguity: 'CLEAR',
+        alternatives: [],
+      },
+      { offered, groundingText: '그거 다시 읽고 내용 요약해줘', now: NOW, timeZone: 'Asia/Seoul', direct: true, previousArgs: {}, previousEntryId: 'mail.list' },
+    );
+    expect(detail).not.toMatchObject({ stepReason: 'repeats-listing' });
   });
 });
