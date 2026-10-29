@@ -31297,3 +31297,25 @@ and D9 still governs every turn that goes to chat.
 - **Tests.** `repeats-listing.test.ts` (the failing shape, the inherited period, the refresh and negation counter-examples,
   the pointer reader, the agent-plan one-step refusal and the referenced-listing exemption); `nl-selection-service.test.ts`
   (the runtime answers chat, then a refresh re-lists); `nl-intent-eval.test.ts` (scored `none`; a refresh is a hit).
+- **Owner decision of 2026-10-29 — the intent gate miss of 1c236738 is recorded as a known variance ("예외 기록 후
+  병합").** Measurement at 1c236738: suite 550 files / 17,800 tests; eval:context 3/3 runs (0 hard); read-regression 3/3;
+  agent-plan 3/3 (`uat5r6-07` absent in all runs); intent 2/3: run 3 answered gold `neg-100` ("summarize document 1"
+  after a `drive.files` listing, expect `none` while `item.summarize` is hidden) with `drive.files {}` again (also once
+  at 95386868; about 2 of 69 archived intent runs). Same selector prompt digest as 2dd14102; the rule above does not
+  read a bare number, so this path is unchanged by the branch. With `item.summarize` offered (read-regression, the
+  deployed catalog) the same text was `item.summarize {source: drive, ref: #1, mode: summary}` in 3/3 runs. The owner
+  approved this one gate exception; the gate, its thresholds and the gold are unchanged.
+  - Tried and reverted: reading one bare number (`nlNumeralsIn`) as an item pointer. Codex review (two P2s, reproduced)
+    showed it reads quantities, pages and argument digits as an item ("Show the whole list of 10 again", "상위 5개 전체
+    다시 보여줘", "Summarize the list in 5 pages", "Q3 전체 다시 보여줘" after `drive.files {name: Q3}`) and turned
+    legitimate re-lists into chat. Telling "document 1" from "list of 10" needs a list-noun vocabulary, against the
+    owner's rule.
+  - Outside references read for this (owner request; code or official docs only): block/buzz (`crates/buzz-agent/src/
+    agent.rs` preflight rejects an unknown tool and returns the error to the model), openclaw/openclaw
+    (`docs/concepts/agent-loop.md` schema validation of tool args; `docs/tools/loop-detection.md` blocks the exact same
+    call repeated and gives the model one recovery turn), Rasa (`rasa_sdk/knowledge_base/utils.py` resolves a mention
+    only against `listed_items`), Alexa `AMAZON.SelectIntent` (`ListPosition` tied to the shown items). None parses bare
+    numbers deterministically; they keep the item action visible to the model, as the deployed catalog does.
+  - Backlog candidate (not started): when the selector repeats the listing just shown, ask the model once whether an
+    item action fits instead of refusing (the Buzz / OpenClaw one-recovery pattern); a prompt and model-call change that
+    needs its own design, review and full measurement.
