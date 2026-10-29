@@ -31239,3 +31239,19 @@ and D9 still governs every turn that goes to chat.
    read. It keeps the red-team invariant. No code change.
 3. **Confirmed: POLICY_SENSITIVE_CHAT effort stays medium**, like GENERAL_CHAT (`DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY`,
    `packages/ai-cli/src/index.ts`). No code change.
+
+### Owner decision of 2026-10-29 — a command inside two pairs of marks keeps one ("먼저 고치고 재측정"; branch `claude/v5-context-fixes`)
+
+- **Problem.** Context eval at 2dd14102, run 1, `lc-drive-roadmap-en` t2: after a Drive listing, the chat wrote
+  `` `"1번 문서 요약해줘"` `` (code marks around a quoted command). The B1 check (owner decision of 2026-10-28) kept the
+  span, but the owner copying it sends the inner quotes too, and the command sent with them did not run (the scorer's
+  probe reached chat), so the scorer counted a hard `unparseable-suggestion`. The same command without the quotes ran.
+  `item.summarize` does read a listed Drive file; the command itself was right.
+- **Decision (structural, B1's own span check).** `nlUnquoteNonCommands` (`honest-chat.ts`) now looks inside a span
+  that is wholly one more pair of the marks it already knows (`"…"`, `“…”`, `「…」`, `『…』`, `` `…` ``), with no further
+  mark of that pair inside. The check is asked about the command without the inner pair. A runnable command keeps the
+  outer pair only; a refused one loses both, as before. No word list; fenced blocks are untouched.
+- **Unchanged.** The B1 rule and its check, D2, the chat prompt, the scorer and the golden scenarios. Plan digests
+  unchanged (no prompt byte changes).
+- **Tests.** `honest-chat-listing.test.ts`: the code-then-quote and quote-then-code forms keep one pair; a refused
+  double-marked span loses both; a span holding two quoted words is judged as it is.

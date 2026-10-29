@@ -677,6 +677,17 @@ export function guardShownListingDenials(
 const QUOTE_SPAN = /"([^"\n]+)"|“([^”\n]+)”|「([^」\n]+)」|『([^』\n]+)』|(?<!`)`([^`\n]+)`(?!`)/gu;
 /** Codex review of 672fb8f7 (P2-b): a span longer than this is never a command; it loses its marks unchecked (fail closed). */
 const QUOTE_SPAN_MAX_CHARS = 200;
+/** The opening mark of each pair `QUOTE_SPAN` knows, with its closing mark. */
+const PAIRED_MARKS: Readonly<Record<string, string>> = { '"': '"', '“': '”', '「': '」', '『': '』', '`': '`' };
+
+/** A span wholly inside one more pair of marks (`"1번 문서 요약해줘"`) without that pair; any other span as it is. */
+function withoutInnerMarks(span: string): string {
+  const open = span.charAt(0);
+  const close = PAIRED_MARKS[open];
+  if (close === undefined || span.length <= 2 || !span.endsWith(close)) return span;
+  const inner = span.slice(1, -1);
+  return inner.includes(open) || inner.includes(close) || inner.trim() === '' ? span : inner.trim();
+}
 
 /**
  * B1: whether a span reads as a request to Quoky about one of the offered sources: it names an offered entry's catalog
@@ -694,6 +705,9 @@ export function nlSpanRequestsOfferedSource(span: string, entries: readonly NlCa
  * B1: every quoted or inline-code span of a chat reply that `runnable` does not accept keeps its text and loses its
  * quote marks, so a quote is only ever around a command the owner can send. Returns the text and how many spans lost
  * their marks. Fenced code blocks are not touched. Pure.
+ *
+ * Context eval of 2dd14102 (run 1, `lc-drive-roadmap-en` t2): a command inside two pairs of marks (`"1번 문서 요약해줘"`)
+ * hands the owner the inner quotes too, and the command sent with them did not run. Such a span keeps one pair only.
  */
 export function nlUnquoteNonCommands(reply: string, runnable: (span: string) => boolean): { readonly text: string; readonly unquoted: number } {
   let unquoted = 0;
@@ -705,9 +719,10 @@ export function nlUnquoteNonCommands(reply: string, runnable: (span: string) => 
         : part.replace(QUOTE_SPAN, (whole, ...groups: unknown[]) => {
             const span = (groups.slice(0, 5).find((group) => typeof group === 'string') as string | undefined) ?? '';
             if (span.trim() === '') return whole;
-            if (span.length <= QUOTE_SPAN_MAX_CHARS && runnable(span.trim())) return whole;
+            const bare = withoutInnerMarks(span.trim());
+            if (bare.length <= QUOTE_SPAN_MAX_CHARS && runnable(bare)) return bare === span.trim() ? whole : `${whole.charAt(0)}${bare}${whole.charAt(whole.length - 1)}`;
             unquoted += 1;
-            return span;
+            return bare === span.trim() ? span : bare;
           }),
     )
     .join('');

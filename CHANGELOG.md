@@ -17,6 +17,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   lexical recall. No model call.
 ## Unreleased — Context eval fixes P1/P2/P8/P4 (branch `claude/v5-context-fixes`)
 
+- **Fixed (owner decision 2026-10-29).** A command the chat reply wraps in both code marks and quotes (`"1번 문서
+  요약해줘"` in code) keeps only one pair, so the owner can copy it and send it as it is.
 - **Changed (owner decision 2026-10-29).** When Core closes its own confirmation or choice question because the owner's
   reply was not an answer, the chat replies that follow (for 30 minutes, until Core replies with anything else) are
   told, without any item content, that the question was never confirmed, nothing from it was held, and a yes now

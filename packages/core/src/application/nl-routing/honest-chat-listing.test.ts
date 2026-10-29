@@ -153,4 +153,14 @@ describe('owner decision of 2026-10-28 (B1): quote marks only around a runnable 
     const atCap = '나'.repeat(200);
     expect(nlUnquoteNonCommands(`"${atCap}"`, () => true)).toEqual({ text: `"${atCap}"`, unquoted: 0 });
   });
+
+  it('context eval of 2dd14102 (lc-drive-roadmap-en t2): a command inside two pairs of marks keeps one pair only', () => {
+    const keep = (span: string): boolean => span === '1번 문서 요약해줘';
+    // The check is asked about the command without its inner quotes; the outer pair stays.
+    expect(nlUnquoteNonCommands('- `"1번 문서 요약해줘"`\n- "`1번 문서 요약해줘`"', keep)).toEqual({ text: '- `1번 문서 요약해줘`\n- "1번 문서 요약해줘"', unquoted: 0 });
+    // A refused span loses both pairs.
+    expect(nlUnquoteNonCommands('`"내일 3시 회의"`', keep)).toEqual({ text: '내일 3시 회의', unquoted: 1 });
+    // A span with more than one inner pair is not one quoted command: it is judged as it is.
+    expect(nlUnquoteNonCommands('`"a" 그리고 "b"`', keep)).toEqual({ text: '"a" 그리고 "b"', unquoted: 1 });
+  });
 });
