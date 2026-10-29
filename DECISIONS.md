@@ -31297,6 +31297,14 @@ and D9 still governs every turn that goes to chat.
 - **Tests.** `repeats-listing.test.ts` (the failing shape, the inherited period, the refresh and negation counter-examples,
   the pointer reader, the agent-plan one-step refusal and the referenced-listing exemption); `nl-selection-service.test.ts`
   (the runtime answers chat, then a refresh re-lists); `nl-intent-eval.test.ts` (scored `none`; a refresh is a hit).
+- **Codex final review of 53e0040b (P2, reproduced).** A full-text word (전체 / whole, `NL_MODE_FULL_WORDS`) beside a
+  pointer ("그거 전체 목록 다시 보여줘", "show this whole list again", "그거 전체 다시 보여줘") may ask for the whole
+  listing, and the rule turned that refresh into chat. The rule now reads only the summary and content words
+  (`NL_MODE_SUMMARY_WORDS`, `NL_CONTENT_WORDS`) as an item-content request; `asksForItemContent` itself (the
+  `item.summarize` grounding) is unchanged. This only narrows the rule toward main's behaviour. No gold or context-eval
+  turn has a pointer with a full-text word and no summary or content word (scanned offline: nl-intent, agent-plan,
+  nl-intent.context, the 186 context-eval texts), so the measured runs of 1c236738 are unaffected; `uat5r6-07`
+  ("그거 요약해줘") is still caught.
 - **Owner decision of 2026-10-29 — the intent gate miss of 1c236738 is recorded as a known variance ("예외 기록 후
   병합").** Measurement at 1c236738: suite 550 files / 17,800 tests; eval:context 3/3 runs (0 hard); read-regression 3/3;
   agent-plan 3/3 (`uat5r6-07` absent in all runs); intent 2/3: run 3 answered gold `neg-100` ("summarize document 1"

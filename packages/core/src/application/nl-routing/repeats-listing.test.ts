@@ -47,6 +47,8 @@ describe('repeats-listing: the shown listing again, for a content request about 
     // Codex review of 49a2a3d0 (P2): words naming the listing's own source may ask for the list itself.
     expect(check('그거 전체 메일 목록 다시 보여줘', {}).ok).toBe(true);
     expect(check('Show this whole mail list again', {}).ok).toBe(true);
+    // Codex final review of 53e0040b (P2): a full-text word may ask for the whole listing, with or without a list word.
+    for (const text of ['Show this whole list again', '그거 전체 목록 다시 보여줘', '그거 전체 다시 보여줘']) expect(check(text, {}).ok, text).toBe(true);
     // Fail-safe: a negation or exclusion marker.
     expect(check('그거 요약 말고 목록 다시 보여줘', {}).ok).toBe(true);
     // Another listing, another entry, or no previous selection.

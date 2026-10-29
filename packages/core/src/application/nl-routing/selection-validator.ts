@@ -11,7 +11,6 @@ import {
   type NlCatalogEntryId,
 } from './catalog';
 import {
-  asksForItemContent,
   formatNlRef,
   isNlDeicticOnlyPayload,
   NL_ACTION_CANONICAL_WORDS,
@@ -858,7 +857,8 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
 /**
  * Fix of 2026-10-29 (uat5r6-07, "그거 요약해줘" after a mail listing answered with the same `mail.list`): a
  * READ that only repeats the listing the owner was just shown, while the owner's words ask for a listed item's content
- * (`asksForItemContent`, the `item.summarize` check of A6-D1 owner decision 5) and point at one item
+ * (a summary or content word of the `item.summarize` check of A6-D1 owner decision 5; a full-text word is left out, it may
+ * ask for the whole listing) and point at one item
  * (`nlPointsAtListedItem`: a deictic pronoun, 마지막 / last, an ordinal), is not a re-list request. Structural:
  * - the same entry as the previous selection (`previousEntryId`; absent, the rule never applies), and the read is the
  *   answer itself (an agent plan's listing that a later step reads by reference is that step's input);
@@ -872,10 +872,13 @@ export function validateSelection(candidate: NlSelectionCandidate, ctx: NlValida
 function repeatsShownListing(entry: NlCatalogEntry, args: Readonly<Record<string, NlArgValue>>, ctx: NlValidationContext, mentions: readonly NlWeekdayMention[]): boolean {
   if (ctx.listingFeedsLaterStep === true || ctx.previousEntryId !== entry.id || ctx.previousArgs === undefined) return false;
   const prose = withoutStructures(ctx.groundingText);
-  if (!asksForItemContent(prose) || !nlPointsAtListedItem(prose) || nlHasExclusionOrNegation(prose)) return false;
+  // Codex final review of 53e0040b (P2): a full-text word (전체 / whole) may ask for the whole listing ("그거 전체 목록 다시
+  // 보여줘", "show this whole list again"), so only a summary or content word asks for an item's content here.
+  const lower = normalizeForMatch(prose);
+  const asksContent = [...NL_MODE_SUMMARY_WORDS, ...NL_CONTENT_WORDS].some((word) => groundingWordIn(lower, normalizeForMatch(word)));
+  if (!asksContent || !nlPointsAtListedItem(prose) || nlHasExclusionOrNegation(prose)) return false;
   // Codex review of 49a2a3d0 (P2): words naming the listing's own source ("그거 전체 메일 목록 다시 보여줘", "show this whole
   // mail list again") may ask for the list itself, so the read is left alone (fail-safe: today's re-list).
-  const lower = normalizeForMatch(prose);
   if ([...entry.aliases, ...(entry.sourceNames ?? [])].some((name) => groundingWordIn(lower, normalizeForMatch(name)))) return false;
   const previous: Record<string, NlArgValue> = { ...ctx.previousArgs };
   const rangeSpec = entry.args.find((spec) => spec.kind === 'range');
