@@ -9316,6 +9316,9 @@ export class ConversationRuntime {
       });
       await this.deps.tasks.transition(task, TaskStatus.FAILED);
       this.deps.logger.error('work turn failed', { taskId: task.id, runId: run.id, kind: failure.kind });
+      // Codex review P2 of 31dd36e9: the fixed error below is not a chat reply, so `quoky.lastReply` records a non-chat
+      // turn (ending any closed-question fact) even though the turn was marked chat before the provider call.
+      this.nlChatReplies.delete(message);
       const reply = this.deps.composer.composeError(message.context, failure.userMessage);
       return { status: 'FAILED', reply, sessionId: session.id, workFacts: workFacts(providerId) };
     }

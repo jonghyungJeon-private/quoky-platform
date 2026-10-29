@@ -469,6 +469,31 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(carries(await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm))).toBe(false);
   }, 120_000);
 
+  it('Codex review P2 of 31dd36e9: a chat turn that fails with the fixed error ends the closed-question fact', async () => {
+    const answer = (entryId: string, args: Record<string, unknown> = {}) => JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [] });
+    let selector = answer('jira.release', { project: '누리 운영 2026', release: '20261029' });
+    let failChat = false;
+    world = await bootContextEvalWorld('deployed', {
+      select: async () => selector,
+      chat: async () => {
+        if (failChat) throw new Error('provider timeout');
+        return CONTEXT_EVAL_STUB_CHAT;
+      },
+      summarize: async () => '',
+    });
+    const { CLOSED_QUESTION_FACT } = world.core;
+    const carries = (observation: { chatPrompts: readonly string[] }) => observation.chatPrompts.some((prompt) => prompt.includes(CLOSED_QUESTION_FACT));
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    await world.turn(owner, '누리 운영 2026 프로젝트 20261029 배포건 보여줘', owner.dm);
+    selector = answer('none');
+    expect(carries(await world.turn(owner, '아 근데 오늘 날씨 어때?', owner.dm))).toBe(true);
+    failChat = true;
+    const failed = await world.turn(owner, '그럼 우산 챙길까?', owner.dm);
+    expect(failed.served).toEqual([]);
+    failChat = false;
+    expect(carries(await world.turn(owner, '내일은 어떨까?', owner.dm))).toBe(false);
+  }, 120_000);
+
   it('owner decision of 2026-10-29 ("1번 진행"): the scenario runner keeps sc-confirm-chat-yes and cy-question-then-other on their routes', async () => {
     const records = await dryRun('deployed', { kind: 'oracle' }, ['cy-question-then-other', 'sc-confirm-chat-yes']);
     const byId = (id: string) => records.find((record) => record.score.id === id) as ScenarioRecord;

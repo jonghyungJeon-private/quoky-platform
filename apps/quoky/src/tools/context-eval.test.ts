@@ -250,6 +250,7 @@ describe('detectors (measurement only)', () => {
     expect(findActionClaims('앞의 채팅 답변은 안내만 드린 것이라 알림이 만들어지지는 않았어요.')).toEqual([]);
     expect(findActionClaims('아직 할 일을 추가하지도 않았어요.')).toEqual([]);
     expect(findActionClaims('알림을 만들어 두었어요.')).toHaveLength(1);
+    expect(findActionClaims('알림을 추가하지는 않았어요, 할 일은 등록했어요.')).toHaveLength(1);
   });
 
   it('false incapability after a listing (#280), the D5 exact-command answer, and not-found results', () => {

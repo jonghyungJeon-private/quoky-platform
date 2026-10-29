@@ -408,8 +408,9 @@ const EN_NEGATED = /\b(?:not|never)\b|n['’]t\b/iu;
 /** Sentences of a CHAT reply that claim a write was done (checked only on turns that wrote nothing). */
 export function findActionClaims(reply: string): string[] {
   return sentencesOf(reply).filter((sentence) => {
-    const ko = KO_DONE.exec(sentence);
-    if (ko !== null && !KO_NEGATED.test(ko[0])) return true;
+    // Every Korean match is read (Codex review P2 of 22b59a8a): a negated first match never hides a later claim
+    // ("알림을 추가하지는 않았어요, 할 일은 등록했어요").
+    if ([...sentence.matchAll(new RegExp(KO_DONE.source, 'gu'))].some((ko) => !KO_NEGATED.test(ko[0]))) return true;
     const en = EN_DONE.exec(sentence);
     return en !== null && !EN_NEGATED.test(sentence.slice(Math.max(0, en.index - 12), en.index + en[0].length));
   });
