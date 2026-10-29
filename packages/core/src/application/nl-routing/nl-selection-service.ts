@@ -1140,6 +1140,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const ctx = this.validationContext(turn, prepared.groundingText, last?.args, false, last?.entryId);
     const main = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
     this.forgetRefusedPeriod(cacheKey, main);
+    // Fix of 2026-10-29 (uat5r6-07): the listing just shown, again, for a request about one shown item's
+    // content is not a re-list (`repeats-listing`): like a selector `none`, the turn is chat, never a question or a repair.
+    if (!main.ok && main.reason === 'repeats-listing') {
+      this.log('info', 'nl_selection.repeats_listing', { entryId: output.entryId });
+      return { kind: 'none' };
+    }
     // Owner decision of 2026-10-19, bounded: a period outside the entry's closed set (a span, a duration, a month, a
     // day-only or past date) is never filtered with and never dropped: the fixed restate of the set asks (content-free).
     if (!main.ok && main.reason === 'unsupported-period' && main.entryId !== undefined) {
@@ -2407,7 +2413,8 @@ export class NlSelectionService implements TurnDeliveryObserver {
       const base = lastSelectionFor(output.entryId, last);
       const validated = validateSelection({ entryId: output.entryId, args: output.args }, this.validationContext(turn, prepared.groundingText, base?.args, false, base?.entryId));
       this.forgetRefusedPeriod(selected.cacheKey, validated);
-      if (!validated.ok) outcome = 'INVALID';
+      // The shadow sees what active would do: a repeated listing for a content request is `none` (2026-10-29).
+      if (!validated.ok) outcome = validated.reason === 'repeats-listing' ? 'none' : 'INVALID';
       else if (output.ambiguity === 'CLEAR' && isNlWave1EntryId(validated.value.entry.id)) executable = { entryId: validated.value.entry.id, args: validated.value.args };
     }
     if (turn.grammar !== undefined) {

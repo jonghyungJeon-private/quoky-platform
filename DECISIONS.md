@@ -31255,3 +31255,35 @@ and D9 still governs every turn that goes to chat.
   unchanged (no prompt byte changes).
 - **Tests.** `honest-chat-listing.test.ts`: the code-then-quote and quote-then-code forms keep one pair; a refused
   double-marked span loses both; a span holding two quoted words is judged as it is.
+
+### Owner-approved fix of 2026-10-29 — the listing just shown, repeated for a content request, is chat ("먼저 고치고 재측정"; uat5r6-07; branch `claude/v5-context-fixes`)
+
+- **Problem.** Gold `uat5r6-07` ("그거 요약해줘" after a `mail.list` listing, expect `none` while `item.summarize` is not
+  offered) failed about one run in three: the haiku selector or planner answered `mail.list` with the same args again, a
+  re-list of the exact listing just shown, for a request about a listed item's content (eval:nl intent run 3 at
+  f6854a87; eval:agent-plan run 3 at a4c591a1 and run 2 at 2dd14102). The selector prompt already holds a near copy
+  ("저거 요약 좀 해줄래" after `mail.list` → none), so another example would be gold fitting. The prompt is unchanged.
+- **Decision (structural, in `validateSelection`, the one place the selector path and every agent-plan read step pass).**
+  A READ candidate fails with the new reason `repeats-listing` when all hold:
+  - it is the previous selection's entry (`previousEntryId`) with the same canonical args (a read with no period of its
+    own that would inherit the held listing's period, P-time (ii) `inheritsHeldRange` with no period named, is the same
+    listing too);
+  - the owner's words ask for an item's content: `asksForItemContent`, the existing `item.summarize` check (A6-D1 owner
+    decision 5, record C);
+  - they point at ONE listed item (`nlPointsAtListedItem`, from the existing A6-D2 ref vocabularies: a deictic pronoun,
+    마지막 / last, an ordinal). The recency words 방금 / 아까 are left out: they also date a listing ("아까 메일 전체
+    다시 보여줘");
+  - fail-safe: no negation or exclusion marker in the prose (`nlHasExclusionOrNegation`); pasted structures ground nothing.
+  The selector path answers `repeats-listing` as `none` (chat, log `nl_selection.repeats_listing`), before any repair or
+  question; the shadow logs it as `none`. The agent-plan validator refuses the step (`step-invalid` / `repeats-listing`);
+  a listing that a later plan step reads by reference is that step's input and is exempt (`listingFeedsLaterStep`, e.g.
+  "메일 목록 보고 세 번째 메일 요약해줘"). The eval:nl intent scorer scores the reason as the runtime answers it, `none`.
+- **Not hurt.** A refresh asks for no content and still re-lists ("메일 다시 보여줘", "새 메일 왔어? 다시 확인해줘",
+  "안 읽은 메일 다시", "그거 다시 보여줘"); another listing (other args or entry), no previous selection, and the
+  `mail.list` `item` question ("N번째 건 누가 보냈어?", a transient arg, so other args) are unchanged. No gold expects a
+  repeated listing for such a text (all golden corpora scanned offline). `lastSelection` is kept (D1).
+- **Unchanged.** The selector and planner prompts (no prompt bytes), the golds and thresholds, D1–D4, AgentRunService.
+  No phrase list: only existing closed vocabularies are reused.
+- **Tests.** `repeats-listing.test.ts` (the failing shape, the inherited period, the refresh and negation counter-examples,
+  the pointer reader, the agent-plan one-step refusal and the referenced-listing exemption); `nl-selection-service.test.ts`
+  (the runtime answers chat, then a refresh re-lists); `nl-intent-eval.test.ts` (scored `none`; a refresh is a hit).

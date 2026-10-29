@@ -735,6 +735,8 @@ function checkRead(
       groundingText: temporal?.texts.get(number) ?? ctx.groundingText,
       ...(ctx.previousArgs !== undefined ? { previousArgs: ctx.previousArgs } : {}),
       ...(ctx.previousEntryId !== undefined ? { previousEntryId: ctx.previousEntryId } : {}),
+      // A listing a later step reads by reference is that step's input, never a repeat of the shown one (2026-10-29).
+      ...(steps.some((later) => later.kind === 'read' && later.ref?.step === number) ? { listingFeedsLaterStep: true as const } : {}),
       now: ctx.now,
       timeZone: ctx.timeZone,
     },

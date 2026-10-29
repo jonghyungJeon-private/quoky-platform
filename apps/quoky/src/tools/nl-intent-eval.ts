@@ -255,6 +255,8 @@ export function scoreOutput(golden: NlEvalCase, raw: string, now: string, timeZo
   const base = nlEvalPriorFor(golden.prior, output.entryId);
   const ctx = { offered, groundingText: prepared.groundingText, ...(base ? { previousArgs: base.args, ...(isNlCatalogEntryId(base.entryId) ? { previousEntryId: base.entryId } : {}) } : {}), now, timeZone };
   const validated = validateSelection({ entryId: output.entryId, args: output.args }, ctx);
+  // Fix of 2026-10-29 (uat5r6-07): the runtime answers the listing just shown, repeated for a content request, as `none`.
+  if (!validated.ok && validated.reason === 'repeats-listing') return { id: golden.id, expected, outcome: golden.expect === 'none' ? 'none' : 'miss', got: 'none' };
   if (!validated.ok || output.ambiguity !== 'CLEAR') {
     return { id: golden.id, expected, outcome: 'clarify', got: output.entryId };
   }

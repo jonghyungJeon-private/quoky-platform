@@ -653,6 +653,15 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(h.calls[1]!.prompt).toContain('Previous selection: {"entryId":"jira.issues","args":{"role":"either","window":"created","range":"today"}}');
   });
 
+  it('fix of 2026-10-29 (uat5r6-07): the listing just shown, repeated for a pointed content request, is chat; a refresh re-lists', async () => {
+    const h = harness({ script: [out('mail.list'), out('mail.list'), out('mail.list')] });
+    expect(await h.decide('메일 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'mail.list', args: {} } });
+    expect(await h.decide('그거 요약해줘', { now: at(60_000) })).toEqual({ kind: 'none' });
+    expect(h.logs.some((log) => log.event === 'nl_selection.repeats_listing')).toBe(true);
+    // The listing is kept (D1): a refresh asks for no content and still re-lists.
+    expect(await h.decide('메일 다시 보여줘', { now: at(120_000) })).toMatchObject({ kind: 'execute', command: { entryId: 'mail.list', args: {} } });
+  });
+
   it('CA review: a jira.release fallback names the default in the basis line ("내 담당"); a Jira status fallback with a window says 미해결', async () => {
     const release = harness({ script: [out('jira.release', { release: '1.4.0', scope: 'all' })] });
     expect(await release.decide('이번 1.4.0 릴리즈에 포함된 지라 티켓 다 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'jira.release', args: { release: '1.4.0' } }, basis: '기준: 릴리스 "1.4.0" / 내 담당' });

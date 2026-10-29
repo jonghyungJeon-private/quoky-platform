@@ -35,6 +35,13 @@ describe('nl-intent evaluation scoring (exact match after validation)', () => {
     expect(scoreOutput(CASES[4]!, 'I would create it', NOW).outcome).toBe('error');
   });
 
+  it('the shown listing repeated for a pointed content request scores as the runtime answers it, `none` (uat5r6-07)', () => {
+    const pointed: NlEvalCase = { id: 'uat5r6-07', text: '그거 요약해줘', prior: { entryId: 'mail.list', args: {} }, expect: 'none' };
+    expect(scoreOutput(pointed, answer('mail.list'), NOW)).toMatchObject({ outcome: 'none', got: 'none' });
+    const refresh: NlEvalCase = { id: 'refresh', text: '메일 다시 보여줘', prior: { entryId: 'mail.list', args: {} }, expect: { entryId: 'mail.list', args: {} } };
+    expect(scoreOutput(refresh, answer('mail.list'), NOW).outcome).toBe('hit');
+  });
+
   it('A7: a capture of a clear past-tense statement scores as the runtime answers it, `none`', () => {
     const statement: NlEvalCase = { id: 'neg-s', text: '어제 일정 있었는데 까먹었어 ㅠ', expect: 'none' };
     expect(scoreOutput(statement, answer('calendar.events', { range: 'yesterday' }), NOW)).toMatchObject({ outcome: 'none', got: 'none' });

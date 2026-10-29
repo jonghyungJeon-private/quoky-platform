@@ -309,6 +309,17 @@ export function nlHasLastWord(groundingText: string): boolean {
   return hasLastWord(groundingText);
 }
 
+/**
+ * Whether the owner's words point at ONE listed item by their own words, as an item `ref` is grounded (A6-D2): a deictic
+ * pronoun (그거 / 이거 / 저거 …, it / that / this), 마지막 / last, or an ordinal. The recency words (방금 / 아까) are left
+ * out: they date a listing as easily as an item ("아까 메일 전체 다시 보여줘"). Closed vocabularies only, no new list.
+ */
+export function nlPointsAtListedItem(groundingText: string): boolean {
+  const text = normalizeForMatch(groundingText);
+  const pronoun = DEICTIC_KO.some((word) => !(RECENCY_KO as readonly string[]).includes(word) && text.includes(word)) || DEICTIC_EN.some((word) => latinWordIn(text, word));
+  return pronoun || hasLastWord(groundingText) || nlOrdinalsIn(groundingText).length > 0;
+}
+
 /** Whether the owner's words carry a recency word ({@link NL_RECENCY_WORDS}; Korean inside a token, as every deictic). */
 export function nlHasRecencyWord(groundingText: string): boolean {
   const text = normalizeForMatch(groundingText);
