@@ -31283,6 +31283,11 @@ and D9 still governs every turn that goes to chat.
   보여줘", "show this whole mail list again") may ask for the list, so the rule leaves such a read alone (fail-safe:
   today's re-list). A plan read that itself reads an earlier step's items by reference (with or without a position) is
   an item-detail read and is exempt too.
+- **Known limit (Codex delta review of 3bd4d44a, P2, recorded and closed).** The source-name exemption also leaves an
+  item-content request that names the source ("summarize that email", "그 메일 요약해줘") to today's re-list. Telling
+  "that email" from "the mail list" needs a list-noun vocabulary the catalog does not have, and a new word list is
+  against the owner's rule; the exemption errs toward main's behaviour (a harmless repeated read), never toward
+  suppressing a requested listing. With `item.summarize` offered the selector answers such a request with it.
 - **Not hurt.** A refresh asks for no content and still re-lists ("메일 다시 보여줘", "새 메일 왔어? 다시 확인해줘",
   "안 읽은 메일 다시", "그거 다시 보여줘"); another listing (other args or entry), no previous selection, and the
   `mail.list` `item` question ("N번째 건 누가 보냈어?", a transient arg, so other args) are unchanged. No gold expects a
