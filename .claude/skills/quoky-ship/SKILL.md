@@ -56,7 +56,7 @@ Codex 레인이 열려 있으면(token-budget §3.5, `bash ~/.claude/skills/toke
 
 ## 2. 오프라인 검증 (worktree 안에서)
 
-**Node 버전 (2026-10-13~):** 저장소 기준은 `.nvmrc`(22.22.1)다. 셸 기본 node는 아직 18일 수 있으므로 모든 pnpm/node 명령 앞에 `export PATH=$HOME/.nvm/versions/node/$(cat .nvmrc | sed 's/^v//;s/^/v/')/bin:$PATH` 를 붙이고, 구현 에이전트에게도 같은 지시를 준다. worktree 의 `better-sqlite3` 가 다른 ABI(NODE_MODULE_VERSION 불일치)로 빌드돼 있으면 `~/Library/Application Support/Quoky/rollback-node18/better_sqlite3.node22.node` 를 `build/Release/better_sqlite3.node` 로 복사한다(로컬 node-gyp 컴파일은 macOS 27 SDK 문제로 실패한다). 롤백용 Node 18 바이너리: `~/Library/Application Support/Quoky/rollback-node18/`.
+**Node 버전 (2026-10-13~):** 저장소 기준은 `.nvmrc` 다(버전은 그 파일에만 적는다). 셸 기본 node는 아직 18일 수 있으므로 모든 pnpm/node 명령 앞에 `export PATH=$HOME/.nvm/versions/node/$(cat .nvmrc | sed 's/^v//;s/^/v/')/bin:$PATH` 를 붙이고, 구현 에이전트에게도 같은 지시를 준다. worktree 의 `better-sqlite3` 가 다른 ABI(NODE_MODULE_VERSION 불일치)로 빌드돼 있으면 `~/Library/Application Support/Quoky/rollback-node18/better_sqlite3.node22.node` 를 `build/Release/better_sqlite3.node` 로 복사한다(로컬 node-gyp 컴파일은 macOS 27 SDK 문제로 실패한다). 롤백용 Node 18 바이너리: `~/Library/Application Support/Quoky/rollback-node18/`.
 
 ```bash
 pnpm install --frozen-lockfile   # rebase 로 새 패키지가 들어왔으면 필수
