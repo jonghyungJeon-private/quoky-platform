@@ -786,7 +786,7 @@ ops/security/quoky-net-selfcheck.sh --json   # 같은 내용을 기계가 읽는
 pnpm security:secret-scan                    # 저장소의 비밀 값 스캔. 새로 걸리는 항목이 없어야 함 (비밀 값 자체는 출력하지 않음)
 ```
 
-**Node 22.** 상시 실행 서비스는 Node 22 LTS로 돌립니다 (`.nvmrc` 22.22.1, `engines.node` >=22.12). 설치할 때 `--node`에
+**Node 22.** 상시 실행 서비스는 Node 22 LTS로 돌립니다 (`.nvmrc` 22.23.4, `engines.node` >=22.12). 설치할 때 `--node`에
 Node 22 실행 파일의 절대 경로를 지정하세요 (위 launchd 절 참고).
 
 ## 8. 처음 사용하기

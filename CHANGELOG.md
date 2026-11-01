@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Security: Node 22.23.4 (repository Node; the service switch waits for the owner)
+
+- **Changed.** `.nvmrc` 22.22.1 → 22.23.4 (Node 22 LTS "Jod", same major, `engines.node` >=22.12 unchanged). The
+  security releases in between are 22.22.2, 22.23.0, 22.23.2 and 22.23.4 (TLS hostname/SNI and session binding, DNS
+  input validation, HTTP/2 and Brotli fixes; bundled OpenSSL 3.5.5 → 3.5.9, undici 6.23.0 → 6.29.1, c-ares 1.34.6 →
+  1.34.9, nghttp2 1.64.0 → 1.69.0). The operator guide and quickstart name the new `.nvmrc`.
+- **Checked (offline, Node 22.23.4).** `NODE_MODULE_VERSION` stays 127, so `better-sqlite3` 11.10.0 (the only native
+  addon) loads unchanged; build, typecheck and the full suite pass (550 files / 17,801 tests). No code uses `node:http2`
+  or Brotli directly (HTTP/2 priority signaling, removed in 22.23.0, is unused). A handshake-only probe of the existing
+  connector hosts gave the same DNS answers, TLS 1.3 verification, ALPN and cipher on 22.22.1 and 22.23.4, and the same
+  undici `fetch` result; zlib/Brotli round trips and error codes match.
+- **Not changed.** The always-on service still runs the Node 22.22.1 binary named in its launchd plist (`--node`); the
+  switch (`quokyctl.sh install --apply --node <22.23.4>`) and restart need a separate owner yes. 22.22.1 stays installed
+  for rollback. `ops` scripts take the Node path as an argument and hold no version.
+
 ## Unreleased — Security: durable-memory embeddings are local-only (fail closed to lexical recall)
 
 - **Fixed.** The durable-memory `SemanticRecallScorer` was built with the unfiltered provider selector, so an Ollama

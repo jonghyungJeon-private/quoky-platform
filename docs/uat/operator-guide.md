@@ -561,7 +561,7 @@ Setup for users is in `docs/user/quickstart.md` ("Personal v5 설정과 점검")
 - **Self-check and secret scan.** Read-only:
   `ops/security/quoky-net-selfcheck.sh [--json] [--since 24h]` reports the Quoky process tree and its live connections against
   the allowlist, and reads the ledger. `pnpm security:secret-scan` must show no new gating hit; it prints per-hit locations and fingerprints with the value masked, never the secret itself.
-- **Node 22.** The always-on service runs Node 22 LTS (`.nvmrc` 22.22.1; `engines.node` >=22.12). Pass the Node 22 binary
+- **Node 22.** The always-on service runs Node 22 LTS (`.nvmrc` 22.23.4; `engines.node` >=22.12). Pass the Node 22 binary
   with `--node` when installing the launchd service; a Node 18 binary is end-of-life and is not used.
 - **Owner items still open.** S1 per-grammar Phase C; egress `enforce`; the A6 R1 batch (red-team, relabel, clause
   confirmations); token rotation (deferred); the OS firewall ("not now"); D12 approval of the 23 `uat5r*` cases.
