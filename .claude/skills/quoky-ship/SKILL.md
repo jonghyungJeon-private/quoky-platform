@@ -7,7 +7,7 @@ description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 �
 
 이 스킬은 Quoky 저장소 전용이다. 공통 절차(worktree 격리, 실행 방식, 모델 선택)는 **side-job 스킬을 호출해** 처리하고, 이 스킬은 그 위에 Quoky 출하 절차만 얹는다.
 
-**상시 승인**: 소유자가 v4 웨이브에 대해 "오프라인 검증 + Codex PASS 후 자동 Push → PR → Merge, 배포"를 승인했다(v3와 같은 조건, 2026-10-08 갱신). 이 승인 범위를 벗어나는 Strict 항목(§7)은 그때마다 따로 묻는다.
+**상시 승인**: 소유자가 v5 웨이브에 대해 "오프라인 검증 + 독립 리뷰 + Codex PASS 후 자동 Push → PR → Merge → 상시 서비스 배포 → 스모크"를 승인했다(v4와 같은 조건, 2026-10-12 v5 비준 기록 결정 1). 이 승인 범위를 벗어나는 Strict 항목(§7)은 그때마다 따로 묻는다.
 
 > **이전(migration) 메모 (2026-10-21):** 이 `SKILL.md` 는 예전에 main checkout 에 **추적되지 않는 파일**로 있었다. 이 브랜치를 main checkout 에서 pull/merge 하기 전에 `mv .claude/skills/quoky-ship/SKILL.md .claude/skills/quoky-ship/SKILL.md.local-bak` 로 치워 둬야 "untracked working tree files would be overwritten" 로 멈추지 않는다. `scripts/` 안의 나머지 untracked 파일(`chat/`, `qa/`, `space_id` 등)은 그대로 둔다.
 
@@ -28,7 +28,7 @@ description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 �
   - **X**: 판단 모델 평가 실행(eval 3회, probe)과 결과 요약, 검증 실행, 승인된 배포 명령, worktree 정리
 - 구현 에이전트에게 반드시 지시할 것:
   - `AGENTS.md` 의 loading router 를 따른다.
-  - 관련 ADR 과 `docs/plans/personal-v4-plan.md` 해당 행을 읽는다.
+  - 관련 ADR 과 `docs/plans/personal-v5-plan.md` 해당 행을 읽는다.
   - `DECISIONS.md` 에 구현 노트를, `CHANGELOG.md` 와 `CURRENT_STATE.md` 에 항목을 남긴다.
   - 커밋은 conventional 형식으로 하고 `Co-Authored-By` 트레일러를 넣지 않는다. push 는 하지 않는다.
   - 토큰처럼 생긴 리터럴을 쓰지 않는다. 테스트의 가짜 키는 조각을 이어 만든다.
@@ -167,10 +167,14 @@ PR 본문에 넣을 내용:
 
 ```bash
 D=/Users/seongsujeonjonghyeong/demo_Project/.worktrees/quoky-platform/quoky-service
-export PATH=$HOME/.nvm/versions/node/v22.22.1/bin:$PATH   # 서비스는 Node 22 (plist --node)
-cd $D && git fetch -q origin && git checkout -q --detach origin/main \
-  && pnpm install --frozen-lockfile && pnpm build \
-  && bash ops/launchd/quokyctl.sh restart --apply --repo $D
+cd "$D" && git fetch -q origin && git checkout -q --detach origin/main || { echo "STOP: checkout failed"; exit 1; }
+# 서비스 Node = 체크아웃한 .nvmrc. plist 의 --node 가 다른 버전이면 멈춘다(경로 전환은 Strict, §7).
+NODE_BIN="$HOME/.nvm/versions/node/v$(sed 's/^v//' "$D/.nvmrc")/bin/node"
+[ -x "$NODE_BIN" ] && /usr/bin/grep -qxF "    <string>$NODE_BIN</string>" ~/Library/LaunchAgents/com.quoky.personal.plist \
+  || { echo "STOP: .nvmrc Node ($NODE_BIN) is missing or differs from the plist --node; ask the owner"; exit 1; }
+export PATH="$(dirname "$NODE_BIN"):$PATH"
+pnpm install --frozen-lockfile && pnpm build \
+  && bash ops/launchd/quokyctl.sh restart --apply --repo "$D"
 tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 ```
 
