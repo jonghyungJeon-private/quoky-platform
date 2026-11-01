@@ -167,10 +167,10 @@ PR 본문에 넣을 내용:
 
 ```bash
 D=/Users/seongsujeonjonghyeong/demo_Project/.worktrees/quoky-platform/quoky-service
-cd "$D" && git fetch -q origin && git checkout -q --detach origin/main
+cd "$D" && git fetch -q origin && git checkout -q --detach origin/main || { echo "STOP: checkout failed"; exit 1; }
 # 서비스 Node = 체크아웃한 .nvmrc. plist 의 --node 가 다른 버전이면 멈춘다(경로 전환은 Strict, §7).
 NODE_BIN="$HOME/.nvm/versions/node/v$(sed 's/^v//' "$D/.nvmrc")/bin/node"
-[ -x "$NODE_BIN" ] && /usr/bin/grep -qF "$NODE_BIN" ~/Library/LaunchAgents/com.quoky.personal.plist \
+[ -x "$NODE_BIN" ] && /usr/bin/grep -qxF "    <string>$NODE_BIN</string>" ~/Library/LaunchAgents/com.quoky.personal.plist \
   || { echo "STOP: .nvmrc Node ($NODE_BIN) is missing or differs from the plist --node; ask the owner"; exit 1; }
 export PATH="$(dirname "$NODE_BIN"):$PATH"
 pnpm install --frozen-lockfile && pnpm build \
