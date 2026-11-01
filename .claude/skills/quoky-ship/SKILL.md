@@ -167,10 +167,14 @@ PR 본문에 넣을 내용:
 
 ```bash
 D=/Users/seongsujeonjonghyeong/demo_Project/.worktrees/quoky-platform/quoky-service
-export PATH=$HOME/.nvm/versions/node/v$(sed 's/^v//' $D/.nvmrc)/bin:$PATH   # 서비스 Node = .nvmrc (plist --node 와 같은 버전)
-cd $D && git fetch -q origin && git checkout -q --detach origin/main \
-  && pnpm install --frozen-lockfile && pnpm build \
-  && bash ops/launchd/quokyctl.sh restart --apply --repo $D
+cd "$D" && git fetch -q origin && git checkout -q --detach origin/main
+# 서비스 Node = 체크아웃한 .nvmrc. plist 의 --node 가 다른 버전이면 멈춘다(경로 전환은 Strict, §7).
+NODE_BIN="$HOME/.nvm/versions/node/v$(sed 's/^v//' "$D/.nvmrc")/bin/node"
+[ -x "$NODE_BIN" ] && /usr/bin/grep -qF "$NODE_BIN" ~/Library/LaunchAgents/com.quoky.personal.plist \
+  || { echo "STOP: .nvmrc Node ($NODE_BIN) is missing or differs from the plist --node; ask the owner"; exit 1; }
+export PATH="$(dirname "$NODE_BIN"):$PATH"
+pnpm install --frozen-lockfile && pnpm build \
+  && bash ops/launchd/quokyctl.sh restart --apply --repo "$D"
 tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 ```
 
