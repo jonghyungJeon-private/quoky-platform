@@ -16,6 +16,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Recorded.** Owner decisions of 2026-11-02 (planner model study rule, no neg-033 carve-out for `active`, a separate S2 read
   red-team of at least 300 cases, shadow clock restart, egress enforce before `active`): DECISIONS "ADR-0121 S2 implementation
   note — P3-3a".
+## Unreleased — ADR-0112 amendment 3 ratified (owner decision of 2026-11-02)
+
+- **Docs.** Undo of approved external connector writes: O1-O7 recorded in DECISIONS.md (reachable at `local` with connector
+  writes enabled; calendar update/cancel inverses; Jira comment delete; Jira transition revert; `restoreEvent`; CRITICAL
+  approval and exact phrases kept). No code in this entry.
 
 ## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
 

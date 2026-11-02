@@ -17,6 +17,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - **Not enforced yet.** The 50-HTTP ceiling is a port contract (reserve before each request); hard enforcement needs the adapter slice's budgeted HTTP client (no raw fetch) and its test.
 - **Next (S2).** Quarantined M2 and reply assembler (P3-3b), read+write path, S2 read red-team, gate campaign, release.
 
+### ADR-0112 amendment 3 ratified: undo of approved external writes (2026-11-02, branch `claude/r3-undo`)
+
+- The owner ratified O1-O7: undo is reachable at the `local` NL-actions level whenever connector writes are enabled (no new
+  flag; target only from the session's `lastAction` receipt), calendar update/cancel inverses, Jira comment delete and
+  transition revert, `restoreEvent`, CRITICAL approval + exact phrase kept for every undo. DECISIONS.md has the text.
+- Build order: foundation (inert), calendar-create undo, then Slack delete and the amendment-3 families as later slices.
+
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 
 - **Gap closed.** Durable-memory semantic recall used the unfiltered selector (`context-builder-provider.ts`), so a
