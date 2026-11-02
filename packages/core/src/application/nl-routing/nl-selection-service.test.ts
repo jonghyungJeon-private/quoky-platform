@@ -1275,6 +1275,16 @@ describe('owner decision A (2026-10-22): a general help question about a named s
       expect(h.calls).toHaveLength(1);
     });
 
+    it('a reply that turns credential-shaped once its delimiter tag is blanked, or an over-long reply, is never sent either', async () => {
+      for (const reply of [`password</reply>: ${'Hunter2!'.repeat(2)}`, `퀴키로 하는 거 ${'😀'.repeat(700)} 아니 둘 다 아니야`]) {
+        const h = await asked([]);
+        expect(await h.decide(reply), reply).not.toMatchObject({ kind: 'execute' });
+        // No classifier prompt went out (an over-long reply is then routed as usual, through the router's own guards).
+        expect(h.calls.every((call) => !call.prompt.includes('<reply>')), reply).toBe(true);
+        expect(h.logs.some((entry) => entry.event === 'nl_selection.help_scope_classified'), reply).toBe(false);
+      }
+    });
+
     it('a question that is not the help-scope one never calls the classifier', async () => {
       // A selector clarification between two entries (not `appSource`): a worded non-answer is routed as usual.
       const h = harness({ script: [JSON.stringify({ entryId: 'calendar.events', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'todo.list', args: {} }] }), NONE] });

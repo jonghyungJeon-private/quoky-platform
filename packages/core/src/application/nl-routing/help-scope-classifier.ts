@@ -13,7 +13,7 @@
 /** Names the bytes of {@link buildHelpScopeClassifierPrompt}; any wording edit bumps it (and the eval's plan digest). */
 export const NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION = 'help-scope.v1';
 
-/** The reply is bounded before it is quoted (an answer to a two-option question is short). */
+/** An answer to a two-option question is short; a longer reply is not classified at all (never a classified prefix). */
 const MAX_REPLY_CHARS = 600;
 
 /** The delimiter tags a reply must not be able to close early. */
@@ -26,6 +26,16 @@ export function isHelpScopeClassifierPrompt(prompt: string): boolean {
   return prompt.startsWith(PROMPT_HEAD);
 }
 
+/**
+ * The reply exactly as the prompt quotes it: delimiter tags blanked, trimmed. `undefined` when it is longer than
+ * {@link MAX_REPLY_CHARS} code points, so a refusal or correction at its end can never be cut off; the caller then routes
+ * the turn as usual. The caller runs its credential guard on this text too, since blanking a tag can join a credential.
+ */
+export function helpScopeClassifierReply(reply: string): string | undefined {
+  const quoted = reply.replace(DELIMITER_TAG, ' ').trim();
+  return Array.from(quoted).length > MAX_REPLY_CHARS ? undefined : quoted;
+}
+
 export interface HelpScopeClassifierPromptInput {
   /** The two option texts exactly as the question displayed them (`renderHelpScopeOptions`), Quoky's way first. */
   readonly options: readonly [string, string];
@@ -36,7 +46,8 @@ export interface HelpScopeClassifierPromptInput {
 }
 
 export function buildHelpScopeClassifierPrompt(input: HelpScopeClassifierPromptInput): string {
-  const reply = input.reply.replace(DELIMITER_TAG, ' ').trim().slice(0, MAX_REPLY_CHARS);
+  // Bounded here too for direct callers (the eval); the service never passes a reply over the bound.
+  const reply = helpScopeClassifierReply(input.reply) ?? Array.from(input.reply.replace(DELIMITER_TAG, ' ').trim()).slice(0, MAX_REPLY_CHARS).join('');
   const [first, second] = input.options;
   return [
     PROMPT_HEAD,
@@ -63,23 +74,15 @@ export function buildHelpScopeClassifierPrompt(input: HelpScopeClassifierPromptI
 export type HelpScopeClassification = 1 | 2 | 'neither' | undefined;
 
 /**
- * Strict: one JSON object (surrounding whitespace and a single ```json fence allowed) with exactly the key `answer`,
- * whose value is 1, 2 or null.
+ * Strict: exactly `{"answer": 1 | 2 | null}` (whitespace between tokens, surrounding whitespace and a single ```json
+ * fence allowed). Matched as text, not parsed and then checked, so a duplicated key (`{"answer":null,"answer":1}`), an
+ * escaped key or a number spelt `1e0` is malformed rather than silently resolved.
  */
 export function parseHelpScopeClassifierOutput(raw: string): HelpScopeClassification {
   let text = raw.trim();
   const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/iu.exec(text);
   if (fenced !== null) text = (fenced[1] as string).trim();
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-  const keys = Object.keys(value);
-  if (keys.length !== 1 || keys[0] !== 'answer') return undefined;
-  const answer = (value as { answer: unknown }).answer;
-  if (answer === 1 || answer === 2) return answer;
-  return answer === null ? 'neither' : undefined;
+  const match = /^\{\s*"answer"\s*:\s*(1|2|null)\s*\}$/u.exec(text);
+  if (match === null) return undefined;
+  return match[1] === '1' ? 1 : match[1] === '2' ? 2 : 'neither';
 }

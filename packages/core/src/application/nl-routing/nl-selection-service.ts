@@ -120,7 +120,7 @@ import {
 } from './selection-state';
 import { groundingWordIn, validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
-import { buildHelpScopeClassifierPrompt, parseHelpScopeClassifierOutput } from './help-scope-classifier';
+import { buildHelpScopeClassifierPrompt, helpScopeClassifierReply, parseHelpScopeClassifierOutput } from './help-scope-classifier';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
@@ -2558,8 +2558,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
    * answer class and the latency only, never the reply.
    */
   private async classifyHelpScopeReply(turn: NlSelectionTurn, reply: string, options: readonly [string, string], language: 'ko' | 'en'): Promise<1 | 2 | undefined> {
-    // Nothing credential-shaped leaves the process (the selector's own pre-egress guard, `prepare`, never saw this reply).
-    if (containsCredentialMaterial(reply)) return undefined;
+    // Nothing credential-shaped leaves the process (the selector's own pre-egress guard, `prepare`, never saw this reply);
+    // checked on the reply as received and as the prompt quotes it. An over-long reply is not classified at all.
+    const quoted = helpScopeClassifierReply(reply);
+    if (quoted === undefined || containsCredentialMaterial(reply) || containsCredentialMaterial(quoted)) return undefined;
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
     const done = (answer: '1' | '2' | 'neither' | 'malformed' | 'timeout' | 'failed' | 'egress-refused'): 1 | 2 | undefined => {
@@ -2574,7 +2576,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return done('failed');
     }
     if (sameEgress(provider, turn.chatProviderId, turn.chatProviderLocality) !== 'same') return done('egress-refused');
-    const prompt = buildHelpScopeClassifierPrompt({ options, reply, language });
+    const prompt = buildHelpScopeClassifierPrompt({ options, reply: quoted, language });
     const timeoutMs = this.selectionBound(clock()).boundMs;
     let rawText: string;
     try {

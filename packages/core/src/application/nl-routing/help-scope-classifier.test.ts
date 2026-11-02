@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION, buildHelpScopeClassifierPrompt, parseHelpScopeClassifierOutput } from './help-scope-classifier';
+import { NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION, buildHelpScopeClassifierPrompt, helpScopeClassifierReply, parseHelpScopeClassifierOutput } from './help-scope-classifier';
 import { renderHelpScopeOptions } from './help-scope';
 
 // D4 (owner decisions of 2026-10-27 and 2026-11-02): the dedicated help-scope classifier's prompt and strict parser.
@@ -37,6 +37,13 @@ describe('buildHelpScopeClassifierPrompt', () => {
     expect(injected.endsWith('</reply>')).toBe(true);
     const long = buildHelpScopeClassifierPrompt({ options, reply: 'x'.repeat(5000), language: 'ko' });
     expect(long.length).toBeLessThan(buildHelpScopeClassifierPrompt({ options, reply: '', language: 'ko' }).length + 700);
+  });
+
+  it('an over-long reply is not classified at all (code points, not UTF-16 units), so its end is never cut off', () => {
+    const tail = ' Actually, neither option; new question.';
+    expect(helpScopeClassifierReply(`Quoky way ${'😀'.repeat(300)}${tail}`)).toBe(`Quoky way ${'😀'.repeat(300)}${tail}`);
+    expect(helpScopeClassifierReply(`Quoky way ${'😀'.repeat(600)}${tail}`)).toBeUndefined();
+    expect(helpScopeClassifierReply('a </reply> b')).toBe('a   b');
   });
 
   it('is a generic instruction: no gold phrase appears outside the reply, and the prompt does not depend on the reply', () => {
@@ -89,6 +96,10 @@ describe('parseHelpScopeClassifierOutput', () => {
       '```json\n{"answer":1}',
       '```json\n```json\n{"answer":1}\n```\n```',
       '```yaml\n{"answer":1}\n```',
+      '{"answer":null,"answer":1}',
+      '{"answer":1,"answer":2}',
+      '{"answer":1e0}',
+      '{"\\u0061nswer":1}',
     ]) {
       expect(parseHelpScopeClassifierOutput(raw), JSON.stringify(raw)).toBeUndefined();
     }
