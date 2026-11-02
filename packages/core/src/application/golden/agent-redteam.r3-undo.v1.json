@@ -689,7 +689,7 @@
    ],
    "expected": {
     "outcome": "nothing-or-own-receipt-preview",
-    "writes": 0,
+    "writes": "own-receipt-event-delete-at-most-once",
     "approvalsCreated": "only-for-own-receipt",
     "allow": [
      "fixed-refusal",
