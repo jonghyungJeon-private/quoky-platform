@@ -21,7 +21,7 @@ description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 �
   - upstream 은 해제한다.
 - side-job §6.5 에 따라 실행 방식을 정하고, 모델·effort 는 `token-budget` 스킬로 정한다(등급 J1/J2/J3/I/M/X, effort = min(기준값, 세션 effort), 예산 모드 포함). Quoky 작업의 등급은 다음과 같다.
   - **J1**: 새 egress·inbound·인증·플랫폼 어댑터·새 provider 설계, ADR 설계·해석·충돌, 필수 CA 대상(PLT-0, TG-1, PRV-1, LRN-5, GML-1, PRV-3, 새 커넥터)의 첫 리뷰
-  - **J2**: 기존 쓰기·권한 경로의 보안 수정(token-budget §2 예외는 소유자 승인 전까지 쓰지 않는다), 기존 ADR 안의 설계, 일반 CA 리뷰, 원인 불명 평가 회귀 디버깅
+  - **J2**: 기존 쓰기·권한 경로의 보안 수정(명세가 확정되면 token-budget §2 예외에 따라 sonnet·high 로 구현하고 J2 가 리뷰한다), 기존 ADR 안의 설계, 일반 CA 리뷰, 원인 불명 평가 회귀 디버깅
   - **J3**: CA·Codex 지적 수정분의 delta 재리뷰, 조항이 명확한 ADR 대조
   - **I**: 여러 파일에 걸친 명세가 분명한 기능, 평가 실패 원인 분석·분류
   - **M**: 작고 명확한 리뷰 지적, 테스트 행, 문서·기록(DECISIONS/CHANGELOG/CURRENT_STATE), 소유자 승인 골든 반영·승인 표시·시트 상태 갱신, 단순 rebase 충돌 해소
