@@ -12,28 +12,24 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   unchanged; `ConversationRuntime` keeps its constructor, its public statics (as one-line delegators), `handle` and the
   same 19 exports. No behaviour, API or test change.
 ## Unreleased — D4: the help-scope classifier (owner decisions of 2026-10-27 and 2026-11-02)
+## Unreleased — D4 help-scope classifier (merged switched off) and the Drive one-option narrowing (owner decisions of 2026-11-02)
 
-- **Added.** A worded reply to the help-scope question ("퀴키한테 물어보는 방법 말이야", "the app's own settings") is read by
-  one dedicated, bounded call that answers 1 / 2 / neither (`help-scope-classifier.ts`, prompt `help-scope.v1`). It runs
-  only for that question, only when a number or a displayed option text did not already answer it, on the same
-  `INTENT_SELECTION` provider and bound as the selector, and only where this turn's chat would have gone (same-egress
-  check). 1 picks option 1, 2 gives the fixed app-itself reply; neither, a malformed answer, a timeout, a provider error
-  or an egress refusal leave the turn routed as usual, as today. A credential-shaped reply is never sent. The router and
-  selector prompts are untouched (no `nl-select` bump). One content-free log line, `nl_selection.help_scope_classified`.
-- **Added (eval).** `pnpm eval:nl -- --mode help-scope` (plan, digest, `--approved-plan-digest`, `--runs`, `--model`,
-  `--effort`, same as the other modes; `run-gates.sh` mode `help-scope`, not in the default set). It scores the 55
-  owner-approved cases (26 answers, 29 non-answers). Gate per run, set before any run: 0 wrong captures on the
-  non-answers, answer accuracy at least 95% (one miss in 26 passes, two fail) and 0 harness errors; the multi-run gate
-  needs every run. No model call has been made yet.
-- **Changed.** The 34 golds moved to `golden/nl-help-scope.v1.json` (from `nl-intent.context-d4-pending.v1.json`,
-  verbatim). The `hs-calendar-words` turn-2 known-gap marks are removed and the turn is scored again against its
-  unchanged expectation; the context eval's dry oracle answers the classifier call (`oracle.helpScopeAnswer`). Dry:
-  deployed 38/38, actions-local 55/55, all hard checks 0.
-- **Golds (owner decision of 2026-11-02, "18번 빼고 21건 승인").** 21 new agent-drafted non-answers (`hs-na-*`: thanks,
-  small talk, new unrelated requests, both / neither / do not know, other questions, injection-like replies) joined the
-  corpus: 55 cases, 26 answers and 29 non-answers. `hs-na-018` was dropped: option 2 and neither are both defensible for it.
-- **Fixed (Codex review).** A credential joined by blanking a delimiter tag (also nested tags) is never sent; a
-  duplicated-key output is malformed; an over-long reply is not classified (never a classified prefix).
+- **Changed (Drive one-option ask, owner decision "예외를 좁힘").** A read the owner named runs its broader read when Core
+  only dropped enum values the enum accepts but the owner's words did not ground (DM4: "드라이브 문서 목록 보여줘" no
+  longer asks "1. 드라이브 파일 조회"). Out-of-set values, dropped free text and pasted-only names still ask.
+- **Added (off by default).** A dedicated, bounded 1 / 2 / neither classifier for a worded reply to the help-scope question
+  (`help-scope-classifier.ts`, prompt `help-scope.v2`; `NlSelectionServiceDeps.helpScopeClassifier`). Same
+  `INTENT_SELECTION` provider, bound and same-egress check as the selector; a credential-shaped or over-long reply is never
+  sent; anything but a clean 1 or 2 routes the turn as usual. **It is merged switched off** (owner decision of 2026-11-02,
+  "분류기 끄고 나머지 병합"): the Strict gate passed 2 of 3 runs, so a worded reply is still routed as before D4, and
+  `hs-calendar-words` turn 2 stays the D4 known gap.
+- **Added (eval).** `pnpm eval:nl -- --mode help-scope` (plan digest, `--runs`; `run-gates.sh` mode `help-scope`, not in the
+  default set) over `golden/nl-help-scope.v1.json`: 67 owner-approved cases, 38 answers (the 26 D4 golds and 12 held-out
+  `hs-ho-*`) and 29 non-answers (8 D4 golds and 21 `hs-na-*`). Gate per run: 0 wrong captures on non-answers, answer
+  accuracy at least 95%, 0 harness errors; every run must pass.
+- **Measured (Strict, haiku).** `help-scope.v1`: answers 20-21/26, non-answers 29/29 (failed; the prompt never said that
+  Quoky asked). `help-scope.v2`: answers 36/38, 37/38, 37/38, non-answers 29/29 every run, one option read the other way
+  once (failed, 2 of 3 runs).
 
 ## Unreleased — Security: Node 22.23.4 (repository Node; the service switch waits for the owner)
 

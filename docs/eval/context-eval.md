@@ -210,6 +210,10 @@ its own provider hook: the dry oracle answers it from the turn's `oracle.helpSco
 neither), the `none` selector answers neither, and a Strict run sends it to the real selection provider (the router's
 egress). Dry: deployed 38/38, actions-local 55/55, all hard checks 0.
 
+**Update (owner decision of 2026-11-02, "분류기 끄고 나머지 병합").** The classifier's Strict gate passed 2 of 3 runs,
+so it is merged switched off and the marks are back: `hs-calendar-words` (scenario `knownGap` naming D4, turn 2
+`knownGap: true`) is the D4 known gap again, with its expectation and its `oracle.helpScopeAnswer` unchanged.
+
 ## Relation to `quoky-e2e`
 
 `quoky-e2e` (the live-channel skill) drives the owner's real service over Discord or Telegram with real connectors.

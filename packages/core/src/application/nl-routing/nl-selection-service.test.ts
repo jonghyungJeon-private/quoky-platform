@@ -45,6 +45,7 @@ function harness(options: {
   select?: () => Promise<AiProvider>;
   timeoutMs?: number;
   elapsed?: () => number;
+  helpScopeClassifier?: boolean;
 } = {}): Harness {
   const calls: AiRequest[] = [];
   const logs: Harness['logs'] = [];
@@ -78,6 +79,7 @@ function harness(options: {
     error: (event, fields) => void logs.push({ level: 'error', event, ...(fields ? { fields } : {}) }),
   };
   const service = new NlSelectionService({
+    ...(options.helpScopeClassifier === undefined ? {} : { helpScopeClassifier: options.helpScopeClassifier }),
     mode: options.mode ?? 'active',
     router: { select: options.select ?? (async (capability) => {
       expect(capability).toBe(Capability.INTENT_SELECTION);
@@ -1144,8 +1146,8 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await h.decide('취소')).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
   });
 
-  it('any other answer is read by the D4 classifier; neither routes through natural-language selection as usual (no word list for the answer)', async () => {
-    const h = harness({ script: [out('help.topic'), '{"answer":null}', NONE] });
+  it('any other answer is read by the D4 classifier when it is on; neither routes through natural-language selection as usual (no word list for the answer)', async () => {
+    const h = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":null}', NONE] });
     await h.decide('슬랙에서 검색하는 방법 알려줘');
     expect(await h.decide('앱 자체 얘기였어')).toEqual({ kind: 'none' });
     expect(h.calls).toHaveLength(3);
@@ -1154,10 +1156,18 @@ describe('owner decision A (2026-10-22): a general help question about a named s
   describe('D4 classifier (owner decisions of 2026-10-27 and 2026-11-02): a worded reply to the help-scope question', () => {
     const APP_REPLY = '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.';
     const asked = async (script: string[]) => {
-      const h = harness({ script: [out('help.topic'), ...script] });
+      const h = harness({ helpScopeClassifier: true, script: [out('help.topic'), ...script] });
       await h.decide('슬랙에서 검색하는 방법 알려줘');
       return h;
     };
+
+    it('owner decision of 2026-11-02: the classifier is off by default; a worded reply then makes no classifier call', async () => {
+      const off = harness({ script: [out('help.topic'), NONE] });
+      await off.decide('슬랙에서 검색하는 방법 알려줘');
+      expect(await off.decide('퀴키한테 물어보는 방법 말이야')).not.toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+      expect(off.calls.every((call) => !call.prompt.includes('<reply>'))).toBe(true);
+      expect(off.logs.some((entry) => entry.event === 'nl_selection.help_scope_classified')).toBe(false);
+    });
 
     it('1 completes option 1 like the number; 2 is the app-itself reply like the number', async () => {
       const one = await asked(['{"answer":1}']);
@@ -1167,7 +1177,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
       expect(await two.decide('아니 슬랙 앱에서 직접 하는 거')).toEqual({ kind: 'ask', text: APP_REPLY });
       expect(two.calls).toHaveLength(2);
       // The question's own language is what the English app reply keeps for an English question.
-      const en = harness({ script: [out('help.topic'), '{"answer":2}'] });
+      const en = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":2}'] });
       await en.decide('how do I search in Slack?');
       expect(await en.decide("the app's own settings")).toEqual({ kind: 'ask', text: "That is about using the Slack app itself, so I can't guide you through it reliably. Please check Slack's own help." });
     });
@@ -1199,6 +1209,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
       for (const [label, response, logged] of cases) {
         let n = 0;
         const h = harness({
+          helpScopeClassifier: true,
           execute: async () => {
             n += 1;
             if (n === 1) return { text: out('help.topic') };
@@ -1222,6 +1233,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
         vi.setSystemTime(1_000_000);
         let n = 0;
         const h = harness({
+          helpScopeClassifier: true,
           elapsed: () => Date.now(),
           execute: () => {
             n += 1;
@@ -1240,17 +1252,17 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     });
 
     it('egress: a selector that is not the chat provider, an unknown chat provider and a missing provider make no call', async () => {
-      const other = harness({ script: [out('help.topic')] });
+      const other = harness({ helpScopeClassifier: true, script: [out('help.topic')] });
       await other.decide('슬랙에서 검색하는 방법 알려줘');
       expect(await other.decide('퀴키로 하는 쪽', { chatProviderId: 'another-provider' })).toMatchObject({ kind: 'skip' });
       expect(other.calls).toHaveLength(1);
       expect(other.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified')?.fields).toMatchObject({ answer: 'egress-refused' });
-      const unknown = harness({ script: [out('help.topic')] });
+      const unknown = harness({ helpScopeClassifier: true, script: [out('help.topic')] });
       await unknown.decide('슬랙에서 검색하는 방법 알려줘');
       expect(await unknown.decide('퀴키로 하는 쪽', { chatProviderId: null })).toMatchObject({ kind: 'skip' });
       expect(unknown.calls).toHaveLength(1);
       let selects = 0;
-      const down = harness({ script: [out('help.topic')], select: async () => {
+      const down = harness({ helpScopeClassifier: true, script: [out('help.topic')], select: async () => {
         selects += 1;
         if (selects > 1) throw new Error('no provider');
         return { id: 'scripted-selector', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: out('help.topic'), artifacts: [] }) } as AiProvider;
@@ -1287,7 +1299,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
 
     it('a question that is not the help-scope one never calls the classifier', async () => {
       // A selector clarification between two entries (not `appSource`): a worded non-answer is routed as usual.
-      const h = harness({ script: [JSON.stringify({ entryId: 'calendar.events', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'todo.list', args: {} }] }), NONE] });
+      const h = harness({ helpScopeClassifier: true, script: [JSON.stringify({ entryId: 'calendar.events', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'todo.list', args: {} }] }), NONE] });
       await h.decide('일정');
       expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeDefined();
       await h.decide('고마워');
@@ -1296,7 +1308,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     });
 
     it('the router prompt is untouched: an `answer` field is still outside its contract', async () => {
-      const stray = harness({ script: [out('help.topic'), '{"answer":null}', out('none', {}, { answer: 1 })] });
+      const stray = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":null}', out('none', {}, { answer: 1 })] });
       await stray.decide('슬랙에서 검색하는 방법 알려줘');
       expect(await stray.decide('퀴키로 하는 쪽')).toEqual({ kind: 'unavailable' });
     });

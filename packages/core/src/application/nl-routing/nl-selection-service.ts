@@ -324,6 +324,12 @@ export interface NlSelectionServiceDeps {
   readonly logger: Logger;
   /** Set from config (`QUOKY_NL_INTENT_TIMEOUT_MS`, default {@link NL_SELECTION_TIMEOUT_MS}); tests also override it. */
   readonly timeoutMs?: number;
+  /**
+   * D4 help-scope classifier (`help-scope-classifier.ts`). Off unless set: the 2026-11-02 Strict gate of `help-scope.v2`
+   * passed 2 of 3 runs, so the owner decided (2026-11-02, "분류기 끄고 나머지 병합") to merge it switched off. Off, a
+   * worded reply to the help-scope question is routed as usual, exactly as before D4.
+   */
+  readonly helpScopeClassifier?: boolean;
   /** Tests only: monotonic milliseconds for latency (default `Date.now`). */
   readonly elapsed?: () => number;
   /**
@@ -1535,7 +1541,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       let resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
       // D4 (owner decisions of 2026-10-22 and 2026-10-27): only a worded reply to the help-scope question, one that neither
       // a number nor a displayed option text resolved, goes to the dedicated classifier; 1 and 2 then pick like the number.
-      if (resolved.kind === 'none' && appSource !== undefined) {
+      if (resolved.kind === 'none' && appSource !== undefined && this.deps.helpScopeClassifier === true) {
         const answer = await this.classifyHelpScopeReply(turn, answerText, renderHelpScopeOptions(appSource, pending.language, more), pending.language);
         if (answer === 1) resolved = { kind: 'pick', index: 0 };
         else if (answer === 2) resolved = { kind: 'pick', index: pending.options.length };

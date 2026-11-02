@@ -31411,3 +31411,36 @@ and D9 still governs every turn that goes to chat.
   parser matches the exact text `{"answer": 1 | 2 | null}` (a duplicated key, an escaped key or `1e0` is malformed). A
   reply over 600 code points is not classified at all and is routed as usual, so a correction at its end is never cut off.
 - **Runs.** Model-in-the-loop eval runs were approved by the owner on 2026-11-02 together with the strict bar.
+
+### Owner decisions of 2026-11-02 after the Strict gates — D4 merged switched off; `neg-033` recorded as an exception (branch `claude/v5-d4-classifier`)
+
+- **Gates of 55b99c12 (`help-scope.v1`).** Full suite 552 files / 17,837 tests pass. Context eval 38/38 in all 3 runs
+  (0 hard). Intent gate PASSED 3/3; read-regression gate (`nl-select.v71`) PASSED 3/3. Help-scope gate FAILED 0/3: the
+  non-answers were 29/29 with 0 wrong captures every run, but answers were 20/26, 21/26, 20/26. Every miss was an
+  option-1 answer that spoke to Quoky directly ("I meant through you", "너로 찾는 거", "채팅으로 검색하는 방법",
+  "Quoky 기능 얘기야", ...) read as neither: the prompt showed the option texts but never said that Quoky asked, in this
+  conversation, and "when unsure, neither" took the rest. No answer was read as the other option.
+- **Owner decision ("v2 + 확인용 예시 먼저").** `help-scope.v2` adds one context paragraph (Quoky, the assistant the owner
+  is talking to, asked the question in this conversation; option 1 is through Quoky here, option 2 the app's own screens;
+  a reply that refers to the one being spoken to, or to this conversation, refers to Quoky). It names no reply words.
+  Before any v2 run, 12 held-out answers (`hs-ho-001..012`, 6 per option, wordings unlike the missed ones) were drafted
+  and owner-approved ("12건 그대로 승인"): 67 cases, 38 answers, 29 non-answers, the same bar.
+- **Gate of 4161faf4 (`help-scope.v2`).** FAILED, 2 of 3 runs: answers 36/38, 37/38, 37/38; non-answers 29/29 and 0
+  wrong captures every run. Misses: `hs-ho-006` "the assistant side" (Confluence) read as neither in all 3 runs;
+  `ctx-d4-015` "앱 안에서 직접 하는 방법" read as option 1 instead of 2 once (new in v2; the context paragraph likely made
+  "the app" read as Quoky). Context eval on 4161faf4: 38/38, 38/38, 37/38 (the miss is a listing-content router turn, not
+  the classifier), PASSED. A v3 prompt was not tried: the held-out set has been seen once, and tuning again on the same
+  golds would be gold fitting.
+- **Owner decision ("분류기 끄고 나머지 병합").** The classifier, its eval mode and `help-scope.v2` are merged switched
+  off: `NlSelectionServiceDeps.helpScopeClassifier` (default off; the app does not set it). Off, a worded reply to the
+  help-scope question is routed as usual, exactly as before D4. `hs-calendar-words` turn 2 is the D4 known gap again
+  (scenario `knownGap` and turn `knownGap: true` restored, expectation unchanged). Backlog: switch it on only after a
+  Strict gate that passes every run, measured on golds that were not used to tune the prompt (for example a stronger
+  model for this one call, with no prompt change).
+- **Agent-plan gate of 55b99c12: FAILED, run checks 2 of 3 (multi-step pooled 507/513 = 98.8%).** Run 2 had one wrong
+  capture on a negative: `neg-033` "드라이브 중에 듣기 좋은 노래 추천해줘" (드라이브 = a car drive) planned as
+  `drive.files`; runs 1 and 3 answered none. The same case failed the same way 1 run in 3 at f6854a87 (2026-10-29, before
+  this branch's Drive change), reported then as selector variance after the selector effort went to high, with no
+  structural fix. The model chose `drive.files` itself (no Core repair involved). It is a read only: no write and no
+  external send. **Owner decision ("예외 기록 후 병합"), like neg-100:** recorded as a known exception; the merge goes
+  ahead. Backlog: the homonym variance stays an open selector item (no phrase list, no gold change).
