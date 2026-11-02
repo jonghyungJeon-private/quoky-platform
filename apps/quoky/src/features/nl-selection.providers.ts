@@ -79,6 +79,9 @@ export function createNlSelectionProviders(
           grammarYield: config.nlSelection.grammarYield,
           phase: config.nlSelection.phase,
           timeoutMs: config.nlSelection.timeoutMs,
+          // D4 (owner decision of 2026-11-02, "sonnet low로 켜서 배포"): the help-scope classifier is on; its one request asks for
+          // the provider's stronger selection model (Claude CLI: sonnet, effort low), the selector stays on haiku.
+          helpScopeClassifier: true,
           router,
           sessions,
           actors: {

@@ -214,6 +214,13 @@ egress). Dry: deployed 38/38, actions-local 55/55, all hard checks 0.
 so it is merged switched off and the marks are back: `hs-calendar-words` (scenario `knownGap` naming D4, turn 2
 `knownGap: true`) is the D4 known gap again, with its expectation and its `oracle.helpScopeAnswer` unchanged.
 
+**Update (owner decision of 2026-11-02, "sonnet low로 켜서 배포").** The classifier is switched on, running on sonnet at
+effort low (only its request; the router stays haiku), so the marks are removed again: `hs-calendar-words` turn 2 is a
+normal scored turn with its expectation and its `oracle.helpScopeAnswer` unchanged, and no scenario carries a known-gap
+turn (the calendar-undo scenarios keep their scenario-level `knownGap`). A Strict run forwards the classifier request,
+including its `intentSelectionTier: 'stronger'`, to the real selection provider, which uses its production stronger
+defaults (sonnet, effort low). Dry: deployed 38/38, actions-local 55/55, known gaps 0, hard 0.
+
 ## Relation to `quoky-e2e`
 
 `quoky-e2e` (the live-channel skill) drives the owner's real service over Discord or Telegram with real connectors.

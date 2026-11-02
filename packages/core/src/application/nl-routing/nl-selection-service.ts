@@ -325,8 +325,11 @@ export interface NlSelectionServiceDeps {
   /** Set from config (`QUOKY_NL_INTENT_TIMEOUT_MS`, default {@link NL_SELECTION_TIMEOUT_MS}); tests also override it. */
   readonly timeoutMs?: number;
   /**
-   * D4 help-scope classifier (`help-scope-classifier.ts`). Off unless set: the 2026-11-02 Strict gate of `help-scope.v2`
-   * passed 2 of 3 runs, so the owner decided (2026-11-02, "분류기 끄고 나머지 병합") to merge it switched off. Off, a
+   * D4 help-scope classifier (`help-scope-classifier.ts`). Off unless set (core tests and other callers stay off); the app
+   * composition sets it. Owner decision of 2026-11-02, "sonnet low로 켜서 배포": the classifier request alone asks for the
+   * provider's stronger selection model (`intentSelectionTier: 'stronger'`; Claude CLI: sonnet, effort low), the selector
+   * stays on its own model. Measured on the same 67 golds, 3 runs each: haiku high 2/3, xhigh 0/3, max 1/3 (timeouts);
+   * sonnet high, medium and low 3/3 (38/38 answers, 29/29 non-answers, 0 wrong captures, 0 timeouts, p50 ~1.6 s). Off, a
    * worded reply to the help-scope question is routed as usual, exactly as before D4.
    */
   readonly helpScopeClassifier?: boolean;
@@ -2586,7 +2589,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const timeoutMs = this.selectionBound(clock()).boundMs;
     let rawText: string;
     try {
-      rawText = (await withTimeout(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs }), timeoutMs)).text;
+      rawText = (await withTimeout(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, intentSelectionTier: 'stronger' }), timeoutMs)).text;
     } catch (error) {
       const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
       if (!timedOut) this.lastCompletedAtMs = clock();

@@ -1947,7 +1947,6 @@
    "title": "캘린더에서 일정 찾는 방법 → 번호 대신 말로 답함",
    "lang": "ko",
    "world": "office",
-   "knownGap": "D4 (a worded answer to the help-scope question): the dedicated classifier is built but merged switched off (owner decision of 2026-11-02, the help-scope.v2 Strict gate passed 2 of 3 runs); turn 2 keeps the feature's expectation and is re-scored as a normal turn when the classifier is switched on",
    "turns": [
     {
      "text": "캘린더에서 일정 찾는 방법 알려줘",
@@ -1961,7 +1960,6 @@
     },
     {
      "text": "Quoky로 하는 거",
-     "knownGap": true,
      "oracle": {
       "entryId": "none",
       "helpScopeAnswer": 1

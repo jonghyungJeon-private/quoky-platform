@@ -33,7 +33,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
 import { Capability, type AiProvider } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import {
@@ -161,6 +161,9 @@ R2 gate: >= ${NL_ACTION_R2_EVAL_GATE.overall * 100}% exact {entry, args, target}
 
 D4 help-scope classifier (owner decisions of 2026-10-27 and 2026-11-02; the dedicated 1 / 2 / neither call, not the router prompt):
           pnpm eval:nl -- --mode help-scope [--model M] [--effort E] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
+In this mode the requests carry the production tier (intentSelectionTier 'stronger') and --model / --effort override the
+STRONGER model and effort, whose production defaults are ${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL} / ${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT} (owner decision of 2026-11-02);
+the resolved model, effort and tier are printed in the plan and bound into its digest. The selection-model options above do not apply to it.
 Without --approved-plan-digest it is offline (schema check, plan, digest, call count). With it, a Strict run.
 Help-scope gate per run: ${NL_HELP_SCOPE_EVAL_GATE.wrongCaptures} wrong captures on the non-answers, answer accuracy >= ${NL_HELP_SCOPE_EVAL_GATE.answerAccuracy * 100}%, ${NL_HELP_SCOPE_EVAL_GATE.harnessErrors} harness errors;
          the multi-run gate passes only when every run passes.
@@ -225,6 +228,13 @@ export function selectionEffort(options: Readonly<Record<string, string>>): stri
   return effort;
 }
 
+/** D4: the effort of `--mode help-scope`, `--effort` over the stronger tier's production default (low); always bound into the plan digest. */
+export function strongerSelectionEffort(options: Readonly<Record<string, string>>): string {
+  const effort = options['--effort'] ?? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT;
+  if (!(CLAUDE_EFFORT_LEVEL_NAMES as readonly string[]).includes(effort)) throw new UsageError(`--effort must be one of ${CLAUDE_EFFORT_LEVEL_NAMES.join(', ')}`);
+  return effort;
+}
+
 export function planOptions(
   options: Readonly<Record<string, string>>,
   env: NodeJS.ProcessEnv = process.env,
@@ -260,7 +270,7 @@ export interface CliDeps {
   readonly loadCorpus: () => { corpus: NlEvalCorpus; sha256: string };
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
-  readonly createProvider: (model: string, effort?: string) => AiProvider;
+  readonly createProvider: (model: string, effort?: string, tier?: 'stronger') => AiProvider;
   /** The outage guard's canary (one tiny call through the same provider); tests inject it, production calls the provider. */
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
 }
@@ -281,8 +291,12 @@ export function defaultDeps(): CliDeps {
       writeFileSync(path, contents, { encoding: 'utf8', flag: 'wx' });
       return path;
     },
-    createProvider: (model, effort) =>
-      new ClaudeCliProvider('claude', { intentSelectionModel: model, ...(effort !== undefined ? { effortByCapability: { [Capability.INTENT_SELECTION]: effort as ClaudeEffortLevel } } : {}) }),
+    createProvider: (model, effort, tier) =>
+      // D4: `--mode help-scope` builds the provider for the stronger tier (the production classifier request): the model and
+      // effort it is given are the stronger ones. Every other mode keeps the selection model and effort.
+      tier === 'stronger'
+        ? new ClaudeCliProvider('claude', { strongerIntentSelectionModel: model, ...(effort !== undefined ? { strongerIntentSelectionEffort: effort as ClaudeEffortLevel } : {}) })
+        : new ClaudeCliProvider('claude', { intentSelectionModel: model, ...(effort !== undefined ? { effortByCapability: { [Capability.INTENT_SELECTION]: effort as ClaudeEffortLevel } } : {}) }),
   };
 }
 
@@ -432,9 +446,11 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
   const flag = options['--timeout-ms'];
   const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
   if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
+  // D4: for `--mode help-scope` `--model` / `--effort` override the STRONGER tier (production defaults sonnet / low).
+  const stronger = mode === 'help-scope';
   const settings = {
-    model: options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
-    effort: selectionEffort(options),
+    model: options['--model'] ?? (stronger ? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL : DEFAULT_CLAUDE_INTENT_SELECTION_MODEL),
+    effort: stronger ? strongerSelectionEffort(options) : selectionEffort(options),
     runs: integer(options['--runs'], 1),
     concurrency: integer(options['--concurrency'], 4),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
@@ -640,7 +656,7 @@ async function runHelpScopeCli(settings: { model: string; effort?: string; runs:
     deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const provider = deps.createProvider(plan.model, plan.effort);
+  const provider = deps.createProvider(plan.model, plan.effort, plan.tier);
   if (!(await provider.isAvailable().catch(() => false))) {
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;

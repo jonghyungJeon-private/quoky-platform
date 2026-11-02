@@ -353,6 +353,14 @@ export const DEFAULT_CLAUDE_MODEL = 'sonnet';
 export const DEFAULT_CLAUDE_INTENT_SELECTION_MODEL = 'haiku';
 
 /**
+ * D4 (owner decision of 2026-11-02, "sonnet low로 켜서 배포"): the model and effort of an `INTENT_SELECTION` request that asks for
+ * the stronger tier (`AiRequest.intentSelectionTier === 'stronger'`; today only the help-scope classifier). Measured on the
+ * 67 help-scope golds, 3 runs each: haiku high 2/3, xhigh 0/3, max 1/3 (timeouts); sonnet high, medium and low 3/3.
+ */
+export const DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL = 'sonnet';
+export const DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT: ClaudeEffortLevel = 'low';
+
+/**
  * Adapter-owned capability -> reasoning effort policy (decision D2). Core never sees
  * this: it only advertises a capability, and the adapter decides how hard to think.
  * Capabilities not listed here (e.g. TEST_EXECUTION) pass no `--effort` flag (CLI default; ADR-0092).
@@ -381,6 +389,10 @@ export interface ClaudeCliProviderOptions extends CliProviderOptions {
   effortByCapability?: Partial<Record<Capability, ClaudeEffortLevel>>;
   /** ADR-0120 D2: the `--model` of an `INTENT_SELECTION` request. Default {@link DEFAULT_CLAUDE_INTENT_SELECTION_MODEL}. */
   intentSelectionModel?: string;
+  /** D4: the `--model` of an `INTENT_SELECTION` request with `intentSelectionTier: 'stronger'`. Default {@link DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL}. */
+  strongerIntentSelectionModel?: string;
+  /** D4: the `--effort` of that request (instead of the capability effort). Default {@link DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT}. */
+  strongerIntentSelectionEffort?: ClaudeEffortLevel;
 }
 
 /**
@@ -398,6 +410,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   private readonly defaultTimeoutMs: number;
   private readonly model: string;
   private readonly intentSelectionModel: string;
+  private readonly strongerIntentSelectionModel: string;
+  private readonly strongerIntentSelectionEffort: ClaudeEffortLevel;
   private readonly effortByCapability: Readonly<Partial<Record<Capability, ClaudeEffortLevel>>>;
 
   readonly capabilities: readonly AiCapabilityDescriptor[] = [
@@ -425,6 +439,9 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
     this.model = validatedClaudeModel(options.model ?? DEFAULT_CLAUDE_MODEL);
     this.intentSelectionModel = validatedClaudeModel(options.intentSelectionModel ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL);
+    this.strongerIntentSelectionModel = validatedClaudeModel(options.strongerIntentSelectionModel ?? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL);
+    this.strongerIntentSelectionEffort = options.strongerIntentSelectionEffort ?? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT;
+    if (!CLAUDE_EFFORT_LEVELS.includes(this.strongerIntentSelectionEffort)) throw new TypeError('Invalid Claude effort level');
     // An explicit `undefined` override means "use the default", never an invalid level.
     const overrides = Object.fromEntries(
       Object.entries(options.effortByCapability ?? {}).filter(([, level]) => level !== undefined),
@@ -444,17 +461,27 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
    * and nothing written to the owner's session history (`--no-session-persistence`). Without this a reply could
    * describe the owner's own connectors ("Google Calendar 커넥터를 승인해 주세요") as if Quoky could use them.
    */
-  buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace'>): string[] {
-    const model = request?.capability === Capability.INTENT_SELECTION ? this.intentSelectionModel : this.model;
+  buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace' | 'intentSelectionTier'>): string[] {
+    const model = this.modelFor(request);
     const args = [
       '-p', '--model', model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
     ];
     if (request === undefined) return args;
-    const effort = this.effortByCapability[request.capability];
+    const effort = this.isStrongerSelection(request) ? this.strongerIntentSelectionEffort : this.effortByCapability[request.capability];
     if (effort !== undefined) args.push('--effort', effort);
     // `--tools` is variadic and must stay the LAST argv entry so it cannot swallow other flags.
     if (request.workspace === undefined) args.push('--tools', '');
     return args;
+  }
+
+  /** D4: only an `INTENT_SELECTION` request that asks for the stronger tier uses the stronger model and effort. */
+  private isStrongerSelection(request: Pick<AiRequest, 'capability' | 'intentSelectionTier'> | undefined): boolean {
+    return request?.capability === Capability.INTENT_SELECTION && request.intentSelectionTier === 'stronger';
+  }
+
+  private modelFor(request: Pick<AiRequest, 'capability' | 'intentSelectionTier'> | undefined): string {
+    if (request?.capability !== Capability.INTENT_SELECTION) return this.model;
+    return this.isStrongerSelection(request) ? this.strongerIntentSelectionModel : this.intentSelectionModel;
   }
 
   override async isAvailable(): Promise<boolean> {
@@ -528,7 +555,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
       // ADR-0115 D8: the plain-text print mode exposes no token counts, so only the label is reported ("unknown").
-      usage: { label: `claude:${request.capability === Capability.INTENT_SELECTION ? this.intentSelectionModel : this.model}` },
+      usage: { label: `claude:${this.modelFor(request)}` },
     };
   }
 }

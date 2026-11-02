@@ -31447,3 +31447,46 @@ and D9 still governs every turn that goes to chat.
   structural fix. The model chose `drive.files` itself (no Core repair involved). It is a read only: no write and no
   external send. **Owner decision ("예외 기록 후 병합"), like neg-100:** recorded as a known exception; the merge goes
   ahead. Backlog: the homonym variance stays an open selector item (no phrase list, no gold change).
+
+### Owner decision of 2026-11-02 — the D4 classifier runs on sonnet (effort low) and is switched on (branch `claude/v5-d4-model`)
+
+- **Measurement (owner-approved, same `help-scope.v2` prompt, same 67 golds, `eval:nl --mode help-scope`, 3 runs each; the
+  classifier request only, the router stays haiku).** Per-run answer counts for the haiku rows were not recorded in the
+  task that wrote this entry; the gate is the owner's: every run needs 0 wrong captures, answers at least 95%, 0 harness
+  errors.
+
+  | Model, effort | Runs passing the gate | Answers per run | Wrong options | Timeouts | p50 | Gate |
+  |---|---|---|---|---|---|---|
+  | haiku, high | 2 of 3 | not recorded here | not recorded here | not recorded here | not recorded here | FAILED |
+  | haiku, xhigh | 0 of 3 | not recorded here | not recorded here | timeouts at the 10 s bound | not recorded here | FAILED |
+  | haiku, max | 1 of 3 | not recorded here | not recorded here | timeouts at the 10 s bound | not recorded here | FAILED |
+  | sonnet, high | 3 of 3 | 38/38 (non-answers 29/29) | 0 wrong captures | 0 | ~1.6 s | PASSED |
+  | sonnet, medium | 3 of 3 | 38/38 (non-answers 29/29) | 0 wrong captures | 0 | ~1.6 s | PASSED |
+  | sonnet, low | 3 of 3 | 38/38 (non-answers 29/29) | 0 wrong captures | 0 | ~1.6 s | PASSED |
+
+- **Decision, verbatim: "sonnet low로 켜서 배포".** Only the classifier request goes to sonnet with effort low; the
+  router/selector stays on haiku (high); then the classifier is switched on. The earlier backlog item ("a stronger model for
+  this one call, with no prompt change") is this change: the prompt `help-scope.v2` and the golds are unchanged.
+- **Port.** `AiRequest.intentSelectionTier?: 'stronger'` (additive, optional, `ai-provider.port.ts`). Only meaningful with
+  `Capability.INTENT_SELECTION`: it asks a provider that has a stronger selection model configured to use it for this one
+  request, and a provider without one ignores it. Core only sets the hint (`classifyHelpScopeReply`); it never branches on
+  provider internals, and no prompt logic moved (ADR-0003 / ADR-0014: the provider just executes).
+- **Provider behaviour (Claude CLI).** New options `strongerIntentSelectionModel` (default `sonnet`) and
+  `strongerIntentSelectionEffort` (default `low`), validated like `intentSelectionModel` and the effort levels. With
+  `capability === INTENT_SELECTION && intentSelectionTier === 'stronger'`, `buildArgs` uses that model and effort instead of
+  `intentSelectionModel` and the capability effort, and the usage label names the model used (`claude:sonnet`). Any other
+  request, including the same tier on another capability, gets the same arguments as before.
+- **What stays haiku.** The router/selector request (the read, action and R2 prompts), the agent planner and every other
+  `INTENT_SELECTION` caller; `QUOKY_NL_INTENT_MODEL` still sets the selection model. No new environment variable.
+- **Switched on.** `nl-selection.providers.ts` builds the service with `helpScopeClassifier: true`; the Core dep default
+  stays off, so Core tests and other callers are unchanged. `hs-calendar-words` turn 2 is a normal scored turn again (the
+  scenario `knownGap` and the turn `knownGap: true` are removed; the expectation and `oracle.helpScopeAnswer` are
+  unchanged). Dry context eval: deployed 38/38, actions-local 55/55, 0 known gaps, hard 0.
+- **Evals.** `eval:nl --mode help-scope` sets the tier on its requests; `--model` / `--effort` override the stronger model
+  and effort (production defaults `sonnet` / `low`); the plan prints and binds model, effort and tier in its digest. The
+  context eval forwards the real request, tier included, to the real provider, which uses its production defaults.
+- **Other providers.** Only the Claude CLI provider implements the tier. `INTENT_SELECTION` is pinned to the Claude CLI
+  (ADR-0120 D2; no other provider advertises it, and the owner's chat-tier choice never applies to it), so in production
+  the classifier request always reaches the Claude CLI. If a provider that does not implement the tier ever served
+  `INTENT_SELECTION`, it would ignore the hint and run the classifier on its own selection model, which is unmeasured for
+  this prompt; the classifier then still fails closed (anything but a clean 1 or 2 routes the turn as usual).

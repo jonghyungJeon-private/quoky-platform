@@ -1186,8 +1186,11 @@ describe('owner decision A (2026-10-22): a general help question about a named s
       const h = await asked(['```json\n{"answer":1}\n```']);
       await h.decide('퀴키한테 물어보는 방법 말이야');
       const call = h.calls[1] as AiRequest;
-      expect(call).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_SELECTION_COLD_TIMEOUT_MS });
-      expect(Object.keys(call)).toEqual(['capability', 'prompt', 'timeoutMs']);
+      // Owner decision of 2026-11-02: only this request asks for the provider's stronger selection model (the router never does).
+      expect(call).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_SELECTION_COLD_TIMEOUT_MS, intentSelectionTier: 'stronger' });
+      expect(Object.keys(call)).toEqual(['capability', 'prompt', 'timeoutMs', 'intentSelectionTier']);
+      expect(h.calls[0]).not.toHaveProperty('intentSelectionTier');
+      expect(h.calls.filter((request) => request.intentSelectionTier !== undefined)).toEqual([call]);
       expect(call.prompt).toContain('Option 1: Quoky로 슬랙 조회하는 방법');
       expect(call.prompt).toContain('Option 2: 슬랙 앱 자체의 사용법');
       expect(call.prompt).toContain('<reply>\n퀴키한테 물어보는 방법 말이야\n</reply>');
