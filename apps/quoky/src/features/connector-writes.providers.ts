@@ -82,6 +82,7 @@ export function createConnectorWriteComposition(options: ConnectorWriteCompositi
         prepare: (receipt) => storage.connectorWriteReceipts.prepare(receipt),
         complete: (id, outcome, now) => storage.connectorWriteReceipts.complete(id, outcome, now),
         findByIdempotencyKey: (key) => storage.connectorWriteReceipts.findByIdempotencyKey(key),
+        findById: (id, actorId) => storage.connectorWriteReceipts.findById(id, actorId),
         findLatestSent: (match) => storage.connectorWriteReceipts.findLatestSent(match),
         findLatestUnresolved: (match) => storage.connectorWriteReceipts.findLatestUnresolved(match),
         findLatestForOperation: (actorId, operation) => storage.connectorWriteReceipts.findLatestForOperation(actorId, operation),

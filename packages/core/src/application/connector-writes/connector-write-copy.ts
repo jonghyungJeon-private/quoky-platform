@@ -139,6 +139,13 @@ const NO_INVITES = '참석자: 없음 · 초대·변경 메일: 보내지 않음
 const PRIMARY = '캘린더: 내 기본 캘린더(primary)';
 const UNCHANGED_EVENT_ONLY = '실행할 때 이 일정이 미리보기 그대로일 때만 실행해요. 그사이 일정이 바뀌면 실행하지 않아요.';
 
+/**
+ * ADR-0112 amendment 1 S4 / amendment 3 (the A6-D4 receipt-sourced banner variant): every undo card says the target came
+ * from Quoky's own record of what it sent, and that nothing in the owner's sentence chose it. Fixed copy, no placeholders.
+ */
+export const CONNECTOR_UNDO_RECEIPT_BANNER =
+  '되돌리기 요청 — 대상은 Quoky가 보낸 기록(영수증)에서 가져왔어요. 문장에서 가져온 대상은 없어요';
+
 function previewBody(preview: ConnectorWritePreview): MessageBody[] {
   switch (preview.operation) {
     case 'ISSUE_COMMENT':

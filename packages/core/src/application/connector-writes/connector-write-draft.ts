@@ -1,4 +1,4 @@
-import type { IsoTimestamp } from '../../domain';
+import type { Id, IsoTimestamp } from '../../domain';
 import type { CalendarEventDraft } from '../../ports/connector-write.port';
 
 /**
@@ -82,6 +82,17 @@ export type ConnectorWriteDraft =
   | { readonly kind: 'calendar-update'; readonly ref: CalendarEventReference; readonly changes: CalendarDraftChanges }
   | { readonly kind: 'calendar-delete'; readonly ref: CalendarEventReference }
   | { readonly kind: 'usage'; readonly topic: ConnectorWriteUsageTopic };
+
+/**
+ * ADR-0112 amendment 3 / amendment 1 S9: the undo of an approved external write, bound to that write's SENT receipt. It
+ * carries the receipt id only, never an event id, text or link: the target comes from the receipt the session's own
+ * `lastAction` names. One closed kind per family whose undo is built.
+ */
+export type ExternalUndoDraftKind = 'calendar-create-undo';
+export interface ExternalUndoDraft {
+  readonly kind: ExternalUndoDraftKind;
+  readonly receiptId: Id;
+}
 
 export type ConnectorWriteDraftKind = ConnectorWriteDraft['kind'];
 

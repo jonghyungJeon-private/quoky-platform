@@ -47,6 +47,10 @@ class FakeReceipts implements ConnectorWriteReceiptRepository {
     return [...this.rows.values()].find((row) => row.idempotencyKey === key) ?? null;
   }
 
+  async findById(): Promise<ConnectorWriteReceipt | null> {
+    return null;
+  }
+
   async findLatestSent(_match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null> {
     return null;
   }

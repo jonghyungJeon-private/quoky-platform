@@ -126,6 +126,14 @@ export class SqliteConnectorWriteReceiptRepository implements ConnectorWriteRece
     return row ? receiptOf(row) : null;
   }
 
+  async findById(id: Id, actorId: Id): Promise<ConnectorWriteReceipt | null> {
+    if (typeof id !== 'string' || id.length === 0 || typeof actorId !== 'string' || actorId.length === 0) return null;
+    const row = this.db.prepare(
+      'SELECT * FROM connector_write_receipts WHERE id = ? AND actor_id = ?',
+    ).get(id, actorId) as ReceiptRow | undefined;
+    return row ? receiptOf(row) : null;
+  }
+
   async findLatestSent(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null> {
     const row = this.db.prepare(
       `SELECT * FROM connector_write_receipts

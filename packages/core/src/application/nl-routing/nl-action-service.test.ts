@@ -485,6 +485,9 @@ describe('receipts: lastAction, the echo label and the delivery binding', () => 
     await w.service.recordActionReceipt({ session: w.session(), actor: w.actor(), message, now: at(0), action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: 'todo-7', label: 7, version: at(0), undoable: true } });
     await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
     expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', undoable: false, outcome: 'SENT', requestId: 'in-2' } } });
+    // Amendment 3: the anchor task id is kept (an id only) and the record stays not undoable while no family is open.
+    await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-3' }, now: at(2), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-2', outcome: 'SENT', anchorTaskId: 'task-9' });
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { itemId: 'receipt-2', undoable: false, anchorTaskId: 'task-9' } } });
     const off = world({ level: 'off', script: [] });
     await off.service.recordExternalWrite({ session: off.session(), actor: off.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
     expect(off.session().metadata).toBeUndefined();

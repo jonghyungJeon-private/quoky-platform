@@ -178,4 +178,13 @@ describe('SqliteConnectorWriteReceiptRepository (ADR-0112 D3, schema v15)', () =
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('findById returns a receipt only to the actor that owns it (ADR-0112 amendment 3)', async () => {
+    const { repo } = setup();
+    await repo.prepare(receipt());
+    expect((await repo.findById('r1', 'actor-1'))?.id).toBe('r1');
+    expect(await repo.findById('r1', 'actor-2')).toBeNull();
+    expect(await repo.findById('missing', 'actor-1')).toBeNull();
+    expect(await repo.findById('', 'actor-1')).toBeNull();
+  });
 });

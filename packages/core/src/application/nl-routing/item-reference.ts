@@ -1,9 +1,9 @@
-import type { IsoTimestamp } from '../../domain';
+import type { Id, IsoTimestamp } from '../../domain';
 import type { AnyListingReplyMatch, ListingItem, ListingRecord, ListingSlot, ListingSource } from '../last-listing';
 import { LISTING_REPLY_TTL_MS } from '../last-listing';
 import type { NlActionEntryId, NlItemSource, NlItemTarget, NlUndoSpec } from './catalog';
 import { nlIndexWording, nlNamedItemSources, type NlRef } from './action-entries';
-import { LAST_ACTION_EXTERNAL_ENTRY, isLastActionExternalSource, type LastActionExternalOutcome, type LastActionExternalSource, type LastActionView } from './last-action';
+import { LAST_ACTION_EXTERNAL_ENTRY, externalUndoFamilyOf, isExternalUndoOpen, isLastActionExternalSource, type ExternalUndoFamily, type LastActionExternalOutcome, type LastActionExternalSource, type LastActionView } from './last-action';
 import type { LastReadRecord } from './last-read';
 import { newestReference } from './reference-recency';
 import { normalizeForMatch } from './selection-input';
@@ -254,6 +254,11 @@ export type NlUndoUnresolvedOutcome = 'no-action' | 'undo-of-undo' | 'echo-misma
 export interface NlUndoExternal {
   readonly source: LastActionExternalSource;
   readonly outcome: LastActionExternalOutcome;
+  /**
+   * ADR-0112 amendment 3 (O1): set only when the record's family is in the closed capability set, the write was SENT and it
+   * is not undone. The id is the record's receipt id (from the session's own `lastAction`, never from text).
+   */
+  readonly open?: { readonly family: ExternalUndoFamily; readonly receiptId: Id };
 }
 
 /**
@@ -274,11 +279,18 @@ export function resolveUndo(state: Pick<NlReferenceState, 'lastAction' | 'replyT
   const record = last.record;
   // ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): an external write is the last action; it is answered, never
   // skipped for an older item.
+  if (record.entryId === 'action.undo') return { kind: 'unresolved', outcome: 'undo-of-undo' };
   if (record.source !== 'todo' && record.source !== 'reminder') {
-    return { kind: 'unresolved', outcome: 'external', external: { source: record.source, outcome: record.outcome ?? 'SENT' } };
+    const family = externalUndoFamilyOf(record.entryId);
+    const open = record.undoable && !record.undone && record.outcome === 'SENT' && family !== undefined && isExternalUndoOpen(family);
+    return {
+      kind: 'unresolved',
+      outcome: 'external',
+      external: { source: record.source, outcome: record.outcome ?? 'SENT', ...(open && family !== undefined ? { open: { family, receiptId: record.itemId } } : {}) },
+    };
   }
   if (record.entryId === LAST_ACTION_EXTERNAL_ENTRY) return { kind: 'unresolved', outcome: 'undo-of-undo' };
-  if (record.entryId === 'action.undo' || !record.undoable) return { kind: 'unresolved', outcome: 'undo-of-undo' };
+  if (!record.undoable) return { kind: 'unresolved', outcome: 'undo-of-undo' };
   if (record.undone) return { kind: 'unresolved', outcome: 'undo-of-undo' };
   return {
     kind: 'resolved',

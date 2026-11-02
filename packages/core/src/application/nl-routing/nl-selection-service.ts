@@ -52,6 +52,8 @@ import {
 } from './item-reference';
 import {
   LAST_ACTION_METADATA_KEY,
+  externalUndoFamilyOf,
+  isExternalUndoOpen,
   isLastActionExternalSource,
   readLastAction,
   withLastAction,
@@ -973,16 +975,24 @@ export class NlSelectionService implements TurnDeliveryObserver {
     readonly entryId: LastActionEntryId;
     readonly receiptId: string;
     readonly outcome: LastActionExternalOutcome;
+    /** ADR-0112 amendment 3: the anchor Task of the approval (payload and preview live there), an id only. */
+    readonly anchorTaskId?: string;
+    /** This write was itself an undo of the receipt's entry: the record becomes a non-undoable `action.undo`. */
+    readonly undoOf?: NlActionEntryId;
   }): Promise<void> {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
+    const isUndo = input.undoOf !== undefined;
     const record: LastActionRecord = {
-      entryId: input.entryId,
+      entryId: isUndo ? 'action.undo' : input.entryId,
       source: input.source,
       itemId: input.receiptId,
       at: input.now,
-      undoable: false,
+      // Opens only for a SENT write of a family in the closed capability set (empty until a slice adds its family).
+      undoable: !isUndo && input.outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(input.entryId)),
       undone: false,
       outcome: input.outcome,
+      ...(input.anchorTaskId !== undefined ? { anchorTaskId: input.anchorTaskId } : {}),
+      ...(input.undoOf !== undefined ? { undoOf: input.undoOf } : {}),
       requestId: input.message.id,
       echoReplyIds: [],
     };

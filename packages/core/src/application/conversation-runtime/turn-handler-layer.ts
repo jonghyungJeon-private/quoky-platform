@@ -863,7 +863,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
             // "되돌려줘" answers about it and never reaches an older to-do or reminder.
             if (executed.kind === 'outcome') {
               const { source, entryId } = externalLastActionOf(anchor.family, executed.operation);
-              await this.deps.nlSelection?.recordExternalWrite?.({ session, actor, message, now: this.clock(), source, entryId, receiptId: executed.receiptId ?? view.taskId, outcome: executed.outcome.status });
+              await this.deps.nlSelection?.recordExternalWrite?.({ session, actor, message, now: this.clock(), source, entryId, receiptId: executed.receiptId ?? view.taskId, outcome: executed.outcome.status, anchorTaskId: view.taskId });
             }
             return respond(executed);
           } catch (error) {

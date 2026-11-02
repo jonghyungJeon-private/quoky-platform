@@ -74,6 +74,11 @@ export interface ConnectorWriteReceiptRepository {
    */
   complete(id: Id, outcome: ConnectorWriteOutcome, now: IsoTimestamp): Promise<ConnectorWriteReceipt | null>;
   findByIdempotencyKey(idempotencyKey: string): Promise<ConnectorWriteReceipt | null>;
+  /**
+   * One receipt by its id, only for the actor that owns it (ADR-0112 amendment 1 S2, amendment 3): null when it does not
+   * exist or belongs to another actor. Called only with an id taken from this session's own `lastAction`, never from text.
+   */
+  findById(id: Id, actorId: Id): Promise<ConnectorWriteReceipt | null>;
   /** The newest `SENT` receipt for the same actor, connector, operation, target and payload hash, or null. */
   findLatestSent(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null>;
   /**

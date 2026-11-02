@@ -61,6 +61,25 @@ export function externalLastActionOf(
   return { source, entryId };
 }
 
+/**
+ * ADR-0112 amendment 3 (O1, Accepted 2026-11-02): the closed set of external-write families whose undo is built. An
+ * external record is `undoable` only when its family is in {@link EXTERNAL_UNDO_CAPABILITIES}; every other external record
+ * keeps the S3 "not on yet" state, whatever a stored flag says. The set is a constant, never read from a store, a flag or
+ * text: a family opens only when its slice adds it here.
+ */
+export type ExternalUndoFamily = 'calendar-create';
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze([] as ExternalUndoFamily[]);
+
+/** The undo family of an external record's entry, or `undefined` when its entry has none. Closed mapping. */
+export function externalUndoFamilyOf(entryId: string): ExternalUndoFamily | undefined {
+  return entryId === 'calendar.create' ? 'calendar-create' : undefined;
+}
+
+/** Whether the undo of `family` is built (the family is in the capability set). */
+export function isExternalUndoOpen(family: ExternalUndoFamily | undefined, capabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES): boolean {
+  return family !== undefined && capabilities.includes(family);
+}
+
 export interface LastActionRecord {
   /**
    * The executed entry (`todo.add`, …), `action.undo` after an undo; for a connector write its catalog id (`slack.post`,
@@ -79,6 +98,11 @@ export interface LastActionRecord {
   readonly undoable: boolean;
   /** External records only: the write's outcome (ADR-0112 amendment 1 S3: every outcome is recorded). */
   readonly outcome?: LastActionExternalOutcome;
+  /**
+   * External records only (ADR-0112 amendment 3): the id of the connector-write anchor Task of the original approval, which
+   * holds the payload and the preview. An id only, never content; it names nothing a receipt does not.
+   */
+  readonly anchorTaskId?: Id;
   readonly undone: boolean;
   /** `action.undo` records: the entry that was undone. */
   readonly undoOf?: NlActionEntryId;
@@ -119,6 +143,7 @@ export function lastActionOf(raw: unknown): LastActionRecord | undefined {
   const label = Number.isSafeInteger(record.label) && (record.label as number) >= 1 ? (record.label as number) : undefined;
   const version = boundedString(record.version, 64);
   const requestId = boundedString(record.requestId, MAX_REPLY_ID_CHARS);
+  const anchorTaskId = external ? boundedString(record.anchorTaskId, MAX_ID_CHARS) : undefined;
   const undoOf = isNlActionEntryId(record.undoOf) ? record.undoOf : undefined;
   const echo = Array.isArray(record.echoReplyIds)
     ? record.echoReplyIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= MAX_REPLY_ID_CHARS).slice(0, MAX_REPLY_IDS)
@@ -130,10 +155,15 @@ export function lastActionOf(raw: unknown): LastActionRecord | undefined {
     ...(label !== undefined ? { label } : {}),
     ...(version !== undefined ? { version } : {}),
     at: record.at as IsoTimestamp,
-    // Until the R3 undo writers act, an external write is never undone here (a stored flag cannot change that).
-    undoable: record.undoable === true && record.entryId !== 'action.undo' && !external,
+    // An external write is undoable only for a family in the closed capability set, and only a SENT one (a stored flag
+    // alone cannot open it).
+    undoable:
+      record.undoable === true &&
+      record.entryId !== 'action.undo' &&
+      (!external || (outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(String(record.entryId))))),
     undone: record.undone === true,
     ...(external && outcome !== undefined ? { outcome } : {}),
+    ...(anchorTaskId !== undefined ? { anchorTaskId } : {}),
     ...(undoOf !== undefined ? { undoOf } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
     echoReplyIds: echo,
@@ -165,6 +195,7 @@ function serialize(record: LastActionRecord): Record<string, unknown> {
     undoable: record.undoable,
     undone: record.undone,
     ...(record.outcome !== undefined ? { outcome: record.outcome } : {}),
+    ...(record.anchorTaskId !== undefined ? { anchorTaskId: record.anchorTaskId } : {}),
     ...(record.undoOf !== undefined ? { undoOf: record.undoOf } : {}),
     ...(record.requestId !== undefined ? { requestId: record.requestId } : {}),
     echoReplyIds: [...record.echoReplyIds],

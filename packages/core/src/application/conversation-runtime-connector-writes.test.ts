@@ -160,6 +160,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
         .pop() ?? null
     );
   }
+  async findById(id: string, actorId: string): Promise<ConnectorWriteReceipt | null> {
+    return [...this.rows.values()].find((row) => row.id === id && row.actorId === actorId) ?? null;
+  }
   async findLatestForOperation(actorId: string, operation: string): Promise<ConnectorWriteReceipt | null> {
     return [...this.rows.values()].filter((row) => row.actorId === actorId && row.operation === operation).pop() ?? null;
   }
