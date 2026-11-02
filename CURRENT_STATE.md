@@ -5,6 +5,18 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 S2 P3-3a — executor, projector and run bounds built, unwired (2026-11-02, branch `claude/s2-executor`)
+
+- **Built (Core, offline).** `plan-executor.ts`, `structure-projector.ts`, `run-bounds.ts` under `application/agent/`. Bounds as
+  ratified (D7 and the 2026-10-23 interpretation note): 6 steps, 1 re-plan, 10 connector queries, 50 HTTP requests, 5 model calls,
+  3 M2 calls, 45 s, 40k tokens; a breach gives a partial result. Still `off`/`shadow` only: `active` is refused, nothing wired.
+- **Owner decisions (2026-11-02).** Planner study: lowest sonnet effort passing every run within the 6 s p95, else no change;
+  neg-033 exception was merge-only (no D11 carve-out for `active`); separate `agent-redteam.s2-read.v1.json` of at least 300
+  cases; the 7-day shadow clock restarts on the final planner; egress guard `enforce` before `active`. Record: DECISIONS
+  "ADR-0121 S2 implementation note — P3-3a".
+- **Not enforced yet.** The 50-HTTP ceiling is a port contract (reserve before each request); hard enforcement needs the adapter slice's budgeted HTTP client (no raw fetch) and its test.
+- **Next (S2).** Quarantined M2 and reply assembler (P3-3b), read+write path, S2 read red-team, gate campaign, release.
+
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 
 - **Gap closed.** Durable-memory semantic recall used the unfiltered selector (`context-builder-provider.ts`), so a

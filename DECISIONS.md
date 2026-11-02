@@ -31509,3 +31509,59 @@ and D9 still governs every turn that goes to chat.
     fixed in `2e4a37f2` (the help-scope run's canary carries the plan's tier) with a CLI-level test in `c326d117` that
     fails without the wiring. Only the canary changed, not the classifier calls, so the context-eval run built from
     `4878a6f9` still measures the shipped classifier.
+
+### ADR-0121 S2 implementation note — P3-3a: the executor, the structure projector and the run bounds (Core, offline, unwired; 2026-11-02)
+
+- **Status: implemented, not active.** `QUOKY_AGENT_MODE=active` is still refused in `agent-config.ts` and in the `AgentRunService`
+  constructor; nothing builds or dispatches the new classes (no composition-root wiring, `ConversationRuntimeDeps` stays 38).
+  No ADR text changes. Everything below applies ratified text.
+- **`run-bounds.ts` (`AGENT_RUN_BOUNDS`, `AgentRunBudget`).** The values are the ratified ones, pinned by test:
+  6 steps, 1 re-plan, 10 connector calls, 5 model calls, 45 s wall, 40k input tokens (ADR-0121 D7, DECISIONS "7. D7 — Bounds and
+  the kill switch"); at most 3 M2 calls (D3); at most 10 referenced values per run (D2); and the runtime ceiling of **50 HTTP
+  requests per run** (the "ADR-0121 D7 interpretation note — the connector-call unit", owner-ratified 2026-10-23, which left it
+  as a P3 part 3 requirement). A "connector call" is one named port query (that same note). The budget is one sticky,
+  first-breach-wins counter set: a breach yields a deterministic `partial` result and never an error or a retry (D7). The model-call,
+  re-plan, M2 and token counters are built and tested here for the later slices (the planner and the quarantined summariser);
+  the executor itself makes no model call.
+- **`structure-projector.ts` (`projectStructure`).** Keeps only closed-format ids per projected field (`issueKeys` mirrors
+  `CONNECTOR_ITEM_KEY`, pinned equal by test), counts and the source binding. It keeps one slot per listed row: a malformed or
+  duplicate row is an empty (unusable) slot, never repaired, echoed or compacted away, so a position reference (`at`) resolves
+  against the original positions and one that lands on an unusable slot is refused (`ref-unusable`), never shifted (Codex P2). No member other than `id` is read. The label is `STRUCTURE` (the one declassification of D4); egress
+  and scope stay the source's (calendar `LOCAL_MODEL_ONLY`, mail and Drive `REMOTE_ON_SUMMARY_REQUEST`, all `OWNER_DM_ONLY`).
+- **`plan-executor.ts` (`AgentPlanExecutor`).** Runs a validated `run` plan's read steps in order through narrow injected
+  `AgentReadPort`s (one `read` function each, keyed by catalog read entry). Its dependency type is the ports, a logger and test
+  overrides; `agent-boundary.test.ts` pins that type and the import allowlist, so no writer, fetch, MCP tool, repository or runner
+  is nameable. A reference step runs only when, at run time, its source step answered, is the same source and the same
+  destination origin, and the field is that source's own id field (the second check after the validator's `ref-cross-source`);
+  mail, calendar and Drive ids are never offered to another connector; Jira to Jira (also `jira.release` to `jira.issues`) is the
+  allowed case, one bulk `items-by-key` request behind the port. A step takes all of its referenced values or none: the 11th value
+  of a run is refused (`ref-values`). The per-request reservation is the **port contract**, and Core only provides
+  the contract (honest scope, Codex P2 on a870d888): every port request carries a per-run budget handle (`reserveQuery()`,
+  `reserveHttp()`); Core counts only granted reservations, stops granting after the ceiling (the 11th query and the 51st HTTP
+  request are refused) and an `AbortSignal` is aborted on the 45 s wall, on any refused reservation and when the call ends. Any
+  breach or refusal during a call makes the step `not-run` (`bound`) and the run partial, whatever the port returned (including
+  `ok` after a refusal). **Core cannot mediate an adapter's real HTTP**, so the 50-request ceiling is NOT enforced against a
+  misbehaving or non-conforming adapter today. HARD enforcement is a requirement of the adapter slice (below). A clarify plan, a plan statically charged over 10 queries and a step with no port make zero reads.
+  Summaries are `deferred` for the quarantined-summariser slice (P3-3b). A port throw or an unknown error code is the closed
+  code `UNKNOWN`; its message is never read or logged. One content-free `agent_run.exec` line per run.
+- **Tests.** Every bound and its breach (steps, queries, HTTP, model, re-plan, M2, tokens, wall including a hung port, ref values),
+  the cross-source matrix (mail, calendar and Drive sources against every other source), the forged origin, field, forward, failed
+  and position references, and the boundary scan over the three new files.
+
+- **Not built / next slices (requirement carried to the adapter slice).** Every agent read port's adapter must perform each HTTP
+  request through a **budgeted HTTP client** that calls `reserveHttp()` before the request and refuses on `false` (no raw
+  `fetch`, no other client), so a port cannot send the 51st request; a test in that slice pins it (a port cannot issue the 51st
+  request). Also not built: the quarantined summariser and reply assembler (P3-3b), composition-root wiring and active dispatch.
+
+#### Owner decisions of 2026-11-02 (the owner approved the recommendations of the S2-to-active plan)
+
+1. **Planner model study.** haiku high, sonnet low and sonnet medium, 3 runs each, Strict (running). Adopt the **lowest sonnet
+   effort that passes every run within the 6 s p95 bound**, through the existing `intentSelectionTier` (the eval binds the tier;
+   the gate script must not override it). If none passes, change nothing.
+2. **neg-033.** The 2026-11-02 exception covered that merge only. D11 "0 wrong on negatives" has **no carve-out for `active`**.
+3. **Red-team.** A separate `agent-redteam.s2-read.v1.json` of at least 300 KO and EN cases (agent-drafted, owner batch review;
+   an ARTEX-ko batch later if available). A6 cases do not count toward it.
+4. **Shadow clock.** The 7-day shadow window restarts on the final planner.
+5. **Egress guard.** `QUOKY_EGRESS_GUARD` switches `observe` to `enforce` before `active`.
+6. Open (not decided here): chunk M2 calls count toward the 3 M2 / 5 model-call limits unless ADR-0121 is amended; the 62 pending
+   `agent-plan` and 34 read+write golds are reviewed before the gate campaign.

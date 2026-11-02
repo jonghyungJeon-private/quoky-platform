@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 S2 P3-3a: bounded read executor, structure projector and run bounds (Core, offline, unwired)
+
+- **Added (Core).** `agent/run-bounds.ts` (the D7 bounds: 6 steps, 1 re-plan, 10 connector queries, 50 HTTP requests, 5 model
+  calls, 3 M2 calls, 45 s, 40k input tokens, 10 referenced values; a breach is a deterministic partial result),
+  `agent/structure-projector.ts` (closed-format ids and counts only, `STRUCTURE` label) and `agent/plan-executor.ts` (a validated
+  plan's reads through narrow injected read ports; same-source references only, checked again at run time).
+- **Not changed.** `active` is still refused; nothing is wired; `ConversationRuntimeDeps` stays 38. `agent-boundary.test.ts`
+  now also pins the executor's dependency type.
+- **Recorded.** Owner decisions of 2026-11-02 (planner model study rule, no neg-033 carve-out for `active`, a separate S2 read
+  red-team of at least 300 cases, shadow clock restart, egress enforce before `active`): DECISIONS "ADR-0121 S2 implementation
+  note — P3-3a".
+
 ## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
 
 - **Changed (on).** The app composition sets `NlSelectionServiceDeps.helpScopeClassifier: true`; a worded reply to the
