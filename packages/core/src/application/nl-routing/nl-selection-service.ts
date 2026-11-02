@@ -120,6 +120,7 @@ import {
 } from './selection-state';
 import { groundingWordIn, validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
+import { buildHelpScopeClassifierPrompt, parseHelpScopeClassifierOutput } from './help-scope-classifier';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
@@ -1531,7 +1532,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // reply sets, `interpretContinuationConfirmReply`); a number or the option's name still answers it.
       const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
       if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
-      const resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
+      let resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
+      // D4 (owner decisions of 2026-10-22 and 2026-10-27): only a worded reply to the help-scope question, one that neither
+      // a number nor a displayed option text resolved, goes to the dedicated classifier; 1 and 2 then pick like the number.
+      if (resolved.kind === 'none' && appSource !== undefined) {
+        const answer = await this.classifyHelpScopeReply(turn, answerText, renderHelpScopeOptions(appSource, pending.language, more), pending.language);
+        if (answer === 1) resolved = { kind: 'pick', index: 0 };
+        else if (answer === 2) resolved = { kind: 'pick', index: pending.options.length };
+      }
       if (resolved.kind === 'none') return undefined;
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
       if (resolved.kind === 'pick' && appSource !== undefined && resolved.index === pending.options.length) {
@@ -2541,6 +2549,44 @@ export class NlSelectionService implements TurnDeliveryObserver {
       }
     }
     return { kind: 'output', output, latencyMs, cached: false, call, ...(cacheable ? { cacheKey } : {}) };
+  }
+
+  /**
+   * D4: one bounded `INTENT_SELECTION` call that reads a worded reply to the help-scope question as option 1, option 2 or
+   * neither (`help-scope-classifier.ts`). Same egress rule and bound as the selector, no cache. Anything but a clean 1 or 2
+   * (neither, malformed, timeout, provider error, egress refusal) is `undefined`: the turn is routed as usual. Logs the
+   * answer class and the latency only, never the reply.
+   */
+  private async classifyHelpScopeReply(turn: NlSelectionTurn, reply: string, options: readonly [string, string], language: 'ko' | 'en'): Promise<1 | 2 | undefined> {
+    // Nothing credential-shaped leaves the process (the selector's own pre-egress guard, `prepare`, never saw this reply).
+    if (containsCredentialMaterial(reply)) return undefined;
+    const clock = this.deps.elapsed ?? Date.now;
+    const started = clock();
+    const done = (answer: '1' | '2' | 'neither' | 'malformed' | 'timeout' | 'failed' | 'egress-refused'): 1 | 2 | undefined => {
+      this.log('info', 'nl_selection.help_scope_classified', { answer, latencyMs: Math.max(0, clock() - started) });
+      return answer === '1' ? 1 : answer === '2' ? 2 : undefined;
+    };
+    if (turn.chatProviderId === undefined) return done('egress-refused');
+    let provider: AiProvider;
+    try {
+      provider = await this.deps.router.select(Capability.INTENT_SELECTION);
+    } catch {
+      return done('failed');
+    }
+    if (sameEgress(provider, turn.chatProviderId, turn.chatProviderLocality) !== 'same') return done('egress-refused');
+    const prompt = buildHelpScopeClassifierPrompt({ options, reply, language });
+    const timeoutMs = this.selectionBound(clock()).boundMs;
+    let rawText: string;
+    try {
+      rawText = (await withTimeout(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs }), timeoutMs)).text;
+    } catch (error) {
+      const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
+      if (!timedOut) this.lastCompletedAtMs = clock();
+      return done(timedOut ? 'timeout' : 'failed');
+    }
+    this.lastCompletedAtMs = clock();
+    const answer = parseHelpScopeClassifierOutput(rawText);
+    return done(answer === 1 ? '1' : answer === 2 ? '2' : answer === 'neither' ? 'neither' : 'malformed');
   }
 
   /**

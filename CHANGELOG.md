@@ -11,6 +11,26 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   abstract layer classes, types, word lists and helpers under `application/conversation-runtime/`. Method bodies moved
   unchanged; `ConversationRuntime` keeps its constructor, its public statics (as one-line delegators), `handle` and the
   same 19 exports. No behaviour, API or test change.
+## Unreleased — D4: the help-scope classifier (owner decisions of 2026-10-27 and 2026-11-02)
+
+- **Added.** A worded reply to the help-scope question ("퀴키한테 물어보는 방법 말이야", "the app's own settings") is read by
+  one dedicated, bounded call that answers 1 / 2 / neither (`help-scope-classifier.ts`, prompt `help-scope.v1`). It runs
+  only for that question, only when a number or a displayed option text did not already answer it, on the same
+  `INTENT_SELECTION` provider and bound as the selector, and only where this turn's chat would have gone (same-egress
+  check). 1 picks option 1, 2 gives the fixed app-itself reply; neither, a malformed answer, a timeout, a provider error
+  or an egress refusal leave the turn routed as usual, as today. A credential-shaped reply is never sent. The router and
+  selector prompts are untouched (no `nl-select` bump). One content-free log line, `nl_selection.help_scope_classified`.
+- **Added (eval).** `pnpm eval:nl -- --mode help-scope` (plan, digest, `--approved-plan-digest`, `--runs`, `--model`,
+  `--effort`, same as the other modes; `run-gates.sh` mode `help-scope`, not in the default set). It scores the 34
+  owner-approved cases (26 answers, 8 non-answers). Gate per run, set before any run: 0 wrong captures on the
+  non-answers, answer accuracy at least 95% (one miss in 26 passes, two fail) and 0 harness errors; the multi-run gate
+  needs every run. No model call has been made yet.
+- **Changed.** The 34 golds moved to `golden/nl-help-scope.v1.json` (from `nl-intent.context-d4-pending.v1.json`,
+  verbatim). The `hs-calendar-words` turn-2 known-gap marks are removed and the turn is scored again against its
+  unchanged expectation; the context eval's dry oracle answers the classifier call (`oracle.helpScopeAnswer`). Dry:
+  deployed 38/38, actions-local 55/55, all hard checks 0.
+- **Pending the owner.** `golden/nl-help-scope.pending-nonanswers.v1.json`: 22 agent-drafted new non-answer golds, not
+  scored until approved.
 
 ## Unreleased — Security: Node 22.23.4 (repository Node; the service switch waits for the owner)
 

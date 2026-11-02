@@ -110,6 +110,11 @@ export interface ContextEvalTurn {
     readonly args?: Readonly<Record<string, unknown>>;
     readonly ambiguity?: 'CLEAR' | 'NEEDS_CLARIFICATION';
     readonly alternatives?: ReadonlyArray<{ readonly entryId: string; readonly args?: Readonly<Record<string, unknown>> }>;
+    /**
+     * D4: what an ideal help-scope classifier answers when this turn is a worded reply to the help-scope question (1 or 2;
+     * absent: neither). Never shown to a model.
+     */
+    readonly helpScopeAnswer?: 1 | 2;
   };
   readonly expect: TurnExpectation;
   /**

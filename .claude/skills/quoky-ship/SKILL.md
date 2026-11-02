@@ -76,7 +76,7 @@ git log origin/main..HEAD --format=%B | grep -ci co-authored   # 0 이어야 함
 
 ## 2.5 판단 모델 평가 게이트 (`run-gates.sh`)
 
-D12 / S2 게이트(eval:nl `intent`·`action`·`read-regression`·`r2`, `agent-plan`, `r2-redteam`)는 손으로 띄우지 않고 이 스크립트로 돌린다. tmux 세션에서 분리 실행되므로 Claude 세션이 재시작돼도 계속 돈다.
+D12 / S2 게이트(eval:nl `intent`·`action`·`read-regression`·`r2`·`help-scope`, `agent-plan`, `r2-redteam`)는 손으로 띄우지 않고 이 스크립트로 돌린다. tmux 세션에서 분리 실행되므로 Claude 세션이 재시작돼도 계속 돈다.
 
 ```bash
 S=.claude/skills/quoky-ship/scripts/run-gates.sh

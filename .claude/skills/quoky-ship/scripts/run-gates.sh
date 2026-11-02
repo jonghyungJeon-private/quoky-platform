@@ -5,8 +5,8 @@
 #   run-gates.sh run    <worktree> <name> [modes...]   the same in the foreground (what the tmux session executes)
 #   run-gates.sh status [<name>]                       summary of an archive (no name: the 10 most recent archives)
 #
-# Modes: intent action read-regression r2 (eval:nl), agent-plan (eval:agent-plan), r2-redteam (eval:r2-redteam).
-# Default modes: action read-regression r2.
+# Modes: intent action read-regression r2 help-scope (eval:nl), agent-plan (eval:agent-plan), r2-redteam (eval:r2-redteam).
+# Default modes: action read-regression r2 (help-scope, the D4 classifier gate, is run on request).
 #
 # Archive: ~/Library/Application Support/Quoky/eval-archive/<name>/ holds head.txt, build.log, usage.log, run.log,
 # digests.txt, <mode>.plan.log, <mode>.log, <mode>.report.json (copied from the worktree's data/eval), RUNNING while it
@@ -47,7 +47,7 @@ RETRY_WAIT_SEC="${GATES_RETRY_WAIT_SEC:-900}"
 MARGIN="${GATES_RESET_MARGIN_SEC:-60}"
 DEFAULT_MODES="action read-regression r2"
 EXIT_INVALID=5
-ALL_MODES="intent action read-regression r2 agent-plan r2-redteam"
+ALL_MODES="intent action read-regression r2 help-scope agent-plan r2-redteam"
 
 usage() {
   sed -n '2,8p' "$SELF" | sed 's/^# \{0,1\}//'
@@ -135,7 +135,7 @@ wait_block_reset() {
 
 cli_of() {
   case "$1" in
-    intent|action|read-regression|r2) echo eval:nl ;;
+    intent|action|read-regression|r2|help-scope) echo eval:nl ;;
     agent-plan) echo eval:agent-plan ;;
     r2-redteam) echo eval:r2-redteam ;;
     *) return 1 ;;
@@ -344,7 +344,7 @@ for line in read("digests.txt").splitlines():
     if parts and parts[0] not in order:
         order.append(parts[0])
 for name in sorted(os.listdir(A)):
-    m = re.match(r"^(intent|action|read-regression|r2|agent-plan|r2-redteam)\.log$", name)
+    m = re.match(r"^(intent|action|read-regression|r2|help-scope|agent-plan|r2-redteam)\.log$", name)
     if m and m.group(1) not in order:
         order.append(m.group(1))
 
@@ -398,6 +398,8 @@ for mode in order:
             line = "run %d: multi-step %s, one-step %s, wrong on negatives %s" % (index, pct(g["multiStep"]["rate"]), pct(g["oneStep"]["rate"]), s.get("wrongOnNegatives", 0))
         elif "perFamily" in s and "total" in s:
             line = "run %d: successful attacks %s, errored cases %s" % (index, s["total"], s.get("errors", 0))
+        elif "answers" in s and "nonAnswers" in s:
+            line = "run %d: answers %d/%d (%s), non-answers %d/%d, wrong captures %s, errors %s" % (index, s["answers"]["hits"], s["answers"]["total"], pct(s["answers"]["rate"]), s["nonAnswers"]["hits"], s["nonAnswers"]["total"], s.get("wrongCaptures", 0), s.get("errors", 0))
         elif "overall" in s:
             extra = ["%s %s" % (k, s[k]) for k in ("wrongCaptures", "wrongTargets", "negativeCaptures", "actionCaptures") if k in s]
             if "helpCaptures" in s:

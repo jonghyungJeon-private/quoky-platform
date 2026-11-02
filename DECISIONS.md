@@ -31341,3 +31341,58 @@ and D9 still governs every turn that goes to chat.
   value, an entry the owner's words do not name, a refused weekday, the help-scope question, and no option at all.
 - **Tests.** `nl-selection-service.test.ts`: the DM4 shape runs `drive.files {}`; the same output with no Drive word asks;
   a dropped keyword with Jira named still asks. The test fails without the change. The red-team test files (12) pass.
+
+### D4 help-scope classifier — implementation note (owner decisions 2026-10-27 and 2026-11-02; branch `claude/v5-d4-classifier`)
+
+- **What was built.**
+  - `nl-routing/help-scope-classifier.ts`: `NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION = 'help-scope.v1'`,
+    `buildHelpScopeClassifierPrompt` and the strict `parseHelpScopeClassifierOutput`. The prompt is a generic instruction:
+    the two displayed option texts (`renderHelpScopeOptions`, in the question's language) and the owner's reply as DATA
+    between `<reply>` tags (a delimiter inside the reply is removed; the reply is bounded to 600 characters). It asks
+    "option 1, option 2 or neither", names thanks, small talk, a new or unrelated request, unsure, both and refusal as
+    neither, and says "when unsure, neither". It carries no example phrase and no phrase list (a test checks that no gold
+    text appears outside the reply). The output is exactly one `{"answer":1}`, `{"answer":2}` or `{"answer":null}`; the
+    parser accepts one object, with whitespace or one ```json fence around it, with exactly the key `answer`, else
+    `undefined` (malformed).
+  - `NlSelectionService.answerPending`: for the help-scope question only (`appSource` / `appSources`), and only when
+    `resolveChoice` returned `none` (a number or displayed option text, a cancel and an unclear number are unchanged and
+    make no call), `classifyHelpScopeReply` makes one `INTENT_SELECTION` call: the same router lookup, the `sameEgress ===
+    'same'` requirement against the turn's chat provider id and locality, the selector's bound (`selectionBound`) and
+    `withTimeout`, no cache. 1 behaves as a pick of option 1; 2 as a pick of option 2 (the fixed app-itself reply). The
+    question's own stored language renders the options; the app reply keeps the reply's language, as for a number.
+  - **Fail-safe.** Neither, a malformed answer, a timeout, a provider error, a missing chat provider id and an egress
+    refusal all return no answer, so the turn is routed as usual (today's behaviour). A credential-shaped reply is never
+    sent (`containsCredentialMaterial`, the selector's own pre-egress guard, which the answer path did not pass before).
+    One content-free log line: `nl_selection.help_scope_classified` with `answer` (`1`, `2`, `neither`, `malformed`,
+    `timeout`, `failed`, `egress-refused`) and `latencyMs`; the reply is never logged.
+  - The abort signal is not wired: `NlSelectionTurn` carries none for an owner turn (only the background shadow job has
+    one), so the call ends at the bound.
+  - The router and selector prompts are untouched: no `nl-select` bump (read v72, A6 v70, R2 v71), the prompt-pin hashes
+    are unchanged, and the classifier is a separate call. ADR-0110 D4: the call carries the two option texts (source
+    names the owner wrote) and the owner's reply, never calendar, mail or Drive content.
+- **Eval.** `pnpm eval:nl -- --mode help-scope` (`nl-help-scope-eval.ts`; plan, digest, `--approved-plan-digest`, `--runs`,
+  `--model`, `--effort`, `--concurrency`, `--timeout-ms`; the digest binds the prompt version and the sha256 of the prompt
+  bytes, the corpus sha256, model, effort, runs, the call count and the gate). Each case builds the real prompt from
+  `renderHelpScopeOptions(openQuestion.sources, language)` and the case text, makes one call and parses it. An answer is a
+  hit when the classifier returns its number; a non-answer is a hit on neither and a **wrong capture** on 1 or 2;
+  malformed and timeout are misses, never wrong captures; a provider failure that is not a timeout is a harness error. The
+  report is content-free (ids, outcomes, answer classes; a malformed answer keeps up to 200 characters of the model's JSON
+  text). `run-gates.sh` knows the mode (`ALL_MODES`, `status` summary), not in `DEFAULT_MODES`.
+- **Gate bar (owner decision of 2026-11-02, set before any run).** Per run: 0 wrong captures on the non-answers AND answer
+  accuracy of at least 95% AND 0 harness errors. Accuracy is over the 26 answers, so one miss passes (25/26 = 96.2%) and two
+  fail (24/26 = 92.3%). The multi-run gate passes only when every run passes. The golds and thresholds are unchanged.
+- **Corpus.** The 34 owner-approved cases (26 answers, 13 for each option, and 8 non-answers) moved verbatim, notes
+  included, from `nl-intent.context-d4-pending.v1.json` to `golden/nl-help-scope.v1.json`. The router evals still score none
+  of them.
+- **Known gap removed.** The `knownGap` marks of `hs-calendar-words` (scenario and turn 2, "Quoky로 하는 거") are removed;
+  the turn is scored again and its expectation (`help.topic`, nothing pending) is unchanged. The context eval's harness
+  now tells the classifier prompt apart from the router prompt (`isHelpScopeClassifierPrompt`): the dry oracle answers it
+  from the turn's `oracle.helpScopeAnswer` (1 for this turn), the `none` selector answers neither, and a Strict run sends
+  it to the real selection provider like the router prompt. Dry: deployed 38/38, actions-local 55/55, all hard checks 0
+  (it was 37/38 and 54/55). The known-gap machinery itself stays in the scorer (no scenario uses it now).
+- **Pending for the owner.** `golden/nl-help-scope.pending-nonanswers.v1.json`: 22 agent-drafted non-answer golds (thanks and
+  acknowledgements, small talk, new unrelated read requests, both / neither / do not know, a question about something else,
+  an off-topic reply that names the app, and injection-like replies), mixed Korean and English and mixed source sets, each
+  noted "agent-drafted 2026-11-02 ... pending owner approval". They are not scored and not in the plan digest until the
+  owner approves them (or edits them) and they are merged into `nl-help-scope.v1.json`; the next plan digest then changes.
+- **Not run.** No model call and no eval run were made. The Strict `help-scope` run needs the owner's plan-digest approval.

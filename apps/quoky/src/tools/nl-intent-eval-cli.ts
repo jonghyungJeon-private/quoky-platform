@@ -23,6 +23,13 @@
  * digest rule: `action` scores `golden/nl-action.v1.json` (+ the R0 seed) through Core's own decision path (exact
  * `{entry, args, target}`, spans, wrong targets, negatives, questions); `read-regression` re-runs `nl-intent.v1.json` with
  * the A6 entries offered and fails on any read case captured by an action or ITEM_READ entry.
+ *
+ * D4 (owner decisions of 2026-10-27 and 2026-11-02):
+ *
+ *   pnpm eval:nl -- --mode help-scope [--model M] [--effort E] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
+ *
+ * The dedicated help-scope classifier over `golden/nl-help-scope.v1.json` (`nl-help-scope-eval.ts`); the same offline /
+ * Strict digest rule as the A6 modes.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -45,6 +52,15 @@ import {
   type HardFailureCounts,
 } from './eval-provider-guard';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
+import {
+  NL_HELP_SCOPE_EVAL_GATE,
+  buildHelpScopePlan,
+  computeHelpScopePlanDigest,
+  loadHelpScopeCorpus,
+  runHelpScopeEvaluation,
+  summarizeHelpScope,
+  validateHelpScopeCorpus,
+} from './nl-help-scope-eval';
 import {
   NL_ACTION_EVAL_GATE,
   NL_ACTION_R2_EVAL_GATE,
@@ -143,6 +159,12 @@ Without --approved-plan-digest it is offline (schema check, plan, digest, call c
 R2 gate: >= ${NL_ACTION_R2_EVAL_GATE.overall * 100}% exact {entry, args, target} overall and >= ${NL_ACTION_R2_EVAL_GATE.perSource * 100}% for each of the jira and slack slices, ${NL_ACTION_R2_EVAL_GATE.wrongTarget} wrong targets,
          ${NL_ACTION_R2_EVAL_GATE.negativeCaptures} negative captures, questions on positive references <= ${NL_ACTION_R2_EVAL_GATE.questionRateOnReferences * 100}%, calls over the bound <= ${NL_ACTION_R2_EVAL_GATE.overBoundRate * 100}%.
 
+D4 help-scope classifier (owner decisions of 2026-10-27 and 2026-11-02; the dedicated 1 / 2 / neither call, not the router prompt):
+          pnpm eval:nl -- --mode help-scope [--model M] [--effort E] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
+Without --approved-plan-digest it is offline (schema check, plan, digest, call count). With it, a Strict run.
+Help-scope gate per run: ${NL_HELP_SCOPE_EVAL_GATE.wrongCaptures} wrong captures on the non-answers, answer accuracy >= ${NL_HELP_SCOPE_EVAL_GATE.answerAccuracy * 100}%, ${NL_HELP_SCOPE_EVAL_GATE.harnessErrors} harness errors;
+         the multi-run gate passes only when every run passes.
+
 ADR-0121 S2 plan exactness (the agent planner prompt over agent-plan.v1.json plus every case above as one-step gold) has
 its own CLI: pnpm eval:agent-plan -- --mode plan|run [...] (see agent-plan-eval-cli.ts).
 `;
@@ -162,7 +184,7 @@ const OPTIONS = new Set([
 
 export class UsageError extends Error {}
 
-export type NlEvalMode = 'plan' | 'run' | 'action' | 'read-regression' | 'r2' | 'help';
+export type NlEvalMode = 'plan' | 'run' | 'action' | 'read-regression' | 'r2' | 'help-scope' | 'help';
 
 export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; options: Record<string, string> } {
   const tokens = argv[0] === '--' ? argv.slice(1) : [...argv];
@@ -177,11 +199,11 @@ export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; opt
     options[name] = value;
   }
   const mode = options['--mode'];
-  if (mode === 'action' || mode === 'read-regression' || mode === 'r2') {
+  if (mode === 'action' || mode === 'read-regression' || mode === 'r2' || mode === 'help-scope') {
     for (const name of ['--entries', '--negatives', '--per-entry']) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
     return { mode, options };
   }
-  if (mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be plan, run, action, read-regression or r2');
+  if (mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be plan, run, action, read-regression, r2 or help-scope');
   if (mode === 'run' && options['--approved-plan-digest'] === undefined) throw new UsageError('run requires --approved-plan-digest');
   if (mode === 'plan' && options['--approved-plan-digest'] !== undefined) throw new UsageError('--approved-plan-digest is only for run');
   return { mode, options };
@@ -319,7 +341,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       deps.stdout(HELP);
       return EXIT_OK;
     }
-    if (parsed.mode === 'action' || parsed.mode === 'read-regression' || parsed.mode === 'r2') return await runActionCli(parsed.mode, parsed.options, deps);
+    if (parsed.mode === 'action' || parsed.mode === 'read-regression' || parsed.mode === 'r2' || parsed.mode === 'help-scope') return await runActionCli(parsed.mode, parsed.options, deps);
     options = planOptions(parsed.options);
   } catch (error) {
     deps.stderr(error instanceof UsageError ? error.message : 'invalid arguments');
@@ -402,10 +424,11 @@ export interface ActionCliDeps {
   readonly loadActionCorpus?: typeof loadActionCorpus;
   readonly loadR2ActionCorpus?: typeof loadR2ActionCorpus;
   readonly loadReadRegressionCorpus?: typeof loadReadRegressionCorpus;
+  readonly loadHelpScopeCorpus?: typeof loadHelpScopeCorpus;
 }
 
 /** `--mode action` / `--mode read-regression` (ADR-0120 amendment A6-D7). */
-export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', options: Readonly<Record<string, string>>, deps: CliDeps & ActionCliDeps): Promise<number> {
+export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | 'help-scope', options: Readonly<Record<string, string>>, deps: CliDeps & ActionCliDeps): Promise<number> {
   const flag = options['--timeout-ms'];
   const timeoutMs = flag === undefined ? undefined : parseNlIntentTimeoutMs(flag);
   if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
@@ -418,6 +441,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2', op
   };
   const approved = options['--approved-plan-digest'];
   if (mode === 'r2') return await runR2Cli(settings, approved, deps);
+  if (mode === 'help-scope') return await runHelpScopeCli(settings, approved, deps);
   if (mode === 'action') {
     const { corpus, sha256, files } = (deps.loadActionCorpus ?? loadActionCorpus)();
     const problems = validateActionCorpus(corpus);
@@ -583,6 +607,57 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
   deps.stdout(formatProviderOutcomes(outage));
   deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
   // Content-free: ids, outcomes, entries and reasons only (never an owner text or a raw model answer).
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
+  deps.stdout(`results written to ${path}`);
+  return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
+}
+
+/** `--mode help-scope` (D4): the dedicated help-scope classifier over the owner-approved 34-case corpus. */
+async function runHelpScopeCli(settings: { model: string; effort?: string; runs: number; concurrency: number; timeoutMs?: number }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
+  const { corpus, sha256 } = (deps.loadHelpScopeCorpus ?? loadHelpScopeCorpus)();
+  const problems = validateHelpScopeCorpus(corpus);
+  const answers = corpus.cases.filter((golden) => golden.expectAnswer !== undefined).length;
+  deps.stdout(`help-scope corpus: ${corpus.cases.length} cases (${answers} answers, ${corpus.cases.length - answers} non-answers); schema problems: ${problems.length}`);
+  for (const problem of problems.slice(0, 50)) deps.stdout(`  ${problem}`);
+  if (problems.length > 0 || corpus.cases.length === 0) return EXIT_GATE_FAILED;
+  let plan: ReturnType<typeof buildHelpScopePlan>;
+  try {
+    plan = buildHelpScopePlan(corpus.cases.map((golden) => golden.id), sha256, settings);
+  } catch (error) {
+    deps.stderr(`invalid plan: ${error instanceof Error ? error.message : 'unknown'}`);
+    return EXIT_USAGE;
+  }
+  const digest = computeHelpScopePlanDigest(plan);
+  if (approved === undefined) {
+    deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
+    deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
+    deps.stdout(`model calls this plan authorises: at most ${plan.calls} (${plan.caseIds.length} cases x ${plan.runs} run(s), one classifier call each)`);
+    deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
+    return EXIT_OK;
+  }
+  if (approved !== digest) {
+    deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
+    return EXIT_BLOCKED;
+  }
+  const provider = deps.createProvider(plan.model, plan.effort);
+  if (!(await provider.isAvailable().catch(() => false))) {
+    deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
+    return EXIT_BLOCKED;
+  }
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+  const startedAt = deps.now();
+  const records = await runHelpScopeEvaluation({ cases: corpus.cases, plan, provider: guard.provider });
+  await guard.settle();
+  const outage = guard.report();
+  const reportName = `nl-help-scope-${startedAt.replace(/[:.]/g, '-')}.json`;
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeHelpScope(records.filter((record) => record.run === index + 1)));
+  const hard = sumHardFailures(summaries, ['wrongCaptures']);
+  if (outage.invalidReason !== undefined && hardFailureTotal(hard) === 0) return finishInvalid(deps, `help-scope gate (${plan.promptVersion})`, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
+  for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
+  deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(formatGateRuns(`help-scope gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
+  // Content-free: ids, outcomes and answer classes only (never an owner text).
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
