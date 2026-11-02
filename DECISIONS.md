@@ -31498,7 +31498,7 @@ and D9 still governs every turn that goes to chat.
   - Full suite at `4878a6f9`: 553 files, 17,846 tests passed.
   - Context eval Strict (`--profile deployed --chat real --model haiku`, 3 runs, built from `4878a6f9`): PASSED every run,
     hard 0; `hs-calendar-words` scored (not a known gap) and passed in all 3 runs.
-  - The first help-scope gate (archive `d4on-4878a6f9`) FAILED 0 of 3, but it measured **haiku / low**, not the
+  - The first help-scope gate (archive `d4on-4878a6f9`) FAILED, passed 0 of 3, but it measured **haiku / low**, not the
     production tier: `run-gates.sh` passed the selector's `GATES_MODEL` (`--model haiku`) to every eval:nl mode, and in
     help-scope mode `--model` overrides the stronger tier. Its numbers (answers 36/38 each run, 1 wrong option, non-answers
     29/29, 0 wrong captures) match the earlier haiku study. Fixed in `0b0f3b36`: the help-scope gate passes no `--model`
