@@ -31524,8 +31524,9 @@ and D9 still governs every turn that goes to chat.
   re-plan, M2 and token counters are built and tested here for the later slices (the planner and the quarantined summariser);
   the executor itself makes no model call.
 - **`structure-projector.ts` (`projectStructure`).** Keeps only closed-format ids per projected field (`issueKeys` mirrors
-  `CONNECTOR_ITEM_KEY`, pinned equal by test), counts and the source binding; a malformed or duplicate id is dropped and counted,
-  never repaired or echoed. No member other than `id` is read. The label is `STRUCTURE` (the one declassification of D4); egress
+  `CONNECTOR_ITEM_KEY`, pinned equal by test), counts and the source binding. It keeps one slot per listed row: a malformed or
+  duplicate row is an empty (unusable) slot, never repaired, echoed or compacted away, so a position reference (`at`) resolves
+  against the original positions and one that lands on an unusable slot is refused (`ref-unusable`), never shifted (Codex P2). No member other than `id` is read. The label is `STRUCTURE` (the one declassification of D4); egress
   and scope stay the source's (calendar `LOCAL_MODEL_ONLY`, mail and Drive `REMOTE_ON_SUMMARY_REQUEST`, all `OWNER_DM_ONLY`).
 - **`plan-executor.ts` (`AgentPlanExecutor`).** Runs a validated `run` plan's read steps in order through narrow injected
   `AgentReadPort`s (one `read` function each, keyed by catalog read entry). Its dependency type is the ports, a logger and test
@@ -31534,8 +31535,11 @@ and D9 still governs every turn that goes to chat.
   destination origin, and the field is that source's own id field (the second check after the validator's `ref-cross-source`);
   mail, calendar and Drive ids are never offered to another connector; Jira to Jira (also `jira.release` to `jira.issues`) is the
   allowed case, one bulk `items-by-key` request behind the port. A step takes all of its referenced values or none: the 11th value
-  of a run is refused (`ref-values`). Counts are real (what the port reports), so a lookup that used more queries than its static
-  charge ends the run partial. A clarify plan, a plan statically charged over 10 queries and a step with no port make zero reads.
+  of a run is refused (`ref-values`). Bounds are enforced BEFORE each egress request (Codex P2): every port request carries a
+  per-run budget handle (`reserveQuery()`, `reserveHttp()`); only granted reservations are counted, the 11th query and the 51st
+  HTTP request are refused and never made, and a refusal ends the step `not-run` (`bound`) and the run partial. Every port
+  request also carries an `AbortSignal`, aborted on the 45 s wall, on any refused reservation and when the call ends, so no read
+  keeps paginating after a breach (Codex P2). A clarify plan, a plan statically charged over 10 queries and a step with no port make zero reads.
   Summaries are `deferred` for the quarantined-summariser slice (P3-3b). A port throw or an unknown error code is the closed
   code `UNKNOWN`; its message is never read or logged. One content-free `agent_run.exec` line per run.
 - **Tests.** Every bound and its breach (steps, queries, HTTP, model, re-plan, M2, tokens, wall including a hung port, ref values),
