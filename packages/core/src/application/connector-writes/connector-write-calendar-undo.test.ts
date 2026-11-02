@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalStatus, SessionStatus } from '../../domain';
 import type { Actor, ApprovalRequest, Session, Task } from '../../domain';
 import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
@@ -18,6 +18,7 @@ import type {
 import { LAST_ACTION_METADATA_KEY, externalUndoFamilyOf, withLastAction, type LastActionRecord } from '../nl-routing/last-action';
 import { plainTextOf } from '../message-rendering';
 import { CONNECTOR_UNDO_RECEIPT_BANNER, renderConnectorWriteStep } from './connector-write-copy';
+import { setExternalUndoCapabilitiesForTest } from '../nl-routing/last-action';
 import { StatelessConnectorWriteFlow, type ConnectorWriteStep } from './connector-write-flow';
 
 // ADR-0112 amendment 1 S9 / amendment 3, slice 3: the undo of an NL-created calendar event through the real flow. Storage,
@@ -77,6 +78,8 @@ interface HarnessOptions {
   deleteOutcome?: ConnectorWriteOutcome;
   /** The version the writer reports for the create (absent = the writer reports none). */
   createVersion?: string | undefined;
+  /** `getEvent` throws this instead of answering (a read failure is never "gone"). */
+  getError?: Error;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -85,6 +88,7 @@ function harness(options: HarnessOptions = {}) {
   const tasks = new Map<string, Task>();
   const approvals = new Map<string, ApprovalRequest>();
   const writes = { delete: [] as CalendarEventDeleteRequest[], create: 0 };
+  const reads = { list: 0, get: [] as Array<{ calendarId: string; eventId: string }> };
   const receipts = new MemoryReceipts();
   const context = { platform: 'test', channelId: 'chan-1', userId: 'owner-user' };
   for (const id of ['sess-1', 'sess-2']) {
@@ -112,9 +116,17 @@ function harness(options: HarnessOptions = {}) {
     source: 'calendar',
     readOnly: true,
     async listEvents(query) {
+      reads.list += 1;
       const from = Date.parse(query.from);
       const to = Date.parse(query.to);
       return live.events.filter((event) => Date.parse(event.end) > from && Date.parse(event.start) < to);
+    },
+    async getEvent(calendarId, eventId) {
+      reads.get.push({ calendarId, eventId });
+      if (options.getError) throw options.getError;
+      const found = live.events.find((event) => event.id === eventId);
+      // The reader normalises titles like the real adapter (whitespace collapsed).
+      return found === undefined ? undefined : { ...found, title: found.title.replace(/\s+/g, ' ').trim() };
     },
   };
   const writer: CalendarEventWriter = {
@@ -170,12 +182,12 @@ function harness(options: HarnessOptions = {}) {
   }
 
   /** The owner's "내일 오후 5시에 QA 일정 잡아줘" approved and executed, and the runtime's lastAction record for it. */
-  async function createEvent(): Promise<{ receiptId: string; anchorTaskId: string; step: ConnectorWriteStep }> {
+  async function createEvent(title = 'QA 세션'): Promise<{ receiptId: string; anchorTaskId: string; step: ConnectorWriteStep }> {
     const preview = await flow.prepare({
       session: session(),
       actor: OWNER,
       now: at(0),
-      draft: { kind: 'calendar-create', event: { title: 'QA 세션', time: { allDay: false, start: '2026-11-03T17:00:00+09:00', end: '2026-11-03T18:00:00+09:00', timeZone: SEOUL } } },
+      draft: { kind: 'calendar-create', event: { title, time: { allDay: false, start: '2026-11-03T17:00:00+09:00', end: '2026-11-03T18:00:00+09:00', timeZone: SEOUL } } },
     });
     expect(preview.kind).toBe('preview');
     const view = await flow.find(session());
@@ -187,7 +199,7 @@ function harness(options: HarnessOptions = {}) {
   }
 
   /** What the runtime's recordExternalWrite stores (the capability is open for calendar.create). */
-  function recordLastAction(input: { receiptId: string; anchorTaskId?: string; sessionId?: string; actorId?: string; at?: string; entryId?: LastActionRecord['entryId']; outcome?: LastActionRecord['outcome'] }): void {
+  function recordLastAction(input: { receiptId: string; anchorTaskId?: string; sessionId?: string; actorId?: string; at?: string; entryId?: LastActionRecord['entryId']; outcome?: LastActionRecord['outcome']; echoReplyIds?: string[] }): void {
     const sessionId = input.sessionId ?? 'sess-1';
     const entryId = input.entryId ?? 'calendar.create';
     const record: LastActionRecord = {
@@ -199,21 +211,24 @@ function harness(options: HarnessOptions = {}) {
       undone: false,
       outcome: input.outcome ?? 'SENT',
       ...(input.anchorTaskId !== undefined ? { anchorTaskId: input.anchorTaskId } : {}),
-      echoReplyIds: [],
+      echoReplyIds: input.echoReplyIds ?? [],
     };
     const current = session(sessionId);
     sessions.set(sessionId, { ...current, metadata: { ...current.metadata, [LAST_ACTION_METADATA_KEY]: withLastAction(current.metadata?.[LAST_ACTION_METADATA_KEY], input.actorId ?? OWNER.id, record, record.at) } });
   }
 
-  const undo = (receiptId: string, now: string, actor: Actor = OWNER, sessionId = 'sess-1') =>
-    flow.prepare({ session: session(sessionId), actor, now, draft: { kind: 'calendar-create-undo', receiptId } });
+  const undo = (receiptId: string, now: string, actor: Actor = OWNER, sessionId = 'sess-1', extra: { replyToMessageId?: string; ownerText?: string } = {}) =>
+    flow.prepare({ session: session(sessionId), actor, now, draft: { kind: 'calendar-create-undo', receiptId }, ...extra });
 
-  return { flow, session, writes, live, receipts, approveAndExecute, createEvent, recordLastAction, undo };
+  return { flow, session, writes, reads, live, receipts, tasks, approveAndExecute, createEvent, recordLastAction, undo };
 }
 
 const reason = (step: ConnectorWriteStep): string | undefined => (step.kind === 'refused' ? step.reason : undefined);
 
 describe('undo of an NL-created calendar event (amendment 1 S9, slice 3)', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
   it('stores the post-create version on the receipt', async () => {
     const h = harness();
     const { receiptId } = await h.createEvent();
@@ -316,7 +331,91 @@ describe('undo of an NL-created calendar event (amendment 1 S9, slice 3)', () =>
     const unversioned = harness({ createVersion: undefined });
     const third = await unversioned.createEvent();
     expect(unversioned.receipts.rows.get(third.receiptId)?.data.version).toBeUndefined();
-    expect(reason(await unversioned.undo(third.receiptId, at(3)))).toBe('undo-nothing');
+    expect(reason(await unversioned.undo(third.receiptId, at(3)))).toBe('undo-unavailable');
+  });
+
+  it('P2-1: an echo reply keeps the undo reachable for 30 minutes; a reply that is not the echo is refused', async () => {
+    const h = harness();
+    const { receiptId, anchorTaskId } = await h.createEvent();
+    h.recordLastAction({ receiptId, anchorTaskId, echoReplyIds: ['echo-1'] });
+    // 15 minutes after the create: the plain window (10 min) is over, the echo window (30 min) is not.
+    expect(reason(await h.undo(receiptId, at(16)))).toBe('undo-nothing');
+    expect((await h.undo(receiptId, at(16), OWNER, 'sess-1', { replyToMessageId: 'echo-1' })).kind).toBe('preview');
+    expect(reason(await h.undo(receiptId, at(16), OWNER, 'sess-1', { replyToMessageId: 'echo-other' }))).toBe('undo-nothing');
+    expect(reason(await h.undo(receiptId, at(40), OWNER, 'sess-1', { replyToMessageId: 'echo-1' }))).toBe('undo-nothing');
+  });
+
+  it('P2-3: the target is ONE authoritative read by id on the receipt\'s calendar; no listing is ever read', async () => {
+    const h = harness();
+    const { receiptId } = await h.createEvent();
+    h.live.events.push({ id: 'zzzzz99999', title: '다른 일정', start: '2026-11-03T08:00:00.000Z', end: '2026-11-03T09:00:00.000Z', allDay: false, status: 'confirmed', calendarName: 'primary' });
+    const readsBefore = h.reads.list;
+    const step = await h.undo(receiptId, at(3));
+    expect(step.kind).toBe('preview');
+    expect(h.reads.get).toEqual([{ calendarId: 'primary', eventId: EVENT_ID }]);
+    expect(h.reads.list).toBe(readsBefore);
+    expect(JSON.stringify(step)).not.toContain('다른 일정');
+  });
+
+  it('P2-3: a read failure is calendar-read-failed, never "gone"; only a not-found answer is gone', async () => {
+    const failing = harness({ getError: new Error('503') });
+    const created = await failing.createEvent();
+    expect(reason(await failing.undo(created.receiptId, at(3)))).toBe('calendar-read-failed');
+    expect(failing.reads.list).toBe(0);
+    const gone = harness();
+    const second = await gone.createEvent();
+    gone.live.events = [];
+    expect(reason(await gone.undo(second.receiptId, at(3)))).toBe('undo-event-gone');
+  });
+
+  it('P3-3: the delete target is the receipt event id; a read answering another id is never deleted', async () => {
+    const h = harness();
+    const { receiptId } = await h.createEvent();
+    h.live.events = h.live.events.map((event) => ({ ...event, id: 'other00001' }));
+    expect(reason(await h.undo(receiptId, at(3)))).toBe('undo-event-gone');
+    expect(h.writes.delete).toHaveLength(0);
+  });
+
+  it('P3-5: a draft title with a double space still matches the reader\'s collapsed title', async () => {
+    const h = harness();
+    const { receiptId } = await h.createEvent('QA  세션');
+    expect((await h.undo(receiptId, at(3))).kind).toBe('preview');
+  });
+
+  it('P3-7: no version on the receipt, or an anchor that could not be saved, is "cannot be undone automatically"', async () => {
+    const noAnchor = harness();
+    const created = await noAnchor.createEvent();
+    noAnchor.recordLastAction({ receiptId: created.receiptId });
+    const step = await noAnchor.undo(created.receiptId, at(3));
+    expect(reason(step)).toBe('undo-unavailable');
+    expect(plainTextOf(renderConnectorWriteStep(step))).toContain('이 일정은 자동으로 되돌릴 수 없어요. 캘린더에서 직접 지워 주세요');
+  });
+
+  it('R-b (S4): the card quotes the owner\'s own undo sentence, bounded, as untrusted text', async () => {
+    const h = harness();
+    const { receiptId } = await h.createEvent();
+    const step = await h.undo(receiptId, at(3), OWNER, 'sess-1', { ownerText: `방금 거 되돌려줘 ${'가'.repeat(400)}` });
+    expect(step.kind).toBe('preview');
+    if (step.kind !== 'preview') return;
+    const text = plainTextOf(renderConnectorWriteStep(step));
+    expect(text).toContain('요청하신 문장: ');
+    expect(text).toContain('방금 거 되돌려줘');
+    expect(text).not.toContain('가'.repeat(150));
+    // The sentence never chooses the target: it is only shown.
+    expect(h.reads.get).toEqual([{ calendarId: 'primary', eventId: EVENT_ID }]);
+  });
+
+  it('P2-2: only SENT counts as undone; NOT_SENT and UNCERTAIN say so in their own words', async () => {
+    const notSent = harness({ deleteOutcome: connectorWriteNotSent('PROVIDER_REJECTED') });
+    const a = await notSent.createEvent();
+    await notSent.undo(a.receiptId, at(3));
+    const failed = await notSent.approveAndExecute(at(4));
+    expect(plainTextOf(renderConnectorWriteStep(failed))).toContain('되돌리지 못했어요 — 일정은 그대로 있어요');
+    const uncertain = harness({ deleteOutcome: { status: 'UNCERTAIN', reason: 'TIMEOUT' } as ConnectorWriteOutcome });
+    const b = await uncertain.createEvent();
+    await uncertain.undo(b.receiptId, at(3));
+    const unsure = await uncertain.approveAndExecute(at(4));
+    expect(plainTextOf(renderConnectorWriteStep(unsure))).toContain('되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요');
   });
 
   it('is off (writes-off) when no calendar writer is bound', async () => {

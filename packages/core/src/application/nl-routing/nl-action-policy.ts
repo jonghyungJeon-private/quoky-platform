@@ -446,13 +446,17 @@ function renderExternalUndo(external: { readonly source: 'slack' | 'jira' | 'cal
 
 /** The answer when "되돌려줘" has nothing to undo, or must not undo (ratification record A). */
 export function renderUndoUnresolved(
-  outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external',
+  outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external' | 'undo-uncertain',
   language: Lang,
   external?: { readonly source: 'slack' | 'jira' | 'calendar'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT' },
 ): string {
   switch (outcome) {
     case 'external':
       return renderExternalUndo(external ?? { source: 'calendar', outcome: 'SENT' }, language);
+    case 'undo-uncertain':
+      return language === 'en'
+        ? 'I could not confirm whether the undo went through. Please check your calendar.'
+        : '되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요.';
     case 'no-action':
       return language === 'en' ? 'There is no recent action of mine to undo.' : '되돌릴 최근 작업이 없어요.';
     case 'undo-of-undo':

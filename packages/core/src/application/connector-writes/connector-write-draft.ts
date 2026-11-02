@@ -112,8 +112,16 @@ export function connectorWriteFamilyOf(draft: ConnectorWriteDraft): ConnectorWri
       return draft.topic === 'issue-comment' || draft.topic === 'issue-transition' || draft.topic === 'channel-post'
         ? draft.topic
         : 'calendar';
-    default:
+    case 'calendar-create':
+    case 'calendar-update':
+    case 'calendar-delete':
+    case 'calendar-create-undo':
       return 'calendar';
+    default: {
+      // A new draft kind must name its family here: the compiler stops at this line until it does.
+      const unreachable: never = draft;
+      throw new Error(`unhandled connector write draft kind: ${String((unreachable as { kind?: unknown }).kind)}`);
+    }
   }
 }
 

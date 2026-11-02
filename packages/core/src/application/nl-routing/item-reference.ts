@@ -248,7 +248,9 @@ export type NlUndoResolution =
  * Why "되돌려줘" undoes nothing. `external`: the last action is an approved connector write (ADR-0112 amendment 1 S3), which
  * this undo cannot invert yet (R3), and which an older local item never stands in for.
  */
-export type NlUndoUnresolvedOutcome = 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external';
+export type NlUndoUnresolvedOutcome = 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external' | 'undo-uncertain';
+// `undo-uncertain`: the last action was an undo of an approved external write whose result could not be confirmed. It is not
+// retried automatically and is not "already undone": the answer tells the owner to check the source.
 
 /** The external write an `external` outcome names: its family and what became of it. */
 export interface NlUndoExternal {
@@ -279,7 +281,9 @@ export function resolveUndo(state: Pick<NlReferenceState, 'lastAction' | 'replyT
   const record = last.record;
   // ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): an external write is the last action; it is answered, never
   // skipped for an older item.
-  if (record.entryId === 'action.undo') return { kind: 'unresolved', outcome: 'undo-of-undo' };
+  if (record.entryId === 'action.undo') {
+    return { kind: 'unresolved', outcome: record.outcome === 'UNCERTAIN' && isLastActionExternalSource(record.source) ? 'undo-uncertain' : 'undo-of-undo' };
+  }
   if (record.source !== 'todo' && record.source !== 'reminder') {
     const family = externalUndoFamilyOf(record.entryId);
     const open = record.undoable && !record.undone && record.outcome === 'SENT' && family !== undefined && isExternalUndoOpen(family);

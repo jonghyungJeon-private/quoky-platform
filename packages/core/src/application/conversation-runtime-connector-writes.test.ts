@@ -66,6 +66,7 @@ import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { WorkManager } from './work-manager';
 import { WorkChatService } from './work-chat/work-chat-service';
 import { createWorkChatTurnHandlers } from './work-chat/work-chat-turn-handler';
+import { setExternalUndoCapabilitiesForTest } from './nl-routing/last-action';
 import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } from './message-rendering';
 
 /** PLT-0: link and conversation-reference spans of a reply made visible (the platform adapter renders them). */
@@ -403,6 +404,10 @@ function harness(opts: HarnessOptions = {}) {
       if (opts.calendarReadFails) throw new Error('down');
       return live.events;
     },
+    async getEvent(_calendarId, eventId) {
+      if (opts.calendarReadFails) throw new Error('down');
+      return live.events.find((event) => event.id === eventId);
+    },
   };
   const writers: ConnectorWriteWriters = {
     ...(enabled.has('comment') ? { issueComments } : {}),
@@ -519,9 +524,9 @@ function harness(opts: HarnessOptions = {}) {
   };
   const runtime = new ConversationRuntime(deps, { clock: () => new Date().toISOString() });
   let seq = 0;
-  const sendIn = (context: ConversationContext, text: string) =>
-    runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0 } satisfies InboundMessage);
-  const send = (text: string) => sendIn(CTX, text);
+  const sendIn = (context: ConversationContext, text: string, replyToMessageId?: string) =>
+    runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0, ...(replyToMessageId !== undefined ? { replyTo: { messageId: replyToMessageId } } : {}) } satisfies InboundMessage);
+  const send = (text: string, replyToMessageId?: string) => sendIn(CTX, text, replyToMessageId);
   const totalWrites = () =>
     writes.addComment.length + writes.transition.length + writes.post.length + writes.createEvent.length +
     writes.updateEvent.length + writes.deleteEvent.length;
@@ -814,6 +819,9 @@ describe('connector writes — Jira transition and Slack post', () => {
 });
 
 describe('connector writes — undo of an approved calendar create (ADR-0112 amendment 3, O1)', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
   it('"되돌려줘" after an approved create previews the delete from the receipt, then deletes that event only on the exact phrase', async () => {
     const recorded: Array<Record<string, unknown>> = [];
     const decisions: Array<{ kind: 'execute'; command: Record<string, unknown>; action: Record<string, unknown> }> = [];
@@ -860,12 +868,58 @@ describe('connector writes — undo of an approved calendar create (ADR-0112 ame
     expect(preview.reply.text).toContain('삭제할 일정: 주간 회의');
     expect(preview.reply.text).toContain('"일정 삭제 실행"');
     expect(h.writes.deleteEvent).toHaveLength(0);
+    // The preview read exactly one event by id: no listing for the undo itself.
+    expect(h.writes.listEvents).toBe(0);
     await h.send('승인');
     const done = await h.send('일정 삭제 실행');
     expect(done.reply.text).toContain('방금 추가한 일정을 지워서 되돌렸어요.');
     expect(h.writes.deleteEvent).toEqual([expect.objectContaining({ eventId: 'abcde12345', expected: expect.objectContaining({ version: '"v-made"' }) })]);
     expect(recorded).toHaveLength(2);
     expect(recorded[1]).toMatchObject({ outcome: 'SENT', undoOf: 'calendar.create', entryId: 'external.write' });
+  });
+
+  it('P2-1: a reply to the echo is carried to the resolver, so the undo previews 15 minutes after the create; a wrong reply id is refused', async () => {
+    const recorded: Array<Record<string, unknown>> = [];
+    const decisions: Array<Record<string, unknown>> = [];
+    const nlSelection = {
+      mode: 'active',
+      decide: async () => ({ kind: 'skip', reason: 'disabled' }),
+      actionsActing: () => true,
+      actionsStillActing: async () => true,
+      logActionUnserved: () => undefined,
+      recordExternalWrite: async (input: Record<string, unknown>) => {
+        recorded.push(input);
+      },
+      recordActionReceipt: async () => undefined,
+      decideAnchoredUndo: async () => decisions.shift(),
+    } as unknown as ConversationRuntimeDeps['nlSelection'];
+    const h = harness({ createdEvent: true, nlSelection });
+    await h.send('내일 오후 3시에 회의 잡아줘 제목 주간 회의');
+    await h.send('승인');
+    await h.send('일정 추가 실행');
+    const receiptId = recorded[0]?.receiptId as string;
+    const seeded = h.sessions.get('sess-1') as Session;
+    h.sessions.set('sess-1', {
+      ...seeded,
+      metadata: {
+        'quoky.lastAction': {
+          byActor: { [OWNER.id]: { entryId: 'calendar.create', source: 'calendar', itemId: receiptId, at: new Date().toISOString(), undoable: true, undone: false, outcome: 'SENT', anchorTaskId: recorded[0]?.anchorTaskId, echoReplyIds: ['echo-1'] } },
+        },
+      },
+    });
+    const decision = () => ({
+      kind: 'execute',
+      command: { entryId: 'action.undo', args: {}, language: 'ko', externalUndo: { family: 'calendar-create', receiptId } },
+      action: { entryId: 'action.undo', risk: 'EXTERNAL_WRITE', refKind: 'none', resolution: 'resolved', result: 'asked', reason: 'external-undo', latencyMs: 0 },
+    });
+    advanceMinutes(15);
+    decisions.push(decision());
+    const wrong = await h.send('되돌리기', 'echo-other');
+    expect(wrong.status).not.toBe('AWAITING_APPROVAL');
+    decisions.push(decision());
+    const right = await h.send('되돌리기', 'echo-1');
+    expect(right.status).toBe('AWAITING_APPROVAL');
+    expect(right.reply.text).toContain('삭제할 일정: 주간 회의');
   });
 
   it('with the calendar writer off, the undo reply is the fixed unavailable text and nothing is prepared', async () => {

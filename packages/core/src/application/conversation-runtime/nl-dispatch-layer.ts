@@ -19,6 +19,7 @@ import {
 import { mergeItemSummarizeEntries } from '../nl-routing/action-entries';
 import { nlActionReceiptSource, nlHeldItemWordsFor } from './helpers';
 import type { NlChatFacts, NlEarlySelection } from './internal-types';
+import { externalUndoDraftKindOf } from '../connector-writes/external-undo-resolver';
 import type { TurnHandlerWriteDraft } from '../../ports/conversation-turn-handler.port';
 import { ConversationRuntimeTurnHandlerLayer } from './turn-handler-layer';
 import type { ApplyPreviewAnchor, TurnResult } from './types';
@@ -513,7 +514,7 @@ export abstract class ConversationRuntimeNlDispatchLayer extends ConversationRun
       if (decision.action !== undefined) this.nlActionTurns.set(message, { audit: decision.action, language: decision.command.language });
       const draft: TurnHandlerWriteDraft = {
         kind: 'write-draft',
-        draft: { kind: 'calendar-create-undo', receiptId: decision.command.externalUndo.receiptId },
+        draft: { kind: externalUndoDraftKindOf(decision.command.externalUndo.family), receiptId: decision.command.externalUndo.receiptId },
         fallbackText: renderExternalUndoUnavailable(decision.command.language),
       };
       const undoResult = await this.respondTurnHandler(message, session, actor, userMemoryId, draft);

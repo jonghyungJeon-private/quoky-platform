@@ -1,7 +1,7 @@
 import { ApprovalStatus, Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../../domain';
 import type { Actor, ApprovalRequest, ConversationContext, ExecutionPlanRef, Id, IsoTimestamp, Session, Task } from '../../domain';
 import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
-import { CALENDAR_EVENTS_MAX_LIMIT } from '../../ports/calendar-reader.port';
+import { CALENDAR_EVENTS_MAX_LIMIT, CALENDAR_EVENT_TITLE_MAX_LENGTH, boundCalendarText } from '../../ports/calendar-reader.port';
 import {
   CONNECTOR_WRITE_OPERATIONS,
   ISSUE_TRANSITION_STATUS_MAX_LENGTH,
@@ -170,6 +170,8 @@ export type ConnectorWritePreview =
       readonly timeZone: string;
       /** The target came from Quoky's own SENT receipt (an undo), not from the owner's words: the card shows the banner. */
       readonly receiptSourced?: true;
+      /** ADR-0112 amendment 1 S4: the owner's own undo sentence, bounded, shown on the card as quoted text and never read as an instruction. */
+      readonly ownerSentence?: string;
     };
 
 /** Where an undated reference's candidates came from ({@link ConnectorWriteStep} `choice.basis`). */
@@ -286,6 +288,8 @@ export type ConnectorWriteRefusal =
   | 'choice-expired'
   /** ADR-0112 amendment 3: the undo has nothing to act on (no receipt of this session's own last write, or it is stale). */
   | 'undo-nothing'
+  /** The write is real but cannot be undone automatically (no version recorded, or its anchor is gone). */
+  | 'undo-unavailable'
   /** The event the receipt named is already gone. */
   | 'undo-event-gone'
   /** The event changed after it was created (version, time or title differ from what Quoky wrote). */
@@ -567,6 +571,13 @@ export interface FlowInput {
   readonly now: IsoTimestamp;
   /** A caller already holding the session write lock passes its hold (ADR-0113 D7); absent → the flow takes it. */
   readonly held?: SessionLockHold;
+  /**
+   * ADR-0112 amendment 1 S3: the platform id of the message this turn replied to. Only an undo reads it (echo-reply window);
+   * the resolver verifies it against the record's own `echoReplyIds`.
+   */
+  readonly replyToMessageId?: string;
+  /** The owner's own message text of this turn (an undo card quotes it, bounded; it never selects a target). */
+  readonly ownerText?: string;
 }
 
 /**
@@ -1579,15 +1590,16 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   private async readWindow(window: { readonly from: IsoTimestamp; readonly to: IsoTimestamp }): Promise<readonly CalendarEvent[]> {
     const reader = this.deps.calendarReader;
     if (!reader) throw new Error('no calendar reader');
+    return this.withReadTimeout(reader.listEvents({ from: window.from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT }));
+  }
+
+  private async withReadTimeout<T>(read: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new ReadTimeout()), this.deps.readTimeoutMs ?? 30_000);
     });
     try {
-      return await Promise.race([
-        reader.listEvents({ from: window.from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT }),
-        timeout,
-      ]);
+      return await Promise.race([read, timeout]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
@@ -1614,45 +1626,56 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         return anchor?.kind === CONNECTOR_WRITE_ANCHOR_KIND ? anchor : undefined;
       },
     });
-    const resolved = await resolver.resolve({ session: live, actor: input.actor, now: input.now });
+    const resolved = await resolver.resolve({
+      session: live,
+      actor: input.actor,
+      now: input.now,
+      ...(input.replyToMessageId !== undefined ? { replyToMessageId: input.replyToMessageId } : {}),
+    });
+    // The anchor that holds the approved payload and version could not be found (for example its save failed): the write
+    // is real, but there is nothing safe to compare against, so the owner is told to delete it by hand.
+    if (resolved.kind === 'nothing-to-undo' && resolved.reason === 'anchor-missing') return refused('undo-unavailable');
     if (resolved.kind !== 'resolved' || resolved.family !== 'calendar-create' || resolved.draft.receiptId !== receiptId) {
       return refused('undo-nothing');
     }
     const created = resolved.anchor.payload;
     const version = resolved.receipt.data.version;
-    if (created?.operation !== 'CALENDAR_EVENT_CREATE' || !isEventVersion(version)) return refused('undo-nothing');
+    if (created?.operation !== 'CALENDAR_EVENT_CREATE') return refused('undo-nothing');
+    // No version on the create (no etag) means no compare-and-set: it cannot be undone safely.
+    if (!isEventVersion(version)) return refused('undo-unavailable');
+    // The calendar and the event come from the receipt (ARCHITECTURE section 8 provenance), never from a read or the words.
+    const calendarId = resolved.receipt.target;
+    if (calendarId !== writer.target) return refused('undo-nothing');
     const eventId = resolved.receipt.data.externalRef as string;
+    const reader = this.deps.calendarReader;
+    if (!reader?.getEvent) return refused('calendar-read-failed');
     let event: CalendarEvent | undefined;
     try {
-      event = await this.findCreatedEvent(eventId, created.draft.time);
+      // One authoritative read of that one event: not a window, not a listing. Only "not found" means gone.
+      event = await this.withReadTimeout(reader.getEvent(calendarId, eventId));
     } catch {
       return refused('calendar-read-failed');
     }
     if (event === undefined) return refused('undo-event-gone');
-    if (event.version !== version || !sameAsDraft(event, created.draft)) return refused('undo-event-changed');
+    if (event.id !== eventId || event.version !== version || !sameAsDraft(event, created.draft)) return refused('undo-event-changed');
     const summary = summaryOf(event);
     const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version };
-    const step = await this.propose(
+    return this.propose(
       input,
       'calendar',
       writer.source,
-      `${writer.target}/${event.id}`,
-      { operation: 'CALENDAR_EVENT_DELETE', eventId: event.id, expected },
-      { operation: 'CALENDAR_EVENT_DELETE', before: summary, timeZone: this.deps.timeZone, receiptSourced: true },
+      `${writer.target}/${eventId}`,
+      { operation: 'CALENDAR_EVENT_DELETE', eventId, expected },
+      {
+        operation: 'CALENDAR_EVENT_DELETE',
+        before: summary,
+        timeZone: this.deps.timeZone,
+        receiptSourced: true,
+        ...(boundedOwnerSentence(input.ownerText) !== undefined ? { ownerSentence: boundedOwnerSentence(input.ownerText) as string } : {}),
+      },
       undefined,
       { entryId: 'calendar.create', receiptId: resolved.receipt.id },
     );
-    return step;
-  }
-
-  /** The created event by id: a read of the day around its approved time (never a listing the owner chose from). */
-  private async findCreatedEvent(eventId: string, time: CalendarEventTime): Promise<CalendarEvent | undefined> {
-    const startMs = time.allDay ? Date.parse(`${time.startDate}T00:00:00Z`) : Date.parse(time.start);
-    const endMs = time.allDay ? Date.parse(`${time.endDate}T00:00:00Z`) : Date.parse(time.end);
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return undefined;
-    const day = 24 * 60 * 60_000;
-    const events = await this.readWindow({ from: new Date(startMs - day).toISOString(), to: new Date(endMs + day).toISOString() });
-    return events.find((event) => event.id === eventId);
   }
 
   private async proposeEventChange(
@@ -2023,15 +2046,21 @@ function isExpectation(value: CalendarEventExpectation | undefined): value is Ca
   );
 }
 
-/** A usable provider event version (printable ASCII, bounded) — the condition every update / delete is sent under. */
+/** The owner's undo sentence for the card: single line, control characters removed, at most 120 characters; `undefined` when empty. */
+function boundedOwnerSentence(text: string | undefined): string | undefined {
+  const bounded = boundCalendarText(text, 120);
+  return bounded.length > 0 ? bounded : undefined;
+}
+
 /** The live event is still exactly the event Quoky was approved to create: the same title, start and end. */
 function sameAsDraft(event: CalendarEvent, draft: CalendarEventDraft): boolean {
-  if (event.title !== draft.title) return false;
+  if (event.title !== boundCalendarText(draft.title, CALENDAR_EVENT_TITLE_MAX_LENGTH)) return false;
   const time = draft.time;
   if (time.allDay) return event.allDay && event.start === time.startDate && event.end === time.endDate;
   return !event.allDay && Date.parse(event.start) === Date.parse(time.start) && Date.parse(event.end) === Date.parse(time.end);
 }
 
+/** A usable provider event version (printable ASCII, bounded) — the condition every update / delete is sent under. */
 function isEventVersion(value: unknown): value is string {
   return typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
 }

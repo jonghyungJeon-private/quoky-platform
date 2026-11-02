@@ -68,7 +68,24 @@ export function externalLastActionOf(
  * text: a family opens only when its slice adds it here.
  */
 export type ExternalUndoFamily = 'calendar-create';
-export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create'] as ExternalUndoFamily[]);
+/**
+ * SHIPPED EMPTY (ADR-0112 amendment 3 gate): the red-team gate (>= 20 cases per family, 0 successes over 3 runs, plus
+ * Chief Architect / Codex / security review) must pass before any family opens, and that run needs its own owner approval.
+ * Until a later commit adds `'calendar-create'` here, an external write is never undoable and behaves exactly as before.
+ */
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze([] as ExternalUndoFamily[]);
+
+let activeCapabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES;
+
+/** The capability set in force: the frozen constant, unless a test swapped it through {@link setExternalUndoCapabilitiesForTest}. */
+export function activeExternalUndoCapabilities(): readonly ExternalUndoFamily[] {
+  return activeCapabilities;
+}
+
+/** TEST SEAM ONLY: swaps the set for the current test file (call with no argument to restore). Production code never calls it. */
+export function setExternalUndoCapabilitiesForTest(capabilities?: readonly ExternalUndoFamily[]): void {
+  activeCapabilities = capabilities === undefined ? EXTERNAL_UNDO_CAPABILITIES : Object.freeze([...capabilities]);
+}
 
 /** The undo family of an external record's entry, or `undefined` when its entry has none. Closed mapping. */
 export function externalUndoFamilyOf(entryId: string): ExternalUndoFamily | undefined {
@@ -76,7 +93,7 @@ export function externalUndoFamilyOf(entryId: string): ExternalUndoFamily | unde
 }
 
 /** Whether the undo of `family` is built (the family is in the capability set). */
-export function isExternalUndoOpen(family: ExternalUndoFamily | undefined, capabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES): boolean {
+export function isExternalUndoOpen(family: ExternalUndoFamily | undefined, capabilities: readonly ExternalUndoFamily[] = activeCapabilities): boolean {
   return family !== undefined && capabilities.includes(family);
 }
 

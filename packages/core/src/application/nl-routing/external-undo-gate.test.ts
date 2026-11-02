@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveUndo } from './item-reference';
 import {
   EXTERNAL_UNDO_CAPABILITIES,
@@ -9,6 +9,7 @@ import {
   isExternalUndoOpen,
   lastActionOf,
   readLastAction,
+  setExternalUndoCapabilitiesForTest,
   withLastAction,
   type LastActionRecord,
 } from './last-action';
@@ -34,10 +35,23 @@ function external(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-describe('the external undo capability gate (amendment 3)', () => {
-  it('is a closed, frozen set; slice 3 opens calendar-create only', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create']);
+describe('the external undo capability gate shipped OFF (red-team gate pending)', () => {
+  it('the frozen constant is empty: no family is undoable, and an external write behaves exactly as before the undo slices', () => {
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual([]);
     expect(Object.isFrozen(EXTERNAL_UNDO_CAPABILITIES)).toBe(true);
+    expect(isExternalUndoOpen('calendar-create')).toBe(false);
+    expect(lastActionOf(external())?.undoable).toBe(false);
+    const view = readLastAction(withLastAction(undefined, ACTOR, lastActionOf(external()) as LastActionRecord, NOW), ACTOR, NOW);
+    expect(resolveUndo({ lastAction: view })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+  });
+});
+
+describe('the external undo capability gate (amendment 3), family switched on by injection', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  it('is a closed, frozen set that the family-on seam does not mutate', () => {
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual([]);
     expect(isExternalUndoOpen('calendar-create')).toBe(true);
     expect(isExternalUndoOpen(undefined, ['calendar-create'])).toBe(false);
     expect(isExternalUndoOpen('calendar-create', [])).toBe(false);
@@ -86,6 +100,12 @@ describe('the external undo capability gate (amendment 3)', () => {
     expect(resolveUndo({ lastAction: view({ entryId: 'external.write' }) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
     expect(resolveUndo({ lastAction: view({ outcome: 'UNCERTAIN' }) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'UNCERTAIN' } });
     expect(resolveUndo({ lastAction: view({ undone: true }) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+  });
+
+  it('an UNCERTAIN undo is answered as "could not confirm", not as already undone; a SENT undo is an undo of an undo', () => {
+    const view = (overrides: Record<string, unknown>) => readLastAction(withLastAction(undefined, ACTOR, lastActionOf(external({ entryId: 'action.undo', undoOf: 'calendar.create', ...overrides })) as LastActionRecord, NOW), ACTOR, NOW);
+    expect(resolveUndo({ lastAction: view({ outcome: 'UNCERTAIN' }) })).toEqual({ kind: 'unresolved', outcome: 'undo-uncertain' });
+    expect(resolveUndo({ lastAction: view({ outcome: 'SENT' }) })).toEqual({ kind: 'unresolved', outcome: 'undo-of-undo' });
   });
 
   it('a record named action.undo is never undoable and is an undo of an undo', () => {

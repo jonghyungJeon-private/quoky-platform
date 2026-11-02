@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { setExternalUndoCapabilitiesForTest } from './last-action';
 import {
   LAST_LISTING_METADATA_KEY,
   findAnyListingByReply,
@@ -339,7 +340,14 @@ describe('an external write is the last action, never undoable (ADR-0112 amendme
     // A family with no undo built (here the generic external entry) stays closed; calendar.create SENT is open (amendment 3).
     expect(readLastAction({ byActor: { [ACTOR]: { ...external(0, { entryId: LAST_ACTION_EXTERNAL_ENTRY }), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
     expect(readLastAction({ byActor: { [ACTOR]: { ...external(0, { outcome: 'UNCERTAIN' }), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
-    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(true);
+    // Shipped off: even calendar.create SENT is not undoable until the red-team gate opens the family.
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
+    setExternalUndoCapabilitiesForTest(['calendar-create']);
+    try {
+      expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(true);
+    } finally {
+      setExternalUndoCapabilitiesForTest();
+    }
     const { outcome: _dropped, ...withoutOutcome } = external(0);
     expect(readLastAction({ byActor: { [ACTOR]: withoutOutcome } }, ACTOR, at(1))).toBeUndefined();
     expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), source: 'todo', entryId: LAST_ACTION_EXTERNAL_ENTRY } } }, ACTOR, at(1))).toBeUndefined();

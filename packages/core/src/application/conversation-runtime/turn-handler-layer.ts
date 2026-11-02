@@ -583,7 +583,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     }
     let step: ConnectorWriteStep;
     try {
-      step = await flow.prepare({ session, actor, draft: outcome.draft, now: this.clock() });
+      step = await flow.prepare({ session, actor, draft: outcome.draft, now: this.clock(), ...(message.replyTo?.messageId !== undefined ? { replyToMessageId: message.replyTo.messageId } : {}), ownerText: message.text });
     } catch (err) {
       return this.failReadOnlyTurn(message, session, err); // no write call happens while preparing
     }

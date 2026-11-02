@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Session, Task } from '../../domain';
 import type { ConnectorWriteReceipt } from '../../ports';
 import { withLastAction, type LastActionRecord } from '../nl-routing/last-action';
 import { ExternalUndoResolver } from './external-undo-resolver';
 import { CONNECTOR_WRITE_ANCHOR_KIND, type ConnectorWriteAnchor } from './connector-write-flow';
+import { setExternalUndoCapabilitiesForTest } from '../nl-routing/last-action';
 import { CONNECTOR_UNDO_RECEIPT_BANNER } from './connector-write-copy';
 
 const NOW = '2026-11-02T10:00:00.000Z';
@@ -37,6 +38,10 @@ function anchor(overrides: Partial<ConnectorWriteAnchor> = {}): ConnectorWriteAn
     sessionId: SESSION,
     family: 'calendar',
     operation: 'CALENDAR_EVENT_CREATE',
+    connector: 'google-calendar',
+    target: 'primary',
+    payloadSha256: 'a'.repeat(64),
+    approvalId: 'approval-1',
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -49,7 +54,7 @@ function record(overrides: Partial<LastActionRecord> = {}): LastActionRecord {
     source: 'calendar',
     itemId: 'receipt-1',
     at: EARLIER(2),
-    undoable: false,
+    undoable: true,
     undone: false,
     outcome: 'SENT',
     anchorTaskId: 'task-1',
@@ -81,6 +86,9 @@ const input = (last: LastActionRecord | undefined, extra: { replyToMessageId?: s
 });
 
 describe('ExternalUndoResolver (amendment 3: lastAction -> receipt -> anchor -> undo draft)', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
   it('resolves this session\'s own SENT write to a draft that carries the receipt id only', async () => {
     const result = await resolver().resolve(input(record()));
     expect(result).toMatchObject({ kind: 'resolved', family: 'calendar-create', anchorTaskId: 'task-1', draft: { kind: 'calendar-create-undo', receiptId: 'receipt-1' } });
@@ -141,6 +149,29 @@ describe('ExternalUndoResolver (amendment 3: lastAction -> receipt -> anchor -> 
     expect(await resolver().resolve(input(record({ outcome: 'NOT_SENT' })))).toEqual({ kind: 'nothing-to-undo', reason: 'not-sent' });
     expect(await resolver().resolve(input({ entryId: 'todo.add', source: 'todo', itemId: 'todo-1', at: EARLIER(1), undoable: true, undone: false, echoReplyIds: [] }))).toEqual({ kind: 'nothing-to-undo', reason: 'not-external' });
     expect(await resolver().resolve(input(record({ entryId: 'external.write' })))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
+  });
+});
+
+describe('ExternalUndoResolver defence in depth (P3-4): the receipt must be the one this anchor produced', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  it('refuses a receipt whose idempotency key, payload hash, target or connector is not the anchor\'s', async () => {
+    for (const other of [
+      receipt({ idempotencyKey: 'cwr:approval-2' }),
+      receipt({ payloadSha256: 'b'.repeat(64) }),
+      receipt({ target: 'primary/zzzzz' }),
+      receipt({ connector: 'other-connector' }),
+    ]) {
+      expect(await resolver({ receipts: [other] }).resolve(input(record()))).toEqual({ kind: 'nothing-to-undo', reason: 'receipt-mismatch' });
+    }
+    expect(await resolver({ anchors: { 'task-1': anchor({ approvalId: undefined }) } }).resolve(input(record()))).toEqual({ kind: 'nothing-to-undo', reason: 'receipt-mismatch' });
+  });
+
+  it('refuses a record that is not undoable (a stored flag cannot open it, and the normaliser drops it with the family off)', async () => {
+    expect(await resolver({ open: false }).resolve(input(record()))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
+    setExternalUndoCapabilitiesForTest();
+    expect(await resolver().resolve(input(record({ undoable: true })))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
   });
 });
 

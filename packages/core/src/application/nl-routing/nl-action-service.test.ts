@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { NL_ACTION_UNDO_COMMAND, NL_ACTION_UNDO_HINT } from '../work-chat/work-chat-renderer';
 import { Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
 import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
@@ -15,6 +15,7 @@ import { prepareSelectionInput } from './selection-input';
 import { NL_ACTION_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
 import { INTERPRETATION_PREFERENCES_METADATA_KEY, LAST_SELECTION_METADATA_KEY, NL_PENDING_METADATA_KEY, readPendingQuestion, type PendingQuestion } from './selection-state';
 import { interpretContinuationConfirmReply, interpretUndoConfirmReply } from './undo-confirm';
+import { setExternalUndoCapabilitiesForTest } from './last-action';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
 // ADR-0120 amendment A6 (NLA-5) at the selection service: the flag levels and the startup refusals, `off` byte-identical
@@ -283,6 +284,9 @@ describe('caps (A6-D3)', () => {
 });
 
 describe('references, questions and the audit line', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
   it('"내 할 일" → "2번 완료": the shown label resolves to its id; the audit target is the local UUID, never text', async () => {
     const w = world({ script: [out('todo.complete', { ref: '#2' })] });
     w.setMetadata(LAST_LISTING_METADATA_KEY, todoListing([1, 2, 3]));
@@ -326,7 +330,17 @@ describe('references, questions and the audit line', () => {
     expect(await w.decide('되돌려줘', { now: at(2) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '되돌린 작업은 다시 되돌릴 수 없어요.' });
   });
 
+  it('shipped OFF: "되돌려줘" after an approved calendar create answers the family copy exactly as before the undo slices', async () => {
+    setExternalUndoCapabilitiesForTest(); // the shipped (empty) set
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', at: at(0), undoable: true, undone: false, outcome: 'SENT', anchorTaskId: 'task-1', echoReplyIds: [] }, at(0)));
+    const decision = await w.decide('되돌려줘', { now: at(1) });
+    expect(decision).toEqual({ kind: 'ask', entryId: expect.any(String), text: '캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐 주세요.' });
+  });
+
   it('"되돌려줘" after an approved calendar create is an external undo at the local level, with the receipt id only (amendment 3, O1)', async () => {
+    setExternalUndoCapabilitiesForTest(['calendar-create']);
+    onTestFinished(() => setExternalUndoCapabilitiesForTest());
     const calendar = (overrides: Record<string, unknown> = {}) => ({ entryId: 'calendar.create' as const, source: 'calendar' as const, itemId: 'receipt-1', at: at(0), undoable: true, undone: false, outcome: 'SENT' as const, anchorTaskId: 'task-1', echoReplyIds: [], ...overrides });
     const local = world({ level: 'local', script: () => out('action.undo') });
     local.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
@@ -509,6 +523,43 @@ describe('shadow (A6-D8): the decision is logged, nothing acts, nothing is writt
 });
 
 describe('receipts: lastAction, the echo label and the delivery binding', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  const calendarCreate = (overrides: Record<string, unknown> = {}) => ({ entryId: 'calendar.create' as const, source: 'calendar' as const, itemId: 'receipt-1', at: at(0), undoable: true, undone: false, outcome: 'SENT' as const, anchorTaskId: 'task-1', echoReplyIds: [], ...overrides });
+  const undoOutcome = (w: ReturnType<typeof world>, outcome: 'SENT' | 'NOT_SENT' | 'UNCERTAIN', now = at(2)) =>
+    w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-undo' }, now, source: 'calendar', entryId: 'external.write', receiptId: 'receipt-del', outcome, anchorTaskId: 'task-del', undoOf: 'calendar.create' });
+
+  it('P2-2: a NOT_SENT undo consumes nothing; the original create stays the last action and the owner can retry', async () => {
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendarCreate(), at(0)));
+    await undoOutcome(w, 'NOT_SENT');
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'calendar.create', itemId: 'receipt-1', undoable: true, outcome: 'SENT' } } });
+    expect(await w.decide('되돌려줘', { now: at(3) })).toMatchObject({ kind: 'execute', command: { externalUndo: { receiptId: 'receipt-1' } } });
+  });
+
+  it('P2-2: an UNCERTAIN undo is recorded, never retried, and answered as "could not confirm"', async () => {
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendarCreate(), at(0)));
+    await undoOutcome(w, 'UNCERTAIN');
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'action.undo', undoable: false, outcome: 'UNCERTAIN' } } });
+    expect(await w.decide('되돌려줘', { now: at(3) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요.' });
+  });
+
+  it('P2-2: a SENT undo is an undone action: a further "되돌려줘" says it cannot be undone again', async () => {
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendarCreate(), at(0)));
+    await undoOutcome(w, 'SENT');
+    expect(await w.decide('되돌려줘', { now: at(3) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '되돌린 작업은 다시 되돌릴 수 없어요.' });
+  });
+
+  it('R-c: an external undo counts against the external write cap (10 an hour), not the local one (20)', async () => {
+    const w = world({ level: 'local', script: () => out('action.undo') });
+    w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendarCreate(), at(0)));
+    for (let i = 0; i < 10; i += 1) expect((await w.decide('되돌려줘', { now: at(1) })).kind).toBe('execute');
+    expect(await w.decide('되돌려줘', { now: at(1) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '지금은 자연어로 실행할 수 있는 횟수를 넘었어요. 잠시 뒤에 다시 말씀해 주세요. 정확한 명령은 그대로 동작해요.' });
+  });
+
   it('an approved connector write becomes the not-undoable last action, replacing an older to-do; nothing while off (P4)', async () => {
     const w = world({ script: [] });
     const message = { id: 'in-1', context: { platform: 'test', channelId: 'dm' } };

@@ -23,8 +23,11 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   flag; target only from the session's `lastAction` receipt), calendar update/cancel inverses, Jira comment delete and
   transition revert, `restoreEvent`, CRITICAL approval + exact phrase kept for every undo. DECISIONS.md has the text.
 - Built so far (branch `claude/r3-undo`): the inert foundation (receipt `findById`, `lastAction.anchorTaskId`,
-  `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo (capability `calendar-create`
-  open). Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
+  `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo. **The calendar-create family
+  is OFF in this build: `EXTERNAL_UNDO_CAPABILITIES` is empty pending the amendment-3 red-team gate** (>= 20 cases, 0
+  successes over 3 runs, CA/Codex/security review; the 24 drafted cases are in
+  `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`, not run: a model-in-the-loop run needs the owner's
+  separate approval). Switching it on is a one-line change to the constant after the gate. Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
   are later slices; their families stay out of the capability set until built.
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)

@@ -982,6 +982,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }): Promise<void> {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
     const isUndo = input.undoOf !== undefined;
+    // A failed undo consumed nothing: the original write stays the last action so the owner can ask again (a retry is a
+    // fresh preview, CRITICAL approval and exact phrase). Only SENT counts as undone; UNCERTAIN is recorded so it is never
+    // retried automatically and is answered as "could not confirm".
+    if (isUndo && input.outcome === 'NOT_SENT') return;
     const record: LastActionRecord = {
       entryId: isUndo ? 'action.undo' : input.entryId,
       source: input.source,
@@ -2063,10 +2067,11 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (resolved.kind === 'unresolved' && resolved.outcome === 'external' && resolved.external?.open !== undefined) {
       const audit: NlActionAudit = { ...base, resolution: 'resolved', result: 'asked', reason: 'external-undo' };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
-      if (!this.actionCaps.allows(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now))) {
+      // The undo ends in an external write, so it counts against the external connector-write caps, not the local ones.
+      if (!this.actionCaps.allows(turn.actor.id, 'EXTERNAL_WRITE', Date.parse(turn.now))) {
         return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
       }
-      this.actionCaps.note(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now));
+      this.actionCaps.note(turn.actor.id, 'EXTERNAL_WRITE', Date.parse(turn.now));
       return { kind: 'execute', command: { entryId: 'action.undo', args: {}, language, externalUndo: resolved.external.open }, action: audit };
     }
     if (resolved.kind === 'unresolved') {

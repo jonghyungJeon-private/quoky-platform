@@ -1,7 +1,7 @@
 import type { Actor, Id, IsoTimestamp, Session, Task } from '../../domain';
 import { ConnectorWriteOperation, type ConnectorWriteReceipt, type ConnectorWriteReceiptRepository } from '../../ports';
 import {
-  EXTERNAL_UNDO_CAPABILITIES,
+  activeExternalUndoCapabilities,
   externalUndoFamilyOf,
   isLastActionExternalSource,
   readSessionLastAction,
@@ -69,6 +69,11 @@ const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
   },
 };
 
+/** The draft kind of a family's undo (the only place the family-to-kind mapping lives). */
+export function externalUndoDraftKindOf(family: ExternalUndoFamily): ExternalUndoDraftKind {
+  return FAMILIES[family].draftKind;
+}
+
 export interface ExternalUndoResolverDeps {
   readonly receipts: Pick<ConnectorWriteReceiptRepository, 'findById'>;
   readonly tasks: { get(id: Id): Promise<Task | null> };
@@ -104,8 +109,8 @@ export class ExternalUndoResolver {
     if (!isLastActionExternalSource(record.source)) return nothing('not-external');
     if (record.outcome !== 'SENT') return nothing('not-sent');
     const family = externalUndoFamilyOf(record.entryId);
-    const capabilities = this.deps.capabilities ?? EXTERNAL_UNDO_CAPABILITIES;
-    if (family === undefined || !capabilities.includes(family)) return nothing('not-open');
+    const capabilities = this.deps.capabilities ?? activeExternalUndoCapabilities();
+    if (family === undefined || !capabilities.includes(family) || !record.undoable) return nothing('not-open');
     const spec = FAMILIES[family];
 
     const receipt = await this.deps.receipts.findById(record.itemId, input.actor.id);
@@ -125,6 +130,17 @@ export class ExternalUndoResolver {
       anchor.status !== 'SENT'
     ) {
       return nothing('anchor-mismatch');
+    }
+    // Defence in depth: the receipt must be the one THIS anchor's approval produced (idempotency key `cwr:<approvalId>`, same
+    // connector, target and payload hash), not merely another SENT receipt of the same actor and operation.
+    if (
+      anchor.approvalId === undefined ||
+      receipt.idempotencyKey !== `cwr:${anchor.approvalId}` ||
+      receipt.payloadSha256 !== anchor.payloadSha256 ||
+      receipt.target !== anchor.target ||
+      receipt.connector !== anchor.connector
+    ) {
+      return nothing('receipt-mismatch');
     }
     return { kind: 'resolved', draft: { kind: spec.draftKind, receiptId: receipt.id }, family, receipt, anchor, anchorTaskId: task.id };
   }
