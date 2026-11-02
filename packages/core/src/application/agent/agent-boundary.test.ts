@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ConversationRuntimeDeps } from '../conversation-runtime';
 import type { AgentRunServiceDeps } from './agent-run-service';
+import type { AgentPlanExecutorDeps, AgentReadPort, AgentReadRequest } from './plan-executor';
 
 // ADR-0121 D5 / D12 (stage S2 P1): the agent's boundary, pinned.
 // - Import ALLOWLIST (CA review): every module specifier of `application/agent/` is a domain module, one of the two ports
@@ -52,7 +53,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'help-split.ts', 'index.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'read-write-probe.ts', 'reply-notes.ts', 'unbounded-ask.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'read-write-probe.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'unbounded-ask.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
     const refused = [
@@ -145,6 +146,26 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
   it('the service deps type holds only the router, the actor repository, the logger and configuration', () => {
     const keys: Record<keyof AgentRunServiceDeps, true> = { mode: true, router: true, actors: true, logger: true, timeZone: true, timeoutMs: true, elapsed: true, caps: true };
     expect(Object.keys(keys).sort()).toEqual(['actors', 'caps', 'elapsed', 'logger', 'mode', 'router', 'timeZone', 'timeoutMs']);
+  });
+
+  // ADR-0121 D5 / S2 P3-3a: the executor's dependency type holds only narrow read ports, the logger and test overrides. A
+  // port is one `read` function over a request of closed fields; there is no writer, runner, fetch, MCP tool or repository.
+  it('the executor deps type holds only read ports, the logger and test overrides; a port is one read function', () => {
+    const deps: Record<keyof AgentPlanExecutorDeps, true> = { readers: true, logger: true, elapsed: true, bounds: true };
+    expect(Object.keys(deps).sort()).toEqual(['bounds', 'elapsed', 'logger', 'readers']);
+    const port: Record<keyof AgentReadPort, true> = { read: true };
+    expect(Object.keys(port)).toEqual(['read']);
+    const request: Record<keyof AgentReadRequest, true> = { entryId: true, args: true, keys: true, remainingMs: true };
+    expect(Object.keys(request).sort()).toEqual(['args', 'entryId', 'keys', 'remainingMs']);
+  });
+
+  it('the executor, the projector and the bounds name no collaborator beyond the allowlist (calibration of the executor files)', () => {
+    for (const name of ['plan-executor.ts', 'structure-projector.ts', 'run-bounds.ts']) {
+      const source = SOURCES.find((candidate) => candidate.name === name);
+      expect(source, name).toBeDefined();
+      const specifiers = specifiersOf((source as { text: string }).text);
+      for (const specifier of specifiers) expect(allowedSpecifier(specifier), `${name}: ${specifier}`).toBe(true);
+    }
   });
 });
 
