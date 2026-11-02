@@ -121,7 +121,7 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
     if (!row || row.status !== 'PREPARED') return null;
     const data =
       outcome.status === 'SENT'
-        ? { externalRef: outcome.externalRef, ...(outcome.url ? { url: outcome.url } : {}) }
+        ? { externalRef: outcome.externalRef, ...(outcome.url ? { url: outcome.url } : {}), ...(outcome.version ? { version: outcome.version } : {}) }
         : { reason: outcome.reason };
     const next = { ...row, status: outcome.status, updatedAt: now, data };
     this.rows.set(id, next);
@@ -187,6 +187,10 @@ interface HarnessOptions {
   commentSource?: string;
   /** Which receipt step throws (storage failure). */
   receiptFails?: 'prepare' | 'complete';
+  /** The writer creates a real event (valid id, post-create version) the reader then lists (the undo of a create). */
+  createdEvent?: boolean;
+  /** A fake NL selection service (ADR-0112 amendment 3: records external writes, decides the undo). */
+  nlSelection?: ConversationRuntimeDeps['nlSelection'];
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -376,6 +380,10 @@ function harness(opts: HarnessOptions = {}) {
     target: 'primary',
     async createEvent(request) {
       writes.createEvent.push(request);
+      if (opts.createdEvent === true && !request.draft.time.allDay) {
+        live.events.push({ id: 'abcde12345', title: request.draft.title, start: request.draft.time.start, end: request.draft.time.end, allDay: false, status: 'confirmed', calendarName: 'primary', version: '"v-made"' });
+        return connectorWriteSent('abcde12345', undefined, '"v-made"');
+      }
       return connectorWriteSent('evt-new');
     },
     async updateEvent(request) {
@@ -506,6 +514,7 @@ function harness(opts: HarnessOptions = {}) {
     turnHandlers,
     credentialOverrideFlow: undefined,
     connectorWriteFlow: flow,
+    ...(opts.nlSelection !== undefined ? { nlSelection: opts.nlSelection } : {}),
     logger,
   };
   const runtime = new ConversationRuntime(deps, { clock: () => new Date().toISOString() });
@@ -801,6 +810,85 @@ describe('connector writes — Jira transition and Slack post', () => {
     expect(refused.reply.text).toContain('쓰기가 허용된 대상이 아니에요');
     expect(g.approvals.size).toBe(0);
     expect(g.totalWrites()).toBe(0);
+  });
+});
+
+describe('connector writes — undo of an approved calendar create (ADR-0112 amendment 3, O1)', () => {
+  it('"되돌려줘" after an approved create previews the delete from the receipt, then deletes that event only on the exact phrase', async () => {
+    const recorded: Array<Record<string, unknown>> = [];
+    const decisions: Array<{ kind: 'execute'; command: Record<string, unknown>; action: Record<string, unknown> }> = [];
+    const nlSelection = {
+      mode: 'active',
+      decide: async () => ({ kind: 'skip', reason: 'disabled' }),
+      actionsActing: () => true,
+      actionsStillActing: async () => true,
+      logActionUnserved: () => undefined,
+      recordExternalWrite: async (input: Record<string, unknown>) => {
+        recorded.push(input);
+      },
+      recordActionReceipt: async () => undefined,
+      decideAnchoredUndo: async () => decisions.shift(),
+    } as unknown as ConversationRuntimeDeps['nlSelection'];
+    const h = harness({ createdEvent: true, nlSelection });
+    await h.send('내일 오후 3시에 회의 잡아줘 제목 주간 회의');
+    await h.send('승인');
+    await h.send('일정 추가 실행');
+    expect(recorded).toHaveLength(1);
+    // The runtime hands the anchor task id and no undo marker for the create itself.
+    expect(recorded[0]).toMatchObject({ source: 'calendar', entryId: 'calendar.create', outcome: 'SENT', anchorTaskId: expect.any(String) });
+    expect(recorded[0]?.undoOf).toBeUndefined();
+    const receiptId = recorded[0]?.receiptId as string;
+    // The service writes this record; the fake service's decision stands in for "되돌려줘" resolved from it.
+    const seeded = h.sessions.get('sess-1') as Session;
+    h.sessions.set('sess-1', {
+      ...seeded,
+      metadata: {
+        'quoky.lastAction': {
+          byActor: { [OWNER.id]: { entryId: 'calendar.create', source: 'calendar', itemId: receiptId, at: new Date().toISOString(), undoable: true, undone: false, outcome: 'SENT', anchorTaskId: recorded[0]?.anchorTaskId, echoReplyIds: [] } },
+        },
+      },
+    });
+    decisions.push({
+      kind: 'execute',
+      command: { entryId: 'action.undo', args: {}, language: 'ko', externalUndo: { family: 'calendar-create', receiptId } },
+      action: { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'resolved', result: 'asked', reason: 'external-undo', latencyMs: 0 },
+    });
+    advanceMinutes(2);
+    const preview = await h.send('되돌리기');
+    expect(preview.status).toBe('AWAITING_APPROVAL');
+    expect(preview.reply.text).toContain('되돌리기 요청 — 대상은 Quoky가 보낸 기록(영수증)에서 가져왔어요. 문장에서 가져온 대상은 없어요');
+    expect(preview.reply.text).toContain('삭제할 일정: 주간 회의');
+    expect(preview.reply.text).toContain('"일정 삭제 실행"');
+    expect(h.writes.deleteEvent).toHaveLength(0);
+    await h.send('승인');
+    const done = await h.send('일정 삭제 실행');
+    expect(done.reply.text).toContain('방금 추가한 일정을 지워서 되돌렸어요.');
+    expect(h.writes.deleteEvent).toEqual([expect.objectContaining({ eventId: 'abcde12345', expected: expect.objectContaining({ version: '"v-made"' }) })]);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[1]).toMatchObject({ outcome: 'SENT', undoOf: 'calendar.create', entryId: 'external.write' });
+  });
+
+  it('with the calendar writer off, the undo reply is the fixed unavailable text and nothing is prepared', async () => {
+    const decisions: Array<Record<string, unknown>> = [];
+    const nlSelection = {
+      mode: 'active',
+      decide: async () => ({ kind: 'skip', reason: 'disabled' }),
+      actionsActing: () => true,
+      actionsStillActing: async () => true,
+      logActionUnserved: () => undefined,
+      recordActionReceipt: async () => undefined,
+      decideAnchoredUndo: async () => decisions.shift(),
+    } as unknown as ConversationRuntimeDeps['nlSelection'];
+    const h = harness({ writers: ['comment'], nlSelection });
+    decisions.push({
+      kind: 'execute',
+      command: { entryId: 'action.undo', args: {}, language: 'ko', externalUndo: { family: 'calendar-create', receiptId: 'r-1' } },
+      action: { entryId: 'action.undo', risk: 'LOCAL_WRITE', refKind: 'none', resolution: 'resolved', result: 'asked', reason: 'external-undo', latencyMs: 0 },
+    });
+    const reply = await h.send('되돌리기');
+    expect(reply.reply.text).toBe('방금 추가한 일정 되돌리기는 지금 쓸 수 없어요 (캘린더 쓰기가 꺼져 있어요). 캘린더에서 직접 지워 주세요. 아무것도 바꾸지 않았어요.');
+    expect(h.approvals.size).toBe(0);
+    expect(h.totalWrites()).toBe(0);
   });
 });
 

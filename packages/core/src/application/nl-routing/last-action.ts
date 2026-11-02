@@ -68,7 +68,7 @@ export function externalLastActionOf(
  * text: a family opens only when its slice adds it here.
  */
 export type ExternalUndoFamily = 'calendar-create';
-export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze([] as ExternalUndoFamily[]);
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create'] as ExternalUndoFamily[]);
 
 /** The undo family of an external record's entry, or `undefined` when its entry has none. Closed mapping. */
 export function externalUndoFamilyOf(entryId: string): ExternalUndoFamily | undefined {

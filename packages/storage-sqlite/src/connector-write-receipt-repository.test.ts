@@ -179,6 +179,17 @@ describe('SqliteConnectorWriteReceiptRepository (ADR-0112 D3, schema v15)', () =
     }
   });
 
+  it('keeps a bounded post-write version on a SENT receipt and drops a malformed one', async () => {
+    const { repo } = setup();
+    await repo.prepare(receipt({ id: 'v1', idempotencyKey: 'approval:v1-abcd' }));
+    const done = await repo.complete('v1', { status: 'SENT', externalRef: 'abcde12345', version: '"3181161784712000"' }, '2026-10-06T00:01:00.000Z');
+    expect(done?.data).toEqual({ externalRef: 'abcde12345', version: '"3181161784712000"' });
+    expect((await repo.findById('v1', 'actor-1'))?.data.version).toBe('"3181161784712000"');
+    await repo.prepare(receipt({ id: 'v2', idempotencyKey: 'approval:v2-abcd' }));
+    const odd = await repo.complete('v2', { status: 'SENT', externalRef: 'abcde12346', version: 'has a space' }, '2026-10-06T00:01:00.000Z');
+    expect(odd?.data).toEqual({ externalRef: 'abcde12346' });
+  });
+
   it('findById returns a receipt only to the actor that owns it (ADR-0112 amendment 3)', async () => {
     const { repo } = setup();
     await repo.prepare(receipt());

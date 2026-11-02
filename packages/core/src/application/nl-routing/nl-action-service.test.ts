@@ -326,6 +326,36 @@ describe('references, questions and the audit line', () => {
     expect(await w.decide('되돌려줘', { now: at(2) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '되돌린 작업은 다시 되돌릴 수 없어요.' });
   });
 
+  it('"되돌려줘" after an approved calendar create is an external undo at the local level, with the receipt id only (amendment 3, O1)', async () => {
+    const calendar = (overrides: Record<string, unknown> = {}) => ({ entryId: 'calendar.create' as const, source: 'calendar' as const, itemId: 'receipt-1', at: at(0), undoable: true, undone: false, outcome: 'SENT' as const, anchorTaskId: 'task-1', echoReplyIds: [], ...overrides });
+    const local = world({ level: 'local', script: () => out('action.undo') });
+    local.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
+    expect(await local.decide('되돌려줘', { now: at(1) })).toMatchObject({
+      kind: 'execute',
+      command: { entryId: 'action.undo', externalUndo: { family: 'calendar-create', receiptId: 'receipt-1' } },
+      action: { entryId: 'action.undo', result: 'asked', reason: 'external-undo' },
+    });
+    // Older than 10 minutes without a reply to its echo: the same stale answer as a local undo, nothing external.
+    const stale = world({ level: 'local', script: () => out('action.undo') });
+    stale.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
+    expect(await stale.decide('되돌려줘', { now: at(12) })).toMatchObject({ kind: 'ask' });
+    // Shadow never acts.
+    const shadow = world({ level: 'shadow', script: () => out('action.undo') });
+    shadow.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
+    expect(await shadow.decide('되돌려줘', { now: at(1) })).toEqual({ kind: 'none' });
+    // An uncertain write and an undo are answered, never executed.
+    for (const record of [calendar({ outcome: 'UNCERTAIN', undoable: false }), calendar({ entryId: 'action.undo', undoable: false, undoOf: 'calendar.create' }), calendar({ entryId: 'external.write', undoable: false })]) {
+      const w = world({ level: 'local', script: () => out('action.undo') });
+      w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', record as never, at(0)));
+      const decision = await w.decide('되돌려줘', { now: at(1) });
+      expect(decision.kind).toBe('ask');
+    }
+    // The anchored command takes the same path.
+    const anchored = world({ level: 'local', script: [] });
+    anchored.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
+    expect(await anchored.service.decideAnchoredUndo({ direct: true, text: NL_ACTION_UNDO_COMMAND, session: anchored.session(), actor: anchored.actor(), now: at(1), entries: ALL })).toMatchObject({ kind: 'execute', command: { externalUndo: { receiptId: 'receipt-1' } } });
+  });
+
   it('"되돌려줘" as a reply to an older echo asks, never undoes something else', async () => {
     const w = world({ script: [out('action.undo')] });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'todo.add', source: 'todo', itemId: 'todo-9', at: at(0), undoable: true, undone: false, echoReplyIds: ['echo-new'] }, at(0)));
@@ -484,10 +514,15 @@ describe('receipts: lastAction, the echo label and the delivery binding', () => 
     const message = { id: 'in-1', context: { platform: 'test', channelId: 'dm' } };
     await w.service.recordActionReceipt({ session: w.session(), actor: w.actor(), message, now: at(0), action: { entryId: 'todo.add', result: 'executed', source: 'todo', itemId: 'todo-7', label: 7, version: at(0), undoable: true } });
     await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
-    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', undoable: false, outcome: 'SENT', requestId: 'in-2' } } });
-    // Amendment 3: the anchor task id is kept (an id only) and the record stays not undoable while no family is open.
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', undoable: true, outcome: 'SENT', requestId: 'in-2' } } });
+    // Amendment 3: the anchor task id is kept (an id only); a SENT calendar create is undoable, an UNCERTAIN one or a delete is not.
     await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-3' }, now: at(2), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-2', outcome: 'SENT', anchorTaskId: 'task-9' });
-    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { itemId: 'receipt-2', undoable: false, anchorTaskId: 'task-9' } } });
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { itemId: 'receipt-2', undoable: true, anchorTaskId: 'task-9' } } });
+    await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-4' }, now: at(3), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-3', outcome: 'UNCERTAIN', anchorTaskId: 'task-10' });
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { itemId: 'receipt-3', undoable: false, outcome: 'UNCERTAIN' } } });
+    // The undo itself is recorded as a non-undoable action.undo of that entry.
+    await w.service.recordExternalWrite({ session: w.session(), actor: w.actor(), message: { id: 'in-5' }, now: at(4), source: 'calendar', entryId: 'external.write', receiptId: 'receipt-4', outcome: 'SENT', anchorTaskId: 'task-11', undoOf: 'calendar.create' });
+    expect(w.session().metadata?.[LAST_ACTION_METADATA_KEY]).toMatchObject({ byActor: { owner: { entryId: 'action.undo', itemId: 'receipt-4', undoable: false, undoOf: 'calendar.create' } } });
     const off = world({ level: 'off', script: [] });
     await off.service.recordExternalWrite({ session: off.session(), actor: off.actor(), message: { id: 'in-2' }, now: at(1), source: 'calendar', entryId: 'calendar.create', receiptId: 'receipt-1', outcome: 'SENT' });
     expect(off.session().metadata).toBeUndefined();

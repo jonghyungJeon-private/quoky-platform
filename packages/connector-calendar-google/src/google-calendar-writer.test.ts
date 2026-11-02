@@ -122,6 +122,16 @@ describe('GoogleCalendarWriter — create (ADR-0110 amendment D2-D5)', () => {
     expect(new URLSearchParams(String(google.tokenCalls[0]!.init?.body)).get('grant_type')).toBe('refresh_token');
   });
 
+  it('reports the event\'s entity tag as the post-create version, so its undo can compare-and-set (ADR-0112 amendment 3)', async () => {
+    const id = googleCalendarEventIdFor(KEY);
+    const tagged = fakeGoogle([json(200, { id, htmlLink: EVENT_LINK, etag: '"3181161784712000"' })]);
+    expect(await writer(tagged.fetchImpl).createEvent({ draft: DRAFT, idempotencyKey: KEY })).toEqual({ status: 'SENT', externalRef: id, url: EVENT_LINK, version: '"3181161784712000"' });
+    for (const etag of ['', 'has space', 42, 'x'.repeat(201)]) {
+      const odd = fakeGoogle([json(200, { id, etag })]);
+      expect(await writer(odd.fetchImpl).createEvent({ draft: DRAFT, idempotencyKey: KEY })).toEqual({ status: 'SENT', externalRef: id });
+    }
+  });
+
   it('derives a stable base32hex event id per idempotency key', () => {
     const id = googleCalendarEventIdFor(KEY);
     expect(id).toMatch(/^[0-9a-v]{32}$/);

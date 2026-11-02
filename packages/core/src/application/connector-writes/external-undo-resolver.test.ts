@@ -69,7 +69,7 @@ function resolver(options: { receipts?: ConnectorWriteReceipt[]; anchors?: Recor
     receipts: { findById: async (id, actorId) => receipts.find((row) => row.id === id && row.actorId === actorId) ?? null },
     tasks: { get: async (id) => (anchors[id] === undefined ? null : ({ id, metadata: { anchor: anchors[id] } } as unknown as Task)) },
     readAnchor: (task) => (task.metadata as { anchor?: ConnectorWriteAnchor } | undefined)?.anchor,
-    ...(options.open === false ? {} : { capabilities: ['calendar-create'] as const }),
+    capabilities: options.open === false ? [] : (['calendar-create'] as const),
   });
 }
 
@@ -87,7 +87,7 @@ describe('ExternalUndoResolver (amendment 3: lastAction -> receipt -> anchor -> 
     expect(Object.keys((result as { draft: object }).draft).sort()).toEqual(['kind', 'receiptId']);
   });
 
-  it('resolves nothing while the capability set is empty (the foundation default)', async () => {
+  it('resolves nothing while the family is not in the capability set', async () => {
     expect(await resolver({ open: false }).resolve(input(record()))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
   });
 

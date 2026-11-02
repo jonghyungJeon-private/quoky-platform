@@ -34,23 +34,28 @@ function external(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-describe('the external undo capability gate (amendment 3, foundation slice)', () => {
-  it('is a closed, frozen set with nothing open in this slice', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual([]);
+describe('the external undo capability gate (amendment 3)', () => {
+  it('is a closed, frozen set; slice 3 opens calendar-create only', () => {
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create']);
     expect(Object.isFrozen(EXTERNAL_UNDO_CAPABILITIES)).toBe(true);
-    expect(isExternalUndoOpen('calendar-create')).toBe(false);
+    expect(isExternalUndoOpen('calendar-create')).toBe(true);
     expect(isExternalUndoOpen(undefined, ['calendar-create'])).toBe(false);
-    expect(isExternalUndoOpen('calendar-create', ['calendar-create'])).toBe(true);
+    expect(isExternalUndoOpen('calendar-create', [])).toBe(false);
     expect(externalUndoFamilyOf('calendar.create')).toBe('calendar-create');
     expect(externalUndoFamilyOf('external.write')).toBeUndefined();
     expect(externalUndoFamilyOf('slack.post')).toBeUndefined();
   });
 
-  it('keeps an external record not undoable whatever the stored flag says, and keeps its anchor task id', () => {
-    const record = lastActionOf(external());
-    expect(record?.undoable).toBe(false);
-    expect(record?.anchorTaskId).toBe('task-1');
-    expect(record?.outcome).toBe('SENT');
+  it('opens only for a SENT write of an open family; every other external record keeps the not-undoable state', () => {
+    expect(lastActionOf(external())?.undoable).toBe(true);
+    expect(lastActionOf(external({ outcome: 'UNCERTAIN' }))?.undoable).toBe(false);
+    expect(lastActionOf(external({ outcome: 'NOT_SENT' }))?.undoable).toBe(false);
+    expect(lastActionOf(external({ undoable: false }))?.undoable).toBe(false);
+    // A family with no undo built (an update, a delete, a Slack post, a Jira write) is never opened by a stored flag.
+    expect(lastActionOf(external({ entryId: 'external.write' }))?.undoable).toBe(false);
+    expect(lastActionOf(external({ entryId: 'slack.post', source: 'slack' }))?.undoable).toBe(false);
+    expect(lastActionOf(external({ entryId: 'external.write', source: 'jira' }))?.undoable).toBe(false);
+    expect(lastActionOf(external())?.anchorTaskId).toBe('task-1');
   });
 
   it('drops a malformed anchor task id and never keeps one on a local record', () => {
@@ -62,19 +67,32 @@ describe('the external undo capability gate (amendment 3, foundation slice)', ()
     expect(local?.anchorTaskId).toBeUndefined();
   });
 
-  it('round-trips the anchor task id through the session metadata and still answers the family copy at undo', () => {
+  it('round-trips the anchor task id and resolves an open record to its receipt id (never from words)', () => {
     const record = lastActionOf(external());
     expect(record).toBeDefined();
     const value = withLastAction(undefined, ACTOR, record as LastActionRecord, NOW);
     const view = readLastAction(value, ACTOR, NOW);
     expect(view?.record.anchorTaskId).toBe('task-1');
     expect(readLastAction(value, 'actor-2', NOW)).toBeUndefined();
-    expect(resolveUndo({ lastAction: view })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+    expect(resolveUndo({ lastAction: view })).toEqual({
+      kind: 'unresolved',
+      outcome: 'external',
+      external: { source: 'calendar', outcome: 'SENT', open: { family: 'calendar-create', receiptId: 'receipt-1' } },
+    });
   });
 
-  it('a record named action.undo is never undoable, external or not', () => {
-    const record = lastActionOf(external({ entryId: 'action.undo' }));
+  it('answers the family copy, not an undo, for a family that is not open, an uncertain write and an undone record', () => {
+    const view = (overrides: Record<string, unknown>) => readLastAction(withLastAction(undefined, ACTOR, lastActionOf(external(overrides)) as LastActionRecord, NOW), ACTOR, NOW);
+    expect(resolveUndo({ lastAction: view({ entryId: 'external.write' }) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+    expect(resolveUndo({ lastAction: view({ outcome: 'UNCERTAIN' }) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'UNCERTAIN' } });
+    expect(resolveUndo({ lastAction: view({ undone: true }) })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+  });
+
+  it('a record named action.undo is never undoable and is an undo of an undo', () => {
+    const record = lastActionOf(external({ entryId: 'action.undo', undoOf: 'calendar.create' }));
     expect(record?.undoable).toBe(false);
+    const view = readLastAction(withLastAction(undefined, ACTOR, record as LastActionRecord, NOW), ACTOR, NOW);
+    expect(resolveUndo({ lastAction: view })).toEqual({ kind: 'unresolved', outcome: 'undo-of-undo' });
   });
 });
 

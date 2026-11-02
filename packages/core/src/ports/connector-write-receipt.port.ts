@@ -31,6 +31,8 @@ export type ConnectorWriteReceiptStatus = (typeof ConnectorWriteReceiptStatus)[k
 export interface ConnectorWriteReceiptData {
   externalRef?: string;
   url?: string;
+  /** The provider's opaque version right after the write (a calendar create), for the undo's compare-and-set. */
+  version?: string;
   reason?: ConnectorWriteNotSentReason | ConnectorWriteUncertainReason | 'INTERRUPTED';
 }
 

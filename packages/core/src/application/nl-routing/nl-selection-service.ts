@@ -2057,6 +2057,18 @@ export class NlSelectionService implements TurnDeliveryObserver {
   ): Promise<NlSelectionDecision> {
     const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs, ...correlationOf(turn) };
     const resolved = resolveUndo(reference);
+    // ADR-0112 amendment 3 (O1): the last action is an approved external write whose family undo is built. Reachable at
+    // `local` too; the target is the receipt id of this session's own `lastAction`, never anything from the words. Nothing
+    // is written here: the runtime hands the draft to the connector-write flow, which previews it and asks for approval.
+    if (resolved.kind === 'unresolved' && resolved.outcome === 'external' && resolved.external?.open !== undefined) {
+      const audit: NlActionAudit = { ...base, resolution: 'resolved', result: 'asked', reason: 'external-undo' };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      if (!this.actionCaps.allows(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now))) {
+        return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+      }
+      this.actionCaps.note(turn.actor.id, 'LOCAL_WRITE', Date.parse(turn.now));
+      return { kind: 'execute', command: { entryId: 'action.undo', args: {}, language, externalUndo: resolved.external.open }, action: audit };
+    }
     if (resolved.kind === 'unresolved') {
       const audit: NlActionAudit = { ...base, resolution: resolved.outcome === 'stale' ? 'stale' : 'none', result: 'refused', reason: resolved.outcome };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });

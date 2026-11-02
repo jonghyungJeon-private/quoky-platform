@@ -22,7 +22,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - The owner ratified O1-O7: undo is reachable at the `local` NL-actions level whenever connector writes are enabled (no new
   flag; target only from the session's `lastAction` receipt), calendar update/cancel inverses, Jira comment delete and
   transition revert, `restoreEvent`, CRITICAL approval + exact phrase kept for every undo. DECISIONS.md has the text.
-- Build order: foundation (inert), calendar-create undo, then Slack delete and the amendment-3 families as later slices.
+- Built so far (branch `claude/r3-undo`): the inert foundation (receipt `findById`, `lastAction.anchorTaskId`,
+  `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo (capability `calendar-create`
+  open). Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
+  are later slices; their families stay out of the capability set until built.
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 

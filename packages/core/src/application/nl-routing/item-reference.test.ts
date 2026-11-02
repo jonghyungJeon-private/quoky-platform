@@ -336,7 +336,10 @@ describe('an external write is the last action, never undoable (ADR-0112 amendme
   });
 
   it('a stored external record cannot be made undoable; one without an outcome, or a local one with the external entry, is dropped', () => {
-    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
+    // A family with no undo built (here the generic external entry) stays closed; calendar.create SENT is open (amendment 3).
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0, { entryId: LAST_ACTION_EXTERNAL_ENTRY }), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0, { outcome: 'UNCERTAIN' }), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(false);
+    expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), undoable: true } } }, ACTOR, at(1))?.record.undoable).toBe(true);
     const { outcome: _dropped, ...withoutOutcome } = external(0);
     expect(readLastAction({ byActor: { [ACTOR]: withoutOutcome } }, ACTOR, at(1))).toBeUndefined();
     expect(readLastAction({ byActor: { [ACTOR]: { ...external(0), source: 'todo', entryId: LAST_ACTION_EXTERNAL_ENTRY } } }, ACTOR, at(1))).toBeUndefined();

@@ -20,7 +20,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Docs.** Undo of approved external connector writes: O1-O7 recorded in DECISIONS.md (reachable at `local` with connector
   writes enabled; calendar update/cancel inverses; Jira comment delete; Jira transition revert; `restoreEvent`; CRITICAL
-  approval and exact phrases kept). No code in this entry.
+  approval and exact phrases kept).
+- **Added (foundation, inert).** `ConnectorWriteReceiptRepository.findById(id, actorId)`; `lastAction.anchorTaskId`; a Core
+  `ExternalUndoResolver` (lastAction -> receipt -> anchor -> `{kind, receiptId}`); the receipt-sourced banner; a closed
+  capability set (`EXTERNAL_UNDO_CAPABILITIES`) that gates which external families may be undone.
+- **Added (calendar-create undo, S9/C-1).** The calendar writer reports the event's entity tag as `version` on a create
+  (kept on the receipt); "되돌려줘" after an approved create previews a `CALENDAR_EVENT_DELETE` bound to that receipt and
+  version (preview, CRITICAL approval, `일정 삭제 실행`, receipt). Refused when the event was edited, is gone, the undo is
+  older than 10 minutes, or it is another session or actor. Reachable at the `local` level when the calendar writer is
+  bound; otherwise a fixed "not available" reply. The undo is recorded as a non-undoable `action.undo`.
 
 ## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
 

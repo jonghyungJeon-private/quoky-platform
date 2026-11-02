@@ -81,6 +81,7 @@ export type ConnectorWriteDraft =
   | { readonly kind: 'calendar-create'; readonly event: CalendarEventDraft }
   | { readonly kind: 'calendar-update'; readonly ref: CalendarEventReference; readonly changes: CalendarDraftChanges }
   | { readonly kind: 'calendar-delete'; readonly ref: CalendarEventReference }
+  | ExternalUndoDraft
   | { readonly kind: 'usage'; readonly topic: ConnectorWriteUsageTopic };
 
 /**

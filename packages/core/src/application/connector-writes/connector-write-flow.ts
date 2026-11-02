@@ -43,6 +43,7 @@ import {
   type ConnectorWriteUsageTopic,
 } from './connector-write-draft';
 import { ConnectorWriteExecutor, ConnectorWriteRequestError } from './connector-write-executor';
+import { ExternalUndoResolver } from './external-undo-resolver';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
 import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from '../session-write-lock';
 
@@ -163,7 +164,13 @@ export type ConnectorWritePreview =
       readonly after: { readonly title: string; readonly time: CalendarEventTime; readonly location?: string };
       readonly timeZone: string;
     }
-  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly before: ConnectorWriteEventSummary; readonly timeZone: string };
+  | {
+      readonly operation: 'CALENDAR_EVENT_DELETE';
+      readonly before: ConnectorWriteEventSummary;
+      readonly timeZone: string;
+      /** The target came from Quoky's own SENT receipt (an undo), not from the owner's words: the card shows the banner. */
+      readonly receiptSourced?: true;
+    };
 
 /** Where an undated reference's candidates came from ({@link ConnectorWriteStep} `choice.basis`). */
 export type ConnectorWriteChoiceBasis = 'listed' | 'written' | 'nearby';
@@ -209,6 +216,11 @@ export interface ConnectorWriteAnchor {
     readonly reason?: string;
   };
   readonly closedReason?: ConnectorWriteCloseReason;
+  /**
+   * ADR-0112 amendment 3: set when this write is the undo of an earlier SENT write of this actor (its entry and receipt id).
+   * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
+   */
+  readonly undoOf?: { readonly entryId: 'calendar.create'; readonly receiptId: Id };
 }
 
 /** What `releaseExpired` released: the lapsed anchor's state and the session pointer after the release. */
@@ -271,7 +283,13 @@ export type ConnectorWriteRefusal =
   | 'grant-expired'
   /** The grant was withdrawn (거절/취소 after approval) before it could run (Codex P1 on 55c5a2f). */
   | 'grant-revoked'
-  | 'choice-expired';
+  | 'choice-expired'
+  /** ADR-0112 amendment 3: the undo has nothing to act on (no receipt of this session's own last write, or it is stale). */
+  | 'undo-nothing'
+  /** The event the receipt named is already gone. */
+  | 'undo-event-gone'
+  /** The event changed after it was created (version, time or title differ from what Quoky wrote). */
+  | 'undo-event-changed';
 
 /** What one flow step produced; the runtime renders it through `ResponseComposer` (reply text lives there). */
 export type ConnectorWriteStep =
@@ -1093,6 +1111,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           { operation: 'CALENDAR_EVENT_CREATE', event: draft.event, timeZone: this.deps.timeZone },
         );
       }
+      case 'calendar-create-undo':
+        return this.proposeCalendarCreateUndo(input, draft.receiptId);
       case 'calendar-update':
       case 'calendar-delete': {
         const changes = draft.kind === 'calendar-update' ? draft.changes : undefined;
@@ -1573,6 +1593,68 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     }
   }
 
+  /**
+   * ADR-0112 amendment 1 S9 / amendment 3: the undo of an NL-created event. The draft carries a receipt id only; the
+   * resolver proves it is this session's own last write (same actor, SENT, same session's anchor). The event id comes from
+   * that receipt, never from text. The event must still be exactly what Quoky wrote: the version, the title and the time
+   * equal the receipt and the approved draft, else nothing is proposed. The delete itself is the existing
+   * `CALENDAR_EVENT_DELETE` flow with `If-Match` on Quoky's own post-create version.
+   */
+  private async proposeCalendarCreateUndo(input: FlowInput, receiptId: Id): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.calendarEvents;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'calendar' });
+    // The live session row: the lastAction the resolver reads must be the one the owner's last turn left.
+    const live = (await this.deps.store.sessions.get(input.session.id)) ?? input.session;
+    const resolver = new ExternalUndoResolver({
+      receipts: this.deps.receipts,
+      tasks: this.deps.store.tasks,
+      readAnchor: (task) => {
+        const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+        return anchor?.kind === CONNECTOR_WRITE_ANCHOR_KIND ? anchor : undefined;
+      },
+    });
+    const resolved = await resolver.resolve({ session: live, actor: input.actor, now: input.now });
+    if (resolved.kind !== 'resolved' || resolved.family !== 'calendar-create' || resolved.draft.receiptId !== receiptId) {
+      return refused('undo-nothing');
+    }
+    const created = resolved.anchor.payload;
+    const version = resolved.receipt.data.version;
+    if (created?.operation !== 'CALENDAR_EVENT_CREATE' || !isEventVersion(version)) return refused('undo-nothing');
+    const eventId = resolved.receipt.data.externalRef as string;
+    let event: CalendarEvent | undefined;
+    try {
+      event = await this.findCreatedEvent(eventId, created.draft.time);
+    } catch {
+      return refused('calendar-read-failed');
+    }
+    if (event === undefined) return refused('undo-event-gone');
+    if (event.version !== version || !sameAsDraft(event, created.draft)) return refused('undo-event-changed');
+    const summary = summaryOf(event);
+    const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version };
+    const step = await this.propose(
+      input,
+      'calendar',
+      writer.source,
+      `${writer.target}/${event.id}`,
+      { operation: 'CALENDAR_EVENT_DELETE', eventId: event.id, expected },
+      { operation: 'CALENDAR_EVENT_DELETE', before: summary, timeZone: this.deps.timeZone, receiptSourced: true },
+      undefined,
+      { entryId: 'calendar.create', receiptId: resolved.receipt.id },
+    );
+    return step;
+  }
+
+  /** The created event by id: a read of the day around its approved time (never a listing the owner chose from). */
+  private async findCreatedEvent(eventId: string, time: CalendarEventTime): Promise<CalendarEvent | undefined> {
+    const startMs = time.allDay ? Date.parse(`${time.startDate}T00:00:00Z`) : Date.parse(time.start);
+    const endMs = time.allDay ? Date.parse(`${time.endDate}T00:00:00Z`) : Date.parse(time.end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return undefined;
+    const day = 24 * 60 * 60_000;
+    const events = await this.readWindow({ from: new Date(startMs - day).toISOString(), to: new Date(endMs + day).toISOString() });
+    return events.find((event) => event.id === eventId);
+  }
+
   private async proposeEventChange(
     input: FlowInput,
     mode: 'update' | 'delete',
@@ -1640,6 +1722,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     payload: ConnectorWritePayload,
     preview: ConnectorWritePreview,
     inheritedPrevious?: Id,
+    undoOf?: ConnectorWriteAnchor['undoOf'],
   ): Promise<ConnectorWriteStep> {
     const operation = payload.operation;
     const payloadSha256 = connectorWritePayloadSha256(operation, target, sendableOf(payload));
@@ -1688,6 +1771,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       createdAt: input.now,
       updatedAt: input.now,
       ...(previous ? { previousActiveTaskId: previous } : {}),
+      ...(undoOf ? { undoOf } : {}),
     };
     try {
       await this.createAnchor(input.session, anchor, input.now, input.held);
@@ -1940,6 +2024,14 @@ function isExpectation(value: CalendarEventExpectation | undefined): value is Ca
 }
 
 /** A usable provider event version (printable ASCII, bounded) — the condition every update / delete is sent under. */
+/** The live event is still exactly the event Quoky was approved to create: the same title, start and end. */
+function sameAsDraft(event: CalendarEvent, draft: CalendarEventDraft): boolean {
+  if (event.title !== draft.title) return false;
+  const time = draft.time;
+  if (time.allDay) return event.allDay && event.start === time.startDate && event.end === time.endDate;
+  return !event.allDay && Date.parse(event.start) === Date.parse(time.start) && Date.parse(event.end) === Date.parse(time.end);
+}
+
 function isEventVersion(value: unknown): value is string {
   return typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
 }

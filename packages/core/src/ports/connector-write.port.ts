@@ -71,12 +71,22 @@ export type ConnectorWriteOutcome =
       readonly externalRef: string;
       /** A link to the written item when the provider gives one (`https:` only). */
       readonly url?: string;
+      /**
+       * The provider's opaque version of what was just written (a calendar create: the event's entity tag), so a later
+       * inverse can compare-and-set on Quoky's own post-write version (ADR-0112 amendment 3). Never shown to the owner.
+       */
+      readonly version?: string;
     }
   | { readonly status: 'NOT_SENT'; readonly reason: ConnectorWriteNotSentReason; readonly retryable: false }
   | { readonly status: 'UNCERTAIN'; readonly reason: ConnectorWriteUncertainReason };
 
-export function connectorWriteSent(externalRef: string, url?: string): ConnectorWriteOutcome {
-  return url === undefined ? { status: 'SENT', externalRef } : { status: 'SENT', externalRef, url };
+export function connectorWriteSent(externalRef: string, url?: string, version?: string): ConnectorWriteOutcome {
+  return {
+    status: 'SENT',
+    externalRef,
+    ...(url !== undefined ? { url } : {}),
+    ...(version !== undefined ? { version } : {}),
+  };
 }
 
 export function connectorWriteNotSent(reason: ConnectorWriteNotSentReason): ConnectorWriteOutcome {
