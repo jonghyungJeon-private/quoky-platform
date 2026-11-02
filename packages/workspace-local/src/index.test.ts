@@ -85,6 +85,19 @@ describe('LocalCloneWorkspaceProvider.readProjectFiles (ADR-0019, gated read-onl
     expect(pkg?.content.length).toBe(8000);
   });
 
+  it('caps by code points, so an astral character is never cut in half or counted twice', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'package.json'), '😀'.repeat(9000));
+    const readout = await provider.readProjectFiles(dir);
+    const pkg = readout.files.find((f) => f.path === 'package.json');
+    expect(pkg?.truncated).toBe(true);
+    expect(Array.from(pkg?.content ?? '').length).toBe(8000);
+    expect(pkg?.content).toBe('😀'.repeat(8000));
+    writeFileSync(join(dir, 'package.json'), '😀'.repeat(8000));
+    const exact = (await provider.readProjectFiles(dir)).files.find((f) => f.path === 'package.json');
+    expect(exact?.truncated).toBe(false);
+  });
+
   it('includes a 2-level tree (root + apps/ + packages/), excluding ignored dirs', async () => {
     const dir = tempDir();
     mkdirSync(join(dir, 'packages', 'core'), { recursive: true });

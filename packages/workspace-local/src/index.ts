@@ -51,6 +51,14 @@ const ANALYSIS_ALLOW = new Set([
 /** Per-file read cap for analysis. */
 const MAX_FILE_BYTES = 8000;
 
+/** The first `max` code points of `text` (the cap counts code points, never UTF-16 units, so a pair is never cut). */
+function cutCodePoints(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  let end = 0;
+  for (let taken = 0; taken < max && end < text.length; taken += 1) end += (text.codePointAt(end) ?? 0) > 0xffff ? 2 : 1;
+  return end >= text.length ? { text, truncated: false } : { text: text.slice(0, end), truncated: true };
+}
+
 /** Never read env / secret-looking files (ADR-0019) — the shared core name rule (ADR-0099 D6, QA-V2-CL-02). */
 const isSecretName = isSecretLookingFileName;
 
@@ -220,10 +228,8 @@ export class LocalCloneWorkspaceProvider implements WorkspaceProvider {
       try {
         const st = statSync(full);
         if (!st.isFile()) continue;
-        let content = readFileSync(full, 'utf8');
-        const truncated = content.length > MAX_FILE_BYTES;
-        if (truncated) content = content.slice(0, MAX_FILE_BYTES);
-        files.push({ path: name, content, truncated });
+        const cut = cutCodePoints(readFileSync(full, 'utf8'), MAX_FILE_BYTES);
+        files.push({ path: name, content: cut.text, truncated: cut.truncated });
       } catch {
         /* skip unreadable file */
       }
