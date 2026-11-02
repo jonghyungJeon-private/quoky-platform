@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "D4 gold cases for the dedicated D4 classifier (owner decision of 2026-10-27, after the 32a2c81f gates: D4 moves to the next merge as a small classifier call answering 1 / 2 / neither, outside the router prompt, with its own eval and gate). Scored only by `eval:nl --mode help-scope` (not by intent or read-regression: the router no longer sees the open question). The cases keep their owner approvals in their notes: ctx-d4-001..008 approved in the D12 batch of 2026-10-26, ctx-d4-009..034 in the D12 batch of 2026-10-27, and the 21 non-answers hs-na-001..022 (agent-drafted 2026-11-02) by the owner on 2026-11-02, \"18번 빼고 21건 승인\": hs-na-018 (\"슬랙 계정 비밀번호는 어떻게 바꿔?\") was dropped because option 2 and neither are both defensible readings of it. Schema as nl-intent.context.v1.json plus `openQuestion` (the help-scope question shown: sources, language) and `expectAnswer` (the option a worded reply means; absent = not an answer; `expect` is the router's reading otherwise).",
+  "description": "D4 gold cases for the dedicated D4 classifier (owner decision of 2026-10-27, after the 32a2c81f gates: D4 moves to the next merge as a small classifier call answering 1 / 2 / neither, outside the router prompt, with its own eval and gate). Scored only by `eval:nl --mode help-scope` (not by intent or read-regression: the router no longer sees the open question). The cases keep their owner approvals in their notes: ctx-d4-001..008 approved in the D12 batch of 2026-10-26, ctx-d4-009..034 in the D12 batch of 2026-10-27, and the 21 non-answers hs-na-001..022 (agent-drafted 2026-11-02) by the owner on 2026-11-02, \"18번 빼고 21건 승인\": hs-na-018 (\"슬랙 계정 비밀번호는 어떻게 바꿔?\") was dropped because option 2 and neither are both defensible readings of it. The 12 held-out answers hs-ho-001..012 (6 per option) were drafted after the help-scope.v1 gate failed and before any help-scope.v2 run, in wordings unlike the missed answers, and owner-approved on 2026-11-02 (\"12건 그대로 승인\"). Schema as nl-intent.context.v1.json plus `openQuestion` (the help-scope question shown: sources, language) and `expectAnswer` (the option a worded reply means; absent = not an answer; `expect` is the router's reading otherwise).",
   "cases": [
     {
       "id": "ctx-d4-001",
@@ -631,6 +631,144 @@
       },
       "expect": "none",
       "note": "D4 non-answer: an off-topic reply that mentions the app name [agent-drafted 2026-11-02 for the D4 classifier corpus, owner-approved 2026-11-02 (\"18번 빼고 21건 승인\")]"
+    },
+    {
+      "id": "hs-ho-001",
+      "text": "봇한테 시켜서 보는 거",
+      "openQuestion": {
+        "sources": "슬랙",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "held-out answer for help-scope.v2: option 1 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-002",
+      "text": "the way where you pull it up for me",
+      "openQuestion": {
+        "sources": "Jira",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "held-out answer for help-scope.v2: option 1 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-003",
+      "text": "메신저로 물어보면 알려주는 그거",
+      "openQuestion": {
+        "sources": "구글 캘린더",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "held-out answer for help-scope.v2: option 1 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-004",
+      "text": "through Quoky, not the website",
+      "openQuestion": {
+        "sources": "Google Drive",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "held-out answer for help-scope.v2: option 1 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-005",
+      "text": "AI 비서로 확인하는 쪽이요",
+      "openQuestion": {
+        "sources": [
+          "지라",
+          "깃허브"
+        ],
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "held-out answer for help-scope.v2: option 1 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-006",
+      "text": "the assistant side",
+      "openQuestion": {
+        "sources": "Confluence",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 1,
+      "note": "held-out answer for help-scope.v2: option 1 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-007",
+      "text": "지메일 홈페이지에서 직접 설정하는 거",
+      "openQuestion": {
+        "sources": "지메일",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "held-out answer for help-scope.v2: option 2 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-008",
+      "text": "Slack's own preferences menu",
+      "openQuestion": {
+        "sources": "Slack",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "held-out answer for help-scope.v2: option 2 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-009",
+      "text": "드라이브 앱 들어가서 하는 법",
+      "openQuestion": {
+        "sources": "드라이브",
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "held-out answer for help-scope.v2: option 2 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-010",
+      "text": "how to do it in the Calendar app on my phone",
+      "openQuestion": {
+        "sources": "Google Calendar",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "held-out answer for help-scope.v2: option 2 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-011",
+      "text": "구글 쪽 앱에서 직접 바꾸는 방법",
+      "openQuestion": {
+        "sources": [
+          "구글 캘린더",
+          "지메일"
+        ],
+        "language": "ko"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "held-out answer for help-scope.v2: option 2 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
+    },
+    {
+      "id": "hs-ho-012",
+      "text": "GitHub's settings page itself",
+      "openQuestion": {
+        "sources": "GitHub",
+        "language": "en"
+      },
+      "expect": "none",
+      "expectAnswer": 2,
+      "note": "held-out answer for help-scope.v2: option 2 [agent-drafted 2026-11-02 after the v1 gate failed on option-1 answers, before any v2 run; owner-approved as-is on 2026-11-02 (\"12건 그대로 승인\")]"
     }
   ]
 }

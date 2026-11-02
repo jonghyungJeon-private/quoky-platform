@@ -10,7 +10,7 @@ const golds = (JSON.parse(readFileSync(goldPath, 'utf8')) as { cases: Array<{ te
 
 describe('buildHelpScopeClassifierPrompt', () => {
   it('names its version', () => {
-    expect(NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION).toBe('help-scope.v1');
+    expect(NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION).toBe('help-scope.v2');
   });
 
   it('carries both displayed option texts and the reply inside delimiters, for Korean and English questions', () => {

@@ -73,16 +73,19 @@ async function strictRun(provider: () => AiProvider, runs = 1): Promise<{ code: 
 }
 
 describe('the help-scope corpus', () => {
-  it('is the 55 owner-approved cases: 26 answers (13 -> 1, 13 -> 2) and 29 non-answers, schema-valid', () => {
-    expect(corpus.cases).toHaveLength(55);
-    expect(answers.filter((golden) => golden.expectAnswer === 1)).toHaveLength(13);
-    expect(answers.filter((golden) => golden.expectAnswer === 2)).toHaveLength(13);
+  it('is the 67 owner-approved cases: 38 answers (19 -> 1, 19 -> 2) and 29 non-answers, schema-valid', () => {
+    expect(corpus.cases).toHaveLength(67);
+    expect(answers.filter((golden) => golden.expectAnswer === 1)).toHaveLength(19);
+    expect(answers.filter((golden) => golden.expectAnswer === 2)).toHaveLength(19);
     expect(nonAnswers).toHaveLength(29);
     expect(validateHelpScopeCorpus(corpus)).toEqual([]);
-    expect(corpus.cases.every((golden) => /^(ctx-d4|hs-na)-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true)).toBe(true);
+    expect(corpus.cases.every((golden) => /^(ctx-d4|hs-na|hs-ho)-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true)).toBe(true);
     // Owner decision of 2026-11-02 ("18번 빼고 21건 승인"): the 21 drafted non-answers joined, hs-na-018 did not.
     expect(corpus.cases.filter((golden) => golden.id.startsWith('hs-na-'))).toHaveLength(21);
     expect(corpus.cases.some((golden) => golden.id === 'hs-na-018')).toBe(false);
+    // Owner decision of 2026-11-02 ("12건 그대로 승인"): 12 held-out answers for help-scope.v2, 6 per option.
+    expect(corpus.cases.filter((golden) => golden.id.startsWith('hs-ho-') && golden.expectAnswer === 1)).toHaveLength(6);
+    expect(corpus.cases.filter((golden) => golden.id.startsWith('hs-ho-') && golden.expectAnswer === 2)).toHaveLength(6);
   });
 
   it('the validator names a malformed case', () => {
@@ -124,18 +127,18 @@ describe('scoring and the gate (owner decision of 2026-11-02)', () => {
     });
 
   it('a perfect run passes', () => {
-    expect(summarizeHelpScope(run())).toMatchObject({ answers: { hits: 26, total: 26, rate: 1 }, nonAnswers: { hits: 29, total: 29 }, wrongCaptures: 0, errors: 0, gatePassed: true });
+    expect(summarizeHelpScope(run())).toMatchObject({ answers: { hits: 38, total: 38, rate: 1 }, nonAnswers: { hits: 29, total: 29 }, wrongCaptures: 0, errors: 0, gatePassed: true });
   });
 
   it('one wrong capture on a non-answer fails the run even with every answer right', () => {
     const records = run((_record, golden) => (golden.id === nonAnswers[0]?.id ? { outcome: 'wrong-capture', got: '1' } : undefined));
-    expect(summarizeHelpScope(records)).toMatchObject({ wrongCaptures: 1, answers: { hits: 26, total: 26 }, gatePassed: false });
+    expect(summarizeHelpScope(records)).toMatchObject({ wrongCaptures: 1, answers: { hits: 38, total: 38 }, gatePassed: false });
   });
 
-  it('one miss in 26 answers passes (96.2%), two fail (92.3%)', () => {
+  it('one miss in 38 answers passes (97.4%), two fail (94.7%)', () => {
     const miss = (count: number) => run((_record, golden) => (answers.slice(0, count).some((candidate) => candidate.id === golden.id) ? { outcome: 'miss', got: 'neither' } : undefined));
-    expect(summarizeHelpScope(miss(1))).toMatchObject({ answers: { hits: 25, total: 26 }, gatePassed: true });
-    expect(summarizeHelpScope(miss(2))).toMatchObject({ answers: { hits: 24, total: 26 }, gatePassed: false });
+    expect(summarizeHelpScope(miss(1))).toMatchObject({ answers: { hits: 37, total: 38 }, gatePassed: true });
+    expect(summarizeHelpScope(miss(2))).toMatchObject({ answers: { hits: 36, total: 38 }, gatePassed: false });
   });
 
   it('malformed and timeout on answers count as misses (not wrong captures); on non-answers they are neither a hit nor a wrong capture', () => {
@@ -148,7 +151,7 @@ describe('scoring and the gate (owner decision of 2026-11-02)', () => {
         return undefined;
       }),
     );
-    expect(summary).toMatchObject({ answers: { hits: 24, total: 26 }, nonAnswers: { hits: 27, total: 29 }, wrongCaptures: 0, malformed: 2, timeouts: 2, gatePassed: false });
+    expect(summary).toMatchObject({ answers: { hits: 36, total: 38 }, nonAnswers: { hits: 27, total: 29 }, wrongCaptures: 0, malformed: 2, timeouts: 2, gatePassed: false });
     // One malformed non-answer and one timeout answer alone stay inside the bar.
     expect(summarizeHelpScope(run((_r, golden) => (golden.id === nonAnswers[0]?.id ? { outcome: 'malformed' } : golden.id === answers[0]?.id ? { outcome: 'timeout' } : undefined))).gatePassed).toBe(true);
   });
@@ -169,9 +172,9 @@ describe('runHelpScopeEvaluation', () => {
   it('makes one INTENT_SELECTION call per case and run, with the real prompt', async () => {
     const provider = scriptedProvider();
     const records = await runHelpScopeEvaluation({ cases: corpus.cases, plan, provider });
-    expect(provider.calls).toHaveLength(110);
+    expect(provider.calls).toHaveLength(134);
     expect(provider.calls.every((call) => call.capability === Capability.INTENT_SELECTION && call.timeoutMs === plan.callTimeoutMs)).toBe(true);
-    expect(records).toHaveLength(110);
+    expect(records).toHaveLength(134);
     expect(records.every((record) => record.outcome === 'hit')).toBe(true);
     expect([1, 2].map((n) => summarizeHelpScope(records.filter((record) => record.run === n)).gatePassed)).toEqual([true, true]);
   });
@@ -194,9 +197,9 @@ describe('eval:nl --mode help-scope plan', () => {
     const d = deps();
     expect(await runCli(['--mode', 'help-scope', '--runs', '3'], d)).toBe(EXIT_OK);
     const plan = buildHelpScopePlan(ids, sha256, { model: 'haiku', effort: 'low', runs: 3, concurrency: 4 });
-    expect(plan).toMatchObject({ kind: 'nl-help-scope-eval', promptVersion: 'help-scope.v1', corpusSha256: sha256, runs: 3, calls: 165, gate: NL_HELP_SCOPE_EVAL_GATE });
-    expect(d.out.join('\n')).toContain('55 cases (26 answers, 29 non-answers)');
-    expect(d.out.join('\n')).toContain('at most 165');
+    expect(plan).toMatchObject({ kind: 'nl-help-scope-eval', promptVersion: 'help-scope.v2', corpusSha256: sha256, runs: 3, calls: 201, gate: NL_HELP_SCOPE_EVAL_GATE });
+    expect(d.out.join('\n')).toContain('67 cases (38 answers, 29 non-answers)');
+    expect(d.out.join('\n')).toContain('at most 201');
     expect(d.created).toEqual([]);
     expect(d.written).toEqual([]);
     expect(digestOf(d.out)).toBe(computeHelpScopePlanDigest({ ...plan, effort: /"effort": "([a-z]+)"/.exec(d.out.join('\n'))?.[1] as string }));
@@ -231,13 +234,13 @@ describe('eval:nl --mode help-scope run (Strict)', () => {
     const { code, d } = await strictRun(() => scriptedProvider(), 3);
     expect(code).toBe(EXIT_OK);
     expect(d.created).toEqual(['haiku']);
-    expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v1): PASSED in all 3 run(s)');
+    expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v2): PASSED in all 3 run(s)');
     expect(d.out.filter((line) => /^run \d\/3: /.test(line))).toHaveLength(3);
     expect(d.written).toHaveLength(1);
     expect(d.written[0]?.name).toMatch(/^nl-help-scope-/);
     const report = JSON.parse(d.written[0]?.contents ?? '{}') as { summaries: unknown[]; records: Array<Record<string, unknown>> };
     expect(report.summaries).toHaveLength(3);
-    expect(report.records).toHaveLength(165);
+    expect(report.records).toHaveLength(201);
     // Ids, outcomes and answer classes only: no owner text.
     for (const golden of corpus.cases) expect(d.written[0]?.contents).not.toContain(golden.text);
   });
@@ -257,10 +260,10 @@ describe('eval:nl --mode help-scope run (Strict)', () => {
       3,
     );
     expect(code).toBe(EXIT_GATE_FAILED);
-    expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v1): FAILED, passed 2 of 3 run(s)');
+    expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v2): FAILED, passed 2 of 3 run(s)');
   });
 
-  it('one miss in 26 answers passes every run; two misses in one run fail', async () => {
+  it('one miss in 38 answers passes every run; two misses in one run fail', async () => {
     const one = await strictRun(() => scriptedProvider((golden) => (golden.id === answers[0]?.id ? '{"answer":null}' : undefined)), 2);
     expect(one.code).toBe(EXIT_OK);
     const two = await strictRun(() => scriptedProvider((golden) => (golden.id === answers[0]?.id || golden.id === answers[1]?.id ? '{"answer":null}' : undefined)), 1);

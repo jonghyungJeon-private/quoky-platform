@@ -1,7 +1,7 @@
 /**
  * D4 help-scope classifier evaluation (owner decisions of 2026-10-27 and 2026-11-02): the model-in-the-loop scoring of the
- * dedicated classifier (`help-scope-classifier.ts`) over `golden/nl-help-scope.v1.json`, the 55 owner-approved cases
- * (26 worded answers, 29 non-answers). Each case builds the real prompt from the question's rendered option texts
+ * dedicated classifier (`help-scope-classifier.ts`) over `golden/nl-help-scope.v1.json`, the 67 owner-approved cases
+ * (38 worded answers, 29 non-answers). Each case builds the real prompt from the question's rendered option texts
  * (`renderHelpScopeOptions`) and the case text, makes ONE `INTENT_SELECTION` call and parses it strictly. No LLM judge.
  * Pure except for the injected provider: the plan, the digest and the scoring are deterministic and tested offline; only a
  * Strict run spawns anything, and only after the digest check in the CLI.

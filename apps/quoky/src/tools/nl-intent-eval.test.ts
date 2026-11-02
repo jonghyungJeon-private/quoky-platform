@@ -338,9 +338,9 @@ describe('D4 is a dedicated classifier (owner decisions of 2026-10-27 and 2026-1
     const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as { cases: Array<{ id: string; note?: string; openQuestion?: unknown }> };
     expect(pending.cases.filter((golden) => golden.id.startsWith('ctx-d4-'))).toHaveLength(34);
     expect(pending.cases.filter((golden) => golden.id.startsWith('hs-na-'))).toHaveLength(21);
-    expect(pending.cases.every((golden) => /^(ctx-d4|hs-na)-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true && golden.openQuestion !== undefined)).toBe(true);
+    expect(pending.cases.every((golden) => /^(ctx-d4|hs-na|hs-ho)-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true && golden.openQuestion !== undefined)).toBe(true);
     const scored = loadScoredCorpus().corpus.cases;
-    expect(scored.filter((golden) => golden.id.startsWith('ctx-d4-') || golden.id.startsWith('hs-na-'))).toEqual([]);
+    expect(scored.filter((golden) => golden.id.startsWith('ctx-d4-') || golden.id.startsWith('hs-na-') || golden.id.startsWith('hs-ho-'))).toEqual([]);
     expect(scored.filter((golden) => 'openQuestion' in golden || 'expectAnswer' in golden)).toEqual([]);
     expect(loadScoredReadRegressionCorpus().cases.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
   });
