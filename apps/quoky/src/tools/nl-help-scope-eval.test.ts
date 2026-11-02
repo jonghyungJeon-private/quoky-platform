@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { Capability, buildHelpScopeClassifierPrompt, renderHelpScopeOptions, type AiProvider, type AiRequest } from '@quoky/core';
+import { AiFailureKind, AiProviderError, Capability, buildHelpScopeClassifierPrompt, renderHelpScopeOptions, type AiProvider, type AiRequest } from '@quoky/core';
 import { NL_HELP_SCOPE_EVAL_GATE, buildHelpScopePlan, computeHelpScopePlanDigest, helpScopeCasePrompt, helpScopeExpected, loadHelpScopeCorpus, runHelpScopeEvaluation, scoreHelpScopeAnswer, summarizeHelpScope, validateHelpScopeCorpus, type NlHelpScopeCase, type NlHelpScopeRecord } from './nl-help-scope-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_INVALID, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // D4 `eval:nl --mode help-scope` offline: the corpus, the plan and its Strict digest, the scoring and the per-run /
 // multi-run gate (owner decision of 2026-11-02: 0 wrong captures on non-answers, answer accuracy >= 95%, 0 harness
@@ -288,6 +288,26 @@ describe('eval:nl --mode help-scope run (Strict)', () => {
     );
     expect(code).toBe(EXIT_GATE_FAILED);
     expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v2): FAILED, passed 2 of 3 run(s)');
+  });
+
+  it('Codex P3 of 2e4a37f2: the outage canary carries the stronger tier, so an outage of only that tier is INVALID, not scored', async () => {
+    const goldPrompts = new Set(corpus.cases.map((golden) => helpScopeCasePrompt(golden)));
+    const canaryTiers: Array<AiRequest['intentSelectionTier']> = [];
+    const tierDown = (): AiProvider => ({
+      id: 'tier-down',
+      capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async (request) => {
+        if (!goldPrompts.has(request.prompt)) canaryTiers.push(request.intentSelectionTier);
+        if (request.intentSelectionTier === 'stronger') throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'limit');
+        return { text: '{"answer":null}', artifacts: [] };
+      },
+    });
+    const { code, d } = await strictRun(tierDown, 1);
+    expect(canaryTiers.length).toBeGreaterThan(0);
+    expect(canaryTiers.every((tier) => tier === 'stronger')).toBe(true);
+    expect(code).toBe(EXIT_INVALID);
+    expect(d.out.join('\n')).not.toContain('PASSED');
   });
 
   it('one miss in 38 answers passes every run; two misses in one run fail', async () => {
