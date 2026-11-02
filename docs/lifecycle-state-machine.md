@@ -2,7 +2,7 @@
 
 > Consolidated, single-page map of the end-to-end development lifecycle the bot drives across turns
 > (Sprint 3k / G1, docs-only). Authority: `ARCHITECTURE.md`, `DECISIONS.md` (ADR-0040 … ADR-0060), and the
-> `ApplyPreviewAnchorStatus` union + handlers in `packages/core/src/application/conversation-runtime.ts`.
+> `ApplyPreviewAnchorStatus` union + handlers in `packages/core/src/application/conversation-runtime.ts` and `packages/core/src/application/conversation-runtime/`.
 > This document is descriptive: the code is the source of truth. It adds **no** state and changes **no** behavior.
 
 ## What this is

@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Internal: conversation-runtime split into layer modules (refactor, no behaviour change)
+
+- **Changed.** `packages/core/src/application/conversation-runtime.ts` (about 10,000 lines) is split into a chain of
+  abstract layer classes, types, word lists and helpers under `application/conversation-runtime/`. Method bodies moved
+  unchanged; `ConversationRuntime` keeps its constructor, its public statics (as one-line delegators), `handle` and the
+  same 19 exports. No behaviour, API or test change.
+
 ## Unreleased — Security: Node 22.23.4 (repository Node; the service switch waits for the owner)
 
 - **Changed.** `.nvmrc` 22.22.1 → 22.23.4 (Node 22 LTS "Jod", same major, `engines.node` >=22.12 unchanged). The
