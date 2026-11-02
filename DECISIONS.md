@@ -31629,3 +31629,549 @@ and D9 still governs every turn that goes to chat.
   O7 as listed above, all yes as recommended), through the orchestrator.
 - **Scope of this record.** Docs only. It authorises no runtime start, token, scope, allowlist or live action; Strict steps
   keep their own approvals.
+## ADR-0124 — Chunked reading of long content: per-request, in-memory chunks for item summaries and item questions, a section index for project analysis, multi-vector memory recall, and a local embedder chosen by measurement. Part L (local-only, no new egress by default) ratified 2026-11-02; three item-summary arms L / H / R2 measured on a synthetic corpus only; Part R (remote exception for real content) not ratified. Amends ADR-0111 D3, ADR-0118 GML-1 / DRV-1 notes, ADR-0120 A6 R2 (readout, `focus` argument), ADR-0019 (lexical section selection), ADR-0098 D8 (multi-vector) and the ADR-0106 forget amendment.
+
+- **Status:** **Part L ratified by the Product Owner on 2026-11-02, with the recommended defaults** (record in section 13).
+  **Part R is not ratified** (section 12). Chief Architect rulings **RQ-1, RQ-2 and RQ-3 are in (2026-11-02)** and are recorded in section 10: RQ-1 yes, conditional; RQ-2 no §8 amendment, only if invariants I1 to I9 hold; RQ-3 yes, a separate embedding cap, with ADR-0121 D7 amended **by addition**.
+  The gate thresholds CH1 to CH7 (section 7) are **proposals**; each is ratified separately before its gate runs. Every
+  model-in-the-loop run is a **Strict** action with its own owner yes on a plan digest. The ADR number is a proposal; the
+  Chief Architect confirms it.
+- **Origin.** An independent review of 2026-10-28 found that no retrieval or long-content path chunks anything. The draft
+  of 2026-10-28 (branch `claude/chunking-proposal`, `docs/plans/adr-proposal-chunking.md`) checked each finding against
+  the code at `main` `3bcdb116`; section 0 records two corrections to the review. This text is that draft, edited to
+  the owner's decisions of 2026-11-02.
+- **Arm names (read this first).** The three arms for long mail, thread, Drive and Sheets summaries are **L**
+  (local map plus local reduce), **H** (local map notes plus one final remote call of at most 3,000 code points; the
+  owner's 2026-10-28 answer called this "R") and **R2** (every window summarised remotely). The embedder candidates
+  use different names (E0 to E3, EL, EH) so nobody confuses them. "A6 R2" always means the ADR-0120 amendment.
+- **Amends (Part L, on ratification):** the ADR-0118 GML-1 / DRV-1 implementation notes and ADR-0111 D3 (the readout
+  clip), ADR-0120 amendment A6 R2 (the `item.summarize` readout and an optional `focus` argument), ADR-0019 (lexical
+  section selection over allow-listed files, phase A), ADR-0098 D8 (the embedding input bound and one vector per memory)
+  and, for forget, the ADR-0106 amendment (all chunk vectors are removed). It also adds one clause outside the
+  existing ADRs: the **fixed Core progress notice** (clause PN in section 12 A). Section 9 lists each clause.
+- **Does not amend:** `ARCHITECTURE.md`, ADR-0110 D4, ADR-0115, ADR-0116, the ADR-0121 labels and caps (D3, D4, D10), A2-D6, and ADR-0118 D7. **ADR-0121 D7 is amended by addition** (RQ-3): a
+  separate embedding cap, section 3.8. **Part R**, if ever ratified, would amend ADR-0118 D7 (arm H and arm R2 each named
+  separately) and add an ADR-0110 D4 scope note.
+- **Clarifies (Chief Architect, RQ-1: yes, conditional):** the ADR-0123 D1 out-of-scope clause. Ranking the chunks of **one item
+  the owner named**, in memory, for one request, is not "knowledge RAG over mail, Drive or documents". A persistent index
+  of connector content stays out of scope.
+- **Relates:** ADR-0105 (a local model is chosen by measurement; this applies it to the embedder), ADR-0121 (direction:
+  "better, not imitate"; a feature has to earn its place by measured results), ADR-0123 D3 (digest pinning and space ids).
+- **Date:** 2026-11-02 (proposal 2026-10-28).
+
+---
+
+### 0. Evidence, checked against the code
+
+| # | Path | What the code does (file:line) | Review claim | Checked |
+|---|---|---|---|---|
+| E1 | Mail, mail thread, Drive, Jira, Slack readout | `UNTRUSTED_DOCUMENT_BODY_MAX_CHARS = 3_000` (`packages/core/src/application/untrusted-document-readout.ts:46`), applied by `clipHeadAndTail` (`:193`) | "head and tail, 3,000 code points each" | **Corrected.** The 3,000 code points are the **total**. `clipHeadAndTail` (`attachment-context.ts:73-85`) keeps about 40% from the head (about 1,180) and 60% from the tail (about 1,780), with an omission marker between them. |
+| E2 | Google Sheets | At most `UNTRUSTED_DOCUMENT_SECTIONS_MAX = 20` sheets (`:105-106`, `:233-255`). The 3,000 code points are water-filled between them (`clipSections`, `:264-287`). The connector reads at most 26 columns, 1,000 rows per sheet, 40,000 cells and 1,000 characters per cell (`connector-gdrive/src/sheets-reader.ts:46-53`). | "at most 20 fair-share slices" | Confirmed. With 20 sheets each sheet gets roughly 120 code points after the headers. |
+| E3 | Drive text | The text export is cut at `DRIVE_TEXT_MAX_BYTES = 256 * 1024` while it streams (`packages/core/src/ports/drive-reader.port.ts:35`, read at `gdrive-reader.ts:430-431`). | "capped at 64 KiB (`gdrive-reader.ts:97`)" | **Corrected.** `:97` is `GDRIVE_GET_MAX_BYTES`, the bound on the **metadata JSON** of one file. The text bound is 256 KiB, which is about 87,000 Hangul syllables or 262,000 ASCII characters. All of it is then clipped to 3,000 code points (E1). |
+| E4 | Project analysis | `ANALYSIS_ALLOW` (`workspace-local/src/index.ts:43-49`), `MAX_FILE_BYTES = 8000` (`:52`), `content.slice(0, MAX_FILE_BYTES)` (`:224-225`) | "first 8,000 bytes each" | Confirmed, with one detail: the cap counts UTF-16 code units (`string.length`), not bytes, and the whole file is read into memory first (`readFileSync`). `DECISIONS.md` is 2.4 MB and 30,347 lines, so the analysis sees about the first 0.3% of it. `ARCHITECTURE.md` is 34.2 KB, so §5 to §13 are never seen. |
+| E5 | Durable memory recall | `MAX_EMBEDDING_INPUT_CHARS = 8_000` UTF-16 units, cut by `boundedInput` (`ai-cli/src/ollama-embedding-provider.ts:102`, `:153-160`). One vector per memory, with the vector id equal to the memory id (`durable-memory-v1`, `recall/semantic-recall-scorer.ts:17`). At most 4 new embeddings per turn, 3 s per turn (`:18-19`). The default model is `nomic-embed-text` (`:84`) with nomic role prefixes. | "one vector per whole memory, cut at 8,000 characters" | Confirmed. The domain puts no length bound on memory content (`domain/durable-memory.ts`, `requireText` only). |
+| E6 | Selector RAG (ADR-0123) | The pool entries are short owner-style messages. | "needs no chunking" | Agreed. Out of scope here. |
+| E7 | Text attachments (ADR-0111) | The same `clipHeadAndTail` | not in the review | An adjacent path with the same loss. Open question 11. |
+
+**Embedder evidence (indirect only).** ADR-0123's contamination dry run found that `nomic-embed-text` v1.5 fails the
+near-copy audit on Korean pool texts (τ 0.925 flagged 39 of 100 entries), while `nomic-embed-text-v2-moe` passes
+(`DECISIONS.md`, ADR-0123 D5). That run measured how well each model separates near-duplicate Korean commands. It did not
+measure retrieval recall. It is a reason to measure, not a result.
+
+---
+
+### 1. The problem, path by path
+
+All examples are fictional: the people, companies and projects are invented.
+
+1. **P1: Mail and mail threads** (`mail`, `mail-thread`). The body budget is 3,000 code points in total (E1). *Example:*
+   a 9,400-character Korean mail from a vendor, "솔빛상사 (fictional)", about a contract revision. The changed payment
+   date ("잔금 지급일 11/30 → 12/15") is at character 4,600. The readout keeps characters 1–1,180 and 7,620–9,400. The
+   summary describes the greeting and the signature block, and it reads as complete. A 14-message thread gets the same
+   3,000 code points for all 14 messages. The decision in message 7 is gone.
+2. **P2: Drive documents and Sheets** (`drive`). Up to 256 KiB of text are read and 3,000 code points survive (E3).
+   *Example:* the minutes of a 40,000-character planning meeting for "Project Mangrove (fictional)". The owner's own
+   action item is on page 7 of 12. 7.5% of the text reaches the model, and the action item is not part of it.
+   *Sheets example:* a 20-sheet budget workbook. The "출장비" sheet has 400 rows, and row 212 holds an over-budget line.
+   That sheet gets about 120 code points, which is the header row and one data row.
+3. **P3: Jira issues and Slack threads** (`jira-issue`, `slack-message`, `slack-thread`, A6 R2). They use the same
+   readout. *Example:* a Jira issue with a long description and 40 comments. The agreed fix is in comment 18. A Slack
+   thread with 120 replies keeps its first and last few replies.
+4. **P4: Project analysis** (ADR-0019). *Example:* the owner asks "프로젝트 결정 문서에서 캘린더 요약 규칙이 뭐였지?". The
+   analysis prompt holds the first 8,000 code units of `DECISIONS.md` (ADR-0001 to about ADR-0003) and of
+   `ARCHITECTURE.md` (§1 to §4). ADR-0110 is not in the prompt. The answer is either "not found" or, worse, a plausible
+   invention.
+5. **P5: Durable memory recall** (ADR-0098 D8). Two separate failures:
+   - **Length.** A long memory, such as a 12,000-character pasted moving checklist, is embedded only from its first 8,000
+     characters. A question about its last part cannot match it semantically. A memory that mixes several topics gets
+     one blurred vector.
+   - **Language.** `nomic-embed-text` was trained mostly on English. *Example:* the query "아버지 생신 선물 뭐였지" and
+     the memory "아빠 생일엔 등산화 사기로 함" share no word, so lexical ranking cannot help. Whether the current embedder
+     ranks the memory first is **unmeasured**. Section 6 measures it.
+   - **Context length (also unmeasured).** Whether 8,000 Korean characters even fit the embedder's context window under
+     Ollama's defaults is unknown. Korean usually costs more tokens per character than English, so silent truncation
+     inside Ollama is possible. Section 6 measures the token count per model.
+
+**What all five paths share:** the dropped text is never shown, never searched and never mentioned to the owner, apart
+from a `truncated` flag that only the model sees. The proposal fixes the coverage and also makes it visible.
+
+---
+
+### 2. Principles and non-goals
+
+1. **N1: No persistent index of connector content.** Chunks of mail, Drive, Jira and Slack items, and their vectors,
+   exist only in process memory for the one request that read the item. They are dropped when the reply is sent. They
+   are never written to `LocalVectorProvider`, SQLite, logs, the history, the eval archive or a cache. (Memory vectors
+   (P5) and project section data (P4) are covered by their own rules in sections 5 and 3.4.)
+2. **N2: No new egress, provider, port, dependency or migration** under option L. Chunking is a pure Core module
+   (`packages/core/src/application/chunking/`). Embeddings use the existing `EMBEDDING` capability on a local Ollama
+   provider (ADR-0098 D8, `ARCHITECTURE.md` §5.5 and §6.5). Sentence and grapheme boundaries use `Intl.Segmenter`,
+   which Node already ships with full ICU.
+3. **N3: Content never chooses a step, a destination or an operation** (`ARCHITECTURE.md` §8.3). The owner's words choose
+   the mode (section 3.5). Chunk selection only decides **which part of the item the owner named** is read. The number
+   of chunks follows from the length of the item, which is structural. RQ-2 (section 10) rules that this
+   is not "content-conditioned control flow" (§8.5) provided the invariants I1 to I9 hold.
+4. **N4: The credential guard is unchanged and comes first.** The strict guard still runs on the full normalized item
+   before any split (as `buildUntrustedDocumentReadout` does today, `:184-190`). A match anywhere still refuses the whole
+   item, never redacted. The guard then runs again on every chunk, every partial note and every rendered prompt.
+5. **N5: Every reply states its coverage.** Core renders a fixed coverage line, for example "전체 12개 구간 중 3개를
+   읽고 답했어요". The model never writes it. The history keeps the existing fixed note (ADR-0118 / A6 R2 C10) and no
+   chunk text.
+6. **N6: Off by default, shadow first, measured before `on`** (section 7). Each path has its own flag.
+7. **N7: Labels are inherited, never widened.** A chunk carries its item's label (trust `UNTRUSTED`, the item's egress
+   and scope, its sources). A partial note written by a model from a chunk is `UNTRUSTED` plus `MODEL_DERIVED`, with
+   the item's egress label (ADR-0121 D3/D4). Joining notes gives the most restrictive label.
+
+---
+
+### 3. The chunking strategy
+
+#### 3.1 Units, and how Korean text is counted
+
+- **Hard bounds are code points**, as every existing readout bound is (E1). This proposal also changes the two places
+  that count UTF-16 units today (E4, E5) to count code points, so a bound means the same thing in every path.
+- **Budgets for a model's window are estimated tokens.** Window sizes are set in tokens, but no tokenizer library is
+  added (N2). Core estimates tokens from code points by script class:
+
+  | Script class | Proposed weight (tokens per code point) | Note |
+  |---|---|---|
+  | Hangul syllables (U+AC00–U+D7A3) and Hangul Jamo | 1.0 | Precomposed syllables. NFKC (already applied) keeps them composed. |
+  | Han, Kana | 1.0 | |
+  | Latin letters, digits | 0.30 | |
+  | Whitespace, punctuation, symbols | 0.5 | |
+
+  **These weights are proposals.** Phase 1 calibrates them per pinned model from Ollama's reported
+  `prompt_eval_count` on a fixed synthetic corpus (Korean, English, mixed, code, tables). The record keeps the measured
+  weights and a 20% safety margin. The current readout comment assumes "about 1.5 characters per token" (`:43-44`).
+  That holds for mixed text but under-counts pure Korean, which is why the estimate is per script.
+- **Korean lexical matching uses Hangul character bigrams.** Particles attach to nouns ("지급일은", "지급일이",
+  "지급일을"), so whole-word matching fails without a morphological analyzer. Bigrams match without a new dependency.
+  Latin text uses lowercase words. Numbers and dates are normalized (`12/15`, `12월 15일` and `2026-12-15` become one
+  key) by the existing Core date parsers, never by a model.
+
+#### 3.2 Two levels: passages and windows
+
+- **Passage:** the unit of **selection**, small enough for precise retrieval. *Proposed:* a target of 800 code points
+  and a maximum of 1,200 code points and 600 estimated tokens. The maximum also has to fit the chosen embedder's
+  context (section 6).
+- **Window:** the unit a model **reads**. Adjacent selected passages are packed in document order into a window.
+  *Proposed:* a window has at most 3,000 code points and 1,800 estimated tokens. That is today's readout bound.
+  **Every window therefore passes the existing `isSummarizableDocumentReadout` checks unchanged.** A window is a readout,
+  and the prompt, the guards and the 4,096-token local window that were sized for it still hold.
+
+#### 3.3 Overlap
+
+- **Split on a structural boundary: no overlap.** A heading, message, comment, sheet or paragraph boundary is
+  self-contained.
+- **Split inside an over-long paragraph** (at sentence ends): one sentence of overlap, capped at 15% of the passage and
+  150 code points.
+- **Sheet rows: no overlap,** but each passage repeats the sheet's header row as **context carry**. The header row is
+  counted in the passage's size. It is not a second copy of data.
+- **Code blocks:** never split unless a block exceeds the passage maximum. Then the split is at line ends, with 2 lines of
+  overlap.
+
+#### 3.4 Boundaries, by priority
+
+The first boundary that keeps a passage within its maximum is used:
+
+1. **Source structure** (Quoky's own frame, `STRUCTURE`): a message of a thread (`[메시지 7/14]`), a Jira description or
+   comment (`설명`, `댓글 18`, as A6 R2 C4 already titles them), a Slack reply, a sheet (`[Sheet i/n]`).
+2. **Headings and document sections:**
+   - Markdown headings (`#`..`######`).
+   - In a plain-text Drive export there are **no guessed headings**. Layout cues such as a short line before a blank line
+     or a numbered line are not read as headings, and no phrase pattern is used (owner decision 2026-11-02: structural
+     rules only, no phrase lists; the proposal's `제3조` pattern is dropped). Paragraph and sentence boundaries (items 4
+     and 5) apply. Open question 10 asks whether the Drive adapter should export Docs as Markdown to keep real headings.
+3. **Sheet row blocks:** contiguous rows up to the passage maximum. Row numbers come from the connector, not the text.
+4. **Paragraphs** (a blank line), **list items** and **fenced code blocks** (kept whole, 3.3).
+5. **Sentences:** `Intl.Segmenter('ko' | 'en', { granularity: 'sentence' })`. Korean endings such as `다.`, `요.`, `?`
+   and `!` are covered. Golden tests pin the behaviour.
+6. **Last resort:** a code-point split on a grapheme boundary (`Intl.Segmenter`, `granularity: 'grapheme'`). It never
+   splits a surrogate pair or a Hangul syllable.
+
+**Mail quoting.** Quoted blocks are recognised **structurally** only: a run of lines that start with the quote marker
+`>`, plus the quote headers the existing mail reader already recognises (`QUOTE_HEADERS`, reused as is and **never
+extended**). The proposal's "… wrote:" and "-----Original Message-----" patterns are dropped (owner decision 2026-11-02).
+A quoted block is marked `quote`. In a thread, a quoted line is removed before passaging when its **normalized form
+matches a line of an earlier message of the same thread** (repeated quotes), and the coverage line says so. This saves
+budget without losing text, because the original is kept. Open question 12.
+
+#### 3.5 Metadata per chunk
+
+Every passage carries:
+
+| Field | Meaning | Trust |
+|---|---|---|
+| `ordinal`, `total` | Position i of n in the item | `STRUCTURE` |
+| `frame` | Quoky's label: `메시지 7/14`, `댓글 18`, `Sheet 3/20`, `행 201–260`, `ADR-0110` | `STRUCTURE` |
+| `heading` | The nearest heading text from the content, one line, at most 60 code points, JSON-quoted in prompts | `UNTRUSTED` (content), as sheet titles are today |
+| `kind` | `prose`, `list`, `table`, `code` or `quote` | `STRUCTURE` |
+| `span` | Code-point offsets `[start, end)` in the prepared body | `STRUCTURE` |
+| `rows` | Sheet row range and the header-row reference | `STRUCTURE` |
+| `author`, `time` | For a message or comment. When a remote model may see it, the author is replaced by the A6 R2 D5 pseudonym ("참여자 B"). | `UNTRUSTED` / `STRUCTURE` |
+| `estTokens` | The estimate from 3.1 | `STRUCTURE` |
+| `contentHash` | sha256 of the normalized passage, used for de-duplication and content-free audit only | `STRUCTURE` |
+| `label` | The item's label (N7) | |
+
+Only `ordinal`, `total`, `frame`, the counts and the timing reach logs or the run audit. No text and no `heading` do.
+
+#### 3.6 How chunks are selected for a request
+
+The **owner's words** choose the mode, through the existing selector or handler, never the content:
+
+| Mode | When | Selection | Model calls |
+|---|---|---|---|
+| **S1: Fits** | The prepared item is within one window | Nothing changes; today's readout, byte for byte | As today |
+| **S2: Question about an item** ("이 문서에서 잔금 지급일 언제야?") | A summary or `answer` request whose owner words carry a focus | **Hybrid retrieval:** the focus is embedded with the query role, every passage with the document role (local embedder), plus a Hangul-bigram / word BM25 score. The two ranks are fused (reciprocal rank fusion, k = 60). The top passages are packed into **one** window in document order, with their frames. | 1 answer or summary call (+ embedding calls, all local) |
+| **S3: Whole-item summary** ("이 메일 요약해줘", no focus) | The item exceeds one window | **Map-reduce:** passages are packed into windows in order. Each window gets one map call ("the key points of this part, at most N lines"), and one reduce call joins the partial notes into the reply. Above the window cap (3.7), the windows are chosen by **stratified coverage** (the first, the last, and evenly spaced in between), and the coverage line names the parts read. | W map calls + 1 reduce call |
+| **S4: Section index** (project analysis, and any long structured document under S2) | The file has headings | Core builds the list of sections (id and heading). Sections are selected: (a) exactly, when the owner's words name an id (`ADR-0110`, `§8`, a heading); (b) otherwise by the S2 lexical score on the heading and first paragraph (phase A), and by the hybrid score only after phase B is measured. Selected sections are read whole up to the budget. | As today's analysis call |
+
+- **Build order (owner decision 2026-11-02): S3 before S2.** The whole-item summary (S3) is built and measured first
+  (slice C5a); the question about an item (S2) and the `focus` argument follow (slice C5b), and S2 and every slice that
+  selects passages by similarity are built **only under the RQ-2 invariants I1 to I9** (section 10) and their tests
+  T2-* and T3-*, which are pending until those slices.
+- **The focus** is the owner's own words (`TRUSTED`). Open question 5 proposes an optional `focus` argument on
+  `item.summarize`, which the selector fills from the owner's words (an ADR-0120 catalog change). That avoids a phrase
+  list for "question vs summary" (owner direction: natural-language routing, no regex phrase fixes).
+- **The S3 map prompt** is a new versioned asset (`prompts/document-map.v1`, sha256-pinned), with the same untrusted
+  framing as today's summary prompt, no tools, a schema-bound output (at most 8 lines of at most 160 code points each)
+  and no URL. The reduce call reuses the document-summary prompt over the notes, framed as untrusted model-derived data.
+- **Agent runs (ADR-0121):** only S1 and S2. An S2 run makes one M2 call over one packed window, so the D7 model-call caps
+  (≤ 5 model calls, ≤ 3 M2, ≤ 40k input tokens) are unchanged in their numbers. Embedding calls are not M2 calls. They count
+  against a separate embedding cap that **amends ADR-0121 D7 by addition** (RQ-3, section 3.8). **S3 map-reduce never runs inside an agent run**
+  without its own ADR-0121 amendment.
+
+#### 3.8 Embedding cap (RQ-3, amends ADR-0121 D7 by addition)
+
+Per agent run, and per non-agent S2 request: **1 query embedding plus at most 200 passage embeddings**; at most **1 S2
+item per run**; a passage input of at most 1,200 code points; embedding time within the 45 s wall time with an embedding
+sub-budget of **8 s**. Passages beyond 200 are ranked lexically (score, ties by ordinal). The counter is separate from
+the D7 model calls and from the memory-recall embedding budget. A breach ends in lexical ranking only, with no retry.
+The embedder is **LOCAL only**: a `cloud` model is refused and there is no remote fallback. Embedding and generation
+never run at the same time (one local model at a time). Only counts reach the audit.
+
+**Part L, embedding call (CA ruling).** The embedding call is tool-less. Its vectors are read only by Core's ranker, which
+returns the ordinals of the passages of the same item. A vector never reaches a planner, a prompt, a log, the history or a
+store.
+
+#### 3.7 Limits (ratified at the proposed defaults, 2026-11-02; the measured ones are recalibrated by the measurement record)
+
+| Bound | Proposed default | Why |
+|---|---|---|
+| Passages embedded per request (S2) | ≤ 200 | 256 KiB of English is about 330 passages, so the rest are ranked lexically only and the coverage line says so |
+| Windows in an S2 answer | 1 | Today's volume and prompt |
+| Map windows per S3 request (W) | ≤ 6 | About 18,000 code points read in full; the rest by stratified coverage |
+| S3 wall time | ≤ 90 s, with a **fixed Core progress notice** after 8 s ("긴 문서라 나눠서 읽고 있어요, 구간 6개"): DM only, sent through the existing `PlatformAdapter.sendMessage`, text from a Core template with the window count only, **never model text**, at most once per request, and no history entry. The reply path stays one reply per turn; the notice is a separate Core message (ADR clause D7 below). | On this Mac the local model is warm at a median of ≤ 5 s per call (A2 G3), so 7 calls take about 35–60 s, plus cold start |
+| S2 wall time | warm p95 ≤ 12 s | 1 call plus embedding |
+| Embedding call cost | Measured in phase 1 | `OllamaCliEmbeddingProvider` spawns one `ollama run` per text. If 200 spawns miss the bound, a loopback batch embed call inside `packages/ai-cli` is an implementation choice with no new egress, as A2-D21 already uses the loopback Ollama API |
+| Concurrency | One local model call at a time; embedding and generation never run in parallel | 18 GB RAM; the 2026-10-16 memory incident |
+| Project analysis (S4) budget | Index ≤ 8,000 code points + selected sections ≤ 48,000 code points (today's 6 files × 8,000) at first; widening is open question 6 | Same recipient, same volume as today |
+| Remote money cost | Unchanged under L. Under H, the same maximum volume as today. | Usage ledger (ADR-0115 D8) as today |
+
+A breached bound ends with a deterministic partial reply (what was read, the coverage line), never a silent cut and
+never a retry. This is the ADR-0121 D7 pattern.
+
+---
+
+### 4. Which model sees which chunks (D4 kept intact)
+
+**What the ratified rules say.** ADR-0110 D4 (calendar) makes summaries local-only, with no Claude fallback. Its only
+exception is the A2 owner-confirmed minimal topic. ADR-0118 D7 (mail, Drive) sends body text to the effective chat-tier
+provider **only on an explicit summary request for one item**, under the ADR-0111 D3 bounds, and A2-D6 runs agent answers
+over mail and Drive on a `LOCAL` provider. The ADR-0118 D7 text allows up to 256 KiB per readout. The implemented and
+live-tested bound, however, is 3,000 code points, and changing what leaves the host is the owner's decision. **Part L
+therefore adds no remote flow of calendar, mail or Drive content beyond today's. Arms H and R2 are measured on the
+synthetic corpus only and need the section 12 ratification before they touch real content.** Short, single-window mail
+and Drive summaries keep going to the remote chat tier as today (owner decision 2026-11-02: no new restriction).
+
+| Path | Step | What the step receives | Who runs it | Status |
+|---|---|---|---|---|
+| Every item path | Normalize, guard, passage, score lexically, pack | The full prepared item | Core, no model | `HOST_ONLY`, in memory, dropped after the reply (N1) |
+| Every item path (S2) | Embed passages and focus | Each passage (document role), the owner's focus (query role) | Local Ollama `EMBEDDING` provider (`LOCAL`; a `cloud` name is refused) | No egress. Vectors stay in memory and are dropped. |
+| **Calendar** | — | Not chunked (events are short) | — | **ADR-0110 D4 unchanged.** If an event body is ever chunked, every step is `LOCAL`. |
+| **Mail, mail thread, Drive, Sheets: arm L (ratified, Part L)** | S2 answer, S3 map and reduce | One window ≤ 3,000 code points; or local partial notes, ≤ 3,000 code points in total | `LOCAL` `SUMMARIZATION` provider only | **No new egress.** Today's summary may run on a `REMOTE` chat-tier provider. Under arm L a long item (one that exceeds a window) runs locally; an item that fits (S1) is unchanged. |
+| Mail … **arm H** | Final S2 or S3 call | One packed window ≤ 3,000 code points of raw passages, or ≤ 3,000 code points of local partial notes, so the same maximum volume as today, with a different selection | The effective chat-tier provider (may be `REMOTE`), on an explicit summary request only | **Part R (not ratified).** Built and **measured on the synthetic corpus only**. Turning it on for real content needs the separate ratification in section 12 (an ADR-0118 D7 amendment plus an ADR-0110 D4 scope note). |
+| Mail … **arm R2** | S3 map and reduce, every window summarised remotely | All windows, up to 256 KiB, as several remote calls | `REMOTE` | **Part R (not ratified).** Re-added by the owner on 2026-11-02 because the local model's quality was worse than expected and short mail and Drive summaries already go to the remote chat tier (ADR-0118 D7). Built and **measured on the synthetic corpus only**. It multiplies what leaves the host and the cost, so real content needs the section 12 ratification. |
+| Jira, Slack | S2 answer, S3 map | Windows | `LOCAL` | Within the existing label (`REMOTE_ON_SUMMARY_REQUEST`) |
+| Jira, Slack | Reduce / answer | ≤ 3,000 code points (packed passages or notes) | Local first, then the Claude CLI fallback (A6 R2 D6). An HTTP API vendor only with `QUOKY_WORK_TEXT_VENDOR_ALLOWED=true`. D5 pseudonyms on the remote call. | Existing label and order. The remote call sees the same maximum volume as today. |
+| Project analysis | Section selection | Headings, ids, the owner's words | Core (phase A); local embedder (phase B, if measured) | No egress |
+| Project analysis | Analysis call | The index plus the selected sections, within today's budget | Claude CLI (`PROJECT_ANALYSIS` stays on the CLI, §5.5) | Same recipient, the owner's own allow-listed files, as today |
+| Durable memory | Embed memory chunks | Each chunk of a memory | Local `EMBEDDING` | Vectors `HOST_ONLY`, rebuildable cache (section 5) |
+| Durable memory | Recall injection | Unchanged by default; open question 8 offers "the best chunk of a long memory instead of its head" | The chat provider as today, DM-only (PLT-0 gate) | Unchanged, or less volume |
+| Agent runs | S2 only | One packed window | M2 under its label (mail and Drive `LOCAL`, A2-D6) | Unchanged caps and labels |
+
+---
+
+### 5. Durable memory: multi-vector recall
+
+1. **Short memories do not change.** A memory within one passage keeps exactly one vector, with id = memory id.
+2. **Long memories get one vector per passage** (3.2), with ids `<memoryId>#<ordinal>`. The memory's score is the maximum
+   cosine over its passages (max-sim). The lexical path is unchanged, and the scorer still returns one score per memory,
+   so `DefaultMemoryRetriever` and the `SemanticRecallScoring` seam keep their shape.
+3. **A new collection per space:** `durable-memory-v2-<space id>`, where the space id follows ADR-0123 D3 (model, digest
+   and Ollama runtime version). Vectors of different spaces never mix. The collection is a rebuildable cache, so there is
+   no migration.
+4. **Backfill outside turns.** `maxNewEmbeddingsPerTurn = 4` stays per turn. Missing chunk vectors are filled in the
+   background, as the warm-up already runs outside turns. Until a memory is fully indexed, its score uses the chunks
+   that exist.
+5. **Forget** (ADR-0106 amendment: archive with the vector removed) removes **all** of a memory's chunk vectors. A test
+   pins this.
+6. **The 8,000-unit cut** (E5) stays only as a defensive bound for one input. No memory text is silently unembedded any
+   more.
+7. **Injection** into the prompt is unchanged unless open question 8 is answered yes.
+
+---
+
+### 6. The embedding model: measure, do not pick
+
+- **Today:** `nomic-embed-text` (v1.5) for memory recall, with nomic prefixes. ADR-0123 already pins
+  `nomic-embed-text-v2-moe` (digest `ff9c2f10ef5e`) for the selector experiment only.
+- **Proposal:** keep `nomic-embed-text` as the default **until a measurement decides** (ADR-0105). Evaluate local,
+  multilingual candidates, each pinned by digest and runtime version (ADR-0123 D3), each pulled by the owner (the
+  provider never pulls; **pulling `bge-m3` is an ops step for the owner, recorded here, and no agent pulls it**), and each refused if its name contains `cloud`:
+
+  | Arm | Model (Ollama) | Why it is a candidate | Prefix policy (part of the pin) |
+  |---|---|---|---|
+  | E0 | `nomic-embed-text` (v1.5) | Baseline in production | `search_query:` / `search_document:` |
+  | E1 | `nomic-embed-text-v2-moe` | Multilingual; already pinned on this host | as nomic |
+  | E2 | `bge-m3` | Multilingual, long context | none |
+  | E3 | `qwen3-embedding` (smallest size that fits) | Multilingual | instruction on the query side only |
+  | EL | No embedder: Hangul-bigram / word BM25 | Lexical baseline | — |
+  | EH(x) | The best embedder arm fused with EL (RRF) | Hybrid | — |
+
+  The candidate list is frozen in the measurement record before any run. A model that is not available on the host, or
+  that does not fit in memory beside the local generation model, is dropped with a note. Free disk space is limited
+  (about 17 GB in October), so the owner decides which to pull (open question 7).
+- **What is measured, per arm:**
+  - **Retrieval:** Recall@1, @3, @5 and @10, MRR and nDCG@10 on the CH1 passage set and the CH7 memory set,
+    **stratified by language** (Korean, English, mixed) and by needle type;
+  - **Fit:** tokens per Hangul syllable, from `prompt_eval_count`, and whether the passage maximum and the 8,000-unit
+    memory bound fit the model's context under the configured `num_ctx` (no silent truncation);
+  - **Cost:** warm and cold latency per call (p50, p95), the time to embed 200 passages, and resident memory.
+- **Decision rule (proposed, owner to ratify before any run):** among the arms that meet the latency bar of 3.7, choose
+  the one with the highest **Korean Recall@5 on CH7**, provided it is not more than 2 percentage points worse than E0 on
+  English. A tie goes to the smaller model. If no arm beats E0 on Korean by at least 5 points, keep E0. **No arm is
+  chosen until the run is done.** A change of model is a new space: the collection is rebuilt (section 5.3).
+
+---
+
+### 7. Evaluation and gate before activation
+
+**All thresholds below are proposals.** None applies until the owner ratifies it. The measurement record (a
+`DECISIONS.md` section, as for ADR-0123 and A3a) freezes the sets' hashes, the parameters (3.1–3.7), the prompts' hashes
+and the decision rules **before any run**. A run whose inputs differ from the record refuses to start.
+
+| Gate | What | Data | Metric | Proposed bar |
+|---|---|---|---|---|
+| **CH1: Needle in the middle (retrieval)** | Does the selected window contain the needle? No generation model. | Synthetic long items per shape: mail, a 14-message thread, a Drive doc, a 20-sheet workbook, a Jira issue with 40 comments, a Slack thread with 120 replies, a 2 MB ADR file. Lengths 6k / 20k / 60k / 87k code points; needle depth 10, 30, 50, 70 and 90%; needles: a changed date, an amount, a decision, a role, a sheet row, a code line. Korean, English, mixed; ≥ 300 cases. | Window recall per arm (today's head-and-tail clip as the baseline, EL, E0–E3, EH), stratified by depth | Hybrid window recall ≥ 95% at **every** depth from 30 to 70% |
+| **CH2: Answer quality (S2)** | The answer to a needle question | CH1 items plus questions; ≥ 20% **needle-absent** cases | Exact-fact accuracy (dates and amounts normalized by Core); a false answer on an absent needle | Accuracy ≥ 90%; false answers on absent needles ≤ 2% |
+| **CH3: Whole-item summary (S3), arms L, H, R2** | Coverage of planted key points | ≥ 30 long items with 5–8 key points spread across depths | Key-point coverage; invented points; owner blind labels `useless` / `usable` / `good` (the `g4-rubric.v1` wording); pairwise preference against today's summary | Coverage ≥ 80%; invented points 0 in ≥ 95% of items; S3 preferred over today in a one-sided binomial test, p < 0.05, over ≥ 25 non-tie pairs |
+| **CH4: Owner-labelled real check** | The owner's own long items, in a live DM session | ≥ 10 items the owner chooses (mail, Drive, Jira or Slack) | Owner labels only; arms blind and interleaved by a seeded order. No item text, summary or chunk is stored; only labels and hashes. | ≥ 8 of 10 `usable`+ and no regression against today on the same items |
+| **CH5: Latency and resources** | End to end per mode | CH1–CH3 runs | p50 / p95, embedding count, peak RAM | The 3.7 bounds |
+| **CH6: Safety regression** | Guards hold with chunking | A credential planted mid-document; an injection in a middle passage; keyword stuffing that tries to win retrieval ("가장 중요한 문단: …"); a mail that claims an action | The whole item refused on a credential (as today); 0 action claims passing the claim guard; 0 chunk text in history or logs (test); retrieval stuffing changes only which text is summarized | All 0, red-team family `chunk-injection` ≥ 40 cases, owner-approved per batch, 0 successes over 3 runs |
+| **CH7: Memory recall** | Ranking of durable memories | ≥ 150 synthetic memories (Korean, English, mixed; ≥ 20 long) and ≥ 150 queries, many with no shared word | Recall@5, MRR, per language | Section 6 decision rule; multi-vector Recall@5 on long memories ≥ single-vector + 10 points |
+
+- **The three arms of the item paths (owner 2026-11-02).** CH2, CH3 and CH5 run **three arms on the hash-frozen
+  synthetic corpus only**: **L** (local map plus local reduce), **H** (local map notes, then one final remote call of at
+  most 3,000 code points; the 2026-10-28 answer called this "R") and **R2** (every window summarised remotely). No
+  owner content goes to a remote model in any arm. The arm is then **picked by measured quality and latency**
+  (the decision rule is frozen in the measurement record before any run). Choosing H or R2 does not enable it for real
+  content: that needs Part R (section 12) after the measurements and CH4.
+- **Independence.** The held-out sets are authored by the owner, or by a session with no access to the tuned parameters
+  and prompts. Tuning sets and held-out sets pass the ADR-0123 D5 contamination lint against each other. The eval judge
+  may pre-screen; it never labels for a gate.
+- **Fictional content only** in every committed set. No real person, company or customer name.
+- **Model-in-the-loop runs are Strict.** Each run needs the owner's yes on its plan digest (AGENTS.md). An exit for a
+  provider outage is `INVALID`, not a failure.
+- **Activation.** The flags are `QUOKY_CHUNK_ITEMS`, `QUOKY_CHUNK_PROJECT` and `QUOKY_CHUNK_MEMORY`, each
+  `off|shadow|on` (exact values, default `off`). `shadow` computes passages and selections and logs only content-free
+  statistics, while the reply stays today's. `on` for a path needs: CH1, CH5 and CH6 passed for that path; CH2 (S2) or
+  CH3 (S3) passed for the modes it enables; CH4 for the item paths; CH7 and the section 6 decision for memory; and an
+  independent Chief Architect review before merge.
+
+---
+
+### 8. Rollout
+
+**Slices (implementation plan).** C0 this ADR; C1 the pure Core chunker; C2 `eval:chunk` harness (`tools/chunk-eval`,
+hash-frozen synthetic corpus); C3 project-analysis sections (`QUOKY_CHUNK_PROJECT`); C4 batched local embedding and
+RRF hybrid; **C5a S3 whole-item summary, arm L** (mail, thread and Drive handlers, map-reduce with `requiredLocality`
+LOCAL, `QUOKY_CHUNK_ITEMS`); C5b S2 question about an item and the `focus` argument (under the RQ-2 invariants; a selector prompt
+change that forces `eval:nl` and context reruns); **C6 arms H and R2, eval-only**; C7 Jira and Slack; C8 memory
+multi-vector; C9 red-team `chunk-injection` (at least 40 cases). Slices that depend on RQ-2 (similarity-based passage
+selection, S2) are built only under invariants I1 to I9 and tests T2-* and T3-* (section 10).
+
+1. **Phase 0 (no model).** The pure chunker, the boundary golden tests (Korean sentence ends, sheet rows, code fences,
+   ADR headings), the UTF-16 to code-point fixes (E4, E5), and CH1 with the lexical arm only. Project analysis S4,
+   phase A (exact ids and lexical), behind `QUOKY_CHUNK_PROJECT=shadow`.
+2. **Phase 1 (local embedding, offline, Strict per run).** Token-weight calibration (3.1), the embedder comparison
+   (section 6) on CH1 and CH7. The owner records the decision.
+3. **Phase 2 (local generation, offline, Strict per run).** CH2, CH3 and CH6 under option L. The owner labels blind.
+4. **Phase 3 (live).** `shadow` per path, then CH4 in a DM session, then `on` per path. Order: project analysis, then
+   Jira and Slack, then mail and Drive (S2 before S3), then memory.
+5. **Arms H and R2** are built and measured in phase 2 (slice C6, eval-only, synthetic corpus). Enabling either for real
+   content is Part R (section 12), after the measurements and CH4, and only as its own ratified exception.
+
+---
+
+### 9. Clauses this amends
+
+| Clause | Settled text, short | This proposal |
+|---|---|---|
+| ADR-0111 D3 (bounded readout) and the GML-1 / DRV-1 notes of ADR-0118 | Normalize, guard, clip head and tail to 3,000 code points | Normalize and guard the full item as before; passage and select; every window keeps the 3,000-code-point readout bound; the coverage line |
+| ADR-0118 D7 | Text to the chat-tier provider only on an explicit summary request | **Unchanged by Part L.** Arm H or R2 for real content needs the Part R amendment (section 12). |
+| ADR-0120 A6 R2 (D1–D12, C4, C10) | `item.summarize` over one readout; local first, then the Claude CLI | Windows and S2 / S3 modes; the same provider order and pseudonyms; the same history note. If open question 5 is answered yes, an optional `focus` argument (an ADR-0120 catalog change, with gold cases). |
+| ADR-0019 | Allow-listed files, 8 KB each; no indexing, no vector search | S4 section selection over the same allow-list (phase A, lexical). Phase B (a local embedding cache of the owner's repository sections) needs the "no vector search" sentence amended, and only after CH1 shows lexical misses. |
+| ADR-0098 D8 | One vector per memory; an input bound of 8,000 | Multi-vector for long memories, a new collection per space, code-point counting, background backfill |
+| ADR-0106 amendment (forget) | The vector is removed on archive | All chunk vectors are removed |
+| ADR-0123 D1 (out of scope) | No knowledge RAG over connector content | Clarified, not amended (RQ-1): per-request, in-memory ranking within one named item is allowed; a persistent connector index stays out |
+| ADR-0121 D7 | Run caps | **Amended by addition (RQ-3):** a separate embedding cap (section 3.8); the model-call numbers are unchanged; no S3 inside runs. |
+| ADR-0121 D10 | Run caps | Unchanged. |
+| Part R only (not ratified): ADR-0118 D7 and an ADR-0110 D4 scope note | Mail and Drive text to the chat tier only on an explicit summary of one item; calendar local-only | Arm H or R2 for **real** content; decided after the measurements and CH4 (section 12) |
+
+### 10. Rule questions for the Chief Architect (answered 2026-11-02)
+
+**Rulings (Chief Architect, 2026-11-02, read-only review).** ADR-0123 is Proposed except its Q1; its D1 is treated as
+binding intent.
+
+- **RQ-1: YES, conditional.** Ranking the passages of **one owner-named item**, in memory, for one request, is not
+  "knowledge RAG" (ADR-0123 D1). ADR-0124 is "its own ADR". **Not covered:** the S4 phase B persistent vector cache
+  (needs an ADR-0019 amendment) and memory multi-vector (ADR-0098 D8). Invariants: **(a)** the chunking API accepts
+  exactly one prepared item (no list type); **(b)** `chunking/` imports no vector-store, persistence or history port;
+  **(c)** passages, vectors and scores live in memory only and are dropped after the reply; **(d)** only ordinal, total,
+  frame, counts and timings reach any audit. Tests: **T1-1** a canary never appears in vector collections, SQLite,
+  history, logs or the eval archive (pending, with the wiring slices); **T1-2** an import-boundary lint on `chunking/`
+  (C1); **T1-3** `@ts-expect-error` on a second item (C1).
+- **RQ-2: NO, it is not content-conditioned control flow, and no §8 amendment, IF all of I1 to I9 hold.** **I1** the mode
+  comes only from the selector's `focus` (the owner's words) and the item's length, with no phrase lists. **I2** the
+  recipient (L, H, R2), the locality, the M2 count and the map-call count W never depend on a score; S3 picks windows by
+  position only; a weak or no-match S2 still makes exactly one call over its packed window and never falls back to S3, H,
+  another item or another source. **I3** a selection's output is sorted ordinals in `[0, total)` only. **I4** the planner
+  never receives a passage, heading, score or vector. **I5** an S2 window is one window of at most 3,000 code points that
+  passes `isSummarizableDocumentReadout`; W is at most 6; S3 never runs in an agent run; the credential guard runs on the
+  full item, then on every chunk, note and prompt. **I6** Core renders the coverage line from counts after the model
+  output. **I7** "다른 구간도 볼까요?" is offered only when k < n, and the follow-up reads by ordinal on the owner's yes.
+  **I8** labels are inherited, never widened; H and R2 stay behind Part R on real content. **I9** the 8 s notice is fixed
+  Core text, triggered by time. Tests (all pending until their slices): **T2-1** a metamorphic test (replace passage
+  contents, injections included: mode, locality, provider, M2 count, W and connector calls stay byte-identical); **T2-2**
+  zero-signal S2 makes one call and a coverage line; **T2-3** a sentinel never reaches the planner prompt; **T2-4**
+  keyword-stuffing red-team of at least 40 cases, 0 successes, dedup by `contentHash`, BM25 saturation; **T2-5** a lint
+  that finds no phrase or regex lists in chunking code (C1 applies it to `chunking/`); **T2-6** an embedding failure ranks
+  lexically with the same call count and the coverage line says so.
+- **RQ-3: YES, a separate cap, with ADR-0121 D7 amended BY ADDITION (not "unchanged").** The cap is section 3.8. Tests
+  (pending until the embedding slice): **T3-1** 330 passages make 201 embed calls; **T3-2** the D7 count is unchanged with
+  the feature on and off; **T3-3** an exhausted budget gives a partial result with no retry; **T3-4** a remote or cloud
+  embedder is refused; **T3-5** a mutex between embedding and generation; **T3-6** the memory-recall budget is unchanged.
+
+---
+
+### 11. Open questions for the owner
+
+**Status (2026-11-02): answered. See section 13 for the ratification record.** The text below is kept as proposed.
+
+1. **The recipient of long mail and Drive summaries.** *Recommended:* **L**, local only for anything longer than one
+   window, which adds no egress. *Alternatives:* **H**, the same maximum volume as today to the effective chat-tier
+   provider (needs a ratified ADR-0118 D7 exception), or **R2** (needs an exception; not recommended). Under L a long
+   mail is summarized by the local model, where today it may go to the remote chat model. Is that trade acceptable until
+   CH3 reports?
+2. **Jira and Slack:** keep the A6 R2 D6 order (local first, then the Claude CLI with ≤ 3,000 code points)?
+   *Recommended:* yes.
+3. **Beyond the window cap (S3):** a stratified summary with the coverage line, plus the offer "다른 구간도 볼까요?"
+   (a follow-up that reads the next windows)? Or ask the owner to narrow the request? *Recommended:* the coverage line
+   and the offer.
+4. **Waiting time:** is ≤ 90 s with a progress message acceptable for a whole-document summary? *Recommended:* yes, with
+   ≤ 12 s for a question about an item.
+5. **A `focus` argument on `item.summarize`,** filled by the selector from your words, so that "요약" and "이 문서에서 …
+   찾아줘" go to S3 and S2 without phrase lists? *Recommended:* yes.
+6. **Project analysis:** allow section selection over the existing allow-list (ADR-0019)? Widen the budget sent to the
+   Claude CLI beyond today's 48,000 code points, or add files (`CURRENT_STATE.md`, `ROADMAP.md`) to the allow-list?
+   *Recommended:* the selection yes; the budget and the allow-list unchanged at first.
+7. **Embedder candidates:** which of E1–E3 may be pulled, given the disk space? *Recommended:* E1 (already on the host)
+   and one of E2 or E3.
+8. **Memory injection:** for a long memory, inject the best-matching passage instead of the memory's beginning?
+   *Recommended:* yes, after CH7. It also sends less text.
+9. **The thresholds in section 7:** ratify them as written, or change them?
+10. **Drive export as Markdown** (an adapter change) to keep real headings for S4? *Recommended:* measure it in CH1 first.
+11. **Text attachments (ADR-0111)** use the same clip. Include them in this ADR or later? *Recommended:* later, as a
+    small amendment once the item paths are `on`.
+12. **De-duplication of quoted mail text in threads:** allow it, with the coverage line saying so? *Recommended:* yes.
+
+### Alternatives considered
+
+- **A larger head-and-tail budget.** It still drops the middle and it costs every summary. Rejected.
+- **Send the whole item to a remote long-context model.** It breaks the local-first posture for calendar, mail and Drive
+  and needs an ADR-0118 D7 exception for each item. Kept as arm R2: measured on the synthetic corpus only, never on real content before Part R.
+- **A persistent vector index of mail, Drive, Jira and Slack** ("knowledge RAG"). It copies enterprise data to local disk
+  and puts untrusted text near the planner (ADR-0123 D1). Rejected here.
+- **A tokenizer library for exact counts.** It is model-specific and a new dependency. Calibrated per-script estimates
+  with a margin are enough for bounds, and the code-point bound stays hard.
+- **Fixed-size chunks with 10–20% overlap everywhere.** That is simpler, but it cuts sheet rows, code blocks and ADR
+  sections. Structural boundaries first, overlap only for split paragraphs.
+- **Pick a multilingual embedder now.** Rejected: it would not be measured (ADR-0105, ADR-0121 direction).
+
+---
+
+
+---
+
+### 12. Part R: not ratified
+
+**A. Clause PN of Part L (ratified): the fixed progress notice.** After 8 s of a whole-item summary (S3), Core sends one
+fixed progress message through the existing `PlatformAdapter.sendMessage`, in a DM only. The text is a Core template
+that contains only the window count. It is never model text, it is sent at most once per request, and it leaves no
+history entry. The 90 s wall-time limit applies to the whole request. Today the orchestrator sends one reply per turn
+(`orchestrator.ts:70-106`); this clause is the explicit exception that allows the one notice.
+
+**B. Part R (not ratified).** Turning arm H or arm R2 on for **real** mail or Drive content needs a **separate later
+ratification** that names **arm H and arm R2 separately** (R2 sends every window remote, so it needs its own ADR-0118 D7
+exception) and contains (1) an amendment of ADR-0118 D7 (what the chat-tier provider may receive on a long item, how
+much, and for which arm), and (2) an ADR-0110 D4 scope note (calendar stays local-only; no calendar text in either
+arm). It is asked for only **after** the synthetic-corpus measurements of L, H and R2 and after CH4. Until then arms H
+and R2 are eval-only (slice C6) on the hash-frozen synthetic corpus. Short, single-window mail and Drive summaries
+continue to go to the remote chat tier as today (ADR-0118 D7 unchanged for them).
+
+### 13. Ratification record (Product Owner, 2026-11-02)
+
+- Part L is **ratified with the recommended defaults** for every open question of section 11, except as changed below.
+- **Remote arms changed.** Build and **measure three arms** on the hash-frozen synthetic corpus only: **L**, **H**
+  (the 2026-10-28 answer's "R") and **R2**. R2 was dropped by the proposal and **re-added by the owner on 2026-11-02**
+  because "로컬 모델 품질이 생각보다 많이 안좋더라고" and short mail and Drive summaries already go to the remote chat
+  tier under ADR-0118 D7. The arm is then picked by measured quality and latency. H or R2 on real content needs Part R
+  (section 12) after the measurements and CH4.
+- **Progress notice.** A fixed Core notice after 8 s (DM only, existing `PlatformAdapter.sendMessage`, never model
+  text); the S3 limit is 90 s.
+- **Structural rules only, no phrase lists.** The proposal's "… wrote:" and `제3조` patterns are dropped. Repeated
+  quotes are removed by matching normalized lines against earlier messages. The existing `QUOTE_HEADERS` are reused and
+  never extended.
+- **Order.** S3 whole-item summary before S2 question about an item.
+- **Embedder.** `bge-m3` is to be pulled by the owner (ops step; no agent pulls it). The candidate list otherwise
+  follows section 6.
+- **Existing short summaries.** Single-window mail and Drive summaries keep going to the remote chat tier as today; no
+  new restriction.
+- **Chief Architect rulings (2026-11-02) received:** RQ-1 yes, conditional; RQ-2 no §8 amendment iff I1 to I9 hold; RQ-3
+  a separate embedding cap with ADR-0121 D7 amended by addition (section 10). Slices that rank or select by similarity
+  (S2, the `focus` argument) are built under those invariants; tests T1-1, T2-1 to T2-4, T2-6 and T3-* are pending until
+  their slices.
+- **Earlier answers (2026-10-28), kept:** Q4 (up to 90 s for a whole-document summary, with a progress notice first) is
+  accepted. Measurements run on fictional or synthetic data only. Gate thresholds are ratified separately before each
+  gate runs. The track starts after the multi-turn context fixes were merged.
