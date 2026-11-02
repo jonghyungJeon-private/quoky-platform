@@ -201,6 +201,18 @@ P7 cases. `hs-calendar-words` t2 is expected to fail again until that classifier
 scenario's `knownGap` names D4. A scenario that misses only soft checks on its known-gap turns is reported as a known
 gap (`known gaps N` in the summary), outside the 95% rate. Hard checks on the turn still count. When D4 lands, the
 marks are removed, and the turn is re-scored as a normal turn against its unchanged expectation.
+marks are removed, and the turn is re-scored as a normal turn against its unchanged expectation.
+
+**Update (D4 classifier, owner decisions of 2026-10-27 and 2026-11-02).** The classifier landed, so the marks are
+removed: `hs-calendar-words` turn 2 is a normal turn again, with its expectation unchanged. The 34 golds now live in
+`golden/nl-help-scope.v1.json` and are scored by `pnpm eval:nl -- --mode help-scope`. In this eval the classifier call is
+its own provider hook: the dry oracle answers it from the turn's `oracle.helpScopeAnswer` (1 for that turn; absent is
+neither), the `none` selector answers neither, and a Strict run sends it to the real selection provider (the router's
+egress). Dry: deployed 38/38, actions-local 55/55, all hard checks 0.
+
+**Update (owner decision of 2026-11-02, "분류기 끄고 나머지 병합").** The classifier's Strict gate passed 2 of 3 runs,
+so it is merged switched off and the marks are back: `hs-calendar-words` (scenario `knownGap` naming D4, turn 2
+`knownGap: true`) is the D4 known gap again, with its expectation and its `oracle.helpScopeAnswer` unchanged.
 
 ## Relation to `quoky-e2e`
 

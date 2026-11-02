@@ -31327,3 +31327,123 @@ and D9 still governs every turn that goes to chat.
   - Backlog candidate (not started): when the selector repeats the listing just shown, ask the model once whether an
     item action fits instead of refusing (the Buzz / OpenClaw one-recovery pattern); a prompt and model-call change that
     needs its own design, review and full measurement.
+
+### Owner decision of 2026-11-02 — an ungrounded enum dropped from a read the owner named runs (narrows the 2026-10-28 one-option rule; branch `claude/v5-d4-classifier`)
+
+- **Problem.** Deploy smoke of 5f9a7c0e (DM4): "드라이브 문서 목록 보여줘" was answered with a one-option question ("1. 드라이브
+  파일 조회 (최근 파일)"). The selector read 문서 as `drive.files {kind: document}`; a plain 문서 is no Drive type, so the
+  repair dropped `kind`, and the 2026-10-28 rule (an option Core had to change asks) asked instead of running.
+- **Decision (owner, 2026-11-02, "예외를 좁힘").** A changed option still runs when Core's repair only DROPPED enum values
+  (a closed value set, never a keyword, span, period or other free text), kept every other arg exactly as the selector
+  gave it, and the owner's own words outside pasted structures name the entry (one of its aliases or source names).
+  The read that runs is the broader read of the source the owner named (`onlyEnumDroppedFromNamedEntry`).
+- **Still asked.** A dropped free-text value (a keyword grounded only in pasted text: the red-team invariant), a replaced
+  value, an entry the owner's words do not name, a refused weekday, the help-scope question, and no option at all.
+- **Tests.** `nl-selection-service.test.ts`: the DM4 shape runs `drive.files {}`; the same output with no Drive word asks;
+  a dropped keyword with Jira named still asks. The test fails without the change. The red-team test files (12) pass.
+- **Follow-up (same branch, found by the wider targeted run).** The first cut also ran a read when the dropped enum value
+  was OUT of the enum's set (`todo.list {status: done}` for "끝난 할 일 보여줘"), which the 2026-10-28 Codex P2 / CA P1
+  test in `nl-action-live4.test.ts` guards: the broader read would answer a different question (open to-dos for finished
+  ones). The exception now needs every dropped value to be one the enum accepts and the owner's words did not ground (the
+  DM4 shape: `document` is a Drive kind, a plain 문서 does not ground it). Out-of-set values ask as before. One assertion
+  in that test changes with the owner's decision: "알림 몇 개 걸려 있어?" with an ungrounded in-set `status: canceled` now
+  runs `reminder.list {}` (the active reminders, which is what the words ask) instead of asking.
+
+### D4 help-scope classifier — implementation note (owner decisions 2026-10-27 and 2026-11-02; branch `claude/v5-d4-classifier`)
+
+- **What was built.**
+  - `nl-routing/help-scope-classifier.ts`: `NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION = 'help-scope.v1'`,
+    `buildHelpScopeClassifierPrompt` and the strict `parseHelpScopeClassifierOutput`. The prompt is a generic instruction:
+    the two displayed option texts (`renderHelpScopeOptions`, in the question's language) and the owner's reply as DATA
+    between `<reply>` tags (delimiter tags inside the reply are blanked to a fixed point; a reply over 600 code points is not classified). It asks
+    "option 1, option 2 or neither", names thanks, small talk, a new or unrelated request, unsure, both and refusal as
+    neither, and says "when unsure, neither". It carries no example phrase and no phrase list (a test checks that no gold
+    text appears outside the reply). The output is exactly one `{"answer":1}`, `{"answer":2}` or `{"answer":null}`; the
+    parser matches that exact text (whitespace between tokens, or one ```json fence around it), else `undefined`
+    (malformed).
+  - `NlSelectionService.answerPending`: for the help-scope question only (`appSource` / `appSources`), and only when
+    `resolveChoice` returned `none` (a number or displayed option text, a cancel and an unclear number are unchanged and
+    make no call), `classifyHelpScopeReply` makes one `INTENT_SELECTION` call: the same router lookup, the `sameEgress ===
+    'same'` requirement against the turn's chat provider id and locality, the selector's bound (`selectionBound`) and
+    `withTimeout`, no cache. 1 behaves as a pick of option 1; 2 as a pick of option 2 (the fixed app-itself reply). The
+    question's own stored language renders the options; the app reply keeps the reply's language, as for a number.
+  - **Fail-safe.** Neither, a malformed answer, a timeout, a provider error, a missing chat provider id and an egress
+    refusal all return no answer, so the turn is routed as usual (today's behaviour). A credential-shaped reply is never
+    sent (`containsCredentialMaterial`, the selector's own pre-egress guard, which the answer path did not pass before).
+    One content-free log line: `nl_selection.help_scope_classified` with `answer` (`1`, `2`, `neither`, `malformed`,
+    `timeout`, `failed`, `egress-refused`) and `latencyMs`; the reply is never logged.
+  - The abort signal is not wired: `NlSelectionTurn` carries none for an owner turn (only the background shadow job has
+    one), so the call ends at the bound.
+  - The router and selector prompts are untouched: no `nl-select` bump (read v72, A6 v70, R2 v71), the prompt-pin hashes
+    are unchanged, and the classifier is a separate call. ADR-0110 D4: the call carries the two option texts (source
+    names the owner wrote) and the owner's reply, never calendar, mail or Drive content.
+- **Eval.** `pnpm eval:nl -- --mode help-scope` (`nl-help-scope-eval.ts`; plan, digest, `--approved-plan-digest`, `--runs`,
+  `--model`, `--effort`, `--concurrency`, `--timeout-ms`; the digest binds the prompt version and the sha256 of the prompt
+  bytes, the corpus sha256, model, effort, runs, the call count and the gate). Each case builds the real prompt from
+  `renderHelpScopeOptions(openQuestion.sources, language)` and the case text, makes one call and parses it. An answer is a
+  hit when the classifier returns its number; a non-answer is a hit on neither and a **wrong capture** on 1 or 2;
+  malformed and timeout are misses, never wrong captures; a provider failure that is not a timeout is a harness error. The
+  report is content-free (ids, outcomes, answer classes; a malformed answer keeps up to 200 characters of the model's JSON
+  text). `run-gates.sh` knows the mode (`ALL_MODES`, `status` summary), not in `DEFAULT_MODES`.
+- **Gate bar (owner decision of 2026-11-02, set before any run).** Per run: 0 wrong captures on the non-answers AND answer
+  accuracy of at least 95% AND 0 harness errors. Accuracy is over the 26 answers, so one miss passes (25/26 = 96.2%) and two
+  fail (24/26 = 92.3%). The multi-run gate passes only when every run passes. The golds and thresholds are unchanged.
+- **Corpus.** The 34 owner-approved cases (26 answers, 13 for each option, and 8 non-answers) moved verbatim, notes
+  included, from `nl-intent.context-d4-pending.v1.json` to `golden/nl-help-scope.v1.json`. The router evals still score none
+  of them.
+- **Known gap removed.** The `knownGap` marks of `hs-calendar-words` (scenario and turn 2, "Quoky로 하는 거") are removed;
+  the turn is scored again and its expectation (`help.topic`, nothing pending) is unchanged. The context eval's harness
+  now tells the classifier prompt apart from the router prompt (`isHelpScopeClassifierPrompt`): the dry oracle answers it
+  from the turn's `oracle.helpScopeAnswer` (1 for this turn), the `none` selector answers neither, and a Strict run sends
+  it to the real selection provider like the router prompt. Dry: deployed 38/38, actions-local 55/55, all hard checks 0
+  (it was 37/38 and 54/55). The known-gap machinery itself stays in the scorer (no scenario uses it now).
+- **New non-answers (owner decision of 2026-11-02, verbatim: "18번 빼고 21건 승인").** 22 non-answers were agent-drafted
+  (thanks and acknowledgements, small talk, new unrelated read requests, both / neither / do not know, a question about
+  something else, an off-topic reply that names the app, and injection-like replies; mixed Korean and English and mixed
+  source sets). The owner first asked what the classifier does and what option 2 answers (the fixed "check the app's own
+  help" reply, not the app's steps), then approved 21: `hs-na-018` ("슬랙 계정 비밀번호는 어떻게 바꿔?") is dropped because
+  option 2 and neither are both defensible readings, so scoring it either way would punish a reasonable answer. The 21
+  joined `nl-help-scope.v1.json` (notes say owner-approved 2026-11-02); the corpus is 55 cases, 26 answers and 29
+  non-answers, and the gate bar is unchanged. Whether option 2 should answer the app's own how-to is not part of this
+  merge.
+- **Codex review fixes.** The credential guard runs on the reply as received and as the prompt quotes it; delimiter tags
+  are blanked to a fixed point, so a nested tag (`<</reply>reply>`) cannot assemble a credential after the guard. The
+  parser matches the exact text `{"answer": 1 | 2 | null}` (a duplicated key, an escaped key or `1e0` is malformed). A
+  reply over 600 code points is not classified at all and is routed as usual, so a correction at its end is never cut off.
+- **Runs.** Model-in-the-loop eval runs were approved by the owner on 2026-11-02 together with the strict bar.
+
+### Owner decisions of 2026-11-02 after the Strict gates — D4 merged switched off; `neg-033` recorded as an exception (branch `claude/v5-d4-classifier`)
+
+- **Gates of 55b99c12 (`help-scope.v1`).** Full suite 552 files / 17,837 tests pass. Context eval 38/38 in all 3 runs
+  (0 hard). Intent gate PASSED 3/3; read-regression gate (`nl-select.v71`) PASSED 3/3. Help-scope gate FAILED 0/3: the
+  non-answers were 29/29 with 0 wrong captures every run, but answers were 20/26, 21/26, 20/26. Every miss was an
+  option-1 answer that spoke to Quoky directly ("I meant through you", "너로 찾는 거", "채팅으로 검색하는 방법",
+  "Quoky 기능 얘기야", ...) read as neither: the prompt showed the option texts but never said that Quoky asked, in this
+  conversation, and "when unsure, neither" took the rest. No answer was read as the other option.
+- **Owner decision ("v2 + 확인용 예시 먼저").** `help-scope.v2` adds one context paragraph (Quoky, the assistant the owner
+  is talking to, asked the question in this conversation; option 1 is through Quoky here, option 2 the app's own screens;
+  a reply that refers to the one being spoken to, or to this conversation, refers to Quoky). It names no reply words.
+  Before any v2 run, 12 held-out answers (`hs-ho-001..012`, 6 per option, wordings unlike the missed ones) were drafted
+  and owner-approved ("12건 그대로 승인"): 67 cases, 38 answers, 29 non-answers, the same bar.
+- **Gate of 4161faf4 (`help-scope.v2`).** FAILED, 2 of 3 runs: answers 36/38, 37/38, 37/38; non-answers 29/29 and 0
+  wrong captures every run. Misses: `hs-ho-006` "the assistant side" (Confluence) read as neither in all 3 runs;
+  `ctx-d4-015` "앱 안에서 직접 하는 방법" read as option 1 instead of 2 once (new in v2; the context paragraph likely made
+  "the app" read as Quoky). Context eval on 4161faf4: 38/38, 38/38, 37/38 (the miss is a listing-content router turn, not
+  the classifier), PASSED. A v3 prompt was not tried: the held-out set has been seen once, and tuning again on the same
+  golds would be gold fitting.
+- **Owner decision ("분류기 끄고 나머지 병합").** The classifier, its eval mode and `help-scope.v2` are merged switched
+  off: `NlSelectionServiceDeps.helpScopeClassifier` (default off; the app does not set it). Off, a worded reply to the
+  help-scope question is routed as usual, exactly as before D4. `hs-calendar-words` turn 2 is the D4 known gap again
+  (scenario `knownGap` and turn `knownGap: true` restored, expectation unchanged). Backlog: switch it on only after a
+  Strict gate that passes every run, measured on golds that were not used to tune the prompt (for example a stronger
+  model for this one call, with no prompt change).
+- **Agent-plan gate, archive `d4-55b99c12`: FAILED, run checks 2 of 3 (multi-step pooled 507/513 = 98.8%).** The
+  gate run built `dist` once from 55b99c12 at its start (10:56 KST); the report's `plan.gitHead` reads 4161faf4 because
+  that source-only commit (the classifier prompt, its golds and tests; nothing the agent planner reads) landed in the
+  worktree at 11:25 KST, before the agent-plan mode started at 11:33, without a rebuild. The measured code is 55b99c12. Run 2 had one wrong
+  capture on a negative: `neg-033` "드라이브 중에 듣기 좋은 노래 추천해줘" (드라이브 = a car drive) planned as
+  `drive.files`; runs 1 and 3 answered none. The same case failed the same way 1 run in 3 at f6854a87 (2026-10-29, before
+  this branch's Drive change), reported then as selector variance after the selector effort went to high, with no
+  structural fix. The model chose `drive.files` itself (no Core repair involved). It is a read only: no write and no
+  external send. **Owner decision ("예외 기록 후 병합"), like neg-100:** recorded as a known exception; the merge goes
+  ahead. Backlog: the homonym variance stays an open selector item (no phrase list, no gold change).

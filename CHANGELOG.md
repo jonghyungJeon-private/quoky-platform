@@ -11,6 +11,25 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   abstract layer classes, types, word lists and helpers under `application/conversation-runtime/`. Method bodies moved
   unchanged; `ConversationRuntime` keeps its constructor, its public statics (as one-line delegators), `handle` and the
   same 19 exports. No behaviour, API or test change.
+## Unreleased — D4: the help-scope classifier (owner decisions of 2026-10-27 and 2026-11-02)
+## Unreleased — D4 help-scope classifier (merged switched off) and the Drive one-option narrowing (owner decisions of 2026-11-02)
+
+- **Changed (Drive one-option ask, owner decision "예외를 좁힘").** A read the owner named runs its broader read when Core
+  only dropped enum values the enum accepts but the owner's words did not ground (DM4: "드라이브 문서 목록 보여줘" no
+  longer asks "1. 드라이브 파일 조회"). Out-of-set values, dropped free text and pasted-only names still ask.
+- **Added (off by default).** A dedicated, bounded 1 / 2 / neither classifier for a worded reply to the help-scope question
+  (`help-scope-classifier.ts`, prompt `help-scope.v2`; `NlSelectionServiceDeps.helpScopeClassifier`). Same
+  `INTENT_SELECTION` provider, bound and same-egress check as the selector; a credential-shaped or over-long reply is never
+  sent; anything but a clean 1 or 2 routes the turn as usual. **It is merged switched off** (owner decision of 2026-11-02,
+  "분류기 끄고 나머지 병합"): the Strict gate passed 2 of 3 runs, so a worded reply is still routed as before D4, and
+  `hs-calendar-words` turn 2 stays the D4 known gap.
+- **Added (eval).** `pnpm eval:nl -- --mode help-scope` (plan digest, `--runs`; `run-gates.sh` mode `help-scope`, not in the
+  default set) over `golden/nl-help-scope.v1.json`: 67 owner-approved cases, 38 answers (the 26 D4 golds and 12 held-out
+  `hs-ho-*`) and 29 non-answers (8 D4 golds and 21 `hs-na-*`). Gate per run: 0 wrong captures on non-answers, answer
+  accuracy at least 95%, 0 harness errors; every run must pass.
+- **Measured (Strict, haiku).** `help-scope.v1`: answers 20-21/26, non-answers 29/29 (failed; the prompt never said that
+  Quoky asked). `help-scope.v2`: answers 36/38, 37/38, 37/38, non-answers 29/29 every run, one option read the other way
+  once (failed, 2 of 3 runs).
 
 ## Unreleased — Security: Node 22.23.4 (repository Node; the service switch waits for the owner)
 

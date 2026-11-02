@@ -77,6 +77,12 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   6 runs. The open question is removed from the router, and the 34 D4 golds are pending for a dedicated classifier.
   Re-scored without them, 32a2c81f passes both gates in all 3 runs. `hs-calendar-words` fails in the dry runs until
   the classifier lands.
+  the classifier lands.
+- **D4 classifier merged switched off (2026-11-02, owner decision "분류기 끄고 나머지 병합").** The dedicated 1 / 2 /
+  neither call (`help-scope.v2`, `helpScopeClassifier` dep, default off) and `eval:nl --mode help-scope` (67 cases: 38
+  answers, 29 non-answers) are in the tree; the Strict gate passed 2 of 3 runs (answers 36-37/38, 0 wrong captures), so a
+  worded reply to the help-scope question is routed as before and `hs-calendar-words` turn 2 stays the D4 known gap.
+  Backlog: switch it on only after a gate that passes every run without re-tuning the prompt on the same golds.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.

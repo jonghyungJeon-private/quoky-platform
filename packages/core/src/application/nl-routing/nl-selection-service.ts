@@ -118,8 +118,9 @@ import {
   type PendingQuestion,
   type StoredSelection,
 } from './selection-state';
-import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { groundingWordIn, validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
+import { buildHelpScopeClassifierPrompt, helpScopeClassifierReply, parseHelpScopeClassifierOutput } from './help-scope-classifier';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
@@ -323,6 +324,12 @@ export interface NlSelectionServiceDeps {
   readonly logger: Logger;
   /** Set from config (`QUOKY_NL_INTENT_TIMEOUT_MS`, default {@link NL_SELECTION_TIMEOUT_MS}); tests also override it. */
   readonly timeoutMs?: number;
+  /**
+   * D4 help-scope classifier (`help-scope-classifier.ts`). Off unless set: the 2026-11-02 Strict gate of `help-scope.v2`
+   * passed 2 of 3 runs, so the owner decided (2026-11-02, "분류기 끄고 나머지 병합") to merge it switched off. Off, a
+   * worded reply to the help-scope question is routed as usual, exactly as before D4.
+   */
+  readonly helpScopeClassifier?: boolean;
   /** Tests only: monotonic milliseconds for latency (default `Date.now`). */
   readonly elapsed?: () => number;
   /**
@@ -1207,7 +1214,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) {
         options.push(repaired.value);
         // Owner decision of 2026-10-28: whether Core had to change this candidate (a repaired or ungrounded value dropped).
-        optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args));
+        // Owner decision of 2026-11-02: dropping only enum filter values, from a read the owner's own words name, is not a
+        // change that asks (the broader read of the named source runs).
+        optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args) && !onlyEnumDroppedFromNamedEntry(repaired.value, candidate.args, prepared.groundingText));
         dateOnly.push(isDateRangeOnlyReading(repaired.value, candidate.args, own?.args));
       }
     }
@@ -1245,7 +1254,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // it. Still asked: a refused weekday (the hint names the week and day), the help-scope question (just above, owner
       // decision A), no option at all (below), and an option Core had to CHANGE (a repaired candidate: Core dropped or
       // replaced a value the selector gave, e.g. a keyword grounded only in pasted text). The red-team invariant holds:
-      // a hostile or ungrounded selection never runs a read by repair.
+      // a hostile or ungrounded selection never runs a read by repair. Owner decision of 2026-11-02 narrows the last case
+      // (`onlyEnumDroppedFromNamedEntry`): "드라이브 문서 목록 보여줘" read as `drive.files {kind: document}` (a plain 문서 is
+      // no type) runs as the Drive listing instead of a one-option question.
       if (optionChanged[0] !== true) {
         this.log('info', 'nl_selection.one_option_ran', { entryId: (options[0] as NlValidatedSelection).entry.id });
         return this.complete(options[0] as NlValidatedSelection, turn, last, language, prepared.groundingText);
@@ -1527,7 +1538,14 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // reply sets, `interpretContinuationConfirmReply`); a number or the option's name still answers it.
       const yesNo = pending.confirm === true ? interpretContinuationConfirmReply(answerText) : 'none';
       if (yesNo === 'deny') return { kind: 'ask', text: renderCancelled(language) };
-      const resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
+      let resolved: ChoiceResolution = yesNo === 'approve' ? { kind: 'pick', index: 0 } : resolveChoice(answerText, labels);
+      // D4 (owner decisions of 2026-10-22 and 2026-10-27): only a worded reply to the help-scope question, one that neither
+      // a number nor a displayed option text resolved, goes to the dedicated classifier; 1 and 2 then pick like the number.
+      if (resolved.kind === 'none' && appSource !== undefined && this.deps.helpScopeClassifier === true) {
+        const answer = await this.classifyHelpScopeReply(turn, answerText, renderHelpScopeOptions(appSource, pending.language, more), pending.language);
+        if (answer === 1) resolved = { kind: 'pick', index: 0 };
+        else if (answer === 2) resolved = { kind: 'pick', index: pending.options.length };
+      }
       if (resolved.kind === 'none') return undefined;
       if (resolved.kind === 'cancel') return { kind: 'ask', text: renderCancelled(language) };
       if (resolved.kind === 'pick' && appSource !== undefined && resolved.index === pending.options.length) {
@@ -2540,6 +2558,46 @@ export class NlSelectionService implements TurnDeliveryObserver {
   }
 
   /**
+   * D4: one bounded `INTENT_SELECTION` call that reads a worded reply to the help-scope question as option 1, option 2 or
+   * neither (`help-scope-classifier.ts`). Same egress rule and bound as the selector, no cache. Anything but a clean 1 or 2
+   * (neither, malformed, timeout, provider error, egress refusal) is `undefined`: the turn is routed as usual. Logs the
+   * answer class and the latency only, never the reply.
+   */
+  private async classifyHelpScopeReply(turn: NlSelectionTurn, reply: string, options: readonly [string, string], language: 'ko' | 'en'): Promise<1 | 2 | undefined> {
+    // Nothing credential-shaped leaves the process (the selector's own pre-egress guard, `prepare`, never saw this reply);
+    // checked on the reply as received and as the prompt quotes it. An over-long reply is not classified at all.
+    const quoted = helpScopeClassifierReply(reply);
+    if (quoted === undefined || containsCredentialMaterial(reply) || containsCredentialMaterial(quoted)) return undefined;
+    const clock = this.deps.elapsed ?? Date.now;
+    const started = clock();
+    const done = (answer: '1' | '2' | 'neither' | 'malformed' | 'timeout' | 'failed' | 'egress-refused'): 1 | 2 | undefined => {
+      this.log('info', 'nl_selection.help_scope_classified', { answer, latencyMs: Math.max(0, clock() - started) });
+      return answer === '1' ? 1 : answer === '2' ? 2 : undefined;
+    };
+    if (turn.chatProviderId === undefined) return done('egress-refused');
+    let provider: AiProvider;
+    try {
+      provider = await this.deps.router.select(Capability.INTENT_SELECTION);
+    } catch {
+      return done('failed');
+    }
+    if (sameEgress(provider, turn.chatProviderId, turn.chatProviderLocality) !== 'same') return done('egress-refused');
+    const prompt = buildHelpScopeClassifierPrompt({ options, reply: quoted, language });
+    const timeoutMs = this.selectionBound(clock()).boundMs;
+    let rawText: string;
+    try {
+      rawText = (await withTimeout(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs }), timeoutMs)).text;
+    } catch (error) {
+      const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
+      if (!timedOut) this.lastCompletedAtMs = clock();
+      return done(timedOut ? 'timeout' : 'failed');
+    }
+    this.lastCompletedAtMs = clock();
+    const answer = parseHelpScopeClassifierOutput(rawText);
+    return done(answer === 1 ? '1' : answer === 2 ? '2' : answer === 'neither' ? 'neither' : 'malformed');
+  }
+
+  /**
    * The selector bound at `nowMs`: the configured bound (default 10 s), raised to 10 s (the configured upper limit, never
    * more) while the process is younger than 180 s or the last completed selector call is more than 30 min old.
    * Content-free; sends nothing.
@@ -2713,6 +2771,30 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     dropped.push({ arg: name, kind });
   }
   return undefined;
+}
+
+/**
+ * Owner decision of 2026-11-02 (narrows the 2026-10-28 rule that a changed option asks): Core's repair only DROPPED enum
+ * values the enum accepts but the owner's words did not ground (a closed value set: never a keyword, span, period or other
+ * free text, and never an out-of-set value, which keeps the ask), kept every other arg as the selector
+ * gave it, and the owner's own words, outside pasted structures, name the entry (an alias or source name). The read
+ * that runs is then the broader read of the source the owner named. A free-text value grounded only in pasted text, a
+ * replaced value, or an entry the owner did not name still asks (the red-team invariant).
+ */
+function onlyEnumDroppedFromNamedEntry(repaired: NlValidatedSelection, given: NlArgs, groundingText: string): boolean {
+  const kept = repaired.args as Readonly<Record<string, unknown>>;
+  const dropped = Object.keys(given).filter((name) => !(name in kept));
+  if (dropped.length === 0 || Object.keys(kept).some((name) => !(name in given) || JSON.stringify(kept[name]) !== JSON.stringify((given as Readonly<Record<string, unknown>>)[name]))) return false;
+  // Only a value the enum accepts and the owner's words did not ground: an out-of-set value ("done" for a to-do status) is
+  // the model's reading of words the enum cannot hold, so the broader read would answer a different question; it asks.
+  const givenArgs = given as Readonly<Record<string, unknown>>;
+  if (!dropped.every((name) => {
+    const spec = repaired.entry.args.find((candidate) => candidate.name === name);
+    const value = givenArgs[name];
+    return spec?.kind === 'enum' && typeof value === 'string' && spec.values?.includes(value) === true;
+  })) return false;
+  const prose = normalizeForMatch(withoutStructures(groundingText));
+  return [...repaired.entry.aliases, ...(repaired.entry.sourceNames ?? [])].some((name) => groundingWordIn(prose, normalizeForMatch(name)));
 }
 
 /** Args as a canonical string (key order ignored), to tell an unchanged selection from a repaired one. */

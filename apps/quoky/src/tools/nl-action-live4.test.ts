@@ -112,7 +112,9 @@ describe('v51 gate: a read hedged against an action runs instead of a one-option
     expect(await ask('내 지라 완료된 것까지 다', 'jira.issues', { status: 'resolved' })).toBe('ask');
     expect(await ask('지라 둘 다 보여줘', 'jira.issues', { role: 'watcher' })).toBe('ask');
     expect(await ask('todo 하는 방법 알려줘', 'help.topic', { topic: 'todos' })).toBe('ask');
-    expect(await ask('알림 몇 개 걸려 있어?', 'reminder.list', { status: 'canceled' })).toBe('ask');
+    // Owner decision of 2026-11-02: an IN-SET enum value the owner's words did not ground, dropped from a read the owner
+    // named ("알림"), runs the broader read; the out-of-set values above and below still ask.
+    expect(await ask('알림 몇 개 걸려 있어?', 'reminder.list', { status: 'canceled' })).toBe('execute');
     expect(await ask('알림 몇 개 걸려 있어?', 'reminder.list', { status: 'scheduled' })).toBe('ask');
   });
 

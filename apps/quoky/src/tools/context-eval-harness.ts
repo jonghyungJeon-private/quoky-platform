@@ -153,6 +153,8 @@ export interface TurnObservation {
   readonly selectionCalls: number;
   /** Other INTENT_SELECTION calls (e.g. a planner); never sent to the real selector. */
   readonly otherSelectionCalls: number;
+  /** D4: help-scope classifier calls (one worded reply to the open help-scope question), counted apart from both. */
+  readonly helpScopeCalls?: number;
   /**
    * The conversation context the router prompt carried this turn (diagnosis of context loss): the previous selection's
    * entry id (`none` when the prompt said none) and the A6 reference context line, as rendered. Absent without selection.
@@ -180,6 +182,8 @@ export interface TurnObservation {
 export interface ContextEvalProviders {
   /** The router prompt of natural-language selection: the raw selector output text, or a throw (a provider failure). */
   select(request: AiRequest): Promise<string>;
+  /** D4: the help-scope classifier prompt (one INTENT_SELECTION call, not the router prompt): its raw output (absent: neither). */
+  classify?(request: AiRequest): Promise<string>;
   /** Chat (GENERAL_CHAT / POLICY_SENSITIVE_CHAT and anything else that is not selection or summarisation). */
   chat(request: AiRequest): Promise<string>;
   /** Summarisation (document / item summaries). */
@@ -414,6 +418,8 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
       async execute(request: AiRequest) {
         requests.push({ ...request, locality });
         if (request.capability === core.Capability.INTENT_SELECTION) {
+          // D4: the help-scope classifier is its own call, answered by its own provider hook.
+          if (core.isHelpScopeClassifierPrompt(request.prompt)) return { text: state.providers.classify === undefined ? '{"answer":null}' : await state.providers.classify(request), artifacts: [] };
           // Only the router prompt is natural-language selection; any other INTENT_SELECTION call (a planner) gets none.
           if (!request.prompt.startsWith(routerHead)) return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] }), artifacts: [] };
           return { text: await state.providers.select(request), artifacts: [] };
@@ -624,7 +630,8 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
         claims: claims.slice(claimStart),
         claimedEntries: claimedEntries.slice(claimedStart),
         selectionCalls: selection.filter((request) => request.prompt.startsWith(routerHead)).length,
-        otherSelectionCalls: selection.filter((request) => !request.prompt.startsWith(routerHead)).length,
+        otherSelectionCalls: selection.filter((request) => !request.prompt.startsWith(routerHead) && !core.isHelpScopeClassifierPrompt(request.prompt)).length,
+        helpScopeCalls: selection.filter((request) => core.isHelpScopeClassifierPrompt(request.prompt)).length,
         chatPrompts: made.filter((request) => request.capability === core.Capability.GENERAL_CHAT || request.capability === core.Capability.POLICY_SENSITIVE_CHAT).map((request) => request.prompt),
         summaryPrompts: made.filter((request) => request.capability === core.Capability.SUMMARIZATION).map((request) => request.prompt),
         remotePrompts: made

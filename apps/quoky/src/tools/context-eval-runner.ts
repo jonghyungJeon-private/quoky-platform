@@ -152,11 +152,13 @@ export class ContextEvalRunner {
   private providers(turn: ContextEvalTurn | undefined, mode: 'scored' | 'quiet' | 'probe-selector'): ContextEvalProviders {
     const { selection, chat } = this.options;
     const stubChat = async (): Promise<string> => CONTEXT_EVAL_STUB_CHAT;
-    if (mode === 'quiet') return { select: async () => NONE, chat: stubChat, summarize: async () => CONTEXT_EVAL_STUB_SUMMARY };
+    const NEITHER = '{"answer":null}';
+    if (mode === 'quiet') return { select: async () => NONE, classify: async () => NEITHER, chat: stubChat, summarize: async () => CONTEXT_EVAL_STUB_SUMMARY };
     // D2: a chat-suggested command is probed through the real selector (a Strict run); chat stays the stub.
     if (mode === 'probe-selector') {
       return {
         select: async (request: AiRequest) => (selection.kind === 'real' ? (await selection.provider.execute(request)).text : NONE),
+        classify: async () => NEITHER,
         chat: stubChat,
         summarize: async () => CONTEXT_EVAL_STUB_SUMMARY,
       };
@@ -165,6 +167,13 @@ export class ContextEvalRunner {
       select: async (request: AiRequest) => {
         if (selection.kind === 'oracle') return oracleOutput(turn);
         if (selection.kind === 'none') return NONE;
+        return (await selection.provider.execute(request)).text;
+      },
+      // D4: the oracle classifier answers what the corpus says an ideal one would; a real run asks the real provider (the
+      // same selection provider, so the same egress as the router prompt).
+      classify: async (request: AiRequest) => {
+        if (selection.kind === 'oracle') return JSON.stringify({ answer: turn?.oracle?.helpScopeAnswer ?? null });
+        if (selection.kind === 'none') return NEITHER;
         return (await selection.provider.execute(request)).text;
       },
       chat:

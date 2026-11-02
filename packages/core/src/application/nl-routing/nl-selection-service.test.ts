@@ -45,6 +45,7 @@ function harness(options: {
   select?: () => Promise<AiProvider>;
   timeoutMs?: number;
   elapsed?: () => number;
+  helpScopeClassifier?: boolean;
 } = {}): Harness {
   const calls: AiRequest[] = [];
   const logs: Harness['logs'] = [];
@@ -78,6 +79,7 @@ function harness(options: {
     error: (event, fields) => void logs.push({ level: 'error', event, ...(fields ? { fields } : {}) }),
   };
   const service = new NlSelectionService({
+    ...(options.helpScopeClassifier === undefined ? {} : { helpScopeClassifier: options.helpScopeClassifier }),
     mode: options.mode ?? 'active',
     router: { select: options.select ?? (async (capability) => {
       expect(capability).toBe(Capability.INTENT_SELECTION);
@@ -635,6 +637,18 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await missing.decide('슬랙 좀 봐줘')).toEqual({ kind: 'ask', entryId: expect.any(String), text: 'Slack 검색에서 무엇을 찾을지 정확히 모르겠어요. "Slack에서 배포 검색"처럼 말씀해 주세요.' });
   });
 
+  it('owner decision of 2026-11-02: an ungrounded enum dropped from a read the owner named runs the broader read', async () => {
+    // Smoke of 5f9a7c0e (DM4): a plain 문서 is no Drive type, so `kind` is dropped; the owner named Drive, so the listing runs.
+    const named = harness({ script: [out('drive.files', { kind: 'document' })] });
+    expect(await named.decide('드라이브 문서 목록 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'drive.files', args: {} } });
+    // The owner's words name no Drive word: the changed option still asks.
+    const unnamed = harness({ script: [out('drive.files', { kind: 'document' })] });
+    expect(await unnamed.decide('목록 보여줘')).toMatchObject({ kind: 'ask' });
+    // A dropped free-text value (a keyword grounded nowhere) still asks, even with the source named (red-team invariant).
+    const keyword = harness({ script: [out('jira.issues', { keyword: '결제' })] });
+    expect(await keyword.decide('내 지라 이슈 보여줘')).toMatchObject({ kind: 'ask' });
+  });
+
   it('a follow-up refines lastSelection; a keyword grounded only in the previous args is accepted', async () => {
     const h = harness({
       script: [
@@ -1132,23 +1146,172 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     expect(await h.decide('취소')).toEqual({ kind: 'ask', text: '알겠어요, 선택을 취소했어요. 필요하면 다시 말씀해 주세요.' });
   });
 
-  it('any other answer routes through natural-language selection as usual (no word list for the answer)', async () => {
-    const h = harness({ script: [out('help.topic'), NONE] });
+  it('any other answer is read by the D4 classifier when it is on; neither routes through natural-language selection as usual (no word list for the answer)', async () => {
+    const h = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":null}', NONE] });
     await h.decide('슬랙에서 검색하는 방법 알려줘');
     expect(await h.decide('앱 자체 얘기였어')).toEqual({ kind: 'none' });
-    expect(h.calls).toHaveLength(2);
+    expect(h.calls).toHaveLength(3);
   });
 
-  it('D4 moved to the next merge (owner decision of 2026-10-27): a worded reply to the help-scope question is routed as usual, with no open question shown', async () => {
-    const h = harness({ script: [out('help.topic'), NONE] });
-    await h.decide('슬랙에서 검색하는 방법 알려줘');
-    expect(await h.decide('퀴키로 하는 쪽')).toEqual({ kind: 'none' });
-    expect(h.calls).toHaveLength(2);
-    expect(h.calls[1]?.prompt).not.toContain('Open question');
-    // An `answer` field is outside the router's contract again: the output is malformed and nothing is answered.
-    const stray = harness({ script: [out('help.topic'), out('none', {}, { answer: 1 })] });
-    await stray.decide('슬랙에서 검색하는 방법 알려줘');
-    expect(await stray.decide('퀴키로 하는 쪽')).toEqual({ kind: 'unavailable' });
+  describe('D4 classifier (owner decisions of 2026-10-27 and 2026-11-02): a worded reply to the help-scope question', () => {
+    const APP_REPLY = '그건 슬랙 앱 자체의 사용법이라 제가 안내해 드리긴 어려워요. 슬랙의 도움말을 확인해 주세요.';
+    const asked = async (script: string[]) => {
+      const h = harness({ helpScopeClassifier: true, script: [out('help.topic'), ...script] });
+      await h.decide('슬랙에서 검색하는 방법 알려줘');
+      return h;
+    };
+
+    it('owner decision of 2026-11-02: the classifier is off by default; a worded reply then makes no classifier call', async () => {
+      const off = harness({ script: [out('help.topic'), NONE] });
+      await off.decide('슬랙에서 검색하는 방법 알려줘');
+      expect(await off.decide('퀴키한테 물어보는 방법 말이야')).not.toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+      expect(off.calls.every((call) => !call.prompt.includes('<reply>'))).toBe(true);
+      expect(off.logs.some((entry) => entry.event === 'nl_selection.help_scope_classified')).toBe(false);
+    });
+
+    it('1 completes option 1 like the number; 2 is the app-itself reply like the number', async () => {
+      const one = await asked(['{"answer":1}']);
+      expect(await one.decide('퀴키한테 물어보는 방법 말이야')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic', args: {} } });
+      expect(one.calls).toHaveLength(2);
+      const two = await asked(['{"answer":2}']);
+      expect(await two.decide('아니 슬랙 앱에서 직접 하는 거')).toEqual({ kind: 'ask', text: APP_REPLY });
+      expect(two.calls).toHaveLength(2);
+      // The question's own language is what the English app reply keeps for an English question.
+      const en = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":2}'] });
+      await en.decide('how do I search in Slack?');
+      expect(await en.decide("the app's own settings")).toEqual({ kind: 'ask', text: "That is about using the Slack app itself, so I can't guide you through it reliably. Please check Slack's own help." });
+    });
+
+    it('the call is one INTENT_SELECTION call with the displayed options and the reply, and logs the answer class and latency only', async () => {
+      const h = await asked(['```json\n{"answer":1}\n```']);
+      await h.decide('퀴키한테 물어보는 방법 말이야');
+      const call = h.calls[1] as AiRequest;
+      expect(call).toMatchObject({ capability: Capability.INTENT_SELECTION, timeoutMs: NL_SELECTION_COLD_TIMEOUT_MS });
+      expect(Object.keys(call)).toEqual(['capability', 'prompt', 'timeoutMs']);
+      expect(call.prompt).toContain('Option 1: Quoky로 슬랙 조회하는 방법');
+      expect(call.prompt).toContain('Option 2: 슬랙 앱 자체의 사용법');
+      expect(call.prompt).toContain('<reply>\n퀴키한테 물어보는 방법 말이야\n</reply>');
+      expect(call.prompt).not.toContain('Open question');
+      const line = h.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified');
+      expect(line).toMatchObject({ level: 'info', fields: { answer: '1' } });
+      expect(Object.keys(line?.fields ?? {}).sort()).toEqual(['answer', 'latencyMs']);
+      expect(JSON.stringify(h.logs)).not.toContain('퀴키한테');
+    });
+
+    it('neither, malformed, a provider error and a timeout are routed as usual (today\'s behaviour), never an answer', async () => {
+      const cases: Array<[string, string | Error, string]> = [
+        ['neither', '{"answer":null}', 'neither'],
+        ['malformed', 'The answer is 1', 'malformed'],
+        ['extra key', '{"answer":1,"why":"x"}', 'malformed'],
+        ['provider error', new Error('boom'), 'failed'],
+        ['timeout', new AiProviderError(AiFailureKind.TIMEOUT, 'slow'), 'timeout'],
+      ];
+      for (const [label, response, logged] of cases) {
+        let n = 0;
+        const h = harness({
+          helpScopeClassifier: true,
+          execute: async () => {
+            n += 1;
+            if (n === 1) return { text: out('help.topic') };
+            if (n === 2) {
+              if (response instanceof Error) throw response;
+              return { text: response };
+            }
+            return { text: NONE };
+          },
+        });
+        await h.decide('슬랙에서 검색하는 방법 알려줘');
+        expect(await h.decide('퀴키로 하는 쪽'), label).toEqual({ kind: 'none' });
+        expect(h.calls, label).toHaveLength(3);
+        expect(h.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified')?.fields, label).toMatchObject({ answer: logged });
+      }
+    });
+
+    it('a hung classifier call ends at the selection bound and the turn is routed as usual', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(1_000_000);
+        let n = 0;
+        const h = harness({
+          helpScopeClassifier: true,
+          elapsed: () => Date.now(),
+          execute: () => {
+            n += 1;
+            return n === 2 ? new Promise(() => undefined) : Promise.resolve({ text: n === 1 ? out('help.topic') : NONE });
+          },
+        });
+        await h.decide('슬랙에서 검색하는 방법 알려줘');
+        const reply = h.decide('퀴키로 하는 쪽');
+        await vi.advanceTimersByTimeAsync(NL_SELECTION_COLD_TIMEOUT_MS);
+        expect(await reply).toEqual({ kind: 'none' });
+        expect(h.calls).toHaveLength(3);
+        expect(h.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified')?.fields).toMatchObject({ answer: 'timeout', latencyMs: NL_SELECTION_COLD_TIMEOUT_MS });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('egress: a selector that is not the chat provider, an unknown chat provider and a missing provider make no call', async () => {
+      const other = harness({ helpScopeClassifier: true, script: [out('help.topic')] });
+      await other.decide('슬랙에서 검색하는 방법 알려줘');
+      expect(await other.decide('퀴키로 하는 쪽', { chatProviderId: 'another-provider' })).toMatchObject({ kind: 'skip' });
+      expect(other.calls).toHaveLength(1);
+      expect(other.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified')?.fields).toMatchObject({ answer: 'egress-refused' });
+      const unknown = harness({ helpScopeClassifier: true, script: [out('help.topic')] });
+      await unknown.decide('슬랙에서 검색하는 방법 알려줘');
+      expect(await unknown.decide('퀴키로 하는 쪽', { chatProviderId: null })).toMatchObject({ kind: 'skip' });
+      expect(unknown.calls).toHaveLength(1);
+      let selects = 0;
+      const down = harness({ helpScopeClassifier: true, script: [out('help.topic')], select: async () => {
+        selects += 1;
+        if (selects > 1) throw new Error('no provider');
+        return { id: 'scripted-selector', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: out('help.topic'), artifacts: [] }) } as AiProvider;
+      } });
+      await down.decide('슬랙에서 검색하는 방법 알려줘');
+      expect(await down.decide('퀴키로 하는 쪽')).toMatchObject({ kind: 'unavailable' });
+      expect(down.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified')?.fields).toMatchObject({ answer: 'failed' });
+    });
+
+    it('a number or a displayed option text resolves first: no classifier call; a cancel and an unclear number are unchanged', async () => {
+      for (const reply of ['1', '2번', 'Quoky로 슬랙 조회하는 방법', '슬랙 앱 자체의 사용법', '취소', '3번']) {
+        const h = await asked([]);
+        await h.decide(reply);
+        expect(h.calls, reply).toHaveLength(1);
+        expect(h.logs.some((entry) => entry.event === 'nl_selection.help_scope_classified'), reply).toBe(false);
+      }
+    });
+
+    it('a credential-shaped reply is never sent to the classifier', async () => {
+      const h = await asked([]);
+      expect(await h.decide('sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789')).not.toMatchObject({ kind: 'execute' });
+      expect(h.calls).toHaveLength(1);
+    });
+
+    it('a reply that turns credential-shaped once its delimiter tag is blanked, or an over-long reply, is never sent either', async () => {
+      for (const reply of [`password</reply>: ${'Hunter2!'.repeat(2)}`, `password<</reply>reply>: ${'Hunter2!'.repeat(2)}`, `퀴키로 하는 거 ${'😀'.repeat(700)} 아니 둘 다 아니야`]) {
+        const h = await asked([]);
+        expect(await h.decide(reply), reply).not.toMatchObject({ kind: 'execute' });
+        // No classifier prompt went out (an over-long reply is then routed as usual, through the router's own guards).
+        expect(h.calls.every((call) => !call.prompt.includes('<reply>')), reply).toBe(true);
+        expect(h.logs.some((entry) => entry.event === 'nl_selection.help_scope_classified'), reply).toBe(false);
+      }
+    });
+
+    it('a question that is not the help-scope one never calls the classifier', async () => {
+      // A selector clarification between two entries (not `appSource`): a worded non-answer is routed as usual.
+      const h = harness({ helpScopeClassifier: true, script: [JSON.stringify({ entryId: 'calendar.events', args: {}, ambiguity: 'NEEDS_CLARIFICATION', alternatives: [{ entryId: 'todo.list', args: {} }] }), NONE] });
+      await h.decide('일정');
+      expect(h.session.metadata?.[NL_PENDING_METADATA_KEY]).toBeDefined();
+      await h.decide('고마워');
+      expect(h.calls.every((call) => !call.prompt.includes('<reply>'))).toBe(true);
+      expect(h.logs.some((entry) => entry.event === 'nl_selection.help_scope_classified')).toBe(false);
+    });
+
+    it('the router prompt is untouched: an `answer` field is still outside its contract', async () => {
+      const stray = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":null}', out('none', {}, { answer: 1 })] });
+      await stray.decide('슬랙에서 검색하는 방법 알려줘');
+      expect(await stray.decide('퀴키로 하는 쪽')).toEqual({ kind: 'unavailable' });
+    });
   });
 
   it('a8-25 (2026-10-27): a link-only message is jira.release with no args, with no selector call', async () => {

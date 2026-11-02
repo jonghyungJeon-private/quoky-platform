@@ -33,3 +33,4 @@ export * from './last-read';
 export * from './last-reply';
 export * from './help-scope';
 export * from './write-clause';
+export * from './help-scope-classifier';
