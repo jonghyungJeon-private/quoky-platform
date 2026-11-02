@@ -16,6 +16,8 @@ interface Piece {
   readonly separator: string;
   readonly lead: string;
   readonly text: string;
+  /** The piece continues the previous one in the source with nothing between: joined byte for byte. */
+  readonly adjacent: boolean;
 }
 
 function piece(index: CodePointIndex, passage: Passage, previous: Passage | undefined): Piece {
@@ -35,7 +37,7 @@ function piece(index: CodePointIndex, passage: Passage, previous: Passage | unde
     if (header !== undefined) lead.push(index.slice(header.start, header.end).trimEnd());
     else if (passage.overlap !== undefined) lead.push(index.slice(passage.overlap.start, passage.overlap.end).trimEnd());
   }
-  return { separator, lead: lead.length === 0 ? '' : `${lead.join('\n')}\n`, text };
+  return { separator, lead: lead.length === 0 ? '' : `${lead.join('\n')}\n`, text, adjacent };
 }
 
 /** Cuts a text to `max` code points on a grapheme boundary. */
@@ -43,7 +45,9 @@ function clipToBound(text: string, max: number): string {
   const index = new CodePointIndex(text);
   if (index.length <= max) return text;
   const [first] = graphemeRanges(text, { start: 0, end: text.length }, { maxCodePoints: max, maxTokens: Infinity }, index);
-  return first === undefined ? '' : text.slice(first.start, first.end);
+  // An oversized single grapheme comes back whole and over the bound; it cannot be clipped without splitting it.
+  if (first === undefined || codePointLength(text.slice(first.start, first.end)) > max) return '';
+  return text.slice(first.start, first.end);
 }
 
 /**
@@ -59,7 +63,8 @@ export function packWindows(
   budget: WindowBudget = DEFAULT_WINDOW_BUDGET,
 ): Window[] {
   const index = new CodePointIndex(prepared);
-  const wanted = [...new Set(selected)].filter((ordinal) => Number.isInteger(ordinal) && ordinal >= 0 && ordinal < passages.length).sort((a, b) => a - b);
+  const wanted = [...new Set(selected)]
+    .filter((ordinal) => Number.isInteger(ordinal) && ordinal >= 0 && ordinal < passages.length && passages[ordinal]?.overCap !== true).sort((a, b) => a - b);
   const windows: Window[] = [];
   let text = '';
   let ordinals: number[] = [];
@@ -77,7 +82,14 @@ export function packWindows(
     const passage = passages[ordinal];
     if (passage === undefined) continue;
     let next = piece(index, passage, previous);
-    let candidate = ordinals.length === 0 ? `${next.lead}${next.text}` : `${text.trimEnd()}${next.separator}${next.lead}${next.text}`;
+    // Contiguous passages are joined exactly (the spans partition the source); trailing whitespace is trimmed only
+    // where a separator or a gap marker follows, and at the very end of a window.
+    let candidate =
+      ordinals.length === 0
+        ? `${next.lead}${next.text}`
+        : next.adjacent
+          ? `${text}${next.text}`
+          : `${text.trimEnd()}${next.separator}${next.lead}${next.text}`;
     const over = (value: string): boolean => {
       const trimmed = value.trimEnd();
       return codePointLength(trimmed) > budget.maxCodePoints || estimateTokens(trimmed) > budget.maxEstTokens;
@@ -91,6 +103,7 @@ export function packWindows(
       // A single piece over the hard bound: drop the carried context, then cut on a grapheme boundary.
       const bare = next.text;
       candidate = codePointLength(bare.trimEnd()) <= budget.maxCodePoints ? bare : clipToBound(bare, budget.maxCodePoints);
+      if (candidate === '') continue;
     }
     text = candidate;
     ordinals.push(ordinal);
@@ -102,6 +115,8 @@ export function packWindows(
 
 /** The one window of an item that fits (today's readout, by the code-point bound only), or `undefined`. */
 export function singleWindow(prepared: string, passages: readonly Passage[], budget: WindowBudget = DEFAULT_WINDOW_BUDGET): Window | undefined {
+  // An over-cap passage cannot be read, so the item is not one window.
+  if (passages.some((passage) => passage.overCap === true)) return undefined;
   const all = passages.map((passage) => passage.ordinal);
   const windows = packWindows(prepared, passages, all, { maxCodePoints: budget.maxCodePoints, maxEstTokens: Infinity });
   return windows.length === 1 ? windows[0] : undefined;

@@ -33,6 +33,11 @@ export interface Passage {
   /** One sentence (or two code lines) of the previous passage, carried for context when a paragraph or code block was split. */
   readonly overlap?: Span;
   readonly rows?: PassageRows;
+  /**
+   * The passage is one grapheme cluster longer than the passage cap (stacked combining marks). It is never cut, never
+   * packed into a window and never counted as read (ADR-0124 section 3.4).
+   */
+  readonly overCap?: true;
   /** The estimate of {@link estimateTokens} over everything the passage renders (overlap and header row included). */
   readonly estTokens: number;
   /** sha256 of the passage text; for de-duplication and content-free audit only. */

@@ -12,6 +12,7 @@ export interface Coverage {
   readonly codePointsRead: number;
 }
 
+/** An over-cap passage (one oversized grapheme cluster) is never read, so it is never counted as read. */
 export function computeCoverage(passages: readonly Passage[], readOrdinals: readonly number[]): Coverage {
   const read = new Set(readOrdinals);
   let codePointsTotal = 0;
@@ -20,7 +21,7 @@ export function computeCoverage(passages: readonly Passage[], readOrdinals: read
   for (const passage of passages) {
     const size = passage.span.end - passage.span.start;
     codePointsTotal += size;
-    if (read.has(passage.ordinal)) {
+    if (read.has(passage.ordinal) && passage.overCap !== true) {
       codePointsRead += size;
       count += 1;
     }

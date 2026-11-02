@@ -393,3 +393,98 @@ describe('lexical ranking', () => {
     expect(index.rank('alpha')).toEqual([0, 1, 2]);
   });
 });
+
+describe('Codex P2 fixes (chunking-1)', () => {
+  const ranges = (text: string) => ({ start: 0, end: text.length });
+
+  it('joins contiguous passages byte for byte (the window is the source substring)', () => {
+    const source = 'alpha\n\n# Beta\ntext';
+    const passages = chunk(source);
+    expect(passages.length).toBeGreaterThan(1);
+    expect(singleWindow(source, passages)?.text).toBe(source);
+    expect(packWindows(source, passages, passages.map((passage) => passage.ordinal))[0]?.text).toBe(source);
+  });
+
+  it('handles a non-contiguous selection with a separator and a gap marker', () => {
+    const source = 'first part.\n\n# Middle\nmiddle text.\n\n# Last\nlast text.';
+    const passages = chunk(source);
+    expect(passages.length).toBeGreaterThanOrEqual(3);
+    const windows = packWindows(source, passages, [0, passages.length - 1]);
+    expect(windows).toHaveLength(1);
+    expect(windows[0]?.text).toBe(`first part.\n[...]\n# Last\nlast text.`);
+  });
+
+  it('property: a contiguous window equals the source slice', () => {
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const prepared = proseText(seed, 20 + seed * 7);
+      const passages = chunk(prepared);
+      const index = new CodePointIndex(prepared);
+      const next = rng(seed * 17);
+      for (let trial = 0; trial < 5; trial += 1) {
+        const from = Math.floor(next() * passages.length);
+        const to = Math.min(passages.length - 1, from + Math.floor(next() * 4));
+        const picked = passages.slice(from, to + 1).map((passage) => passage.ordinal);
+        const windows = packWindows(prepared, passages, picked, { maxCodePoints: 100_000, maxEstTokens: Infinity });
+        const first = passages[from] as Passage;
+        const last = passages[to] as Passage;
+        expect(windows).toHaveLength(1);
+        const expected = index.slice(first.span.start, last.span.end).trimEnd();
+        // A window that starts a new section or carries an overlap line adds its own lead; the body is the exact slice.
+        expect(windows[0]?.text.endsWith(expected)).toBe(true);
+      }
+    }
+  });
+
+  it('keeps passage input including overlap within the passage cap', () => {
+    const fence = '```\n';
+    const text = `${fence}${'a'.repeat(115)}\n${'b'.repeat(1_199)}\n${'c'.repeat(300)}\n${'d'.repeat(300)}\n\`\`\``;
+    const passages = chunk(text);
+    for (const passage of passages) {
+      const body = passage.span.end - passage.span.start;
+      const overlap = passage.overlap === undefined ? 0 : passage.overlap.end - passage.overlap.start;
+      expect(body + overlap).toBeLessThanOrEqual(PASSAGE_MAX_CODE_POINTS);
+    }
+  });
+
+  it('property: passage plus overlap never exceeds the cap over generated fenced code', () => {
+    for (let seed = 1; seed <= 30; seed += 1) {
+      const next = rng(seed);
+      const lines = Array.from({ length: 10 + Math.floor(next() * 20) }, () => 'x'.repeat(1 + Math.floor(next() * 1_199)));
+      const passages = chunk(`\`\`\`\n${lines.join('\n')}\n\`\`\``);
+      for (const passage of passages) {
+        const overlap = passage.overlap === undefined ? 0 : passage.overlap.end - passage.overlap.start;
+        expect(passage.span.end - passage.span.start + overlap).toBeLessThanOrEqual(PASSAGE_MAX_CODE_POINTS);
+      }
+    }
+  });
+
+  it('never cuts inside a grapheme cluster longer than the cap: over-cap passage, not read, never in a window', () => {
+    const cluster = 'x' + '́'.repeat(1_200);
+    expect(cluster.length).toBeGreaterThan(1_200);
+    const index = new CodePointIndex(cluster);
+    const pieces = graphemeRanges(cluster, ranges(cluster), { maxCodePoints: 1_200, maxTokens: Infinity }, index);
+    expect(pieces).toEqual([ranges(cluster)]);
+
+    const prepared = `before text here.\n\n${cluster}\n\nafter text here.`;
+    const passages = chunk(prepared);
+    expectPartition(prepared, passages);
+    const over = passages.filter((passage) => passage.overCap === true);
+    expect(over).toHaveLength(1);
+    expect(passages.filter((passage) => passage.overCap !== true).every((passage) => passage.span.end - passage.span.start <= PASSAGE_MAX_CODE_POINTS)).toBe(true);
+
+    const all = passages.map((passage) => passage.ordinal);
+    expect(singleWindow(prepared, passages)).toBeUndefined();
+    const windows = packWindows(prepared, passages, all);
+    const packed = new Set(windows.flatMap((window) => window.ordinals));
+    expect(packed.has((over[0] as Passage).ordinal)).toBe(false);
+    expect(packed.size).toBe(passages.length - 1);
+    for (const window of windows) {
+      expect(window.codePoints).toBeLessThanOrEqual(DEFAULT_WINDOW_BUDGET.maxCodePoints);
+      expect(window.text).not.toContain('́');
+      expect(windowReadout(window, META, true)).toBeDefined();
+    }
+    const coverage = computeCoverage(passages, all);
+    expect(coverage.complete).toBe(false);
+    expect(coverage.read).toBe(passages.length - 1);
+  });
+});

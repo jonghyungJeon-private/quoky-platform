@@ -181,7 +181,8 @@ function overlapFor(index: CodePointIndex, previous: Draft | undefined, draft: D
   const start = previous.units[from]?.start ?? last.start;
   const points = index.countUnits(start, last.end);
   const cap = Math.min(OVERLAP_MAX_CODE_POINTS, Math.floor(OVERLAP_MAX_FRACTION * draft.points));
-  return points > 0 && points <= cap ? { start, end: last.end } : undefined;
+  // The passage input INCLUDING the overlap stays within the passage cap; an overlap that would not fit is dropped.
+  return points > 0 && points <= cap && draft.points + points <= PASSAGE_MAX_CODE_POINTS ? { start, end: last.end } : undefined;
 }
 
 /** Quoky's own sections of a prepared text, as `{frame, body}` parts: joins them (blank line between) and tiles the result. */
@@ -281,6 +282,7 @@ export function chunk(prepared: string, sections?: readonly ChunkSection[]): Pas
       span: spanOf(index, range),
       ...(overlap === undefined ? {} : { overlap: spanOf(index, overlap) }),
       ...(rows === undefined ? {} : { rows }),
+      ...(draft.points > PASSAGE_MAX_CODE_POINTS ? { overCap: true as const } : {}),
       estTokens: Math.ceil(weight),
       contentHash: createHash('sha256').update(text.trim()).digest('hex'),
     };

@@ -157,7 +157,8 @@ export interface PieceLimit {
 
 /**
  * The last resort: pieces within the limits cut on grapheme boundaries, so a surrogate pair, a Hangul syllable or an
- * emoji sequence is never split. A single grapheme beyond the limit is cut by code point (the bound is hard).
+ * emoji sequence is never split. A single grapheme beyond the limit is returned whole as one over-limit piece (never cut
+ * inside a cluster); the caller must treat that piece as over-cap.
  */
 export function graphemeRanges(text: string, range: Range, limit: PieceLimit, index: CodePointIndex): Range[] {
   const out: Range[] = [];
@@ -177,16 +178,11 @@ export function graphemeRanges(text: string, range: Range, limit: PieceLimit, in
     const cost = estimateTokenWeight(part.segment);
     if (points > 0 && (points + size > limit.maxCodePoints || weight + cost > limit.maxTokens)) close(absolute);
     if (size > limit.maxCodePoints) {
-      // One grapheme longer than the bound (stacked combining marks): cut by code point.
-      let at = absolute;
-      const end = absolute + part.segment.length;
-      while (at < end) {
-        let next = at;
-        for (let taken = 0; taken < limit.maxCodePoints && next < end; taken += 1) next += (text.codePointAt(next) ?? 0) > 0xffff ? 2 : 1;
-        pieceStart = at;
-        close(next);
-        at = next;
-      }
+      // One grapheme longer than the bound (stacked combining marks). Never cut inside a grapheme cluster: it becomes a
+      // piece of its own that exceeds the limit; passages.ts marks that passage `overCap` and pack.ts keeps it out of
+      // every window (ADR-0124 section 3.4 implementation note).
+      pieceStart = absolute;
+      close(absolute + part.segment.length);
       continue;
     }
     points += size;

@@ -31808,6 +31808,13 @@ The first boundary that keeps a passage within its maximum is used:
    and `!` are covered. Golden tests pin the behaviour.
 6. **Last resort:** a code-point split on a grapheme boundary (`Intl.Segmenter`, `granularity: 'grapheme'`). It never
    splits a surrogate pair or a Hangul syllable.
+   *Implementation note (Codex P2 fixes).* A cut never falls inside a grapheme cluster. A single cluster longer than
+   the passage cap (for example a base letter with more than 1,200 combining marks) becomes **its own passage marked
+   `overCap`** (option A). An `overCap` passage is never packed into a window, so every window stays within 3,000 code
+   points and passes `isSummarizableDocumentReadout`; it is never counted as read, so the coverage line says so; and an
+   item that holds one is never a single window. The passage input including its overlap stays within 1,200 code points
+   (an overlap that would not fit is dropped), and passages of one section that are contiguous are joined into a window
+   byte for byte (trailing whitespace is trimmed only before a separator or gap marker and at the end of a window).
 
 **Mail quoting.** Quoted blocks are recognised **structurally** only: a run of lines that start with the quote marker
 `>`, plus the quote headers the existing mail reader already recognises (`QUOTE_HEADERS`, reused as is and **never
