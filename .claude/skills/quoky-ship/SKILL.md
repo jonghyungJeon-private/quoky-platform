@@ -179,10 +179,10 @@ tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 ```
 
 - 다른 worktree 의 fetch 와 겹쳐 ref lock 오류가 나면 다시 시도한다(빌드가 옛 코드로 돌았을 수 있다).
-- **스모크**: ego-browser 의 로그인된 Discord 탭(task space id 는 소유자 로컬 main checkout 의 `space_id`, page `p1`)만 쓴다. 새 탭·새 space 로 우회하지 않는다. 재부팅 뒤에는 space 가 사라지므로 `taskSpace("quoky discord relay")` 로 하나 만들어 Discord 로그인 상태를 확인하고 그 id 를 `space_id` 에 적는다(로그아웃 상태면 소유자에게 로그인을 요청).
+- **스모크**: **`abx`** 브라우저의 로그인된 Discord 탭으로 한다(소유자 지시 2026-11-02, ego-browser 대신; `qa/nl-uat.sh dm|ch` 가 `qa/abx-steps.py` 를 쓴다). 로그아웃 상태면 `abx handoff` 후 소유자에게 로그인을 요청하고, 소유자가 끝났다고 말하면 `abx resume` 한다.
   - 실행·판정·되돌리기·보고는 **`quoky-e2e` 스킬**로 한다. 넘기는 요청문은 이 PR 의 변경된 기능 경로와 미설정 기능의 기존 동작이다(범위는 출하 승인으로 갈음하므로 시나리오 표는 보고에만 남긴다).
   - 대상은 QA 채널 또는 Quoky DM(봇 "chunsik-bot")이다. 구체 URL·ID 는 저장소에 두지 않고 로컬 `scripts/chat/` 설정과 메모리(`quoky-*`)에 있다.
-  - **`chat/`, `qa/`, `space_id` 는 추적되지 않는다.** 소유자 로컬 main checkout `/Users/seongsujeonjonghyeong/demo_Project/quoky-platform/.claude/skills/quoky-ship/scripts/` 에만 있고 worktree 에는 없으므로, 그 절대 경로로 실행한다.
+  - **`chat/`, `qa/`(`abx-steps.py` 포함), `space_id` 는 추적되지 않는다.** 소유자 로컬 main checkout `/Users/seongsujeonjonghyeong/demo_Project/quoky-platform/.claude/skills/quoky-ship/scripts/` 에만 있고 worktree 에는 없으므로, 그 절대 경로로 실행한다.
   - 변경된 기능 경로와 미설정 기능의 기존 동작을 하나씩 확인한다.
 - **소유자 보고**: 로컬 main checkout 의 `scripts/chat/send.txt` 에 한국어 업데이트를 쓰고 `scripts/chat/relay-send.sh` 로 `#new_chatting` 에 보낸다. 결정이 필요하면 권장안과 함께 묻고, 응답이 없으면 권장안대로 진행한다고 알린다. 폴러 `scripts/chat/poll.sh 3300`(같은 로컬 경로) 을 백그라운드로 계속 띄워 둔다(종료되면 재시작).
 - 헬퍼 스크립트는 재부팅에도 남도록 `.claude/skills/quoky-ship/scripts/` 에 둔다(스크래치패드·/tmp 는 재부팅 때 지워진다). 추적되는 것은 `run-gates.sh` 와 `resolve_changelog.py` 뿐이다.
