@@ -31450,19 +31450,23 @@ and D9 still governs every turn that goes to chat.
 
 ### Owner decision of 2026-11-02 — the D4 classifier runs on sonnet (effort low) and is switched on (branch `claude/v5-d4-model`)
 
-- **Measurement (owner-approved, same `help-scope.v2` prompt, same 67 golds, `eval:nl --mode help-scope`, 3 runs each; the
-  classifier request only, the router stays haiku).** Per-run answer counts for the haiku rows were not recorded in the
-  task that wrote this entry; the gate is the owner's: every run needs 0 wrong captures, answers at least 95%, 0 harness
-  errors.
+- **Measurement (owner-approved, same `help-scope.v2` prompt, same 67 golds, `eval:nl --mode help-scope`, 3 runs each,
+  10 s call bound; the classifier request only, the router stays haiku).** The gate is the owner's: every run needs 0
+  wrong captures, answers at least 95% (36/38 fails) and 0 harness errors. No row had a wrong capture (a non-answer read
+  as 1 or 2). haiku high is archive `d4v2-4161faf4`; the other rows are `data/eval/nl-help-scope-2026-11-02T04-*` of this
+  worktree.
 
-  | Model, effort | Runs passing the gate | Answers per run | Wrong options | Timeouts | p50 | Gate |
-  |---|---|---|---|---|---|---|
-  | haiku, high | 2 of 3 | not recorded here | not recorded here | not recorded here | not recorded here | FAILED |
-  | haiku, xhigh | 0 of 3 | not recorded here | not recorded here | timeouts at the 10 s bound | not recorded here | FAILED |
-  | haiku, max | 1 of 3 | not recorded here | not recorded here | timeouts at the 10 s bound | not recorded here | FAILED |
-  | sonnet, high | 3 of 3 | 38/38 (non-answers 29/29) | 0 wrong captures | 0 | ~1.6 s | PASSED |
-  | sonnet, medium | 3 of 3 | 38/38 (non-answers 29/29) | 0 wrong captures | 0 | ~1.6 s | PASSED |
-  | sonnet, low | 3 of 3 | 38/38 (non-answers 29/29) | 0 wrong captures | 0 | ~1.6 s | PASSED |
+  | Model, effort | Answers per run (of 38) | Wrong options (1 read as 2 or back) | Timeouts | p50 per run | Gate |
+  |---|---|---|---|---|---|
+  | haiku, high | 36, 37, 37 | 1 | 0 | 1.17, 1.19, 1.14 s | FAILED (2 of 3) |
+  | haiku, xhigh | 36, 36, 36 | 5 (`ctx-d4-015` 2→1 every run, `hs-ho-006` 1→2 twice) | 0 | 1.21, 1.17, 1.12 s | FAILED (0 of 3) |
+  | haiku, max | 36, 37, 35 | 0 | 6 (2 per run, at the 10 s bound; one on a non-answer) | 1.87, 1.88, 1.79 s | FAILED (1 of 3) |
+  | sonnet, high | 38, 38, 38 | 0 | 0 | 1.67, 1.63, 1.60 s | PASSED (3 of 3) |
+  | sonnet, medium | 38, 38, 38 | 0 | 0 | 1.62, 1.56, 1.59 s | PASSED (3 of 3) |
+  | sonnet, low | 38, 38, 38 | 0 | 0 | 1.60, 1.60, 1.56 s | PASSED (3 of 3) |
+
+  Raising haiku's effort did not close the gap (xhigh read options the other way more often, max ran into the bound);
+  sonnet was perfect at every effort, so the lowest effort was chosen.
 
 - **Decision, verbatim: "sonnet low로 켜서 배포".** Only the classifier request goes to sonnet with effort low; the
   router/selector stays on haiku (high); then the classifier is switched on. The earlier backlog item ("a stronger model for
