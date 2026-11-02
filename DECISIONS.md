@@ -31327,3 +31327,17 @@ and D9 still governs every turn that goes to chat.
   - Backlog candidate (not started): when the selector repeats the listing just shown, ask the model once whether an
     item action fits instead of refusing (the Buzz / OpenClaw one-recovery pattern); a prompt and model-call change that
     needs its own design, review and full measurement.
+
+### Owner decision of 2026-11-02 — an ungrounded enum dropped from a read the owner named runs (narrows the 2026-10-28 one-option rule; branch `claude/v5-d4-classifier`)
+
+- **Problem.** Deploy smoke of 5f9a7c0e (DM4): "드라이브 문서 목록 보여줘" was answered with a one-option question ("1. 드라이브
+  파일 조회 (최근 파일)"). The selector read 문서 as `drive.files {kind: document}`; a plain 문서 is no Drive type, so the
+  repair dropped `kind`, and the 2026-10-28 rule (an option Core had to change asks) asked instead of running.
+- **Decision (owner, 2026-11-02, "예외를 좁힘").** A changed option still runs when Core's repair only DROPPED enum values
+  (a closed value set, never a keyword, span, period or other free text), kept every other arg exactly as the selector
+  gave it, and the owner's own words outside pasted structures name the entry (one of its aliases or source names).
+  The read that runs is the broader read of the source the owner named (`onlyEnumDroppedFromNamedEntry`).
+- **Still asked.** A dropped free-text value (a keyword grounded only in pasted text: the red-team invariant), a replaced
+  value, an entry the owner's words do not name, a refused weekday, the help-scope question, and no option at all.
+- **Tests.** `nl-selection-service.test.ts`: the DM4 shape runs `drive.files {}`; the same output with no Drive word asks;
+  a dropped keyword with Jira named still asks. The test fails without the change. The red-team test files (12) pass.

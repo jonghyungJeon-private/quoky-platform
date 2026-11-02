@@ -118,7 +118,7 @@ import {
   type PendingQuestion,
   type StoredSelection,
 } from './selection-state';
-import { validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
+import { groundingWordIn, validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
 import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
@@ -1207,7 +1207,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       if (repaired.ok && repaired.value.entry.risk === 'READ' && !options.some((option) => option.entry.id === repaired.value.entry.id)) {
         options.push(repaired.value);
         // Owner decision of 2026-10-28: whether Core had to change this candidate (a repaired or ungrounded value dropped).
-        optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args));
+        // Owner decision of 2026-11-02: dropping only enum filter values, from a read the owner's own words name, is not a
+        // change that asks (the broader read of the named source runs).
+        optionChanged.push(sortedArgs(repaired.value.args) !== sortedArgs(candidate.args) && !onlyEnumDroppedFromNamedEntry(repaired.value, candidate.args, prepared.groundingText));
         dateOnly.push(isDateRangeOnlyReading(repaired.value, candidate.args, own?.args));
       }
     }
@@ -1245,7 +1247,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // it. Still asked: a refused weekday (the hint names the week and day), the help-scope question (just above, owner
       // decision A), no option at all (below), and an option Core had to CHANGE (a repaired candidate: Core dropped or
       // replaced a value the selector gave, e.g. a keyword grounded only in pasted text). The red-team invariant holds:
-      // a hostile or ungrounded selection never runs a read by repair.
+      // a hostile or ungrounded selection never runs a read by repair. Owner decision of 2026-11-02 narrows the last case
+      // (`onlyEnumDroppedFromNamedEntry`): "드라이브 문서 목록 보여줘" read as `drive.files {kind: document}` (a plain 문서 is
+      // no type) runs as the Drive listing instead of a one-option question.
       if (optionChanged[0] !== true) {
         this.log('info', 'nl_selection.one_option_ran', { entryId: (options[0] as NlValidatedSelection).entry.id });
         return this.complete(options[0] as NlValidatedSelection, turn, last, language, prepared.groundingText);
@@ -2713,6 +2717,22 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
     dropped.push({ arg: name, kind });
   }
   return undefined;
+}
+
+/**
+ * Owner decision of 2026-11-02 (narrows the 2026-10-28 rule that a changed option asks): Core's repair only DROPPED enum
+ * values (a closed value set: never a keyword, span, period or other free text), kept every other arg as the selector
+ * gave it, and the owner's own words, outside pasted structures, name the entry (an alias or source name). The read
+ * that runs is then the broader read of the source the owner named. A free-text value grounded only in pasted text, a
+ * replaced value, or an entry the owner did not name still asks (the red-team invariant).
+ */
+function onlyEnumDroppedFromNamedEntry(repaired: NlValidatedSelection, given: NlArgs, groundingText: string): boolean {
+  const kept = repaired.args as Readonly<Record<string, unknown>>;
+  const dropped = Object.keys(given).filter((name) => !(name in kept));
+  if (dropped.length === 0 || Object.keys(kept).some((name) => !(name in given) || JSON.stringify(kept[name]) !== JSON.stringify((given as Readonly<Record<string, unknown>>)[name]))) return false;
+  if (!dropped.every((name) => repaired.entry.args.find((spec) => spec.name === name)?.kind === 'enum')) return false;
+  const prose = normalizeForMatch(withoutStructures(groundingText));
+  return [...repaired.entry.aliases, ...(repaired.entry.sourceNames ?? [])].some((name) => groundingWordIn(prose, normalizeForMatch(name)));
 }
 
 /** Args as a canonical string (key order ignored), to tell an unchanged selection from a repaired one. */

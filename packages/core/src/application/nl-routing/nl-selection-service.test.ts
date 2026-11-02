@@ -635,6 +635,18 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await missing.decide('슬랙 좀 봐줘')).toEqual({ kind: 'ask', entryId: expect.any(String), text: 'Slack 검색에서 무엇을 찾을지 정확히 모르겠어요. "Slack에서 배포 검색"처럼 말씀해 주세요.' });
   });
 
+  it('owner decision of 2026-11-02: an ungrounded enum dropped from a read the owner named runs the broader read', async () => {
+    // Smoke of 5f9a7c0e (DM4): a plain 문서 is no Drive type, so `kind` is dropped; the owner named Drive, so the listing runs.
+    const named = harness({ script: [out('drive.files', { kind: 'document' })] });
+    expect(await named.decide('드라이브 문서 목록 보여줘')).toMatchObject({ kind: 'execute', command: { entryId: 'drive.files', args: {} } });
+    // The owner's words name no Drive word: the changed option still asks.
+    const unnamed = harness({ script: [out('drive.files', { kind: 'document' })] });
+    expect(await unnamed.decide('목록 보여줘')).toMatchObject({ kind: 'ask' });
+    // A dropped free-text value (a keyword grounded nowhere) still asks, even with the source named (red-team invariant).
+    const keyword = harness({ script: [out('jira.issues', { keyword: '결제' })] });
+    expect(await keyword.decide('내 지라 이슈 보여줘')).toMatchObject({ kind: 'ask' });
+  });
+
   it('a follow-up refines lastSelection; a keyword grounded only in the previous args is accepted', async () => {
     const h = harness({
       script: [
