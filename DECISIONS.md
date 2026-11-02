@@ -31607,6 +31607,10 @@ and D9 still governs every turn that goes to chat.
 - A Core `ExternalUndoResolver` (lastAction -> receipt -> anchor -> undo draft `{kind, receiptId}`) and a closed capability
   set of undoable families. A family becomes undoable only when its slice adds it; until then the `undoable:false` rule of
   `last-action.ts` holds for it.
+- `CalendarReader.getEvent?(calendarId, eventId)` (recorded 2026-11-02, review fix of the calendar-create undo): one event by
+  id on the receipt's calendar (Google `events.get`, same `calendar.readonly` scope and `www.googleapis.com` host, minimised
+  fields). It resolves `undefined` only for not found / gone / cancelled and throws for every other failure, so "gone" is
+  never inferred from an error. The id comes from the receipt, never from text; the undo preview no longer lists events.
 - `CalendarEventWriter.restoreEvent`; a Jira comment delete port; the Jira transition payload gains `fromStatusId`.
 
 ### Gates and tests (before any family is switched on)

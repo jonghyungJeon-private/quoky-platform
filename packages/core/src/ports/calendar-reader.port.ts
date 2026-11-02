@@ -60,6 +60,13 @@ export interface CalendarReader {
   readonly readOnly: true;
   /** Events overlapping `[from, to)`, ordered by start, at most `limit`. Throws `ConnectorQueryError`. */
   listEvents(query: CalendarEventQuery): Promise<readonly CalendarEvent[]>;
+  /**
+   * ADR-0112 amendment 3 (additive read, ARCHITECTURE section 11.7): ONE event by id on ONE calendar (the receipt-bound undo
+   * check). Resolves `undefined` when the event does not exist (not found, gone or cancelled) and throws
+   * `ConnectorQueryError` for every other failure, so "gone" is never inferred from an error. Optional: a reader without it
+   * cannot back an undo. Never takes an id from the owner's words.
+   */
+  getEvent?(calendarId: string, eventId: string): Promise<CalendarEvent | undefined>;
 }
 
 export interface ParsedCalendarEventQuery {

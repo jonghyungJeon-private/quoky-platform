@@ -494,3 +494,40 @@ describe('GoogleCalendarReader (ADR-0110 D1/D2)', () => {
     );
   });
 });
+
+describe('GoogleCalendarReader.getEvent (ADR-0112 amendment 3: one event by id)', () => {
+  const EVENT_ID = 'abc0123456789v';
+
+  it('reads exactly one event with events.get (GET, same host, minimised fields, no list call)', async () => {
+    const google = fakeGoogle({
+      calendar: () => json(200, timed(EVENT_ID, '팀  회의', '2026-10-06T09:00:00+09:00', '2026-10-06T10:00:00+09:00', { etag: '"v1"' })),
+    });
+    const event = await reader(google.fetchImpl).getEvent('primary', EVENT_ID);
+    expect(event).toMatchObject({ id: EVENT_ID, title: '팀 회의', version: '"v1"', allDay: false });
+    expect(google.calendarCalls).toHaveLength(1);
+    const url = google.calendarCalls[0]!.url;
+    expect(url.origin).toBe('https://www.googleapis.com');
+    expect(url.pathname).toBe(`/calendar/v3/calendars/primary/events/${EVENT_ID}`);
+    expect(url.searchParams.has('timeMin')).toBe(false);
+    expect(url.searchParams.get('fields')).not.toContain('attendees');
+    expect(google.calendarCalls[0]!.init?.method).toBe('GET');
+  });
+
+  it('resolves undefined for 404, 410 and a cancelled event', async () => {
+    for (const handler of [() => json(404, {}), () => json(410, {}), () => json(200, { id: EVENT_ID, status: 'cancelled' })]) {
+      const google = fakeGoogle({ calendar: handler });
+      await expect(reader(google.fetchImpl).getEvent('primary', EVENT_ID)).resolves.toBeUndefined();
+    }
+  });
+
+  it('throws (never "gone") for a 5xx, 403 or transport failure, and refuses malformed ids before any request', async () => {
+    const google = fakeGoogle({ calendar: () => json(503, {}) });
+    expect((await errorOf(reader(google.fetchImpl).getEvent('primary', EVENT_ID))).reason).toBe('UNAVAILABLE');
+    const forbidden = fakeGoogle({ calendar: () => json(403, {}) });
+    expect((await errorOf(reader(forbidden.fetchImpl).getEvent('primary', EVENT_ID))).reason).toBe('FORBIDDEN');
+    const none = fakeGoogle({ calendar: () => json(200, {}) });
+    await errorOf(reader(none.fetchImpl).getEvent('primary', '../x'));
+    await errorOf(reader(none.fetchImpl).getEvent('a/b', EVENT_ID));
+    expect(none.allCalls).toHaveLength(0);
+  });
+});
