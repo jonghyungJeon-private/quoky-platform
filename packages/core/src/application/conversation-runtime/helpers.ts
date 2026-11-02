@@ -37,6 +37,7 @@ import type {
   ExecutionOutcomeStatus,
 } from '../execution-orchestrator';
 import { MAX_COMMIT_CANDIDATE_FILES, MAX_GIT_REF_DISPLAY } from './intent-words';
+import { TURN_HANDLER_STAGES, type ConversationTurnHandler, type TurnHandlerStage } from '../../ports';
 
 /** The dispatch-time grant view of an anchor's grant records (the shape the flow hands `dispatch`). */
 export function toDispatchGrants(anchor: CredentialOverrideAnchor): CredentialOverrideGrant[] {
@@ -453,4 +454,33 @@ export function nlHeldItemWordsFor(
   last: { readonly turnId?: string },
 ): readonly string[] | undefined {
   return held !== undefined && last.turnId !== undefined && held.turnId === last.turnId ? held.words : undefined;
+}
+
+/**
+ * Validate and order the turn-handler registry (ADR-0096 D2): a known stage, a finite order and a non-empty id
+ * unique across the registry, else construction fails; sorted by `(stage, order, id)` with stages in
+ * `TURN_HANDLER_STAGES` order and ids compared by code unit (locale-independent).
+ */
+export function orderTurnHandlers(handlers: readonly ConversationTurnHandler[]): ConversationTurnHandler[] {
+  const seen = new Set<string>();
+  for (const handler of handlers) {
+    if (typeof handler.id !== 'string' || handler.id.length === 0) {
+      throw new Error('conversation turn handler id must be a non-empty string');
+    }
+    if (seen.has(handler.id)) throw new Error(`duplicate conversation turn handler id: ${handler.id}`);
+    seen.add(handler.id);
+    if (!TURN_HANDLER_STAGES.includes(handler.stage)) {
+      throw new Error(`conversation turn handler ${handler.id} has an unknown stage`);
+    }
+    if (!Number.isFinite(handler.order)) {
+      throw new Error(`conversation turn handler ${handler.id} has a non-finite order`);
+    }
+  }
+  const stageIndex = (stage: TurnHandlerStage): number => TURN_HANDLER_STAGES.indexOf(stage);
+  return [...handlers].sort(
+    (a, b) =>
+      stageIndex(a.stage) - stageIndex(b.stage) ||
+      a.order - b.order ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
 }

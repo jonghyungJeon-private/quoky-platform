@@ -1,5 +1,4 @@
 import { describeAiFailure } from './ai-failure';
-import { detectHelpIntent } from './help-intent/help-intent';
 import { helpTopicOfLines } from './help-intent/help-intent-turn-handler';
 import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from './chat-policy/chat-response-policy';
 import { guardInternalActionClaims } from './chat-policy/internal-action-claim-guard';
@@ -40,8 +39,8 @@ import {
   withAttachedTextFiles,
 } from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
-import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
+import { unnegatedMatch } from './intent-negation';
+import { isChainCompanionRequest, isGitTopicOnlyMention } from './git-request-shape';
 import { parseLearningCommand } from './feedback/learning-commands';
 import { parseMemoryCommand } from './memory-commands/memory-command-grammar';
 import { parseModelSelectionCommand } from './model-selection/model-selection-command';
@@ -51,7 +50,6 @@ import {
   type ConnectorWriteAnchorView,
   type ConnectorWriteLatestRequest,
   type ConnectorWriteFlow,
-  type ConnectorWriteRelease,
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
   connectorWriteTargetOf,
@@ -67,7 +65,7 @@ import {
 } from './connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connector-write-copy';
 import { isDirectConversation, messageBody, outboundBody, outboundMessage, plainTextOf, withOutboundBody } from './message-rendering';
-import { interpretApprovalDecision, interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
+import { interpretStrayDecisionUtterance, isPendingCancelUtterance } from './approval-decision';
 import {
   ApprovalDecisionService,
   type ApprovalDecisionInput,
@@ -76,7 +74,6 @@ import {
   anchorAfterRejection,
   logAnchoredApprovalFailure,
 } from './approval-decision-service';
-import { detectExplicitValidationKinds, isDeniedValidationRequest } from './validation-run-intent';
 import { type MutationSafety, safeRequestId, toSafeError } from './safe-error';
 import {
   type ConversationControlCommand,
@@ -85,7 +82,6 @@ import {
 } from './conversation-commands';
 import {
   NON_ABSOLUTE_REGISTRATION_KIND,
-  POLICY_SENSITIVE_CHAT_KIND,
   IntentClassifier,
   chatIntentOf,
   detectProjectRegistration,
@@ -202,7 +198,6 @@ import type {
 } from '../domain';
 import {
   CONNECTOR_WRITE_OPERATIONS,
-  TURN_HANDLER_STAGES,
   executionLocalityOf,
   type AiExecutionLocality,
   type ProviderSelectionContext,
@@ -223,10 +218,6 @@ import {
   type TurnHandlerWriteDraft,
 } from '../ports';
 import { now } from '../util/clock';
-import type {
-  ResponseComposer,
-  TestResultDetail,
-} from './response-composer';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
 import { RoutingFailureCode } from './runtime-response-validation-contracts';
 import type {
@@ -278,7 +269,7 @@ import {
   interpretCredentialOverrideDecision,
   isStrayCredentialOverridePhrase,
 } from './credential-override';
-import { MAX_COMMIT_MESSAGE_CHARS, isValidCommitMessage } from './commit-message';
+import { isValidCommitMessage } from './commit-message';
 import { isSafePushBranch, isSafePushRemote } from './push-target';
 import {
   classifyUnverifiedChangeSet,
@@ -318,7 +309,6 @@ import type {
 } from './conversation-runtime/internal-types';
 import type {
   ApplyPreviewAnchor,
-  ApprovalDecisionKind,
   ConversationRuntimeDeps,
   ConversationRuntimeOptions,
   PendingScopeClarification,
@@ -350,55 +340,60 @@ import {
   type HostingIdentityLookup,
 } from './conversation-runtime/helpers';
 import {
-  APPLY_WORDS,
   CANCEL_WORDS,
   CLEANUP_BRANCH_WORD,
-  CLEANUP_BULK,
-  CLEANUP_FOREIGN_CHAIN_WORD,
-  CLEANUP_MAIN_TARGET,
-  CLEANUP_NOT_A_REQUEST,
-  CLEANUP_REMOTE_WORD,
   CLEANUP_VERB,
-  COMMIT_EXECUTION_FORBIDDEN,
-  COMMIT_EXECUTION_WORDS,
-  COMMIT_FORBIDDEN_COMPANION,
-  COMMIT_WORDS,
   DEPLOY_ONLY_WORDS,
-  FINAL_APPLY_WORDS,
-  GIT_DIFF_WORDS,
-  GIT_MUTATING_WORDS,
-  GIT_STATUS_WORDS,
-  HOW_TO_QUESTION,
   MAIN_SYNC_MENTION,
   MAIN_SYNC_REMOTE,
-  MAIN_WORD,
   MERGED_CHAIN_STATUSES,
-  MERGE_EXECUTION_ATTACHED,
-  MERGE_EXECUTION_FOREIGN,
-  MERGE_EXECUTION_VERB,
-  MERGE_QUESTION,
-  MERGE_REQUEST_ATTACHED,
   MERGE_WORD,
-  PATCH_WORDS,
   POST_PUSH_CHAIN_STATUSES,
   PROTECTED_COMMIT_BRANCHES,
   PR_BASE_BRANCH_POLICY,
   PR_CREATED_COMPANION_WORDS,
-  PR_CREATION_WORDS,
-  PR_FORBIDDEN_COMPANION,
-  PR_STATUS_NOUN,
-  PR_STATUS_QUERY,
-  PR_WORD,
-  PUSH_CHAT_TOPIC,
   PUSH_EXECUTION_WORDS,
-  PUSH_FORBIDDEN_COMPANION,
-  PUSH_REQUEST_SHAPES,
-  PUSH_WORDS,
-  REMOTE_CLEANUP_BARE_EXECUTE,
-  REMOTE_CLEANUP_EXECUTE_VERB,
-  SYNC_FOREIGN,
-  SYNC_WORD,
 } from './conversation-runtime/intent-words';
+import { orderTurnHandlers } from './conversation-runtime/helpers';
+import {
+  asksForWholeRequestAgain,
+  connectorWriteChoiceIndex,
+  explicitDurableMemoryContent,
+  explicitNewFileTarget,
+  interpretApplyIntent,
+  interpretBranchCleanupIntent,
+  interpretCommitExecutionIntent,
+  interpretCommitIntent,
+  interpretDecision,
+  interpretFinalApplyIntent,
+  interpretGitPreviewIntent,
+  interpretMainSyncIntent,
+  interpretMergeExecutionIntent,
+  interpretMergeIntent,
+  interpretMergeStatusIntent,
+  interpretNoAnchorPushRequest,
+  interpretNoChainMergeRequest,
+  interpretPatchIntent,
+  interpretPostApplyValidationIntent,
+  interpretPrIntent,
+  interpretPrStatusIntent,
+  interpretPushExecutionIntent,
+  interpretPushIntent,
+  interpretRemoteBranchCleanupExecutionIntent,
+  interpretRemoteBranchCleanupIntent,
+  isExplicitNewFileRequest,
+  isFreshCreateResend,
+  isHowToQuestionWithoutTarget,
+  isPreviewDiscardUtterance,
+  isWorkChatLookupCommand,
+  lapsedConnectorWriteStep,
+  needsWorkspace,
+  nlReplyKindOf,
+  nlSelectionRoute,
+  nlWorkSurfaceRoute,
+  parseCommitMessage,
+  toTestResultDetail,
+} from './conversation-runtime/turn-intents';
 export {
   filterInScopeChanges,
   toCodeChangePreview,
@@ -493,7 +488,7 @@ export class ConversationRuntime {
       },
       { clock: this.clock },
     );
-    const registry = ConversationRuntime.orderTurnHandlers(deps.turnHandlers ?? []);
+    const registry = orderTurnHandlers(deps.turnHandlers ?? []);
     this.turnHandlerRegistry = registry;
     for (const handler of registry) {
       try {
@@ -512,407 +507,57 @@ export class ConversationRuntime {
     this.contributedHelpLines = [...registry.flatMap((h) => h.helpLines ?? []), ...(deps.connectorWriteFlow?.helpLines ?? [])];
   }
 
-  /**
-   * Validate and order the turn-handler registry (ADR-0096 D2): a known stage, a finite order and a non-empty id
-   * unique across the registry, else construction fails; sorted by `(stage, order, id)` with stages in
-   * `TURN_HANDLER_STAGES` order and ids compared by code unit (locale-independent).
-   */
-  private static orderTurnHandlers(handlers: readonly ConversationTurnHandler[]): ConversationTurnHandler[] {
-    const seen = new Set<string>();
-    for (const handler of handlers) {
-      if (typeof handler.id !== 'string' || handler.id.length === 0) {
-        throw new Error('conversation turn handler id must be a non-empty string');
-      }
-      if (seen.has(handler.id)) throw new Error(`duplicate conversation turn handler id: ${handler.id}`);
-      seen.add(handler.id);
-      if (!TURN_HANDLER_STAGES.includes(handler.stage)) {
-        throw new Error(`conversation turn handler ${handler.id} has an unknown stage`);
-      }
-      if (!Number.isFinite(handler.order)) {
-        throw new Error(`conversation turn handler ${handler.id} has a non-finite order`);
-      }
-    }
-    const stageIndex = (stage: TurnHandlerStage): number => TURN_HANDLER_STAGES.indexOf(stage);
-    return [...handlers].sort(
-      (a, b) =>
-        stageIndex(a.stage) - stageIndex(b.stage) ||
-        a.order - b.order ||
-        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-    );
-  }
+  // Public pure seams of the intent interpreters (the tests and callers use them as statics); the implementations live in
+  // './conversation-runtime/turn-intents'.
+  static interpretDecision(...a: Parameters<typeof interpretDecision>): ReturnType<typeof interpretDecision> { return interpretDecision(...a); }
+  static interpretApplyIntent(...a: Parameters<typeof interpretApplyIntent>): ReturnType<typeof interpretApplyIntent> { return interpretApplyIntent(...a); }
+  static interpretPatchIntent(...a: Parameters<typeof interpretPatchIntent>): ReturnType<typeof interpretPatchIntent> { return interpretPatchIntent(...a); }
+  static interpretFinalApplyIntent(...a: Parameters<typeof interpretFinalApplyIntent>): ReturnType<typeof interpretFinalApplyIntent> { return interpretFinalApplyIntent(...a); }
+  static interpretPostApplyValidationIntent(...a: Parameters<typeof interpretPostApplyValidationIntent>): ReturnType<typeof interpretPostApplyValidationIntent> { return interpretPostApplyValidationIntent(...a); }
+  static interpretGitPreviewIntent(...a: Parameters<typeof interpretGitPreviewIntent>): ReturnType<typeof interpretGitPreviewIntent> { return interpretGitPreviewIntent(...a); }
+  static interpretCommitIntent(...a: Parameters<typeof interpretCommitIntent>): ReturnType<typeof interpretCommitIntent> { return interpretCommitIntent(...a); }
+  static interpretCommitExecutionIntent(...a: Parameters<typeof interpretCommitExecutionIntent>): ReturnType<typeof interpretCommitExecutionIntent> { return interpretCommitExecutionIntent(...a); }
+  static interpretPushIntent(...a: Parameters<typeof interpretPushIntent>): ReturnType<typeof interpretPushIntent> { return interpretPushIntent(...a); }
+  static interpretNoAnchorPushRequest(...a: Parameters<typeof interpretNoAnchorPushRequest>): ReturnType<typeof interpretNoAnchorPushRequest> { return interpretNoAnchorPushRequest(...a); }
+  static interpretPushExecutionIntent(...a: Parameters<typeof interpretPushExecutionIntent>): ReturnType<typeof interpretPushExecutionIntent> { return interpretPushExecutionIntent(...a); }
+  static interpretPrIntent(...a: Parameters<typeof interpretPrIntent>): ReturnType<typeof interpretPrIntent> { return interpretPrIntent(...a); }
+  static interpretPrStatusIntent(...a: Parameters<typeof interpretPrStatusIntent>): ReturnType<typeof interpretPrStatusIntent> { return interpretPrStatusIntent(...a); }
+  static isWorkChatLookupCommand(...a: Parameters<typeof isWorkChatLookupCommand>): ReturnType<typeof isWorkChatLookupCommand> { return isWorkChatLookupCommand(...a); }
+  static interpretMergeIntent(...a: Parameters<typeof interpretMergeIntent>): ReturnType<typeof interpretMergeIntent> { return interpretMergeIntent(...a); }
+  static interpretNoChainMergeRequest(...a: Parameters<typeof interpretNoChainMergeRequest>): ReturnType<typeof interpretNoChainMergeRequest> { return interpretNoChainMergeRequest(...a); }
+  static interpretMergeExecutionIntent(...a: Parameters<typeof interpretMergeExecutionIntent>): ReturnType<typeof interpretMergeExecutionIntent> { return interpretMergeExecutionIntent(...a); }
+  static interpretMergeStatusIntent(...a: Parameters<typeof interpretMergeStatusIntent>): ReturnType<typeof interpretMergeStatusIntent> { return interpretMergeStatusIntent(...a); }
+  static interpretMainSyncIntent(...a: Parameters<typeof interpretMainSyncIntent>): ReturnType<typeof interpretMainSyncIntent> { return interpretMainSyncIntent(...a); }
+  static interpretRemoteBranchCleanupIntent(...a: Parameters<typeof interpretRemoteBranchCleanupIntent>): ReturnType<typeof interpretRemoteBranchCleanupIntent> { return interpretRemoteBranchCleanupIntent(...a); }
+  static interpretRemoteBranchCleanupExecutionIntent(...a: Parameters<typeof interpretRemoteBranchCleanupExecutionIntent>): ReturnType<typeof interpretRemoteBranchCleanupExecutionIntent> { return interpretRemoteBranchCleanupExecutionIntent(...a); }
+  static interpretBranchCleanupIntent(...a: Parameters<typeof interpretBranchCleanupIntent>): ReturnType<typeof interpretBranchCleanupIntent> { return interpretBranchCleanupIntent(...a); }
+  static parseCommitMessage(...a: Parameters<typeof parseCommitMessage>): ReturnType<typeof parseCommitMessage> { return parseCommitMessage(...a); }
+  static explicitNewFileTarget(...a: Parameters<typeof explicitNewFileTarget>): ReturnType<typeof explicitNewFileTarget> { return explicitNewFileTarget(...a); }
 
-  /** Capabilities that operate on files need a resolved workspace; chat does not. */
-  private static needsWorkspace(capability: Capability): boolean {
-    return capability === Capability.CODE_IMPLEMENTATION || capability === Capability.TEST_EXECUTION;
-  }
 
-  /** Interpret a user message as an approval decision (only meaningful while a pending approval exists). */
-  static interpretDecision(text: string): ApprovalDecisionKind {
-    return interpretApprovalDecision(text);
-  }
 
-  /** Explicit apply intent only (Sprint 2s, ADR-0040) — deliberately NOT interpretDecision/APPROVE_WORDS;
-   *  "좋아"/"오케이"/"확인"/"괜찮네" must never authorize file modification (Critical Product Rule). */
-  static interpretApplyIntent(text: string): boolean {
-    return unnegatedMatch(text, APPLY_WORDS); // negation-aware (ADR-0062 draft): "적용하지 마" is not an apply
-  }
 
-  /** Explicit patch-generation intent only (Sprint 2t, ADR-0041) — the ambiguous standalone "계속 진행"
-   *  is excluded; combined with routing, generation only fires on an APPROVED anchor. */
-  static interpretPatchIntent(text: string): boolean {
-    return unnegatedMatch(text, PATCH_WORDS); // negation-aware (ADR-0062 draft)
-  }
 
-  /** Explicit final workspace-apply intent only (Sprint 2u, ADR-0042) — qualified phrases only; a bare
-   *  "적용"/"다음 단계 진행"/"좋아" never triggers a file write. Combined with routing, a write only fires
-   *  on a PATCH_READY anchor. Checked before apply-intent so "패치 적용해줘" is a file-apply. */
-  static interpretFinalApplyIntent(text: string): boolean {
-    return unnegatedMatch(text, FINAL_APPLY_WORDS); // negation-aware (ADR-0062 draft)
-  }
 
-  /**
-   * Explicit post-apply validation intent only (Sprint 2v, ADR-0043) — qualified validation tokens only; a
-   * bare "좋아"/"오케이"/"확인"/"다음 단계 진행"/"계속 진행" (or any message with no validation token) never
-   * matches. The command is DERIVED from the matched kind, never from user text. Returns:
-   *  - `'test'` / `'typecheck'` → run exactly that one allow-listed command;
-   *  - `'ambiguous'` → clarify: bare "검증", OR BOTH test and typecheck requested (CA Round 1 #1 — never a
-   *    silent pick);
-   *  - `'unsupported'` → a validation phrase carrying a dangerous/arbitrary command fragment (CA Round 1 #2
-   *    — refuse, never a run);
-   *  - `null` → not a validation intent at all → fall through (Sprint 2l path / normal routing).
-   * Only consulted inside the WORKSPACE_APPLIED routing guard, so Sprint 2l semantics are untouched.
-   */
-  static interpretPostApplyValidationIntent(
-    text: string,
-  ): 'test' | 'typecheck' | 'ambiguous' | 'unsupported' | null {
-    const t = text.trim().toLowerCase();
-    // Use the same explicit request boundary as IntentClassifier. Topic mentions alone must never enter the
-    // direct command.run path merely because a WORKSPACE_APPLIED anchor exists.
-    const { test: wantsTest, typecheck: wantsTypecheck } = detectExplicitValidationKinds(text);
-    const mentionsTest = unnegatedMatch(text, [/테스트|\btests?\b/i]);
-    const mentionsTypecheck = unnegatedMatch(text, [/typecheck|타입\s*체크|type\s*check/i]);
-    const wantsValidate = unnegatedMatch(text, [
-      /^\s*검증\s*$/i,
-      /^\s*검증\s*(?:해\s*(?:줘|주세요|봐|보세요|줄래|주실래요?)|하(?:세요|자|라)|부탁해)\s*$/i,
-      /^\s*(?:please\s+)?validate\s*$/i,
-    ]);
-    const hasValidationSignal =
-      wantsTest || wantsTypecheck || mentionsTest || mentionsTypecheck || wantsValidate;
-    // (CA Round 1 #2) Any validation signal combined with an out-of-allow-list fragment is refused before
-    // request-shape gating. A denied suffix may prevent an end-anchored request matcher from detecting a kind,
-    // but it must never let the message fall through to or trigger command execution.
-    if (isDeniedValidationRequest(t) && hasValidationSignal) return 'unsupported';
-    // Gate first: with no validation token this is NOT our branch — a pure "git status 해줘" falls through
-    // untouched (CA Round 1 #7), never a validation "unsupported" reply.
-    if (!wantsTypecheck && !wantsTest && !wantsValidate) return null;
-    // (CA Round 1 #1) BOTH test and typecheck requested → clarify; NEVER silently pick one.
-    if ((wantsTypecheck && mentionsTest) || (wantsTest && mentionsTypecheck)) return 'ambiguous';
-    if (wantsTypecheck) return 'typecheck';
-    if (wantsTest) return 'test';
-    return 'ambiguous'; // "검증" alone
-  }
 
-  /**
-   * Explicit read-only git-preview intent (Sprint 2w, ADR-0044). Returns:
-   *  - `'mutating'` → a git MUTATION phrase (커밋/푸시/add/reset/…, or any English `commit`) → reject, no git
-   *    call. Checked FIRST — precedence over diff/status (CA Required Change #6);
-   *  - `'diff'` → a read-only diff preview;
-   *  - `'status'` → a read-only status/changed-files preview;
-   *  - `null` → not a git-preview intent → fall through (no broad general git handling, CA Q3).
-   * Only consulted inside the WORKSPACE_APPLIED routing guard. Korean "커밋 전에 변경사항 요약" is status;
-   * English `commit` is conservative (→ mutating) until a future sprint adds clearer NL handling (CA #5).
-   */
-  static interpretGitPreviewIntent(text: string): 'status' | 'diff' | 'mutating' | null {
-    const t = text.trim().toLowerCase();
-    // W1-L03: a how-to question about a git mutation ("git commit 어떻게 해?") is chat, not a mutation to reject.
-    // Live QA 2026-10-07: a concept question / topic mention ("rebase와 merge 비교해줘", "푸시 로직 검토해줘") is chat too.
-    if (GIT_MUTATING_WORDS.test(t)) return HOW_TO_QUESTION.test(t) || isGitTopicOnlyMention(t) ? null : 'mutating';
-    if (GIT_DIFF_WORDS.test(t)) return 'diff';
-    if (GIT_STATUS_WORDS.test(t)) return 'status';
-    return null;
-  }
 
-  /**
-   * Explicit git-commit intent (Sprint 2x, ADR-0045). Returns:
-   *  - `'commit'` → a pure commit request → commit-approval planning;
-   *  - `'commit-with-forbidden'` → a commit request bundled with push/add/reset/… (rejected — approval only);
-   *  - `null` → not a commit request. A push/add/reset-**only** phrase returns null so the Sprint 2w
-   *    git-preview mutating-reject still handles it unchanged; "커밋 전에 변경사항 요약" (no action verb after
-   *    커밋) stays a 2w status phrase. A bare 좋아/오케이/확인/다음 단계/진행해/이대로 해 → null.
-   */
-  static interpretCommitIntent(text: string): 'commit' | 'commit-with-forbidden' | null {
-    // Liberal commit-token detection is used ONLY for the forbidden-combo guard, so a bundled request like
-    // "commit and push" / "커밋하고 push" is rejected as unsupported (never routed to a plain commit or the
-    // 2w mutating reply). The plain-commit trigger stays conservative via COMMIT_WORDS. Negation-aware
-    // (ADR-0062 draft): a NEGATED commit/companion token ("커밋하지 마", "do not commit/push") is NOT a request.
-    // W1-L03: a how-to question ("git commit 은 어떻게 하는 거야?") asks about committing — never a commit request.
-    if (HOW_TO_QUESTION.test(text) || isGitConceptQuestion(text)) return null; // + "커밋 메시지 컨벤션 알려줘" (live QA 2026-10-07)
-    const hasCommitToken = unnegatedMatch(text, [/커밋|\bcommit\b/i]);
-    if (hasCommitToken && unnegatedMatch(text, [COMMIT_FORBIDDEN_COMPANION])) return 'commit-with-forbidden';
-    if (!unnegatedMatch(text, [COMMIT_WORDS])) return null; // "커밋 전"/push-only/negated/etc. → not a commit request
-    return 'commit';
-  }
 
-  /**
-   * Explicit commit-EXECUTION intent (Sprint 2y, ADR-0046) — only consulted inside the COMMIT_APPROVED /
-   * GIT_COMMITTED routing guards. Returns:
-   *  - `'push-unsupported'` → a push/other-mutation phrase (checked first; rejected, no push);
-   *  - `'execute'` → perform the approved commit ("승인된 커밋 실행해줘"/"커밋 실행해줘"/"이제 실제 커밋해줘"/
-   *    "execute commit"/…);
-   *  - `null` → not an execution request (bare 좋아/오케이/확인/진행해/다음 단계 → null).
-   */
-  static interpretCommitExecutionIntent(text: string): 'execute' | 'push-unsupported' | null {
-    // Live QA 2026-10-07: with no commit-execution phrase, a question / topic mention ("rebase와 merge 차이가 뭐야?") is
-    // never a forbidden companion. An explicit execution phrase is always classified.
-    if (!unnegatedMatch(text, [COMMIT_EXECUTION_WORDS]) && isGitTopicOnlyMention(text)) return null;
-    if (unnegatedMatch(text, [COMMIT_EXECUTION_FORBIDDEN])) return 'push-unsupported'; // push/reset/… incl. "commit and push"
-    if (unnegatedMatch(text, [COMMIT_EXECUTION_WORDS])) return 'execute';
-    return null;
-  }
 
-  /**
-   * Explicit git-PUSH intent (Sprint 2z, ADR-0047) — only consulted inside the GIT_COMMITTED / PUSH_APPROVED
-   * routing guards (never a global/no-anchor handler — CA #1). A forbidden-companion is classified ONLY when
-   * a push word is present (CA #2), so a bare "배포해줘"/"branch"/"tag"/"reset" is NOT push handling. Returns:
-   *  - `null` → no push word (→ existing fallback);
-   *  - `'push-unsupported'` → push bundled with force/PR/deploy/tag/branch/reset/checkout/stash/merge/rebase;
-   *  - `'push'` → a plain push request ("푸시해줘"/"git push 해줘"/"원격에 올려줘"/"push this commit"/…).
-   */
-  static interpretPushIntent(text: string): 'push' | 'push-unsupported' | null {
-    if (isGitTopicOnlyMention(text)) return null; // "git push와 merge 차이가 뭐야?" / "푸시 로직을 검토해줘" → chat (live QA 2026-10-07)
-    if (!unnegatedMatch(text, [PUSH_WORDS])) return null; // (CA #2) no (non-negated) push word → not push handling
-    if (unnegatedMatch(text, [PUSH_FORBIDDEN_COMPANION])) return 'push-unsupported'; // push + force/PR/deploy/tag/branch/…
-    return 'push';
-  }
 
-  /**
-   * A push request that reaches the no-relevant-anchor fall-through (QA-V2-W8): the strict imperative/execution
-   * shape of {@link interpretPushIntent}. A question or a topic mention ("git push가 뭐야?", "푸시 알림 설정하는 법",
-   * "push notification 구현 방법") is `null` and stays ordinary chat.
-   */
-  static interpretNoAnchorPushRequest(text: string): 'push' | 'push-unsupported' | null {
-    const kind = ConversationRuntime.interpretPushIntent(text);
-    if (kind === null) return null;
-    const t = text.trim();
-    if (PUSH_CHAT_TOPIC.test(t) || !PUSH_REQUEST_SHAPES.some((re) => re.test(t))) return null;
-    return kind;
-  }
 
-  /**
-   * Explicit git-push-EXECUTION intent (Sprint 3a, ADR-0048) — only consulted inside the PUSH_APPROVED /
-   * GIT_PUSHED routing guards. A forbidden-companion is classified ONLY when a push/exec word is present
-   * (2z CA #2 lesson), so a bare "배포"/"branch"/"reset" is NOT push handling. Returns:
-   *  - `null` → no push/exec word, OR a bare push word without an execution phrase (→ 2z already-approved);
-   *  - `'push-unsupported'` → push bundled with force/PR/deploy/tag/branch/reset/checkout/stash/merge/rebase;
-   *  - `'execute'` → an explicit execution phrase ("승인된 push 실행해줘"/"push 실행해줘"/"이제 실제 push"/
-   *    "execute approved push"/"push approved commit"/…).
-   */
-  static interpretPushExecutionIntent(text: string): 'execute' | 'push-unsupported' | null {
-    if (!unnegatedMatch(text, [PUSH_EXECUTION_WORDS]) && !unnegatedMatch(text, [PUSH_WORDS])) return null; // no (non-negated) push/exec word
-    // A bare push word in a question / topic mention is chat (live QA 2026-10-07); an execution phrase is always classified
-    // (Codex wave-8 review, P1: "푸시 실행해도 돼?" must never reach a later destructive route).
-    if (!unnegatedMatch(text, [PUSH_EXECUTION_WORDS]) && isGitTopicOnlyMention(text)) return null;
-    if (unnegatedMatch(text, [PUSH_FORBIDDEN_COMPANION])) return 'push-unsupported'; // push + force/PR/deploy/tag/branch/…
-    if (unnegatedMatch(text, [PUSH_EXECUTION_WORDS])) return 'execute';
-    return null; // a bare push word (no exec word) → leave to the 2z already-approved reply at PUSH_APPROVED
-  }
 
-  /**
-   * Explicit PR-creation intent (Sprint 3b, ADR-0049) — only consulted inside the GIT_PUSHED / PR_APPROVED
-   * routing guards (never a global/no-anchor handler). A forbidden-companion is classified ONLY when a PR
-   * word is present (2z CA #2 lesson), so a bare "배포"/"merge"/"reset" is NOT PR handling. Returns:
-   *  - null → no PR word, OR a bare PR noun WITHOUT a create/open verb (→ existing behavior — CA #1);
-   *  - 'pr-unsupported' → PR bundled with deploy/merge/release/auto-merge/force/reset/… (CA #5);
-   *  - 'create' → an explicit PR-creation phrase ("PR 만들어줘"/"open a PR"/"merge request 만들어줘"/…).
-   */
-  static interpretPrIntent(text: string): 'create' | 'pr-unsupported' | null {
-    if (!unnegatedMatch(text, [PR_WORD])) return null; // no (non-negated) PR word → not PR handling
-    if (isGitTopicOnlyMention(text)) return null; // "PR 만드는 법 알려줘" / "PR과 머지 차이" → chat (live QA 2026-10-07)
-    // PR + deploy/merge/release/force/… → unsupported only when the companion rides along with a PR request: a PR
-    // create verb, a companion request shape, or a short command ("PR 만들고 배포", "PR and merge"). Free text that merely
-    // names both ("PR 설명에 배포 일정 적어줘") is not a bundle (live QA 2026-10-07).
-    if (
-      unnegatedMatch(text, [PR_FORBIDDEN_COMPANION]) &&
-      (unnegatedMatch(text, [PR_CREATION_WORDS]) || isChainCompanionRequest(text) || text.trim().split(/\s+/).length <= 4)
-    ) {
-      return 'pr-unsupported';
-    }
-    if (unnegatedMatch(text, [PR_CREATION_WORDS])) return 'create';
-    return null; // a bare PR noun without a create/open verb → not PR handling (CA #1)
-  }
 
-  /**
-   * Explicit PR/CI/check/review STATUS-preview intent (Sprint 3e, ADR-0055) — only consulted at PR_CREATED.
-   * True only when BOTH a status-context noun (PR/CI/check/review) AND a query verb (상태/확인/…) are present, so
-   * a bare "상태" never triggers (CA Q1) and merge/deploy/release/reviewer/label phrases (no status noun+query)
-   * do not match — they keep routing to the companion-unsupported reply.
-   */
-  static interpretPrStatusIntent(text: string): boolean {
-    const t = text.trim().toLowerCase();
-    return PR_STATUS_NOUN.test(t) && PR_STATUS_QUERY.test(t) && !isGitConceptQuestion(t); // "PR 리뷰 어떻게 하는지 알려줘" → chat
-  }
 
-  /** True for an explicit work-chat lookup/search command (reuses the work-chat grammar; never a to-do mutation). */
-  static isWorkChatLookupCommand(text: string): boolean {
-    return detectWorkChatCommand(text)?.kind === 'lookup';
-  }
 
-  /**
-   * Explicit merge-APPROVAL intent (Sprint 3f, ADR-0056) — only consulted at PR_CREATED, AFTER the status
-   * intent. Returns `'merge'` only for a merge word + an approval/execution request verb attached to it (live QA
-   * 2026-10-07: a concept question or topic mention such as "git rebase와 merge 차이를 간단히 설명해줘" is null); a merge
-   * safety/possibility QUESTION or a bare merge noun returns null (→ falls through to the companion reply). A
-   * bare "진행해"/"좋아"/"승인" has no merge word → null (so PR_CREATED + "진행해" never creates a merge approval).
-   */
-  static interpretMergeIntent(text: string): 'merge' | null {
-    const t = text.trim().toLowerCase();
-    if (!MERGE_WORD.test(t)) return null;
-    if (MERGE_QUESTION.test(t)) return null; // "머지 가능해?/안전해?/통과?" → not an approval request
-    // Live QA 2026-10-07: a concept question / topic mention ("git rebase와 merge 차이를 간단히 설명해줘", "머지 전략 비교해줘",
-    // "explain git merge") is chat, and the request verb must attach to the merge word ("머지해줘", "merge the PR").
-    if (isGitTopicOnlyMention(t)) return null;
-    if (MERGE_REQUEST_ATTACHED.test(t)) return 'merge';
-    return null; // bare "머지" noun → companion-unsupported
-  }
 
-  /**
-   * A merge request with no code chain (live QA session 3, D11): the {@link interpretMergeIntent} request shape, naming a
-   * git merge — "머지"/"merge", or "병합" next to a PR / git word ("PR 머지해줘", "머지해줘", "PR 병합해줘"). A generic
-   * "파일 병합해줘" is not one (chat). Only picks the fixed merge-disabled / no-PR reply; never an approval or a merge.
-   */
-  static interpretNoChainMergeRequest(text: string): 'merge' | null {
-    if (ConversationRuntime.interpretMergeIntent(text) !== 'merge') return null;
-    if (!unnegatedMatch(text, [MERGE_WORD])) return null;
-    const t = text.trim().toLowerCase();
-    return /머지|\bmerge\b/.test(t) || PR_WORD.test(t) || /\bgit\b|깃/.test(t) ? 'merge' : null;
-  }
 
-  /**
-   * Explicit merge-EXECUTION intent (Sprint 3g, ADR-0057, CA change 1) — only consulted at MERGE_APPROVED /
-   * PR_MERGED. A merge word + a request/execution verb → `'execute'`; the MERGE_QUESTION status/check/possibility
-   * guard takes precedence (so "머지 상태 확인해줘"/"머지 체크해줘"/"머지 가능해?" never execute); a bare "머지"/"merge"
-   * noun (no verb) → null (→ composeMergeAlreadyApproved). At MERGE_APPROVED the CRITICAL 3f approval was already
-   * granted, so "머지해줘"/"이 PR 머지해줘"/"merge this PR" are valid execution commands.
-   */
-  static interpretMergeExecutionIntent(text: string): 'execute' | null {
-    const t = text.trim().toLowerCase();
-    if (!MERGE_WORD.test(t)) return null;
-    if (MERGE_QUESTION.test(t)) return null; // status/check/possibility → not execution (read-only path)
-    if (isGitTopicOnlyMention(t)) return null; // concept question / topic mention → chat (live QA 2026-10-07)
-    if (MERGE_EXECUTION_FOREIGN.test(t)) return null; // merge + push/deploy/sync/delete/force → never execution (Codex W8)
-    if (MERGE_EXECUTION_VERB.test(t) && MERGE_EXECUTION_ATTACHED.test(t)) return 'execute';
-    return null; // bare "머지"/"merge" noun → already-approved reply, no execution
-  }
 
-  /**
-   * A merge STATUS/CHECK phrase (Sprint 3g) → routes to the read-only status preview at MERGE_APPROVED/PR_MERGED,
-   * so "머지 상태 확인해줘"/"머지 체크해줘" land on the 3e preview even though PR_STATUS_NOUN does not include "머지".
-   * A merge word + a MERGE_QUESTION status/check/possibility word (never execution).
-   */
-  static interpretMergeStatusIntent(text: string): boolean {
-    const t = text.trim().toLowerCase();
-    return MERGE_WORD.test(t) && MERGE_QUESTION.test(t) && !isGitConceptQuestion(t); // "merge conflict 해결법 알려줘" → chat
-  }
 
-  /**
-   * Explicit post-merge LOCAL main sync intent (Sprint 3h, ADR-0058) — only consulted at PR_MERGED / MAIN_SYNCED.
-   * Requires a sync verb (동기화/최신화/받아와/sync/pull/update main) AND a main target — so a bare "sync"/"pull" or a
-   * bare "main" alone does not trigger. Covers "main 동기화해줘"/"로컬 main 최신화해줘"/"머지된 main 받아와줘"/"sync main"/
-   * "update local main".
-   */
-  static interpretMainSyncIntent(text: string): 'sync' | null {
-    const t = text.trim().toLowerCase();
-    if (!SYNC_WORD.test(t)) return null;
-    if (isGitTopicOnlyMention(t)) return null; // "git pull과 fetch 차이 설명해줘" → chat (live QA 2026-10-07)
-    if (SYNC_FOREIGN.test(t)) return null; // sync + push/PR/delete/deploy/force → never a sync command (Codex W8)
-    if (MAIN_WORD.test(t) || /update\s+(local\s+)?main/.test(t)) return 'sync';
-    return null;
-  }
 
-  /**
-   * A REMOTE branch cleanup phrase (Sprint 3i, ADR-0059, CA change 1; HARDENED in Sprint 3j-A, ADR-0060) — consulted
-   * at MAIN_SYNCED (→ unsupported: clean local first) and BRANCH_CLEANED / REMOTE_BRANCH_CLEANUP_APPROVED (→ the
-   * CRITICAL approval flow). A cleanup verb + a branch word + a remote qualifier (원격/remote/origin/github) →
-   * `'remote'`. **3j-A hardening (CA change 8):** because a remote phrase now starts a real CRITICAL delete-approval
-   * (not a 3i no-op), bulk/wildcard/"main·default" phrases MUST be rejected here too so they can never create an
-   * approval request. The deletion target is ALWAYS the anchored PR head branch — never a user-named branch.
-   */
-  static interpretRemoteBranchCleanupIntent(text: string): 'remote' | null {
-    const t = text.trim().toLowerCase();
-    if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/"main·default 삭제" → never
-    if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null; // other chain verb / statement (Codex W8)
-    if (isGitTopicOnlyMention(t)) return null; // "원격 브랜치 삭제와 로컬 브랜치 삭제 차이" → chat (live QA 2026-10-07)
-    if (CLEANUP_VERB.test(t) && CLEANUP_BRANCH_WORD.test(t) && CLEANUP_REMOTE_WORD.test(t)) return 'remote';
-    return null;
-  }
 
-  /**
-   * An explicit remote-branch-cleanup EXECUTION intent (Sprint 3j-A, HARDENED in Sprint 3j-B, ADR-0060) — only
-   * consulted at REMOTE_BRANCH_CLEANUP_APPROVED, checked FIRST (Sprint 3j-B, CA change 1) so an execution phrase
-   * ("원격 브랜치 삭제 실행해줘" / "지금 원격 브랜치 삭제해줘" / "execute remote branch cleanup" / "proceed") is never swallowed
-   * by the re-request ("already approved") route. A pure execute verb (실행/진행/지금/execute/proceed/now) → `'execute'`.
-   * **3j-B hardening (CA change 1):** bulk/wildcard/main/default phrases are rejected here too so they can never
-   * execute a delete. A bare re-request ("원격 브랜치 삭제해줘", no execute verb) → null → "already approved".
-   */
-  static interpretRemoteBranchCleanupExecutionIntent(text: string): 'execute' | null {
-    const t = text.trim().toLowerCase();
-    if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/main·default → never execute (CA change 1)
-    // (Codex wave-8 review, P1) only the step's OWN execution phrases: never a push/merge/PR/sync/… phrase ("execute
-    // approved push", "푸시 실행해도 돼?"), never a statement/question, never an execute word with unrelated content.
-    if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null;
-    if (isGitTopicOnlyMention(t)) return null; // concept question / topic mention → chat (live QA 2026-10-07)
-    if (REMOTE_CLEANUP_BARE_EXECUTE.test(t)) return 'execute'; // "실행해줘" / "proceed" — the approved step's own command
-    // Otherwise the step's OWN target is required (Codex wave-8 re-review): a cleanup verb + a branch word + a remote
-    // qualifier + an execute verb — "delete the file now" names no remote branch and never executes.
-    if (
-      CLEANUP_VERB.test(t) &&
-      CLEANUP_BRANCH_WORD.test(t) &&
-      CLEANUP_REMOTE_WORD.test(t) &&
-      unnegatedMatch(t, [REMOTE_CLEANUP_EXECUTE_VERB])
-    ) {
-      return 'execute';
-    }
-    return null;
-  }
 
-  /**
-   * A LOCAL branch cleanup phrase (Sprint 3i, ADR-0059) — only consulted at MAIN_SYNCED/BRANCH_CLEANED, AFTER the
-   * remote guard. A cleanup verb + a branch word → `'local'`; rejects bulk/wildcard, a "main"-delete target, and any
-   * remote qualifier (handled by interpretRemoteBranchCleanupIntent). The deletion target is ALWAYS the anchored PR
-   * head branch — never a user-named branch. A bare "정리해줘"/"배포해줘" (no branch word) → null.
-   */
-  static interpretBranchCleanupIntent(text: string): 'local' | null {
-    const t = text.trim().toLowerCase();
-    if (CLEANUP_BULK.test(t) || CLEANUP_MAIN_TARGET.test(t)) return null; // bulk/wildcard/"main 삭제" → never
-    if (CLEANUP_REMOTE_WORD.test(t)) return null; // remote → not local (routed by interpretRemoteBranchCleanupIntent)
-    if (CLEANUP_FOREIGN_CHAIN_WORD.test(t) || CLEANUP_NOT_A_REQUEST.test(t)) return null; // other chain verb / statement (Codex W8)
-    if (isGitTopicOnlyMention(t)) return null; // concept question / topic mention → chat (live QA 2026-10-07)
-    if (CLEANUP_VERB.test(t) && CLEANUP_BRANCH_WORD.test(t)) return 'local';
-    return null;
-  }
 
-  /**
-   * Resolve the commit message for a commit-approval turn (Sprint 2x, CA #6/#7/#8). If the text carries a
-   * user message (a single quoted segment after a `메시지`/`message` keyword) it is accepted only when it is
-   * exactly one candidate, single-line, ≤120 chars, control-char-free, and trimmed non-empty — otherwise
-   * `'invalid'`. With no user message, a deterministic template from `targetFiles` is used (no AI). Never
-   * interpolates diff/file content.
-   */
-  static parseCommitMessage(text: string, targetFiles: string[]): { message: string } | 'invalid' {
-    // A user message is offered ONLY via a quoted segment (e.g. 메시지는 "fix: …"). No quote → deterministic
-    // template (so "커밋 메시지 만들어줘" means "make one for me", not an empty user message). More than one
-    // quoted segment → invalid (CA #8, no ambiguous multi-message extraction).
-    const quoted = text.match(/["'`]([^"'`]*)["'`]/g) ?? [];
-    if (quoted.length > 0) {
-      if (quoted.length !== 1) return 'invalid';
-      const inner = quoted[0]!.slice(1, -1).trim();
-      if (!isValidCommitMessage(inner)) return 'invalid';
-      return { message: inner };
-    }
-    const primary = targetFiles[0] ?? 'workspace';
-    const suffix = targetFiles.length > 1 ? ` 외 ${targetFiles.length - 1}개` : '';
-    return { message: `chore: update ${primary}${suffix}`.slice(0, MAX_COMMIT_MESSAGE_CHARS) };
-  }
+
 
   /**
    * Handle one inbound message → one transient `TurnResult` (with an `OutboundMessage`). Never sends
@@ -1109,7 +754,7 @@ export class ConversationRuntime {
     }
     // ADR-0112: the follow-up the lapsed write was waiting for (its exact execution phrase, or a choice number) is told
     // that it lapsed — never run, and never handed to a model as a bare "1".
-    const lapsedReply = lapsedWrite ? ConversationRuntime.lapsedConnectorWriteStep(lapsedWrite, message.text) : null;
+    const lapsedReply = lapsedWrite ? lapsedConnectorWriteStep(lapsedWrite, message.text) : null;
     if (lapsedReply) return this.respondConnectorWriteStep(message, session, lapsedReply, '');
 
     // ADR-0120 amendment A6: an open A6 question is answered before any grammar ("3", "요약" must not be read as anything
@@ -1148,8 +793,8 @@ export class ConversationRuntime {
       // reply naming the file — routed normally, it reaches the `pre-classify` help-intent handler or chat.
       if (
         !detectProjectRegistration(message.text) &&
-        !ConversationRuntime.isFreshCreateResend(message.text) &&
-        !ConversationRuntime.isHowToQuestionWithoutTarget(message.text)
+        !isFreshCreateResend(message.text) &&
+        !isHowToQuestionWithoutTarget(message.text)
       ) {
         const deniedScope = await this.surfaceDeniedDecision(message, session, actor, ['code']);
         if (deniedScope) return deniedScope;
@@ -1194,7 +839,7 @@ export class ConversationRuntime {
     // (QA-V2 post-connect) an explicit work-chat lookup/search command ("Confluence에서 배포 검색") is never captured by the
     // anchored-chain companion/deploy/merge-word replies below; it falls through to the work-chat handler. Pending-approval
     // intercepts and execution allow-list gates above/below are untouched.
-    const workLookup = ConversationRuntime.isWorkChatLookupCommand(message.text);
+    const workLookup = isWorkChatLookupCommand(message.text);
     // (live QA 2026-10-07) A concept question or topic mention about a git operation ("git rebase와 merge 차이를 간단히
     // 설명해줘", "머지 전략 비교해줘", "explain git merge") is never captured by the anchored chain's bare-word replies
     // (already approved / already merged / unsupported companion / execution-phrase hint) either; it reaches chat. The
@@ -1252,7 +897,7 @@ export class ConversationRuntime {
     // (QA-V2-CL-03) "취소" while a diff preview awaits "적용해줘" discards that preview — never the QA-018 "nothing to
     // approve" reply, which ignored the open preview. ELIGIBLE only: no approval exists yet and no file was changed.
     // Every approval-pending state above keeps its own decision flow; later states keep their own replies.
-    if (applyAnchor?.status === 'ELIGIBLE' && ConversationRuntime.isPreviewDiscardUtterance(message.text)) {
+    if (applyAnchor?.status === 'ELIGIBLE' && isPreviewDiscardUtterance(message.text)) {
       return this.stateBoundStep(message, session, actor, 'preview-discard', () => this.handlePreviewDiscardTurn(message, session, applyAnchor));
     }
     // (A3b) ADR-0111 D4/D5 (MM-2): a message carrying an admitted image is an image turn — after every pending
@@ -1292,7 +937,7 @@ export class ConversationRuntime {
     // execute a derived validation command. Without this guard, a missing/stale WORKSPACE_APPLIED anchor can
     // fall through to IntentClassifier -> RUN_TESTS -> ExecutionOrchestrator. Keep pending approval decisions
     // above this check because those turns cannot enter validation execution and must retain decision semantics.
-    if (ConversationRuntime.interpretPostApplyValidationIntent(message.text) === 'unsupported') {
+    if (interpretPostApplyValidationIntent(message.text) === 'unsupported') {
       return this.respondComposed(
         message,
         session,
@@ -1308,19 +953,19 @@ export class ConversationRuntime {
       // in execution-command-guard); any other commit-execution mention → the already-approved reply, which quotes
       // the documented phrase. The same rule applies to every approved execution gate below.
       if (isAcceptedExecutionPhrase('commit', message.text)) return this.stateBoundStep(message, session, actor, 'commit', () => this.handleCommitExecutionTurn(message, session, applyAnchor));
-      const execKind = ConversationRuntime.interpretCommitExecutionIntent(chainText);
+      const execKind = interpretCommitExecutionIntent(chainText);
       if (execKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleCommitPushUnsupportedTurn(message, session));
       if (execKind === 'execute') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleCommitAlreadyApprovedTurn(message, session));
     }
     if (applyAnchor?.status === 'GIT_COMMITTED') {
       // (Sprint 2z, ADR-0047) push is checked FIRST so "푸시해줘" plans a push approval rather than hitting
       // the 2y commit-push-unsupported reply. A push bundled with force/PR/deploy/… → unsupported companion.
-      const pushKind = ConversationRuntime.interpretPushIntent(chainText);
+      const pushKind = interpretPushIntent(chainText);
       if (pushKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushUnsupportedCompanionTurn(message, session));
       if (pushKind === 'push') return this.stateBoundStep(message, session, actor, 'push', () => this.handlePushApprovalTurn(message, session, actor, applyAnchor));
       // A repeat commit-execution phrase at GIT_COMMITTED → already committed (2y). ("push"-forbidden here is
       // handled above by 2z; the remaining COMMIT_EXECUTION 'push-unsupported' cases have no push word.)
-      const execKind = ConversationRuntime.interpretCommitExecutionIntent(chainText);
+      const execKind = interpretCommitExecutionIntent(chainText);
       if (execKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleCommitPushUnsupportedTurn(message, session));
       if (execKind === 'execute') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleCommitAlreadyCommittedTurn(message, session, applyAnchor));
     }
@@ -1329,11 +974,11 @@ export class ConversationRuntime {
     // word) falls to the 2z already-approved reply. A push+forbidden phrase → unsupported companion.
     if (applyAnchor?.status === 'PUSH_APPROVED') {
       if (isAcceptedExecutionPhrase('push', message.text)) return this.stateBoundStep(message, session, actor, 'push', () => this.handlePushExecutionTurn(message, session, actor, applyAnchor));
-      const exKind = ConversationRuntime.interpretPushExecutionIntent(chainText);
+      const exKind = interpretPushExecutionIntent(chainText);
       if (exKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushUnsupportedCompanionTurn(message, session));
       if (exKind === 'execute') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushAlreadyApprovedTurn(message, session)); // not an exact phrase (allow-list)
       // (Sprint 2z) a bare push phrase at PUSH_APPROVED → already approved (not pushed).
-      const pushKind = ConversationRuntime.interpretPushIntent(chainText);
+      const pushKind = interpretPushIntent(chainText);
       if (pushKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushUnsupportedCompanionTurn(message, session));
       if (pushKind === 'push') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushAlreadyApprovedTurn(message, session));
     }
@@ -1342,14 +987,14 @@ export class ConversationRuntime {
     // explicit PR-creation phrase → CRITICAL PR approval; a PR+forbidden → unsupported companion; a bare
     // deploy-only phrase → deploy-only future-sprint (PR-creation is now supported, so it is no longer bundled).
     if (applyAnchor?.status === 'GIT_PUSHED') {
-      const exKind = ConversationRuntime.interpretPushExecutionIntent(chainText);
+      const exKind = interpretPushExecutionIntent(chainText);
       if (exKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushUnsupportedCompanionTurn(message, session));
       if (exKind === 'execute') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushAlreadyPushedTurn(message, session, applyAnchor));
-      const prKind = ConversationRuntime.interpretPrIntent(chainText);
+      const prKind = interpretPrIntent(chainText);
       if (prKind === 'pr-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePrUnsupportedCompanionTurn(message, session));
       if (prKind === 'create') return this.stateBoundStep(message, session, actor, 'pr-create', () => this.handlePrApprovalTurn(message, session, actor, applyAnchor));
       if (chainCompanionAsk(DEPLOY_ONLY_WORDS)) return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushPrDeployUnsupportedTurn(message, session));
-      if (ConversationRuntime.interpretPushIntent(chainText) === 'push') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushAlreadyPushedTurn(message, session, applyAnchor));
+      if (interpretPushIntent(chainText) === 'push') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushAlreadyPushedTurn(message, session, applyAnchor));
     }
     // (QA-V2-W7-02) After the push, every later chain state: a push/push-execution phrase must never fall through
     // to chat (a free-text model reply could fabricate or advise e.g. `git push -f`). A push+forbidden companion
@@ -1362,13 +1007,13 @@ export class ConversationRuntime {
     if (
       applyAnchor &&
       POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status) &&
-      !ConversationRuntime.interpretPrStatusIntent(chainText) &&
-      !ConversationRuntime.interpretMergeStatusIntent(chainText)
+      !interpretPrStatusIntent(chainText) &&
+      !interpretMergeStatusIntent(chainText)
     ) {
       const execKind = unnegatedMatch(chainText, [PUSH_EXECUTION_WORDS])
-        ? ConversationRuntime.interpretPushExecutionIntent(chainText)
+        ? interpretPushExecutionIntent(chainText)
         : null;
-      const pushKind = execKind === 'execute' ? 'push' : (execKind ?? ConversationRuntime.interpretNoAnchorPushRequest(chainText));
+      const pushKind = execKind === 'execute' ? 'push' : (execKind ?? interpretNoAnchorPushRequest(chainText));
       if (pushKind === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushUnsupportedCompanionTurn(message, session));
       if (pushKind === 'push') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushAlreadyPushedTurn(message, session, applyAnchor));
     }
@@ -1378,7 +1023,7 @@ export class ConversationRuntime {
       if (isAcceptedExecutionPhrase('prCreate', message.text)) {
         return this.stateBoundStep(message, session, actor, 'pr-create', () => this.handlePrCreationExecutionTurn(message, session, actor, applyAnchor));
       }
-      const prKind = ConversationRuntime.interpretPrIntent(chainText);
+      const prKind = interpretPrIntent(chainText);
       if (prKind === 'pr-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePrUnsupportedCompanionTurn(message, session));
       // (Sprint 3d-D, ADR-0054) an explicit PR create/open phrase at PR_APPROVED now EXECUTES creation
       // (state-driven trigger — the same grammar requested approval at GIT_PUSHED). Bare noun/승인/진행해 → null.
@@ -1392,12 +1037,12 @@ export class ConversationRuntime {
     // a deploy/merge/release/companion phrase → unsupported future step. Never re-creates / merges / deploys.
     if (applyAnchor?.status === 'PR_CREATED') {
       // (Sprint 3e) an explicit PR/CI/check/review status phrase → read-only status preview (checked first).
-      if (ConversationRuntime.interpretPrStatusIntent(chainText)) {
+      if (interpretPrStatusIntent(chainText)) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
       // (Sprint 3f, ADR-0056) an explicit merge approval / merge phrase → CRITICAL merge-approval halt (records
       // permission only; NO merge). Checked before create/companion so "머지해줘" plans an approval, not a companion.
-      if (ConversationRuntime.interpretMergeIntent(chainText) === 'merge') {
+      if (interpretMergeIntent(chainText) === 'merge') {
         // ADR-0099 D5: with QUOKY_GIT_MERGE_ENABLED=false the merge chain is off — the fixed reply comes BEFORE any
         // merge ApprovalRequest or MERGE_APPROVAL_PENDING anchor (the hosting guard also refuses the merge call).
         if (!this.gitMergeEnabled) {
@@ -1405,7 +1050,7 @@ export class ConversationRuntime {
         }
         return this.stateBoundStep(message, session, actor, 'merge', () => this.handleMergeApprovalTurn(message, session, actor, applyAnchor));
       }
-      const prKind = ConversationRuntime.interpretPrIntent(chainText);
+      const prKind = interpretPrIntent(chainText);
       if (prKind === 'create') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePrAlreadyCreatedTurn(message, session, applyAnchor));
       if (prKind === 'pr-unsupported' || (chainCompanionAsk(PR_CREATED_COMPANION_WORDS))) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePrCreatedCompanionUnsupportedTurn(message, session));
@@ -1418,14 +1063,14 @@ export class ConversationRuntime {
     if (applyAnchor?.status === 'MERGE_APPROVED') {
       if (isAcceptedExecutionPhrase('merge', message.text)) return this.stateBoundStep(message, session, actor, 'merge', () => this.handleMergeExecutionTurn(message, session, actor, applyAnchor));
       if (
-        ConversationRuntime.interpretPrStatusIntent(chainText) ||
-        ConversationRuntime.interpretMergeStatusIntent(chainText)
+        interpretPrStatusIntent(chainText) ||
+        interpretMergeStatusIntent(chainText)
       ) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
       // (Sprint 3g, ADR-0057, CA change 1) "머지해줘"/"이 PR 머지해줘"/"merge this PR"/"실제 머지해줘"/… → EXECUTE.
       // A merge-execution-shaped phrase that is not an exact accepted phrase (allow-list) → already approved.
-      if (ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute') {
+      if (interpretMergeExecutionIntent(chainText) === 'execute') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMergeAlreadyApprovedTurn(message, session));
       }
       // A bare "머지"/"merge" mention (merge word, no execution verb, not a status phrase) → already approved,
@@ -1446,8 +1091,8 @@ export class ConversationRuntime {
       // (allow-list) only an exact accepted sync phrase syncs; any other sync mention → a fixed hint naming the phrase.
       if (isAcceptedExecutionPhrase('mainSync', message.text)) return this.stateBoundStep(message, session, actor, 'main-sync', () => this.handleMainSyncTurn(message, session, actor, applyAnchor));
       if (
-        ConversationRuntime.interpretPrStatusIntent(chainText) ||
-        ConversationRuntime.interpretMergeStatusIntent(chainText)
+        interpretPrStatusIntent(chainText) ||
+        interpretMergeStatusIntent(chainText)
       ) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
@@ -1455,7 +1100,7 @@ export class ConversationRuntime {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'main-sync')));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        interpretMergeExecutionIntent(chainText) === 'execute' ||
         (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMergeAlreadyMergedTurn(message, session, applyAnchor));
@@ -1469,19 +1114,19 @@ export class ConversationRuntime {
     // branch delete (Sprint 3i); a sync command → already synced; a status/check phrase → read-only preview; any
     // merge phrase → already merged; deploy/release/companion → unsupported future step.
     if (applyAnchor?.status === 'MAIN_SYNCED') {
-      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
+      if (interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleRemoteBranchCleanupUnsupportedTurn(message, session));
       }
       // (allow-list) only an exact accepted cleanup phrase deletes; any other local-cleanup mention → a fixed hint.
       if (isAcceptedExecutionPhrase('localCleanup', message.text)) {
         return this.stateBoundStep(message, session, actor, 'local-cleanup', () => this.handleBranchCleanupTurn(message, session, actor, applyAnchor));
       }
-      if (ConversationRuntime.interpretMainSyncIntent(chainText) === 'sync') {
+      if (interpretMainSyncIntent(chainText) === 'sync') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMainAlreadySyncedTurn(message, session, applyAnchor));
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(chainText) ||
-        ConversationRuntime.interpretMergeStatusIntent(chainText)
+        interpretPrStatusIntent(chainText) ||
+        interpretMergeStatusIntent(chainText)
       ) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
@@ -1489,7 +1134,7 @@ export class ConversationRuntime {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'local-cleanup')));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        interpretMergeExecutionIntent(chainText) === 'execute' ||
         (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMergeAlreadyMergedTurn(message, session, applyAnchor));
@@ -1503,23 +1148,23 @@ export class ConversationRuntime {
     // mutation); a sync command → still synced; a status/check phrase → read-only preview; any merge phrase →
     // already merged; deploy/release/companion → unsupported. NEVER deletes/deploys.
     if (applyAnchor?.status === 'BRANCH_CLEANED') {
-      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
+      if (interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
         return this.stateBoundStep(message, session, actor, 'remote-cleanup', () => this.handleRemoteBranchCleanupApprovalTurn(message, session, actor, applyAnchor));
       }
-      if (ConversationRuntime.interpretBranchCleanupIntent(chainText) === 'local') {
+      if (interpretBranchCleanupIntent(chainText) === 'local') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleBranchAlreadyCleanedTurn(message, session, applyAnchor));
       }
-      if (ConversationRuntime.interpretMainSyncIntent(chainText) === 'sync') {
+      if (interpretMainSyncIntent(chainText) === 'sync') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMainAlreadySyncedTurn(message, session, applyAnchor));
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(chainText) ||
-        ConversationRuntime.interpretMergeStatusIntent(chainText)
+        interpretPrStatusIntent(chainText) ||
+        interpretMergeStatusIntent(chainText)
       ) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        interpretMergeExecutionIntent(chainText) === 'execute' ||
         (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMergeAlreadyMergedTurn(message, session, applyAnchor));
@@ -1537,20 +1182,20 @@ export class ConversationRuntime {
         return this.stateBoundStep(message, session, actor, 'remote-cleanup', () => this.handleRemoteBranchCleanupExecutionTurn(message, session, actor, applyAnchor));
       }
       // An execution-shaped phrase that is not an exact accepted phrase (allow-list) → already approved (quotes the phrase).
-      if (ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(chainText) === 'execute') {
+      if (interpretRemoteBranchCleanupExecutionIntent(chainText) === 'execute') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session));
       }
-      if (ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
+      if (interpretRemoteBranchCleanupIntent(chainText) === 'remote') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleRemoteBranchCleanupAlreadyApprovedTurn(message, session));
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(chainText) ||
-        ConversationRuntime.interpretMergeStatusIntent(chainText)
+        interpretPrStatusIntent(chainText) ||
+        interpretMergeStatusIntent(chainText)
       ) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        interpretMergeExecutionIntent(chainText) === 'execute' ||
         (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMergeAlreadyMergedTurn(message, session, applyAnchor));
@@ -1564,25 +1209,25 @@ export class ConversationRuntime {
     // read-only preview (keeps the state); a merge phrase → already merged; deploy/release/companion → unsupported.
     if (applyAnchor?.status === 'REMOTE_BRANCH_CLEANED') {
       if (
-        ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(chainText) === 'execute' ||
-        ConversationRuntime.interpretRemoteBranchCleanupIntent(chainText) === 'remote'
+        interpretRemoteBranchCleanupExecutionIntent(chainText) === 'execute' ||
+        interpretRemoteBranchCleanupIntent(chainText) === 'remote'
       ) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleRemoteBranchAlreadyCleanedTurn(message, session, applyAnchor));
       }
-      if (ConversationRuntime.interpretBranchCleanupIntent(chainText) === 'local') {
+      if (interpretBranchCleanupIntent(chainText) === 'local') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleBranchAlreadyCleanedTurn(message, session, applyAnchor));
       }
-      if (ConversationRuntime.interpretMainSyncIntent(chainText) === 'sync') {
+      if (interpretMainSyncIntent(chainText) === 'sync') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMainAlreadySyncedTurn(message, session, applyAnchor));
       }
       if (
-        ConversationRuntime.interpretPrStatusIntent(chainText) ||
-        ConversationRuntime.interpretMergeStatusIntent(chainText)
+        interpretPrStatusIntent(chainText) ||
+        interpretMergeStatusIntent(chainText)
       ) {
         return this.stateBoundStep(message, session, actor, 'pr-status', () => this.handlePrStatusPreviewTurn(message, session, applyAnchor));
       }
       if (
-        ConversationRuntime.interpretMergeExecutionIntent(chainText) === 'execute' ||
+        interpretMergeExecutionIntent(chainText) === 'execute' ||
         (chainCompanionAsk(MERGE_WORD))
       ) {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleMergeAlreadyMergedTurn(message, session, applyAnchor));
@@ -1598,7 +1243,7 @@ export class ConversationRuntime {
     if (
       applyAnchor?.status !== 'COMMIT_APPROVED' &&
       applyAnchor?.status !== 'GIT_COMMITTED' &&
-      ConversationRuntime.interpretCommitExecutionIntent(chainText) === 'execute'
+      interpretCommitExecutionIntent(chainText) === 'execute'
     ) {
       return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleCommitExecutionUnavailableTurn(message, session));
     }
@@ -1615,7 +1260,7 @@ export class ConversationRuntime {
       if (isAcceptedExecutionPhrase('validationTypecheck', message.text)) {
         return this.stateBoundStep(message, session, actor, 'validation', () => this.handlePostApplyValidationTurn(message, session, applyAnchor, 'typecheck'));
       }
-      const validationKind = ConversationRuntime.interpretPostApplyValidationIntent(chainText);
+      const validationKind = interpretPostApplyValidationIntent(chainText);
       if (validationKind === 'test' || validationKind === 'typecheck') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.respondComposed(message, session, this.deps.composer.composeExecutionPhraseHint(message.context, 'validation')));
       }
@@ -1624,7 +1269,7 @@ export class ConversationRuntime {
       }
       // (Sprint 2x) explicit commit request → commit-approval PLANNING (halt, no git mutation). A
       // push/add/reset-only phrase → null → falls to the 2w git-preview mutating reject (unchanged).
-      const commitKind = ConversationRuntime.interpretCommitIntent(chainText);
+      const commitKind = interpretCommitIntent(chainText);
       if (commitKind) {
         return commitKind === 'commit'
           ? this.stateBoundStep(message, session, actor, 'commit', () => this.handleCommitApprovalTurn(message, session, actor, applyAnchor))
@@ -1632,14 +1277,14 @@ export class ConversationRuntime {
       }
       // (Sprint 2w, ADR-0044) Explicit read-only git preview → GitManager.status/diff against the applied
       // workspace. With no WORKSPACE_APPLIED anchor this is never consulted (no general git handling).
-      const gitKind = ConversationRuntime.interpretGitPreviewIntent(chainText);
+      const gitKind = interpretGitPreviewIntent(chainText);
       if (gitKind) {
         return this.stateBoundStep(message, session, actor, 'git-preview', () => this.handleGitPreviewTurn(message, session, applyAnchor, gitKind));
       }
     }
     // (Sprint 2x, ADR-0045) A commit request outside WORKSPACE_APPLIED: at COMMIT_APPROVED say already-approved
     // (not committed); otherwise a scoped "no applied change to commit" reply (never broad general handling).
-    if (ConversationRuntime.interpretCommitIntent(chainText)) {
+    if (interpretCommitIntent(chainText)) {
       if (applyAnchor?.status === 'COMMIT_APPROVED') {
         return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleCommitAlreadyApprovedTurn(message, session));
       }
@@ -1648,7 +1293,7 @@ export class ConversationRuntime {
     // (Sprint 2u, ADR-0042) Explicit final workspace-apply → the first real file mutation. Checked before
     // patch- and apply-intent (FINAL_APPLY_WORDS is non-overlapping with PATCH_WORDS and precedes
     // APPLY_WORDS so "패치 적용해줘" is a file-apply, not a Sprint 2s apply-intent). Only fires on PATCH_READY.
-    if (ConversationRuntime.interpretFinalApplyIntent(chainText)) {
+    if (interpretFinalApplyIntent(chainText)) {
       if (applyAnchor?.status === 'PATCH_READY') {
         // (allow-list) only an exact accepted apply phrase writes files; otherwise the patch-ready (not applied) reply,
         // which quotes "패치 적용해줘".
@@ -1664,7 +1309,7 @@ export class ConversationRuntime {
     // (Sprint 2t, ADR-0041) Explicit patch command → PatchSet representation. Generation only on APPROVED.
     // CA Round 1 #8: at WORKSPACE_APPLIED, route to the workspace-already-applied reply (never a
     // "preview generated" reply that would hide the stronger applied state).
-    if (ConversationRuntime.interpretPatchIntent(chainText)) {
+    if (interpretPatchIntent(chainText)) {
       if (applyAnchor?.status === 'APPROVED') {
         return this.stateBoundStep(message, session, actor, 'patch', () => this.handlePatchGenerationTurn(message, session, applyAnchor));
       }
@@ -1678,7 +1323,7 @@ export class ConversationRuntime {
       // new code-change request, mirroring the apply-unavailable handling.
       return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePatchUnavailableTurn(message, session));
     }
-    if (ConversationRuntime.interpretApplyIntent(chainText)) {
+    if (interpretApplyIntent(chainText)) {
       if (applyAnchor?.status === 'ELIGIBLE') {
         return this.stateBoundStep(message, session, actor, 'apply', () => this.handleApplyIntentTurn(message, session, actor, applyAnchor)); // creates approval #2
       }
@@ -1706,14 +1351,14 @@ export class ConversationRuntime {
           POST_PUSH_CHAIN_STATUSES.has(applyAnchor.status))
       )
     ) {
-      const noAnchorPush = ConversationRuntime.interpretNoAnchorPushRequest(chainText);
+      const noAnchorPush = interpretNoAnchorPushRequest(chainText);
       if (noAnchorPush === 'push-unsupported') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handlePushUnsupportedCompanionTurn(message, session));
       if (noAnchorPush === 'push') return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.handleNoPushTargetTurn(message, session));
     }
     // Live QA session 3 (D11): a merge request with no code chain at all ("PR 머지해줘") gets the documented fixed reply —
     // the merge-disabled refusal while QUOKY_GIT_MERGE_ENABLED=false (quickstart §6/§8), otherwise "no PR to merge" —
     // never chat. No approval, no git/hosting call.
-    if (!applyAnchor && ConversationRuntime.interpretNoChainMergeRequest(chainText) === 'merge') {
+    if (!applyAnchor && interpretNoChainMergeRequest(chainText) === 'merge') {
       return this.stateBoundStep(message, session, actor, 'chain-reply', () => this.respondComposed(
         message,
         session,
@@ -1770,7 +1415,7 @@ export class ConversationRuntime {
       return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
     }
 
-    const durableMemoryContent = ConversationRuntime.explicitDurableMemoryContent(message.text);
+    const durableMemoryContent = explicitDurableMemoryContent(message.text);
     if (durableMemoryContent === '') {
       // QA-010: the explicit command with no content is a usage error, never ordinary chat.
       return this.respondComposed(message, session, this.deps.composer.composeMemoryUsageHint(message.context));
@@ -1871,7 +1516,7 @@ export class ConversationRuntime {
     }
     // Live UAT R9: an explicit `none` of a selector that ran (at a Class B position above) wins over the classifier's frozen
     // personal-work surface clause; only a skipped, failed or disabled selector leaves the surface as the fallback.
-    if (nlEarly?.declined === true && ConversationRuntime.nlWorkSurfaceRoute(intent) !== undefined) intent = chatIntentOf(message.text);
+    if (nlEarly?.declined === true && nlWorkSurfaceRoute(intent) !== undefined) intent = chatIntentOf(message.text);
     this.deps.logger.info('intent classified', {
       capability: intent.capability,
       requiresWork: intent.requiresWork,
@@ -1900,8 +1545,8 @@ export class ConversationRuntime {
     if (nlEarly === undefined && this.deps.nlSelection !== undefined && this.deps.nlSelection.mode !== 'off' && !lookup.pending) {
       const phaseC = this.nlPhaseC(lookup.pending);
       const route =
-        ConversationRuntime.nlSelectionRoute(intent) ??
-        (phaseC || this.nlSurfaceYields(message) ? ConversationRuntime.nlWorkSurfaceRoute(intent) : undefined);
+        nlSelectionRoute(intent) ??
+        (phaseC || this.nlSurfaceYields(message) ? nlWorkSurfaceRoute(intent) : undefined);
       if (route !== undefined) {
         try {
           const grammar: NlClassBProbe | undefined = route === 'work-surface' && phaseC ? { grammarId: 'work-surface', selection: { entryId: 'todo.list', args: {} } } : undefined;
@@ -1960,24 +1605,6 @@ export class ConversationRuntime {
   /** Owner decision of 2026-10-29 ("1번 진행"): turns whose start took the actor's open D7 question (`takePending`). */
   private readonly nlClosedQuestions = new WeakSet<InboundMessage>();
 
-  /** A6 R5a: what a handler's reply was, for `quoky.lastTurn` (an echo, a to-do / reminder listing, a question, a note). */
-  private static nlReplyKindOf(handled: TurnHandlerOutcome): { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' } {
-    if (handled.kind === 'summarize' || handled.kind === 'write-draft') return { kind: 'note' };
-    const action = handled.nlAction;
-    const local = (source: string | undefined): 'todo' | 'reminder' | undefined => (source === 'todo' || source === 'reminder' ? source : undefined);
-    if (action !== undefined && (action.result === 'executed' || action.result === 'undone') && local(action.source) !== undefined) {
-      return { kind: 'echo', listingSource: local(action.source) as 'todo' | 'reminder' };
-    }
-    if (handled.nlListing !== undefined && handled.nlListing.items.length > 0) {
-      // A6 R2: a Jira / Slack listing is a listing reply, but never an R5a referent source.
-      const listed = local(handled.nlListing.source);
-      return listed !== undefined ? { kind: 'listing', listingSource: listed } : { kind: 'listing' };
-    }
-    if (action !== undefined && action.result === 'asked' && (action.candidates?.length ?? 0) > 0 && local(action.source) !== undefined) {
-      return { kind: 'question', listingSource: local(action.source) as 'todo' | 'reminder' };
-    }
-    return { kind: 'note' };
-  }
 
   /** A6 R5a §1.2: write `quoky.lastTurn` for an owner DM turn (the service writes nothing while the flag is off). */
   private async recordNlLastTurn(message: InboundMessage): Promise<void> {
@@ -2169,10 +1796,6 @@ export class ConversationRuntime {
     return this.nlYield.has(message) && todoListLeavesUnexpressedContent(message.text.trim());
   }
 
-  /** ADR-0120 D6 Phase C: the classifier's personal-work surface (a frozen Class B clause, D6) as a selection route. */
-  private static nlWorkSurfaceRoute(intent: Intent): 'work-surface' | undefined {
-    return intent.type === IntentType.LOOKUP && intent.raw?.kind === 'personal-work-surface' ? 'work-surface' : undefined;
-  }
 
   /** ADR-0120 D6 Phase C (S1) is on for this turn: `QUOKY_NL_PHASE=c`, `active` or `shadow`, and no approval pending. */
   private nlPhaseC(pending: unknown): boolean {
@@ -2482,18 +2105,6 @@ export class ConversationRuntime {
     return probe;
   }
 
-  /** ADR-0120 D6: the Phase A routes selection may run on, or `undefined`. */
-  private static nlSelectionRoute(intent: Intent): 'chat' | 'personal-data' | undefined {
-    if (intent.capability === Capability.GENERAL_CHAT && intent.type === IntentType.CHAT) return 'chat';
-    if (
-      intent.capability === Capability.POLICY_SENSITIVE_CHAT &&
-      intent.raw?.kind === POLICY_SENSITIVE_CHAT_KIND &&
-      intent.raw.reason === 'personal-data'
-    ) {
-      return 'personal-data';
-    }
-    return undefined;
-  }
 
   /**
    * ADR-0120 D6/D8: the id of the provider this chat turn would reach — the same resolution the chat path makes (the
@@ -2895,7 +2506,7 @@ export class ConversationRuntime {
   private isExplicitTurnHandlerCommand(text: string): boolean {
     if (parseLearningCommand(text) !== null || parseMemoryCommand(text) !== null) return true;
     if (parseModelSelectionCommand(text) !== null) return true;
-    if (ConversationRuntime.explicitDurableMemoryContent(text) !== null) return true;
+    if (explicitDurableMemoryContent(text) !== null) return true;
     const workChat = detectWorkChatCommand(text);
     if (workChat !== null && workChat.kind !== 'usage') return true;
     try {
@@ -2905,10 +2516,6 @@ export class ConversationRuntime {
     }
   }
 
-  private static explicitDurableMemoryContent(text: string): string | null {
-    const match = text.trim().match(/^(?:기억해줘|기억해|remember)\s*:\s*(.*)$/isu);
-    return match ? (match[1] ?? '').trim() : null;
-  }
 
   /** Milliseconds before a pending approval expires (ADR-0093); `<= 0` means expired. */
   private remainingMs(approval: ApprovalRequest): number {
@@ -3138,7 +2745,7 @@ export class ConversationRuntime {
     // ADR-0120 amendment A6-D2/D3: the content-free receipts of a to-do / reminder listing or action (an A6 dispatch or an
     // anchored command) become `quoky.lastAction`, the echo label and the listing slot. The service writes nothing while
     // QUOKY_NL_ACTIONS is `off`; the reply is never changed.
-    this.nlReplyKinds.set(message, ConversationRuntime.nlReplyKindOf(handled));
+    this.nlReplyKinds.set(message, nlReplyKindOf(handled));
     const decided = this.nlActionTurns.get(message);
     // A6 R2: a summarize outcome may carry the `item.summarize` read it reports (its listing is recorded after the
     // summary, once the delivered form is known).
@@ -3401,18 +3008,6 @@ export class ConversationRuntime {
     return this.respondConnectorWriteStep(message, session, step, outcome.fallbackText, history);
   }
 
-  /**
-   * The reply for the follow-up a lapsed write was waiting for: its exact execution phrase after an expired grant, or a
-   * choice number after an expired choice. Anything else routes as a new turn (null).
-   */
-  private static lapsedConnectorWriteStep(lapsed: ConnectorWriteRelease, text: string): ConnectorWriteStep | null {
-    if (lapsed.status === 'APPROVED') {
-      if (!lapsed.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(lapsed.operation), text)) return null;
-      return { kind: 'refused', reason: 'grant-expired', family: lapsed.family };
-    }
-    if (ConversationRuntime.connectorWriteChoiceIndex(text) === null) return null;
-    return { kind: 'refused', reason: 'choice-expired', family: lapsed.family };
-  }
 
   /**
    * A turn while the session holds a connector-write anchor. Returns `null` to let the turn route normally, or
@@ -3454,7 +3049,7 @@ export class ConversationRuntime {
         const phrase = documentedExecutionPhrase(connectorWriteExecutionGate(anchor.operation));
         // Only the actor who asked may decide (the anchor binds actor and session); anyone else is re-prompted.
         // Live QA session 4 (N2): a whole-message "됐어" / "never mind" cancels too (closing sends nothing).
-        const interpreted = anchor.actorId === actor.id ? ConversationRuntime.interpretDecision(message.text) : 'ambiguous';
+        const interpreted = anchor.actorId === actor.id ? interpretDecision(message.text) : 'ambiguous';
         const decision = interpreted === 'ambiguous' && anchor.actorId === actor.id && isPendingCancelUtterance(message.text)
           ? 'cancel'
           : interpreted;
@@ -3485,7 +3080,7 @@ export class ConversationRuntime {
         );
       }
       case 'AWAITING_CHOICE': {
-        const index = ConversationRuntime.connectorWriteChoiceIndex(message.text);
+        const index = connectorWriteChoiceIndex(message.text);
         if (index !== null) {
           const deniedChoice = await deniedStep();
           if (deniedChoice) return deniedChoice;
@@ -3780,13 +3375,6 @@ export class ConversationRuntime {
     return connectorWriteOperationsAskedAbout(text).length > 0 || loosely.length > 0;
   }
 
-  /** "1", "2번", "1번이요", "2번으로" — a choice number, or null. */
-  private static connectorWriteChoiceIndex(text: string): number | null {
-    const match = /^\s*(\d{1,2})\s*(?:번(?:째)?)?\s*(?:이요|요|으로|로|으로\s*해\s*줘|로\s*해\s*줘|이에요|입니다)?\s*[.!~]*\s*$/u.exec(text);
-    if (!match) return null;
-    const index = Number(match[1]);
-    return Number.isInteger(index) && index >= 1 ? index : null;
-  }
 
   private async respondConnectorWriteStep(
     message: InboundMessage,
@@ -3849,7 +3437,7 @@ export class ConversationRuntime {
     actor: Actor,
     pending: ApprovalRequest,
   ): Promise<TurnResult> {
-    const decision = ConversationRuntime.interpretDecision(message.text);
+    const decision = interpretDecision(message.text);
     this.deps.logger.info('approval decision interpreted', { approvalId: pending.id, decision });
 
     if (decision === 'ambiguous') {
@@ -4508,24 +4096,7 @@ export class ConversationRuntime {
     await this.approvalDecisions.closeIfPending(approval.id, decidedBy, comment);
   }
 
-  /** Optional "the preview / the change" noun before a cancel word ("미리보기 취소", "변경 취소해줘", "cancel the preview"). */
-  private static readonly PREVIEW_DISCARD_NOUN =
-    /^(?:(?:이|그|this|the)\s*)?(?:미리\s*보기|변경\s*사항|코드\s*변경|변경|수정\s*사항|preview|changes?)\s*(?:은|는|을|를|도)?\s*/i;
 
-  /**
-   * Whether a turn at an ELIGIBLE anchor asks to discard the shown preview (QA-V2-CL-03): a bare cancel utterance
-   * ("취소", "취소해줘", "cancel"), optionally led by a preview noun. Deny/approve words are NOT discards and keep the
-   * QA-018 reply; a cancel word inside a longer request ("결제 취소 기능 추가해줘") is not a bare utterance.
-   */
-  private static isPreviewDiscardUtterance(text: string): boolean {
-    const trimmed = text.trim();
-    // Only a genuinely bare message: the stray-decision parser strips punctuation, so a fenced/inline code block or a
-    // multi-line message that merely contains "cancel" must never discard a preview.
-    if (trimmed.length === 0 || /[`\n\r]|~~~/.test(trimmed)) return false;
-    if (interpretStrayDecisionUtterance(trimmed) === 'cancel') return true;
-    const withoutNoun = trimmed.replace(ConversationRuntime.PREVIEW_DISCARD_NOUN, '');
-    return withoutNoun !== trimmed && interpretStrayDecisionUtterance(withoutNoun) === 'cancel';
-  }
 
   /**
    * Discard an ELIGIBLE diff preview on "취소" (QA-V2-CL-03). Clears the inert apply-preview anchor only — no
@@ -4617,7 +4188,7 @@ export class ConversationRuntime {
     actor: Actor,
     anchor: ApplyPreviewAnchor,
   ): Promise<TurnResult> {
-    const decision = ConversationRuntime.interpretDecision(message.text);
+    const decision = interpretDecision(message.text);
     if (decision === 'ambiguous') {
       return this.respondAnchoredReminder(
         message,
@@ -4931,7 +4502,7 @@ export class ConversationRuntime {
     });
 
     // 7. Render (CA Q9/Q10/Q11) — reuses the Sprint 2m/2n bounded-output helpers via toTestResultDetail.
-    const detail = ConversationRuntime.toTestResultDetail(execution);
+    const detail = toTestResultDetail(execution);
     if (
       execution.status === CommandExecutionStatus.SUCCEEDED ||
       execution.status === CommandExecutionStatus.FAILED
@@ -4981,7 +4552,7 @@ export class ConversationRuntime {
     if (kind === 'mutating') {
       // QA-020: a push/remote request gets remote-specific copy; other local git mutations (add/reset/stash/…)
       // keep the local wording. Both point at the supported local commit phrase "커밋해줘".
-      const scope = ConversationRuntime.interpretPushIntent(message.text) !== null ? 'remote' : 'local';
+      const scope = interpretPushIntent(message.text) !== null ? 'remote' : 'local';
       return this.respondComposed(
         message,
         session,
@@ -5062,7 +4633,7 @@ export class ConversationRuntime {
     }
 
     // 1. Commit message: user-provided (validated) else deterministic template. Invalid user msg → ask again.
-    const parsed = ConversationRuntime.parseCommitMessage(message.text, anchor.targetFiles);
+    const parsed = parseCommitMessage(message.text, anchor.targetFiles);
     if (parsed === 'invalid') {
       return this.respondComposed(message, session, this.deps.composer.composeCommitMessageInvalid(message.context));
     }
@@ -5154,7 +4725,7 @@ export class ConversationRuntime {
     //  resume context for Sprint 2y. Any missing field → safe failure, NO decide / git / re-anchor.
     const incomplete = this.approvalDecisions.incompleteAnchoredContext(message.context, session, anchor);
     if (incomplete) return this.decisionTurn(session, await incomplete);
-    const decision = ConversationRuntime.interpretDecision(message.text);
+    const decision = interpretDecision(message.text);
     if (decision === 'ambiguous') {
       // (CA #13) preserve pending context: re-prompt only; no decide, no new approval, no re-anchor.
       return this.respondAnchoredReminder(
@@ -5513,9 +5084,9 @@ export class ConversationRuntime {
     // of THIS approval. Classify it ambiguous so it re-prompts (matching the 2z push-phrase intent above)
     // instead of auto-approving on the "승인" substring; a bare "승인"/"거절"/"취소" still decides normally.
     const decision =
-      ConversationRuntime.interpretPushExecutionIntent(message.text) !== null
+      interpretPushExecutionIntent(message.text) !== null
         ? 'ambiguous'
-        : ConversationRuntime.interpretDecision(message.text);
+        : interpretDecision(message.text);
     if (decision === 'ambiguous') {
       // (CA #3) push/force/deploy phrases land here too (not approve/deny/cancel) → re-prompt, preserve
       // context; no decide, no new approval, no re-anchor, no push.
@@ -5959,9 +5530,9 @@ export class ConversationRuntime {
     // 1. (CA #7) a PR-creation / PR+forbidden phrase — or any deploy-only phrase — is a premature request
     //    while PENDING, NOT a clean approve → classify ambiguous → re-prompt; NO decide, NO PR.
     const decision =
-      ConversationRuntime.interpretPrIntent(message.text) !== null || DEPLOY_ONLY_WORDS.test(message.text)
+      interpretPrIntent(message.text) !== null || DEPLOY_ONLY_WORDS.test(message.text)
         ? 'ambiguous'
-        : ConversationRuntime.interpretDecision(message.text);
+        : interpretDecision(message.text);
     if (decision === 'ambiguous') {
       return this.respondAnchoredReminder(
         message,
@@ -6327,11 +5898,11 @@ export class ConversationRuntime {
     if (incomplete) return this.decisionTurn(session, await incomplete);
     // A merge / status phrase, or any deploy-only phrase, while PENDING → ambiguous re-prompt (no decide).
     const decision =
-      ConversationRuntime.interpretMergeIntent(message.text) !== null ||
-      ConversationRuntime.interpretPrStatusIntent(message.text) ||
+      interpretMergeIntent(message.text) !== null ||
+      interpretPrStatusIntent(message.text) ||
       DEPLOY_ONLY_WORDS.test(message.text)
         ? 'ambiguous'
-        : ConversationRuntime.interpretDecision(message.text);
+        : interpretDecision(message.text);
     if (decision === 'ambiguous') {
       return this.respondAnchoredReminder(
         message,
@@ -6790,12 +6361,12 @@ export class ConversationRuntime {
     if (incomplete) return this.decisionTurn(session, await incomplete);
     // A remote-cleanup / execute / status phrase, or any deploy-only phrase, while PENDING → ambiguous re-prompt.
     const decision =
-      ConversationRuntime.interpretRemoteBranchCleanupIntent(message.text) !== null ||
-      ConversationRuntime.interpretRemoteBranchCleanupExecutionIntent(message.text) !== null ||
-      ConversationRuntime.interpretPrStatusIntent(message.text) ||
+      interpretRemoteBranchCleanupIntent(message.text) !== null ||
+      interpretRemoteBranchCleanupExecutionIntent(message.text) !== null ||
+      interpretPrStatusIntent(message.text) ||
       DEPLOY_ONLY_WORDS.test(message.text)
         ? 'ambiguous'
-        : ConversationRuntime.interpretDecision(message.text);
+        : interpretDecision(message.text);
     if (decision === 'ambiguous') {
       return this.respondAnchoredReminder(
         message,
@@ -7005,7 +6576,7 @@ export class ConversationRuntime {
       // instruction content. Fenced code is pasted content, never a target.
       const { candidates, unsafe } = extractSafeTargetCandidates(message.text);
       const collected = await this.collectCodeChangeTargets(
-        workspaceRef!, candidates, ConversationRuntime.isExplicitNewFileRequest(message.text),
+        workspaceRef!, candidates, isExplicitNewFileRequest(message.text),
       );
       if (collected.kind === 'targets') {
         targetFiles = collected.targets;
@@ -7020,7 +6591,7 @@ export class ConversationRuntime {
         // wording for a new file), so it is NOT anchored — the resend must route as a fresh request, where the
         // create wording is honored and its own text becomes the instruction. Anchoring it would send the resend
         // to the existing-files-only recovery with the stale instruction and dead-end on the same reply.
-        if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
+        if (asksForWholeRequestAgain(collected)) {
           return this.respondComposed(message, session, this.composeTargetScopeReply(message, collected, unsafe));
         }
         // ADR-0037: anchor so the user's very next reply (even a bare path) can recover this
@@ -7046,66 +6617,12 @@ export class ConversationRuntime {
     );
   }
 
-  /** Explicit create-file markers (Sprint 4c-Follow-up-2, A2) — KO + EN. Conservative: only unambiguous
-   *  file-creation wording, so an ordinary code-change request never trips it. */
-  private static readonly NEW_FILE_MARKER =
-    /(파일\s*생성|파일\s*추가|새\s*파일(?:\s*(?:생성|추가))?|create\s+(?:a\s+)?(?:new\s+)?file|new\s+file|add\s+(?:a\s+)?(?:new\s+)?file)/i;
 
-  /** File noun for the co-located create-file phrasing (Sprint 4c-Follow-up-6). */
-  private static readonly NEW_FILE_NOUN = /(파일|file)/i;
 
-  /** IMPERATIVE/request create verb (Sprint 4c-Follow-up-6): natural KO "만들어줘 / 만들어 줘 / 만들자 / 생성해(줘)"
-   *  and "make/create". Deliberately request-shaped so a PAST/descriptive "만들어졌는지" ("how it was made") or a
-   *  negated "만들지 마" is NOT matched as a create request. */
-  private static readonly NEW_FILE_CREATE_VERB =
-    /(만들어\s*줘|만들어\s*주(?:세요|실래요|시겠어요)?|만들어\s*줄래|만들어라|만들자|생성\s*해(?:\s*줘|\s*주세요)?|\bcreate\b|\bmake\b)/i;
 
-  /**
-   * The pre-ADR-0099 single new-file rule (Sprint 4c-Follow-up-2, A2; extended 4c-Follow-up-6): the normalized
-   * path for a create-file request with exactly ONE candidate, else null. NOT used for routing any more — a
-   * code-change request now collects every named path (≤ MAX_CHANGE_SET_FILES) through
-   * `collectCodeChangeTargets` with {@link isExplicitNewFileRequest} as the create gate. Kept only as the public,
-   * pure seam the create-wording tests exercise (`isExplicitNewFileRequest` itself is private). No I/O.
-   */
-  static explicitNewFileTarget(text: string, candidates: readonly string[]): string | null {
-    if (!ConversationRuntime.isExplicitNewFileRequest(text)) return null;
-    if (candidates.length !== 1) return null; // 0 → nothing to target; >1 → ambiguous → clarify
-    const only = candidates[0];
-    return only ? normalizeRelativePath(only) : null;
-  }
 
-  /**
-   * Whether the text is an explicit, NON-negated new-file creation request (Sprint 4c-Follow-up-6, CA scope
-   * expansion). Two recognizers, both negation-/clause-aware so a negated or descriptive phrase stays a
-   * constraint, not a create intent:
-   *   (a) the fixed markers (파일 생성/추가, 새 파일, create/new/add file) at a NON-negated position — so
-   *       "새 파일 생성 금지" / "do not create file" do NOT count;
-   *   (b) natural KO "파일 … 만들다(imperative)" — a file NOUN co-located in the same, un-negated clause with a
-   *       request-shaped create VERB — so "다음 파일을 새로 만들어줘" counts, while "파일을 만들지 마" (negated),
-   *       "파일은 실제로 만들거나 수정하지 말 것" (negated), and "이 파일이 어떻게 만들어졌는지 알려줘" (descriptive,
-   *       not imperative) do NOT.
-   */
-  private static isExplicitNewFileRequest(text: string): boolean {
-    return (
-      unnegatedMatch(text, [ConversationRuntime.NEW_FILE_MARKER]) ||
-      hasCoLocatedUnnegated(text, ConversationRuntime.NEW_FILE_NOUN, ConversationRuntime.NEW_FILE_CREATE_VERB)
-    );
-  }
 
-  /**
-   * Whether a reply to a pending scope clarification is really a full resend of a code-change request with explicit
-   * (non-negated) create wording and at least one safe named path (ADR-0099 D1 QA follow-up). Such a resend is
-   * routed as a fresh request instead of the existing-files-only bare-path recovery.
-   */
-  private static isHowToQuestionWithoutTarget(text: string): boolean {
-    if (detectHelpIntent(text) === null && !HOW_TO_QUESTION.test(text)) return false;
-    const { candidates, unsafe } = extractSafeTargetCandidates(text);
-    return candidates.length === 0 && unsafe.length === 0;
-  }
 
-  private static isFreshCreateResend(text: string): boolean {
-    return ConversationRuntime.isExplicitNewFileRequest(text) && extractSafeTargetCandidates(text).candidates.length > 0;
-  }
 
   /** Resolve the active project's workspace for a needsWorkspace capability, or an early-return reply. */
   private async resolveExecutionWorkspace(
@@ -7113,7 +6630,7 @@ export class ConversationRuntime {
     session: Session,
     capability: Capability,
   ): Promise<{ workspaceRef?: WorkspaceRef } | TurnResult> {
-    if (!ConversationRuntime.needsWorkspace(capability)) return {};
+    if (!needsWorkspace(capability)) return {};
     if (!session.activeProjectId) {
       return this.respondComposed(message, session, this.deps.composer.composeNeedsProject(message.context));
     }
@@ -7334,18 +6851,6 @@ export class ConversationRuntime {
     });
   }
 
-  /**
-   * Whether the target-scope reply is {@link ResponseComposer.composeTargetsMissing} — some named paths resolved
-   * but others are missing, or several are missing (ADR-0099 D1). That reply asks the owner to resend the WHOLE
-   * request (adding create wording for a new file), so it is never anchored as a scope clarification: a bare-path
-   * recovery could neither honor the create wording nor take the corrected instruction. A single missing path,
-   * an unsafe path, or no path at all keeps the ADR-0037 bare-path clarification.
-   */
-  private static asksForWholeRequestAgain(
-    collected: CodeChangeTargetCollection,
-  ): collected is Extract<CodeChangeTargetCollection, { kind: 'missing' }> {
-    return collected.kind === 'missing' && (collected.resolved.length > 0 || collected.missing.length > 1);
-  }
 
   /**
    * The "which file?" reply for a code-change request with no usable target set (ADR-0036/0037; QA-016;
@@ -7369,7 +6874,7 @@ export class ConversationRuntime {
       return this.deps.composer.composeTargetSecretNamed(message.context, collected.paths);
     }
     const firstMissing = collected.kind === 'missing' ? collected.missing[0] : undefined;
-    if (ConversationRuntime.asksForWholeRequestAgain(collected)) {
+    if (asksForWholeRequestAgain(collected)) {
       return this.deps.composer.composeTargetsMissing(message.context, collected.missing);
     }
     const mentioned = extractMentionedPathTokens(message.text);
@@ -7381,19 +6886,6 @@ export class ConversationRuntime {
       : this.deps.composer.composeTargetScopeClarification(message.context);
   }
 
-  /** Assemble the display-relevant facts for a ran/timed-out `CommandExecution` (ADR-0034). Raw only — no truncation, no text. */
-  private static toTestResultDetail(exec: CommandExecution): TestResultDetail {
-    const kind: 'test' | 'typecheck' = exec.args.includes('typecheck') ? 'typecheck' : 'test';
-    return {
-      kind,
-      command: exec.command,
-      args: exec.args,
-      durationMs: exec.durationMs,
-      stdout: exec.stdout,
-      stderr: exec.stderr,
-      ...(exec.exitCode !== undefined ? { exitCode: exec.exitCode } : {}),
-    };
-  }
 
   /**
    * Frame a TEST_EXECUTION outcome (ADR-0033; detail three-way branch added in ADR-0034). A command
@@ -7415,13 +6907,13 @@ export class ConversationRuntime {
       (exec.status === CommandExecutionStatus.SUCCEEDED || exec.status === CommandExecutionStatus.FAILED)
     ) {
       const passed = exec.status === CommandExecutionStatus.SUCCEEDED;
-      const detail = ConversationRuntime.toTestResultDetail(exec);
+      const detail = toTestResultDetail(exec);
       const reply = this.deps.composer.composeTestResult(message.context, { ...detail, passed });
       await this.deps.memory.recordAssistant(reply.text, message.context, session.id);
       return { status: 'RESPONDED', reply, sessionId: session.id, executionOutcome: outcome };
     }
     if (exec && exec.status === CommandExecutionStatus.TIMED_OUT) {
-      const detail = ConversationRuntime.toTestResultDetail(exec);
+      const detail = toTestResultDetail(exec);
       const reply = this.deps.composer.composeTestTimedOut(message.context, detail);
       return this.failComposed(message, session, reply, outcome);
     }
@@ -7594,7 +7086,7 @@ export class ConversationRuntime {
       ...(accepted ? { providerId: accepted } : {}),
     });
     try {
-      const workspace = ConversationRuntime.needsWorkspace(capability)
+      const workspace = needsWorkspace(capability)
         ? await this.deps.workspace.prepare(task)
         : undefined;
       // ADR-0100 D8 / ADR-0096 D4: a connector work summary is self-contained — no short-term history or durable
@@ -8343,7 +7835,7 @@ export class ConversationRuntime {
     groups: readonly SurfaceGroupId[],
   ): Promise<TurnResult | null> {
     if (this.channelGate(message.context) === undefined) return null;
-    const decision = ConversationRuntime.interpretDecision(message.text);
+    const decision = interpretDecision(message.text);
     if (decision === 'deny' || decision === 'cancel' || isPendingCancelUtterance(message.text)) return null;
     const denied = this.surfaceDenied(message.context, actor, groups, { path: 'approval' });
     return denied ? this.surfaceDeniedTurn(message, session, denied) : null;
