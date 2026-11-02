@@ -47,6 +47,11 @@ export interface StructureProjection {
   readonly field?: string;
   /** Closed-format ids in the order the source listed them (de-duplicated). */
   readonly ids: readonly string[];
+  /**
+   * One slot per listed row, in listing order: the row's id, or `undefined` for a malformed or duplicate row. A position
+   * reference resolves against these slots, never against {@link ids}, so an unusable row never shifts a later one.
+   */
+  readonly slots: readonly (string | undefined)[];
   /** Items the port returned. */
   readonly itemCount: number;
   /** Items whose id was missing, malformed or a duplicate. */
@@ -62,18 +67,21 @@ export function projectStructure(entryId: NlWave1EntryId, items: readonly AgentR
   const list = Array.isArray(items) ? items : [];
   const base = { entryId, source: meta.source, origin: meta.origin, itemCount: list.length, label };
   const field = meta.refField;
-  if (field === undefined) return { ...base, ids: [], dropped: 0 };
+  if (field === undefined) return { ...base, ids: [], slots: list.map(() => undefined), dropped: 0 };
   const seen = new Set<string>();
   const ids: string[] = [];
+  const slots: (string | undefined)[] = [];
   let dropped = 0;
   for (const item of list) {
     const id = typeof item === 'object' && item !== null ? (item as AgentRawItem).id : undefined;
     if (!isProjectedId(field, id) || seen.has(id)) {
       dropped += 1;
+      slots.push(undefined);
       continue;
     }
     seen.add(id);
     ids.push(id);
+    slots.push(id);
   }
-  return { ...base, field, ids, dropped };
+  return { ...base, field, ids, slots, dropped };
 }

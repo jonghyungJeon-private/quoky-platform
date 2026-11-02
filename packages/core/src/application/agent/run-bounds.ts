@@ -55,9 +55,8 @@ export interface AgentRunUsage {
 }
 
 /**
- * One run's counters. `reserve*` methods say whether new work of that kind may START (and count it when it may); `record*`
- * methods add what a finished call really used (the executor's budget counts real calls: a lookup may use more queries than
- * it was charged statically). The first breach wins and is sticky: once breached, every later `reserve*` is refused.
+ * One run's counters. `reserve*` methods say whether new work of that kind may START (and count it when it may): every connector query and every
+ * HTTP request is reserved BEFORE it is made, so the 11th query and the 51st request never happen. The first breach wins and is sticky: once breached, every later `reserve*` is refused.
  */
 export class AgentRunBudget {
   private readonly bounds: AgentRunBoundValues;
@@ -117,15 +116,22 @@ export class AgentRunBudget {
   }
 
   /**
-   * What a finished read really used. Going over a bound is recorded as that bound's breach (the result already obtained
-   * is kept; nothing further starts). Returns whether the run may continue.
+   * One named connector query may be made. Reserved BEFORE it starts (a port asks through its per-call handle), so the 11th is
+   * refused and never made.
    */
-  recordConnector(queries: number, httpRequests: number): boolean {
-    this.connectorQueries += nonNegative(queries);
-    this.httpRequests += nonNegative(httpRequests);
-    if (this.connectorQueries > this.bounds.maxConnectorQueries) return this.fail('connector-queries');
-    if (this.httpRequests > this.bounds.maxHttpRequests) return this.fail('http-requests');
-    return this.firstBreach === undefined;
+  reserveQuery(): boolean {
+    if (!this.checkWall()) return false;
+    if (this.connectorQueries >= this.bounds.maxConnectorQueries) return this.fail('connector-queries');
+    this.connectorQueries += 1;
+    return true;
+  }
+
+  /** One HTTP request may be made. Reserved BEFORE it is sent: the 51st is refused and never sent (D7 interpretation note). */
+  reserveHttp(): boolean {
+    if (!this.checkWall()) return false;
+    if (this.httpRequests >= this.bounds.maxHttpRequests) return this.fail('http-requests');
+    this.httpRequests += 1;
+    return true;
   }
 
   /** `count` referenced values may be used (a step takes all of its values or none: the 11th value is refused). */

@@ -42,26 +42,24 @@ describe('AgentRunBudget: every bound, and its breach', () => {
     expect(budget.breach).toBe('steps');
   });
 
-  it('connector queries: 10 are allowed, going over is a breach, and nothing more starts', () => {
+  it('connector queries: 10 are granted, the 11th is refused before it is made', () => {
     const budget = new AgentRunBudget(clockOf().now);
-    expect(budget.mayReadConnector()).toBe(true);
-    expect(budget.recordConnector(10, 10)).toBe(true);
+    for (let i = 0; i < 10; i += 1) expect(budget.reserveQuery()).toBe(true);
     expect(budget.breach).toBeUndefined();
-    expect(budget.mayReadConnector()).toBe(false);
+    expect(budget.reserveQuery()).toBe(false);
     expect(budget.breach).toBe('connector-queries');
-    const over = new AgentRunBudget(clockOf().now);
-    expect(over.recordConnector(11, 11)).toBe(false);
-    expect(over.breach).toBe('connector-queries');
+    expect(budget.snapshot().connectorQueries).toBe(10);
+    expect(budget.mayReadConnector()).toBe(false);
   });
 
-  it('http requests: 50 are allowed, the 51st is a breach', () => {
+  it('http requests: 50 are granted, the 51st is refused before it is sent', () => {
     const budget = new AgentRunBudget(clockOf().now);
-    expect(budget.recordConnector(1, 50)).toBe(true);
-    expect(budget.mayReadConnector()).toBe(false);
+    for (let i = 0; i < 50; i += 1) expect(budget.reserveHttp()).toBe(true);
+    expect(budget.breach).toBeUndefined();
+    expect(budget.reserveHttp()).toBe(false);
+    expect(budget.reserveHttp()).toBe(false);
     expect(budget.breach).toBe('http-requests');
-    const over = new AgentRunBudget(clockOf().now);
-    expect(over.recordConnector(1, 51)).toBe(false);
-    expect(over.breach).toBe('http-requests');
+    expect(budget.snapshot().httpRequests).toBe(50);
   });
 
   it('model calls: 5, with at most 1 re-plan and 3 M2 calls', () => {
@@ -130,12 +128,5 @@ describe('AgentRunBudget: every bound, and its breach', () => {
     expect(budget.reserveStep()).toBe(false);
     expect(budget.reserveModelCall('planner')).toBe(false);
     expect(budget.reserveRefValues(1)).toBe(false);
-  });
-
-  it('ignores a negative, NaN or fractional usage report', () => {
-    const budget = new AgentRunBudget(clockOf().now);
-    budget.recordConnector(-5, Number.NaN);
-    budget.recordConnector(1.9, 2.9);
-    expect(budget.snapshot()).toMatchObject({ connectorQueries: 1, httpRequests: 2 });
   });
 });

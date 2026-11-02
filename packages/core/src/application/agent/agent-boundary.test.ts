@@ -155,8 +155,8 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
     expect(Object.keys(deps).sort()).toEqual(['bounds', 'elapsed', 'logger', 'readers']);
     const port: Record<keyof AgentReadPort, true> = { read: true };
     expect(Object.keys(port)).toEqual(['read']);
-    const request: Record<keyof AgentReadRequest, true> = { entryId: true, args: true, keys: true, remainingMs: true };
-    expect(Object.keys(request).sort()).toEqual(['args', 'entryId', 'keys', 'remainingMs']);
+    const request: Record<keyof AgentReadRequest, true> = { entryId: true, args: true, keys: true, remainingMs: true, signal: true, budget: true };
+    expect(Object.keys(request).sort()).toEqual(['args', 'budget', 'entryId', 'keys', 'remainingMs', 'signal']);
   });
 
   it('the executor, the projector and the bounds name no collaborator beyond the allowlist (calibration of the executor files)', () => {

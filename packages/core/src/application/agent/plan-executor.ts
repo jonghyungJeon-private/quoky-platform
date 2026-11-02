@@ -29,7 +29,7 @@ import { projectStructure, type AgentRawItem, type StructureProjection } from '.
 
 export const AGENT_EXEC_LOG_EVENT = 'agent_run.exec';
 
-export const AGENT_READ_ERROR_CODES = ['NOT_FOUND', 'UNAUTHORIZED', 'UNAVAILABLE', 'UNSUPPORTED', 'INVALID_RESPONSE', 'TOO_LARGE', 'RATE_LIMITED', 'UNKNOWN'] as const;
+export const AGENT_READ_ERROR_CODES = ['NOT_FOUND', 'UNAUTHORIZED', 'UNAVAILABLE', 'UNSUPPORTED', 'INVALID_RESPONSE', 'TOO_LARGE', 'RATE_LIMITED', 'BOUND', 'UNKNOWN'] as const;
 export type AgentReadErrorCode = (typeof AGENT_READ_ERROR_CODES)[number];
 
 /** What the executor asks a read port for: one catalog read, or the detail of keys a projector took from an earlier read. */
@@ -41,18 +41,27 @@ export interface AgentReadRequest {
   readonly keys?: readonly string[];
   /** Wall time left for the run, in ms; a port should give up by then. */
   readonly remainingMs: number;
+  /**
+   * Aborted on any bound breach or the wall: the port must stop at once (no further page, retry or request). A port that
+   * ignores it is still cut off, because every request is reserved first.
+   */
+  readonly signal: AbortSignal;
+  /** The run's budget for this call (D7): each query and each HTTP request is reserved BEFORE it is made. */
+  readonly budget: AgentReadBudget;
 }
 
-export interface AgentReadUsage {
-  /** Named port queries really made. */
-  readonly connectorQueries: number;
-  /** HTTP requests really made (the egress ledger's count for this call). */
-  readonly httpRequests: number;
+/** The per-call handle on the run's budget. A `false` means: do not make it, and stop. Counted when granted. */
+export interface AgentReadBudget {
+  /** One named connector query (`ConnectorQuery`). */
+  reserveQuery(): boolean;
+  /** One HTTP request (the egress ledger's unit): refuses the 51st of a run. */
+  reserveHttp(): boolean;
 }
 
 export type AgentReadResponse =
-  | { readonly ok: true; readonly items: readonly AgentRawItem[]; readonly hasMore?: boolean; readonly truncated?: boolean; readonly usage: AgentReadUsage }
-  | { readonly ok: false; readonly code: string; readonly usage: AgentReadUsage };
+  | { readonly ok: true; readonly items: readonly AgentRawItem[]; readonly hasMore?: boolean; readonly truncated?: boolean }
+  /** `BOUND`: the port stopped because a reservation was refused or the signal aborted (the run is partial). */
+  | { readonly ok: false; readonly code: string };
 
 /** One narrow, read-only port. */
 export interface AgentReadPort {
@@ -71,7 +80,7 @@ export interface AgentPlanExecutorDeps {
   readonly bounds?: Partial<AgentRunBoundValues>;
 }
 
-export type AgentStepNotRunReason = 'bound' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-too-many';
+export type AgentStepNotRunReason = 'bound' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-unusable' | 'ref-too-many';
 
 export type AgentStepResult =
   | {
@@ -167,36 +176,52 @@ export class AgentPlanExecutor {
     // A step takes all of its referenced values or none: the 11th value of a run is refused (a partial result).
     if (keys !== undefined && !budget.reserveRefValues(refValues)) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
 
-    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), remainingMs: budget.remainingMs() });
-    if (response === 'wall') {
-      budget.markBreach('wall-time');
-      return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
-    }
-    budget.recordConnector(response.usage.connectorQueries, response.usage.httpRequests);
+    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}) }, budget);
+    if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
     // A call that ended after the wall is a breach, but its result is kept.
     budget.checkWall();
-    if (!response.ok) return { step: number, kind: 'read', entryId, status: 'failed', errorCode: closedCode(response.code) };
+    if (!response.ok) {
+      if (response.code === 'BOUND' || budget.breach !== undefined) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+      return { step: number, kind: 'read', entryId, status: 'failed', errorCode: closedCode(response.code) };
+    }
     const projection = projectStructure(entryId, response.items);
     projections.set(number, projection);
     return { step: number, kind: 'read', entryId, status: 'ok', projection, hasMore: response.hasMore === true, truncated: response.truncated === true, refValues };
   }
 
-  /** A port call that cannot outlive the wall; a throw is an `UNKNOWN` failure whose message is never read. */
-  private async callPort(reader: AgentReadPort, request: AgentReadRequest): Promise<AgentReadResponse | 'wall'> {
+  /**
+   * A port call that cannot outlive the wall. The signal is aborted on the wall and on any refused reservation, and every
+   * request the port makes is reserved on the run's budget first, so usage is counted up to the abort and nothing is made
+   * after it. A throw is an `UNKNOWN` failure whose message is never read.
+   */
+  private async callPort(reader: AgentReadPort, request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys'>, budget: AgentRunBudget): Promise<AgentReadResponse | 'wall'> {
+    const controller = new AbortController();
+    const reserve = (take: () => boolean): boolean => {
+      if (controller.signal.aborted) return false;
+      if (take()) return true;
+      controller.abort();
+      return false;
+    };
+    const handle: AgentReadBudget = { reserveQuery: () => reserve(() => budget.reserveQuery()), reserveHttp: () => reserve(() => budget.reserveHttp()) };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const wall = new Promise<'wall'>((resolve) => {
-      timer = setTimeout(() => resolve('wall'), Math.max(1, request.remainingMs));
+      timer = setTimeout(() => {
+        budget.markBreach('wall-time');
+        controller.abort();
+        resolve('wall');
+      }, Math.max(1, budget.remainingMs()));
     });
     try {
       const call = Promise.resolve()
-        .then(() => reader.read(request))
+        .then(() => reader.read({ ...request, remainingMs: budget.remainingMs(), signal: controller.signal, budget: handle }))
         .then(
           (value) => value,
-          (): AgentReadResponse => ({ ok: false, code: 'UNKNOWN', usage: { connectorQueries: 1, httpRequests: 1 } }),
+          (): AgentReadResponse => ({ ok: false, code: 'UNKNOWN' }),
         );
       return await Promise.race([call, wall]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      controller.abort();
     }
   }
 }
@@ -223,7 +248,13 @@ function resolveReference(
   if (projection.source !== to.source || projection.origin !== to.origin || ref.provenance.origin !== projection.origin) return { ok: false, reason: 'ref-cross-source' };
   if (projection.field === undefined || ref.field !== projection.field) return { ok: false, reason: 'ref-field' };
   if (ref.take > AGENT_PLAN_MAX_REF_VALUES) return { ok: false, reason: 'ref-too-many' };
-  const keys = ref.at !== undefined ? projection.ids.slice(ref.at - 1, ref.at) : projection.ids.slice(0, ref.take);
+  if (ref.at !== undefined) {
+    // A position is a row of the listing, not of the usable ids: an unusable row refuses the reference, never shifts it.
+    if (ref.at > projection.slots.length) return { ok: false, reason: 'ref-empty' };
+    const id = projection.slots[ref.at - 1];
+    return id === undefined ? { ok: false, reason: 'ref-unusable' } : { ok: true, keys: [id] };
+  }
+  const keys = projection.ids.slice(0, ref.take);
   if (keys.length === 0) return { ok: false, reason: 'ref-empty' };
   return { ok: true, keys };
 }
