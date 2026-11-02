@@ -31494,3 +31494,18 @@ and D9 still governs every turn that goes to chat.
   the classifier request always reaches the Claude CLI. If a provider that does not implement the tier ever served
   `INTENT_SELECTION`, it would ignore the hint and run the classifier on its own selection model, which is unmeasured for
   this prompt; the classifier then still fails closed (anything but a clean 1 or 2 routes the turn as usual).
+- **Gate results on this branch (2026-11-02).**
+  - Full suite at `4878a6f9`: 553 files, 17,846 tests passed.
+  - Context eval Strict (`--profile deployed --chat real --model haiku`, 3 runs, built from `4878a6f9`): PASSED every run,
+    hard 0; `hs-calendar-words` scored (not a known gap) and passed in all 3 runs.
+  - The first help-scope gate (archive `d4on-4878a6f9`) FAILED 0 of 3, but it measured **haiku / low**, not the
+    production tier: `run-gates.sh` passed the selector's `GATES_MODEL` (`--model haiku`) to every eval:nl mode, and in
+    help-scope mode `--model` overrides the stronger tier. Its numbers (answers 36/38 each run, 1 wrong option, non-answers
+    29/29, 0 wrong captures) match the earlier haiku study. Fixed in `0b0f3b36`: the help-scope gate passes no `--model`
+    (override with `GATES_HELP_SCOPE_MODEL`), so it measures the production default.
+  - The help-scope gate re-run (archive `d4on-c326d117`, plan sonnet / low / tier stronger): PASSED in all 3 runs,
+    answers 38/38, non-answers 29/29, 0 wrong captures, 0 wrong options, 0 timeouts, 0 errors, p50 1.55 / 1.45 / 1.53 s.
+  - Codex P2 on `4878a6f9` (the eval's outage canary probed the default haiku tier, not the classifier's sonnet):
+    fixed in `2e4a37f2` (the help-scope run's canary carries the plan's tier) with a CLI-level test in `c326d117` that
+    fails without the wiring. Only the canary changed, not the classifier calls, so the context-eval run built from
+    `4878a6f9` still measures the shipped classifier.
