@@ -1,22 +1,5 @@
-import {
-  ApprovalStatus,
-  CommandExecutionStatus,
-  RiskLevel,
-  approvalRef,
-  commandExecutionRef,
-  patchRef,
-  workspaceChangeRef,
-} from '../../domain';
-import type {
-  Actor,
-  ApplyInput,
-  CommandExecution,
-  InboundMessage,
-  PatchSet,
-  Session,
-  WorkspaceChange,
-  WorkspaceDiff,
-} from '../../domain';
+import { ApprovalStatus, CommandExecutionStatus, RiskLevel, approvalRef, commandExecutionRef, patchRef, workspaceChangeRef } from '../../domain';
+import type { Actor, ApplyInput, CommandExecution, InboundMessage, PatchSet, Session, WorkspaceChange, WorkspaceDiff } from '../../domain';
 import { normalizeRelativePath } from '../target-scope';
 import {
   classifyUnverifiedChangeSet,

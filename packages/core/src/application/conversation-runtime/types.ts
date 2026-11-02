@@ -1,21 +1,11 @@
-import {
-  type ImageUnderstandingLocalitiesResolver,
-} from '../image-understanding';
-import {
-  type ConnectorWriteFlow,
-} from '../connector-writes/connector-write-flow';
-import {
-  type IntentClassifyContext,
-} from '../intent-classifier';
+import { type ImageUnderstandingLocalitiesResolver } from '../image-understanding';
+import { type ConnectorWriteFlow } from '../connector-writes/connector-write-flow';
+import { type IntentClassifyContext } from '../intent-classifier';
 import { type NlSelectionService } from '../nl-routing/nl-selection-service';
 import { type AgentRunService } from '../agent/agent-run-service';
 import { type SurfaceGate } from '../surface-grants/surface-gate';
 import { type SurfaceGrantService } from '../surface-grants/surface-grant-service';
-import {
-  Capability,
-  RiskLevel,
-  TaskStatus,
-} from '../../domain';
+import { Capability, RiskLevel, TaskStatus } from '../../domain';
 import type {
   Actor,
   ApplyInput,
@@ -79,35 +69,19 @@ import {
   type ProjectReadout,
   type ConversationTurnHandler,
 } from '../../ports';
-import type {
-  ResponseComposer,
-} from '../response-composer';
-import type {
-  RuntimeProviderRouting,
-} from '../runtime-provider-routing-service';
+import type { ResponseComposer } from '../response-composer';
+import type { RuntimeProviderRouting } from '../runtime-provider-routing-service';
 import type { IntentResolutionContext } from '../intent-resolver';
 import type { MemoryWriter } from '../memory-writer';
 import type { WorkSurface, WorkSurfaceReadOptions } from '../work-surface-query';
 import type { ExternalWorkReadout } from '../work-chat/external-work-readout';
-import {
-  type PromptCompositionOptions,
-} from '../prompt-composer';
-import {
-  type UntrustedDocumentReadout,
-} from '../untrusted-document-readout';
+import { type PromptCompositionOptions } from '../prompt-composer';
+import { type UntrustedDocumentReadout } from '../untrusted-document-readout';
 import type { SessionLockHold } from '../session-write-lock';
-import {
-  type CredentialOverrideFlow,
-} from '../credential-override';
+import { type CredentialOverrideFlow } from '../credential-override';
 import type { RunUsageRecord } from '../../domain';
-import {
-  type PushMode,
-} from '../code-work/push-target-resolution';
-import type {
-  CancelToken,
-  ExecutionOutcome,
-  ExecutionRequest,
-} from '../execution-orchestrator';
+import { type PushMode } from '../code-work/push-target-resolution';
+import type { CancelToken, ExecutionOutcome, ExecutionRequest } from '../execution-orchestrator';
 
 /** Transient per-turn status — an Application-layer concept, never persisted. */
 export type RuntimeTurnStatus = 'RESPONDED' | 'AWAITING_APPROVAL' | 'DENIED' | 'FAILED' | 'CANCELLED';

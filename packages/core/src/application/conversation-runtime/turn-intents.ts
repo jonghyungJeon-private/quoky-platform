@@ -2,38 +2,19 @@ import { detectHelpIntent } from '../help-intent/help-intent';
 import { hasCoLocatedUnnegated, unnegatedMatch } from '../intent-negation';
 import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from '../git-request-shape';
 import { isAcceptedExecutionPhrase } from '../execution-command-guard';
-import {
-  type ConnectorWriteRelease,
-  type ConnectorWriteStep,
-  connectorWriteExecutionGate,
-} from '../connector-writes/connector-write-flow';
+import { type ConnectorWriteRelease, type ConnectorWriteStep, connectorWriteExecutionGate } from '../connector-writes/connector-write-flow';
 import { interpretApprovalDecision, interpretStrayDecisionUtterance } from '../approval-decision';
 import { detectExplicitValidationKinds, isDeniedValidationRequest } from '../validation-run-intent';
-import {
-  POLICY_SENSITIVE_CHAT_KIND,
-} from '../intent-classifier';
+import { POLICY_SENSITIVE_CHAT_KIND } from '../intent-classifier';
 import type { LastTurnReplyKind } from '../nl-routing/last-turn';
-import {
-  Capability,
-  IntentType,
-} from '../../domain';
-import type {
-  CommandExecution,
-  Intent,
-} from '../../domain';
-import {
-  type TurnHandlerOutcome,
-} from '../../ports';
-import type {
-  ResponseComposer,
-  TestResultDetail,
-} from '../response-composer';
+import { Capability, IntentType } from '../../domain';
+import type { CommandExecution, Intent } from '../../domain';
+import { type TurnHandlerOutcome } from '../../ports';
+import type { ResponseComposer, TestResultDetail } from '../response-composer';
 import { detectWorkChatCommand } from '../work-chat/work-chat-command';
 import { normalizeRelativePath } from '../target-scope';
 import { MAX_COMMIT_MESSAGE_CHARS, isValidCommitMessage } from '../commit-message';
-import {
-  extractSafeTargetCandidates,
-} from '../code-work/code-change-set';
+import { extractSafeTargetCandidates } from '../code-work/code-change-set';
 import type { CodeChangeTargetCollection } from '../code-work/code-change-set';
 import {
   APPLY_WORDS,

@@ -1,29 +1,13 @@
-import {
-  isDirectConversation,
-  messageBody,
-  outboundBody,
-  outboundMessage,
-  withOutboundBody,
-} from '../message-rendering';
+import { isDirectConversation, messageBody, outboundBody, outboundMessage, withOutboundBody } from '../message-rendering';
 import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe } from '../nl-routing/catalog';
-import {
-  type ShownListing,
-} from '../nl-routing/honest-chat';
+import { type ShownListing } from '../nl-routing/honest-chat';
 import { type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from '../nl-routing/nl-selection-service';
 import { readLastSelection } from '../nl-routing/selection-state';
 import { renderActionStopped, renderActionUnavailable } from '../nl-routing/nl-action-policy';
 import { isActionPendingQuestion, type PendingQuestion } from '../nl-routing/selection-state';
 import { renderNlActionDmOnly } from '../surface-grants/surface-grant-copy';
-import {
-  Capability,
-} from '../../domain';
-import type {
-  Actor,
-  Id,
-  InboundMessage,
-  Intent,
-  Session,
-} from '../../domain';
+import { Capability } from '../../domain';
+import type { Actor, Id, InboundMessage, Intent, Session } from '../../domain';
 import {
   executionLocalityOf,
   type AiExecutionLocality,

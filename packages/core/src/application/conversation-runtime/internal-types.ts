@@ -1,23 +1,9 @@
-import {
-  type ConnectorWriteLatestRequest,
-  type ConnectorWriteRecentSend,
-} from '../connector-writes/connector-write-flow';
+import { type ConnectorWriteLatestRequest, type ConnectorWriteRecentSend } from '../connector-writes/connector-write-flow';
 import { type NlCatalogEntry } from '../nl-routing/catalog';
-import {
-  type ShownListing,
-} from '../nl-routing/honest-chat';
-import type {
-  ContextFile,
-  ExecutionPlanRef,
-  IsoTimestamp,
-  WorkspaceRef,
-} from '../../domain';
-import {
-  type ConnectorWriteOperation,
-} from '../../ports';
-import {
-  type CodeGenerationContextResult,
-} from '../code-generation-context';
+import { type ShownListing } from '../nl-routing/honest-chat';
+import type { ContextFile, ExecutionPlanRef, IsoTimestamp, WorkspaceRef } from '../../domain';
+import { type ConnectorWriteOperation } from '../../ports';
+import { type CodeGenerationContextResult } from '../code-generation-context';
 
 /** ADR-0120 D9: what the chat turn after a `none` (or unavailable) selection carries — the configured entries. */
 export interface NlChatFacts {

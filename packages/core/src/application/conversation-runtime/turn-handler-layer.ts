@@ -1,7 +1,5 @@
 import { generalChatReplyPolicy } from '../chat-policy/chat-response-policy';
-import {
-  noticeLanguage,
-} from '../chat-policy/internal-action-vocabulary';
+import { noticeLanguage } from '../chat-policy/internal-action-vocabulary';
 import { parseLearningCommand } from '../feedback/learning-commands';
 import { parseMemoryCommand } from '../memory-commands/memory-command-grammar';
 import { parseModelSelectionCommand } from '../model-selection/model-selection-command';
@@ -21,35 +19,14 @@ import {
 } from '../connector-writes/connector-write-flow';
 import { outboundMessage, withOutboundBody } from '../message-rendering';
 import { interpretStrayDecisionUtterance } from '../approval-decision';
-import {
-  type ConversationControlCommand,
-} from '../conversation-commands';
-import {
-  NON_ABSOLUTE_REGISTRATION_KIND,
-} from '../intent-classifier';
+import { type ConversationControlCommand } from '../conversation-commands';
+import { NON_ABSOLUTE_REGISTRATION_KIND } from '../intent-classifier';
 import { type NlListingReceipt } from '../nl-routing/catalog';
 import { surfacePermittedWorkSources } from '../surface-grants/surface-permit';
 import { SURFACE_GRANT_HELP_LINES } from '../surface-grants/surface-grant-copy';
-import {
-  surfaceGroupsOfSelection,
-  surfaceGroupsOfWriteDraft,
-  surfaceGroupsOfWriteOperation,
-} from '../surface-grants/surface-group-map';
-import {
-  Capability,
-  IntentType,
-} from '../../domain';
-import type {
-  Actor,
-  ApprovalRequest,
-  Id,
-  InboundMessage,
-  Intent,
-  IsoTimestamp,
-  OutboundMessage,
-  Session,
-  WorkspaceRef,
-} from '../../domain';
+import { surfaceGroupsOfSelection, surfaceGroupsOfWriteDraft, surfaceGroupsOfWriteOperation } from '../surface-grants/surface-group-map';
+import { Capability, IntentType } from '../../domain';
+import type { Actor, ApprovalRequest, Id, InboundMessage, Intent, IsoTimestamp, OutboundMessage, Session, WorkspaceRef } from '../../domain';
 import {
   CONNECTOR_WRITE_OPERATIONS,
   type ConnectorWriteOperation,
@@ -64,9 +41,7 @@ import {
   type TurnHandlerWriteDraft,
 } from '../../ports';
 import { detectWorkChatCommand } from '../work-chat/work-chat-command';
-import {
-  isWorkSummaryRequestTextWithheld,
-} from '../prompt-composer';
+import { isWorkSummaryRequestTextWithheld } from '../prompt-composer';
 import { appendWorkSummaryFooter, isSummarizableExternalWorkReadout } from '../work-chat/work-chat-turn-handler';
 import { numberExternalWorkSummary } from '../work-chat/external-work-readout';
 import { pseudonymiseParticipants } from '../work-chat/work-item-summary';
@@ -79,11 +54,7 @@ import {
   isUntrustedDocumentReadout,
   type UntrustedDocumentReadout,
 } from '../untrusted-document-readout';
-import {
-  checkDocumentSummaryClaims,
-  isFixedDocumentSummaryNotice,
-  renderDocumentSummaryTooLong,
-} from '../document-summary-claim-check';
+import { checkDocumentSummaryClaims, isFixedDocumentSummaryNotice, renderDocumentSummaryTooLong } from '../document-summary-claim-check';
 import { ConversationRuntimeChatLayer } from './chat-layer';
 import { frozenPlainSnapshot, nlConfirmToRecord } from './helpers';
 import type { NlChatFacts, RecentConnectorWrite } from './internal-types';

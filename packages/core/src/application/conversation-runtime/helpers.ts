@@ -1,41 +1,15 @@
-import {
-  isAttachmentReplyWithheld,
-} from '../attachment-context';
+import { isAttachmentReplyWithheld } from '../attachment-context';
 import { type NlItemSource, type NlSelectedCommand } from '../nl-routing/catalog';
 import { type SurfaceDecision } from '../surface-grants/surface-gate';
-import type {
-  Artifact,
-  ProposedChange,
-  RepositoryIdentity,
-  Session,
-  WorkspaceDiff,
-  WorkspaceRef,
-  WorkspaceRepositoryRefusal,
-} from '../../domain';
-import {
-  type TurnHandlerOutcome,
-  type TurnHandlerReply,
-} from '../../ports';
-import type {
-  CodeChangePreview,
-  CodeDiffPreview,
-  ExecutionReplyStatus,
-} from '../response-composer';
+import type { Artifact, ProposedChange, RepositoryIdentity, Session, WorkspaceDiff, WorkspaceRef, WorkspaceRepositoryRefusal } from '../../domain';
+import { type TurnHandlerOutcome, type TurnHandlerReply } from '../../ports';
+import type { CodeChangePreview, CodeDiffPreview, ExecutionReplyStatus } from '../response-composer';
 import { neutralizeLinks } from '../link-neutralizer';
 import { normalizeRelativePath } from '../target-scope';
-import {
-  type CredentialOverrideGrant,
-} from '../code-generation-context';
-import {
-  type CredentialOverrideAnchor,
-} from '../credential-override';
-import {
-  type PushMode,
-  parsePushUpstreamRef,
-} from '../code-work/push-target-resolution';
-import type {
-  ExecutionOutcomeStatus,
-} from '../execution-orchestrator';
+import { type CredentialOverrideGrant } from '../code-generation-context';
+import { type CredentialOverrideAnchor } from '../credential-override';
+import { type PushMode, parsePushUpstreamRef } from '../code-work/push-target-resolution';
+import type { ExecutionOutcomeStatus } from '../execution-orchestrator';
 import { MAX_COMMIT_CANDIDATE_FILES, MAX_GIT_REF_DISPLAY } from './intent-words';
 import { TURN_HANDLER_STAGES, type ConversationTurnHandler, type TurnHandlerStage } from '../../ports';
 

@@ -1,33 +1,12 @@
 import { describeAiFailure } from '../ai-failure';
 import { generalChatReplyPolicy, generalChatReplyPolicyMetadata } from '../chat-policy/chat-response-policy';
 import { guardInternalActionClaims } from '../chat-policy/internal-action-claim-guard';
-import {
-  detectOwnMemoryRecallQuestion,
-  hasOwnMemoryRecallHit,
-  renderOwnMemoryDmOnly,
-  renderOwnMemoryNotFound,
-} from '../chat-policy/own-memory-recall';
-import {
-  noticeLanguage,
-} from '../chat-policy/internal-action-vocabulary';
-import {
-  isAttachmentReplyWithheld,
-  renderAttachmentReplyWithheld,
-  withAttachedTextFiles,
-} from '../attachment-context';
-import {
-  isDirectConversation,
-  outboundBody,
-  outboundMessage,
-  plainTextOf,
-} from '../message-rendering';
-import {
-  detectConversationControl,
-} from '../conversation-commands';
-import {
-  IntentClassifier,
-  externalActionRequestOf,
-} from '../intent-classifier';
+import { detectOwnMemoryRecallQuestion, hasOwnMemoryRecallHit, renderOwnMemoryDmOnly, renderOwnMemoryNotFound } from '../chat-policy/own-memory-recall';
+import { noticeLanguage } from '../chat-policy/internal-action-vocabulary';
+import { isAttachmentReplyWithheld, renderAttachmentReplyWithheld, withAttachedTextFiles } from '../attachment-context';
+import { isDirectConversation, outboundBody, outboundMessage, plainTextOf } from '../message-rendering';
+import { detectConversationControl } from '../conversation-commands';
+import { IntentClassifier, externalActionRequestOf } from '../intent-classifier';
 import {
   guardFalseControlDenials,
   guardFalseIncapabilityClaims,
@@ -43,48 +22,19 @@ import {
 } from '../nl-routing/honest-chat';
 import { languageOf } from '../nl-routing/nl-selection-service';
 import type { LastTurnReplyKind } from '../nl-routing/last-turn';
-import {
-  LAST_REPLY_METADATA_KEY,
-  nlBareYesNo,
-  readClosedQuestion,
-  readLastReply,
-} from '../nl-routing/last-reply';
+import { LAST_REPLY_METADATA_KEY, nlBareYesNo, readClosedQuestion, readLastReply } from '../nl-routing/last-reply';
 import type { MessageBody } from '../../domain';
 import { type PendingQuestion } from '../nl-routing/selection-state';
 import { parseActionSwitchPhrase } from '../nl-routing/action-switch';
-import {
-  Capability,
-  IntentType,
-  TaskStatus,
-} from '../../domain';
-import type {
-  Actor,
-  Artifact,
-  ContextBundle,
-  Id,
-  InboundMessage,
-  Intent,
-  OutboundMessage,
-  Session,
-  Task,
-  TurnWorkFacts,
-} from '../../domain';
-import {
-  executionLocalityOf,
-  type AiExecutionResult,
-  type ProjectReadout,
-} from '../../ports';
+import { Capability, IntentType, TaskStatus } from '../../domain';
+import type { Actor, Artifact, ContextBundle, Id, InboundMessage, Intent, OutboundMessage, Session, Task, TurnWorkFacts } from '../../domain';
+import { executionLocalityOf, type AiExecutionResult, type ProjectReadout } from '../../ports';
 import { ProviderGatewayTerminalStatus } from '../provider-routing-gateway';
 import { RoutingFailureCode } from '../runtime-response-validation-contracts';
-import type {
-  RuntimeProviderRoutingAudit,
-} from '../runtime-provider-routing-service';
+import type { RuntimeProviderRoutingAudit } from '../runtime-provider-routing-service';
 import type { ExternalWorkReadout } from '../work-chat/external-work-readout';
 import { todoListLeavesUnexpressedContent } from '../work-chat/work-chat-command';
-import {
-  curatedExamplesForPrompt,
-  isExternalWorkReadout,
-} from '../prompt-composer';
+import { curatedExamplesForPrompt, isExternalWorkReadout } from '../prompt-composer';
 import {
   isR2DocumentSource,
   isUntrustedDocumentReadout,
@@ -93,10 +43,7 @@ import {
   type UntrustedDocumentReadout,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import {
-  checkDocumentSummaryClaims,
-  renderDocumentSummaryTooLong,
-} from '../document-summary-claim-check';
+import { checkDocumentSummaryClaims, renderDocumentSummaryTooLong } from '../document-summary-claim-check';
 import { combinedUsage } from '../provider-usage-record';
 import { runUsageRecord } from '../provider-usage-record';
 import { documentSummaryCredentialShaped } from './helpers';

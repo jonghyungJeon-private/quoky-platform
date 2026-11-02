@@ -1,44 +1,32 @@
 import { helpTopicOfLines } from '../help-intent/help-intent-turn-handler';
-import {
-  noticeLanguage,
-} from '../chat-policy/internal-action-vocabulary';
-import {
-  imageUnderstandingPolicyOf,
-  type ImageUnderstandingLocalitiesResolver,
-  type ImageUnderstandingPolicy,
-} from '../image-understanding';
+import { noticeLanguage } from '../chat-policy/internal-action-vocabulary';
+import { imageUnderstandingPolicyOf, type ImageUnderstandingLocalitiesResolver, type ImageUnderstandingPolicy } from '../image-understanding';
 import { outboundMessage } from '../message-rendering';
 import { isPendingCancelUtterance } from '../approval-decision';
-import {
-  ApprovalDecisionService,
-  type ApprovalDecisionInput,
-  type ApprovalDecisionReply,
-  type PendingApprovalLookup,
-} from '../approval-decision-service';
+import { ApprovalDecisionService, type ApprovalDecisionInput, type ApprovalDecisionReply, type PendingApprovalLookup } from '../approval-decision-service';
 import { safeRequestId, toSafeError } from '../safe-error';
 import { type NlCatalogEntry, type NlSelectedCommand } from '../nl-routing/catalog';
-import {
-  type NlControlScope,
-} from '../nl-routing/honest-chat';
+import { type NlControlScope } from '../nl-routing/honest-chat';
 import { languageOf } from '../nl-routing/nl-selection-service';
 import { renderAgentSwitchReply } from '../agent/agent-run-service';
 import { type NlActionAudit } from '../nl-routing/nl-action-policy';
 import type { LastTurnReplyKind } from '../nl-routing/last-turn';
 import { nearMissActionSwitchPhrase, parseActionSwitchPhrase, renderActionSwitchHint, renderActionSwitchReply } from '../nl-routing/action-switch';
-import { allowedSurfaceGroups, decideSurface, isSurfaceDirect, type SurfaceDecision, type SurfaceGate, type SurfaceGateAudit } from '../surface-grants/surface-gate';
+import {
+  allowedSurfaceGroups,
+  decideSurface,
+  isSurfaceDirect,
+  type SurfaceDecision,
+  type SurfaceGate,
+  type SurfaceGateAudit,
+} from '../surface-grants/surface-gate';
 import { type SurfacePermit } from '../surface-grants/surface-permit';
 import { renderNlActionDmOnly, renderSurfaceDenied, renderSurfaceSwitchSuffix } from '../surface-grants/surface-grant-copy';
-import {
-  surfaceGroupOfStateStep,
-  surfaceGroupsOfSelection,
-  type StateBoundStep,
-} from '../surface-grants/surface-group-map';
+import { surfaceGroupOfStateStep, surfaceGroupsOfSelection, type StateBoundStep } from '../surface-grants/surface-group-map';
 import type { SurfaceGroupId } from '../surface-grants/surface-groups';
 import { parseJiraReleaseLinks } from '../work-chat/jira-release-link';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
-import {
-  CommandExecutionStatus,
-} from '../../domain';
+import { CommandExecutionStatus } from '../../domain';
 import type {
   Actor,
   ApprovalRequest,
@@ -62,26 +50,10 @@ import {
   type TurnHandlerStage,
 } from '../../ports';
 import { now } from '../../util/clock';
-import type {
-  ExecutionOutcome,
-  ExecutionOutcomeStatus,
-} from '../execution-orchestrator';
-import {
-  BoundedShownItems,
-  SurfaceDeniedError,
-  orderTurnHandlers,
-  sameRepositoryIdentity,
-  toReplyStatus,
-  type HostingIdentityLookup,
-} from './helpers';
+import type { ExecutionOutcome, ExecutionOutcomeStatus } from '../execution-orchestrator';
+import { BoundedShownItems, SurfaceDeniedError, orderTurnHandlers, sameRepositoryIdentity, toReplyStatus, type HostingIdentityLookup } from './helpers';
 import { interpretDecision, toTestResultDetail } from './turn-intents';
-import type {
-  ApplyPreviewAnchor,
-  ConversationRuntimeDeps,
-  ConversationRuntimeOptions,
-  RuntimeTurnStatus,
-  TurnResult,
-} from './types';
+import type { ApplyPreviewAnchor, ConversationRuntimeDeps, ConversationRuntimeOptions, RuntimeTurnStatus, TurnResult } from './types';
 
 export abstract class ConversationRuntimeBase {
   protected readonly clock: () => IsoTimestamp;

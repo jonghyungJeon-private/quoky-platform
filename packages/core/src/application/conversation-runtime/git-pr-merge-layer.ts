@@ -1,20 +1,8 @@
-import {
-  logAnchoredApprovalFailure,
-} from '../approval-decision-service';
+import { logAnchoredApprovalFailure } from '../approval-decision-service';
 import { RepositoryHostingBlockedError } from '../repository-hosting-manager';
 import { RemoteBranchCleanupBlockedError, RemoteBranchCleanupUnverifiedError } from '../../domain';
-import {
-  BranchCleanupBlockedError,
-  BranchCleanupUnverifiedError,
-  GitMainSyncBlockedError,
-  GitMainSyncUnverifiedError,
-} from '../git-manager';
-import {
-  ApprovalStatus,
-  RiskLevel,
-  approvalRef,
-  pullRequestRef,
-} from '../../domain';
+import { BranchCleanupBlockedError, BranchCleanupUnverifiedError, GitMainSyncBlockedError, GitMainSyncUnverifiedError } from '../git-manager';
+import { ApprovalStatus, RiskLevel, approvalRef, pullRequestRef } from '../../domain';
 import type {
   Actor,
   GitBranchCleanupResult,
@@ -28,17 +16,9 @@ import type {
 } from '../../domain';
 import { now } from '../../util/clock';
 import { isSafePushBranch, isSafePushRemote } from '../push-target';
-import {
-  buildDeterministicPrDescription,
-  prDescriptionContentHash,
-} from '../code-work/pr-description';
+import { buildDeterministicPrDescription, prDescriptionContentHash } from '../code-work/pr-description';
 import { ConversationRuntimeGitCommitPushLayer } from './git-commit-push-layer';
-import {
-  buildMergeApprovalReason,
-  buildPrApprovalReason,
-  buildRemoteBranchCleanupApprovalReason,
-  parsePushUpstream,
-} from './helpers';
+import { buildMergeApprovalReason, buildPrApprovalReason, buildRemoteBranchCleanupApprovalReason, parsePushUpstream } from './helpers';
 import { DEPLOY_ONLY_WORDS, MAIN_SYNC_REMOTE, PR_BASE_BRANCH_POLICY } from './intent-words';
 import {
   interpretDecision,

@@ -1,23 +1,7 @@
 import { codeGenerationDispatchOfError } from '../code-generation-manager';
-import {
-  Capability,
-  CodeGenerationStatus,
-  codeGenerationRef,
-  codeProposalRef,
-} from '../../domain';
-import type {
-  Actor,
-  ApprovalRequest,
-  CodeGeneration,
-  CodeGenerationDispatch,
-  InboundMessage,
-  OutboundMessage,
-  Session,
-  WorkspaceDiff,
-} from '../../domain';
-import {
-  type LogFields,
-} from '../../ports';
+import { Capability, CodeGenerationStatus, codeGenerationRef, codeProposalRef } from '../../domain';
+import type { Actor, ApprovalRequest, CodeGeneration, CodeGenerationDispatch, InboundMessage, OutboundMessage, Session, WorkspaceDiff } from '../../domain';
+import { type LogFields } from '../../ports';
 import { now } from '../../util/clock';
 import { normalizeRelativePath } from '../target-scope';
 import {
@@ -35,17 +19,8 @@ import {
   assessCredentialOverrideCoverage,
   interpretCredentialOverrideDecision,
 } from '../credential-override';
-import type {
-  ExecutionOutcome,
-  ExecutionOutcomeStatus,
-  ExecutionRequest,
-} from '../execution-orchestrator';
-import {
-  filterInScopeChanges,
-  sameDispatchGrants,
-  toCodeDiffPreview,
-  toDispatchGrants,
-} from './helpers';
+import type { ExecutionOutcome, ExecutionOutcomeStatus, ExecutionRequest } from '../execution-orchestrator';
+import { filterInScopeChanges, sameDispatchGrants, toCodeDiffPreview, toDispatchGrants } from './helpers';
 import type { CodeGenerationPreparation, PreparedCodeGeneration } from './internal-types';
 import { ConversationRuntimeNlDispatchLayer } from './nl-dispatch-layer';
 import { interpretDecision } from './turn-intents';

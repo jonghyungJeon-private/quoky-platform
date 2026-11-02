@@ -1,47 +1,15 @@
-import {
-  logAnchoredApprovalFailure,
-} from '../approval-decision-service';
-import {
-  GitPushBlockedError,
-  classifyGitFailure,
-} from '../git-manager';
-import {
-  ApprovalStatus,
-  RiskLevel,
-  approvalRef,
-} from '../../domain';
-import type {
-  Actor,
-  GitCommitResult,
-  GitPushResult,
-  GitStatus,
-  RepositoryInfo,
-  InboundMessage,
-  Session,
-} from '../../domain';
+import { logAnchoredApprovalFailure } from '../approval-decision-service';
+import { GitPushBlockedError, classifyGitFailure } from '../git-manager';
+import { ApprovalStatus, RiskLevel, approvalRef } from '../../domain';
+import type { Actor, GitCommitResult, GitPushResult, GitStatus, RepositoryInfo, InboundMessage, Session } from '../../domain';
 import { normalizeRelativePath } from '../target-scope';
 import { isValidCommitMessage } from '../commit-message';
 import { isSafePushBranch, isSafePushRemote } from '../push-target';
-import {
-  newFileCommitCandidates,
-  partitionCommitCandidates,
-} from '../code-work/code-change-set';
-import {
-  type PushTargetRefusal,
-  checkPushHead,
-  resolvePushTarget,
-  verifyApprovedPushTarget,
-} from '../code-work/push-target-resolution';
-import {
-  committedSubjectOf,
-} from '../code-work/pr-description';
+import { newFileCommitCandidates, partitionCommitCandidates } from '../code-work/code-change-set';
+import { type PushTargetRefusal, checkPushHead, resolvePushTarget, verifyApprovedPushTarget } from '../code-work/push-target-resolution';
+import { committedSubjectOf } from '../code-work/pr-description';
 import { ConversationRuntimeApplyLayer } from './apply-layer';
-import {
-  buildCommitApprovalReason,
-  buildPushApprovalReason,
-  parsePushUpstream,
-  safeRelativePath,
-} from './helpers';
+import { buildCommitApprovalReason, buildPushApprovalReason, parsePushUpstream, safeRelativePath } from './helpers';
 import { PROTECTED_COMMIT_BRANCHES } from './intent-words';
 import { interpretDecision, interpretPushExecutionIntent, parseCommitMessage } from './turn-intents';
 import type { ApplyPreviewAnchor, TurnResult } from './types';
