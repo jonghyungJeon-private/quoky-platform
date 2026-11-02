@@ -690,12 +690,14 @@ export const CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE = '[캘린더 쓰기 응답 �
 
 /** The single entry point the composer uses for every flow step (except `writes-off`, which is the handler's text). */
 /** ADR-0112 amendment 3: the outcome of an undo's delete. Only SENT counts as undone; NOT_SENT leaves the event and the undo retryable. */
-function renderCalendarUndoOutcome(status: 'SENT' | 'NOT_SENT' | 'UNCERTAIN'): string {
-  switch (status) {
+function renderCalendarUndoOutcome(outcome: ConnectorWriteOutcome): string {
+  switch (outcome.status) {
     case 'SENT':
       return '방금 추가한 일정을 지워서 되돌렸어요. 취소 메일은 보내지 않았어요.';
     case 'NOT_SENT':
-      return '되돌리지 못했어요 — 일정은 그대로 있어요. 다시 되돌리려면 "되돌려줘"라고 다시 말씀해 주세요.';
+      if (outcome.reason === 'NOT_FOUND') return '되돌리지 못했어요 — 그 일정은 이미 캘린더에 없어요. 이번 요청으로 지운 것은 없어요.';
+      if (outcome.reason === 'TARGET_CHANGED') return '되돌리지 못했어요 — 미리보기 이후 일정이 바뀌어서 지우지 않았어요. 캘린더에서 확인해 주세요.';
+      return '되돌리지 못했어요 — 이번 요청으로는 일정을 지우지 않았어요. 다시 되돌리려면 "되돌려줘"라고 다시 말씀해 주세요.';
     case 'UNCERTAIN':
       return '되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요. 중복을 막기 위해 자동으로 다시 시도하지 않아요.';
   }
@@ -717,7 +719,7 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
       return renderConnectorWriteApproved(step.operation, step.executionPhrase);
     case 'outcome':
       return step.preview.operation === 'CALENDAR_EVENT_DELETE' && step.preview.receiptSourced === true
-        ? renderCalendarUndoOutcome(step.outcome.status)
+        ? renderCalendarUndoOutcome(step.outcome)
         : renderConnectorWriteOutcome(step.operation, step.outcome);
     case 'repeat':
       return renderConnectorWriteRepeat(step.operation, step.status, step.externalRef, step.url);

@@ -410,7 +410,7 @@ describe('undo of an NL-created calendar event (amendment 1 S9, slice 3)', () =>
     const a = await notSent.createEvent();
     await notSent.undo(a.receiptId, at(3));
     const failed = await notSent.approveAndExecute(at(4));
-    expect(plainTextOf(renderConnectorWriteStep(failed))).toContain('되돌리지 못했어요 — 일정은 그대로 있어요');
+    expect(plainTextOf(renderConnectorWriteStep(failed))).toContain('되돌리지 못했어요 — 이번 요청으로는 일정을 지우지 않았어요');
     const uncertain = harness({ deleteOutcome: { status: 'UNCERTAIN', reason: 'TIMEOUT' } as ConnectorWriteOutcome });
     const b = await uncertain.createEvent();
     await uncertain.undo(b.receiptId, at(3));
