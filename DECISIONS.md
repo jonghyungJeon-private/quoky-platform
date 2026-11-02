@@ -31565,3 +31565,67 @@ and D9 still governs every turn that goes to chat.
 5. **Egress guard.** `QUOKY_EGRESS_GUARD` switches `observe` to `enforce` before `active`.
 6. Open (not decided here): chunk M2 calls count toward the 3 M2 / 5 model-call limits unless ADR-0121 is amended; the 62 pending
    `agent-plan` and 34 read+write golds are reviewed before the gate campaign.
+## ADR-0112 amendment 3 — Undo of approved external connector writes: calendar update and restore, Jira comment delete and transition revert, `lastAction.anchorTaskId`, undo reachable at the `local` level (Accepted 2026-11-02) (2026-11-02)
+
+- **Status:** **Accepted 2026-11-02** by the owner with the recommended options O1-O7 (see the ratification record at the
+  end). Docs only in this commit; the code is built in later R3 slices (plan: ADR-0120 amendment A6 stage R3, NLA-11).
+- **Why now.** The owner's per-action-inverse rule (ADR-0120 A6 ratification record A) says every action has its own
+  inverse back to the original state, on the same item. Amendment 1 (S1-S9) already ratified the Slack message delete and
+  the calendar-create undo, and A6 left a Jira transition undo out of scope. Calendar update and cancel, a Jira comment and
+  a Jira transition had no ratified inverse, and the A6/amendment-1 reachability rules tied every external undo to
+  `QUOKY_NL_ACTIONS=external`.
+- **Reaffirms unchanged:** ADR-0112 D3 state machine, D4 allowlist, D5 preview + CRITICAL one-time approval + exact
+  execution phrase, D6 at-most-once, UNC-1; ADR-0120 A6-D3/D3a/D4 (the receipt-sourced banner variant of amendment 1 S4);
+  ADR-0121 D6/D8. No new OAuth scope, token, flag or migration is decided here.
+
+### Decision (O1-O7, all ratified)
+
+1. **O1 — Reachability.** Undo of an external write is reachable at the `local` NL-actions level whenever connector writes
+   are enabled (`QUOKY_CONNECTOR_WRITES_ENABLED` and the family's writer bound). There is **no new flag**. The only target
+   source is the session's own `lastAction` receipt (anchored through `lastAction.anchorTaskId`); no text, link, id or
+   listing selects a target. **Amends:** amendment 1 S3 (the `shadow`/`local` "not undoable yet" state and "`external`:
+   both reach the delete"), amendment 1 S-5 ("available whenever Slack posting is enabled and `QUOKY_NL_ACTIONS=external`")
+   and ADR-0120 A6-D8 (the external level as the gate of external undo). `QUOKY_NL_ACTIONS=off` still writes no `lastAction`
+   and has no undo path.
+2. **O2 — Calendar update inverse.** PATCH back only the fields the update changed, to `preview.before`, as compare-and-set
+   on Quoky's own post-write version (`If-Match`); `TARGET_CHANGED` if the event moved on.
+3. **O3 — Calendar cancel inverse.** Restore the same event id, never a copy. If Google refuses, say so plainly.
+4. **O4 — Jira comment delete.** Only the comment Quoky added, only when unedited; the permission is checked read-only; no
+   new permission is requested.
+5. **O5 — Jira transition revert.** Bound to a recorded `fromStatusId`. Several transitions lead back: the owner picks. None:
+   say so. (Amends A6's "out of scope: undo of a Jira transition".)
+6. **O6 — `restoreEvent`** is added to the existing `CalendarEventWriter`; no new port.
+7. **O7 — Approval strength.** Every undo keeps preview, CRITICAL one-time approval and an exact execution phrase. New
+   gates (ADR-0112 D5 exact-command gates, not phrase lists): `일정 복원 실행`, `Jira 댓글 삭제 실행`,
+   `Jira 상태 되돌리기 실행`. As in amendment 1 S5, no bare `삭제 실행` on any gate; the A6-D3a refusal covers them.
+
+### Additive interfaces recorded before code (ARCHITECTURE.md §11.7)
+
+- `ConnectorWriteReceiptRepository.findById(id, actorId)` (null for another actor); `lastAction.anchorTaskId` (the anchor
+  Task of the original approval, which holds payload and preview, including `before`).
+- Writers return the post-write version on `SENT` (calendar create/update) so the inverse can compare-and-set.
+- A Core `ExternalUndoResolver` (lastAction -> receipt -> anchor -> undo draft `{kind, receiptId}`) and a closed capability
+  set of undoable families. A family becomes undoable only when its slice adds it; until then the `undoable:false` rule of
+  `last-action.ts` holds for it.
+- `CalendarReader.getEvent?(calendarId, eventId)` (recorded 2026-11-02, review fix of the calendar-create undo): one event by
+  id on the receipt's calendar (Google `events.get`, same `calendar.readonly` scope and `www.googleapis.com` host, minimised
+  fields). It resolves `undefined` only for not found / gone / cancelled and throws for every other failure, so "gone" is
+  never inferred from an error. The id comes from the receipt, never from text; the undo preview no longer lists events.
+- `CalendarEventWriter.restoreEvent`; a Jira comment delete port; the Jira transition payload gains `fromStatusId`.
+
+### Gates and tests (before any family is switched on)
+
+- **Red-team:** at least 20 cases per new family (calendar update undo, calendar restore, Jira comment delete, Jira
+  transition revert), **0 successes over 3 runs**. Success means any preview, approval or call whose target does not come
+  from this actor's own SENT receipt reached through this session's `lastAction`.
+- **Live UAT (Strict, one approval per run):** limited to Slack `#quoky-test`, the Jira BE test issue and the primary
+  calendar; snapshot -> write -> undo -> diff.
+- Chief Architect, Codex and `/security-review` PASS (ADR-0121 D11); import scan that no writer is reachable from
+  `nl-routing`; the amendment-1 gates stay.
+
+### Ratification record (amendment 3, 2026-11-02)
+
+- **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
+  O7 as listed above, all yes as recommended), through the orchestrator.
+- **Scope of this record.** Docs only. It authorises no runtime start, token, scope, allowlist or live action; Strict steps
+  keep their own approvals.

@@ -363,6 +363,16 @@ export function renderActionUnavailable(language: Lang): string {
   return language === 'en' ? 'I cannot do that right now. Nothing was changed.' : '지금은 그 작업을 할 수 없어요. 아무것도 바꾸지 않았어요.';
 }
 
+/**
+ * ADR-0112 amendment 3 (O1): "되돌려줘" after an approved calendar create while the calendar writer is not bound (connector
+ * writes are off). Nothing was changed, and the owner is told where to delete the event.
+ */
+export function renderExternalUndoUnavailable(language: Lang): string {
+  return language === 'en'
+    ? 'Undoing that calendar event is not available right now (calendar writes are off). Please delete it in your calendar directly. Nothing was changed.'
+    : '방금 추가한 일정 되돌리기는 지금 쓸 수 없어요 (캘린더 쓰기가 꺼져 있어요). 캘린더에서 직접 지워 주세요. 아무것도 바꾸지 않았어요.';
+}
+
 /** The question or refusal of an unresolved reference (A6-D2), in the owner's own labels. Never an item's content. */
 export function renderReferenceQuestion(
   outcome: Exclude<NlResolutionOutcome, 'resolved'>,
@@ -436,13 +446,17 @@ function renderExternalUndo(external: { readonly source: 'slack' | 'jira' | 'cal
 
 /** The answer when "되돌려줘" has nothing to undo, or must not undo (ratification record A). */
 export function renderUndoUnresolved(
-  outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external',
+  outcome: 'no-action' | 'undo-of-undo' | 'echo-mismatch' | 'stale' | 'external' | 'undo-uncertain',
   language: Lang,
   external?: { readonly source: 'slack' | 'jira' | 'calendar'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT' },
 ): string {
   switch (outcome) {
     case 'external':
       return renderExternalUndo(external ?? { source: 'calendar', outcome: 'SENT' }, language);
+    case 'undo-uncertain':
+      return language === 'en'
+        ? 'I could not confirm whether the undo went through. Please check your calendar.'
+        : '되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요.';
     case 'no-action':
       return language === 'en' ? 'There is no recent action of mine to undo.' : '되돌릴 최근 작업이 없어요.';
     case 'undo-of-undo':

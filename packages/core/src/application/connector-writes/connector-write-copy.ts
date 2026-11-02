@@ -139,6 +139,13 @@ const NO_INVITES = '참석자: 없음 · 초대·변경 메일: 보내지 않음
 const PRIMARY = '캘린더: 내 기본 캘린더(primary)';
 const UNCHANGED_EVENT_ONLY = '실행할 때 이 일정이 미리보기 그대로일 때만 실행해요. 그사이 일정이 바뀌면 실행하지 않아요.';
 
+/**
+ * ADR-0112 amendment 1 S4 / amendment 3 (the A6-D4 receipt-sourced banner variant): every undo card says the target came
+ * from Quoky's own record of what it sent, and that nothing in the owner's sentence chose it. Fixed copy, no placeholders.
+ */
+export const CONNECTOR_UNDO_RECEIPT_BANNER =
+  '되돌리기 요청 — 대상은 Quoky가 보낸 기록(영수증)에서 가져왔어요. 문장에서 가져온 대상은 없어요';
+
 function previewBody(preview: ConnectorWritePreview): MessageBody[] {
   switch (preview.operation) {
     case 'ISSUE_COMMENT':
@@ -167,6 +174,11 @@ function previewBody(preview: ConnectorWritePreview): MessageBody[] {
       ];
     case 'CALENDAR_EVENT_DELETE':
       return [
+        ...(preview.receiptSourced === true ? [
+            CONNECTOR_UNDO_RECEIPT_BANNER,
+            ...(preview.ownerSentence !== undefined ? [messageBody('요청하신 문장: ', inline(preview.ownerSentence))] : []),
+            '방금 Quoky가 추가한 이 일정을 지워서 되돌려요.',
+          ] : []),
         PRIMARY,
         messageBody('삭제할 일정: ', inline(preview.before.title || '(제목 없음)'), ` · ${summaryTime(preview.before, preview.timeZone)}`),
         ...(preview.before.location !== undefined ? [messageBody('장소: ', inline(preview.before.location))] : []),
@@ -594,6 +606,10 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'binding-mismatch': '승인한 요청과 지금 요청이 일치하는지 확인할 수 없어요.',
   'grant-expired': '승인한 지 30분이 지나 승인이 만료됐어요.',
   'grant-revoked': '실행하기 전에 이 요청이 거절(취소)돼서 실행하지 않았어요.',
+  'undo-nothing': '되돌릴 수 있는 방금 한 일정 추가를 찾지 못했어요. (이 대화에서 방금 한 일정 추가만 되돌릴 수 있어요.)',
+  'undo-unavailable': '이 일정은 자동으로 되돌릴 수 없어요. 캘린더에서 직접 지워 주세요.',
+  'undo-event-gone': '그 일정은 이미 캘린더에 없어요. 되돌릴 게 없어요.',
+  'undo-event-changed': '그 일정이 만든 뒤에 바뀌어서 되돌리지 않았어요. 필요하면 캘린더에서 직접 지워 주세요.',
   'choice-expired': '일정 목록을 보여 드린 지 30분이 지나 선택이 만료됐어요 (그사이 일정이 바뀌었을 수 있어요).',
 };
 
@@ -673,6 +689,20 @@ export function renderNoApprovedConnectorWrite(): string {
 export const CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE = '[캘린더 쓰기 응답 — 일정 내용은 대화 기록에 남기지 않아요.]';
 
 /** The single entry point the composer uses for every flow step (except `writes-off`, which is the handler's text). */
+/** ADR-0112 amendment 3: the outcome of an undo's delete. Only SENT counts as undone; NOT_SENT leaves the event and the undo retryable. */
+function renderCalendarUndoOutcome(outcome: ConnectorWriteOutcome): string {
+  switch (outcome.status) {
+    case 'SENT':
+      return '방금 추가한 일정을 지워서 되돌렸어요. 취소 메일은 보내지 않았어요.';
+    case 'NOT_SENT':
+      if (outcome.reason === 'NOT_FOUND') return '되돌리지 못했어요 — 그 일정은 이미 캘린더에 없어요. 이번 요청으로 지운 것은 없어요.';
+      if (outcome.reason === 'TARGET_CHANGED') return '되돌리지 못했어요 — 미리보기 이후 일정이 바뀌어서 지우지 않았어요. 캘린더에서 확인해 주세요.';
+      return '되돌리지 못했어요 — 이번 요청으로는 일정을 지우지 않았어요. 다시 되돌리려면 "되돌려줘"라고 다시 말씀해 주세요.';
+    case 'UNCERTAIN':
+      return '되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요. 중복을 막기 위해 자동으로 다시 시도하지 않아요.';
+  }
+}
+
 export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): MessageBody {
   switch (step.kind) {
     case 'usage':
@@ -688,7 +718,9 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
     case 'approved':
       return renderConnectorWriteApproved(step.operation, step.executionPhrase);
     case 'outcome':
-      return renderConnectorWriteOutcome(step.operation, step.outcome);
+      return step.preview.operation === 'CALENDAR_EVENT_DELETE' && step.preview.receiptSourced === true
+        ? renderCalendarUndoOutcome(step.outcome)
+        : renderConnectorWriteOutcome(step.operation, step.outcome);
     case 'repeat':
       return renderConnectorWriteRepeat(step.operation, step.status, step.externalRef, step.url);
     case 'closed':

@@ -30,6 +30,8 @@ export const CONNECTOR_WRITE_RECEIPTS_SCHEMA_VERSION = 15;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const REF_MAX_LENGTH = 300;
 const URL_MAX_LENGTH = 2000;
+/** An opaque provider version (an entity tag): printable ASCII without spaces, bounded. */
+const VERSION_PATTERN = /^[\x21-\x7e]{1,200}$/;
 const REASONS: readonly string[] = [...CONNECTOR_WRITE_NOT_SENT_REASONS, ...CONNECTOR_WRITE_UNCERTAIN_REASONS, 'INTERRUPTED'];
 
 /**
@@ -44,13 +46,18 @@ function receiptData(data: ConnectorWriteReceiptData): ConnectorWriteReceiptData
   if (typeof data.url === 'string' && data.url.startsWith('https://') && data.url.length <= URL_MAX_LENGTH) {
     out.url = data.url;
   }
+  if (typeof data.version === 'string' && VERSION_PATTERN.test(data.version)) out.version = data.version;
   if (typeof data.reason === 'string' && REASONS.includes(data.reason)) out.reason = data.reason;
   return out;
 }
 
 function dataOfOutcome(outcome: ConnectorWriteOutcome): ConnectorWriteReceiptData {
   if (outcome.status === 'SENT') {
-    return receiptData({ externalRef: outcome.externalRef, ...(outcome.url !== undefined ? { url: outcome.url } : {}) });
+    return receiptData({
+      externalRef: outcome.externalRef,
+      ...(outcome.url !== undefined ? { url: outcome.url } : {}),
+      ...(outcome.version !== undefined ? { version: outcome.version } : {}),
+    });
   }
   return receiptData({ reason: outcome.reason });
 }
@@ -123,6 +130,14 @@ export class SqliteConnectorWriteReceiptRepository implements ConnectorWriteRece
     const row = this.db.prepare(
       'SELECT * FROM connector_write_receipts WHERE idempotency_key = ?',
     ).get(idempotencyKey) as ReceiptRow | undefined;
+    return row ? receiptOf(row) : null;
+  }
+
+  async findById(id: Id, actorId: Id): Promise<ConnectorWriteReceipt | null> {
+    if (typeof id !== 'string' || id.length === 0 || typeof actorId !== 'string' || actorId.length === 0) return null;
+    const row = this.db.prepare(
+      'SELECT * FROM connector_write_receipts WHERE id = ? AND actor_id = ?',
+    ).get(id, actorId) as ReceiptRow | undefined;
     return row ? receiptOf(row) : null;
   }
 

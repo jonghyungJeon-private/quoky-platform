@@ -16,6 +16,29 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Recorded.** Owner decisions of 2026-11-02 (planner model study rule, no neg-033 carve-out for `active`, a separate S2 read
   red-team of at least 300 cases, shadow clock restart, egress enforce before `active`): DECISIONS "ADR-0121 S2 implementation
   note — P3-3a".
+## Unreleased — ADR-0112 amendment 3 ratified (owner decision of 2026-11-02)
+
+- **Docs.** Undo of approved external connector writes: O1-O7 recorded in DECISIONS.md (reachable at `local` with connector
+  writes enabled; calendar update/cancel inverses; Jira comment delete; Jira transition revert; `restoreEvent`; CRITICAL
+  approval and exact phrases kept).
+- **Added (foundation, inert).** `ConnectorWriteReceiptRepository.findById(id, actorId)`; `lastAction.anchorTaskId`; a Core
+  `ExternalUndoResolver` (lastAction -> receipt -> anchor -> `{kind, receiptId}`); the receipt-sourced banner; a closed
+  capability set (`EXTERNAL_UNDO_CAPABILITIES`) that gates which external families may be undone.
+- **Added (calendar-create undo, S9/C-1).** The calendar writer reports the event's entity tag as `version` on a create
+  (kept on the receipt); "되돌려줘" after an approved create previews a `CALENDAR_EVENT_DELETE` bound to that receipt and
+  version (preview, CRITICAL approval, `일정 삭제 실행`, receipt). Refused when the event was edited, is gone, the undo is
+  older than 10 minutes, or it is another session or actor. Reachable at the `local` level when the calendar writer is
+  bound; otherwise a fixed "not available" reply. The undo is recorded as a non-undoable `action.undo`.
+- **Review fixes (Codex + security review of 54275d34).** The family ships **OFF**: `EXTERNAL_UNDO_CAPABILITIES` is empty
+  until the amendment-3 red-team gate passes, so an external write behaves exactly as before (tests switch it on through
+  `setExternalUndoCapabilitiesForTest`). An echo reply is threaded to the flow resolver (30-minute window). A failed
+  (NOT_SENT) undo consumes nothing and can be retried; an UNCERTAIN undo is never retried and is answered "could not
+  confirm". The preview reads ONE event by id on the receipt's calendar (new additive `CalendarReader.getEvent`, Google
+  `events.get`, same scope and host; a read failure is never "gone"); the delete id comes from the receipt; the receipt must
+  match its anchor (idempotency key, payload hash, target, connector) and the record must be undoable; the card quotes the
+  owner's undo sentence (bounded); an undo counts against the external write cap; `connectorWriteFamilyOf` is exhaustive;
+  "cannot be undone automatically" copy when no version/anchor. Draft red-team cases (24, not run):
+  `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`.
 
 ## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
 

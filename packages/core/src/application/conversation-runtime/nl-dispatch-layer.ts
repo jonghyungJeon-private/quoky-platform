@@ -3,7 +3,7 @@ import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe } from '../n
 import { type ShownListing } from '../nl-routing/honest-chat';
 import { type NlSelectionDecision, type NlSelectionRoute, type NlSelectionService } from '../nl-routing/nl-selection-service';
 import { readLastSelection } from '../nl-routing/selection-state';
-import { renderActionStopped, renderActionUnavailable } from '../nl-routing/nl-action-policy';
+import { renderActionStopped, renderActionUnavailable, renderExternalUndoUnavailable } from '../nl-routing/nl-action-policy';
 import { isActionPendingQuestion, type PendingQuestion } from '../nl-routing/selection-state';
 import { renderNlActionDmOnly } from '../surface-grants/surface-grant-copy';
 import { Capability } from '../../domain';
@@ -19,6 +19,8 @@ import {
 import { mergeItemSummarizeEntries } from '../nl-routing/action-entries';
 import { nlActionReceiptSource, nlHeldItemWordsFor } from './helpers';
 import type { NlChatFacts, NlEarlySelection } from './internal-types';
+import { externalUndoDraftKindOf } from '../connector-writes/external-undo-resolver';
+import type { TurnHandlerWriteDraft } from '../../ports/conversation-turn-handler.port';
 import { ConversationRuntimeTurnHandlerLayer } from './turn-handler-layer';
 import type { ApplyPreviewAnchor, TurnResult } from './types';
 
@@ -504,6 +506,20 @@ export abstract class ConversationRuntimeNlDispatchLayer extends ConversationRun
           : {}),
       };
       return this.respondTurnHandler(message, session, actor, userMemoryId, refusal);
+    }
+    // ADR-0112 amendment 3 (O1): the undo of an approved external write is not a local handler's job. The receipt id of this
+    // session's own `lastAction` becomes a connector-write draft; the flow resolves it again, previews it and asks for the
+    // CRITICAL approval (nothing is written on this turn). While the writer is off, the fixed reply says so.
+    if (decision.command.externalUndo !== undefined) {
+      if (decision.action !== undefined) this.nlActionTurns.set(message, { audit: decision.action, language: decision.command.language });
+      const draft: TurnHandlerWriteDraft = {
+        kind: 'write-draft',
+        draft: { kind: externalUndoDraftKindOf(decision.command.externalUndo.family), receiptId: decision.command.externalUndo.receiptId },
+        fallbackText: renderExternalUndoUnavailable(decision.command.language),
+      };
+      const undoResult = await this.respondTurnHandler(message, session, actor, userMemoryId, draft);
+      if (decision.basis === undefined) return undoResult;
+      return { ...undoResult, reply: withOutboundBody(undoResult.reply, messageBody(decision.basis, '\n', outboundBody(undoResult.reply))) };
     }
     // Every write the handler makes carries the switch as a condition its store checks atomically with the write.
     const ctx = this.turnHandlerContext(message, session, actor, applyAnchor, { actionSwitchOf: actor.id });

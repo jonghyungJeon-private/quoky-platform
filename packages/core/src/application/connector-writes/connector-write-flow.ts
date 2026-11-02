@@ -1,7 +1,7 @@
 import { ApprovalStatus, Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../../domain';
 import type { Actor, ApprovalRequest, ConversationContext, ExecutionPlanRef, Id, IsoTimestamp, Session, Task } from '../../domain';
 import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
-import { CALENDAR_EVENTS_MAX_LIMIT } from '../../ports/calendar-reader.port';
+import { CALENDAR_EVENTS_MAX_LIMIT, CALENDAR_EVENT_TITLE_MAX_LENGTH, boundCalendarText } from '../../ports/calendar-reader.port';
 import {
   CONNECTOR_WRITE_OPERATIONS,
   ISSUE_TRANSITION_STATUS_MAX_LENGTH,
@@ -43,6 +43,7 @@ import {
   type ConnectorWriteUsageTopic,
 } from './connector-write-draft';
 import { ConnectorWriteExecutor, ConnectorWriteRequestError } from './connector-write-executor';
+import { ExternalUndoResolver } from './external-undo-resolver';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
 import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from '../session-write-lock';
 
@@ -163,7 +164,15 @@ export type ConnectorWritePreview =
       readonly after: { readonly title: string; readonly time: CalendarEventTime; readonly location?: string };
       readonly timeZone: string;
     }
-  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly before: ConnectorWriteEventSummary; readonly timeZone: string };
+  | {
+      readonly operation: 'CALENDAR_EVENT_DELETE';
+      readonly before: ConnectorWriteEventSummary;
+      readonly timeZone: string;
+      /** The target came from Quoky's own SENT receipt (an undo), not from the owner's words: the card shows the banner. */
+      readonly receiptSourced?: true;
+      /** ADR-0112 amendment 1 S4: the owner's own undo sentence, bounded, shown on the card as quoted text and never read as an instruction. */
+      readonly ownerSentence?: string;
+    };
 
 /** Where an undated reference's candidates came from ({@link ConnectorWriteStep} `choice.basis`). */
 export type ConnectorWriteChoiceBasis = 'listed' | 'written' | 'nearby';
@@ -209,6 +218,11 @@ export interface ConnectorWriteAnchor {
     readonly reason?: string;
   };
   readonly closedReason?: ConnectorWriteCloseReason;
+  /**
+   * ADR-0112 amendment 3: set when this write is the undo of an earlier SENT write of this actor (its entry and receipt id).
+   * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
+   */
+  readonly undoOf?: { readonly entryId: 'calendar.create'; readonly receiptId: Id };
 }
 
 /** What `releaseExpired` released: the lapsed anchor's state and the session pointer after the release. */
@@ -271,7 +285,15 @@ export type ConnectorWriteRefusal =
   | 'grant-expired'
   /** The grant was withdrawn (거절/취소 after approval) before it could run (Codex P1 on 55c5a2f). */
   | 'grant-revoked'
-  | 'choice-expired';
+  | 'choice-expired'
+  /** ADR-0112 amendment 3: the undo has nothing to act on (no receipt of this session's own last write, or it is stale). */
+  | 'undo-nothing'
+  /** The write is real but cannot be undone automatically (no version recorded, or its anchor is gone). */
+  | 'undo-unavailable'
+  /** The event the receipt named is already gone. */
+  | 'undo-event-gone'
+  /** The event changed after it was created (version, time or title differ from what Quoky wrote). */
+  | 'undo-event-changed';
 
 /** What one flow step produced; the runtime renders it through `ResponseComposer` (reply text lives there). */
 export type ConnectorWriteStep =
@@ -549,6 +571,13 @@ export interface FlowInput {
   readonly now: IsoTimestamp;
   /** A caller already holding the session write lock passes its hold (ADR-0113 D7); absent → the flow takes it. */
   readonly held?: SessionLockHold;
+  /**
+   * ADR-0112 amendment 1 S3: the platform id of the message this turn replied to. Only an undo reads it (echo-reply window);
+   * the resolver verifies it against the record's own `echoReplyIds`.
+   */
+  readonly replyToMessageId?: string;
+  /** The owner's own message text of this turn (an undo card quotes it, bounded; it never selects a target). */
+  readonly ownerText?: string;
 }
 
 /**
@@ -1093,6 +1122,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           { operation: 'CALENDAR_EVENT_CREATE', event: draft.event, timeZone: this.deps.timeZone },
         );
       }
+      case 'calendar-create-undo':
+        return this.proposeCalendarCreateUndo(input, draft.receiptId);
       case 'calendar-update':
       case 'calendar-delete': {
         const changes = draft.kind === 'calendar-update' ? draft.changes : undefined;
@@ -1559,18 +1590,92 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   private async readWindow(window: { readonly from: IsoTimestamp; readonly to: IsoTimestamp }): Promise<readonly CalendarEvent[]> {
     const reader = this.deps.calendarReader;
     if (!reader) throw new Error('no calendar reader');
+    return this.withReadTimeout(reader.listEvents({ from: window.from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT }));
+  }
+
+  private async withReadTimeout<T>(read: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new ReadTimeout()), this.deps.readTimeoutMs ?? 30_000);
     });
     try {
-      return await Promise.race([
-        reader.listEvents({ from: window.from, to: window.to, limit: CALENDAR_EVENTS_MAX_LIMIT }),
-        timeout,
-      ]);
+      return await Promise.race([read, timeout]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  /**
+   * ADR-0112 amendment 1 S9 / amendment 3: the undo of an NL-created event. The draft carries a receipt id only; the
+   * resolver proves it is this session's own last write (same actor, SENT, same session's anchor). The event id comes from
+   * that receipt, never from text. The event must still be exactly what Quoky wrote: the version, the title and the time
+   * equal the receipt and the approved draft, else nothing is proposed. The delete itself is the existing
+   * `CALENDAR_EVENT_DELETE` flow with `If-Match` on Quoky's own post-create version.
+   */
+  private async proposeCalendarCreateUndo(input: FlowInput, receiptId: Id): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.calendarEvents;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'calendar' });
+    // The live session row: the lastAction the resolver reads must be the one the owner's last turn left.
+    const live = (await this.deps.store.sessions.get(input.session.id)) ?? input.session;
+    const resolver = new ExternalUndoResolver({
+      receipts: this.deps.receipts,
+      tasks: this.deps.store.tasks,
+      readAnchor: (task) => {
+        const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+        return anchor?.kind === CONNECTOR_WRITE_ANCHOR_KIND ? anchor : undefined;
+      },
+    });
+    const resolved = await resolver.resolve({
+      session: live,
+      actor: input.actor,
+      now: input.now,
+      ...(input.replyToMessageId !== undefined ? { replyToMessageId: input.replyToMessageId } : {}),
+    });
+    // The anchor that holds the approved payload and version could not be found (for example its save failed): the write
+    // is real, but there is nothing safe to compare against, so the owner is told to delete it by hand.
+    if (resolved.kind === 'nothing-to-undo' && resolved.reason === 'anchor-missing') return refused('undo-unavailable');
+    if (resolved.kind !== 'resolved' || resolved.family !== 'calendar-create' || resolved.draft.receiptId !== receiptId) {
+      return refused('undo-nothing');
+    }
+    const created = resolved.anchor.payload;
+    const version = resolved.receipt.data.version;
+    if (created?.operation !== 'CALENDAR_EVENT_CREATE') return refused('undo-nothing');
+    // No version on the create (no etag) means no compare-and-set: it cannot be undone safely.
+    if (!isEventVersion(version)) return refused('undo-unavailable');
+    // The calendar and the event come from the receipt (ARCHITECTURE section 8 provenance), never from a read or the words.
+    const calendarId = resolved.receipt.target;
+    if (calendarId !== writer.target) return refused('undo-nothing');
+    const eventId = resolved.receipt.data.externalRef as string;
+    const reader = this.deps.calendarReader;
+    if (!reader?.getEvent) return refused('calendar-read-failed');
+    let event: CalendarEvent | undefined;
+    try {
+      // One authoritative read of that one event: not a window, not a listing. Only "not found" means gone.
+      event = await this.withReadTimeout(reader.getEvent(calendarId, eventId));
+    } catch {
+      return refused('calendar-read-failed');
+    }
+    if (event === undefined) return refused('undo-event-gone');
+    if (event.id !== eventId || event.version !== version || !sameAsDraft(event, created.draft)) return refused('undo-event-changed');
+    const summary = summaryOf(event);
+    const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version };
+    return this.propose(
+      input,
+      'calendar',
+      writer.source,
+      `${writer.target}/${eventId}`,
+      { operation: 'CALENDAR_EVENT_DELETE', eventId, expected },
+      {
+        operation: 'CALENDAR_EVENT_DELETE',
+        before: summary,
+        timeZone: this.deps.timeZone,
+        receiptSourced: true,
+        ...(boundedOwnerSentence(input.ownerText) !== undefined ? { ownerSentence: boundedOwnerSentence(input.ownerText) as string } : {}),
+      },
+      undefined,
+      { entryId: 'calendar.create', receiptId: resolved.receipt.id },
+    );
   }
 
   private async proposeEventChange(
@@ -1640,6 +1745,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     payload: ConnectorWritePayload,
     preview: ConnectorWritePreview,
     inheritedPrevious?: Id,
+    undoOf?: ConnectorWriteAnchor['undoOf'],
   ): Promise<ConnectorWriteStep> {
     const operation = payload.operation;
     const payloadSha256 = connectorWritePayloadSha256(operation, target, sendableOf(payload));
@@ -1688,6 +1794,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       createdAt: input.now,
       updatedAt: input.now,
       ...(previous ? { previousActiveTaskId: previous } : {}),
+      ...(undoOf ? { undoOf } : {}),
     };
     try {
       await this.createAnchor(input.session, anchor, input.now, input.held);
@@ -1937,6 +2044,20 @@ function isExpectation(value: CalendarEventExpectation | undefined): value is Ca
     typeof value.start === 'string' &&
     typeof value.end === 'string'
   );
+}
+
+/** The owner's undo sentence for the card: single line, control characters removed, at most 120 characters; `undefined` when empty. */
+function boundedOwnerSentence(text: string | undefined): string | undefined {
+  const bounded = boundCalendarText(text, 120);
+  return bounded.length > 0 ? bounded : undefined;
+}
+
+/** The live event is still exactly the event Quoky was approved to create: the same title, start and end. */
+function sameAsDraft(event: CalendarEvent, draft: CalendarEventDraft): boolean {
+  if (event.title !== boundCalendarText(draft.title, CALENDAR_EVENT_TITLE_MAX_LENGTH)) return false;
+  const time = draft.time;
+  if (time.allDay) return event.allDay && event.start === time.startDate && event.end === time.endDate;
+  return !event.allDay && Date.parse(event.start) === Date.parse(time.start) && Date.parse(event.end) === Date.parse(time.end);
 }
 
 /** A usable provider event version (printable ASCII, bounded) — the condition every update / delete is sent under. */

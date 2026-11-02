@@ -1,3 +1,4 @@
+import type { ExternalUndoFamily } from './last-action';
 import type { NlResolvedRange } from './symbolic-time';
 
 /**
@@ -366,6 +367,11 @@ export interface NlSelectedCommand {
   readonly target?: NlItemTarget;
   /** A6 `action.undo` only: the action the inverse undoes. */
   readonly undo?: NlUndoSpec;
+  /**
+   * A6 `action.undo` of an approved EXTERNAL write (ADR-0112 amendment 3, O1): the family and the receipt id taken from this
+   * session's own `lastAction`. Never a writer call: the runtime hands it to the connector-write flow as a preview draft.
+   */
+  readonly externalUndo?: { readonly family: ExternalUndoFamily; readonly receiptId: string };
   /**
    * A6 R5a: the owner approved a preview of exactly this write, which already named any open to-do with the same title
    * ("같은 제목의 할 일이 이미 있어요"); the add then runs as approved instead of refusing the duplicate.

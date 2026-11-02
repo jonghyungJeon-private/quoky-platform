@@ -52,6 +52,8 @@ import {
 } from './item-reference';
 import {
   LAST_ACTION_METADATA_KEY,
+  externalUndoFamilyOf,
+  isExternalUndoOpen,
   isLastActionExternalSource,
   readLastAction,
   withLastAction,
@@ -973,16 +975,28 @@ export class NlSelectionService implements TurnDeliveryObserver {
     readonly entryId: LastActionEntryId;
     readonly receiptId: string;
     readonly outcome: LastActionExternalOutcome;
+    /** ADR-0112 amendment 3: the anchor Task of the approval (payload and preview live there), an id only. */
+    readonly anchorTaskId?: string;
+    /** This write was itself an undo of the receipt's entry: the record becomes a non-undoable `action.undo`. */
+    readonly undoOf?: NlActionEntryId;
   }): Promise<void> {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
+    const isUndo = input.undoOf !== undefined;
+    // A failed undo consumed nothing: the original write stays the last action so the owner can ask again (a retry is a
+    // fresh preview, CRITICAL approval and exact phrase). Only SENT counts as undone; UNCERTAIN is recorded so it is never
+    // retried automatically and is answered as "could not confirm".
+    if (isUndo && input.outcome === 'NOT_SENT') return;
     const record: LastActionRecord = {
-      entryId: input.entryId,
+      entryId: isUndo ? 'action.undo' : input.entryId,
       source: input.source,
       itemId: input.receiptId,
       at: input.now,
-      undoable: false,
+      // Opens only for a SENT write of a family in the closed capability set (empty until a slice adds its family).
+      undoable: !isUndo && input.outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(input.entryId)),
       undone: false,
       outcome: input.outcome,
+      ...(input.anchorTaskId !== undefined ? { anchorTaskId: input.anchorTaskId } : {}),
+      ...(input.undoOf !== undefined ? { undoOf: input.undoOf } : {}),
       requestId: input.message.id,
       echoReplyIds: [],
     };
@@ -2047,6 +2061,19 @@ export class NlSelectionService implements TurnDeliveryObserver {
   ): Promise<NlSelectionDecision> {
     const base = { entryId: 'action.undo', risk: 'LOCAL_WRITE' as NlCatalogRisk, refKind: 'none' as const, latencyMs, ...correlationOf(turn) };
     const resolved = resolveUndo(reference);
+    // ADR-0112 amendment 3 (O1): the last action is an approved external write whose family undo is built. Reachable at
+    // `local` too; the target is the receipt id of this session's own `lastAction`, never anything from the words. Nothing
+    // is written here: the runtime hands the draft to the connector-write flow, which previews it and asks for approval.
+    if (resolved.kind === 'unresolved' && resolved.outcome === 'external' && resolved.external?.open !== undefined) {
+      const audit: NlActionAudit = { ...base, resolution: 'resolved', result: 'asked', reason: 'external-undo' };
+      if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });
+      // The undo ends in an external write, so it counts against the external connector-write caps, not the local ones.
+      if (!this.actionCaps.allows(turn.actor.id, 'EXTERNAL_WRITE', Date.parse(turn.now))) {
+        return this.actionAnswer({ ...audit, result: 'capped', reason: 'capped' }, renderCapped(language));
+      }
+      this.actionCaps.note(turn.actor.id, 'EXTERNAL_WRITE', Date.parse(turn.now));
+      return { kind: 'execute', command: { entryId: 'action.undo', args: {}, language, externalUndo: resolved.external.open }, action: audit };
+    }
     if (resolved.kind === 'unresolved') {
       const audit: NlActionAudit = { ...base, resolution: resolved.outcome === 'stale' ? 'stale' : 'none', result: 'refused', reason: resolved.outcome };
       if (this.actionLevelValue === 'shadow') return this.shadowAction({ ...audit, result: 'shadow' });

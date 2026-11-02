@@ -233,7 +233,9 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
       return connectorWriteUncertain('INVALID_RESPONSE');
     }
     const link = typeof payload.htmlLink === 'string' && HTML_LINK.test(payload.htmlLink) ? payload.htmlLink : undefined;
-    return connectorWriteSent(payload.id, link);
+    // A create reports the event's entity tag so its undo can compare-and-set on Quoky's own post-write version.
+    const version = kind === 'create' && isValidVersion(payload.etag) ? payload.etag : undefined;
+    return connectorWriteSent(payload.id, link, version);
   }
 
   private async send(

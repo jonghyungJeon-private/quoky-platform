@@ -7,3 +7,4 @@ export * from './connector-write-executor';
 export * from './connector-write-draft';
 export * from './connector-write-flow';
 export * from './connector-write-copy';
+export * from './external-undo-resolver';

@@ -21,6 +21,8 @@ export const GOOGLE_CALENDAR_API_ORIGIN = 'https://www.googleapis.com';
 /** The minimised partial response (ADR-0110 D1): no description, attendees, organizer, links or conference data. */
 export const GOOGLE_CALENDAR_EVENT_FIELDS =
   'summary,nextPageToken,items(id,etag,status,summary,location,start(date,dateTime),end(date,dateTime))';
+/** The same minimised fields for one `events.get` (no list wrapper). */
+export const GOOGLE_CALENDAR_GET_FIELDS = 'id,etag,status,summary,location,start(date,dateTime),end(date,dateTime)';
 export const GOOGLE_CALENDAR_MAX_CALENDARS = 10;
 /** Pages followed per calendar per call; with `limit ≤ 50` events per page this bounds one read. */
 const MAX_PAGES_PER_CALENDAR = 5;
@@ -100,6 +102,34 @@ export class GoogleCalendarReader implements CalendarReader {
     }
     collected.sort(compareMappedEvents);
     return collected.slice(0, window.limit).map((entry) => entry.event);
+  }
+
+  /**
+   * ADR-0112 amendment 3: `events.get` of one event on one calendar (same scope and host as the list). 404 and 410 (the event
+   * does not exist) and a cancelled event resolve `undefined`; every other failure throws, so "gone" is never inferred from
+   * an error. The ids are validated before they enter the URL path.
+   */
+  async getEvent(calendarId: string, eventId: string): Promise<CalendarEvent | undefined> {
+    if (!isValidCalendarId(calendarId) || !/^[0-9a-v]{5,1024}$/.test(eventId)) {
+      throw new GoogleCalendarResponseError('calendar');
+    }
+    const url = new URL(
+      `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+      GOOGLE_CALENDAR_API_ORIGIN,
+    );
+    url.searchParams.set('timeZone', this.timeZone);
+    url.searchParams.set('fields', GOOGLE_CALENDAR_GET_FIELDS);
+    let payload: Record<string, unknown>;
+    try {
+      payload = await this.getJson(url);
+    } catch (error) {
+      if (error instanceof GoogleCalendarHttpError && error.endpoint === 'calendar' && (error.status === 404 || error.status === 410)) {
+        return undefined;
+      }
+      throw error;
+    }
+    const mapped = this.mapEvent(payload, 'calendar');
+    return mapped?.event;
   }
 
   private async listCalendar(
