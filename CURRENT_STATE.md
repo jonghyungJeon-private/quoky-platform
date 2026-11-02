@@ -78,11 +78,14 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   Re-scored without them, 32a2c81f passes both gates in all 3 runs. `hs-calendar-words` fails in the dry runs until
   the classifier lands.
   the classifier lands.
-- **D4 classifier merged switched off (2026-11-02, owner decision "분류기 끄고 나머지 병합").** The dedicated 1 / 2 /
-  neither call (`help-scope.v2`, `helpScopeClassifier` dep, default off) and `eval:nl --mode help-scope` (67 cases: 38
-  answers, 29 non-answers) are in the tree; the Strict gate passed 2 of 3 runs (answers 36-37/38, 0 wrong captures), so a
-  worded reply to the help-scope question is routed as before and `hs-calendar-words` turn 2 stays the D4 known gap.
-  Backlog: switch it on only after a gate that passes every run without re-tuning the prompt on the same golds.
+- **D4 classifier switched on, on sonnet at effort low (2026-11-02, owner decision "sonnet low로 켜서 배포").** The
+  dedicated 1 / 2 / neither call (`help-scope.v2`) was merged switched off because haiku high passed 2 of 3 runs. The same
+  prompt on the same 67 golds on sonnet passed 3 of 3 at high, medium and low (38/38 answers, 29/29 non-answers, 0 wrong
+  captures, 0 timeouts, p50 ~1.6 s). Only the classifier request goes to sonnet: it sets `AiRequest.intentSelectionTier:
+  'stronger'`, which the Claude CLI provider maps to `strongerIntentSelectionModel` / `strongerIntentSelectionEffort`
+  (defaults `sonnet` / `low`); the router/selector stays haiku. The app composition sets `helpScopeClassifier: true` (the
+  Core dep default stays off). `eval:nl --mode help-scope` and the context eval send the production request;
+  `hs-calendar-words` turn 2 is a normal scored turn again (dry: deployed 38/38, actions-local 55/55, known gaps 0, hard 0).
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.

@@ -5,7 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — Internal: conversation-runtime split into layer modules (refactor, no behaviour change)
+## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
+
+- **Changed (on).** The app composition sets `NlSelectionServiceDeps.helpScopeClassifier: true`; a worded reply to the
+  help-scope question is read as option 1, option 2 or neither again. The Core dep default stays off.
+- **Added (port, optional).** `AiRequest.intentSelectionTier?: 'stronger'`: only with `INTENT_SELECTION`, asks a provider
+  that has a stronger selection model configured to use it for this one request; a provider without one ignores it.
+  `classifyHelpScopeReply` sets it; the router/selector request never does.
+- **Added (Claude CLI provider).** `strongerIntentSelectionModel` (default `sonnet`) and `strongerIntentSelectionEffort`
+  (default `low`), validated like the existing options. A selection request with the tier uses them; every other request
+  and argument list is byte-identical. The usage label names the model actually used.
+- **Measured (same prompt, same 67 golds, `eval:nl --mode help-scope`, 3 runs each).** haiku high 2/3, xhigh 0/3, max 1/3
+  (timeouts at the 10 s bound); sonnet high, medium and low each 3/3 (38/38 answers, 29/29 non-answers, 0 wrong captures,
+  0 timeouts, p50 ~1.6 s).
+- **Changed (eval).** `eval:nl --mode help-scope` sends the production request (the tier); `--model` / `--effort` override
+  the stronger model and effort (defaults `sonnet` / `low`), and the plan prints and binds the model, effort and tier. The
+  context eval forwards the classifier request, tier included, to the real provider.
+- **Changed (corpus).** `hs-calendar-words` turn 2 is a normal scored turn again (the scenario `knownGap` and the turn
+  `knownGap: true` are removed). Dry context eval: deployed 38/38, actions-local 55/55, 0 known gaps, hard 0.
+
+ into layer modules (refactor, no behaviour change)
 
 - **Changed.** `packages/core/src/application/conversation-runtime.ts` (about 10,000 lines) is split into a chain of
   abstract layer classes, types, word lists and helpers under `application/conversation-runtime/`. Method bodies moved

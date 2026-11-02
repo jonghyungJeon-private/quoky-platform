@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { Capability, buildHelpScopeClassifierPrompt, renderHelpScopeOptions, type AiProvider, type AiRequest } from '@quoky/core';
+import { AiFailureKind, AiProviderError, Capability, buildHelpScopeClassifierPrompt, renderHelpScopeOptions, type AiProvider, type AiRequest } from '@quoky/core';
 import { NL_HELP_SCOPE_EVAL_GATE, buildHelpScopePlan, computeHelpScopePlanDigest, helpScopeCasePrompt, helpScopeExpected, loadHelpScopeCorpus, runHelpScopeEvaluation, scoreHelpScopeAnswer, summarizeHelpScope, validateHelpScopeCorpus, type NlHelpScopeCase, type NlHelpScopeRecord } from './nl-help-scope-eval';
-import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_INVALID, EXIT_OK, EXIT_USAGE, runCli, type CliDeps } from './nl-intent-eval-cli';
 
 // D4 `eval:nl --mode help-scope` offline: the corpus, the plan and its Strict digest, the scoring and the per-run /
 // multi-run gate (owner decision of 2026-11-02: 0 wrong captures on non-answers, answer accuracy >= 95%, 0 harness
@@ -174,6 +174,8 @@ describe('runHelpScopeEvaluation', () => {
     const records = await runHelpScopeEvaluation({ cases: corpus.cases, plan, provider });
     expect(provider.calls).toHaveLength(134);
     expect(provider.calls.every((call) => call.capability === Capability.INTENT_SELECTION && call.timeoutMs === plan.callTimeoutMs)).toBe(true);
+    // The production request: every classifier call asks for the stronger tier.
+    expect(provider.calls.every((call) => call.intentSelectionTier === 'stronger')).toBe(true);
     expect(records).toHaveLength(134);
     expect(records.every((record) => record.outcome === 'hit')).toBe(true);
     expect([1, 2].map((n) => summarizeHelpScope(records.filter((record) => record.run === n)).gatePassed)).toEqual([true, true]);
@@ -196,13 +198,38 @@ describe('eval:nl --mode help-scope plan', () => {
   it('prints the plan: prompt version, corpus digest, runs, the call count, the gate; nothing is constructed or written', async () => {
     const d = deps();
     expect(await runCli(['--mode', 'help-scope', '--runs', '3'], d)).toBe(EXIT_OK);
-    const plan = buildHelpScopePlan(ids, sha256, { model: 'haiku', effort: 'low', runs: 3, concurrency: 4 });
+    const plan = buildHelpScopePlan(ids, sha256, { model: 'sonnet', effort: 'low', runs: 3, concurrency: 4 });
     expect(plan).toMatchObject({ kind: 'nl-help-scope-eval', promptVersion: 'help-scope.v2', corpusSha256: sha256, runs: 3, calls: 201, gate: NL_HELP_SCOPE_EVAL_GATE });
     expect(d.out.join('\n')).toContain('67 cases (38 answers, 29 non-answers)');
     expect(d.out.join('\n')).toContain('at most 201');
     expect(d.created).toEqual([]);
     expect(d.written).toEqual([]);
-    expect(digestOf(d.out)).toBe(computeHelpScopePlanDigest({ ...plan, effort: /"effort": "([a-z]+)"/.exec(d.out.join('\n'))?.[1] as string }));
+    expect(digestOf(d.out)).toBe(computeHelpScopePlanDigest(plan));
+  });
+
+  it('owner decision of 2026-11-02: the plan resolves to the stronger tier (sonnet, low) by default and prints it; --model / --effort override the stronger model and effort', async () => {
+    const d = deps();
+    expect(await runCli(['--mode', 'help-scope', '--runs', '3'], d)).toBe(EXIT_OK);
+    const printed = JSON.parse(/\{[\s\S]*?\n\}/.exec(d.out.join('\n'))?.[0] ?? '{}') as Record<string, unknown>;
+    expect(printed).toMatchObject({ model: 'sonnet', effort: 'low', tier: 'stronger' });
+    const expected = buildHelpScopePlan(ids, sha256, { model: 'sonnet', effort: 'low', runs: 3, concurrency: 4 });
+    expect(digestOf(d.out)).toBe(computeHelpScopePlanDigest(expected));
+    // The digest binds the resolved classifier model, effort and tier.
+    const over = deps();
+    expect(await runCli(['--mode', 'help-scope', '--runs', '3', '--model', 'haiku', '--effort', 'high'], over)).toBe(EXIT_OK);
+    expect(JSON.parse(/\{[\s\S]*?\n\}/.exec(over.out.join('\n'))?.[0] ?? '{}')).toMatchObject({ model: 'haiku', effort: 'high', tier: 'stronger' });
+    expect(digestOf(over.out)).toBe(computeHelpScopePlanDigest(buildHelpScopePlan(ids, sha256, { model: 'haiku', effort: 'high', runs: 3, concurrency: 4 })));
+    expect(digestOf(over.out)).not.toBe(digestOf(d.out));
+    expect(computeHelpScopePlanDigest({ ...expected, tier: 'weaker' as never })).not.toBe(digestOf(d.out));
+  });
+
+  it('the stronger model and effort reach the provider factory only in a Strict run, with the tier', async () => {
+    const calls: Array<[string, string | undefined, string | undefined]> = [];
+    const planned = deps();
+    await runCli(['--mode', 'help-scope', '--runs', '1'], planned);
+    const d = { ...deps(() => scriptedProvider()), createProvider: (model: string, effort?: string, tier?: 'stronger') => { calls.push([model, effort, tier]); return scriptedProvider(); } };
+    expect(await runCli(['--mode', 'help-scope', '--runs', '1', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_OK);
+    expect(calls).toEqual([['sonnet', 'low', 'stronger']]);
   });
 
   it('the digest binds the prompt bytes, the runs, the model, the effort, the corpus and the gate', () => {
@@ -233,7 +260,7 @@ describe('eval:nl --mode help-scope run (Strict)', () => {
   it('a gold classifier passes in every run; the multi-run gate line and a content-free report', async () => {
     const { code, d } = await strictRun(() => scriptedProvider(), 3);
     expect(code).toBe(EXIT_OK);
-    expect(d.created).toEqual(['haiku']);
+    expect(d.created).toEqual(['sonnet']);
     expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v2): PASSED in all 3 run(s)');
     expect(d.out.filter((line) => /^run \d\/3: /.test(line))).toHaveLength(3);
     expect(d.written).toHaveLength(1);
@@ -261,6 +288,26 @@ describe('eval:nl --mode help-scope run (Strict)', () => {
     );
     expect(code).toBe(EXIT_GATE_FAILED);
     expect(d.out.join('\n')).toContain('help-scope gate (help-scope.v2): FAILED, passed 2 of 3 run(s)');
+  });
+
+  it('Codex P3 of 2e4a37f2: the outage canary carries the stronger tier, so an outage of only that tier is INVALID, not scored', async () => {
+    const goldPrompts = new Set(corpus.cases.map((golden) => helpScopeCasePrompt(golden)));
+    const canaryTiers: Array<AiRequest['intentSelectionTier']> = [];
+    const tierDown = (): AiProvider => ({
+      id: 'tier-down',
+      capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async (request) => {
+        if (!goldPrompts.has(request.prompt)) canaryTiers.push(request.intentSelectionTier);
+        if (request.intentSelectionTier === 'stronger') throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'limit');
+        return { text: '{"answer":null}', artifacts: [] };
+      },
+    });
+    const { code, d } = await strictRun(tierDown, 1);
+    expect(canaryTiers.length).toBeGreaterThan(0);
+    expect(canaryTiers.every((tier) => tier === 'stronger')).toBe(true);
+    expect(code).toBe(EXIT_INVALID);
+    expect(d.out.join('\n')).not.toContain('PASSED');
   });
 
   it('one miss in 38 answers passes every run; two misses in one run fail', async () => {

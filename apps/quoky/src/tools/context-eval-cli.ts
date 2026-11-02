@@ -20,7 +20,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
 import {
   Capability,
   NL_ACTION_PROMPT_VERSION,
@@ -330,6 +330,7 @@ export async function runCli(argv: readonly string[], deps: ContextEvalDeps = de
         (plan.maxChatCalls > 0 ? ` and ${plan.maxChatCalls} chat call(s)` : ' and 0 chat calls (stub)') +
         `, plus ${CANARY_CLAUSE}${plan.maxChatCalls > 0 ? ' per provider' : ''}; estimated cost at most ~$${cost.toFixed(2)} (assumes ~$${COST_PER_SELECTION_CALL_USD}/selection call, ~$${COST_PER_CHAT_CALL_USD}/chat call)`,
     );
+    deps.stdout(`help-scope classifier requests (D4, owner decision of 2026-11-02) ask for the stronger selection tier: ${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL}, effort ${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT} (the provider's production defaults)`);
     deps.stdout('nothing was executed; a run is a Strict owner step and needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
   }

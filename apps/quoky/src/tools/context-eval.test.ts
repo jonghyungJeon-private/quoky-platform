@@ -99,15 +99,15 @@ describe('context eval corpus (golden/context-eval.v1.json)', () => {
     expect(corpus.scenarios.filter((scenario) => scenario.source?.startsWith('owner-dm-')).length).toBeGreaterThanOrEqual(5);
   });
 
-  it('owner decision of 2026-11-02: the D4 classifier is merged switched off, so hs-calendar-words turn 2 stays the D4 known gap, with the feature\'s expectation unchanged', () => {
+  it('owner decision of 2026-11-02 ("sonnet low로 켜서 배포"): the D4 classifier is on, so hs-calendar-words turn 2 is a normal scored turn again, with the feature\'s expectation unchanged', () => {
     const words = corpus.scenarios.find((scenario) => scenario.id === 'hs-calendar-words') as ContextEvalScenario;
-    expect(words.knownGap).toContain('D4');
-    expect(words.turns.map((entry) => entry.knownGap === true)).toEqual([false, true]);
-    // The router oracle is unchanged; the dry oracle's classifier answer is kept for the day the classifier is switched on.
+    expect(words.knownGap).toBeUndefined();
+    expect(words.turns.map((entry) => entry.knownGap === true)).toEqual([false, false]);
+    // The router oracle is unchanged; the dry oracle answers the classifier from the turn's `oracle.helpScopeAnswer`.
     expect(words.turns[1]).toMatchObject({ text: 'Quoky로 하는 거', oracle: { entryId: 'none', helpScopeAnswer: 1 }, expect: { entry: 'help.topic', asks: false } });
-    // Only that scenario carries a known-gap turn, and a known-gap turn needs its scenario's knownGap.
-    expect(corpus.scenarios.filter((scenario) => scenario.turns.some((entry) => entry.knownGap === true)).map((scenario) => scenario.id)).toEqual(['hs-calendar-words']);
-    const orphan = { ...corpus, scenarios: [{ ...words, knownGap: undefined }] } as unknown as typeof corpus;
+    // No scenario carries a known-gap turn, and a known-gap turn still needs its scenario's knownGap.
+    expect(corpus.scenarios.filter((scenario) => scenario.turns.some((entry) => entry.knownGap === true))).toEqual([]);
+    const orphan = { ...corpus, scenarios: [{ ...words, turns: [{ ...(words.turns[0] as object) }, { ...(words.turns[1] as object), knownGap: true }] }] } as unknown as typeof corpus;
     expect(validateContextEvalCorpus(orphan, KNOWN).some((problem) => problem.includes('a known-gap turn needs'))).toBe(true);
   });
 

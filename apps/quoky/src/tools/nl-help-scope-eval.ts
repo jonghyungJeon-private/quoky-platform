@@ -76,8 +76,12 @@ export interface NlHelpScopePlan {
   /** The prompt text with fixed options and no reply: any wording edit changes the digest. */
   readonly promptSha256: string;
   readonly corpusSha256: string;
+  /** The classifier's resolved model (the production default is the provider's stronger selection model, sonnet). */
   readonly model: string;
+  /** The classifier's resolved effort (production default: low). */
   readonly effort?: string;
+  /** The tier every classifier request asks for (`AiRequest.intentSelectionTier`), exactly as production sets it. */
+  readonly tier: 'stronger';
   readonly runs: number;
   readonly concurrency: number;
   readonly callTimeoutMs: number;
@@ -108,6 +112,7 @@ export function buildHelpScopePlan(
     corpusSha256,
     model: options.model,
     ...(options.effort !== undefined ? { effort: options.effort } : {}),
+    tier: 'stronger',
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
@@ -172,7 +177,7 @@ export async function runHelpScopeEvaluation(input: {
         const started = clock();
         try {
           const result = await withTimeout(
-            input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: helpScopeCasePrompt(golden), timeoutMs: input.plan.callTimeoutMs }),
+            input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt: helpScopeCasePrompt(golden), timeoutMs: input.plan.callTimeoutMs, intentSelectionTier: input.plan.tier }),
             input.plan.callTimeoutMs,
           );
           const scored = scoreHelpScopeAnswer(expected, parseHelpScopeClassifierOutput(result.text));

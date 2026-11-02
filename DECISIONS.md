@@ -31447,3 +31447,65 @@ and D9 still governs every turn that goes to chat.
   structural fix. The model chose `drive.files` itself (no Core repair involved). It is a read only: no write and no
   external send. **Owner decision ("예외 기록 후 병합"), like neg-100:** recorded as a known exception; the merge goes
   ahead. Backlog: the homonym variance stays an open selector item (no phrase list, no gold change).
+
+### Owner decision of 2026-11-02 — the D4 classifier runs on sonnet (effort low) and is switched on (branch `claude/v5-d4-model`)
+
+- **Measurement (owner-approved, same `help-scope.v2` prompt, same 67 golds, `eval:nl --mode help-scope`, 3 runs each,
+  10 s call bound; the classifier request only, the router stays haiku).** The gate is the owner's: every run needs 0
+  wrong captures, answers at least 95% (36/38 fails) and 0 harness errors. No row had a wrong capture (a non-answer read
+  as 1 or 2). haiku high is archive `d4v2-4161faf4`; the other rows are `data/eval/nl-help-scope-2026-11-02T04-*` of this
+  worktree.
+
+  | Model, effort | Answers per run (of 38) | Wrong options (1 read as 2 or back) | Timeouts | p50 per run | Gate |
+  |---|---|---|---|---|---|
+  | haiku, high | 36, 37, 37 | 1 | 0 | 1.17, 1.19, 1.14 s | FAILED (2 of 3) |
+  | haiku, xhigh | 36, 36, 36 | 5 (`ctx-d4-015` 2→1 every run, `hs-ho-006` 1→2 twice) | 0 | 1.21, 1.17, 1.12 s | FAILED (0 of 3) |
+  | haiku, max | 36, 37, 35 | 0 | 6 (2 per run, at the 10 s bound; one on a non-answer) | 1.87, 1.88, 1.79 s | FAILED (1 of 3) |
+  | sonnet, high | 38, 38, 38 | 0 | 0 | 1.67, 1.63, 1.60 s | PASSED (3 of 3) |
+  | sonnet, medium | 38, 38, 38 | 0 | 0 | 1.62, 1.56, 1.59 s | PASSED (3 of 3) |
+  | sonnet, low | 38, 38, 38 | 0 | 0 | 1.60, 1.60, 1.56 s | PASSED (3 of 3) |
+
+  Raising haiku's effort did not close the gap (xhigh read options the other way more often, max ran into the bound);
+  sonnet was perfect at every effort, so the lowest effort was chosen.
+
+- **Decision, verbatim: "sonnet low로 켜서 배포".** Only the classifier request goes to sonnet with effort low; the
+  router/selector stays on haiku (high); then the classifier is switched on. The earlier backlog item ("a stronger model for
+  this one call, with no prompt change") is this change: the prompt `help-scope.v2` and the golds are unchanged.
+- **Port.** `AiRequest.intentSelectionTier?: 'stronger'` (additive, optional, `ai-provider.port.ts`). Only meaningful with
+  `Capability.INTENT_SELECTION`: it asks a provider that has a stronger selection model configured to use it for this one
+  request, and a provider without one ignores it. Core only sets the hint (`classifyHelpScopeReply`); it never branches on
+  provider internals, and no prompt logic moved (ADR-0003 / ADR-0014: the provider just executes).
+- **Provider behaviour (Claude CLI).** New options `strongerIntentSelectionModel` (default `sonnet`) and
+  `strongerIntentSelectionEffort` (default `low`), validated like `intentSelectionModel` and the effort levels. With
+  `capability === INTENT_SELECTION && intentSelectionTier === 'stronger'`, `buildArgs` uses that model and effort instead of
+  `intentSelectionModel` and the capability effort, and the usage label names the model used (`claude:sonnet`). Any other
+  request, including the same tier on another capability, gets the same arguments as before.
+- **What stays haiku.** The router/selector request (the read, action and R2 prompts), the agent planner and every other
+  `INTENT_SELECTION` caller; `QUOKY_NL_INTENT_MODEL` still sets the selection model. No new environment variable.
+- **Switched on.** `nl-selection.providers.ts` builds the service with `helpScopeClassifier: true`; the Core dep default
+  stays off, so Core tests and other callers are unchanged. `hs-calendar-words` turn 2 is a normal scored turn again (the
+  scenario `knownGap` and the turn `knownGap: true` are removed; the expectation and `oracle.helpScopeAnswer` are
+  unchanged). Dry context eval: deployed 38/38, actions-local 55/55, 0 known gaps, hard 0.
+- **Evals.** `eval:nl --mode help-scope` sets the tier on its requests; `--model` / `--effort` override the stronger model
+  and effort (production defaults `sonnet` / `low`); the plan prints and binds model, effort and tier in its digest. The
+  context eval forwards the real request, tier included, to the real provider, which uses its production defaults.
+- **Other providers.** Only the Claude CLI provider implements the tier. `INTENT_SELECTION` is pinned to the Claude CLI
+  (ADR-0120 D2; no other provider advertises it, and the owner's chat-tier choice never applies to it), so in production
+  the classifier request always reaches the Claude CLI. If a provider that does not implement the tier ever served
+  `INTENT_SELECTION`, it would ignore the hint and run the classifier on its own selection model, which is unmeasured for
+  this prompt; the classifier then still fails closed (anything but a clean 1 or 2 routes the turn as usual).
+- **Gate results on this branch (2026-11-02).**
+  - Full suite at `4878a6f9`: 553 files, 17,846 tests passed.
+  - Context eval Strict (`--profile deployed --chat real --model haiku`, 3 runs, built from `4878a6f9`): PASSED every run,
+    hard 0; `hs-calendar-words` scored (not a known gap) and passed in all 3 runs.
+  - The first help-scope gate (archive `d4on-4878a6f9`) FAILED, passed 0 of 3, but it measured **haiku / low**, not the
+    production tier: `run-gates.sh` passed the selector's `GATES_MODEL` (`--model haiku`) to every eval:nl mode, and in
+    help-scope mode `--model` overrides the stronger tier. Its numbers (answers 36/38 each run, 1 wrong option, non-answers
+    29/29, 0 wrong captures) match the earlier haiku study. Fixed in `0b0f3b36`: the help-scope gate passes no `--model`
+    (override with `GATES_HELP_SCOPE_MODEL`), so it measures the production default.
+  - The help-scope gate re-run (archive `d4on-c326d117`, plan sonnet / low / tier stronger): PASSED in all 3 runs,
+    answers 38/38, non-answers 29/29, 0 wrong captures, 0 wrong options, 0 timeouts, 0 errors, p50 1.55 / 1.45 / 1.53 s.
+  - Codex P2 on `4878a6f9` (the eval's outage canary probed the default haiku tier, not the classifier's sonnet):
+    fixed in `2e4a37f2` (the help-scope run's canary carries the plan's tier) with a CLI-level test in `c326d117` that
+    fails without the wiring. Only the canary changed, not the classifier calls, so the context-eval run built from
+    `4878a6f9` still measures the shipped classifier.

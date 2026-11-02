@@ -67,6 +67,14 @@ export interface AiRequest {
    * A2). Every other request omits it.
    */
   images?: readonly AiImageInput[];
+  /**
+   * D4 (owner decision of 2026-11-02, optional, additive): only meaningful with `Capability.INTENT_SELECTION`. `'stronger'`
+   * asks a provider that has a stronger selection model configured to use it for this ONE request (the help-scope
+   * classifier asks; the router/selector never does). A provider without one ignores it and runs the request on its own
+   * selection model. Core only sets the hint and never branches on provider internals; the provider decides which model
+   * and effort that means.
+   */
+  intentSelectionTier?: 'stronger';
 }
 
 /**

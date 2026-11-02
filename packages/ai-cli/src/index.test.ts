@@ -99,6 +99,55 @@ describe('ClaudeCliProvider', () => {
     expect(() => new ClaudeCliProvider('claude', { intentSelectionModel: '--dangerously' })).toThrow();
   });
 
+  describe('D4 (owner decision of 2026-11-02, "sonnet low로 켜서 배포"): the stronger selection tier', () => {
+    const okRunner = (calls: Array<{ args: string[]; label?: string }>): CliRunner => async (_bin, args) => {
+      calls.push({ args });
+      return { code: 0, stdout: '{"answer":1}\n', stderr: '', timedOut: false };
+    };
+    const BASE = ['--strict-mcp-config', '--no-session-persistence', '--setting-sources', ''];
+
+    it('INTENT_SELECTION with the tier runs on sonnet at effort low; the label names the model used', async () => {
+      const calls: Array<{ args: string[] }> = [];
+      const claude = new ClaudeCliProvider('claude', { runner: okRunner(calls) });
+      const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'classify', intentSelectionTier: 'stronger' });
+      expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', ...BASE, '--effort', 'low', '--tools', '']);
+      expect(res.usage).toEqual({ label: 'claude:sonnet' });
+      expect(claude.buildArgs({ capability: Capability.INTENT_SELECTION, intentSelectionTier: 'stronger' })).toEqual(['-p', '--model', 'sonnet', ...BASE, '--effort', 'low', '--tools', '']);
+    });
+
+    it('no tier leaves a selection request byte-identical (haiku, high), whatever the stronger options say', async () => {
+      const calls: Array<{ args: string[] }> = [];
+      const claude = new ClaudeCliProvider('claude', { runner: okRunner(calls), strongerIntentSelectionModel: 'opus', strongerIntentSelectionEffort: 'max' });
+      const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'route' });
+      expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', ...BASE, '--effort', 'high', '--tools', '']);
+      expect(res.usage).toEqual({ label: 'claude:haiku' });
+    });
+
+    it('the tier means nothing for another capability: chat keeps its model and effort', async () => {
+      const calls: Array<{ args: string[] }> = [];
+      const claude = new ClaudeCliProvider('claude', { runner: okRunner(calls) });
+      const res = await claude.execute({ capability: Capability.GENERAL_CHAT, prompt: 'hi', intentSelectionTier: 'stronger' });
+      expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', ...BASE, '--effort', 'medium', '--tools', '']);
+      expect(res.usage).toEqual({ label: 'claude:sonnet' });
+      expect(claude.buildArgs({ capability: Capability.READONLY_LOOKUP, intentSelectionTier: 'stronger' })).toEqual(claude.buildArgs({ capability: Capability.READONLY_LOOKUP }));
+    });
+
+    it('custom stronger options are honoured and the router model and effort stay apart', async () => {
+      const calls: Array<{ args: string[] }> = [];
+      const claude = new ClaudeCliProvider('claude', { runner: okRunner(calls), strongerIntentSelectionModel: 'claude-sonnet-4-5', strongerIntentSelectionEffort: 'medium', intentSelectionModel: 'claude-haiku-4-5' });
+      await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'c', intentSelectionTier: 'stronger' });
+      await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'r' });
+      expect(calls[0]?.args).toEqual(['-p', '--model', 'claude-sonnet-4-5', ...BASE, '--effort', 'medium', '--tools', '']);
+      expect(calls[1]?.args).toEqual(['-p', '--model', 'claude-haiku-4-5', ...BASE, '--effort', 'high', '--tools', '']);
+    });
+
+    it('invalid stronger options are rejected at construction', () => {
+      expect(() => new ClaudeCliProvider('claude', { strongerIntentSelectionModel: '--dangerously' })).toThrow();
+      expect(() => new ClaudeCliProvider('claude', { strongerIntentSelectionModel: '' })).toThrow();
+      expect(() => new ClaudeCliProvider('claude', { strongerIntentSelectionEffort: 'huge' as never })).toThrow(TypeError);
+    });
+  });
+
   it('ADR-0120 D2: no other CLI provider advertises INTENT_SELECTION', () => {
     for (const provider of [new CodexCliProvider(), new OllamaCliProvider(), new OllamaCliEmbeddingProvider()]) {
       expect(provider.capabilities.map((c) => c.capability)).not.toContain(Capability.INTENT_SELECTION);
