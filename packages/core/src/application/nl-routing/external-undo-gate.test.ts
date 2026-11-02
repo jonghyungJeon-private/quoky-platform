@@ -143,3 +143,28 @@ describe('nl-routing reaches no connector writer (amendment 3 import scan)', () 
     expect(offenders).toEqual([]);
   });
 });
+
+describe('the family-on test seam has no production caller (Codex P3: the seam is exported, so pin it)', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+  const roots = ['packages', 'apps'].map((name) => join(repoRoot, name));
+  const skip = new Set(['node_modules', 'dist', 'build', 'coverage', '.turbo']);
+
+  function sources(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir)) {
+      if (skip.has(name)) continue;
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) sources(path, out);
+      else if (/\.(ts|tsx|mts|cts)$/.test(name) && !/\.test\.(ts|tsx)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(path);
+    }
+    return out;
+  }
+
+  it('only last-action.ts (the definition) and test files name setExternalUndoCapabilitiesForTest', () => {
+    const all = roots.flatMap((root) => sources(root));
+    expect(all.some((path) => path.endsWith(join('nl-routing', 'last-action.ts')))).toBe(true);
+    const callers = all.filter(
+      (path) => !path.endsWith(join('nl-routing', 'last-action.ts')) && readFileSync(path, 'utf8').includes('setExternalUndoCapabilitiesForTest'),
+    );
+    expect(callers).toEqual([]);
+  });
+});
