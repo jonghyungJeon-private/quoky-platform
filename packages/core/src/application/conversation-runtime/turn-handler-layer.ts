@@ -4,27 +4,33 @@ import { parseLearningCommand } from '../feedback/learning-commands';
 import { parseMemoryCommand } from '../memory-commands/memory-command-grammar';
 import { parseModelSelectionCommand } from '../model-selection/model-selection-command';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
-import { isAcceptedExecutionPhrase } from '../execution-command-guard';
+import { documentedExecutionPhrase, isAcceptedExecutionPhrase } from '../execution-command-guard';
 import {
+  type ConnectorWriteAnchorView,
   type ConnectorWriteLatestRequest,
   type ConnectorWriteFlow,
   type ConnectorWriteStep,
   connectorWriteExecutionGate,
+  connectorWriteTargetOf,
   isAnyConnectorWriteExecutionPhrase,
   connectorWriteOperationsAskedAbout,
   connectorWriteOperationsNamedLoosely,
+  isBareExecutionProhibition,
   isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
+  isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
 } from '../connector-writes/connector-write-flow';
+import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from '../connector-writes/connector-write-copy';
 import { outboundMessage, withOutboundBody } from '../message-rendering';
-import { interpretStrayDecisionUtterance } from '../approval-decision';
+import { interpretStrayDecisionUtterance, isPendingCancelUtterance } from '../approval-decision';
+import { externalLastActionOf } from '../nl-routing/last-action';
 import { type ConversationControlCommand } from '../conversation-commands';
 import { NON_ABSOLUTE_REGISTRATION_KIND } from '../intent-classifier';
 import { type NlListingReceipt } from '../nl-routing/catalog';
 import { surfacePermittedWorkSources } from '../surface-grants/surface-permit';
 import { SURFACE_GRANT_HELP_LINES } from '../surface-grants/surface-grant-copy';
-import { surfaceGroupsOfSelection, surfaceGroupsOfWriteDraft, surfaceGroupsOfWriteOperation } from '../surface-grants/surface-group-map';
+import { surfaceGroupsOfSelection, surfaceGroupsOfWriteDraft, surfaceGroupsOfWriteFamily, surfaceGroupsOfWriteOperation } from '../surface-grants/surface-group-map';
 import { Capability, IntentType } from '../../domain';
 import type { Actor, ApprovalRequest, Id, InboundMessage, Intent, IsoTimestamp, OutboundMessage, Session, WorkspaceRef } from '../../domain';
 import {
@@ -56,9 +62,9 @@ import {
 } from '../untrusted-document-readout';
 import { checkDocumentSummaryClaims, isFixedDocumentSummaryNotice, renderDocumentSummaryTooLong } from '../document-summary-claim-check';
 import { ConversationRuntimeChatLayer } from './chat-layer';
-import { frozenPlainSnapshot, nlConfirmToRecord } from './helpers';
+import { SurfaceDeniedError, frozenPlainSnapshot, nlConfirmToRecord } from './helpers';
 import type { NlChatFacts, RecentConnectorWrite } from './internal-types';
-import { explicitDurableMemoryContent, nlReplyKindOf } from './turn-intents';
+import { connectorWriteChoiceIndex, explicitDurableMemoryContent, interpretDecision, nlReplyKindOf } from './turn-intents';
 import type { ApplyPreviewAnchor, RuntimeTurnStatus, TurnResult } from './types';
 
 export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRuntimeChatLayer {
@@ -741,5 +747,243 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     history?: string,
   ): Promise<TurnResult> {
     return this.decisionTurn(session, await this.approvalDecisions.connectorWriteReply(message.context, session.id, reply, status, history));
+  }
+  /**
+   * A turn while the session holds a connector-write anchor. Returns `null` to let the turn route normally, or
+   * `'released'` when the anchor was closed on the way (an abandoned choice) so the caller mirrors the restored pointer.
+   *
+   * - `APPROVAL_PENDING` intercepts every turn: the ADR-0095 interpreter decides; "승인" is re-checked against the
+   *   ADR-0093 lifetime immediately before `ApprovalManager.decide`; anything ambiguous re-prompts with the preview.
+   * - `APPROVED` executes ONLY on the operation's exact allow-listed phrase (EXECUTION_PHRASES); another write's phrase
+   *   or a bare "승인" names the right phrase; the owner's "거절"/"취소" discards it; anything else falls through and the
+   *   grant waits — at most the ADR-0093 lifetime (`releaseExpired` at turn start).
+   * - `AWAITING_CHOICE` takes a number on the next turn only; any other message abandons the choice.
+   * - After execution a repeated phrase reports the recorded outcome and never sends again.
+   */
+  protected async handleConnectorWriteAnchorTurn(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    view: ConnectorWriteAnchorView,
+  ): Promise<TurnResult | 'released' | null> {
+    const flow = this.deps.connectorWriteFlow;
+    if (!flow) return null;
+    const { anchor } = view;
+    const history = anchor.family === 'calendar' ? CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE : undefined;
+    const respond = (step: ConnectorWriteStep): Promise<TurnResult> =>
+      this.respondConnectorWriteStep(message, session, step, '', history);
+    // ADR-0122 D2.5: every step that shows this write or runs it re-checks `writes` and the service's read group against
+    // this (the approving) conversation, immediately before; withdrawing it ("거절" / "취소" / a stop word) always passes.
+    const writeGroups = surfaceGroupsOfWriteFamily(anchor.family);
+    const deniedStep = async (): Promise<TurnResult | null> => {
+      const denied = this.surfaceDenied(message.context, actor, writeGroups, { path: 'approval' });
+      return denied ? this.surfaceDeniedTurn(message, session, denied) : null;
+    };
+    switch (anchor.status) {
+      case 'APPROVAL_PENDING': {
+        const approval = view.approval;
+        if (!approval || !anchor.operation || !anchor.preview) return null;
+        const deniedPending = await this.surfaceDeniedDecision(message, session, actor, writeGroups);
+        if (deniedPending) return deniedPending;
+        const phrase = documentedExecutionPhrase(connectorWriteExecutionGate(anchor.operation));
+        // Only the actor who asked may decide (the anchor binds actor and session); anyone else is re-prompted.
+        // Live QA session 4 (N2): a whole-message "됐어" / "never mind" cancels too (closing sends nothing).
+        const interpreted = anchor.actorId === actor.id ? interpretDecision(message.text) : 'ambiguous';
+        const decision = interpreted === 'ambiguous' && anchor.actorId === actor.id && isPendingCancelUtterance(message.text)
+          ? 'cancel'
+          : interpreted;
+        this.deps.logger.info('approval decision interpreted', { approvalId: approval.id, decision });
+        if (decision === 'ambiguous') {
+          const reply = this.deps.composer.composeConnectorWritePending(
+            message.context,
+            anchor.preview,
+            this.remainingMs(approval),
+            phrase,
+          );
+          const reminded = await this.respondConnectorWrite(message, session, reply, 'AWAITING_APPROVAL', history);
+          // ADR-0113 D7: the reference line rides the reminder only while the operations UI is on (history unchanged).
+          return {
+            ...reminded,
+            reply: this.approvalDecisions.withConfirmationReference(
+              reminded.reply,
+              approval,
+              { kind: 'CONNECTOR_WRITE', operation: anchor.operation },
+              session.actorId,
+            ),
+          };
+        }
+        // ADR-0113 D7: the shared decision path (expiry re-check, decide, record approval or close) — the UI runs it too.
+        return this.decisionTurn(
+          session,
+          await this.approvalDecisions.decideConnectorWrite(this.chatDecision(message, session, actor), view, decision),
+        );
+      }
+      case 'AWAITING_CHOICE': {
+        const index = connectorWriteChoiceIndex(message.text);
+        if (index !== null) {
+          const deniedChoice = await deniedStep();
+          if (deniedChoice) return deniedChoice;
+          let step: ConnectorWriteStep;
+          try {
+            step = await flow.choose({ session, actor, view, index, now: this.clock() });
+          } catch (err) {
+            return this.failReadOnlyTurn(message, session, err);
+          }
+          return respond(step);
+        }
+        const decision = interpretStrayDecisionUtterance(message.text);
+        await flow.close(session, view, 'abandoned', this.clock());
+        // Live QA session 4 (N2): "그만" / "아니" / "됐어" / "stop" close the choice with the fixed reply too — never chat,
+        // which could not tell what had (not) happened.
+        if (decision === 'deny' || decision === 'cancel' || isPendingCancelUtterance(message.text)) {
+          return respond({ kind: 'closed', reason: 'abandoned', family: anchor.family });
+        }
+        return 'released'; // next-turn-only: any other message is a new turn
+      }
+      case 'APPROVED': {
+        if (!anchor.operation) return null;
+        const gate = connectorWriteExecutionGate(anchor.operation);
+        const decisionWord = interpretStrayDecisionUtterance(message.text);
+        const withdrawing = anchor.actorId === actor.id && (decisionWord === 'deny' || decisionWord === 'cancel' || (decisionWord === null && isPendingCancelUtterance(message.text)) || isBareExecutionProhibition(message.text));
+        if (!withdrawing && this.connectorWriteApprovedStepClaims(message.text, anchor.operation)) {
+          const deniedRun = await deniedStep();
+          if (deniedRun) return deniedRun;
+        }
+        if (isAcceptedExecutionPhrase(gate, message.text)) {
+          // Not caught here: after the consume save a failure may follow the send, so the `handle` backstop's
+          // "cannot verify" wording is the truthful one. Validation + consume share the revocation's locks (Codex P1).
+          // ADR-0122 D2.5: the grant is re-read (live, not this turn's snapshot) inside the execution claim, right
+          // before the grant is consumed; a revoke that landed meanwhile wins and nothing is sent.
+          const recheck = this.channelGate(message.context) === undefined
+            ? undefined
+            : () => this.surfaceStillAllows(message.context, actor, writeGroups);
+          try {
+            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck);
+            // ADR-0112 amendment 1 S3 (context eval P4): every outcome of the write is the last action (receipt id), so
+            // "되돌려줘" answers about it and never reaches an older to-do or reminder.
+            if (executed.kind === 'outcome') {
+              const { source, entryId } = externalLastActionOf(anchor.family, executed.operation);
+              await this.deps.nlSelection?.recordExternalWrite?.({ session, actor, message, now: this.clock(), source, entryId, receiptId: executed.receiptId ?? view.taskId, outcome: executed.outcome.status });
+            }
+            return respond(executed);
+          } catch (error) {
+            if (!(error instanceof SurfaceDeniedError)) throw error;
+            return this.surfaceDeniedTurn(message, session, error.decision);
+          }
+        }
+        const decision = interpretStrayDecisionUtterance(message.text);
+        // Another write's execution phrase while this one waits approved: it runs nothing, and the reply names the
+        // phrase that would (the generic "nothing approved" would be untrue).
+        if (decision === 'approve' || isAnyConnectorWriteExecutionPhrase(message.text)) {
+          const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // W5-L01: a question/negation about the execution step ("댓글 실행해도 돼?") gets the non-mutating reminder, never
+        // chat (a model must not claim a send) and never an execution (the exact phrase stays the only executor).
+        const loosely = connectorWriteOperationsNamedLoosely(message.text);
+        if (mentionsConnectorWriteExecutionStep(message.text, anchor.operation) || loosely.includes(anchor.operation)) {
+          const reply = this.deps.composer.composeConnectorWriteApprovedReminder(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+            anchor.preview ? connectorWriteTargetOf(anchor.preview) : undefined,
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // Routing exec gaps (INT-2 finding): a bare "실행" / "실행해줘" / "go" / "run it" names no step. It runs nothing
+        // (the exact phrase stays the only executor) and gets a deterministic reply quoting the approved write's phrase,
+        // never chat (a model could answer as if it ran). A question / negation about ANOTHER write's step names the
+        // phrase that would run here too (the stray "nothing approved" reply would be untrue).
+        // Codex P2 on 5594c16: a bare prohibition ("실행하지 마") withdraws this grant through the serialized revoke path
+        // (a cancel; nothing is sent), never "nothing approved". Only the actor who asked may withdraw it; anyone else
+        // gets the exact-phrase hint like a bare question ("실행해도 돼?", "실행할까?").
+        if (isBareExecutionProhibition(message.text) && anchor.actorId === actor.id) {
+          return this.decisionTurn(
+            session,
+            await this.approvalDecisions.revokeConnectorWrite(this.chatDecision(message, session, actor), view, 'cancelled'),
+          );
+        }
+        if (isBareExecutionRequest(message.text) || isBareExecutionQuestionOrNegation(message.text)) {
+          const reply = this.deps.composer.composeConnectorWriteBareExecution(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+            anchor.preview ? connectorWriteTargetOf(anchor.preview) : undefined,
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        if (connectorWriteOperationsAskedAbout(message.text).length > 0 || loosely.length > 0) {
+          const reply = this.deps.composer.composeConnectorWriteAlreadyApproved(
+            message.context,
+            anchor.operation,
+            documentedExecutionPhrase(gate),
+          );
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // Only the actor who asked may discard the grant; anyone else's "거절" decides nothing here. D12: the approval is
+        // recorded withdrawn (REJECTED) together with the close, under the approval → session locks (#132 rules).
+        // Live QA session 4 (N2): "그만" / "됐어" / "stop" withdraw it like "취소" (nothing is sent either way).
+        const withdraws = decision === 'deny' || decision === 'cancel' || (decision === null && isPendingCancelUtterance(message.text));
+        if (withdraws && anchor.actorId === actor.id) {
+          return this.decisionTurn(
+            session,
+            await this.approvalDecisions.revokeConnectorWrite(
+              this.chatDecision(message, session, actor),
+              view,
+              decision === 'deny' ? 'denied' : 'cancelled',
+            ),
+          );
+        }
+        return null;
+      }
+      case 'EXECUTING':
+      case 'SENT':
+      case 'NOT_SENT':
+      case 'UNCERTAIN': {
+        // Codex P1 on 55c5a2f: the owner's 거절/취소 while the approved write is already executing cannot withdraw it; say
+        // so (the executing turn reports the outcome) — never "nothing was sent".
+        // Codex P2 on b571e4d: the wider stop words ("그만", "아니", "됐어", "stop") take the same late path as 취소/거절 —
+        // "already started" while executing; once finished, the deterministic "nothing to decide" (취소's route) — never chat.
+        if (anchor.actorId === actor.id) {
+          const decision = interpretStrayDecisionUtterance(message.text);
+          const stopWord = decision === null && isPendingCancelUtterance(message.text);
+          if (anchor.status === 'EXECUTING' && anchor.operation && (decision === 'deny' || decision === 'cancel' || stopWord)) {
+            const reply = this.deps.composer.composeConnectorWriteRevokeTooLate(message.context, anchor.operation);
+            return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+          }
+          if (anchor.status !== 'EXECUTING' && stopWord) {
+            return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
+          }
+        }
+        if (!anchor.operation || !isAcceptedExecutionPhrase(connectorWriteExecutionGate(anchor.operation), message.text)) {
+          return null;
+        }
+        const deniedFinished = await deniedStep();
+        if (deniedFinished) return deniedFinished;
+        const now = this.clock();
+        // Live QA (cross-session): this conversation's write is finished, but an approved one of the same kind waits in
+        // another conversation — run nothing and say where its phrase must be sent.
+        const elsewhere = await flow.approvedElsewhere(session, actor.id, anchor.operation, now);
+        if (elsewhere) {
+          const reply = this.deps.composer.composeConnectorWriteApprovedElsewhere(message.context, elsewhere);
+          return this.respondConnectorWrite(message, session, reply, 'RESPONDED', history);
+        }
+        // An old send is not "already executed" any more: the stray-phrase path answers (nothing approved).
+        if (isConnectorWriteSendStale(anchor, now)) return null;
+        // Live QA session 3 (D1) / Codex P2: when a later request of the same kind exists in this conversation, the reply
+        // describes THAT request (rejected, expired, not sent, …), never this one as "already sent".
+        const latest = await flow.latestRequestInSession(session, actor.id, anchor.operation);
+        if (latest && latest.taskId !== view.taskId) {
+          return this.respondStrayConnectorWritePhrase(message, session, actor, [anchor.operation]);
+        }
+        return respond(await flow.execute({ session, actor, view, now }));
+      }
+      default:
+        return null;
+    }
   }
 }

@@ -6,13 +6,15 @@ import { describe, expect, it } from 'vitest';
 // step added without the wrapper fails here.
 
 const source = readFileSync(new URL('./conversation-runtime.ts', import.meta.url), 'utf8');
+// `handleConnectorWriteAnchorTurn` lives in the turn-handler layer (line-ceiling split of conversation-runtime.ts).
+const connectorWriteSource = readFileSync(new URL('./conversation-runtime/turn-handler-layer.ts', import.meta.url), 'utf8');
 
-function between(start: string, end: string): string {
-  const from = source.indexOf(start);
-  const to = source.indexOf(end, from);
+function between(start: string, end: string, text: string = source): string {
+  const from = text.indexOf(start);
+  const to = text.indexOf(end, from);
   expect(from, start).toBeGreaterThan(0);
   expect(to, end).toBeGreaterThan(from);
-  return source.slice(from, to);
+  return text.slice(from, to);
 }
 
 describe('the state-bound section is gated at every step (source rule)', () => {
@@ -46,7 +48,7 @@ describe('the state-bound section is gated at every step (source rule)', () => {
 
   it('the B0b status answer and the connector-write execution are gated', () => {
     expect(source).toContain("this.stateBoundStep(message, session, actor, 'internal-status'");
-    const execute = between("if (isAcceptedExecutionPhrase(gate, message.text)) {", 'const decision = interpretStrayDecisionUtterance(message.text);');
+    const execute = between("if (isAcceptedExecutionPhrase(gate, message.text)) {", 'const decision = interpretStrayDecisionUtterance(message.text);', connectorWriteSource);
     expect(execute).toContain('surfaceStillAllows');
     expect(execute).toContain('executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck)');
   });
