@@ -2769,7 +2769,8 @@ function validateWithoutDetail(candidate: NlSelectionCandidate, ctx: NlValidatio
 
 /**
  * Owner decision of 2026-11-02 (narrows the 2026-10-28 rule that a changed option asks): Core's repair only DROPPED enum
- * values (a closed value set: never a keyword, span, period or other free text), kept every other arg as the selector
+ * values the enum accepts but the owner's words did not ground (a closed value set: never a keyword, span, period or other
+ * free text, and never an out-of-set value, which keeps the ask), kept every other arg as the selector
  * gave it, and the owner's own words, outside pasted structures, name the entry (an alias or source name). The read
  * that runs is then the broader read of the source the owner named. A free-text value grounded only in pasted text, a
  * replaced value, or an entry the owner did not name still asks (the red-team invariant).
@@ -2778,7 +2779,14 @@ function onlyEnumDroppedFromNamedEntry(repaired: NlValidatedSelection, given: Nl
   const kept = repaired.args as Readonly<Record<string, unknown>>;
   const dropped = Object.keys(given).filter((name) => !(name in kept));
   if (dropped.length === 0 || Object.keys(kept).some((name) => !(name in given) || JSON.stringify(kept[name]) !== JSON.stringify((given as Readonly<Record<string, unknown>>)[name]))) return false;
-  if (!dropped.every((name) => repaired.entry.args.find((spec) => spec.name === name)?.kind === 'enum')) return false;
+  // Only a value the enum accepts and the owner's words did not ground: an out-of-set value ("done" for a to-do status) is
+  // the model's reading of words the enum cannot hold, so the broader read would answer a different question; it asks.
+  const givenArgs = given as Readonly<Record<string, unknown>>;
+  if (!dropped.every((name) => {
+    const spec = repaired.entry.args.find((candidate) => candidate.name === name);
+    const value = givenArgs[name];
+    return spec?.kind === 'enum' && typeof value === 'string' && spec.values?.includes(value) === true;
+  })) return false;
   const prose = normalizeForMatch(withoutStructures(groundingText));
   return [...repaired.entry.aliases, ...(repaired.entry.sourceNames ?? [])].some((name) => groundingWordIn(prose, normalizeForMatch(name)));
 }

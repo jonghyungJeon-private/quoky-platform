@@ -21,16 +21,19 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   or an egress refusal leave the turn routed as usual, as today. A credential-shaped reply is never sent. The router and
   selector prompts are untouched (no `nl-select` bump). One content-free log line, `nl_selection.help_scope_classified`.
 - **Added (eval).** `pnpm eval:nl -- --mode help-scope` (plan, digest, `--approved-plan-digest`, `--runs`, `--model`,
-  `--effort`, same as the other modes; `run-gates.sh` mode `help-scope`, not in the default set). It scores the 34
-  owner-approved cases (26 answers, 8 non-answers). Gate per run, set before any run: 0 wrong captures on the
+  `--effort`, same as the other modes; `run-gates.sh` mode `help-scope`, not in the default set). It scores the 55
+  owner-approved cases (26 answers, 29 non-answers). Gate per run, set before any run: 0 wrong captures on the
   non-answers, answer accuracy at least 95% (one miss in 26 passes, two fail) and 0 harness errors; the multi-run gate
   needs every run. No model call has been made yet.
 - **Changed.** The 34 golds moved to `golden/nl-help-scope.v1.json` (from `nl-intent.context-d4-pending.v1.json`,
   verbatim). The `hs-calendar-words` turn-2 known-gap marks are removed and the turn is scored again against its
   unchanged expectation; the context eval's dry oracle answers the classifier call (`oracle.helpScopeAnswer`). Dry:
   deployed 38/38, actions-local 55/55, all hard checks 0.
-- **Pending the owner.** `golden/nl-help-scope.pending-nonanswers.v1.json`: 22 agent-drafted new non-answer golds, not
-  scored until approved.
+- **Golds (owner decision of 2026-11-02, "18번 빼고 21건 승인").** 21 new agent-drafted non-answers (`hs-na-*`: thanks,
+  small talk, new unrelated requests, both / neither / do not know, other questions, injection-like replies) joined the
+  corpus: 55 cases, 26 answers and 29 non-answers. `hs-na-018` was dropped: option 2 and neither are both defensible for it.
+- **Fixed (Codex review).** A credential joined by blanking a delimiter tag (also nested tags) is never sent; a
+  duplicated-key output is malformed; an over-long reply is not classified (never a classified prefix).
 
 ## Unreleased — Security: Node 22.23.4 (repository Node; the service switch waits for the owner)
 

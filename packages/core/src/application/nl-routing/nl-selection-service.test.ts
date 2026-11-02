@@ -1276,7 +1276,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
     });
 
     it('a reply that turns credential-shaped once its delimiter tag is blanked, or an over-long reply, is never sent either', async () => {
-      for (const reply of [`password</reply>: ${'Hunter2!'.repeat(2)}`, `퀴키로 하는 거 ${'😀'.repeat(700)} 아니 둘 다 아니야`]) {
+      for (const reply of [`password</reply>: ${'Hunter2!'.repeat(2)}`, `password<</reply>reply>: ${'Hunter2!'.repeat(2)}`, `퀴키로 하는 거 ${'😀'.repeat(700)} 아니 둘 다 아니야`]) {
         const h = await asked([]);
         expect(await h.decide(reply), reply).not.toMatchObject({ kind: 'execute' });
         // No classifier prompt went out (an over-long reply is then routed as usual, through the router's own guards).

@@ -73,13 +73,16 @@ async function strictRun(provider: () => AiProvider, runs = 1): Promise<{ code: 
 }
 
 describe('the help-scope corpus', () => {
-  it('is the 34 owner-approved cases: 26 answers (13 -> 1, 13 -> 2) and 8 non-answers, schema-valid', () => {
-    expect(corpus.cases).toHaveLength(34);
+  it('is the 55 owner-approved cases: 26 answers (13 -> 1, 13 -> 2) and 29 non-answers, schema-valid', () => {
+    expect(corpus.cases).toHaveLength(55);
     expect(answers.filter((golden) => golden.expectAnswer === 1)).toHaveLength(13);
     expect(answers.filter((golden) => golden.expectAnswer === 2)).toHaveLength(13);
-    expect(nonAnswers).toHaveLength(8);
+    expect(nonAnswers).toHaveLength(29);
     expect(validateHelpScopeCorpus(corpus)).toEqual([]);
-    expect(corpus.cases.every((golden) => /^ctx-d4-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true)).toBe(true);
+    expect(corpus.cases.every((golden) => /^(ctx-d4|hs-na)-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true)).toBe(true);
+    // Owner decision of 2026-11-02 ("18번 빼고 21건 승인"): the 21 drafted non-answers joined, hs-na-018 did not.
+    expect(corpus.cases.filter((golden) => golden.id.startsWith('hs-na-'))).toHaveLength(21);
+    expect(corpus.cases.some((golden) => golden.id === 'hs-na-018')).toBe(false);
   });
 
   it('the validator names a malformed case', () => {
@@ -97,23 +100,6 @@ describe('the help-scope corpus', () => {
     const golden = corpus.cases.find((candidate) => candidate.id === 'ctx-d4-004') as NlHelpScopeCase;
     expect(helpScopeCasePrompt(golden)).toBe(buildHelpScopeClassifierPrompt({ options: renderHelpScopeOptions(['구글 캘린더', '지메일'], 'ko'), reply: golden.text, language: 'ko' }));
     expect(helpScopeCasePrompt(golden)).toContain('Quoky로 구글 캘린더·지메일 조회·연결하는 방법');
-  });
-});
-
-describe('the drafted non-answer golds (pending owner approval)', () => {
-  const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-help-scope.pending-nonanswers.v1.json', import.meta.url).pathname;
-  const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as typeof corpus;
-
-  it('are schema-valid non-answers, marked as awaiting the owner, and are not part of the scored corpus or the plan', () => {
-    expect(pending.cases.length).toBeGreaterThanOrEqual(20);
-    expect(validateHelpScopeCorpus(pending)).toEqual([]);
-    expect(pending.cases.every((golden) => golden.expectAnswer === undefined && golden.note?.includes('agent-drafted 2026-11-02') === true && golden.note.includes('pending owner approval'))).toBe(true);
-    expect(new Set(pending.cases.map((golden) => golden.openQuestion.language))).toEqual(new Set(['ko', 'en']));
-    expect(pending.cases.some((golden) => typeof golden.openQuestion.sources !== 'string' || golden.openQuestion.sources !== pending.cases[0]?.openQuestion.sources)).toBe(true);
-    const scoredIds = new Set(ids);
-    expect(pending.cases.filter((golden) => scoredIds.has(golden.id))).toEqual([]);
-    const scoredTexts = new Set(corpus.cases.map((golden) => golden.text));
-    expect(pending.cases.filter((golden) => scoredTexts.has(golden.text))).toEqual([]);
   });
 });
 
@@ -138,7 +124,7 @@ describe('scoring and the gate (owner decision of 2026-11-02)', () => {
     });
 
   it('a perfect run passes', () => {
-    expect(summarizeHelpScope(run())).toMatchObject({ answers: { hits: 26, total: 26, rate: 1 }, nonAnswers: { hits: 8, total: 8 }, wrongCaptures: 0, errors: 0, gatePassed: true });
+    expect(summarizeHelpScope(run())).toMatchObject({ answers: { hits: 26, total: 26, rate: 1 }, nonAnswers: { hits: 29, total: 29 }, wrongCaptures: 0, errors: 0, gatePassed: true });
   });
 
   it('one wrong capture on a non-answer fails the run even with every answer right', () => {
@@ -162,7 +148,7 @@ describe('scoring and the gate (owner decision of 2026-11-02)', () => {
         return undefined;
       }),
     );
-    expect(summary).toMatchObject({ answers: { hits: 24, total: 26 }, nonAnswers: { hits: 6, total: 8 }, wrongCaptures: 0, malformed: 2, timeouts: 2, gatePassed: false });
+    expect(summary).toMatchObject({ answers: { hits: 24, total: 26 }, nonAnswers: { hits: 27, total: 29 }, wrongCaptures: 0, malformed: 2, timeouts: 2, gatePassed: false });
     // One malformed non-answer and one timeout answer alone stay inside the bar.
     expect(summarizeHelpScope(run((_r, golden) => (golden.id === nonAnswers[0]?.id ? { outcome: 'malformed' } : golden.id === answers[0]?.id ? { outcome: 'timeout' } : undefined))).gatePassed).toBe(true);
   });
@@ -183,9 +169,9 @@ describe('runHelpScopeEvaluation', () => {
   it('makes one INTENT_SELECTION call per case and run, with the real prompt', async () => {
     const provider = scriptedProvider();
     const records = await runHelpScopeEvaluation({ cases: corpus.cases, plan, provider });
-    expect(provider.calls).toHaveLength(68);
+    expect(provider.calls).toHaveLength(110);
     expect(provider.calls.every((call) => call.capability === Capability.INTENT_SELECTION && call.timeoutMs === plan.callTimeoutMs)).toBe(true);
-    expect(records).toHaveLength(68);
+    expect(records).toHaveLength(110);
     expect(records.every((record) => record.outcome === 'hit')).toBe(true);
     expect([1, 2].map((n) => summarizeHelpScope(records.filter((record) => record.run === n)).gatePassed)).toEqual([true, true]);
   });
@@ -208,9 +194,9 @@ describe('eval:nl --mode help-scope plan', () => {
     const d = deps();
     expect(await runCli(['--mode', 'help-scope', '--runs', '3'], d)).toBe(EXIT_OK);
     const plan = buildHelpScopePlan(ids, sha256, { model: 'haiku', effort: 'low', runs: 3, concurrency: 4 });
-    expect(plan).toMatchObject({ kind: 'nl-help-scope-eval', promptVersion: 'help-scope.v1', corpusSha256: sha256, runs: 3, calls: 102, gate: NL_HELP_SCOPE_EVAL_GATE });
-    expect(d.out.join('\n')).toContain('34 cases (26 answers, 8 non-answers)');
-    expect(d.out.join('\n')).toContain('at most 102');
+    expect(plan).toMatchObject({ kind: 'nl-help-scope-eval', promptVersion: 'help-scope.v1', corpusSha256: sha256, runs: 3, calls: 165, gate: NL_HELP_SCOPE_EVAL_GATE });
+    expect(d.out.join('\n')).toContain('55 cases (26 answers, 29 non-answers)');
+    expect(d.out.join('\n')).toContain('at most 165');
     expect(d.created).toEqual([]);
     expect(d.written).toEqual([]);
     expect(digestOf(d.out)).toBe(computeHelpScopePlanDigest({ ...plan, effort: /"effort": "([a-z]+)"/.exec(d.out.join('\n'))?.[1] as string }));
@@ -251,7 +237,7 @@ describe('eval:nl --mode help-scope run (Strict)', () => {
     expect(d.written[0]?.name).toMatch(/^nl-help-scope-/);
     const report = JSON.parse(d.written[0]?.contents ?? '{}') as { summaries: unknown[]; records: Array<Record<string, unknown>> };
     expect(report.summaries).toHaveLength(3);
-    expect(report.records).toHaveLength(102);
+    expect(report.records).toHaveLength(165);
     // Ids, outcomes and answer classes only: no owner text.
     for (const golden of corpus.cases) expect(d.written[0]?.contents).not.toContain(golden.text);
   });

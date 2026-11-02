@@ -32,8 +32,21 @@ export function isHelpScopeClassifierPrompt(prompt: string): boolean {
  * the turn as usual. The caller runs its credential guard on this text too, since blanking a tag can join a credential.
  */
 export function helpScopeClassifierReply(reply: string): string | undefined {
-  const quoted = reply.replace(DELIMITER_TAG, ' ').trim();
+  const quoted = withoutDelimiterTags(reply).trim();
   return Array.from(quoted).length > MAX_REPLY_CHARS ? undefined : quoted;
+}
+
+/**
+ * Blanks delimiter tags until none is left, so blanking one cannot assemble another (`<</reply>reply>`): the result is a
+ * fixed point, and the prompt builder's own pass over an already-quoted reply changes nothing the guard did not see.
+ */
+function withoutDelimiterTags(text: string): string {
+  let current = text;
+  for (;;) {
+    const next = current.replace(DELIMITER_TAG, ' ');
+    if (next === current) return current;
+    current = next;
+  }
 }
 
 export interface HelpScopeClassifierPromptInput {
@@ -47,7 +60,7 @@ export interface HelpScopeClassifierPromptInput {
 
 export function buildHelpScopeClassifierPrompt(input: HelpScopeClassifierPromptInput): string {
   // Bounded here too for direct callers (the eval); the service never passes a reply over the bound.
-  const reply = helpScopeClassifierReply(input.reply) ?? Array.from(input.reply.replace(DELIMITER_TAG, ' ').trim()).slice(0, MAX_REPLY_CHARS).join('');
+  const reply = helpScopeClassifierReply(input.reply) ?? Array.from(withoutDelimiterTags(input.reply).trim()).slice(0, MAX_REPLY_CHARS).join('');
   const [first, second] = input.options;
   return [
     PROMPT_HEAD,

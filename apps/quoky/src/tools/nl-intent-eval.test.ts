@@ -333,13 +333,14 @@ describe('S1 fair evidence — grammar side vs selector side on the grammar-hand
 });
 
 describe('D4 is a dedicated classifier (owner decisions of 2026-10-27 and 2026-11-02): its golds are scored by `--mode help-scope`, not by the router evals', () => {
-  it('the 34 ctx-d4 cases keep their owner approvals in nl-help-scope.v1.json, none is scored here, and no scored case carries an open question', () => {
+  it('the help-scope cases (34 ctx-d4, 21 hs-na) keep their owner approvals in nl-help-scope.v1.json, none is scored here, and no scored case carries an open question', () => {
     const pendingPath = new URL('../../../../packages/core/src/application/golden/nl-help-scope.v1.json', import.meta.url).pathname;
     const pending = JSON.parse(readFileSync(pendingPath, 'utf8')) as { cases: Array<{ id: string; note?: string; openQuestion?: unknown }> };
-    expect(pending.cases).toHaveLength(34);
-    expect(pending.cases.every((golden) => /^ctx-d4-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true && golden.openQuestion !== undefined)).toBe(true);
+    expect(pending.cases.filter((golden) => golden.id.startsWith('ctx-d4-'))).toHaveLength(34);
+    expect(pending.cases.filter((golden) => golden.id.startsWith('hs-na-'))).toHaveLength(21);
+    expect(pending.cases.every((golden) => /^(ctx-d4|hs-na)-0\d\d$/.test(golden.id) && golden.note?.includes('owner-approved') === true && golden.openQuestion !== undefined)).toBe(true);
     const scored = loadScoredCorpus().corpus.cases;
-    expect(scored.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
+    expect(scored.filter((golden) => golden.id.startsWith('ctx-d4-') || golden.id.startsWith('hs-na-'))).toEqual([]);
     expect(scored.filter((golden) => 'openQuestion' in golden || 'expectAnswer' in golden)).toEqual([]);
     expect(loadScoredReadRegressionCorpus().cases.filter((golden) => golden.id.startsWith('ctx-d4-'))).toEqual([]);
   });

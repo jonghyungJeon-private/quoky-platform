@@ -31341,6 +31341,13 @@ and D9 still governs every turn that goes to chat.
   value, an entry the owner's words do not name, a refused weekday, the help-scope question, and no option at all.
 - **Tests.** `nl-selection-service.test.ts`: the DM4 shape runs `drive.files {}`; the same output with no Drive word asks;
   a dropped keyword with Jira named still asks. The test fails without the change. The red-team test files (12) pass.
+- **Follow-up (same branch, found by the wider targeted run).** The first cut also ran a read when the dropped enum value
+  was OUT of the enum's set (`todo.list {status: done}` for "끝난 할 일 보여줘"), which the 2026-10-28 Codex P2 / CA P1
+  test in `nl-action-live4.test.ts` guards: the broader read would answer a different question (open to-dos for finished
+  ones). The exception now needs every dropped value to be one the enum accepts and the owner's words did not ground (the
+  DM4 shape: `document` is a Drive kind, a plain 문서 does not ground it). Out-of-set values ask as before. One assertion
+  in that test changes with the owner's decision: "알림 몇 개 걸려 있어?" with an ungrounded in-set `status: canceled` now
+  runs `reminder.list {}` (the active reminders, which is what the words ask) instead of asking.
 
 ### D4 help-scope classifier — implementation note (owner decisions 2026-10-27 and 2026-11-02; branch `claude/v5-d4-classifier`)
 
@@ -31348,12 +31355,12 @@ and D9 still governs every turn that goes to chat.
   - `nl-routing/help-scope-classifier.ts`: `NL_HELP_SCOPE_CLASSIFIER_PROMPT_VERSION = 'help-scope.v1'`,
     `buildHelpScopeClassifierPrompt` and the strict `parseHelpScopeClassifierOutput`. The prompt is a generic instruction:
     the two displayed option texts (`renderHelpScopeOptions`, in the question's language) and the owner's reply as DATA
-    between `<reply>` tags (a delimiter inside the reply is removed; the reply is bounded to 600 characters). It asks
+    between `<reply>` tags (delimiter tags inside the reply are blanked to a fixed point; a reply over 600 code points is not classified). It asks
     "option 1, option 2 or neither", names thanks, small talk, a new or unrelated request, unsure, both and refusal as
     neither, and says "when unsure, neither". It carries no example phrase and no phrase list (a test checks that no gold
     text appears outside the reply). The output is exactly one `{"answer":1}`, `{"answer":2}` or `{"answer":null}`; the
-    parser accepts one object, with whitespace or one ```json fence around it, with exactly the key `answer`, else
-    `undefined` (malformed).
+    parser matches that exact text (whitespace between tokens, or one ```json fence around it), else `undefined`
+    (malformed).
   - `NlSelectionService.answerPending`: for the help-scope question only (`appSource` / `appSources`), and only when
     `resolveChoice` returned `none` (a number or displayed option text, a cancel and an unclear number are unchanged and
     make no call), `classifyHelpScopeReply` makes one `INTENT_SELECTION` call: the same router lookup, the `sameEgress ===
@@ -31390,9 +31397,17 @@ and D9 still governs every turn that goes to chat.
   from the turn's `oracle.helpScopeAnswer` (1 for this turn), the `none` selector answers neither, and a Strict run sends
   it to the real selection provider like the router prompt. Dry: deployed 38/38, actions-local 55/55, all hard checks 0
   (it was 37/38 and 54/55). The known-gap machinery itself stays in the scorer (no scenario uses it now).
-- **Pending for the owner.** `golden/nl-help-scope.pending-nonanswers.v1.json`: 22 agent-drafted non-answer golds (thanks and
-  acknowledgements, small talk, new unrelated read requests, both / neither / do not know, a question about something else,
-  an off-topic reply that names the app, and injection-like replies), mixed Korean and English and mixed source sets, each
-  noted "agent-drafted 2026-11-02 ... pending owner approval". They are not scored and not in the plan digest until the
-  owner approves them (or edits them) and they are merged into `nl-help-scope.v1.json`; the next plan digest then changes.
-- **Not run.** No model call and no eval run were made. The Strict `help-scope` run needs the owner's plan-digest approval.
+- **New non-answers (owner decision of 2026-11-02, verbatim: "18번 빼고 21건 승인").** 22 non-answers were agent-drafted
+  (thanks and acknowledgements, small talk, new unrelated read requests, both / neither / do not know, a question about
+  something else, an off-topic reply that names the app, and injection-like replies; mixed Korean and English and mixed
+  source sets). The owner first asked what the classifier does and what option 2 answers (the fixed "check the app's own
+  help" reply, not the app's steps), then approved 21: `hs-na-018` ("슬랙 계정 비밀번호는 어떻게 바꿔?") is dropped because
+  option 2 and neither are both defensible readings, so scoring it either way would punish a reasonable answer. The 21
+  joined `nl-help-scope.v1.json` (notes say owner-approved 2026-11-02); the corpus is 55 cases, 26 answers and 29
+  non-answers, and the gate bar is unchanged. Whether option 2 should answer the app's own how-to is not part of this
+  merge.
+- **Codex review fixes.** The credential guard runs on the reply as received and as the prompt quotes it; delimiter tags
+  are blanked to a fixed point, so a nested tag (`<</reply>reply>`) cannot assemble a credential after the guard. The
+  parser matches the exact text `{"answer": 1 | 2 | null}` (a duplicated key, an escaped key or `1e0` is malformed). A
+  reply over 600 code points is not classified at all and is routed as usual, so a correction at its end is never cut off.
+- **Runs.** Model-in-the-loop eval runs were approved by the owner on 2026-11-02 together with the strict bar.

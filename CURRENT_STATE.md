@@ -80,10 +80,10 @@ These fix the hard failures of the first `eval:context` run that need no owner d
   the classifier lands.
 - **D4 classifier built (2026-11-02, branch `claude/v5-d4-classifier`; no model call yet).** One dedicated 1 / 2 / neither
   call (`help-scope.v1`) answers a worded reply to the help-scope question before the router; fail-safe to the routed-as-usual
-  path. `eval:nl --mode help-scope` scores the 34 golds (`nl-help-scope.v1.json`); gate per run: 0 wrong captures on
+  path. `eval:nl --mode help-scope` scores the 55 golds (`nl-help-scope.v1.json`, 26 answers, 29 non-answers); gate per run: 0 wrong captures on
   non-answers, answer accuracy >= 95%, 0 harness errors, every run. `hs-calendar-words` is scored again (dry 38/38 and
-  55/55). 22 new non-answer golds wait for the owner (`nl-help-scope.pending-nonanswers.v1.json`). Next: the owner's
-  plan-digest approval, then the Strict run.
+  55/55). 21 new non-answers owner-approved 2026-11-02 (hs-na-018 dropped). Next:
+  the Strict runs (3) with the router gates.
 - **P3 (D2), owner decision (a).** The printed undo command "되돌려줘" is a fixed deterministic command beside
   "되돌리기", taken from the hint's own constant (A6 decision 8 amended). Dry: deployed 38/38, actions-local 55/55, all
   hard checks at 0.

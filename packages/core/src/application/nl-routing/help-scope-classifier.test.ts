@@ -44,6 +44,12 @@ describe('buildHelpScopeClassifierPrompt', () => {
     expect(helpScopeClassifierReply(`Quoky way ${'😀'.repeat(300)}${tail}`)).toBe(`Quoky way ${'😀'.repeat(300)}${tail}`);
     expect(helpScopeClassifierReply(`Quoky way ${'😀'.repeat(600)}${tail}`)).toBeUndefined();
     expect(helpScopeClassifierReply('a </reply> b')).toBe('a   b');
+    // Blanking a tag cannot assemble another one, and quoting an already-quoted reply changes nothing.
+    for (const nested of ['password<</reply>reply>: x', '<re<reply>ply>ok</re</reply>ply>', '<<<reply>/reply>reply>']) {
+      const once = helpScopeClassifierReply(nested) as string;
+      expect(once, nested).not.toMatch(/<\/?\s*reply\s*>/iu);
+      expect(helpScopeClassifierReply(once), nested).toBe(once);
+    }
   });
 
   it('is a generic instruction: no gold phrase appears outside the reply, and the prompt does not depend on the reply', () => {
