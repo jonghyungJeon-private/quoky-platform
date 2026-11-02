@@ -46,7 +46,7 @@ CH1	...	...
 ## 2. 사전 점검 (하나라도 실패하면 실행하지 않고 보고)
 
 1. 서비스: `bash ops/launchd/quokyctl.sh status` 와 `tail ~/Library/Logs/Quoky/quoky.log` 에서 `[quoky] started`. 서비스 worktree(`.worktrees/quoky-platform/quoky-service`)의 HEAD 가 요청이 기대하는 SHA(보통 `origin/main`)인지 확인한다.
-2. 브라우저: **`abx`** 로 진행한다(소유자 지시 2026-11-02, ego-browser 대신). `abx` 는 지속 프로필이라 재부팅 뒤에도 로그인이 남는다. `abx open <Discord DM URL>` 이 `/login` 으로 가면 로그아웃 상태다: `abx handoff "Discord에 로그인해 주세요"` 후 소유자에게 로그인을 요청하고, 소유자가 끝났다고 말하면 `abx resume` 한다(abx 는 사람의 로그인 완료를 알려 주지 않는다). Telegram 이 필요하면 같은 방식으로 Telegram Web 로그인을 확인한다(`tg` 대상은 아직 ego-browser `tg-steps.sh` 이다). 끝나면 `abx done` 으로 소유자에게 마우스·키보드를 돌려준다(`abx-steps.py` 는 스스로 호출한다). ego-browser 경로는 `dm-ego`/`ch-ego` 대상으로만 남긴다(대체 수단; 파일 첨부 시나리오는 `abx-steps.py` 가 아직 지원하지 않으므로 이쪽을 쓴다).
+2. 브라우저: **`abx`** 로 진행한다(소유자 지시 2026-11-02, ego-browser 대신). `abx` 는 지속 프로필이라 재부팅 뒤에도 로그인이 남는다. `abx open <Discord DM URL>` 이 `/login` 으로 가면 로그아웃 상태다: `abx handoff "Discord에 로그인해 주세요"` 후 소유자에게 로그인을 요청하고, 소유자가 끝났다고 말하면 `abx resume` 한다(abx 는 사람의 로그인 완료를 알려 주지 않는다). `tg` 대상은 아직 ego-browser `tg-steps.sh` 이므로, Telegram 이 필요하면 Telegram Web 로그인은 ego-browser task space(`$Q/space_id`, page `p2`)에서 확인한다(abx 프로필과 세션이 따로다). 끝나면 `abx done` 으로 소유자에게 마우스·키보드를 돌려준다(`abx-steps.py` 는 스스로 호출한다). ego-browser 경로는 `dm-ego`/`ch-ego` 대상으로만 남긴다(대체 수단; 파일 첨부 시나리오는 `abx-steps.py` 가 아직 지원하지 않으므로 이쪽을 쓴다).
 3. 자원: 전체 `pnpm test` 가 돌고 있지 않다(`ps -axo pid,command | grep vitest`). 동시에 돌리지 않는다.
 4. 잠금: `$Q/chat/busy` 가 이미 있으면 다른 실행이 탭을 쓰는 중이다. 끝날 때까지 기다린다(`nl-uat.sh` 가 잠금을 걸고 푼다).
 5. 쓰기 시나리오가 있으면, 대상의 **실행 전 상태**를 읽어 기록한다(§4 의 다시 읽기 방법).
