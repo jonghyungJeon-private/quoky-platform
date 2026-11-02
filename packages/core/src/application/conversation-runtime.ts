@@ -41,7 +41,7 @@ import {
 } from './attachment-context';
 import { NoProviderAvailableError } from '../errors';
 import { hasCoLocatedUnnegated, unnegatedMatch } from './intent-negation';
-import { KO_END, KO_START, isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention, koNoun } from './git-request-shape';
+import { isChainCompanionRequest, isGitConceptQuestion, isGitTopicOnlyMention } from './git-request-shape';
 import { parseLearningCommand } from './feedback/learning-commands';
 import { parseMemoryCommand } from './memory-commands/memory-command-grammar';
 import { parseModelSelectionCommand } from './model-selection/model-selection-command';
@@ -91,7 +91,13 @@ import {
   detectProjectRegistration,
   externalActionRequestOf,
 } from './intent-classifier';
-import { isNlActionEntryId, type NlCatalogEntry, type NlClassBProbe, type NlItemSource, type NlListingReceipt, type NlSelectedCommand } from './nl-routing/catalog';
+import {
+  isNlActionEntryId,
+  type NlCatalogEntry,
+  type NlClassBProbe,
+  type NlListingReceipt,
+  type NlSelectedCommand,
+} from './nl-routing/catalog';
 import {
   guardFalseControlDenials,
   guardFalseIncapabilityClaims,
@@ -181,7 +187,6 @@ import type {
   IsoTimestamp,
   OutboundMessage,
   PatchSet,
-  ProposedChange,
   PullRequestMergeResult,
   PullRequestResult,
   PullRequestStatusPreview,
@@ -193,7 +198,6 @@ import type {
   WorkspaceChange,
   WorkspaceDiff,
   WorkspaceRef,
-  WorkspaceRepositoryRefusal,
   WorkspaceRepositoryResolution,
 } from '../domain';
 import {
@@ -221,9 +225,6 @@ import {
 import { now } from '../util/clock';
 import type {
   ResponseComposer,
-  CodeChangePreview,
-  CodeDiffPreview,
-  ExecutionReplyStatus,
   TestResultDetail,
 } from './response-composer';
 import { ProviderGatewayTerminalStatus } from './provider-routing-gateway';
@@ -260,7 +261,6 @@ import {
   renderDocumentSummaryTooLong,
 } from './document-summary-claim-check';
 import { combinedUsage } from './provider-usage-record';
-import { neutralizeLinks } from './link-neutralizer';
 import { extractMentionedPathTokens, normalizeRelativePath } from './target-scope';
 import {
   type CredentialOverrideGrant,
@@ -294,10 +294,8 @@ import {
 import { runUsageRecord } from './provider-usage-record';
 import type { CodeChangeTargetCollection } from './code-work/code-change-set';
 import {
-  type PushMode,
   type PushTargetRefusal,
   checkPushHead,
-  parsePushUpstreamRef,
   resolvePushTarget,
   verifyApprovedPushTarget,
 } from './code-work/push-target-resolution';
@@ -327,6 +325,88 @@ import type {
   RuntimeTurnStatus,
   TurnResult,
 } from './conversation-runtime/types';
+import {
+  BoundedShownItems,
+  SurfaceDeniedError,
+  buildCommitApprovalReason,
+  buildMergeApprovalReason,
+  buildPrApprovalReason,
+  buildPushApprovalReason,
+  buildRemoteBranchCleanupApprovalReason,
+  documentSummaryCredentialShaped,
+  filterInScopeChanges,
+  frozenPlainSnapshot,
+  nlActionReceiptSource,
+  nlConfirmToRecord,
+  nlHeldItemWordsFor,
+  parsePushUpstream,
+  safeRelativePath,
+  sameDispatchGrants,
+  sameRepositoryIdentity,
+  toCodeDiffPreview,
+  toDispatchGrants,
+  toReplyStatus,
+  withoutSessionMetadataKey,
+  type HostingIdentityLookup,
+} from './conversation-runtime/helpers';
+import {
+  APPLY_WORDS,
+  CANCEL_WORDS,
+  CLEANUP_BRANCH_WORD,
+  CLEANUP_BULK,
+  CLEANUP_FOREIGN_CHAIN_WORD,
+  CLEANUP_MAIN_TARGET,
+  CLEANUP_NOT_A_REQUEST,
+  CLEANUP_REMOTE_WORD,
+  CLEANUP_VERB,
+  COMMIT_EXECUTION_FORBIDDEN,
+  COMMIT_EXECUTION_WORDS,
+  COMMIT_FORBIDDEN_COMPANION,
+  COMMIT_WORDS,
+  DEPLOY_ONLY_WORDS,
+  FINAL_APPLY_WORDS,
+  GIT_DIFF_WORDS,
+  GIT_MUTATING_WORDS,
+  GIT_STATUS_WORDS,
+  HOW_TO_QUESTION,
+  MAIN_SYNC_MENTION,
+  MAIN_SYNC_REMOTE,
+  MAIN_WORD,
+  MERGED_CHAIN_STATUSES,
+  MERGE_EXECUTION_ATTACHED,
+  MERGE_EXECUTION_FOREIGN,
+  MERGE_EXECUTION_VERB,
+  MERGE_QUESTION,
+  MERGE_REQUEST_ATTACHED,
+  MERGE_WORD,
+  PATCH_WORDS,
+  POST_PUSH_CHAIN_STATUSES,
+  PROTECTED_COMMIT_BRANCHES,
+  PR_BASE_BRANCH_POLICY,
+  PR_CREATED_COMPANION_WORDS,
+  PR_CREATION_WORDS,
+  PR_FORBIDDEN_COMPANION,
+  PR_STATUS_NOUN,
+  PR_STATUS_QUERY,
+  PR_WORD,
+  PUSH_CHAT_TOPIC,
+  PUSH_EXECUTION_WORDS,
+  PUSH_FORBIDDEN_COMPANION,
+  PUSH_REQUEST_SHAPES,
+  PUSH_WORDS,
+  REMOTE_CLEANUP_BARE_EXECUTE,
+  REMOTE_CLEANUP_EXECUTE_VERB,
+  SYNC_FOREIGN,
+  SYNC_WORD,
+} from './conversation-runtime/intent-words';
+export {
+  filterInScopeChanges,
+  toCodeChangePreview,
+  toCodeDiffPreview,
+  SurfaceDeniedError,
+  nlConfirmToRecord,
+  nlHeldItemWordsFor,
+} from './conversation-runtime/helpers';
 
 /**
  * Conversation Runtime (Sprint 2k, ADR-0032) — 춘식봇's conversation entry point. It turns one user
@@ -353,666 +433,6 @@ export type {
   ConversationRuntimeDeps,
   ConversationRuntimeOptions,
 } from './conversation-runtime/types';
-
-/** The dispatch-time grant view of an anchor's grant records (the shape the flow hands `dispatch`). */
-function toDispatchGrants(anchor: CredentialOverrideAnchor): CredentialOverrideGrant[] {
-  return anchor.grants.map((g) => ({
-    path: g.path, contentSha256: g.contentSha256, detector: g.detector, line: g.line, state: 'CONSUMED' as const,
-  }));
-}
-
-/** True iff the grants the flow consumed are exactly the grants the dispatched content was prepared under. */
-function sameDispatchGrants(
-  consumed: readonly CredentialOverrideGrant[],
-  prepared: readonly CredentialOverrideGrant[],
-): boolean {
-  return (
-    consumed.length === prepared.length &&
-    consumed.every((g, i) => {
-      const p = prepared[i]!;
-      return (
-        normalizeRelativePath(g.path) === normalizeRelativePath(p.path) &&
-        g.contentSha256 === p.contentSha256 &&
-        g.detector === p.detector &&
-        g.line === p.line &&
-        g.state === p.state
-      );
-    })
-  );
-}
-
-/** The turn's session copy without one metadata key (mirrors a field-scoped removal already saved on the live row). */
-function withoutSessionMetadataKey(session: Session, key: string): Session {
-  if (session.metadata?.[key] === undefined) return session;
-  const metadata = { ...session.metadata };
-  delete metadata[key];
-  const { metadata: _previous, ...rest } = session;
-  return Object.keys(metadata).length > 0 ? { ...rest, metadata } : rest;
-}
-
-/**
- * A deeply-frozen, plain-data copy of a turn-handler context value (ADR-0096 D1). Arrays and plain objects are
- * copied recursively and frozen; primitives pass through; any other value (function, class instance, Map, Date,
- * a cyclic back-reference) is omitted — the domain values handed to handlers are plain data by construction, so
- * nothing is lost, and nothing a handler does to its copy can reach the runtime's own objects.
- */
-function frozenPlainSnapshot<T>(value: T): T {
-  const seen = new WeakSet<object>();
-  const copy = (v: unknown): unknown => {
-    if (v === null || typeof v !== 'object') return typeof v === 'function' ? undefined : v;
-    if (seen.has(v)) return undefined;
-    if (Array.isArray(v)) {
-      seen.add(v);
-      const out = Object.freeze(v.map((item) => copy(item)));
-      seen.delete(v);
-      return out;
-    }
-    const proto = Object.getPrototypeOf(v) as unknown;
-    if (proto !== Object.prototype && proto !== null) return undefined;
-    seen.add(v);
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(v)) {
-      const item = copy((v as Record<string, unknown>)[key]);
-      if (item !== undefined) out[key] = item;
-    }
-    seen.delete(v);
-    return Object.freeze(out);
-  };
-  return copy(value) as T;
-}
-
-// Approve/deny/cancel decision phrases for pending approvals live in ./approval-decision (whole-token,
-// negation-aware); "APPROVE_WORDS" in the comments below refers to that approve phrase set.
-/**
- * ADR-0118 D7 (final sign-off W-1) and the owner decision of 2026-10-15: the one credential check of a document summary
- * draft — the raw reply and every artifact, then the display-normalized reply. It decides both that a draft is withheld
- * and that a flagged draft is not regenerated.
- */
-function documentSummaryCredentialShaped(text: string, artifacts: readonly Artifact[]): boolean {
-  return isAttachmentReplyWithheld(text, artifacts) || isAttachmentReplyWithheld(neutralizeLinks(text, 'display'), []);
-}
-
-const CANCEL_WORDS = ['취소', '중단', '그만'];
-
-/** Explicit apply-only phrases (Sprint 2s, ADR-0040) — "좋아"/"오케이"/"확인"/"괜찮네" must NEVER match;
- *  those stay in APPROVE_WORDS for the ordinary approval flow but are insufficient to authorize file
- *  modification. "이대로 진행" (multi-word) is deliberately distinct from APPROVE_WORDS' bare "진행" —
- *  the two word-sets are non-overlapping by construction, not by coincidence. */
-const APPLY_WORDS = ['적용', '반영', '이대로 진행'];
-
-/** Explicit patch phrases (Sprint 2t, ADR-0041) — distinct from APPROVE_WORDS and APPLY_WORDS. CA Round 1
- *  Required Change #2: the ambiguous standalone "계속 진행" is deliberately excluded — a bare "continue"
- *  intent must never be auto-read as PatchSet generation. Every entry is an explicit patch-generation
- *  phrase; "다음 단계 진행" is the full multi-word form (never bare "다음 단계"); "좋아"/"오케이"/"확인"
- *  never match. Combined with routing (generation only on an APPROVED anchor), this enforces:
- *  explicit patch phrase + APPROVED anchor ⇒ generation; a bare "계속 진행" ⇒ never generation. */
-const PATCH_WORDS = [
-  '패치 만들어',
-  '패치 생성',
-  '패치로 만들어',
-  'patch 만들어',
-  'generate patch',
-  'patchset 만들어',
-  '다음 단계 진행',
-];
-
-/** Explicit final workspace-apply phrases (Sprint 2u, ADR-0042) — the first real file mutation. Distinct
- *  from APPROVE_WORDS/APPLY_WORDS/PATCH_WORDS: every entry is a QUALIFIED apply phrase, so a bare "적용"/
- *  "반영"/"좋아"/"오케이"/"확인"/"다음 단계 진행" never triggers a file write (CA Q3). No overlap with
- *  PATCH_WORDS; checked before APPLY_WORDS so "패치 적용해줘" (which also contains the apply-word "적용")
- *  routes to file-apply, not Sprint 2s apply-intent. */
-const FINAL_APPLY_WORDS = [
-  '최종 적용',
-  '파일에 적용',
-  '패치 적용',
-  'workspace에 적용',
-  'apply patch',
-  'apply to workspace',
-];
-
-/** Mutating git phrases (Sprint 2w, ADR-0044, CA Required Change #5/#6) — must NEVER route to a read-only
- *  preview; checked FIRST (precedence over diff/status). Korean "커밋" counts as a command only with an
- *  action verb, so "커밋 전에 변경사항 요약해줘" is a STATUS phrase; English `commit` stays conservative (any
- *  `commit` token → mutating). */
-const GIT_MUTATING_WORDS =
-  /(커밋\s*(해|하자|할|하기|하고|하는)|\bcommit\b|푸시|\bpush\b|git\s*add|\badd\s*해|리셋|\breset\b|checkout|체크아웃|stash|스태시|\bbranch\b|브랜치\s*(만들|생성)|merge|머지|rebase|리베이스|\btag\b|태그)/i;
-/** Read-only diff-preview phrases (Sprint 2w). */
-const GIT_DIFF_WORDS = /(\bdiff\b|디프)/i;
-/** Read-only status/changed-files phrases (Sprint 2w) — incl. the CA-approved safe Korean "커밋 전에 …". */
-const GIT_STATUS_WORDS = /(git\s*상태|깃\s*상태|git\s*status|\bstatus\b\s*보여|변경\s*파일|변경\s*사항|변경사항|바뀐\s*파일|커밋\s*전)/i;
-
-/** Explicit git-commit request phrases (Sprint 2x, ADR-0045) — qualified; a bare "좋아"/"오케이"/"확인"/
- *  "다음 단계"/"진행해"/"이대로 해" never matches, and bare "커밋 전" (2w status) is excluded (no action verb). */
-const COMMIT_WORDS =
-  /(커밋\s*(해|하자|할래|준비|승인)|커밋\s*메시지|git\s*commit|commit\s+this|prepare\s+commit|create\s+commit\s+approval)/i;
-/** Non-commit git mutations that must NOT ride along with a commit request (Sprint 2x) — a commit bundled
- *  with any of these is rejected (commit-approval planning only). */
-const COMMIT_FORBIDDEN_COMPANION =
-  /(푸시|\bpush\b|git\s*add|\badd\s*해|리셋|\breset\b|checkout|체크아웃|stash|스태시|\bbranch\b|브랜치|merge|머지|rebase|리베이스|\btag\b|태그)/i;
-
-/** Explicit commit-EXECUTION phrases (Sprint 2y, ADR-0046) — distinct from the 2x commit-approval words. */
-const COMMIT_EXECUTION_WORDS =
-  /(승인된?\s*커밋\s*실행|커밋\s*실행|이제\s*실제\s*커밋|commit\s+approved\s+changes|execute\s+commit|run\s+approved\s+commit)/i;
-/** Non-commit git mutations that must be rejected on the execution path (Sprint 2y) — never a push/commit. */
-const COMMIT_EXECUTION_FORBIDDEN =
-  /(푸시|\bpush\b|리셋|\breset\b|checkout|체크아웃|stash|스태시|\bbranch\b|브랜치|merge|머지|rebase|리베이스|\btag\b|태그|git\s*add)/i;
-
-/** Explicit git-PUSH phrases (Sprint 2z, ADR-0047) — a bare 좋아/오케이/확인/진행해/다음 단계 never matches.
- *  `푸시`/`push` as a bare token counts (only ever consulted in push-relevant states), so companions like
- *  "푸시하고 배포" are caught by PUSH_FORBIDDEN_COMPANION rather than slipping through as non-push. */
-const PUSH_WORDS =
-  /(푸시|git\s*push|\bpush\b|원격에\s*올려|리모트에\s*올려|원격으로\s*보내|push\s+this\s+commit|push\s+(the\s+)?approved\s+commit)/i;
-/** Force + bundling + other git ops that must NOT ride along with a push (Sprint 2z, CA #2/#5) — only ever
- *  consulted when a PUSH word is already present, so a bare "배포"/"branch"/"tag"/"reset" is NOT push handling. */
-const PUSH_FORBIDDEN_COMPANION =
-  /(--?force|\bforce\b|강제|(^|\s)-f(\s|$)|(^|\s)\+[\w./-]|--delete\b|(^|\s)-d(\s|$)|(^|\s):[\w./-]|--mirror\b|--all\b|--tags\b|--prune\b|\bpr\b|pull\s*request|풀\s*리퀘|배포|deploy|머지|\bmerge\b|리베이스|rebase|\btag\b|태그|\bbranch\b|브랜치|리셋|\breset\b|checkout|체크아웃|stash|스태시)/i;
-
-/** A push word as the request's own object ("푸시", "git push", "push"). */
-const PUSH_TOKEN_SRC = '(?:푸시|git\\s*push|\\bpush\\b)';
-/** A Korean request tail attached DIRECTLY to the push word ("푸시해줘", "push 실행해줘", "git push 해 줘"). */
-const KO_PUSH_REQUEST_TAIL_SRC =
-  '(?:\\s*(?:을|를))?(?:\\s*좀)?\\s*(?:해\\s*줘요?|해\\s*주세요|해\\s*주라|해\\s*줄래요?|해라|해\\s*봐|하자|해|' +
-  '실행(?:\\s*해\\s*줘요?|\\s*해\\s*주세요|\\s*해|\\s*하자)?|진행(?:\\s*해\\s*줘요?|\\s*해)?)';
-const KO_IMPERATIVE_END_SRC = '(?:해\\s*줘요?|해\\s*주세요|해\\s*주라|해라|하자|해)';
-/**
- * Push-request shapes (QA-V2-W8; Codex wave-8 review): the request verb must attach to the push word ITSELF —
- * never a trailing "해줘" elsewhere in the sentence ("git push 명령을 한국어로 번역해줘" / "푸시 로직을 검토해줘" are
- * chat) — or the text is a typed push command, with or without options/remote/refspec ("git push --force origin x").
- */
-const PUSH_REQUEST_SHAPES: readonly RegExp[] = [
-  // Korean: "푸시해줘", "푸시 해 줘", "git push 해줘", "push 실행", "push 실행해줘", "강제 푸시해줘", "이 커밋 푸시해줘"
-  new RegExp(`${PUSH_TOKEN_SRC}${KO_PUSH_REQUEST_TAIL_SRC}\\s*[.!~]*$`, 'i'),
-  // Korean bundle: "푸시하고 머지해줘", "푸시한 다음 배포해줘" — a push chained to another imperative (→ companion)
-  new RegExp(`${PUSH_TOKEN_SRC}\\s*(?:하고|한\\s*(?:다음|뒤|후)에?|해서)\\s+.+${KO_IMPERATIVE_END_SRC}\\s*[.!~]*$`, 'i'),
-  // Korean: "원격에 올려줘", "리모트로 보내줘"
-  /(원격|리모트)(에|으로|로)\s*(올려|보내)\s*(줘요?|주세요|줄래요?|라)?\s*[.!~]*$/i,
-  // English imperative: "push", "push now", "push this commit", "force push", "push -f", "push to origin"
-  /^\s*(please\s+)?(force[\s-]+)?push(\s+(-{1,2}[\w-]+|origin\S*|upstream|now|please|it|this(\s+commit)?|the\s+(approved\s+)?commit|approved\s+commit|to\s+(origin|remote|github)\S*))*\s*[.!]*$/i,
-  /^\s*(please\s+)?(execute|run)\s+(the\s+)?(approved\s+)?push(\s+now)?\s*[.!]*$/i,
-  // A typed git push command with any options / remote / refspec: "git push", "git push -f origin main"
-  /^\s*git\s+push(\s+[\w./:@+=~^-]+)*\s*[.!]*$/i,
-];
-/**
- * A how-to / explanation question (live QA W1-L01, W1-L03): "git commit 은 어떻게 하는 거야?", "커밋해 주는 방법",
- * "완료 처리 어떻게 해?", "what is git commit?". It asks how something works and never requests the action, so it is
- * never a commit request, a git-mutation reject or the reply to a pending scope clarification; it reaches the
- * `pre-classify` help-intent handler or ordinary chat. No execution gate consults it (those stay exact allow-lists).
- * "차이" matches as a whole word with an optional particle ("차이", "차이를", "차이점이"), never inside another word:
- * "차이나 서버 변경 커밋해줘" is a commit request, not a how-to question (the git-request-shape boundary rule).
- */
-const HOW_TO_QUESTION = new RegExp(
-  `어떻게|방법|하는\\s*법|사용법|뭐야|뭔가요|뭐예요|뭐에요|무엇|무슨|뜻이|${koNoun('차이')}|설명해|` +
-    '\\bhow\\s+(?:do|does|can|should|would|to)\\b|\\bwhat\\s+(?:is|does|are)\\b|\\bexplain\\b',
-  'iu',
-);
-
-/**
- * Questions / how-to / notification topics that merely mention push are ordinary chat (QA-V2-W8). Korean topic words
- * match whole words only, with the git-request-shape boundary + particle rule (routing exec gaps): "차이", "차이를",
- * "방법이", "푸시 알림", "설명해줘", "알려줘", "뭐야", "왜" are topics; "차이나", "설명서", "알려진", "왜곡", "뭐든" are not,
- * so "차이나 서버 변경을 푸시해줘" stays a push request. Only consulted on the non-executing push replies (already pushed /
- * no push target / unsupported companion) — never by an execution gate.
- */
-const PUSH_CHAT_TOPIC = new RegExp(
-  [
-    '[?？]',
-    // Interrogatives start their word: "뭐야", "무엇을", "뭔데", "어떻게", "어떤", "왜(요)" — not "뭐든", "왜곡".
-    `${KO_START}(?:뭐(?!든|라도)|무엇|뭔|어떻게|어떤|왜(?:요|죠)?${KO_END})`,
-    // Topic nouns as whole words with an optional particle: "차이를", "해결방법", "알림", "설정은", "구현", "설명이".
-    koNoun('차이|(?:해결|사용|설정)?방법|알림|설정|구현|설명'),
-    // The same words as a request verb: "설명해줘", "설정하는", "구현해", "알려줘", "알려 주세요".
-    `${KO_START}(?:(?:설명|설정|구현)\\s*(?:해|하|할|좀|부탁)|알려\\s*(?:줘|주|줄|달))`,
-    '\\bnotifications?\\b|\\bhow\\b|\\bwhat\\b|\\bwhy\\b|\\bexplain\\b|\\bdifference\\b|\\bwhen\\b',
-  ].join('|'),
-  'iu',
-);
-
-/** Chain states after a successful push (QA-V2-W7-02) — a push phrase here means "already pushed", never a new push. */
-const POST_PUSH_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
-  'PR_APPROVED',
-  'PR_CREATED',
-  'MERGE_APPROVED',
-  'PR_MERGED',
-  'MAIN_SYNCED',
-  'BRANCH_CLEANED',
-  'REMOTE_BRANCH_CLEANUP_APPROVED',
-  'REMOTE_BRANCH_CLEANED',
-]);
-
-/** Chain states after a successful merge (ADR-0104 D3 status replies: "머지됐어?" → already merged). */
-const MERGED_CHAIN_STATUSES: ReadonlySet<ApplyPreviewAnchor['status']> = new Set([
-  'PR_MERGED',
-  'MAIN_SYNCED',
-  'BRANCH_CLEANED',
-  'REMOTE_BRANCH_CLEANUP_APPROVED',
-  'REMOTE_BRANCH_CLEANED',
-]);
-
-/** Branches Personal v1 never commits on (ADR-0094; QA-022 up-front refusal at commit-approval planning). */
-const PROTECTED_COMMIT_BRANCHES: ReadonlySet<string> = new Set(['main', 'master']);
-
-/** Bound on user-controllable git ref (remote/branch/upstream) display length (Sprint 2z, CA #6). */
-const MAX_GIT_REF_DISPLAY = 80;
-
-/** Explicit git-push-EXECUTION phrases (Sprint 3a, ADR-0048) — distinct from the 2z push-approval words;
- *  a bare 좋아/오케이/확인/진행해/다음 단계 never matches. Only consulted at PUSH_APPROVED / GIT_PUSHED. */
-const PUSH_EXECUTION_WORDS =
-  /(승인된?\s*(푸시|push)\s*실행|(푸시|push)\s*실행|이제\s*실제\s*(푸시|push)|execute\s+(the\s+)?approved\s+push|run\s+approved\s+push|push\s+approved\s+commit)/i;
-/** Deploy-only phrases (Sprint 3b, ADR-0049 — replaces the 3a `PR_DEPLOY_WORDS`) — a bare deploy request
- *  (no PR word) at GIT_PUSHED/PR_APPROVED gets a state-appropriate "deploy not supported" reply. PR phrases
- *  are handled by `interpretPrIntent`, NOT here. */
-const DEPLOY_ONLY_WORDS = /(배포|deploy|릴리즈|release)/i;
-
-/** Companion follow-ups that are unsupported once a PR is already created (Sprint 3d-D) — merge/deploy/release/
- *  reviewer/label/assignee. Consulted ONLY at PR_CREATED to answer "that's a future step" (no mutation). */
-const PR_CREATED_COMPANION_WORDS =
-  /(배포|deploy|릴리즈|release|머지|\bmerge\b|병합|auto\s*-?\s*merge|자동\s*머지|리뷰어|reviewer|라벨|\blabel\b|assignee|담당자)/i;
-
-/** Explicit PR/CI/check/review STATUS-query phrases (Sprint 3e, ADR-0055) — only consulted at PR_CREATED. A
- *  status-context noun (PR/풀리퀘/pull request/CI/체크/check(s)/리뷰/review) AND a query verb (상태/status/확인/
- *  어때/봐/알려/통과/열려) must BOTH be present, in either order. A bare "상태" with no PR/CI/check/review context
- *  never matches (CA Q1); merge/deploy/release/reviewer/label/assignee are NOT status phrases (they route to the
- *  companion-unsupported reply). */
-const PR_STATUS_NOUN = /(\bpr\b|풀\s*리퀘|pull\s*request|\bci\b|체크|checks?|리뷰|review)/i;
-const PR_STATUS_QUERY = /(상태|status|확인|어때|봐줘|봐|알려|통과(했|돼|되)|열려\s*있|open\s*\?)/i;
-
-/** Explicit merge-APPROVAL / merge phrases (Sprint 3f, ADR-0056) — only consulted at PR_CREATED, AFTER the
- *  status intent. A merge word is required; a merge QUESTION (가능/안전/되나/통과/?/mergeable) is NOT an approval
- *  request; only a merge word + a request/approval/execution verb triggers. "머지해줘" (execution wording) is
- *  treated as a merge-approval REQUEST (Sprint 3f records permission only). */
-const MERGE_WORD = /(머지|병합|\bmerge\b)/i;
-// A merge SAFETY/POSSIBILITY/STATUS/INSPECTION question (not an approval request) — a possibility/safety word,
-// a status/check/inspection word, or a trailing "?". Consulted only when a MERGE_WORD is present, so it never
-// affects non-merge phrases. "머지 상태 확인해줘"/"머지 확인해줘"/"머지 체크해줘" are inquiries, NOT approval requests
-// (Sprint 3f impl review — the "해줘" request verb must not turn an inquiry into an approval).
-const MERGE_QUESTION =
-  /(가능|안전|괜찮|되나|되나요|통과|상태|확인|봐줘|봐|알려|체크|\bcheck\b|\bstatus\b|\bmergeable\b|can\s+i|is\s+it|\?)/i;
-// An explicit merge approval/execution REQUEST ("머지 승인해줘"/"머지해줘"/"머지해도 되게 승인"/"merge this"/"approve merge").
-// (live QA 2026-10-07) the request verb must attach to the merge word itself ("머지해줘", "PR 머지해줘", "main에 머지해줘",
-// "머지 승인해줘", "병합해줘", "merge the PR", "approve merge") — a trailing "설명해줘" elsewhere in the sentence ("git rebase와
-// merge 차이를 간단히 설명해줘") is never a merge request.
-const MERGE_REQUEST_ATTACHED =
-  /((머지|병합)\s*(을|를)?\s*(좀\s*)?(해(?!결)|하자|시켜|진행|실행|승인|요청)|\bmerge\s+(this|it|the|now|pr|approval)\b|\bapprove\s+(the\s+)?(pr\s+)?merge\b|\b(request|create)\s+(a\s+)?merge\s+approval\b)/i;
-// A merge-EXECUTION verb (Sprint 3g, ADR-0057, CA change 1) — only consulted at MERGE_APPROVED/PR_MERGED, AFTER
-// the MERGE_QUESTION status guard. At MERGE_APPROVED the user already passed the CRITICAL merge-approval gate, so
-// a direct merge imperative (해줘/실행/실제/지금/승인된/now/execute/merge this/approved) IS an execution command. A
-// bare "머지"/"merge" noun (no verb) is NOT execution (→ composeMergeAlreadyApproved).
-const MERGE_EXECUTION_VERB = /(해줘|해\s*줘|실제|실행|지금|승인된|\bnow\b|\bexecute\b|merge\s+this|\bapproved\b)/i;
-// (Codex wave-8 review) the execution verb must attach to the merge word itself ("머지해줘", "머지 실행해줘", "merge
-// this PR", "merge now", "execute merge") — a trailing "해줘" on another verb ("머지 로그 요약해줘") is never a merge.
-const MERGE_EXECUTION_ATTACHED =
-  /((머지|병합)\s*(을|를)?\s*(좀\s*)?(해|실행|진행|하자|시켜)|\bmerge\s+(this|it|the|now|pr|approved)\b|\b(execute|run|do)\s+(the\s+)?(approved\s+)?merge\b|\bapproved\s+merge\b)/i;
-// Chain verbs foreign to the merge step (Codex wave-8 review): a merge bundled with push/deploy/sync/branch-delete/
-// force/reset/rebase is never a merge-EXECUTION command.
-const MERGE_EXECUTION_FOREIGN =
-  /(푸시|\bpush|배포|deploy|릴리즈|release|동기화|최신화|\bsync\b|\bpull\b(?!\s*request)|삭제|지워|제거|정리|\bdelete\b|\bremove\b|clean\s*up|\bcleanup\b|리베이스|rebase|리셋|\breset\b|강제|\bforce\b)/i;
-// Post-merge LOCAL main sync (Sprint 3h, ADR-0058) — only consulted at PR_MERGED/MAIN_SYNCED. A sync command needs
-// a sync VERB (동기화/최신화/받아와/sync/pull/update ... main) AND a MAIN target — a bare "sync"/"pull" or a bare "main"
-// alone never triggers.
-const SYNC_WORD = /(동기화|최신화|받아와|받아\s*줘|\bsync\b|\bpull\b(?!\s*request)|update\s+(local\s+)?main|당겨)/i;
-// Chain verbs foreign to the main sync step (Codex wave-8 review): push / pull-request / branch delete / deploy / force.
-const SYNC_FOREIGN =
-  /(푸시|\bpush|pull\s*request|풀\s*리퀘|삭제|지워|제거|\bdelete\b|\bremove\b|배포|deploy|릴리즈|release|리베이스|rebase|리셋|\breset\b|강제|\bforce\b)/i;
-const MAIN_WORD = /(\bmain\b|메인|origin\/main)/i;
-/** Any mention of the main-sync step (allow-list hint at PR_MERGED) — never an execution trigger on its own. */
-const MAIN_SYNC_MENTION = /(동기화|최신화|받아와|\bsync\b|update\s+(local\s+)?main|\bpull\s+main\b)/i;
-/** The origin to sync local main from (github.com origin; fixed like PR_BASE_BRANCH_POLICY). */
-const MAIN_SYNC_REMOTE = 'origin';
-// Post-merge LOCAL branch cleanup (Sprint 3i, ADR-0059) — only consulted at MAIN_SYNCED/BRANCH_CLEANED. A cleanup
-// command needs a cleanup VERB + a BRANCH word. A REMOTE qualifier routes to the "unsupported" reply (remote
-// deletion deferred); bulk/wildcard and a "main"-delete target never trigger.
-const CLEANUP_VERB = /(정리|삭제|제거|지워|지우|없애|\bcleanup\b|clean\s*up|\bdelete\b|\bremove\b|\bprune\b)/i;
-const CLEANUP_BRANCH_WORD = /(브랜치|\bbranch\b)/i;
-const CLEANUP_REMOTE_WORD = /(원격|\bremote\b|\borigin\b|github)/i;
-const CLEANUP_BULK = /(다\s*(삭제|지워|정리)|전부|모두|\ball\b|every|\*|패턴|pattern|wildcard)/i;
-const CLEANUP_MAIN_TARGET = /(^|\s)(main|메인|master|default(\s*branch)?|기본\s*브랜치)\s*(브랜치)?\s*(삭제|지워|delete|remove)/i;
-// Remote-branch-cleanup EXECUTION verb (Sprint 3j-A, ADR-0060) — only consulted at REMOTE_BRANCH_CLEANUP_APPROVED, to
-// route an execute imperative to the "execution is a future step (3j-B)" reply. A re-request (원격 브랜치 삭제해줘) is
-// caught first by interpretRemoteBranchCleanupIntent, so this needs only the pure execute verbs.
-const REMOTE_CLEANUP_EXECUTE_VERB = /(실행|진행|지금|승인된|\bexecute\b|\bproceed\b|\bnow\b|go\s*ahead)/i;
-// A bare execute command with no other content ("실행해줘", "진행해", "proceed", "go ahead") — the only cleanup-execution
-// form without a cleanup verb (Codex wave-8 review: "지금 몇 시야?" / "진행 상황 알려줘" must never delete a branch).
-const REMOTE_CLEANUP_BARE_EXECUTE =
-  /^((이제|지금|바로)\s*)*(실행|진행)\s*(해\s*줘요?|해\s*주세요|해|하자|해라|할게|시켜\s*줘)?\s*[.!~]*$|^(please\s+)?(proceed|execute|go\s*ahead|do\s+it)(\s+(it|now))?(\s+please)?\s*[.!]*$/i;
-// Chain verbs foreign to a branch-cleanup step (Codex wave-8 review): a push / merge / PR / sync / commit / deploy /
-// force phrase is never a branch cleanup — "execute approved push" must not reach the remote DELETE. "머지된 브랜치" /
-// "merged branch" are qualifiers, not merge verbs.
-const CLEANUP_FOREIGN_CHAIN_WORD =
-  /(푸시|\bpush|원격에\s*올려|리모트에\s*올려|머지(?!\s*된)|병합(?!\s*된)|\bmerge\b|\bpr\b|pull\s*request|풀\s*리퀘|동기화|최신화|\bsync\b|\bpull\b|커밋|\bcommit\b|배포|deploy|릴리즈|release|리베이스|rebase|리셋|\breset\b|강제|\bforce\b|\btag\b|태그)/i;
-// A statement / question / report about a cleanup is never a cleanup request (Codex wave-8 review): "브랜치 삭제했어",
-// "브랜치 정리 완료", "브랜치 삭제 로그를 요약해줘", "원격 브랜치 상태 알려줘".
-const CLEANUP_NOT_A_REQUEST =
-  /[?？]|(삭제|정리|제거)\s*(했|됐|되었|됨|완료|끝)|지웠|없앴|뭐|무엇|어떻게|왜|방법|설명|요약|보여|알려|로그|기록|이력|상태|확인|체크|\bhow\b|\bwhat\b|\bwhy\b|\bsummar|\bshow\b|\blogs?\b|\bexplain\b|\bstatus\b|\bcheck\b|\bdeleted\b|\bremoved\b/i;
-
-/** A PR-ish noun (Sprint 3b, ADR-0049) — only ever consulted at GIT_PUSHED/PR_APPROVAL_PENDING/PR_APPROVED.
- *  A bare 좋아/오케이/확인/진행해/다음 단계 never matches. A noun ALONE is not a PR-creation request (CA #1). */
-const PR_WORD = /(\bpr\b|pull\s*request|풀\s*리퀘|merge\s*request|\bmr\b)/i;
-/** Explicit PR-CREATION phrases (Sprint 3b, Q4 — CA #1/#2/#3): a PR-ish noun REQUIRES a create/open verb.
- *  Covers Korean spacing/order incl. "깃허브 PR 만들어줘" (CA #2) and "merge request 만들어줘"/"create merge
- *  request" (CA #3). A bare "PR"/"GitHub PR"/"pull request"/"merge request" is NOT sufficient (CA #1). */
-const PR_CREATION_WORDS =
-  /((깃허브\s*)?(\bpr\b|pull\s*request|풀\s*리퀘|merge\s*request|\bmr\b)\s*(만들|생성|열|올려)|github\s*pr\s*(만들|생성|열|올려)|open\s+(a\s+)?(pr|pull\s*request|merge\s*request)|create\s+(a\s+)?(pr|pull\s*request|merge\s*request))/i;
-/** Companions that must NOT ride along with a PR request (Sprint 3b, Constraint 10 / Q5 / CA #5) — only ever
- *  consulted when a PR word is present (2z CA #2 lesson). `\bmerge\b(?!\s*request)` keeps the GitLab synonym
- *  "merge request" a CREATE phrase while catching "auto merge" / "PR 만들고 merge". */
-const PR_FORBIDDEN_COMPANION =
-  /(배포|deploy|auto\s*-?\s*merge|자동\s*머지|\bmerge\b(?!\s*request)|머지|병합|릴리즈|release|--?force|강제|\bforce\b|(^|\s)-f(\s|$)|리셋|\breset\b|checkout|체크아웃|stash|스태시|rebase|리베이스|\btag\b|태그|브랜치\s*생성|create\s+branch)/i;
-
-/** Fixed PR base-branch product policy for Quoky Platform V2 (Sprint 3b, Q6/CA #6/#11 — CA option C). RepositoryInfo
- *  exposes NO default branch and no config default-branch source exists, so the base branch is a STATED PRODUCT
- *  POLICY, not an inferred/user-provided value. Revisit if a safer configured default-branch source is added. */
-const PR_BASE_BRANCH_POLICY = 'main';
-
-/** Git-commit display/approval bounds (Sprint 2x, CA #7). */
-const MAX_COMMIT_OUT_OF_SCOPE_SHOWN = 10;
-const MAX_COMMIT_CANDIDATE_FILES = 30;
-// Commit-message bounds/validation are shared with GitManager (Sprint 2y) — see ./commit-message.
-
-/**
- * Defensively normalize a git-status path to a safe project-relative path, or `null` when it is absolute,
- * contains a `..` traversal, is empty, or is otherwise not safely representable (Sprint 2x, CA #6). A `null`
- * path is never trusted — the caller surfaces it as out-of-scope and refuses to create a commit approval.
- */
-function safeRelativePath(raw: string): string | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-  if (/^([a-zA-Z]:[\\/]|[\\/])/.test(trimmed)) return null; // absolute (POSIX `/…` or Windows `C:\…`)
-  const normalized = normalizeRelativePath(trimmed);
-  if (normalized.length === 0) return null;
-  if (normalized === '..' || normalized.startsWith('../') || normalized.split('/').includes('..')) return null;
-  return normalized;
-}
-
-/**
- * Compose the HIGH commit-approval `reason` string (Sprint 2x, ADR-0045, CA #4/#11). Names the operation,
- * workspace, bounded candidate files, commit message, validation context, and that this records permission
- * only — actual git add/commit/push is NOT executed in Sprint 2x. NO raw diff / file content.
- */
-function buildCommitApprovalReason(
-  workspaceRef: WorkspaceRef,
-  candidateFiles: string[],
-  commitMessage: string,
-  validation: { command: string; status: string } | 'unavailable' | 'none',
-  newFiles: readonly string[] = [],
-): string {
-  const shown = candidateFiles.slice(0, MAX_COMMIT_CANDIDATE_FILES);
-  const omitted = candidateFiles.length - shown.length;
-  // ADR-0099 D3: a new file is marked so the approval covers the `git add` it implies.
-  const isNew = new Set(newFiles);
-  const files = `${shown.map((f) => (isNew.has(f) ? `${f} (new file)` : f)).join(', ')}${omitted > 0 ? ` (외 ${omitted}개 생략)` : ''}`;
-  const validationText =
-    validation === 'none'
-      ? 'no post-apply validation on record'
-      : validation === 'unavailable'
-        ? 'validation record could not be resolved'
-        : `latest validation: ${validation.command} ${validation.status}`;
-  return [
-    'operation: git commit approval planning',
-    `workspaceRef: ${workspaceRef.id}`,
-    `candidate files: ${files}`,
-    `proposed commit message: ${commitMessage}`,
-    validationText,
-    'risk: HIGH',
-    'no git add/commit/push has been performed',
-    'this approval records permission only; actual git add/commit/push is NOT executed in Sprint 2x — future execution requires a separate step',
-  ].join('\n');
-}
-
-/** Bound + strip a user-controllable git ref for display (Sprint 2z, CA #6) — trims, drops control chars,
- *  caps length. Never lets a raw/unbounded/control-char branch string reach a reason or reply. */
-function boundGitRef(ref: string): string {
-  return [...ref.trim()].filter((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0x7f).join('').slice(0, MAX_GIT_REF_DISPLAY);
-}
-
-/** The outcome of resolving the repository a remote step targets (ADR-0109 D2). */
-type HostingIdentityLookup =
-  | { ok: true; identity: RepositoryIdentity }
-  | { ok: false; refusal?: WorkspaceRepositoryRefusal | 'target-changed'; hint?: string };
-
-/** Exact provider/owner/repo equality of two repository identities (ADR-0109: anchored vs freshly resolved). */
-function sameRepositoryIdentity(a: RepositoryIdentity, b: RepositoryIdentity): boolean {
-  return a.provider === b.provider && a.owner === b.owner && a.repo === b.repo;
-}
-
-/**
- * Split + validate an upstream tracking ref into `<remote>/<branch>` on the FIRST '/' (Sprint 2z, ADR-0047,
- * CA #5). Returns `null` (→ block approval) when the ref is empty, over-long, has control chars, has no
- * '/', or has an empty remote/branch, or a remote containing whitespace. `branch` may contain '/' (e.g.
- * `feature/x`). Read-only; no git call.
- */
-function parsePushUpstream(upstream: string): { remote: string; branch: string } | null {
-  // ADR-0099 D5: one parser for approval, execution and the PR step (the pure push-target resolver's).
-  return parsePushUpstreamRef(upstream);
-}
-
-/**
- * Compose the CRITICAL push-approval `reason` (Sprint 2z, ADR-0047, CA #4/#6/#7/#13). Names the operation,
- * commit sha, bounded remote/branch/upstream, ahead count, that NO push has run, that this records
- * permission only (NOT executed in Sprint 2z; future execution needs a separate step), and the point-in-time
- * caveat. NO raw diff/file content and NO validation/test "push-ready" context (CA #13).
- */
-function buildPushApprovalReason(input: {
-  commitHash: string;
-  remote: string;
-  branch: string;
-  upstream: string;
-  ahead?: number;
-  mode?: PushMode;
-  /** ADR-0109: the bound repository (only when the per-workspace resolver is configured). */
-  repository?: RepositoryIdentity;
-}): string {
-  const target =
-    input.mode === 'new-remote-branch'
-      ? [
-          'mode: new remote branch (the branch has no upstream; the first push creates it on the remote)',
-          `remote: ${boundGitRef(input.remote)}`,
-          `branch: ${boundGitRef(input.branch)}`,
-          `creates: ${boundGitRef(input.upstream)}`,
-          'no force push; no upstream (tracking) configuration; no fetch',
-        ]
-      : [
-          `remote: ${boundGitRef(input.remote)}`,
-          `branch: ${boundGitRef(input.branch)}`,
-          `upstream: ${boundGitRef(input.upstream)}`,
-          `ahead: ${input.ahead ?? 0}`,
-        ];
-  return [
-    'operation: git push approval planning',
-    `commit: ${input.commitHash}`,
-    ...(input.repository ? [`repository: ${boundGitRef(input.repository.owner)}/${boundGitRef(input.repository.repo)}`] : []),
-    ...target,
-    'risk: CRITICAL',
-    'no git push has been performed',
-    'this approval records permission only; actual git push is NOT executed in Sprint 2z — future execution requires a separate step',
-    'this is a point-in-time snapshot; the branch is not guaranteed pushable later — future push execution must re-read Git state before pushing',
-  ].join('\n');
-}
-
-/**
- * Bounded CRITICAL PR-creation approval reason (Sprint 3b, ADR-0049, CA #6/#12). No diff/file content/paths.
- * ADR-0108 D5: records the exact title and the SHA-256 of (title, body) the approval covers (audit only — the
- * anchor's structured `prContentHash` is the authority; this text is never parsed). Explicitly states no PR
- * created / no deployment / no merge / permission-only / not-in-3b / future repository-hosting step, and the
- * "not verified on hosting, not guaranteed creatable" discipline.
- */
-function buildPrApprovalReason(input: {
-  pushedCommitHash: string;
-  headBranch: string;
-  baseBranch: string;
-  title: string;
-  contentHash: string;
-  owner?: string;
-  repo?: string;
-}): string {
-  return [
-    'operation: pull request creation approval planning',
-    // Target repository for human review (Sprint 3d-D) — owner/repo only, NEVER a token. Structured anchor
-    // fields (anchor.repositoryIdentity) are the authority; this reason text is NOT parsed later (CA change 10).
-    ...(input.owner && input.repo ? [`repository: ${boundGitRef(input.owner)}/${boundGitRef(input.repo)}`] : []),
-    `pushed commit: ${input.pushedCommitHash}`,
-    `head: ${boundGitRef(input.headBranch)}`,
-    `base: ${boundGitRef(input.baseBranch)}`,
-    `title: ${input.title}`,
-    `title/body sha256: ${input.contentHash}`,
-    'risk: CRITICAL',
-    'no pull request has been created',
-    'no deployment has been performed',
-    'no merge has been performed',
-    'this approval records permission only',
-    'actual PR creation is NOT performed in Sprint 3b',
-    'future execution requires a separate repository-hosting step',
-    'creating a PR mutates shared collaboration state (CI, notifications, reviews, branch protections, automations)',
-    'approval is based on the pushed context currently recorded by Quoky Platform; it does not verify the branch on the hosting provider and does not guarantee a PR can be created',
-  ].join('\n');
-}
-
-/**
- * Deterministic bounded PR MERGE-APPROVAL reason (Sprint 3f, ADR-0056). Records permission-only intent for a
- * specific PR context — owner/repo/PR number/URL/head/base/short commit/pr-source — and explicitly states no
- * merge/deploy/release was performed and that the approval does NOT verify checks/reviews/mergeability/safety.
- * NO token / raw diff / file content / check logs / review body / full GitHub response. Never parsed later.
- */
-function buildMergeApprovalReason(input: {
-  owner: string;
-  repo: string;
-  prNumber: number;
-  prUrl: string;
-  headBranch: string;
-  baseBranch: string;
-  commitHash: string;
-  reused: boolean;
-}): string {
-  return [
-    'operation: pull request merge approval planning',
-    `repository: ${boundGitRef(input.owner)}/${boundGitRef(input.repo)}`,
-    `pull request: #${input.prNumber} ${input.prUrl.slice(0, MAX_GIT_REF_DISPLAY)}`,
-    `head: ${boundGitRef(input.headBranch)}`,
-    `base: ${boundGitRef(input.baseBranch)}`,
-    `commit: ${input.commitHash.slice(0, 7)}`,
-    `pr source: ${input.reused ? 'connected-existing' : 'created'}`,
-    'risk: CRITICAL',
-    'no merge has been performed',
-    'no deployment has been performed',
-    'no release has been performed',
-    'this approval records permission only',
-    'actual merge execution is NOT performed in Sprint 3f and requires a separate repository-hosting step',
-    'merge is not guaranteed safe or mergeable by this approval; checks/reviews/hosting state are not verified',
-  ].join('\n');
-}
-
-/**
- * Build the CRITICAL remote-branch-cleanup approval reason (Sprint 3j-A, ADR-0060). States ONLY the requested
- * permission TARGET — repository, PR, the anchored remote head branch, and the expected head commit — plus the
- * risk and the permission-only disclaimers (CA change 4). It must NOT claim the branch currently exists, that its
- * SHA is still the expected one, that the PR is still merged, or that the delete will succeed / is safe now — those
- * are live execution checks for Sprint 3j-B. Deterministic; never parsed back.
- */
-function buildRemoteBranchCleanupApprovalReason(input: {
-  owner: string;
-  repo: string;
-  prNumber: number;
-  prUrl: string;
-  branch: string;
-  expectedHeadCommit: string;
-}): string {
-  return [
-    'operation: remote branch cleanup approval planning',
-    `repository: ${boundGitRef(input.owner)}/${boundGitRef(input.repo)}`,
-    `pull request: #${input.prNumber} ${input.prUrl.slice(0, MAX_GIT_REF_DISPLAY)}`,
-    `remote head branch (target): ${boundGitRef(input.branch)}`,
-    `expected head commit: ${input.expectedHeadCommit.slice(0, 7)}`,
-    'risk: CRITICAL',
-    'no remote branch has been deleted',
-    'no deployment has been performed',
-    'no release has been performed',
-    'this approval records permission only',
-    'actual remote branch deletion is NOT performed in Sprint 3j-A and requires a separate 3j-B execution step',
-    'branch existence, current commit, PR merged state, and delete safety are NOT asserted by this approval; they are verified live at execution',
-  ].join('\n');
-}
-
-/** Map an Execution Orchestrator outcome status to the ResponseComposer reply status. */
-function toReplyStatus(status: ExecutionOutcomeStatus): ExecutionReplyStatus {
-  return status as unknown as ExecutionReplyStatus; // identical string values (ADR-0032)
-}
-
-/**
- * Split a proposal into in-scope changes (path normalizes to a validated targetFiles entry) and
- * everything else, reported as a warning and never read/rendered as content (AI Code Generation
- * Preview, ADR-0038; Unified Diff Preview, ADR-0039). AI-proposed paths are untrusted; targetFiles is
- * the authoritative scope. Exported (not a private class method) so it is directly unit-testable,
- * matching `target-scope.ts`'s pattern.
- *
- * Preserves each in-scope `ProposedChange`'s `delete`/`newContent` shape exactly as given — spreads
- * `change` and overrides only `path`, never reconstructing a new object that could default a field the
- * AI's proposal didn't carry (Sprint 2r, ADR-0039, CA Round 1 Required Change #6).
- */
-export function filterInScopeChanges(
-  proposal: ProposedChange[],
-  targetFiles: string[],
-): { inScope: ProposedChange[]; outOfScopeWarnings: string[] } {
-  const normalizedTargets = new Map(targetFiles.map((p) => [normalizeRelativePath(p), p]));
-  const inScope: ProposedChange[] = [];
-  const outOfScopeWarnings: string[] = [];
-  for (const change of proposal) {
-    const validatedPath = normalizedTargets.get(normalizeRelativePath(change.path));
-    if (!validatedPath) {
-      outOfScopeWarnings.push(change.path);
-      continue;
-    }
-    inScope.push({ ...change, path: validatedPath }); // validated value, never the AI's raw path
-  }
-  return { inScope, outOfScopeWarnings };
-}
-
-/** Sprint 2q's original filtering + text-excerpt shaping (ADR-0038) — now a thin wrapper over
- *  {@link filterInScopeChanges}. Signature/behavior unchanged; retained for compatibility (ADR-0039). */
-export function toCodeChangePreview(proposal: ProposedChange[], targetFiles: string[]): CodeChangePreview {
-  const { inScope, outOfScopeWarnings } = filterInScopeChanges(proposal, targetFiles);
-  const changes: CodeChangePreview['changes'] = inScope.map((c) => ({
-    path: c.path,
-    kind: c.delete ? 'delete' : 'update',
-    ...(c.delete ? {} : { excerpt: c.newContent }),
-  }));
-  return { changes, outOfScopeWarnings };
-}
-
-/**
- * Shape an already-guarded `WorkspaceManager.diff()` result into the composer-facing DTO (Sprint 2r,
- * ADR-0039). Pure data reshaping — no bounding/truncation-notice text here; `ResponseComposer` owns
- * that (ADR-0032). Callers must have already rejected an empty `diff.files` before calling this, and any
- * `changeKind: 'add'` entry must already have passed the explicit-new-file + non-existence guard (F3-A,
- * Sprint 4c-Follow-up-3) — an `add` here is a confirmed new-file preview, rendered against empty content.
- */
-export function toCodeDiffPreview(diff: WorkspaceDiff, outOfScopeWarnings: string[]): CodeDiffPreview {
-  const changes: CodeDiffPreview['changes'] = diff.files.map((f) => ({
-    path: f.path, // already the validated targetFiles value passed into workspace.diff
-    // 'modify' -> 'update'; 'add' is a guarded new-file preview (F3-A); 'delete' unchanged.
-    kind: f.changeKind === 'delete' ? 'delete' : f.changeKind === 'add' ? 'add' : 'update',
-    unified: f.unified, // '' when binary or size-skipped by the provider
-    binary: f.binary,
-    // ADR-0099 D1 byte bounds for the apply-capable footer; only when the provider reported them.
-    ...(f.oldSize !== undefined ? { oldSize: f.oldSize } : {}),
-    ...(f.newSize !== undefined ? { newSize: f.newSize } : {}),
-  }));
-  return { changes, outOfScopeWarnings };
-}
-
-/** The item source of an A6 receipt (the entry's family, or the resolved target's source). */
-function nlActionReceiptSource(command: NlSelectedCommand): NlItemSource | undefined {
-  if (command.entryId.startsWith('todo.')) return 'todo';
-  if (command.entryId.startsWith('reminder.')) return 'reminder';
-  return command.target?.source;
-}
-
-/** ADR-0122 D2.5: thrown inside a connector-write execution claim when the live grant no longer allows the write. */
-export class SurfaceDeniedError extends Error {
-  constructor(readonly decision: Extract<SurfaceDecision, { allow: false }>) {
-    super('SURFACE_DENIED');
-    this.name = 'SurfaceDeniedError';
-  }
-}
 
 /** ADR-0122 D2.3: the anchor statuses whose pending decision intercepts every turn. */
 const PENDING_DECISION_ANCHOR_STATUSES: ReadonlySet<string> = new Set([
@@ -9141,37 +8561,3 @@ export class ConversationRuntime {
   }
 }
 
-/**
- * Owner decision B (2026-10-22): the confirmation a handler reply asks the owner for, when it is to be kept as the open
- * question: only a deterministic reply that did not fail (a FAILED reply asks nothing; a summary or write draft carries
- * none). Pure.
- */
-export function nlConfirmToRecord(handled: TurnHandlerOutcome): TurnHandlerReply['nlConfirm'] {
-  if (handled.kind === 'summarize' || handled.kind === 'write-draft' || handled.status === 'FAILED') return undefined;
-  return handled.nlConfirm;
-}
-
-/** Owner decision of 2026-10-28: a small in-memory map of shown item words (at most 256 sessions, oldest dropped first). */
-class BoundedShownItems {
-  private readonly map = new Map<string, { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] }>();
-  get(key: string): { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] } | undefined {
-    return this.map.get(key);
-  }
-  set(key: string, value: { readonly turnId: string; readonly words: readonly string[]; readonly titles: readonly string[] }): void {
-    this.map.delete(key);
-    this.map.set(key, value);
-    while (this.map.size > 256) this.map.delete(this.map.keys().next().value as string);
-  }
-}
-
-/**
- * Codex review of 7f7e8d32: the held item words attach to a `lastSelection` only when they were taken from the very turn
- * that recorded it (the same turn id). Inbound turns run concurrently: a listing that finishes after another overwrites
- * the held words, and a completion-time check would then attach them to the other listing's record. Pure.
- */
-export function nlHeldItemWordsFor(
-  held: { readonly turnId: string; readonly words: readonly string[] } | undefined,
-  last: { readonly turnId?: string },
-): readonly string[] | undefined {
-  return held !== undefined && last.turnId !== undefined && held.turnId === last.turnId ? held.words : undefined;
-}
