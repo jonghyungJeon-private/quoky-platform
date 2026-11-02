@@ -31437,7 +31437,10 @@ and D9 still governs every turn that goes to chat.
   (scenario `knownGap` and turn `knownGap: true` restored, expectation unchanged). Backlog: switch it on only after a
   Strict gate that passes every run, measured on golds that were not used to tune the prompt (for example a stronger
   model for this one call, with no prompt change).
-- **Agent-plan gate of 55b99c12: FAILED, run checks 2 of 3 (multi-step pooled 507/513 = 98.8%).** Run 2 had one wrong
+- **Agent-plan gate, archive `d4-55b99c12`: FAILED, run checks 2 of 3 (multi-step pooled 507/513 = 98.8%).** The
+  gate run built `dist` once from 55b99c12 at its start (10:56 KST); the report's `plan.gitHead` reads 4161faf4 because
+  that source-only commit (the classifier prompt, its golds and tests; nothing the agent planner reads) landed in the
+  worktree at 11:25 KST, before the agent-plan mode started at 11:33, without a rebuild. The measured code is 55b99c12. Run 2 had one wrong
   capture on a negative: `neg-033` "드라이브 중에 듣기 좋은 노래 추천해줘" (드라이브 = a car drive) planned as
   `drive.files`; runs 1 and 3 answered none. The same case failed the same way 1 run in 3 at f6854a87 (2026-10-29, before
   this branch's Drive change), reported then as selector variance after the selector effort went to high, with no
