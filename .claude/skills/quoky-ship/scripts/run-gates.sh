@@ -22,7 +22,7 @@
 # A killed run (TERM / INT / HUP) writes a terminal DONE marker; `status` also checks that the RUNNING pid is alive.
 #
 # Environment: GATES_MODEL (haiku), GATES_RUNS (3), GATES_CONCURRENCY (4), GATES_REDTEAM_MODEL (unset: the Claude CLI
-# default summariser), QUOKY_USAGE_LIMIT_USD (218), GATES_USAGE_PCT (95), GATES_RETRY_WAIT_SEC (900, used when no
+# default summariser), GATES_HELP_SCOPE_MODEL (unset: the classifier's production stronger tier), QUOKY_USAGE_LIMIT_USD (218), GATES_USAGE_PCT (95), GATES_RETRY_WAIT_SEC (900, used when no
 # active usage block is reported), GATES_RESET_MARGIN_SEC (60, slack after a block end), GATES_NO_RETRY,
 # QUOKY_EVAL_ARCHIVE (archive root).
 #
@@ -146,6 +146,9 @@ cli_of() {
 common_args() {
   case "$1" in
     r2-redteam) printf -- '--runs %s' "$RUNS"; [ -n "${GATES_REDTEAM_MODEL:-}" ] && printf -- ' --model %s' "$GATES_REDTEAM_MODEL" ;;
+    # help-scope: --model / --effort override the classifier's STRONGER tier, so GATES_MODEL (the selector's haiku) must
+    # not reach it; the gate measures the production default (sonnet / low) unless GATES_HELP_SCOPE_MODEL is set.
+    help-scope) printf -- '--runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_HELP_SCOPE_MODEL:-}" ] && printf -- ' --model %s' "$GATES_HELP_SCOPE_MODEL" ;;
     *) printf -- '--model %s --runs %s --concurrency %s' "$MODEL" "$RUNS" "$CONC" ;;
   esac
   return 0
