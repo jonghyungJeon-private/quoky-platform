@@ -34,7 +34,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
-import { Capability, type AiProvider } from '@quoky/core';
+import { Capability, type AiProvider, type AiRequest } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import {
   EXIT_INVALID_PROVIDER,
@@ -114,12 +114,18 @@ export const EXIT_INVALID = EXIT_INVALID_PROVIDER;
 export function guardRunProvider(
   provider: AiProvider,
   stderr: (line: string) => void,
-  run: { readonly concurrency: number; readonly maxCalls: number; readonly canary?: (provider: AiProvider) => Promise<CanaryResult> },
+  run: {
+    readonly concurrency: number;
+    readonly maxCalls: number;
+    readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
+    /** D4: the tier the run's calls ask for; the default canary then probes the same model (Codex P2 of 4878a6f9). */
+    readonly intentSelectionTier?: AiRequest['intentSelectionTier'];
+  },
 ): GuardedProvider {
   return guardEvalProvider(provider, {
     concurrency: run.concurrency,
     maxCalls: run.maxCalls,
-    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<CanaryResult>)(provider) : providerCanary(provider, undefined, Capability.INTENT_SELECTION),
+    canary: run.canary !== undefined ? () => (run.canary as (provider: AiProvider) => Promise<CanaryResult>)(provider) : providerCanary(provider, undefined, Capability.INTENT_SELECTION, run.intentSelectionTier),
     onTrip: (trip) => stderr(formatTrip(trip)),
   });
 }
@@ -661,7 +667,7 @@ async function runHelpScopeCli(settings: { model: string; effort?: string; runs:
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, intentSelectionTier: plan.tier, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   const records = await runHelpScopeEvaluation({ cases: corpus.cases, plan, provider: guard.provider });
   await guard.settle();

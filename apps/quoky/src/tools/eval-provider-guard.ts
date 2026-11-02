@@ -19,7 +19,7 @@
  * Sporadic failures below the threshold are not touched: the call's error reaches the eval exactly as before and is
  * scored as it is today (timeouts and parse failures included).
  */
-import { AiFailureKind, AiProviderError, Capability, type AiProvider } from '@quoky/core';
+import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
 
 /** Exit code of an eval run invalidated by a provider outage (distinct from 0 pass, 1 fail, 2 usage, 3 blocked, 4 non-gating). */
 export const EXIT_INVALID_PROVIDER = 5;
@@ -88,13 +88,19 @@ export type CanaryResult = boolean | string;
  * The default canary: one tiny call through the SAME provider client (never counted in the run's outcomes). Resolves true
  * when the provider answers, else the content-free failure reason (limit, auth, outage, timeout).
  */
-export function providerCanary(provider: AiProvider, timeoutMs: number = CANARY_TIMEOUT_MS, evaluated: Capability = Capability.SUMMARIZATION): () => Promise<CanaryResult> {
+export function providerCanary(
+  provider: AiProvider,
+  timeoutMs: number = CANARY_TIMEOUT_MS,
+  evaluated: Capability = Capability.SUMMARIZATION,
+  intentSelectionTier?: AiRequest['intentSelectionTier'],
+): () => Promise<CanaryResult> {
   return async () => {
     // The canary must probe the capability the run evaluates: the provider routes its model per capability (e.g. the intent
     // selection model), so another capability would be answered by a different model.
     const capability = provider.capabilities.find((entry) => entry.capability === evaluated)?.capability ?? provider.capabilities[0]?.capability ?? evaluated;
     try {
-      await provider.execute({ capability, prompt: CANARY_PROMPT, timeoutMs });
+      // D4: a run whose calls ask for the stronger selection tier probes that tier too (its model, not the router's).
+      await provider.execute({ capability, prompt: CANARY_PROMPT, timeoutMs, ...(intentSelectionTier !== undefined ? { intentSelectionTier } : {}) });
       return true;
     } catch (error) {
       return providerFailureReason(error);

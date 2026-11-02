@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AiFailureKind, AiProviderError, Capability, type AiProvider, type AiRequest } from '@quoky/core';
 import { CANARY_CLAUSE, CANARY_PLAN_LINE, TOTAL_CANARY_CALLS, EXIT_INVALID_PROVIDER, MAX_CANARY_CALLS, ProviderOutageAbort, formatProviderOutcomes, guardEvalProvider, providerCanary, providerFailureReason, resolveThresholds, summarizeLatency, timeEvalProvider } from './eval-provider-guard';
-import { EXIT_INVALID as EXIT_INVALID_NL, runCli as runNlCli, type CliDeps } from './nl-intent-eval-cli';
+import { EXIT_INVALID as EXIT_INVALID_NL, guardRunProvider, runCli as runNlCli, type CliDeps } from './nl-intent-eval-cli';
 import { EXIT_INVALID as EXIT_INVALID_PLAN, runCli as runAgentPlanCli, type AgentPlanCliDeps } from './agent-plan-eval-cli';
 import { loadAgentPlanCorpus } from './agent-plan-eval';
 import { EXIT_INVALID as EXIT_INVALID_REDTEAM, runCli as runRedTeamCli, type RedTeamCaseRecord, type RedTeamDeps } from './nl-r2-redteam-cli';
@@ -363,6 +363,43 @@ describe('guard robustness (CA review W5 / W6)', () => {
     await providerCanary(both, undefined, Capability.INTENT_SELECTION)();
     await providerCanary(both)();
     expect(seen.map((req) => req.capability)).toEqual([Capability.INTENT_SELECTION, Capability.SUMMARIZATION]);
+  });
+
+  it('D4 (Codex P2 of 4878a6f9): a stronger-tier outage with a healthy default model is INVALID, not scored', async () => {
+    // Only the stronger tier fails (sonnet down, haiku up): the run's own canary must see the outage.
+    let calls = 0;
+    const tierDown = (): AiProvider => ({
+      id: 'tier-down',
+      capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async (req) => {
+        calls += 1;
+        if (req.intentSelectionTier === 'stronger') throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'limit');
+        return { text: 'ok' };
+      },
+    });
+    const tiered: AiRequest = { ...request, intentSelectionTier: 'stronger' };
+    const run = async (intentSelectionTier?: 'stronger') => {
+      calls = 0;
+      const guard = guardRunProvider(tierDown(), () => undefined, { concurrency: 1, maxCalls: 100, ...(intentSelectionTier !== undefined ? { intentSelectionTier } : {}) });
+      for (let index = 0; index < 60; index += 1) await guard.provider.execute(tiered).catch(() => undefined);
+      await guard.settle();
+      return { invalid: guard.report().invalidReason, calls };
+    };
+    const probed = await run('stronger');
+    expect(probed.invalid).toBeDefined();
+    expect(probed.calls).toBeLessThan(60);
+    // Without the tier the canary would answer from the healthy model and the outage would be scored as misses.
+    expect((await run()).invalid).toBeUndefined();
+  });
+
+  it('D4 (Codex P2 of 4878a6f9): a canary for a stronger-tier run probes that tier, the default canary carries none', async () => {
+    const seen: AiRequest[] = [];
+    const selector: AiProvider = { ...scripted(() => undefined), capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }], execute: async (req) => (seen.push(req), { text: 'ok' }) };
+    await providerCanary(selector, undefined, Capability.INTENT_SELECTION, 'stronger')();
+    await providerCanary(selector, undefined, Capability.INTENT_SELECTION)();
+    expect(seen.map((req) => req.intentSelectionTier)).toEqual(['stronger', undefined]);
+    expect('intentSelectionTier' in (seen[1] as object)).toBe(false);
   });
 });
 
