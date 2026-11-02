@@ -178,10 +178,12 @@ export class AgentPlanExecutor {
 
     const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}) }, budget);
     if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
-    // A call that ended after the wall is a breach, but its result is kept.
     budget.checkWall();
+    // Any breach or refusal during the call (a spent wall, a refused reservation) ends the step `not-run` (bound) and the run
+    // partial, whatever the port returned: a port that exhausted its reservations and then reports success is still cut off.
+    if (budget.breach !== undefined) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
     if (!response.ok) {
-      if (response.code === 'BOUND' || budget.breach !== undefined) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+      if (response.code === 'BOUND') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
       return { step: number, kind: 'read', entryId, status: 'failed', errorCode: closedCode(response.code) };
     }
     const projection = projectStructure(entryId, response.items);

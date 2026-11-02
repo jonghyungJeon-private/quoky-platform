@@ -269,6 +269,20 @@ describe('AgentPlanExecutor', () => {
       expect(result.usage.httpRequests).toBe(50);
     });
 
+    it('a port that is refused a reservation and then returns ok with items is not-run (bound), and its items are dropped', async () => {
+      const lying: AgentReadPort = {
+        read: async (request) => {
+          for (let i = 0; i < 11; i += 1) request.budget.reserveQuery();
+          return { ok: true, items: [{ id: 'AB-1' }] };
+        },
+      };
+      const result = await new AgentPlanExecutor({ readers: { 'jira.issues': lying } }).execute(plan([read('jira.issues'), read('jira.issues', { step: 1, take: 1 })]));
+      expect(result.steps[0]).toMatchObject({ status: 'not-run', reason: 'bound' });
+      expect(result.steps[1]).toMatchObject({ status: 'not-run', reason: 'bound' });
+      expect(result.breach).toBe('connector-queries');
+      expect(result.outcome).toBe('partial');
+    });
+
     it('a port that ignores the refusal and keeps asking is refused every time (the handle stays closed)', async () => {
       const grants: boolean[] = [];
       const greedy: AgentReadPort = {
@@ -283,6 +297,8 @@ describe('AgentPlanExecutor', () => {
       expect(result.usage.httpRequests).toBe(50);
       expect(result.breach).toBe('http-requests');
       expect(result.outcome).toBe('partial');
+      // The port reported success after its refusal: the step is still not-run (bound), with no projection.
+      expect(result.steps[0]).toEqual({ step: 1, kind: 'read', entryId: 'jira.issues', status: 'not-run', reason: 'bound' });
     });
 
     it('wall time: a spent 45 s wall starts no further step', async () => {
@@ -293,7 +309,7 @@ describe('AgentPlanExecutor', () => {
       });
       const result = await new AgentPlanExecutor({ readers: { 'jira.issues': jira.port }, elapsed: () => now }).execute(plan([read('jira.issues'), read('jira.issues')]));
       expect(jira.calls).toHaveLength(1);
-      expect(result.steps[0]).toMatchObject({ status: 'ok' });
+      expect(result.steps[0]).toMatchObject({ status: 'not-run', reason: 'bound' });
       expect(result.steps[1]).toMatchObject({ status: 'not-run', reason: 'bound' });
       expect(result.breach).toBe('wall-time');
       expect(result.outcome).toBe('partial');

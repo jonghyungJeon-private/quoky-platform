@@ -14,6 +14,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   neg-033 exception was merge-only (no D11 carve-out for `active`); separate `agent-redteam.s2-read.v1.json` of at least 300
   cases; the 7-day shadow clock restarts on the final planner; egress guard `enforce` before `active`. Record: DECISIONS
   "ADR-0121 S2 implementation note — P3-3a".
+- **Not enforced yet.** The 50-HTTP ceiling is a port contract (reserve before each request); hard enforcement needs the adapter slice's budgeted HTTP client (no raw fetch) and its test.
 - **Next (S2).** Quarantined M2 and reply assembler (P3-3b), read+write path, S2 read red-team, gate campaign, release.
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
