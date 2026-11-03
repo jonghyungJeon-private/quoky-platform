@@ -12,3 +12,35 @@ export * from './read-write-probe';
 export * from './run-bounds';
 export * from './structure-projector';
 export * from './plan-executor';
+// The summariser's value exports are pure functions and constants only: the sealed summary class, its accessor, the grant
+// seams and every `...ForTest` name stay module-private (pinned by quarantined-summary.test.ts).
+export {
+  AGENT_M2_MAX_ITEMS,
+  AGENT_M2_OUTPUT_MAX_BYTES,
+  AGENT_M2_SUMMARY_MAX_CHARS,
+  AGENT_M2_TOPICS_MAX,
+  AGENT_M2_TOPIC_MAX_CHARS,
+  AGENT_SUMMARY_READOUT_SOURCE,
+  AGENT_SUMMARY_WORK_TEXT_PENDING,
+  QUARANTINED_LISTING_ONLY_REASONS,
+  estimateInputTokens,
+  parseQuarantinedOutput,
+  renderQuarantinedPrompt,
+  summaryReadiness,
+  validateSourceDocuments,
+} from './quarantined-summary';
+export type {
+  AgentSourceDocument,
+  AgentSummarySchemaId,
+  AgentSummarySource,
+  ModelDerivedLabel,
+  QuarantinedCallAudit,
+  QuarantinedListingOnlyReason,
+  QuarantinedModelRefusal,
+  QuarantinedOutputFailure,
+  QuarantinedSummary,
+  QuarantinedSummarizerModel,
+  SummaryEgressGrant,
+  SummaryEntry,
+} from './quarantined-summary';
+export * from './reply-assembler';

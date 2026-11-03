@@ -1,8 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ConversationRuntimeDeps } from '../conversation-runtime';
-import type { AgentRunServiceDeps } from './agent-run-service';
-import type { AgentPlanExecutorDeps, AgentReadPort, AgentReadRequest } from './plan-executor';
 
 // ADR-0121 D5 / D12 (stage S2 P1): the agent's boundary, pinned.
 // - Import ALLOWLIST (CA review): every module specifier of `application/agent/` is a domain module, one of the two ports
@@ -33,6 +31,10 @@ function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;
   if (specifier === '../../ports/ai-provider.port' || specifier === '../../ports/logger.port') return true;
   if (specifier === '../credential-guard') return true;
+  // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
+  if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;
+  // The document action-claim guard (pure: its only import is a type), run on every model-derived summary line.
+  if (specifier === '../document-summary-claim-guard') return true;
   // ADR-0121 A1-E1: the frozen ADR-0104 help grammar (a pure module with no imports) for the help split.
   if (specifier === '../help-intent/help-intent') return true;
   if (ALLOWED_NL_ROUTING.some((name) => specifier === `../nl-routing/${name}`)) return true;
@@ -53,9 +55,13 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'read-write-probe.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'unbounded-ask.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'unbounded-ask.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
+    // The claim guard the summaries pass through is pure: its only import is a type (erased).
+    const claimGuard = readFileSync(new URL('../document-summary-claim-guard.ts', DIR), 'utf8');
+    expect(specifiersOf(claimGuard)).toEqual(['./untrusted-document-readout']);
+    expect(claimGuard).toMatch(/^import type \{ UntrustedDocumentSource \} from '\.\/untrusted-document-readout';$/m);
     const refused = [
       '../memory-writer',
       '../reminders/reminder-repository',
@@ -143,20 +149,17 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
     }
   });
 
-  it('the service deps type holds only the router, the actor repository, the logger and configuration', () => {
-    const keys: Record<keyof AgentRunServiceDeps, true> = { mode: true, router: true, actors: true, logger: true, timeZone: true, timeoutMs: true, elapsed: true, caps: true };
-    expect(Object.keys(keys).sort()).toEqual(['actors', 'caps', 'elapsed', 'logger', 'mode', 'router', 'timeZone', 'timeoutMs']);
-  });
-
-  // ADR-0121 D5 / S2 P3-3a: the executor's dependency type holds only narrow read ports, the logger and test overrides. A
-  // port is one `read` function over a request of closed fields; there is no writer, runner, fetch, MCP tool or repository.
-  it('the executor deps type holds only read ports, the logger and test overrides; a port is one read function', () => {
-    const deps: Record<keyof AgentPlanExecutorDeps, true> = { readers: true, logger: true, elapsed: true, bounds: true };
-    expect(Object.keys(deps).sort()).toEqual(['bounds', 'elapsed', 'logger', 'readers']);
-    const port: Record<keyof AgentReadPort, true> = { read: true };
-    expect(Object.keys(port)).toEqual(['read']);
-    const request: Record<keyof AgentReadRequest, true> = { entryId: true, args: true, keys: true, remainingMs: true, signal: true, budget: true };
-    expect(Object.keys(request).sort()).toEqual(['args', 'budget', 'entryId', 'keys', 'remainingMs', 'signal']);
+  // The deps and request key sets are pinned at compile time in `agent-contract-check.ts` (a non-test file under `tsc -b`):
+  // a test file is not type-checked, so a key-set assertion here would be vacuous.
+  it('the dependency contracts are pinned in a compiled file that nothing imports at runtime and the index does not export', () => {
+    const check = SOURCES.find((source) => source.name === 'agent-contract-check.ts');
+    expect(check).toBeDefined();
+    const text = (check as { text: string }).text;
+    for (const name of ['AgentPlanExecutorDeps', 'AgentSummarizerDeps', 'AgentReadPort', 'AgentReadRequest', 'QuarantinedSummarizerModel', 'AgentRunServiceDeps']) expect(text).toContain(name);
+    expect(text).toContain("'summarizer'");
+    expect(text).toContain("'auditId'");
+    expect(text).not.toMatch(/^export (?:const|function|class|let)\b/m);
+    for (const source of SOURCES) expect(source.text, source.name).not.toContain('agent-contract-check');
   });
 
   it('the executor, the projector and the bounds name no collaborator beyond the allowlist (calibration of the executor files)', () => {
@@ -183,5 +186,37 @@ describe('ConversationRuntimeDeps baseline (ADR-0032 M3, ADR-0121 S2 note)', () 
     };
     expect(Object.keys(keys).filter((key) => key !== 'runtimeProviderRouting')).toHaveLength(38);
     expect(Object.keys(keys)).toContain('agentRuns');
+  });
+});
+
+describe('Core reaches the process only through the test-seam barrier (ADR-0121 P3-3b, R1)', () => {
+  const CORE = new URL('../../', import.meta.url);
+  const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const PROCESS = /\bprocess\s*[.?]|\bglobalThis\b[^;\n]*\bprocess\b/;
+  function coreSources(dir: URL, relative: string, out: { path: string; text: string }[]): { path: string; text: string }[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = new URL(entry.isDirectory() ? `${entry.name}/` : entry.name, dir);
+      if (entry.isDirectory()) coreSources(child, `${relative}${entry.name}/`, out);
+      else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) out.push({ path: `${relative}${entry.name}`, text: strip(readFileSync(child, 'utf8')) });
+    }
+    return out;
+  }
+
+  it('assertTestRuntime in quarantined-summary.ts is the only reference to `process` in packages/core/src, besides deadline-policy.ts (process.hrtime)', () => {
+    const files = coreSources(CORE, '', []);
+    expect(files.some((file) => file.path === 'application/agent/quarantined-summary.ts')).toBe(true);
+    const hits = files.filter((file) => PROCESS.test(file.text)).map((file) => file.path).sort();
+    // `deadline-policy.ts` is the one pre-existing reference (`process.hrtime`, a monotonic clock); nothing else may name the process.
+    expect(hits).toEqual(['application/agent/quarantined-summary.ts', 'application/deadline-policy.ts']);
+    const own = files.find((file) => file.path === 'application/agent/quarantined-summary.ts')?.text ?? '';
+    const barrier = /function assertTestRuntime\(\): void \{[\s\S]*?\n\}/.exec(own)?.[0] ?? '';
+    expect(barrier).toMatch(PROCESS);
+    expect(own.replace(barrier, '')).not.toMatch(PROCESS);
+    const deadline = files.find((file) => file.path === 'application/deadline-policy.ts')?.text ?? '';
+    expect(deadline.split('\n').filter((line) => PROCESS.test(line)).map((line) => line.trim())).toEqual(['nowMs: () => Number(process.hrtime.bigint()) / 1_000_000,']);
+    // The scan catches what it must.
+    expect(PROCESS.test('const x = process.env.A;')).toBe(true);
+    expect(PROCESS.test('(globalThis as { process?: unknown }).process')).toBe(true);
+    expect(PROCESS.test('const processed = 1;')).toBe(false);
   });
 });
