@@ -249,7 +249,11 @@ describe('the recipient request (production-equivalent, tool-less)', () => {
     // 2026-10-28, so the production argv is built at that frozen effort explicitly.
     expect(CLAUDE_EFFORT).toBe('low');
     const production = new ClaudeCliProvider('claude', { model: 'sonnet', effortByCapability: { [Capability.GENERAL_CHAT]: CLAUDE_EFFORT } }).buildArgs({ capability: Capability.GENERAL_CHAT });
-    expect(claudeArgv('sonnet')).toEqual(production);
+    // ADR-0115 D8 (2026-11-03): production adds `--output-format json` to read token usage; the frozen G7 harness reads
+    // plain-text stdout, so it is the production argv without that one option pair (every isolation flag still equal).
+    const at = production.indexOf('--output-format');
+    expect(production.slice(at, at + 2)).toEqual(['--output-format', 'json']);
+    expect(claudeArgv('sonnet')).toEqual([...production.slice(0, at), ...production.slice(at + 2)]);
     expect(claudeArgv('claude-sonnet-4-5').slice(-2)).toEqual(['--tools', '']);
     expect(() => claudeArgv('sonnet; rm -rf /')).toThrow();
   });
