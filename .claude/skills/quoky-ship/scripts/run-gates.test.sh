@@ -130,7 +130,7 @@ rc=$(FAKE_CALLS=100 FAKE_COST_FILE="$T/idle.cost" gates e9c action); check "idle
 has "idle window recorded as 0%" "$T/arch/e9c/estimate.txt" "current_5h_usage_pct=0.0"
 
 # 11. numeric validation (hard block, even with owner-ok)
-for kv in GATES_RATE_PCT_PER_CALL=garbage GATES_RATE_PCT_SONNET=0 GATES_MAX_EST_PCT=abc GATES_STOP_PCT=101 GATES_STOP_PCT=0 GATES_WATCH_SEC=1.5 GATES_STOP_GRACE_SEC=x GATES_RATE_PCT_PER_CALL=; do
+for kv in GATES_RATE_PCT_PER_CALL=garbage GATES_RATE_PCT_SONNET=0 GATES_MAX_EST_PCT=abc GATES_STOP_PCT=101 GATES_STOP_PCT=0 GATES_WATCH_SEC=1.5 GATES_WATCH_SEC=08 GATES_STOP_GRACE_SEC=x GATES_RATE_PCT_PER_CALL= GATES_RUNS=x GATES_CONCURRENCY=0 GATES_RETRY_WAIT_SEC=-1 GATES_RESET_MARGIN_SEC=abc; do
   n="e11-$(printf '%s' "$kv" | tr -c 'A-Za-z0-9\n' '-')"
   rc=$(export "$kv" GATES_OWNER_OK=20261104-try; gates "$n" action); check "invalid $kv blocked" "$rc" 2
   has "reason for $kv" "$T/arch/$n/estimate.txt" "invalid configuration"

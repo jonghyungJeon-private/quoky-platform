@@ -218,10 +218,13 @@ group_verified() {
     fi
   fi
   group_has_members "$pgid" || return 2
-  cur=$(lstart_of "$pgid")
-  if [ -n "$cur" ] && [ "$(pgid_of "$pgid")" = "$pgid" ]; then   # the leader is alive: its start time must match
-    if [ -z "$want" ] || [ "$cur" != "$want" ]; then
-      log "group signal refused: leader $pgid start time '$cur' != recorded '${want:-none}' (pid reuse?)"; return 1
+  # While a process with the leader's pid is alive in this group, its start time must be read and match the recorded one;
+  # a failed or empty lookup is refused (never treated as verified). With the leader gone, the group's existing members
+  # prove the pgid is not reused (POSIX: a pgid is not reused while its group has members).
+  if ps -p "$pgid" -o pid= >/dev/null 2>&1 && [ "$(pgid_of "$pgid")" = "$pgid" ]; then
+    cur=$(lstart_of "$pgid")
+    if [ -z "$cur" ] || [ -z "$want" ] || [ "$cur" != "$want" ]; then
+      log "group signal refused: leader $pgid start time '${cur:-unreadable}' != recorded '${want:-none}' (pid reuse?)"; return 1
     fi
   fi
   return 0
@@ -329,7 +332,8 @@ rate_for() {
 # Numeric validation (fail-closed). pos_decimal: > 0; pct: 0 < x <= 100; pos_int: integer > 0. Echo nothing, return 0 when valid.
 is_pos_decimal() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v v="$1" 'BEGIN { exit !(v + 0 > 0) }'; }
 is_pct() { is_pos_decimal "$1" && awk -v v="$1" 'BEGIN { exit !(v + 0 <= 100) }'; }
-is_pos_int() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$((10#$1))" -gt 0 ]; }
+is_pos_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }          # no leading zero: bash 3.2 arithmetic reads 08 as bad octal
+is_nonneg_int() { [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]; }
 
 # Space-separated "NAME=value (what is wrong)" for every invalid numeric setting; empty when all are valid.
 config_problems() {
@@ -348,6 +352,10 @@ config_problems() {
   chk pos_decimal QUOKY_USAGE_LIMIT_USD "$LIMIT_USD"
   chk pos_int GATES_WATCH_SEC "$WATCH_SEC"
   chk pos_int GATES_STOP_GRACE_SEC "$STOP_GRACE_SEC"
+  chk pos_int GATES_RUNS "$RUNS"
+  chk pos_int GATES_CONCURRENCY "$CONC"
+  chk pos_int GATES_RETRY_WAIT_SEC "$RETRY_WAIT_SEC"
+  chk nonneg_int GATES_RESET_MARGIN_SEC "$MARGIN"
   printf '%s' "$out"
 }
 
