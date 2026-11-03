@@ -142,6 +142,15 @@ describe('reply assembler', () => {
     expect(out.label.egress).toBe('REMOTE_OK');
   });
 
+  it('S6: a forged summary step with a REMOTE audit renders the facts and exactly the disclosure line, no summary text', async () => {
+    const r = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });
+    const fake = { kind: 'quarantined-summary', schema: 'digest.v1', count: 1, label: flowLabel('UNTRUSTED', 'HOST_ONLY', 'OWNER_DM_ONLY', ['x']) } as never;
+    const step = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audit: { locality: 'REMOTE', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } } as AgentStepResult;
+    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, step] } }, 'en');
+    expect(out.parts.filter((part) => part.kind !== 'fact' && part.kind !== 'note')).toEqual([{ kind: 'status', text: 'Part of the original text was sent to an outside model to make this summary.' }]);
+    expect(out.parts.some((part) => part.kind === 'summary')).toBe(false);
+  });
+
   it('only the owner DM gets content: any other destination gets the one fixed refusal, whatever the label', async () => {
     const mail = await run([read('mail.list')], { 'mail.list': port(['m-1'], []) });
     const jira = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });

@@ -31644,6 +31644,15 @@ and D9 still governs every turn that goes to chat.
 
 ## ADR-0112 amendment 3 — Undo of approved external connector writes: calendar update and restore, Jira comment delete and transition revert, `lastAction.anchorTaskId`, undo reachable at the `local` level (Accepted 2026-11-02) (2026-11-02)
 
+- **Review round 3.** The model is chosen with the count that was asked for, not what fit: the larger of the run's requested counts
+  over the summary's reads (the count readiness used) and the covered items the sources hold, taken before withheld, dropped and
+  fit, so a batch sent to LOCAL never flips to REMOTE when trimmed to one item. A model's audit id and locality are read once at
+  selection, before any egress, and the call, the audit and the disclosure use that snapshot; a model whose metadata throws is
+  never called. `selectQuarantinedModel` is module-internal. The run token is required on grants and requests. Omitted is the items
+  listed over the summary's reads minus the entries the summary carries. Readiness sums the requested counts over the summary's
+  reads. A throwing `elapsed` while the budget is built is a closed partial result. Narrow exception recorded: `assertTestRuntime`
+  in `quarantined-summary.ts` is the only Core reference to `process` (besides `deadline-policy.ts` `process.hrtime`), pinned in
+  `agent-boundary.test.ts`.
 - **Status:** **Accepted 2026-11-02** by the owner with the recommended options O1-O7 (see the ratification record at the
   end). Docs only in this commit; the code is built in later R3 slices (plan: ADR-0120 amendment A6 stage R3, NLA-11).
 - **Why now.** The owner's per-action-inverse rule (ADR-0120 A6 ratification record A) says every action has its own

@@ -15,6 +15,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   Drive are listing only until the owner decides how a `SummaryEgressGrant` is derived (no producer exists; no caller flag); nine
   owner decisions in DECISIONS "ADR-0121 S2 implementation note — P3-3b".
   Review round 2 applied (seam runtime barrier, per-run grants, input-fit, audit on every post-call status; owner decision 9 added).
+  Review round 3 applied (asked-for count picks the model, metadata snapshot before egress, required run token, omitted = listed minus carried).
 - **Next (S2).** Adapter read ports with raw documents and the budgeted HTTP client, wiring, read+write path, S2 read red-team,
   gate campaign, release.
 

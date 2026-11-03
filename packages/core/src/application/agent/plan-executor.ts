@@ -177,7 +177,9 @@ interface RunState {
   /** `<summarize step>:<read step>` to why that summary needs no body from that read. */
   readonly denials: Map<string, QuarantinedListingOnlyReason>;
   /** Read step number to the later summarize steps that cover it. */
-  readonly coverage: Map<number, { readonly step: number; readonly schema: AgentSummarySchemaId }[]>;
+  readonly coverage: Map<number, { readonly step: number; readonly schema: AgentSummarySchemaId; readonly from: readonly number[] }[]>;
+  /** Read step number to the items it asked for (its limit, an unstated one counts as the item cap). */
+  readonly requested: Map<number, number>;
   /** Read step number to the items its projection listed (a denied read's items are omitted from a summary over it). */
   readonly listed: Map<number, number>;
   /** This run's token: a summary grant of another run never matches. */
@@ -192,16 +194,23 @@ export class AgentPlanExecutor {
 
   /** Execute a validated `run` plan. Total: never throws or rejects; a bound or a port failure ends in a partial result. */
   async execute(plan: RunPlan): Promise<AgentRunResult> {
-    const budget = new AgentRunBudget(this.deps.elapsed ?? Date.now, this.deps.bounds);
+    let budget: AgentRunBudget;
+    try {
+      budget = new AgentRunBudget(this.deps.elapsed ?? Date.now, this.deps.bounds);
+    } catch {
+      // A clock or bounds that throws while the budget is built: the closed result, nothing ran (total: never rejects).
+      return { outcome: 'partial', steps: plan.steps.map((step, index) => notRun(step, index + 1, 'bound')), usage: ZERO_USAGE };
+    }
     const results: AgentStepResult[] = [];
     const projections = new Map<number, StructureProjection>();
     // Raw content of the reads a summary covers: per run, in memory only, never in the result.
-    const state: RunState = { documents: new Map(), denials: new Map(), coverage: new Map(), listed: new Map(), run: newSummaryRunToken() };
+    const state: RunState = { documents: new Map(), denials: new Map(), coverage: new Map(), listed: new Map(), requested: new Map(), run: newSummaryRunToken() };
     // Which later summarize steps cover which read.
     for (const [index, step] of plan.steps.entries()) {
+      if (step.kind === 'read') state.requested.set(index + 1, Math.min(AGENT_M2_MAX_ITEMS, Math.max(1, nlLimitArg(step.args) ?? AGENT_M2_MAX_ITEMS)));
       if (step.kind !== 'summarize') continue;
       for (const from of step.from) {
-        if (from < index + 1) state.coverage.set(from, [...(state.coverage.get(from) ?? []), { step: index + 1, schema: step.schema }]);
+        if (from < index + 1) state.coverage.set(from, [...(state.coverage.get(from) ?? []), { step: index + 1, schema: step.schema, from: step.from }]);
       }
     }
     // The static charge is the validator's; a plan over the bound is never started (zero reads).
@@ -286,11 +295,10 @@ export class AgentPlanExecutor {
     // A read of several items counts its requested limit (an unstated limit counts as the item cap): a remote model qualifies
     // for one item only, so a multi-item read with remote models alone never fetches bodies (N3).
     const models = this.deps.summarizer?.models;
-    const requested = Math.min(AGENT_M2_MAX_ITEMS, Math.max(1, nlLimitArg(step.args) ?? AGENT_M2_MAX_ITEMS));
     let withDocuments = false;
     if (models !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
-        const refusal = summaryReadiness(entryId, cover.schema, summaryGrantFor(cover.step, entryId, state.run), requested, models);
+        const refusal = summaryReadiness(entryId, cover.schema, summaryGrantFor(cover.step, entryId, state.run), askedAcross(state, cover.from), models);
         if (refusal === undefined) withDocuments = true;
         else state.denials.set(`${cover.step}:${number}`, refusal);
       }
@@ -342,8 +350,9 @@ export class AgentPlanExecutor {
       return { ...base, status: 'listing-only', reason: denied ?? 'no-documents' };
     }
 
-    // A summary over several reads where some were denied: the denied reads' listed items are omitted too (N4).
-    const deniedItems = step.from.reduce((sum, from) => sum + (state.denials.has(`${number}:${from}`) && state.documents.get(from) === undefined ? (state.listed.get(from) ?? 0) : 0), 0);
+    // Omitted is everything listed over the covered reads that the summary does not carry: a missing document, a denied read, a
+    // dropped one, one cut by the cap or the fit, or left out by the model.
+    const listedItems = step.from.reduce((sum, from) => sum + (state.listed.get(from) ?? 0), 0);
 
     const controller = new AbortController();
     let started: (() => QuarantinedCallAudit) | undefined;
@@ -364,6 +373,7 @@ export class AgentPlanExecutor {
         models: summarizer.models,
         signal: controller.signal,
         run: state.run,
+        askedItems: askedAcross(state, step.from),
         remainingInputTokens: budget.remainingInputTokens(),
         reserve: (tokens) => budget.reserveModelCall('m2') && budget.reserveInputTokens(tokens),
         onCallStart: (audit) => {
@@ -378,7 +388,7 @@ export class AgentPlanExecutor {
         return audit !== undefined ? { audit } : {};
       };
       if (outcome === 'wall' || budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudit(outcome !== 'wall' && 'audit' in outcome ? outcome.audit : undefined) };
-      if (outcome.kind === 'summary') return { ...base, status: 'ok', summary: outcome.summary, omitted: outcome.omitted + deniedItems, audit: outcome.audit };
+      if (outcome.kind === 'summary') return { ...base, status: 'ok', summary: outcome.summary, omitted: Math.max(0, listedItems - outcome.summary.count), audit: outcome.audit };
       if (outcome.kind === 'listing-only') return { ...base, status: 'listing-only', reason: outcome.reason };
       if (outcome.kind === 'failed') {
         const errorCode = outcome.reason === 'schema' ? 'SCHEMA' : outcome.reason === 'credential' ? 'CREDENTIAL' : 'MODEL';
@@ -468,6 +478,11 @@ function notRun(step: ValidatedAgentStep, number: number, reason: AgentStepNotRu
 
 function closedCode(code: string): AgentReadErrorCode {
   return (AGENT_READ_ERROR_CODES as readonly string[]).includes(code) ? (code as AgentReadErrorCode) : 'UNKNOWN';
+}
+
+/** The items a summary asks for over its covered reads: the sum of their requested counts (the count readiness and the model choice share). */
+function askedAcross(state: RunState, from: readonly number[]): number {
+  return from.reduce((sum, read) => sum + (state.requested.get(read) ?? 0), 0);
 }
 
 const ZERO_USAGE: AgentRunUsage = Object.freeze({ steps: 0, replans: 0, connectorQueries: 0, httpRequests: 0, modelCalls: 0, m2Calls: 0, inputTokens: 0, refValues: 0, elapsedMs: 0 });

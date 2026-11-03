@@ -188,3 +188,35 @@ describe('ConversationRuntimeDeps baseline (ADR-0032 M3, ADR-0121 S2 note)', () 
     expect(Object.keys(keys)).toContain('agentRuns');
   });
 });
+
+describe('Core reaches the process only through the test-seam barrier (ADR-0121 P3-3b, R1)', () => {
+  const CORE = new URL('../../', import.meta.url);
+  const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const PROCESS = /\bprocess\s*[.?]|\bglobalThis\b[^;\n]*\bprocess\b/;
+  function coreSources(dir: URL, relative: string, out: { path: string; text: string }[]): { path: string; text: string }[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = new URL(entry.isDirectory() ? `${entry.name}/` : entry.name, dir);
+      if (entry.isDirectory()) coreSources(child, `${relative}${entry.name}/`, out);
+      else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) out.push({ path: `${relative}${entry.name}`, text: strip(readFileSync(child, 'utf8')) });
+    }
+    return out;
+  }
+
+  it('assertTestRuntime in quarantined-summary.ts is the only reference to `process` in packages/core/src, besides deadline-policy.ts (process.hrtime)', () => {
+    const files = coreSources(CORE, '', []);
+    expect(files.some((file) => file.path === 'application/agent/quarantined-summary.ts')).toBe(true);
+    const hits = files.filter((file) => PROCESS.test(file.text)).map((file) => file.path).sort();
+    // `deadline-policy.ts` is the one pre-existing reference (`process.hrtime`, a monotonic clock); nothing else may name the process.
+    expect(hits).toEqual(['application/agent/quarantined-summary.ts', 'application/deadline-policy.ts']);
+    const own = files.find((file) => file.path === 'application/agent/quarantined-summary.ts')?.text ?? '';
+    const barrier = /function assertTestRuntime\(\): void \{[\s\S]*?\n\}/.exec(own)?.[0] ?? '';
+    expect(barrier).toMatch(PROCESS);
+    expect(own.replace(barrier, '')).not.toMatch(PROCESS);
+    const deadline = files.find((file) => file.path === 'application/deadline-policy.ts')?.text ?? '';
+    expect(deadline.split('\n').filter((line) => PROCESS.test(line)).map((line) => line.trim())).toEqual(['nowMs: () => Number(process.hrtime.bigint()) / 1_000_000,']);
+    // The scan catches what it must.
+    expect(PROCESS.test('const x = process.env.A;')).toBe(true);
+    expect(PROCESS.test('(globalThis as { process?: unknown }).process')).toBe(true);
+    expect(PROCESS.test('const processed = 1;')).toBe(false);
+  });
+});

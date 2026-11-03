@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AiRequest } from '../../ports/ai-provider.port';
-import type { FlowEgress } from '../../domain/flow-label';
 import { Capability } from '../../domain';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf } from './flow-policy';
@@ -16,7 +15,6 @@ import {
   summaryGrantFor,
   parseQuarantinedOutput,
   quarantinedSummarize,
-  selectQuarantinedModel,
   summaryEntriesForAssembler,
   summaryReadiness,
   validateSourceDocuments,
@@ -42,7 +40,8 @@ const doc = (position: number, body = `body ${position}`, extra: Partial<AgentSo
 });
 
 /** A source with the grant of summarize step 1. */
-const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, grant: mintSummaryEgressGrantForTest(1, entryId) });
+const RUN = newSummaryRunToken();
+const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, grant: mintSummaryEgressGrantForTest(1, entryId, RUN) });
 const mail = (...documents: AgentSourceDocument[]): AgentSummarySource => granted('mail.list', documents);
 
 interface FakeModel extends QuarantinedSummarizerModel {
@@ -62,7 +61,7 @@ function model(locality: 'LOCAL' | 'REMOTE' | undefined, answer: string | ((requ
 }
 
 const allow = (): boolean => true;
-const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: allow };
+const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: allow, run: RUN };
 
 describe('quarantined summariser: the sealed request (D3)', () => {
   it('is a SUMMARIZATION request with nothing but the self-contained prompt', async () => {
@@ -401,50 +400,99 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
   const local = model('LOCAL');
   const remote = model('REMOTE');
   const unknown = model(undefined);
-  const grant = mintSummaryEgressGrantForTest(1, 'mail.list');
-  const name = (result: ReturnType<typeof selectQuarantinedModel>): string => (result.ok ? (result.model === local ? 'local' : result.model === remote ? 'remote' : 'unknown') : result.reason);
+  const grant = mintSummaryEgressGrantForTest(1, 'mail.list', RUN);
+  // Selection is module-internal: it is reached through `summaryReadiness` (a read's question) and `quarantinedSummarize` (the call).
+  // Mail and Drive are the readable sources and both are `REMOTE_ON_SUMMARY_REQUEST`; the other egress values belong to sources
+  // that `sourceRefusal` stops first (calendar `LOCAL_MODEL_ONLY`, Jira and Slack work text), asserted below.
+  const ready = (g: SummaryEgressGrant | undefined, count: number, models: QuarantinedSummarizerModel[]): string => summaryReadiness('mail.list', 'digest.v1', g, count, models) ?? 'ok';
 
-  it('HOST_ONLY never leaves the host: no model, even a local one, grant or not', () => {
-    for (const g of [undefined, grant]) for (const count of [1, 5]) for (const models of [[local], [remote], [local, remote]]) expect(name(selectQuarantinedModel('HOST_ONLY', g, count, models))).toBe('host-only');
-  });
-
-  it('LOCAL_MODEL_ONLY needs a LOCAL model, whatever a grant says; a remote or undeclared one never qualifies', () => {
-    for (const g of [undefined, grant]) {
-      expect(name(selectQuarantinedModel('LOCAL_MODEL_ONLY', g, 1, [remote]))).toBe('no-model');
-      expect(name(selectQuarantinedModel('LOCAL_MODEL_ONLY', g, 1, [unknown]))).toBe('no-model');
-      expect(name(selectQuarantinedModel('LOCAL_MODEL_ONLY', g, 1, []))).toBe('no-model');
-      expect(name(selectQuarantinedModel('LOCAL_MODEL_ONLY', g, 1, [local]))).toBe('local');
-      expect(name(selectQuarantinedModel('LOCAL_MODEL_ONLY', g, 3, [remote, local]))).toBe('local');
-    }
-  });
-
-  it('REMOTE_ON_SUMMARY_REQUEST without a grant is refused: no fallback to a local model', () => {
-    for (const models of [[local], [remote], [local, remote], [unknown], []]) expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', undefined, 1, models))).toBe('no-summary-grant');
+  it('without a grant there is no model, local or not: no fallback to a local one', () => {
+    for (const models of [[local], [remote], [local, remote], [unknown], []]) expect(ready(undefined, 1, models)).toBe('no-summary-grant');
     // An object that is not a grant minted by Core is no grant.
-    expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', {} as unknown as SummaryEgressGrant, 1, [local]))).toBe('no-summary-grant');
+    expect(ready({} as unknown as SummaryEgressGrant, 1, [local])).toBe('no-summary-grant');
   });
 
   it('with a grant a remote model is allowed for exactly one item; a batch runs on a LOCAL model only', () => {
-    expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', grant, 1, [remote, local]))).toBe('remote');
-    expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', grant, 1, [unknown]))).toBe('unknown');
-    expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', grant, 1, []))).toBe('no-model');
+    expect(ready(grant, 1, [remote, local])).toBe('ok');
+    expect(ready(grant, 1, [unknown])).toBe('ok');
+    expect(ready(grant, 1, [])).toBe('no-model');
     for (const count of [2, 3, AGENT_M2_MAX_ITEMS]) {
-      expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', grant, count, [remote]))).toBe('no-model');
-      expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', grant, count, [unknown]))).toBe('no-model');
-      expect(name(selectQuarantinedModel('REMOTE_ON_SUMMARY_REQUEST', grant, count, [remote, local]))).toBe('local');
+      expect(ready(grant, count, [remote])).toBe('no-model');
+      expect(ready(grant, count, [unknown])).toBe('no-model');
+      expect(ready(grant, count, [remote, local])).toBe('ok');
     }
   });
 
-  it('REMOTE_OK: any model, in the caller\'s order, no grant needed', () => {
-    expect(name(selectQuarantinedModel('REMOTE_OK', undefined, 4, [remote, local]))).toBe('remote');
-    expect(name(selectQuarantinedModel('REMOTE_OK', undefined, 1, [local]))).toBe('local');
-    expect(name(selectQuarantinedModel('REMOTE_OK', undefined, 1, []))).toBe('no-model');
+  it('the first model of the caller\'s order that qualifies is the one called', async () => {
+    const first = model('REMOTE');
+    const second = model('LOCAL');
+    expect((await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [first, second] })).kind).toBe('summary');
+    expect(first.requests).toHaveLength(1);
+    expect(second.requests).toHaveLength(0);
+    const batchFirst = model('REMOTE');
+    const batchSecond = model('LOCAL');
+    await quarantinedSummarize({ ...base, sources: [mail(doc(1), doc(2))], models: [batchFirst, batchSecond] });
+    expect([batchFirst.requests.length, batchSecond.requests.length]).toEqual([0, 1]);
   });
 
-  it('every egress value is covered by the matrix above', () => {
-    const covered: FlowEgress[] = ['HOST_ONLY', 'LOCAL_MODEL_ONLY', 'REMOTE_ON_SUMMARY_REQUEST', 'REMOTE_OK'];
-    const refusals = covered.map((egress) => selectQuarantinedModel(egress, undefined, 1, [remote]));
-    expect(refusals.map((result) => (result.ok ? 'ok' : result.reason))).toEqual(['host-only', 'no-model', 'no-summary-grant', 'ok']);
+  it('W1: the model is chosen with the count that was asked for, not the count that fit', async () => {
+    const remoteFirst = model('REMOTE');
+    const localSecond = model('LOCAL');
+    const body = '가나다라마바사아자차'.repeat(200);
+    const five = [1, 2, 3, 4, 5].map((n) => doc(n, body));
+    const probe = model('LOCAL');
+    await quarantinedSummarize({ ...base, sources: [mail(five[0] as AgentSourceDocument)], models: [probe] });
+    const one = estimateInputTokens((probe.requests[0] as AiRequest).prompt);
+    // The fit trims 5 items to 1; the batch the policy sent to LOCAL must not flip to the REMOTE model.
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(...five)], models: [remoteFirst, localSecond], remainingInputTokens: one });
+    expect(outcome.kind).toBe('summary');
+    expect(remoteFirst.requests).toHaveLength(0);
+    expect(localSecond.requests).toHaveLength(1);
+    expect(((localSecond.requests[0] as AiRequest).prompt.match(/^ITEM \d+$/gm) ?? []).length).toBe(1);
+    // The count the run asked for (more than the documents that came back) counts too.
+    const remoteOnly = model('REMOTE');
+    expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [remoteOnly], askedItems: 3 })).toEqual({ kind: 'listing-only', reason: 'no-model' });
+    expect(remoteOnly.requests).toHaveLength(0);
+  });
+
+  it('only mail and Drive can reach a model: every other entry stops before selection', () => {
+    for (const entryId of ['calendar.events', 'jira.issues', 'slack.search', 'github.items', 'todo.list'] as const) {
+      expect(summaryReadiness(entryId, 'digest.v1', grant, 1, [local]), entryId).not.toBeUndefined();
+    }
+  });
+
+  it('a model whose audit id or locality getter throws is never called (metadata is read once, before any egress)', async () => {
+    const run = async (): Promise<{ text: string }> => ({ text: '{"items":[{"n":1,"summary":"A short summary."}]}' });
+    const calls: string[] = [];
+    const badAudit: QuarantinedSummarizerModel = { executionLocality: 'REMOTE', get auditId(): string { throw new Error('audit'); }, run: async () => (calls.push('audit'), run()) };
+    const badLocality: QuarantinedSummarizerModel = { get executionLocality(): 'LOCAL' { throw new Error('locality'); }, auditId: 'x', run: async () => (calls.push('locality'), run()) };
+    for (const bad of [badAudit, badLocality]) {
+      expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [bad] })).toEqual({ kind: 'listing-only', reason: 'no-model' });
+    }
+    expect(calls).toEqual([]);
+    // A usable model behind it is still chosen, and its audit and disclosure use the snapshot taken at selection.
+    const good = model('REMOTE');
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [badAudit, good] });
+    expect(outcome).toMatchObject({ kind: 'summary', audit: { locality: 'REMOTE', auditId: 'audit-REMOTE' } });
+  });
+
+  it('a getter that flips after selection cannot change the audit: the snapshot is the record', async () => {
+    let reads = 0;
+    const flipping: QuarantinedSummarizerModel = {
+      get executionLocality(): 'LOCAL' | 'REMOTE' {
+        reads += 1;
+        if (reads > 1) throw new Error('later');
+        return 'REMOTE';
+      },
+      get auditId(): string {
+        reads += 1;
+        if (reads > 2) throw new Error('later');
+        return 'snap';
+      },
+      run: async () => ({ text: '{"items":[{"n":1,"summary":"A short summary."}]}' }),
+    };
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [flipping] });
+    expect(outcome).toMatchObject({ kind: 'summary', audit: { locality: 'REMOTE', auditId: 'snap' } });
   });
 
   it('mail with a local model but no grant (production today): listing only, the model is never called', async () => {
@@ -456,8 +504,8 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
 
   it('a grant for another step or another source is no grant', async () => {
     const fake = model('LOCAL');
-    const otherStep = { entryId: 'mail.list' as const, documents: [doc(1)], grant: mintSummaryEgressGrantForTest(2, 'mail.list') };
-    const otherSource = { entryId: 'mail.list' as const, documents: [doc(1)], grant: mintSummaryEgressGrantForTest(1, 'drive.files') };
+    const otherStep = { entryId: 'mail.list' as const, documents: [doc(1)], grant: mintSummaryEgressGrantForTest(2, 'mail.list', RUN) };
+    const otherSource = { entryId: 'mail.list' as const, documents: [doc(1)], grant: mintSummaryEgressGrantForTest(1, 'drive.files', RUN) };
     const forged = { entryId: 'mail.list' as const, documents: [doc(1)], grant: {} as unknown as SummaryEgressGrant };
     for (const source of [otherStep, otherSource, forged]) {
       expect(await quarantinedSummarize({ ...base, sources: [source], models: [fake] })).toEqual({ kind: 'listing-only', reason: 'no-summary-grant' });
@@ -609,15 +657,15 @@ describe('quarantined summariser: review round 2', () => {
     const saved = env.VITEST;
     delete env.VITEST;
     try {
-      expect(() => mintSummaryEgressGrantForTest(1, 'mail.list')).toThrow();
+      expect(() => mintSummaryEgressGrantForTest(1, 'mail.list', RUN)).toThrow();
       expect(() => setSummaryGrantsForTest(() => true)).toThrow();
       expect(() => sealQuarantinedSummaryForTest('digest.v1', { trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED', egress: 'HOST_ONLY', scope: 'OWNER_DM_ONLY', sources: [] } as never, [])).toThrow();
-      expect(summaryGrantFor(1, 'mail.list')).toBeUndefined();
+      expect(summaryGrantFor(1, 'mail.list', RUN)).toBeUndefined();
     } finally {
       env.VITEST = saved;
     }
     expect(env.VITEST).toBe('true');
-    expect(summaryGrantFor(1, 'mail.list')).toBeUndefined();
+    expect(summaryGrantFor(1, 'mail.list', RUN)).toBeUndefined();
   });
 });
 

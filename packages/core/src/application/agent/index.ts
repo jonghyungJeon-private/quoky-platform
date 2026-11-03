@@ -26,7 +26,6 @@ export {
   estimateInputTokens,
   parseQuarantinedOutput,
   renderQuarantinedPrompt,
-  selectQuarantinedModel,
   summaryReadiness,
   validateSourceDocuments,
 } from './quarantined-summary';

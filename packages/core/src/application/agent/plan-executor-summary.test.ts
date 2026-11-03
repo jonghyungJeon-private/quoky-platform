@@ -129,6 +129,63 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.breach).toBeUndefined();
     });
 
+    it('S2: omitted is the listed items minus the entries the summary carries (3 listed, 1 document: omitted 2, partial)', async () => {
+      const exec = new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2', 'm3'], docs('a')) }, summarizer: { models: [model('LOCAL', '{"items":[{"n":1,"summary":"first"}]}')] } });
+      const result = await exec.execute(MAIL_PLAN());
+      expect(result.steps[1]).toMatchObject({ status: 'ok', omitted: 2 });
+      expect(result.outcome).toBe('partial');
+    });
+
+    it('S3: readiness sums the requested counts over the summary\'s reads: two reads of one item each are a batch, so REMOTE-only models fetch no bodies', async () => {
+      const remote = model('REMOTE');
+      const mail = port(['m1'], docs('a'));
+      const drive = port(['d1'], [{ id: 'd1', position: 1, title: 't', author: 'a', date: '', body: 'b' }]);
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail, 'drive.files': drive }, summarizer: { models: [remote] } }).execute(plan([read('mail.list'), read('drive.files'), summarize([1, 2])]));
+      expect(mail.requests[0]?.withDocuments).toBeUndefined();
+      expect(drive.requests[0]?.withDocuments).toBeUndefined();
+      expect(result.steps[2]).toMatchObject({ status: 'listing-only', reason: 'no-model' });
+      expect(remote.requests).toHaveLength(0);
+      // A LOCAL model qualifies for the same plan.
+      const local = model('LOCAL');
+      const mail2 = port(['m1'], docs('a'));
+      const drive2 = port(['d1'], [{ id: 'd1', position: 1, title: 't', author: 'a', date: '', body: 'b' }]);
+      await new AgentPlanExecutor({ readers: { 'mail.list': mail2, 'drive.files': drive2 }, summarizer: { models: [local] } }).execute(plan([read('mail.list'), read('drive.files'), summarize([1, 2])]));
+      expect(mail2.requests[0]?.withDocuments).toBe(true);
+      expect(drive2.requests[0]?.withDocuments).toBe(true);
+    });
+
+    it('an unstated limit counts as the item cap: REMOTE-only models with a grant are listing-only and no body is fetched', async () => {
+      const remote = model('REMOTE');
+      const mail = port(['m1'], docs('a'));
+      const unstated: ValidatedAgentStep = { kind: 'read', entry: NL_WAVE1_ENTRIES['mail.list' as keyof typeof NL_WAVE1_ENTRIES], args: {}, provenance: {} };
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: { models: [remote] } }).execute(plan([unstated, summarize([1])]));
+      expect(mail.requests[0]?.withDocuments).toBeUndefined();
+      expect(result.steps[1]).toMatchObject({ status: 'listing-only', reason: 'no-model' });
+      expect(remote.requests).toHaveLength(0);
+    });
+
+    it('a clock that throws while the budget is built is a closed partial result, never a rejection', async () => {
+      const mail = port(['m1'], docs('a'));
+      const result = await new AgentPlanExecutor({
+        readers: { 'mail.list': mail },
+        summarizer: { models: [model('LOCAL')] },
+        elapsed: () => {
+          throw new Error('clock');
+        },
+      }).execute(MAIL_PLAN());
+      expect(result.outcome).toBe('partial');
+      expect(result.steps.map((step) => step.status)).toEqual(['not-run', 'not-run']);
+      expect(mail.requests).toHaveLength(0);
+    });
+
+    it('a model whose audit id getter throws is never called and the step is listing-only', async () => {
+      const calls: number[] = [];
+      const bad: QuarantinedSummarizerModel = { executionLocality: 'REMOTE', get auditId(): string { throw new Error('audit'); }, run: async () => (calls.push(1), { text: '{}' }) };
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('a')) }, summarizer: { models: [bad] } }).execute(MAIL_PLAN());
+      expect(calls).toEqual([]);
+      expect(result.steps[1]).toMatchObject({ status: 'listing-only' });
+    });
+
     it('documents are asked for only when the read is covered and a model can already be selected', async () => {
       // Covered, selectable: asked.
       const covered = port(['m1'], docs('a'));
@@ -156,8 +213,9 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       const fake = model('LOCAL', '{"items":[{"n":1,"summary":"only the valid one"}]}');
       const documents = [good(1), good(9, 'm9'), good(2), good(2), good(3, 'WRONG'), { ...good(1), position: 1.5 }];
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(ids(3), documents) }, summarizer: { models: [fake] } }).execute(MAIL_PLAN());
-      // Valid: position 1 only (position 2 is claimed twice, 9 is out of range, 3 mismatches, 1.5 is not an integer).
-      expect(result.steps[1]).toMatchObject({ status: 'ok', omitted: 5 });
+      // Valid: position 1 only (position 2 is claimed twice, 9 is out of range, 3 mismatches, 1.5 is not an integer); omitted is
+      // the 3 listed items minus the 1 the summary carries.
+      expect(result.steps[1]).toMatchObject({ status: 'ok', omitted: 2 });
       const prompt = (fake.requests[0] as AiRequest).prompt;
       expect(prompt).toContain('body 1');
       for (const gone of ['body 2', 'body 3', 'body 9']) expect(prompt).not.toContain(gone);

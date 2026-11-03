@@ -210,9 +210,9 @@ export function newSummaryRunToken(): SummaryRunToken {
   return Object.freeze({}) as SummaryRunToken;
 }
 
-const GRANTS = new WeakMap<object, { readonly step: number; readonly entryId: NlWave1EntryId; readonly run: SummaryRunToken | undefined }>();
+const GRANTS = new WeakMap<object, { readonly step: number; readonly entryId: NlWave1EntryId; readonly run: SummaryRunToken }>();
 
-function mintGrant(step: number, entryId: NlWave1EntryId, run: SummaryRunToken | undefined): SummaryEgressGrant {
+function mintGrant(step: number, entryId: NlWave1EntryId, run: SummaryRunToken): SummaryEgressGrant {
   const grant = Object.freeze({}) as SummaryEgressGrant;
   GRANTS.set(grant, { step, entryId, run });
   return grant;
@@ -221,7 +221,7 @@ function mintGrant(step: number, entryId: NlWave1EntryId, run: SummaryRunToken |
 let grantSource: ((step: number, entryId: NlWave1EntryId) => boolean) | undefined;
 
 /** The grant of one summarize step over one source, or `undefined` (always, in production: there is no producer). */
-export function summaryGrantFor(step: number, entryId: NlWave1EntryId, run?: SummaryRunToken): SummaryEgressGrant | undefined {
+export function summaryGrantFor(step: number, entryId: NlWave1EntryId, run: SummaryRunToken): SummaryEgressGrant | undefined {
   return grantSource !== undefined && grantSource(step, entryId) ? mintGrant(step, entryId, run) : undefined;
 }
 
@@ -231,13 +231,13 @@ export function setSummaryGrantsForTest(allow?: (step: number, entryId: NlWave1E
   grantSource = allow;
 }
 
-/** TEST SEAM ONLY (throws outside the test runner): a grant for one step and one source (of one run, if a token is given). */
-export function mintSummaryEgressGrantForTest(step: number, entryId: NlWave1EntryId, run?: SummaryRunToken): SummaryEgressGrant {
+/** TEST SEAM ONLY (throws outside the test runner): a grant for one step and one source of one run. */
+export function mintSummaryEgressGrantForTest(step: number, entryId: NlWave1EntryId, run: SummaryRunToken): SummaryEgressGrant {
   assertTestRuntime();
   return mintGrant(step, entryId, run);
 }
 
-function grantMatches(grant: SummaryEgressGrant | undefined, step: number, entryId: NlWave1EntryId, run: SummaryRunToken | undefined): boolean {
+function grantMatches(grant: SummaryEgressGrant | undefined, step: number, entryId: NlWave1EntryId, run: SummaryRunToken): boolean {
   if (grant === undefined || typeof grant !== 'object' || grant === null) return false;
   const known = GRANTS.get(grant);
   return known !== undefined && known.step === step && known.entryId === entryId && known.run === run;
@@ -256,28 +256,48 @@ export interface QuarantinedSummarizerModel {
 
 export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-grant';
 
+/** A model with its metadata read ONCE, at selection and before any egress: the call, the audit and the disclosure use only this. */
+interface SelectedModel {
+  readonly model: QuarantinedSummarizerModel;
+  readonly locality: AiExecutionLocality;
+  readonly auditId: string;
+}
+
+/** Reads a model's locality and audit id once; a model whose metadata throws is unusable (never called). */
+function snapshotModel(model: QuarantinedSummarizerModel): SelectedModel | undefined {
+  try {
+    const locality = executionLocalityOf(model);
+    const id = model.auditId;
+    return { model, locality, auditId: typeof id === 'string' ? id : '' };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * D4: the first model (the caller's order is the priority) that satisfies the strictest egress label of the inputs. Pure.
+ * Module-internal: a grant is only valid as matched against a step, a source and a run, so callers go through
+ * {@link quarantinedSummarize} / {@link summaryReadiness}. `itemCount` is what was ASKED for, not what fit.
  * - `HOST_ONLY`: none, ever.
  * - `LOCAL_MODEL_ONLY`: a `LOCAL` model.
  * - `REMOTE_ON_SUMMARY_REQUEST`: no grant, no model (never a fallback to a local one: the body is not even fetched). With a
  *   grant: any model for exactly ONE item; a batch (more items) runs on a `LOCAL` model only.
  * - `REMOTE_OK`: any model.
  */
-export function selectQuarantinedModel(
+function selectQuarantinedModel(
   egress: FlowEgress,
   grant: SummaryEgressGrant | undefined,
   itemCount: number,
   models: readonly QuarantinedSummarizerModel[],
-): { readonly ok: true; readonly model: QuarantinedSummarizerModel } | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
+): { readonly ok: true; readonly selected: SelectedModel } | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
   if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
   if (egress === 'REMOTE_ON_SUMMARY_REQUEST' && (grant === undefined || typeof grant !== 'object' || grant === null || !GRANTS.has(grant))) {
     return { ok: false, reason: 'no-summary-grant' };
   }
-  const local = models.filter((model) => executionLocalityOf(model) === 'LOCAL');
-  const candidates = egress === 'REMOTE_OK' || (egress === 'REMOTE_ON_SUMMARY_REQUEST' && itemCount === 1) ? models : local;
+  const usable = models.map(snapshotModel).filter((entry): entry is SelectedModel => entry !== undefined);
+  const candidates = egress === 'REMOTE_OK' || (egress === 'REMOTE_ON_SUMMARY_REQUEST' && itemCount === 1) ? usable : usable.filter((entry) => entry.locality === 'LOCAL');
   const picked = candidates[0];
-  return picked === undefined ? { ok: false, reason: 'no-model' } : { ok: true, model: picked };
+  return picked === undefined ? { ok: false, reason: 'no-model' } : { ok: true, selected: picked };
 }
 
 export type QuarantinedListingOnlyReason = QuarantinedModelRefusal | 'no-readout-source' | 'work-text-controls-not-built' | 'no-documents' | 'credential-in-prompt';
@@ -475,7 +495,12 @@ export interface QuarantinedSummaryRequest {
    */
   readonly remainingInputTokens?: number;
   /** The grants of this request belong to this run (see {@link newSummaryRunToken}); a grant of another run never matches. */
-  readonly run?: SummaryRunToken;
+  readonly run: SummaryRunToken;
+  /**
+   * The items the run ASKED for across the covered reads (the count summary readiness used). The model is chosen with the larger
+   * of this and the covered items the sources hold: the count is what was asked for, not what fit.
+   */
+  readonly askedItems?: number;
   /**
    * Called once, as soon as a model call starts (after the reservation), with a content-free audit reader: the caller reports the
    * call (locality, audit id, tokens, latency so far) even if the wall or a bound ends the step before the answer comes back.
@@ -505,11 +530,14 @@ export type QuarantinedSummaryOutcome =
 export async function quarantinedSummarize(request: QuarantinedSummaryRequest): Promise<QuarantinedSummaryOutcome> {
   const prepared: { readonly entryId: NlWave1EntryId; readonly position: number; readonly rendered: string }[] = [];
   let omitted = 0;
+  let asked = request.askedItems ?? 0;
+  let held = 0;
   for (const source of request.sources) {
     const refusal = sourceRefusal(source.entryId, request.schema);
     if (refusal !== undefined) return { kind: 'listing-only', reason: refusal };
     const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId] as UntrustedDocumentSource;
     omitted += source.dropped ?? 0;
+    held += source.documents.length + (source.dropped ?? 0);
     for (const document of source.documents) {
       if (prepared.length >= AGENT_M2_MAX_ITEMS) {
         omitted += 1;
@@ -531,6 +559,7 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     }
   }
   if (prepared.length === 0) return { kind: 'listing-only', reason: 'no-documents' };
+  asked = Math.max(asked, held);
 
   // Fit to the run's remaining input tokens (N2): keep the longest prefix whose rendered prompt fits (UTF-8 bytes, an upper
   // bound); the rest is omitted, never a breach. If not even one fits, the one-item prompt is reserved and the bound says so.
@@ -546,8 +575,9 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   const joined = joinFlowLabels(...request.sources.map((source) => readOutputLabel(source.entryId)));
   const needing = request.sources.filter((source) => readOutputLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
   const allGranted = needing.length > 0 && needing.every((source) => grantMatches(source.grant, request.summaryStep, source.entryId, request.run));
-  const chosen = selectQuarantinedModel(joined.egress, allGranted ? needing[0]?.grant : undefined, prepared.length, request.models);
+  const chosen = selectQuarantinedModel(joined.egress, allGranted ? needing[0]?.grant : undefined, asked, request.models);
   if (!chosen.ok) return { kind: 'listing-only', reason: chosen.reason };
+  const picked = chosen.selected;
 
   const schema = request.schema;
   const prompt = renderQuarantinedPrompt(
@@ -564,8 +594,8 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   const started = now();
   const aiRequest: AiRequest = { capability: Capability.SUMMARIZATION, prompt, ...(request.signal !== undefined ? { signal: request.signal } : {}) };
   const audit = (): QuarantinedCallAudit => ({
-    locality: executionLocalityOf(chosen.model),
-    auditId: typeof chosen.model.auditId === 'string' ? chosen.model.auditId : '',
+    locality: picked.locality,
+    auditId: picked.auditId,
     estimatedTokens,
     latencyMs: Math.max(0, now() - started),
   });
@@ -576,7 +606,7 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   }
   let text: string;
   try {
-    text = await callModel(chosen.model, aiRequest, request.signal);
+    text = await callModel(picked.model, aiRequest, request.signal);
   } catch {
     // The adapter's message is never read.
     return { kind: 'failed', reason: 'model', audit: audit() };

@@ -63,6 +63,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Review round 2 (same slice).** Test seams throw outside the test runner; per-run grant token; input-fit batches (omitted, not
   a breach); REMOTE calls disclosed on every post-call status; denied reads counted as omitted; throwing logger and `text` getter
   contained; readiness uses the read's limit; port signature pinned at compile time; scan widened to scripts and dynamic imports.
+- **Review round 3 (same slice).** Model chosen with the asked-for count; model metadata snapshotted before egress; run token required; omitted counts every listed item the summary lacks; readiness sums the covered reads; `execute` survives a throwing clock; `process` access pinned to the test barrier; port signature pinned in full.
 - **Recorded.** DECISIONS "ADR-0121 S2 implementation note — P3-3b" (six unresolved points, for example calendar has no readout shape).
 - **Review fixes (same slice).** Jira and Slack are `listing-only` (`work-text-controls-not-built`); the caller flag
   `summaryRequested` is gone and `REMOTE_ON_SUMMARY_REQUEST` content needs a `SummaryEgressGrant` that nothing produces yet (mail
