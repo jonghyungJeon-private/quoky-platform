@@ -437,13 +437,18 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
   try {
     const writer = app.get<CalendarEventWriter>(core.CALENDAR_EVENT_WRITER);
     Object.assign(writer as object, {
-      async createEvent(request: { draft: { title?: string; summary?: string; start?: unknown; end?: unknown } }) {
+      async createEvent(request: { draft: { title?: string; summary?: string; time?: { allDay: boolean; start?: string; end?: string } } }) {
         created += 1;
-        const id = `created-${created}`;
+        // A Google-shaped event id (base32hex) and its etag, as the real writer returns, so the receipt is a valid undo anchor.
+        const id = `evt${String(created).padStart(5, '0')}`;
         const title = String(request.draft.title ?? request.draft.summary ?? '');
         state.calendarWrites.push({ op: 'create', title, eventId: id });
-        state.calendar.push({ id, summary: title, status: 'confirmed', etag: `"etag-${id}"`, start: { dateTime: new Date(Date.now() + 86_400_000).toISOString() }, end: { dateTime: new Date(Date.now() + 90_000_000).toISOString() } });
-        return { status: 'SENT', externalRef: id };
+        // The event carries the approved draft's own time, as the provider stores it, so the undo's compare-before-delete matches.
+        const time = request.draft.time;
+        const start = !time?.allDay && time?.start !== undefined ? time.start : new Date(Date.now() + 86_400_000).toISOString();
+        const end = !time?.allDay && time?.end !== undefined ? time.end : new Date(Date.now() + 90_000_000).toISOString();
+        state.calendar.push({ id, summary: title, status: 'confirmed', etag: `"etag-${id}"`, start: { dateTime: start }, end: { dateTime: end } });
+        return core.connectorWriteSent(id, undefined, `"etag-${id}"`);
       },
       async updateEvent(request: { eventId: string }) {
         state.calendarWrites.push({ op: 'update', eventId: request.eventId });
@@ -696,6 +701,12 @@ function route(url: URL, fixtures: ContextEvalFixtures, calendar: readonly Recor
   if (url.origin === 'https://gmail.googleapis.com') return gmailRoute(url, fixtures.mail ?? []);
   if (url.origin === 'https://www.googleapis.com' && url.pathname.startsWith('/drive/v3/files')) return driveRoute(url, fixtures.drive ?? []);
   if (url.origin === 'https://www.googleapis.com' && url.pathname.startsWith('/calendar/v3/calendars/')) {
+    // A single event read (the undo preview re-reads the created event): the fixture event by id, or Google's 404.
+    const single = /\/events\/([^/]+)$/.exec(url.pathname);
+    if (single !== null) {
+      const found = calendar.find((event) => event.id === decodeURIComponent(single[1] as string));
+      return found !== undefined ? json(found) : json({ error: { code: 404, message: 'Not Found' } }, 404);
+    }
     const from = Date.parse(url.searchParams.get('timeMin') ?? '');
     const to = Date.parse(url.searchParams.get('timeMax') ?? '');
     const items = calendar.filter((event) => {

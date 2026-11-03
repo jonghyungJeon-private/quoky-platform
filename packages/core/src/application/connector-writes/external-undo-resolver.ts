@@ -21,7 +21,7 @@ import type { ExternalUndoDraft, ExternalUndoDraftKind } from './connector-write
  *
  * Every other state is `nothing-to-undo` with a value-free reason (no id, text or reference in it). A `lastAction` whose
  * `itemId` is not a receipt (the anchor task id the runtime falls back to when a write left no receipt) finds no receipt
- * and so means nothing to undo. The capability set is empty in the foundation slice: nothing resolves until a family opens.
+ * and so means nothing to undo. The capability set holds `calendar-create` (ADR-0112 amendment 3): only that family resolves; any other family stays closed until its slice opens it.
  *
  * It never calls a writer and the nl-routing layer never imports it (an import scan pins that).
  */
@@ -79,7 +79,7 @@ export interface ExternalUndoResolverDeps {
   readonly tasks: { get(id: Id): Promise<Task | null> };
   /** Reads the connector-write anchor off a Task (injected: this file never imports the flow's runtime values). */
   readonly readAnchor: (task: Task) => ConnectorWriteAnchor | undefined;
-  /** The families whose undo is built; defaults to the closed constant (empty in the foundation slice). */
+  /** The families whose undo is built; defaults to the production constant (`calendar-create`). */
   readonly capabilities?: readonly ExternalUndoFamily[];
 }
 

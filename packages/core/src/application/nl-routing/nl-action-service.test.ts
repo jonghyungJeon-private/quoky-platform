@@ -358,6 +358,7 @@ describe('references, questions and the audit line', () => {
     const shadow = world({ level: 'shadow', script: () => out('action.undo') });
     shadow.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
     expect(await shadow.decide('되돌려줘', { now: at(1) })).toEqual({ kind: 'none' });
+    expect(actionLogs(shadow).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'external-undo' });
     // An uncertain write and an undo are answered, never executed.
     for (const record of [calendar({ outcome: 'UNCERTAIN', undoable: false }), calendar({ entryId: 'action.undo', undoable: false, undoOf: 'calendar.create' }), calendar({ entryId: 'external.write', undoable: false })]) {
       const w = world({ level: 'local', script: () => out('action.undo') });

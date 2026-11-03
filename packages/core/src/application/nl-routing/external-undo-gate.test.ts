@@ -15,8 +15,8 @@ import {
   type LastActionRecord,
 } from './last-action';
 
-// ADR-0112 amendment 3 (O1), foundation slice: the `undoable:false` gate at last-action.ts opens per family only through a
-// closed capability set, and this slice leaves it empty. Plus the scan that nl-routing reaches no writer.
+// ADR-0112 amendment 3 (O1), the `undoable:false` gate at last-action.ts opens per family only through a
+// closed capability set, which now holds `calendar-create` only. Plus the scan that nl-routing reaches no writer.
 
 const NOW = '2026-11-02T10:00:00.000Z';
 const ACTOR = 'actor-1';

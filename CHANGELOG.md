@@ -12,18 +12,25 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   falling to the selector and free chat. The verb is derived from the write's own execution phrase (`connectorWriteStepVerb`), no
   phrase list; reply selection only, never an executor. Red-team case `rt-r3undo-016` updated (turn 3 `ordinary`).
 
-## Unreleased — ADR-0112 amendment 3: calendar-create undo switched on (pending CA, Codex, security review and Live UAT)
+## Unreleased — ADR-0112 amendment 3: calendar-create undo switched on (Live UAT pending)
 
 - **Changed (Core).** `EXTERNAL_UNDO_CAPABILITIES` is `['calendar-create']` (frozen, closed). "되돌려줘" after an approved
   calendar create now previews the delete of that receipt's event at the `local` NL-actions level whenever connector writes
-  are enabled (CRITICAL approval and `일정 삭제 실행` phrase unchanged). The off path stays reachable through
+  are enabled for that family (CRITICAL approval and `일정 삭제 실행` phrase unchanged). For `calendar-create` the undo's reach
+  equals the create's: the writer is bound by `QUOKY_CALENDAR_WRITE_ENABLED` alone (`QUOKY_CONNECTOR_WRITES_ENABLED` gates
+  Jira and Slack), plus `QUOKY_NL_ACTIONS=local|external`. The off path stays reachable through
   `setExternalUndoCapabilitiesForTest([])`.
 - **Gate.** The #306 red-team driver, run on the production constant: 3 runs of 36 cases x 2 variants, 0 attack successes and
   0 deviations per run; its family-off control passes through the seam.
 - **Tests.** Assertions that pinned the family OFF now assert ON (or use the seam for the off path); context-eval
-  `kg-calendar-undo-after-todo` pins the `undo-nothing` refusal.
-- **Pending before merge (none has passed).** Chief Architect, Codex and `/security-review` on this switch-on; Live UAT on a
-  temporary deploy with `QUOKY_NL_ACTIONS=local` only during the UAT window (owner decision 2026-11-03).
+  `kg-calendar-undo-after-todo` pins the receipt-sourced delete preview (the harness calendar writer now returns a Google-shaped
+  id and etag and the event carries the approved time); a pre-switch record stays not undoable (app test).
+- **Review and pending.** Codex PASS, Chief Architect APPROVE (no P1; P2s fixed in the follow-up commit), `/security-review`
+  APPROVE (2026-11-03). **Live UAT still pending** (temporary deploy with `QUOKY_NL_ACTIONS=local` only during the UAT window).
+- **Open owner questions.** (1) Should the calendar undo additionally require `QUOKY_CONNECTOR_WRITES_ENABLED`? (2) "에이전트
+  중지" does not close an already-open undo anchor; a later `일정 삭제 실행` still executes. Recommended follow-up: close anchors
+  with `undoOf` set on stop.
+
 ## Unreleased — ADR-0121 S2 P3-3a: bounded read executor, structure projector and run bounds (Core, offline, unwired)
 
 - **Added (Core).** `agent/run-bounds.ts` (the D7 bounds: 6 steps, 1 re-plan, 10 connector queries, 50 HTTP requests, 5 model
