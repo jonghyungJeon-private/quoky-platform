@@ -26,11 +26,14 @@
 #     output ("model calls this plan authorises: at most N", or "real summarisation calls ...: at most N"; else the plan JSON's
 #     `"caseIds": "<n> cases"` x `"runs"`, which is the guard's maxCalls). No parseable cap = unknown = BLOCK. est % of the 5 h
 #     window = calls x a per-call rate per model (sonnet 0.06 measured; haiku 0.03 and opus 0.15 are PLACEHOLDERS; an unknown
-#     model gets the opus rate). Written to <archive>/estimate.txt and shown by `status`. The run is refused (DONE, exit 2, no
+#     model has no rate and blocks unless GATES_RATE_PCT_PER_CALL or GATES_OWNER_OK is set). Written to <archive>/estimate.txt and shown by `status`. The run is refused (DONE, exit 2, no
 #     run) when the sum over the modes exceeds GATES_MAX_EST_PCT (30), or current 5 h usage + estimate exceeds GATES_USAGE_PCT
-#     (95), or any cap is unknown, unless GATES_OWNER_OK=<yyyymmdd-short-reason> is set (recorded verbatim in estimate.txt).
+#     (95), or any cap is unknown, or the model is unknown, or the current usage is unknown (ccusage failed at start),
+#     unless GATES_OWNER_OK=<yyyymmdd-short-reason> is set (recorded verbatim in estimate.txt). An invalid numeric setting
+#     (rates, GATES_MAX_EST_PCT, GATES_STOP_PCT, GATES_USAGE_PCT, GATES_WATCH_SEC, GATES_STOP_GRACE_SEC) always blocks, owner-ok or not.
 #  2. In-run brake. While a mode runs, a watchdog polls ccusage every GATES_WATCH_SEC (60) s with the same pinned command and
-#     limit. At >= GATES_STOP_PCT (85) % of the limit it TERMs the eval's own process group (KILL after GATES_STOP_GRACE_SEC,
+#     limit. At >= GATES_STOP_PCT (85) % of the limit it TERMs the eval's own process group, only after verifying it (still has members, not our own / tmux's group, leader
+#     start time matches the recorded one; never a bare PID), then KILLs the group by pgid after GATES_STOP_GRACE_SEC,
 #     15), writes `<mode> exit=6 status=USAGE-STOP pct=<n>` into DONE, never retries and runs no further mode. The partial
 #     report is neither PASSED nor FAILED. ccusage failures are tolerated: the poll interval backs off (x2, max 300 s), the
 #     last known value is kept, nothing is stopped for an unreadable meter (the failure count is logged to usage.log).
@@ -75,6 +78,7 @@ RATE_HAIKU="${GATES_RATE_PCT_HAIKU:-0.03}"
 RATE_OPUS="${GATES_RATE_PCT_OPUS:-0.15}"
 CHILD_PID=""
 CHILD_PGID=""
+CHILD_LSTART=""
 WATCH_PID=""
 ALL_MODES="intent action read-regression r2 help-scope agent-plan r2-redteam"
 
@@ -187,20 +191,48 @@ run_mode_name() { case "$1" in intent|agent-plan|r2-redteam) echo run ;; *) echo
 
 # --- Quota guards -----------------------------------------------------------------------------------------------------------
 
-# Signal a process group (never our own, never an unverified one): TERM, then KILL after the grace period.
+# Process-group identity. A PID / PGID number alone proves nothing (reuse), so a group is signalled only after it is verified:
+# it still has at least one member (POSIX: a pgid is never reused while its group exists), it is not this script's own group
+# nor the tmux server's, and, while its leader is alive, the leader's start time (lstart) equals the one recorded at launch.
+# Signals go to the group only (`kill -- -PGID`); there is NO fallback to signalling a bare PID.
+lstart_of() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/  */ /g'; }
+pgid_of() { ps -o pgid= -p "$1" 2>/dev/null | tr -d ' '; }
+group_has_members() { ps -axo pgid= 2>/dev/null | awk -v g="$1" '$1 == g { f = 1 } END { exit !f }'; }
+
+# 0 verified, 2 the group no longer exists (nothing to signal), 1 refused (logged).
+group_verified() {
+  local pgid=$1 want=$2 own tpid="" cur
+  case "$pgid" in ''|*[!0-9]*) log "group signal refused: no valid pgid recorded"; return 1 ;; esac
+  [ "$pgid" -gt 1 ] || { log "group signal refused: pgid $pgid"; return 1; }
+  own=$(pgid_of "$$")
+  if [ "$pgid" = "$own" ]; then log "group signal refused: pgid $pgid is this script's own group"; return 1; fi
+  if [ -n "${TMUX:-}" ]; then
+    tpid=$(printf '%s' "$TMUX" | cut -d, -f2)
+    if [ -n "$tpid" ] && { [ "$pgid" = "$tpid" ] || [ "$pgid" = "$(pgid_of "$tpid")" ]; }; then
+      log "group signal refused: pgid $pgid is the tmux server's"; return 1
+    fi
+  fi
+  group_has_members "$pgid" || return 2
+  cur=$(lstart_of "$pgid")
+  if [ -n "$cur" ] && [ "$(pgid_of "$pgid")" = "$pgid" ]; then   # the leader is alive: its start time must match
+    if [ -z "$want" ] || [ "$cur" != "$want" ]; then
+      log "group signal refused: leader $pgid start time '$cur' != recorded '${want:-none}' (pid reuse?)"; return 1
+    fi
+  fi
+  return 0
+}
+
+# Terminate a verified process group by membership: TERM, wait up to STOP_GRACE_SEC while members remain, then KILL the group.
 kill_group() {
-  local pid=$1 pgid=$2 i=0 own
-  [ -n "$pid" ] && [ -n "$pgid" ] || return 0
-  own=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
-  if [ "$pgid" = "$pid" ] && [ "$pgid" != "$own" ] && [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pgid" ]; then
-    kill -TERM -- "-$pgid" 2>/dev/null
-    while [ "$i" -lt "$STOP_GRACE_SEC" ] && kill -0 -- "-$pgid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
-    kill -0 -- "-$pgid" 2>/dev/null && kill -KILL -- "-$pgid" 2>/dev/null
-  else
-    # No own group (job control unavailable): only the recorded child itself.
-    kill -TERM "$pid" 2>/dev/null
-    while [ "$i" -lt "$STOP_GRACE_SEC" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
-    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+  local pgid=$1 want=$2 i=0 rc
+  [ -n "$pgid" ] || return 0
+  group_verified "$pgid" "$want"; rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  kill -TERM -- "-$pgid" 2>/dev/null
+  while [ "$i" -lt "$STOP_GRACE_SEC" ] && group_has_members "$pgid"; do sleep 1; i=$((i + 1)); done
+  if group_has_members "$pgid"; then
+    group_verified "$pgid" "$want"; rc=$?
+    if [ "$rc" -eq 0 ]; then kill -KILL -- "-$pgid" 2>/dev/null; log "process group $pgid still alive after ${STOP_GRACE_SEC}s: KILL"; fi
   fi
   return 0
 }
@@ -208,7 +240,7 @@ kill_group() {
 # Background watchdog for one running eval child. Polls ccusage; at >= STOP_PCT % of the limit it writes $A/USAGE-STOP and stops
 # the child's process group. Exits by itself when the child is gone.
 start_watch() {
-  local pid=$1 pgid=$2 m=$3
+  local pid=$1 pgid=$2 want=$3 m=$4
   (
     trap - EXIT TERM INT HUP
     waited=0; fails=0; interval=$WATCH_SEC
@@ -231,7 +263,7 @@ start_watch() {
         if kill -0 "$pid" 2>/dev/null; then
           echo "$pct" > "$A/USAGE-STOP"
           log "$m: USAGE-STOP at $pct% of the 5 h limit (stop threshold $STOP_PCT%): stopping the eval process group $pgid"
-          kill_group "$pid" "$pgid"
+          kill_group "$pgid" "$want"
         fi
         exit 0
       fi
@@ -277,20 +309,46 @@ mode_env_model() {
   esac
 }
 
-# Per-call rate (% of the 5 h window) for a model name; an unknown model gets the highest rate.
+# Per-call rate (% of the 5 h window) for a model name. An unknown / unparseable model has NO rate (prints UNKNOWN, returns 1)
+# unless GATES_RATE_PCT_PER_CALL is set: the estimate guard blocks it (owner-ok may allow it).
 rate_for() {
-  if [ -n "${GATES_RATE_PCT_PER_CALL:-}" ]; then echo "$GATES_RATE_PCT_PER_CALL"; return; fi
+  if [ -n "${GATES_RATE_PCT_PER_CALL:-}" ]; then echo "$GATES_RATE_PCT_PER_CALL"; return 0; fi
   case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
     *haiku*) echo "$RATE_HAIKU" ;;
     *sonnet*) echo "$RATE_SONNET" ;;
     *opus*) echo "$RATE_OPUS" ;;
-    *) echo "$RATE_OPUS" ;;
+    *) echo UNKNOWN; return 1 ;;
   esac
+}
+
+# Numeric validation (fail-closed). pos_decimal: > 0; pct: 0 < x <= 100; pos_int: integer > 0. Echo nothing, return 0 when valid.
+is_pos_decimal() { [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v v="$1" 'BEGIN { exit !(v + 0 > 0) }'; }
+is_pct() { is_pos_decimal "$1" && awk -v v="$1" 'BEGIN { exit !(v + 0 <= 100) }'; }
+is_pos_int() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$((10#$1))" -gt 0 ]; }
+
+# Space-separated "NAME=value (what is wrong)" for every invalid numeric setting; empty when all are valid.
+config_problems() {
+  local out="" v
+  chk() { # kind name value
+    [ -n "$3" ] || { out="$out $2 is empty;"; return; }
+    "is_$1" "$3" || out="$out $2='$3' is not a valid $1;"
+  }
+  [ -z "${GATES_RATE_PCT_PER_CALL+x}" ] || chk pos_decimal GATES_RATE_PCT_PER_CALL "$GATES_RATE_PCT_PER_CALL"
+  chk pos_decimal GATES_RATE_PCT_SONNET "$RATE_SONNET"
+  chk pos_decimal GATES_RATE_PCT_HAIKU "$RATE_HAIKU"
+  chk pos_decimal GATES_RATE_PCT_OPUS "$RATE_OPUS"
+  chk pos_decimal GATES_MAX_EST_PCT "$MAX_EST_PCT"
+  chk pct GATES_STOP_PCT "$STOP_PCT"
+  chk pct GATES_USAGE_PCT "$USAGE_PCT"
+  chk pos_decimal QUOKY_USAGE_LIMIT_USD "$LIMIT_USD"
+  chk pos_int GATES_WATCH_SEC "$WATCH_SEC"
+  chk pos_int GATES_STOP_GRACE_SEC "$STOP_GRACE_SEC"
+  printf '%s' "$out"
 }
 
 # Estimate every planned mode, write estimate.txt, refuse (return 1) when over a limit without a valid GATES_OWNER_OK.
 estimate_guard() {
-  local m parsed calls src model rate pct total=0 unknown="" reasons="" state cost cur="unknown" ok="none" verdict
+  local m parsed calls src model rate pct total=0 unknown="" unkmodel="" reasons="" state cost cur="unknown" ok="none" verdict
   local f="$A/estimate.txt"
   { echo "estimate $(date '+%F %T')  (per-call rates in % of the 5 h window: sonnet $RATE_SONNET measured; haiku $RATE_HAIKU and opus $RATE_OPUS are PLACEHOLDERS)"; } > "$f"
   for m in "$@"; do
@@ -301,7 +359,7 @@ estimate_guard() {
       continue
     fi
     calls=${parsed%% *}; src=$(echo "$parsed" | awk '{print $2}'); model=$(echo "$parsed" | awk '{print $3}')
-    rate=$(rate_for "$model")
+    rate=$(rate_for "$model") || { unkmodel="$unkmodel $m($model)"; rate=$RATE_OPUS; echo "mode=$m model=$model has no known rate (UNKNOWN MODEL); the opus rate is shown only to size the estimate" >> "$f"; }
     pct=$(awk -v c="$calls" -v r="$rate" 'BEGIN { printf "%.1f", c * r }')
     total=$(awk -v a="$total" -v b="$pct" 'BEGIN { printf "%.1f", a + b }')
     echo "mode=$m model=$model calls=$calls rate_pct_per_call=$rate est_pct_5h=$pct cap_source=$src" >> "$f"
@@ -311,11 +369,15 @@ estimate_guard() {
     cost=${state% *}
     cur=$(awk -v c="$cost" -v l="$LIMIT_USD" 'BEGIN { printf "%.1f", c * 100 / l }')
   fi
+  [ -n "$state" ] || echo "current usage UNKNOWN: ccusage failed or reported no active block (fail-closed)" >> "$f"
   echo "total_est_pct_5h=$total current_5h_usage_pct=$cur max_est_pct=$MAX_EST_PCT pause_pct=$USAGE_PCT" >> "$f"
   [ -z "$unknown" ] || reasons="$reasons call cap unknown for:$unknown;"
+  [ -z "$unkmodel" ] || reasons="$reasons unknown model (no rate; set GATES_RATE_PCT_PER_CALL) for:$unkmodel;"
   awk -v t="$total" -v m="$MAX_EST_PCT" 'BEGIN { exit !(t + 0 > m + 0) }' && reasons="$reasons estimate $total% > GATES_MAX_EST_PCT $MAX_EST_PCT%;"
   if [ "$cur" != unknown ]; then
     awk -v t="$total" -v c="$cur" -v p="$USAGE_PCT" 'BEGIN { exit !(t + c > p + 0) }' && reasons="$reasons current $cur% + estimate $total% > $USAGE_PCT%;"
+  else
+    reasons="$reasons current usage unknown (ccusage failed or no active block);"
   fi
   if [ -z "$reasons" ]; then
     echo "owner_ok=$( [ -n "${GATES_OWNER_OK:-}" ] && printf '%s' "$GATES_OWNER_OK" || echo none)" >> "$f"
@@ -354,7 +416,7 @@ plan_one() {
 
 # Run one planned mode with the stored digest under the watchdog; returns the eval's exit status, or 6 on USAGE-STOP.
 exec_one() {
-  local m=$1 cli digest rc report pid pgid pct
+  local m=$1 cli digest rc report pid pgid lstart pct
   cli=$(cli_of "$m")
   digest=$(cat "$A/$m.digest")
   rm -f "$A/USAGE-STOP"
@@ -364,16 +426,22 @@ exec_one() {
   pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1 &
   pid=$!
   set +m
-  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
-  CHILD_PID=$pid; CHILD_PGID=$pgid
-  start_watch "$pid" "${pgid:-}" "$m"
+  pgid=$(pgid_of "$pid"); lstart=$(lstart_of "$pid")
+  # Only an own process group (leader = the child, not our group) is ever signalled; otherwise nothing is recorded.
+  if [ "$pgid" != "$pid" ] || [ -z "$lstart" ]; then
+    log "$m: eval child $pid has no own process group (pgid '${pgid:-?}'): it will not be signalled by the guards"
+    pgid=""; lstart=""
+  fi
+  CHILD_PID=$pid; CHILD_PGID=$pgid; CHILD_LSTART=$lstart
+  start_watch "$pid" "$pgid" "$lstart" "$m"
   wait "$pid" 2>/dev/null; rc=$?
   if [ -f "$A/USAGE-STOP" ]; then
     wait "$WATCH_PID" 2>/dev/null; WATCH_PID=""   # let the watchdog finish its TERM / KILL sequence
-  else
-    stop_watch
   fi
-  CHILD_PID=""; CHILD_PGID=""
+  # Leftover descendants of the eval group first (by membership), only then the watchdog.
+  [ -z "$pgid" ] || kill_group "$pgid" "$lstart"
+  stop_watch
+  CHILD_PID=""; CHILD_PGID=""; CHILD_LSTART=""
   if [ -f "$A/USAGE-STOP" ]; then
     pct=$(cat "$A/USAGE-STOP")
     log "$m: USAGE-STOP at $pct%: partial run, neither PASSED nor FAILED; no retry"
@@ -388,15 +456,17 @@ exec_one() {
 # Exit handler: stop the watchdog and the recorded eval child group only, then leave a terminal marker.
 on_exit() {
   [ "${BASH_SUBSHELL:-0}" = 0 ] || return 0
+  # The eval group is terminated (by pgid membership) BEFORE the watchdog is stopped.
+  if [ -n "$CHILD_PGID" ]; then kill_group "$CHILD_PGID" "$CHILD_LSTART"; fi
+  CHILD_PID=""; CHILD_PGID=""; CHILD_LSTART=""
   stop_watch
-  if [ -n "$CHILD_PID" ]; then kill_group "$CHILD_PID" "$CHILD_PGID"; CHILD_PID=""; fi
   if [ -f "$A/RUNNING" ]; then { cat "$A/modes.txt" 2>/dev/null; echo "KILLED: the run was terminated before it finished"; date; } > "$A/DONE"; rm -f "$A/RUNNING"; fi
   return 0
 }
 
 cmd_run() {
   local W=$1 N=$2; shift 2
-  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason cfail nodev n_failed=0 n_invalid=0 n_other=0 n_ustop=0 final planned="" ustop_pct
+  local MODES="${*:-$DEFAULT_MODES}" cfg m rc retried=0 stopped="" reason cfail nodev n_failed=0 n_invalid=0 n_other=0 n_ustop=0 final planned="" ustop_pct
   for m in $MODES; do
     case " $ALL_MODES " in *" $m "*) ;; *) echo "unknown mode: $m (one of: $ALL_MODES)" >&2; exit 2 ;; esac
   done
@@ -414,6 +484,17 @@ cmd_run() {
   printf 'pid=%s session=%s worktree=%s modes=%s started=%s\n' "$$" "${TMUX_SESSION:-foreground}" "$W" "$MODES" "$(date '+%F %T')" > "$A/RUNNING"
   git -C "$W" log --oneline -1 > "$A/head.txt"
   log "gates $N: worktree $W, head $(cat "$A/head.txt"), modes: $MODES"
+  # Invalid numeric settings are a hard block (not bypassable by GATES_OWNER_OK): nothing is built or run.
+  cfg=$(config_problems)
+  if [ -n "$cfg" ]; then
+    echo "estimate $(date '+%F %T')" > "$A/estimate.txt"
+    echo "verdict=BLOCKED (invalid configuration:$cfg)" >> "$A/estimate.txt"
+    log "BLOCKED: invalid configuration:$cfg"
+    for m in $MODES; do echo "$m exit=2 status=BLOCKED-ESTIMATE" >> "$A/modes.txt"; done
+    { cat "$A/modes.txt"; echo "stopped: invalid configuration ($cfg); nothing was run"; date; } > "$A/DONE"
+    rm -f "$A/RUNNING"
+    exit 2
+  fi
   wait_for_usage
   if ! pnpm build > "$A/build.log" 2>&1; then
     log "build failed (see build.log)"

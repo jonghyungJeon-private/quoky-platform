@@ -34,7 +34,8 @@ if [ -z "$digest" ]; then
 fi
 echo "$mode started" >> "$FAKE_LOG"
 if [ -n "${FAKE_HANG:-}" ]; then
-  sleep 300 & echo $! > "$FAKE_LOG.grandchild"
+  if [ -n "${FAKE_STUBBORN:-}" ]; then ( trap '' TERM; exec sleep 300 ) & else sleep 300 & fi
+  echo $! > "$FAKE_LOG.grandchild"
   wait
 fi
 echo "gate ($mode): PASSED"
@@ -49,7 +50,7 @@ has() { if grep -q -- "$3" "$2" 2>/dev/null; then pass=$((pass + 1)); echo "ok  
 
 gates() { # name, then modes; env from caller
   local n=$1; shift
-  FAKE_LOG="$T/$n.fake.log" GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" GATES_WATCH_SEC=1 GATES_STOP_GRACE_SEC=2 \
+  FAKE_LOG="$T/$n.fake.log" GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" GATES_WATCH_SEC="${GATES_WATCH_SEC:-1}" GATES_STOP_GRACE_SEC="${GATES_STOP_GRACE_SEC:-2}" \
     bash "$GATES" run "$T/wt" "$n" "$@" > "$T/$n.out" 2>&1
   echo $? > "$T/$n.rc"; cat "$T/$n.rc"
 }
@@ -115,8 +116,27 @@ GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" bash "$GATES" status e8 >
 has "status shows partial" "$T/e8.status" "PARTIAL"
 check "watchdog gone" "$(pgrep -f "run-gates.sh run $T/wt e8" | wc -l | tr -d ' ')" 0
 
-# 9. ccusage failing mid-run is tolerated (no stop); the run finishes normally
-rc=$(FAKE_CALLS=100 FAKE_COST_FILE=/nonexistent gates e9 action); check "ccusage unreadable: no stop, exit 0" "$rc" 0
+# 9. ccusage failing: unknown current usage blocks at start (fail-closed); owner-ok allows it, and a mid-run outage is then tolerated
+rc=$(FAKE_CALLS=100 FAKE_COST_FILE=/nonexistent gates e9 action); check "usage unknown blocks exit 2" "$rc" 2
+has "usage unknown reason" "$T/arch/e9/estimate.txt" "current usage unknown"
+has "usage UNKNOWN recorded" "$T/arch/e9/estimate.txt" "current usage UNKNOWN"
+check "no eval after unknown usage" "$(count started "$T/e9.fake.log")" 0
+rc=$(FAKE_CALLS=100 FAKE_COST_FILE=/nonexistent GATES_OWNER_OK=20261104-ccusage-down gates e9b action); check "usage unknown + owner-ok: no stop, exit 0" "$rc" 0
+
+# 11. numeric validation (hard block, even with owner-ok)
+for kv in GATES_RATE_PCT_PER_CALL=garbage GATES_RATE_PCT_SONNET=0 GATES_MAX_EST_PCT=abc GATES_STOP_PCT=101 GATES_STOP_PCT=0 GATES_WATCH_SEC=1.5 GATES_STOP_GRACE_SEC=x GATES_RATE_PCT_PER_CALL=; do
+  n="e11-$(printf '%s' "$kv" | tr -c 'A-Za-z0-9\n' '-')"
+  rc=$(export "$kv" GATES_OWNER_OK=20261104-try; gates "$n" action); check "invalid $kv blocked" "$rc" 2
+  has "reason for $kv" "$T/arch/$n/estimate.txt" "invalid configuration"
+  check "no eval for $kv" "$(count started "$T/$n.fake.log")" 0
+done
+echo 10 > "$T/cost"
+
+# 12. unknown model: blocked unless a rate override or owner-ok
+rc=$(FAKE_PLAN_STYLE=json FAKE_MODEL=gpt-9 gates e12 action); check "unknown model blocked" "$rc" 2
+has "unknown model reason" "$T/arch/e12/estimate.txt" "unknown model"
+rc=$(FAKE_PLAN_STYLE=json FAKE_MODEL=gpt-9 GATES_RATE_PCT_PER_CALL=0.01 gates e12b action); check "unknown model + rate override allowed" "$rc" 0
+rc=$(FAKE_PLAN_STYLE=json FAKE_MODEL=gpt-9 GATES_OWNER_OK=20261104-gpt gates e12c action); check "unknown model + owner-ok allowed" "$rc" 0
 
 # 10. trap cleanup: TERM the runner while the eval hangs -> group killed, KILLED marker, no stray watchdog
 echo 10 > "$T/cost"
@@ -130,6 +150,17 @@ has "KILLED marker" "$T/arch/e10/DONE" "KILLED"
 sleep 1
 gc=$(cat "$T/e10.fake.log.grandchild" 2>/dev/null)
 if [ -n "$gc" ] && kill -0 "$gc" 2>/dev/null; then check "child group killed on TERM" alive dead; else check "child group killed on TERM" dead dead; fi
+
+# 13. TERM-ignoring grandchild whose leader exits on TERM: after cleanup no member of the group remains
+FAKE_LOG="$T/e13.fake.log" FAKE_CALLS=100 FAKE_HANG=1 FAKE_STUBBORN=1 GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" GATES_WATCH_SEC=1 GATES_STOP_GRACE_SEC=2 \
+  bash "$GATES" run "$T/wt" e13 action > "$T/e13.out" 2>&1 &
+rp=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/e13.fake.log.grandchild" ] && break; sleep 1; done
+gc=$(cat "$T/e13.fake.log.grandchild"); gpg=$(ps -o pgid= -p "$gc" | tr -d ' ')
+check "grandchild has its own group before cleanup" "$([ -n "$gpg" ] && [ "$gpg" != "$(ps -o pgid= -p $$ | tr -d ' ')" ] && echo yes)" yes
+kill -TERM "$rp"; wait "$rp" 2>/dev/null
+check "group members after cleanup" "$(ps -axo pgid= | awk -v g="$gpg" '$1 == g' | wc -l | tr -d ' ')" 0
+if kill -0 "$gc" 2>/dev/null; then check "TERM-resistant grandchild killed" alive dead; else check "TERM-resistant grandchild killed" dead dead; fi
 
 echo; echo "passed $pass, failed $failn"
 [ "$failn" -eq 0 ]
