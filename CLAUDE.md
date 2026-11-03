@@ -8,3 +8,5 @@ Claude Code는 먼저 `AGENTS.md`를 따르고 conditional loading router에 따
 
 Runtime/Live UAT의 임시 environment 안전 규칙은 `AGENTS.md`의
 `Temporary Local/UAT Runtime Environment` section을 직접 따른다. 이 파일에 규칙을 복제하지 않는다.
+
+작업 전 `docs/wiki/index.md` 를 보고 필요한 페이지만 읽는다. 위키와 코드가 다르면 코드가 맞고, 위키를 고친다.
