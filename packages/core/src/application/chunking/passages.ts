@@ -123,6 +123,14 @@ function pack(units: readonly Unit[], frame: string, table: boolean, header: Dra
       flush();
       current = open();
     }
+    // A row that fits the cap alone but not with the repeated header (an unsplittable grapheme, Codex P2): drop the
+    // carried header context rather than mark the row over the cap and leave it unread.
+    if (current.units.length === 0 && current.header !== undefined && !fitsLimit(current.points + unit.points, current.weight + unit.weight, {
+      maxCodePoints: allowance.points,
+      maxTokens: allowance.weight,
+    })) {
+      current = { units: [], frame, table, points: 0, weight: 0 };
+    }
     current.units.push(unit);
     current.points += unit.points;
     current.weight += unit.weight;

@@ -254,6 +254,17 @@ describe('sheet rows', () => {
     expect(lines[2]).not.toBe(header);
   });
 
+  it('keeps a row readable when only the repeated header pushes it over the cap (Codex P2)', () => {
+    const body = 'h'.repeat(200) + '\n' + 'x' + '\u0301'.repeat(1000);
+    const joined = joinSections([{ frame: '[Sheet 1/1] "x"', kind: 'table', firstRow: 1, body }]);
+    const passages = chunk(joined.text, joined.sections);
+    expectPartition(joined.text, passages);
+    expect(passages.some((passage) => passage.overCap === true)).toBe(false);
+    const row = passages.find((passage) => new CodePointIndex(joined.text).slice(passage.span.start, passage.span.end).includes('\u0301'));
+    expect(row).toBeDefined();
+    expect(row?.rows?.headerSpan).toBeUndefined();
+  });
+
   it('numbers rows from the connector row of the section', () => {
     const joined = joinSections([{ frame: '[Sheet 1/1] "x"', kind: 'table', firstRow: 5, body: ['a | b', 'c | d', 'e | f'].join('\n') }]);
     const [passage] = chunk(joined.text, joined.sections);
