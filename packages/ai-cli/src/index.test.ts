@@ -117,6 +117,25 @@ describe('ClaudeCliProvider', () => {
     expect(reply.text).toBe('{"answer":"x"}');
   });
 
+  it('ADR-0115 D8: a stdout notice before an error envelope still classifies like plain text (auth, usage limit)', async () => {
+    const errEnv = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' });
+    const auth = await exec({ code: 1, stdout: `Not logged in · Please run /login\n${errEnv}`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(auth).toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    expect((auth as Error).message).not.toContain('"type"');
+    const plain = await exec({ code: 1, stdout: 'Claude AI usage limit reached', stderr: '', timedOut: false }).catch((e: unknown) => e);
+    const limited = await exec({ code: 1, stdout: `Claude AI usage limit reached\n${errEnv}`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect((limited as { kind: unknown }).kind).toBe((plain as { kind: unknown }).kind);
+  });
+
+  it('ADR-0115 D8: a notice before a pretty-printed multi-line envelope yields the envelope result, never the raw JSON', async () => {
+    const pretty = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'pretty reply', usage: { input_tokens: 3 } }, null, 2);
+    const res = await exec({ code: 0, stdout: `some notice\n${pretty}\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('pretty reply');
+    const bad = '{\n  "type": "result",\n  "result": "LEAKED_TEXT", broken\n}';
+    const err = await exec({ code: 0, stdout: `notice\n${bad}`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
   it('ADR-0115 D8: is_error JSON classifies on the result text like the plain-text path', async () => {
     const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' });
     await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });

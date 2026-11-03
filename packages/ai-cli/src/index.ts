@@ -541,7 +541,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       const kind =
         json?.apiErrorStatus === 401 || json?.apiErrorStatus === 403
           ? AiFailureKind.AUTH_REQUIRED
-          : classifyClaudeCliFailure(`${result.stderr}\n${stdoutText}${json?.errorsText ? `\n${json.errorsText}` : ''}`);
+          : classifyClaudeCliFailure(`${result.stderr}\n${json === undefined ? result.stdout : `${json.notices}\n${stdoutText}`}${json?.errorsText ? `\n${json.errorsText}` : ''}`);
       const reason = json?.subtype !== undefined ? ` (${json.subtype})` : '';
       throw new AiProviderError(
         kind,
@@ -586,11 +586,13 @@ interface ClaudePrintJson {
   readonly apiErrorStatus?: number;
   readonly errorsText?: string;
   readonly subtype?: string;
+  /** Stdout text around the envelope (login/usage notices); used only to classify a failure, never echoed. */
+  readonly notices: string;
 }
 
 const RESULT_LOOKING = /"type"\s*:\s*"result"/;
 
-function envelopeOf(obj: Record<string, unknown>): ClaudePrintJson {
+function envelopeOf(obj: Record<string, unknown>, notices = ''): ClaudePrintJson {
   const result = typeof obj.result === 'string' ? obj.result : undefined;
   const errorSubtype = typeof obj.subtype === 'string' && obj.subtype.startsWith('error');
   const status = obj.api_error_status;
@@ -598,6 +600,7 @@ function envelopeOf(obj: Record<string, unknown>): ClaudePrintJson {
   return {
     result,
     isError: obj.is_error === true || errorSubtype,
+    notices,
     usage: parseClaudeResultUsage(obj),
     ...(typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? { apiErrorStatus: status } : {}),
     ...(errorsText !== '' ? { errorsText } : {}),
@@ -617,38 +620,61 @@ const isResultObject = (v: unknown): v is Record<string, unknown> =>
 function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
   const trimmed = stdout.trim();
   if (trimmed === '') return undefined;
+  const lastResultIn = (v: unknown): Record<string, unknown> | undefined => {
+    if (Array.isArray(v)) {
+      let found: Record<string, unknown> | undefined;
+      for (const el of v) if (isResultObject(el)) found = el;
+      return found;
+    }
+    return isResultObject(v) ? v : undefined;
+  };
   let whole: unknown;
   let wholeOk = false;
   try {
     whole = JSON.parse(trimmed);
     wholeOk = true;
   } catch {
-    // fall through to the line scan
+    // fall through to the offset / line scans
   }
-  if (wholeOk && !Array.isArray(whole)) {
+  if (wholeOk) {
     // Only the CLI's own envelope is parsed; any other JSON (an intent selection reply) stays plain text.
-    return isResultObject(whole) ? envelopeOf(whole) : undefined;
+    const found = lastResultIn(whole);
+    return found === undefined ? undefined : envelopeOf(found);
   }
-  let last: Record<string, unknown> | undefined;
-  let looks = false;
-  if (wholeOk && Array.isArray(whole)) {
-    for (const el of whole) if (isResultObject(el)) last = el;
-  } else {
-    for (const line of trimmed.split('\n')) {
-      const t = line.trim();
-      if (t === '') continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(t);
-      } catch {
-        if (t.startsWith('{') && RESULT_LOOKING.test(t)) looks = true;
-        continue;
-      }
-      if (isResultObject(parsed)) last = parsed;
+  // Notices before a (possibly pretty-printed, multi-line) envelope: try each line-start `{` / `[` from last to first,
+  // parsing to the end of stdout; the last start that yields a result envelope wins.
+  const starts: number[] = [];
+  const re = /^[ \t]*[{[]/gm;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) starts.push(m.index);
+  for (let i = starts.length - 1; i >= 0; i -= 1) {
+    const at = starts[i] as number;
+    try {
+      const found = lastResultIn(JSON.parse(stdout.slice(at).trim()));
+      if (found !== undefined) return envelopeOf(found, stdout.slice(0, at));
+    } catch {
+      // not a parseable tail from here
     }
   }
-  if (last !== undefined) return envelopeOf(last);
-  return looks ? { malformed: true, result: undefined, isError: false, usage: {} } : undefined;
+  // Single-line envelopes with notices on either side.
+  let last: Record<string, unknown> | undefined;
+  let lastLine = -1;
+  const lines = trimmed.split('\n');
+  lines.forEach((line, idx) => {
+    const t = line.trim();
+    if (!t.startsWith('{') && !t.startsWith('[')) return;
+    try {
+      const found = lastResultIn(JSON.parse(t));
+      if (found !== undefined) {
+        last = found;
+        lastLine = idx;
+      }
+    } catch {
+      // not JSON
+    }
+  });
+  if (last !== undefined) return envelopeOf(last, lines.filter((_, idx) => idx !== lastLine).join('\n'));
+  const looks = RESULT_LOOKING.test(stdout) && /^[ \t]*[{[]/m.test(stdout);
+  return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
 }
 
 /**

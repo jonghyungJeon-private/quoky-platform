@@ -32436,6 +32436,7 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
   text provider captures up to 2x the usual stdout bound (`maxStdoutBytes`), because JSON escaping inflates the reply. An envelope
   with no string `result` is never echoed as a reply: it is a classified failure if `is_error` is set or the `subtype` is an
   error, and empty output otherwise.
+- **Review fix.** Failure classification runs over the stdout notices around the envelope plus the envelope's own error info (so a login or usage-limit notice keeps its plain-text class); the envelope is also found by scanning line-start `{`/`[` offsets last to first (pretty-printed multi-line output), and the result-looking guard tolerates whitespace. The raw envelope is never a reply or error text.
 - **Logs.** The NL selection call, the D4 help-scope classifier and the `agent_run.shadow` line carry counts only:
   `inTok`, `cacheRead`, `outTok` (each omitted when unreported), plus `promptChars` and `promptBytes`. No content. Core stays
   provider-neutral (`application/call-usage-log-fields.ts`).
