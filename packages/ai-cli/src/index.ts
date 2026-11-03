@@ -525,7 +525,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     }
     // ADR-0115 D8: `--output-format json` prints ONE object; anything else (an older CLI, a login notice) is plain text.
     const json = parseClaudePrintJson(result.stdout);
-    const stdoutText = json?.result ?? result.stdout;
+    // A JSON object that is not a usable envelope (no string `result`, e.g. an error subtype) is never echoed as a reply.
+    const stdoutText = json === undefined ? result.stdout : (json.result ?? '');
     if (result.code !== 0 || json?.isError === true) {
       // The CLI prints "Not logged in · Please run /login" on STDOUT (stderr empty), so
       // classify on stderr + stdout. Only masked stderr is echoed; never the prompt.
@@ -566,10 +567,11 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
 }
 
 /**
- * ADR-0115 D8: parse the single JSON object `claude -p --output-format json` prints. Tolerant: undefined unless stdout
- * is one JSON object whose `result` is a string (then the caller falls back to plain-text handling).
+ * ADR-0115 D8: parse the single JSON object `claude -p --output-format json` prints. Undefined when stdout is not the
+ * CLI's `type: "result"` envelope (an older CLI, a login notice, a plain reply that is JSON): the caller handles it as plain text. A JSON object whose `result`
+ * is not a string returns `result: undefined` (an error, or empty output), so the raw envelope never becomes reply text.
  */
-function parseClaudePrintJson(stdout: string): { result: string; isError: boolean; usage: ReturnType<typeof parseClaudeResultUsage> } | undefined {
+function parseClaudePrintJson(stdout: string): { result: string | undefined; isError: boolean; usage: ReturnType<typeof parseClaudeResultUsage> } | undefined {
   const trimmed = stdout.trim();
   if (!trimmed.startsWith('{')) return undefined;
   let parsed: unknown;
@@ -579,9 +581,13 @@ function parseClaudePrintJson(stdout: string): { result: string; isError: boolea
     return undefined;
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
-  const obj = parsed as { result?: unknown; is_error?: unknown };
-  if (typeof obj.result !== 'string') return undefined;
-  return { result: obj.result, isError: obj.is_error === true, usage: parseClaudeResultUsage(parsed) };
+  const obj = parsed as { type?: unknown; result?: unknown; is_error?: unknown; subtype?: unknown };
+  // Only the CLI's own envelope (`type: "result"`) is parsed; any other JSON (a plain-text reply that is itself JSON, as an
+  // intent selection is) stays plain text.
+  if (obj.type !== 'result') return undefined;
+  const result = typeof obj.result === 'string' ? obj.result : undefined;
+  const errorSubtype = typeof obj.subtype === 'string' && obj.subtype.startsWith('error');
+  return { result, isError: obj.is_error === true || errorSubtype, usage: parseClaudeResultUsage(parsed) };
 }
 
 /**

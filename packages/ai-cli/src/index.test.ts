@@ -73,11 +73,22 @@ describe('ClaudeCliProvider', () => {
     expect(res.usage).toEqual({ label: 'claude:sonnet' });
   });
 
-  it('ADR-0115 D8: a JSON object without a string result falls back to the plain-text path', async () => {
+  it('ADR-0115 D8: a JSON object without a string result is empty output, never the raw envelope as a reply', async () => {
     const stdout = JSON.stringify({ type: 'result', usage: { input_tokens: 1 } });
-    const res = await exec({ code: 0, stdout, stderr: '', timedOut: false });
-    expect(res.text).toBe(stdout);
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.EMPTY_OUTPUT });
+  });
+
+  it('ADR-0115 D8: an error subtype without a result is a classified failure, never a reply', async () => {
+    const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: false });
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toBeInstanceOf(Error);
+  });
+
+  it('ADR-0115 D8: plain text that is not the CLI envelope stays the reply (older CLI), JSON replies included', async () => {
+    const res = await exec({ code: 0, stdout: '{ not json', stderr: '', timedOut: false });
+    expect(res.text).toBe('{ not json');
     expect(res.usage).toEqual({ label: 'claude:sonnet' });
+    const reply = await exec({ code: 0, stdout: '{"answer":"x"}', stderr: '', timedOut: false });
+    expect(reply.text).toBe('{"answer":"x"}');
   });
 
   it('ADR-0115 D8: is_error JSON classifies on the result text like the plain-text path', async () => {
