@@ -57,6 +57,8 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   embedding cap, ADR-0121 D7 amended by addition. Tests T1-1, T2-1..4, T2-6, T3-* are pending until their slices. Gate
   thresholds CH1-CH7 are proposals. Owner ops step: pull `bge-m3`.
 - **Code.** Docs only in C0; C1 adds the pure Core chunker (`application/chunking/`), not wired into any handler.
+- **C2 (2026-11-03).** `pnpm eval:chunk` runs CH1 with the baseline clip and the lexical arm only (no model; 435 hash-frozen
+  synthetic cases incl. a 2 MiB ADR file; exit 4 NON-GATING). Window recall baseline 12.6%, EL 97.0%; E0-E3 and EH not run; thresholds remain proposals.
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 
