@@ -458,7 +458,14 @@ exec_one() {
     "$@" & c=$!
     while :; do wait "$c"; rc=$?; kill -0 "$c" 2>/dev/null || break; done
     if [ "$rc" -gt 128 ]; then wait "$c" 2>/dev/null; r2=$?; [ "$r2" -eq 127 ] || rc=$r2; fi
-    while ps -axo pid=,ppid=,pgid= 2>/dev/null | awk -v me="$$" "\$3 == me && \$1 != me && \$2 != me { f = 1 } END { exit !f }"; do
+    # Release only on a valid snapshot that shows no other member; a failed/empty snapshot keeps holding (bounded:
+    # after 60 consecutive failures the holder leaves and the leftover, if any, is refused and logged, never guessed).
+    n=0
+    while :; do
+      snap=$(exec ps -axo pid=,ppid=,pgid= 2>/dev/null) || snap=""   # exec: ps is a direct child of the holder, excluded
+      if [ -z "$snap" ]; then n=$((n + 1)); [ "$n" -ge 60 ] && break; sleep 1; continue; fi
+      n=0
+      printf "%s\n" "$snap" | awk -v me="$$" "\$3 == me && \$1 != me && \$2 != me { f = 1 } END { exit !f }" || break
       sleep 1
     done
     exit "$rc"
