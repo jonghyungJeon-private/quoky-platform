@@ -492,6 +492,12 @@ export interface ConnectorWriteFlow {
    * kill switch can list and close the approvals it governs. Optional: a flow without it has nothing to list.
    */
   openAnchorsOf?(actorId: Id): Promise<Array<{ readonly session: Session; readonly view: ConnectorWriteAnchorView }>>;
+  /**
+   * Strictly read-only: the connector-write anchor of ONE task read directly (not through the session's `activeTaskId`, which a
+   * finished write hands back to its previous task), or null when the task is missing or not a connector-write anchor. A closed
+   * anchor is returned as it is. For the kill switch's truthful report of a write that finished meanwhile.
+   */
+  anchorOfTask?(taskId: Id): Promise<ConnectorWriteAnchorView | null>;
   prepare(input: FlowInput & { readonly draft: ConnectorWriteDraft }): Promise<ConnectorWriteStep>;
   choose(input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number }): Promise<ConnectorWriteStep>;
   recordApproval(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
@@ -1082,6 +1088,13 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       ...(anchor.operation ? { operation: anchor.operation } : {}),
       activeTaskId: anchor.previousActiveTaskId,
     };
+  }
+
+  async anchorOfTask(taskId: Id): Promise<ConnectorWriteAnchorView | null> {
+    const task = await this.deps.store.tasks.get(taskId);
+    const anchor = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (!task || anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND) return null;
+    return { taskId: task.id, anchor, approval: null };
   }
 
   /** The session's own, not yet closed connector-write anchor (via `activeTaskId`), or null. */

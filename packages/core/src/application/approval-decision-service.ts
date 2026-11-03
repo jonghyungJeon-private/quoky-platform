@@ -1033,8 +1033,18 @@ export class ApprovalDecisionService {
     return this.exclusive(view.anchor.approvalId, input.session.id, async (held): Promise<ConnectorWriteStopResult> => {
       const flow = this.deps.connectorWriteFlow!;
       const live = await flow.find(input.session, held);
-      // Closed or replaced meanwhile by another transition: nothing here ran and nothing is left to withdraw.
-      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) return { kind: 'gone' };
+      // `find` follows the session pointer, which a finished write hands back to its previous task: on a miss the task is read
+      // directly, so a write that ran is reported as run (never as "nothing to decide"); only closed or missing is `gone`.
+      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) {
+        const direct = flow.anchorOfTask !== undefined ? await flow.anchorOfTask(view.taskId) : null;
+        const found = direct !== null && direct.anchor.approvalId === view.anchor.approvalId ? direct.anchor : undefined;
+        if (found === undefined) return { kind: 'gone' };
+        if (found.status === 'EXECUTING') return { kind: 'in-flight' };
+        if (found.operation && (found.status === 'SENT' || found.status === 'NOT_SENT' || found.status === 'UNCERTAIN')) {
+          return { kind: 'done', step: { kind: 'repeat', operation: found.operation, status: found.status, ...outcomeLinkOf(found) } };
+        }
+        return { kind: 'gone' };
+      }
       const status = live.anchor.status;
       if (status === 'EXECUTING') return { kind: 'in-flight' };
       const operation = live.anchor.operation;

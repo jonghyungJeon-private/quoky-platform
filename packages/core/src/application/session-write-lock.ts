@@ -13,6 +13,9 @@ import { KeyedMutex, type LockHold } from '../util/keyed-mutex';
  *   1. the approval lock   (`ApprovalDecisionService`, keyed by approval id)
  *   2. the session lock    (this, keyed by session id; at most ONE session held at a time)
  *   3. a flow's own anchor queue (e.g. the credential-override flow's per-anchor serialization)
+ *   4. the per-actor metadata lock (`ActorMetadataStore.whileLocked`, the kill switch's check + grant consumption and the stop's
+ *      own save). Innermost: it is taken only inside 1 and 2 and its `work` is bounded; nothing is acquired while it is held
+ *      except the flow's own anchor writes, and it is never held while waiting for 1 or 2. It is not re-entrant.
  * A flow method that both takes its anchor queue and writes the session takes the session lock FIRST.
  *
  * Re-entrancy is explicit: a caller already holding the session lock passes its {@link SessionLockHold} to the

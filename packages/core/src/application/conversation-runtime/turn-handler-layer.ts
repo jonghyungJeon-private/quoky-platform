@@ -916,11 +916,20 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
           const consumeGuard =
             isActionSwitchGoverned(anchor) && nlSwitch !== undefined
               ? async <T>(work: () => Promise<T>): Promise<T> => {
-                  if (nlSwitch.whileActionsActing === undefined) {
-                    if (await this.actionSwitchStopsAnchor(anchor, actor)) throw new ActionStoppedError();
-                    return work();
+                  // Fail closed: without the atomic guard the check and the consume cannot share the actor lock (dead in production).
+                  if (nlSwitch.whileActionsActing === undefined) throw new ActionStoppedError();
+                  let started = false;
+                  let guarded: { readonly acted: true; readonly value: T } | { readonly acted: false };
+                  try {
+                    guarded = await nlSwitch.whileActionsActing(actor, async () => {
+                      started = true;
+                      return work();
+                    });
+                  } catch (error) {
+                    // The actor read failed before the work began: nothing was consumed or sent, so the owner hears "not run".
+                    if (!started) throw new ActionStoppedError();
+                    throw error;
                   }
-                  const guarded = await nlSwitch.whileActionsActing(actor, work);
                   if (!guarded.acted) throw new ActionStoppedError();
                   return guarded.value;
                 }

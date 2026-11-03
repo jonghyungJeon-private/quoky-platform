@@ -830,6 +830,7 @@ describe('connector writes — undo of an approved calendar create (ADR-0112 ame
       decide: async () => ({ kind: 'skip', reason: 'disabled' }),
       actionsActing: () => true,
       actionsStillActing: async () => true,
+      whileActionsActing: async (_actor: unknown, work: () => Promise<unknown>) => ({ acted: true as const, value: await work() }),
       logActionUnserved: () => undefined,
       recordExternalWrite: async (input: Record<string, unknown>) => {
         recorded.push(input);
@@ -886,6 +887,7 @@ describe('connector writes — undo of an approved calendar create (ADR-0112 ame
       decide: async () => ({ kind: 'skip', reason: 'disabled' }),
       actionsActing: () => true,
       actionsStillActing: async () => true,
+      whileActionsActing: async (_actor: unknown, work: () => Promise<unknown>) => ({ acted: true as const, value: await work() }),
       logActionUnserved: () => undefined,
       recordExternalWrite: async (input: Record<string, unknown>) => {
         recorded.push(input);
@@ -929,6 +931,7 @@ describe('connector writes — undo of an approved calendar create (ADR-0112 ame
       decide: async () => ({ kind: 'skip', reason: 'disabled' }),
       actionsActing: () => true,
       actionsStillActing: async () => true,
+      whileActionsActing: async (_actor: unknown, work: () => Promise<unknown>) => ({ acted: true as const, value: await work() }),
       logActionUnserved: () => undefined,
       recordActionReceipt: async () => undefined,
       decideAnchoredUndo: async () => decisions.shift(),

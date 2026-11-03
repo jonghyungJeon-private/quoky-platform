@@ -366,9 +366,12 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
     }
   });
 
-  it('race: a real stop that completes before the claim wins; nothing is consumed or written', async () => {
+  it('race: a real stop that completes before the claim wins; only the atomic guard can block the write', async () => {
     const { context } = await openUndo(true);
     const decisions = internals().approvalDecisions;
+    const flow = internals().deps.connectorWriteFlow;
+    // The stop's own withdrawal sees no open anchor, so it cannot close it: only `whileActionsActing` stands between the write and the stop.
+    const scanSpy = vi.spyOn(flow, 'openAnchorsOf').mockResolvedValue([]);
     const originalExecute = decisions.executeConnectorWrite.bind(decisions);
     let stopReply = '';
     const spy = vi.spyOn(decisions, 'executeConnectorWrite').mockImplementation(async (...args: unknown[]) => {
@@ -377,11 +380,13 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
     });
     try {
       const run = await send(context, '일정 삭제 실행');
-      expect(stopReply).toContain('1건');
+      expect(stopReply).toContain(STOP_REPLY);
       expect(writerCalls).not.toContain('deleteEvent');
+      expect(run.reply.text).toContain('자연어 실행이 멈춰 있어서');
       expect(run.reply.text).not.toContain('되돌렸어요');
     } finally {
       spy.mockRestore();
+      scanSpy.mockRestore();
     }
   });
 
@@ -401,8 +406,33 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
       await setSwitch('stopped');
       const run = await send(context, '일정 삭제 실행');
       expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
+      expect(run.reply.text).toContain('이미 실행했어요');
       expect(run.reply.text).not.toContain('아무것도 하지 않았어요');
       expect(run.reply.text).not.toContain('닫');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('done: the finished anchor handed the session pointer back, the stop still reports the finished write (never "nothing to decide")', async () => {
+    const { context } = await openUndo(true);
+    const decisions = internals().approvalDecisions as unknown as { withdrawConnectorWriteForStop: (...args: unknown[]) => Promise<unknown> };
+    const original = decisions.withdrawConnectorWriteForStop.bind(decisions);
+    const spy = vi.spyOn(decisions, 'withdrawConnectorWriteForStop').mockImplementation(async (...args: unknown[]) => {
+      await setSwitch(undefined);
+      const finished = await send(context, '일정 삭제 실행');
+      expect(finished.reply.text).toContain('되돌렸어요');
+      // A finished anchor with a previousActiveTaskId hands the pointer back: the withdrawal's session no longer points at it.
+      const input = args[0] as { session: { activeTaskId?: string } };
+      args[0] = { ...input, session: { ...input.session, activeTaskId: undefined } };
+      await setSwitch('stopped');
+      return original(...args);
+    });
+    try {
+      await setSwitch('stopped');
+      const run = await send(context, '일정 삭제 실행');
+      expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
+      expect(run.reply.text).toContain('이미 실행했어요');
     } finally {
       spy.mockRestore();
     }

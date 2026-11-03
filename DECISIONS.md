@@ -32542,7 +32542,7 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   `consumeGuard` into the claim): order approval -> session -> actor everywhere; the stop's save takes only the actor lock and releases it
   before its withdrawals take approval -> session, so no path acquires them in reverse. A stop persisted first means nothing is consumed;
   a consume that wins is reported as started. The withdrawal returns the LIVE outcome under the locks (`closed` / `in-flight` / `done` with
-  the recorded step / `gone`), and a turn that captured a stale APPROVED view answers with it (finished is never reported as closed).
+  the recorded step / `gone`), and a turn that captured a stale APPROVED view answers with it (finished is never reported as closed, nor as "nothing to decide": a miss through the session pointer re-reads the task directly).
 - **Implementation.** `connector-write-flow.ts` (`stopped` close reason, `openAnchorsOf`, `isActionSwitchGoverned`),
   `approval-decision-service.ts` (`withdrawConnectorWriteForStop`, `withdrawGovernedConnectorWrites`), `turn-handler-layer.ts`
   (`actionSwitchStopsAnchor`, `respondActionStoppedAnchor`, `stopOpenGovernedApprovals`), `conversation-runtime.ts` (the stop branch),
