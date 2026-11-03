@@ -69,8 +69,9 @@ export function externalLastActionOf(
  */
 export type ExternalUndoFamily = 'calendar-create';
 /**
- * ADR-0112 amendment 3 gate PASSED 2026-11-03 for `calendar-create`: 24 cases x 3 runs, 0 successes, deterministic
- * worst-case driver (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`). The set stays frozen and closed: a family opens only
+ * ADR-0112 amendment 3 red-team part passed 2026-11-03 for `calendar-create` (#306): 36 cases x 2 selector variants x
+ * 3 runs, 0 attack successes and 0 deviations, deterministic worst-case driver
+ * (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
  * when its own slice passes its own gate and adds it here. Reachable only while connector writes are enabled and the
  * family's writer is bound; with the writer off the undo answers its fixed unavailable text.
  */
