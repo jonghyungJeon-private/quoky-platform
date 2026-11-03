@@ -30,6 +30,18 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   separate approval). Switching it on is a one-line change to the constant after the gate. Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
   are later slices; their families stay out of the capability set until built.
 
+### ADR-0124 chunked reading of long content: Part L ratified (2026-11-02, branch `claude/chunking`)
+
+- **Decision.** Part L ratified with the recommended defaults (DECISIONS "ADR-0124", lines 31513-32016). Long mail, thread,
+  Drive and Sheets items will be read in windows of at most 3,000 code points. Three arms are built and measured on the
+  hash-frozen synthetic corpus only: **L** (local map + local reduce), **H** (local notes + one final remote call of at
+  most 3,000 code points) and **R2** (every window remote). Real content on H or R2 needs a later Part R ratification
+  (ADR-0118 D7 amendment plus an ADR-0110 D4 scope note), after the measurements and CH4.
+- **CA rulings (2026-11-02).** RQ-1 yes, conditional; RQ-2 no §8 amendment iff invariants I1-I9 hold; RQ-3 a separate
+  embedding cap, ADR-0121 D7 amended by addition. Tests T1-1, T2-1..4, T2-6, T3-* are pending until their slices. Gate
+  thresholds CH1-CH7 are proposals. Owner ops step: pull `bge-m3`.
+- **Code.** Docs only in C0; C1 adds the pure Core chunker (`application/chunking/`), not wired into any handler.
+
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 
 - **Gap closed.** Durable-memory semantic recall used the unfiltered selector (`context-builder-provider.ts`), so a

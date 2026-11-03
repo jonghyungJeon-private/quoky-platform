@@ -39,6 +39,14 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   owner's undo sentence (bounded); an undo counts against the external write cap; `connectorWriteFamilyOf` is exhaustive;
   "cannot be undone automatically" copy when no version/anchor. Draft red-team cases (24, not run):
   `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`.
+## Unreleased — ADR-0124 chunked reading of long content: Part L ratified (docs; owner decision of 2026-11-02)
+
+- **Added (docs).** ADR-0124 in `DECISIONS.md`: per-request, in-memory chunks for item summaries and item questions,
+  a section index for project analysis, multi-vector memory recall and a local embedder chosen by measurement. Arms
+  L / H / R2 are measured on the synthetic corpus only; Part R (remote exception for real content) is not ratified;
+  RQ-1 to RQ-3 ruled by the Chief Architect (2026-11-02; RQ-3 amends ADR-0121 D7 by addition); gates CH1-CH7 are proposals; every model run is Strict.
+- **Added (code, not wired).** A pure Core chunker under `packages/core/src/application/chunking/` (boundaries,
+  passages, token estimate, lexical BM25, window packing, coverage). No handler uses it yet.
 
 ## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
 
