@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { baselineWindow, lexicalWindow, relevantPassages, windowHasNeedle } from './arms';
-import { buildCase, corpusDigest, CORPUS_SEED, CORPUS_VERSION, DEPTHS, generateCorpus, LANGUAGES, LENGTHS, SHAPES, type ChunkEvalCase } from './corpus';
+import { ADR_FILE_BYTES, buildCase, corpusDigest, CORPUS_SEED, CORPUS_VERSION, DEPTHS, generateCorpus, LANGUAGES, LENGTHS, lengthsOf, SHAPES, type ChunkEvalCase } from './corpus';
 import { firstRelevantRank, mean, ndcgAtK, recallAtK, reciprocalRank } from './metrics';
 import { runChunkEval } from './chunk-eval';
 import { EXIT_BLOCKED, EXIT_INVALID, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, FREEZE_PATH, parseArguments, runCli, type CliDeps, type FreezeRecord } from '../chunk-eval-cli';
@@ -10,8 +10,9 @@ import { buildUntrustedDocumentReadout, chunking } from '@quoky/core';
 const corpus = generateCorpus();
 
 describe('CH1 corpus', () => {
-  it('has the ADR matrix: 7 shapes x 4 lengths x 5 depths x 3 languages, at least 300 cases', () => {
-    expect(corpus.length).toBe(SHAPES.length * LENGTHS.length * DEPTHS.length * LANGUAGES.length);
+  it('has the ADR matrix: 7 shapes x 4 lengths x 5 depths x 3 languages, plus the 2 MiB ADR-file tier, at least 300 cases', () => {
+    expect(corpus.length).toBe(SHAPES.length * LENGTHS.length * DEPTHS.length * LANGUAGES.length + DEPTHS.length * LANGUAGES.length);
+    expect(SHAPES.map((shape) => lengthsOf(shape).length)).toEqual([4, 4, 4, 4, 4, 4, 5]);
     expect(corpus.length).toBeGreaterThanOrEqual(300);
     expect(new Set(corpus.map((item) => item.id)).size).toBe(corpus.length);
   });
@@ -33,13 +34,51 @@ describe('CH1 corpus', () => {
     expect(corpusDigest(changed)).not.toBe(record.sha256);
   });
 
-  it('places the needle once, at the requested depth, measured in code points', () => {
+  it('places the needle once, at the requested depth, measured on the serialized text', () => {
+    // The needle goes in at the unit boundary (a paragraph, a table row, a short Slack line) nearest the requested depth, so
+    // the error is at most half a unit: units are 40-250 code points, i.e. up to ~2.1% of the 6k tier. The measured maximum
+    // is 1.5 points; the tolerance is 2 points of depth (0.02) for every case, and the longer tiers sit far inside it.
+    const TOLERANCE = 0.02;
     for (const item of corpus) {
       const points = Array.from(item.prepared);
       expect(points.slice(item.needle.start, item.needle.end).join('')).toBe(item.needle.text);
+      expect(item.prepared.split(item.needle.text).length - 1).toBe(1);
       const fraction = item.needle.start / points.length;
-      // The needle goes in at a paragraph (or row) boundary: within one unit and the decoys' insertions of the target depth.
-      expect(Math.abs(fraction - item.depth / 100)).toBeLessThan(item.length === 6_000 ? 0.12 : 0.06);
+      expect(Math.abs(fraction - item.depth / 100), item.id).toBeLessThanOrEqual(TOLERANCE);
+    }
+  });
+
+  it('table rows count one code point for their separator (the 6k mixed workbook at 70% is not at 77%)', () => {
+    const item = corpus.find((candidate) => candidate.id === 'ch1-workbook-6k-d70-mixed') as ChunkEvalCase;
+    expect(Math.abs(item.needle.start / Array.from(item.prepared).length - 0.7)).toBeLessThanOrEqual(0.02);
+  });
+
+  it('has a 2 MiB ADR file (UTF-8 bytes) at every depth and language', () => {
+    const big = corpus.filter((item) => item.length === ADR_FILE_BYTES);
+    expect(big.length).toBe(DEPTHS.length * LANGUAGES.length);
+    expect(new Set(big.map((item) => item.shape))).toEqual(new Set(['adr-file']));
+    for (const item of big) {
+      const bytes = Buffer.byteLength(item.prepared, 'utf8');
+      expect(bytes, item.id).toBeGreaterThanOrEqual(ADR_FILE_BYTES);
+      expect(bytes, item.id).toBeLessThan(ADR_FILE_BYTES * 1.02);
+    }
+  });
+
+  it('hashes every field of a case, including the prepared text and the sections the EL arm reads', () => {
+    const record = corpusDigest(corpus);
+    const at = corpus.findIndex((item) => item.sections.length > 1);
+    const mutate = (change: (item: ChunkEvalCase) => ChunkEvalCase): string => corpusDigest(corpus.map((item, i) => (i === at ? change(item) : item)));
+    expect(mutate((item) => ({ ...item, prepared: `${item.prepared} ` }))).not.toBe(record);
+    expect(mutate((item) => ({ ...item, sections: item.sections.map((section, i) => (i === 0 ? { ...section, end: section.end + 1 } : section)) }))).not.toBe(record);
+    expect(mutate((item) => ({ ...item, sections: item.sections.slice(0, -1) }))).not.toBe(record);
+    // every key of a case moves the digest
+    for (const key of Object.keys(corpus[at] as ChunkEvalCase) as (keyof ChunkEvalCase)[]) {
+      const moved = mutate((item) => {
+        const value = item[key];
+        const next = typeof value === 'string' ? `${value}x` : typeof value === 'number' ? value + 1 : Array.isArray(value) ? [...value, value[0]] : { ...(value as object), text: 'x' };
+        return { ...item, [key]: next } as ChunkEvalCase;
+      });
+      expect(moved, key).not.toBe(record);
     }
   });
 
@@ -206,6 +245,21 @@ describe('cli', () => {
     expect(run.written.name).toMatch(/^chunk-eval-[0-9a-f]{12}-2026-11-03T00-00-00-000Z\.json$/);
     expect(run.out.join('\n')).toContain('NON-GATING');
     expect(run.out.join('\n')).not.toMatch(/PASSED/);
+  });
+
+  it('exits 3 on verify and run when only the prepared text or the sections differ from the freeze', async () => {
+    const threaded = corpus.filter((item) => item.shape === 'thread' && item.length === 6_000 && item.language === 'en' && item.depth === 50);
+    const record: FreezeRecord = { version: CORPUS_VERSION, seed: CORPUS_SEED, cases: threaded.length, sha256: corpusDigest(threaded) };
+    const prepared = threaded.map((item) => ({ ...item, prepared: `${item.prepared}\n` }));
+    const sections = threaded.map((item) => ({ ...item, sections: item.sections.map((section) => ({ ...section, end: section.end + 1 })) }));
+    for (const changed of [prepared, sections]) {
+      const run = make({ corpus: () => changed }, record);
+      expect(await runCli(['--mode', 'verify'], run.deps)).toBe(EXIT_BLOCKED);
+      expect(await runCli(['--mode', 'run'], run.deps)).toBe(EXIT_BLOCKED);
+      expect(run.written.report).toBeUndefined();
+    }
+    const same = make({ corpus: () => threaded }, record);
+    expect(await runCli(['--mode', 'verify'], same.deps)).toBe(EXIT_OK);
   });
 
   it('exits 5 INVALID when a needle is missing from its item', async () => {

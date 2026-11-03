@@ -7,7 +7,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — ADR-0124 C2: `eval:chunk` CH1 harness, lexical arm only (offline, no model)
 
-- **Added.** `pnpm eval:chunk` (`apps/quoky/src/tools/chunk-eval*`): a hash-frozen synthetic corpus (420 cases, seeded, fictional),
+- **Added.** `pnpm eval:chunk` (`apps/quoky/src/tools/chunk-eval*`): a hash-frozen synthetic corpus (435 cases incl. a 2 MiB ADR file, seeded, fictional; the digest covers every field the arms read),
   today's head-and-tail clip as the baseline (the real `buildUntrustedDocumentReadout`) and the lexical arm over C1 chunks;
   window recall by depth, shape, language, length and needle kind, Recall@1/3/5/10, MRR, nDCG@10; report under `data/eval/`.
   Exit codes 3 on a corpus hash mismatch, 4 NON-GATING after a run (CH1 is a proposal; E0-E3 and EH are not run).

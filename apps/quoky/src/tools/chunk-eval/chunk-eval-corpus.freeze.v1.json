@@ -1,6 +1,6 @@
 {
   "version": "chunk-eval-corpus.v1",
   "seed": "quoky-adr-0124-ch1-2026-11",
-  "cases": 420,
-  "sha256": "1f175212f925a64ca5af196f394ad394806622cd3d32f0abf3e3b78b8e3be716"
+  "cases": 435,
+  "sha256": "f395110d15bb635851a85b290d5867ac897160514e71420a0df73e051f8c4ed5"
 }

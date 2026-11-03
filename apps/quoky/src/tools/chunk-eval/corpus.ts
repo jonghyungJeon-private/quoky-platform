@@ -22,6 +22,13 @@ export const CORPUS_SEED = 'quoky-adr-0124-ch1-2026-11';
 export const SHAPES = ['mail', 'thread', 'drive-doc', 'workbook', 'jira-issue', 'slack-thread', 'adr-file'] as const;
 export type Shape = (typeof SHAPES)[number];
 export const LENGTHS = [6_000, 20_000, 60_000, 87_000] as const;
+/**
+ * CH1 names "a 2 MB ADR file" as a shape. Reading chosen (recorded in DECISIONS section 14): the four code-point tiers apply
+ * to every shape, and the ADR-file shape has ONE added tier of 2 MiB measured in UTF-8 BYTES (not code points). Only the
+ * `length` of that tier is a byte count.
+ */
+export const ADR_FILE_BYTES = 2_097_152;
+export const lengthsOf = (shape: Shape): readonly number[] => (shape === 'adr-file' ? [...LENGTHS, ADR_FILE_BYTES] : LENGTHS);
 export const DEPTHS = [10, 30, 50, 70, 90] as const;
 export const LANGUAGES = ['ko', 'en', 'mixed'] as const;
 export type Language = (typeof LANGUAGES)[number];
@@ -60,7 +67,7 @@ export interface CasePart {
 export interface ChunkEvalCase {
   readonly id: string;
   readonly shape: Shape;
-  /** The requested length in code points of the prepared text (frames not counted). */
+  /** The requested length: code points of the prepared text, or UTF-8 bytes for the 2 MiB ADR-file tier (`ADR_FILE_BYTES`). */
   readonly length: number;
   /** The requested depth, percent. */
   readonly depth: number;
@@ -293,7 +300,8 @@ function frameOf(shape: Shape, language: Language, index: number, total: number)
 }
 
 export function buildCase(shape: Shape, length: number, depth: number, language: Language, ordinal: number): ChunkEvalCase {
-  const id = `ch1-${shape}-${length / 1000}k-d${depth}-${language}`;
+  const id = `ch1-${shape}-${length === ADR_FILE_BYTES ? '2mb' : `${length / 1000}k`}-d${depth}-${language}`;
+  const measure = length === ADR_FILE_BYTES ? (text: string): number => Buffer.byteLength(text, 'utf8') : cpLength;
   const random = seeded(`${CORPUS_SEED}:${id}`);
   const kinds = SHAPE_KINDS[shape];
   const needleKind = kinds[ordinal % kinds.length] as NeedleKind;
@@ -315,56 +323,50 @@ export function buildCase(shape: Shape, length: number, depth: number, language:
     let size = 0;
     if (table) {
       list.push(language === 'ko' ? '항목 | 담당자 | 금액 | 날짜' : 'Item | Owner | Amount | Date');
-      size += cpLength(list[0] as string) + 1;
+      size += measure(list[0] as string) + 1;
     }
     while (size < share) {
       const unit = table ? tableRow(random, language, decoyNames) : paragraph(random, language, decoyNames, target, shape, unitPoints);
       list.push(unit);
-      size += cpLength(unit) + (table ? 1 : 2);
+      size += measure(unit) + (table ? 1 : 2);
     }
     units.push(list);
   }
 
-  // The needle replaces nothing: it is inserted as its own unit at the cumulative position of the requested depth.
+  // The needle replaces nothing: it is inserted as its own unit. Its depth is measured on the SERIALIZED text (the prepared
+  // item the arms read: the sections' bodies joined by a blank line, a body's units joined by a blank line or, in a
+  // table, a newline), at the unit boundary whose code-point offset is nearest to the requested depth.
   const needleSlots = slotValues(needleKind, language, random, target);
   const needleText = template.text(needleSlots);
-  const total = units.reduce((sum, list) => sum + list.reduce((inner, unit) => inner + cpLength(unit) + 2, 0), 0);
-  const wanted = (depth / 100) * total;
-  let walked = 0;
-  let placed = false;
   const decoyKinds: readonly NeedleKind[] = table ? ['sheet-row'] : kinds;
   // Decoys: the same template with another codename and other values; some of the needle's kind, some of the others.
   const decoyCount = length <= 6_000 ? 2 : length <= 20_000 ? 3 : 5;
-  const decoys: { readonly text: string; readonly at: number }[] = [];
+  const sectionsOut: string[][] = units.map((list) => [...list]);
   for (let n = 0; n < decoyCount; n += 1) {
     const kind = n % 2 === 0 ? needleKind : (pick(random, decoyKinds) as NeedleKind);
     const subject = kind === 'code-line' ? latinName(random, used) : pick(random, decoyNames);
-    decoys.push({ text: needleTemplate(kind, language).text(slotValues(kind, language, random, subject)), at: random() });
+    const text = needleTemplate(kind, language).text(slotValues(kind, language, random, subject));
+    const at = random();
+    const list = sectionsOut[Math.min(Math.floor(at * sectionsOut.length), sectionsOut.length - 1)] as string[];
+    list.splice(table ? 1 + Math.floor(at * (list.length - 1)) : Math.floor(at * list.length), 0, text);
   }
-  const sectionsOut: string[][] = units.map((list) => [...list]);
-  for (let section = 0; section < sectionsOut.length && !placed; section += 1) {
-    const list = sectionsOut[section] as string[];
-    for (let at = table ? 1 : 0; at <= list.length; at += 1) {
-      if (walked >= wanted || (section === sectionsOut.length - 1 && at === list.length)) {
-        list.splice(at, 0, needleText);
-        placed = true;
-        break;
-      }
-      walked += cpLength(list[at] ?? '') + 2;
+  const unitSeparator = table ? 1 : 2;
+  const withoutNeedle = sectionsOut.reduce((sum, list, order) => sum + list.reduce((inner, unit, at) => inner + cpLength(unit) + (at > 0 ? unitSeparator : 0), 0) + (order > 0 ? 2 : 0), 0);
+  const totalWithNeedle = withoutNeedle + cpLength(needleText) + unitSeparator;
+  let best: { section: number; at: number; error: number } | undefined;
+  let sectionStart = 0;
+  sectionsOut.forEach((list, section) => {
+    let offset = sectionStart;
+    for (let at = 0; at <= list.length; at += 1) {
+      if (at > 0) offset += cpLength(list[at - 1] as string) + unitSeparator;
+      if (table && at === 0) continue;
+      const error = Math.abs(offset / totalWithNeedle - depth / 100);
+      if (best === undefined || error < best.error) best = { section, at, error };
     }
-  }
-  for (const decoy of decoys) {
-    // Never in the needle's own unit neighbourhood by construction of the depth: spread by a seeded fraction, skip the needle.
-    let target2 = Math.floor(decoy.at * sectionsOut.length);
-    target2 = Math.min(target2, sectionsOut.length - 1);
-    const list = sectionsOut[target2] as string[];
-    if (list.includes(needleText)) {
-      const other = sectionsOut[(target2 + 1) % sectionsOut.length] as string[];
-      if (!other.includes(needleText)) other.splice(table ? 1 : other.length, 0, decoy.text);
-      continue;
-    }
-    list.splice(table ? 1 + Math.floor(decoy.at * (list.length - 1)) : Math.floor(decoy.at * list.length), 0, decoy.text);
-  }
+    sectionStart += list.reduce((sum, unit, at) => sum + cpLength(unit) + (at > 0 ? unitSeparator : 0), 0) + 2;
+  });
+  const chosen = best as { section: number; at: number; error: number };
+  (sectionsOut[chosen.section] as string[]).splice(chosen.at, 0, needleText);
 
   const parts: CasePart[] = sectionsOut.map((list, index) => ({
     frame: sectioned ? frameOf(shape, language, index, sectionCount) : '',
@@ -392,22 +394,25 @@ export function buildCase(shape: Shape, length: number, depth: number, language:
   };
 }
 
-/** Every case of the CH1 matrix: 7 shapes x 4 lengths x 5 depths x 3 languages = 420. Order is fixed. */
+/** Every case of the CH1 matrix: 7 shapes x 4 lengths x 5 depths x 3 languages = 420, plus the 2 MiB ADR-file tier (15) = 435. Order is fixed. */
 export function generateCorpus(): ChunkEvalCase[] {
   const cases: ChunkEvalCase[] = [];
   // The needle kind is (length index + depth index + language index) modulo the shape's kinds, so a kind is balanced across
   // every single factor and is not aliased with the language or the depth.
   for (const shape of SHAPES)
-    LENGTHS.forEach((length, lengthAt) =>
+    lengthsOf(shape).forEach((length, lengthAt) =>
       DEPTHS.forEach((depth, depthAt) => LANGUAGES.forEach((language, languageAt) => cases.push(buildCase(shape, length, depth, language, lengthAt + depthAt + languageAt)))),
     );
   return cases;
 }
 
-/** The digest of one case: everything the arms read (parts, question, needle) and the matrix coordinates. */
+/**
+ * The digest of one case: EVERY field of the case, in a fixed order (canonical serialization: an array, so key order cannot
+ * matter). That includes `prepared` and `sections`, which the EL arm consumes, not only the `parts` they come from.
+ */
 function caseDigest(item: ChunkEvalCase): string {
   const hash = createHash('sha256');
-  hash.update(JSON.stringify([item.id, item.shape, item.length, item.depth, item.language, item.needleKind, item.question, item.needle, item.parts]));
+  hash.update(JSON.stringify([item.id, item.shape, item.length, item.depth, item.language, item.needleKind, item.question, item.needle, item.parts, item.prepared, item.sections]));
   return hash.digest('hex');
 }
 
