@@ -610,12 +610,16 @@ function envelopeOf(obj: Record<string, unknown>, notices = ''): ClaudePrintJson
 
 /**
  * Index just past the JSON object/array that opens at `start` (`{` or `[`), matching brackets outside strings
- * (escapes honoured); -1 when it never closes or the brackets do not match. Parsing is still JSON.parse's job.
+ * (escapes honoured); -1 when it never closes or the brackets do not match; -2 when the shared scan `budget` runs out
+ * (it bounds the total work over all candidate starts to a small multiple of the stdout length, so many unclosed
+ * bracket-led notice lines cannot make the scan quadratic). Parsing is still JSON.parse's job.
  */
-function jsonValueEnd(text: string, start: number): number {
+function jsonValueEnd(text: string, start: number, budget: { left: number }): number {
   const stack: string[] = [];
   let inString = false;
   for (let i = start; i < text.length; i += 1) {
+    budget.left -= 1;
+    if (budget.left < 0) return -2;
     const ch = text[i];
     if (inString) {
       if (ch === '\\') i += 1;
@@ -670,11 +674,23 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
   // end of that JSON value by string-aware bracket matching and parse exactly that span; a parsed span is skipped
   // as a whole. The last span holding a result envelope wins; the text outside it is the notices.
   let last: { obj: Record<string, unknown>; from: number; to: number } | undefined;
+  const budget = { left: 4 * stdout.length + 1024 };
+  let exhausted = false;
   const re = /^[ \t]*[{[]/gm;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
     const from = m.index + m[0].length - 1;
-    const to = jsonValueEnd(stdout, from);
+    const to = jsonValueEnd(stdout, from, budget);
+    if (to === -2) {
+      exhausted = true;
+      break;
+    }
     if (to < 0) continue;
+    // JSON.parse of a span costs its length too.
+    budget.left -= to - from;
+    if (budget.left < 0) {
+      exhausted = true;
+      break;
+    }
     try {
       const found = lastResultIn(JSON.parse(stdout.slice(from, to)));
       if (found !== undefined) last = { obj: found, from, to };
@@ -683,8 +699,11 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
       // balanced but not JSON (a notice in brackets): keep scanning from the next line
     }
   }
-  if (last !== undefined) return envelopeOf(last.obj, `${stdout.slice(0, last.from)}\n${stdout.slice(last.to)}`);
   const looks = RESULT_LOOKING.test(stdout) && /^[ \t]*[{[]/m.test(stdout);
+  // Out of scan budget: a later envelope may be unseen, so a result-looking stdout fails closed (never echoed, never
+  // an earlier envelope taken as the last one).
+  if (exhausted) return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
+  if (last !== undefined) return envelopeOf(last.obj, `${stdout.slice(0, last.from)}\n${stdout.slice(last.to)}`);
   return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
 }
 

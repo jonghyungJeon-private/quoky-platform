@@ -150,6 +150,19 @@ describe('ClaudeCliProvider', () => {
     expect(res.text).toBe('array reply');
   });
 
+  it('ADR-0115 D8: many unclosed bracket-led notices before a large envelope stay linear and fail closed when unscannable', async () => {
+    const big = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x'.repeat(400_000) });
+    const notices = Array.from({ length: 2000 }, (_, i) => `[notice ${i}`).join('\n');
+    const started = Date.now();
+    const out = await exec({ code: 0, stdout: `${notices}\n${big}\n`, stderr: '', timedOut: false }).then(
+      (r) => r.text,
+      (e: unknown) => e,
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+    if (typeof out === 'string') expect(out).toBe('x'.repeat(400_000));
+    else expect(out).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
   it('ADR-0115 D8: is_error JSON classifies on the result text like the plain-text path', async () => {
     const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' });
     await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
