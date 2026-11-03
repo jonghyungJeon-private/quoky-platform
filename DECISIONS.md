@@ -31565,6 +31565,7 @@ and D9 still governs every turn that goes to chat.
 5. **Egress guard.** `QUOKY_EGRESS_GUARD` switches `observe` to `enforce` before `active`.
 6. Open (not decided here): chunk M2 calls count toward the 3 M2 / 5 model-call limits unless ADR-0121 is amended; the 62 pending
    `agent-plan` and 34 read+write golds are reviewed before the gate campaign.
+
 ### ADR-0121 S2 implementation note — P3-3b: the quarantined summariser (M2) and the reply assembler (Core, offline, unwired; 2026-11-03)
 
 - **Status: implemented, not active.** `active` is still refused; no composition-root wiring, no dispatch, no real model call,
@@ -31581,10 +31582,10 @@ and D9 still governs every turn that goes to chat.
   or `toString` content). Pinned: only the executor and the assembler import the module, only the assembler calls
   `summaryEntriesForAssembler`, and the planner-side files never do (`quarantined-summary.test.ts`).
 - **Egress (D4).** The input label is the join of the covered reads' `readOutputLabel`. `selectQuarantinedModel`: `HOST_ONLY` no
-  model; `LOCAL_MODEL_ONLY` a `LOCAL` model; `REMOTE_ON_SUMMARY_REQUEST` any model only when the caller passes `summaryRequested`
-  (a grounded request in the owner's words), else a `LOCAL` one; `REMOTE_OK` any, in the caller's order. A model that does not
+  model; `LOCAL_MODEL_ONLY` a `LOCAL` model; `REMOTE_ON_SUMMARY_REQUEST` a model only with a `SummaryEgressGrant`
+  (see the review fixes below; there is no caller flag); `REMOTE_OK` any, in the caller's order. A model that does not
   declare `LOCAL` counts as `REMOTE`. No satisfying model is `listing-only` and no call is made.
-- **Executor.** `AgentPlanExecutor` takes an optional `summarizer` (the models) and `execute(plan, { summaryRequested })`. A read
+- **Executor.** `AgentPlanExecutor` takes an optional `summarizer` (the models) and `execute(plan)`. A read
   port may return raw `documents` beside `items`; the executor keeps them in memory for the reads a summary covers, for that
   one run, and they are in no result, projection or log. The call is reserved on the run budget right before it
   (`reserveModelCall('m2')`, then `reserveInputTokens`): the 4th M2 call, the 6th model call, 40k tokens and the 45 s wall are a
@@ -31596,15 +31597,40 @@ and D9 still governs every turn that goes to chat.
   untrusted span, each guarded again by the link neutraliser and credential guard, a failing line dropped), then fixed status
   lines (listing only, a failed summary, a bound stop). An `OWNER_DM_ONLY` result is assembled only for the owner's DM. One
   content-free `agent_run.assemble` log line.
-- **Unresolved, not decided here (the owner or a later amendment).** (1) The readout shapes cover mail, Drive, Jira and Slack
-  only; calendar (`meeting-digest.v1`, `LOCAL_MODEL_ONLY`), GitHub and Confluence have none, so a summary over them is
+- **Unresolved, not decided here (the owner or a later amendment).** (1) The readout shapes cover mail and Drive only (Jira and Slack are withheld, see the review fixes); calendar (`meeting-digest.v1`, `LOCAL_MODEL_ONLY`), GitHub and Confluence have none, so a summary over them is
   `listing-only` (`no-readout-source`); adding sources widens `UntrustedDocumentSource`, which the existing document-summary turns
-  also consume. (2) How `summaryRequested` is computed from the owner's words is not defined by D4; it is a caller input,
-  default false. (3) A `LOCAL` model for `REMOTE_ON_SUMMARY_REQUEST` without a request, and no model at all for `HOST_ONLY`
+  also consume. (2) How the summary grant is derived from the owner's words is not defined by D4; nothing produces one yet. (3) No model for `REMOTE_ON_SUMMARY_REQUEST` without a grant, and no model at all for `HOST_ONLY`
   (even a local one), are the fail-closed readings of D4. (4) The shapes and bounds of the two schemas (one sentence of at most
   280 characters, at most 10 items per call, no chunking) are implementation choices; chunking stays open (owner decision 6 of the
   P3-3a note). (5) The raw `documents` a read port hands over are a new additive field of the port contract; the adapter slice
   builds them and must apply the same item bounds. (6) The `quoky.agentRun` audit and M1' re-plan are not built.
+- **Review fixes (Chief Architect, security and Codex review; strict-side choices of the orchestrator, pending the owner).**
+  Jira, Slack (and any other work-text entry) are `listing-only` with the closed reason `work-text-controls-not-built`: they left
+  `AGENT_SUMMARY_READOUT_SOURCE`, so no Jira or Slack body reaches a model. The caller flag `summaryRequested` is deleted
+  (`execute(plan)` takes nothing else). `REMOTE_ON_SUMMARY_REQUEST` content needs a `SummaryEgressGrant` (an opaque branded value,
+  per summarize step and per source, made only by a module-private factory); this slice builds no producer, so in production mail
+  and Drive are `listing-only` (`no-summary-grant`), the body is never fetched (`withDocuments` is asked for only when a summarize
+  step covers the read and a model can already be selected for its label) and there is no fallback to a local model. With a grant
+  a remote model may take exactly one item; a batch runs on a `LOCAL` model only. `HOST_ONLY` gets no model. Documents are
+  validated against the projection (shape, an integer unique in-range position, the projector's id at that position), the input
+  reservation is the prompt's UTF-8 byte length, both credential detectors and the document action-claim guard run on the final
+  prompt and on every entry (and again in the assembler), the assembler answers only the owner's DM, and a REMOTE summary carries a
+  fixed disclosure line. `GitHub` labels in `flow-policy.ts` are NOT changed in this slice (GitHub has no readout, so it cannot
+  reach M2); that is an open precondition (decision 7).
+- **Owner decisions needed (recommendations are not ratified text).**
+  1. Jira and Slack M2 labels and controls. Recommend: item content labelled C5, listing-only until pseudonyms, a work-summary
+     flag and a `workText` provider constraint exist.
+  2. How the summary grant is derived. Recommend: Core, per step and source, from the owner's non-quoted clause using existing
+     approved vocabulary; never a caller flag and never the planner's step.
+  3. Remote batch versus single item. Recommend: remote for a single item only (implemented in `selectQuarantinedModel`).
+  4. `REMOTE_ON_SUMMARY_REQUEST` without a grant is `listing-only` (implemented).
+  5. `HOST_ONLY` gets no model (acknowledge).
+  6. Schema bounds of 280 characters and 10 items (acknowledge).
+  7. Readout sources are limited to mail and Drive (acknowledge). GitHub needs the RQ-1 `readOutputLabel` fix first.
+  8. Body fetch cost accounting before the adapter slice: count body fetches as HTTP requests and raise the static charge for
+     covered reads.
+  - Open Chief Architect / owner interpretation (not refactored here): the narrow `QuarantinedSummarizerModel` port versus
+    routing M2 through the existing provider router with a locality and `workText` constraint (ADR-0121 D12 "no new port").
 ## ADR-0112 amendment 3 — Undo of approved external connector writes: calendar update and restore, Jira comment delete and transition revert, `lastAction.anchorTaskId`, undo reachable at the `local` level (Accepted 2026-11-02) (2026-11-02)
 
 - **Status:** **Accepted 2026-11-02** by the owner with the recommended options O1-O7 (see the ratification record at the

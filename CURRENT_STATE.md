@@ -11,8 +11,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   `application/agent/`. M2: sealed `SUMMARIZATION` request, closed output schema, `UNTRUSTED` + `MODEL_DERIVED`, provider chosen
   by the strictest egress label (else listing only), at most 3 calls charged on the run bounds. Assembler: deterministic, Core
   facts first, no URL from a model. Still `off`/`shadow` only: `active` is refused, nothing wired, no model called.
-- **Open.** Calendar, GitHub and Confluence have no readout shape (listing only); `summaryRequested` derivation; see DECISIONS
-  "ADR-0121 S2 implementation note — P3-3b".
+- **Open.** Calendar, GitHub, Confluence, Jira and Slack are listing only (no readout shape or no work-text controls); mail and
+  Drive are listing only until the owner decides how a `SummaryEgressGrant` is derived (no producer exists; no caller flag); eight
+  owner decisions in DECISIONS "ADR-0121 S2 implementation note — P3-3b".
 - **Next (S2).** Adapter read ports with raw documents and the budgeted HTTP client, wiring, read+write path, S2 read red-team,
   gate campaign, release.
 

@@ -3,6 +3,7 @@ import { joinFlowLabels, type FlowEgress, type FlowLabel } from '../../domain/fl
 import { executionLocalityOf, type AiExecutionLocality, type AiRequest } from '../../ports/ai-provider.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
+import { containsDocumentActionClaim } from '../document-summary-claim-guard';
 import { containsLink, neutralizeLinks } from '../link-neutralizer';
 import {
   buildUntrustedDocumentReadout,
@@ -23,14 +24,17 @@ import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
  *   envelope), after `buildUntrustedDocumentReadout` normalised them, neutralised their links and withheld any item that is
  *   credential-shaped (never redacted, never sent).
  * - **Egress (D4).** The provider must satisfy the strictest egress label of the inputs ({@link selectQuarantinedModel}).
- *   `LOCAL_MODEL_ONLY` needs a `LOCAL` model, `REMOTE_ON_SUMMARY_REQUEST` a remote one only when the caller says the owner's
- *   words asked for a summary, `HOST_ONLY` no model at all. No model satisfying it is a `listing-only` outcome: no call.
+ *   `LOCAL_MODEL_ONLY` needs a `LOCAL` model, `HOST_ONLY` no model at all. `REMOTE_ON_SUMMARY_REQUEST` needs a
+ *   {@link SummaryEgressGrant} (per summarize step and per source; only a module-private Core factory makes one, and this slice
+ *   builds no producer, so in production it is always `listing-only` with no body fetched); with a grant a remote model is
+ *   allowed for exactly one item, a batch runs on a `LOCAL` model only. No model satisfying it is a `listing-only`: no call.
  * - **A schema-bound output (D3, A2).** One closed JSON object per {@link AGENT_PLAN_SUMMARY_SCHEMAS} id; any other shape,
  *   key, type, length or position is a closed `schema` failure. Links are neutralised and the credential guard runs on the
  *   result (a match fails the whole output, `credential`).
  * - **A label that cannot be dropped.** The output is a {@link QuarantinedSummary}: `UNTRUSTED` plus `MODEL_DERIVED`, text held
- *   in a module-private store, no `toJSON` content, no `toString` content. Only {@link summaryEntriesForAssembler} reads it,
- *   and a test pins that only `reply-assembler.ts` may. It carries no value an argument, a planner prompt (D4: M1 takes
+ *   in a module-private store, no `toJSON` content, no `toString` content. The class is not exported (a sealed constructor, one
+ *   module-private factory); only {@link summaryEntriesForAssembler} reads it, and a test pins that only `reply-assembler.ts`
+ *   does, across `packages/**` and `apps/**`. It carries no value an argument, a planner prompt (D4: M1 takes
  *   `TRUSTED` and `STRUCTURE` only) or a store could take.
  * - **Content-free.** This module logs nothing; results carry closed codes and counts.
  */
@@ -39,6 +43,8 @@ export type AgentSummarySchemaId = (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number];
 
 /** One listed item's content as an adapter-side read port hands it over: raw, untrusted, never projected into control flow. */
 export interface AgentSourceDocument {
+  /** The item's closed-format id (the projector's id at {@link position}); a document whose id does not match is dropped. */
+  readonly id: string;
   /** The item's 1-based position in the listing (as Quoky renders it). */
   readonly position: number;
   readonly title: string;
@@ -54,19 +60,27 @@ export interface AgentSourceDocument {
 export interface AgentSummarySource {
   readonly entryId: NlWave1EntryId;
   readonly documents: readonly AgentSourceDocument[];
+  /** The summary grant for this summarize step and this source, if Core derived one (none is derived in this slice). */
+  readonly grant?: SummaryEgressGrant;
+  /** Documents the executor dropped on validation (shape, position, id): counted as omitted. */
+  readonly dropped?: number;
 }
 
 /**
- * The entries whose content has an untrusted-document readout shape (the D3 untrusted span). Calendar, GitHub, Confluence and
- * the local stores have none: a summary over them is `listing-only` (see the P3-3b note, unresolved point 1).
+ * The entries whose content has an untrusted-document readout shape (the D3 untrusted span) and whose egress controls exist.
+ * Calendar, GitHub, Confluence and the local stores have none, and Jira and Slack work text is withheld until its controls
+ * are built ({@link AGENT_SUMMARY_WORK_TEXT_PENDING}): a summary over them is `listing-only` (P3-3b note).
  */
 export const AGENT_SUMMARY_READOUT_SOURCE: Readonly<Partial<Record<NlWave1EntryId, UntrustedDocumentSource>>> = Object.freeze({
   'mail.list': 'mail',
   'drive.files': 'drive',
-  'jira.issues': 'jira-issue',
-  'jira.release': 'jira-issue',
-  'slack.search': 'slack-message',
 });
+
+/**
+ * Work text (Jira, Slack) is labelled `REMOTE_OK` today and has no work-text controls (pseudonyms, a work-summary flag, a
+ * `workText` provider constraint), so it must not reach a model: `listing-only` with its own closed reason (owner decision pending).
+ */
+export const AGENT_SUMMARY_WORK_TEXT_PENDING: readonly NlWave1EntryId[] = Object.freeze(['jira.issues', 'jira.release', 'slack.search'] as const);
 
 /** At most this many items go into one M2 call (a chunk would be a second call; the owner has not ratified chunking). */
 export const AGENT_M2_MAX_ITEMS = 10;
@@ -75,8 +89,13 @@ export const AGENT_M2_TOPIC_MAX_CHARS = 60;
 export const AGENT_M2_TOPICS_MAX = 3;
 /** The model's whole answer is refused above this size (a bound, not a parser limit). */
 export const AGENT_M2_OUTPUT_MAX_BYTES = 16 * 1024;
-/** Characters per input token, worst case (the readout's own estimate: about 1.5). */
-const CHARS_PER_TOKEN = 1.5;
+/**
+ * The input-token reservation is the prompt's UTF-8 byte length: a token is never shorter than one byte, so the byte count is
+ * a true upper bound of the tokens for any text (Korean included), not an estimate.
+ */
+export function estimateInputTokens(prompt: string): number {
+  return new TextEncoder().encode(prompt).length;
+}
 
 /** The label of an M2 output: `UNTRUSTED` plus the derivation marker (D3). */
 export type ModelDerivedLabel = FlowLabel & { readonly trust: 'UNTRUSTED'; readonly derivation: 'MODEL_DERIVED' };
@@ -91,28 +110,42 @@ export interface SummaryEntry {
   readonly topics: readonly string[];
 }
 
-const STORE = new WeakMap<QuarantinedSummary, readonly SummaryEntry[]>();
+/** The content-free audit of one model call: the model's own audit id, its locality, the reserved tokens and the latency. */
+export interface QuarantinedCallAudit {
+  readonly locality: AiExecutionLocality;
+  readonly auditId: string;
+  readonly estimatedTokens: number;
+  readonly latencyMs: number;
+}
+
+// ── the sealed summary ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+const SEAL = Symbol('quarantined-summary-seal');
+const STORE = new WeakMap<object, readonly SummaryEntry[]>();
 
 /**
  * A validated M2 output. The text is not a property: it lives in a module-private store keyed by this object, so the value
- * cannot be spread, serialised, logged or passed as an argument by accident. It is plain data a deterministic assembler
- * renders, nothing else.
+ * cannot be spread, serialised, logged or passed as an argument by accident. The class itself is not exported: its
+ * constructor needs a module-private seal, and the one factory is module-private, so no other module (and no JSON) can make
+ * one. It is plain data a deterministic assembler renders, nothing else.
  */
-export class QuarantinedSummary {
+class QuarantinedSummary {
   readonly kind = 'quarantined-summary' as const;
+  readonly schema: AgentSummarySchemaId;
   readonly label: ModelDerivedLabel;
   /** Entries kept. */
   readonly count: number;
 
-  /** @internal Use {@link quarantinedSummarize}; a forged instance has no stored content and renders nothing. */
-  constructor(
-    readonly schema: AgentSummarySchemaId,
-    label: ModelDerivedLabel,
-    entries: readonly SummaryEntry[],
-  ) {
-    this.label = label;
+  constructor(seal: symbol, schema: AgentSummarySchemaId, label: ModelDerivedLabel, entries: readonly SummaryEntry[]) {
+    if (seal !== SEAL) throw new Error('a quarantined summary is made by the summariser only');
+    this.schema = schema;
+    this.label = Object.freeze({ ...label, sources: Object.freeze([...label.sources]) }) as ModelDerivedLabel;
     this.count = entries.length;
-    STORE.set(this, Object.freeze([...entries]));
+    STORE.set(
+      this,
+      Object.freeze(entries.map((entry) => Object.freeze({ ...entry, topics: Object.freeze([...entry.topics]) }))),
+    );
+    Object.freeze(this);
   }
 
   toJSON(): { readonly kind: 'quarantined-summary'; readonly schema: AgentSummarySchemaId; readonly count: number } {
@@ -123,10 +156,67 @@ export class QuarantinedSummary {
     return '[quarantined-summary]';
   }
 }
+export type { QuarantinedSummary };
 
-/** The assembler's one way to read a summary. Only `reply-assembler.ts` may call it (pinned by test). */
-export function summaryEntriesForAssembler(summary: QuarantinedSummary): readonly SummaryEntry[] {
-  return STORE.get(summary) ?? [];
+function sealSummary(schema: AgentSummarySchemaId, label: ModelDerivedLabel, entries: readonly SummaryEntry[]): QuarantinedSummary {
+  return new QuarantinedSummary(SEAL, schema, label, entries);
+}
+
+/**
+ * The assembler's one way to read a summary. Only `reply-assembler.ts` may call it (pinned by a scan of `packages/**` and
+ * `apps/**`). A value that is not a real summary (a forged object) has no stored content: `undefined`.
+ */
+export function summaryEntriesForAssembler(summary: QuarantinedSummary): readonly SummaryEntry[] | undefined {
+  return STORE.get(summary);
+}
+
+/** TEST SEAM ONLY: seals a summary from given entries (so the assembler's own guards can be tested). Production code never calls it. */
+export function sealQuarantinedSummaryForTest(schema: AgentSummarySchemaId, label: ModelDerivedLabel, entries: readonly SummaryEntry[]): QuarantinedSummary {
+  return sealSummary(schema, label, entries);
+}
+
+// ── the summary egress grant (D4) ──────────────────────────────────────────────────────────────────────────────────────
+
+declare const GRANT_BRAND: unique symbol;
+/**
+ * Permission for ONE summarize step to send ONE source's `REMOTE_ON_SUMMARY_REQUEST` content to a model. An opaque branded value:
+ * only the module-private {@link mintGrant} makes one. THIS SLICE BUILDS NO PRODUCER: how Core derives it (the owner's
+ * non-quoted words, never a caller flag and never the planner's step) is an owner decision (DECISIONS P3-3b), so in production
+ * {@link summaryGrantFor} is always `undefined`.
+ */
+export interface SummaryEgressGrant {
+  readonly [GRANT_BRAND]: true;
+}
+
+const GRANTS = new WeakMap<object, { readonly step: number; readonly entryId: NlWave1EntryId }>();
+
+function mintGrant(step: number, entryId: NlWave1EntryId): SummaryEgressGrant {
+  const grant = Object.freeze({}) as SummaryEgressGrant;
+  GRANTS.set(grant, { step, entryId });
+  return grant;
+}
+
+let grantSource: ((step: number, entryId: NlWave1EntryId) => boolean) | undefined;
+
+/** The grant of one summarize step over one source, or `undefined` (always, in production: there is no producer). */
+export function summaryGrantFor(step: number, entryId: NlWave1EntryId): SummaryEgressGrant | undefined {
+  return grantSource !== undefined && grantSource(step, entryId) ? mintGrant(step, entryId) : undefined;
+}
+
+/** TEST SEAM ONLY: makes {@link summaryGrantFor} grant where `allow` says so (no argument restores production). */
+export function setSummaryGrantsForTest(allow?: (step: number, entryId: NlWave1EntryId) => boolean): void {
+  grantSource = allow;
+}
+
+/** TEST SEAM ONLY: a grant for one step and one source. Production code never calls it. */
+export function mintSummaryEgressGrantForTest(step: number, entryId: NlWave1EntryId): SummaryEgressGrant {
+  return mintGrant(step, entryId);
+}
+
+function grantMatches(grant: SummaryEgressGrant | undefined, step: number, entryId: NlWave1EntryId): boolean {
+  if (grant === undefined || typeof grant !== 'object' || grant === null) return false;
+  const known = GRANTS.get(grant);
+  return known !== undefined && known.step === step && known.entryId === entryId;
 }
 
 // ── provider selection (D4) ────────────────────────────────────────────────────────────────────────────────────────────
@@ -135,29 +225,115 @@ export function summaryEntriesForAssembler(summary: QuarantinedSummary): readonl
 export interface QuarantinedSummarizerModel {
   /** Absent counts as `REMOTE` (fail closed), exactly as `executionLocalityOf`. */
   readonly executionLocality?: AiExecutionLocality;
+  /** A static, content-free id of this model/route for the audit trail. */
+  readonly auditId: string;
   run(request: AiRequest): Promise<{ readonly text: string }>;
 }
 
-export type QuarantinedModelRefusal = 'host-only' | 'no-model';
+export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-grant';
 
 /**
  * D4: the first model (the caller's order is the priority) that satisfies the strictest egress label of the inputs. Pure.
  * - `HOST_ONLY`: none, ever.
  * - `LOCAL_MODEL_ONLY`: a `LOCAL` model.
- * - `REMOTE_ON_SUMMARY_REQUEST`: any model when `summaryRequested`, else a `LOCAL` one (a local call leaves nothing).
+ * - `REMOTE_ON_SUMMARY_REQUEST`: no grant, no model (never a fallback to a local one: the body is not even fetched). With a
+ *   grant: any model for exactly ONE item; a batch (more items) runs on a `LOCAL` model only.
  * - `REMOTE_OK`: any model.
  */
 export function selectQuarantinedModel(
   egress: FlowEgress,
-  summaryRequested: boolean,
+  grant: SummaryEgressGrant | undefined,
+  itemCount: number,
   models: readonly QuarantinedSummarizerModel[],
 ): { readonly ok: true; readonly model: QuarantinedSummarizerModel } | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
   if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
+  if (egress === 'REMOTE_ON_SUMMARY_REQUEST' && (grant === undefined || typeof grant !== 'object' || grant === null || !GRANTS.has(grant))) {
+    return { ok: false, reason: 'no-summary-grant' };
+  }
   const local = models.filter((model) => executionLocalityOf(model) === 'LOCAL');
-  const candidates = egress === 'REMOTE_OK' || (egress === 'REMOTE_ON_SUMMARY_REQUEST' && summaryRequested) ? models : local;
+  const candidates = egress === 'REMOTE_OK' || (egress === 'REMOTE_ON_SUMMARY_REQUEST' && itemCount === 1) ? models : local;
   const picked = candidates[0];
   return picked === undefined ? { ok: false, reason: 'no-model' } : { ok: true, model: picked };
 }
+
+export type QuarantinedListingOnlyReason = QuarantinedModelRefusal | 'no-readout-source' | 'work-text-controls-not-built' | 'no-documents' | 'credential-in-prompt';
+
+/** The closed reasons, for exhaustive renderers. */
+export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyReason[] = Object.freeze([
+  'host-only',
+  'no-model',
+  'no-summary-grant',
+  'no-readout-source',
+  'work-text-controls-not-built',
+  'no-documents',
+  'credential-in-prompt',
+]);
+
+function sourceRefusal(entryId: NlWave1EntryId, schema: AgentSummarySchemaId): QuarantinedListingOnlyReason | undefined {
+  if (AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId)) return 'work-text-controls-not-built';
+  // `meeting-digest.v1` is a calendar digest, and calendar has no readout shape here: it is dead until calendar gets one.
+  if (AGENT_SUMMARY_READOUT_SOURCE[entryId] === undefined || (schema === 'meeting-digest.v1' && entryId !== 'calendar.events')) return 'no-readout-source';
+  return undefined;
+}
+
+/**
+ * Whether a summary over one read could run at all, BEFORE its body is fetched: the source has a readout shape and work-text
+ * controls, and a model can be selected for its label (with `itemCount` items). `undefined` means it can; a reason means
+ * the read must not fetch documents. Pure.
+ */
+export function summaryReadiness(
+  entryId: NlWave1EntryId,
+  schema: AgentSummarySchemaId,
+  grant: SummaryEgressGrant | undefined,
+  itemCount: number,
+  models: readonly QuarantinedSummarizerModel[],
+): QuarantinedListingOnlyReason | undefined {
+  const refusal = sourceRefusal(entryId, schema);
+  if (refusal !== undefined) return refusal;
+  const chosen = selectQuarantinedModel(readOutputLabel(entryId).egress, grant, itemCount, models);
+  return chosen.ok ? undefined : chosen.reason;
+}
+
+/**
+ * Validate the raw documents a read port handed over, against the projection's id slots. A document is kept only when it is a
+ * plain object with string fields, an integer in-range position that no other document claims, and an `id` equal to the id the
+ * projector took at that position; everything else is dropped and counted (never repaired). Pure and total.
+ */
+export function validateSourceDocuments(raw: unknown, slots: readonly (string | undefined)[]): { readonly documents: readonly AgentSourceDocument[]; readonly dropped: number } {
+  if (!Array.isArray(raw)) return { documents: [], dropped: 0 };
+  const claims = new Map<number, number>();
+  const candidates: { readonly document: AgentSourceDocument }[] = [];
+  let dropped = 0;
+  for (const item of raw as unknown[]) {
+    try {
+      if (!plainObject(item)) {
+        dropped += 1;
+        continue;
+      }
+      const { position, id, title, author, date, body, truncated } = item;
+      if (typeof position === 'number' && Number.isInteger(position)) claims.set(position, (claims.get(position) ?? 0) + 1);
+      if (
+        typeof position !== 'number' || !Number.isInteger(position) || position < 1 || position > slots.length ||
+        typeof id !== 'string' || slots[position - 1] !== id ||
+        typeof title !== 'string' || typeof author !== 'string' || typeof date !== 'string' || typeof body !== 'string' ||
+        (truncated !== undefined && typeof truncated !== 'boolean')
+      ) {
+        dropped += 1;
+        continue;
+      }
+      candidates.push({ document: { position, id, title, author, date, body, ...(truncated === true ? { truncated: true } : {}) } });
+    } catch {
+      dropped += 1;
+    }
+  }
+  const documents: AgentSourceDocument[] = [];
+  for (const { document } of candidates) {
+    if ((claims.get(document.position) ?? 0) === 1) documents.push(document);
+    else dropped += 1;
+  }
+  return { documents, dropped };
+}
+
 
 // ── the request and the schema ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -199,13 +375,16 @@ function cleanText(value: unknown, max: number): string | undefined {
 /**
  * Parse the model's answer against the closed schema. The whole text must be one JSON object (no fence, no prose); any
  * unknown key, wrong type, over-long string, unknown or repeated item number is a `schema` failure; the credential guard on
- * every kept string fails the whole output (`credential`). Pure.
+ * every kept string fails the whole output (`credential`). An entry that claims an action Quoky did (the document action-claim
+ * guard of its source) is dropped and counted in `dropped`, never repaired. Pure.
  */
 export function parseQuarantinedOutput(
   schema: AgentSummarySchemaId,
   text: string,
   numbered: readonly { readonly n: number; readonly entryId: NlWave1EntryId; readonly position: number }[],
-): { readonly ok: true; readonly entries: readonly SummaryEntry[] } | { readonly ok: false; readonly reason: QuarantinedOutputFailure } {
+):
+  | { readonly ok: true; readonly entries: readonly SummaryEntry[]; readonly dropped: number }
+  | { readonly ok: false; readonly reason: QuarantinedOutputFailure } {
   if (typeof text !== 'string' || new TextEncoder().encode(text).length > AGENT_M2_OUTPUT_MAX_BYTES) return { ok: false, reason: 'schema' };
   const body = text.trim();
   if (!body.startsWith('{') || !body.endsWith('}')) return { ok: false, reason: 'schema' };
@@ -220,6 +399,7 @@ export function parseQuarantinedOutput(
   const byN = new Map(numbered.map((item) => [item.n, item]));
   const seen = new Set<number>();
   const entries: SummaryEntry[] = [];
+  let dropped = 0;
   const allowedKeys = schema === 'meeting-digest.v1' ? ['n', 'summary', 'topics'] : ['n', 'summary'];
   for (const raw of value.items as unknown[]) {
     if (!plainObject(raw)) return { ok: false, reason: 'schema' };
@@ -239,52 +419,61 @@ export function parseQuarantinedOutput(
         topics.push(clean);
       }
     }
+    // The action-claim guard of the item's own source; an entry with no readout source cannot be judged, so it is dropped.
+    const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId];
+    if (readoutSource === undefined || [summary, ...topics].some((part) => containsDocumentActionClaim(part, readoutSource))) {
+      dropped += 1;
+      continue;
+    }
     entries.push({ n: source.n, entryId: source.entryId, position: source.position, text: summary, topics });
   }
   const joined = entries.flatMap((entry) => [entry.text, ...entry.topics]).join('\n');
   if (containsCredentialMaterial(joined) || containsCredentialFileContent(joined)) return { ok: false, reason: 'credential' };
-  return { ok: true, entries };
+  return { ok: true, entries, dropped };
 }
 
 // ── the call ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface QuarantinedSummaryRequest {
   readonly schema: AgentSummarySchemaId;
+  /** The summarize step's number in the plan (a grant is bound to it). */
+  readonly summaryStep: number;
   readonly sources: readonly AgentSummarySource[];
-  /** The owner's own words asked for a summary (D4 `REMOTE_ON_SUMMARY_REQUEST`). Absent counts as false (fail closed). */
-  readonly summaryRequested?: boolean;
   readonly models: readonly QuarantinedSummarizerModel[];
   /**
-   * Called once, right before the model call, with the prompt's worst-case input tokens: the caller charges the run's M2 /
-   * model-call / token bounds and returns `false` to refuse (no call is made; the run is partial, never an error).
+   * Called once, right before the model call, with the prompt's input tokens (an upper bound: its UTF-8 bytes): the caller
+   * charges the run's M2 / model-call / token bounds and returns `false` to refuse (no call is made; the run is partial).
    */
   readonly reserve: (inputTokens: number) => boolean;
-  /** Aborted on the run's wall or a bound breach: the call is abandoned. */
+  /** Aborted on the run's wall or a bound breach: the call is abandoned, and an already-aborted signal makes no call. */
   readonly signal?: AbortSignal;
+  /** Tests only: monotonic milliseconds for the audit latency (default `Date.now`). */
+  readonly now?: () => number;
 }
-
-export type QuarantinedListingOnlyReason = QuarantinedModelRefusal | 'no-readout-source' | 'no-documents';
 
 export type QuarantinedSummaryOutcome =
   | {
       readonly kind: 'summary';
       readonly summary: QuarantinedSummary;
-      /** Items left out: over {@link AGENT_M2_MAX_ITEMS}, or credential-shaped / empty and withheld. */
+      /** Items not in the summary: over {@link AGENT_M2_MAX_ITEMS}, withheld, dropped on validation, left out by the model or by a claim guard. */
       readonly omitted: number;
+      readonly audit: QuarantinedCallAudit;
     }
   /** No model call was made: the reply is the listing only. */
   | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
   /** The bound refused the call (a partial result). */
   | { readonly kind: 'bound' }
-  | { readonly kind: 'failed'; readonly reason: QuarantinedOutputFailure | 'model' };
+  | { readonly kind: 'failed'; readonly reason: QuarantinedOutputFailure | 'model'; readonly audit?: QuarantinedCallAudit };
 
 /** Run one M2 call (at most; never a retry). Total: never throws. */
 export async function quarantinedSummarize(request: QuarantinedSummaryRequest): Promise<QuarantinedSummaryOutcome> {
   const prepared: { readonly entryId: NlWave1EntryId; readonly position: number; readonly rendered: string }[] = [];
   let omitted = 0;
   for (const source of request.sources) {
-    const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId];
-    if (readoutSource === undefined) return { kind: 'listing-only', reason: 'no-readout-source' };
+    const refusal = sourceRefusal(source.entryId, request.schema);
+    if (refusal !== undefined) return { kind: 'listing-only', reason: refusal };
+    const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId] as UntrustedDocumentSource;
+    omitted += source.dropped ?? 0;
     for (const document of source.documents) {
       if (prepared.length >= AGENT_M2_MAX_ITEMS) {
         omitted += 1;
@@ -307,9 +496,12 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   }
   if (prepared.length === 0) return { kind: 'listing-only', reason: 'no-documents' };
 
-  // The strictest egress of every covered read (a withheld item still counts: the label is the source's).
+  // The strictest egress of every covered read (a withheld item still counts: the label is the source's). Every source whose
+  // label needs a summary grant must hold a valid one for THIS step and THIS source.
   const joined = joinFlowLabels(...request.sources.map((source) => readOutputLabel(source.entryId)));
-  const chosen = selectQuarantinedModel(joined.egress, request.summaryRequested === true, request.models);
+  const needing = request.sources.filter((source) => readOutputLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
+  const allGranted = needing.length > 0 && needing.every((source) => grantMatches(source.grant, request.summaryStep, source.entryId));
+  const chosen = selectQuarantinedModel(joined.egress, allGranted ? needing[0]?.grant : undefined, prepared.length, request.models);
   if (!chosen.ok) return { kind: 'listing-only', reason: chosen.reason };
 
   const schema = request.schema;
@@ -317,37 +509,66 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     schema,
     prepared.map((item) => item.rendered),
   );
-  if (!request.reserve(Math.ceil(Array.from(prompt).length / CHARS_PER_TOKEN))) return { kind: 'bound' };
+  // Both credential detectors on the FINAL prompt, instructions and span together (never redacted: no call).
+  if (containsCredentialMaterial(prompt) || containsCredentialFileContent(prompt)) return { kind: 'listing-only', reason: 'credential-in-prompt' };
+  if (request.signal?.aborted === true) return { kind: 'failed', reason: 'model' };
+  const estimatedTokens = estimateInputTokens(prompt);
+  if (!request.reserve(estimatedTokens)) return { kind: 'bound' };
 
+  const now = request.now ?? Date.now;
+  const started = now();
   const aiRequest: AiRequest = { capability: Capability.SUMMARIZATION, prompt, ...(request.signal !== undefined ? { signal: request.signal } : {}) };
+  const audit = (): QuarantinedCallAudit => ({
+    locality: executionLocalityOf(chosen.model),
+    auditId: typeof chosen.model.auditId === 'string' ? chosen.model.auditId : '',
+    estimatedTokens,
+    latencyMs: Math.max(0, now() - started),
+  });
   let text: string;
   try {
-    text = await abandonOnAbort(Promise.resolve().then(() => chosen.model.run(aiRequest)), request.signal).then((result) => (typeof result?.text === 'string' ? result.text : ''));
+    text = await callModel(chosen.model, aiRequest, request.signal);
   } catch {
     // The adapter's message is never read.
-    return { kind: 'failed', reason: 'model' };
+    return { kind: 'failed', reason: 'model', audit: audit() };
   }
   const numbered = prepared.map((item, index) => ({ n: index + 1, entryId: item.entryId, position: item.position }));
   const parsed = parseQuarantinedOutput(schema, text, numbered);
-  if (!parsed.ok) return { kind: 'failed', reason: parsed.reason };
+  if (!parsed.ok) return { kind: 'failed', reason: parsed.reason, audit: audit() };
   const label: ModelDerivedLabel = { ...joined, trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED' };
-  return { kind: 'summary', summary: new QuarantinedSummary(schema, label, parsed.entries), omitted };
+  // Every prepared item the summary does not carry (the model skipped it, or a claim guard dropped it) is an omitted item.
+  const left = omitted + (prepared.length - parsed.entries.length);
+  return { kind: 'summary', summary: sealSummary(schema, label, parsed.entries), omitted: left, audit: audit() };
 }
 
-function abandonOnAbort<T>(call: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (signal === undefined) return call;
-  return new Promise<T>((resolve, reject) => {
+/**
+ * One model call that an abort abandons. The model is never invoked on an already-aborted signal, and a handler is attached to
+ * the call at once, so a later rejection of an abandoned call is never an unhandled rejection.
+ */
+function callModel(model: QuarantinedSummarizerModel, request: AiRequest, signal: AbortSignal | undefined): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    if (signal?.aborted === true) {
+      reject(new Error('aborted'));
+      return;
+    }
     const abort = (): void => reject(new Error('aborted'));
-    if (signal.aborted) return abort();
-    signal.addEventListener('abort', abort, { once: true });
+    signal?.addEventListener('abort', abort, { once: true });
+    const done = (): void => signal?.removeEventListener('abort', abort);
+    let call: Promise<{ readonly text: string }>;
+    try {
+      call = Promise.resolve(model.run(request));
+    } catch {
+      done();
+      reject(new Error('model'));
+      return;
+    }
     call.then(
-      (value) => {
-        signal.removeEventListener('abort', abort);
-        resolve(value);
+      (result) => {
+        done();
+        resolve(typeof result?.text === 'string' ? result.text : '');
       },
-      (error: unknown) => {
-        signal.removeEventListener('abort', abort);
-        reject(error instanceof Error ? error : new Error('model'));
+      () => {
+        done();
+        reject(new Error('model'));
       },
     );
   });

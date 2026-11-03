@@ -55,8 +55,9 @@ export interface AiRequest {
   workspace?: WorkspaceRef;
   timeoutMs?: number;
   /**
-   * Optional, additive: aborting it ends the call early (a CLI provider terminates its child process). Only the startup
-   * warm-up (ADR-0120 A3 follow-up) sets it; a provider that does not support it ignores it.
+   * Optional, additive: aborting it ends the call early (a CLI provider terminates its child process). The startup
+   * warm-up (ADR-0120 A3 follow-up) and the quarantined summariser (ADR-0121 S2 P3-3b: aborted on the run's wall or a bound
+   * breach, and never called when already aborted) set it; a provider that does not support it ignores it.
    */
   signal?: AbortSignal;
   metadata?: Metadata;

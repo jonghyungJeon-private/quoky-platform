@@ -61,6 +61,13 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Not changed.** `active` is still refused; nothing is wired; no model is called. `agent-boundary.test.ts` allows the link
   neutraliser and the untrusted-document readout and scans the two new files.
 - **Recorded.** DECISIONS "ADR-0121 S2 implementation note — P3-3b" (six unresolved points, for example calendar has no readout shape).
+- **Review fixes (same slice).** Jira and Slack are `listing-only` (`work-text-controls-not-built`); the caller flag
+  `summaryRequested` is gone and `REMOTE_ON_SUMMARY_REQUEST` content needs a `SummaryEgressGrant` that nothing produces yet (mail
+  and Drive stay `listing-only`, body never fetched; remote only for one item with a grant). The summary class is sealed and not
+  exported; documents are validated against the projection (`id`, unique in-range position, shape); input tokens are UTF-8 bytes;
+  the document action-claim guard runs per entry and again in the assembler; the assembler answers the owner's DM only and adds a
+  REMOTE disclosure and per-reason listing-only lines; an aborted signal never calls the model; model-omitted items count as
+  omitted (partial). Dependency key sets are pinned at compile time in `agent-contract-check.ts`. Eight owner decisions recorded in DECISIONS.
 
 ## Unreleased — ADR-0121 S2 P3-3a: bounded read executor, structure projector and run bounds (Core, offline, unwired)
 

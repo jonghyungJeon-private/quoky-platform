@@ -2,10 +2,11 @@ import { joinFlowLabels, type FlowLabel } from '../../domain/flow-label';
 import type { Logger } from '../../ports/logger.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
+import { containsDocumentActionClaim } from '../document-summary-claim-guard';
 import { containsLink, neutralizeLinks } from '../link-neutralizer';
 import type { AgentRunResult } from './plan-executor';
 import { agentReplyNotes, type AgentNoteLanguage, type AgentStepCount, type AgentStepsPlan } from './reply-notes';
-import { summaryEntriesForAssembler, type QuarantinedListingOnlyReason } from './quarantined-summary';
+import { AGENT_SUMMARY_READOUT_SOURCE, summaryEntriesForAssembler, type QuarantinedListingOnlyReason } from './quarantined-summary';
 import type { StructureProjection } from './structure-projector';
 
 /**
@@ -17,11 +18,13 @@ import type { StructureProjection } from './structure-projector';
  *   status lines (listing only, a bound that stopped the run). Nothing before the summaries is model output.
  * - **The summaries are the only M2 text.** They come from {@link QuarantinedSummary} through
  *   {@link summaryEntriesForAssembler} (this file is the only reader), pass the link neutralizer and the credential guard
- *   a second time (defence in depth: a line that still fails is dropped, never repaired), are marked as model-written, and are
+ *   a second time (defence in depth: a line that still fails, or that claims an action Quoky did, is dropped, never repaired), are marked as model-written, and are
  *   returned as their own `summary` parts so a platform layer can render them inside an untrusted span. No URL comes from a
  *   model: a line that would still hold a link is dropped.
- * - **Scope (D4/D5).** A result whose label is `OWNER_DM_ONLY` is assembled only for the owner's DM; elsewhere the reply is one
- *   fixed refusal line and nothing of the content.
+ * - **Scope (D4/D5).** Agent runs happen in the owner's DM only: for any other destination the reply is one fixed refusal
+ *   line and nothing of the content, whatever the label.
+ * - **Disclosure.** When a summary was made by a `REMOTE` model, one fixed line says part of the text was sent to an outside model.
+ * - **Rendering input.** `parts` is the only rendering input; `text` is those parts joined and is for logs and plain-text sinks.
  * - **Content-free log.** One `agent_run.assemble` line: counters only.
  */
 
@@ -44,7 +47,7 @@ export interface AssembleAgentReplyInput {
 }
 
 export interface AssembledAgentReply {
-  /** The parts joined by newlines. */
+  /** The parts joined by newlines (derived from {@link parts}, which is the only rendering input). */
   readonly text: string;
   readonly parts: readonly AgentReplyPart[];
   /** The join of every read's label, and of every summary's label (a summary is `UNTRUSTED`). */
@@ -81,7 +84,17 @@ const T = {
     summaryHeader: '요약 (모델이 쓴 요약이에요. 원문과 다를 수 있어요)',
     summaryLine: (noun: string, position: number, text: string, topics: readonly string[]) => `${noun} ${position}번: ${text}${topics.length > 0 ? ` (주제: ${topics.join(', ')})` : ''}`,
     omitted: (n: number) => `요약에서 ${n}건은 제외했어요.`,
-    listingOnly: '요약은 하지 않고 목록만 보여드려요. 이 자료는 요약용 모델로 보낼 수 없어요.',
+    listingOnly: {
+      'host-only': '이 자료는 외부로 보낼 수 없어서 요약하지 않고 목록만 보여드려요.',
+      'no-model': '이 자료를 보낼 수 있는 요약용 모델이 없어서 목록만 보여드려요.',
+      'no-summary-grant': '요약 요청이 확인되지 않아서 원문은 읽지 않고 목록만 보여드려요.',
+      'no-readout-source': '이 종류의 자료는 아직 요약하지 않고 목록만 보여드려요.',
+      'work-text-controls-not-built': '업무 글 요약에 필요한 보호 장치가 아직 없어서 목록만 보여드려요.',
+      'no-documents': '요약할 내용을 가져오지 못해서 목록만 보여드려요.',
+      'credential-in-prompt': '요약할 자료에 민감한 정보가 있는 것 같아서 목록만 보여드려요.',
+    } satisfies Record<QuarantinedListingOnlyReason, string>,
+    summaryUnavailable: '요약을 보여드릴 수 없었어요.',
+    remoteDisclosure: '이 요약을 만들려고 원문 일부를 외부 모델로 보냈어요.',
     summaryFailed: '요약을 만들지 못해서 목록만 보여드려요.',
     boundStopped: '한도에 도달해서 여기까지만 보여드려요.',
     dmOnly: '이 답은 소유자 DM에서만 보여드릴 수 있어요.',
@@ -94,14 +107,22 @@ const T = {
     summaryHeader: 'Summary (written by a model; it may differ from the original)',
     summaryLine: (noun: string, position: number, text: string, topics: readonly string[]) => `${noun} #${position}: ${text}${topics.length > 0 ? ` (topics: ${topics.join(', ')})` : ''}`,
     omitted: (n: number) => `${n} item${n === 1 ? ' was' : 's were'} left out of the summary.`,
-    listingOnly: 'No summary was made; this is the listing only. This material cannot be sent to a summarizing model.',
+    listingOnly: {
+      'host-only': 'This material cannot leave the host, so there is no summary; this is the listing only.',
+      'no-model': 'No summarizing model may receive this material, so this is the listing only.',
+      'no-summary-grant': 'The summary request was not confirmed, so the content was not read; this is the listing only.',
+      'no-readout-source': 'This kind of material is not summarized yet; this is the listing only.',
+      'work-text-controls-not-built': 'The safeguards for summarizing work text are not built yet; this is the listing only.',
+      'no-documents': 'The content to summarize could not be fetched; this is the listing only.',
+      'credential-in-prompt': 'The material to summarize looked sensitive, so this is the listing only.',
+    } satisfies Record<QuarantinedListingOnlyReason, string>,
+    summaryUnavailable: 'A summary could not be shown.',
+    remoteDisclosure: 'Part of the original text was sent to an outside model to make this summary.',
     summaryFailed: 'A summary could not be made, so this is the listing only.',
     boundStopped: 'A limit was reached, so this is as far as it goes.',
     dmOnly: 'This answer can only be shown in the owner\'s DM.',
   },
 } as const;
-
-const listingOnlyReasons: readonly QuarantinedListingOnlyReason[] = ['host-only', 'no-model', 'no-readout-source', 'no-documents'];
 
 /** Assemble the reply of one executed run. Pure and total. */
 export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAgentReply {
@@ -113,10 +134,11 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   let droppedLines = 0;
 
   // A summary with no stored content (a forged instance) is not a summary: it is ignored, label and all.
-  const summaries = result.steps.flatMap((step) => (step.kind === 'summarize' && step.status === 'ok' && summaryEntriesForAssembler(step.summary).length > 0 ? [step] : []));
+  const summaries = result.steps.flatMap((step) => (step.kind === 'summarize' && step.status === 'ok' && summaryEntriesForAssembler(step.summary) !== undefined ? [step] : []));
   const label = joinFlowLabels(...readLabels, ...summaries.map((step) => step.summary.label));
 
-  if (label.scope === 'OWNER_DM_ONLY' && !input.destinationIsOwnerDm) {
+  // Agent runs are owner-DM only (D5): any other destination gets the fixed refusal, whatever the label says.
+  if (!input.destinationIsOwnerDm) {
     parts.push({ kind: 'status', text: t.dmOnly });
     return finish(input, parts, label, 0, 0);
   }
@@ -138,28 +160,39 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   for (const note of agentReplyNotes(input.plan, counts, language)) parts.push({ kind: 'note', text: note });
 
   // 3. The model's summaries, after every fact.
+  let unavailable = false;
+  let remote = false;
   for (const step of summaries) {
     const lines: string[] = [];
-    for (const entry of summaryEntriesForAssembler(step.summary)) {
+    for (const entry of summaryEntriesForAssembler(step.summary) ?? []) {
       const noun = NOUN[entry.entryId][language];
-      const text = guarded(entry.text);
-      const topics = entry.topics.map(guarded);
+      const text = guarded(entry.text, entry.entryId);
+      const topics = entry.topics.map((topic) => guarded(topic, entry.entryId));
       if (text === undefined || topics.some((topic) => topic === undefined)) {
         droppedLines += 1;
         continue;
       }
       lines.push(t.summaryLine(noun, entry.position, text, topics as string[]));
     }
-    if (lines.length === 0) continue;
-    parts.push({ kind: 'status', text: t.summaryHeader });
-    for (const line of lines) parts.push({ kind: 'summary', text: line });
-    summaryLines += lines.length;
-    if (step.omitted > 0) parts.push({ kind: 'status', text: t.omitted(step.omitted) });
+    if (lines.length === 0) {
+      unavailable = true;
+    } else {
+      parts.push({ kind: 'status', text: t.summaryHeader });
+      for (const line of lines) parts.push({ kind: 'summary', text: line });
+      summaryLines += lines.length;
+      if (step.omitted > 0) parts.push({ kind: 'status', text: t.omitted(step.omitted) });
+    }
+    if (step.audit.locality === 'REMOTE') remote = true;
   }
+  if (remote) parts.push({ kind: 'status', text: t.remoteDisclosure });
 
   // 4. Fixed status lines: no model call was made, a call failed, a bound stopped the run.
   const sum = result.steps.filter((step) => step.kind === 'summarize');
-  if (sum.some((step) => step.status === 'listing-only' && listingOnlyReasons.includes(step.reason))) parts.push({ kind: 'status', text: t.listingOnly });
+  const reasons: QuarantinedListingOnlyReason[] = [];
+  for (const step of sum) if (step.status === 'listing-only' && !reasons.includes(step.reason)) reasons.push(step.reason);
+  for (const reason of reasons) parts.push({ kind: 'status', text: t.listingOnly[reason] });
+  // An ok summary with every line dropped, or a step that was deferred: the fixed "cannot be shown" line, never a blank.
+  if (unavailable || sum.some((step) => step.status === 'deferred')) parts.push({ kind: 'status', text: t.summaryUnavailable });
   if (sum.some((step) => step.status === 'failed')) parts.push({ kind: 'status', text: t.summaryFailed });
   if (result.breach !== undefined) parts.push({ kind: 'status', text: t.boundStopped });
   return finish(input, parts, label, summaryLines, droppedLines);
@@ -173,7 +206,8 @@ function finish(input: AssembleAgentReplyInput, parts: readonly AgentReplyPart[]
     droppedLines,
     ...(input.result.breach !== undefined ? { breach: input.result.breach } : {}),
   });
-  return { text: parts.map((part) => part.text).join('\n'), parts, label, summaryLines, droppedLines };
+  const frozen = Object.freeze(parts.map((part) => Object.freeze({ ...part })));
+  return { text: frozen.map((part) => part.text).join('\n'), parts: frozen, label, summaryLines, droppedLines };
 }
 
 function idsOf(projection: StructureProjection, render: (ids: string) => string): string {
@@ -181,9 +215,15 @@ function idsOf(projection: StructureProjection, render: (ids: string) => string)
   return render(projection.ids.join(', '));
 }
 
-/** The second guard on one model-derived string: links neutralised, no link left, no credential. `undefined` drops it. */
-function guarded(text: string): string | undefined {
+/**
+ * The second guard on one model-derived string: links neutralised, no link left, no credential, and no claim of an action
+ * Quoky did (the guard of the item's own source; a source with none cannot be judged). `undefined` drops it.
+ */
+function guarded(text: string, entryId: NlWave1EntryId): string | undefined {
+  const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[entryId];
+  if (readoutSource === undefined) return undefined;
   const clean = neutralizeLinks(text, 'display');
   if (containsLink(clean, 'display') || containsCredentialMaterial(clean) || containsCredentialFileContent(clean)) return undefined;
+  if (containsDocumentActionClaim(clean, readoutSource)) return undefined;
   return clean;
 }
