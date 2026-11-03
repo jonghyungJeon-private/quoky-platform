@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Eval gate quota guards (2026-11-04, branch `claude/v5-gates-quota-guard`)
+
+- **Done (script + offline tests, no model call).** `run-gates.sh` plans every mode first and refuses the whole start when the
+  estimated cost (max planned calls x per-model rate) exceeds 30% of the 5 h window, current usage + estimate exceeds 95%, or a
+  call cap cannot be read, unless `GATES_OWNER_OK=<yyyymmdd-reason>` (archived in `estimate.txt`). A watchdog stops the running eval
+  process group at 85% of the ccusage limit (exit 6, `USAGE-STOP`, no retry). Test `.claude/skills/quoky-ship/scripts/run-gates.test.sh`
+  (38 checks). Record: DECISIONS "Eval gate quota guards".
+- **Open.** haiku 0.03 / opus 0.15 per-call rates are placeholders (only sonnet 0.06 is measured). action / read-regression plans print
+  no call-cap line; the script derives cases x runs from the plan JSON.
+
 ### Kill switch closes open undo approvals and is re-checked at execution (2026-11-03, branch `claude/v5-stop-guard`)
 
 - **Done (Core, offline).** `에이전트 중지` closes the owner's open undo approvals (anchors with `undoOf`) in every conversation and

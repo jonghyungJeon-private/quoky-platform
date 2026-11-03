@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — eval gate quota guards (ops, `run-gates.sh`)
+
+- **Added.** Pre-start estimate guard: the planned call cap x a per-model rate (sonnet 0.06 % of the 5 h window per call, measured;
+  haiku 0.03 / opus 0.15 placeholders) is written to `estimate.txt` and shown by `status`; a start over `GATES_MAX_EST_PCT` (30), over
+  the 95 % pause threshold with current usage, or with an unreadable cap is refused unless `GATES_OWNER_OK=<yyyymmdd-reason>`.
+  In-run brake: a watchdog stops the eval process group at `GATES_STOP_PCT` (85) % of the ccusage limit; `DONE` carries
+  `USAGE-STOP at <pct>%`, `run` exits 6, no retry (owner order 2026-11-04, after the 2026-11-03 run that took 0 % to 81 % in 12 min).
+
 ## Unreleased — Claude CLI reports token usage (ai-cli, ADR-0115 D8 note)
 
 - **Added.** The Claude CLI text provider runs `--output-format json` and reports `inputTokens` (total), `cachedInputTokens`,
