@@ -200,6 +200,8 @@ import { nlModeVocabularyText } from './action-entries';
  *    reference with Previous selection none ("이번 주 거", "그 중에 X만"); rule 6's own sentence for the second case is gone.
  * A6 rule 8 points to rule 3b. Pinned by `golden/nl-select.v73.prompts.json`.
  */
+// Candidate (not active) `nl-select.v74` = v73 with the one source-name principle in rule 1 and the de-duplication S1-S5: built
+// only with `rev: 'v74'` ({@link NL_CANDIDATE_PROMPT_VERSIONS}); enabled only after the D12 gates and the owner's approval.
 export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v73';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
@@ -284,7 +286,33 @@ export interface NlSelectionPromptInput {
    * `retrievedExamples` is absent or empty.
    */
   readonly replaceStaticExamples?: boolean;
+  /**
+   * Prompt revision of the rule text (default `v73`, the gated production text, byte for byte). `v74` is the slimmed text
+   * with the one source-name principle (DECISIONS "Prompt slimming and the source-name principle (nl-select.v74)"): NOT
+   * enabled anywhere until the D12 gates pass and the owner approves; it exists so a gate can compare it with v73.
+   */
+  readonly rev?: NlPromptRev;
 }
+
+/** The selectable prompt revisions of the rule text (`v73` active, `v74` candidate). */
+export type NlPromptRev = 'v73' | 'v74';
+
+/** Version ids of the candidate (`rev: 'v74'`) prompts: read, A6 action and A6 R2 (each built from the same v74 rule text). */
+export const NL_CANDIDATE_PROMPT_VERSIONS = { read: 'nl-select.v74', action: 'nl-select.v75', r2: 'nl-select.v76' } as const;
+
+const RULE7_END_V73 = '   Otherwise CLEAR with "alternatives": [].';
+const RULE7_END_V74 = '   Otherwise CLEAR; leave "alternatives" out when there is none.';
+/** v74 (S2): the `count` and `limit` arg lines every entry repeated, stated once at the head of the catalog. */
+const SHARED_COUNT =
+  'true only when the owner asks how many ("몇 개", "how many"). A how-many follow-up to the previous selection keeps that entry and all its args and sets count true.';
+const SHARED_LIMIT = 'Only when the owner asks for at most N results (1-10).';
+const SHARED_ARGS_NOTE = `Shared args (an entry has one only where it lists it below): count: ${SHARED_COUNT} limit: ${SHARED_LIMIT.replace(/^Only/, 'only')}`;
+/** v74 (S4): what the removed rule-5 bullets said beyond their arg line, moved onto that arg line. */
+const V74_ARG_SUFFIX: Readonly<Record<string, string>> = {
+  'jira.issues.window': ' A time word beside 할당된/배정된 ("어제 배정된") sets no window.',
+  'calendar.events.keyword': ' 일정, 회의, 미팅 alone are never the keyword. Never for a busy/free question (that is `availability`).',
+  'github.items.kind': ' Never with query review-requests.',
+};
 
 /**
  * The previous selection as the prompt shows it. `turns` (owner decision D1, 2026-10-26) and `earlier` (P7) are rendered
@@ -587,6 +615,7 @@ const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
 
 /** The full instruction text for one selection call. */
 export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
+  const v74 = input.rev === 'v74';
   const offered = new Set(input.entries.map((entry) => entry.id));
   const lines: string[] = [];
   lines.push(
@@ -599,6 +628,13 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     'Rules:',
     '1. Pick an entry when the owner wants Quoky to show, list, find, check, count, summarize or brief them on that data now.',
     '   Questions and indirect requests count ("~있어?", "~있나?", "~있을텐데?", "정리해줘", "브리핑해줘", "요약해줘", "알려줘").',
+    ...(v74
+      ? [
+          '   A source name selects that source\'s entry only when the message asks for that source\'s own data or names it as the',
+          '   place to look. A message in which the name is only a word that happens to match, or that asks for something the',
+          '   source\'s data cannot hold, is none; when it is unclear which one is meant, NEEDS_CLARIFICATION (rule 7).',
+        ]
+      : []),
     '2. Return "none" for small talk, feelings, statements of fact, opinions, general knowledge ("노션이 뭐야?"), how-to',
     '   questions or tips that rule 3 does not send to help.topic ("git 태그는 어떻게 달아?", "슬랙 채널 정리 잘하는 팁"),',
     '   negated requests ("보여주지 마"), questions about what a',
@@ -606,12 +642,23 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   switching Quoky\'s model, and EVERY request to create, add, register,',
     '   send, reply, forward, post, comment, assign, move, change, delete, cancel, schedule, remind or remember something, also when',
     '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.',
-    '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none even when it',
-    '   names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
-    '   A message whose main predicate states how the owner feels or what state they are in (답답해, 불안해, 지친다, 막막하다,',
-    '   stressed, worried, overwhelmed) and that asks for nothing is none, even when it names a source or what the feeling is',
-    '   about: a question word inside the clause that only gives the reason for the feeling does not make it a question. A',
-    '   feeling followed by its own question or request in the same message ("…복잡한데 … 뭐 있어?") is still that lookup.',
+    ...(v74
+      ? [
+          '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none; a',
+          '   past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
+          '   A message whose main predicate states how the owner feels or what state they are in (답답해, 불안해, 지친다, 막막하다,',
+          '   stressed, worried, overwhelmed) and that asks for nothing is none: a question word inside the clause that only gives',
+          '   the reason for the feeling does not make it a question. A feeling followed by its own question or request in the',
+          '   same message ("…복잡한데 … 뭐 있어?") is still that lookup.',
+        ]
+      : [
+          '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none even when it',
+          '   names a source or a day; a past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
+          '   A message whose main predicate states how the owner feels or what state they are in (답답해, 불안해, 지친다, 막막하다,',
+          '   stressed, worried, overwhelmed) and that asks for nothing is none, even when it names a source or what the feeling is',
+          '   about: a question word inside the clause that only gives the reason for the feeling does not make it a question. A',
+          '   feeling followed by its own question or request in the same message ("…복잡한데 … 뭐 있어?") is still that lookup.',
+        ]),
     '3. How-to and capability questions, decided in this order (the first that applies wins):',
     '   a. About Quoky itself: it addresses Quoky (여기서, 너한테, how to ask you), asks whether Quoky can read a source or do',
     '      something, or asks how to use one of Quoky\'s own features (to-dos, reminders, memory, feedback, model switching,',
@@ -633,15 +680,17 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   (문서, 자료, 페이지, 파일, 관련, 얘기, 내용, 메시지, 건, 거) and the verb even when it is glued on',
     '   ("장애검색해줘" -> 장애); never translate or paraphrase them.',
     '   `upcoming` is for the calendar\'s next event only; for Jira "마감 다가오는/임박한" use window due, next-7-days.',
-    '   Jira window: ONLY when the owner says when issues were created (등록/생성/새로 올라온), updated (업데이트/수정/변경)',
-    '   or are due (마감/기한/due). 할당된/배정된/내 담당 is the role, and a time word with it ("어제 배정된") sets nothing.',
-    '   Jira status: in-progress ONLY when the owner says 진행/진행중/진행 중/in progress/working on ("진행중인 이슈"); never',
-    '   guess it. Calendar keyword: a word of the event title the owner narrows to ("스크럼만", "스크럼 일정"); the period',
-    '   words (오늘, 이번 주) and the generic words (일정, 회의, 미팅) are never the keyword.',
-    '   Drive kind: ONLY when the owner names the file type (스프레드시트/시트/엑셀, 구글 문서/독스 only (plain 문서 is not a type), 슬라이드/ppt, pdf, 폴더);',
-    '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
-    '   GitHub kind: pr ONLY when the owner names pull requests (PR, PRs, pull request, 풀리퀘, 머지 요청); issue ONLY when the owner',
-    '   names issues (이슈, issue); omit it when both or neither are named; never with query review-requests.',
+    ...(v74 ? [] : [
+      '   Jira window: ONLY when the owner says when issues were created (등록/생성/새로 올라온), updated (업데이트/수정/변경)',
+      '   or are due (마감/기한/due). 할당된/배정된/내 담당 is the role, and a time word with it ("어제 배정된") sets nothing.',
+      '   Jira status: in-progress ONLY when the owner says 진행/진행중/진행 중/in progress/working on ("진행중인 이슈"); never',
+      '   guess it. Calendar keyword: a word of the event title the owner narrows to ("스크럼만", "스크럼 일정"); the period',
+      '   words (오늘, 이번 주) and the generic words (일정, 회의, 미팅) are never the keyword.',
+      '   Drive kind: ONLY when the owner names the file type (스프레드시트/시트/엑셀, 구글 문서/독스 only (plain 문서 is not a type), 슬라이드/ppt, pdf, 폴더);',
+      '   the type word is then `kind`, not part of `name`. Do not use `keyword` on the calendar for "busy/free" questions.',
+      '   GitHub kind: pr ONLY when the owner names pull requests (PR, PRs, pull request, 풀리퀘, 머지 요청); issue ONLY when the owner',
+      '   names issues (이슈, issue); omit it when both or neither are named; never with query review-requests.',
+    ]),
     '   A message that is only a source name ("지라", "메일", "일정", "드라이브") selects that source\'s default listing with',
     '   args {}; a bare "슬랙" or "컨플루언스" has no keyword, so answer NEEDS_CLARIFICATION with that entry.',
     '   A source named in the message decides which source\'s search is used (Slack names the Slack search; Confluence or a wiki',
@@ -650,10 +699,14 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '   period word (목요일, 어제, 다다음 주, 이번 달 말까지) is ALWAYS `range`, never a keyword, from, or name; a part of the day',
     '   (오전, 오후, 저녁) is `partOfDay`. A follow-up that names another day ("일요일 것도 알려줘" after a week) changes `range` only',
     '   (this-sun), keeps the other previous args, and never makes the day word a keyword.',
-    '   Search keyword (Slack, Confluence): only the core topic term(s); drop conversational filler such as 얘기, 나온, 관련, 거.',
+    ...(v74 ? [] : [
+      '   Search keyword (Slack, Confluence): only the core topic term(s); drop conversational filler such as 얘기, 나온, 관련, 거.',
+    ]),
     '   Mail: a period the mail was received in is `range` ("이번 주에 도착한 메일" = this-week); a question about ONE listed mail by its',
     '   number ("N번째 건 누가 보냈어?") is `item`; summarizing, replying to or reading one mail ("이 메일 요점만 알려줘") is none, not a list.',
-    '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("가장 오래 열려 있는 것 먼저"); keep the previous args.',
+    ...(v74 ? [] : [
+      '   Jira order: sort oldest/newest/recently-updated only when the owner asks for an order ("가장 오래 열려 있는 것 먼저"); keep the previous args.',
+    ]),
     '6. Follow-ups: when a previous selection is given and the message narrows or corrects it ("그 중에 X만", "아니 보고자만",',
     '   "모레는 어때?"), return the same entryId with the previous args plus only the change the message states.',
     '   A count follow-up ("총 몇 건이야", "how many is that") with a previous selection is the same entry and args plus',
@@ -664,7 +717,7 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '7. NEEDS_CLARIFICATION when a request to see something does not settle one entry: two entries fit equally well, or it',
     '   names only a period or a reference with Previous selection none ("이번 주 거", "그 중에 X만", "among those, only X");',
     '   list the (at most 2) likeliest in alternatives, never CLEAR and never none.',
-    '   Otherwise CLEAR with "alternatives": [].',
+    v74 ? RULE7_END_V74 : RULE7_END_V73,
     '',
     `Range symbols: ${NL_RANGE_SYMBOLS.join(', ')}; mon..sun (the nearest such day: 금요일 = fri); this-mon..this-sun (that day of this week: 이번 주 금요일 = this-fri); ${WEEKEND_NOTE};`,
     'next-mon..next-sun and last-mon..last-sun (that day of next / last week: 지난주 금요일 = last-fri, 다음 주 수 = next-wed);',
@@ -672,9 +725,16 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     'until-mon..until-sun (from today through the nearest such day: 금요일까지 = until-fri); until-next-mon..until-next-sun (from today through that day of next week);',
     '',
     'Catalog:',
+    ...(v74 && input.entries.some((entry) => entry.args.some((spec) => (spec.name === 'count' && spec.description === SHARED_COUNT) || (spec.name === 'limit' && spec.description === SHARED_LIMIT))) ? [SHARED_ARGS_NOTE] : []),
   );
   for (const entry of input.entries) {
-    lines.push(`- ${entry.id}: ${bounded(entry.description.en)} (${bounded(entry.description.ko)})`);
+    // v74 (S3, S5): no Korean gloss (the arg lines keep the Korean cue words); the Slack / Confluence "pick it whenever the
+    // message names it" sentence is the rule-1 principle now.
+    lines.push(
+      v74
+        ? `- ${entry.id}: ${bounded(entry.description.en).replace(/ Pick it whenever the message names \w+ as the place to look, whatever the topic is\./, '')}`
+        : `- ${entry.id}: ${bounded(entry.description.en)} (${bounded(entry.description.ko)})`,
+    );
     if (entry.args.length === 0) {
       lines.push('  args: none');
       continue;
@@ -693,7 +753,12 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
                 : spec.kind === 'ref'
                   ? '"#N"|recent|this|last'
                   : 'verbatim text';
-      lines.push(`  ${spec.name}${spec.required === true ? ' (required)' : ''}: ${values}. ${bounded(spec.description)}`);
+      if (v74 && ((spec.name === 'count' && spec.description === SHARED_COUNT) || (spec.name === 'limit' && spec.description === SHARED_LIMIT))) {
+        lines.push(`  ${spec.name}: ${values}. As above.`);
+        continue;
+      }
+      const suffix = v74 ? (V74_ARG_SUFFIX[`${entry.id}.${spec.name}`] ?? '') : '';
+      lines.push(`  ${spec.name}${spec.required === true ? ' (required)' : ''}: ${values}. ${bounded(spec.description)}${suffix}`);
     }
   }
   const retrieved = input.retrievedExamples !== undefined && input.retrievedExamples.length > 0 ? input.retrievedExamples : undefined;
@@ -707,7 +772,9 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     for (const example of examples) {
       if (example.previous !== undefined) lines.push(`Previous selection: ${example.previous}`);
       if (example.context !== undefined) lines.push(`Reference context: ${example.context}`);
-      lines.push(`Message: ${example.text.replace(/\n/g, ' ')}`, `Output: ${example.output}`);
+      // v74 (S1): `alternatives` is left out when empty (the parser reads a missing one as []).
+      const output = v74 ? example.output.replace(',"alternatives":[]}', '}') : example.output;
+      lines.push(`Message: ${example.text.replace(/\n/g, ' ')}`, `Output: ${output}`);
     }
   }
   if (retrieved !== undefined && !swap) lines.push('', renderRetrievedBlock(retrieved));
@@ -741,7 +808,7 @@ function withActionRules(lines: readonly string[], r2: readonly string[] = []): 
     if (line === 'Catalog:') header = false;
     const replacement = ACTION_LINE_REPLACEMENTS[line];
     out.push(...(replacement ?? [line]));
-    if (line === '   Otherwise CLEAR with "alternatives": [].') out.push(...rules);
+    if (line === RULE7_END_V73 || line === RULE7_END_V74) out.push(...rules);
   }
   return out;
 }
