@@ -237,7 +237,7 @@ describe('NlSelectionService — D10/D11 agreement log (content-free)', () => {
 
 /** Every field is a closed id, a flag or a number; no owner text or argument value appears in any field. */
 function assertContentFree(lines: readonly LogFields[], forbidden: readonly string[]): void {
-  const allowed = new Set(['grammarId', 'grammarEntryId', 'entryId', 'outcome', 'mode', 'agree', 'agreeEntry', 'reason', 'latencyMs', 'cached', 'promptChars', 'sinceStartMs', 'idleMs', 'boundMs']);
+  const allowed = new Set(['grammarId', 'grammarEntryId', 'entryId', 'outcome', 'mode', 'agree', 'agreeEntry', 'reason', 'latencyMs', 'cached', 'promptChars', 'promptBytes', 'inTok', 'cacheRead', 'outTok', 'sinceStartMs', 'idleMs', 'boundMs']);
   for (const line of lines) {
     for (const [key, value] of Object.entries(line)) {
       expect(allowed.has(key), key).toBe(true);

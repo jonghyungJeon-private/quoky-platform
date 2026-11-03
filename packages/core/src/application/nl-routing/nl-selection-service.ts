@@ -130,6 +130,7 @@ import { nlOneStepClauseGroundedFlags } from './clause-flags';
 import { nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
 import { nlOwnerStatedRange, nlSearchParentListing } from './owner-period';
 import { isJiraReleaseLinkOnly } from '../work-chat/jira-release-link';
+import { callUsageLogFields, type CallUsageLogFields } from '../call-usage-log-fields';
 
 /**
  * Natural-language capability selection (ADR-0120): the one owner of the catalog call, its validation, the clarification
@@ -166,6 +167,11 @@ export const NL_PHASES: readonly NlPhase[] = ['a', 'c', 'c-shadow'];
 /** Content-free timing of one selector call (never prompt text): size, process age, idle time and the bound applied. */
 export interface SelectionCallMeta {
   readonly promptChars: number;
+  /** ADR-0115 D8 note: UTF-8 size of the prompt and the provider-reported counts (each omitted when unreported). */
+  readonly promptBytes?: number;
+  readonly inTok?: number;
+  readonly cacheRead?: number;
+  readonly outTok?: number;
   readonly sinceStartMs: number;
   readonly idleMs: number;
   readonly boundMs: number;
@@ -2555,7 +2561,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     });
     const bound = this.selectionBound(clock());
     const timeoutMs = bound.boundMs;
-    const call: SelectionCallMeta = { promptChars: prompt.length, ...bound };
+    let call: SelectionCallMeta = { ...callUsageLogFields(prompt, undefined), ...bound };
     let rawText: string;
     try {
       const result = await withTimeout(
@@ -2563,6 +2569,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
         timeoutMs,
       );
       rawText = result.text;
+      call = { ...callUsageLogFields(prompt, result.usage), ...bound };
     } catch (error) {
       // A provider-reported timeout is not a completed call either (it must not reset the idle clock).
       const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
@@ -2600,8 +2607,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (quoted === undefined || containsCredentialMaterial(reply) || containsCredentialMaterial(quoted)) return undefined;
     const clock = this.deps.elapsed ?? Date.now;
     const started = clock();
+    let usageFields: CallUsageLogFields | undefined;
     const done = (answer: '1' | '2' | 'neither' | 'malformed' | 'timeout' | 'failed' | 'egress-refused'): 1 | 2 | undefined => {
-      this.log('info', 'nl_selection.help_scope_classified', { answer, latencyMs: Math.max(0, clock() - started) });
+      this.log('info', 'nl_selection.help_scope_classified', { answer, latencyMs: Math.max(0, clock() - started), ...(usageFields ?? {}) });
       return answer === '1' ? 1 : answer === '2' ? 2 : undefined;
     };
     if (turn.chatProviderId === undefined) return done('egress-refused');
@@ -2616,7 +2624,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const timeoutMs = this.selectionBound(clock()).boundMs;
     let rawText: string;
     try {
-      rawText = (await withTimeout(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, intentSelectionTier: 'stronger' }), timeoutMs)).text;
+      const classified = await withTimeout(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, intentSelectionTier: 'stronger' }), timeoutMs);
+      rawText = classified.text;
+      usageFields = callUsageLogFields(prompt, classified.usage);
     } catch (error) {
       const timedOut = error instanceof SelectionTimeout || (error instanceof AiProviderError && error.kind === AiFailureKind.TIMEOUT);
       if (!timedOut) this.lastCompletedAtMs = clock();

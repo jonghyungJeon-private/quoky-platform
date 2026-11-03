@@ -50,9 +50,40 @@ const exec = (r: CliRunResult) =>
   });
 
 describe('ClaudeCliProvider', () => {
-  it('PRV-3: reports its selection label only — the print mode exposes no token counts ("unknown")', async () => {
+  it('PRV-3: a plain-text stdout (older CLI) is the reply and reports the label only ("unknown")', async () => {
     const res = await exec({ code: 0, stdout: 'hello', stderr: '', timedOut: false });
+    expect(res.text).toBe('hello');
     expect(res.usage).toEqual({ label: 'claude:sonnet' });
+  });
+
+  it('ADR-0115 D8: the JSON print result gives the reply text and the reported token counts', async () => {
+    const stdout = JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false, result: ' hi json ',
+      usage: { input_tokens: 5, cache_creation_input_tokens: 100, cache_read_input_tokens: 20, output_tokens: 7 },
+    });
+    const res = await exec({ code: 0, stdout, stderr: '', timedOut: false });
+    expect(res.text).toBe('hi json');
+    expect(res.usage).toEqual({ label: 'claude:sonnet', inputTokens: 125, cachedInputTokens: 20, cacheCreationInputTokens: 100, outputTokens: 7 });
+    expect(JSON.stringify(res.usage)).not.toContain('hi json');
+  });
+
+  it('ADR-0115 D8: invalid counts are omitted, never zeroed', async () => {
+    const stdout = JSON.stringify({ type: 'result', is_error: false, result: 'ok', usage: { input_tokens: -1, output_tokens: 1.5, cache_read_input_tokens: '3' } });
+    const res = await exec({ code: 0, stdout, stderr: '', timedOut: false });
+    expect(res.usage).toEqual({ label: 'claude:sonnet' });
+  });
+
+  it('ADR-0115 D8: a JSON object without a string result falls back to the plain-text path', async () => {
+    const stdout = JSON.stringify({ type: 'result', usage: { input_tokens: 1 } });
+    const res = await exec({ code: 0, stdout, stderr: '', timedOut: false });
+    expect(res.text).toBe(stdout);
+    expect(res.usage).toEqual({ label: 'claude:sonnet' });
+  });
+
+  it('ADR-0115 D8: is_error JSON classifies on the result text like the plain-text path', async () => {
+    const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' });
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    await expect(exec({ code: 1, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
   });
 
   it('success → runs `claude -p` with prompt on stdin (neutral cwd) and returns a MARKDOWN_REPORT artifact', async () => {
@@ -67,7 +98,7 @@ describe('ClaudeCliProvider', () => {
     });
     expect(calls[0]?.bin).toBe('claude');
     // Owner decision of 2026-10-28: GENERAL_CHAT runs at medium effort.
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'medium', '--tools', '']);
     expect(calls[0]?.opts.input).toContain('do the thing');
     expect(calls[0]?.opts.cwd).toBeTruthy();
     // ADR-0121 S0 L1: exactly the non-essential-traffic switch, nothing else.
@@ -85,7 +116,7 @@ describe('ClaudeCliProvider', () => {
     const claude = new ClaudeCliProvider('claude', { runner });
     expect(claude.capabilities).toContainEqual({ capability: Capability.INTENT_SELECTION, priority: 50 });
     const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'route this', timeoutMs: 4000 });
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'high', '--tools', '']);
     expect(calls[0]?.opts.timeoutMs).toBe(4000);
     // Not a chat capability: the JSON passes through without the chat hygiene rewriting it.
     expect(res.text).toBe('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}');
@@ -104,7 +135,7 @@ describe('ClaudeCliProvider', () => {
       calls.push({ args });
       return { code: 0, stdout: '{"answer":1}\n', stderr: '', timedOut: false };
     };
-    const BASE = ['--strict-mcp-config', '--no-session-persistence', '--setting-sources', ''];
+    const BASE = ['--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json'];
 
     it('INTENT_SELECTION with the tier runs on sonnet at effort low; the label names the model used', async () => {
       const calls: Array<{ args: string[] }> = [];
@@ -260,27 +291,27 @@ describe('ClaudeCliProvider', () => {
     [Capability.CODE_IMPLEMENTATION, 'high'],
   ] as const)('passes --model sonnet and the default effort for %s (%s)', async (capability, effort) => {
     const args = await argsFor({ capability });
-    expect(args.slice(0, 9)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', effort]);
+    expect(args.slice(0, 11)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', effort]);
     expect(args).not.toContain(PROMPT); // prompt stays on stdin
   });
 
   it('passes no --effort flag for a capability outside the effort table (ADR-0092: CLI default)', async () => {
     const args = await argsFor({ capability: Capability.TEST_EXECUTION });
-    expect(args.slice(0, 7)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '']);
+    expect(args.slice(0, 9)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json']);
     expect(args).not.toContain('--effort');
   });
 
   it('honours a configured model and partial effort overrides over the defaults', async () => {
     const options = { model: 'opus', effortByCapability: { [Capability.GENERAL_CHAT]: 'medium' as const } };
-    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 9))
-      .toEqual(['-p', '--model', 'opus', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium']);
-    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(7, 9))
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 11))
+      .toEqual(['-p', '--model', 'opus', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'medium']);
+    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(9, 11))
       .toEqual(['--effort', 'high']);
   });
 
   it('treats an explicit undefined effort override as the default instead of throwing', async () => {
     const options = { effortByCapability: { [Capability.GENERAL_CHAT]: undefined } };
-    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(7, 9))
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(9, 11))
       .toEqual(['--effort', 'medium']);
   });
 
@@ -304,7 +335,7 @@ describe('ClaudeCliProvider', () => {
       capability: Capability.CODE_IMPLEMENTATION,
       workspace: { id: 'w1', rootPath: '/repo', kind: 'local-clone' },
     });
-    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high']);
+    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'high']);
   });
 
   it('rejects a model or effort that could be read as another flag', () => {
@@ -1386,7 +1417,7 @@ describe('Provider regression through the contained runner', () => {
     });
     expect(probe.spawns).toHaveLength(1);
     expect(probe.spawns[0]?.bin).toBe('claude');
-    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium', '--tools', '']);
+    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'medium', '--tools', '']);
     expect(probe.spawns[0]?.options.cwd).toBe(tmpdir()); // Claude's neutral-cwd contract
     expect(probe.spawns[0]?.options.shell).toBe(false);
     expect(probe.stdinWrites).toEqual([PROMPT]); // prompt on stdin, never argv

@@ -31,6 +31,7 @@ function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;
   if (specifier === '../../ports/ai-provider.port' || specifier === '../../ports/logger.port') return true;
   if (specifier === '../credential-guard') return true;
+  if (specifier === '../call-usage-log-fields') return true;
   // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
   if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;
   // The document action-claim guard (pure: its only import is a type), run on every model-derived summary line.

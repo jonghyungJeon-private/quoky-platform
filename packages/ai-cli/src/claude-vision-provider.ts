@@ -78,8 +78,46 @@ export function buildClaudeVisionStreamJsonInput(
 /** `result` event subtypes named in a failure reason; anything else is reported as `error`. */
 const KNOWN_RESULT_SUBTYPES: readonly string[] = ['success', 'error_during_execution', 'error_max_turns', 'error_max_budget_usd'];
 
+/**
+ * ADR-0115 D8: the token counts a Claude CLI `result` object (print mode `--output-format json`, or the stream-json
+ * final `result` event) reports in `usage`. The provider-neutral shape follows the Codex adapter: `inputTokens` is the
+ * TOTAL input (uncached + cache read + cache creation), `cachedInputTokens` the cache-read part, and
+ * `cacheCreationInputTokens` the cache-write part. Only non-negative safe integers count; anything else is omitted,
+ * never estimated, and no text is ever copied from the object.
+ */
+export type ClaudeReportedUsage = {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  outputTokens?: number;
+};
+
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export function parseClaudeResultUsage(result: unknown): ClaudeReportedUsage {
+  const out: ClaudeReportedUsage = {};
+  if (typeof result !== 'object' || result === null) return out;
+  const usage = (result as { usage?: unknown }).usage;
+  if (typeof usage !== 'object' || usage === null || Array.isArray(usage)) return out;
+  const u = usage as Record<string, unknown>;
+  const fresh = tokenCount(u.input_tokens);
+  const cacheRead = tokenCount(u.cache_read_input_tokens);
+  const cacheCreation = tokenCount(u.cache_creation_input_tokens);
+  const output = tokenCount(u.output_tokens);
+  if (fresh !== undefined) {
+    const total = fresh + (cacheRead ?? 0) + (cacheCreation ?? 0);
+    if (Number.isSafeInteger(total)) out.inputTokens = total;
+  }
+  if (cacheRead !== undefined) out.cachedInputTokens = cacheRead;
+  if (cacheCreation !== undefined) out.cacheCreationInputTokens = cacheCreation;
+  if (output !== undefined) out.outputTokens = output;
+  return out;
+}
+
 export type ClaudeStreamJsonOutcome =
-  | { readonly ok: true; readonly text: string }
+  | { readonly ok: true; readonly text: string; readonly usage?: ClaudeReportedUsage }
   | { readonly ok: false; readonly kind: AiFailureKind; readonly reason: string };
 
 /**
@@ -122,7 +160,7 @@ export function parseClaudeStreamJsonResult(stdout: string): ClaudeStreamJsonOut
       typeof result.subtype === 'string' && KNOWN_RESULT_SUBTYPES.includes(result.subtype) ? result.subtype : 'error';
     return { ok: false, kind, reason: `result ${subtype}${status === undefined ? '' : ` status ${status}`}`, failureText };
   }
-  return { ok: true, text: resultText, failureText };
+  return { ok: true, text: resultText, usage: parseClaudeResultUsage(result), failureText };
 }
 
 export interface ClaudeCliVisionProviderOptions {
@@ -266,8 +304,8 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code },
-      // ADR-0115 D8: the label only (counts are not read from the stream-json result): "unknown".
-      usage: { label: `claude:${this.model}` },
+      // ADR-0115 D8: the label plus whichever counts the final stream-json `result` event reported.
+      usage: { label: `claude:${this.model}`, ...(outcome.usage ?? {}) },
       audit: {
         model: this.model,
         executionLocality: this.executionLocality,

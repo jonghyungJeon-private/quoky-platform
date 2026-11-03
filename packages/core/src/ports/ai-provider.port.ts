@@ -87,6 +87,8 @@ export interface AiUsage {
   readonly label: string;
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
+  /** Tokens written to the provider's prompt cache (reported by some providers only). */
+  readonly cacheCreationInputTokens?: number;
   readonly outputTokens?: number;
   readonly reasoningTokens?: number;
   readonly totalTokens?: number;

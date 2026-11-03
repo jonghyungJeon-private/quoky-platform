@@ -2,6 +2,7 @@ import { Capability, type Actor, type Id, type InboundQuotedRange, type IsoTimes
 import { CATALOG_FLOW_LABEL, OWNER_TEXT_FLOW_LABEL, PREVIOUS_SELECTION_FLOW_LABEL } from '../../domain/flow-label';
 import type { AiExecutionLocality, AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import { callUsageLogFields, type CallUsageLogFields } from '../call-usage-log-fields';
 import { containsCredentialMaterial } from '../credential-guard';
 import { NlActionSwitch, parseActionSwitchPhrase, readActionSwitch, type NlActionSwitchState } from '../nl-routing/action-switch';
 import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
@@ -319,8 +320,11 @@ export class AgentRunService {
     if (signal.aborted) return;
     const timeoutMs = this.deps.timeoutMs ?? AGENT_SHADOW_DEFAULT_TIMEOUT_MS;
     let raw: string;
+    let callFields: CallUsageLogFields = callUsageLogFields(prompt, undefined);
     try {
-      raw = (await provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal })).text;
+      const planned = await provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal });
+      raw = planned.text;
+      callFields = callUsageLogFields(prompt, planned.usage);
     } catch {
       if (!signal.aborted) this.logShadow({ outcome: 'unavailable', reason: 'failed', latencyMs: latency() });
       return;
@@ -328,7 +332,7 @@ export class AgentRunService {
     if (signal.aborted) return;
     const plan = parseAgentPlanOutput(raw);
     if (plan === null) {
-      this.logShadow({ outcome: 'malformed', reason: agentPlanParseFailure(raw) ?? 'unknown', latencyMs: latency() });
+      this.logShadow({ outcome: 'malformed', reason: agentPlanParseFailure(raw) ?? 'unknown', ...callFields, latencyMs: latency() });
       return;
     }
     const offered = new Map(turn.entries.filter((entry) => entry.risk === 'READ').map((entry) => [entry.id, entry] as const));
@@ -353,6 +357,7 @@ export class AgentRunService {
       ...(uncovered > 0 ? { uncoveredClauses: uncovered } : {}),
       ...agreement,
       ...liveFields(turn.live),
+      ...callFields,
       latencyMs: latency(),
     });
   }

@@ -1197,7 +1197,7 @@ describe('owner decision A (2026-10-22): a general help question about a named s
       expect(call.prompt).not.toContain('Open question');
       const line = h.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified');
       expect(line).toMatchObject({ level: 'info', fields: { answer: '1' } });
-      expect(Object.keys(line?.fields ?? {}).sort()).toEqual(['answer', 'latencyMs']);
+      expect(Object.keys(line?.fields ?? {}).sort()).toEqual(['answer', 'latencyMs', 'promptBytes', 'promptChars']);
       expect(JSON.stringify(h.logs)).not.toContain('퀴키한테');
     });
 

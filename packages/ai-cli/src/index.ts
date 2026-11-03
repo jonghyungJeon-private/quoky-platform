@@ -21,7 +21,7 @@ import type {
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
 import { CLAUDE_CHILD_ENV, defaultCliRunner, maskSecrets } from './cli-runner';
 import type { CliRunner } from './cli-runner';
-import { classifyClaudeCliFailure, validatedClaudeModel } from './claude-vision-provider';
+import { classifyClaudeCliFailure, parseClaudeResultUsage, validatedClaudeModel } from './claude-vision-provider';
 import {
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -465,6 +465,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const model = this.modelFor(request);
     const args = [
       '-p', '--model', model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
+      // ADR-0115 D8: one JSON `result` object, so the reply text and the reported token counts come back together.
+      '--output-format', 'json',
     ];
     if (request === undefined) return args;
     const effort = this.isStrongerSelection(request) ? this.strongerIntentSelectionEffort : this.effortByCapability[request.capability];
@@ -521,17 +523,20 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
         `claude CLI could not run: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
-    if (result.code !== 0) {
+    // ADR-0115 D8: `--output-format json` prints ONE object; anything else (an older CLI, a login notice) is plain text.
+    const json = parseClaudePrintJson(result.stdout);
+    const stdoutText = json?.result ?? result.stdout;
+    if (result.code !== 0 || json?.isError === true) {
       // The CLI prints "Not logged in · Please run /login" on STDOUT (stderr empty), so
       // classify on stderr + stdout. Only masked stderr is echoed; never the prompt.
-      const kind = classifyClaudeCliFailure(`${result.stderr}\n${result.stdout}`);
+      const kind = classifyClaudeCliFailure(`${result.stderr}\n${stdoutText}`);
       throw new AiProviderError(
         kind,
         `claude CLI exited ${result.code}: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
 
-    const sanitizedOutput = sanitizeTerminalOutput(result.stdout);
+    const sanitizedOutput = sanitizeTerminalOutput(stdoutText);
     const text = (isChatCapability(request.capability)
       ? sanitizeGeneralChatText(
           stripInternalMetadataEnvelope(sanitizedOutput),
@@ -554,10 +559,29 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
-      // ADR-0115 D8: the plain-text print mode exposes no token counts, so only the label is reported ("unknown").
-      usage: { label: `claude:${this.modelFor(request)}` },
+      // ADR-0115 D8: the label plus the counts the JSON `result` reported; the plain-text fallback has the label only.
+      usage: { label: `claude:${this.modelFor(request)}`, ...(json?.usage ?? {}) },
     };
   }
+}
+
+/**
+ * ADR-0115 D8: parse the single JSON object `claude -p --output-format json` prints. Tolerant: undefined unless stdout
+ * is one JSON object whose `result` is a string (then the caller falls back to plain-text handling).
+ */
+function parseClaudePrintJson(stdout: string): { result: string; isError: boolean; usage: ReturnType<typeof parseClaudeResultUsage> } | undefined {
+  const trimmed = stdout.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  const obj = parsed as { result?: unknown; is_error?: unknown };
+  if (typeof obj.result !== 'string') return undefined;
+  return { result: obj.result, isError: obj.is_error === true, usage: parseClaudeResultUsage(parsed) };
 }
 
 /**

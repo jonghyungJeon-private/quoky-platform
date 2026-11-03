@@ -32416,3 +32416,19 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
   claim about real mail. EL's only misses (13 of 435) are code-line needles in the ADR-file shape (60k: 6, 87k: 2, 2 MiB: 5 of 15), where the filler
   code blocks repeat the same constant pattern; reported and left untuned. The hybrid arm EH,
   which carries the proposed 95% bar, is not run, so no CH1 verdict exists.
+
+## ADR-0115 D8 note — Claude CLI JSON print mode reports token usage (2026-11-03)
+
+- **Owner request (2026-11-03).** Measure real token usage so the input-token estimates can be calibrated.
+- **Change.** The Claude CLI text provider adds `--output-format json` to its print-mode argv (`--tools` stays last, every
+  isolation flag stays). The one JSON `result` object gives the reply text (`result`) and `usage`. The same sanitize,
+  mask and empty-output pipeline runs on that text; `is_error: true` is classified by the existing failure classifier on the
+  `result` text plus stderr. `AiUsage` gains an optional `cacheCreationInputTokens`; `inputTokens` is the TOTAL input
+  (uncached + cache read + cache creation, the Codex meaning), `cachedInputTokens` the cache-read part. Only non-negative
+  integers are kept; absent stays absent, never 0. The vision provider reads the same fields from its final stream-json
+  `result` event.
+- **Fallback.** If stdout is not one JSON object with a string `result` (an older CLI, a login notice), stdout is the reply
+  as before and only the label is reported.
+- **Logs.** The NL selection call, the D4 help-scope classifier and the `agent_run.shadow` line carry counts only:
+  `inTok`, `cacheRead`, `outTok` (each omitted when unreported), plus `promptChars` and `promptBytes`. No content. Core stays
+  provider-neutral (`application/call-usage-log-fields.ts`).

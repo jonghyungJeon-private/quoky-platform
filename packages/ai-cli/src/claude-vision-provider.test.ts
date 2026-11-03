@@ -96,7 +96,7 @@ describe('ClaudeCliVisionProvider — descriptor', () => {
       '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--tools', '',
     ]);
     // Same isolation prefix as the chat ClaudeCliProvider.
-    expect(args.slice(0, 7)).toEqual(new ClaudeCliProvider('claude', { model: 'sonnet' }).buildArgs());
+    expect(args.slice(0, 7)).toEqual(new ClaudeCliProvider('claude', { model: 'sonnet' }).buildArgs().slice(0, 7));
   });
 
   it('refuses a model name that could be read as a flag or carries whitespace', () => {
@@ -360,5 +360,13 @@ describe('capability routing with the Claude vision provider (amendment A2)', ()
     // The chat provider never advertises the capability, and the local vision provider is a separate instance.
     expect(chat.capabilities.map((c) => c.capability)).not.toContain(Capability.IMAGE_UNDERSTANDING);
     expect(new OllamaCliVisionProvider({ model: 'gemma3:4b' }).capabilities).toEqual(vision.capabilities);
+  });
+});
+
+describe('parseClaudeStreamJsonResult usage (ADR-0115 D8)', () => {
+  it('reads the counts of the final result event, omitting invalid ones', () => {
+    const line = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x', usage: { input_tokens: 2, cache_read_input_tokens: 3, output_tokens: -4 } });
+    const out = parseClaudeStreamJsonResult(line);
+    expect(out.ok && out.usage).toEqual({ inputTokens: 5, cachedInputTokens: 3 });
   });
 });
