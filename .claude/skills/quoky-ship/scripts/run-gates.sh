@@ -230,6 +230,7 @@ group_verified() {
       if (bad) { print "refuse unparseable snapshot line"; exit }
       if (owngrp == "") { print "refuse own process group unreadable"; exit }
       if (g == owngrp) { print "refuse pgid is this script own group"; exit }
+      if (tp != "" && tgrp == "") { print "refuse tmux server pid not in the snapshot"; exit }
       if (tp != "" && (g == tp || g == tgrp)) { print "refuse pgid is the tmux server group"; exit }
       if (members == 0) { print "gone"; exit }
       if (leader && (lstart == "" || want == "" || lstart != want)) { print "refuse leader start time [" lstart "] != recorded [" want "] (pid reuse?)"; exit }
