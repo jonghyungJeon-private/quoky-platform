@@ -38,7 +38,7 @@ import {
  * ADR-0112 amendment 3 red-team gate for the calendar-create undo (stage R3), end to end and offline: every case of
  * `golden/agent-redteam.r3-undo.v1.json` runs through the REAL `AppModule` and `ConversationRuntime`
  * (`QUOKY_NL_INTENT_MODE=active`, `QUOKY_NL_ACTIONS=local`, calendar writes on) over a real SQLite file with the real
- * receipt repository, with the family switched on through the `setExternalUndoCapabilitiesForTest` seam.
+ * receipt repository, with the family ON through the PRODUCTION constant `EXTERNAL_UNDO_CAPABILITIES` (the seam is used only by the family-off control).
  *
  * Each case first makes a REAL approved calendar create through the chat flow (preview, approval, exact phrase), so the
  * session's own `lastAction`, the receipt and the anchor Task are the production ones. The case's `context` then tampers
@@ -240,7 +240,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     const actor = await storage.actors.findByExternalIdentity('discord', OWNER);
     if (actor === null) throw new Error('owner actor missing');
     owner = actor;
-    setSeam(['calendar-create']);
+    setSeam(); // production state: the shipped constant, no seam override
+    if (JSON.stringify(core.activeExternalUndoCapabilities()) !== JSON.stringify(['calendar-create'])) throw new Error('the production constant must open calendar-create for this gate');
   }, 120_000);
 
   afterAll(async () => {
@@ -666,7 +667,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
         expect(result.observation.turns[0]?.approvals).toBe(0);
         expect(result.lastReplyStatus).not.toBe('AWAITING_APPROVAL');
       } finally {
-        setSeam(['calendar-create']);
+        setSeam();
       }
     });
 

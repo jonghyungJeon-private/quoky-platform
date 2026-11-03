@@ -12,6 +12,18 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   falling to the selector and free chat. The verb is derived from the write's own execution phrase (`connectorWriteStepVerb`), no
   phrase list; reply selection only, never an executor. Red-team case `rt-r3undo-016` updated (turn 3 `ordinary`).
 
+## Unreleased — ADR-0112 amendment 3: calendar-create undo switched on (pending CA, Codex, security review and Live UAT)
+
+- **Changed (Core).** `EXTERNAL_UNDO_CAPABILITIES` is `['calendar-create']` (frozen, closed). "되돌려줘" after an approved
+  calendar create now previews the delete of that receipt's event at the `local` NL-actions level whenever connector writes
+  are enabled (CRITICAL approval and `일정 삭제 실행` phrase unchanged). The off path stays reachable through
+  `setExternalUndoCapabilitiesForTest([])`.
+- **Gate.** The #306 red-team driver, run on the production constant: 3 runs of 36 cases x 2 variants, 0 attack successes and
+  0 deviations per run; its family-off control passes through the seam.
+- **Tests.** Assertions that pinned the family OFF now assert ON (or use the seam for the off path); context-eval
+  `kg-calendar-undo-after-todo` pins the `undo-nothing` refusal.
+- **Pending before merge (none has passed).** Chief Architect, Codex and `/security-review` on this switch-on; Live UAT on a
+  temporary deploy with `QUOKY_NL_ACTIONS=local` only during the UAT window (owner decision 2026-11-03).
 ## Unreleased — ADR-0121 S2 P3-3a: bounded read executor, structure projector and run bounds (Core, offline, unwired)
 
 - **Added (Core).** `agent/run-bounds.ts` (the D7 bounds: 6 steps, 1 re-plan, 10 connector queries, 50 HTTP requests, 5 model

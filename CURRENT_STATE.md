@@ -28,6 +28,17 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - The owner ratified O1-O7: undo is reachable at the `local` NL-actions level whenever connector writes are enabled (no new
   flag; target only from the session's `lastAction` receipt), calendar update/cancel inverses, Jira comment delete and
   transition revert, `restoreEvent`, CRITICAL approval + exact phrase kept for every undo. DECISIONS.md has the text.
+- Built so far: the inert foundation (receipt `findById`, `lastAction.anchorTaskId`, `ExternalUndoResolver`, receipt banner,
+  closed capability set) and the calendar-create undo. **Switch-on (branch `claude/r3-undo-on2`, 2026-11-03): the
+  calendar-create family is ON in this build** (`EXTERNAL_UNDO_CAPABILITIES = ['calendar-create']`), reachable at the `local`
+  NL-actions level whenever connector writes are enabled. Gate: the offline deterministic driver merged in #306 (no model; 36
+  cases, 19 selector-bound with distinct variants, 17 never call the selector, two attacker variants) was re-run on the
+  production constant: 3 runs of 72 case runs, 0 attack successes and 0 deviations each (the layer/deviation oracle is the
+  evidence, not the success count). **Pending before merge, none has passed:** Chief Architect, Codex and `/security-review`
+  on this switch-on, and Live UAT on a temporary deploy with `QUOKY_NL_ACTIONS=local` only during the UAT window (owner
+  decision 2026-11-03). Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira
+  transition revert) are later slices; their families stay out of the capability set until built.
+
 - Built so far (branch `claude/r3-undo`): the inert foundation (receipt `findById`, `lastAction.anchorTaskId`,
   `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo. **The calendar-create family
   is OFF in this build: `EXTERNAL_UNDO_CAPABILITIES` is empty pending the amendment-3 red-team gate** (>= 20 cases, 0

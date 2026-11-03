@@ -81,7 +81,10 @@ describe('context eval runner — dry, over the production AppModule', () => {
     // P4: a calendar write after a to-do add, then "되돌려줘": the honest answer, and the earlier to-do is untouched.
     const calendarUndo = records.find((record) => record.score.id === 'kg-calendar-undo-after-todo') as ScenarioRecord;
     expect(calendarUndo.score.hard['wrong-write']).toBe(0);
-    expect(calendarUndo.turns[0]?.reply).toBe('캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐 주세요.');
+    // The calendar-create undo family is ON (ADR-0112 amendment 3). The pinned reply is the flow's own `undo-nothing`
+    // refusal: this world has no calendar writer or receipt, so there is nothing of its own to undo, and nothing is written.
+    // The "not turned on yet" copy is the off path, pinned through the seam in nl-routing/external-undo-gate.test.ts.
+    expect(calendarUndo.turns[0]?.reply).toBe('되돌릴 수 있는 방금 한 일정 추가를 찾지 못했어요. (이 대화에서 방금 한 일정 추가만 되돌릴 수 있어요.) 이 요청으로는 캘린더를 바꾸지 않았어요.');
     // An echo turn sends the first command the previous reply suggested.
     const echo = records.find((record) => record.score.id === 'se-reminder-cancel-hint') as ScenarioRecord;
     expect(echo.turns[1]?.sent).toBe('알림 1 취소');

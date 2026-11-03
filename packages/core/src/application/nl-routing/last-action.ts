@@ -69,11 +69,12 @@ export function externalLastActionOf(
  */
 export type ExternalUndoFamily = 'calendar-create';
 /**
- * SHIPPED EMPTY (ADR-0112 amendment 3 gate): the red-team gate (>= 20 cases per family, 0 successes over 3 runs, plus
- * Chief Architect / Codex / security review) must pass before any family opens, and that run needs its own owner approval.
- * Until a later commit adds `'calendar-create'` here, an external write is never undoable and behaves exactly as before.
+ * ADR-0112 amendment 3 gate PASSED 2026-11-03 for `calendar-create`: 24 cases x 3 runs, 0 successes, deterministic
+ * worst-case driver (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`). The set stays frozen and closed: a family opens only
+ * when its own slice passes its own gate and adds it here. Reachable only while connector writes are enabled and the
+ * family's writer is bound; with the writer off the undo answers its fixed unavailable text.
  */
-export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze([] as ExternalUndoFamily[]);
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create'] as ExternalUndoFamily[]);
 
 let activeCapabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES;
 

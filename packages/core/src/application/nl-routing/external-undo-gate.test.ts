@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveUndo } from './item-reference';
 import {
   EXTERNAL_UNDO_CAPABILITIES,
+  activeExternalUndoCapabilities,
   externalUndoFamilyOf,
   isExternalUndoOpen,
   lastActionOf,
@@ -35,10 +36,17 @@ function external(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-describe('the external undo capability gate shipped OFF (red-team gate pending)', () => {
-  it('the frozen constant is empty: no family is undoable, and an external write behaves exactly as before the undo slices', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual([]);
+describe('the external undo capability gate, off path through the test seam', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest([]));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  it('the shipped constant is frozen and holds exactly the family whose red-team gate passed (2026-11-03)', () => {
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create']);
     expect(Object.isFrozen(EXTERNAL_UNDO_CAPABILITIES)).toBe(true);
+  });
+
+  it('with the set empty through the seam: no family is undoable, and an external write behaves exactly as before the undo slices', () => {
+    expect(activeExternalUndoCapabilities()).toEqual([]);
     expect(isExternalUndoOpen('calendar-create')).toBe(false);
     expect(lastActionOf(external())?.undoable).toBe(false);
     const view = readLastAction(withLastAction(undefined, ACTOR, lastActionOf(external()) as LastActionRecord, NOW), ACTOR, NOW);
@@ -51,7 +59,7 @@ describe('the external undo capability gate (amendment 3), family switched on by
   afterEach(() => setExternalUndoCapabilitiesForTest());
 
   it('is a closed, frozen set that the family-on seam does not mutate', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual([]);
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create']);
     expect(isExternalUndoOpen('calendar-create')).toBe(true);
     expect(isExternalUndoOpen(undefined, ['calendar-create'])).toBe(false);
     expect(isExternalUndoOpen('calendar-create', [])).toBe(false);
