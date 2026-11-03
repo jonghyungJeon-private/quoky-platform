@@ -12,6 +12,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   the 95 % pause threshold with current usage, or with an unreadable cap is refused unless `GATES_OWNER_OK=<yyyymmdd-reason>`.
   In-run brake: a watchdog stops the eval process group at `GATES_STOP_PCT` (85) % of the ccusage limit; `DONE` carries
   `USAGE-STOP at <pct>%`, `run` exits 6, no retry (owner order 2026-11-04, after the 2026-11-03 run that took 0 % to 81 % in 12 min).
+## Unreleased — nl-select.v74 / agent-plan.v11 candidate prompts (Core, ADR-0121 D12 candidate; not enabled)
+
+- **Added.** `rev: 'v74'` on `buildSelectionPrompt` and `rev: 'v11'` on `buildAgentPlanPrompt` build the candidate prompts: one general
+  source-name principle in rule 1 (a source name selects its entry only when the message asks for that source's data or names it as
+  the place to look; otherwise none, or NEEDS_CLARIFICATION when unclear) and the pure de-duplication S1-S5 (selector 27,924 ->
+  23,906 chars, planner 32,637 -> 28,619). Candidate ids: `nl-select.v74` (read), `v75` (A6), `v76` (R2), `agent-plan.v11`.
+- **Unchanged.** The default revision and every active pin stay `nl-select.v73` / `v71` / `v72` and `agent-plan.v10`; nothing uses the
+  candidates at runtime. They are NOT deployed or enabled until the D12 gates pass and the owner approves the eval quota.
+- **Draft.** `docs/eval/drafts/homonym-heldout-draft.md` (16 held-out homonym cases, owner approval pending, wired nowhere).
 
 ## Unreleased — Claude CLI reports token usage (ai-cli, ADR-0115 D8 note)
 
