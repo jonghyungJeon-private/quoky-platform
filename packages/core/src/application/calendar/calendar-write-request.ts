@@ -32,7 +32,8 @@ import { CALENDAR_RELOCATE, CALENDAR_RENAME } from './calendar-field-change';
  *   flow resolves it against the session's recent calendar context instead of today (live QA D2).
  * - Clock times follow the reminder convention with a day: an explicit 오전/오후 (아침, 낮, 점심, 저녁, 밤) wins; without
  *   one, 1–6 is afternoon, 7–11 morning, 12 noon, and 0 or 13–23 is taken as written. "반" is 30 minutes.
- * - A new event without an end lasts one hour; "3시부터 4시까지", "3시~4시" and "1시간"/"30분" set it. "종일" is an
+ * - A new event without an end lasts one hour; "3시부터 4시까지", "3시~4시", "1시간" and "30분 동안/짜리/간" set it (a bare
+ *   "30분" does not: it can be a clock minute or a modifier such as "30분 거리", so it stays the one-hour default). "종일" is an
  *   all-day event. The title is the text after "제목" (or a quoted text), else the whole noun phrase between the time
  *   phrase and the booking verb when it holds a meeting noun ("금요일 오후 3시에 QA 스윕 회의 잡아줘" → "QA 스윕 회의",
  *   live QA D10), else the meeting noun the owner used.
@@ -269,10 +270,12 @@ function titlePhraseOf(head: string): string | undefined {
   if (start >= end) return undefined;
   let phrase = head.slice(start, end).replace(LEADING_LINK, '').replace(/\s*(?:을|를|으로|로)\s*$/u, '').trim();
   const words = phrase.split(/\s+/u).filter((word) => word.length > 0 && !FILLER.test(word));
-  if (words.length > 1 && words[words.length - 1] === '일정') words.pop();
-  phrase = words.join(' ');
-  if (phrase.length === 0 || !MEETING_NOUN.test(phrase)) return undefined;
-  return phrase;
+  if (words.length === 0 || !MEETING_NOUN.test(words.join(' '))) return undefined;
+  // The generic trailing "일정" is dropped only when another meeting noun remains ("통화 일정" → "통화"). When it is the
+  // phrase's only meeting noun the owner's words are kept whole ("Quoky E2E 테스트 일정", live UAT 2026-11-03; "중요한
+  // 일정", not the bare modifier "중요한").
+  if (words.length > 1 && words[words.length - 1] === '일정' && MEETING_NOUN.test(words.slice(0, -1).join(' '))) words.pop();
+  return words.join(' ');
 }
 
 /** Whether the text names a day at all (`extractSpan` defaults to today when it does not). */
