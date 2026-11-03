@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — calendar create keeps the owner's title phrase (Core, ADR-0110 D3 grammar)
+
+- **Fixed.** "내일 오후 3시에 30분짜리 Quoky E2E 되돌리기 테스트 일정 추가해줘" drafted the title "일정": the title phrase was
+  tested for a meeting noun after its generic trailing "일정" was dropped. The test now reads the phrase as written, and the
+  trailing "일정" is dropped only when another meeting noun remains ("통화 일정" → "통화"), so the title is "Quoky E2E 되돌리기
+  테스트 일정" (found in the 2026-11-03 Live UAT; the preview was rejected, nothing was written).
+- **Residual (recorded, not chased; quoky-ship §3.5).** A bare "30분" ("30분 일정 추가해줘") still gives the one-hour default.
+  Reading it as a duration was tried and dropped after five Codex rounds: a bare minute count is ambiguous (a clock minute,
+  "3분기", a quoted title, "30분 거리"), and the span rules kept producing wrong titles or times. "30분 동안/짜리/간",
+  "3시부터 3시 30분까지" and "1시간" set the length; the preview shows the time before any write. The doc comment now says so.
+
 ## Unreleased — ADR-0124 C2: `eval:chunk` CH1 harness, lexical arm only (offline, no model)
 
 - **Added.** `pnpm eval:chunk` (`apps/quoky/src/tools/chunk-eval*`): a hash-frozen synthetic corpus (435 cases incl. a 2 MiB ADR file, seeded, fictional; the digest covers every field the arms read),

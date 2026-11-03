@@ -77,6 +77,13 @@ describe('calendar write grammar (ADR-0110 amendment D3, CWR-2)', () => {
     // A quoted title and an explicit 제목 field still win over the phrase.
     ['내일 3시에 "설계 리뷰" 회의 잡아줘', '설계 리뷰'],
     ['내일 3시에 QA 회의 잡아줘 제목 주간 회의', '주간 회의'],
+    // Live UAT 2026-11-03: when the trailing generic "일정" is the only meeting noun, the title keeps the owner's words.
+    ['내일 오후 3시에 30분짜리 Quoky E2E 되돌리기 테스트 일정 추가해줘', 'Quoky E2E 되돌리기 테스트 일정'],
+    ['내일 오후 3시에 중요한 일정 잡아줘', '중요한 일정'],
+    // Pins from the review rounds: these keep origin/main's titles.
+    ['내일 3시에 3분기 실적 회의 잡아줘', '3분기 실적 회의'],
+    ['내일 오후 3시에 30분 거리 카페 미팅 추가해줘', '30분 거리 카페 미팅'],
+    ['내일 3시에 회의를 2시간 정도 잡아줘', '회의'],
   ])('create title (live QA D10): "%s" → "%s"', (text, title) => {
     expect(parse(text)).toMatchObject({ kind: 'calendar-create', event: { title } });
   });
