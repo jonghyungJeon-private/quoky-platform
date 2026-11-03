@@ -21,7 +21,10 @@ import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connec
 import {
   connectorWriteExecutionGate,
   connectorWriteTargetOf,
+  type ConnectorWriteAnchor,
   type ConnectorWriteAnchorView,
+  type ConnectorWriteFlow,
+  type ConnectorWritePreview,
   type ConnectorWriteStep,
   type ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
@@ -488,6 +491,16 @@ export type CredentialOverrideSendResult =
 
 type AnchoredFailureFamily = 'commit' | 'push' | 'pr';
 
+/**
+ * What the stop's withdrawal of one connector write found under the locks: closed (nothing ran), in flight (its grant was
+ * consumed: it finishes and reports), done (it finished: the live terminal step), or gone (closed meanwhile).
+ */
+export type ConnectorWriteStopResult =
+  | { readonly kind: 'closed' }
+  | { readonly kind: 'in-flight' }
+  | { readonly kind: 'done'; readonly step: ConnectorWriteStep }
+  | { readonly kind: 'gone' };
+
 export class ApprovalDecisionService {
   private readonly clock: () => IsoTimestamp;
   /** The per-approval lock (outermost; see the serialization note above). */
@@ -924,6 +937,20 @@ export class ApprovalDecisionService {
      * refuse, and nothing is consumed or sent.
      */
     surfaceRecheck?: () => Promise<boolean>,
+    /**
+     * Surface-only check run right before the writer is called (after the grant is consumed). The kill switch is NOT
+     * re-checked here: once the grant is consumed the write has started and finishes (A6-D3 amendment, owner's rule).
+     */
+    beforeSend?: () => Promise<boolean>,
+    /**
+     * A6-D3 amendment, lock design: wraps ONLY the validation + consume section (`claimGrant`, which ends with the EXECUTING
+     * save). The caller supplies the per-actor metadata lock + switch check (`whileActionsActing`), so a stop's save (which
+     * takes that lock) lands wholly before the check (nothing is consumed) or wholly after the consume. LOCK ORDER everywhere:
+     * approval -> session -> actor. The stop's save takes only the actor lock and releases it BEFORE its withdrawals take
+     * approval -> session, and nothing under the actor lock takes either of those, so no path acquires them in reverse.
+     * Throws to refuse (nothing consumed).
+     */
+    consumeGuard?: <T>(work: () => Promise<T>) => Promise<T>,
   ): Promise<ConnectorWriteStep> {
     const flow = this.deps.connectorWriteFlow!;
     return flow.execute({
@@ -934,10 +961,10 @@ export class ApprovalDecisionService {
       claim: (work) =>
         this.exclusive(view.anchor.approvalId, input.session.id, async (held) => {
           if (surfaceRecheck !== undefined) await surfaceRecheck();
-          return work(held);
+          return consumeGuard === undefined ? work(held) : consumeGuard(() => work(held));
         }),
       // And once more as the last step before the writer is called.
-      ...(surfaceRecheck !== undefined ? { beforeSend: surfaceRecheck } : {}),
+      ...(beforeSend !== undefined ? { beforeSend } : {}),
     });
   }
 
@@ -994,6 +1021,94 @@ export class ApprovalDecisionService {
       await flow.close(input.session, live, reason, this.clock(), held);
       return this.connectorWriteStepReply(input.context, input.session.id, { kind: 'closed', reason, family: anchor.family }, '', history);
     });
+  }
+
+  /**
+   * ADR-0120 A6-D3 amendment (2026-11-03): withdraw ONE open connector write because the kill switch is stopped. Under the
+   * approval → session locks (the ones execution's claim takes): re-read the live anchor; a PENDING approval is recorded
+   * rejected, an APPROVED one revoked, and the anchor is closed `stopped`. A write whose grant is already consumed (it started
+   * or finished) is never touched: `in-flight` (it completes and reports) or `done`. Never sends.
+   */
+  withdrawConnectorWriteForStop(input: ApprovalDecisionInput, view: ConnectorWriteAnchorView): Promise<ConnectorWriteStopResult> {
+    return this.exclusive(view.anchor.approvalId, input.session.id, async (held): Promise<ConnectorWriteStopResult> => {
+      const flow = this.deps.connectorWriteFlow!;
+      const live = await flow.find(input.session, held);
+      // `find` follows the session pointer, which a finished write hands back to its previous task: on a miss the task is read
+      // directly, so a write that ran is reported as run (never as "nothing to decide"); only closed or missing is `gone`.
+      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) {
+        const direct = flow.anchorOfTask !== undefined ? await flow.anchorOfTask(input.session, view.taskId) : null;
+        const found =
+          direct !== null && direct.anchor.approvalId === view.anchor.approvalId && direct.anchor.actorId === input.actor.id
+            ? direct.anchor
+            : undefined;
+        if (found === undefined) return { kind: 'gone' };
+        if (found.status === 'EXECUTING') return { kind: 'in-flight' };
+        if (found.operation && (found.status === 'SENT' || found.status === 'NOT_SENT' || found.status === 'UNCERTAIN')) {
+          return { kind: 'done', step: { kind: 'repeat', operation: found.operation, status: found.status, ...outcomeLinkOf(found) } };
+        }
+        return { kind: 'gone' };
+      }
+      const status = live.anchor.status;
+      if (status === 'EXECUTING') return { kind: 'in-flight' };
+      const operation = live.anchor.operation;
+      if (operation && (status === 'SENT' || status === 'NOT_SENT' || status === 'UNCERTAIN')) {
+        // The live terminal outcome (a write that finished after the caller captured its APPROVED view): reported as it is.
+        return { kind: 'done', step: { kind: 'repeat', operation, status, ...outcomeLinkOf(live.anchor) } };
+      }
+      if (live.anchor.consumedAt) return { kind: 'in-flight' };
+      const approvalId = live.anchor.approvalId;
+      let outcome: 'REJECTED' | 'REVOKED' | undefined;
+      if (approvalId !== undefined && status === 'APPROVAL_PENDING' && live.approval !== null) {
+        await this.deps.approvals.decide(approvalId, this.decisionOf(approvalId, input, false));
+        outcome = 'REJECTED';
+      } else if (approvalId !== undefined && status === 'APPROVED' && this.deps.approvals.revoke) {
+        const approval = await this.deps.approvals.get(approvalId);
+        if (approval?.status === ApprovalStatus.APPROVED) {
+          await this.deps.approvals.revoke(approvalId, { ...this.decisionOf(approvalId, input, false), comment: APPROVAL_REVOKED_COMMENT });
+          outcome = 'REVOKED';
+        }
+      }
+      if (approvalId !== undefined && outcome !== undefined) {
+        this.deps.logger.info('approval decided', { approvalId, surface: input.surface, kind: 'CONNECTOR_WRITE', outcome });
+      }
+      await flow.close(input.session, live, 'stopped', this.clock(), held);
+      return { kind: 'closed' };
+    });
+  }
+
+  /**
+   * The owner's `에이전트 중지` (same turn): close every open connector write of this actor that the switch governs
+   * (`governs`), in whatever conversation it waits (ADR-0114: every platform is one owner Actor). Returns the closed ones
+   * (their previews, for the reply) and how many had already started. Best-effort per anchor, never throws.
+   */
+  async withdrawGovernedConnectorWrites(
+    actor: Actor,
+    governs: (anchor: ConnectorWriteAnchor) => boolean,
+  ): Promise<{ readonly closed: readonly ConnectorWritePreview[]; readonly running: number; readonly failed: number; readonly scanFailed: boolean }> {
+    const flow = this.deps.connectorWriteFlow;
+    const closed: ConnectorWritePreview[] = [];
+    let running = 0;
+    let failed = 0;
+    if (flow?.openAnchorsOf === undefined) return { closed, running, failed, scanFailed: false };
+    let open: Awaited<ReturnType<NonNullable<ConnectorWriteFlow['openAnchorsOf']>>> = [];
+    try {
+      open = await flow.openAnchorsOf(actor.id);
+    } catch (error) {
+      this.deps.logger.warn('approval.stop_scan_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return { closed, running, failed, scanFailed: true };
+    }
+    for (const { session, view } of open) {
+      if (!governs(view.anchor)) continue;
+      try {
+        const result = await this.withdrawConnectorWriteForStop({ context: session.context, session, actor, surface: 'chat' }, view);
+        if (result.kind === 'closed' && view.anchor.preview !== undefined) closed.push(view.anchor.preview);
+        else if (result.kind === 'in-flight') running += 1;
+      } catch (error) {
+        failed += 1;
+        this.deps.logger.warn('approval.stop_withdraw_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      }
+    }
+    return { closed, running, failed, scanFailed: false };
   }
 
   /** Compose a connector-write step reply and record it (a calendar step keeps the fixed note in history). */

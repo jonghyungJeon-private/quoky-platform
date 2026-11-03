@@ -359,6 +359,16 @@ export function renderActionStopped(language: Lang): string {
     : '자연어 실행이 멈춰 있어서 아무것도 하지 않았어요. 정확한 명령은 그대로 동작해요.';
 }
 
+/**
+ * ADR-0120 A6-D3 amendment (2026-11-03): an approval the switch governs reached its execution step while the switch is
+ * stopped. Nothing ran and the request is closed (the stopped copy above, plus what became of the request).
+ */
+export function renderActionStoppedApprovalClosed(language: Lang): string {
+  return language === 'en'
+    ? `${renderActionStopped('en')} This approval request is closed. To do it, send "에이전트 재개" and ask again.`
+    : `${renderActionStopped('ko')} 이 승인 요청은 닫았어요. 하려면 "에이전트 재개" 후 다시 말씀해 주세요.`;
+}
+
 export function renderActionUnavailable(language: Lang): string {
   return language === 'en' ? 'I cannot do that right now. Nothing was changed.' : '지금은 그 작업을 할 수 없어요. 아무것도 바꾸지 않았어요.';
 }

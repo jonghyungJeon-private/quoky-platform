@@ -108,7 +108,9 @@ export type ConnectorWriteCloseReason =
   | 'expired'
   | 'superseded'
   | 'abandoned'
-  | 'inconsistent';
+  | 'inconsistent'
+  /** The owner's `에이전트 중지` (ADR-0120 A6-D3 amendment, 2026-11-03) closed a write the switch governs. */
+  | 'stopped';
 
 /** A calendar event as the preview and the choice list show it (untrusted readout, already bounded by the reader). */
 export interface ConnectorWriteEventSummary {
@@ -223,6 +225,16 @@ export interface ConnectorWriteAnchor {
    * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
    */
   readonly undoOf?: { readonly entryId: 'calendar.create'; readonly receiptId: Id };
+}
+
+/**
+ * ADR-0120 A6-D3 amendment (2026-11-03): the connector writes the kill switch governs. ADR-0112 amendment 1 ties the undo to
+ * the switch (`action.undo` is withdrawn while stopped), so an anchor with `undoOf` (the receipt-sourced undo of an own
+ * write) is governed. A write the owner asked for with an anchored Class A command carries no switch (A6-D3: "Anchored
+ * Class A commands carry no condition"), so it is not.
+ */
+export function isActionSwitchGoverned(anchor: Pick<ConnectorWriteAnchor, 'undoOf'>): boolean {
+  return anchor.undoOf !== undefined;
 }
 
 /** What `releaseExpired` released: the lapsed anchor's state and the session pointer after the release. */
@@ -474,6 +486,18 @@ export interface ConnectorWriteFlow {
    * (restoring the pointer it displaced) and says what was released; null when nothing lapsed.
    */
   releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null>;
+  /**
+   * ADR-0120 A6-D3 amendment (2026-11-03): every not yet closed anchor of `actorId` across the actor's active conversations,
+   * each with its session and (behind `APPROVAL_PENDING`) its pending approval. Strictly read-only (like `peek`), so the
+   * kill switch can list and close the approvals it governs. Optional: a flow without it has nothing to list.
+   */
+  openAnchorsOf?(actorId: Id): Promise<Array<{ readonly session: Session; readonly view: ConnectorWriteAnchorView }>>;
+  /**
+   * Strictly read-only: the connector-write anchor of ONE task read directly (not through the session's `activeTaskId`, which a
+   * finished write hands back to its previous task), or null when the task is missing or not a connector-write anchor. A closed
+   * anchor is returned as it is. For the kill switch's truthful report of a write that finished meanwhile.
+   */
+  anchorOfTask?(session: Session, taskId: Id): Promise<ConnectorWriteAnchorView | null>;
   prepare(input: FlowInput & { readonly draft: ConnectorWriteDraft }): Promise<ConnectorWriteStep>;
   choose(input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number }): Promise<ConnectorWriteStep>;
   recordApproval(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
@@ -1035,6 +1059,20 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     return best;
   }
 
+  async openAnchorsOf(actorId: Id): Promise<Array<{ readonly session: Session; readonly view: ConnectorWriteAnchorView }>> {
+    const open: Array<{ session: Session; view: ConnectorWriteAnchorView }> = [];
+    for (const session of await this.deps.store.sessions.list()) {
+      if (session.actorId !== actorId || session.status !== SessionStatus.ACTIVE) continue;
+      const found = await this.openAnchorOf(session);
+      if (!found || found.anchor.actorId !== actorId) continue;
+      const { task, anchor } = found;
+      const approval =
+        anchor.status === 'APPROVAL_PENDING' && anchor.approvalId ? await this.deps.approvals.get(anchor.approvalId) : null;
+      open.push({ session, view: { taskId: task.id, anchor, approval: approval?.status === ApprovalStatus.PENDING ? approval : null } });
+    }
+    return open;
+  }
+
   async releaseExpired(session: Session, now: IsoTimestamp): Promise<ConnectorWriteRelease | null> {
     const found = await this.openAnchorOf(session);
     if (!found) return null;
@@ -1050,6 +1088,15 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       ...(anchor.operation ? { operation: anchor.operation } : {}),
       activeTaskId: anchor.previousActiveTaskId,
     };
+  }
+
+  /** Read-only: the connector-write anchor on `taskId` (any status), only when it belongs to this owner's `session`. */
+  async anchorOfTask(session: Session, taskId: Id): Promise<ConnectorWriteAnchorView | null> {
+    const task = await this.deps.store.tasks.get(taskId);
+    if (!task || task.planId) return null;
+    const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id) return null;
+    return { taskId: task.id, anchor, approval: null };
   }
 
   /** The session's own, not yet closed connector-write anchor (via `activeTaskId`), or null. */
@@ -1380,7 +1427,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const view: ConnectorWriteAnchorView = { ...input.view, anchor };
     if (anchor.status === 'CLOSED') {
       const reason: ConnectorWriteRefusal =
-        anchor.closedReason === 'denied' || anchor.closedReason === 'cancelled'
+        anchor.closedReason === 'denied' || anchor.closedReason === 'cancelled' || anchor.closedReason === 'stopped'
           ? 'grant-revoked'
           : anchor.closedReason === 'expired'
             ? 'grant-expired'

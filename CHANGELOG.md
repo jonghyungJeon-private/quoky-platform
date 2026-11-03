@@ -11,6 +11,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   optional `cacheCreationInputTokens` and `outputTokens`; a non-JSON stdout falls back to plain text with the label only. The
   NL selection call, the help-scope classifier and the `agent_run.shadow` log line now carry `inTok`, `cacheRead`, `outTok`,
   `promptChars`, `promptBytes` (counts only) so estimates can be calibrated (owner request 2026-11-03).
+## Unreleased — `에이전트 중지` closes open undo approvals and is re-checked at execution (Core, ADR-0120 A6-D3 amendment)
+
+- **Fixed.** An undo approval that was already open ("되돌려줘" -> delete preview -> waiting for "일정 삭제 실행") survived
+  `에이전트 중지`: the exact phrase still deleted the event, because the switch was read at preview time only.
+- **Changed.** The stop turn now closes the owner's open undo approvals in every conversation and lists them (count, one line each:
+  "캘린더 일정 삭제 — <title>"); writes that already started are not aborted and are counted. With nothing open the reply is unchanged.
+  The approval and the exact phrase of such a write re-read the persisted switch (at the step, inside the execution claim, before the
+  writer) and answer the existing stopped copy. `에이전트 재개` does not reopen a closed approval. Anchored Class A writes and generic
+  approvals are not under the switch (unchanged; open point in DECISIONS).
 
 ## Unreleased — calendar create keeps the owner's title phrase (Core, ADR-0110 D3 grammar)
 

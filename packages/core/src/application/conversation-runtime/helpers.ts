@@ -395,6 +395,14 @@ export class SurfaceDeniedError extends Error {
   }
 }
 
+/** ADR-0120 A6-D3 amendment (2026-11-03): thrown inside a connector-write execution claim when the kill switch is stopped. */
+export class ActionStoppedError extends Error {
+  constructor() {
+    super('ACTION_STOPPED');
+    this.name = 'ActionStoppedError';
+  }
+}
+
 /**
  * Owner decision B (2026-10-22): the confirmation a handler reply asks the owner for, when it is to be kept as the open
  * question: only a deterministic reply that did not fail (a FAILED reply asks nothing; a summary or write draft carries

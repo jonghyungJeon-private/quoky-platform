@@ -18,12 +18,15 @@ import {
   isBareExecutionProhibition,
   isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
+  isActionSwitchGoverned,
   isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
   namesApprovedWriteStepVerb,
 } from '../connector-writes/connector-write-flow';
-import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from '../connector-writes/connector-write-copy';
+import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
 import { outboundMessage, withOutboundBody } from '../message-rendering';
+import { renderActionSwitchStopNotice } from '../nl-routing/action-switch';
+import { renderActionStoppedApprovalClosed } from '../nl-routing/nl-action-policy';
 import { interpretStrayDecisionUtterance, isPendingCancelUtterance } from '../approval-decision';
 import { externalLastActionOf } from '../nl-routing/last-action';
 import { type ConversationControlCommand } from '../conversation-commands';
@@ -33,7 +36,7 @@ import { surfacePermittedWorkSources } from '../surface-grants/surface-permit';
 import { SURFACE_GRANT_HELP_LINES } from '../surface-grants/surface-grant-copy';
 import { surfaceGroupsOfSelection, surfaceGroupsOfWriteDraft, surfaceGroupsOfWriteFamily, surfaceGroupsOfWriteOperation } from '../surface-grants/surface-group-map';
 import { Capability, IntentType } from '../../domain';
-import type { Actor, ApprovalRequest, Id, InboundMessage, Intent, IsoTimestamp, OutboundMessage, Session, WorkspaceRef } from '../../domain';
+import type { Actor, ApprovalRequest, Id, InboundMessage, Intent, IsoTimestamp, MessageBody, OutboundMessage, Session, WorkspaceRef } from '../../domain';
 import {
   CONNECTOR_WRITE_OPERATIONS,
   type ConnectorWriteOperation,
@@ -63,7 +66,7 @@ import {
 } from '../untrusted-document-readout';
 import { checkDocumentSummaryClaims, isFixedDocumentSummaryNotice, renderDocumentSummaryTooLong } from '../document-summary-claim-check';
 import { ConversationRuntimeChatLayer } from './chat-layer';
-import { SurfaceDeniedError, frozenPlainSnapshot, nlConfirmToRecord } from './helpers';
+import { ActionStoppedError, SurfaceDeniedError, frozenPlainSnapshot, nlConfirmToRecord } from './helpers';
 import type { NlChatFacts, RecentConnectorWrite } from './internal-types';
 import { connectorWriteChoiceIndex, explicitDurableMemoryContent, interpretDecision, nlReplyKindOf } from './turn-intents';
 import type { ApplyPreviewAnchor, RuntimeTurnStatus, TurnResult } from './types';
@@ -750,6 +753,48 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     return this.decisionTurn(session, await this.approvalDecisions.connectorWriteReply(message.context, session.id, reply, status, history));
   }
   /**
+   * ADR-0120 A6-D3 amendment (2026-11-03), the execution-time check: whether this anchor is one the kill switch governs
+   * (an undo, `undoOf`) and the switch is not acting NOW. The switch is re-read from the persisted Actor (`actionsStillActing`),
+   * never this turn's snapshot, so a stop that an earlier step missed still holds. Without the selection service nothing
+   * can have opened such an anchor.
+   */
+  protected async actionSwitchStopsAnchor(anchor: ConnectorWriteAnchorView['anchor'], actor: Actor): Promise<boolean> {
+    if (!isActionSwitchGoverned(anchor)) return false;
+    const nl = this.deps.nlSelection;
+    if (nl?.actionsStillActing === undefined) return false;
+    return !(await nl.actionsStillActing(actor));
+  }
+
+  /** The anchor is withdrawn (closed `stopped`, its approval rejected or revoked) and the owner is told nothing ran. */
+  protected async respondActionStoppedAnchor(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    view: ConnectorWriteAnchorView,
+  ): Promise<TurnResult> {
+    const result = await this.approvalDecisions.withdrawConnectorWriteForStop(this.chatDecision(message, session, actor), view);
+    this.deps.logger.info('nl_action.stopped_at_execution', { operation: view.anchor.operation ?? 'unknown', result: result.kind });
+    // The LIVE outcome under the locks, never the captured APPROVED view: a started write is reported as started, a finished
+    // one with its recorded outcome, a write closed meanwhile by the "nothing to decide" reply; only a close says "closed".
+    if (result.kind === 'in-flight') {
+      return this.respondConnectorWriteStep(message, session, { kind: 'repeat', operation: view.anchor.operation!, status: 'EXECUTING' }, '');
+    }
+    if (result.kind === 'done') return this.respondConnectorWriteStep(message, session, result.step, '');
+    if (result.kind === 'gone') return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
+    return this.respondComposed(message, session, outboundMessage(message.context, renderActionStoppedApprovalClosed(noticeLanguage(undefined, message.text))));
+  }
+
+  /**
+   * A6-D3 amendment: the owner's `에이전트 중지` closes the owner's open approvals of the governed kinds, in every
+   * conversation, and returns what the stop reply adds (or `undefined` when nothing was open: the reply stays as it was).
+   */
+  protected async stopOpenGovernedApprovals(actor: Actor, text: string): Promise<MessageBody | undefined> {
+    if (this.deps.connectorWriteFlow === undefined) return undefined;
+    const { closed, running, failed, scanFailed } = await this.approvalDecisions.withdrawGovernedConnectorWrites(actor, isActionSwitchGoverned);
+    return renderActionSwitchStopNotice(closed.map(renderConnectorWriteStopLine), running, noticeLanguage(undefined, text), { failed, scanFailed });
+  }
+
+  /**
    * A turn while the session holds a connector-write anchor. Returns `null` to let the turn route normally, or
    * `'released'` when the anchor was closed on the way (an abandoned choice) so the caller mirrors the restored pointer.
    *
@@ -794,6 +839,10 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
           ? 'cancel'
           : interpreted;
         this.deps.logger.info('approval decision interpreted', { approvalId: approval.id, decision });
+        // A6-D3 amendment: an approval of a governed write is not granted while the switch is stopped.
+        if (decision === 'approve' && (await this.actionSwitchStopsAnchor(anchor, actor))) {
+          return this.respondActionStoppedAnchor(message, session, actor, view);
+        }
         if (decision === 'ambiguous') {
           const reply = this.deps.composer.composeConnectorWritePending(
             message.context,
@@ -851,15 +900,42 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
           if (deniedRun) return deniedRun;
         }
         if (isAcceptedExecutionPhrase(gate, message.text)) {
+          // A6-D3 amendment, the execution-time check: the exact phrase of a governed write runs nothing while the switch is stopped.
+          if (await this.actionSwitchStopsAnchor(anchor, actor)) return this.respondActionStoppedAnchor(message, session, actor, view);
           // Not caught here: after the consume save a failure may follow the send, so the `handle` backstop's
           // "cannot verify" wording is the truthful one. Validation + consume share the revocation's locks (Codex P1).
           // ADR-0122 D2.5: the grant is re-read (live, not this turn's snapshot) inside the execution claim, right
           // before the grant is consumed; a revoke that landed meanwhile wins and nothing is sent.
-          const recheck = this.channelGate(message.context) === undefined
+          const surfaceRecheck = this.channelGate(message.context) === undefined
             ? undefined
             : () => this.surfaceStillAllows(message.context, actor, writeGroups);
+          // The switch check and the grant consumption are ONE critical section with the stop's own save (the per-actor metadata
+          // lock, inside the approval and session locks): a stop persisted first wins and nothing is consumed; once the consume
+          // wins the write has started and finishes (the stop reply counts it as running). `beforeSend` stays surface-only.
+          const nlSwitch = this.deps.nlSelection;
+          const consumeGuard =
+            isActionSwitchGoverned(anchor) && nlSwitch !== undefined
+              ? async <T>(work: () => Promise<T>): Promise<T> => {
+                  // Fail closed: without the atomic guard the check and the consume cannot share the actor lock (dead in production).
+                  if (nlSwitch.whileActionsActing === undefined) throw new ActionStoppedError();
+                  let started = false;
+                  let guarded: { readonly acted: true; readonly value: T } | { readonly acted: false };
+                  try {
+                    guarded = await nlSwitch.whileActionsActing(actor, async () => {
+                      started = true;
+                      return work();
+                    });
+                  } catch (error) {
+                    // The actor read failed before the work began: nothing was consumed or sent, so the owner hears "not run".
+                    if (!started) throw new ActionStoppedError();
+                    throw error;
+                  }
+                  if (!guarded.acted) throw new ActionStoppedError();
+                  return guarded.value;
+                }
+              : undefined;
           try {
-            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck);
+            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, surfaceRecheck, surfaceRecheck, consumeGuard);
             // ADR-0112 amendment 1 S3 (context eval P4): every outcome of the write is the last action (receipt id), so
             // "되돌려줘" answers about it and never reaches an older to-do or reminder.
             if (executed.kind === 'outcome') {
@@ -868,6 +944,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
             }
             return respond(executed);
           } catch (error) {
+            if (error instanceof ActionStoppedError) return this.respondActionStoppedAnchor(message, session, actor, view);
             if (!(error instanceof SurfaceDeniedError)) throw error;
             return this.surfaceDeniedTurn(message, session, error.decision);
           }

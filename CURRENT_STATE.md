@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Kill switch closes open undo approvals and is re-checked at execution (2026-11-03, branch `claude/v5-stop-guard`)
+
+- **Done (Core, offline).** `에이전트 중지` closes the owner's open undo approvals (anchors with `undoOf`) in every conversation and
+  lists them in the stop reply; the approval and the exact phrase of such a write re-read the persisted switch (step, claim, before
+  the writer); `에이전트 재개` does not reopen. A write already started finishes (turns are not serialized; the approval and session
+  locks decide). Test `apps/quoky/src/nl-stop-guard.app.test.ts`. Record: DECISIONS "ADR-0120 A6-D3 amendment — the kill switch closes open approvals".
+- **Open.** Anchored Class A connector writes and generic approval flows are not under the switch (by the ADRs); owner may decide
+  otherwise. Not deployed; no live check yet.
+
 ### Claude CLI token usage (2026-11-03, branch `claude/v5-cli-usage`)
 
 - The Claude CLI provider uses `--output-format json` and reports real token counts (plain-text fallback keeps the label only);

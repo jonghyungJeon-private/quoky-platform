@@ -1,5 +1,6 @@
-import type { Actor, Id, IsoTimestamp, Metadata } from '../../domain';
+import type { Actor, Id, IsoTimestamp, MessageBody, Metadata } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
+import { joinBody, messageBody, type MessagePart } from '../message-rendering';
 import { ActorMetadataStore } from '../actor-metadata-store';
 import { NL_GLUED_REQUEST_TAIL, nlIsKeystrokePrefix, nlKeystrokeCount, nlKeystrokeDistance } from './garbled-action';
 
@@ -190,4 +191,35 @@ export function renderActionSwitchReply(state: NlActionSwitchState | undefined, 
       : '자연어 실행을 멈췄어요. 정확한 명령(예: "할 일 추가: …")은 그대로 동작해요. 다시 켜려면 "에이전트 재개"라고 보내 주세요.';
   }
   return language === 'en' ? 'Natural-language actions are running again.' : '자연어 실행을 다시 켰어요.';
+}
+
+/**
+ * ADR-0120 A6-D3 amendment (2026-11-03): what `에이전트 중지` adds to its fixed reply when the owner had approvals open that the
+ * switch governs. `closed` are the requests it closed (one line each: action kind and the target the preview showed, built
+ * by the caller); `running` is how many writes had already started: those are not aborted, they finish and report. Both
+ * empty: `undefined`, so the reply stays byte-identical to the plain stop reply.
+ */
+export function renderActionSwitchStopNotice(closed: ReadonlyArray<MessagePart>, running: number, language: 'ko' | 'en' = 'ko', failure: { readonly failed?: number; readonly scanFailed?: boolean } = {}): MessageBody | undefined {
+  const failed = failure.failed ?? 0;
+  if (closed.length === 0 && running === 0 && failed === 0 && failure.scanFailed !== true) return undefined;
+  const parts: MessagePart[] = [];
+  if (closed.length > 0) {
+    parts.push(language === 'en' ? `Closed ${closed.length} open approval request(s) without running them:` : `열려 있던 승인 요청 ${closed.length}건을 실행하지 않고 닫았어요:`);
+    for (const line of closed) parts.push(messageBody('- ', line));
+    parts.push(language === 'en' ? 'To do one of them, resume and ask again.' : '다시 하려면 "에이전트 재개" 후 다시 말씀해 주세요.');
+  }
+  if (running > 0) {
+    parts.push(
+      language === 'en'
+        ? `${running} write(s) had already started; they finish and report their result.`
+        : `이미 실행이 시작된 요청 ${running}건은 중단하지 않고 끝까지 마친 뒤 결과를 알려 드려요.`,
+    );
+  }
+  // A scan or a withdrawal that failed: the stop reply must not claim nothing was open. The switch stays stopped regardless.
+  if (failure.scanFailed === true) {
+    parts.push(language === 'en' ? 'I could not check for open approvals. Please check before resuming.' : '열린 승인을 확인하지 못했어요. 재개하기 전에 확인해 주세요.');
+  } else if (failed > 0) {
+    parts.push(language === 'en' ? `${failed} request(s) could not be closed. Please check before resuming.` : `${failed}건은 닫지 못했어요. 재개하기 전에 확인해 주세요.`);
+  }
+  return joinBody(parts);
 }

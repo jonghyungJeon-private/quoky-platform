@@ -879,6 +879,21 @@ export class NlSelectionService implements TurnDeliveryObserver {
     }
   }
 
+  /**
+   * A6-D3 amendment (2026-11-03): run `work` ONLY while the switch is acting, with the check and `work` inside the per-actor
+   * metadata lock that the stop's own save (`killSwitch.set` -> `ActorMetadataStore.updateMetadataEntry`) takes. A stop
+   * therefore either persisted before this check (nothing runs: `{ acted: false }`) or waits until `work` returns. `work`
+   * must be bounded and must not take the actor lock again (the lock is not re-entrant). A failed read propagates (the
+   * caller fails closed: nothing was run).
+   */
+  whileActionsActing<T>(actor: Pick<Actor, 'id'>, work: () => Promise<T>): Promise<{ readonly acted: true; readonly value: T } | { readonly acted: false }> {
+    if (this.mode !== 'active' || !actionLevelActs(this.actionLevelValue)) return Promise.resolve({ acted: false });
+    return this.actorMetadata.whileLocked(actor.id, async (live) => {
+      if (live === null || !this.actionsActing(live)) return { acted: false } as const;
+      return { acted: true, value: await work() } as const;
+    });
+  }
+
   /** Whether an A6 decision may act for this actor (`local` / `external` and running); `shadow` only logs. */
   actionsActing(actor: Pick<Actor, 'metadata'>): boolean {
     return this.actionsOffered(actor) && actionLevelActs(this.actionLevelValue);

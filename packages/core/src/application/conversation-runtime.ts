@@ -13,7 +13,8 @@ import {
   isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
 } from './connector-writes/connector-write-flow';
-import { isDirectConversation, messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
+import { isDirectConversation, joinBody, messageBody, outboundBody, outboundMessage, withOutboundBody } from './message-rendering';
+import { parseActionSwitchPhrase, renderActionSwitchReply } from './nl-routing/action-switch';
 import { interpretStrayDecisionUtterance } from './approval-decision';
 import { anchorAfterRejection } from './approval-decision-service';
 import { safeRequestId, toSafeError } from './safe-error';
@@ -274,7 +275,13 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
     // state). Recognized only while QUOKY_NL_ACTIONS is not `off` (with `off` the text is routed exactly as before).
     if (this.deps.nlSelection?.handleSwitchPhrase !== undefined && isDirectConversation(message.context) && !expiryNotice) {
       const switched = await this.deps.nlSelection.handleSwitchPhrase(actor, message.text, this.clock());
-      if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSwitchSuffix(message.text, switched, this.withSurfaceSwitchSuffix(message.text, switched))));
+      if (switched !== undefined) {
+        const reply = this.withAgentSwitchSuffix(message.text, switched, this.withSurfaceSwitchSuffix(message.text, switched));
+        // A6-D3 amendment (2026-11-03): a saved stop also closes the owner's open approvals of the governed kinds and lists them.
+        const stopped = parseActionSwitchPhrase(message.text) === 'stopped' && switched === renderActionSwitchReply('stopped', languageOf(message.text));
+        const notice = stopped ? await this.stopOpenGovernedApprovals(actor, message.text) : undefined;
+        return this.responded(session, outboundMessage(message.context, notice === undefined ? reply : joinBody([reply, notice])));
+      }
     }
     // ADR-0121 S2 (D7, reused switch): while QUOKY_AGENT_MODE is not `off`, the same phrase (owner DM, every state) also when
     // A6 actions are off; it saves the same `quoky.actionSwitch` record. With `off` (or absent) the text routes as before.
