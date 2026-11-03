@@ -30,6 +30,8 @@ export interface CliRunOptions {
    * production answer on stdout that merely quotes a pull log is never mistaken for a download.
    */
   downloadMarkerPolicy?: 'OLLAMA_PULL' | 'OLLAMA_PULL_STDERR';
+  /** Per-call stdout capture bound; defaults to `MAX_STDOUT_CAPTURE_BYTES`. Only the Claude JSON-envelope path raises it (escaping inflates output). */
+  maxStdoutBytes?: number;
 }
 
 export interface CliRunResult {
@@ -642,7 +644,7 @@ export function createContainedCliRunner(hooks: ContainedRunnerHooks = {}): CliR
         // Gate BEFORE any counting or decoding: a settled run, an already-overflowed
         // stream, or any containment failure must leave every counter untouched.
         if (settled || (isStdout ? stdoutOverflowed : stderrOverflowed) || containmentFailed()) return;
-        const limit = isStdout ? MAX_STDOUT_CAPTURE_BYTES : MAX_STDERR_CAPTURE_BYTES;
+        const limit = isStdout ? (options.maxStdoutBytes ?? MAX_STDOUT_CAPTURE_BYTES) : MAX_STDERR_CAPTURE_BYTES;
         const total = (isStdout ? stdoutBytes : stderrBytes) + chunk.byteLength;
         if (total > limit) {
           // The breaching chunk is NEVER handed to the decoder and never partially

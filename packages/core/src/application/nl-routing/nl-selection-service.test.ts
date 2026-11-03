@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AiProviderError } from '../../errors';
 import { AiFailureKind, Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
-import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
+import type { AiProvider, AiRequest, AiUsage, LogFields, Logger } from '../../ports';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { buildSelectionPrompt } from './selection-prompt';
 import { NL_SELECTION_COLD_TIMEOUT_MS, NL_SELECTION_TIMEOUT_MS, NL_WARMUP_TIMEOUT_MS, NL_WARMUP_PROBE_TEXT, nlWarmupPrompt, NlSelectionService, choiceIndex, resolveChoice, type NlIntentMode, type NlSelectionDecision } from './nl-selection-service';
@@ -46,6 +46,7 @@ function harness(options: {
   timeoutMs?: number;
   elapsed?: () => number;
   helpScopeClassifier?: boolean;
+  usage?: AiUsage;
 } = {}): Harness {
   const calls: AiRequest[] = [];
   const logs: Harness['logs'] = [];
@@ -67,10 +68,11 @@ function harness(options: {
     },
     async execute(request) {
       calls.push(request);
-      if (options.execute) return { ...(await options.execute(request)), artifacts: [] };
+      const usage = options.usage !== undefined ? { usage: options.usage } : {};
+      if (options.execute) return { ...(await options.execute(request)), artifacts: [], ...usage };
       const next = script.shift();
       if (next === undefined) throw new Error('script exhausted');
-      return { text: next, artifacts: [] };
+      return { text: next, artifacts: [], ...usage };
     },
   };
   const logger: Logger = {
@@ -1180,6 +1182,18 @@ describe('owner decision A (2026-10-22): a general help question about a named s
       const en = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":2}'] });
       await en.decide('how do I search in Slack?');
       expect(await en.decide("the app's own settings")).toEqual({ kind: 'ask', text: "That is about using the Slack app itself, so I can't guide you through it reliably. Please check Slack's own help." });
+    });
+
+    it('ADR-0115 D8: the classifier call logs the reported counts exactly and no prompt or reply text', async () => {
+      const h = harness({ helpScopeClassifier: true, script: [out('help.topic'), '{"answer":1}'], usage: { label: 'claude:haiku', inputTokens: 900, cachedInputTokens: 700, outputTokens: 12 } });
+      await h.decide('슬랙에서 검색하는 방법 알려줘');
+      await h.decide('퀴키한테 물어보는 방법 말이야');
+      // The selection call's own line carries the same exact counts.
+      expect(h.logs.filter((entry) => entry.fields?.inTok === 900 && entry.fields?.cacheRead === 700 && entry.fields?.outTok === 12).length).toBeGreaterThanOrEqual(2);
+      const line = h.logs.find((entry) => entry.event === 'nl_selection.help_scope_classified');
+      expect(line?.fields).toMatchObject({ inTok: 900, cacheRead: 700, outTok: 12 });
+      expect(JSON.stringify(h.logs)).not.toContain('퀴키한테');
+      expect(JSON.stringify(h.logs)).not.toContain('{"answer":1}');
     });
 
     it('the call is one INTENT_SELECTION call with the displayed options and the reply, and logs the answer class and latency only', async () => {

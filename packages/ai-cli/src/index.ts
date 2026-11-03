@@ -19,9 +19,12 @@ import type {
   Artifact,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
-import { CLAUDE_CHILD_ENV, defaultCliRunner, maskSecrets } from './cli-runner';
+import { CLAUDE_CHILD_ENV, MAX_STDOUT_CAPTURE_BYTES, defaultCliRunner, maskSecrets } from './cli-runner';
+
+/** JSON escaping inflates the reply inside the `--output-format json` envelope, so the Claude text provider captures 2x. */
+const CLAUDE_JSON_STDOUT_CAPTURE_BYTES = MAX_STDOUT_CAPTURE_BYTES * 2;
 import type { CliRunner } from './cli-runner';
-import { classifyClaudeCliFailure, parseClaudeResultUsage, validatedClaudeModel } from './claude-vision-provider';
+import { KNOWN_RESULT_SUBTYPES, classifyClaudeCliFailure, parseClaudeResultUsage, validatedClaudeModel } from './claude-vision-provider';
 import {
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -511,7 +514,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
     // ADR-0121 S0 L1: the child gets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and nothing else beyond the allow-list.
-    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
+    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, maxStdoutBytes: CLAUDE_JSON_STDOUT_CAPTURE_BYTES, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
     if (result.timedOut) {
@@ -523,17 +526,26 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
         `claude CLI could not run: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
-    // ADR-0115 D8: `--output-format json` prints ONE object; anything else (an older CLI, a login notice) is plain text.
-    const json = parseClaudePrintJson(result.stdout);
+    // ADR-0115 D8: `--output-format json` prints the CLI's `type: "result"` envelope; anything else (an older CLI) is plain text.
+    const parsedJson = parseClaudePrintJson(result.stdout);
+    if (parsedJson?.malformed === true && result.code === 0) {
+      // Result-looking output that does not parse is never echoed as the reply.
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'claude CLI printed an unparsable result envelope');
+    }
+    const json = parsedJson?.malformed === true ? undefined : parsedJson;
     // A JSON object that is not a usable envelope (no string `result`, e.g. an error subtype) is never echoed as a reply.
     const stdoutText = json === undefined ? result.stdout : (json.result ?? '');
     if (result.code !== 0 || json?.isError === true) {
       // The CLI prints "Not logged in · Please run /login" on STDOUT (stderr empty), so
-      // classify on stderr + stdout. Only masked stderr is echoed; never the prompt.
-      const kind = classifyClaudeCliFailure(`${result.stderr}\n${stdoutText}`);
+      // classify on stderr + stdout (+ the envelope's `errors`). Only masked stderr and a known subtype are echoed; never the prompt.
+      const kind =
+        json?.apiErrorStatus === 401 || json?.apiErrorStatus === 403
+          ? AiFailureKind.AUTH_REQUIRED
+          : classifyClaudeCliFailure(`${result.stderr}\n${stdoutText}${json?.errorsText ? `\n${json.errorsText}` : ''}`);
+      const reason = json?.subtype !== undefined ? ` (${json.subtype})` : '';
       throw new AiProviderError(
         kind,
-        `claude CLI exited ${result.code}: ${maskSecrets(result.stderr).slice(0, 300)}`,
+        `claude CLI exited ${result.code}${reason}: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
 
@@ -566,28 +578,77 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   }
 }
 
-/**
- * ADR-0115 D8: parse the single JSON object `claude -p --output-format json` prints. Undefined when stdout is not the
- * CLI's `type: "result"` envelope (an older CLI, a login notice, a plain reply that is JSON): the caller handles it as plain text. A JSON object whose `result`
- * is not a string returns `result: undefined` (an error, or empty output), so the raw envelope never becomes reply text.
- */
-function parseClaudePrintJson(stdout: string): { result: string | undefined; isError: boolean; usage: ReturnType<typeof parseClaudeResultUsage> } | undefined {
-  const trimmed = stdout.trim();
-  if (!trimmed.startsWith('{')) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
-  const obj = parsed as { type?: unknown; result?: unknown; is_error?: unknown; subtype?: unknown };
-  // Only the CLI's own envelope (`type: "result"`) is parsed; any other JSON (a plain-text reply that is itself JSON, as an
-  // intent selection is) stays plain text.
-  if (obj.type !== 'result') return undefined;
+interface ClaudePrintJson {
+  readonly malformed?: true;
+  readonly result: string | undefined;
+  readonly isError: boolean;
+  readonly usage: ReturnType<typeof parseClaudeResultUsage>;
+  readonly apiErrorStatus?: number;
+  readonly errorsText?: string;
+  readonly subtype?: string;
+}
+
+const RESULT_LOOKING = /"type"\s*:\s*"result"/;
+
+function envelopeOf(obj: Record<string, unknown>): ClaudePrintJson {
   const result = typeof obj.result === 'string' ? obj.result : undefined;
   const errorSubtype = typeof obj.subtype === 'string' && obj.subtype.startsWith('error');
-  return { result, isError: obj.is_error === true || errorSubtype, usage: parseClaudeResultUsage(parsed) };
+  const status = obj.api_error_status;
+  const errorsText = Array.isArray(obj.errors) ? obj.errors.filter((e): e is string => typeof e === 'string').join('\n') : '';
+  return {
+    result,
+    isError: obj.is_error === true || errorSubtype,
+    usage: parseClaudeResultUsage(obj),
+    ...(typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? { apiErrorStatus: status } : {}),
+    ...(errorsText !== '' ? { errorsText } : {}),
+    ...(typeof obj.subtype === 'string' && KNOWN_RESULT_SUBTYPES.includes(obj.subtype) ? { subtype: obj.subtype } : {}),
+  };
+}
+
+const isResultObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) && (v as { type?: unknown }).type === 'result';
+
+/**
+ * ADR-0115 D8: find the CLI's `type: "result"` envelope in stdout. The whole stdout may be one object, a JSON array
+ * (verbose) or lines with notices around the envelope; the LAST result object wins (as in `parseClaudeStreamJsonResult`).
+ * Undefined when there is no envelope at all (an older CLI, a plain reply, a plain reply that is itself JSON): plain text.
+ * `malformed: true` when something looks like a result envelope but none parses; the raw text is never the reply then.
+ */
+function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
+  const trimmed = stdout.trim();
+  if (trimmed === '') return undefined;
+  let whole: unknown;
+  let wholeOk = false;
+  try {
+    whole = JSON.parse(trimmed);
+    wholeOk = true;
+  } catch {
+    // fall through to the line scan
+  }
+  if (wholeOk && !Array.isArray(whole)) {
+    // Only the CLI's own envelope is parsed; any other JSON (an intent selection reply) stays plain text.
+    return isResultObject(whole) ? envelopeOf(whole) : undefined;
+  }
+  let last: Record<string, unknown> | undefined;
+  let looks = false;
+  if (wholeOk && Array.isArray(whole)) {
+    for (const el of whole) if (isResultObject(el)) last = el;
+  } else {
+    for (const line of trimmed.split('\n')) {
+      const t = line.trim();
+      if (t === '') continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(t);
+      } catch {
+        if (t.startsWith('{') && RESULT_LOOKING.test(t)) looks = true;
+        continue;
+      }
+      if (isResultObject(parsed)) last = parsed;
+    }
+  }
+  if (last !== undefined) return envelopeOf(last);
+  return looks ? { malformed: true, result: undefined, isError: false, usage: {} } : undefined;
 }
 
 /**

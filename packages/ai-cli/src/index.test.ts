@@ -80,7 +80,33 @@ describe('ClaudeCliProvider', () => {
 
   it('ADR-0115 D8: an error subtype without a result is a classified failure, never a reply', async () => {
     const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: false });
-    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toBeInstanceOf(Error);
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
+  it('ADR-0115 D8: a notice line around the envelope is skipped; the last result object is the reply', async () => {
+    const env = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'the reply', usage: { input_tokens: 3, output_tokens: 2 } });
+    const res = await exec({ code: 0, stdout: `Update available\n${env}\nbye\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('the reply');
+    expect(res.usage).toEqual({ label: 'claude:sonnet', inputTokens: 3, outputTokens: 2 });
+    const arr = JSON.stringify([{ type: 'system' }, { type: 'result', is_error: false, result: 'array reply' }]);
+    expect((await exec({ code: 0, stdout: arr, stderr: '', timedOut: false })).text).toBe('array reply');
+  });
+
+  it('ADR-0115 D8: is_error with api_error_status 401 is AUTH_REQUIRED and the message has the subtype, no result text', async () => {
+    const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 401, result: 'SECRET_PROMPT_ECHO' });
+    const err = await exec({ code: 0, stdout, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    expect((err as Error).message).toContain('error_during_execution');
+    expect((err as Error).message).not.toContain('SECRET_PROMPT_ECHO');
+    const noResult = JSON.stringify({ type: 'result', is_error: true, errors: ['Not logged in · Please run /login'] });
+    await expect(exec({ code: 0, stdout: noResult, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+  });
+
+  it('ADR-0115 D8: result-looking stdout that does not parse is EXECUTION_FAILED, never echoed', async () => {
+    const stdout = '{"type":"result","subtype":"success","result":"LEAKED_TEXT", broken';
+    const err = await exec({ code: 0, stdout, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+    expect((err as Error).message).not.toContain('LEAKED_TEXT');
   });
 
   it('ADR-0115 D8: plain text that is not the CLI envelope stays the reply (older CLI), JSON replies included', async () => {

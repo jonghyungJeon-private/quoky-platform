@@ -32428,7 +32428,12 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
   integers are kept; absent stays absent, never 0. The vision provider reads the same fields from its final stream-json
   `result` event.
 - **Fallback.** Only the CLI's own envelope (a JSON object with `type: "result"`) is parsed. Any other stdout (an older CLI,
-  a login notice, or a plain reply that is itself JSON) is the reply as before, and only the label is reported. An envelope
+  a login notice, or a plain reply that is itself JSON) is the reply as before, and only the label is reported. When stdout
+  is not one JSON object, the lines (or the elements of a JSON array) are scanned and the LAST `type: "result"` object is
+  the envelope, so a notice line or verbose array output still works. Result-looking output that parses to no envelope
+  (exit 0) is `EXECUTION_FAILED`, never echoed. An `is_error` envelope reads `api_error_status` (401/403 is
+  `AUTH_REQUIRED`) and string `errors[]` for classification; the error message carries a known `subtype` only. The Claude
+  text provider captures up to 2x the usual stdout bound (`maxStdoutBytes`), because JSON escaping inflates the reply. An envelope
   with no string `result` is never echoed as a reply: it is a classified failure if `is_error` is set or the `subtype` is an
   error, and empty output otherwise.
 - **Logs.** The NL selection call, the D4 help-scope classifier and the `agent_run.shadow` line carry counts only:
@@ -32455,8 +32460,9 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
      `count_tokens`) or a script-aware estimate before the call, then reconciliation against the provider's reported usage
      after it.
      - Step 1 is ADR-0115 D8 usage capture for the Claude CLI (the note above).
-     - Step 2 calibrates a per-model, script-aware bound from logged `inTok` / `promptChars` / `promptBytes` with a safety
-       margin. That bound then replaces the UTF-8 byte bound and `util/token-estimator.ts` (`length / 4`, which undercounts
+     - Step 2 calibrates from logged `inTok` / `promptChars` / `promptBytes` by fitting a per-model fixed overhead term (the
+       CLI's own system prompt and cache reads are inside `inTok`) plus a script-aware per-character rate, not a plain
+       ratio, with a safety margin. That bound then replaces the UTF-8 byte bound and `util/token-estimator.ts` (`length / 4`, which undercounts
        Korean).
      - Until step 2, the UTF-8 byte bound stays.
 - **ADR-0121 D12 amendment proposal (consulted with Codex, 2026-11-03; the owner allowed amending the ADR).**

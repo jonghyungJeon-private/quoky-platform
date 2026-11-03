@@ -76,7 +76,7 @@ export function buildClaudeVisionStreamJsonInput(
 }
 
 /** `result` event subtypes named in a failure reason; anything else is reported as `error`. */
-const KNOWN_RESULT_SUBTYPES: readonly string[] = ['success', 'error_during_execution', 'error_max_turns', 'error_max_budget_usd'];
+export const KNOWN_RESULT_SUBTYPES: readonly string[] = ['success', 'error_during_execution', 'error_max_turns', 'error_max_budget_usd'];
 
 /**
  * ADR-0115 D8: the token counts a Claude CLI `result` object (print mode `--output-format json`, or the stream-json
@@ -106,7 +106,9 @@ export function parseClaudeResultUsage(result: unknown): ClaudeReportedUsage {
   const cacheRead = tokenCount(u.cache_read_input_tokens);
   const cacheCreation = tokenCount(u.cache_creation_input_tokens);
   const output = tokenCount(u.output_tokens);
-  if (fresh !== undefined) {
+  // A present-but-invalid cache count (negative, fractional, string) makes the total unknown; null/absent is 0.
+  const cacheInvalid = (raw: unknown, parsed: number | undefined): boolean => raw !== undefined && raw !== null && parsed === undefined;
+  if (fresh !== undefined && !cacheInvalid(u.cache_read_input_tokens, cacheRead) && !cacheInvalid(u.cache_creation_input_tokens, cacheCreation)) {
     const total = fresh + (cacheRead ?? 0) + (cacheCreation ?? 0);
     if (Number.isSafeInteger(total)) out.inputTokens = total;
   }

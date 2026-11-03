@@ -200,6 +200,13 @@ describe('ClaudeCliVisionProvider — execute', () => {
     expect(call.opts.input).not.toContain(dir);
   });
 
+  it('ADR-0115 D8: the result event usage is returned with the label', async () => {
+    const event = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 4, cache_read_input_tokens: 6, cache_creation_input_tokens: 10, output_tokens: 9 } });
+    const { runner } = recordingRunner(() => ok(event));
+    const result = await new ClaudeCliVisionProvider({ model: 'sonnet', runner }).execute(imageRequest([{ path: png, mimeType: 'image/png' }]));
+    expect(result.usage).toEqual({ label: 'claude:sonnet', inputTokens: 20, cachedInputTokens: 6, cacheCreationInputTokens: 10, outputTokens: 9 });
+  });
+
   it('the audit carries counts and hashes only — no path, no bytes, no prompt text', async () => {
     const { runner } = recordingRunner(() => ok(SUCCESS));
     const prompt = '# Task\nUser request: "PROMPT_BODY_MARKER"';
@@ -368,5 +375,15 @@ describe('parseClaudeStreamJsonResult usage (ADR-0115 D8)', () => {
     const line = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x', usage: { input_tokens: 2, cache_read_input_tokens: 3, output_tokens: -4 } });
     const out = parseClaudeStreamJsonResult(line);
     expect(out.ok && out.usage).toEqual({ inputTokens: 5, cachedInputTokens: 3 });
+  });
+
+  it('an invalid present cache count omits inputTokens; null counts as 0', () => {
+    const mk = (cache: unknown) => parseClaudeStreamJsonResult(JSON.stringify({ type: 'result', subtype: 'success', result: 'x', usage: { input_tokens: 2, cache_read_input_tokens: cache } }));
+    for (const bad of [-1, 1.5, '3']) {
+      const out = mk(bad);
+      expect(out.ok && 'inputTokens' in (out.usage ?? {})).toBe(false);
+    }
+    const out = mk(null);
+    expect(out.ok && out.usage).toEqual({ inputTokens: 2 });
   });
 });
