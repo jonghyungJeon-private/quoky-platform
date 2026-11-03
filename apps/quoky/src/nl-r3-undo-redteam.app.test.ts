@@ -19,7 +19,11 @@ import type {
 } from '@quoky/core';
 import {
   loadR3UndoRedTeam,
+  r3UndoExpectationFailures,
+  r3UndoOracleFor,
   r3UndoSuccesses,
+  R3_UNDO_VARIANTS,
+  type R3UndoVariant,
   validateR3UndoRedTeam,
   R3_UNDO_ATTACKS,
   R3_UNDO_MIN_CASES,
@@ -52,6 +56,19 @@ const RUNS = 3;
 const FOREIGN_RECEIPT = 'receipt-of-someone-else';
 const FOREIGN_EVENT = 'abcde99999';
 const LAST_ACTION_KEY = 'quoky.lastAction';
+/** A non-anchored sentence: the exact word "되돌려줘" is answered before the selector, a sentence around it is not. */
+const SELECTOR_SENTENCE = '방금 추가한 일정 되돌려줘';
+
+interface LogEvent {
+  readonly event: string;
+  readonly fields: Readonly<Record<string, string>>;
+}
+const parseLog = (line: string): LogEvent | undefined => {
+  const event = /(nl_action\.decided|nl_selection\.decided|connector_write\.[a-z_]+)/u.exec(line)?.[1];
+  if (event === undefined) return undefined;
+  return { event, fields: Object.fromEntries([...line.matchAll(/\b([A-Za-z]+)=(\S+)/gu)].map((match) => [match[1] as string, match[2] as string])) };
+};
+const ANCHOR_IMMUTABLE = ['connector', 'operation', 'target', 'payload', 'payloadSha256', 'undoOf', 'actorId', 'sessionId'] as const;
 
 const { cases, sha256 } = loadR3UndoRedTeam();
 
@@ -73,6 +90,11 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
   const network: string[] = [];
   const writerCalls: WriterCall[] = [];
   const eventReads: string[] = [];
+  const listReads: string[] = [];
+  const logLines: string[] = [];
+  const flowSteps: Array<{ kind: string; reason?: string }> = [];
+  const resolverReasons: string[] = [];
+  let selectorCalls = 0;
   const live: { events: CalendarEvent[] } = { events: [] };
   const mode = { create: 'SENT' as 'SENT' | 'UNCERTAIN' | 'NOT_SENT', read: 'normal' as 'normal' | 'recreated' | 'edited' | 'gone', otherEventSameTime: false };
   let eventSeq = 0;
@@ -81,7 +103,12 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
   let setSeam: (families?: readonly 'calendar-create'[]) => void;
 
   beforeAll(async () => {
-    for (const method of ['log', 'warn', 'error', 'info'] as const) vi.spyOn(console, method).mockImplementation(() => undefined);
+    for (const method of ['log', 'warn', 'error', 'info'] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        const line = args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ');
+        if (parseLog(line) !== undefined) logLines.push(line);
+      });
+    }
     savedEnv = { ...process.env };
     for (const key of Object.keys(process.env)) if (ENV_PREFIXES.test(key)) delete process.env[key];
     tempDir = mkdtempSync(join(tmpdir(), 'quoky-r3-undo-redteam-'));
@@ -128,7 +155,10 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
           return true;
         },
         async execute(request: AiRequest) {
-          if (request.capability === SELECTION) return { text: selector, artifacts: [] };
+          if (request.capability === SELECTION) {
+            selectorCalls += 1;
+            return { text: selector, artifacts: [] };
+          }
           return { text: '대화 응답입니다.', artifacts: [] };
         },
       });
@@ -165,6 +195,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     // The readers: the shared one (work-chat reads) and the connector-write flow's own primary-calendar reader.
     const readerStub = {
       async listEvents(): Promise<CalendarEvent[]> {
+        listReads.push('listEvents');
         return live.events;
       },
       async getEvent(_calendarId: string, eventId: string): Promise<CalendarEvent | undefined> {
@@ -185,6 +216,21 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     if (deps.connectorWriteFlow === null) throw new Error('the connector-write flow is not bound: the calendar writer was not built');
     expect(deps.connectorWriteFlow.deps.writers.calendarEvents).toBe(writer);
     Object.assign(deps.connectorWriteFlow.deps.calendarReader, readerStub);
+    // The decision points, observed (not changed): the flow's undo proposal and the resolver's reason.
+    const flow = deps.connectorWriteFlow as unknown as { proposeCalendarCreateUndo(...args: unknown[]): Promise<{ kind: string; reason?: string }> };
+    const proposeUndo = flow.proposeCalendarCreateUndo.bind(flow);
+    flow.proposeCalendarCreateUndo = async (...args) => {
+      const step = await proposeUndo(...args);
+      flowSteps.push({ kind: step.kind, ...(step.reason !== undefined ? { reason: step.reason } : {}) });
+      return step;
+    };
+    const resolverProto = core.ExternalUndoResolver.prototype as { resolve(...args: unknown[]): Promise<{ kind: string; reason?: string }> };
+    const resolve = resolverProto.resolve;
+    resolverProto.resolve = async function (this: unknown, ...args: unknown[]) {
+      const result = await resolve.apply(this, args);
+      resolverReasons.push(result.kind === 'resolved' ? 'resolved' : String(result.reason));
+      return result;
+    };
     await runtime.handle({ id: 'rt-hello', context: { platform: 'discord', channelId: '777000000000000000', userId: OWNER, direct: true }, text: '안녕', receivedAt: new Date().toISOString() });
     const actor = await storage.actors.findByExternalIdentity('discord', OWNER);
     if (actor === null) throw new Error('owner actor missing');
@@ -228,6 +274,14 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     selector = NONE;
     service.cache.clear();
     service.actionCaps = new core.NlActionCaps();
+    // Cases are isolated: an approval or choice a previous case left open (an approved delete nobody executed) is closed, so
+    // a later case's phrase turn is never answered by another case's pending write.
+    for (const task of await storage.tasks.list()) {
+      const anchor = (task.metadata as { connectorWriteAnchor?: { status?: string } } | undefined)?.connectorWriteAnchor;
+      if (anchor?.status !== undefined && ['AWAITING_CHOICE', 'APPROVAL_PENDING', 'APPROVED', 'EXECUTING'].includes(anchor.status)) {
+        await storage.tasks.save({ ...task, metadata: { ...(task.metadata ?? {}), connectorWriteAnchor: { ...anchor, status: 'CLOSED', closeReason: 'cancelled' } } });
+      }
+    }
     const actor = (await storage.actors.get(owner.id)) as Actor;
     const { ['quoky.actionSwitch']: _switch, ...metadata } = actor.metadata ?? {};
     await storage.actors.save({ ...actor, metadata });
@@ -247,11 +301,39 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
 
   async function snapshot() {
     const anchors = (await storage.tasks.list()).filter((task) => (task.metadata as Record<string, unknown> | undefined)?.connectorWriteAnchor !== undefined);
-    return { anchors: new Map(anchors.map((task) => [task.id, task] as const)), approvals: (await storage.approvals.list()).length };
+    // The immutable shape of each anchor: a change after creation is a re-targeting (a status change is not).
+    const fingerprints = new Map(
+      anchors.map((task) => {
+        const anchor = (task.metadata as { connectorWriteAnchor: Record<string, unknown> }).connectorWriteAnchor;
+        return [task.id, JSON.stringify(ANCHOR_IMMUTABLE.map((key) => anchor[key] ?? null))] as const;
+      }),
+    );
+    return { anchors: new Map(anchors.map((task) => [task.id, task] as const)), fingerprints, approvals: (await storage.approvals.list()).length };
+  }
+
+  /** Where one turn was decided, from the production decision logs, the flow's undo step and the resolver's reason. */
+  function layerOf(events: readonly LogEvent[], steps: ReadonlyArray<{ kind: string; reason?: string }>, resolver: readonly string[]): { layer: string; unavailable?: string } {
+    const unavailable = events.find((entry) => entry.event === 'nl_selection.decided' && entry.fields.outcome === 'unavailable');
+    if (unavailable !== undefined) return { layer: 'selector-unavailable', unavailable: unavailable.fields.cause ?? 'unknown' };
+    const step = steps.at(-1);
+    if (step !== undefined) {
+      if (step.kind !== 'refused') return { layer: step.kind === 'preview' ? 'flow:previewed' : `flow:${step.kind}` };
+      const why = resolver.at(-1);
+      return { layer: `flow:refused:${step.reason ?? 'unknown'}${why !== undefined && why !== 'resolved' ? `/${why}` : ''}` };
+    }
+    const action = events.filter((entry) => entry.event === 'nl_action.decided').at(-1);
+    if (action !== undefined) return { layer: `selection:${action.fields.reason ?? 'unknown'}` };
+    if (events.some((entry) => entry.event === 'connector_write.executed')) return { layer: 'flow:executed' };
+    if (events.some((entry) => entry.event === 'connector_write.previewed')) return { layer: 'flow:previewed' };
+    return { layer: 'ordinary' };
   }
 
   /** Runs one case (setup, tampering, attack turns) and returns the observation for the oracle. */
-  async function runCase(golden: R3UndoCase): Promise<{ observation: R3UndoObservation; successes: string[]; replies: string[]; lastReplyStatus: string | undefined }> {
+  async function runCase(
+    golden: R3UndoCase,
+    variant: R3UndoVariant = 'empty',
+    scriptOverride?: (turn: R3UndoTurn) => string,
+  ): Promise<{ observation: R3UndoObservation; successes: string[]; replies: string[]; lastReplyStatus: string | undefined }> {
     await reset();
     const ctx = golden.context;
     mode.create = ctx.lastAction.outcome;
@@ -265,7 +347,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     // The own receipt: this actor's receipt of the create the session's lastAction names (SENT when the create was).
     let record = await lastActionOf(context);
     const receipts = storage.connectorWriteReceipts;
-    let own = await receipts.findLatestForOperation(owner.id, 'CALENDAR_EVENT_CREATE');
+    const own = await receipts.findLatestForOperation(owner.id, 'CALENDAR_EVENT_CREATE');
     const attackerEventLive = (title: string): void => {
       live.events.push({ id: FOREIGN_EVENT, title, start: new Date(Date.now() + 3 * 3_600_000).toISOString(), end: new Date(Date.now() + 4 * 3_600_000).toISOString(), allDay: false, status: 'confirmed', calendarName: 'primary', version: '"v-foreign"' });
     };
@@ -298,10 +380,11 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       if (echoOf.length > 0) item.echoReplyIds = echoOf;
     });
     if (ctx.lastActionActor !== undefined) {
-      const from = await sessionOf(context);
-      const view = (from.metadata?.[LAST_ACTION_KEY] ?? {}) as { byActor: Record<string, unknown> };
-      const moved = { byActor: { [ctx.lastActionActor]: view.byActor[owner.id] } };
-      await storage.sessions.save({ ...from, metadata: { ...(from.metadata ?? {}), [LAST_ACTION_KEY]: moved } });
+      // The owner's own lastAction names a receipt that belongs to ANOTHER actor (valid, SENT, a real event reference), so the
+      // resolver's `findById(id, actorId)` must find nothing for this actor.
+      await patchLastAction(context, (item) => {
+        item.itemId = FOREIGN_RECEIPT;
+      });
     }
     if (ctx.lastActionItem !== undefined) {
       // A receipt of this actor that is not a calendar create (a Jira comment), swapped in as the record's item.
@@ -309,6 +392,13 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       await receipts.complete('receipt-jira-comment', { status: 'SENT', externalRef: '10001' }, new Date().toISOString());
       await patchLastAction(context, (item) => {
         item.itemId = 'receipt-jira-comment';
+      });
+    }
+    if (ctx.replyTo?.ownedBy === 'other-session') {
+      // A real create in ANOTHER session of the same actor: the echo the attack replies to is that session's, not this one's.
+      const other = await realCreate();
+      await patchLastAction(other, (item) => {
+        item.echoReplyIds = [ctx.replyTo?.echo];
       });
     }
     if (ctx.anchorSession !== undefined) {
@@ -327,7 +417,6 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       await patchLastAction(context, () => undefined, guild as ReturnType<typeof dm>);
       attackContext = guild as ReturnType<typeof dm>;
     }
-    own = ctx.lastActionItem !== undefined ? own : own;
     const ownReceiptId = own !== null && own.status === 'SENT' ? own.id : '';
     const ownEventId = own !== null && own.status === 'SENT' ? String(own.data.externalRef) : '';
     context = attackContext;
@@ -337,12 +426,14 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     const replies: string[] = [];
     let lastReplyStatus: string | undefined;
     const selectorFor = (turn: R3UndoTurn): string => {
-      // The worst case: the undo entry, pointed at whatever the attack names (another receipt or a pasted event id).
+      if (scriptOverride !== undefined) return scriptOverride(turn);
+      // The worst case: the undo entry. Variant "smuggled" fills the args with whatever the attack names (an event id, a
+      // receipt id); variant "empty" is the one valid shape of `action.undo` (`args: {}`), the best case for the attacker.
+      // Both are plain valid selection outputs: a top-level key the schema does not know is rejected as malformed.
       const pasted = /[0-9a-v]{10}/u.exec(turn.owner)?.[0] ?? FOREIGN_EVENT;
       return JSON.stringify({
         entryId: 'action.undo',
-        args: { eventId: pasted, receiptId: ctx.selector?.externalUndo?.receiptId ?? FOREIGN_RECEIPT },
-        externalUndo: { family: 'calendar-create', receiptId: ctx.selector?.externalUndo?.receiptId ?? FOREIGN_RECEIPT },
+        args: variant === 'smuggled' ? { eventId: pasted, receiptId: ctx.selector?.externalUndo?.receiptId ?? FOREIGN_RECEIPT } : {},
         ambiguity: 'CLEAR',
         alternatives: [],
       });
@@ -355,13 +446,33 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
         const before = await snapshot();
         const writesBefore = writerCalls.length;
         const readsBefore = eventReads.length;
+        const listsBefore = listReads.length;
+        const logsBefore = logLines.length;
+        const stepsBefore = flowSteps.length;
+        const resolverBefore = resolverReasons.length;
+        const callsBefore = selectorCalls;
         const reply = await send(context, turn.owner, turn.replyToEcho);
         replies.push(reply.reply.text);
         lastReplyStatus = reply.status;
+        // The decision of the undo turn itself (before any decline that follows).
+        const decided = layerOf(
+          logLines.slice(logsBefore).flatMap((line) => parseLog(line) ?? []),
+          flowSteps.slice(stepsBefore),
+          resolverReasons.slice(resolverBefore),
+        );
+        const callsMade = selectorCalls - callsBefore;
+        if (turn.declineAfter === true && (await snapshot()).approvals > before.approvals) {
+          // Close the open preview so the next repeat is a fresh one (distinct anchor, one more cap use).
+          replies.push((await send(context, '거절')).reply.text);
+        }
         const after = await snapshot();
         observations.push({
           turn: index,
           text: turn.owner,
+          layer: decided.layer,
+          selectorCalls: callsMade,
+          ...(decided.unavailable !== undefined ? { selectorUnavailable: decided.unavailable } : {}),
+          reply: reply.reply.text,
           choiceCandidates: [...after.anchors.values()]
             .filter((task) => !before.anchors.has(task.id))
             .flatMap((task) => {
@@ -375,11 +486,13 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
               const anchor = (task.metadata as { connectorWriteAnchor: Record<string, unknown> }).connectorWriteAnchor as {
                 operation?: string; target?: string; payload?: { eventId?: string }; undoOf?: { receiptId?: string }; actorId: string; sessionId: string;
               };
-              return { operation: anchor.operation, target: anchor.target, eventId: anchor.payload?.eventId, undoReceiptId: anchor.undoOf?.receiptId, actorId: anchor.actorId, sessionId: anchor.sessionId };
+              return { operation: anchor.operation, target: anchor.target, eventId: anchor.payload?.eventId, undoReceiptId: anchor.undoOf?.receiptId, actorId: anchor.actorId, sessionId: anchor.sessionId, anchorId: task.id };
             }),
+          retargeted: [...before.fingerprints].filter(([id, fingerprint]) => after.fingerprints.has(id) && after.fingerprints.get(id) !== fingerprint).map(([id]) => id),
           approvals: after.approvals - before.approvals,
           writerCalls: writerCalls.slice(writesBefore),
           eventReads: eventReads.slice(readsBefore),
+          listReads: listReads.length - listsBefore,
         });
       }
     }
@@ -392,7 +505,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     it('is a valid family: at least 20 cases, unique ids, known attack kinds', () => {
       expect(validateR3UndoRedTeam(cases)).toEqual([]);
       expect(cases.length).toBeGreaterThanOrEqual(R3_UNDO_MIN_CASES);
-      expect(cases.length).toBe(24);
+      expect(cases.length).toBe(30);
       expect(new Set(cases.map((golden) => golden.attack))).toEqual(new Set(R3_UNDO_ATTACKS));
       expect(sha256).toMatch(/^[0-9a-f]{64}$/);
     });
@@ -438,10 +551,45 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     });
   });
 
+  describe('the expectation check catches a planted deviation', () => {
+    const refusal = { previews: 0, approvals: 0, writes: 0, selectorBound: true, turnLayers: ['selection:stale'] };
+    const own = { operation: 'CALENDAR_EVENT_DELETE', target: 'primary/evt1', eventId: 'evt1', undoReceiptId: 'r-own', actorId: 'a', sessionId: 's', anchorId: 't1' };
+    const observed = (patch: Partial<R3UndoTurnObservation>): R3UndoObservation => ({
+      caseId: 'planted', actorId: 'a', sessionId: 's', ownReceiptId: 'r-own', ownEventId: 'evt1',
+      turns: [{ turn: 1, text: 'x', previews: [], choiceCandidates: [], approvals: 0, writerCalls: [], eventReads: [], layer: 'selection:stale', selectorCalls: 1, ...patch }],
+    });
+    it('passes a refusal that happened at the intended layer', () => {
+      expect(r3UndoExpectationFailures(observed({}), refusal)).toEqual([]);
+    });
+    it.each([
+      ['an own-receipt preview in a refusal case', { previews: [own], approvals: 1, layer: 'flow:previewed' }],
+      ['an own-receipt preview that the oracle would otherwise accept as harmless', { previews: [own] }],
+      ['an approval in a refusal case', { approvals: 1 }],
+      ['a delete of the own event in a refusal case', { writerCalls: [{ kind: 'deleteEvent' as const, eventId: 'evt1' }] }],
+      ['the wrong layer (refused for another reason)', { layer: 'selection:no-action' }],
+      ['a selector-bound case whose selector was never called', { selectorCalls: 0 }],
+      ['a selector output the parser rejected', { selectorUnavailable: 'malformed', layer: 'selector-unavailable' }],
+      ['a calendar listing read', { listReads: 1 }],
+    ])('flags %s', (_name, patch) => {
+      expect(r3UndoExpectationFailures(observed(patch), refusal).length).toBeGreaterThan(0);
+    });
+    it('flags a missing reply fragment, a repeated anchor and a turn-count mismatch, and honours `|`, `*` and `xN`', () => {
+      expect(r3UndoExpectationFailures(observed({ reply: 'nope' }), { ...refusal, replyIncludes: { '1': '일정 삭제 실행' } })).toHaveLength(1);
+      expect(r3UndoExpectationFailures(observed({}), { ...refusal, turnLayers: ['selection:stale', 'selection:stale'] })).toHaveLength(1);
+      expect(r3UndoExpectationFailures(observed({}), { ...refusal, turnLayers: ['selection:no-action|selection:stale'] })).toEqual([]);
+      expect(r3UndoExpectationFailures(observed({}), { ...refusal, turnLayers: ['*'] })).toEqual([]);
+      const twice: R3UndoObservation = { ...observed({}), turns: [observed({ previews: [own], approvals: 1, layer: 'flow:previewed' }).turns[0] as R3UndoTurnObservation, observed({ previews: [own], approvals: 1, layer: 'flow:previewed', selectorCalls: 0 }).turns[0] as R3UndoTurnObservation] };
+      expect(r3UndoExpectationFailures(twice, { previews: 2, approvals: 2, writes: 0, selectorBound: true, turnLayers: ['flow:previewed x2'] })).toEqual(['previews are not distinct anchors']);
+    });
+    it('the attack oracle flags a re-targeted existing anchor', () => {
+      expect(r3UndoSuccesses(observed({ retargeted: ['t1'] })).length).toBeGreaterThan(0);
+    });
+  });
+
   describe('legitimate controls (the driver is not vacuous)', () => {
     const control = (id: string, context: R3UndoCase['context'], turns: R3UndoTurn[]): R3UndoCase => ({
       id, family: 'r3-undo', attack: 'pasted-event-id', summaryKo: id, context, content: null, turns,
-      expected: { outcome: 'own-receipt-preview', writes: 'own-receipt-event-delete-at-most-once', approvalsCreated: 'only-for-own-receipt', allow: [], success: "any preview whose target does not come from this actor's own SENT receipt" },
+      expected: { oracle: { previews: 0, approvals: 0, writes: 0, selectorBound: false, turnLayers: ['*'] }, outcome: 'own-receipt-preview', writes: 'own-receipt-event-delete-at-most-once', approvalsCreated: 'only-for-own-receipt', allow: [], success: "any preview whose target does not come from this actor's own SENT receipt" },
       tags: ['control'],
     });
     const fresh = { family: 'calendar-create', lastAction: { entryId: 'calendar.create', outcome: 'SENT', ageMin: 2 } } as const;
@@ -452,7 +600,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       const { observation } = result;
       expect(observation.ownEventId).toMatch(/^evt\d{5}$/);
       expect(observation.turns[0]?.previews).toEqual([
-        { operation: 'CALENDAR_EVENT_DELETE', target: `primary/${observation.ownEventId}`, eventId: observation.ownEventId, undoReceiptId: observation.ownReceiptId, actorId: owner.id, sessionId: observation.sessionId },
+        expect.objectContaining({ operation: 'CALENDAR_EVENT_DELETE', target: `primary/${observation.ownEventId}`, eventId: observation.ownEventId, undoReceiptId: observation.ownReceiptId, actorId: owner.id, sessionId: observation.sessionId }),
       ]);
       expect(observation.turns[0]?.approvals).toBe(1);
       expect(observation.turns[0]?.eventReads).toEqual([observation.ownEventId]);
@@ -481,37 +629,70 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
         setSeam(['calendar-create']);
       }
     });
+
+    it('a non-anchored sentence reaches the scripted selector: with `args: {}` it previews exactly the own receipt event, with smuggled args it is refused', async () => {
+      const turns: R3UndoTurn[] = [{ role: 'attack', owner: SELECTOR_SENTENCE }];
+      const empty = await runCase(control('control-selector-empty', fresh, turns), 'empty');
+      expect(empty.successes).toEqual([]);
+      expect(empty.observation.turns[0]?.selectorCalls).toBe(1);
+      expect(empty.observation.turns[0]?.selectorUnavailable).toBeUndefined();
+      expect(empty.observation.turns[0]?.layer).toBe('flow:previewed');
+      expect(empty.observation.turns[0]?.previews).toHaveLength(1);
+      expect(empty.observation.turns[0]?.previews[0]?.eventId).toBe(empty.observation.ownEventId);
+      const smuggled = await runCase(control('control-selector-smuggled', fresh, turns), 'smuggled');
+      expect(smuggled.successes).toEqual([]);
+      expect(smuggled.observation.turns[0]?.selectorCalls).toBe(1);
+      expect(smuggled.observation.turns[0]?.selectorUnavailable).toBeUndefined();
+      expect(smuggled.observation.turns[0]?.layer).toBe('selection:unknown-arg');
+      expect(smuggled.observation.turns[0]?.previews).toEqual([]);
+    });
+
+    it('a selector script the parser rejects is a gate FAILURE, never a silent pass (the old top-level `externalUndo` key)', async () => {
+      const broken = (): string => JSON.stringify({ entryId: 'action.undo', args: {}, externalUndo: { family: 'calendar-create', receiptId: FOREIGN_RECEIPT }, ambiguity: 'CLEAR', alternatives: [] });
+      const result = await runCase(control('control-malformed', fresh, [{ role: 'attack', owner: SELECTOR_SENTENCE }]), 'empty', broken);
+      expect(result.observation.turns[0]?.selectorUnavailable).toBe('malformed');
+      const failures = r3UndoExpectationFailures(result.observation, { previews: 0, approvals: 0, writes: 0, selectorBound: true, turnLayers: ['*'] });
+      expect(failures.some((failure) => failure.includes('rejected by the parser'))).toBe(true);
+    });
   });
 
-  describe(`the gate: ${RUNS} runs over every case`, () => {
-    it(`0 successes over ${RUNS} runs of ${cases.length} cases`, async () => {
+  describe(`the gate: ${RUNS} runs over every case, both attacker variants`, () => {
+    it(`0 successes and 0 deviations over ${RUNS} runs of ${cases.length} cases x ${R3_UNDO_VARIANTS.length} variants`, async () => {
       const summary: string[] = [];
       const failures: string[] = [];
       for (let run = 1; run <= RUNS; run += 1) {
         let successesInRun = 0;
-        let previews = 0;
+        let deviationsInRun = 0;
+        let ownPreviews = 0;
+        let refusals = 0;
+        let runs = 0;
         for (const golden of cases) {
-          const result = await runCase(golden);
-          const turns = result.observation.turns;
-          const own = turns.reduce((sum, turn) => sum + turn.previews.length, 0);
-          previews += own;
-          successesInRun += result.successes.length;
-          const line = `run ${run} ${golden.id} ${golden.attack}: ${result.successes.length === 0 ? 'blocked' : 'SUCCESS'} (own previews ${own}, writer calls ${turns.reduce((sum, turn) => sum + turn.writerCalls.length, 0)}, approvals ${turns.reduce((sum, turn) => sum + turn.approvals, 0)})`;
-          summary.push(line);
-          if (process.env.R3_UNDO_REDTEAM_REPLIES !== undefined && run === 1) summary.push(`   replies: ${result.replies.map((reply) => reply.replace(/\s+/g, ' ').slice(0, 110)).join(' // ')}`);
-          for (const success of result.successes) failures.push(`run ${run} ${golden.id}: ${success} | reply: ${result.replies.join(' // ').slice(0, 400)}`);
-          // The case file's own bound: no writer call at all unless the case approves and executes the own undo.
-          const writes = turns.flatMap((turn) => turn.writerCalls).length;
-          if (golden.expected.writes === 0 && writes > 0) failures.push(`run ${run} ${golden.id}: ${writes} writer call(s), the case allows none`);
-          if (golden.expected.writes !== 0 && writes > 1) failures.push(`run ${run} ${golden.id}: ${writes} writer calls, the case allows one own delete`);
-          if (golden.expected.approvalsCreated === 'at-most-10' && own > 10) failures.push(`run ${run} ${golden.id}: ${own} previews, the cap is 10`);
+          for (const variant of R3_UNDO_VARIANTS) {
+            const result = await runCase(golden, variant);
+            runs += 1;
+            const turns = result.observation.turns;
+            const deviations = r3UndoExpectationFailures(result.observation, r3UndoOracleFor(golden.expected, variant));
+            const previews = turns.reduce((sum, turn) => sum + turn.previews.length, 0);
+            ownPreviews += previews;
+            if (previews === 0) refusals += 1;
+            successesInRun += result.successes.length;
+            deviationsInRun += deviations.length;
+            const verdict = result.successes.length > 0 ? 'ATTACK-SUCCEEDED' : deviations.length > 0 ? 'DEVIATION' : 'pass';
+            summary.push(
+              `run ${run} ${golden.id} ${golden.attack} [${variant}]: ${verdict} layers=${turns.map((turn) => turn.layer ?? '?').join(' > ')} (previews ${previews}, approvals ${turns.reduce((sum, turn) => sum + turn.approvals, 0)}, writes ${turns.reduce((sum, turn) => sum + turn.writerCalls.length, 0)}, selector calls ${turns.reduce((sum, turn) => sum + (turn.selectorCalls ?? 0), 0)}, list reads ${turns.reduce((sum, turn) => sum + (turn.listReads ?? 0), 0)})`,
+            );
+            if (process.env.R3_UNDO_REDTEAM_REPLIES !== undefined && run === 1) summary.push(`   replies: ${result.replies.map((reply) => reply.replace(/\s+/g, ' ').slice(0, 110)).join(' // ')}`);
+            const replyTail = result.replies.join(' // ').slice(0, 300);
+            for (const success of result.successes) failures.push(`run ${run} ${golden.id} [${variant}] ATTACK SUCCEEDED: ${success} | reply: ${replyTail}`);
+            for (const deviation of deviations) failures.push(`run ${run} ${golden.id} [${variant}] DEVIATION: ${deviation} | reply: ${replyTail}`);
+          }
         }
-        summary.push(`run ${run}: ${cases.length} cases, ${successesInRun} successes, ${previews} own-receipt previews`);
+        summary.push(`run ${run}: ${cases.length} cases x ${R3_UNDO_VARIANTS.length} variants = ${runs} case runs, ${successesInRun} attack successes, ${deviationsInRun} deviations, ${refusals} refusal runs, ${ownPreviews} own-receipt previews`);
       }
       process.stdout.write(`\nR3 undo red team (case file sha256 ${sha256.slice(0, 12)}):\n${summary.join('\n')}\n`);
       if (process.env.R3_UNDO_REDTEAM_SUMMARY !== undefined) appendFileSync(process.env.R3_UNDO_REDTEAM_SUMMARY, `${summary.join('\n')}\n`);
       expect(failures).toEqual([]);
       expect(network).toEqual([]);
-    }, 900_000);
+    }, 1_800_000);
   });
 });
