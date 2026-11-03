@@ -51,8 +51,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`, no model) is now real: the scripted selector output parses (the old
   top-level `externalUndo` key was rejected, so five cases fell to chat), every case runs with smuggled args and with
   `args: {}`, a rejected script fails the gate, and every case has an oracle (a refusal is previews 0, approvals 0, writes 0
-  at a named layer and reason). 30 cases (six selector-path twins added), 3 runs x 60 case runs: 0 attack successes, 0
-  deviations. Case 018's `writes: 0` is corrected (it contradicted its own approve/execute turns; replay is still rejected).
+  at a named layer and reason). 36 cases (19 selector-bound with two distinct selector variants, 17 never call the selector),
+  3 runs x 72 case runs: 0 attack successes, 0 deviations. Review fixes: approvals are now checked by their binding (event,
+  calendar, payload hash), not by count, with planted controls; 002 is labelled the question-mark form and twin 031 has no
+  `?`; 005 plants the echo; new selector-path guild, paraphrase (`askUndoConfirm`/`decideUndo`) and cap cases. Across 13
+  scratch mutations the attack-success oracle stayed 0 and only the layer/deviation oracle detected anything; the resolver's
+  SENT checks (M9, M11) are pinned only by unit tests. Case 018's `writes: 0` is corrected (it contradicted its own approve/execute turns; replay is still rejected).
   The family stays OFF (`EXTERNAL_UNDO_CAPABILITIES` empty) until Chief Architect, Codex and `/security-review` PASS on the
   switch-on and Live UAT; none of those has passed. DECISIONS "Implementation note (amendment 3, calendar-create family...)".
 

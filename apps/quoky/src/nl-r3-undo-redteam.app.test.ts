@@ -24,6 +24,7 @@ import {
   r3UndoSuccesses,
   R3_UNDO_VARIANTS,
   type R3UndoVariant,
+  parseApprovalBinding,
   validateR3UndoRedTeam,
   R3_UNDO_ATTACKS,
   R3_UNDO_MIN_CASES,
@@ -95,6 +96,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
   const flowSteps: Array<{ kind: string; reason?: string }> = [];
   const resolverReasons: string[] = [];
   let selectorCalls = 0;
+  /** A planted control only: rewrites the binding of every approval the flow creates (never set by a gate case). */
+  let tamperApproval: ((reason: string) => string) | undefined;
   const live: { events: CalendarEvent[] } = { events: [] };
   const mode = { create: 'SENT' as 'SENT' | 'UNCERTAIN' | 'NOT_SENT', read: 'normal' as 'normal' | 'recreated' | 'edited' | 'gone', otherEventSameTime: false };
   let eventSeq = 0;
@@ -231,6 +234,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       resolverReasons.push(result.kind === 'resolved' ? 'resolved' : String(result.reason));
       return result;
     };
+    const approvalSave = storage.approvals.save.bind(storage.approvals);
+    storage.approvals.save = async (approval) => approvalSave(tamperApproval === undefined || String(approval.status) !== 'PENDING' ? approval : { ...approval, reason: tamperApproval(approval.reason) });
     await runtime.handle({ id: 'rt-hello', context: { platform: 'discord', channelId: '777000000000000000', userId: OWNER, direct: true }, text: '안녕', receivedAt: new Date().toISOString() });
     const actor = await storage.actors.findByExternalIdentity('discord', OWNER);
     if (actor === null) throw new Error('owner actor missing');
@@ -272,6 +277,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     mode.read = 'normal';
     mode.otherEventSameTime = false;
     selector = NONE;
+    tamperApproval = undefined;
     service.cache.clear();
     service.actionCaps = new core.NlActionCaps();
     // Cases are isolated: an approval or choice a previous case left open (an approved delete nobody executed) is closed, so
@@ -308,7 +314,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
         return [task.id, JSON.stringify(ANCHOR_IMMUTABLE.map((key) => anchor[key] ?? null))] as const;
       }),
     );
-    return { anchors: new Map(anchors.map((task) => [task.id, task] as const)), fingerprints, approvals: (await storage.approvals.list()).length };
+    const approvals = await storage.approvals.list();
+    return { anchors: new Map(anchors.map((task) => [task.id, task] as const)), fingerprints, approvals: approvals.length, approvalList: approvals };
   }
 
   /** Where one turn was decided, from the production decision logs, the flow's undo step and the resolver's reason. */
@@ -333,8 +340,10 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     golden: R3UndoCase,
     variant: R3UndoVariant = 'empty',
     scriptOverride?: (turn: R3UndoTurn) => string,
+    plantedApprovalTamper?: (reason: string) => string,
   ): Promise<{ observation: R3UndoObservation; successes: string[]; replies: string[]; lastReplyStatus: string | undefined }> {
     await reset();
+    tamperApproval = undefined;
     const ctx = golden.context;
     mode.create = ctx.lastAction.outcome;
     if (ctx.liveEvent?.gone) mode.read = 'gone';
@@ -438,6 +447,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
         alternatives: [],
       });
     };
+    tamperApproval = plantedApprovalTamper;
     let index = 0;
     for (const turn of golden.turns) {
       selector = selectorFor(turn);
@@ -484,12 +494,13 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
             .filter((task) => (task.metadata as { connectorWriteAnchor: { operation?: string } }).connectorWriteAnchor.operation !== undefined)
             .map((task) => {
               const anchor = (task.metadata as { connectorWriteAnchor: Record<string, unknown> }).connectorWriteAnchor as {
-                operation?: string; target?: string; payload?: { eventId?: string }; undoOf?: { receiptId?: string }; actorId: string; sessionId: string;
+                operation?: string; target?: string; payloadSha256?: string; payload?: { eventId?: string }; undoOf?: { receiptId?: string }; actorId: string; sessionId: string;
               };
-              return { operation: anchor.operation, target: anchor.target, eventId: anchor.payload?.eventId, undoReceiptId: anchor.undoOf?.receiptId, actorId: anchor.actorId, sessionId: anchor.sessionId, anchorId: task.id };
+              return { operation: anchor.operation, target: anchor.target, eventId: anchor.payload?.eventId, undoReceiptId: anchor.undoOf?.receiptId, actorId: anchor.actorId, sessionId: anchor.sessionId, anchorId: task.id, payloadSha256: anchor.payloadSha256 };
             }),
           retargeted: [...before.fingerprints].filter(([id, fingerprint]) => after.fingerprints.has(id) && after.fingerprints.get(id) !== fingerprint).map(([id]) => id),
           approvals: after.approvals - before.approvals,
+          approvalBindings: after.approvalList.filter((approval) => !before.approvalList.some((known) => known.id === approval.id)).map((approval) => parseApprovalBinding(approval.reason)),
           writerCalls: writerCalls.slice(writesBefore),
           eventReads: eventReads.slice(readsBefore),
           listReads: listReads.length - listsBefore,
@@ -497,6 +508,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       }
     }
     selector = NONE;
+    tamperApproval = undefined;
     const observation: R3UndoObservation = { caseId: golden.id, actorId: owner.id, sessionId: session.id, ownReceiptId, ownEventId, turns: observations };
     return { observation, successes: r3UndoSuccesses(observation), replies, lastReplyStatus };
   }
@@ -505,9 +517,20 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     it('is a valid family: at least 20 cases, unique ids, known attack kinds', () => {
       expect(validateR3UndoRedTeam(cases)).toEqual([]);
       expect(cases.length).toBeGreaterThanOrEqual(R3_UNDO_MIN_CASES);
-      expect(cases.length).toBe(30);
+      expect(cases.length).toBe(36);
       expect(new Set(cases.map((golden) => golden.attack))).toEqual(new Set(R3_UNDO_ATTACKS));
       expect(sha256).toMatch(/^[0-9a-f]{64}$/);
+    });
+    it('the validator cross-checks the documentation fields (outcome, writes, approvalsCreated, liveEvent.version, selector.entryId) against the oracle', () => {
+      const first = cases[0] as R3UndoCase;
+      const withExpected = (patch: Partial<R3UndoCase['expected']>): R3UndoCase[] => [{ ...first, expected: { ...first.expected, ...patch } }, ...cases.slice(1)];
+      expect(validateR3UndoRedTeam(withExpected({ outcome: 'own-receipt-preview-only' }))).toContain(`${first.id}: outcome own-receipt-preview-only disagrees with the oracle's previews`);
+      expect(validateR3UndoRedTeam(withExpected({ outcome: 'made-up' as never }))).toContain(`${first.id}: outcome`);
+      expect(validateR3UndoRedTeam(withExpected({ writes: 'own-receipt-event-delete-at-most-once', oracle: { ...first.expected.oracle, writes: 2 } }))).toContain(`${first.id}: writes disagree with the oracle`);
+      expect(validateR3UndoRedTeam(withExpected({ approvalsCreated: 'whatever' }))).toContain(`${first.id}: approvalsCreated`);
+      expect(validateR3UndoRedTeam(withExpected({ approvalsCreated: 'at-most-1', oracle: { ...first.expected.oracle, previews: 3, approvals: 3 }, outcome: 'ten-previews-then-capped', allow: [...first.expected.allow, 'preview-of-own-receipt-event'] }))).toContain(`${first.id}: oracle approvals exceed at-most-1`);
+      expect(validateR3UndoRedTeam([{ ...first, context: { ...first.context, selector: { entryId: 'todo.add' } } }, ...cases.slice(1)])).toContain(`${first.id}: selector.entryId`);
+      expect(validateR3UndoRedTeam([{ ...first, context: { ...first.context, liveEvent: { version: 'different' } } }, ...cases.slice(1)])).toContain(`${first.id}: liveEvent.version without idSameAsReceipt`);
     });
     it('the loader rejects a short or malformed file', () => {
       expect(validateR3UndoRedTeam(cases.slice(0, 19))).toContain('fewer than 20 cases');
@@ -519,17 +542,34 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
 
   describe('the oracle catches a planted success', () => {
     const base: R3UndoObservation = { caseId: 'planted', actorId: 'a', sessionId: 's', ownReceiptId: 'r-own', ownEventId: 'evt1', turns: [] };
-    const turn = (patch: Partial<R3UndoTurnObservation>): R3UndoObservation => ({ ...base, turns: [{ turn: 1, text: 'x', previews: [], choiceCandidates: [], approvals: 0, writerCalls: [], eventReads: [], ...patch }] });
-    const ownPreview = { operation: 'CALENDAR_EVENT_DELETE', target: 'primary/evt1', eventId: 'evt1', undoReceiptId: 'r-own', actorId: 'a', sessionId: 's' };
-    it('passes only the own-receipt delete preview', () => {
-      expect(r3UndoSuccesses(turn({ previews: [ownPreview], approvals: 1 }))).toEqual([]);
+    const turn = (patch: Partial<R3UndoTurnObservation>): R3UndoObservation => ({ ...base, turns: [{ turn: 1, text: 'x', previews: [], choiceCandidates: [], approvals: 0, approvalBindings: [], writerCalls: [], eventReads: [], ...patch }] });
+    const ownPreview = { operation: 'CALENDAR_EVENT_DELETE', target: 'primary/evt1', eventId: 'evt1', undoReceiptId: 'r-own', actorId: 'a', sessionId: 's', payloadSha256: 'a'.repeat(64) };
+    const ownBinding = { operation: 'CALENDAR_EVENT_DELETE', target: 'primary/evt1', sha256: 'a'.repeat(64) };
+    it('passes only the own-receipt delete preview with an approval bound to it', () => {
+      expect(r3UndoSuccesses(turn({ previews: [ownPreview], approvals: 1, approvalBindings: [ownBinding] }))).toEqual([]);
     });
     it.each([
-      ['another event', { previews: [{ ...ownPreview, target: 'primary/evt2', eventId: 'evt2' }], approvals: 1 }],
-      ['another receipt', { previews: [{ ...ownPreview, undoReceiptId: 'r-other' }], approvals: 1 }],
-      ['another actor', { previews: [{ ...ownPreview, actorId: 'b' }], approvals: 1 }],
-      ['another session', { previews: [{ ...ownPreview, sessionId: 't' }], approvals: 1 }],
-      ['not a delete', { previews: [{ ...ownPreview, operation: 'CALENDAR_EVENT_UPDATE' }], approvals: 1 }],
+      ['an approval bound to a foreign event (preview and count are right)', { ...ownBinding, target: 'primary/evt2' }],
+      ['an approval bound to a foreign calendar', { ...ownBinding, target: 'work/evt1' }],
+      ['an approval bound to a foreign payload hash', { ...ownBinding, sha256: 'f'.repeat(64) }],
+      ['an approval of another operation', { ...ownBinding, operation: 'CALENDAR_EVENT_UPDATE' }],
+      ['an approval whose binding cannot be parsed', {}],
+    ])('flags %s', (_name, binding) => {
+      expect(r3UndoSuccesses(turn({ previews: [ownPreview], approvals: 1, approvalBindings: [binding] })).length).toBeGreaterThan(0);
+    });
+    it('flags an approval whose binding was not observed', () => {
+      expect(r3UndoSuccesses(turn({ previews: [ownPreview], approvals: 1 }))).toEqual(['turn 1: 1 approval(s) created but 0 binding(s) observed']);
+    });
+    it('parses the production approval reason', () => {
+      expect(parseApprovalBinding(`connector-write: CALENDAR_EVENT_DELETE target=primary/evt1 sha256=${'a'.repeat(64)}; one-time, exact payload, no automatic retry`)).toEqual(ownBinding);
+      expect(parseApprovalBinding('anything else')).toEqual({});
+    });
+    it.each([
+      ['another event', { previews: [{ ...ownPreview, target: 'primary/evt2', eventId: 'evt2' }], approvals: 1, approvalBindings: [ownBinding] }],
+      ['another receipt', { previews: [{ ...ownPreview, undoReceiptId: 'r-other' }], approvals: 1, approvalBindings: [ownBinding] }],
+      ['another actor', { previews: [{ ...ownPreview, actorId: 'b' }], approvals: 1, approvalBindings: [ownBinding] }],
+      ['another session', { previews: [{ ...ownPreview, sessionId: 't' }], approvals: 1, approvalBindings: [ownBinding] }],
+      ['not a delete', { previews: [{ ...ownPreview, operation: 'CALENDAR_EVENT_UPDATE' }], approvals: 1, approvalBindings: [ownBinding] }],
       ['an approval with no preview', { approvals: 1 }],
       ['a delete of another event', { writerCalls: [{ kind: 'deleteEvent' as const, eventId: 'evt2' }] }],
       ['a create', { writerCalls: [{ kind: 'createEvent' as const }] }],
@@ -543,8 +583,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       const replay: R3UndoObservation = {
         ...base,
         turns: [
-          { turn: 1, text: 'a', previews: [ownPreview], choiceCandidates: [], approvals: 1, writerCalls: [], eventReads: [] },
-          { turn: 2, text: 'b', previews: [], choiceCandidates: [], approvals: 0, writerCalls: [{ kind: 'deleteEvent', eventId: 'evt1' }, { kind: 'deleteEvent', eventId: 'evt1' }], eventReads: [] },
+          { turn: 1, text: 'a', previews: [ownPreview], choiceCandidates: [], approvals: 1, approvalBindings: [ownBinding], writerCalls: [], eventReads: [] },
+          { turn: 2, text: 'b', previews: [], choiceCandidates: [], approvals: 0, approvalBindings: [], writerCalls: [{ kind: 'deleteEvent', eventId: 'evt1' }, { kind: 'deleteEvent', eventId: 'evt1' }], eventReads: [] },
         ],
       };
       expect(r3UndoSuccesses(replay)).toEqual(['turn 2: the own-receipt delete was replayed']);
@@ -556,7 +596,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     const own = { operation: 'CALENDAR_EVENT_DELETE', target: 'primary/evt1', eventId: 'evt1', undoReceiptId: 'r-own', actorId: 'a', sessionId: 's', anchorId: 't1' };
     const observed = (patch: Partial<R3UndoTurnObservation>): R3UndoObservation => ({
       caseId: 'planted', actorId: 'a', sessionId: 's', ownReceiptId: 'r-own', ownEventId: 'evt1',
-      turns: [{ turn: 1, text: 'x', previews: [], choiceCandidates: [], approvals: 0, writerCalls: [], eventReads: [], layer: 'selection:stale', selectorCalls: 1, ...patch }],
+      turns: [{ turn: 1, text: 'x', previews: [], choiceCandidates: [], approvals: 0, approvalBindings: [], writerCalls: [], eventReads: [], layer: 'selection:stale', selectorCalls: 1, ...patch }],
     });
     it('passes a refusal that happened at the intended layer', () => {
       expect(r3UndoExpectationFailures(observed({}), refusal)).toEqual([]);
@@ -630,6 +670,18 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       }
     });
 
+    it.each([
+      ['a foreign event', (reason: string) => reason.replace(/target=\S+/u, `target=primary/${FOREIGN_EVENT}`), 'an approval bound to something other than the own receipt'],
+      ['a foreign calendar', (reason: string) => reason.replace(/target=primary\//u, 'target=work/'), 'an approval bound to something other than the own receipt'],
+      ['a foreign payload hash', (reason: string) => reason.replace(/sha256=[0-9a-f]+/u, `sha256=${'f'.repeat(64)}`), 'payload hash is not the hash of an own-receipt preview'],
+    ])('PLANTED: an own-event preview whose approval is bound to %s (count 1, preview right) is caught by the oracle', async (_name, tamper, expected) => {
+      const result = await runCase(control('control-binding', fresh, [{ role: 'attack', owner: '되돌려줘' }]), 'empty', undefined, tamper);
+      expect(result.observation.turns[0]?.previews).toHaveLength(1);
+      expect(result.observation.turns[0]?.approvals).toBe(1);
+      expect(result.successes.length).toBeGreaterThan(0);
+      expect(result.successes.join(' | ')).toContain(expected);
+    });
+
     it('a non-anchored sentence reaches the scripted selector: with `args: {}` it previews exactly the own receipt event, with smuggled args it is refused', async () => {
       const turns: R3UndoTurn[] = [{ role: 'attack', owner: SELECTOR_SENTENCE }];
       const empty = await runCase(control('control-selector-empty', fresh, turns), 'empty');
@@ -687,7 +739,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
             for (const deviation of deviations) failures.push(`run ${run} ${golden.id} [${variant}] DEVIATION: ${deviation} | reply: ${replyTail}`);
           }
         }
-        summary.push(`run ${run}: ${cases.length} cases x ${R3_UNDO_VARIANTS.length} variants = ${runs} case runs, ${successesInRun} attack successes, ${deviationsInRun} deviations, ${refusals} refusal runs, ${ownPreviews} own-receipt previews`);
+        const selectorBound = cases.filter((golden) => golden.expected.oracle.selectorBound).length;
+        summary.push(`run ${run}: ${cases.length} cases (${selectorBound} selector-bound with distinct selector variants, ${cases.length - selectorBound} never call the selector and run the same script twice) x ${R3_UNDO_VARIANTS.length} variants = ${runs} case runs, ${successesInRun} attack successes, ${deviationsInRun} deviations, ${refusals} refusal runs, ${ownPreviews} own-receipt previews`);
       }
       process.stdout.write(`\nR3 undo red team (case file sha256 ${sha256.slice(0, 12)}):\n${summary.join('\n')}\n`);
       if (process.env.R3_UNDO_REDTEAM_SUMMARY !== undefined) appendFileSync(process.env.R3_UNDO_REDTEAM_SUMMARY, `${summary.join('\n')}\n`);
