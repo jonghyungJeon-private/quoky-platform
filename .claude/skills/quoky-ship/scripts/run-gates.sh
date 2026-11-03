@@ -113,6 +113,8 @@ with_timeout() {
 }
 
 # "<cost USD> <block end epoch>" of the active ccusage block, or nothing when ccusage reports none or is unavailable.
+# With USAGE_IDLE_AS_ZERO=1 (the pre-start estimate only): a valid ccusage answer with no active block is an idle window,
+# printed as "0.00 0"; only a failed / unparseable ccusage stays empty (unknown, fail-closed).
 usage_state() {
   (mkdir -p "$ARCHIVE_ROOT" && cd "$ARCHIVE_ROOT" && with_timeout "$CCUSAGE_TIMEOUT_SEC" npx -y "ccusage@$CCUSAGE_VERSION" blocks --active --json 2>/dev/null) | python3 -c '
 import json, sys, datetime
@@ -125,7 +127,10 @@ for block in data.get("blocks", []):
         end = datetime.datetime.fromisoformat(block["endTime"].replace("Z", "+00:00")).timestamp()
         print("%.2f %d" % (block.get("costUSD", 0), int(end)))
         break
-'
+else:
+    if isinstance(data, dict) and isinstance(data.get("blocks"), list) and sys.argv[1] == "1":
+        print("0.00 0")
+' "${USAGE_IDLE_AS_ZERO:-0}"
 }
 
 # Wait while the active usage block is at or above the threshold.
@@ -364,12 +369,12 @@ estimate_guard() {
     total=$(awk -v a="$total" -v b="$pct" 'BEGIN { printf "%.1f", a + b }')
     echo "mode=$m model=$model calls=$calls rate_pct_per_call=$rate est_pct_5h=$pct cap_source=$src" >> "$f"
   done
-  state=$(usage_state)
+  state=$(USAGE_IDLE_AS_ZERO=1 usage_state)
   if [ -n "$state" ]; then
     cost=${state% *}
     cur=$(awk -v c="$cost" -v l="$LIMIT_USD" 'BEGIN { printf "%.1f", c * 100 / l }')
   fi
-  [ -n "$state" ] || echo "current usage UNKNOWN: ccusage failed or reported no active block (fail-closed)" >> "$f"
+  [ -n "$state" ] || echo "current usage UNKNOWN: ccusage failed or its output was unreadable (fail-closed)" >> "$f"
   echo "total_est_pct_5h=$total current_5h_usage_pct=$cur max_est_pct=$MAX_EST_PCT pause_pct=$USAGE_PCT" >> "$f"
   [ -z "$unknown" ] || reasons="$reasons call cap unknown for:$unknown;"
   [ -z "$unkmodel" ] || reasons="$reasons unknown model (no rate; set GATES_RATE_PCT_PER_CALL) for:$unkmodel;"
@@ -377,7 +382,7 @@ estimate_guard() {
   if [ "$cur" != unknown ]; then
     awk -v t="$total" -v c="$cur" -v p="$USAGE_PCT" 'BEGIN { exit !(t + c > p + 0) }' && reasons="$reasons current $cur% + estimate $total% > $USAGE_PCT%;"
   else
-    reasons="$reasons current usage unknown (ccusage failed or no active block);"
+    reasons="$reasons current usage unknown (ccusage failed or unreadable);"
   fi
   if [ -z "$reasons" ]; then
     echo "owner_ok=$( [ -n "${GATES_OWNER_OK:-}" ] && printf '%s' "$GATES_OWNER_OK" || echo none)" >> "$f"

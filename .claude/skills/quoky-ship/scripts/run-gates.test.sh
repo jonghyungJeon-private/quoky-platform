@@ -13,6 +13,7 @@ git -C "$T/wt" init -q 2>/dev/null; git -C "$T/wt" -c user.email=t@t -c user.nam
 cat > "$STUB/npx" <<'SH'
 #!/bin/bash
 [ -f "${FAKE_COST_FILE:-/nonexistent}" ] || exit 1
+[ "$(cat "$FAKE_COST_FILE")" = idle ] && { echo '{"blocks":[]}'; exit 0; }
 end=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.000Z"))')
 echo "{\"blocks\":[{\"isActive\":true,\"isGap\":false,\"endTime\":\"$end\",\"costUSD\":$(cat "$FAKE_COST_FILE")}]}"
 SH
@@ -122,6 +123,11 @@ has "usage unknown reason" "$T/arch/e9/estimate.txt" "current usage unknown"
 has "usage UNKNOWN recorded" "$T/arch/e9/estimate.txt" "current usage UNKNOWN"
 check "no eval after unknown usage" "$(count started "$T/e9.fake.log")" 0
 rc=$(FAKE_CALLS=100 FAKE_COST_FILE=/nonexistent GATES_OWNER_OK=20261104-ccusage-down gates e9b action); check "usage unknown + owner-ok: no stop, exit 0" "$rc" 0
+
+# 9c. a valid ccusage answer with no active block is an idle window (0%), not unknown: a small run starts without owner-ok
+echo idle > "$T/idle.cost"
+rc=$(FAKE_CALLS=100 FAKE_COST_FILE="$T/idle.cost" gates e9c action); check "idle window: runs, exit 0" "$rc" 0
+has "idle window recorded as 0%" "$T/arch/e9c/estimate.txt" "current_5h_usage_pct=0.0"
 
 # 11. numeric validation (hard block, even with owner-ok)
 for kv in GATES_RATE_PCT_PER_CALL=garbage GATES_RATE_PCT_SONNET=0 GATES_MAX_EST_PCT=abc GATES_STOP_PCT=101 GATES_STOP_PCT=0 GATES_WATCH_SEC=1.5 GATES_STOP_GRACE_SEC=x GATES_RATE_PCT_PER_CALL=; do
