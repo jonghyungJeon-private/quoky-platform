@@ -5,6 +5,11 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Claude CLI token usage (2026-11-03, branch `claude/v5-cli-usage`)
+
+- The Claude CLI provider uses `--output-format json` and reports real token counts (plain-text fallback keeps the label only);
+  selection, help-scope and agent-shadow log lines add `inTok/cacheRead/outTok/promptChars/promptBytes`. See DECISIONS "ADR-0115 D8 note".
+
 ### ADR-0121 S2 P3-3b — quarantined summariser (M2) and reply assembler built, unwired (2026-11-03, branch `claude/s2-m2-assembler`)
 
 - **Built (Core, offline).** `quarantined-summary.ts`, `reply-assembler.ts` and the executor's summary path under

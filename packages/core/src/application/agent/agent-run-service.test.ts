@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, type Actor } from '../../domain';
-import type { AiExecutionLocality, AiProvider, AiRequest, LogFields, Logger } from '../../ports';
+import type { AiExecutionLocality, AiProvider, AiRequest, AiUsage, LogFields, Logger } from '../../ports';
 import { ACTION_SWITCH_METADATA_KEY } from '../nl-routing/action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
@@ -29,7 +29,7 @@ interface Harness {
   release?: () => void;
 }
 
-function harness(options: { mode?: AgentMode; script?: string[]; hang?: boolean; family?: string; caps?: { perHour?: number; perDay?: number }; timeoutMs?: number } = {}): Harness {
+function harness(options: { mode?: AgentMode; script?: string[]; hang?: boolean; family?: string; caps?: { perHour?: number; perDay?: number }; timeoutMs?: number; usage?: AiUsage } = {}): Harness {
   const calls: AiRequest[] = [];
   const selects: Capability[] = [];
   const logs: Array<{ event: string; fields?: LogFields }> = [];
@@ -53,7 +53,7 @@ function harness(options: { mode?: AgentMode; script?: string[]; hang?: boolean;
       }
       const next = script.shift();
       if (next === undefined) throw new Error('script exhausted');
-      return { text: next, artifacts: [] };
+      return { text: next, artifacts: [], ...(options.usage !== undefined ? { usage: options.usage } : {}) };
     },
   };
   const logger: Logger = {
@@ -138,6 +138,15 @@ describe('AgentRunService — shadow', () => {
     ]);
     // A multi-step plan has no one-step agreement.
     expect(shadowLines(h)[0]).not.toHaveProperty('agree');
+  });
+
+  it('ADR-0115 D8: the reported usage reaches the shadow line as exact counts, with no prompt or reply text', async () => {
+    const h = harness({ script: [TWO_READS], usage: { label: 'claude:haiku', inputTokens: 2048, cachedInputTokens: 1500, outputTokens: 77 } });
+    await h.service.runShadow(turn(h), async () => CHAT);
+    expect(shadowLines(h)[0]).toMatchObject({ inTok: 2048, cacheRead: 1500, outTok: 77 });
+    const logged = JSON.stringify(h.logs);
+    expect(logged).not.toContain(h.calls[0]?.prompt.slice(0, 40) ?? 'x');
+    expect(logged).not.toContain(TWO_READS);
   });
 
   it('an unbounded plan (decision (h)) logs an ask with its closed bound and suggestion, and runs nothing', async () => {

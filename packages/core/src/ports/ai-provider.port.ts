@@ -85,8 +85,12 @@ export interface AiRequest {
  */
 export interface AiUsage {
   readonly label: string;
+  /** TOTAL input tokens, including cache reads and cache writes. */
   readonly inputTokens?: number;
+  /** Part of `inputTokens` served from the prompt cache (never added to it again). */
   readonly cachedInputTokens?: number;
+  /** Part of `inputTokens` written to the provider's prompt cache (reported by some providers only; never added again). */
+  readonly cacheCreationInputTokens?: number;
   readonly outputTokens?: number;
   readonly reasoningTokens?: number;
   readonly totalTokens?: number;

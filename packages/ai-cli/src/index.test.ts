@@ -50,9 +50,131 @@ const exec = (r: CliRunResult) =>
   });
 
 describe('ClaudeCliProvider', () => {
-  it('PRV-3: reports its selection label only — the print mode exposes no token counts ("unknown")', async () => {
+  it('PRV-3: a plain-text stdout (older CLI) is the reply and reports the label only ("unknown")', async () => {
     const res = await exec({ code: 0, stdout: 'hello', stderr: '', timedOut: false });
+    expect(res.text).toBe('hello');
     expect(res.usage).toEqual({ label: 'claude:sonnet' });
+  });
+
+  it('ADR-0115 D8: the JSON print result gives the reply text and the reported token counts', async () => {
+    const stdout = JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false, result: ' hi json ',
+      usage: { input_tokens: 5, cache_creation_input_tokens: 100, cache_read_input_tokens: 20, output_tokens: 7 },
+    });
+    const res = await exec({ code: 0, stdout, stderr: '', timedOut: false });
+    expect(res.text).toBe('hi json');
+    expect(res.usage).toEqual({ label: 'claude:sonnet', inputTokens: 125, cachedInputTokens: 20, cacheCreationInputTokens: 100, outputTokens: 7 });
+    expect(JSON.stringify(res.usage)).not.toContain('hi json');
+  });
+
+  it('ADR-0115 D8: invalid counts are omitted, never zeroed', async () => {
+    const stdout = JSON.stringify({ type: 'result', is_error: false, result: 'ok', usage: { input_tokens: -1, output_tokens: 1.5, cache_read_input_tokens: '3' } });
+    const res = await exec({ code: 0, stdout, stderr: '', timedOut: false });
+    expect(res.usage).toEqual({ label: 'claude:sonnet' });
+  });
+
+  it('ADR-0115 D8: a JSON object without a string result is empty output, never the raw envelope as a reply', async () => {
+    const stdout = JSON.stringify({ type: 'result', usage: { input_tokens: 1 } });
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.EMPTY_OUTPUT });
+  });
+
+  it('ADR-0115 D8: an error subtype without a result is a classified failure, never a reply', async () => {
+    const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: false });
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
+  it('ADR-0115 D8: a notice line around the envelope is skipped; the last result object is the reply', async () => {
+    const env = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'the reply', usage: { input_tokens: 3, output_tokens: 2 } });
+    const res = await exec({ code: 0, stdout: `Update available\n${env}\nbye\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('the reply');
+    expect(res.usage).toEqual({ label: 'claude:sonnet', inputTokens: 3, outputTokens: 2 });
+    const arr = JSON.stringify([{ type: 'system' }, { type: 'result', is_error: false, result: 'array reply' }]);
+    expect((await exec({ code: 0, stdout: arr, stderr: '', timedOut: false })).text).toBe('array reply');
+  });
+
+  it('ADR-0115 D8: is_error with api_error_status 401 is AUTH_REQUIRED and the message has the subtype, no result text', async () => {
+    const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 401, result: 'SECRET_PROMPT_ECHO' });
+    const err = await exec({ code: 0, stdout, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    expect((err as Error).message).toContain('error_during_execution');
+    expect((err as Error).message).not.toContain('SECRET_PROMPT_ECHO');
+    const noResult = JSON.stringify({ type: 'result', is_error: true, errors: ['Not logged in · Please run /login'] });
+    await expect(exec({ code: 0, stdout: noResult, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+  });
+
+  it('ADR-0115 D8: result-looking stdout that does not parse is EXECUTION_FAILED, never echoed', async () => {
+    const stdout = '{"type":"result","subtype":"success","result":"LEAKED_TEXT", broken';
+    const err = await exec({ code: 0, stdout, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+    expect((err as Error).message).not.toContain('LEAKED_TEXT');
+  });
+
+  it('ADR-0115 D8: plain text that is not the CLI envelope stays the reply (older CLI), JSON replies included', async () => {
+    const res = await exec({ code: 0, stdout: '{ not json', stderr: '', timedOut: false });
+    expect(res.text).toBe('{ not json');
+    expect(res.usage).toEqual({ label: 'claude:sonnet' });
+    const reply = await exec({ code: 0, stdout: '{"answer":"x"}', stderr: '', timedOut: false });
+    expect(reply.text).toBe('{"answer":"x"}');
+  });
+
+  it('ADR-0115 D8: a stdout notice before an error envelope still classifies like plain text (auth, usage limit)', async () => {
+    const errEnv = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' });
+    const auth = await exec({ code: 1, stdout: `Not logged in · Please run /login\n${errEnv}`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(auth).toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    expect((auth as Error).message).not.toContain('"type"');
+    const plain = await exec({ code: 1, stdout: 'Claude AI usage limit reached', stderr: '', timedOut: false }).catch((e: unknown) => e);
+    const limited = await exec({ code: 1, stdout: `Claude AI usage limit reached\n${errEnv}`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect((limited as { kind: unknown }).kind).toBe((plain as { kind: unknown }).kind);
+  });
+
+  it('ADR-0115 D8: a notice before a pretty-printed multi-line envelope yields the envelope result, never the raw JSON', async () => {
+    const pretty = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'pretty reply', usage: { input_tokens: 3 } }, null, 2);
+    const res = await exec({ code: 0, stdout: `some notice\n${pretty}\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('pretty reply');
+    const bad = '{\n  "type": "result",\n  "result": "LEAKED_TEXT", broken\n}';
+    const err = await exec({ code: 0, stdout: `notice\n${bad}`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
+  it('ADR-0115 D8: notices after a pretty-printed envelope or array still parse it and keep the failure class', async () => {
+    const errPretty = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' }, null, 2);
+    const auth = await exec({ code: 1, stdout: `${errPretty}\nNot logged in · Please run /login\n`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(auth).toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    expect((auth as Error).message).not.toContain('"type"');
+    const arr = JSON.stringify(
+      [{ type: 'system', note: 'has } and ] in "a string"' }, { type: 'result', subtype: 'success', is_error: false, result: 'array reply' }],
+      null,
+      2,
+    );
+    const res = await exec({ code: 0, stdout: `before notice\n${arr}\nafter notice {not json}\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('array reply');
+  });
+
+  it('ADR-0115 D8: a few unclosed bracket-led notices before an escaped-type envelope still yield its result', async () => {
+    const body = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'y'.repeat(10_000) }).replace('"result","subtype"', '"\\u0072esult","subtype"');
+    expect(body).toContain('\\u0072esult');
+    const notices = Array.from({ length: 8 }, (_, i) => `[notice ${i}`).join('\n');
+    const res = await exec({ code: 0, stdout: `${notices}\n${body}\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('y'.repeat(10_000));
+  });
+
+  it('ADR-0115 D8: many unclosed bracket-led notices before a large envelope stay linear and fail closed when unscannable', async () => {
+    const big = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x'.repeat(400_000) });
+    const notices = Array.from({ length: 2000 }, (_, i) => `[notice ${i}`).join('\n');
+    const started = Date.now();
+    const out = await exec({ code: 0, stdout: `${notices}\n${big}\n`, stderr: '', timedOut: false }).then(
+      (r) => r.text,
+      (e: unknown) => e,
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+    if (typeof out === 'string') expect(out).toBe('x'.repeat(400_000));
+    else expect(out).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
+  });
+
+  it('ADR-0115 D8: is_error JSON classifies on the result text like the plain-text path', async () => {
+    const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' });
+    await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    await expect(exec({ code: 1, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
   });
 
   it('success → runs `claude -p` with prompt on stdin (neutral cwd) and returns a MARKDOWN_REPORT artifact', async () => {
@@ -67,7 +189,7 @@ describe('ClaudeCliProvider', () => {
     });
     expect(calls[0]?.bin).toBe('claude');
     // Owner decision of 2026-10-28: GENERAL_CHAT runs at medium effort.
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'medium', '--tools', '']);
     expect(calls[0]?.opts.input).toContain('do the thing');
     expect(calls[0]?.opts.cwd).toBeTruthy();
     // ADR-0121 S0 L1: exactly the non-essential-traffic switch, nothing else.
@@ -85,7 +207,7 @@ describe('ClaudeCliProvider', () => {
     const claude = new ClaudeCliProvider('claude', { runner });
     expect(claude.capabilities).toContainEqual({ capability: Capability.INTENT_SELECTION, priority: 50 });
     const res = await claude.execute({ capability: Capability.INTENT_SELECTION, prompt: 'route this', timeoutMs: 4000 });
-    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high', '--tools', '']);
+    expect(calls[0]?.args).toEqual(['-p', '--model', 'haiku', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'high', '--tools', '']);
     expect(calls[0]?.opts.timeoutMs).toBe(4000);
     // Not a chat capability: the JSON passes through without the chat hygiene rewriting it.
     expect(res.text).toBe('{"entryId":"none","args":{},"ambiguity":"CLEAR","alternatives":[]}');
@@ -104,7 +226,7 @@ describe('ClaudeCliProvider', () => {
       calls.push({ args });
       return { code: 0, stdout: '{"answer":1}\n', stderr: '', timedOut: false };
     };
-    const BASE = ['--strict-mcp-config', '--no-session-persistence', '--setting-sources', ''];
+    const BASE = ['--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json'];
 
     it('INTENT_SELECTION with the tier runs on sonnet at effort low; the label names the model used', async () => {
       const calls: Array<{ args: string[] }> = [];
@@ -260,27 +382,27 @@ describe('ClaudeCliProvider', () => {
     [Capability.CODE_IMPLEMENTATION, 'high'],
   ] as const)('passes --model sonnet and the default effort for %s (%s)', async (capability, effort) => {
     const args = await argsFor({ capability });
-    expect(args.slice(0, 9)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', effort]);
+    expect(args.slice(0, 11)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', effort]);
     expect(args).not.toContain(PROMPT); // prompt stays on stdin
   });
 
   it('passes no --effort flag for a capability outside the effort table (ADR-0092: CLI default)', async () => {
     const args = await argsFor({ capability: Capability.TEST_EXECUTION });
-    expect(args.slice(0, 7)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '']);
+    expect(args.slice(0, 9)).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json']);
     expect(args).not.toContain('--effort');
   });
 
   it('honours a configured model and partial effort overrides over the defaults', async () => {
     const options = { model: 'opus', effortByCapability: { [Capability.GENERAL_CHAT]: 'medium' as const } };
-    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 9))
-      .toEqual(['-p', '--model', 'opus', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium']);
-    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(7, 9))
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(0, 11))
+      .toEqual(['-p', '--model', 'opus', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'medium']);
+    expect((await argsFor({ capability: Capability.CODE_IMPLEMENTATION }, options)).slice(9, 11))
       .toEqual(['--effort', 'high']);
   });
 
   it('treats an explicit undefined effort override as the default instead of throwing', async () => {
     const options = { effortByCapability: { [Capability.GENERAL_CHAT]: undefined } };
-    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(7, 9))
+    expect((await argsFor({ capability: Capability.GENERAL_CHAT }, options)).slice(9, 11))
       .toEqual(['--effort', 'medium']);
   });
 
@@ -304,7 +426,7 @@ describe('ClaudeCliProvider', () => {
       capability: Capability.CODE_IMPLEMENTATION,
       workspace: { id: 'w1', rootPath: '/repo', kind: 'local-clone' },
     });
-    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'high']);
+    expect(withWorkspace).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'high']);
   });
 
   it('rejects a model or effort that could be read as another flag', () => {
@@ -1386,7 +1508,7 @@ describe('Provider regression through the contained runner', () => {
     });
     expect(probe.spawns).toHaveLength(1);
     expect(probe.spawns[0]?.bin).toBe('claude');
-    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--effort', 'medium', '--tools', '']);
+    expect(probe.spawns[0]?.args).toEqual(['-p', '--model', 'sonnet', '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json', '--effort', 'medium', '--tools', '']);
     expect(probe.spawns[0]?.options.cwd).toBe(tmpdir()); // Claude's neutral-cwd contract
     expect(probe.spawns[0]?.options.shell).toBe(false);
     expect(probe.stdinWrites).toEqual([PROMPT]); // prompt on stdin, never argv

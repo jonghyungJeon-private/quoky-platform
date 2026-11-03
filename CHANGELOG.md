@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Claude CLI reports token usage (ai-cli, ADR-0115 D8 note)
+
+- **Added.** The Claude CLI text provider runs `--output-format json` and reports `inputTokens` (total), `cachedInputTokens`,
+  optional `cacheCreationInputTokens` and `outputTokens`; a non-JSON stdout falls back to plain text with the label only. The
+  NL selection call, the help-scope classifier and the `agent_run.shadow` log line now carry `inTok`, `cacheRead`, `outTok`,
+  `promptChars`, `promptBytes` (counts only) so estimates can be calibrated (owner request 2026-11-03).
+
 ## Unreleased — calendar create keeps the owner's title phrase (Core, ADR-0110 D3 grammar)
 
 - **Fixed.** "내일 오후 3시에 30분짜리 Quoky E2E 되돌리기 테스트 일정 추가해줘" drafted the title "일정": the title phrase was

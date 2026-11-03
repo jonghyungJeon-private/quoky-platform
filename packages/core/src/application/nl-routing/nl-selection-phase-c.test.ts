@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, type Actor, type Session } from '../../domain';
-import type { AiExecutionLocality, AiProvider, AiRequest, LogFields, Logger } from '../../ports';
+import type { AiExecutionLocality, AiProvider, AiUsage, AiRequest, LogFields, Logger } from '../../ports';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry, type NlClassBProbe } from './catalog';
 import { NlSelectionService, type NlIntentMode, type NlPhase, type NlSelectionDecision, type NlSelectionRoute } from './nl-selection-service';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
@@ -15,7 +15,7 @@ const ALL: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1
 const out = (entryId: string, args: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ entryId, args, ambiguity: 'CLEAR', alternatives: [], ...extra });
 
-function harness(options: { mode?: NlIntentMode; phase?: NlPhase; script?: string[]; locality?: AiExecutionLocality; family?: string; fail?: boolean } = {}) {
+function harness(options: { mode?: NlIntentMode; phase?: NlPhase; script?: string[]; locality?: AiExecutionLocality; family?: string; fail?: boolean; usage?: AiUsage } = {}) {
   const calls: AiRequest[] = [];
   const logs: Array<{ event: string; fields?: LogFields }> = [];
   const script = [...(options.script ?? [])];
@@ -41,7 +41,7 @@ function harness(options: { mode?: NlIntentMode; phase?: NlPhase; script?: strin
       if (options.fail === true) throw new Error('selector down');
       const next = script.shift();
       if (next === undefined) throw new Error('script exhausted');
-      return { text: next, artifacts: [] };
+      return { text: next, artifacts: [], ...(options.usage !== undefined ? { usage: options.usage } : {}) };
     },
   };
   const logger: Logger = {
@@ -204,6 +204,15 @@ describe('NlSelectionService — D10/D11 agreement log (content-free)', () => {
     assertContentFree(agreementLines(h.logs), [...texts, '위클리카', 'in-progress']);
   });
 
+  it('ADR-0115 D8: a reported usage reaches the agreement line as exact counts, and no line carries prompt or reply text', async () => {
+    const h = harness({ phase: 'c', script: [out('jira.issues', { keyword: '위클리카' })], usage: { label: 'claude:haiku', inputTokens: 1234, cachedInputTokens: 1000, outputTokens: 56 } });
+    await h.decide('위클리카 관련 지라 이슈 보여줘', { grammar });
+    const [line] = agreementLines(h.logs);
+    expect(line).toMatchObject({ inTok: 1234, cacheRead: 1000, outTok: 56 });
+    assertContentFree(agreementLines(h.logs), ['위클리카', 'jira.issues"']);
+    expect(JSON.stringify(h.logs)).not.toContain('위클리카');
+  });
+
   it('fallback causes are logged without an agree flag (they are not agreement data); no line without a grammar probe', async () => {
     const down = harness({ phase: 'c', fail: true });
     expect(await down.decide('위클리카 관련 지라 이슈 보여줘', { grammar })).toEqual({ kind: 'unavailable' });
@@ -237,7 +246,7 @@ describe('NlSelectionService — D10/D11 agreement log (content-free)', () => {
 
 /** Every field is a closed id, a flag or a number; no owner text or argument value appears in any field. */
 function assertContentFree(lines: readonly LogFields[], forbidden: readonly string[]): void {
-  const allowed = new Set(['grammarId', 'grammarEntryId', 'entryId', 'outcome', 'mode', 'agree', 'agreeEntry', 'reason', 'latencyMs', 'cached', 'promptChars', 'sinceStartMs', 'idleMs', 'boundMs']);
+  const allowed = new Set(['grammarId', 'grammarEntryId', 'entryId', 'outcome', 'mode', 'agree', 'agreeEntry', 'reason', 'latencyMs', 'cached', 'promptChars', 'promptBytes', 'inTok', 'cacheRead', 'outTok', 'sinceStartMs', 'idleMs', 'boundMs']);
   for (const line of lines) {
     for (const [key, value] of Object.entries(line)) {
       expect(allowed.has(key), key).toBe(true);

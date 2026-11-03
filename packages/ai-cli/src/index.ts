@@ -19,9 +19,12 @@ import type {
   Artifact,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
-import { CLAUDE_CHILD_ENV, defaultCliRunner, maskSecrets } from './cli-runner';
+import { CLAUDE_CHILD_ENV, MAX_STDOUT_CAPTURE_BYTES, defaultCliRunner, maskSecrets } from './cli-runner';
+
+/** JSON escaping inflates the reply inside the `--output-format json` envelope, so the Claude text provider captures 2x. */
+const CLAUDE_JSON_STDOUT_CAPTURE_BYTES = MAX_STDOUT_CAPTURE_BYTES * 2;
 import type { CliRunner } from './cli-runner';
-import { classifyClaudeCliFailure, validatedClaudeModel } from './claude-vision-provider';
+import { KNOWN_RESULT_SUBTYPES, classifyClaudeCliFailure, parseClaudeResultUsage, validatedClaudeModel } from './claude-vision-provider';
 import {
   sanitizeGeneralChatText,
   sanitizeTerminalOutput,
@@ -465,6 +468,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const model = this.modelFor(request);
     const args = [
       '-p', '--model', model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
+      // ADR-0115 D8: one JSON `result` object, so the reply text and the reported token counts come back together.
+      '--output-format', 'json',
     ];
     if (request === undefined) return args;
     const effort = this.isStrongerSelection(request) ? this.strongerIntentSelectionEffort : this.effortByCapability[request.capability];
@@ -509,7 +514,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
     // ADR-0121 S0 L1: the child gets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and nothing else beyond the allow-list.
-    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
+    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, maxStdoutBytes: CLAUDE_JSON_STDOUT_CAPTURE_BYTES, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
     if (result.timedOut) {
@@ -521,17 +526,30 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
         `claude CLI could not run: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
-    if (result.code !== 0) {
+    // ADR-0115 D8: `--output-format json` prints the CLI's `type: "result"` envelope; anything else (an older CLI) is plain text.
+    const parsedJson = parseClaudePrintJson(result.stdout);
+    if (parsedJson?.malformed === true && result.code === 0) {
+      // Result-looking output that does not parse is never echoed as the reply.
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'claude CLI printed an unparsable result envelope');
+    }
+    const json = parsedJson?.malformed === true ? undefined : parsedJson;
+    // A JSON object that is not a usable envelope (no string `result`, e.g. an error subtype) is never echoed as a reply.
+    const stdoutText = json === undefined ? result.stdout : (json.result ?? '');
+    if (result.code !== 0 || json?.isError === true) {
       // The CLI prints "Not logged in · Please run /login" on STDOUT (stderr empty), so
-      // classify on stderr + stdout. Only masked stderr is echoed; never the prompt.
-      const kind = classifyClaudeCliFailure(`${result.stderr}\n${result.stdout}`);
+      // classify on stderr + stdout (+ the envelope's `errors`). Only masked stderr and a known subtype are echoed; never the prompt.
+      const kind =
+        json?.apiErrorStatus === 401 || json?.apiErrorStatus === 403
+          ? AiFailureKind.AUTH_REQUIRED
+          : classifyClaudeCliFailure(`${result.stderr}\n${json === undefined ? result.stdout : `${json.notices}\n${stdoutText}`}${json?.errorsText ? `\n${json.errorsText}` : ''}`);
+      const reason = json?.subtype !== undefined ? ` (${json.subtype})` : '';
       throw new AiProviderError(
         kind,
-        `claude CLI exited ${result.code}: ${maskSecrets(result.stderr).slice(0, 300)}`,
+        `claude CLI exited ${result.code}${reason}: ${maskSecrets(result.stderr).slice(0, 300)}`,
       );
     }
 
-    const sanitizedOutput = sanitizeTerminalOutput(result.stdout);
+    const sanitizedOutput = sanitizeTerminalOutput(stdoutText);
     const text = (isChatCapability(request.capability)
       ? sanitizeGeneralChatText(
           stripInternalMetadataEnvelope(sanitizedOutput),
@@ -554,10 +572,139 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
       text,
       artifacts: [artifact],
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
-      // ADR-0115 D8: the plain-text print mode exposes no token counts, so only the label is reported ("unknown").
-      usage: { label: `claude:${this.modelFor(request)}` },
+      // ADR-0115 D8: the label plus the counts the JSON `result` reported; the plain-text fallback has the label only.
+      usage: { label: `claude:${this.modelFor(request)}`, ...(json?.usage ?? {}) },
     };
   }
+}
+
+interface ClaudePrintJson {
+  readonly malformed?: true;
+  readonly result: string | undefined;
+  readonly isError: boolean;
+  readonly usage: ReturnType<typeof parseClaudeResultUsage>;
+  readonly apiErrorStatus?: number;
+  readonly errorsText?: string;
+  readonly subtype?: string;
+  /** Stdout text around the envelope (login/usage notices); used only to classify a failure, never echoed. */
+  readonly notices: string;
+}
+
+const RESULT_LOOKING = /"type"\s*:\s*"result"/;
+
+function envelopeOf(obj: Record<string, unknown>, notices = ''): ClaudePrintJson {
+  const result = typeof obj.result === 'string' ? obj.result : undefined;
+  const errorSubtype = typeof obj.subtype === 'string' && obj.subtype.startsWith('error');
+  const status = obj.api_error_status;
+  const errorsText = Array.isArray(obj.errors) ? obj.errors.filter((e): e is string => typeof e === 'string').join('\n') : '';
+  return {
+    result,
+    isError: obj.is_error === true || errorSubtype,
+    notices,
+    usage: parseClaudeResultUsage(obj),
+    ...(typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? { apiErrorStatus: status } : {}),
+    ...(errorsText !== '' ? { errorsText } : {}),
+    ...(typeof obj.subtype === 'string' && KNOWN_RESULT_SUBTYPES.includes(obj.subtype) ? { subtype: obj.subtype } : {}),
+  };
+}
+
+/**
+ * Index just past the JSON object/array that opens at `start` (`{` or `[`), matching brackets outside strings
+ * (escapes honoured); -1 when it never closes or the brackets do not match; -2 when the shared scan `budget` runs out
+ * (it bounds the total work over all candidate starts to a fixed multiple of the stdout length, so many unclosed
+ * bracket-led notice lines cannot make the scan quadratic). Parsing is still JSON.parse's job.
+ */
+function jsonValueEnd(text: string, start: number, budget: { left: number }): number {
+  const stack: string[] = [];
+  let inString = false;
+  for (let i = start; i < text.length; i += 1) {
+    budget.left -= 1;
+    if (budget.left < 0) return -2;
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.pop() !== ch) return -1;
+      if (stack.length === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+const isResultObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) && (v as { type?: unknown }).type === 'result';
+
+/**
+ * ADR-0115 D8: find the CLI's `type: "result"` envelope in stdout. The whole stdout may be one object, a JSON array
+ * (verbose) or lines with notices around the envelope; the LAST result object wins (as in `parseClaudeStreamJsonResult`).
+ * Undefined when there is no envelope at all (an older CLI, a plain reply, a plain reply that is itself JSON): plain text.
+ * `malformed: true` when something looks like a result envelope but none parses; the raw text is never the reply then.
+ */
+function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
+  const trimmed = stdout.trim();
+  if (trimmed === '') return undefined;
+  const lastResultIn = (v: unknown): Record<string, unknown> | undefined => {
+    if (Array.isArray(v)) {
+      let found: Record<string, unknown> | undefined;
+      for (const el of v) if (isResultObject(el)) found = el;
+      return found;
+    }
+    return isResultObject(v) ? v : undefined;
+  };
+  let whole: unknown;
+  let wholeOk = false;
+  try {
+    whole = JSON.parse(trimmed);
+    wholeOk = true;
+  } catch {
+    // fall through to the offset / line scans
+  }
+  if (wholeOk) {
+    // Only the CLI's own envelope is parsed; any other JSON (an intent selection reply) stays plain text.
+    const found = lastResultIn(whole);
+    return found === undefined ? undefined : envelopeOf(found);
+  }
+  // Notices before and/or after a (single-line or pretty-printed) envelope: from each line-start `{` / `[`, find the
+  // end of that JSON value by string-aware bracket matching and parse exactly that span; a parsed span is skipped
+  // as a whole. The last span holding a result envelope wins; the text outside it is the notices.
+  let last: { obj: Record<string, unknown>; from: number; to: number } | undefined;
+  const budget = { left: 32 * stdout.length + 65_536 };
+  let exhausted = false;
+  const re = /^[ \t]*[{[]/gm;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
+    const from = m.index + m[0].length - 1;
+    const to = jsonValueEnd(stdout, from, budget);
+    if (to === -2) {
+      exhausted = true;
+      break;
+    }
+    if (to < 0) continue;
+    // JSON.parse of a span costs its length too.
+    budget.left -= to - from;
+    if (budget.left < 0) {
+      exhausted = true;
+      break;
+    }
+    try {
+      const found = lastResultIn(JSON.parse(stdout.slice(from, to)));
+      if (found !== undefined) last = { obj: found, from, to };
+      re.lastIndex = to;
+    } catch {
+      // balanced but not JSON (a notice in brackets): keep scanning from the next line
+    }
+  }
+  const looks = RESULT_LOOKING.test(stdout) && /^[ \t]*[{[]/m.test(stdout);
+  // Out of scan budget (only pathological bracket-led output): an envelope may be unseen, and its `type` may even be
+  // JSON-escaped, so fail closed unconditionally (never echoed, never an earlier envelope taken as the last one).
+  if (exhausted) return { malformed: true, result: undefined, isError: false, usage: {}, notices: '' };
+  if (last !== undefined) return envelopeOf(last.obj, `${stdout.slice(0, last.from)}\n${stdout.slice(last.to)}`);
+  return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
 }
 
 /**

@@ -96,7 +96,7 @@ describe('ClaudeCliVisionProvider — descriptor', () => {
       '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--tools', '',
     ]);
     // Same isolation prefix as the chat ClaudeCliProvider.
-    expect(args.slice(0, 7)).toEqual(new ClaudeCliProvider('claude', { model: 'sonnet' }).buildArgs());
+    expect(args.slice(0, 7)).toEqual(new ClaudeCliProvider('claude', { model: 'sonnet' }).buildArgs().slice(0, 7));
   });
 
   it('refuses a model name that could be read as a flag or carries whitespace', () => {
@@ -198,6 +198,13 @@ describe('ClaudeCliVisionProvider — execute', () => {
     ]);
     // The stdin payload carries the bytes, never the temp-file path.
     expect(call.opts.input).not.toContain(dir);
+  });
+
+  it('ADR-0115 D8: the result event usage is returned with the label', async () => {
+    const event = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 4, cache_read_input_tokens: 6, cache_creation_input_tokens: 10, output_tokens: 9 } });
+    const { runner } = recordingRunner(() => ok(event));
+    const result = await new ClaudeCliVisionProvider({ model: 'sonnet', runner }).execute(imageRequest([{ path: png, mimeType: 'image/png' }]));
+    expect(result.usage).toEqual({ label: 'claude:sonnet', inputTokens: 20, cachedInputTokens: 6, cacheCreationInputTokens: 10, outputTokens: 9 });
   });
 
   it('the audit carries counts and hashes only — no path, no bytes, no prompt text', async () => {
@@ -360,5 +367,23 @@ describe('capability routing with the Claude vision provider (amendment A2)', ()
     // The chat provider never advertises the capability, and the local vision provider is a separate instance.
     expect(chat.capabilities.map((c) => c.capability)).not.toContain(Capability.IMAGE_UNDERSTANDING);
     expect(new OllamaCliVisionProvider({ model: 'gemma3:4b' }).capabilities).toEqual(vision.capabilities);
+  });
+});
+
+describe('parseClaudeStreamJsonResult usage (ADR-0115 D8)', () => {
+  it('reads the counts of the final result event, omitting invalid ones', () => {
+    const line = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x', usage: { input_tokens: 2, cache_read_input_tokens: 3, output_tokens: -4 } });
+    const out = parseClaudeStreamJsonResult(line);
+    expect(out.ok && out.usage).toEqual({ inputTokens: 5, cachedInputTokens: 3 });
+  });
+
+  it('an invalid present cache count omits inputTokens; null counts as 0', () => {
+    const mk = (cache: unknown) => parseClaudeStreamJsonResult(JSON.stringify({ type: 'result', subtype: 'success', result: 'x', usage: { input_tokens: 2, cache_read_input_tokens: cache } }));
+    for (const bad of [-1, 1.5, '3']) {
+      const out = mk(bad);
+      expect(out.ok && 'inputTokens' in (out.usage ?? {})).toBe(false);
+    }
+    const out = mk(null);
+    expect(out.ok && out.usage).toEqual({ inputTokens: 2 });
   });
 });
