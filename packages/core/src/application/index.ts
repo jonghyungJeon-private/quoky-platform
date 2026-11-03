@@ -198,6 +198,8 @@ export * from './calendar';
 // ADR-0118 mail read (GML-1): the untrusted single-item summary readout and the mail sub-barrel.
 export * from './link-neutralizer';
 export * from './untrusted-document-readout';
+// ADR-0124 C2: the pure chunker, reachable by the offline eval harness; no handler or runtime path imports it yet.
+export * as chunking from './chunking';
 // ADR-0120 amendment A6 R2 (D11): the card-spoof check of a Jira / Slack summary.
 export * from './card-spoof';
 export * from './document-summary-claim-guard';

@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 C2: `eval:chunk` CH1 harness, lexical arm only (offline, no model)
+
+- **Added.** `pnpm eval:chunk` (`apps/quoky/src/tools/chunk-eval*`): a hash-frozen synthetic corpus (420 cases, seeded, fictional),
+  today's head-and-tail clip as the baseline (the real `buildUntrustedDocumentReadout`) and the lexical arm over C1 chunks;
+  window recall by depth, shape, language, length and needle kind, Recall@1/3/5/10, MRR, nDCG@10; report under `data/eval/`.
+  Exit codes 3 on a corpus hash mismatch, 4 NON-GATING after a run (CH1 is a proposal; E0-E3 and EH are not run).
+- **Changed (Core).** The application barrel exports the pure chunker as the `chunking` namespace; nothing imports it at runtime.
+
 ## Unreleased — connector-write bare step verb gets the exact-phrase hint (Core)
 
 - **Fixed (Core).** While a connector write waits approved, its own step verb without the object noun (`삭제 실행` for
