@@ -381,7 +381,12 @@ export class AgentPlanExecutor {
         },
       }).catch((): { readonly kind: 'failed'; readonly reason: 'model' } => ({ kind: 'failed', reason: 'model' }));
       const outcome = await Promise.race([call, wall]);
-      budget.checkWall();
+      // A clock that throws after the call started is a wall breach, never an escape that would drop the call's audit (Codex).
+      try {
+        budget.checkWall();
+      } catch {
+        safely(() => budget.markBreach('wall-time'), undefined);
+      }
       // Every status reached after a model call started carries its audit (the call was made, whatever became of the answer).
       const callAudit = (known?: QuarantinedCallAudit): { readonly audit?: QuarantinedCallAudit } => {
         const audit = known ?? (started !== undefined ? safely(started, undefined) : undefined);

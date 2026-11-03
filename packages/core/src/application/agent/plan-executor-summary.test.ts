@@ -325,6 +325,29 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.steps[1]).toMatchObject({ status: 'failed', errorCode: 'SCHEMA', audit: { locality: 'REMOTE' } });
     });
 
+    it('a clock that starts throwing after a REMOTE call started is a wall breach that keeps the audit (Codex)', async () => {
+      let called = false;
+      const remote: QuarantinedSummarizerModel = {
+        executionLocality: 'REMOTE',
+        auditId: 'audit-clock',
+        run: async () => {
+          called = true;
+          return { text: 'not json' };
+        },
+      };
+      const result = await new AgentPlanExecutor({
+        readers: { 'mail.list': port(['m1'], docs('b')) },
+        summarizer: { models: [remote] },
+        elapsed: () => {
+          if (called) throw new Error('clock');
+          return 0;
+        },
+      }).execute(MAIL_PLAN());
+      expect(called).toBe(true);
+      expect(result.outcome).toBe('partial');
+      expect(result.steps[1]).toMatchObject({ status: 'not-run', audit: { locality: 'REMOTE', auditId: 'audit-clock' } });
+    });
+
     it('N1: a step refused before any call carries no audit', async () => {
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: { models: [model('REMOTE')] }, bounds: { maxModelCalls: 0 } }).execute(MAIL_PLAN());
       expect(result.steps[1]).toMatchObject({ status: 'not-run' });
