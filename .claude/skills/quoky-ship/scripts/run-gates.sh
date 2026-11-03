@@ -214,8 +214,8 @@ group_verified() {
   if [ -n "${TMUX:-}" ] && [ -z "$tpid" ]; then log "group signal refused: TMUX is set but its server pid is unreadable"; return 1; fi
   # One consistent process snapshot decides (no separate lookups that can disagree or fail silently):
   # ps failing or printing nothing -> refused; no member with this pgid -> 2 (nothing to signal); a live process with the
-  # leader's pid inside this group must carry the recorded start time (unreadable/empty/different -> refused). With the
-  # leader gone, the group's remaining members prove the pgid is not reused (POSIX: no reuse while the group has members).
+  # leader's pid inside this group must carry the recorded start time (unreadable/empty/different -> refused). The holder
+  # leader outlives every member (exec_one), so members without a leader cannot be proven ours -> refused.
   snap=$(ps -axo pid=,pgid=,lstart= 2>/dev/null) || { log "group signal refused: process snapshot failed"; return 1; }
   [ -n "$snap" ] || { log "group signal refused: empty process snapshot"; return 1; }
   # The script's own group and the tmux server's group are read from the same snapshot; unreadable -> refused.
@@ -233,6 +233,7 @@ group_verified() {
       if (tp != "" && tgrp == "") { print "refuse tmux server pid not in the snapshot"; exit }
       if (tp != "" && (g == tp || g == tgrp)) { print "refuse pgid is the tmux server group"; exit }
       if (members == 0) { print "gone"; exit }
+      if (!leader) { print "refuse group has members but its holder leader is gone (identity unprovable)"; exit }
       if (leader && (lstart == "" || want == "" || lstart != want)) { print "refuse leader start time [" lstart "] != recorded [" want "] (pid reuse?)"; exit }
       print "ok" }')
   case "$verdict" in
@@ -447,8 +448,21 @@ exec_one() {
   rm -f "$A/USAGE-STOP"
   log "$m: running ($cli, digest ${digest:0:12})"
   set -m
+  # The group leader is a small holder shell that outlives the eval and every descendant still in its group (it leaves
+  # only when no other member remains, or when the group is KILLed). So whenever the group has members, its leader is
+  # alive and its recorded start time proves the group's identity; "members but no leader" is refused (group_verified).
+  # TERM is caught by the holder only (the eval gets the default action) so it keeps holding while descendants exit.
   # shellcheck disable=SC2046
-  pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1 &
+  bash -c '
+    trap ":" TERM INT HUP
+    "$@" & c=$!
+    while :; do wait "$c"; rc=$?; kill -0 "$c" 2>/dev/null || break; done
+    if [ "$rc" -gt 128 ]; then wait "$c" 2>/dev/null; r2=$?; [ "$r2" -eq 127 ] || rc=$r2; fi
+    while ps -axo pid=,ppid=,pgid= 2>/dev/null | awk -v me="$$" "\$3 == me && \$1 != me && \$2 != me { f = 1 } END { exit !f }"; do
+      sleep 1
+    done
+    exit "$rc"
+  ' gates-holder pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1 &
   pid=$!
   set +m
   pgid=$(pgid_of "$pid"); lstart=$(lstart_of "$pid")
