@@ -32427,8 +32427,59 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
   (uncached + cache read + cache creation, the Codex meaning), `cachedInputTokens` the cache-read part. Only non-negative
   integers are kept; absent stays absent, never 0. The vision provider reads the same fields from its final stream-json
   `result` event.
-- **Fallback.** If stdout is not one JSON object with a string `result` (an older CLI, a login notice), stdout is the reply
-  as before and only the label is reported.
+- **Fallback.** Only the CLI's own envelope (a JSON object with `type: "result"`) is parsed. Any other stdout (an older CLI,
+  a login notice, or a plain reply that is itself JSON) is the reply as before, and only the label is reported. An envelope
+  with no string `result` is never echoed as a reply: it is a classified failure if `is_error` is set or the `subtype` is an
+  error, and empty output otherwise.
 - **Logs.** The NL selection call, the D4 help-scope classifier and the `agent_run.shadow` line carry counts only:
   `inTok`, `cacheRead`, `outTok` (each omitted when unreported), plus `promptChars` and `promptBytes`. No content. Core stays
   provider-neutral (`application/call-usage-log-fields.ts`).
+
+## ADR-0121 S2 P3-3b owner decisions and ADR-0121 D12 amendment proposal (2026-11-03)
+
+- **Owner answers (2026-11-03) to the P3-3b decision list.**
+  1. Jira and Slack in M2: accepted as recommended. Item content is C5 and stays listing-only until pseudonyms, a work-summary
+     flag and a `workText` provider constraint exist.
+  2. Summary grant derivation: accepted as recommended. Core derives it per step and per source from the owner's own words,
+     excluding quoted or pasted text, using the existing approved vocabulary. It is never a caller flag and never the planner's step.
+  3. Remote batch versus single item: **changed.** When the owner asks for a summary of several items, a remote summary may
+     cover them all. Design to implement:
+     - One sealed batch call per source, at most 10 items, fitted to the remaining input budget.
+     - If the items do not fit, they are split into at most the D3 cap of 3 M2 calls run in parallel, and the per-item
+       outputs are merged deterministically in source order. The merge makes no model call.
+     - The grant still covers exactly the asked-for items. Every call keeps its own audit and the REMOTE disclosure line.
+     - Sources stay mail and Drive.
+     This supersedes the single-item rule in `selectQuarantinedModel` once implemented.
+  8. Body fetch cost accounting: explained to the owner and kept as the precondition for the adapter slice.
+  9. Input-token estimator: the owner asked for the standard practice. The standard is a provider count (Claude's
+     `count_tokens`) or a script-aware estimate before the call, then reconciliation against the provider's reported usage
+     after it.
+     - Step 1 is ADR-0115 D8 usage capture for the Claude CLI (the note above).
+     - Step 2 calibrates a per-model, script-aware bound from logged `inTok` / `promptChars` / `promptBytes` with a safety
+       margin. That bound then replaces the UTF-8 byte bound and `util/token-estimator.ts` (`length / 4`, which undercounts
+       Korean).
+     - Until step 2, the UTF-8 byte bound stays.
+- **ADR-0121 D12 amendment proposal (consulted with Codex, 2026-11-03; the owner allowed amending the ADR).**
+  - M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no model-execution port or DI token. This
+    replaces the narrow `QuarantinedSummarizerModel` list.
+  - Core derives the allowed execution localities from the input labels, a valid grant and the asked-for item count. It
+    passes them as a data constraint on the existing `ProviderSelectionContext` (a new `allowedExecutionLocalities` beside
+    `workText`).
+  - Candidates are the intersection of capability, owner policy, locality and `workText`. An unmet or unverifiable
+    constraint means listing-only.
+  - Policy and locality are re-checked immediately before dispatch.
+  - A request that was sent is never re-sent to another provider.
+  - Kept: no body fetch without a grant, no model for `HOST_ONLY`, the batch bound by the asked-for count, and the sealed
+    request and output.
+  - Order: this text → the context constraint with a mandatory dispatch check → replace the model list → tests and an
+    independent review (J1).
+- **Other owner answers (2026-11-03).**
+  - Local embedding measurement is deferred (Mac capacity); the ADR-0124 C3/C4 embedding arms wait.
+  - `QUOKY_NL_ACTIONS=local` is the NL action level, not a local LLM. Cloud models stay the default and a local LLM stays
+    configurable. Whether the live service moves to `local` is re-asked.
+  - Undo and `QUOKY_CONNECTOR_WRITES_ENABLED`: recommended to keep undo reach equal to create reach (the calendar flag
+    only). Requiring the Jira/Slack flag too would leave a creatable but not undoable event.
+  - Kill switch: the owner wants open items reported, and the stop applied after work in flight ends. Proposed slice:
+    - The stop blocks new work at once.
+    - An external call already sent runs to completion and is reported.
+    - Open approvals waiting for an exact phrase (undo anchors included) are listed in the stop reply and closed.
