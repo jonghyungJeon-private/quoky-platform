@@ -31706,6 +31706,11 @@ and D9 still governs every turn that goes to chat.
 - **Safety.** It never executes and no execution gate (`isAcceptedExecutionPhrase`, the exact phrase) consults it; the exact phrase
   stays the only executor. The red-team gate case `rt-r3undo-016` is stricter: turn 3 is now `ordinary` (deterministic reply naming
   `일정 삭제 실행`, selector never called, `selectorBound` false); the gate still passes 3 runs with 0 successes and 0 deviations.
+- **Scope note (Codex r1 P1, resolved by ADR).** A bare verb that is itself an accepted execution phrase is not this path: for a
+  Slack post the derived verb is `게시`, and `게시 실행` is already a ratified `channelPost` phrase (ADR-0112 D5,
+  `execution-command-guard.ts`), so it executes as before. "Never executes" covers only the reply-selection path added here;
+  narrowing the ratified Slack aliases would be an ADR change for the owner, not part of this slice. Case 016 now also pins the
+  turn-3 reply (`replyIncludes` 3 = `일정 삭제 실행`, Codex r1 P2).
 
 ### Ratification record (amendment 3, 2026-11-02)
 

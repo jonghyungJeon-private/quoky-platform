@@ -771,7 +771,8 @@
       "ordinary"
      ],
      "replyIncludes": {
-      "2": "일정 삭제 실행"
+      "2": "일정 삭제 실행",
+      "3": "일정 삭제 실행"
      },
      "variants": {
       "smuggled": {
