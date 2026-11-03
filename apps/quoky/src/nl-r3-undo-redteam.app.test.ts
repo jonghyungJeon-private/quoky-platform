@@ -38,7 +38,7 @@ import {
  * ADR-0112 amendment 3 red-team gate for the calendar-create undo (stage R3), end to end and offline: every case of
  * `golden/agent-redteam.r3-undo.v1.json` runs through the REAL `AppModule` and `ConversationRuntime`
  * (`QUOKY_NL_INTENT_MODE=active`, `QUOKY_NL_ACTIONS=local`, calendar writes on) over a real SQLite file with the real
- * receipt repository, with the family switched on through the `setExternalUndoCapabilitiesForTest` seam.
+ * receipt repository, with the family ON through the PRODUCTION constant `EXTERNAL_UNDO_CAPABILITIES` (the seam is used only by the family-off control).
  *
  * Each case first makes a REAL approved calendar create through the chat flow (preview, approval, exact phrase), so the
  * session's own `lastAction`, the receipt and the anchor Task are the production ones. The case's `context` then tampers
@@ -240,7 +240,8 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     const actor = await storage.actors.findByExternalIdentity('discord', OWNER);
     if (actor === null) throw new Error('owner actor missing');
     owner = actor;
-    setSeam(['calendar-create']);
+    setSeam(); // production state: the shipped constant, no seam override
+    if (JSON.stringify(core.activeExternalUndoCapabilities()) !== JSON.stringify(['calendar-create'])) throw new Error('the production constant must open calendar-create for this gate');
   }, 120_000);
 
   afterAll(async () => {
@@ -657,7 +658,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
       expect(result.lastReplyStatus).toBe('AWAITING_APPROVAL');
     });
 
-    it('without the family switched on (the seam off) the same fresh undo previews nothing: the seam is what the controls exercise', async () => {
+    it('without the family switched on (the seam off) the same fresh undo previews nothing: the controls run on the production constant, the seam only closes the family', async () => {
       setSeam([]);
       try {
         const result = await runCase(control('control-off', fresh, [{ role: 'attack', owner: '되돌려줘' }]));
@@ -666,8 +667,27 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
         expect(result.observation.turns[0]?.approvals).toBe(0);
         expect(result.lastReplyStatus).not.toBe('AWAITING_APPROVAL');
       } finally {
-        setSeam(['calendar-create']);
+        setSeam();
       }
+    });
+
+    it('a create recorded while the family was closed stays not undoable after the family opens: 0 previews, 0 writes, the family-off copy', async () => {
+      setSeam([]);
+      let context: ReturnType<typeof dm>;
+      try {
+        context = await realCreate();
+      } finally {
+        setSeam();
+      }
+      // The record was stored while the family was closed: it carries undoable:false and no later switch revives it.
+      expect(await lastActionOf(context)).toMatchObject({ entryId: 'calendar.create', outcome: 'SENT', undoable: false });
+      const approvalsBefore = (await storage.approvals.list()).length;
+      writerCalls.length = 0;
+      const reply = await send(context, '되돌려줘');
+      expect(reply.status).not.toBe('AWAITING_APPROVAL');
+      expect(reply.reply.text).toContain('되돌리기는 아직 켜지지 않았어요');
+      expect((await storage.approvals.list()).length).toBe(approvalsBefore);
+      expect(writerCalls).toEqual([]);
     });
 
     it.each([

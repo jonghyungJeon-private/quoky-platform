@@ -28,16 +28,23 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - The owner ratified O1-O7: undo is reachable at the `local` NL-actions level whenever connector writes are enabled (no new
   flag; target only from the session's `lastAction` receipt), calendar update/cancel inverses, Jira comment delete and
   transition revert, `restoreEvent`, CRITICAL approval + exact phrase kept for every undo. DECISIONS.md has the text.
-- Built so far (branch `claude/r3-undo`): the inert foundation (receipt `findById`, `lastAction.anchorTaskId`,
-  `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo. **The calendar-create family
-  is OFF in this build: `EXTERNAL_UNDO_CAPABILITIES` is empty pending the amendment-3 red-team gate** (>= 20 cases, 0
-  successes over 3 runs, CA/Codex/security review). The offline deterministic gate driver (branch `claude/r3-redteam`, no
-  model; 36 cases (18 selector-bound with distinct variants, 18 never call the selector; 016 moved to `ordinary` by the bare-step-verb fix) in `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`, each with an oracle, two attacker
-  variants) passed 3 runs of 72 case runs with 0 attack successes and 0 deviations (the layer/deviation oracle, not the success count, is the evidence) (DECISIONS "Implementation note
-  (amendment 3, calendar-create family...)"; the 018 `writes` change is a correction, replay is still rejected). **The family
-  stays OFF until Chief Architect, Codex and `/security-review` PASS on the switch-on and Live UAT pass; none has.**
-  Switching it on is a one-line change to the constant (branch `claude/r3-undo-on`). Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
-  are later slices; their families stay out of the capability set until built.
+- Built so far: the inert foundation (receipt `findById`, `lastAction.anchorTaskId`, `ExternalUndoResolver`, receipt banner,
+  closed capability set) and the calendar-create undo. **Switch-on (branch `claude/r3-undo-on2`, 2026-11-03): the
+  calendar-create family is ON in this build** (`EXTERNAL_UNDO_CAPABILITIES = ['calendar-create']`). For this family the
+  undo's reach equals the create's reach: the calendar writer is bound by `QUOKY_CALENDAR_WRITE_ENABLED` alone (not
+  `QUOKY_CONNECTOR_WRITES_ENABLED`, which gates Jira and Slack), plus `QUOKY_NL_ACTIONS=local|external`. Gate: the offline
+  deterministic driver merged in #306 (no model; 36 cases (18 selector-bound with distinct variants, 18 never call the
+  selector; 016 moved to `ordinary` by the bare-step-verb fix) in `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`,
+  each with an oracle, two attacker variants) was re-run on the production constant: 3 runs of 72 case runs, 0 attack
+  successes and 0 deviations each (the layer/deviation oracle is the evidence, not the success count; the 018 `writes` change
+  is a correction, replay is still rejected). **Review status:** Codex PASS, Chief Architect APPROVE (no P1; P2s fixed in the
+  follow-up commit), `/security-review` APPROVE (2026-11-03). **Live UAT PASSED 2026-11-03 on a temporary deploy of 64cec71e with `QUOKY_NL_ACTIONS=local` only during the window (restored to `shadow` after)**: Discord DM create -> "되돌려줘" gave the receipt-sourced delete preview of the same event -> bare `삭제 실행` before and after the approval executed nothing (after approval it named `일정 삭제 실행`, #307) -> 승인 -> `일정 삭제 실행` deleted that same event (calendar read outside Quoky: 1 -> 0) -> "되돌려줘" again refused (`undo-of-undo`); the QA group channel refused `dm-only`. Not run live: TOCTOU edits (need a write outside Quoky) and the kill-switch case (open owner question 2); both are covered offline by the red-team driver and unit tests. **Open owner questions:** (1) should the
+  calendar undo also require `QUOKY_CONNECTOR_WRITES_ENABLED`? (amendment 3 O1 says "whenever connector writes are enabled";
+  in code `QUOKY_CONNECTOR_WRITES_ENABLED=false` does not close calendar create or its undo); (2) "에이전트 중지" does not close
+  an already-open undo anchor, so a later `일정 삭제 실행` still executes (the switch is checked at preview time; amendment 1
+  only requires it to withdraw `action.undo`, which holds). Recommendation: a follow-up slice makes the stop also close anchors
+  with `undoOf` set (stricter side). Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete,
+  Jira transition revert) are later slices; their families stay out of the capability set until built.
 
 ### ADR-0124 chunked reading of long content: Part L ratified (2026-11-02, branch `claude/chunking`)
 

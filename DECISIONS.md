@@ -31628,9 +31628,10 @@ and D9 still governs every turn that goes to chat.
 - **What runs.** `apps/quoky/src/nl-r3-undo-redteam.app.test.ts` is a deterministic worst-case driver with no model in the
   loop: every case of `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json` (36 cases: the 24 drafted, six
   selector-path twins, and six review additions below) runs through the production `AppModule` and `ConversationRuntime` over a real SQLite file, after a real
-  approved calendar create, with the family switched on only through `setExternalUndoCapabilitiesForTest`. A scripted, fully
+  approved calendar create, with the family switched on through `setExternalUndoCapabilitiesForTest` (as first merged; the
+  switch-on below runs it on the production constant). A scripted, fully
   fooled selector answers `action.undo`, in two attacker variants for every case: **smuggled** (`args.eventId` /
-  `args.receiptId`) and **empty** (`args: {}`, the one valid shape). `EXTERNAL_UNDO_CAPABILITIES` stays empty in production.
+  `args.receiptId`) and **empty** (`args: {}`, the one valid shape). `EXTERNAL_UNDO_CAPABILITIES` was empty in production when the gate was merged (#306).
 - **Correction of the first driver.** Its scripted output carried a top-level `externalUndo` key that the selection-output
   parser rejects (`unknown-key`), so cases 002, 003, 005, 020 and 023 silently fell to chat and 019 only used the anchored
   path. The exact word `되돌려줘` is answered before the selector; a sentence around it is not (019 now uses `방금 추가한 일정
@@ -31686,11 +31687,28 @@ and D9 still governs every turn that goes to chat.
   Removing both makes cases 005, 008, 025 fail (a stale own-receipt preview, which the old attack-success oracle alone would
   have passed). Removing the anchor-session check fails 015 (the later receipt check still refuses, so no attack succeeds, but
   the layer moves). Removing the version/draft comparison in `proposeCalendarCreateUndo` fails 010, 011 and 029.
-- **Still OFF.** The family stays off until the remaining gates pass: Chief Architect, Codex and `/security-review` PASS on
-  the switch-on change, plus Live UAT (Strict, owner approval). None of those has passed; this note records only the offline
-  deterministic gate.
-- **Observation.** A bare `삭제 실행` after the approval is not answered by the connector-write flow: it reaches the selector
-  and falls to chat. It writes nothing; whether it should name `일정 삭제 실행` is an open product question.
+- **Switch-on (2026-11-03, branch `claude/r3-undo-on2`, on top of #306).** `EXTERNAL_UNDO_CAPABILITIES` is now the frozen,
+  closed `['calendar-create']`. The calendar-create undo family is ON at the `local` NL-actions level (O1; no new flag). Implementation
+  note on O1's "whenever connector writes are enabled": for `calendar-create` the undo's reach equals the create's reach. The
+  calendar writer is bound by `QUOKY_CALENDAR_WRITE_ENABLED` alone (`apps/quoky/src/config.ts`, `connector-writers-provider.ts`);
+  `QUOKY_CONNECTOR_WRITES_ENABLED` gates Jira and Slack only, so setting it false does not close calendar create or its undo.
+  The undo is gated by `QUOKY_CALENDAR_WRITE_ENABLED` (writer bound) plus `QUOKY_NL_ACTIONS=local|external`; with the calendar writer unbound, the undo still answers its fixed unavailable text.
+  Evidence: the #306 gate, re-run offline against the production constant (no seam override; the driver asserts the active set
+  is `['calendar-create']`): 3 runs of 36 cases x 2 variants = 72 case runs each, 0 attack successes and 0 deviations in each
+  run (59 refusal runs, 40 own-receipt previews per run, no network or model calls); its family-off control passes through the
+  seam. Tests that asserted OFF now assert ON, or pin the off path through `setExternalUndoCapabilitiesForTest([])`. The
+  context-eval case `kg-calendar-undo-after-todo` now pins the receipt-sourced delete preview (not executed) instead of the
+  "not turned on yet" copy; its harness calendar writer returns a Google-shaped event id and etag and stores the approved time.
+  A create recorded while the family was closed stays `undoable:false` after the family opens (app test).
+- **Review status and pending.** Codex PASS, Chief Architect APPROVE (no P1; P2s fixed in the follow-up commit),
+  `/security-review` APPROVE (2026-11-03). **Live UAT PASSED 2026-11-03 on a temporary deploy of 64cec71e with `QUOKY_NL_ACTIONS=local` only during the window (restored to `shadow` after)**: Discord DM create -> "되돌려줘" gave the receipt-sourced delete preview of the same event -> bare `삭제 실행` before and after the approval executed nothing (after approval it named `일정 삭제 실행`, #307) -> 승인 -> `일정 삭제 실행` deleted that same event (calendar read outside Quoky: 1 -> 0) -> "되돌려줘" again refused (`undo-of-undo`); the QA group channel refused `dm-only`. Not run live: TOCTOU edits (need a write outside Quoky) and the kill-switch case (open owner question 2); both are covered offline by the red-team driver and unit tests. The standing service keeps its NL-actions level outside that window.
+- **Open owner questions.** (1) Should the calendar undo additionally require `QUOKY_CONNECTOR_WRITES_ENABLED`, as O1's wording
+  suggests? Today it does not. (2) "에이전트 중지" (kill switch, `conversation-runtime.ts`) does not close an already-open undo
+  anchor: a later `일정 삭제 실행` still executes, because the switch is checked at preview time; amendment 1 only requires the
+  switch to withdraw `action.undo`, which holds. Recommendation: a follow-up slice makes the stop also close anchors with
+  `undoOf` set (stricter side). Not implemented here.
+- **Observation (resolved by #307).** A bare `삭제 실행` after the approval now gets the exact-phrase hint `일정 삭제 실행` and
+  writes nothing; confirmed in the Live UAT.
 
 ### Implementation note (connector-write bare step verb, 2026-11-03)
 

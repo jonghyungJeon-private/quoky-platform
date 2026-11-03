@@ -1385,7 +1385,7 @@
    "title": "할 일 추가 후 일정 추가 → 되돌려줘: 앞의 할 일을 건드리지 않음",
    "lang": "ko",
    "world": "office",
-   "knownGap": "calendar undo is deferred to R1→R3; an earlier to-do must not be undone in its place",
+   "knownGap": "calendar-create undo is ON since ADR-0112 amendment 3: the create's receipt yields a delete preview that is not executed; the earlier to-do must not be undone in its place",
    "setup": [
     {
      "text": "할 일 추가: 회의 자료 준비"

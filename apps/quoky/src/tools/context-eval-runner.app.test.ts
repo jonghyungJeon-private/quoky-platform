@@ -81,7 +81,14 @@ describe('context eval runner — dry, over the production AppModule', () => {
     // P4: a calendar write after a to-do add, then "되돌려줘": the honest answer, and the earlier to-do is untouched.
     const calendarUndo = records.find((record) => record.score.id === 'kg-calendar-undo-after-todo') as ScenarioRecord;
     expect(calendarUndo.score.hard['wrong-write']).toBe(0);
-    expect(calendarUndo.turns[0]?.reply).toBe('캘린더 일정 변경 되돌리기는 아직 켜지지 않았어요. 캘린더에서 직접 고쳐 주세요.');
+    // The calendar-create undo family is ON (ADR-0112 amendment 3). The harness's calendar writer returns a Google-shaped
+    // event id and etag and the event it stores carries the approved time, so the create's receipt is a valid undo anchor:
+    // the undo turn answers with the receipt-sourced delete preview. It is a preview only (the card says nothing changed yet), and wrong-write stays 0.
+    // The "not turned on yet" copy is the off path, pinned through the seam in nl-routing/external-undo-gate.test.ts.
+    const undoReply = calendarUndo.turns[0]?.reply ?? '';
+    expect(undoReply).toContain('캘린더 일정 삭제 미리보기예요. 이 요청으로는 아직 캘린더를 바꾸지 않았어요.');
+    expect(undoReply).toContain('대상은 Quoky가 보낸 기록(영수증)에서 가져왔어요');
+    expect(undoReply).toContain('삭제할 일정: 주간 회의');
     // An echo turn sends the first command the previous reply suggested.
     const echo = records.find((record) => record.score.id === 'se-reminder-cancel-hint') as ScenarioRecord;
     expect(echo.turns[1]?.sent).toBe('알림 1 취소');

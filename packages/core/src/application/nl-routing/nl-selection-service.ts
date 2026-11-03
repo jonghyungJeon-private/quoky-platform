@@ -961,7 +961,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
 
   /**
    * ADR-0112 amendment 1 S3 (context eval 2026-10-26, P4): every outcome of an approved connector write becomes this
-   * actor's last action, with `itemId` = its receipt id, never undoable until the R3 undo writers act, so a plain
+   * actor's last action, with `itemId` = its receipt id, undoable only for a family in the capability set (`calendar-create`; others stay closed), so a plain
    * "되돌려줘" after it answers with that family's copy and never undoes an older to-do or reminder. Content-free (ids,
    * the family, the outcome, the time). Same gate as every lastAction write (mode `active`, `QUOKY_NL_ACTIONS` not off);
    * best-effort, never throws.
@@ -991,7 +991,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       source: input.source,
       itemId: input.receiptId,
       at: input.now,
-      // Opens only for a SENT write of a family in the closed capability set (empty until a slice adds its family).
+      // Opens only for a SENT write of a family in the closed capability set (`calendar-create` today; a slice adds each further family).
       undoable: !isUndo && input.outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(input.entryId)),
       undone: false,
       outcome: input.outcome,

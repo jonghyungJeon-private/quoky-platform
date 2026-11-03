@@ -330,8 +330,9 @@ describe('references, questions and the audit line', () => {
     expect(await w.decide('되돌려줘', { now: at(2) })).toEqual({ kind: 'ask', entryId: expect.any(String), text: '되돌린 작업은 다시 되돌릴 수 없어요.' });
   });
 
-  it('shipped OFF: "되돌려줘" after an approved calendar create answers the family copy exactly as before the undo slices', async () => {
-    setExternalUndoCapabilitiesForTest(); // the shipped (empty) set
+  it('family OFF through the seam: "되돌려줘" after an approved calendar create answers the family copy exactly as before the undo slices', async () => {
+    setExternalUndoCapabilitiesForTest([]); // the family switched off through the seam (the shipped set is ['calendar-create'] since the 2026-11-03 gate)
+    onTestFinished(() => setExternalUndoCapabilitiesForTest());
     const w = world({ level: 'local', script: () => out('action.undo') });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', at: at(0), undoable: true, undone: false, outcome: 'SENT', anchorTaskId: 'task-1', echoReplyIds: [] }, at(0)));
     const decision = await w.decide('되돌려줘', { now: at(1) });
@@ -357,6 +358,7 @@ describe('references, questions and the audit line', () => {
     const shadow = world({ level: 'shadow', script: () => out('action.undo') });
     shadow.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', calendar(), at(0)));
     expect(await shadow.decide('되돌려줘', { now: at(1) })).toEqual({ kind: 'none' });
+    expect(actionLogs(shadow).at(-1)?.fields).toMatchObject({ result: 'shadow', reason: 'external-undo' });
     // An uncertain write and an undo are answered, never executed.
     for (const record of [calendar({ outcome: 'UNCERTAIN', undoable: false }), calendar({ entryId: 'action.undo', undoable: false, undoOf: 'calendar.create' }), calendar({ entryId: 'external.write', undoable: false })]) {
       const w = world({ level: 'local', script: () => out('action.undo') });
