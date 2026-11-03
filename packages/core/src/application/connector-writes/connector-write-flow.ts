@@ -497,7 +497,7 @@ export interface ConnectorWriteFlow {
    * finished write hands back to its previous task), or null when the task is missing or not a connector-write anchor. A closed
    * anchor is returned as it is. For the kill switch's truthful report of a write that finished meanwhile.
    */
-  anchorOfTask?(taskId: Id): Promise<ConnectorWriteAnchorView | null>;
+  anchorOfTask?(session: Session, taskId: Id): Promise<ConnectorWriteAnchorView | null>;
   prepare(input: FlowInput & { readonly draft: ConnectorWriteDraft }): Promise<ConnectorWriteStep>;
   choose(input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number }): Promise<ConnectorWriteStep>;
   recordApproval(input: FlowInput & { readonly view: ConnectorWriteAnchorView }): Promise<ConnectorWriteStep>;
@@ -1090,10 +1090,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     };
   }
 
-  async anchorOfTask(taskId: Id): Promise<ConnectorWriteAnchorView | null> {
+  /** Read-only: the connector-write anchor on `taskId` (any status), only when it belongs to this owner's `session`. */
+  async anchorOfTask(session: Session, taskId: Id): Promise<ConnectorWriteAnchorView | null> {
     const task = await this.deps.store.tasks.get(taskId);
-    const anchor = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
-    if (!task || anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND) return null;
+    if (!task || task.planId) return null;
+    const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (anchor?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || anchor.sessionId !== session.id) return null;
     return { taskId: task.id, anchor, approval: null };
   }
 

@@ -438,6 +438,41 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
     }
   });
 
+  it('the direct task re-read is owner-scoped: another session or actor never sees the finished outcome', async () => {
+    const { context } = await openUndo(true);
+    await send(context, '일정 삭제 실행');
+    const decisions = internals().approvalDecisions as unknown as {
+      withdrawConnectorWriteForStop: (input: unknown, view: unknown) => Promise<{ kind: string }>;
+    };
+    const flow = internals().deps.connectorWriteFlow as unknown as {
+      anchorOfTask: (session: { id: string }, taskId: string) => Promise<{ taskId: string; anchor: { sessionId: string; actorId: string } } | null>;
+    };
+    const captured: { input?: Record<string, unknown>; view?: { taskId: string; anchor: { sessionId: string } } } = {};
+    const spy = vi.spyOn(decisions, 'withdrawConnectorWriteForStop').mockImplementation(async (input, view) => {
+      captured.input = input as Record<string, unknown>;
+      captured.view = view as typeof captured.view;
+      return { kind: 'gone' };
+    });
+    try {
+      await setSwitch(undefined);
+      await openUndo(true);
+      await send(dm(), '에이전트 중지');
+      spy.mockRestore();
+      expect(captured.view).toBeDefined();
+      const own = captured.input as { session: { id: string; activeTaskId?: string }; actor: { id: string } };
+      const view = captured.view!;
+      expect(await flow.anchorOfTask({ id: own.session.id }, view.taskId)).not.toBeNull();
+      expect(await flow.anchorOfTask({ id: 'other-session' }, view.taskId)).toBeNull();
+      const foreignActor = await decisions.withdrawConnectorWriteForStop(
+        { ...own, session: { ...own.session, activeTaskId: undefined }, actor: { ...own.actor, id: 'other-actor' } },
+        view,
+      );
+      expect(foreignActor.kind).toBe('gone');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('the open-approval scan fails: the stop reply says so, and the switch stays stopped', async () => {
     const { context } = await openUndo(true);
     const flow = internals().deps.connectorWriteFlow;

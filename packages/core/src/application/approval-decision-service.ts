@@ -1036,8 +1036,11 @@ export class ApprovalDecisionService {
       // `find` follows the session pointer, which a finished write hands back to its previous task: on a miss the task is read
       // directly, so a write that ran is reported as run (never as "nothing to decide"); only closed or missing is `gone`.
       if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) {
-        const direct = flow.anchorOfTask !== undefined ? await flow.anchorOfTask(view.taskId) : null;
-        const found = direct !== null && direct.anchor.approvalId === view.anchor.approvalId ? direct.anchor : undefined;
+        const direct = flow.anchorOfTask !== undefined ? await flow.anchorOfTask(input.session, view.taskId) : null;
+        const found =
+          direct !== null && direct.anchor.approvalId === view.anchor.approvalId && direct.anchor.actorId === input.actor.id
+            ? direct.anchor
+            : undefined;
         if (found === undefined) return { kind: 'gone' };
         if (found.status === 'EXECUTING') return { kind: 'in-flight' };
         if (found.operation && (found.status === 'SENT' || found.status === 'NOT_SENT' || found.status === 'UNCERTAIN')) {
