@@ -187,6 +187,7 @@ tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 - **소유자 보고**: 로컬 main checkout 의 `scripts/chat/send.txt` 에 한국어 업데이트를 쓰고 `scripts/chat/relay-send.sh` 로 `#new_chatting` 에 보낸다. 결정이 필요하면 권장안과 함께 묻고, 응답이 없으면 권장안대로 진행한다고 알린다. 폴러 `scripts/chat/poll.sh 3300`(같은 로컬 경로) 을 백그라운드로 계속 띄워 둔다(종료되면 재시작).
 - 헬퍼 스크립트는 재부팅에도 남도록 `.claude/skills/quoky-ship/scripts/` 에 둔다(스크래치패드·/tmp 는 재부팅 때 지워진다). 추적되는 것은 `run-gates.sh` 와 `resolve_changelog.py` 뿐이다.
 - **정리**: 미커밋 변경이 없고 main 에 머지된 worktree 만 `git worktree remove` 한다. `quoky-service` worktree 는 절대 지우지 않는다.
+- **Wiki**: 이 PR 이 바꾼 모듈의 `docs/wiki/` 페이지만 갱신한다(haiku 또는 sonnet). 그 모듈의 페이지가 없으면 새로 만들지 않는다. 위키는 source of truth 가 아니다. 코드와 다르면 위키를 고친다.
 
 ## 7. 항상 멈추고 소유자에게 묻는 것 (Strict)
 
