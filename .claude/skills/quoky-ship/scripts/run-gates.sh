@@ -206,28 +206,39 @@ group_has_members() { ps -axo pgid= 2>/dev/null | awk -v g="$1" '$1 == g { f = 1
 
 # 0 verified, 2 the group no longer exists (nothing to signal), 1 refused (logged).
 group_verified() {
-  local pgid=$1 want=$2 own tpid="" cur
+  local pgid=$1 want=$2 tpid="" snap verdict
   case "$pgid" in ''|*[!0-9]*) log "group signal refused: no valid pgid recorded"; return 1 ;; esac
   [ "$pgid" -gt 1 ] || { log "group signal refused: pgid $pgid"; return 1; }
-  own=$(pgid_of "$$")
-  if [ "$pgid" = "$own" ]; then log "group signal refused: pgid $pgid is this script's own group"; return 1; fi
-  if [ -n "${TMUX:-}" ]; then
-    tpid=$(printf '%s' "$TMUX" | cut -d, -f2)
-    if [ -n "$tpid" ] && { [ "$pgid" = "$tpid" ] || [ "$pgid" = "$(pgid_of "$tpid")" ]; }; then
-      log "group signal refused: pgid $pgid is the tmux server's"; return 1
-    fi
-  fi
-  group_has_members "$pgid" || return 2
-  # While a process with the leader's pid is alive in this group, its start time must be read and match the recorded one;
-  # a failed or empty lookup is refused (never treated as verified). With the leader gone, the group's existing members
-  # prove the pgid is not reused (POSIX: a pgid is not reused while its group has members).
-  if ps -p "$pgid" -o pid= >/dev/null 2>&1 && [ "$(pgid_of "$pgid")" = "$pgid" ]; then
-    cur=$(lstart_of "$pgid")
-    if [ -z "$cur" ] || [ -z "$want" ] || [ "$cur" != "$want" ]; then
-      log "group signal refused: leader $pgid start time '${cur:-unreadable}' != recorded '${want:-none}' (pid reuse?)"; return 1
-    fi
-  fi
-  return 0
+  [ -z "${TMUX:-}" ] || tpid=$(printf '%s' "$TMUX" | cut -d, -f2)
+  case "$tpid" in *[!0-9]*) tpid="" ;; esac
+  if [ -n "${TMUX:-}" ] && [ -z "$tpid" ]; then log "group signal refused: TMUX is set but its server pid is unreadable"; return 1; fi
+  # One consistent process snapshot decides (no separate lookups that can disagree or fail silently):
+  # ps failing or printing nothing -> refused; no member with this pgid -> 2 (nothing to signal); a live process with the
+  # leader's pid inside this group must carry the recorded start time (unreadable/empty/different -> refused). With the
+  # leader gone, the group's remaining members prove the pgid is not reused (POSIX: no reuse while the group has members).
+  snap=$(ps -axo pid=,pgid=,lstart= 2>/dev/null) || { log "group signal refused: process snapshot failed"; return 1; }
+  [ -n "$snap" ] || { log "group signal refused: empty process snapshot"; return 1; }
+  # The script's own group and the tmux server's group are read from the same snapshot; unreadable -> refused.
+  verdict=$(printf '%s\n' "$snap" | awk -v g="$pgid" -v want="$want" -v me="$$" -v tp="$tpid" '
+    { pid = $1; grp = $2; $1 = ""; $2 = ""; sub(/^ +/, ""); gsub(/ +/, " "); ls = $0
+      if (pid !~ /^[0-9]+$/ || grp !~ /^[0-9]+$/) { bad = 1; next }
+      if (grp == g) members++
+      if (pid == g && grp == g) { leader = 1; lstart = ls }
+      if (pid == me) owngrp = grp
+      if (tp != "" && pid == tp) tgrp = grp }
+    END {
+      if (bad) { print "refuse unparseable snapshot line"; exit }
+      if (owngrp == "") { print "refuse own process group unreadable"; exit }
+      if (g == owngrp) { print "refuse pgid is this script own group"; exit }
+      if (tp != "" && (g == tp || g == tgrp)) { print "refuse pgid is the tmux server group"; exit }
+      if (members == 0) { print "gone"; exit }
+      if (leader && (lstart == "" || want == "" || lstart != want)) { print "refuse leader start time [" lstart "] != recorded [" want "] (pid reuse?)"; exit }
+      print "ok" }')
+  case "$verdict" in
+    ok) return 0 ;;
+    gone) return 2 ;;
+    *) log "group signal refused: ${verdict#refuse }"; return 1 ;;
+  esac
 }
 
 # Terminate a verified process group by membership: TERM, wait up to STOP_GRACE_SEC while members remain, then KILL the group.
