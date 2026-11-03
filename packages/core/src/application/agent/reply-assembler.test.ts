@@ -21,7 +21,7 @@ import type { AgentStepsPlan } from './reply-notes';
 // summariser, with the grant test seam on) or, to bypass the summariser's own guards, through the sealing test seam.
 
 type RunPlan = Extract<ValidatedAgentPlan, { steps: readonly ValidatedAgentStep[] }>;
-const read = (entryId: NlWave1EntryId): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: {}, provenance: {} });
+const read = (entryId: NlWave1EntryId): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: { limit: 1 }, provenance: {} });
 const summarize = (from: number[]): ValidatedAgentStep => ({ kind: 'summarize', from, schema: 'digest.v1' });
 const plan = (steps: ValidatedAgentStep[]): RunPlan => ({ kind: 'run', steps, connectorCalls: steps.filter((step) => step.kind === 'read').length });
 const doc = (position: number, body = 'body'): AgentSourceDocument => ({ id: `m${position}`, position, title: 't', author: 'a', date: '2026-11-01T09:00:00.000Z', body });
@@ -137,7 +137,7 @@ describe('reply assembler', () => {
   it('a forged summary instance holds no content: it renders nothing, not even its label', async () => {
     const r = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });
     const fake = { kind: 'quarantined-summary', schema: 'digest.v1', count: 1, label: flowLabel('UNTRUSTED', 'HOST_ONLY', 'OWNER_DM_ONLY', ['x']) } as never;
-    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audit: { locality: 'REMOTE', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } }] } }, 'en');
+    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audit: { locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } }] } }, 'en');
     expect(out.parts.every((part) => part.kind === 'fact')).toBe(true);
     expect(out.label.egress).toBe('REMOTE_OK');
   });
@@ -226,5 +226,20 @@ describe('reply assembler', () => {
     assembleAgentReply({ plan: r.plan as AgentStepsPlan, result: r.result, language: 'ko', destinationIsOwnerDm: true, logger });
     expect(logger.lines).toEqual([{ message: 'agent_run.assemble', fields: { parts: 3, facts: 1, summaryLines: 1, droppedLines: 0 } }]);
     expect(JSON.stringify(logger.lines)).not.toMatch(/CANARY|m1/);
+  });
+
+  it('N1: a REMOTE call is disclosed even when it failed or was cut off', async () => {
+    const failed = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json', {}, 'REMOTE');
+    expect(failed.result.steps[1]).toMatchObject({ status: 'failed', audit: { locality: 'REMOTE' } });
+    expect(reply(failed, 'en').parts.map((part) => part.text)).toContain('Part of the original text was sent to an outside model to make this summary.');
+    const local = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json', {}, 'LOCAL');
+    expect(reply(local, 'en').parts.map((part) => part.text)).not.toContain('Part of the original text was sent to an outside model to make this summary.');
+  });
+
+  it('C3/N5: a throwing logger never fails the assembler', async () => {
+    const r = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, ONE);
+    const bad: Logger = { info: () => { throw new Error('log down'); }, warn: () => undefined, error: () => undefined };
+    const out = assembleAgentReply({ plan: r.plan as AgentStepsPlan, result: r.result, language: 'en', destinationIsOwnerDm: true, logger: bad });
+    expect(out.parts.length).toBeGreaterThan(0);
   });
 });

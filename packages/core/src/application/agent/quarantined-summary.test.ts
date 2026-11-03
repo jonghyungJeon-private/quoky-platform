@@ -10,6 +10,10 @@ import {
   AGENT_SUMMARY_READOUT_SOURCE,
   estimateInputTokens,
   mintSummaryEgressGrantForTest,
+  newSummaryRunToken,
+  sealQuarantinedSummaryForTest,
+  setSummaryGrantsForTest,
+  summaryGrantFor,
   parseQuarantinedOutput,
   quarantinedSummarize,
   selectQuarantinedModel,
@@ -550,6 +554,73 @@ describe('quarantined summariser: validation of the documents a read port hands 
   });
 });
 
+describe('quarantined summariser: review round 2', () => {
+  it('N2: items are added while the prompt fits the remaining input tokens; the rest is omitted and no reservation exceeds it', async () => {
+    const body = '가나다라마바사아자차'.repeat(200);
+    const docsKo = Array.from({ length: 10 }, (_, i) => doc(i + 1, body));
+    const probe = model('LOCAL');
+    await quarantinedSummarize({ ...base, sources: [mail(docsKo[0] as AgentSourceDocument)], models: [probe] });
+    const one = estimateInputTokens((probe.requests[0] as AiRequest).prompt);
+    const fake = model('LOCAL');
+    const seen: number[] = [];
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(...docsKo)], models: [fake], remainingInputTokens: one * 4, reserve: (tokens) => (seen.push(tokens), true) });
+    expect(outcome.kind).toBe('summary');
+    const sent = ((fake.requests[0] as AiRequest).prompt.match(/^ITEM \d+$/gm) ?? []).length;
+    expect(sent).toBeGreaterThan(1);
+    expect(sent).toBeLessThan(10);
+    expect(seen[0]).toBeLessThanOrEqual(one * 4);
+    if (outcome.kind === 'summary') expect(outcome.omitted).toBeGreaterThanOrEqual(10 - sent);
+  });
+
+  it('N1: a REMOTE model whose answer fails the schema still reports its audit', async () => {
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [model('REMOTE', 'nope')] });
+    expect(outcome).toMatchObject({ kind: 'failed', reason: 'schema', audit: { locality: 'REMOTE' } });
+  });
+
+  it('N1: onCallStart reports the audit as soon as the call starts, even for a call that never answers', async () => {
+    const controller = new AbortController();
+    let report: (() => unknown) | undefined;
+    const hung: QuarantinedSummarizerModel = { executionLocality: 'REMOTE', auditId: 'audit-hung', run: () => new Promise(() => undefined) };
+    const pending = quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [hung], signal: controller.signal, onCallStart: (audit) => (report = audit) });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(report?.()).toMatchObject({ locality: 'REMOTE', auditId: 'audit-hung' });
+    controller.abort();
+    expect(await pending).toMatchObject({ kind: 'failed', reason: 'model', audit: { locality: 'REMOTE' } });
+  });
+
+  it('N6: a `text` getter that throws settles the call as the closed model failure', async () => {
+    const evil: QuarantinedSummarizerModel = { executionLocality: 'LOCAL', auditId: 'a', run: async () => ({ get text(): string { throw new Error('boom'); } }) };
+    expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], models: [evil] })).toMatchObject({ kind: 'failed', reason: 'model' });
+  });
+
+  it('N9: a grant of run A never matches run B', async () => {
+    const runA = newSummaryRunToken();
+    const runB = newSummaryRunToken();
+    const fake = model('LOCAL');
+    const source = { entryId: 'mail.list' as const, documents: [doc(1)], grant: mintSummaryEgressGrantForTest(1, 'mail.list', runA) };
+    expect(await quarantinedSummarize({ ...base, sources: [source], models: [fake], run: runB })).toEqual({ kind: 'listing-only', reason: 'no-summary-grant' });
+    expect(await quarantinedSummarize({ ...base, sources: [source], models: [fake] })).toEqual({ kind: 'listing-only', reason: 'no-summary-grant' });
+    expect(fake.requests).toHaveLength(0);
+    expect((await quarantinedSummarize({ ...base, sources: [source], models: [fake], run: runA })).kind).toBe('summary');
+  });
+
+  it('C1/C2: every test seam throws outside the test runner and mints, seals and grants nothing', () => {
+    const env = (globalThis as { process: { env: Record<string, string | undefined> } }).process.env;
+    const saved = env.VITEST;
+    delete env.VITEST;
+    try {
+      expect(() => mintSummaryEgressGrantForTest(1, 'mail.list')).toThrow();
+      expect(() => setSummaryGrantsForTest(() => true)).toThrow();
+      expect(() => sealQuarantinedSummaryForTest('digest.v1', { trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED', egress: 'HOST_ONLY', scope: 'OWNER_DM_ONLY', sources: [] } as never, [])).toThrow();
+      expect(summaryGrantFor(1, 'mail.list')).toBeUndefined();
+    } finally {
+      env.VITEST = saved;
+    }
+    expect(env.VITEST).toBe('true');
+    expect(summaryGrantFor(1, 'mail.list')).toBeUndefined();
+  });
+});
+
 describe('quarantined summariser: structural pins', () => {
   const DIR = new URL('./', import.meta.url);
   const ROOT = new URL('../../../../../', import.meta.url);
@@ -558,15 +629,17 @@ describe('quarantined summariser: structural pins', () => {
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
     .map((name) => ({ name, text: strip(readFileSync(new URL(name, DIR), 'utf8')) }));
 
-  /** Every non-test source of every package and app (`<root>/{packages,apps}/<name>/src/**`). */
+  /** Every non-test script and source of every package and app (`<root>/{packages,apps}/<name>/src/**`) and the repo-level `tools/` and `scripts/`. */
+  const CODE = /\.(?:ts|tsx|js|cjs|mjs)$/;
+  const TESTFILE = /\.(?:test|spec)\.[a-z]+$/;
   function allSources(): { path: string; text: string }[] {
     const found: { path: string; text: string }[] = [];
     const walk = (dir: URL, relative: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) continue;
         const child = new URL(entry.isDirectory() ? `${entry.name}/` : entry.name, dir);
         if (entry.isDirectory()) walk(child, `${relative}${entry.name}/`);
-        else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) found.push({ path: `${relative}${entry.name}`, text: strip(readFileSync(child, 'utf8')) });
+        else if (CODE.test(entry.name) && !TESTFILE.test(entry.name)) found.push({ path: `${relative}${entry.name}`, text: strip(readFileSync(child, 'utf8')) });
       }
     };
     for (const top of ['packages', 'apps']) {
@@ -577,6 +650,13 @@ describe('quarantined summariser: structural pins', () => {
         } catch {
           // A package without a src folder.
         }
+      }
+    }
+    for (const top of ['tools', 'scripts']) {
+      try {
+        walk(new URL(`${top}/`, ROOT), `${top}/`);
+      } catch {
+        // No such directory.
       }
     }
     return found;
@@ -609,6 +689,17 @@ describe('quarantined summariser: structural pins', () => {
     expect(index).not.toMatch(/export \* from '\.\/quarantined-summary'/);
     expect(index).toMatch(/export type \{[^}]*\bQuarantinedSummary\b[^}]*\} from '\.\/quarantined-summary'/);
     expect(index.replace(/export type \{[^}]*\} from '\.\/quarantined-summary';/, '')).not.toMatch(/\bQuarantinedSummary\b(?!')/);
+  });
+
+  it('no file outside the agent folder imports the summariser, by static import, dynamic import() or require()', () => {
+    const link = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"`][^'"`]*quarantined-summary(?:\.[a-z]+)?['"`]/;
+    const files = allSources();
+    expect(files.some((file) => file.path.startsWith('tools/'))).toBe(true);
+    const outside = files.filter((file) => !file.path.startsWith('packages/core/src/application/agent/') && link.test(file.text)).map((file) => file.path);
+    expect(outside).toEqual([]);
+    expect(link.test("const m = await import('./quarantined-summary');")).toBe(true);
+    expect(link.test("const m = require('../agent/quarantined-summary.js');")).toBe(true);
+    expect(link.test("export { x } from './quarantined-summary';")).toBe(true);
   });
 
   it('the summariser performs no write, store or log call', () => {

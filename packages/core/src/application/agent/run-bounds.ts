@@ -99,6 +99,11 @@ export class AgentRunBudget {
     return this.firstBreach === undefined;
   }
 
+  /** Input tokens the run may still reserve (0 when spent). */
+  remainingInputTokens(): number {
+    return Math.max(0, this.bounds.maxInputTokens - this.inputTokens);
+  }
+
   /** A step may start: a free step number within `maxSteps` and the wall and every earlier bound intact. */
   reserveStep(): boolean {
     if (!this.checkWall()) return false;

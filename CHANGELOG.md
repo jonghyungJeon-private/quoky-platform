@@ -60,6 +60,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   otherwise.
 - **Not changed.** `active` is still refused; nothing is wired; no model is called. `agent-boundary.test.ts` allows the link
   neutraliser and the untrusted-document readout and scans the two new files.
+- **Review round 2 (same slice).** Test seams throw outside the test runner; per-run grant token; input-fit batches (omitted, not
+  a breach); REMOTE calls disclosed on every post-call status; denied reads counted as omitted; throwing logger and `text` getter
+  contained; readiness uses the read's limit; port signature pinned at compile time; scan widened to scripts and dynamic imports.
 - **Recorded.** DECISIONS "ADR-0121 S2 implementation note — P3-3b" (six unresolved points, for example calendar has no readout shape).
 - **Review fixes (same slice).** Jira and Slack are `listing-only` (`work-text-controls-not-built`); the caller flag
   `summaryRequested` is gone and `REMOTE_ON_SUMMARY_REQUEST` content needs a `SummaryEgressGrant` that nothing produces yet (mail

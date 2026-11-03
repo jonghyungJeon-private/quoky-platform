@@ -182,8 +182,9 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
       summaryLines += lines.length;
       if (step.omitted > 0) parts.push({ kind: 'status', text: t.omitted(step.omitted) });
     }
-    if (step.audit.locality === 'REMOTE') remote = true;
   }
+  // A remote call is disclosed whatever became of its answer (ok, failed, or cut off after it started).
+  for (const step of result.steps) if (step.kind === 'summarize' && 'audit' in step && step.audit?.locality === 'REMOTE') remote = true;
   if (remote) parts.push({ kind: 'status', text: t.remoteDisclosure });
 
   // 4. Fixed status lines: no model call was made, a call failed, a bound stopped the run.
@@ -199,13 +200,18 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
 }
 
 function finish(input: AssembleAgentReplyInput, parts: readonly AgentReplyPart[], label: FlowLabel, summaryLines: number, droppedLines: number): AssembledAgentReply {
-  input.logger?.info(AGENT_ASSEMBLE_LOG_EVENT, {
-    parts: parts.length,
-    facts: parts.filter((part) => part.kind === 'fact').length,
-    summaryLines,
-    droppedLines,
-    ...(input.result.breach !== undefined ? { breach: input.result.breach } : {}),
-  });
+  // A logger that throws never fails the assembler (total).
+  try {
+    input.logger?.info(AGENT_ASSEMBLE_LOG_EVENT, {
+      parts: parts.length,
+      facts: parts.filter((part) => part.kind === 'fact').length,
+      summaryLines,
+      droppedLines,
+      ...(input.result.breach !== undefined ? { breach: input.result.breach } : {}),
+    });
+  } catch {
+    // The log is best-effort.
+  }
   const frozen = Object.freeze(parts.map((part) => Object.freeze({ ...part })));
   return { text: frozen.map((part) => part.text).join('\n'), parts: frozen, label, summaryLines, droppedLines };
 }

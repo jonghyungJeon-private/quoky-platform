@@ -1,9 +1,11 @@
 import type { Logger } from '../../ports/logger.port';
-import type { NlArgs, NlWave1EntryId } from '../nl-routing/catalog';
+import { nlLimitArg, type NlArgs, type NlWave1EntryId } from '../nl-routing/catalog';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { AGENT_PLAN_MAX_REF_VALUES, type ValidatedAgentPlan, type ValidatedAgentStep } from './plan-validator';
 import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues, type AgentRunUsage } from './run-bounds';
 import {
+  AGENT_M2_MAX_ITEMS,
+  newSummaryRunToken,
   quarantinedSummarize,
   summaryGrantFor,
   summaryReadiness,
@@ -15,6 +17,7 @@ import {
   type QuarantinedListingOnlyReason,
   type QuarantinedSummarizerModel,
   type QuarantinedSummary,
+  type SummaryRunToken,
 } from './quarantined-summary';
 import { projectStructure, type AgentRawItem, type StructureProjection } from './structure-projector';
 
@@ -139,8 +142,10 @@ export type AgentStepResult =
     }
   | { readonly step: number; readonly kind: 'read'; readonly entryId: NlWave1EntryId; readonly status: 'failed'; readonly errorCode: AgentReadErrorCode }
   | { readonly step: number; readonly kind: 'read'; readonly entryId: NlWave1EntryId; readonly status: 'not-run'; readonly reason: AgentStepNotRunReason }
-  /** No summariser was injected (`deferred`), or a bound stopped the step (`not-run`). */
-  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'deferred' | 'not-run'; readonly from: readonly number[]; readonly schema: string }
+  /** No summariser was injected (`deferred`). */
+  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'deferred'; readonly from: readonly number[]; readonly schema: string }
+  /** A bound stopped the step; `audit` is set when a model call had already started (the call was made, even if its answer was cut off). */
+  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'not-run'; readonly from: readonly number[]; readonly schema: string; readonly audit?: QuarantinedCallAudit }
   | {
       readonly step: number;
       readonly kind: 'summarize';
@@ -173,6 +178,10 @@ interface RunState {
   readonly denials: Map<string, QuarantinedListingOnlyReason>;
   /** Read step number to the later summarize steps that cover it. */
   readonly coverage: Map<number, { readonly step: number; readonly schema: AgentSummarySchemaId }[]>;
+  /** Read step number to the items its projection listed (a denied read's items are omitted from a summary over it). */
+  readonly listed: Map<number, number>;
+  /** This run's token: a summary grant of another run never matches. */
+  readonly run: SummaryRunToken;
 }
 
 type ReadStep = Extract<ValidatedAgentStep, { kind: 'read' }>;
@@ -187,7 +196,7 @@ export class AgentPlanExecutor {
     const results: AgentStepResult[] = [];
     const projections = new Map<number, StructureProjection>();
     // Raw content of the reads a summary covers: per run, in memory only, never in the result.
-    const state: RunState = { documents: new Map(), denials: new Map(), coverage: new Map() };
+    const state: RunState = { documents: new Map(), denials: new Map(), coverage: new Map(), listed: new Map(), run: newSummaryRunToken() };
     // Which later summarize steps cover which read.
     for (const [index, step] of plan.steps.entries()) {
       if (step.kind !== 'summarize') continue;
@@ -202,7 +211,7 @@ export class AgentPlanExecutor {
     const blocked = staticOver || plan.kind !== 'run';
     for (const [index, step] of plan.steps.entries()) {
       const number = index + 1;
-      if (blocked || !budget.reserveStep()) {
+      if (blocked || !safely(() => budget.reserveStep(), false)) {
         results.push(notRun(step, number, 'bound'));
         continue;
       }
@@ -221,25 +230,30 @@ export class AgentPlanExecutor {
         );
       }
     }
-    const usage = budget.snapshot();
-    const breach = budget.breach;
+    const usage = safely(() => budget.snapshot(), ZERO_USAGE);
+    const breach = safely(() => budget.breach, undefined);
     // A summary that left items out is a partial answer, whatever the reason.
     const allOk = results.every((result) => (result.status === 'ok' && !(result.kind === 'summarize' && result.omitted > 0)) || result.status === 'deferred');
     const summaries = results.filter((result) => result.kind === 'summarize');
     const outcome = breach === undefined && allOk ? 'complete' : 'partial';
-    this.deps.logger?.info(AGENT_EXEC_LOG_EVENT, {
-      outcome,
-      ...(breach !== undefined ? { breach } : {}),
-      steps: results.length,
-      ok: results.filter((result) => result.status === 'ok').length,
-      summaries: summaries.filter((result) => result.status === 'ok').length,
-      listingOnly: summaries.filter((result) => result.status === 'listing-only').length,
-      m2Calls: usage.m2Calls,
-      connectorQueries: usage.connectorQueries,
-      httpRequests: usage.httpRequests,
-      refValues: usage.refValues,
-      elapsedMs: usage.elapsedMs,
-    });
+    // A logger that throws never rejects `execute` (total).
+    safely(
+      () =>
+        this.deps.logger?.info(AGENT_EXEC_LOG_EVENT, {
+          outcome,
+          ...(breach !== undefined ? { breach } : {}),
+          steps: results.length,
+          ok: results.filter((result) => result.status === 'ok').length,
+          summaries: summaries.filter((result) => result.status === 'ok').length,
+          listingOnly: summaries.filter((result) => result.status === 'listing-only').length,
+          m2Calls: usage.m2Calls,
+          connectorQueries: usage.connectorQueries,
+          httpRequests: usage.httpRequests,
+          refValues: usage.refValues,
+          elapsedMs: usage.elapsedMs,
+        }),
+      undefined,
+    );
     return { outcome, ...(breach !== undefined ? { breach } : {}), steps: results, usage };
   }
 
@@ -269,11 +283,14 @@ export class AgentPlanExecutor {
 
     // Documents are asked for only when a covering summarize step could run: its source has a readout shape and work-text
     // controls, and a model can be selected for this read's label (optimistically for one item: the count is not known yet).
+    // A read of several items counts its requested limit (an unstated limit counts as the item cap): a remote model qualifies
+    // for one item only, so a multi-item read with remote models alone never fetches bodies (N3).
     const models = this.deps.summarizer?.models;
+    const requested = Math.min(AGENT_M2_MAX_ITEMS, Math.max(1, nlLimitArg(step.args) ?? AGENT_M2_MAX_ITEMS));
     let withDocuments = false;
     if (models !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
-        const refusal = summaryReadiness(entryId, cover.schema, summaryGrantFor(cover.step, entryId), 1, models);
+        const refusal = summaryReadiness(entryId, cover.schema, summaryGrantFor(cover.step, entryId, state.run), requested, models);
         if (refusal === undefined) withDocuments = true;
         else state.denials.set(`${cover.step}:${number}`, refusal);
       }
@@ -290,6 +307,7 @@ export class AgentPlanExecutor {
     }
     const projection = projectStructure(entryId, response.items);
     projections.set(number, projection);
+    state.listed.set(number, projection.itemCount);
     if (withDocuments && response.documents !== undefined) {
       const checked = validateSourceDocuments(response.documents, projection.slots);
       state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped });
@@ -315,7 +333,7 @@ export class AgentPlanExecutor {
     for (const from of step.from) {
       const covered = state.documents.get(from);
       if (covered === undefined) continue;
-      const grant = summaryGrantFor(number, covered.entryId);
+      const grant = summaryGrantFor(number, covered.entryId, state.run);
       sources.push(grant !== undefined ? { ...covered, grant } : covered);
     }
     if (sources.length === 0) {
@@ -324,7 +342,11 @@ export class AgentPlanExecutor {
       return { ...base, status: 'listing-only', reason: denied ?? 'no-documents' };
     }
 
+    // A summary over several reads where some were denied: the denied reads' listed items are omitted too (N4).
+    const deniedItems = step.from.reduce((sum, from) => sum + (state.denials.has(`${number}:${from}`) && state.documents.get(from) === undefined ? (state.listed.get(from) ?? 0) : 0), 0);
+
     const controller = new AbortController();
+    let started: (() => QuarantinedCallAudit) | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const wall = new Promise<'wall'>((resolve) => {
       timer = setTimeout(() => {
@@ -341,18 +363,28 @@ export class AgentPlanExecutor {
         sources,
         models: summarizer.models,
         signal: controller.signal,
+        run: state.run,
+        remainingInputTokens: budget.remainingInputTokens(),
         reserve: (tokens) => budget.reserveModelCall('m2') && budget.reserveInputTokens(tokens),
+        onCallStart: (audit) => {
+          started = audit;
+        },
       }).catch((): { readonly kind: 'failed'; readonly reason: 'model' } => ({ kind: 'failed', reason: 'model' }));
       const outcome = await Promise.race([call, wall]);
       budget.checkWall();
-      if (outcome === 'wall' || budget.breach !== undefined) return { ...base, status: 'not-run' };
-      if (outcome.kind === 'summary') return { ...base, status: 'ok', summary: outcome.summary, omitted: outcome.omitted, audit: outcome.audit };
+      // Every status reached after a model call started carries its audit (the call was made, whatever became of the answer).
+      const callAudit = (known?: QuarantinedCallAudit): { readonly audit?: QuarantinedCallAudit } => {
+        const audit = known ?? (started !== undefined ? safely(started, undefined) : undefined);
+        return audit !== undefined ? { audit } : {};
+      };
+      if (outcome === 'wall' || budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudit(outcome !== 'wall' && 'audit' in outcome ? outcome.audit : undefined) };
+      if (outcome.kind === 'summary') return { ...base, status: 'ok', summary: outcome.summary, omitted: outcome.omitted + deniedItems, audit: outcome.audit };
       if (outcome.kind === 'listing-only') return { ...base, status: 'listing-only', reason: outcome.reason };
       if (outcome.kind === 'failed') {
         const errorCode = outcome.reason === 'schema' ? 'SCHEMA' : outcome.reason === 'credential' ? 'CREDENTIAL' : 'MODEL';
-        return { ...base, status: 'failed', errorCode, ...('audit' in outcome && outcome.audit !== undefined ? { audit: outcome.audit } : {}) };
+        return { ...base, status: 'failed', errorCode, ...callAudit('audit' in outcome ? outcome.audit : undefined) };
       }
-      return { ...base, status: 'not-run' };
+      return { ...base, status: 'not-run', ...callAudit() };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       controller.abort();
@@ -436,4 +468,15 @@ function notRun(step: ValidatedAgentStep, number: number, reason: AgentStepNotRu
 
 function closedCode(code: string): AgentReadErrorCode {
   return (AGENT_READ_ERROR_CODES as readonly string[]).includes(code) ? (code as AgentReadErrorCode) : 'UNKNOWN';
+}
+
+const ZERO_USAGE: AgentRunUsage = Object.freeze({ steps: 0, replans: 0, connectorQueries: 0, httpRequests: 0, modelCalls: 0, m2Calls: 0, inputTokens: 0, refValues: 0, elapsedMs: 0 });
+
+/** Run `action`; if it throws (a logger, a budget read), the fallback stands. Nothing in `execute` may reject. */
+function safely<T>(action: () => T, fallback: T): T {
+  try {
+    return action();
+  } catch {
+    return fallback;
+  }
 }

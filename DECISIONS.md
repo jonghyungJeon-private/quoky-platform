@@ -31613,8 +31613,8 @@ and D9 still governs every turn that goes to chat.
   step covers the read and a model can already be selected for its label) and there is no fallback to a local model. With a grant
   a remote model may take exactly one item; a batch runs on a `LOCAL` model only. `HOST_ONLY` gets no model. Documents are
   validated against the projection (shape, an integer unique in-range position, the projector's id at that position), the input
-  reservation is the prompt's UTF-8 byte length, both credential detectors and the document action-claim guard run on the final
-  prompt and on every entry (and again in the assembler), the assembler answers only the owner's DM, and a REMOTE summary carries a
+  reservation is the prompt's UTF-8 byte length, both credential detectors run on the final prompt, and the credential detectors and the document
+  action-claim guard run on every entry (and again in the assembler; the action-claim guard does not run on the prompt), the assembler answers only the owner's DM, and a REMOTE summary carries a
   fixed disclosure line. `GitHub` labels in `flow-policy.ts` are NOT changed in this slice (GitHub has no readout, so it cannot
   reach M2); that is an open precondition (decision 7).
 - **Owner decisions needed (recommendations are not ratified text).**
@@ -31631,6 +31631,17 @@ and D9 still governs every turn that goes to chat.
      covered reads.
   - Open Chief Architect / owner interpretation (not refactored here): the narrow `QuarantinedSummarizerModel` port versus
     routing M2 through the existing provider router with a locality and `workText` constraint (ADR-0121 D12 "no new port").
+  9. Input-token estimator. Implemented: the prompt's UTF-8 byte length (a true upper bound, Korean included) with
+     fit-to-budget (items are added while the rendered prompt fits the run's remaining input tokens; the rest is omitted and the
+     run is partial, never a bound breach). Alternative: a calibrated per-model token bound, which fits more items per call but
+     needs measurement per provider. Owner to choose.
+- **Review round 2 (Codex and Chief Architect; strict-side choices, pending the owner).** The test seams (`...ForTest`) throw
+  unless `VITEST=true` (read through `globalThis`; the production service never sets it). A grant is bound to a per-`execute`
+  token. A read asked for bodies counts its requested limit (an unstated limit counts as the item cap of 10). Any summarize
+  step reached after a model call started carries that call's audit, and a REMOTE audit is disclosed whatever the outcome.
+  Denied reads' listed items are omitted from a summary over several reads. A throwing logger or `result.text` getter never
+  rejects the executor, the assembler or the call.
+
 ## ADR-0112 amendment 3 — Undo of approved external connector writes: calendar update and restore, Jira comment delete and transition revert, `lastAction.anchorTaskId`, undo reachable at the `local` level (Accepted 2026-11-02) (2026-11-02)
 
 - **Status:** **Accepted 2026-11-02** by the owner with the recommended options O1-O7 (see the ratification record at the

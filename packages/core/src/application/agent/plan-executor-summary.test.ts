@@ -12,7 +12,7 @@ import { setSummaryGrantsForTest, summaryEntriesForAssembler, type AgentSourceDo
 // makes a summary grant, so the tests that need one switch the test seam on.
 
 type RunPlan = Extract<ValidatedAgentPlan, { steps: readonly ValidatedAgentStep[] }>;
-const read = (entryId: NlWave1EntryId): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: {}, provenance: {} });
+const read = (entryId: NlWave1EntryId): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: { limit: 1 }, provenance: {} });
 const summarize = (from: number[], schema: 'digest.v1' | 'meeting-digest.v1' = 'digest.v1'): ValidatedAgentStep => ({ kind: 'summarize', from, schema });
 const plan = (steps: ValidatedAgentStep[]): RunPlan => ({ kind: 'run', steps, connectorCalls: steps.filter((step) => step.kind === 'read').length });
 
@@ -249,6 +249,69 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.outcome).toBe('partial');
       expect(signals).toHaveLength(1);
       expect(signals[0]?.aborted).toBe(true);
+    });
+  });
+
+  describe('review round 2 (N1-N4, C3)', () => {
+    beforeEach(grantAll);
+    const wide = (id: NlWave1EntryId, limit: number): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES], args: { limit }, provenance: {} });
+
+    it('N1: a REMOTE call the wall cuts off after it started still reports its audit', async () => {
+      const hung: QuarantinedSummarizerModel = { executionLocality: 'REMOTE', auditId: 'audit-hung', run: () => new Promise(() => undefined) };
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: { models: [hung] }, bounds: { wallMs: 30 } }).execute(MAIL_PLAN());
+      expect(result.steps[1]).toMatchObject({ status: 'not-run', audit: { locality: 'REMOTE', auditId: 'audit-hung' } });
+    });
+
+    it('N1: a REMOTE call whose answer fails the schema reports its audit', async () => {
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: { models: [model('REMOTE', 'not json')] } }).execute(MAIL_PLAN());
+      expect(result.steps[1]).toMatchObject({ status: 'failed', errorCode: 'SCHEMA', audit: { locality: 'REMOTE' } });
+    });
+
+    it('N1: a step refused before any call carries no audit', async () => {
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: { models: [model('REMOTE')] }, bounds: { maxModelCalls: 0 } }).execute(MAIL_PLAN());
+      expect(result.steps[1]).toMatchObject({ status: 'not-run' });
+      expect(result.steps[1]).not.toHaveProperty('audit');
+    });
+
+    it('N2: ten full Korean items send only those that fit the input budget and omit the rest, with no input-tokens breach', async () => {
+      const body = '가나다라마바사아자차'.repeat(300);
+      const bodies = Array.from({ length: 10 }, () => body);
+      const fake = model('LOCAL');
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(ids(10), docs(...bodies)) }, summarizer: { models: [fake] }, bounds: { maxInputTokens: 12_000 } }).execute(plan([wide('mail.list', 10), summarize([1])]));
+      expect(result.breach).toBeUndefined();
+      const sent = (fake.requests[0]?.prompt.match(/^ITEM \d+$/gm) ?? []).length;
+      expect(sent).toBeGreaterThan(0);
+      expect(sent).toBeLessThan(10);
+      expect(Buffer.byteLength(fake.requests[0]?.prompt ?? '', 'utf8')).toBeLessThanOrEqual(12_000);
+      expect(result.steps[1]).toMatchObject({ status: 'ok' });
+      expect((result.steps[1] as { omitted: number }).omitted).toBeGreaterThanOrEqual(10 - sent);
+      expect(result.outcome).toBe('partial');
+    });
+
+    it('N3: a multi-item read with only REMOTE models never fetches bodies; a one-item read does', async () => {
+      const remote = model('REMOTE');
+      const many = port(ids(5), docs('a', 'b', 'c', 'd', 'e'));
+      const listed = await new AgentPlanExecutor({ readers: { 'mail.list': many }, summarizer: { models: [remote] } }).execute(plan([wide('mail.list', 5), summarize([1])]));
+      expect(many.requests[0]?.withDocuments).toBeUndefined();
+      expect(listed.steps[1]).toMatchObject({ status: 'listing-only', reason: 'no-model' });
+      const one = port(['m1'], docs('a'));
+      await new AgentPlanExecutor({ readers: { 'mail.list': one }, summarizer: { models: [remote] } }).execute(plan([wide('mail.list', 1), summarize([1])]));
+      expect(one.requests[0]?.withDocuments).toBe(true);
+    });
+
+    it('N4: a summary over [mail, jira] counts the denied jira items as omitted (partial)', async () => {
+      const result = await new AgentPlanExecutor({
+        readers: { 'mail.list': port(['m1'], docs('hello')), 'jira.issues': port(['AB-1', 'AB-2', 'AB-3'], []) },
+        summarizer: { models: [model('LOCAL')] },
+      }).execute(plan([read('mail.list'), read('jira.issues'), summarize([1, 2])]));
+      expect(result.steps[2]).toMatchObject({ status: 'ok', omitted: 3 });
+      expect(result.outcome).toBe('partial');
+    });
+
+    it('C3: a throwing logger never rejects execute', async () => {
+      const bad: Logger = { info: () => { throw new Error('log down'); }, warn: () => undefined, error: () => undefined };
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: { models: [model('LOCAL')] }, logger: bad }).execute(MAIL_PLAN());
+      expect(result.steps[1]).toMatchObject({ status: 'ok' });
     });
   });
 

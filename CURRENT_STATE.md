@@ -12,8 +12,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   by the strictest egress label (else listing only), at most 3 calls charged on the run bounds. Assembler: deterministic, Core
   facts first, no URL from a model. Still `off`/`shadow` only: `active` is refused, nothing wired, no model called.
 - **Open.** Calendar, GitHub, Confluence, Jira and Slack are listing only (no readout shape or no work-text controls); mail and
-  Drive are listing only until the owner decides how a `SummaryEgressGrant` is derived (no producer exists; no caller flag); eight
+  Drive are listing only until the owner decides how a `SummaryEgressGrant` is derived (no producer exists; no caller flag); nine
   owner decisions in DECISIONS "ADR-0121 S2 implementation note — P3-3b".
+  Review round 2 applied (seam runtime barrier, per-run grants, input-fit, audit on every post-call status; owner decision 9 added).
 - **Next (S2).** Adapter read ports with raw documents and the budgeted HTTP client, wiring, read+write path, S2 read red-team,
   gate campaign, release.
 
