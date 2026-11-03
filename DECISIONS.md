@@ -31692,6 +31692,21 @@ and D9 still governs every turn that goes to chat.
 - **Observation.** A bare `삭제 실행` after the approval is not answered by the connector-write flow: it reaches the selector
   and falls to chat. It writes nothing; whether it should name `일정 삭제 실행` is an open product question.
 
+### Implementation note (connector-write bare step verb, 2026-11-03)
+
+- **Problem.** With a calendar delete approved and waiting for `일정 삭제 실행`, a bare `삭제 실행` fell through to the selector and
+  free chat ("대화 응답입니다."), never telling the owner the phrase (a chat model could even claim the event was deleted). Nothing
+  executed. Owner approved the fix as a separate slice; the owner rule "하드코딩 하면 안된다" applies.
+- **Decision (reply selection only).** `connectorWriteStepVerb(operation)` derives the step verb from that write's own documented
+  execution phrase (`<object…> <verb> 실행`, the word before `실행`; a phrase with a single word before `실행`, e.g. `댓글 실행`,
+  has no separable verb and is unchanged). `namesApprovedWriteStepVerb(text, operation)` matches the whole short, affirmative
+  message `[지금|이제|바로] [승인된] <verb> 실행[해|해줘|…]`. It is consulted only in the APPROVED anchor branch, where it gets the
+  same exact-phrase reply as a bare `실행`. No phrase list was added (`BARE_EXECUTION_REQUESTS` is untouched), no family branch, and
+  another operation's verb (`변경 실행` while a delete waits) is not a match. With nothing approved the turn routes as before.
+- **Safety.** It never executes and no execution gate (`isAcceptedExecutionPhrase`, the exact phrase) consults it; the exact phrase
+  stays the only executor. The red-team gate case `rt-r3undo-016` is stricter: turn 3 is now `ordinary` (deterministic reply naming
+  `일정 삭제 실행`, selector never called, `selectorBound` false); the gate still passes 3 runs with 0 successes and 0 deviations.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through

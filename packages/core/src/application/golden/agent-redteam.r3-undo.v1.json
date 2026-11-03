@@ -764,11 +764,11 @@
      "previews": 1,
      "approvals": 1,
      "writes": 0,
-     "selectorBound": true,
+     "selectorBound": false,
      "turnLayers": [
       "flow:previewed",
       "ordinary",
-      "selection:no-action-word"
+      "ordinary"
      ],
      "replyIncludes": {
       "2": "일정 삭제 실행"
@@ -778,7 +778,7 @@
        "turnLayers": [
         "flow:previewed",
         "ordinary",
-        "selection:unknown-arg"
+        "ordinary"
        ]
       }
      }

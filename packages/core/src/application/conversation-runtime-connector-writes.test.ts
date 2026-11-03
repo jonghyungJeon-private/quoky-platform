@@ -1698,6 +1698,50 @@ describe('connector writes — routing exec gaps (INT-2 / PR #137 follow-ups)', 
     expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
   });
 
+  it('a bare step verb of the approved write ("삭제 실행", "변경 실행") gets the exact-phrase hint, runs nothing, and the exact phrase still runs once', async () => {
+    const del = harness({ events: [WEEKLY, LUNCH] });
+    await del.send('내일 3시 회의 취소해줘');
+    await del.send('승인');
+    const classifyBefore = del.classify.count;
+    for (const text of ['삭제 실행', '삭제 실행해줘', '지금 삭제 실행해', '삭제실행']) {
+      const reply = (await del.send(text)).reply.text;
+      expect(reply, text).toContain('승인된 캘린더 일정 삭제');
+      expect(reply, text).toContain('실행할 작업을 정확히 말해 주세요: "일정 삭제 실행"');
+    }
+    expect(del.classify.count).toBe(classifyBefore); // deterministic: never the selector or chat
+    expect(del.totalWrites()).toBe(0);
+    expect(anchorOf(del.anchorTask())?.status).toBe('APPROVED');
+    expect((await del.send('일정 삭제 실행')).reply.text).toContain('일정을 삭제했어요');
+    expect(del.writes.deleteEvent).toHaveLength(1);
+
+    const transition = harness();
+    await transition.send('PROJ-12 진행 중으로 바꿔줘');
+    await transition.send('승인');
+    expect((await transition.send('변경 실행')).reply.text).toContain('실행할 작업을 정확히 말해 주세요: "상태 변경 실행"');
+    expect(transition.totalWrites()).toBe(0);
+    expect(transition.writes.transition).toHaveLength(0);
+    await transition.send('상태 변경 실행');
+    expect(transition.writes.transition).toHaveLength(1);
+  });
+
+  it('the same bare verb with nothing approved is ordinary routing, and another operation’s verb is not a near miss', async () => {
+    const none = harness();
+    const before = none.classify.count;
+    expect((await none.send('삭제 실행')).reply.text).not.toContain('실행할 작업을 정확히 말해 주세요');
+    expect(none.classify.count).toBe(before + 1);
+
+    const h = harness({ events: [WEEKLY, LUNCH] });
+    await h.send('내일 3시 회의 취소해줘');
+    await h.send('승인');
+    for (const text of ['변경 실행', '추가 실행']) {
+      const classifyBefore = h.classify.count;
+      expect((await h.send(text)).reply.text, text).not.toContain('"일정 삭제 실행"');
+      expect(h.classify.count, text).toBe(classifyBefore + 1);
+    }
+    expect(h.totalWrites()).toBe(0);
+    expect(anchorOf(h.anchorTask())?.status).toBe('APPROVED');
+  });
+
   it('gap 1: with nothing approved a bare "실행" is not given the connector-write reply', async () => {
     const h = harness();
     const reply = await h.send('실행');

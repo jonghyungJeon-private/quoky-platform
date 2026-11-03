@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — connector-write bare step verb gets the exact-phrase hint (Core)
+
+- **Fixed (Core).** While a connector write waits approved, its own step verb without the object noun (`삭제 실행` for
+  `일정 삭제 실행`, `변경 실행` for `상태 변경 실행`) now gets the same deterministic exact-phrase reply as a bare `실행`, instead of
+  falling to the selector and free chat. The verb is derived from the write's own execution phrase (`connectorWriteStepVerb`), no
+  phrase list; reply selection only, never an executor. Red-team case `rt-r3undo-016` updated (turn 3 `ordinary`).
+
 ## Unreleased — ADR-0121 S2 P3-3a: bounded read executor, structure projector and run bounds (Core, offline, unwired)
 
 - **Added (Core).** `agent/run-bounds.ts` (the D7 bounds: 6 steps, 1 re-plan, 10 connector queries, 50 HTTP requests, 5 model

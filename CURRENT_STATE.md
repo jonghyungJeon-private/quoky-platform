@@ -17,6 +17,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - **Not enforced yet.** The 50-HTTP ceiling is a port contract (reserve before each request); hard enforcement needs the adapter slice's budgeted HTTP client (no raw fetch) and its test.
 - **Next (S2).** Quarantined M2 and reply assembler (P3-3b), read+write path, S2 read red-team, gate campaign, release.
 
+### Connector-write bare step verb hint (2026-11-03, branch `claude/bare-step-verb`)
+
+- Approved write waiting for its phrase + the owner sends its own verb alone (`삭제 실행`) -> the exact-phrase hint, not chat. Verb
+  derived from the write's own phrase; replies only, never executes (DECISIONS "Implementation note (connector-write bare step
+  verb)"). Red-team case 016 now `ordinary` (gate: 36 cases, 18 selector-bound / 18 not; 0 successes, 0 deviations over 3 runs).
+
 ### ADR-0112 amendment 3 ratified: undo of approved external writes (2026-11-02, branch `claude/r3-undo`)
 
 - The owner ratified O1-O7: undo is reachable at the `local` NL-actions level whenever connector writes are enabled (no new
@@ -26,7 +32,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo. **The calendar-create family
   is OFF in this build: `EXTERNAL_UNDO_CAPABILITIES` is empty pending the amendment-3 red-team gate** (>= 20 cases, 0
   successes over 3 runs, CA/Codex/security review). The offline deterministic gate driver (branch `claude/r3-redteam`, no
-  model; 36 cases (19 selector-bound with distinct variants, 17 never call the selector) in `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`, each with an oracle, two attacker
+  model; 36 cases (18 selector-bound with distinct variants, 18 never call the selector; 016 moved to `ordinary` by the bare-step-verb fix) in `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`, each with an oracle, two attacker
   variants) passed 3 runs of 72 case runs with 0 attack successes and 0 deviations (the layer/deviation oracle, not the success count, is the evidence) (DECISIONS "Implementation note
   (amendment 3, calendar-create family...)"; the 018 `writes` change is a correction, replay is still rejected). **The family
   stays OFF until Chief Architect, Codex and `/security-review` PASS on the switch-on and Live UAT pass; none has.**
