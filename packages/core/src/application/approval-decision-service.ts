@@ -21,7 +21,10 @@ import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from './connector-writes/connec
 import {
   connectorWriteExecutionGate,
   connectorWriteTargetOf,
+  type ConnectorWriteAnchor,
   type ConnectorWriteAnchorView,
+  type ConnectorWriteFlow,
+  type ConnectorWritePreview,
   type ConnectorWriteStep,
   type ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
@@ -994,6 +997,72 @@ export class ApprovalDecisionService {
       await flow.close(input.session, live, reason, this.clock(), held);
       return this.connectorWriteStepReply(input.context, input.session.id, { kind: 'closed', reason, family: anchor.family }, '', history);
     });
+  }
+
+  /**
+   * ADR-0120 A6-D3 amendment (2026-11-03): withdraw ONE open connector write because the kill switch is stopped. Under the
+   * approval → session locks (the ones execution's claim takes): re-read the live anchor; a PENDING approval is recorded
+   * rejected, an APPROVED one revoked, and the anchor is closed `stopped`. A write whose grant is already consumed (it started
+   * or finished) is never touched: `in-flight` (it completes and reports) or `done`. Never sends.
+   */
+  withdrawConnectorWriteForStop(
+    input: ApprovalDecisionInput,
+    view: ConnectorWriteAnchorView,
+  ): Promise<'closed' | 'in-flight' | 'done'> {
+    return this.exclusive(view.anchor.approvalId, input.session.id, async (held) => {
+      const flow = this.deps.connectorWriteFlow!;
+      const live = await flow.find(input.session, held);
+      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) return 'done';
+      const status = live.anchor.status;
+      if (status === 'EXECUTING') return 'in-flight';
+      if (live.anchor.consumedAt || status === 'SENT' || status === 'NOT_SENT' || status === 'UNCERTAIN') return 'done';
+      const approvalId = live.anchor.approvalId;
+      if (approvalId !== undefined && status === 'APPROVAL_PENDING' && live.approval !== null) {
+        await this.deps.approvals.decide(approvalId, this.decisionOf(approvalId, input, false));
+      } else if (approvalId !== undefined && status === 'APPROVED' && this.deps.approvals.revoke) {
+        const approval = await this.deps.approvals.get(approvalId);
+        if (approval?.status === ApprovalStatus.APPROVED) {
+          await this.deps.approvals.revoke(approvalId, { ...this.decisionOf(approvalId, input, false), comment: APPROVAL_REVOKED_COMMENT });
+        }
+      }
+      if (approvalId !== undefined) {
+        this.deps.logger.info('approval decided', { approvalId, surface: input.surface, kind: 'CONNECTOR_WRITE', outcome: 'REVOKED' });
+      }
+      await flow.close(input.session, live, 'stopped', this.clock(), held);
+      return 'closed';
+    });
+  }
+
+  /**
+   * The owner's `에이전트 중지` (same turn): close every open connector write of this actor that the switch governs
+   * (`governs`), in whatever conversation it waits (ADR-0114: every platform is one owner Actor). Returns the closed ones
+   * (their previews, for the reply) and how many had already started. Best-effort per anchor, never throws.
+   */
+  async withdrawGovernedConnectorWrites(
+    actor: Actor,
+    governs: (anchor: ConnectorWriteAnchor) => boolean,
+  ): Promise<{ readonly closed: readonly ConnectorWritePreview[]; readonly running: number }> {
+    const flow = this.deps.connectorWriteFlow;
+    const closed: ConnectorWritePreview[] = [];
+    let running = 0;
+    if (flow?.openAnchorsOf === undefined) return { closed, running };
+    let open: Awaited<ReturnType<NonNullable<ConnectorWriteFlow['openAnchorsOf']>>> = [];
+    try {
+      open = await flow.openAnchorsOf(actor.id);
+    } catch {
+      return { closed, running };
+    }
+    for (const { session, view } of open) {
+      if (!governs(view.anchor)) continue;
+      try {
+        const result = await this.withdrawConnectorWriteForStop({ context: session.context, session, actor, surface: 'chat' }, view);
+        if (result === 'closed' && view.anchor.preview !== undefined) closed.push(view.anchor.preview);
+        else if (result === 'in-flight') running += 1;
+      } catch (error) {
+        this.deps.logger.warn('approval.stop_withdraw_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      }
+    }
+    return { closed, running };
   }
 
   /** Compose a connector-write step reply and record it (a calendar step keeps the fixed note in history). */

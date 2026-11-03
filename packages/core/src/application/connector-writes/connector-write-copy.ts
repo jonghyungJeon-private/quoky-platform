@@ -639,8 +639,30 @@ export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, ca
       return `일정 선택을 취소했어요. ${done}`;
     case 'expired':
       return `승인 시간이 지나 요청이 만료됐어요. ${done}`;
+    case 'stopped':
+      return `에이전트를 중지해서 요청을 닫았어요. ${done}`;
     default:
       return `요청을 끝냈어요. ${done}`;
+  }
+}
+
+/**
+ * ADR-0120 A6-D3 amendment (2026-11-03): one line of the stop reply for an approval the kill switch closed — the action kind
+ * and the target label the preview already showed (an event title is an untrusted span, never markup).
+ */
+export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): MessageBody {
+  const label = connectorWriteLabel(preview.operation);
+  switch (preview.operation) {
+    case 'ISSUE_COMMENT':
+    case 'ISSUE_TRANSITION':
+      return messageBody(`${label} — `, inline(preview.issueKey));
+    case 'CHANNEL_POST':
+      return messageBody(`${label} — #`, inline(preview.channelLabel));
+    case 'CALENDAR_EVENT_CREATE':
+      return messageBody(`${label} — `, inline(preview.event.title));
+    case 'CALENDAR_EVENT_UPDATE':
+    case 'CALENDAR_EVENT_DELETE':
+      return messageBody(`${label} — `, inline(preview.before.title));
   }
 }
 
@@ -651,6 +673,7 @@ const CLOSED_REQUEST_KO: Readonly<Record<ConnectorWriteCloseReason, string>> = {
   superseded: '새 요청으로 바뀌어서',
   abandoned: '선택이 취소돼서',
   inconsistent: '확인할 수 없어서',
+  stopped: '에이전트 중지로 닫혀서',
 };
 
 /**

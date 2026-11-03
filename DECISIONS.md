@@ -32490,3 +32490,55 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
     - The stop blocks new work at once.
     - An external call already sent runs to completion and is reported.
     - Open approvals waiting for an exact phrase (undo anchors included) are listed in the stop reply and closed.
+## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
+
+Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112
+amendment 3 Live UAT note ("에이전트 중지 does not close an already-open undo anchor").
+
+- **Owner wording (2026-11-03).** "이미 열려있는게 있다고 노티 받고, 모든 작업이 종료후에 에이전트 중지": be told what is open;
+  work already running finishes; then the stop holds.
+- **Problem.** The switch was read at preview time. An open undo approval (the owner said "되돌려줘", got the calendar-delete
+  preview, and Quoky waits for the exact phrase "일정 삭제 실행") survived `에이전트 중지`: the phrase still executed.
+- **Behaviour.**
+  1. *On `에이전트 중지` (same turn).* After the switch is saved, Core finds the owner's open connector-write anchors in every
+     active conversation (one owner Actor, ADR-0114; `ConnectorWriteFlow.openAnchorsOf`, read-only) that the switch governs,
+     rejects a pending approval or revokes an approved one under the approval and session locks, and closes the anchor with the
+     new close reason `stopped` (the existing close mechanism; no new port, no migration, the anchor Task JSON gains one enum value). The fixed
+     stop reply gains a notice: the count and one line per closed request, the action kind and the target label the preview
+     showed ("캘린더 일정 삭제 — <event title>", the title an untrusted span). With nothing open the reply is byte-identical.
+  2. *Execution-time check (defence in depth).* The approval of a governed write and its exact execution phrase re-read the
+     persisted switch (`actionsStillActing`, never the turn's snapshot): immediately before the phrase is handled, again inside
+     the execution claim (under the locks, before the grant is consumed) and before the writer is called. If it is stopped nothing
+     runs, the anchor is closed `stopped`, and the answer is the existing stopped copy ("자연어 실행이 멈춰 있어서 아무것도 하지
+     않았어요…") plus that the request is closed. This holds even when step 1 missed an anchor (test: switch flipped straight in the
+     actor record). After step 1, a later phrase is answered by the existing closed-request reply ("가장 최근 … 요청은 에이전트
+     중지로 닫혀서 실행하지 않았어요").
+  3. *`에이전트 재개` never reopens a closed anchor*: the owner asks again (tested).
+- **Scope: what the switch governs.**
+  - *Governed:* A6 natural-language actions and the approvals ADR-0112 amendment 1 ties to the switch, that is connector-write
+    anchors with `undoOf` (the receipt-sourced undo, today `calendar-create`; `isActionSwitchGoverned`). Local NL actions (to-do,
+    reminder create, complete, cancel, reopen, local undo) were already covered at execution: the persisted switch is re-read
+    right before dispatch (`actionsStillActing`) and again inside the store write (`ActionWriteCondition`, A6-D3b); unchanged.
+  - *Not governed (unchanged):* connector writes the owner asks for with an anchored Class A grammar ("캘린더 일정 추가: …",
+    Jira comment/transition, Slack post) and the generic approval-decision-service flows (code, apply, commit, push, PR, merge,
+    credential override): A6-D3 says anchored Class A commands carry no condition, and no ADR text puts these approvals under the
+    switch. They are listed as an open point, not changed.
+- **Work in flight.** Inbound turns are NOT serialized per conversation: `main.ts` hands each message to
+  `core.handleInboundMessage` without a queue, so a stop can be handled while an execution turn awaits the provider. What serializes
+  them is the approval and session locks: the claim consumes the grant (EXECUTING) under them, the stop's withdrawal takes the same
+  locks. So exactly one wins. If the claim won, the write is never aborted: the anchor shows EXECUTING, the stop skips it, the stop reply
+  says how many writes had already started ("이미 실행이 시작된 요청 N건은 중단하지 않고 끝까지 마친 뒤 결과를 알려 드려요"), and the
+  executing turn finishes and delivers its normal result and receipt (tested with a held writer). If the stop won, the claim finds
+  the anchor closed and refuses ("grant-revoked"), nothing sent. A write dispatched before the stop is never rolled back.
+- **Implementation.** `connector-write-flow.ts` (`stopped` close reason, `openAnchorsOf`, `isActionSwitchGoverned`),
+  `approval-decision-service.ts` (`withdrawConnectorWriteForStop`, `withdrawGovernedConnectorWrites`), `turn-handler-layer.ts`
+  (`actionSwitchStopsAnchor`, `respondActionStoppedAnchor`, `stopOpenGovernedApprovals`), `conversation-runtime.ts` (the stop branch),
+  `action-switch.ts` (`renderActionSwitchStopNotice`), `nl-action-policy.ts` (`renderActionStoppedApprovalClosed`),
+  `connector-write-copy.ts` (stop line, `stopped` copy). Test: `apps/quoky/src/nl-stop-guard.app.test.ts` (real AppModule and SQLite,
+  recording calendar stubs, closed network, no model call): stop lists and closes an approved undo, a pending undo preview, the
+  phrase then writes nothing; execution-time check alone; stop with nothing open is byte-identical; 재개 does not reopen; in flight.
+- **Open points.** (1) Should anchored Class A connector writes and the generic approvals also close on `에이전트 중지`? Today they do
+  not (see scope); a stricter stop would need an ADR decision. (2) The agent-only (`QUOKY_NL_ACTIONS=off`) and channel-grants-only
+  stop branches do not close approvals: an undo anchor cannot exist while A6 actions are off. (3) The stop notice names an event title
+  in the DM (the preview showed it already); it is not logged. (4) An undo whose approval is open in a conversation that is no longer
+  ACTIVE is not found by the stop (its own execution-time check still refuses it).
