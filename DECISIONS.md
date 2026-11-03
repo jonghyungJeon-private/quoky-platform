@@ -32537,6 +32537,12 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   adds "열린 승인을 확인하지 못했어요. 재개하기 전에 확인해 주세요" (scan) or "n건은 닫지 못했어요. 재개하기 전에 확인해 주세요". The switch
   stays stopped regardless and the execution-time check still refuses the unclosed anchor. `openAnchorsOf` scans `sessions.list()` (all
   sessions, filtered by actor): acceptable for the single owner.
+- **Lock order and outcome reporting (review fix).** The execution's switch check and grant consumption (the EXECUTING save) are one
+  critical section inside the per-actor metadata lock the stop's own save takes (`NlSelectionService.whileActionsActing`, passed as
+  `consumeGuard` into the claim): order approval -> session -> actor everywhere; the stop's save takes only the actor lock and releases it
+  before its withdrawals take approval -> session, so no path acquires them in reverse. A stop persisted first means nothing is consumed;
+  a consume that wins is reported as started. The withdrawal returns the LIVE outcome under the locks (`closed` / `in-flight` / `done` with
+  the recorded step / `gone`), and a turn that captured a stale APPROVED view answers with it (finished is never reported as closed).
 - **Implementation.** `connector-write-flow.ts` (`stopped` close reason, `openAnchorsOf`, `isActionSwitchGoverned`),
   `approval-decision-service.ts` (`withdrawConnectorWriteForStop`, `withdrawGovernedConnectorWrites`), `turn-handler-layer.ts`
   (`actionSwitchStopsAnchor`, `respondActionStoppedAnchor`, `stopOpenGovernedApprovals`), `conversation-runtime.ts` (the stop branch),

@@ -491,6 +491,16 @@ export type CredentialOverrideSendResult =
 
 type AnchoredFailureFamily = 'commit' | 'push' | 'pr';
 
+/**
+ * What the stop's withdrawal of one connector write found under the locks: closed (nothing ran), in flight (its grant was
+ * consumed: it finishes and reports), done (it finished: the live terminal step), or gone (closed meanwhile).
+ */
+export type ConnectorWriteStopResult =
+  | { readonly kind: 'closed' }
+  | { readonly kind: 'in-flight' }
+  | { readonly kind: 'done'; readonly step: ConnectorWriteStep }
+  | { readonly kind: 'gone' };
+
 export class ApprovalDecisionService {
   private readonly clock: () => IsoTimestamp;
   /** The per-approval lock (outermost; see the serialization note above). */
@@ -932,6 +942,15 @@ export class ApprovalDecisionService {
      * re-checked here: once the grant is consumed the write has started and finishes (A6-D3 amendment, owner's rule).
      */
     beforeSend?: () => Promise<boolean>,
+    /**
+     * A6-D3 amendment, lock design: wraps ONLY the validation + consume section (`claimGrant`, which ends with the EXECUTING
+     * save). The caller supplies the per-actor metadata lock + switch check (`whileActionsActing`), so a stop's save (which
+     * takes that lock) lands wholly before the check (nothing is consumed) or wholly after the consume. LOCK ORDER everywhere:
+     * approval -> session -> actor. The stop's save takes only the actor lock and releases it BEFORE its withdrawals take
+     * approval -> session, and nothing under the actor lock takes either of those, so no path acquires them in reverse.
+     * Throws to refuse (nothing consumed).
+     */
+    consumeGuard?: <T>(work: () => Promise<T>) => Promise<T>,
   ): Promise<ConnectorWriteStep> {
     const flow = this.deps.connectorWriteFlow!;
     return flow.execute({
@@ -942,7 +961,7 @@ export class ApprovalDecisionService {
       claim: (work) =>
         this.exclusive(view.anchor.approvalId, input.session.id, async (held) => {
           if (surfaceRecheck !== undefined) await surfaceRecheck();
-          return work(held);
+          return consumeGuard === undefined ? work(held) : consumeGuard(() => work(held));
         }),
       // And once more as the last step before the writer is called.
       ...(beforeSend !== undefined ? { beforeSend } : {}),
@@ -1010,17 +1029,20 @@ export class ApprovalDecisionService {
    * rejected, an APPROVED one revoked, and the anchor is closed `stopped`. A write whose grant is already consumed (it started
    * or finished) is never touched: `in-flight` (it completes and reports) or `done`. Never sends.
    */
-  withdrawConnectorWriteForStop(
-    input: ApprovalDecisionInput,
-    view: ConnectorWriteAnchorView,
-  ): Promise<'closed' | 'in-flight' | 'done'> {
-    return this.exclusive(view.anchor.approvalId, input.session.id, async (held) => {
+  withdrawConnectorWriteForStop(input: ApprovalDecisionInput, view: ConnectorWriteAnchorView): Promise<ConnectorWriteStopResult> {
+    return this.exclusive(view.anchor.approvalId, input.session.id, async (held): Promise<ConnectorWriteStopResult> => {
       const flow = this.deps.connectorWriteFlow!;
       const live = await flow.find(input.session, held);
-      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) return 'done';
+      // Closed or replaced meanwhile by another transition: nothing here ran and nothing is left to withdraw.
+      if (!live || live.taskId !== view.taskId || live.anchor.approvalId !== view.anchor.approvalId) return { kind: 'gone' };
       const status = live.anchor.status;
-      if (status === 'EXECUTING') return 'in-flight';
-      if (live.anchor.consumedAt || status === 'SENT' || status === 'NOT_SENT' || status === 'UNCERTAIN') return 'done';
+      if (status === 'EXECUTING') return { kind: 'in-flight' };
+      const operation = live.anchor.operation;
+      if (operation && (status === 'SENT' || status === 'NOT_SENT' || status === 'UNCERTAIN')) {
+        // The live terminal outcome (a write that finished after the caller captured its APPROVED view): reported as it is.
+        return { kind: 'done', step: { kind: 'repeat', operation, status, ...outcomeLinkOf(live.anchor) } };
+      }
+      if (live.anchor.consumedAt) return { kind: 'in-flight' };
       const approvalId = live.anchor.approvalId;
       let outcome: 'REJECTED' | 'REVOKED' | undefined;
       if (approvalId !== undefined && status === 'APPROVAL_PENDING' && live.approval !== null) {
@@ -1037,7 +1059,7 @@ export class ApprovalDecisionService {
         this.deps.logger.info('approval decided', { approvalId, surface: input.surface, kind: 'CONNECTOR_WRITE', outcome });
       }
       await flow.close(input.session, live, 'stopped', this.clock(), held);
-      return 'closed';
+      return { kind: 'closed' };
     });
   }
 
@@ -1066,8 +1088,8 @@ export class ApprovalDecisionService {
       if (!governs(view.anchor)) continue;
       try {
         const result = await this.withdrawConnectorWriteForStop({ context: session.context, session, actor, surface: 'chat' }, view);
-        if (result === 'closed' && view.anchor.preview !== undefined) closed.push(view.anchor.preview);
-        else if (result === 'in-flight') running += 1;
+        if (result.kind === 'closed' && view.anchor.preview !== undefined) closed.push(view.anchor.preview);
+        else if (result.kind === 'in-flight') running += 1;
       } catch (error) {
         failed += 1;
         this.deps.logger.warn('approval.stop_withdraw_failed', { errorName: error instanceof Error ? error.name : typeof error });

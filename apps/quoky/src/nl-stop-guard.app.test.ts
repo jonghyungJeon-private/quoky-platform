@@ -142,6 +142,9 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
       }
     }
     await setSwitch(undefined);
+    // Every test drives several undo previews for the one owner; the per-hour action cap is not what these tests are about.
+    const nl = (runtime as unknown as { deps: { nlSelection?: { actionCaps?: { windows?: Map<string, number[]> } } } }).deps.nlSelection;
+    nl?.actionCaps?.windows?.clear();
   });
 
   const dm = () => ({ platform: 'discord', channelId: `88${String((seq += 1)).padStart(16, '0')}`, userId: OWNER, direct: true });
@@ -302,6 +305,104 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
       expect(stopReply).toContain('이미 실행이 시작된 요청 1건');
       expect(done.reply.text).toContain('되돌렸어요');
       expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  const switchState = async (): Promise<string | undefined> => {
+    const actor = (await storage.actors.get(owner.id)) as Actor;
+    return (actor.metadata?.['quoky.actionSwitch'] as { state?: string } | undefined)?.state;
+  };
+
+  it('race: a real stop fired during claimGrant\'s awaits cannot persist before the consume; the consume wins and the stop reports it started', async () => {
+    const { context } = await openUndo(true);
+    const decisions = internals().approvalDecisions;
+    const originalExecute = decisions.executeConnectorWrite.bind(decisions);
+    let armed = false;
+    // The provider call stays pending, so the stop's withdrawal (after the claim) finds the write started, not finished.
+    let release: () => void = () => undefined;
+    deleteGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let stopTurn: Promise<{ reply: { text: string } }> | undefined;
+    const executeSpy = vi.spyOn(decisions, 'executeConnectorWrite').mockImplementation(async (...args: unknown[]) => {
+      armed = true;
+      return originalExecute(...args);
+    });
+    const originalGet = storage.approvals.get.bind(storage.approvals);
+    const getSpy = vi.spyOn(storage.approvals, 'get').mockImplementation(async (id: string) => {
+      if (armed) {
+        armed = false;
+        // The stop turn starts now, inside the claim; give its save every chance to persist before the consume.
+        stopTurn = send(dm(), '에이전트 중지');
+        for (let waited = 0; waited < 200 && (await switchState()) !== 'stopped'; waited += 20) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      return originalGet(id);
+    });
+    let stoppedAtConsume: string | undefined = 'unset';
+    const originalSave = storage.tasks.save.bind(storage.tasks);
+    const saveSpy = vi.spyOn(storage.tasks, 'save').mockImplementation(async (task) => {
+      const anchor = (task.metadata as { connectorWriteAnchor?: { status?: string; undoOf?: unknown } } | undefined)?.connectorWriteAnchor;
+      if (anchor?.status === 'EXECUTING' && anchor.undoOf !== undefined) stoppedAtConsume = await switchState();
+      return originalSave(task);
+    });
+    try {
+      const runTurn = send(context, '일정 삭제 실행');
+      for (let waited = 0; waited < 2000 && writerCalls.length === 0; waited += 10) await new Promise((resolve) => setTimeout(resolve, 10));
+      const stop = await (stopTurn as Promise<{ reply: { text: string } }>);
+      release();
+      const run = await runTurn;
+      // The invariant: a stop that persisted before the consume must not have been followed by the write.
+      expect(stoppedAtConsume).not.toBe('stopped');
+      expect(run.reply.text).toContain('되돌렸어요');
+      expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
+      expect(stop.reply.text).toContain('이미 실행이 시작된 요청 1건');
+      expect(await switchState()).toBe('stopped');
+    } finally {
+      executeSpy.mockRestore();
+      getSpy.mockRestore();
+      saveSpy.mockRestore();
+    }
+  });
+
+  it('race: a real stop that completes before the claim wins; nothing is consumed or written', async () => {
+    const { context } = await openUndo(true);
+    const decisions = internals().approvalDecisions;
+    const originalExecute = decisions.executeConnectorWrite.bind(decisions);
+    let stopReply = '';
+    const spy = vi.spyOn(decisions, 'executeConnectorWrite').mockImplementation(async (...args: unknown[]) => {
+      stopReply = (await send(dm(), '에이전트 중지')).reply.text;
+      return originalExecute(...args);
+    });
+    try {
+      const run = await send(context, '일정 삭제 실행');
+      expect(stopReply).toContain('1건');
+      expect(writerCalls).not.toContain('deleteEvent');
+      expect(run.reply.text).not.toContain('되돌렸어요');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('done: a write that finished after this turn captured its APPROVED view is reported as finished, never as closed', async () => {
+    const { context } = await openUndo(true);
+    const decisions = internals().approvalDecisions as unknown as { withdrawConnectorWriteForStop: (...args: unknown[]) => Promise<unknown> };
+    const original = decisions.withdrawConnectorWriteForStop.bind(decisions);
+    const spy = vi.spyOn(decisions, 'withdrawConnectorWriteForStop').mockImplementation(async (...args: unknown[]) => {
+      // Another turn runs the write to completion while this turn still holds the stale APPROVED view.
+      await setSwitch(undefined);
+      const finished = await send(context, '일정 삭제 실행');
+      expect(finished.reply.text).toContain('되돌렸어요');
+      await setSwitch('stopped');
+      return original(...args);
+    });
+    try {
+      await setSwitch('stopped');
+      const run = await send(context, '일정 삭제 실행');
+      expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
+      expect(run.reply.text).not.toContain('아무것도 하지 않았어요');
+      expect(run.reply.text).not.toContain('닫');
     } finally {
       spy.mockRestore();
     }

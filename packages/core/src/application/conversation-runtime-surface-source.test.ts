@@ -50,6 +50,6 @@ describe('the state-bound section is gated at every step (source rule)', () => {
     expect(source).toContain("this.stateBoundStep(message, session, actor, 'internal-status'");
     const execute = between("if (isAcceptedExecutionPhrase(gate, message.text)) {", 'const decision = interpretStrayDecisionUtterance(message.text);', connectorWriteSource);
     expect(execute).toContain('surfaceStillAllows');
-    expect(execute).toContain('executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck)');
+    expect(execute).toContain('executeConnectorWrite(this.chatDecision(message, session, actor), view, surfaceRecheck, surfaceRecheck, consumeGuard)');
   });
 });

@@ -862,6 +862,7 @@ export interface ConversationRuntimeDeps {
         | 'recordExternalWrite'
         | 'logActionUnserved'
         | 'actionsStillActing'
+        | 'whileActionsActing'
         // ADR-0120 amendment A6 R5a (no new deps key): deictic writes; inert while QUOKY_NL_DEICTIC_WRITES is off.
         | 'answerDeicticDraft'
         | 'recordLastTurn'

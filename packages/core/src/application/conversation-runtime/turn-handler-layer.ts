@@ -773,10 +773,15 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     view: ConnectorWriteAnchorView,
   ): Promise<TurnResult> {
     const result = await this.approvalDecisions.withdrawConnectorWriteForStop(this.chatDecision(message, session, actor), view);
-    this.deps.logger.info('nl_action.stopped_at_execution', { operation: view.anchor.operation ?? 'unknown', result });
-    const text = result === 'in-flight' ? undefined : renderActionStoppedApprovalClosed(noticeLanguage(undefined, message.text));
-    if (text === undefined) return this.respondConnectorWriteStep(message, session, { kind: 'repeat', operation: view.anchor.operation!, status: 'EXECUTING' }, '');
-    return this.respondComposed(message, session, outboundMessage(message.context, text));
+    this.deps.logger.info('nl_action.stopped_at_execution', { operation: view.anchor.operation ?? 'unknown', result: result.kind });
+    // The LIVE outcome under the locks, never the captured APPROVED view: a started write is reported as started, a finished
+    // one with its recorded outcome, a write closed meanwhile by the "nothing to decide" reply; only a close says "closed".
+    if (result.kind === 'in-flight') {
+      return this.respondConnectorWriteStep(message, session, { kind: 'repeat', operation: view.anchor.operation!, status: 'EXECUTING' }, '');
+    }
+    if (result.kind === 'done') return this.respondConnectorWriteStep(message, session, result.step, '');
+    if (result.kind === 'gone') return this.respondComposed(message, session, this.deps.composer.composeNoPendingDecision(message.context));
+    return this.respondComposed(message, session, outboundMessage(message.context, renderActionStoppedApprovalClosed(noticeLanguage(undefined, message.text))));
   }
 
   /**
@@ -904,16 +909,24 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
           const surfaceRecheck = this.channelGate(message.context) === undefined
             ? undefined
             : () => this.surfaceStillAllows(message.context, actor, writeGroups);
-          // And again inside the claim (under the approval and session locks, BEFORE the grant is consumed). After the consume the write
-          // has started and finishes: `beforeSend` stays surface-only (the stop reply counts it as already started).
-          const recheck = isActionSwitchGoverned(anchor)
-            ? async (): Promise<boolean> => {
-                if (await this.actionSwitchStopsAnchor(anchor, actor)) throw new ActionStoppedError();
-                return surfaceRecheck === undefined ? true : surfaceRecheck();
-              }
-            : surfaceRecheck;
+          // The switch check and the grant consumption are ONE critical section with the stop's own save (the per-actor metadata
+          // lock, inside the approval and session locks): a stop persisted first wins and nothing is consumed; once the consume
+          // wins the write has started and finishes (the stop reply counts it as running). `beforeSend` stays surface-only.
+          const nlSwitch = this.deps.nlSelection;
+          const consumeGuard =
+            isActionSwitchGoverned(anchor) && nlSwitch !== undefined
+              ? async <T>(work: () => Promise<T>): Promise<T> => {
+                  if (nlSwitch.whileActionsActing === undefined) {
+                    if (await this.actionSwitchStopsAnchor(anchor, actor)) throw new ActionStoppedError();
+                    return work();
+                  }
+                  const guarded = await nlSwitch.whileActionsActing(actor, work);
+                  if (!guarded.acted) throw new ActionStoppedError();
+                  return guarded.value;
+                }
+              : undefined;
           try {
-            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck, surfaceRecheck);
+            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, surfaceRecheck, surfaceRecheck, consumeGuard);
             // ADR-0112 amendment 1 S3 (context eval P4): every outcome of the write is the last action (receipt id), so
             // "되돌려줘" answers about it and never reaches an older to-do or reminder.
             if (executed.kind === 'outcome') {
