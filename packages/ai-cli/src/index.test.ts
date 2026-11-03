@@ -136,6 +136,20 @@ describe('ClaudeCliProvider', () => {
     expect(err).toMatchObject({ kind: AiFailureKind.EXECUTION_FAILED });
   });
 
+  it('ADR-0115 D8: notices after a pretty-printed envelope or array still parse it and keep the failure class', async () => {
+    const errPretty = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '' }, null, 2);
+    const auth = await exec({ code: 1, stdout: `${errPretty}\nNot logged in · Please run /login\n`, stderr: '', timedOut: false }).catch((e: unknown) => e);
+    expect(auth).toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });
+    expect((auth as Error).message).not.toContain('"type"');
+    const arr = JSON.stringify(
+      [{ type: 'system', note: 'has } and ] in "a string"' }, { type: 'result', subtype: 'success', is_error: false, result: 'array reply' }],
+      null,
+      2,
+    );
+    const res = await exec({ code: 0, stdout: `before notice\n${arr}\nafter notice {not json}\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('array reply');
+  });
+
   it('ADR-0115 D8: is_error JSON classifies on the result text like the plain-text path', async () => {
     const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' });
     await expect(exec({ code: 0, stdout, stderr: '', timedOut: false })).rejects.toMatchObject({ kind: AiFailureKind.AUTH_REQUIRED });

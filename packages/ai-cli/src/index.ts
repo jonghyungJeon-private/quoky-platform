@@ -608,6 +608,31 @@ function envelopeOf(obj: Record<string, unknown>, notices = ''): ClaudePrintJson
   };
 }
 
+/**
+ * Index just past the JSON object/array that opens at `start` (`{` or `[`), matching brackets outside strings
+ * (escapes honoured); -1 when it never closes or the brackets do not match. Parsing is still JSON.parse's job.
+ */
+function jsonValueEnd(text: string, start: number): number {
+  const stack: string[] = [];
+  let inString = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.pop() !== ch) return -1;
+      if (stack.length === 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
 const isResultObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v) && (v as { type?: unknown }).type === 'result';
 
@@ -641,38 +666,24 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
     const found = lastResultIn(whole);
     return found === undefined ? undefined : envelopeOf(found);
   }
-  // Notices before a (possibly pretty-printed, multi-line) envelope: try each line-start `{` / `[` from last to first,
-  // parsing to the end of stdout; the last start that yields a result envelope wins.
-  const starts: number[] = [];
+  // Notices before and/or after a (single-line or pretty-printed) envelope: from each line-start `{` / `[`, find the
+  // end of that JSON value by string-aware bracket matching and parse exactly that span; a parsed span is skipped
+  // as a whole. The last span holding a result envelope wins; the text outside it is the notices.
+  let last: { obj: Record<string, unknown>; from: number; to: number } | undefined;
   const re = /^[ \t]*[{[]/gm;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) starts.push(m.index);
-  for (let i = starts.length - 1; i >= 0; i -= 1) {
-    const at = starts[i] as number;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
+    const from = m.index + m[0].length - 1;
+    const to = jsonValueEnd(stdout, from);
+    if (to < 0) continue;
     try {
-      const found = lastResultIn(JSON.parse(stdout.slice(at).trim()));
-      if (found !== undefined) return envelopeOf(found, stdout.slice(0, at));
+      const found = lastResultIn(JSON.parse(stdout.slice(from, to)));
+      if (found !== undefined) last = { obj: found, from, to };
+      re.lastIndex = to;
     } catch {
-      // not a parseable tail from here
+      // balanced but not JSON (a notice in brackets): keep scanning from the next line
     }
   }
-  // Single-line envelopes with notices on either side.
-  let last: Record<string, unknown> | undefined;
-  let lastLine = -1;
-  const lines = trimmed.split('\n');
-  lines.forEach((line, idx) => {
-    const t = line.trim();
-    if (!t.startsWith('{') && !t.startsWith('[')) return;
-    try {
-      const found = lastResultIn(JSON.parse(t));
-      if (found !== undefined) {
-        last = found;
-        lastLine = idx;
-      }
-    } catch {
-      // not JSON
-    }
-  });
-  if (last !== undefined) return envelopeOf(last, lines.filter((_, idx) => idx !== lastLine).join('\n'));
+  if (last !== undefined) return envelopeOf(last.obj, `${stdout.slice(0, last.from)}\n${stdout.slice(last.to)}`);
   const looks = RESULT_LOOKING.test(stdout) && /^[ \t]*[{[]/m.test(stdout);
   return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
 }
