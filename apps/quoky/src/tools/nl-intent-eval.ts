@@ -249,6 +249,12 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
     counts.set(group, seen + 1);
     caseIds.push(golden.id);
   }
+  // An explicit --cases list is exact: a requested id that another filter (entries, negatives, per-entry) drops is an error.
+  if (options.cases !== undefined) {
+    const kept = new Set(caseIds);
+    const dropped = options.cases.filter((id) => !kept.has(id));
+    if (dropped.length > 0) throw new Error(`requested cases dropped by other filters: ${dropped.join(',')}`);
+  }
   return {
     kind: 'nl-intent-eval',
     promptVersion: rev === 'v74' ? NL_CANDIDATE_PROMPT_VERSIONS.read : NL_SELECTION_PROMPT_VERSION,

@@ -999,6 +999,11 @@ export function buildAgentPlanEvalPlan(
   for (const id of options.cases ?? []) if (!known.has(id)) throw new Error(`unknown case ${id}`);
   const subset = options.cases !== undefined ? new Set(options.cases) : undefined;
   const selected = cases.filter((golden) => (subset === undefined || subset.has(golden.id)) && (golden.status === 'approved' || options.includePending));
+  if (options.cases !== undefined && !options.includePending) {
+    // An explicit --cases list is exact: a requested pending case is refused, never silently skipped.
+    const pending = cases.filter((golden) => subset!.has(golden.id) && golden.status !== 'approved').map((golden) => golden.id);
+    if (pending.length > 0) throw new Error(`requested cases are pending (use --include-pending): ${pending.join(',')}`);
+  }
   if (selected.length === 0) throw new Error('no case selected');
   const probeBound = selected.filter((golden) => {
     const prepared = caseContext(golden, fixture);

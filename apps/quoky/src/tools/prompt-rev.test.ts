@@ -140,6 +140,8 @@ describe('homonym held-out fixture (owner-approved 2026-11-04)', () => {
     expect(plan).toMatchObject({ fixture: 'homonym-heldout', selectedCases: SCREEN, runs: 3 });
     expect(computePlanDigest(buildPlan(corpus, sha256, { ...BASE, fixture: 'homonym-heldout', cases: SCREEN.slice(1) }))).not.toBe(computePlanDigest(plan));
     expect(() => buildPlan(corpus, sha256, { ...BASE, cases: ['hm-zz'] })).toThrow(/unknown case hm-zz/);
+    // Another filter must not silently drop a requested id.
+    expect(() => buildPlan(corpus, sha256, { ...BASE, fixture: 'homonym-heldout', cases: ['hm-n01', 'hm-n02'], perEntry: 1 })).toThrow(/dropped by other filters: hm-n02/);
   });
 
   it('eval:nl CLI: the screen plan authorises 21 cases x 3 runs = 63 calls under both revisions', async () => {
@@ -184,6 +186,11 @@ describe('eval:agent-plan revision, fixture and subset', () => {
     expect([...plan.caseIds].sort()).toEqual([...SCREEN].sort());
     expect(plan.selectedCases).toEqual(SCREEN);
     expect(() => buildAgentPlanEvalPlan(pool, hashes, loaded.corpus.fixture, { ...options, cases: ['hm-zz'] })).toThrow(/unknown case hm-zz/);
+    // A requested pending case is refused, never silently skipped.
+    const pendingId = pool.find((golden) => golden.status !== 'approved')?.id;
+    if (pendingId !== undefined) {
+      expect(() => buildAgentPlanEvalPlan(pool, hashes, loaded.corpus.fixture, { ...options, includePending: false, cases: ['hm-n01', pendingId] })).toThrow(/pending/);
+    }
   });
 
   it('CLI: unknown rev is a usage error; the screen plan is refused across revisions; a plan authorises at most 66 calls (21 planner + 1 probe) x 3', async () => {
