@@ -449,27 +449,36 @@ exec_one() {
   log "$m: running ($cli, digest ${digest:0:12})"
   set -m
   # The group leader is a small holder shell that outlives the eval and every descendant still in its group (it leaves
-  # only when no other member remains, or when the group is KILLed). So whenever the group has members, its leader is
+  # only when no other member remains, or after a bounded grace by KILLing its own group). So whenever the group has members, its leader is
   # alive and its recorded start time proves the group's identity; "members but no leader" is refused (group_verified).
   # TERM is caught by the holder only (the eval gets the default action) so it keeps holding while descendants exit.
   # shellcheck disable=SC2046
+  rm -f "$A/$m.rc"
   bash -c '
+    rcfile=$1; grace=$2; shift 2
     trap ":" TERM INT HUP
     "$@" & c=$!
     while :; do wait "$c"; rc=$?; kill -0 "$c" 2>/dev/null || break; done
     if [ "$rc" -gt 128 ]; then wait "$c" 2>/dev/null; r2=$?; [ "$r2" -eq 127 ] || rc=$r2; fi
-    # Release only on a valid snapshot that shows no other member; a failed/empty snapshot keeps holding (bounded:
-    # after 60 consecutive failures the holder leaves and the leftover, if any, is refused and logged, never guessed).
-    n=0
+    echo "$rc" > "$rcfile"
+    # Hold while other members of this group remain, read from a valid snapshot (ps via exec is a direct child of the
+    # holder, excluded). Bounded: a failed snapshot or a member still present after the grace leads to the holder, the
+    # proven live leader, signalling its own group: TERM (ignored by itself), another grace, then KILL (itself included).
+    # The eval status is already in rcfile, so the KILL never changes the reported result.
+    waited=0; termed=0
     while :; do
-      snap=$(exec ps -axo pid=,ppid=,pgid= 2>/dev/null) || snap=""   # exec: ps is a direct child of the holder, excluded
-      if [ -z "$snap" ]; then n=$((n + 1)); [ "$n" -ge 60 ] && break; sleep 1; continue; fi
-      n=0
-      printf "%s\n" "$snap" | awk -v me="$$" "\$3 == me && \$1 != me && \$2 != me { f = 1 } END { exit !f }" || break
+      snap=$(exec ps -axo pid=,ppid=,pgid= 2>/dev/null) || snap=""
+      if [ -n "$snap" ]; then
+        printf "%s\n" "$snap" | awk -v me="$$" "\$3 == me && \$1 != me && \$2 != me { f = 1 } END { exit !f }" || break
+      fi
+      waited=$((waited + 1))
+      if [ "$waited" -ge "$grace" ]; then
+        if [ "$termed" = 0 ]; then kill -TERM -- -$$ 2>/dev/null; termed=1; waited=0; else kill -KILL -- -$$; fi
+      fi
       sleep 1
     done
     exit "$rc"
-  ' gates-holder pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1 &
+  ' gates-holder "$A/$m.rc" "$STOP_GRACE_SEC" pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1 &
   pid=$!
   set +m
   pgid=$(pgid_of "$pid"); lstart=$(lstart_of "$pid")
@@ -481,6 +490,9 @@ exec_one() {
   CHILD_PID=$pid; CHILD_PGID=$pgid; CHILD_LSTART=$lstart
   start_watch "$pid" "$pgid" "$lstart" "$m"
   wait "$pid" 2>/dev/null; rc=$?
+  # The eval's own status, written by the holder before it releases (a holder that KILLed its leftover group exits 137).
+  if [ -s "$A/$m.rc" ]; then rc=$(cat "$A/$m.rc"); fi
+  case "$rc" in ''|*[!0-9]*) rc=1 ;; esac
   if [ -f "$A/USAGE-STOP" ]; then
     wait "$WATCH_PID" 2>/dev/null; WATCH_PID=""   # let the watchdog finish its TERM / KILL sequence
   fi

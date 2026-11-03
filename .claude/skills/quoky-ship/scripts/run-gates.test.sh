@@ -39,6 +39,7 @@ if [ -n "${FAKE_HANG:-}" ]; then
   echo $! > "$FAKE_LOG.grandchild"
   wait
 fi
+if [ -n "${FAKE_LEAVE_STUBBORN:-}" ]; then ( trap '' TERM; exec sleep 300 ) & echo $! > "$FAKE_LOG.leftover"; fi
 if [ "${FAKE_RUN_EXIT:-0}" = 1 ]; then echo "gate ($mode): FAILED"; exit 1; fi
 echo "gate ($mode): PASSED"
 exit 0
@@ -133,6 +134,13 @@ has "idle window recorded as 0%" "$T/arch/e9c/estimate.txt" "current_5h_usage_pc
 # 9d. the holder leader passes the eval's own exit status through (a FAILED eval stays exit 1)
 rc=$(FAKE_CALLS=100 FAKE_COST_FILE="$T/idle.cost" FAKE_RUN_EXIT=1 gates e9d action); check "failed eval exit 1 through the holder" "$rc" 1
 has "DONE records exit=1" "$T/arch/e9d/DONE" "exit=1"
+
+# 9e. a TERM-ignoring descendant left behind after the eval exits: the holder is bounded (TERM, grace, KILL of its own
+#     group), the run still ends with the eval's own status, and nothing is left running
+t0=$(date +%s)
+rc=$(FAKE_CALLS=100 FAKE_COST_FILE="$T/idle.cost" FAKE_LEAVE_STUBBORN=1 GATES_STOP_GRACE_SEC=2 gates e9e action); check "leftover descendant: eval status 0 kept" "$rc" 0
+check "leftover descendant: bounded (< 30s)" "$(( $(date +%s) - t0 < 30 ))" 1
+left=$(cat "$T/e9e.fake.log.leftover" 2>/dev/null); check "leftover descendant killed" "$(kill -0 "$left" 2>/dev/null && echo alive || echo gone)" gone
 
 # 11. numeric validation (hard block, even with owner-ok)
 for kv in GATES_RATE_PCT_PER_CALL=garbage GATES_RATE_PCT_SONNET=0 GATES_MAX_EST_PCT=abc GATES_STOP_PCT=101 GATES_STOP_PCT=0 GATES_WATCH_SEC=1.5 GATES_WATCH_SEC=08 GATES_STOP_GRACE_SEC=x GATES_RATE_PCT_PER_CALL= GATES_RUNS=x GATES_CONCURRENCY=0 GATES_RETRY_WAIT_SEC=-1 GATES_RESET_MARGIN_SEC=abc; do
