@@ -32556,3 +32556,25 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   in the DM (the preview showed it already); it is not logged. (4) An undo whose approval is open in a conversation that is no longer
   ACTIVE is not found by the stop (its own execution-time check still refuses it). (5) Forward: when R3 offers the reserved A6 ids `calendar.create` / `slack.post`, `isActionSwitchGoverned` must also cover
   A6-originated anchors, not only `undoOf`, or those approvals would escape the stop.
+
+
+## Eval gate quota guards — pre-start estimate block and in-run usage brake (2026-11-04)
+
+- **Status.** Accepted (owner order, ops script only; no ADR affected).
+- **Owner order (verbatim, 2026-11-04).** "평가 실행 스크립트 run-gates.sh에 두 가지를 넣는 작은 PR … 이것도 같이 진행해둬"
+  (two guards: a pre-start block and an in-run brake; background: one sonnet planner eval, ~1,300 calls in 12 min, took the shared 5 h
+  window from 0 % to 81 % on 2026-11-03).
+- **Decision.** (1) After the build, `run-gates.sh` plans every requested mode (no model call), reads each mode's call cap
+  ("calls this plan authorises: at most N"; else cases x runs from the plan JSON; unparseable = unknown = block), multiplies by a
+  per-model rate (sonnet 0.06 % of 5 h per call, measured; haiku 0.03 and opus 0.15 are unmeasured placeholders; unknown model uses
+  the opus rate), writes `estimate.txt`, and refuses the whole start when the sum exceeds `GATES_MAX_EST_PCT` (30), when current
+  usage + estimate exceeds the 95 % pause threshold, or when a cap is unknown, unless `GATES_OWNER_OK=<yyyymmdd-short-reason>` is
+  set (recorded verbatim). (2) A per-mode watchdog polls the same pinned ccusage every `GATES_WATCH_SEC` (60) s and at
+  `GATES_STOP_PCT` (85) % of the limit sends TERM (then KILL after 15 s) to the recorded eval process group only; no retry, remaining
+  modes not run, `DONE` status `USAGE-STOP`, `run` exit 6 (precedence 1 > 6 > 2 > 5). (3) Any model-in-the-loop run needs an owner
+  notice (purpose, calls, model, est % of 5 h/7d, current usage, a cheaper compromise) and a yes first (quoky-ship section 2.5).
+- **Why these choices.** Estimate before the first call because the 11-03 run could not be stopped once started. The watchdog keeps the
+  last known reading and backs off when ccusage is unreadable instead of stopping: a transient `npx` failure should not discard a long
+  run, at the cost of being blind while ccusage is down (logged to `usage.log`). Residual: the estimate is an upper bound on calls
+  at a measured sonnet rate only; haiku/opus rates need measuring.
+- **Evidence.** `.claude/skills/quoky-ship/scripts/run-gates.test.sh` (stub pnpm / npx, no model call).

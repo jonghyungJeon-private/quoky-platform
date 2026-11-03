@@ -21,13 +21,29 @@
 # stops at once and prints the reason.
 # A killed run (TERM / INT / HUP) writes a terminal DONE marker; `status` also checks that the RUNNING pid is alive.
 #
+# Quota guards (2026-11-04, after one sonnet planner eval took the shared 5 h window from 0 % to 81 % in 12 min):
+#  1. Pre-start estimate. After the build, every requested mode is planned (no model call). Its call cap is read from the plan
+#     output ("model calls this plan authorises: at most N", or "real summarisation calls ...: at most N"; else the plan JSON's
+#     `"caseIds": "<n> cases"` x `"runs"`, which is the guard's maxCalls). No parseable cap = unknown = BLOCK. est % of the 5 h
+#     window = calls x a per-call rate per model (sonnet 0.06 measured; haiku 0.03 and opus 0.15 are PLACEHOLDERS; an unknown
+#     model gets the opus rate). Written to <archive>/estimate.txt and shown by `status`. The run is refused (DONE, exit 2, no
+#     run) when the sum over the modes exceeds GATES_MAX_EST_PCT (30), or current 5 h usage + estimate exceeds GATES_USAGE_PCT
+#     (95), or any cap is unknown, unless GATES_OWNER_OK=<yyyymmdd-short-reason> is set (recorded verbatim in estimate.txt).
+#  2. In-run brake. While a mode runs, a watchdog polls ccusage every GATES_WATCH_SEC (60) s with the same pinned command and
+#     limit. At >= GATES_STOP_PCT (85) % of the limit it TERMs the eval's own process group (KILL after GATES_STOP_GRACE_SEC,
+#     15), writes `<mode> exit=6 status=USAGE-STOP pct=<n>` into DONE, never retries and runs no further mode. The partial
+#     report is neither PASSED nor FAILED. ccusage failures are tolerated: the poll interval backs off (x2, max 300 s), the
+#     last known value is kept, nothing is stopped for an unreadable meter (the failure count is logged to usage.log).
+#
 # Environment: GATES_MODEL (haiku), GATES_RUNS (3), GATES_CONCURRENCY (4), GATES_REDTEAM_MODEL (unset: the Claude CLI
 # default summariser), GATES_HELP_SCOPE_MODEL (unset: the classifier's production stronger tier), QUOKY_USAGE_LIMIT_USD (218), GATES_USAGE_PCT (95), GATES_RETRY_WAIT_SEC (900, used when no
 # active usage block is reported), GATES_RESET_MARGIN_SEC (60, slack after a block end), GATES_NO_RETRY,
-# QUOKY_EVAL_ARCHIVE (archive root).
+# QUOKY_EVAL_ARCHIVE (archive root), GATES_MAX_EST_PCT (30), GATES_OWNER_OK, GATES_RATE_PCT_PER_CALL (overrides every rate) /
+# GATES_RATE_PCT_HAIKU / _SONNET / _OPUS, GATES_STOP_PCT (85), GATES_WATCH_SEC (60), GATES_STOP_GRACE_SEC (15).
 #
 # Exit status of `run` (foreground; start's tmux window shows it): 0 all modes PASSED/NON-GATING, 1 any FAILED, 2 any
-# blocked/usage/skipped mode or a build failure, 5 only INVALID remained. Precedence 1 > 2 > 5.
+# blocked/usage/skipped mode, a build failure or a refused estimate, 5 only INVALID remained, 6 USAGE-STOP (the in-run brake
+# stopped a mode). Precedence 1 > 6 > 2 > 5.
 # Exit statuses of the eval CLIs: 0 PASSED, 1 FAILED, 2 USAGE, 3 BLOCKED, 4 NON-GATING, 5 INVALID.
 set -u
 
@@ -47,6 +63,19 @@ RETRY_WAIT_SEC="${GATES_RETRY_WAIT_SEC:-900}"
 MARGIN="${GATES_RESET_MARGIN_SEC:-60}"
 DEFAULT_MODES="action read-regression r2"
 EXIT_INVALID=5
+EXIT_USAGE_STOP=6
+MAX_EST_PCT="${GATES_MAX_EST_PCT:-30}"
+STOP_PCT="${GATES_STOP_PCT:-85}"
+WATCH_SEC="${GATES_WATCH_SEC:-60}"
+STOP_GRACE_SEC="${GATES_STOP_GRACE_SEC:-15}"
+# Per-call cost in % of the 5 h window. sonnet: measured 2026-11-03 (~1,300 calls = 81 %). haiku / opus: PLACEHOLDERS, not
+# measured; replace them when measured.
+RATE_SONNET="${GATES_RATE_PCT_SONNET:-0.06}"
+RATE_HAIKU="${GATES_RATE_PCT_HAIKU:-0.03}"
+RATE_OPUS="${GATES_RATE_PCT_OPUS:-0.15}"
+CHILD_PID=""
+CHILD_PGID=""
+WATCH_PID=""
 ALL_MODES="intent action read-regression r2 help-scope agent-plan r2-redteam"
 
 usage() {
@@ -156,9 +185,160 @@ common_args() {
 plan_mode() { case "$1" in intent|agent-plan|r2-redteam) echo plan ;; *) echo "$1" ;; esac; }
 run_mode_name() { case "$1" in intent|agent-plan|r2-redteam) echo run ;; *) echo "$1" ;; esac; }
 
-# Plan (digest) then run one mode; returns the run's exit status.
-run_one() {
-  local m=$1 cli digest rc report
+# --- Quota guards -----------------------------------------------------------------------------------------------------------
+
+# Signal a process group (never our own, never an unverified one): TERM, then KILL after the grace period.
+kill_group() {
+  local pid=$1 pgid=$2 i=0 own
+  [ -n "$pid" ] && [ -n "$pgid" ] || return 0
+  own=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
+  if [ "$pgid" = "$pid" ] && [ "$pgid" != "$own" ] && [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pgid" ]; then
+    kill -TERM -- "-$pgid" 2>/dev/null
+    while [ "$i" -lt "$STOP_GRACE_SEC" ] && kill -0 -- "-$pgid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+    kill -0 -- "-$pgid" 2>/dev/null && kill -KILL -- "-$pgid" 2>/dev/null
+  else
+    # No own group (job control unavailable): only the recorded child itself.
+    kill -TERM "$pid" 2>/dev/null
+    while [ "$i" -lt "$STOP_GRACE_SEC" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+  fi
+  return 0
+}
+
+# Background watchdog for one running eval child. Polls ccusage; at >= STOP_PCT % of the limit it writes $A/USAGE-STOP and stops
+# the child's process group. Exits by itself when the child is gone.
+start_watch() {
+  local pid=$1 pgid=$2 m=$3
+  (
+    trap - EXIT TERM INT HUP
+    waited=0; fails=0; interval=$WATCH_SEC
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 1; waited=$((waited + 1))
+      [ "$waited" -ge "$interval" ] || continue
+      waited=0
+      state=$(usage_state)
+      if [ -z "$state" ]; then
+        fails=$((fails + 1))
+        interval=$(( WATCH_SEC * (1 << (fails < 3 ? fails : 3)) )); [ "$interval" -gt 300 ] && interval=300
+        echo "$(date '+%F %T') watch $m ccusage-unreadable consecutive=$fails next-poll=${interval}s (keeping the last known value; not stopping)" >> "$A/usage.log"
+        continue
+      fi
+      fails=0; interval=$WATCH_SEC
+      cost=${state% *}
+      pct=$(awk -v c="$cost" -v l="$LIMIT_USD" 'BEGIN { printf "%.1f", c * 100 / l }')
+      echo "$(date '+%F %T') watch $m cost=$cost pct=$pct stop-at=$STOP_PCT" >> "$A/usage.log"
+      if awk -v p="$pct" -v s="$STOP_PCT" 'BEGIN { exit !(p + 0 >= s + 0) }'; then
+        if kill -0 "$pid" 2>/dev/null; then
+          echo "$pct" > "$A/USAGE-STOP"
+          log "$m: USAGE-STOP at $pct% of the 5 h limit (stop threshold $STOP_PCT%): stopping the eval process group $pgid"
+          kill_group "$pid" "$pgid"
+        fi
+        exit 0
+      fi
+    done
+  ) &
+  WATCH_PID=$!
+}
+
+stop_watch() {
+  [ -n "$WATCH_PID" ] || return 0
+  kill "$WATCH_PID" 2>/dev/null
+  wait "$WATCH_PID" 2>/dev/null
+  WATCH_PID=""
+  return 0
+}
+
+# "<calls> <source> <model>" read from a plan log; nothing when no cap can be read (= unknown).
+parse_plan() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+env_model = sys.argv[2]
+model = env_model
+m = re.search(r'"model"\s*:\s*"([^"]+)"', text)
+if m:
+    model = m.group(1)
+caps = [int(x.replace(",", "")) for x in re.findall(r"calls this plan authorises: at most (\d[\d,]*)", text)]
+if caps:
+    print("%d authorises-line %s" % (max(caps), model))
+    sys.exit(0)
+cases = re.search(r'"caseIds"\s*:\s*"(\d+) cases', text)
+runs = re.search(r'"runs"\s*:\s*(\d+)', text)
+if cases and runs:
+    print("%d cases-x-runs %s" % (int(cases.group(1)) * int(runs.group(1)), model))
+PY
+}
+
+mode_env_model() {
+  case "$1" in
+    r2-redteam) echo "${GATES_REDTEAM_MODEL:-sonnet}" ;;
+    help-scope) echo "${GATES_HELP_SCOPE_MODEL:-sonnet}" ;;
+    *) echo "$MODEL" ;;
+  esac
+}
+
+# Per-call rate (% of the 5 h window) for a model name; an unknown model gets the highest rate.
+rate_for() {
+  if [ -n "${GATES_RATE_PCT_PER_CALL:-}" ]; then echo "$GATES_RATE_PCT_PER_CALL"; return; fi
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+    *haiku*) echo "$RATE_HAIKU" ;;
+    *sonnet*) echo "$RATE_SONNET" ;;
+    *opus*) echo "$RATE_OPUS" ;;
+    *) echo "$RATE_OPUS" ;;
+  esac
+}
+
+# Estimate every planned mode, write estimate.txt, refuse (return 1) when over a limit without a valid GATES_OWNER_OK.
+estimate_guard() {
+  local m parsed calls src model rate pct total=0 unknown="" reasons="" state cost cur="unknown" ok="none" verdict
+  local f="$A/estimate.txt"
+  { echo "estimate $(date '+%F %T')  (per-call rates in % of the 5 h window: sonnet $RATE_SONNET measured; haiku $RATE_HAIKU and opus $RATE_OPUS are PLACEHOLDERS)"; } > "$f"
+  for m in "$@"; do
+    parsed=$(parse_plan "$A/$m.plan.log" "$(mode_env_model "$m")")
+    if [ -z "$parsed" ]; then
+      unknown="$unknown $m"
+      echo "mode=$m calls=UNKNOWN (no call cap in $m.plan.log)" >> "$f"
+      continue
+    fi
+    calls=${parsed%% *}; src=$(echo "$parsed" | awk '{print $2}'); model=$(echo "$parsed" | awk '{print $3}')
+    rate=$(rate_for "$model")
+    pct=$(awk -v c="$calls" -v r="$rate" 'BEGIN { printf "%.1f", c * r }')
+    total=$(awk -v a="$total" -v b="$pct" 'BEGIN { printf "%.1f", a + b }')
+    echo "mode=$m model=$model calls=$calls rate_pct_per_call=$rate est_pct_5h=$pct cap_source=$src" >> "$f"
+  done
+  state=$(usage_state)
+  if [ -n "$state" ]; then
+    cost=${state% *}
+    cur=$(awk -v c="$cost" -v l="$LIMIT_USD" 'BEGIN { printf "%.1f", c * 100 / l }')
+  fi
+  echo "total_est_pct_5h=$total current_5h_usage_pct=$cur max_est_pct=$MAX_EST_PCT pause_pct=$USAGE_PCT" >> "$f"
+  [ -z "$unknown" ] || reasons="$reasons call cap unknown for:$unknown;"
+  awk -v t="$total" -v m="$MAX_EST_PCT" 'BEGIN { exit !(t + 0 > m + 0) }' && reasons="$reasons estimate $total% > GATES_MAX_EST_PCT $MAX_EST_PCT%;"
+  if [ "$cur" != unknown ]; then
+    awk -v t="$total" -v c="$cur" -v p="$USAGE_PCT" 'BEGIN { exit !(t + c > p + 0) }' && reasons="$reasons current $cur% + estimate $total% > $USAGE_PCT%;"
+  fi
+  if [ -z "$reasons" ]; then
+    echo "owner_ok=$( [ -n "${GATES_OWNER_OK:-}" ] && printf '%s' "$GATES_OWNER_OK" || echo none)" >> "$f"
+    echo "verdict=OK" >> "$f"
+    log "estimate: total $total% of the 5 h window (current $cur%): within limits (estimate.txt)"
+    return 0
+  fi
+  if [[ "${GATES_OWNER_OK:-}" =~ ^[0-9]{8}-.+ ]]; then
+    ok=$GATES_OWNER_OK
+    echo "owner_ok=$ok" >> "$f"
+    echo "verdict=ALLOWED-BY-OWNER-OK ($reasons)" >> "$f"
+    log "estimate: total $total% (current $cur%) over a limit ($reasons) but GATES_OWNER_OK=$ok; continuing"
+    return 0
+  fi
+  echo "owner_ok=none${GATES_OWNER_OK:+ (GATES_OWNER_OK is set but not in the form yyyymmdd-short-reason: ignored)}" >> "$f"
+  echo "verdict=BLOCKED ($reasons)" >> "$f"
+  log "estimate: BLOCKED ($reasons) total $total%, current $cur%. Ask the owner (purpose, calls, model, est % of 5 h/7d, current usage, a cheaper compromise); with a yes set GATES_OWNER_OK=<yyyymmdd-short-reason>. See estimate.txt"
+  return 1
+}
+
+# Plan one mode (a digest, no model call); 0 when the digest was read.
+plan_one() {
+  local m=$1 cli digest
   cli=$(cli_of "$m")
   # shellcheck disable=SC2046
   pnpm -s "$cli" -- --mode "$(plan_mode "$m")" $(common_args "$m") > "$A/$m.plan.log" 2>&1
@@ -167,20 +347,56 @@ run_one() {
     log "$m: no plan digest (see $m.plan.log)"
     return 2
   fi
+  echo "$digest" > "$A/$m.digest"
   echo "$m $digest" >> "$A/digests.txt"
+  return 0
+}
+
+# Run one planned mode with the stored digest under the watchdog; returns the eval's exit status, or 6 on USAGE-STOP.
+exec_one() {
+  local m=$1 cli digest rc report pid pgid pct
+  cli=$(cli_of "$m")
+  digest=$(cat "$A/$m.digest")
+  rm -f "$A/USAGE-STOP"
   log "$m: running ($cli, digest ${digest:0:12})"
+  set -m
   # shellcheck disable=SC2046
-  pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1
-  rc=$?
+  pnpm -s "$cli" -- --mode "$(run_mode_name "$m")" $(common_args "$m") --approved-plan-digest "$digest" > "$A/$m.log" 2>&1 &
+  pid=$!
+  set +m
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  CHILD_PID=$pid; CHILD_PGID=$pgid
+  start_watch "$pid" "${pgid:-}" "$m"
+  wait "$pid" 2>/dev/null; rc=$?
+  if [ -f "$A/USAGE-STOP" ]; then
+    wait "$WATCH_PID" 2>/dev/null; WATCH_PID=""   # let the watchdog finish its TERM / KILL sequence
+  else
+    stop_watch
+  fi
+  CHILD_PID=""; CHILD_PGID=""
+  if [ -f "$A/USAGE-STOP" ]; then
+    pct=$(cat "$A/USAGE-STOP")
+    log "$m: USAGE-STOP at $pct%: partial run, neither PASSED nor FAILED; no retry"
+    return "$EXIT_USAGE_STOP"
+  fi
   report=$(grep -o 'results written to .*' "$A/$m.log" | tail -1 | sed 's/^results written to //')
   if [ -n "$report" ] && [ -f "$report" ]; then cp "$report" "$A/$m.report.json"; fi
   log "$m: exit=$rc $(status_word "$rc") | $(grep -E 'gate.*: (PASSED|FAILED|INVALID|NON-GATING)' "$A/$m.log" | tail -1)"
   return "$rc"
 }
 
+# Exit handler: stop the watchdog and the recorded eval child group only, then leave a terminal marker.
+on_exit() {
+  [ "${BASH_SUBSHELL:-0}" = 0 ] || return 0
+  stop_watch
+  if [ -n "$CHILD_PID" ]; then kill_group "$CHILD_PID" "$CHILD_PGID"; CHILD_PID=""; fi
+  if [ -f "$A/RUNNING" ]; then { cat "$A/modes.txt" 2>/dev/null; echo "KILLED: the run was terminated before it finished"; date; } > "$A/DONE"; rm -f "$A/RUNNING"; fi
+  return 0
+}
+
 cmd_run() {
   local W=$1 N=$2; shift 2
-  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason cfail nodev n_failed=0 n_invalid=0 n_other=0 final
+  local MODES="${*:-$DEFAULT_MODES}" m rc retried=0 stopped="" reason cfail nodev n_failed=0 n_invalid=0 n_other=0 n_ustop=0 final planned="" ustop_pct
   for m in $MODES; do
     case " $ALL_MODES " in *" $m "*) ;; *) echo "unknown mode: $m (one of: $ALL_MODES)" >&2; exit 2 ;; esac
   done
@@ -190,11 +406,11 @@ cmd_run() {
   if [ -n "$nodev" ] && [ -d "$HOME/.nvm/versions/node/v$nodev/bin" ]; then export PATH="$HOME/.nvm/versions/node/v$nodev/bin:$PATH"; fi
   A="$ARCHIVE_ROOT/$N"
   mkdir -p "$A"
-  rm -f "$A/DONE" "$A/digests.txt" "$A/modes.txt"
+  rm -f "$A/DONE" "$A/digests.txt" "$A/modes.txt" "$A/estimate.txt" "$A/USAGE-STOP" "$A"/*.digest
   # A terminated run (TERM / INT / HUP, or any exit with the RUNNING marker still there) leaves a terminal marker. SIGKILL
   # cannot be trapped: `status` checks that the RUNNING pid is alive.
   trap 'exit 143' TERM INT HUP
-  trap 'if [ -f "$A/RUNNING" ]; then { cat "$A/modes.txt" 2>/dev/null; echo "KILLED: the run was terminated before it finished"; date; } > "$A/DONE"; rm -f "$A/RUNNING"; fi' EXIT
+  trap on_exit EXIT
   printf 'pid=%s session=%s worktree=%s modes=%s started=%s\n' "$$" "${TMUX_SESSION:-foreground}" "$W" "$MODES" "$(date '+%F %T')" > "$A/RUNNING"
   git -C "$W" log --oneline -1 > "$A/head.txt"
   log "gates $N: worktree $W, head $(cat "$A/head.txt"), modes: $MODES"
@@ -205,10 +421,24 @@ cmd_run() {
     rm -f "$A/RUNNING"
     exit 2
   fi
+  # Plan every mode first (digests, no model call), then estimate the whole start before any model call.
   for m in $MODES; do
+    if plan_one "$m"; then planned="$planned $m"; fi
+  done
+  if [ -n "$planned" ] && ! estimate_guard $planned; then
+    for m in $MODES; do echo "$m exit=2 status=BLOCKED-ESTIMATE" >> "$A/modes.txt"; done
+    { cat "$A/modes.txt"; echo "stopped: the pre-start estimate guard refused the run (see estimate.txt); nothing was run"; date; } > "$A/DONE"
+    rm -f "$A/RUNNING"
+    exit 2
+  fi
+  for m in $MODES; do
+    case " $planned " in
+      *" $m "*) ;;
+      *) echo "$m exit=2 status=$(status_word 2)" >> "$A/modes.txt"; echo "$m exit=2" >> "$A/digests.txt"; n_other=$((n_other + 1)); continue ;;
+    esac
     wait_for_usage
     retried=0
-    run_one "$m"; rc=$?
+    exec_one "$m"; rc=$?
     reason=""
     if [ "$rc" -eq "$EXIT_INVALID" ]; then
       reason=$(grep -o 'INVALID (provider unavailable: [^)]*)' "$A/$m.log" | tail -1 | sed 's/^INVALID (provider unavailable: //; s/)$//')
@@ -228,19 +458,30 @@ cmd_run() {
           if [ -f "$A/$m.report.json" ]; then mv "$A/$m.report.json" "$A/$m.invalid-attempt1.report.json"; fi
           wait_block_reset
           wait_for_usage
-          run_one "$m"; rc=$?
+          exec_one "$m"; rc=$?
           reason=$(grep -o 'INVALID (provider unavailable: [^)]*)' "$A/$m.log" | tail -1 | sed 's/^INVALID (provider unavailable: //; s/)$//')
         fi
         ;;
     esac
-    echo "$m exit=$rc status=$(status_word "$rc")" >> "$A/modes.txt"
+    if [ "$rc" -eq "$EXIT_USAGE_STOP" ]; then
+      ustop_pct=$(cat "$A/USAGE-STOP" 2>/dev/null)
+      echo "$m exit=$rc status=USAGE-STOP pct=$ustop_pct" >> "$A/modes.txt"
+    else
+      echo "$m exit=$rc status=$(status_word "$rc")" >> "$A/modes.txt"
+    fi
     echo "$m exit=$rc" >> "$A/digests.txt"
     case "$rc" in
       0|4) ;;
+      "$EXIT_USAGE_STOP") n_ustop=$((n_ustop + 1)) ;;
       1) n_failed=$((n_failed + 1)) ;;
       "$EXIT_INVALID") n_invalid=$((n_invalid + 1)) ;;
       *) n_other=$((n_other + 1)) ;;
     esac
+    if [ "$rc" -eq "$EXIT_USAGE_STOP" ]; then
+      stopped="stopped after $m: USAGE-STOP at ${ustop_pct}% of the 5 h limit (threshold ${STOP_PCT}%); no retry; remaining modes not run; the partial $m report is neither PASSED nor FAILED"
+      log "$stopped"
+      break
+    fi
     if [ "$rc" -eq "$EXIT_INVALID" ]; then
       stopped="stopped after $m: INVALID (provider unavailable: ${reason:-unknown})$([ "$retried" -eq 1 ] && echo ' after the one automatic retry for this mode'); remaining modes not run"
       log "$stopped"
@@ -249,13 +490,14 @@ cmd_run() {
   done
   { cat "$A/modes.txt"; if [ -n "$stopped" ]; then echo "$stopped"; fi; date; } > "$A/DONE"
   rm -f "$A/RUNNING"
-  # Overall exit: 0 every mode PASSED (or NON-GATING); 1 any FAILED; else 2 any mode blocked / usage error / skipped (no plan
+  # Overall exit: 0 every mode PASSED (or NON-GATING); 1 any FAILED; else 6 any USAGE-STOP; else 2 any mode blocked / usage error / skipped (no plan
   # digest) / not run; else 5 when only INVALID remained (a mode left unrun by the INVALID stop does not count). Build failure: 2.
   if [ "$n_failed" -gt 0 ]; then final=1
+  elif [ "$n_ustop" -gt 0 ]; then final=$EXIT_USAGE_STOP
   elif [ "$n_other" -gt 0 ]; then final=2
   elif [ "$n_invalid" -gt 0 ]; then final=$EXIT_INVALID
   else final=0; fi
-  log "gates $N: done (exit $final: failed $n_failed, blocked/skipped $n_other, invalid $n_invalid)"
+  log "gates $N: done (exit $final: failed $n_failed, usage-stop $n_ustop, blocked/skipped $n_other, invalid $n_invalid)"
   return "$final"
 }
 
@@ -307,7 +549,7 @@ def read(name):
         return ""
 pct = lambda r: "%.1f%%" % (r * 100)
 WRONG = {"wrong-capture", "wrong-target", "negative-capture", "action-capture", "wrong"}
-WORD = {0: "PASSED", 1: "FAILED", 2: "USAGE", 3: "BLOCKED", 4: "NON-GATING", 5: "INVALID"}
+WORD = {0: "PASSED", 1: "FAILED", 2: "USAGE", 3: "BLOCKED", 4: "NON-GATING", 5: "INVALID", 6: "USAGE-STOP"}
 print("archive: " + A)
 head = read("head.txt").strip()
 if head:
@@ -336,11 +578,19 @@ elif read("DONE").strip():
             print("         " + line)
 else:
     print("state:   (no RUNNING / DONE marker)")
+estimate = read("estimate.txt").strip()
+if estimate:
+    print("estimate (pre-start, % of the 5 h window):")
+    for line in estimate.splitlines():
+        print("   " + line)
 exits = {}
+words = {}
 for line in (read("DONE") + "\n" + read("digests.txt")).splitlines():
-    m = re.match(r"^(\S+) exit=(\d+)", line)
+    m = re.match(r"^(\S+) exit=(\d+)(?: status=(\S+)(?: pct=([\d.]+))?)?", line)
     if m:
         exits[m.group(1)] = int(m.group(2))
+        if m.group(3):
+            words[m.group(1)] = (m.group(3), m.group(4))
 order = []
 for line in read("digests.txt").splitlines():
     parts = line.split()
@@ -378,6 +628,9 @@ for mode in order:
     code = exits.get(mode)
     print()
     print("== %s  exit=%s %s" % (mode, "?" if code is None else code, "(running or not recorded)" if code is None else WORD.get(code, "")))
+    if words.get(mode, ("", None))[0] == "USAGE-STOP":
+        print("   USAGE-STOP at %s%% of the 5 h limit: the run was stopped, this report is PARTIAL (neither PASSED nor FAILED)" % (words[mode][1] or "?"))
+        continue
     gate = [l for l in log.splitlines() if re.search(r"gate.*: (PASSED|FAILED|INVALID|NON-GATING)", l)]
     if gate:
         print("   gate: " + gate[-1].strip())
