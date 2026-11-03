@@ -785,8 +785,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
    */
   protected async stopOpenGovernedApprovals(actor: Actor, text: string): Promise<MessageBody | undefined> {
     if (this.deps.connectorWriteFlow === undefined) return undefined;
-    const { closed, running } = await this.approvalDecisions.withdrawGovernedConnectorWrites(actor, isActionSwitchGoverned);
-    return renderActionSwitchStopNotice(closed.map(renderConnectorWriteStopLine), running, noticeLanguage(undefined, text));
+    const { closed, running, failed, scanFailed } = await this.approvalDecisions.withdrawGovernedConnectorWrites(actor, isActionSwitchGoverned);
+    return renderActionSwitchStopNotice(closed.map(renderConnectorWriteStopLine), running, noticeLanguage(undefined, text), { failed, scanFailed });
   }
 
   /**
@@ -904,7 +904,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
           const surfaceRecheck = this.channelGate(message.context) === undefined
             ? undefined
             : () => this.surfaceStillAllows(message.context, actor, writeGroups);
-          // And again inside the claim (under the approval and session locks, before the grant is consumed) and before the writer.
+          // And again inside the claim (under the approval and session locks, BEFORE the grant is consumed). After the consume the write
+          // has started and finishes: `beforeSend` stays surface-only (the stop reply counts it as already started).
           const recheck = isActionSwitchGoverned(anchor)
             ? async (): Promise<boolean> => {
                 if (await this.actionSwitchStopsAnchor(anchor, actor)) throw new ActionStoppedError();
@@ -912,7 +913,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
               }
             : surfaceRecheck;
           try {
-            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck);
+            const executed = await this.approvalDecisions.executeConnectorWrite(this.chatDecision(message, session, actor), view, recheck, surfaceRecheck);
             // ADR-0112 amendment 1 S3 (context eval P4): every outcome of the write is the last action (receipt id), so
             // "되돌려줘" answers about it and never reaches an older to-do or reminder.
             if (executed.kind === 'outcome') {

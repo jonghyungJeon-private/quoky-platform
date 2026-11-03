@@ -1412,7 +1412,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const view: ConnectorWriteAnchorView = { ...input.view, anchor };
     if (anchor.status === 'CLOSED') {
       const reason: ConnectorWriteRefusal =
-        anchor.closedReason === 'denied' || anchor.closedReason === 'cancelled'
+        anchor.closedReason === 'denied' || anchor.closedReason === 'cancelled' || anchor.closedReason === 'stopped'
           ? 'grant-revoked'
           : anchor.closedReason === 'expired'
             ? 'grant-expired'

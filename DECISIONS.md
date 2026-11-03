@@ -32507,8 +32507,11 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
      stop reply gains a notice: the count and one line per closed request, the action kind and the target label the preview
      showed ("캘린더 일정 삭제 — <event title>", the title an untrusted span). With nothing open the reply is byte-identical.
   2. *Execution-time check (defence in depth).* The approval of a governed write and its exact execution phrase re-read the
-     persisted switch (`actionsStillActing`, never the turn's snapshot): immediately before the phrase is handled, again inside
-     the execution claim (under the locks, before the grant is consumed) and before the writer is called. If it is stopped nothing
+     persisted switch (`actionsStillActing`, never the turn's snapshot): at the approval step, immediately before the phrase is
+     handled, and again inside the execution claim (under the locks, BEFORE the grant is consumed). It is deliberately NOT re-checked
+     in `beforeSend` (after the consume): from the consume on the write has started and finishes (owner's rule: work that already
+     started finishes; the stop reply must be true), so `beforeSend` stays surface-only and the stop reply's "already started" count
+     matches exactly what will run. If it is stopped nothing
      runs, the anchor is closed `stopped`, and the answer is the existing stopped copy ("자연어 실행이 멈춰 있어서 아무것도 하지
      않았어요…") plus that the request is closed. This holds even when step 1 missed an anchor (test: switch flipped straight in the
      actor record). After step 1, a later phrase is answered by the existing closed-request reply ("가장 최근 … 요청은 에이전트
@@ -32530,6 +32533,10 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   says how many writes had already started ("이미 실행이 시작된 요청 N건은 중단하지 않고 끝까지 마친 뒤 결과를 알려 드려요"), and the
   executing turn finishes and delivers its normal result and receipt (tested with a held writer). If the stop won, the claim finds
   the anchor closed and refuses ("grant-revoked"), nothing sent. A write dispatched before the stop is never rolled back.
+- **Failure honesty.** If the open-anchor scan throws, or withdrawing one anchor fails, the stop reply never claims "nothing open": it
+  adds "열린 승인을 확인하지 못했어요. 재개하기 전에 확인해 주세요" (scan) or "n건은 닫지 못했어요. 재개하기 전에 확인해 주세요". The switch
+  stays stopped regardless and the execution-time check still refuses the unclosed anchor. `openAnchorsOf` scans `sessions.list()` (all
+  sessions, filtered by actor): acceptable for the single owner.
 - **Implementation.** `connector-write-flow.ts` (`stopped` close reason, `openAnchorsOf`, `isActionSwitchGoverned`),
   `approval-decision-service.ts` (`withdrawConnectorWriteForStop`, `withdrawGovernedConnectorWrites`), `turn-handler-layer.ts`
   (`actionSwitchStopsAnchor`, `respondActionStoppedAnchor`, `stopOpenGovernedApprovals`), `conversation-runtime.ts` (the stop branch),
@@ -32541,4 +32548,5 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   not (see scope); a stricter stop would need an ADR decision. (2) The agent-only (`QUOKY_NL_ACTIONS=off`) and channel-grants-only
   stop branches do not close approvals: an undo anchor cannot exist while A6 actions are off. (3) The stop notice names an event title
   in the DM (the preview showed it already); it is not logged. (4) An undo whose approval is open in a conversation that is no longer
-  ACTIVE is not found by the stop (its own execution-time check still refuses it).
+  ACTIVE is not found by the stop (its own execution-time check still refuses it). (5) Forward: when R3 offers the reserved A6 ids `calendar.create` / `slack.post`, `isActionSwitchGoverned` must also cover
+  A6-originated anchors, not only `undoOf`, or those approvals would escape the stop.

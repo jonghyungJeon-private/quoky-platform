@@ -252,4 +252,76 @@ describe('kill switch closes open approvals and is re-checked at execution', () 
     expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
     expect((await anchors()).filter((anchor) => anchor?.status === 'SENT' && anchor.undoOf !== undefined)).toHaveLength(1);
   });
+
+  const internals = () =>
+    runtime as unknown as {
+      approvalDecisions: { executeConnectorWrite: (...args: unknown[]) => Promise<unknown> };
+      deps: { connectorWriteFlow: { reconcileOnce: (...args: unknown[]) => Promise<unknown>; openAnchorsOf: (...args: unknown[]) => Promise<unknown> } };
+    };
+
+  it('switch flipped inside the claim (after the approve-time check, before the grant is consumed): nothing is written', async () => {
+    const { context } = await openUndo(true);
+    const decisions = internals().approvalDecisions;
+    const original = decisions.executeConnectorWrite.bind(decisions);
+    const spy = vi.spyOn(decisions, 'executeConnectorWrite').mockImplementation(async (...args: unknown[]) => {
+      await setSwitch('stopped');
+      return original(...args);
+    });
+    try {
+      const run = await send(context, '일정 삭제 실행');
+      expect(writerCalls).not.toContain('deleteEvent');
+      expect(run.reply.text).toContain('자연어 실행이 멈춰 있어서 아무것도 하지 않았어요');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('switch flipped straight in the actor record, then the approval: it cannot be approved', async () => {
+    const { context } = await openUndo(false);
+    await setSwitch('stopped');
+    const late = await send(context, '승인');
+    expect(late.reply.text).toContain('자연어 실행이 멈춰 있어서 아무것도 하지 않았어요');
+    expect(late.reply.text).not.toContain('일정 삭제 실행으로');
+    const run = await send(context, '일정 삭제 실행');
+    expect(writerCalls).not.toContain('deleteEvent');
+    expect(run.reply.text).not.toContain('되돌렸어요');
+  });
+
+  it('stop between the claim and the send: the write completes and the stop reply counts it as started (true)', async () => {
+    const { context } = await openUndo(true);
+    const flow = internals().deps.connectorWriteFlow;
+    const original = flow.reconcileOnce.bind(flow);
+    let stopReply = '';
+    const spy = vi.spyOn(flow, 'reconcileOnce').mockImplementation(async (...args: unknown[]) => {
+      stopReply = (await send(dm(), '에이전트 중지')).reply.text;
+      spy.mockRestore();
+      return original(...args);
+    });
+    try {
+      const done = await send(context, '일정 삭제 실행');
+      expect(stopReply).toContain('이미 실행이 시작된 요청 1건');
+      expect(done.reply.text).toContain('되돌렸어요');
+      expect(writerCalls.filter((call) => call === 'deleteEvent')).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('the open-approval scan fails: the stop reply says so, and the switch stays stopped', async () => {
+    const { context } = await openUndo(true);
+    const flow = internals().deps.connectorWriteFlow;
+    const spy = vi.spyOn(flow, 'openAnchorsOf').mockRejectedValue(new Error('scan broke'));
+    try {
+      const stop = await send(dm(), '에이전트 중지');
+      expect(stop.reply.text).toContain(STOP_REPLY);
+      expect(stop.reply.text).toContain('열린 승인을 확인하지 못했어요. 재개하기 전에 확인해 주세요');
+    } finally {
+      spy.mockRestore();
+    }
+    const actor = (await storage.actors.get(owner.id)) as Actor;
+    expect((actor.metadata?.['quoky.actionSwitch'] as { state?: string } | undefined)?.state).toBe('stopped');
+    const run = await send(context, '일정 삭제 실행');
+    expect(writerCalls).not.toContain('deleteEvent');
+    expect(run.reply.text).toContain('자연어 실행이 멈춰 있어서');
+  });
 });

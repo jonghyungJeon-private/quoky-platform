@@ -927,6 +927,11 @@ export class ApprovalDecisionService {
      * refuse, and nothing is consumed or sent.
      */
     surfaceRecheck?: () => Promise<boolean>,
+    /**
+     * Surface-only check run right before the writer is called (after the grant is consumed). The kill switch is NOT
+     * re-checked here: once the grant is consumed the write has started and finishes (A6-D3 amendment, owner's rule).
+     */
+    beforeSend?: () => Promise<boolean>,
   ): Promise<ConnectorWriteStep> {
     const flow = this.deps.connectorWriteFlow!;
     return flow.execute({
@@ -940,7 +945,7 @@ export class ApprovalDecisionService {
           return work(held);
         }),
       // And once more as the last step before the writer is called.
-      ...(surfaceRecheck !== undefined ? { beforeSend: surfaceRecheck } : {}),
+      ...(beforeSend !== undefined ? { beforeSend } : {}),
     });
   }
 
@@ -1017,16 +1022,19 @@ export class ApprovalDecisionService {
       if (status === 'EXECUTING') return 'in-flight';
       if (live.anchor.consumedAt || status === 'SENT' || status === 'NOT_SENT' || status === 'UNCERTAIN') return 'done';
       const approvalId = live.anchor.approvalId;
+      let outcome: 'REJECTED' | 'REVOKED' | undefined;
       if (approvalId !== undefined && status === 'APPROVAL_PENDING' && live.approval !== null) {
         await this.deps.approvals.decide(approvalId, this.decisionOf(approvalId, input, false));
+        outcome = 'REJECTED';
       } else if (approvalId !== undefined && status === 'APPROVED' && this.deps.approvals.revoke) {
         const approval = await this.deps.approvals.get(approvalId);
         if (approval?.status === ApprovalStatus.APPROVED) {
           await this.deps.approvals.revoke(approvalId, { ...this.decisionOf(approvalId, input, false), comment: APPROVAL_REVOKED_COMMENT });
+          outcome = 'REVOKED';
         }
       }
-      if (approvalId !== undefined) {
-        this.deps.logger.info('approval decided', { approvalId, surface: input.surface, kind: 'CONNECTOR_WRITE', outcome: 'REVOKED' });
+      if (approvalId !== undefined && outcome !== undefined) {
+        this.deps.logger.info('approval decided', { approvalId, surface: input.surface, kind: 'CONNECTOR_WRITE', outcome });
       }
       await flow.close(input.session, live, 'stopped', this.clock(), held);
       return 'closed';
@@ -1041,16 +1049,18 @@ export class ApprovalDecisionService {
   async withdrawGovernedConnectorWrites(
     actor: Actor,
     governs: (anchor: ConnectorWriteAnchor) => boolean,
-  ): Promise<{ readonly closed: readonly ConnectorWritePreview[]; readonly running: number }> {
+  ): Promise<{ readonly closed: readonly ConnectorWritePreview[]; readonly running: number; readonly failed: number; readonly scanFailed: boolean }> {
     const flow = this.deps.connectorWriteFlow;
     const closed: ConnectorWritePreview[] = [];
     let running = 0;
-    if (flow?.openAnchorsOf === undefined) return { closed, running };
+    let failed = 0;
+    if (flow?.openAnchorsOf === undefined) return { closed, running, failed, scanFailed: false };
     let open: Awaited<ReturnType<NonNullable<ConnectorWriteFlow['openAnchorsOf']>>> = [];
     try {
       open = await flow.openAnchorsOf(actor.id);
-    } catch {
-      return { closed, running };
+    } catch (error) {
+      this.deps.logger.warn('approval.stop_scan_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return { closed, running, failed, scanFailed: true };
     }
     for (const { session, view } of open) {
       if (!governs(view.anchor)) continue;
@@ -1059,10 +1069,11 @@ export class ApprovalDecisionService {
         if (result === 'closed' && view.anchor.preview !== undefined) closed.push(view.anchor.preview);
         else if (result === 'in-flight') running += 1;
       } catch (error) {
+        failed += 1;
         this.deps.logger.warn('approval.stop_withdraw_failed', { errorName: error instanceof Error ? error.name : typeof error });
       }
     }
-    return { closed, running };
+    return { closed, running, failed, scanFailed: false };
   }
 
   /** Compose a connector-write step reply and record it (a calendar step keeps the fixed note in history). */

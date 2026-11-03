@@ -659,10 +659,10 @@ export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): Me
     case 'CHANNEL_POST':
       return messageBody(`${label} — #`, inline(preview.channelLabel));
     case 'CALENDAR_EVENT_CREATE':
-      return messageBody(`${label} — `, inline(preview.event.title));
+      return messageBody(`${label} — `, inline(preview.event.title || '(제목 없음)'));
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
-      return messageBody(`${label} — `, inline(preview.before.title));
+      return messageBody(`${label} — `, inline(preview.before.title || '(제목 없음)'));
   }
 }
 
