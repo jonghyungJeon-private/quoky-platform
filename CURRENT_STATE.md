@@ -25,9 +25,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - Built so far (branch `claude/r3-undo`): the inert foundation (receipt `findById`, `lastAction.anchorTaskId`,
   `ExternalUndoResolver`, receipt banner, closed capability set) and the calendar-create undo. **The calendar-create family
   is OFF in this build: `EXTERNAL_UNDO_CAPABILITIES` is empty pending the amendment-3 red-team gate** (>= 20 cases, 0
-  successes over 3 runs, CA/Codex/security review; the 24 drafted cases are in
-  `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`, not run: a model-in-the-loop run needs the owner's
-  separate approval). Switching it on is a one-line change to the constant after the gate. Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
+  successes over 3 runs, CA/Codex/security review). The offline deterministic gate driver (branch `claude/r3-redteam`, no
+  model; 36 cases (19 selector-bound with distinct variants, 17 never call the selector) in `packages/core/src/application/golden/agent-redteam.r3-undo.v1.json`, each with an oracle, two attacker
+  variants) passed 3 runs of 72 case runs with 0 attack successes and 0 deviations (the layer/deviation oracle, not the success count, is the evidence) (DECISIONS "Implementation note
+  (amendment 3, calendar-create family...)"; the 018 `writes` change is a correction, replay is still rejected). **The family
+  stays OFF until Chief Architect, Codex and `/security-review` PASS on the switch-on and Live UAT pass; none has.**
+  Switching it on is a one-line change to the constant (branch `claude/r3-undo-on`). Slack delete and the amendment-3 families (calendar update/restore, Jira comment delete, Jira transition revert)
   are later slices; their families stay out of the capability set until built.
 
 ### ADR-0124 chunked reading of long content: Part L ratified (2026-11-02, branch `claude/chunking`)
