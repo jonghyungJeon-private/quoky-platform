@@ -611,7 +611,7 @@ function envelopeOf(obj: Record<string, unknown>, notices = ''): ClaudePrintJson
 /**
  * Index just past the JSON object/array that opens at `start` (`{` or `[`), matching brackets outside strings
  * (escapes honoured); -1 when it never closes or the brackets do not match; -2 when the shared scan `budget` runs out
- * (it bounds the total work over all candidate starts to a small multiple of the stdout length, so many unclosed
+ * (it bounds the total work over all candidate starts to a fixed multiple of the stdout length, so many unclosed
  * bracket-led notice lines cannot make the scan quadratic). Parsing is still JSON.parse's job.
  */
 function jsonValueEnd(text: string, start: number, budget: { left: number }): number {
@@ -674,7 +674,7 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
   // end of that JSON value by string-aware bracket matching and parse exactly that span; a parsed span is skipped
   // as a whole. The last span holding a result envelope wins; the text outside it is the notices.
   let last: { obj: Record<string, unknown>; from: number; to: number } | undefined;
-  const budget = { left: 4 * stdout.length + 1024 };
+  const budget = { left: 32 * stdout.length + 65_536 };
   let exhausted = false;
   const re = /^[ \t]*[{[]/gm;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) {
@@ -700,9 +700,9 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
     }
   }
   const looks = RESULT_LOOKING.test(stdout) && /^[ \t]*[{[]/m.test(stdout);
-  // Out of scan budget: a later envelope may be unseen, so a result-looking stdout fails closed (never echoed, never
-  // an earlier envelope taken as the last one).
-  if (exhausted) return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
+  // Out of scan budget (only pathological bracket-led output): an envelope may be unseen, and its `type` may even be
+  // JSON-escaped, so fail closed unconditionally (never echoed, never an earlier envelope taken as the last one).
+  if (exhausted) return { malformed: true, result: undefined, isError: false, usage: {}, notices: '' };
   if (last !== undefined) return envelopeOf(last.obj, `${stdout.slice(0, last.from)}\n${stdout.slice(last.to)}`);
   return looks ? { malformed: true, result: undefined, isError: false, usage: {}, notices: '' } : undefined;
 }

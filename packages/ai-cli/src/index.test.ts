@@ -150,6 +150,14 @@ describe('ClaudeCliProvider', () => {
     expect(res.text).toBe('array reply');
   });
 
+  it('ADR-0115 D8: a few unclosed bracket-led notices before an escaped-type envelope still yield its result', async () => {
+    const body = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'y'.repeat(10_000) }).replace('"result","subtype"', '"\\u0072esult","subtype"');
+    expect(body).toContain('\\u0072esult');
+    const notices = Array.from({ length: 8 }, (_, i) => `[notice ${i}`).join('\n');
+    const res = await exec({ code: 0, stdout: `${notices}\n${body}\n`, stderr: '', timedOut: false });
+    expect(res.text).toBe('y'.repeat(10_000));
+  });
+
   it('ADR-0115 D8: many unclosed bracket-led notices before a large envelope stay linear and fail closed when unscannable', async () => {
     const big = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'x'.repeat(400_000) });
     const notices = Array.from({ length: 2000 }, (_, i) => `[notice ${i}`).join('\n');
