@@ -50,6 +50,18 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   중지" does not close an already-open undo anchor; a later `일정 삭제 실행` still executes. Recommended follow-up: close anchors
   with `undoOf` set on stop.
 
+## Unreleased — ADR-0121 S2 P3-3b: quarantined summariser (M2) and reply assembler (Core, offline, unwired)
+
+- **Added (Core).** `agent/quarantined-summary.ts` (a sealed `SUMMARIZATION` request, schema-bound `digest.v1` /
+  `meeting-digest.v1` output, `UNTRUSTED` + `MODEL_DERIVED` label, egress-label provider selection with a listing-only fallback,
+  link neutraliser and credential guard on the output) and `agent/reply-assembler.ts` (deterministic: Core facts, notes, labelled
+  summaries, fixed status lines; DM-only scope; content-free log). `AgentPlanExecutor` runs `summarize` steps through the
+  summariser when injected (at most 3 M2 calls, charged on the run bounds; a breach is a partial result) and keeps `deferred`
+  otherwise.
+- **Not changed.** `active` is still refused; nothing is wired; no model is called. `agent-boundary.test.ts` allows the link
+  neutraliser and the untrusted-document readout and scans the two new files.
+- **Recorded.** DECISIONS "ADR-0121 S2 implementation note — P3-3b" (six unresolved points, for example calendar has no readout shape).
+
 ## Unreleased — ADR-0121 S2 P3-3a: bounded read executor, structure projector and run bounds (Core, offline, unwired)
 
 - **Added (Core).** `agent/run-bounds.ts` (the D7 bounds: 6 steps, 1 re-plan, 10 connector queries, 50 HTTP requests, 5 model

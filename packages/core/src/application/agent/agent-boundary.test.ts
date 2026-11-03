@@ -33,6 +33,8 @@ function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;
   if (specifier === '../../ports/ai-provider.port' || specifier === '../../ports/logger.port') return true;
   if (specifier === '../credential-guard') return true;
+  // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
+  if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;
   // ADR-0121 A1-E1: the frozen ADR-0104 help grammar (a pure module with no imports) for the help split.
   if (specifier === '../help-intent/help-intent') return true;
   if (ALLOWED_NL_ROUTING.some((name) => specifier === `../nl-routing/${name}`)) return true;
@@ -53,7 +55,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'read-write-probe.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'unbounded-ask.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'unbounded-ask.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
     const refused = [

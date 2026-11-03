@@ -31565,6 +31565,46 @@ and D9 still governs every turn that goes to chat.
 5. **Egress guard.** `QUOKY_EGRESS_GUARD` switches `observe` to `enforce` before `active`.
 6. Open (not decided here): chunk M2 calls count toward the 3 M2 / 5 model-call limits unless ADR-0121 is amended; the 62 pending
    `agent-plan` and 34 read+write golds are reviewed before the gate campaign.
+### ADR-0121 S2 implementation note — P3-3b: the quarantined summariser (M2) and the reply assembler (Core, offline, unwired; 2026-11-03)
+
+- **Status: implemented, not active.** `active` is still refused; no composition-root wiring, no dispatch, no real model call,
+  `ConversationRuntimeDeps` stays 38. No ADR text changes; everything below applies ratified D3/D4/D7.
+- **`quarantined-summary.ts` (M2).** One call per `summarize` step through a narrow injected `QuarantinedSummarizerModel` (one
+  `run(AiRequest)` function and a declared `executionLocality`; Core names no provider). The request is `SUMMARIZATION` with only
+  a self-contained prompt (no context files, workspace, images, metadata, catalog, memory, history or tools). Each item is built
+  by `buildUntrustedDocumentReadout` (normalised, links neutralised, a credential-shaped item withheld, never redacted) and
+  rendered by `renderUntrustedDocumentForPrompt` inside a fixed untrusted span. The output is one JSON object bound to a closed
+  schema (`digest.v1`: `{items:[{n, summary}]}`; `meeting-digest.v1` adds `topics` of at most 3); any other key, type, length,
+  unknown or repeated item number, prose or code fence is a closed `schema` failure; links are neutralised and a URL that
+  survives is a failure; the credential guard on the kept strings fails the whole output (`credential`). The value is a
+  `QuarantinedSummary` labelled `UNTRUSTED` plus `MODEL_DERIVED`, its text in a module-private store (no property, no `toJSON`
+  or `toString` content). Pinned: only the executor and the assembler import the module, only the assembler calls
+  `summaryEntriesForAssembler`, and the planner-side files never do (`quarantined-summary.test.ts`).
+- **Egress (D4).** The input label is the join of the covered reads' `readOutputLabel`. `selectQuarantinedModel`: `HOST_ONLY` no
+  model; `LOCAL_MODEL_ONLY` a `LOCAL` model; `REMOTE_ON_SUMMARY_REQUEST` any model only when the caller passes `summaryRequested`
+  (a grounded request in the owner's words), else a `LOCAL` one; `REMOTE_OK` any, in the caller's order. A model that does not
+  declare `LOCAL` counts as `REMOTE`. No satisfying model is `listing-only` and no call is made.
+- **Executor.** `AgentPlanExecutor` takes an optional `summarizer` (the models) and `execute(plan, { summaryRequested })`. A read
+  port may return raw `documents` beside `items`; the executor keeps them in memory for the reads a summary covers, for that
+  one run, and they are in no result, projection or log. The call is reserved on the run budget right before it
+  (`reserveModelCall('m2')`, then `reserveInputTokens`): the 4th M2 call, the 6th model call, 40k tokens and the 45 s wall are a
+  `not-run` step and a deterministic partial result, never an error or a retry. Statuses: `ok`, `listing-only` (with a closed
+  reason), `failed` (`SCHEMA` / `CREDENTIAL` / `MODEL`), `not-run`; with no `summarizer` the step stays `deferred`. A reference
+  step still takes its keys from the projection only, so a summary can never become an argument.
+- **`reply-assembler.ts`.** Pure and deterministic. Core facts first (count, "more", Jira keys), then the `reply-notes.ts` notes,
+  then the summaries (marked as model-written, returned as their own `summary` parts so a platform layer can render them in an
+  untrusted span, each guarded again by the link neutraliser and credential guard, a failing line dropped), then fixed status
+  lines (listing only, a failed summary, a bound stop). An `OWNER_DM_ONLY` result is assembled only for the owner's DM. One
+  content-free `agent_run.assemble` log line.
+- **Unresolved, not decided here (the owner or a later amendment).** (1) The readout shapes cover mail, Drive, Jira and Slack
+  only; calendar (`meeting-digest.v1`, `LOCAL_MODEL_ONLY`), GitHub and Confluence have none, so a summary over them is
+  `listing-only` (`no-readout-source`); adding sources widens `UntrustedDocumentSource`, which the existing document-summary turns
+  also consume. (2) How `summaryRequested` is computed from the owner's words is not defined by D4; it is a caller input,
+  default false. (3) A `LOCAL` model for `REMOTE_ON_SUMMARY_REQUEST` without a request, and no model at all for `HOST_ONLY`
+  (even a local one), are the fail-closed readings of D4. (4) The shapes and bounds of the two schemas (one sentence of at most
+  280 characters, at most 10 items per call, no chunking) are implementation choices; chunking stays open (owner decision 6 of the
+  P3-3a note). (5) The raw `documents` a read port hands over are a new additive field of the port contract; the adapter slice
+  builds them and must apply the same item bounds. (6) The `quoky.agentRun` audit and M1' re-plan are not built.
 ## ADR-0112 amendment 3 — Undo of approved external connector writes: calendar update and restore, Jira comment delete and transition revert, `lastAction.anchorTaskId`, undo reachable at the `local` level (Accepted 2026-11-02) (2026-11-02)
 
 - **Status:** **Accepted 2026-11-02** by the owner with the recommended options O1-O7 (see the ratification record at the
