@@ -9,6 +9,8 @@ import {
   isBareExecutionProhibition,
   isBareExecutionQuestionOrNegation,
   isBareExecutionRequest,
+  namesApprovedWriteStepVerb,
+  connectorWriteStepVerb,
 } from './connector-write-flow';
 
 // Routing exec gaps (after INT-2 / PR #137): the classifiers that pick a NON-mutating reply for a bare execution command
@@ -171,5 +173,29 @@ describe('isBareExecutionProhibition (Codex P2 on 5594c16)', () => {
     for (const text of ['실행해도 돼?', '실행할까?', '실행 안 해도 돼', '실행', '댓글 실행하지 마', '테스트 실행하지 마', '']) {
       expect(isBareExecutionProhibition(text), text).toBe(false);
     }
+  });
+});
+
+describe('namesApprovedWriteStepVerb (the approved write\u2019s own verb, derived from its phrase)', () => {
+  it('derives each verb from the documented phrase; a phrase with no separable verb has none', () => {
+    expect(CONNECTOR_WRITE_OPERATIONS.map((op) => [op, connectorWriteStepVerb(op)])).toEqual([
+      ['ISSUE_COMMENT', null],
+      ['ISSUE_TRANSITION', '변경'],
+      ['CHANNEL_POST', '게시'],
+      ['CALENDAR_EVENT_CREATE', '추가'],
+      ['CALENDAR_EVENT_UPDATE', '변경'],
+      ['CALENDAR_EVENT_DELETE', '삭제'],
+    ]);
+  });
+
+  it('matches only its own verb (never another operation\u2019s), is never an execution phrase, and ignores questions', () => {
+    expect(namesApprovedWriteStepVerb('삭제 실행', 'CALENDAR_EVENT_DELETE')).toBe(true);
+    expect(namesApprovedWriteStepVerb('지금 삭제 실행해줘', 'CALENDAR_EVENT_DELETE')).toBe(true);
+    expect(namesApprovedWriteStepVerb('삭제 실행', 'CALENDAR_EVENT_UPDATE')).toBe(false);
+    expect(namesApprovedWriteStepVerb('변경 실행', 'CALENDAR_EVENT_DELETE')).toBe(false);
+    expect(namesApprovedWriteStepVerb('실행', 'CALENDAR_EVENT_DELETE')).toBe(false);
+    expect(namesApprovedWriteStepVerb('삭제 실행해도 돼?', 'CALENDAR_EVENT_DELETE')).toBe(false);
+    expect(namesApprovedWriteStepVerb('댓글 실행', 'ISSUE_COMMENT')).toBe(false);
+    for (const text of ['삭제 실행', '변경 실행', '추가 실행']) expect(acceptedByConnectorGate(text), text).toBe(false);
   });
 });

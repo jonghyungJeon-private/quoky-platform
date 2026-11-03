@@ -20,6 +20,7 @@ import {
   isBareExecutionRequest,
   isConnectorWriteSendStale,
   mentionsConnectorWriteExecutionStep,
+  namesApprovedWriteStepVerb,
 } from '../connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE } from '../connector-writes/connector-write-copy';
 import { outboundMessage, withOutboundBody } from '../message-rendering';
@@ -713,7 +714,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     if (interpretStrayDecisionUtterance(text) === 'approve' || isAnyConnectorWriteExecutionPhrase(text)) return true;
     const loosely = connectorWriteOperationsNamedLoosely(text);
     if (mentionsConnectorWriteExecutionStep(text, operation) || loosely.includes(operation)) return true;
-    if (isBareExecutionRequest(text) || isBareExecutionQuestionOrNegation(text)) return true;
+    if (isBareExecutionRequest(text) || isBareExecutionQuestionOrNegation(text) || namesApprovedWriteStepVerb(text, operation)) return true;
     return connectorWriteOperationsAskedAbout(text).length > 0 || loosely.length > 0;
   }
 
@@ -907,7 +908,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
             await this.approvalDecisions.revokeConnectorWrite(this.chatDecision(message, session, actor), view, 'cancelled'),
           );
         }
-        if (isBareExecutionRequest(message.text) || isBareExecutionQuestionOrNegation(message.text)) {
+        // The approved write's own step verb without its object noun ("삭제 실행") is the same non-executing hint.
+        if (isBareExecutionRequest(message.text) || isBareExecutionQuestionOrNegation(message.text) || namesApprovedWriteStepVerb(message.text, anchor.operation)) {
           const reply = this.deps.composer.composeConnectorWriteBareExecution(
             message.context,
             anchor.operation,

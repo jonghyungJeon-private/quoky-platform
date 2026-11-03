@@ -722,6 +722,38 @@ export function connectorWriteOperationsNamedLoosely(text: string): ConnectorWri
 }
 
 /**
+ * The step verb of a write, taken from its OWN documented execution phrase (`<object…> <verb> 실행`): "일정 삭제 실행" ->
+ * "삭제", "상태 변경 실행" -> "변경", "Slack 게시 실행" -> "게시". A phrase whose only word before "실행" is the object
+ * ("댓글 실행") has no separable verb -> null (that family's behaviour is unchanged). Derived from the phrase data, never
+ * from a separate list.
+ */
+export function connectorWriteStepVerb(operation: ConnectorWriteOperation): string | null {
+  const words = normalizeExecutionPhrase(documentedExecutionPhrase(connectorWriteExecutionGate(operation))).split(' ');
+  if (words.length < 3 || words[words.length - 1] !== '실행') return null;
+  return words[words.length - 2] ?? null;
+}
+
+const STEP_VERB_TAIL = String.raw`실행(?:\s*(?:해|해요|해줘|해라|하자|시켜|시켜\s*줘|시켜\s*주세요|해\s*줄래|해\s*줄래요|해\s*봐|좀\s*해\s*줘|부탁해|부탁해요))?`;
+
+/**
+ * True when the whole message is the approved write's own step verb without its object noun ("삭제 실행" while "일정 삭제
+ * 실행" waits). The verb comes from that write's own phrase ({@link connectorWriteStepVerb}); another operation's verb is
+ * not a match. Used ONLY to choose the exact-phrase reply (same as a bare "실행") — it never executes and no execution
+ * gate consults it: the exact phrase stays the only executor.
+ */
+export function namesApprovedWriteStepVerb(text: string, operation: ConnectorWriteOperation): boolean {
+  if (typeof text !== 'string') return false;
+  const verb = connectorWriteStepVerb(operation);
+  if (verb === null) return false;
+  const trimmed = text.normalize('NFC').trim().replace(/\s+/gu, ' ');
+  if (trimmed.length === 0 || trimmed.length > 40) return false;
+  if (executionCommandRejection(trimmed) !== null) return false;
+  const bare = trimmed.toLowerCase().replace(/[\s.!~。！]+$/u, '');
+  const escaped = verb.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(String.raw`^(?:(?:지금|이제|바로)\s*)?(?:승인된\s*)?${escaped}\s*${STEP_VERB_TAIL}$`, 'u').test(bare);
+}
+
+/**
  * Bare execution commands that name no step ("실행", "실행해", "실행해줘", "go", "run it"), after
  * {@link normalizeExecutionPhrase} and one optional leading "지금/이제/바로/now" or trailing "now/please".
  */
