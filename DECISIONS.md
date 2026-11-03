@@ -31701,15 +31701,14 @@ and D9 still governs every turn that goes to chat.
   "not turned on yet" copy; its harness calendar writer returns a Google-shaped event id and etag and stores the approved time.
   A create recorded while the family was closed stays `undoable:false` after the family opens (app test).
 - **Review status and pending.** Codex PASS, Chief Architect APPROVE (no P1; P2s fixed in the follow-up commit),
-  `/security-review` APPROVE (2026-11-03). **Live UAT is still pending**, on a temporary deploy with `QUOKY_NL_ACTIONS=local`
-  set only during the UAT window (owner decision 2026-11-03). The standing service keeps its NL-actions level outside that window.
+  `/security-review` APPROVE (2026-11-03). **Live UAT PASSED 2026-11-03 on a temporary deploy of 64cec71e with `QUOKY_NL_ACTIONS=local` only during the window (restored to `shadow` after)**: Discord DM create -> "되돌려줘" gave the receipt-sourced delete preview of the same event -> bare `삭제 실행` before and after the approval executed nothing (after approval it named `일정 삭제 실행`, #307) -> 승인 -> `일정 삭제 실행` deleted that same event (calendar read outside Quoky: 1 -> 0) -> "되돌려줘" again refused (`undo-of-undo`); the QA group channel refused `dm-only`. Not run live: TOCTOU edits (need a write outside Quoky) and the kill-switch case (open owner question 2); both are covered offline by the red-team driver and unit tests. The standing service keeps its NL-actions level outside that window.
 - **Open owner questions.** (1) Should the calendar undo additionally require `QUOKY_CONNECTOR_WRITES_ENABLED`, as O1's wording
   suggests? Today it does not. (2) "에이전트 중지" (kill switch, `conversation-runtime.ts`) does not close an already-open undo
   anchor: a later `일정 삭제 실행` still executes, because the switch is checked at preview time; amendment 1 only requires the
   switch to withdraw `action.undo`, which holds. Recommendation: a follow-up slice makes the stop also close anchors with
   `undoOf` set (stricter side). Not implemented here.
-- **Observation.** A bare `삭제 실행` after the approval is not answered by the connector-write flow: it reaches the selector
-  and falls to chat. It writes nothing; whether it should name `일정 삭제 실행` is an open product question.
+- **Observation (resolved by #307).** A bare `삭제 실행` after the approval now gets the exact-phrase hint `일정 삭제 실행` and
+  writes nothing; confirmed in the Live UAT.
 
 ### Implementation note (connector-write bare step verb, 2026-11-03)
 

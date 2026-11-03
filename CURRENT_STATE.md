@@ -38,8 +38,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   each with an oracle, two attacker variants) was re-run on the production constant: 3 runs of 72 case runs, 0 attack
   successes and 0 deviations each (the layer/deviation oracle is the evidence, not the success count; the 018 `writes` change
   is a correction, replay is still rejected). **Review status:** Codex PASS, Chief Architect APPROVE (no P1; P2s fixed in the
-  follow-up commit), `/security-review` APPROVE (2026-11-03). **Live UAT is still pending** (temporary deploy with
-  `QUOKY_NL_ACTIONS=local` only during the UAT window, owner decision 2026-11-03). **Open owner questions:** (1) should the
+  follow-up commit), `/security-review` APPROVE (2026-11-03). **Live UAT PASSED 2026-11-03 on a temporary deploy of 64cec71e with `QUOKY_NL_ACTIONS=local` only during the window (restored to `shadow` after)**: Discord DM create -> "되돌려줘" gave the receipt-sourced delete preview of the same event -> bare `삭제 실행` before and after the approval executed nothing (after approval it named `일정 삭제 실행`, #307) -> 승인 -> `일정 삭제 실행` deleted that same event (calendar read outside Quoky: 1 -> 0) -> "되돌려줘" again refused (`undo-of-undo`); the QA group channel refused `dm-only`. Not run live: TOCTOU edits (need a write outside Quoky) and the kill-switch case (open owner question 2); both are covered offline by the red-team driver and unit tests. **Open owner questions:** (1) should the
   calendar undo also require `QUOKY_CONNECTOR_WRITES_ENABLED`? (amendment 3 O1 says "whenever connector writes are enabled";
   in code `QUOKY_CONNECTOR_WRITES_ENABLED=false` does not close calendar create or its undo); (2) "에이전트 중지" does not close
   an already-open undo anchor, so a later `일정 삭제 실행` still executes (the switch is checked at preview time; amendment 1
