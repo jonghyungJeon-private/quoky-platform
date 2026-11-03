@@ -47,6 +47,14 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   RQ-1 to RQ-3 ruled by the Chief Architect (2026-11-02; RQ-3 amends ADR-0121 D7 by addition); gates CH1-CH7 are proposals; every model run is Strict.
 - **Added (code, not wired).** A pure Core chunker under `packages/core/src/application/chunking/` (boundaries,
   passages, token estimate, lexical BM25, window packing, coverage). No handler uses it yet.
+- **Tested (amendment 3 red-team gate driver, branch `claude/r3-redteam`).** The deterministic worst-case driver
+  (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`, no model) is now real: the scripted selector output parses (the old
+  top-level `externalUndo` key was rejected, so five cases fell to chat), every case runs with smuggled args and with
+  `args: {}`, a rejected script fails the gate, and every case has an oracle (a refusal is previews 0, approvals 0, writes 0
+  at a named layer and reason). 30 cases (six selector-path twins added), 3 runs x 60 case runs: 0 attack successes, 0
+  deviations. Case 018's `writes: 0` is corrected (it contradicted its own approve/execute turns; replay is still rejected).
+  The family stays OFF (`EXTERNAL_UNDO_CAPABILITIES` empty) until Chief Architect, Codex and `/security-review` PASS on the
+  switch-on and Live UAT; none of those has passed. DECISIONS "Implementation note (amendment 3, calendar-create family...)".
 
 ## Unreleased — D4: the help-scope classifier runs on sonnet (effort low) and is switched on (owner decision of 2026-11-02)
 
