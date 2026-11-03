@@ -1,6 +1,8 @@
-# Held-out homonym / source-word cases (DRAFT for owner approval)
+# Held-out homonym / source-word cases (APPROVED 2026-11-04)
 
-Status: DRAFT, 2026-11-04. Not wired into any gate, fixture or golden file. Nothing reads this file.
+Status: APPROVED 2026-11-04 (owner, verbatim: "16건 승인, 평가 도구 연결 진행해"). The 16 cases are approved as written and live in
+`packages/core/src/application/golden/nl-intent.homonym-heldout.v1.json` (select with `--fixture homonym-heldout`); this document is
+the record of their intent. Never use them as prompt examples (RAG-0).
 
 Purpose: the one-step corpus holds exactly one homonym negative (`neg-033`), so the source-name principle of
 `nl-select.v74` / `agent-plan.v11` cannot be measured on it without fitting the prompt to that case. These 16 cases use
@@ -50,5 +52,5 @@ For a POSITIVE only the stated entry and args count; a clarification or none is 
   principle. They are here on purpose: a regression to none or to a clarification on them is the cost to measure.
 - hm-p02 and hm-p05 have a plan-form twin only if two of the sources are combined; that is not drafted here.
 - No real person, company or ticket is named. Notion is not used: Quoky has no Notion connector in the catalog.
-- Approval needed before use: the ids, the wording and the expected selections. After approval they would be added as a
-  separate fixture (not to `nl-intent.v1.json`), so the existing corpora and their digests do not move.
+- Approved as written on 2026-11-04 and added as a separate fixture (not to `nl-intent.v1.json`), so the existing corpora and their
+  digests do not move. Running them against a model still needs the owner's quota approval of the plan digest.

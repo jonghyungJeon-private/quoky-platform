@@ -23,6 +23,7 @@ import { resolve } from 'node:path';
 import {
   Capability,
   NL_CATALOG_ENTRY_IDS,
+  NL_CANDIDATE_PROMPT_VERSIONS,
   NL_SELECTION_PROMPT_VERSION,
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
@@ -44,9 +45,11 @@ import {
   type NlArgs,
   type NlCatalogEntry,
   type NlPreviousSelectionInput,
+  type NlPromptRev,
 } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
+import { parseNlPromptRev } from './prompt-rev';
 
 export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0, helpCaptureRate: 0.01 } as const;
 
@@ -148,7 +151,42 @@ export function loadScoredCorpus(mainPath: string = NL_EVAL_CORPUS_PATH, context
   return { corpus: { version: main.corpus.version, cases: [...main.corpus.cases, ...context.corpus.cases] }, sha256 };
 }
 
+/**
+ * Owner-approved held-out fixtures (`--fixture <name>`), separate from `nl-intent.v1.json` so the existing corpora and their
+ * digests never move. RAG-0: their texts are never prompt examples (the contamination lint reads them as gold).
+ */
+export const NL_EVAL_FIXTURE_PATHS: Readonly<Record<string, string>> = {
+  'homonym-heldout': resolve(__dirname, '../../../../packages/core/src/application/golden/nl-intent.homonym-heldout.v1.json'),
+};
+
+/** `--fixture` value check: a known name or a usage-style error. */
+export function nlEvalFixturePath(name: string): string {
+  const path = NL_EVAL_FIXTURE_PATHS[name];
+  if (path === undefined) throw new Error(`--fixture must be one of ${Object.keys(NL_EVAL_FIXTURE_PATHS).join(', ')} (got ${JSON.stringify(name)})`);
+  return path;
+}
+
+/**
+ * The scored corpus plus one held-out fixture: `loadScoredCorpus()` first, then the fixture's cases (a duplicate id is an
+ * error). `sha256` binds the scored corpora and the fixture file.
+ */
+export function loadScoredCorpusWithFixture(name: string, fixturePath: string = nlEvalFixturePath(name)): { corpus: NlEvalCorpus; sha256: string } {
+  const base = loadScoredCorpus();
+  const fixture = loadCorpus(fixturePath);
+  const ids = new Set(base.corpus.cases.map((golden) => golden.id));
+  const clash = fixture.corpus.cases.find((golden) => ids.has(golden.id));
+  if (clash !== undefined) throw new Error(`case ${clash.id} is in both the scored corpora and the ${name} fixture`);
+  const sha256 = createHash('sha256').update(`scored:${base.sha256}\nfixture ${name}:${fixture.sha256}\n`).digest('hex');
+  return { corpus: { version: base.corpus.version, cases: [...base.corpus.cases, ...fixture.corpus.cases] }, sha256 };
+}
+
 export interface NlEvalPlanOptions {
+  /** Prompt revision of the rule text; absent = the active `v73` (the digest then does not change). */
+  readonly promptRev?: NlPromptRev;
+  /** The held-out fixture the corpus was loaded with (bound into the digest; the CLI loads it). */
+  readonly fixture?: string;
+  /** Restrict the plan to exactly these case ids (every id must be in the corpus); recorded in the digest. */
+  readonly cases?: readonly string[];
   readonly model: string;
   /** Restrict to these entries (and, with `includeNegatives`, the negatives). Empty = all. */
   readonly entries: readonly string[];
@@ -166,6 +204,12 @@ export interface NlEvalPlanOptions {
 export interface NlEvalPlan {
   readonly kind: 'nl-intent-eval';
   readonly promptVersion: string;
+  /** Present only for a non-default revision (`v74`): the plan then differs from, and cannot be run as, a v73 plan. */
+  readonly promptRev?: NlPromptRev;
+  /** Present only with `--fixture`. */
+  readonly fixture?: string;
+  /** Present only with `--cases` (the selected ids; `caseIds` is the resulting list). */
+  readonly selectedCases?: readonly string[];
   /** The SHA-256 of the instruction text (the prompt with an empty owner message): any prompt edit changes the digest. */
   readonly promptSha256: string;
   readonly corpusSha256: string;
@@ -189,9 +233,14 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
     throw new Error('timeoutMs must be an integer 2000..10000');
   }
+  const rev = parseNlPromptRev(options.promptRev);
+  const known = new Set(corpus.cases.map((golden) => golden.id));
+  for (const id of options.cases ?? []) if (!known.has(id)) throw new Error(`unknown case ${id}`);
+  const subset = options.cases !== undefined ? new Set(options.cases) : undefined;
   const counts = new Map<string, number>();
   const caseIds: string[] = [];
   for (const golden of corpus.cases) {
+    if (subset !== undefined && !subset.has(golden.id)) continue;
     const group = nlEvalExpectedLabel(golden);
     const wanted = group === 'none' ? options.includeNegatives : options.entries.length === 0 || options.entries.includes(group);
     if (!wanted) continue;
@@ -202,8 +251,11 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   }
   return {
     kind: 'nl-intent-eval',
-    promptVersion: NL_SELECTION_PROMPT_VERSION,
-    promptSha256: createHash('sha256').update(buildSelectionPrompt({ entries: ALL_ENTRIES, text: '' })).digest('hex'),
+    promptVersion: rev === 'v74' ? NL_CANDIDATE_PROMPT_VERSIONS.read : NL_SELECTION_PROMPT_VERSION,
+    ...(rev === 'v74' ? { promptRev: rev } : {}),
+    ...(options.fixture !== undefined ? { fixture: options.fixture } : {}),
+    ...(options.cases !== undefined ? { selectedCases: [...options.cases] } : {}),
+    promptSha256: createHash('sha256').update(buildSelectionPrompt({ entries: ALL_ENTRIES, text: '', ...(rev === 'v74' ? { rev } : {}) })).digest('hex'),
     corpusSha256,
     model: options.model,
     ...(options.effort !== undefined ? { effort: options.effort } : {}),
@@ -459,6 +511,7 @@ export async function runEvaluation(input: {
         const prompt = buildSelectionPrompt({
           entries: ALL_ENTRIES,
           text: prepared.text,
+          ...(input.plan.promptRev === 'v74' ? { rev: 'v74' as const } : {}),
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
             ? { previous: priorPromptInput(golden.prior) }
             : {}),

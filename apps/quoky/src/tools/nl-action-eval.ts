@@ -35,6 +35,7 @@ import {
   NL_ACTION_ENTRY_IDS,
   NL_ACTION_PROMPT_VERSION,
   NL_ACTION_R2_PROMPT_VERSION,
+  NL_CANDIDATE_PROMPT_VERSIONS,
   NL_CATALOG_ENTRY_IDS,
   NL_PENDING_METADATA_KEY,
   NL_SELECTION_TIMEOUT_MS,
@@ -54,6 +55,7 @@ import {
   nlItemSummarizeEntry,
   isNlWave1EntryId,
   parseSelectionOutput,
+  type NlPromptRev,
   pendingQuestionRecord,
   prepareSelectionInput,
   nlCoreSelectionArgs,
@@ -76,6 +78,7 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
+import { parseNlPromptRev } from './prompt-rev';
 import { NL_EVAL_HELP_ENTRY, NL_EVAL_RELEASE_LINK_OUTPUT, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, isJiraReleaseLinkOnly, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
@@ -405,7 +408,7 @@ export async function decideActionCase(
   golden: Pick<NlActionCase, 'text' | 'fixture'>,
   provider: AiProvider,
   now: IsoTimestamp,
-  options: { readonly timeoutMs?: number; readonly itemR2?: 'off' | 'shadow' | 'jira' | 'all' } = {},
+  options: { readonly timeoutMs?: number; readonly itemR2?: 'off' | 'shadow' | 'jira' | 'all'; readonly promptRev?: NlPromptRev } = {},
 ): Promise<{ readonly decision: NlSelectionDecision; readonly audit?: Record<string, unknown>; readonly unavailable?: NlUnavailableCause }> {
   const world = fixtureWorld(golden.fixture, now);
   let session = world.session;
@@ -425,6 +428,7 @@ export async function decideActionCase(
   };
   const service = new NlSelectionService({
     mode: 'active',
+    ...(options.promptRev === 'v74' ? { promptRev: options.promptRev } : {}),
     router: { select: async () => provider },
     sessions: {
       updateMetadataEntry: async (_ref, key, update) => {
@@ -698,6 +702,8 @@ export type NlActionEvalKind = 'nl-action-eval' | 'nl-read-regression' | 'nl-act
 export interface NlActionPlan {
   readonly kind: NlActionEvalKind;
   readonly promptVersion: string;
+  /** Present only for a non-default revision (`v74` = nl-select.v75 / v76): the plan then cannot be run as an active-revision plan. */
+  readonly promptRev?: NlPromptRev;
   readonly promptSha256: string;
   readonly corpusSha256: string;
   readonly model: string;
@@ -718,24 +724,27 @@ export interface NlActionPlan {
 }
 
 /** The v19 instruction text with every entry offered and nothing referenced: any prompt edit changes the digest. */
-export function actionPromptSha256(entries: readonly NlCatalogEntry[] = NL_ACTION_EVAL_ENTRIES): string {
-  return createHash('sha256').update(buildSelectionPrompt({ entries, text: '', actions: { referenceContext: 'none' } })).digest('hex');
+export function actionPromptSha256(entries: readonly NlCatalogEntry[] = NL_ACTION_EVAL_ENTRIES, rev?: NlPromptRev): string {
+  return createHash('sha256').update(buildSelectionPrompt({ entries, text: '', actions: { referenceContext: 'none' }, ...(rev === 'v74' ? { rev } : {}) })).digest('hex');
 }
 
 export function buildActionPlan(
   kind: NlActionEvalKind,
   caseIds: readonly string[],
   corpusSha256: string,
-  options: { readonly model: string; readonly effort?: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string },
+  options: { readonly model: string; readonly effort?: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string; readonly promptRev?: NlPromptRev },
 ): NlActionPlan {
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
   const r2 = kind === 'nl-action-r2-eval';
+  const rev = parseNlPromptRev(options.promptRev);
+  const candidate = rev === 'v74';
   return {
     kind,
-    promptVersion: r2 ? NL_ACTION_R2_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION,
-    promptSha256: r2 ? actionPromptSha256(NL_ACTION_R2_EVAL_ENTRIES) : actionPromptSha256(),
+    promptVersion: candidate ? (r2 ? NL_CANDIDATE_PROMPT_VERSIONS.r2 : NL_CANDIDATE_PROMPT_VERSIONS.action) : r2 ? NL_ACTION_R2_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION,
+    ...(candidate ? { promptRev: rev } : {}),
+    promptSha256: r2 ? actionPromptSha256(NL_ACTION_R2_EVAL_ENTRIES, rev) : actionPromptSha256(undefined, rev),
     corpusSha256,
     model: options.model,
     ...(options.effort !== undefined ? { effort: options.effort } : {}),
@@ -793,7 +802,7 @@ export async function runActionEvaluation(input: {
         const rec = recording(input.provider, input.elapsed ?? Date.now);
         let record: NlActionRecord;
         try {
-          const { decision, audit, unavailable } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}) });
+          const { decision, audit, unavailable } = await decideActionCase(golden, rec.provider, input.now(), { timeoutMs: input.plan.callTimeoutMs, ...(input.plan.itemR2 !== undefined ? { itemR2: input.plan.itemR2 } : {}), ...(input.plan.promptRev !== undefined ? { promptRev: input.plan.promptRev } : {}) });
           const { raw, latencyMs } = rec.last();
           const scored = scoreActionDecision(golden, raw, decision, audit, { entries: input.plan.itemR2 !== undefined ? NL_ACTION_R2_EVAL_ENTRIES : NL_ACTION_EVAL_ENTRIES });
           record = { run, latencyMs, ...scored, ...(input.plan.itemR2 !== undefined ? r2DiagnosticArgs(golden, raw, scored.outcome) : {}) };
@@ -944,12 +953,13 @@ export function loadScoredReadRegressionCorpus(mainPath: string = NL_INTENT_CORP
  * The read-regression prompt of one case: the A6 action prompt, every entry offered, the case's prior as the previous
  * selection and its `context` as the Reference context (`none` without one).
  */
-export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimestamp): string | undefined {
+export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimestamp, rev?: NlPromptRev): string | undefined {
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return undefined;
   return buildSelectionPrompt({
     entries: NL_ACTION_EVAL_ENTRIES,
     text: prepared.text,
+    ...(rev === 'v74' ? { rev } : {}),
     actions: { referenceContext: golden.context === undefined ? 'none' : renderReferenceContext(readRegressionReferenceState(golden.context, now)) },
     ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: priorPromptInput(golden.prior) } : {}),
   });
@@ -969,7 +979,7 @@ export async function runReadRegression(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const prompt = golden.a6Skip !== undefined ? undefined : readRegressionPrompt(golden, input.now());
+        const prompt = golden.a6Skip !== undefined ? undefined : readRegressionPrompt(golden, input.now(), input.plan.promptRev);
         if (prompt === undefined) {
           records.push({ run, id: golden.id, outcome: 'skipped', relabeled: golden.a6Relabel !== undefined, latencyMs: 0 });
           continue;

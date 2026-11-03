@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "status": "approved",
+  "approval": {
+    "by": "owner",
+    "date": "2026-11-04",
+    "quote": "16건 승인, 평가 도구 연결 진행해"
+  },
+  "description": "Held-out homonym / source-word cases for the nl-select.v73-versus-v74 and agent-plan.v10-versus-v11 comparison (source: docs/eval/drafts/homonym-heldout-draft.md). 10 negatives (the source word is present but is not the requested data or place) and 6 weak-phrasing positives. Owner-approved as written on 2026-11-04 (verbatim: \"16건 승인, 평가 도구 연결 진행해\"). NOT part of nl-intent.v1.json or agent-plan.v1.json, so their corpora and digests do not move; selected with `--fixture homonym-heldout` in eval:nl (plan/run) and eval:agent-plan. RAG-0: these texts must never be used as prompt examples; example-contamination.test.ts lints them as gold.",
+  "cases": [
+    {
+      "id": "hm-n01",
+      "text": "우리 집 벽에 걸어둔 캘린더 색이 너무 칙칙해서 바꾸고 싶어",
+      "expect": "none",
+      "note": "캘린더 is a wall calendar (an object) and the message is a remark about it. No request to see the owner's events. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n02",
+      "text": "제주도 여행 일정 짜는 게 이렇게 어려운 줄 몰랐어",
+      "expect": "none",
+      "note": "일정 means a trip itinerary the owner is planning, and the sentence is a feeling. It does not ask for the calendar. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n03",
+      "text": "gmail 주소 새로 만들 때 아이디 뭘로 하는 게 무난해?",
+      "expect": "none",
+      "note": "A general question about choosing an e-mail address. The word names the product, the request is advice, not the owner's mailbox. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n04",
+      "text": "I really need to cut myself some slack this week",
+      "expect": "none",
+      "note": "English \"slack\" meaning leniency. Not the chat tool, and nothing is asked. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n05",
+      "text": "지라 티켓 번호를 커밋 메시지에 붙이는 규칙을 팀에 어떻게 설명하면 좋을까?",
+      "expect": "none",
+      "note": "Jira is the topic of a team-process question (advice). The owner asks for no ticket data. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n06",
+      "text": "깃허브 프로필 소개 문구 좀 센스 있게 써줄 사람 없나",
+      "expect": "none",
+      "note": "GitHub is where the owner's profile text lives, but the request is for writing help, not for issues or pull requests. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n07",
+      "text": "하드 드라이브에서 딸깍 소리가 나는데 이거 고장 난 걸까?",
+      "expect": "none",
+      "note": "Hardware drive (a disk), not Google Drive. A repair question. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n08",
+      "text": "알림이 쌓일 때마다 폰이 계속 진동해서 정말 짜증나",
+      "expect": "none",
+      "note": "알림 is a phone notification, and the message is a complaint. It asks for no list of Quoky reminders. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n09",
+      "text": "내일 발표할 브리핑 자료 첫 장 문구를 좀 다듬어줘",
+      "expect": "none",
+      "note": "브리핑 is a presentation to give. The owner asks for text editing, not for Quoky's daily brief. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-n10",
+      "text": "snail mail은 제주까지 왜 이렇게 오래 걸리지",
+      "expect": "none",
+      "note": "Postal mail (English wording), a remark and a rhetorical question. It does not ask for the inbox. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-p01",
+      "text": "드라이브에 지난주에 올려둔 게 뭐였더라",
+      "expect": {
+        "entryId": "drive.files",
+        "args": {}
+      },
+      "note": "The owner names Drive as the place and wants to recall what is there; no file type or name, so recent files. Past tense and \"더라\" must not turn it into a remark. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-p02",
+      "text": "슬랙에서 배포 공지 누가 올렸나 싶은데",
+      "expect": {
+        "entryId": "slack.search",
+        "args": {
+          "keyword": "배포 공지"
+        }
+      },
+      "note": "Slack is named as the place to look; the request is indirect (\"싶은데\"). [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-p03",
+      "text": "캘린더 보니까 금요일엔 뭐 잡혀 있어?",
+      "expect": {
+        "entryId": "calendar.events",
+        "args": {
+          "range": "fri"
+        }
+      },
+      "note": "The calendar is the place; \"금요일엔\" is the period. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-p04",
+      "text": "메일 중에 오늘 들어온 것만 좀",
+      "expect": {
+        "entryId": "mail.list",
+        "args": {
+          "range": "today"
+        }
+      },
+      "note": "A clipped, verbless request. The mail is the data, the period narrows it. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-p05",
+      "text": "지라에 나한테 걸린 것 중에 이번 주까지인 거",
+      "expect": {
+        "entryId": "jira.issues",
+        "args": {
+          "window": "due",
+          "range": "this-week"
+        }
+      },
+      "note": "Jira is the place; \"이번 주까지인\" is the due window; no verb at all. [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    },
+    {
+      "id": "hm-p06",
+      "text": "깃허브에서 내 리뷰를 기다리는 게 있나 보려고",
+      "expect": {
+        "entryId": "github.items",
+        "args": {
+          "query": "review-requests"
+        }
+      },
+      "note": "GitHub is named, the review request is the data, and the sentence ends in an intention (\"보려고\"). [homonym held-out: agent-drafted 2026-11-04, owner-approved 2026-11-04 ('16건 승인, 평가 도구 연결 진행해'); held-out measurement only, never a prompt example (RAG-0)]"
+    }
+  ]
+}

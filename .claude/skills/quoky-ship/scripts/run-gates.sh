@@ -187,7 +187,12 @@ common_args() {
     # help-scope: --model / --effort override the classifier's STRONGER tier, so GATES_MODEL (the selector's haiku) must
     # not reach it; the gate measures the production default (sonnet / low) unless GATES_HELP_SCOPE_MODEL is set.
     help-scope) printf -- '--runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_HELP_SCOPE_MODEL:-}" ] && printf -- ' --model %s' "$GATES_HELP_SCOPE_MODEL" ;;
-    *) printf -- '--model %s --runs %s --concurrency %s' "$MODEL" "$RUNS" "$CONC" ;;
+    *) printf -- '--model %s --runs %s --concurrency %s' "$MODEL" "$RUNS" "$CONC"
+      # Prompt revision (owner decision 2026-11-04): GATES_PROMPT_REV (v73|v74) / GATES_PLAN_REV (v10|v11), identical in plan and run.
+      case "$1" in
+        agent-plan) [ -n "${GATES_PLAN_REV:-}" ] && printf -- ' --plan-rev %s' "$GATES_PLAN_REV" ;;
+        intent|action|read-regression|r2) [ -n "${GATES_PROMPT_REV:-}" ] && printf -- ' --prompt-rev %s' "$GATES_PROMPT_REV" ;;
+      esac ;;
   esac
   return 0
 }

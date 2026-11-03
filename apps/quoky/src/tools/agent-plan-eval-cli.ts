@@ -2,6 +2,7 @@
  * ADR-0121 D11 plan-exactness evaluation CLI (stage S2 P2):
  *
  *   pnpm eval:agent-plan -- --mode plan [--model haiku] [--effort high] [--runs N] [--concurrency N] [--timeout-ms N] [--include-pending]
+ *                           [--plan-rev v10|v11] [--fixture homonym-heldout] [--cases id1,id2,...]
  *   pnpm eval:agent-plan -- --mode run  <the same options> --approved-plan-digest <sha256 from plan>
  *
  * `plan` is offline: it checks the corpus (`golden/agent-plan.v1.json` with every `nl-intent.v1.json` case as one-step
@@ -29,6 +30,8 @@ import {
   buildAgentPlanEvalPlan,
   computeAgentPlanEvalDigest,
   loadAgentPlanCorpus,
+  loadAgentPlanFixtureCases,
+  AGENT_PLAN_FIXTURE_PATHS,
   runAgentPlanEvaluation,
   summarizeAgentPlanRun,
   validateAgentPlanCorpus,
@@ -38,6 +41,7 @@ import {
   type AgentPlanEvalSummary,
   type AgentPlanPooledGate,
 } from './agent-plan-eval';
+import { AGENT_PLAN_EVAL_REVS, parseAgentPlanRev, parseCaseIds } from './prompt-rev';
 import { guardRunProvider, sumHardFailures } from './nl-intent-eval-cli';
 import { CANARY_CLAUSE, type CanaryResult, EXIT_INVALID_PROVIDER, formatProviderOutcomes, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun } from './eval-provider-guard';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
@@ -64,6 +68,10 @@ Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_
          --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-10000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
+         --plan-rev <${AGENT_PLAN_EVAL_REVS.join('|')}, default v10 = the active planner prompt>  v11 is the candidate (on nl-select.v74); printed in the plan, recorded in the report and
+                    bound into the digest: a plan made for one revision cannot be run under another (the digest differs, exit 3)
+         --fixture <${Object.keys(AGENT_PLAN_FIXTURE_PATHS).join('|')}>  append the owner-approved held-out cases (one-step gold; a positive is the single-step plan) to the pool
+         --cases <id,id,...>  score exactly these case ids (every id must be in the pool; the list is bound into the digest)
 Gate:            >= ${AGENT_PLAN_EVAL_GATE.multiStepExact * 100}% exact over the multi-step positives POOLED over all runs (owner decision 2026-10-26), AND in every run:
                  >= ${AGENT_PLAN_EVAL_GATE.oneStepExact * 100}% over the one-step positives
                  (same ordered step sequence), ${AGENT_PLAN_EVAL_GATE.wrongOnNegatives} wrong on negatives other than help.topic-only plans,
@@ -73,7 +81,7 @@ Provider outage: 5 provider failures in a row, 10 timeouts in a row, or provider
                  further calls; the run is INVALID (provider unavailable: <reason>), exit 5, never PASSED or FAILED.
 `;
 
-const VALUE_OPTIONS = new Set(['--mode', '--model', '--effort', '--runs', '--concurrency', '--timeout-ms', '--approved-plan-digest']);
+const VALUE_OPTIONS = new Set(['--mode', '--model', '--effort', '--runs', '--concurrency', '--timeout-ms', '--approved-plan-digest', '--plan-rev', '--fixture', '--cases']);
 const FLAG_OPTIONS = new Set(['--include-pending']);
 
 export class UsageError extends Error {}
@@ -202,6 +210,18 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
     const loaded = deps.load();
     const problems = validateAgentPlanCorpus(loaded.corpus, loaded.oneStep);
     cases = agentPlanEvalCases(loaded.corpus, loaded.oneStep);
+    const planRev = parseAgentPlanRev(parsed.options['--plan-rev']);
+    const caseIds = parseCaseIds(parsed.options['--cases']);
+    const fixtureName = parsed.options['--fixture'];
+    let heldout: { name: string; sha256: string } | undefined;
+    if (fixtureName !== undefined) {
+      const fixture = loadAgentPlanFixtureCases(fixtureName);
+      const taken = new Set(cases.map((golden) => golden.id));
+      const clash = fixture.cases.find((golden) => taken.has(golden.id));
+      if (clash !== undefined) throw new Error(`case ${clash.id} is in both the agent-plan pool and the ${fixtureName} fixture`);
+      cases = [...cases, ...fixture.cases];
+      heldout = { name: fixtureName, sha256: fixture.sha256 };
+    }
     const pending = cases.filter((golden) => golden.status !== 'approved').length;
     deps.stdout(`agent-plan corpus: ${cases.length} cases (${loaded.corpus.oneStep.count} one-step from ${loaded.corpus.oneStep.corpus}, ${loaded.corpus.cases.length} new; ${pending} pending the owner's approval); schema problems: ${problems.length}`);
     for (const problem of problems.slice(0, 50)) deps.stdout(`  ${problem}`);
@@ -214,6 +234,9 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       includePending: parsed.includePending,
       gitHead: deps.gitHead(),
+      ...(planRev !== undefined && planRev !== 'v10' ? { planRev } : {}),
+      ...(heldout !== undefined ? { heldout } : {}),
+      ...(caseIds !== undefined ? { cases: caseIds } : {}),
     });
   } catch (error) {
     deps.stderr(error instanceof Error ? error.message : 'invalid arguments');

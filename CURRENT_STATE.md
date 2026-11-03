@@ -10,8 +10,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - **Done (Core, offline, no model call).** Candidate prompts behind `rev: 'v74'` / `rev: 'v11'`: the source-name principle and the S1-S5
   de-duplication (selector 27,924 -> 23,906 chars, planner 32,637 -> 28,619). Active prompts (`v73`/`v71`/`v72`, `agent-plan.v10`)
   and their pins are untouched. Record: DECISIONS "Prompt slimming and the source-name principle".
-- **Not enabled.** Nothing selects the candidates; they need the D12 gates (haiku, sonnet tiers, the 16-case held-out homonym set
-  in `docs/eval/drafts/homonym-heldout-draft.md`, owner approval pending) and the owner's approval of the eval quota first.
+- **Not enabled.** Nothing selects the candidates; they need the D12 gates (haiku and sonnet tiers) and the owner's approval of the eval
+  quota first. The 16-case held-out homonym set is owner-approved (2026-11-04, "16건 승인, 평가 도구 연결 진행해") as
+  `golden/nl-intent.homonym-heldout.v1.json`.
+- **Eval tools wired (offline, no model call).** `eval:nl --prompt-rev v73|v74`, `eval:agent-plan --plan-rev v10|v11`,
+  `--fixture homonym-heldout`, `--cases id,...`; the revision is bound into the plan digest and the report. Record: DECISIONS
+  "Held-out homonym set approved; eval tools compare prompt revisions".
 
 ### Eval gate quota guards (2026-11-04, branch `claude/v5-gates-quota-guard`)
 
