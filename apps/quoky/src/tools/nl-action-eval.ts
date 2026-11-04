@@ -77,7 +77,7 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
-import { parseNlPromptRev, storedNlPromptRev } from './prompt-rev';
+import { parseNlPromptRev, selectCaseIds, storedNlPromptRev } from './prompt-rev';
 import { NL_EVAL_HELP_ENTRY, NL_EVAL_RELEASE_LINK_OUTPUT, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, isJiraReleaseLinkOnly, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
@@ -481,7 +481,16 @@ export interface NlActionRecord {
   readonly family: string;
   readonly expected: string;
   readonly outcome: NlActionOutcome;
+  /**
+   * The gold span args (title / match / body / when) equal the span args of Core's FINAL args: the executed command's args,
+   * or, for a gold ask or refusal, the args Core validated and grounded for the selector's output (owner decisions
+   * 2026-10-19 item 1 and 2026-11-04; the same args the outcome uses). Gating.
+   */
   readonly spanExact?: boolean;
+  /** Diagnostic only, never gating: the same comparison on the selector's RAW args (what `spanExact` scored before 2026-11-04). */
+  readonly spanExactRaw?: boolean;
+  /** The selector's own JSON args (bounded; the model's args only, no prompt, no secrets), so later analysis needs no rerun. */
+  readonly rawArgs?: NlArgs;
   readonly got?: string;
   readonly latencyMs: number;
   readonly reason?: string;
@@ -525,6 +534,21 @@ export function r2DiagnosticArgs(golden: NlActionCase, raw: string, outcome: NlA
   };
 }
 
+const RAW_ARGS_MAX_KEYS = 12;
+const RAW_ARGS_MAX_CHARS = 200;
+
+/** The selector's args bounded for a record: at most 12 keys of 64 chars, string values cut at 200 characters, scalars only. */
+export function boundedRawArgs(args: NlArgs): NlArgs {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [name, value] of Object.entries(args).slice(0, RAW_ARGS_MAX_KEYS)) {
+    if (typeof value === 'string') out[name.slice(0, 64)] = Array.from(value).slice(0, RAW_ARGS_MAX_CHARS).join('');
+    else if (typeof value === 'number' || typeof value === 'boolean') out[name.slice(0, 64)] = value;
+  }
+  return out;
+}
+
+const spanText = (value: string): string => value.replace(/\s+/g, ' ').trim().replace(/^['"「“‘]|['"」”’]$/gu, '');
+
 /** What the scorer validates the selector's output against: the turn's offered entries (A6 or R2) and its `now`. */
 export interface NlActionScoreContext {
   readonly entries?: readonly NlCatalogEntry[];
@@ -546,15 +570,16 @@ function coreFinalArgs(golden: NlActionCase, output: NonNullable<ReturnType<type
 
 /**
  * Score Core's decision against the gold (exported for the offline tests). One rule for every gold (owner decision
- * 2026-10-19): the args compared are Core's FINAL args, never the selector's raw ones. An execution carries them; for a
+ * 2026-10-19, confirmed 2026-11-04 for `spanExact`): the args compared, spans included, are Core's FINAL args, never the
+ * selector's raw ones (`spanExactRaw` and `rawArgs` keep the raw view as a diagnostic). An execution carries them; for a
  * gold ask or refusal they are Core's own validated and grounded args for the selector's output ({@link coreFinalArgs}),
  * so a grounded `mode`, `source` or recency `ref` counts the same whether Core executes or asks. This scorer serves the
  * A6 action gate and the R2 gate alike.
  */
 export function scoreActionDecision(golden: NlActionCase, raw: string, decision: NlSelectionDecision, audit?: Record<string, unknown>, context: NlActionScoreContext = {}): Omit<NlActionRecord, 'run' | 'latencyMs'> {
   const expected = golden.expect === 'none' ? 'none' : golden.expect.entryId;
-  const base = { id: golden.id, family: golden.family, expected };
   const output = parseSelectionOutput(raw);
+  const base = { id: golden.id, family: golden.family, expected, ...(output !== null && output.entryId !== null ? { rawArgs: boundedRawArgs(output.args) } : {}) };
   if (decision.kind === 'unavailable') return { ...base, outcome: output === null ? 'error' : 'timeout' };
   if (decision.kind === 'skip') return { ...base, outcome: 'skipped' };
   const reason = typeof audit?.reason === 'string' ? audit.reason : undefined;
@@ -567,9 +592,12 @@ export function scoreActionDecision(golden: NlActionCase, raw: string, decision:
   }
   const gold = golden.expect;
   const spans = SPAN_ARGS.filter((name) => typeof gold.args[name] === 'string');
-  const outputArgs = output?.entryId === gold.entryId ? output.args : {};
-  const spanExact = spans.length === 0 ? undefined : spans.every((name) => typeof outputArgs[name] === 'string' && (outputArgs[name] as string).replace(/\s+/g, ' ').trim().replace(/^['"「“‘]|['"」”’]$/gu, '') === gold.args[name]);
-  const withSpan = spanExact === undefined ? {} : { spanExact };
+  const outputArgs: NlArgs = output?.entryId === gold.entryId ? output.args : {};
+  const sameSpans = (args: NlArgs): boolean => spans.every((name) => typeof args[name] === 'string' && spanText(args[name] as string) === gold.args[name]);
+  // Core's final args: the executed command's, else (a gold ask or refusal, or an execute gold Core did not execute) the
+  // args Core validated and grounded for the selector's output.
+  const finalSpanArgs: NlArgs = executed !== undefined && executed.entryId === gold.entryId ? executed.args : output !== null && output.entryId === gold.entryId ? (coreFinalArgs(golden, output, context) ?? {}) : {};
+  const withSpan = spans.length === 0 ? {} : { spanExact: sameSpans(finalSpanArgs), spanExactRaw: sameSpans(outputArgs) };
   if (gold.outcome !== 'execute') {
     if (isAction && executed.target !== undefined) return { ...base, outcome: 'wrong-target', got: executed.entryId, ...withSpan };
     if (executed !== undefined) return { ...base, outcome: 'miss', got: executed.entryId, ...withSpan };
@@ -610,6 +638,8 @@ export interface NlActionSummary {
   readonly overall: number;
   readonly perEntry: Readonly<Record<string, { readonly hits: number; readonly total: number; readonly rate: number }>>;
   readonly spanExact: number;
+  /** Diagnostic only (not in the gate): the span rate on the selector's raw args. */
+  readonly spanExactRaw: number;
   readonly wrongTargets: number;
   readonly negativeCaptures: number;
   readonly referenceQuestionRate: number;
@@ -629,6 +659,8 @@ export function summarizeAction(records: readonly NlActionRecord[], boundMs: num
   for (const slot of Object.values(perEntry)) slot.rate = slot.total === 0 ? 0 : slot.hits / slot.total;
   const spanRecords = records.filter((record) => record.spanExact !== undefined);
   const spanExact = spanRecords.length === 0 ? 1 : spanRecords.filter((record) => record.spanExact === true).length / spanRecords.length;
+  const rawSpanRecords = records.filter((record) => record.spanExactRaw !== undefined);
+  const spanExactRaw = rawSpanRecords.length === 0 ? 1 : rawSpanRecords.filter((record) => record.spanExactRaw === true).length / rawSpanRecords.length;
   const references = positives.filter((record) => record.family === 'reference' || record.family === 'live');
   const referenceQuestionRate = references.length === 0 ? 0 : references.filter((record) => record.outcome === 'question').length / references.length;
   const wrongTargets = records.filter((record) => record.outcome === 'wrong-target').length;
@@ -643,6 +675,7 @@ export function summarizeAction(records: readonly NlActionRecord[], boundMs: num
     overall,
     perEntry,
     spanExact,
+    spanExactRaw,
     wrongTargets,
     negativeCaptures,
     referenceQuestionRate,
@@ -712,6 +745,8 @@ export interface NlActionPlan {
   readonly concurrency: number;
   readonly callTimeoutMs: number;
   readonly caseIds: readonly string[];
+  /** Present only with `--cases` (the exact ids asked for; `caseIds` is the resulting list, in corpus order). */
+  readonly selectedCases?: readonly string[];
   /** `nl-action-r2-eval` only: R2 is offered as with `QUOKY_NL_ITEM_R2=all` (fixed by the mode; the environment is never read). */
   readonly itemR2?: 'all';
   /** `nl-action-r2-eval` only: the git revision the plan was made at. */
@@ -731,13 +766,14 @@ export function buildActionPlan(
   kind: NlActionEvalKind,
   caseIds: readonly string[],
   corpusSha256: string,
-  options: { readonly model: string; readonly effort?: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string; readonly promptRev?: NlPromptRev },
+  options: { readonly model: string; readonly effort?: string; readonly runs: number; readonly concurrency: number; readonly timeoutMs?: number; readonly gitHead?: string; readonly promptRev?: NlPromptRev; readonly cases?: readonly string[] },
 ): NlActionPlan {
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) throw new Error('runs must be 1..5');
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 8) throw new Error('concurrency must be 1..8');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
   const r2 = kind === 'nl-action-r2-eval';
-  const rev = parseNlPromptRev(options.promptRev);
+  const rev = parseNlPromptRev(options.promptRev, 'action');
+  const selected = options.cases === undefined ? undefined : selectCaseIds(caseIds, options.cases);
   const stored = storedNlPromptRev('action', rev);
   return {
     kind,
@@ -750,8 +786,9 @@ export function buildActionPlan(
     runs: options.runs,
     concurrency: options.concurrency,
     callTimeoutMs: options.timeoutMs ?? NL_SELECTION_TIMEOUT_MS,
-    caseIds: [...caseIds],
-    ...(r2 ? { itemR2: 'all' as const, ...(options.gitHead !== undefined ? { gitHead: options.gitHead } : {}), calls: caseIds.length * options.runs, gate: NL_ACTION_R2_EVAL_GATE } : {}),
+    caseIds: selected ?? [...caseIds],
+    ...(options.cases !== undefined ? { selectedCases: [...options.cases] } : {}),
+    ...(r2 ? { itemR2: 'all' as const, ...(options.gitHead !== undefined ? { gitHead: options.gitHead } : {}), calls: (selected ?? caseIds).length * options.runs, gate: NL_ACTION_R2_EVAL_GATE } : {}),
   };
 }
 

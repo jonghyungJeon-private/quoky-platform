@@ -3,6 +3,7 @@ import { buildSelectionPrompt, Capability, isNlActionEntryId, nlIsPastStatement,
 import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import {
   NL_ACTION_EVAL_ENTRIES,
+  boundedRawArgs,
   buildActionPlan,
   runReadRegression,
   computeActionPlanDigest,
@@ -474,5 +475,39 @@ describe('read regression: help.topic captures counted apart (owner decision 202
     expect(summarizeReadRegression([positive, ...negatives(196), help('h1'), help('h2'), help('h3')], goldOf)).toMatchObject({ helpCaptures: 3, gatePassed: false });
     expect(summarizeReadRegression([positive, ...negatives(198), { id: 'w1', outcome: 'wrong-capture' as const, relabeled: false, got: 'calendar.events' }], goldOf)).toMatchObject({ helpCaptures: 0, wrongCaptures: 1, gatePassed: false });
     expect(summarizeReadRegression([positive, ...negatives(198), { id: 'w2', outcome: 'action-capture' as const, relabeled: false, got: 'todo.add' }], goldOf)).toMatchObject({ actionCaptures: 1, gatePassed: false });
+  });
+});
+
+describe('spanExact is scored on Core final args (owner decisions 2026-10-19 item 1, 2026-11-04)', () => {
+  const gold: NlActionCase = {
+    id: 'a6-span-1',
+    family: 'paraphrase',
+    text: "20분 후에 '스프린트 데모 준비' 알려줘",
+    expect: { entryId: 'reminder.create', args: { body: '스프린트 데모 준비', when: '20분 후' }, outcome: 'execute' },
+  };
+  const run = (raw: string, finalArgs: Record<string, string>) => {
+    const decision = { kind: 'execute', command: { entryId: 'reminder.create', args: finalArgs } } as unknown as Parameters<typeof scoreActionDecision>[2];
+    return scoreActionDecision(gold, raw, decision);
+  };
+
+  it('a raw trailing particle that Core repaired: spanExact true, spanExactRaw false, rawArgs kept', () => {
+    const raw = answer('reminder.create', { body: '스프린트 데모 준비', when: '20분 후에' });
+    const scored = run(raw, { body: '스프린트 데모 준비', when: '20분 후' });
+    expect(scored).toMatchObject({ outcome: 'hit', spanExact: true, spanExactRaw: false, rawArgs: { body: '스프린트 데모 준비', when: '20분 후에' } });
+    const summary = summarizeAction([{ ...scored, run: 1, latencyMs: 1 }]);
+    expect(summary).toMatchObject({ spanExact: 1, spanExactRaw: 0 });
+  });
+
+  it('a final span that differs from the gold is false, whatever the raw args said', () => {
+    const raw = answer('reminder.create', { body: '스프린트 데모 준비', when: '20분 후' });
+    const scored = run(raw, { body: '데모 준비', when: '20분 후' });
+    expect(scored).toMatchObject({ outcome: 'miss', spanExact: false, spanExactRaw: true });
+    expect(summarizeAction([{ ...scored, run: 1, latencyMs: 1 }]).gatePassed).toBe(false);
+  });
+
+  it('bounds the recorded raw args', () => {
+    const bounded = boundedRawArgs({ body: 'x'.repeat(500), n: 3, ...Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`k${index}`, 'v'])) });
+    expect((bounded.body as string).length).toBe(200);
+    expect(Object.keys(bounded)).toHaveLength(12);
   });
 });

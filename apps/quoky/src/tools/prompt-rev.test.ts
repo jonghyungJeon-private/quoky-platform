@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { NL_CANDIDATE_PROMPT_VERSIONS, NL_CATALOG_ENTRY_IDS, NL_SELECTION_PROMPT_VERSION, NL_WAVE1_ENTRIES, buildSelectionPrompt, type AiProvider } from '@quoky/core';
 import { AGENT_PLAN_EVAL_REVS, NL_EVAL_PROMPT_REVS, parseAgentPlanRev, parseCaseIds, parseNlPromptRev } from './prompt-rev';
-import { actionPromptSha256, buildActionPlan, computeActionPlanDigest, decideActionCase } from './nl-action-eval';
+import { actionPromptSha256, buildActionPlan, computeActionPlanDigest, decideActionCase, loadActionCorpus } from './nl-action-eval';
 import { buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, loadScoredCorpusWithFixture, nlEvalFixturePath, scoreOutput } from './nl-intent-eval';
 import { EXIT_BLOCKED, EXIT_OK, EXIT_USAGE, defaultDeps, parseArguments, planOptions, runCli, type CliDeps } from './nl-intent-eval-cli';
 import { agentPlanEvalCases, agentPlanPromptSha256, buildAgentPlanEvalPlan, computeAgentPlanEvalDigest, loadAgentPlanCorpus, loadAgentPlanFixtureCases } from './agent-plan-eval';
@@ -32,10 +32,12 @@ const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([
 
 describe('prompt revision options (owner decision 2026-11-04)', () => {
   it('knows the revisions and rejects an unknown one', () => {
-    expect(NL_EVAL_PROMPT_REVS).toEqual(['v73', 'v74']);
+    expect(NL_EVAL_PROMPT_REVS).toEqual(['v73', 'v74', 'v77']);
     expect(AGENT_PLAN_EVAL_REVS).toEqual(['v10', 'v11']);
     expect(parseNlPromptRev(undefined)).toBeUndefined();
     expect(parseNlPromptRev('v74')).toBe('v74');
+    expect(parseNlPromptRev('v77', 'action')).toBe('v77');
+    expect(() => parseNlPromptRev('v77')).toThrow(/action \/ R2 prompt/);
     expect(() => parseNlPromptRev('v75')).toThrow(/--prompt-rev must be one of/);
     expect(parseAgentPlanRev('v11')).toBe('v11');
     expect(() => parseAgentPlanRev('v12')).toThrow(/--plan-rev must be one of/);
@@ -82,10 +84,9 @@ describe('prompt revision options (owner decision 2026-11-04)', () => {
   it('eval:nl: --prompt-rev reaches the A6 modes, not help-scope; --fixture / --cases are plan/run only', () => {
     for (const mode of ['action', 'read-regression', 'r2']) expect(parseArguments(['--mode', mode, '--prompt-rev', 'v74']).options['--prompt-rev']).toBe('v74');
     expect(() => parseArguments(['--mode', 'help-scope', '--prompt-rev', 'v74'])).toThrow(/help-scope/);
-    for (const mode of ['action', 'read-regression', 'r2', 'help-scope']) {
-      expect(() => parseArguments(['--mode', mode, '--fixture', 'homonym-heldout'])).toThrow(/not an option/);
-      expect(() => parseArguments(['--mode', mode, '--cases', 'neg-033'])).toThrow(/not an option/);
-    }
+    for (const mode of ['action', 'read-regression', 'r2', 'help-scope']) expect(() => parseArguments(['--mode', mode, '--fixture', 'homonym-heldout'])).toThrow(/not an option/);
+    expect(() => parseArguments(['--mode', 'help-scope', '--cases', 'neg-033'])).toThrow(/not an option/);
+    for (const mode of ['action', 'read-regression', 'r2']) expect(parseArguments(['--mode', mode, '--cases', 'neg-033']).options['--cases']).toBe('neg-033');
   });
 
   it('A6 plans: the default is nl-select.v71 (action) / v72 (R2) and stores no rev; explicit v74 is v75 / v76 with its own prompt hash and digest', () => {
@@ -102,6 +103,53 @@ describe('prompt revision options (owner decision 2026-11-04)', () => {
     expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', { ...options, promptRev: 'v74' }).promptVersion).toBe(NL_CANDIDATE_PROMPT_VERSIONS.r2);
     expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v74' }).promptRev).toBe('v74');
     expect(() => buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v1' as never })).toThrow(/--prompt-rev/);
+  });
+});
+
+describe('nl-select.v77 / v78 and --cases on the A6 modes', () => {
+  const options = { model: 'haiku', runs: 3, concurrency: 4 };
+
+  it('v77 plans name nl-select.v77 / v78, store the rev and change the prompt hash and digest; v75 stays v74', () => {
+    const base = buildActionPlan('nl-action-eval', ['x'], 'sha', options);
+    const v77 = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v77' });
+    expect(v77).toMatchObject({ promptVersion: 'nl-select.v77', promptRev: 'v77' });
+    expect(computeActionPlanDigest(v77)).not.toBe(computeActionPlanDigest(base));
+    expect(actionPromptSha256(undefined, 'v77')).not.toBe(actionPromptSha256(undefined, 'v74'));
+    expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', { ...options, promptRev: 'v77' }).promptVersion).toBe('nl-select.v78');
+    expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v77' }).promptRev).toBe('v77');
+    expect(buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v74' }).promptVersion).toBe('nl-select.v75');
+  });
+
+  it('read modes reject v77 (plan option and prompt)', async () => {
+    expect(() => planOptions({ '--prompt-rev': 'v77' })).toThrow(/not valid for the read modes/);
+    expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--prompt-rev', 'v77'], nlDeps())).toBe(EXIT_USAGE);
+  });
+
+  it('--cases binds the exact list into the digest and refuses unknown ids', () => {
+    const base = buildActionPlan('nl-action-eval', ['a', 'b', 'c'], 'sha', options);
+    const picked = buildActionPlan('nl-action-eval', ['a', 'b', 'c'], 'sha', { ...options, cases: ['c', 'a'] });
+    expect(picked.caseIds).toEqual(['a', 'c']);
+    expect(picked.selectedCases).toEqual(['c', 'a']);
+    expect(Object.keys(base)).not.toContain('selectedCases');
+    expect(computeActionPlanDigest(picked)).not.toBe(computeActionPlanDigest(base));
+    expect(buildActionPlan('nl-action-r2-eval', ['a', 'b', 'c'], 'sha', { ...options, cases: ['b'] }).calls).toBe(3);
+    expect(() => buildActionPlan('nl-action-eval', ['a', 'b'], 'sha', { ...options, cases: ['a', 'zz'] })).toThrow(/unknown case zz/);
+  });
+
+  it('eval:nl --mode action / read-regression / r2 --cases: plan lists only those ids; an unknown id is a usage error', async () => {
+    const { corpus } = loadActionCorpus();
+    const ids = corpus.cases.slice(0, 2).map((golden) => golden.id);
+    const planned = nlDeps();
+    expect(await runCli(['--mode', 'action', '--cases', ids.join(',')], planned)).toBe(EXIT_OK);
+    expect(planned.out.join('\n')).toContain('"selectedCases"');
+    expect(planned.out.join('\n')).toContain('"caseIds": "2 cases"');
+    const all = nlDeps();
+    expect(await runCli(['--mode', 'action'], all)).toBe(EXIT_OK);
+    expect(digestOf(all.out)).not.toBe(digestOf(planned.out));
+    for (const mode of ['action', 'read-regression', 'r2']) expect(await runCli(['--mode', mode, '--cases', 'no-such-case'], nlDeps())).toBe(EXIT_USAGE);
+    const r2 = nlDeps();
+    expect(await runCli(['--mode', 'r2', '--prompt-rev', 'v77'], r2)).toBe(EXIT_OK);
+    expect(r2.out.join('\n')).toContain('nl-select.v78');
   });
 });
 
