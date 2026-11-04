@@ -12,6 +12,25 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   the 95 % pause threshold with current usage, or with an unreadable cap is refused unless `GATES_OWNER_OK=<yyyymmdd-reason>`.
   In-run brake: a watchdog stops the eval process group at `GATES_STOP_PCT` (85) % of the ccusage limit; `DONE` carries
   `USAGE-STOP at <pct>%`, `run` exits 6, no retry (owner order 2026-11-04, after the 2026-11-03 run that took 0 % to 81 % in 12 min).
+## Unreleased — eval tools compare prompt revisions; held-out homonym fixture (owner-approved 2026-11-04)
+
+- **Added.** `eval:nl --prompt-rev v73|v74` (plan/run, action, read-regression, r2) and `eval:agent-plan --plan-rev v10|v11`; the
+  revision is part of the plan (version, prompt hash, `promptRev` / `planRev`) and so of the digest, and is recorded in the report.
+  `--fixture homonym-heldout` and `--cases id,id,...` select the approved held-out set and a case subset; `eval:nl` plan now prints
+  the call cap. Optional `promptRev` on `NlSelectionService` (eval only). `run-gates.sh` forwards `GATES_PROMPT_REV` / `GATES_PLAN_REV`.
+- **Added.** `golden/nl-intent.homonym-heldout.v1.json` (16 cases, owner-approved: "16건 승인, 평가 도구 연결 진행해"); the RAG-0
+  contamination lint covers it and the v74 prompts.
+- **Unchanged.** Default revisions, existing corpora and every existing plan digest. No model call was made.
+
+## Unreleased — nl-select.v74 / agent-plan.v11 candidate prompts (Core, ADR-0121 D12 candidate; not enabled)
+
+- **Added.** `rev: 'v74'` on `buildSelectionPrompt` and `rev: 'v11'` on `buildAgentPlanPrompt` build the candidate prompts: one general
+  source-name principle in rule 1 (a source name selects its entry only when the message asks for that source's data or names it as
+  the place to look; otherwise none, or NEEDS_CLARIFICATION when unclear) and the pure de-duplication S1-S5 (selector 27,924 ->
+  23,906 chars, planner 32,637 -> 28,619). Candidate ids: `nl-select.v74` (read), `v75` (A6), `v76` (R2), `agent-plan.v11`.
+- **Unchanged.** The default revision and every active pin stay `nl-select.v73` / `v71` / `v72` and `agent-plan.v10`; nothing uses the
+  candidates at runtime. They are NOT deployed or enabled until the D12 gates pass and the owner approves the eval quota.
+- **Draft.** `docs/eval/drafts/homonym-heldout-draft.md` (16 held-out homonym cases, owner approval pending, wired nowhere).
 
 ## Unreleased — Claude CLI reports token usage (ai-cli, ADR-0115 D8 note)
 

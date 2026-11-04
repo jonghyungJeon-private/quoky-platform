@@ -55,6 +55,7 @@ import {
   agentReadWriteProbePrompt,
   agentReadWriteProbeResult,
   buildAgentPlanPrompt,
+  agentPlanPromptVersion,
   conjunctTokens,
   nlHelpSourceScope,
   nlEntryHelpTopicsOf,
@@ -79,6 +80,7 @@ import {
   type NlCatalogEntry,
   type ValidatedAgentStep,
 } from '@quoky/core';
+import { parseAgentPlanRev, type AgentPlanEvalRev } from './prompt-rev';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { EvalCallTimeout, helpCaptureAllowance, withTimeout } from './nl-intent-eval';
@@ -295,6 +297,30 @@ export function loadAgentPlanCorpus(
     oneStep: (JSON.parse(oneStepText) as { cases: OneStepCase[] }).cases,
     oneStepSha256: sha256(oneStepText),
   };
+}
+
+/** The owner-approved held-out fixtures (`--fixture`), nl-intent format; scored as one-step gold (a positive is the single-step plan). */
+export const AGENT_PLAN_FIXTURE_PATHS: Readonly<Record<string, string>> = {
+  'homonym-heldout': resolve(GOLDEN_DIR, 'nl-intent.homonym-heldout.v1.json'),
+};
+
+/** The held-out fixture's cases as eval cases (status `approved`: the fixture file carries the owner approval), plus the file's sha256. */
+export function loadAgentPlanFixtureCases(name: string, path: string | undefined = AGENT_PLAN_FIXTURE_PATHS[name]): { cases: AgentPlanEvalCase[]; sha256: string } {
+  if (path === undefined) throw new Error(`--fixture must be one of ${Object.keys(AGENT_PLAN_FIXTURE_PATHS).join(', ')} (got ${JSON.stringify(name)})`);
+  const text = readFileSync(path, 'utf8');
+  const file = JSON.parse(text) as { status?: string; cases: OneStepCase[] };
+  if (file.status !== 'approved') throw new Error(`fixture ${name} is not owner-approved`);
+  const cases = file.cases.map<AgentPlanEvalCase>((golden) => ({
+    id: golden.id,
+    family: AGENT_PLAN_ONE_STEP_FAMILY,
+    status: 'approved',
+    text: golden.text,
+    attachments: 0,
+    ...(golden.prior !== undefined ? { prior: golden.prior } : {}),
+    gold: golden.expect === 'none' ? 'none' : { steps: [{ entryId: golden.expect.entryId, args: golden.expect.args }], ambiguity: 'CLEAR' },
+    ...(golden.clarify !== undefined ? { clarify: golden.clarify } : {}),
+  }));
+  return { cases, sha256: sha256(text) };
 }
 
 /** Every case the eval scores: the referenced one-step cases (in the corpus' id order), then the new cases. */
@@ -832,6 +858,12 @@ function askCaseProblems(at: string, expect: AgentPlanAskExpect, golden: AgentPl
 // ── the plan and its digest ─────────────────────────────────────────────────────────────────────────────────────
 
 export interface AgentPlanEvalOptions {
+  /** Planner prompt revision; absent = the active `v10` (the digest then does not change). */
+  readonly planRev?: AgentPlanEvalRev;
+  /** The held-out fixture whose cases were appended to the pool (name and file sha256; bound into the digest). */
+  readonly heldout?: { readonly name: string; readonly sha256: string };
+  /** Restrict the plan to exactly these case ids (every id must be in the pool); recorded in the digest. */
+  readonly cases?: readonly string[];
   readonly model: string;
   /** Owner decision of 2026-10-28: the planner's reasoning effort (a Claude `--effort` level), bound into the digest. */
   readonly effort: string;
@@ -846,6 +878,12 @@ export interface AgentPlanEvalOptions {
 export interface AgentPlanEvalPlan {
   readonly kind: 'agent-plan-eval';
   readonly promptVersion: string;
+  /** Present only for a non-default revision (`v11`): the plan then cannot be run as an active-revision plan. */
+  readonly planRev?: AgentPlanEvalRev;
+  /** Present only with `--fixture`. */
+  readonly heldout?: { readonly name: string; readonly sha256: string };
+  /** Present only with `--cases` (`caseIds` is the resulting list). */
+  readonly selectedCases?: readonly string[];
   /** sha256 of the planner instruction text (every READ entry offered, an empty owner message). */
   readonly promptSha256: string;
   /** sha256 of `agent-plan.v1.json`. */
@@ -939,8 +977,8 @@ export function applyReadWriteProbe(
   return { ...rest, outcome, reason, probe: result.kind, probeEntry: entry };
 }
 
-export function agentPlanPromptSha256(): string {
-  return sha256(buildAgentPlanPrompt({ entries: READ_ENTRIES, text: '' }));
+export function agentPlanPromptSha256(rev?: AgentPlanEvalRev): string {
+  return sha256(buildAgentPlanPrompt({ entries: READ_ENTRIES, text: '', ...(rev === 'v11' ? { rev } : {}) }));
 }
 
 export function buildAgentPlanEvalPlan(
@@ -956,7 +994,16 @@ export function buildAgentPlanEvalPlan(
   if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || parseNlIntentTimeoutMs(String(options.timeoutMs)) === undefined)) {
     throw new Error('timeoutMs must be an integer 2000..10000');
   }
-  const selected = cases.filter((golden) => golden.status === 'approved' || options.includePending);
+  const rev = parseAgentPlanRev(options.planRev);
+  const known = new Set(cases.map((golden) => golden.id));
+  for (const id of options.cases ?? []) if (!known.has(id)) throw new Error(`unknown case ${id}`);
+  const subset = options.cases !== undefined ? new Set(options.cases) : undefined;
+  const selected = cases.filter((golden) => (subset === undefined || subset.has(golden.id)) && (golden.status === 'approved' || options.includePending));
+  if (options.cases !== undefined && !options.includePending) {
+    // An explicit --cases list is exact: a requested pending case is refused, never silently skipped.
+    const pending = cases.filter((golden) => subset!.has(golden.id) && golden.status !== 'approved').map((golden) => golden.id);
+    if (pending.length > 0) throw new Error(`requested cases are pending (use --include-pending): ${pending.join(',')}`);
+  }
   if (selected.length === 0) throw new Error('no case selected');
   const probeBound = selected.filter((golden) => {
     const prepared = caseContext(golden, fixture);
@@ -965,8 +1012,11 @@ export function buildAgentPlanEvalPlan(
   const perRun = selected.length + probeBound;
   return {
     kind: 'agent-plan-eval',
-    promptVersion: AGENT_PLAN_PROMPT_VERSION,
-    promptSha256: agentPlanPromptSha256(),
+    promptVersion: agentPlanPromptVersion(rev),
+    ...(rev === 'v11' ? { planRev: rev } : {}),
+    ...(options.heldout !== undefined ? { heldout: options.heldout } : {}),
+    ...(options.cases !== undefined ? { selectedCases: [...options.cases] } : {}),
+    promptSha256: agentPlanPromptSha256(rev),
     corpusSha256: hashes.corpusSha256,
     oneStepCorpusSha256: hashes.oneStepCorpusSha256,
     gitHead: options.gitHead,
@@ -1078,6 +1128,7 @@ export async function runAgentPlanEvaluation(input: {
           const prompt = buildAgentPlanPrompt({
             entries: READ_ENTRIES,
             text: prepared.text,
+            ...(input.plan.planRev === 'v11' ? { rev: 'v11' as const } : {}),
             ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } } : {}),
           });
           const started = clock();

@@ -32578,3 +32578,66 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   run, at the cost of being blind while ccusage is down (logged to `usage.log`). Residual: the estimate is an upper bound on calls
   at a measured sonnet rate only; haiku/opus rates need measuring.
 - **Evidence.** `.claude/skills/quoky-ship/scripts/run-gates.test.sh` (stub pnpm / npx, no model call).
+## Prompt slimming and the source-name principle (nl-select.v74 / agent-plan.v11 candidates) (2026-11-04, branch `claude/v5-planner-slim`)
+
+- **Status: candidate, NOT deployed, NOT enabled.** The active prompts are still `nl-select.v73` (read), `v71` (A6), `v72` (R2)
+  and `agent-plan.v10`; their bytes and pins are unchanged. The candidates are selected only by `rev: 'v74'` on
+  `buildSelectionPrompt` (A6 `nl-select.v75`, R2 `nl-select.v76`, ids in `NL_CANDIDATE_PROMPT_VERSIONS`) and `rev: 'v11'` on
+  `buildAgentPlanPrompt` (`agent-plan.v11`). No config, runtime path, eval default or gate uses them. Enabling them needs the D12
+  gates (screens M3/M4/M5 of the offline analysis, haiku and the sonnet tiers) and the owner's approval of the eval quota first.
+  The repository has no prompt registry beyond these constants, so `rev` is the registry: a gate builds v73 and v74 (v10 and
+  v11) from the same code and compares them.
+- **Why.** The planner study (archive `planner-study-7ad05955`, offline analysis of 2026-11-04) showed one negative failing per
+  configuration per run, and `neg-033` ("a source word is present, so that source") as the systemic class: the prompt taught
+  "source word present -> that source" in four places and had a "named as the place to look" condition for Slack only.
+- **Rule change (one general principle, no phrase list, no validator rule, no entry-specific note, no example added).** Rule 1
+  gains: a source name selects that source's entry only when the message asks for that source's own data or names it as the place
+  to look; a message whose name is only a word that happens to match, or that asks for something the source's data cannot
+  hold, is none; when unclear, NEEDS_CLARIFICATION (rule 7). Folded into it: rule 2's two "even when it names a source (or a
+  day)" clauses (past remarks, feelings) and the Slack / Confluence catalog sentence "Pick it whenever the message names X as
+  the place to look, whatever the topic is" (the rule 5 "a source named decides which search" line stays: it decides between
+  two sources, not whether a source applies). The bare source-name line of rule 5 is unchanged.
+- **Slimming S1-S5 (meaning-preserving; planner rules 8-9 and the plan examples untouched).** S1 `"alternatives":[]` left out of
+  the example outputs (the parser reads a missing one as `[]`; rule 7's closing line now says so); S2 `count` / `limit` stated once
+  at the catalog head, each entry keeps only `count: true. As above.` (so reminder.list still has no `count`); S3 no Korean gloss
+  at the end of entry descriptions (the arg lines keep their Korean cue words); S4 the rule-5 bullets for Jira window, Jira status,
+  calendar keyword, Drive kind, GitHub kind, Slack / Confluence keyword and Jira order removed because their arg line says the
+  same, with the three things only the bullets said (a time word beside 할당된/배정된 sets no window; 일정/회의/미팅 are never the
+  calendar keyword and never for busy/free; GitHub `kind` never with review-requests) moved onto the arg lines; S5 the principle
+  above. Not done: S6-S11 (examples, plan rules, retrieval, conditional plan section).
+- **Size (full assembled prompt, all 12 READ entries, empty input).** Selector 27,924 -> 23,906 chars (-14.4%); planner
+  32,637 -> 28,619 chars (-12.3%). Prefix-cache order unchanged (rules, range symbols, catalog, examples, then the volatile
+  `Previous selection:` and owner block); the shared-args line sits before the catalog, so the static prefix stays stable.
+- **Risks, stated for the gate.** (1) Positives with weak or indirect phrasing (a7s-11/12/15 style, clipped verbless requests)
+  may fall to none or to a clarification under the stricter wording; haiku already answers none on three of them. (2) Removing
+  "even when it names a source" from rules 2 may weaken venting negatives for a small model, the family the principle should
+  help (neg-037); it is not measured. (3) Dropping the Korean gloss removes cue words from the description; Drive and Slack
+  positives are the ones to watch. (4) Example outputs without `alternatives` could teach a model to omit it on a clarification;
+  the clarification examples still carry non-empty alternatives.
+- **Draft held-out set.** `docs/eval/drafts/homonym-heldout-draft.md` (10 negatives, 6 positives, other source words, none copied
+  from the goldens) awaits owner approval; it is wired nowhere.
+- **Tests.** `selection-prompt-v74.test.ts` (principle present, removed bullets absent and the remnants moved, every example output
+  parses, v73 default unchanged, A6 / R2 candidate build, byte pins of the v74 read, v75 action and v11 planner prompts); the v73
+  and v10 pins in `nl-action-entries.test.ts`, `plan-prompt.test.ts` and the golden `nl-select.v73.prompts.json` did not move.
+
+## Held-out homonym set approved; eval tools compare prompt revisions (2026-11-04, branch `claude/v5-planner-slim`)
+
+- **Owner decision, verbatim (2026-11-04):** "16건 승인, 평가 도구 연결 진행해". The 16 cases of
+  `docs/eval/drafts/homonym-heldout-draft.md` (10 negatives hm-n01..n10, 6 positives hm-p01..p06) are approved as written, and the
+  eval tools must be able to compare the old and the new prompt revisions. Approving the cases is not approval of any model run:
+  every run still needs its own plan digest and the owner's quota approval.
+- **Fixture.** `packages/core/src/application/golden/nl-intent.homonym-heldout.v1.json` (nl-intent format, `status: approved` and the
+  quote in the file). It is separate from `nl-intent.v1.json` / `agent-plan.v1.json`, so those corpora, their sha256 and every
+  existing digest are unchanged. RAG-0: the texts are never prompt examples; `example-contamination.test.ts` now lints them as gold
+  (against v73 and the v74 read, A6 and R2 prompts) and found nothing.
+- **Options.** `eval:nl` (`--mode plan|run|action|read-regression|r2`): `--prompt-rev v73|v74` (default v73; v74 = nl-select.v74 /
+  v75 / v76; not for help-scope). `eval:agent-plan`: `--plan-rev v10|v11` (default v10). `--fixture homonym-heldout` (eval:nl
+  plan/run and eval:agent-plan) appends the fixture to the case pool (a positive is the single-step plan for agent-plan);
+  `--cases id,id,...` restricts a plan to exactly those ids (every id must exist). An unknown value is a usage error (exit 2).
+- **Identity.** A non-default revision adds `promptRev` / `planRev`, a different `promptVersion` and prompt sha256 to the plan, so its
+  digest differs and a plan made for one revision is refused under the other (exit 3, before any provider). `fixture` (and its file
+  hash) and `selectedCases` are in the digest only when used; a default plan has no new key, so existing digests do not move. The
+  report JSON carries the plan, hence the revision. `NlSelectionService` got an optional `promptRev` dependency (eval only; the
+  runtime never sets it). `run-gates.sh` passes `GATES_PROMPT_REV` / `GATES_PLAN_REV` identically to plan and run.
+- **Not done.** No model call was made; the screen runs (haiku and sonnet, runs 3) wait for the owner's quota approval of their
+  digests. The selector-rag experiment's gold list (`selector-rag/gold.ts`) does not include the fixture (its digests stay put).

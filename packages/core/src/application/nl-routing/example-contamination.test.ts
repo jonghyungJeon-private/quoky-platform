@@ -78,7 +78,7 @@ interface GoldCase {
 // ---- gold corpora (ADR-0123 D5 scope: the D12 corpora) --------------------------------------------------------------
 // A6 R5a: the deictic corpus is gold too (it must produce no finding of its own, §6.4).
 // A6 live test 4: the gold candidates pending the owner are linted too, so no prompt example near-copies one before approval.
-const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.deictic.v1.json', 'nl-action.r2.v1.json', 'nl-action.live4-pending.v1.json', 'nl-intent.context.v1.json'] as const;
+const GOLD_FILES = ['nl-intent.v1.json', 'nl-action.v1.json', 'nl-action.seed.v1.json', 'nl-action.exec-time.v1.json', 'nl-action.deictic.v1.json', 'nl-action.r2.v1.json', 'nl-action.live4-pending.v1.json', 'nl-intent.context.v1.json', 'nl-intent.homonym-heldout.v1.json'] as const;
 
 function loadGold(): GoldCase[] {
   const cases: GoldCase[] = [];
@@ -113,9 +113,13 @@ function renderedExamples(): RenderedExample[] {
   const action = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
   // A6 R2 (v46): the R2 prompt carries its own examples and rule lines, so it is linted too.
   const r2 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
+  // The v74 candidate prompts (read / action / R2) are linted too, against the same gold plus the held-out homonym fixture.
+  const read74 = extractPromptExamples(buildSelectionPrompt({ entries: READS, text: 'x', rev: 'v74' }));
+  const action74 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', rev: 'v74', actions: { referenceContext: 'none' } }));
+  const r274 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', rev: 'v74', actions: { referenceContext: 'none' } }));
   const seen = new Set<string>();
   const unique: RenderedExample[] = [];
-  for (const example of [...read, ...action, ...r2]) {
+  for (const example of [...read, ...action, ...r2, ...read74, ...action74, ...r274]) {
     // The output is part of the dedupe identity: a read and an A6 variant with the same (previous, context, text) but a
     // different output are both kept, so the A6 action outputs are output-linted too.
     const key = `${exampleKey(example)}|${example.output}`;
@@ -237,6 +241,14 @@ describe('RAG-0 example contamination lint (ADR-0123 D5)', () => {
     expect(examples.length).toBeGreaterThanOrEqual(50);
     expect(gold.length).toBeGreaterThanOrEqual(500);
     expect(examples.some((e) => e.previous !== undefined)).toBe(true);
+  });
+
+  it('lints the owner-approved held-out homonym fixture as gold, against the v73 and the v74 prompts (2026-11-04)', () => {
+    const heldout = gold.filter((c) => c.id.startsWith('hm-'));
+    expect(heldout).toHaveLength(16);
+    expect(examples.some((e) => e.text.length > 0)).toBe(true);
+    const copied = lint(examples, heldout);
+    expect(copied.map((f) => `${f.kind} ${findingKey(f)}`)).toEqual([]);
   });
 
   it('calibration: the measures flag a known exact copy, a near-copy, a contained short text and a shared span value', () => {

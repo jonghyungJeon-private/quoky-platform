@@ -69,12 +69,31 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * rules 2, 3, 6 and 7); no planner rule or example changed, so the version moves with the bytes (as v3 -> v4 did). */
 export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v10';
 
+/**
+ * v10 -> v11 (CANDIDATE, 2026-11-04; NOT enabled anywhere until the D12 gates pass and the owner approves the eval quota):
+ * the embedded read rules are `nl-select.v74` (the one source-name principle in rule 1, the scattered per-source
+ * exceptions folded into it, and the pure de-duplication S1-S5: no `alternatives` in CLEAR examples, `count` / `limit`
+ * stated once, no Korean gloss on entry descriptions, rule-5 arg bullets that repeat the catalog arg line removed). The
+ * planner rules 8-9 and the plan examples are byte for byte v10. Select it with `rev: 'v11'`; the default stays v10, so
+ * a gate can run both and compare.
+ */
+export const AGENT_PLAN_CANDIDATE_PROMPT_VERSION = 'agent-plan.v11';
+
+export type AgentPlanPromptRev = 'v10' | 'v11';
+
+/** The version id of one planner prompt revision. */
+export function agentPlanPromptVersion(rev: AgentPlanPromptRev = 'v10'): string {
+  return rev === 'v11' ? AGENT_PLAN_CANDIDATE_PROMPT_VERSION : AGENT_PLAN_PROMPT_VERSION;
+}
+
 export interface AgentPlanPromptInput {
   /** The offered entries; only `READ` entries are shown to the planner. */
   readonly entries: readonly NlCatalogEntry[];
   /** Prepared owner text (`prepareSelectionInput().text`). */
   readonly text: string;
   readonly previous?: { readonly entryId: NlCatalogEntryId; readonly args: NlArgs };
+  /** Planner revision; default `v10` (active). `v11` is the candidate on `nl-select.v74` (see {@link AGENT_PLAN_CANDIDATE_PROMPT_VERSION}). */
+  readonly rev?: AgentPlanPromptRev;
 }
 
 const INTRO_FROM = [
@@ -161,7 +180,7 @@ const PLAN_EXAMPLES: ReadonlyArray<{ readonly needs: readonly NlCatalogEntryId[]
 /** The fixed plan instruction text for one planner call. Throws when an anchor of the read prompt moved (pinned by test). */
 export function buildAgentPlanPrompt(input: AgentPlanPromptInput): string {
   const reads = input.entries.filter((entry) => entry.risk === 'READ');
-  const base = buildSelectionPrompt({ entries: reads, text: input.text, ...(input.previous !== undefined ? { previous: input.previous } : {}) });
+  const base = buildSelectionPrompt({ entries: reads, text: input.text, ...(input.rev === 'v11' ? { rev: 'v74' as const } : {}), ...(input.previous !== undefined ? { previous: input.previous } : {}) });
   const lines = base.split('\n');
   if (lines[0] !== INTRO_FROM[0] || lines[1] !== INTRO_FROM[1]) throw new Error('agent-plan prompt: intro anchor moved');
   lines.splice(0, 2, ...INTRO_TO);

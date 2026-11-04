@@ -2,6 +2,7 @@
  * Natural-language selection evaluation CLI (ADR-0120 D12).
  *
  *   pnpm eval:nl -- --mode plan [--model haiku] [--effort low] [--entries jira.issues,help.topic] [--negatives true|false] [--per-entry N] [--runs N] [--concurrency N]
+ *                   [--prompt-rev v73|v74] [--fixture homonym-heldout] [--cases id1,id2,...]
  *   pnpm eval:nl -- --mode run  <the same options> --approved-plan-digest <sha256 from plan>
  *   (or: pnpm --filter @quoky/app nl-eval -- …)
  *
@@ -52,6 +53,7 @@ import {
   type HardFailureCounts,
 } from './eval-provider-guard';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
+import { NL_EVAL_PROMPT_REVS, parseCaseIds, parseNlPromptRev } from './prompt-rev';
 import {
   NL_HELP_SCOPE_EVAL_GATE,
   buildHelpScopePlan,
@@ -86,6 +88,9 @@ import {
   computePlanDigest,
   loadCorpus,
   loadScoredCorpus,
+  loadScoredCorpusWithFixture,
+  nlEvalFixturePath,
+  NL_EVAL_FIXTURE_PATHS,
   runEvaluation,
   summarize,
   clarifyCaseIdsOf,
@@ -145,6 +150,11 @@ Options: --model <claude model alias or full model id (recommended: a full id pi
          --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-10000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
+Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, default v73 = the active text>; v74 is the candidate (read nl-select.v74, action v75, R2 v76).
+         It applies to the plan/run, action, read-regression and r2 modes (not help-scope), is printed in the plan, recorded in the report and
+         bound into the plan digest: a plan made for one revision cannot be run under another (the digest differs, exit 3).
+Held-out fixture (plan/run only): --fixture <${Object.keys(NL_EVAL_FIXTURE_PATHS).join('|')}> adds the owner-approved held-out cases to the corpus (bound into the digest);
+         --cases <id,id,...> restricts the plan to exactly these case ids (every id must exist; the list is bound into the digest).
 Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} data-read wrong captures, help.topic captures <= ceil(${NL_EVAL_GATE.helpCaptureRate * 100}% of the negatives) (owner decision 2026-10-22).
 
 A6 (ADR-0120 amendment A6):
@@ -189,6 +199,9 @@ const OPTIONS = new Set([
   '--timeout-ms',
   '--approved-plan-digest',
   '--effort',
+  '--prompt-rev',
+  '--fixture',
+  '--cases',
 ]);
 
 export class UsageError extends Error {}
@@ -209,7 +222,8 @@ export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; opt
   }
   const mode = options['--mode'];
   if (mode === 'action' || mode === 'read-regression' || mode === 'r2' || mode === 'help-scope') {
-    for (const name of ['--entries', '--negatives', '--per-entry']) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
+    for (const name of ['--entries', '--negatives', '--per-entry', '--fixture', '--cases']) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
+    if (mode === 'help-scope' && '--prompt-rev' in options) throw new UsageError('--prompt-rev is not an option of --mode help-scope (the classifier has its own prompt)');
     return { mode, options };
   }
   if (mode !== 'plan' && mode !== 'run') throw new UsageError('--mode must be plan, run, action, read-regression, r2 or help-scope');
@@ -241,6 +255,15 @@ export function strongerSelectionEffort(options: Readonly<Record<string, string>
   return effort;
 }
 
+/** Run a closed-value parser and turn its error into a usage error. */
+function asUsage<T>(parse: () => T): T {
+  try {
+    return parse();
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : 'invalid option');
+  }
+}
+
 export function planOptions(
   options: Readonly<Record<string, string>>,
   env: NodeJS.ProcessEnv = process.env,
@@ -255,7 +278,14 @@ export function planOptions(
   } else if (env.QUOKY_NL_INTENT_TIMEOUT_MS !== undefined) {
     timeoutMs = parseNlIntentTimeoutMs(env.QUOKY_NL_INTENT_TIMEOUT_MS);
   }
+  const promptRev = asUsage(() => parseNlPromptRev(options['--prompt-rev']));
+  const cases = asUsage(() => parseCaseIds(options['--cases']));
+  const fixture = options['--fixture'];
+  if (fixture !== undefined) asUsage(() => nlEvalFixturePath(fixture));
   return {
+    ...(promptRev !== undefined && promptRev !== 'v73' ? { promptRev } : {}),
+    ...(fixture !== undefined ? { fixture } : {}),
+    ...(cases !== undefined ? { cases } : {}),
     timeoutMs,
     model: options['--model'] ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL,
     effort: selectionEffort(options),
@@ -273,7 +303,8 @@ export interface CliDeps {
   readonly now: () => string;
   /** The git revision bound into the R2 digest (default: `git rev-parse HEAD`). */
   readonly gitHead?: () => string;
-  readonly loadCorpus: () => { corpus: NlEvalCorpus; sha256: string };
+  /** With `--fixture <name>` the scored corpus plus that held-out fixture. */
+  readonly loadCorpus: (fixture?: string) => { corpus: NlEvalCorpus; sha256: string };
   readonly writeReport: (fileName: string, contents: string) => string;
   /** Constructed only by `run`, only after the digest matched. */
   readonly createProvider: (model: string, effort?: string, tier?: 'stronger') => AiProvider;
@@ -289,7 +320,7 @@ export function defaultDeps(): CliDeps {
     stderr: (line) => process.stderr.write(`${line}\n`),
     now: () => new Date().toISOString(),
     // Owner decision (가) option 1 (2026-10-27): the D12 read gate scores the supplemental context corpus too.
-    loadCorpus: () => loadScoredCorpus(),
+    loadCorpus: (fixture) => (fixture === undefined ? loadScoredCorpus() : loadScoredCorpusWithFixture(fixture)),
     writeReport: (fileName, contents) => {
       const dir = resolve(repoRoot, 'data/eval');
       mkdirSync(dir, { recursive: true });
@@ -368,7 +399,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stderr(HELP);
     return EXIT_USAGE;
   }
-  const { corpus, sha256 } = deps.loadCorpus();
+  const { corpus, sha256 } = deps.loadCorpus(options.fixture);
   let plan: ReturnType<typeof buildPlan>;
   try {
     plan = buildPlan(corpus, sha256, options);
@@ -381,6 +412,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
     deps.stdout(`plan digest (sha256): ${digest}`);
     deps.stdout(CANARY_PLAN_LINE);
+    deps.stdout(`model calls this plan authorises: at most ${plan.caseIds.length * plan.runs} (${plan.caseIds.length} cases x ${plan.runs} run(s), one selector call each; a skipped input makes none)`);
     deps.stdout(formatSideScore('grammar side (offline, the Class B grammars on their own hits)', scoreGrammarSide(corpus, deps.now())));
     deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
     return EXIT_OK;
@@ -454,12 +486,14 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
   if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
   // D4: for `--mode help-scope` `--model` / `--effort` override the STRONGER tier (production defaults sonnet / low).
   const stronger = mode === 'help-scope';
+  const promptRev = asUsage(() => parseNlPromptRev(options['--prompt-rev']));
   const settings = {
     model: options['--model'] ?? (stronger ? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL : DEFAULT_CLAUDE_INTENT_SELECTION_MODEL),
     effort: stronger ? strongerSelectionEffort(options) : selectionEffort(options),
     runs: integer(options['--runs'], 1),
     concurrency: integer(options['--concurrency'], 4),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(promptRev !== undefined && promptRev !== 'v73' ? { promptRev } : {}),
   };
   const approved = options['--approved-plan-digest'];
   if (mode === 'r2') return await runR2Cli(settings, approved, deps);
@@ -582,7 +616,7 @@ function finishInvalid(
 }
 
 /** `--mode r2` (A6 R2): the agent-drafted, owner-approved R2 corpus through the real selector with R2 offered. */
-async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
+async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number; promptRev?: 'v74' }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
   const { corpus, sha256, files } = (deps.loadR2ActionCorpus ?? loadR2ActionCorpus)();
   const problems = validateActionCorpus(corpus, NL_ACTION_R2_EVAL_ENTRIES);
   deps.stdout(`R2 corpus: ${corpus.cases.length} cases from ${files.length} file(s); schema problems: ${problems.length}`);
