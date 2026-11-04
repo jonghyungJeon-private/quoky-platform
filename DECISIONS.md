@@ -32786,4 +32786,3 @@ Owner approved enabling them (2026-11-04) after the D12 gates (haiku, 3 runs, he
 - **Eval CLIs.** An absent `--prompt-rev` on action / read-regression / r2 is v79 (no stored rev); `--prompt-rev v73` is stored and reaches v71 / v72.
 - **Size.** Live action prompt 37,733 -> 35,507 chars; R2 40,730 -> 38,468.
 - **Rollback.** Set `NL_ACTIVE_PROMPT_REVS.action` back to `'v73'` and the two active ids back to `nl-select.v71` / `nl-select.v72`.
-
