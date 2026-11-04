@@ -32,11 +32,13 @@ const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([
 
 describe('prompt revision options (owner decision 2026-11-04)', () => {
   it('knows the revisions and rejects an unknown one', () => {
-    expect(NL_EVAL_PROMPT_REVS).toEqual(['v73', 'v74', 'v77']);
+    expect(NL_EVAL_PROMPT_REVS).toEqual(['v73', 'v74', 'v77', 'v79']);
     expect(AGENT_PLAN_EVAL_REVS).toEqual(['v10', 'v11']);
     expect(parseNlPromptRev(undefined)).toBeUndefined();
     expect(parseNlPromptRev('v74')).toBe('v74');
     expect(parseNlPromptRev('v77', 'action')).toBe('v77');
+    expect(parseNlPromptRev('v79', 'action')).toBe('v79');
+    expect(() => parseNlPromptRev('v79')).toThrow(/action \/ R2 prompt/);
     expect(() => parseNlPromptRev('v77')).toThrow(/action \/ R2 prompt/);
     expect(() => parseNlPromptRev('v75')).toThrow(/--prompt-rev must be one of/);
     expect(parseAgentPlanRev('v11')).toBe('v11');
@@ -118,6 +120,17 @@ describe('nl-select.v77 / v78 and --cases on the A6 modes', () => {
     expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', { ...options, promptRev: 'v77' }).promptVersion).toBe('nl-select.v78');
     expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v77' }).promptRev).toBe('v77');
     expect(buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v74' }).promptVersion).toBe('nl-select.v75');
+  });
+
+  it('v79 plans name nl-select.v79 / v80, store the rev and differ from v77 in prompt hash and digest', () => {
+    const v77 = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v77' });
+    const v79 = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v79' });
+    expect(v79).toMatchObject({ promptVersion: 'nl-select.v79', promptRev: 'v79' });
+    expect(computeActionPlanDigest(v79)).not.toBe(computeActionPlanDigest(v77));
+    expect(actionPromptSha256(undefined, 'v79')).not.toBe(actionPromptSha256(undefined, 'v77'));
+    expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', { ...options, promptRev: 'v79' }).promptVersion).toBe('nl-select.v80');
+    expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v79' }).promptRev).toBe('v79');
+    expect(() => planOptions({ '--prompt-rev': 'v79' })).toThrow(/not valid for the read modes/);
   });
 
   it('read modes reject v77 (plan option and prompt)', async () => {

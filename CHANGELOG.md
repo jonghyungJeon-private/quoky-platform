@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 action / R2 candidates nl-select.v79 / v80 restore the Korean glosses on the v77 text (owner decision 2026-11-04)
+
+- **Added.** `NlPromptRev` `'v79'` (action / R2 only): `nl-select.v79` / `nl-select.v80` = v77 / v78 with the Korean gloss back on every catalog entry
+  line (the v77 read-regression gate failed 2/3, `jira.release` 25/28). `--prompt-rev v79` for `eval:nl` action / read-regression / r2. v77 / v78 are
+  superseded; active prompts unchanged (read v74, action v71, R2 v72, planner v11).
+
 ## Unreleased — A6 action / R2 candidates nl-select.v77 / v78; spanExact on Core's final args (owner decision 2026-11-04)
 
 - **Added.** `NlPromptRev` `'v77'` (action / R2 only): `nl-select.v77` / `nl-select.v78` = the v74 text plus general rules for reminder requests

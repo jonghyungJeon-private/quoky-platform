@@ -9,7 +9,7 @@ import { AGENT_PLAN_ACTIVE_REV, nlEffectivePromptRev, type NlPromptMode, type Nl
  * stores a revision only when it differs from its mode's active one ({@link storedNlPromptRev}), so a plan made without
  * the option reproduces the production prompt of that mode.
  */
-export const NL_EVAL_PROMPT_REVS = ['v73', 'v74', 'v77'] as const;
+export const NL_EVAL_PROMPT_REVS = ['v73', 'v74', 'v77', 'v79'] as const;
 export const AGENT_PLAN_EVAL_REVS = ['v10', 'v11'] as const;
 export type AgentPlanEvalRev = (typeof AGENT_PLAN_EVAL_REVS)[number];
 export const AGENT_PLAN_EVAL_DEFAULT_REV: AgentPlanEvalRev = AGENT_PLAN_ACTIVE_REV;
@@ -26,12 +26,14 @@ export function storedAgentPlanRev(rev: AgentPlanEvalRev | undefined): AgentPlan
 
 /**
  * Validate a `--prompt-rev` value; `undefined` stays `undefined` (the active revision). Throws on an unknown one.
- * `v77` (nl-select.v77 / v78) is an action / R2 text: it is rejected for the read modes (`read`).
+ * `v77` / `v79` (nl-select.v77 / v78, v79 / v80) are action / R2 texts: they are rejected for the read modes (`read`).
  */
 export function parseNlPromptRev(value: string | undefined, mode: 'read' | 'action' = 'read'): NlPromptRev | undefined {
   if (value === undefined) return undefined;
   if (!(NL_EVAL_PROMPT_REVS as readonly string[]).includes(value)) throw new Error(`--prompt-rev must be one of ${NL_EVAL_PROMPT_REVS.join(', ')} (got ${JSON.stringify(value)})`);
-  if (value === 'v77' && mode === 'read') throw new Error('--prompt-rev v77 is an action / R2 prompt (nl-select.v77 / v78); it is not valid for the read modes');
+  if ((value === 'v77' || value === 'v79') && mode === 'read') {
+    throw new Error(`--prompt-rev ${value} is an action / R2 prompt (${value === 'v77' ? 'nl-select.v77 / v78' : 'nl-select.v79 / v80'}); it is not valid for the read modes`);
+  }
   return value as NlPromptRev;
 }
 

@@ -300,14 +300,21 @@ export interface NlSelectionPromptInput {
 }
 
 /** The selectable prompt revisions of the rule text. */
-export type NlPromptRev = 'v73' | 'v74' | 'v77';
+export type NlPromptRev = 'v73' | 'v74' | 'v77' | 'v79';
 
 /**
  * `v77` exists only with `actions`: the A6 action / R2 prompt on the v74 rule text plus the three general residual rules
  * (DECISIONS "A6 action prompt on the v74 text with residual-rule fixes (nl-select.v77 / v78 candidates)"). The read mode
  * has no `v77`: {@link buildSelectionPrompt} and {@link nlPromptVersionFor} reject it there.
  */
-export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77'];
+export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77', 'v79'];
+
+/**
+ * `v79` (action / R2 only) = `v77` EXACTLY, except that every catalog entry line keeps its Korean gloss as before v74
+ * (DECISIONS "v79 / v80: Korean glosses restored (read-regression failure of the v77 gate)"). The v74 source-name
+ * principle (the Slack / Confluence sentence removal) stays; only the v74 S3 change is reverted.
+ */
+export const NL_V79_PROMPT_VERSIONS = { action: 'nl-select.v79', r2: 'nl-select.v80' } as const;
 
 /** Version ids of the `rev: 'v77'` candidate prompts: A6 action and A6 R2. */
 export const NL_V77_PROMPT_VERSIONS = { action: 'nl-select.v77', r2: 'nl-select.v78' } as const;
@@ -330,11 +337,12 @@ export function nlEffectivePromptRev(mode: NlPromptMode, rev?: NlPromptRev): NlP
   return rev ?? NL_ACTIVE_PROMPT_REVS[mode === 'read' ? 'read' : 'action'];
 }
 
-/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78`. Throws for `v77` in read mode. */
+/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78|v79|v80`. Throws for `v77` / `v79` in read mode. */
 export function nlPromptVersionFor(mode: NlPromptMode, rev?: NlPromptRev): string {
-  if (rev === 'v77') {
-    if (mode === 'read') throw new Error("prompt rev 'v77' is valid only with action entries (action / r2 mode)");
-    return mode === 'action' ? NL_V77_PROMPT_VERSIONS.action : NL_V77_PROMPT_VERSIONS.r2;
+  if (rev === 'v77' || rev === 'v79') {
+    if (mode === 'read') throw new Error(`prompt rev '${rev}' is valid only with action entries (action / r2 mode)`);
+    const versions = rev === 'v77' ? NL_V77_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
+    return mode === 'action' ? versions.action : versions.r2;
   }
   const v74 = nlEffectivePromptRev(mode, rev) === 'v74';
   if (mode === 'read') return v74 ? NL_SELECTION_PROMPT_VERSION : NL_PREVIOUS_READ_PROMPT_VERSION;
@@ -685,8 +693,9 @@ const V77_ACTION_RULES: readonly string[] = [
 /** The full instruction text for one selection call. */
 export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
   const effectiveRev = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev);
-  if (effectiveRev === 'v77' && input.actions === undefined) throw new Error("prompt rev 'v77' is valid only with action entries");
-  const v77 = effectiveRev === 'v77';
+  if ((effectiveRev === 'v77' || effectiveRev === 'v79') && input.actions === undefined) throw new Error(`prompt rev '${effectiveRev}' is valid only with action entries`);
+  const v79 = effectiveRev === 'v79';
+  const v77 = effectiveRev === 'v77' || v79;
   const v74 = effectiveRev === 'v74' || v77;
   const offered = new Set(input.entries.map((entry) => entry.id));
   const lines: string[] = [];
@@ -801,10 +810,10 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
   );
   for (const entry of input.entries) {
     // v74 (S3, S5): no Korean gloss (the arg lines keep the Korean cue words); the Slack / Confluence "pick it whenever the
-    // message names it" sentence is the rule-1 principle now.
+    // message names it" sentence is the rule-1 principle now. v79 (S3 reverted): the Korean gloss stays, S5 stays.
     lines.push(
       v74
-        ? `- ${entry.id}: ${bounded(entry.description.en).replace(/ Pick it whenever the message names \w+ as the place to look, whatever the topic is\./, '')}`
+        ? `- ${entry.id}: ${bounded(entry.description.en).replace(/ Pick it whenever the message names \w+ as the place to look, whatever the topic is\./, '')}${v79 ? ` (${bounded(entry.description.ko)})` : ''}`
         : `- ${entry.id}: ${bounded(entry.description.en)} (${bounded(entry.description.ko)})`,
     );
     if (entry.args.length === 0) {

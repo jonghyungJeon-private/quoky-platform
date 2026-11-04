@@ -32753,3 +32753,21 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   so the version actually run is visible in the archive. Haiku default rate placeholder 0.03 -> 0.003 (measured). Optional
   `GATES_CASES` is passed as `--cases` to intent, action, read-regression and r2.
 - **Not done.** No model call and no gate run was made; nothing was deployed; the live default is unchanged (v71 / v72).
+
+### v79 / v80: Korean glosses restored (read-regression failure of the v77 gate)
+
+- **Cause.** The v77 read-regression gate (archive `gates-v77-rr-r2-9db19ef9-20261104`) FAILED 2/3 runs; `jira.release` hit 25/28 in run 3.
+  `a8-06` ("이 릴리스 이슈 정리해줘 <release link>") and `a8-11` ("OP26 프로젝트 릴리스 목록 보여줘") started asking instead of selecting once the
+  v74 S3 change removed the Korean gloss from each catalog entry line (21/21 hits across seven v71 archives, which carry the glosses; misses on
+  v75 and v77, which do not). The action gate of v77 PASSED 3/3 (`gates-v77-action-9db19ef9-20261104`) and r2 v78 PASSED 3/3, so the rules F1 / F3 / F4
+  are not at fault; the gloss removal is.
+- **Change.** `rev: 'v79'` (action) / `nl-select.v79`, R2 `nl-select.v80` = rev v77 EXACTLY except that every entry line is
+  `- <id>: <en, with the v74 Slack / Confluence sentence removed> (<ko>)`. Only S3 of v74 is reverted; S5 (the source-name principle in rule 1,
+  no "Pick it whenever the message names X as the place to look" sentence) stays. All glosses are restored, not only `jira.release`: picking one
+  gloss would be gold fitting. Rejected in read mode like v77; `--prompt-rev v79` for eval:nl action / read-regression / r2.
+- **Size** (full live action prompt: every `NL_ACTION_EVAL_ENTRIES` entry, referenceContext none, short message; chars / UTF-8 bytes):
+  v71 37733 / 42871; v77 34577 / 38379; v79 35507 / 40407 (v79 vs v77 +930 / +2028; vs v71 -2226 / -2464).
+  R2: v72 40730 / 46230; v78 37485 / 41573; v80 38468 / 43730 (v80 vs v78 +983 / +2157; vs v72 -2262 / -2500).
+  The glosses cost about 0.9k chars (2.0k bytes) but the prompt stays about 6% shorter than the live v71 / v72 text.
+- **Superseded.** v77 / v78 are superseded and not to be enabled (they stay buildable for the archives and pins). The active default stays
+  v71 / v72 until v79 / v80 pass the D12 gates. No model call was made in this change.

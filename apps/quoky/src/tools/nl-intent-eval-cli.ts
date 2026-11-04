@@ -2,7 +2,7 @@
  * Natural-language selection evaluation CLI (ADR-0120 D12).
  *
  *   pnpm eval:nl -- --mode plan [--model haiku] [--effort low] [--entries jira.issues,help.topic] [--negatives true|false] [--per-entry N] [--runs N] [--concurrency N]
- *                   [--prompt-rev v73|v74|v77] [--fixture homonym-heldout] [--cases id1,id2,...]
+ *                   [--prompt-rev v73|v74|v77|v79] [--fixture homonym-heldout] [--cases id1,id2,...]
  *   pnpm eval:nl -- --mode run  <the same options> --approved-plan-digest <sha256 from plan>
  *   (or: pnpm --filter @quoky/app nl-eval -- …)
  *
@@ -150,7 +150,7 @@ Options: --model <claude model alias or full model id (recommended: a full id pi
          --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-10000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
-Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, absent = the ACTIVE revision of the mode: read modes v74 (nl-select.v74), action / read-regression / r2 modes the v73 text (v71 / v72)>; explicit v73 on a read mode = the previous read prompt, explicit v74 on action / r2 = the candidates v75 / v76, explicit v77 (action / read-regression / r2 only) = the candidates v77 / v78.
+Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, absent = the ACTIVE revision of the mode: read modes v74 (nl-select.v74), action / read-regression / r2 modes the v73 text (v71 / v72)>; explicit v73 on a read mode = the previous read prompt, explicit v74 on action / r2 = the candidates v75 / v76, explicit v77 (action / read-regression / r2 only) = the candidates v77 / v78 (superseded), explicit v79 = v77 with the Korean glosses restored (candidates v79 / v80).
          It applies to the plan/run, action, read-regression and r2 modes (not help-scope), is printed in the plan, recorded in the report and
          bound into the plan digest: a plan made for one revision cannot be run under another (the digest differs, exit 3).
 Held-out fixture (plan/run only): --fixture <${Object.keys(NL_EVAL_FIXTURE_PATHS).join('|')}> adds the owner-approved held-out cases to the corpus (bound into the digest);

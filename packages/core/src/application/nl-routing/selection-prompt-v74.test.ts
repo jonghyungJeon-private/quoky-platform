@@ -11,6 +11,7 @@ import {
   NL_PREVIOUS_READ_PROMPT_VERSION,
   NL_SELECTION_PROMPT_VERSION,
   NL_V77_PROMPT_VERSIONS,
+  NL_V79_PROMPT_VERSIONS,
   buildSelectionPrompt,
   nlPromptVersionFor,
 } from './selection-prompt';
@@ -186,6 +187,61 @@ describe('nl-select.v77 / v78 (rev v77, action and R2 only)', () => {
   });
 });
 
+describe('nl-select.v79 / v80 (rev v79 = v77 with the Korean glosses restored)', () => {
+  const entries = [...READS, ...ACTIONS];
+  const v77 = buildSelectionPrompt({ entries, text, rev: 'v77', actions: ACTION_CONTEXT });
+  const v79 = buildSelectionPrompt({ entries, text, rev: 'v79', actions: ACTION_CONTEXT });
+  const v78 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v77', actions: ACTION_CONTEXT });
+  const v80 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v79', actions: ACTION_CONTEXT });
+  const stripGlosses = (prompt: string, list: readonly NlCatalogEntry[]): string => {
+    let out = prompt;
+    for (const entry of list) {
+      const gloss = ` (${entry.description.ko})`;
+      const lines = out.split('\n').map((line) => (line.startsWith(`- ${entry.id}: `) && line.endsWith(gloss) ? line.slice(0, -gloss.length) : line));
+      out = lines.join('\n');
+    }
+    return out;
+  };
+
+  it('names the versions and rejects v79 in read mode', () => {
+    expect(NL_V79_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v79', r2: 'nl-select.v80' });
+    expect(nlPromptVersionFor('action', 'v79')).toBe('nl-select.v79');
+    expect(nlPromptVersionFor('r2', 'v79')).toBe('nl-select.v80');
+    expect(() => nlPromptVersionFor('read', 'v79')).toThrow(/v79/);
+    expect(() => buildSelectionPrompt({ entries: READS, text, rev: 'v79' })).toThrow(/v79/);
+  });
+
+  it('keeps every earlier pin and pins v79 / v80', () => {
+    expect(sha(buildSelectionPrompt({ entries, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
+    expect(sha(buildSelectionPrompt({ entries, text, rev: 'v74', actions: ACTION_CONTEXT }))).toBe(PINNED_V74_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v74', actions: ACTION_CONTEXT }))).toBe(PINNED_V76_R2);
+    expect(sha(v77)).toBe(PINNED_V77_ACTION);
+    expect(sha(v78)).toBe(PINNED_V78_R2);
+    expect(sha(buildSelectionPrompt({ entries: READS, text }))).toBe(PINNED_V74_READ);
+    expect(sha(v79)).toBe(PINNED_V79_ACTION);
+    expect(sha(v80)).toBe(PINNED_V80_R2);
+  });
+
+  it('has the Korean gloss on every catalog entry line in v79 / v80 and on none in v77 / v78', () => {
+    for (const [with79, with77, list] of [[v79, v77, entries], [v80, v78, R2_ENTRIES]] as const) {
+      for (const entry of list) {
+        const line79 = with79.split('\n').find((line) => line.startsWith(`- ${entry.id}: `));
+        const line77 = with77.split('\n').find((line) => line.startsWith(`- ${entry.id}: `));
+        expect(line79?.endsWith(` (${entry.description.ko})`), entry.id).toBe(true);
+        expect(line77?.endsWith(` (${entry.description.ko})`), entry.id).toBe(false);
+      }
+    }
+  });
+
+  it('is v77 / v78 plus the glosses and nothing else (S5 sentence removal stays)', () => {
+    expect(stripGlosses(v79, entries)).toBe(v77);
+    expect(stripGlosses(v80, R2_ENTRIES)).toBe(v78);
+    expect(v79).not.toContain('Pick it whenever the message names');
+    expect(v79.length).toBeGreaterThan(v77.length);
+  });
+});
+
 describe('agent-plan.v11 (rev v11, the default)', () => {
   const v10 = buildAgentPlanPrompt({ entries: READS, text, rev: 'v10' });
   const v11 = buildAgentPlanPrompt({ entries: READS, text });
@@ -224,4 +280,6 @@ const PINNED_V72_R2 = '768bcf90328082066a2722180cc7a67f81cb228030a89535c02c35e56
 const PINNED_V76_R2 = '8ffb282c8e8714667ce57c2a72acdd8dfe5de2b4d0784870df174bc498dfa333';
 const PINNED_V77_ACTION = 'c4313c45ab3f847b65a57e09f481561b26b073c9c2705f9871700b7c3459582f';
 const PINNED_V78_R2 = 'a93c69ddf32e3a2fdfbcefc1f5bd480952dc8e12280075d460e882bea2ce19ff';
+const PINNED_V79_ACTION = 'e46c310d21de33774acf628a58225f2068a6395d7227034e99ec571fc34d357a';
+const PINNED_V80_R2 = 'fef5c6842cb36cbf72d770195651901da5e66b3687c9a1f996f5fb70694991fd';
 const PINNED_V10 = '6543ae28546a0657c41985c4a27a4be4eb65a216759c2e031da762f1fa8892d6';

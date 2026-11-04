@@ -5,6 +5,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6 action / R2 candidates nl-select.v79 / v80 (2026-11-04, branch `claude/v5-action-residuals`)
+
+- v77 / v78 are superseded (v77 read-regression gate failed 2/3: the v74 S3 gloss removal). `rev: 'v79'` (actions only) = v77 with all Korean glosses
+  restored (`nl-select.v79` action / `v80` R2); gate with `--prompt-rev v79` before flipping `NL_ACTIVE_PROMPT_REVS.action`. Active prompts unchanged.
+  Record: DECISIONS "v79 / v80: Korean glosses restored".
+
 ### A6 action / R2 candidates nl-select.v77 / v78 and span scoring on final args (2026-11-04, branch `claude/v5-action-residuals`)
 
 - **Active prompts unchanged** (read v74, action v71, R2 v72, planner v11). `rev: 'v77'` (actions only) builds the candidates `nl-select.v77`
