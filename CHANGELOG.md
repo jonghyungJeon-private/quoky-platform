@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — enable nl-select.v79 (A6 action) and nl-select.v80 (A6 R2) as the live defaults (owner decision 2026-11-04)
+
+- **Changed.** `NL_ACTIVE_PROMPT_REVS.action` is `'v79'`: `buildSelectionPrompt` with `actions` and no `rev` builds the gated v79 bytes (R2 the v80 bytes);
+  `NL_ACTION_PROMPT_VERSION` / `NL_ACTION_R2_PROMPT_VERSION` are `nl-select.v79` / `nl-select.v80`. Live action prompt 37,733 -> 35,507 chars, R2 40,730 -> 38,468.
+  The previous ids are `NL_PREVIOUS_ACTION_PROMPT_VERSION` / `NL_PREVIOUS_ACTION_R2_PROMPT_VERSION` (`rev: 'v73'`, explicit only; bytes unchanged).
+- **Changed (eval tools).** Absent `--prompt-rev` on action / read-regression / r2 is v79; `--prompt-rev v73` is stored in the plan and builds v71 / v72.
+- **Unchanged.** Rule text, all earlier sha pins, read v74, planner v11, gate thresholds.
+
 ## Unreleased — A6 action / R2 candidates nl-select.v79 / v80 restore the Korean glosses on the v77 text (owner decision 2026-11-04)
 
 - **Added.** `NlPromptRev` `'v79'` (action / R2 only): `nl-select.v79` / `nl-select.v80` = v77 / v78 with the Korean gloss back on every catalog entry

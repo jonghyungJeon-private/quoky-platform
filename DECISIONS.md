@@ -32771,3 +32771,19 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   The glosses cost about 0.9k chars (2.0k bytes) but the prompt stays about 6% shorter than the live v71 / v72 text.
 - **Superseded.** v77 / v78 are superseded and not to be enabled (they stay buildable for the archives and pins). The active default stays
   v71 / v72 until v79 / v80 pass the D12 gates. No model call was made in this change.
+### Enabled: nl-select.v79 (A6 action) and nl-select.v80 (A6 R2) as the live defaults (2026-11-04)
+
+Owner approved enabling them (2026-11-04) after the D12 gates (haiku, 3 runs, head 6a5c47c9) all PASSED.
+
+- **Gates.** read-regression `--prompt-rev v79`, 3/3 PASSED (archive `gates-v79-rr-6a5c47c9-20261104`): overall 0.971 / 0.981 / 0.981. Action
+  `nl-select.v79`, 3/3 PASSED (`gates-v79-action-r2-6a5c47c9-20261104`): overall 0.986 / 0.984 / 0.986, spanExact 1 / 0.989 / 1. R2 `nl-select.v80`, 3/3 PASSED
+  (same archive): overall 1.000 / 0.993 / 0.993. Wrong targets 0, negative captures 0, action captures 0 in every run.
+- **Change.** `NL_ACTIVE_PROMPT_REVS` is `{ read: 'v74', action: 'v79' }`; `NL_ACTION_PROMPT_VERSION` is `nl-select.v79` and `NL_ACTION_R2_PROMPT_VERSION`
+  `nl-select.v80` (the old ids live on as `NL_PREVIOUS_ACTION_PROMPT_VERSION` / `NL_PREVIOUS_ACTION_R2_PROMPT_VERSION`, built by an explicit `rev: 'v73'`).
+  No rule text changed: the default action / R2 bytes equal the gated `rev: 'v79'` bytes (pinned sha256 asserted in `selection-prompt-v74.test.ts`);
+  `rev: 'v73'` still builds v71 / v72, `rev: 'v74'` v75 / v76, `rev: 'v77'` v77 / v78 byte for byte. Read v74 and planner v11 unchanged.
+  The read + write probe follows the action default (`AGENT_READ_WRITE_PROBE_PROMPT_VERSION` = `nl-select.v79`).
+- **Eval CLIs.** An absent `--prompt-rev` on action / read-regression / r2 is v79 (no stored rev); `--prompt-rev v73` is stored and reaches v71 / v72.
+- **Size.** Live action prompt 37,733 -> 35,507 chars; R2 40,730 -> 38,468.
+- **Rollback.** Set `NL_ACTIVE_PROMPT_REVS.action` back to `'v73'` and the two active ids back to `nl-select.v71` / `nl-select.v72`.
+

@@ -19,8 +19,8 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { AGENT_PLAN_PREVIOUS_PROMPT_VERSION, AGENT_PLAN_PROMPT_VERSION, agentPlanPromptVersion, buildAgentPlanPrompt } from '../agent/plan-prompt';
 
 // Enablement of `nl-select.v74` (read) and `agent-plan.v11` (planner) by default (owner decision 2026-11-04, after the D12
-// gates). The A6 action / R2 prompts stay on the v73 rule text (nl-select.v71 / v72; the v75 / v76 candidates failed their
-// gate and are built only with an explicit `rev: 'v74'`). The `rev` option is explicit-only for the other direction too:
+// gates). The A6 action / R2 prompts are `nl-select.v79` / `v80` by default (owner decision 2026-11-04, D12 gates passed);
+// the old v71 / v72 are built only with an explicit `rev: 'v73'`, the v75 / v76 candidates with `rev: 'v74'`. The `rev` option is explicit-only for the other direction too:
 // `rev: 'v73'` builds the previous read prompt and `rev: 'v10'` the previous planner byte for byte.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -32,12 +32,12 @@ const ACTION_CONTEXT = { referenceContext: 'last listing: mail (2 items, 1 min a
 const R2_ENTRIES: readonly NlCatalogEntry[] = [...READS, ...ACTIONS.filter((entry) => entry.id !== 'item.summarize'), nlItemSummarizeEntry(['jira', 'slack'])];
 
 describe('per-mode default revision (owner decision 2026-11-04)', () => {
-  it('names the active versions: read v74, action v71, R2 v72; v75 / v76 are the only candidates', () => {
+  it('names the active versions: read v74, action v79, R2 v80; v71 / v72 are explicit v73 only', () => {
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
     expect(NL_PREVIOUS_READ_PROMPT_VERSION).toBe('nl-select.v73');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v71');
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v72');
-    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v73' });
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v79');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v80');
+    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v79' });
     expect(NL_CANDIDATE_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v75', r2: 'nl-select.v76' });
   });
 
@@ -45,10 +45,10 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(nlPromptVersionFor('read')).toBe('nl-select.v74');
     expect(nlPromptVersionFor('read', 'v73')).toBe('nl-select.v73');
     expect(nlPromptVersionFor('read', 'v74')).toBe('nl-select.v74');
-    expect(nlPromptVersionFor('action')).toBe('nl-select.v71');
+    expect(nlPromptVersionFor('action')).toBe('nl-select.v79');
     expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
     expect(nlPromptVersionFor('action', 'v74')).toBe('nl-select.v75');
-    expect(nlPromptVersionFor('r2')).toBe('nl-select.v72');
+    expect(nlPromptVersionFor('r2')).toBe('nl-select.v80');
     expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
     expect(nlPromptVersionFor('r2', 'v74')).toBe('nl-select.v76');
   });
@@ -62,15 +62,24 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(sha(buildSelectionPrompt({ entries: READS, text, rev: 'v73' }))).toBe(PINNED_V73_READ);
   });
 
-  it('action and R2 prompts without rev stay the v73-text prompts (v71 / v72, unchanged bytes)', () => {
+  it('action and R2 prompts without rev are the gated v79 / v80 bytes; explicit v73 is the old v71 / v72 bytes', () => {
     const action = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT });
-    expect(sha(action)).toBe(PINNED_V71_ACTION);
-    expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v73' })).toBe(action);
+    expect(sha(action)).toBe(PINNED_V79_ACTION);
+    expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v79' })).toBe(action);
+    expect(sha(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v73' }))).toBe(PINNED_V71_ACTION);
     const r2 = buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT });
-    expect(sha(r2)).toBe(PINNED_V72_R2);
-    expect(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v73' })).toBe(r2);
+    expect(sha(r2)).toBe(PINNED_V80_R2);
+    expect(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v79' })).toBe(r2);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v73' }))).toBe(PINNED_V72_R2);
     // The candidates are explicit-only.
-    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v74' }))).not.toBe(PINNED_V72_R2);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v74' }))).toBe(PINNED_V76_R2);
+  });
+
+  it('the version ids follow the default: v73 is v71 / v72, absent is v79 / v80', () => {
+    expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
+    expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
+    expect(nlPromptVersionFor('action')).toBe(nlPromptVersionFor('action', 'v79'));
+    expect(nlPromptVersionFor('r2')).toBe(nlPromptVersionFor('r2', 'v79'));
   });
 });
 
@@ -154,8 +163,8 @@ describe('nl-select.v77 / v78 (rev v77, action and R2 only)', () => {
   });
 
   it('keeps v71 / v72 / v75 / v76 / read v73 / v74 bytes and pins v77 / v78', () => {
-    expect(sha(buildSelectionPrompt({ entries, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
-    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
+    expect(sha(buildSelectionPrompt({ entries, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
     expect(sha(v75)).toBe(PINNED_V74_ACTION);
     expect(sha(v76)).toBe(PINNED_V76_R2);
     expect(sha(buildSelectionPrompt({ entries: READS, text }))).toBe(PINNED_V74_READ);
@@ -212,8 +221,8 @@ describe('nl-select.v79 / v80 (rev v79 = v77 with the Korean glosses restored)',
   });
 
   it('keeps every earlier pin and pins v79 / v80', () => {
-    expect(sha(buildSelectionPrompt({ entries, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
-    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
+    expect(sha(buildSelectionPrompt({ entries, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
     expect(sha(buildSelectionPrompt({ entries, text, rev: 'v74', actions: ACTION_CONTEXT }))).toBe(PINNED_V74_ACTION);
     expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v74', actions: ACTION_CONTEXT }))).toBe(PINNED_V76_R2);
     expect(sha(v77)).toBe(PINNED_V77_ACTION);

@@ -216,7 +216,9 @@ export const NL_PREVIOUS_READ_PROMPT_VERSION = 'nl-select.v73';
  * v70 = v69 with the answer-format lines of read v72.
  * v71 = v70 with the rule-conflict cleanup of read v73 (rule 8 points to rule 3b).
  */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v71';
+export const NL_PREVIOUS_ACTION_PROMPT_VERSION = 'nl-select.v71';
+/** The ACTIVE A6 action prompt id (owner decision 2026-11-04: `rev: 'v79'`, nl-select.v79); the old v71 is `rev: 'v73'`, explicit only. */
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v79';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -256,7 +258,9 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v71';
  * v71 = the v48 R2 lines on top of v70 (the answer-format lines; not the read v71).
  * v72 = the v48 R2 lines on top of v71 (the rule-conflict cleanup; not the read v72).
  */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v72';
+export const NL_PREVIOUS_ACTION_R2_PROMPT_VERSION = 'nl-select.v72';
+/** The ACTIVE A6 R2 prompt id (owner decision 2026-11-04: `rev: 'v79'`, nl-select.v80); the old v72 is `rev: 'v73'`, explicit only. */
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v80';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -291,7 +295,7 @@ export interface NlSelectionPromptInput {
   readonly replaceStaticExamples?: boolean;
   /**
    * Prompt revision of the rule text. Absent: the active revision of the mode ({@link NL_ACTIVE_PROMPT_REVS}: read `v74`,
-   * action / R2 `v73`). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
+   * action / R2 `v79`; an explicit `v73` with actions builds the old v71 / v72). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
    * source-name principle (nl-select.v74)"); enabled for read mode only (owner decision 2026-11-04), so `v74` with
    * `actions` is the candidate A6 / R2 text (v75 / v76, gate failed). `v77` (only with `actions`) = that text plus the
    * residual rules F1 / F3 / F4 (nl-select.v77 / v78 candidates). An explicit value always wins (eval, rollback).
@@ -324,10 +328,10 @@ export type NlPromptMode = 'read' | 'action' | 'r2';
 
 /**
  * The revision each mode builds when `rev` is absent (owner decision 2026-11-04): read `v74`; the A6 action and R2 prompts
- * stay on the v73 rule text (nl-select.v71 / v72) because the v75 candidate failed its gate. Rollback = set `read` to `'v73'`
- * (and `NL_SELECTION_PROMPT_VERSION` back to `nl-select.v73`).
+ * are `v79` (nl-select.v79 / v80; D12 gates passed, owner decision 2026-11-04). Rollback = set `read` to `'v73'` (and
+ * `NL_SELECTION_PROMPT_VERSION` back to `nl-select.v73`) and `action` to `'v73'` (and the two active ids back to v71 / v72).
  */
-export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v73' } as const satisfies Record<'read' | 'action', NlPromptRev>;
+export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v79' } as const satisfies Record<'read' | 'action', NlPromptRev>;
 
 /** Version ids of the candidate (`rev: 'v74'` with actions) prompts: A6 action and A6 R2 (the read v74 is active, not a candidate). */
 export const NL_CANDIDATE_PROMPT_VERSIONS = { action: 'nl-select.v75', r2: 'nl-select.v76' } as const;
@@ -339,15 +343,16 @@ export function nlEffectivePromptRev(mode: NlPromptMode, rev?: NlPromptRev): NlP
 
 /** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78|v79|v80`. Throws for `v77` / `v79` in read mode. */
 export function nlPromptVersionFor(mode: NlPromptMode, rev?: NlPromptRev): string {
-  if (rev === 'v77' || rev === 'v79') {
-    if (mode === 'read') throw new Error(`prompt rev '${rev}' is valid only with action entries (action / r2 mode)`);
-    const versions = rev === 'v77' ? NL_V77_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
+  const effective = nlEffectivePromptRev(mode, rev);
+  if (effective === 'v77' || effective === 'v79') {
+    if (mode === 'read') throw new Error(`prompt rev '${effective}' is valid only with action entries (action / r2 mode)`);
+    const versions = effective === 'v77' ? NL_V77_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
     return mode === 'action' ? versions.action : versions.r2;
   }
-  const v74 = nlEffectivePromptRev(mode, rev) === 'v74';
+  const v74 = effective === 'v74';
   if (mode === 'read') return v74 ? NL_SELECTION_PROMPT_VERSION : NL_PREVIOUS_READ_PROMPT_VERSION;
-  if (mode === 'action') return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.action : NL_ACTION_PROMPT_VERSION;
-  return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.r2 : NL_ACTION_R2_PROMPT_VERSION;
+  if (mode === 'action') return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.action : NL_PREVIOUS_ACTION_PROMPT_VERSION;
+  return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.r2 : NL_PREVIOUS_ACTION_R2_PROMPT_VERSION;
 }
 
 const RULE7_END_V73 = '   Otherwise CLEAR with "alternatives": [].';

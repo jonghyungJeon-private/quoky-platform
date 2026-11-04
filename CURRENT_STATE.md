@@ -5,6 +5,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Enabled: nl-select.v79 (A6 action) / nl-select.v80 (A6 R2) (2026-11-04, branch `claude/v5-action-residuals`)
+
+- **Active prompt versions: read `nl-select.v74`, action `nl-select.v79`, R2 `nl-select.v80`, planner `agent-plan.v11`.** D12 gates passed (haiku, 3 runs);
+  `rev: 'v73'` builds the old v71 / v72, `rev: 'v74'` v75 / v76, `rev: 'v77'` v77 / v78. Rollback = `NL_ACTIVE_PROMPT_REVS.action` back to `'v73'`.
+  Eval CLIs: absent `--prompt-rev` on action / read-regression / r2 is v79. Record: DECISIONS "Enabled: nl-select.v79 (A6 action)".
+
 ### A6 action / R2 candidates nl-select.v79 / v80 (2026-11-04, branch `claude/v5-action-residuals`)
 
 - v77 / v78 are superseded (v77 read-regression gate failed 2/3: the v74 S3 gloss removal). `rev: 'v79'` (actions only) = v77 with all Korean glosses
@@ -22,7 +28,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### Enable nl-select.v74 (read) and agent-plan.v11 (planner) (2026-11-04, branch `claude/v5-enable-v74`)
 
-- **Active prompt versions: read `nl-select.v74`, action `nl-select.v71`, R2 `nl-select.v72`, planner `agent-plan.v11`.** The A6 action
+- **(Superseded by the v79 / v80 enablement above.) Active prompt versions then: read `nl-select.v74`, action `nl-select.v71`, R2 `nl-select.v72`, planner `agent-plan.v11`.** The A6 action
   and R2 prompts are the v73 rule text byte for byte (the v75 candidate failed its gate, 2/3 spanExact); `rev: 'v73'` (read) and
   `rev: 'v10'` (planner) still build the previous prompts. Defaults live in `NL_ACTIVE_PROMPT_REVS` / `AGENT_PLAN_ACTIVE_REV`.
 - **Eval CLIs.** An absent `--prompt-rev` / `--plan-rev` is the active revision of the mode (read modes v74, action / read-regression /

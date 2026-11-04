@@ -3,8 +3,8 @@ import { AGENT_PLAN_ACTIVE_REV, nlEffectivePromptRev, type NlPromptMode, type Nl
 /**
  * Prompt-revision option of the eval CLIs (owner decision 2026-11-04, "평가 도구 연결 진행해": the tools must compare the
  * active prompt with the other revision). An ABSENT value is the ACTIVE revision of the plan's mode (owner decision
- * 2026-11-04, enablement): read modes v74 (nl-select.v74), action / read-regression / R2 modes v73 text (nl-select.v71 /
- * v72), planner v11. Explicit values keep working: `--prompt-rev v73` on a read mode = the previous read v73;
+ * 2026-11-04, enablement): read modes v74 (nl-select.v74), action / read-regression / R2 modes v79 (nl-select.v79 /
+ * v80), planner v11. Explicit values keep working: `--prompt-rev v73` = the previous read v73 (read) or the old v71 / v72 (action / R2);
  * `--prompt-rev v74` on an action / R2 mode = the candidates v75 / v76; `--plan-rev v10` = the previous planner. A plan
  * stores a revision only when it differs from its mode's active one ({@link storedNlPromptRev}), so a plan made without
  * the option reproduces the production prompt of that mode.
