@@ -32679,3 +32679,63 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   planner set `AGENT_PLAN_ACTIVE_REV` back to `'v10'` and `AGENT_PLAN_PROMPT_VERSION` to `agent-plan.v10` (swap the two version
   constants). The previous bytes are still built by the explicit revisions, so nothing else moves.
 - **Not done.** No model call was made in this change; nothing was deployed.
+
+## A6 action prompt on the v74 text with residual-rule fixes (nl-select.v77 / v78 candidates) and span scoring on Core's final args (2026-11-04, branch `claude/v5-action-residuals`)
+
+- **Owner decisions (2026-11-04).** (1) What is tested must be what runs live: production runs `QUOKY_NL_ACTIONS=local`, so every live
+  chat-route selection uses the A6 action prompt (`nl-select.v71`, v73 rule text) or the R2 prompt (`nl-select.v72`); the read prompt v74
+  enabled in the previous change is not used by live chat turns. The goal is an action / R2 prompt on the v74 rule text, gated, then made
+  the live default (a separate later commit after the D12 gates). (2) `spanExact` is computed from Core's FINAL args, the same args the
+  outcome uses; this confirms item 1 of "A6 R2 item.summarize scoring and labels" (2026-10-19, "one rule, Core's final args"), which the
+  span check had never followed. (3) The old raw-selector span stays as a non-gating diagnostic.
+- **Offline analysis of the v75 gate runs** (archive `gates-v74v11-B-39813d9a-20261104` and a second v75 run, haiku; v75 passed 4 of 6
+  runs, every failure on spanExact):
+  - `reminder.create-019` ("<time>에 점심 약속 알려주세요"): read as calendar.events almost always. The action prompt's
+    `ACTION_LINE_REPLACEMENTS` drop the read line `"<time>에 … 알려줘" sets a reminder: none` and put no positive rule in its place;
+    rule 1 lists 알려줘 as a lookup and the calendar description mentions appointments.
+  - `reminder.create-027` ("20분 후에 '…' 알려줘"): Core's normalisation repairs `when` "20분 후에" to "20분 후" and the outcome is a hit, but
+    `spanExact` scored the selector's RAW args, so a case Core had already settled counted as a span failure. A scorer defect, not a prompt one.
+  - `todo.add-906`: the title keeps a leading "when I will do it" clause ("... 끝나고"); nothing said such a clause is not the title.
+  - `reminder.create-035` ("나중에 …"; gold ask, Core reason `time-outside-when`): the model omitted `when`; rule 5 "omit what the owner did
+    not imply" invites that although the owner did write a (vague) time.
+- **Scoring (A).** `scoreActionDecision` (the one scorer of the action, read-regression-on-A6 and R2 modes; selector-rag does not call it)
+  computes `spanExact` from Core's final args: the executed command's args for an executed gold, `coreFinalArgs` (`nlCoreSelectionArgs`)
+  for a gold ask or refusal and for an execute gold Core did not execute. Gate thresholds are unchanged (`spanExact >= 0.95`, now on final
+  args). `spanExactRaw` (record and summary) is the old raw-args comparison and never gates. Every record with a parsed selector output
+  also stores `rawArgs`, the model's JSON args only (at most 12 keys, string values cut at 200 characters, scalars only; no prompt, no raw
+  answer), so later analysis needs no rerun. The doc comment that said the raw args were scored was corrected.
+- **Rules (B), general, in the action-mode part only (rule 8 plus one rule-2 line).** No phrase list, no corpus text, no examples
+  (`example-contamination.test.ts` lints the v77 / v78 prompts too):
+  - F1: asking to be reminded or notified of something at a time (a time, the thing, and a request to remind or tell the owner) is
+    reminder.create, also when the thing is a meeting or an appointment; calendar.events only asks what the calendar holds (a period or
+    schedule list, whether something is scheduled, when something is). The rule-2 slot where the read text said `"<time>에 … 알려줘" sets
+    a reminder: none` carries the positive pointer ("A time, a thing and a request to be reminded or notified of it is reminder.create
+    (rule 8), not a lookup.") instead of nothing.
+  - F3: a todo.add title and a reminder body are the task itself; a leading clause that only says when the owner will get to it (after
+    something, once something is done) is not part of the span; the span is still one contiguous part of the owner's own words.
+  - F4: any time word the owner wrote in a reminder request, even a vague one, goes in `when`; the owner did imply a time, so rule 5 does
+    not omit it; Core decides whether it is too vague and asks (the existing `time-outside-when` path).
+  Why general: each rule states a category (what a remind request is, what a title is, what `when` holds) and delegates the decision to Core's
+  existing validation; none names a case, a verb list or a sample sentence. The read prompt v74 and planner v11 bytes are unchanged
+  (the lines are inserted only when `actions` is given).
+- **Versioning.** `NlPromptRev` gains `'v77'`, valid only with `actions`: action `nl-select.v77`, R2 `nl-select.v78` (`NL_V77_PROMPT_VERSIONS`);
+  `buildSelectionPrompt` and `nlPromptVersionFor` reject `v77` in read mode, and `--prompt-rev v77` is a usage error for the read modes.
+  v71 / v72 (default), v75 / v76 (`rev: 'v74'` + actions) and read v73 / v74 bytes are unchanged (sha256 pins in `selection-prompt-v74.test.ts`:
+  v71 `24bbbd32...f06f`, v72 `768bcf90...7c34`, v75 `e08bc9a7...2544`, v76 `8ffb282c...a333`, read v74 `c6af3597...ea55`, planner v11
+  `a8869372...e11d`; new v77 `dd8ef699...f079`, v78 `f4c767fc...4704`). The default action revision stays `v73` in this change: the flip
+  is a separate commit after the D12 gates (action, read-regression, r2 on `--prompt-rev v77`) pass. The runtime service's eval-only
+  `promptRev` dependency already carries any revision.
+- **Eval tools (C).** `eval:nl --cases id1,id2` now also works for `--mode action`, `read-regression` and `r2` (not `help-scope`): the exact
+  list, bound into the digest as `selectedCases`, an unknown id is refused (usage error, "unknown case <id>"), the plan lists the ids in
+  corpus order, the call cap and the guard's `maxCalls` follow the selected cases. A plan without `--cases` is byte-identical to before,
+  so existing digests do not move.
+- **What changed in the gates.** The action (and R2) gate's `spanExact` now measures final args, so a v71 / v75 baseline run recorded
+  before this change is not comparable on that line; rerun the baseline with the new scorer (records carry `rawArgs`, so a rerun is only
+  needed for the model's behaviour, not for rescoring). The R2 report is no longer span-free: records carry the bounded `rawArgs`.
+- **run-gates incident and fix (D).** 2026-11-04: a stale `GATES_PROMPT_REV=v74` in the tmux global environment turned a v71 baseline into a
+  v75 run unnoticed. `start` now hands the exported settings over and passes `env -u NAME` for every `GATES_*`, `QUOKY_USAGE_LIMIT_USD`
+  and `QUOKY_EVAL_ARCHIVE` name found in the script's own source that the calling shell does not export. After each mode's plan the
+  plan's `promptVersion` (and `promptRev`) is written to `run.log` and to the DONE line (`<mode> exit=.. status=.. prompt=<version>[,rev=<rev>]`),
+  so the version actually run is visible in the archive. Haiku default rate placeholder 0.03 -> 0.003 (measured). Optional
+  `GATES_CASES` is passed as `--cases` to intent, action, read-regression and r2.
+- **Not done.** No model call and no gate run was made; nothing was deployed; the live default is unchanged (v71 / v72).

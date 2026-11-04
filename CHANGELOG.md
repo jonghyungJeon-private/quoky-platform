@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 action / R2 candidates nl-select.v77 / v78; spanExact on Core's final args (owner decision 2026-11-04)
+
+- **Added.** `NlPromptRev` `'v77'` (action / R2 only): `nl-select.v77` / `nl-select.v78` = the v74 text plus general rules for reminder requests
+  (also for meetings), leading when-clauses in titles and any written time word in `when`. `--prompt-rev v77` for `eval:nl` action /
+  read-regression / r2; `eval:nl --cases` for those modes. `spanExactRaw` and `rawArgs` on action records.
+- **Changed.** `spanExact` is scored on Core's final args (same args as the outcome); the raw-selector span is the non-gating `spanExactRaw`.
+  `run-gates.sh start` unsets unexported settings in the tmux session, DONE and `run.log` name the prompt version, haiku rate 0.003, `GATES_CASES`.
+- **Unchanged.** Default action / R2 prompts (v71 / v72), v75 / v76, read v73 / v74, planner v10 / v11 bytes; gate thresholds.
+
 ## Unreleased — enable nl-select.v74 (read) and agent-plan.v11 (planner) (owner decision 2026-11-04)
 
 - **Changed.** `buildSelectionPrompt` without `rev` builds the read prompt `nl-select.v74` and the action / R2 prompts on the v73 rule
@@ -19,7 +28,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — eval gate quota guards (ops, `run-gates.sh`)
 
 - **Added.** Pre-start estimate guard: the planned call cap x a per-model rate (sonnet 0.06 % of the 5 h window per call, measured;
-  haiku 0.03 / opus 0.15 placeholders) is written to `estimate.txt` and shown by `status`; a start over `GATES_MAX_EST_PCT` (30), over
+  haiku 0.03 (replaced by the measured 0.003 on 2026-11-04) / opus 0.15 placeholders) is written to `estimate.txt` and shown by `status`; a start over `GATES_MAX_EST_PCT` (30), over
   the 95 % pause threshold with current usage, or with an unreadable cap is refused unless `GATES_OWNER_OK=<yyyymmdd-reason>`.
   In-run brake: a watchdog stops the eval process group at `GATES_STOP_PCT` (85) % of the ccusage limit; `DONE` carries
   `USAGE-STOP at <pct>%`, `run` exits 6, no retry (owner order 2026-11-04, after the 2026-11-03 run that took 0 % to 81 % in 12 min).

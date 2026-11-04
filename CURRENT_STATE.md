@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6 action / R2 candidates nl-select.v77 / v78 and span scoring on final args (2026-11-04, branch `claude/v5-action-residuals`)
+
+- **Active prompts unchanged** (read v74, action v71, R2 v72, planner v11). `rev: 'v77'` (actions only) builds the candidates `nl-select.v77`
+  (action) / `v78` (R2): the v74 text plus rules F1 (remind requests are reminder.create), F3 (a leading when-clause is not the title) and
+  F4 (any written time word goes in `when`). Gate them with `--prompt-rev v77` before flipping `NL_ACTIVE_PROMPT_REVS.action`.
+- **`spanExact`** is scored on Core's final args; `spanExactRaw` (diagnostic) and `rawArgs` are recorded. `eval:nl --cases` works for
+  action / read-regression / r2. `run-gates.sh`: `start` unsets unexported settings, DONE names the prompt version, haiku rate 0.003.
+  Record: DECISIONS "A6 action prompt on the v74 text with residual-rule fixes".
+
 ### Enable nl-select.v74 (read) and agent-plan.v11 (planner) (2026-11-04, branch `claude/v5-enable-v74`)
 
 - **Active prompt versions: read `nl-select.v74`, action `nl-select.v71`, R2 `nl-select.v72`, planner `agent-plan.v11`.** The A6 action
