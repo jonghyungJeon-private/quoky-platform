@@ -10,6 +10,7 @@ import {
   NL_CANDIDATE_PROMPT_VERSIONS,
   NL_PREVIOUS_READ_PROMPT_VERSION,
   NL_SELECTION_PROMPT_VERSION,
+  NL_V77_PROMPT_VERSIONS,
   buildSelectionPrompt,
   nlPromptVersionFor,
 } from './selection-prompt';
@@ -136,6 +137,53 @@ describe('nl-select.v74 (rev v74)', () => {
   });
 });
 
+describe('nl-select.v77 / v78 (rev v77, action and R2 only)', () => {
+  const entries = [...READS, ...ACTIONS];
+  const v75 = buildSelectionPrompt({ entries, text, rev: 'v74', actions: ACTION_CONTEXT });
+  const v77 = buildSelectionPrompt({ entries, text, rev: 'v77', actions: ACTION_CONTEXT });
+  const v76 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v74', actions: ACTION_CONTEXT });
+  const v78 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v77', actions: ACTION_CONTEXT });
+
+  it('names the versions and rejects v77 in read mode', () => {
+    expect(NL_V77_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v77', r2: 'nl-select.v78' });
+    expect(nlPromptVersionFor('action', 'v77')).toBe('nl-select.v77');
+    expect(nlPromptVersionFor('r2', 'v77')).toBe('nl-select.v78');
+    expect(() => nlPromptVersionFor('read', 'v77')).toThrow(/v77/);
+    expect(() => buildSelectionPrompt({ entries: READS, text, rev: 'v77' })).toThrow(/v77/);
+  });
+
+  it('keeps v71 / v72 / v75 / v76 / read v73 / v74 bytes and pins v77 / v78', () => {
+    expect(sha(buildSelectionPrompt({ entries, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
+    expect(sha(v75)).toBe(PINNED_V74_ACTION);
+    expect(sha(v76)).toBe(PINNED_V76_R2);
+    expect(sha(buildSelectionPrompt({ entries: READS, text }))).toBe(PINNED_V74_READ);
+    expect(sha(v77)).toBe(PINNED_V77_ACTION);
+    expect(sha(v78)).toBe(PINNED_V78_R2);
+  });
+
+  it('is the v75 / v76 text plus the F1 / F3 / F4 lines (generic rules, no phrase list)', () => {
+    for (const [added, base] of [[v77, v75], [v78, v76]] as const) {
+      const baseLines = new Set(base.split('\n'));
+      const extra = added.split('\n').filter((line) => !baseLines.has(line));
+      const kept = base.split('\n').filter((line) => !new Set(added.split('\n')).has(line));
+      expect(extra.join('\n')).toContain('is reminder.create, also when the thing is a meeting or an appointment');
+      expect(extra.join('\n')).toContain('is not part of the span');
+      expect(extra.join('\n')).toContain('even a vague one, goes in `when`');
+      // The only v75 line that goes away is the rule-2 line carrying the stale "sets a reminder: none".
+      expect(kept).toHaveLength(0);
+      expect(added).not.toContain('sets a reminder: none');
+    }
+    expect(v75).not.toContain('a leading clause that only says when');
+  });
+
+  it('puts the lines in rule 8 only and keeps rule 5 intact', () => {
+    expect(v77.indexOf('is reminder.create, also when')).toBeGreaterThan(v77.indexOf('8. Action entries'));
+    expect(v77).toContain('5. Use only the arg names and values listed for the chosen entry. Omit every arg the owner did not imply; never guess.');
+    expect(v77.indexOf('rule 5 does not omit it')).toBeGreaterThan(v77.indexOf('8. Action entries'));
+  });
+});
+
 describe('agent-plan.v11 (rev v11, the default)', () => {
   const v10 = buildAgentPlanPrompt({ entries: READS, text, rev: 'v10' });
   const v11 = buildAgentPlanPrompt({ entries: READS, text });
@@ -171,4 +219,7 @@ const PINNED_V11 = 'a8869372f6257c6254bdc84842f4223ca630bda777525f35b31372900438
 const PINNED_V73_READ = '974bd1183d5f7f31f4fbbc5ac98191203a14a2d565437c725b853e61711e4ed2';
 const PINNED_V71_ACTION = '24bbbd3230e3475ccf7ae8618a90a74156cc3512f06b1fe0c1b6532e1c83f06f';
 const PINNED_V72_R2 = '768bcf90328082066a2722180cc7a67f81cb228030a89535c02c35e563e57c34';
+const PINNED_V76_R2 = '8ffb282c8e8714667ce57c2a72acdd8dfe5de2b4d0784870df174bc498dfa333';
+const PINNED_V77_ACTION = 'dd8ef699f8a51e56156286e344b6325f9f1ffa02060d1c6ac6ed106b075df079';
+const PINNED_V78_R2 = 'f4c767fc5aeccd3d410de5cbf94177d7d456ce20c9de790ed67f177bba0e4704';
 const PINNED_V10 = '6543ae28546a0657c41985c4a27a4be4eb65a216759c2e031da762f1fa8892d6';

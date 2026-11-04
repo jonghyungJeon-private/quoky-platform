@@ -293,13 +293,24 @@ export interface NlSelectionPromptInput {
    * Prompt revision of the rule text. Absent: the active revision of the mode ({@link NL_ACTIVE_PROMPT_REVS}: read `v74`,
    * action / R2 `v73`). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
    * source-name principle (nl-select.v74)"); enabled for read mode only (owner decision 2026-11-04), so `v74` with
-   * `actions` is the candidate A6 / R2 text (v75 / v76, gate failed). An explicit value always wins (eval, rollback).
+   * `actions` is the candidate A6 / R2 text (v75 / v76, gate failed). `v77` (only with `actions`) = that text plus the
+   * residual rules F1 / F3 / F4 (nl-select.v77 / v78 candidates). An explicit value always wins (eval, rollback).
    */
   readonly rev?: NlPromptRev;
 }
 
 /** The selectable prompt revisions of the rule text. */
-export type NlPromptRev = 'v73' | 'v74';
+export type NlPromptRev = 'v73' | 'v74' | 'v77';
+
+/**
+ * `v77` exists only with `actions`: the A6 action / R2 prompt on the v74 rule text plus the three general residual rules
+ * (DECISIONS "A6 action prompt on the v74 text with residual-rule fixes (nl-select.v77 / v78 candidates)"). The read mode
+ * has no `v77`: {@link buildSelectionPrompt} and {@link nlPromptVersionFor} reject it there.
+ */
+export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77'];
+
+/** Version ids of the `rev: 'v77'` candidate prompts: A6 action and A6 R2. */
+export const NL_V77_PROMPT_VERSIONS = { action: 'nl-select.v77', r2: 'nl-select.v78' } as const;
 
 /** The prompt mode: read (no `actions`), A6 action (`actions`), A6 R2 (`actions` with an R2 `item.summarize` source). */
 export type NlPromptMode = 'read' | 'action' | 'r2';
@@ -319,8 +330,12 @@ export function nlEffectivePromptRev(mode: NlPromptMode, rev?: NlPromptRev): NlP
   return rev ?? NL_ACTIVE_PROMPT_REVS[mode === 'read' ? 'read' : 'action'];
 }
 
-/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76`. */
+/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78`. Throws for `v77` in read mode. */
 export function nlPromptVersionFor(mode: NlPromptMode, rev?: NlPromptRev): string {
+  if (rev === 'v77') {
+    if (mode === 'read') throw new Error("prompt rev 'v77' is valid only with action entries (action / r2 mode)");
+    return mode === 'action' ? NL_V77_PROMPT_VERSIONS.action : NL_V77_PROMPT_VERSIONS.r2;
+  }
   const v74 = nlEffectivePromptRev(mode, rev) === 'v74';
   if (mode === 'read') return v74 ? NL_SELECTION_PROMPT_VERSION : NL_PREVIOUS_READ_PROMPT_VERSION;
   if (mode === 'action') return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.action : NL_ACTION_PROMPT_VERSION;
@@ -640,9 +655,35 @@ const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
+/** v77 only: the rule-2 line keeps its replacement and gains the positive reminder line the v73 text lacked. */
+const V77_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
+  '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.': [
+    '   asked politely ("would you mind sending this out for me?"), EXCEPT the action entries of rule 8 that are in the catalog.',
+    '   A time, a thing and a request to be reminded or notified of it is reminder.create (rule 8), not a lookup.',
+  ],
+};
+
+/** The rule 8 line after which the v77 lines are inserted. */
+const V77_RULE_ANCHOR = '   invent an item, an id, a title or a number.';
+
+/** v77 (A6 action / R2): the three general residual rules, placed in rule 8 so that read v74 and planner v11 stay unchanged. */
+const V77_ACTION_RULES: readonly string[] = [
+  '   Asking to be reminded or notified of something at a time (a time, the thing, and a request to remind or tell the owner)',
+  '   is reminder.create, also when the thing is a meeting or an appointment. calendar.events only asks what the calendar',
+  '   holds: a period or schedule list, whether something is scheduled, when something is.',
+  '   A todo.add title and a reminder body are the task itself: a leading clause that only says when the owner will get to',
+  '   it (after something, once something is done) is not part of the span; the span is still one contiguous part of the',
+  '   owner\'s own words.',
+  '   Any time word the owner wrote in a reminder request, even a vague one, goes in `when`: the owner did imply a time, so',
+  '   rule 5 does not omit it; Core decides whether it is too vague and asks.',
+];
+
 /** The full instruction text for one selection call. */
 export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
-  const v74 = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev) === 'v74';
+  const effectiveRev = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev);
+  if (effectiveRev === 'v77' && input.actions === undefined) throw new Error("prompt rev 'v77' is valid only with action entries");
+  const v77 = effectiveRev === 'v77';
+  const v74 = effectiveRev === 'v74' || v77;
   const offered = new Set(input.entries.map((entry) => entry.id));
   const lines: string[] = [];
   lines.push(
@@ -816,16 +857,17 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '>>>',
   );
   if (input.actions === undefined) return lines.join('\n');
-  return withActionRules(lines, r2).join('\n');
+  return withActionRules(lines, r2, v77).join('\n');
 }
 
 /**
  * v25: the v24 instruction lines with the A6 replacements and rule 8 inserted after rule 7. Only the fixed instruction
  * header (before "Catalog:") is rewritten; the catalog, the examples and the owner's message are never touched.
  */
-function withActionRules(lines: readonly string[], r2: readonly string[] = []): string[] {
+function withActionRules(lines: readonly string[], r2: readonly string[] = [], v77 = false): string[] {
   const out: string[] = [];
-  const rules = r2.length === 0 ? ACTION_RULES : ACTION_RULES.flatMap((line) => R2_RULE_REPLACEMENTS(r2)[line] ?? [line]);
+  const base = v77 ? ACTION_RULES.flatMap((line) => (line === V77_RULE_ANCHOR ? [line, ...V77_ACTION_RULES] : [line])) : ACTION_RULES;
+  const rules = r2.length === 0 ? base : base.flatMap((line) => R2_RULE_REPLACEMENTS(r2)[line] ?? [line]);
   let header = true;
   for (const line of lines) {
     if (!header) {
@@ -833,7 +875,7 @@ function withActionRules(lines: readonly string[], r2: readonly string[] = []): 
       continue;
     }
     if (line === 'Catalog:') header = false;
-    const replacement = ACTION_LINE_REPLACEMENTS[line];
+    const replacement = (v77 ? V77_LINE_REPLACEMENTS[line] : undefined) ?? ACTION_LINE_REPLACEMENTS[line];
     out.push(...(replacement ?? [line]));
     if (line === RULE7_END_V73 || line === RULE7_END_V74) out.push(...rules);
   }

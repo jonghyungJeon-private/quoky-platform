@@ -117,9 +117,11 @@ function renderedExamples(): RenderedExample[] {
   const read74 = extractPromptExamples(buildSelectionPrompt({ entries: READS, text: 'x', rev: 'v74' }));
   const action74 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', rev: 'v74', actions: { referenceContext: 'none' } }));
   const r274 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', rev: 'v74', actions: { referenceContext: 'none' } }));
+  const action77 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', rev: 'v77', actions: { referenceContext: 'none' } }));
+  const r277 = extractPromptExamples(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', rev: 'v77', actions: { referenceContext: 'none' } }));
   const seen = new Set<string>();
   const unique: RenderedExample[] = [];
-  for (const example of [...read, ...action, ...r2, ...read74, ...action74, ...r274]) {
+  for (const example of [...read, ...action, ...r2, ...read74, ...action74, ...r274, ...action77, ...r277]) {
     // The output is part of the dedupe identity: a read and an A6 variant with the same (previous, context, text) but a
     // different output are both kept, so the A6 action outputs are output-linted too.
     const key = `${exampleKey(example)}|${example.output}`;
@@ -135,7 +137,8 @@ function quotedPhrases(): RenderedExample[] {
   const read = extractQuotedStrings(buildSelectionPrompt({ entries: READS, text: 'x' }));
   const action = extractQuotedStrings(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
   const r2 = extractQuotedStrings(buildSelectionPrompt({ entries: [...READS, ...R2_ACTIONS], text: 'x', actions: { referenceContext: 'none' } }));
-  return [...new Set([...read, ...action, ...r2])].map((text) => ({ text, output: '{}' }));
+  const action77 = extractQuotedStrings(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: 'x', rev: 'v77', actions: { referenceContext: 'none' } }));
+  return [...new Set([...read, ...action, ...r2, ...action77])].map((text) => ({ text, output: '{}' }));
 }
 
 const exampleKey = (e: { text: string; previous?: string | undefined; context?: string | undefined }): string => JSON.stringify([e.previous ?? '', e.context ?? '', e.text]);
