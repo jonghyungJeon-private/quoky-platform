@@ -41,7 +41,7 @@ import {
   type AgentPlanEvalSummary,
   type AgentPlanPooledGate,
 } from './agent-plan-eval';
-import { AGENT_PLAN_EVAL_REVS, parseAgentPlanRev, parseCaseIds } from './prompt-rev';
+import { AGENT_PLAN_EVAL_REVS, parseAgentPlanRev, parseCaseIds, storedAgentPlanRev } from './prompt-rev';
 import { guardRunProvider, sumHardFailures } from './nl-intent-eval-cli';
 import { CANARY_CLAUSE, type CanaryResult, EXIT_INVALID_PROVIDER, formatProviderOutcomes, hardFailureTotal, invalidVerdict, outageAlsoSeenNote, printInvalidRun } from './eval-provider-guard';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
@@ -68,7 +68,7 @@ Options: --model <claude model alias, default ${DEFAULT_CLAUDE_INTENT_SELECTION_
          --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-10000, default ${AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS}: the per-call bound>
          --include-pending  also score the cases pending the owner's approval (changes the digest)
-         --plan-rev <${AGENT_PLAN_EVAL_REVS.join('|')}, default v10 = the active planner prompt>  v11 is the candidate (on nl-select.v74); printed in the plan, recorded in the report and
+         --plan-rev <${AGENT_PLAN_EVAL_REVS.join('|')}, absent = v11, the active planner prompt (on nl-select.v74)>  v10 = the previous planner (on nl-select.v73); printed in the plan, recorded in the report and
                     bound into the digest: a plan made for one revision cannot be run under another (the digest differs, exit 3)
          --fixture <${Object.keys(AGENT_PLAN_FIXTURE_PATHS).join('|')}>  append the owner-approved held-out cases (one-step gold; a positive is the single-step plan) to the pool
          --cases <id,id,...>  score exactly these case ids (every id must be in the pool; the list is bound into the digest)
@@ -234,7 +234,7 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       includePending: parsed.includePending,
       gitHead: deps.gitHead(),
-      ...(planRev !== undefined && planRev !== 'v10' ? { planRev } : {}),
+      ...(storedAgentPlanRev(planRev) !== undefined ? { planRev } : {}),
       ...(heldout !== undefined ? { heldout } : {}),
       ...(caseIds !== undefined ? { cases: caseIds } : {}),
     });

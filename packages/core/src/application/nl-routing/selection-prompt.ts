@@ -200,9 +200,12 @@ import { nlModeVocabularyText } from './action-entries';
  *    reference with Previous selection none ("이번 주 거", "그 중에 X만"); rule 6's own sentence for the second case is gone.
  * A6 rule 8 points to rule 3b. Pinned by `golden/nl-select.v73.prompts.json`.
  */
-// Candidate (not active) `nl-select.v74` = v73 with the one source-name principle in rule 1 and the de-duplication S1-S5: built
-// only with `rev: 'v74'` ({@link NL_CANDIDATE_PROMPT_VERSIONS}); enabled only after the D12 gates and the owner's approval.
-export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v73';
+// Active read prompt (owner decision of 2026-11-04, after the D12 gates): `nl-select.v74` = v73 with the one source-name
+// principle in rule 1 and the de-duplication S1-S5. The previous read text (`rev: 'v73'`) stays buildable
+// ({@link NL_PREVIOUS_READ_PROMPT_VERSION}); the A6 action / R2 prompts stay on the v73 rule text ({@link NL_ACTIVE_PROMPT_REVS}).
+export const NL_SELECTION_PROMPT_VERSION = 'nl-select.v74';
+/** The previous read prompt (`rev: 'v73'`, explicit only); its bytes are pinned by `golden/nl-select.v73.prompts.json`. */
+export const NL_PREVIOUS_READ_PROMPT_VERSION = 'nl-select.v73';
 /**
  * ADR-0120 amendment A6: the prompt version when action entries are offered (`actions` given). With `QUOKY_NL_ACTIONS=off`
  * (or the kill switch stopped) no action entry is offered and the prompt is {@link NL_SELECTION_PROMPT_VERSION}, byte
@@ -287,18 +290,42 @@ export interface NlSelectionPromptInput {
    */
   readonly replaceStaticExamples?: boolean;
   /**
-   * Prompt revision of the rule text (default `v73`, the gated production text, byte for byte). `v74` is the slimmed text
-   * with the one source-name principle (DECISIONS "Prompt slimming and the source-name principle (nl-select.v74)"): NOT
-   * enabled anywhere until the D12 gates pass and the owner approves; it exists so a gate can compare it with v73.
+   * Prompt revision of the rule text. Absent: the active revision of the mode ({@link NL_ACTIVE_PROMPT_REVS}: read `v74`,
+   * action / R2 `v73`). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
+   * source-name principle (nl-select.v74)"); enabled for read mode only (owner decision 2026-11-04), so `v74` with
+   * `actions` is the candidate A6 / R2 text (v75 / v76, gate failed). An explicit value always wins (eval, rollback).
    */
   readonly rev?: NlPromptRev;
 }
 
-/** The selectable prompt revisions of the rule text (`v73` active, `v74` candidate). */
+/** The selectable prompt revisions of the rule text. */
 export type NlPromptRev = 'v73' | 'v74';
 
-/** Version ids of the candidate (`rev: 'v74'`) prompts: read, A6 action and A6 R2 (each built from the same v74 rule text). */
-export const NL_CANDIDATE_PROMPT_VERSIONS = { read: 'nl-select.v74', action: 'nl-select.v75', r2: 'nl-select.v76' } as const;
+/** The prompt mode: read (no `actions`), A6 action (`actions`), A6 R2 (`actions` with an R2 `item.summarize` source). */
+export type NlPromptMode = 'read' | 'action' | 'r2';
+
+/**
+ * The revision each mode builds when `rev` is absent (owner decision 2026-11-04): read `v74`; the A6 action and R2 prompts
+ * stay on the v73 rule text (nl-select.v71 / v72) because the v75 candidate failed its gate. Rollback = set `read` to `'v73'`
+ * (and `NL_SELECTION_PROMPT_VERSION` back to `nl-select.v73`).
+ */
+export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v73' } as const satisfies Record<'read' | 'action', NlPromptRev>;
+
+/** Version ids of the candidate (`rev: 'v74'` with actions) prompts: A6 action and A6 R2 (the read v74 is active, not a candidate). */
+export const NL_CANDIDATE_PROMPT_VERSIONS = { action: 'nl-select.v75', r2: 'nl-select.v76' } as const;
+
+/** The effective revision of a mode: the explicit one, else the active one (r2 follows action). */
+export function nlEffectivePromptRev(mode: NlPromptMode, rev?: NlPromptRev): NlPromptRev {
+  return rev ?? NL_ACTIVE_PROMPT_REVS[mode === 'read' ? 'read' : 'action'];
+}
+
+/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76`. */
+export function nlPromptVersionFor(mode: NlPromptMode, rev?: NlPromptRev): string {
+  const v74 = nlEffectivePromptRev(mode, rev) === 'v74';
+  if (mode === 'read') return v74 ? NL_SELECTION_PROMPT_VERSION : NL_PREVIOUS_READ_PROMPT_VERSION;
+  if (mode === 'action') return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.action : NL_ACTION_PROMPT_VERSION;
+  return v74 ? NL_CANDIDATE_PROMPT_VERSIONS.r2 : NL_ACTION_R2_PROMPT_VERSION;
+}
 
 const RULE7_END_V73 = '   Otherwise CLEAR with "alternatives": [].';
 const RULE7_END_V74 = '   Otherwise CLEAR; leave "alternatives" out when there is none.';
@@ -615,7 +642,7 @@ const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
 
 /** The full instruction text for one selection call. */
 export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
-  const v74 = input.rev === 'v74';
+  const v74 = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev) === 'v74';
   const offered = new Set(input.entries.map((entry) => entry.id));
   const lines: string[] = [];
   lines.push(

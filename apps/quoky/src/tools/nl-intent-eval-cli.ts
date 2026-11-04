@@ -35,7 +35,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
-import { Capability, type AiProvider, type AiRequest } from '@quoky/core';
+import { Capability, type AiProvider, type AiRequest, type NlPromptRev } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import {
   EXIT_INVALID_PROVIDER,
@@ -150,7 +150,7 @@ Options: --model <claude model alias or full model id (recommended: a full id pi
          --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-10000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
-Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, default v73 = the active text>; v74 is the candidate (read nl-select.v74, action v75, R2 v76).
+Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, absent = the ACTIVE revision of the mode: read modes v74 (nl-select.v74), action / read-regression / r2 modes the v73 text (v71 / v72)>; explicit v73 on a read mode = the previous read prompt, explicit v74 on action / r2 = the candidates v75 / v76.
          It applies to the plan/run, action, read-regression and r2 modes (not help-scope), is printed in the plan, recorded in the report and
          bound into the plan digest: a plan made for one revision cannot be run under another (the digest differs, exit 3).
 Held-out fixture (plan/run only): --fixture <${Object.keys(NL_EVAL_FIXTURE_PATHS).join('|')}> adds the owner-approved held-out cases to the corpus (bound into the digest);
@@ -283,7 +283,7 @@ export function planOptions(
   const fixture = options['--fixture'];
   if (fixture !== undefined) asUsage(() => nlEvalFixturePath(fixture));
   return {
-    ...(promptRev !== undefined && promptRev !== 'v73' ? { promptRev } : {}),
+    ...(promptRev !== undefined ? { promptRev } : {}),
     ...(fixture !== undefined ? { fixture } : {}),
     ...(cases !== undefined ? { cases } : {}),
     timeoutMs,
@@ -493,7 +493,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
     runs: integer(options['--runs'], 1),
     concurrency: integer(options['--concurrency'], 4),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(promptRev !== undefined && promptRev !== 'v73' ? { promptRev } : {}),
+    ...(promptRev !== undefined ? { promptRev } : {}),
   };
   const approved = options['--approved-plan-digest'];
   if (mode === 'r2') return await runR2Cli(settings, approved, deps);
@@ -616,7 +616,7 @@ function finishInvalid(
 }
 
 /** `--mode r2` (A6 R2): the agent-drafted, owner-approved R2 corpus through the real selector with R2 offered. */
-async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number; promptRev?: 'v74' }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
+async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number; promptRev?: NlPromptRev }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
   const { corpus, sha256, files } = (deps.loadR2ActionCorpus ?? loadR2ActionCorpus)();
   const problems = validateActionCorpus(corpus, NL_ACTION_R2_EVAL_ENTRIES);
   deps.stdout(`R2 corpus: ${corpus.cases.length} cases from ${files.length} file(s); schema problems: ${problems.length}`);

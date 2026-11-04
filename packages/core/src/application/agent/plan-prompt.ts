@@ -66,24 +66,27 @@ import { buildSelectionPrompt } from '../nl-routing/selection-prompt';
  * read stays none. No example added or changed.
  *
  * v9 -> v10 (owner decision of 2026-10-28): the embedded read rules are `nl-select.v73` (the rule-conflict cleanup of
- * rules 2, 3, 6 and 7); no planner rule or example changed, so the version moves with the bytes (as v3 -> v4 did). */
-export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v10';
-
-/**
- * v10 -> v11 (CANDIDATE, 2026-11-04; NOT enabled anywhere until the D12 gates pass and the owner approves the eval quota):
+ * rules 2, 3, 6 and 7); no planner rule or example changed, so the version moves with the bytes (as v3 -> v4 did).
+ *
+ * v10 -> v11 (ACTIVE since 2026-11-04: owner decision after the D12 gates; `rev: 'v10'` still builds v10 byte for byte):
  * the embedded read rules are `nl-select.v74` (the one source-name principle in rule 1, the scattered per-source
  * exceptions folded into it, and the pure de-duplication S1-S5: no `alternatives` in CLEAR examples, `count` / `limit`
  * stated once, no Korean gloss on entry descriptions, rule-5 arg bullets that repeat the catalog arg line removed). The
- * planner rules 8-9 and the plan examples are byte for byte v10. Select it with `rev: 'v11'`; the default stays v10, so
- * a gate can run both and compare.
- */
-export const AGENT_PLAN_CANDIDATE_PROMPT_VERSION = 'agent-plan.v11';
+ * planner rules 8-9 and the plan examples are byte for byte v10. Rollback: {@link AGENT_PLAN_ACTIVE_REV} back to `v10`
+ * and this constant back to `agent-plan.v10`. */
+export const AGENT_PLAN_PROMPT_VERSION = 'agent-plan.v11';
+
+/** The previous planner version (`rev: 'v10'`, explicit only; embeds `nl-select.v73`). */
+export const AGENT_PLAN_PREVIOUS_PROMPT_VERSION = 'agent-plan.v10';
 
 export type AgentPlanPromptRev = 'v10' | 'v11';
 
-/** The version id of one planner prompt revision. */
-export function agentPlanPromptVersion(rev: AgentPlanPromptRev = 'v10'): string {
-  return rev === 'v11' ? AGENT_PLAN_CANDIDATE_PROMPT_VERSION : AGENT_PLAN_PROMPT_VERSION;
+/** The planner revision built when `rev` is absent. */
+export const AGENT_PLAN_ACTIVE_REV: AgentPlanPromptRev = 'v11';
+
+/** The version id of one planner prompt revision (default: the active one). */
+export function agentPlanPromptVersion(rev: AgentPlanPromptRev = AGENT_PLAN_ACTIVE_REV): string {
+  return rev === 'v11' ? AGENT_PLAN_PROMPT_VERSION : AGENT_PLAN_PREVIOUS_PROMPT_VERSION;
 }
 
 export interface AgentPlanPromptInput {
@@ -92,7 +95,7 @@ export interface AgentPlanPromptInput {
   /** Prepared owner text (`prepareSelectionInput().text`). */
   readonly text: string;
   readonly previous?: { readonly entryId: NlCatalogEntryId; readonly args: NlArgs };
-  /** Planner revision; default `v10` (active). `v11` is the candidate on `nl-select.v74` (see {@link AGENT_PLAN_CANDIDATE_PROMPT_VERSION}). */
+  /** Planner revision; default `v11` (active, embeds `nl-select.v74`). `v10` embeds `nl-select.v73` and is byte for byte the previous prompt. */
   readonly rev?: AgentPlanPromptRev;
 }
 
@@ -180,7 +183,7 @@ const PLAN_EXAMPLES: ReadonlyArray<{ readonly needs: readonly NlCatalogEntryId[]
 /** The fixed plan instruction text for one planner call. Throws when an anchor of the read prompt moved (pinned by test). */
 export function buildAgentPlanPrompt(input: AgentPlanPromptInput): string {
   const reads = input.entries.filter((entry) => entry.risk === 'READ');
-  const base = buildSelectionPrompt({ entries: reads, text: input.text, ...(input.rev === 'v11' ? { rev: 'v74' as const } : {}), ...(input.previous !== undefined ? { previous: input.previous } : {}) });
+  const base = buildSelectionPrompt({ entries: reads, text: input.text, rev: input.rev === 'v10' ? ('v73' as const) : ('v74' as const), ...(input.previous !== undefined ? { previous: input.previous } : {}) });
   const lines = base.split('\n');
   if (lines[0] !== INTRO_FROM[0] || lines[1] !== INTRO_FROM[1]) throw new Error('agent-plan prompt: intro anchor moved');
   lines.splice(0, 2, ...INTRO_TO);

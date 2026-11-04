@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — enable nl-select.v74 (read) and agent-plan.v11 (planner) (owner decision 2026-11-04)
+
+- **Changed.** `buildSelectionPrompt` without `rev` builds the read prompt `nl-select.v74` and the action / R2 prompts on the v73 rule
+  text (`nl-select.v71` / `v72`, unchanged bytes); `buildAgentPlanPrompt` without `rev` builds `agent-plan.v11`. `NL_SELECTION_PROMPT_VERSION`
+  is `nl-select.v74`, `AGENT_PLAN_PROMPT_VERSION` is `agent-plan.v11`. New: `NL_ACTIVE_PROMPT_REVS`, `nlPromptVersionFor`, `nlEffectivePromptRev`,
+  `NL_PREVIOUS_READ_PROMPT_VERSION`, `AGENT_PLAN_PREVIOUS_PROMPT_VERSION`; `NL_CANDIDATE_PROMPT_VERSIONS` now lists only `action` (v75) and `r2` (v76).
+- **Changed (eval tools).** An absent `--prompt-rev` / `--plan-rev` is the active revision of the mode; `--prompt-rev v73` on a read mode and
+  `--plan-rev v10` build the previous prompts, `--prompt-rev v74` on action / r2 the candidates v75 / v76. Default read-mode eval plans and
+  agent-plan plans now hash v74 / v11, so their digests changed.
+- **Unchanged.** The A6 action (v71) and R2 (v72) prompt bytes, `read-write-probe` (v71), the rule text, every existing pin.
+
 ## Unreleased — eval gate quota guards (ops, `run-gates.sh`)
 
 - **Added.** Pre-start estimate guard: the planned call cap x a per-model rate (sonnet 0.06 % of the 5 h window per call, measured;

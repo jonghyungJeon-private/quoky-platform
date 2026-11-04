@@ -1,31 +1,80 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { NL_ACTION_ENTRIES } from './action-entries';
+import { NL_ACTION_ENTRIES, nlItemSummarizeEntry } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import { parseSelectionOutput } from './selection-output';
-import { NL_ACTION_PROMPT_VERSION, NL_CANDIDATE_PROMPT_VERSIONS, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
+import {
+  NL_ACTION_PROMPT_VERSION,
+  NL_ACTION_R2_PROMPT_VERSION,
+  NL_ACTIVE_PROMPT_REVS,
+  NL_CANDIDATE_PROMPT_VERSIONS,
+  NL_PREVIOUS_READ_PROMPT_VERSION,
+  NL_SELECTION_PROMPT_VERSION,
+  buildSelectionPrompt,
+  nlPromptVersionFor,
+} from './selection-prompt';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
-import { AGENT_PLAN_CANDIDATE_PROMPT_VERSION, AGENT_PLAN_PROMPT_VERSION, agentPlanPromptVersion, buildAgentPlanPrompt } from '../agent/plan-prompt';
+import { AGENT_PLAN_PREVIOUS_PROMPT_VERSION, AGENT_PLAN_PROMPT_VERSION, agentPlanPromptVersion, buildAgentPlanPrompt } from '../agent/plan-prompt';
 
-// Candidate prompts `nl-select.v74` (read) / `.v75` (A6 action) / `.v76` (R2) and `agent-plan.v11`: the source-name
-// principle plus the pure de-duplication S1-S5. NOT enabled anywhere: the default revision stays v73 / v10 (pinned by the
-// existing tests), so a gate can build both and compare.
+// Enablement of `nl-select.v74` (read) and `agent-plan.v11` (planner) by default (owner decision 2026-11-04, after the D12
+// gates). The A6 action / R2 prompts stay on the v73 rule text (nl-select.v71 / v72; the v75 / v76 candidates failed their
+// gate and are built only with an explicit `rev: 'v74'`). The `rev` option is explicit-only for the other direction too:
+// `rev: 'v73'` builds the previous read prompt and `rev: 'v10'` the previous planner byte for byte.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 const ACTIONS: readonly NlCatalogEntry[] = Object.values(NL_ACTION_ENTRIES).filter((entry): entry is NlCatalogEntry => entry !== undefined);
 const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
 const text = '내일 일정 알려줘';
 
-describe('nl-select.v74 candidate (rev v74)', () => {
-  const v73 = buildSelectionPrompt({ entries: READS, text });
-  const v74 = buildSelectionPrompt({ entries: READS, text, rev: 'v74' });
+const ACTION_CONTEXT = { referenceContext: 'last listing: mail (2 items, 1 min ago)' };
+const R2_ENTRIES: readonly NlCatalogEntry[] = [...READS, ...ACTIONS.filter((entry) => entry.id !== 'item.summarize'), nlItemSummarizeEntry(['jira', 'slack'])];
 
-  it('keeps the active version and the default text untouched', () => {
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v73');
+describe('per-mode default revision (owner decision 2026-11-04)', () => {
+  it('names the active versions: read v74, action v71, R2 v72; v75 / v76 are the only candidates', () => {
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
+    expect(NL_PREVIOUS_READ_PROMPT_VERSION).toBe('nl-select.v73');
     expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v71');
-    expect(NL_CANDIDATE_PROMPT_VERSIONS).toEqual({ read: 'nl-select.v74', action: 'nl-select.v75', r2: 'nl-select.v76' });
-    expect(buildSelectionPrompt({ entries: READS, text, rev: 'v73' })).toBe(v73);
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v72');
+    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v73' });
+    expect(NL_CANDIDATE_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v75', r2: 'nl-select.v76' });
   });
+
+  it('maps (mode, rev?) to the version id of the prompt that is built', () => {
+    expect(nlPromptVersionFor('read')).toBe('nl-select.v74');
+    expect(nlPromptVersionFor('read', 'v73')).toBe('nl-select.v73');
+    expect(nlPromptVersionFor('read', 'v74')).toBe('nl-select.v74');
+    expect(nlPromptVersionFor('action')).toBe('nl-select.v71');
+    expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
+    expect(nlPromptVersionFor('action', 'v74')).toBe('nl-select.v75');
+    expect(nlPromptVersionFor('r2')).toBe('nl-select.v72');
+    expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
+    expect(nlPromptVersionFor('r2', 'v74')).toBe('nl-select.v76');
+  });
+
+  it('the default read prompt is byte-identical to the gated v74 read text (pinned sha256)', () => {
+    expect(sha(buildSelectionPrompt({ entries: READS, text }))).toBe(PINNED_V74_READ);
+    expect(sha(buildSelectionPrompt({ entries: READS, text, rev: 'v74' }))).toBe(PINNED_V74_READ);
+  });
+
+  it('explicit rev v73 still builds the previous read prompt byte for byte', () => {
+    expect(sha(buildSelectionPrompt({ entries: READS, text, rev: 'v73' }))).toBe(PINNED_V73_READ);
+  });
+
+  it('action and R2 prompts without rev stay the v73-text prompts (v71 / v72, unchanged bytes)', () => {
+    const action = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT });
+    expect(sha(action)).toBe(PINNED_V71_ACTION);
+    expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v73' })).toBe(action);
+    const r2 = buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT });
+    expect(sha(r2)).toBe(PINNED_V72_R2);
+    expect(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v73' })).toBe(r2);
+    // The candidates are explicit-only.
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v74' }))).not.toBe(PINNED_V72_R2);
+  });
+});
+
+describe('nl-select.v74 (rev v74)', () => {
+  const v73 = buildSelectionPrompt({ entries: READS, text, rev: 'v73' });
+  const v74 = buildSelectionPrompt({ entries: READS, text });
 
   it('states ONE source-name principle in rule 1 and folds the per-source exceptions into it', () => {
     expect(v74).toContain("A source name selects that source's entry only when the message asks for that source's own data or names it as the");
@@ -78,25 +127,26 @@ describe('nl-select.v74 candidate (rev v74)', () => {
     expect(a6.indexOf('Otherwise CLEAR; leave "alternatives" out')).toBeLessThan(a6.indexOf('8. Action entries'));
     expect(a6).toContain('reading or summarizing one listed mail is item.summarize (rule 8)');
     expect(a6).toContain("A source name selects that source's entry only when");
-    expect(a6.length).toBeLessThan(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions }).length);
+    expect(a6.length).toBeLessThan(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions, rev: 'v73' }).length);
   });
 
-  it('pins the candidate bytes (a change needs the next candidate version and its gate run)', () => {
+  it('pins the v74 read and v75 candidate action bytes (a change needs the next version and its gate run)', () => {
     expect(sha(buildSelectionPrompt({ entries: READS, text, rev: 'v74' }))).toBe(PINNED_V74_READ);
     expect(sha(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, rev: 'v74', actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } }))).toBe(PINNED_V74_ACTION);
   });
 });
 
-describe('agent-plan.v11 candidate (rev v11)', () => {
-  const v10 = buildAgentPlanPrompt({ entries: READS, text });
-  const v11 = buildAgentPlanPrompt({ entries: READS, text, rev: 'v11' });
+describe('agent-plan.v11 (rev v11, the default)', () => {
+  const v10 = buildAgentPlanPrompt({ entries: READS, text, rev: 'v10' });
+  const v11 = buildAgentPlanPrompt({ entries: READS, text });
 
-  it('keeps v10 the default and names both versions', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v10');
-    expect(AGENT_PLAN_CANDIDATE_PROMPT_VERSION).toBe('agent-plan.v11');
-    expect(agentPlanPromptVersion()).toBe('agent-plan.v10');
-    expect(agentPlanPromptVersion('v11')).toBe('agent-plan.v11');
-    expect(buildAgentPlanPrompt({ entries: READS, text, rev: 'v10' })).toBe(v10);
+  it('makes v11 the default, keeps v10 buildable byte for byte, and names both versions', () => {
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v11');
+    expect(AGENT_PLAN_PREVIOUS_PROMPT_VERSION).toBe('agent-plan.v10');
+    expect(agentPlanPromptVersion()).toBe('agent-plan.v11');
+    expect(agentPlanPromptVersion('v10')).toBe('agent-plan.v10');
+    expect(buildAgentPlanPrompt({ entries: READS, text, rev: 'v11' })).toBe(v11);
+    expect(sha(v10)).toBe(PINNED_V10);
   });
 
   it('is the v74 read prompt plus the unchanged planner rules and examples', () => {
@@ -110,7 +160,7 @@ describe('agent-plan.v11 candidate (rev v11)', () => {
     expect(v11.endsWith(`<<<\n${text}\n>>>`)).toBe(true);
   });
 
-  it('pins the candidate bytes', () => {
+  it('the default planner prompt is byte-identical to the gated v11 text (pinned sha256)', () => {
     expect(sha(v11)).toBe(PINNED_V11);
   });
 });
@@ -118,3 +168,7 @@ describe('agent-plan.v11 candidate (rev v11)', () => {
 const PINNED_V74_READ = 'c6af35974ecab3405ae42b41a95d11e3753ce7e553f6e3fde7d3cea5c955ea55';
 const PINNED_V74_ACTION = 'e08bc9a7d3a91ecc04fb977929aa1875f263fae62395adac561f602c00782544';
 const PINNED_V11 = 'a8869372f6257c6254bdc84842f4223ca630bda777525f35b31372900438e11d';
+const PINNED_V73_READ = '974bd1183d5f7f31f4fbbc5ac98191203a14a2d565437c725b853e61711e4ed2';
+const PINNED_V71_ACTION = '24bbbd3230e3475ccf7ae8618a90a74156cc3512f06b1fe0c1b6532e1c83f06f';
+const PINNED_V72_R2 = '768bcf90328082066a2722180cc7a67f81cb228030a89535c02c35e563e57c34';
+const PINNED_V10 = '6543ae28546a0657c41985c4a27a4be4eb65a216759c2e031da762f1fa8892d6';

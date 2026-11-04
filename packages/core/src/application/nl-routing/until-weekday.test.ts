@@ -337,7 +337,9 @@ describe('A7 statement check: a clear past-tense statement is not a request to r
 
 describe('prompt nl-select.v22: one until-* line with one example after the date line, and the past-remark rule', () => {
   it('shows the symbols, the example and the rule-2 lines; the Jira due example is unchanged', () => {
-    const prompt = buildSelectionPrompt({ entries: ALL, text: '' });
+    // The rule-2 past-remark sentence is v73 wording (v74 folds it into the rule-1 source-name principle): explicit v73.
+    const prompt = buildSelectionPrompt({ entries: ALL, text: '', rev: 'v73' });
+    expect(buildSelectionPrompt({ entries: ALL, text: '' })).toContain('until-mon..until-sun (from today through the nearest such day');
     expect(prompt).toContain(
       'MM-DD..MM-DD for a span of at most 31 days.\nuntil-mon..until-sun (from today through the nearest such day: 금요일까지 = until-fri); until-next-mon..until-next-sun (from today through that day of next week);\n',
     );
