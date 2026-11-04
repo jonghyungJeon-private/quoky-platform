@@ -668,12 +668,13 @@ const V77_RULE_ANCHOR = '   invent an item, an id, a title or a number.';
 
 /** v77 (A6 action / R2): the three general residual rules, placed in rule 8 so that read v74 and planner v11 stay unchanged. */
 const V77_ACTION_RULES: readonly string[] = [
-  '   reminder.create needs the moment at which the owner wants to be notified (a clock time, a delay such as "in N minutes",',
-  '   or a time stated as when to be told) together with the thing to be told, or an explicit reminder or notification word;',
-  '   then it is reminder.create, also when the thing is a meeting or an appointment. A day or period alone with a show or',
-  '   tell verb ("tell me tomorrow\'s meetings", "this week\'s schedule") asks what the calendar holds now: calendar.events,',
-  '   as does whether something is scheduled or when something is. If it is unclear whether the owner wants to be notified',
-  '   later or shown now, NEEDS_CLARIFICATION with both (rule 7).',
+  '   A time plus a show or tell verb is reminder.create only when the owner affirmatively asks to be notified later: the',
+  '   time is the moment to be told (a clock time, a delay such as "in N minutes", or a time stated as when to be told) and',
+  '   the message names the thing to be told; then it is reminder.create also when the thing is a meeting or an appointment.',
+  '   Asking to see or count existing reminders is reminder.list, and a negated or past-tense remark is none (rule 2). A day',
+  '   or period alone with a show or tell verb ("tell me tomorrow\'s meetings", "this week\'s schedule") asks what the',
+  '   calendar holds now: calendar.events, as does whether something is scheduled or when something is. If it is unclear',
+  '   whether the owner wants to be notified later or shown now, NEEDS_CLARIFICATION with both (rule 7).',
   '   A todo.add title and a reminder body are the task itself: a leading clause that only says when the owner will get to',
   '   it (after something, once something is done) is not part of the span; the span is still one contiguous part of the',
   '   owner\'s own words.',

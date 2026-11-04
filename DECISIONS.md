@@ -32706,11 +32706,13 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   answer), so later analysis needs no rerun. The doc comment that said the raw args were scored was corrected.
 - **Rules (B), general, in the action-mode part only (rule 8 plus one rule-2 line).** No phrase list, no corpus text, no examples
   (`example-contamination.test.ts` lints the v77 / v78 prompts too):
-  - F1 (rev. after Codex P2 round 1): reminder.create needs the moment at which the owner wants to be notified (a clock time, a delay such
-    as "in N minutes", or a time stated as when to be told) together with the thing to be told, or an explicit reminder or notification
-    word; then it is reminder.create, also when the thing is a meeting or an appointment. A day or period alone with a show or tell verb
-    ("tell me tomorrow's meetings", "this week's schedule") asks what the calendar holds now: calendar.events, as does whether something is
-    scheduled or when something is. If it is unclear whether the owner wants to be notified later or shown now, NEEDS_CLARIFICATION with
+  - F1 (rev. after Codex P2 round 2): a time plus a show or tell verb is reminder.create only when the owner affirmatively asks to be
+    notified later: the time is the moment to be told (a clock time, a delay such as "in N minutes", or a time stated as when to be told)
+    and the message names the thing to be told; then it is reminder.create also when the thing is a meeting or an appointment. Asking to
+    see or count existing reminders is reminder.list, and a negated or past-tense remark is none (rule 2). A day or period alone with a
+    show or tell verb ("tell me tomorrow's meetings", "this week's schedule") asks what the calendar holds now: calendar.events, as does
+    whether something is scheduled or when something is. If it is unclear whether the owner wants to be notified later or shown now,
+    NEEDS_CLARIFICATION with
     both (rule 7). The rule-2 slot carries the pointer "A request to be notified later, at a stated moment, of a stated thing is
     reminder.create (rule 8); a day alone is a lookup."
   - F3: a todo.add title and a reminder body are the task itself; a leading clause that only says when the owner will get to it (after
@@ -32726,11 +32728,15 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   with NEEDS_CLARIFICATION for the unclear case; only v77 / v78 bytes changed, all other pins held. (2) `run-gates.test.sh` gained
   behavioural tests: a tmux stub that executes the `new-session` command under a simulated stale global environment, checking that stale
   `GATES_*` values do not reach the child, a caller value survives, and values with spaces, quotes and `$` round-trip exactly.
+- **Codex P2 round 2.** The round-1 F1 made "an explicit reminder or notification word" sufficient, so a request to SEE reminders
+  (a reminder.list request) or a negated notification request could satisfy the create condition. F1 now requires an affirmative request
+  to be notified later (word presence is never enough), names reminder.list for seeing or counting existing reminders and defers negated
+  or past-tense remarks to rule 2. Second fix of the same finding (fix-loop cap 2); only v77 / v78 bytes changed.
 - **Versioning.** `NlPromptRev` gains `'v77'`, valid only with `actions`: action `nl-select.v77`, R2 `nl-select.v78` (`NL_V77_PROMPT_VERSIONS`);
   `buildSelectionPrompt` and `nlPromptVersionFor` reject `v77` in read mode, and `--prompt-rev v77` is a usage error for the read modes.
   v71 / v72 (default), v75 / v76 (`rev: 'v74'` + actions) and read v73 / v74 bytes are unchanged (sha256 pins in `selection-prompt-v74.test.ts`:
   v71 `24bbbd32...f06f`, v72 `768bcf90...7c34`, v75 `e08bc9a7...2544`, v76 `8ffb282c...a333`, read v74 `c6af3597...ea55`, planner v11
-  `a8869372...e11d`; new v77 `386d45fe...2cda`, v78 `44b2c6b5...b6c9`, after Codex P2 round 1). The default action revision stays `v73` in this change: the flip
+  `a8869372...e11d`; new v77 `c4313c45...582f`, v78 `a93c69dd...19ff`, after Codex P2 round 2). The default action revision stays `v73` in this change: the flip
   is a separate commit after the D12 gates (action, read-regression, r2 on `--prompt-rev v77`) pass. The runtime service's eval-only
   `promptRev` dependency already carries any revision.
 - **Eval tools (C).** `eval:nl --cases id1,id2` now also works for `--mode action`, `read-regression` and `r2` (not `help-scope`): the exact

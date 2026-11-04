@@ -167,7 +167,9 @@ describe('nl-select.v77 / v78 (rev v77, action and R2 only)', () => {
       const baseLines = new Set(base.split('\n'));
       const extra = added.split('\n').filter((line) => !baseLines.has(line));
       const kept = base.split('\n').filter((line) => !new Set(added.split('\n')).has(line));
-      expect(extra.join('\n')).toContain('is reminder.create, also when the thing is a meeting or an appointment');
+      expect(extra.join('\n')).toContain('then it is reminder.create also when the thing is a meeting or an appointment');
+      expect(extra.join('\n')).toContain('only when the owner affirmatively asks to be notified later');
+      expect(extra.join('\n')).not.toContain('explicit reminder or notification word');
       expect(extra.join('\n')).toContain('is not part of the span');
       expect(extra.join('\n')).toContain('even a vague one, goes in `when`');
       // The only v75 line that goes away is the rule-2 line carrying the stale "sets a reminder: none".
@@ -178,7 +180,7 @@ describe('nl-select.v77 / v78 (rev v77, action and R2 only)', () => {
   });
 
   it('puts the lines in rule 8 only and keeps rule 5 intact', () => {
-    expect(v77.indexOf('is reminder.create, also when')).toBeGreaterThan(v77.indexOf('8. Action entries'));
+    expect(v77.indexOf('is reminder.create also when')).toBeGreaterThan(v77.indexOf('8. Action entries'));
     expect(v77).toContain('5. Use only the arg names and values listed for the chosen entry. Omit every arg the owner did not imply; never guess.');
     expect(v77.indexOf('rule 5 does not omit it')).toBeGreaterThan(v77.indexOf('8. Action entries'));
   });
@@ -220,6 +222,6 @@ const PINNED_V73_READ = '974bd1183d5f7f31f4fbbc5ac98191203a14a2d565437c725b853e6
 const PINNED_V71_ACTION = '24bbbd3230e3475ccf7ae8618a90a74156cc3512f06b1fe0c1b6532e1c83f06f';
 const PINNED_V72_R2 = '768bcf90328082066a2722180cc7a67f81cb228030a89535c02c35e563e57c34';
 const PINNED_V76_R2 = '8ffb282c8e8714667ce57c2a72acdd8dfe5de2b4d0784870df174bc498dfa333';
-const PINNED_V77_ACTION = '386d45fe5ddd78f0dddd9ad7864be6b1f7b19d8a9a9f36461359b3e77a702cda';
-const PINNED_V78_R2 = '44b2c6b51dbeb24f7b75f87b849d246c25ab614e778e99dd013ecf033b05b6c9';
+const PINNED_V77_ACTION = 'c4313c45ab3f847b65a57e09f481561b26b073c9c2705f9871700b7c3459582f';
+const PINNED_V78_R2 = 'a93c69ddf32e3a2fdfbcefc1f5bd480952dc8e12280075d460e882bea2ce19ff';
 const PINNED_V10 = '6543ae28546a0657c41985c4a27a4be4eb65a216759c2e031da762f1fa8892d6';
