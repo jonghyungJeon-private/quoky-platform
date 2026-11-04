@@ -22,7 +22,7 @@ cat > "$STUB/pnpm" <<'SH'
 #!/bin/bash
 [ "${1:-}" = build ] && exit 0
 shift; cli=$1; shift; shift   # -s <cli> --
-mode=""; digest=""
+all="$*"; mode=""; digest=""
 while [ $# -gt 0 ]; do case "$1" in --mode) mode=$2; shift ;; --approved-plan-digest) digest=$2; shift ;; esac; shift; done
 if [ -z "$digest" ]; then
   case "${FAKE_PLAN_STYLE:-line}" in
@@ -30,6 +30,9 @@ if [ -z "$digest" ]; then
     json) printf '{\n  "model": "%s",\n  "runs": 3,\n  "caseIds": "%s cases"\n}\n' "${FAKE_MODEL:-sonnet}" "${FAKE_CASES:-10}" ;;
     none) echo "something else" ;;
   esac
+  if [ -n "${FAKE_PROMPT_VERSION:-}" ]; then printf '{\n  "promptVersion": "%s",\n%s' "$FAKE_PROMPT_VERSION" "${FAKE_PROMPT_REV:+  \"promptRev\": \"$FAKE_PROMPT_REV\",
+}"; echo '}'; fi
+  echo "$mode $all" >> "${FAKE_ARGS_LOG:-/dev/null}"
   echo "plan digest (sha256): $(printf '%064d' 7)"
   exit 0
 fi
@@ -70,7 +73,7 @@ has "status prints the estimate" "$T/e1.status" "est_pct_5h=6.0"
 
 # 2. JSON plan fallback (cases x runs), model from the plan, haiku placeholder rate
 FAKE_PLAN_STYLE=json FAKE_MODEL=haiku FAKE_CASES=100 rc=$(FAKE_PLAN_STYLE=json FAKE_MODEL=haiku FAKE_CASES=100 gates e2 action); check "json plan exits 0" "$rc" 0
-has "cases x runs = 300 at haiku 0.03 = 9.0" "$T/arch/e2/estimate.txt" "model=haiku calls=300 rate_pct_per_call=0.03 est_pct_5h=9.0 cap_source=cases-x-runs"
+has "cases x runs = 300 at haiku 0.003 = 0.9" "$T/arch/e2/estimate.txt" "model=haiku calls=300 rate_pct_per_call=0.003 est_pct_5h=0.9 cap_source=cases-x-runs"
 
 # 3. unknown cap blocks, no run happens
 rc=$(FAKE_PLAN_STYLE=none gates e3 action); check "unknown cap blocked exit 2" "$rc" 2
@@ -180,6 +183,43 @@ check "grandchild has its own group before cleanup" "$([ -n "$gpg" ] && [ "$gpg"
 kill -TERM "$rp"; wait "$rp" 2>/dev/null
 check "group members after cleanup" "$(ps -axo pgid= | awk -v g="$gpg" '$1 == g' | wc -l | tr -d ' ')" 0
 if kill -0 "$gc" 2>/dev/null; then check "TERM-resistant grandchild killed" alive dead; else check "TERM-resistant grandchild killed" dead dead; fi
+
+# 14. the prompt version of each plan is written to run.log and into the DONE line (incident 2026-11-04)
+rc=$(FAKE_PROMPT_VERSION=nl-select.v71 gates e14 action r2); check "prompt-version run exits 0" "$rc" 0
+has "DONE names the prompt of action" "$T/arch/e14/DONE" "action exit=0 status=PASSED prompt=nl-select.v71"
+has "run.log names the prompt" "$T/arch/e14/run.log" "action: prompt=nl-select.v71"
+rc=$(FAKE_PROMPT_VERSION=nl-select.v77 FAKE_PROMPT_REV=v77 gates e14b action); check "rev run exits 0" "$rc" 0
+has "DONE names version and rev" "$T/arch/e14b/DONE" "action exit=0 status=PASSED prompt=nl-select.v77,rev=v77"
+rc=$(gates e14c action); check "plan without a prompt key exits 0" "$rc" 0
+has "unknown prompt recorded" "$T/arch/e14c/DONE" "action exit=0 status=PASSED prompt=unknown"
+rc=$(FAKE_PROMPT_VERSION=nl-select.v72 FAKE_CALLS=600 gates e14d action); check "blocked estimate still records the prompt" "$rc" 2
+has "BLOCKED-ESTIMATE carries the prompt" "$T/arch/e14d/DONE" "action exit=2 status=BLOCKED-ESTIMATE prompt=nl-select.v72"
+status_line=$(GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" bash "$GATES" status e14 2>&1 | grep -c "action")
+check "status still parses the DONE lines" "$([ "$status_line" -ge 1 ] && echo yes)" yes
+
+# 15. GATES_CASES reaches plan and run of the modes that support it, and only those
+: > "$T/e15.args"
+rc=$(FAKE_ARGS_LOG="$T/e15.args" GATES_CASES=reminder.create-019,reminder.create-035 gates e15 action help-scope); check "cases run exits 0" "$rc" 0
+has "action plan gets --cases" "$T/e15.args" "action --mode action --model"
+has "action plan carries the ids" "$T/e15.args" "--cases reminder.create-019,reminder.create-035"
+check "help-scope gets no --cases" "$(grep -c '^help-scope .*--cases' "$T/e15.args")" 0
+
+# 16. `start` unsets every known setting the calling shell does not export (a stale tmux global environment must not leak)
+cat > "$STUB/tmux" <<'SH'
+#!/bin/bash
+case "$1" in has-session) exit 1 ;; new-session) printf '%s\n' "$*" > "$FAKE_TMUX_LOG" ;; esac
+exit 0
+SH
+chmod +x "$STUB/tmux"
+FAKE_TMUX_LOG="$T/tmux.log" GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" GATES_RUNS=2 bash "$GATES" start "$T/wt" e16 action > "$T/e16.out" 2>&1
+has "start unsets a stale GATES_PROMPT_REV" "$T/tmux.log" " -u GATES_PROMPT_REV"
+has "start unsets GATES_CASES" "$T/tmux.log" " -u GATES_CASES"
+has "start unsets QUOKY_USAGE_LIMIT_USD" "$T/tmux.log" " -u QUOKY_USAGE_LIMIT_USD"
+check "start does not unset an exported setting" "$(grep -c -- '-u GATES_RUNS' "$T/tmux.log")" 0
+check "start does not unset QUOKY_EVAL_ARCHIVE exported here" "$(grep -c -- '-u QUOKY_EVAL_ARCHIVE' "$T/tmux.log")" 0
+has "start passes the exported setting" "$T/tmux.log" "GATES_RUNS=2"
+check "start never unsets a name that is not a setting" "$(grep -oE -- '-u [A-Za-z_]+' "$T/tmux.log" | grep -vcE -- '-u (GATES_[A-Z_]+|QUOKY_USAGE_LIMIT_USD|QUOKY_EVAL_ARCHIVE)$')" 0
+rm -f "$STUB/tmux"
 
 echo; echo "passed $pass, failed $failn"
 [ "$failn" -eq 0 ]

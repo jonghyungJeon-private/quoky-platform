@@ -10,7 +10,11 @@
 #
 # Archive: ~/Library/Application Support/Quoky/eval-archive/<name>/ holds head.txt, build.log, usage.log, run.log,
 # digests.txt, <mode>.plan.log, <mode>.log, <mode>.report.json (copied from the worktree's data/eval), RUNNING while it
-# runs and DONE at the end (one "<mode> exit=<n> status=<word>" line per mode, then the finish time).
+# runs and DONE at the end (one "<mode> exit=<n> status=<word> prompt=<version>" line per mode, then the finish time).
+# The prompt version (and the explicit rev, when one is set) is read from each mode's plan, written to run.log and DONE, so
+# a run can never be mistaken for another prompt (incident 2026-11-04). `start` clears every setting this script knows
+# (GATES_*, QUOKY_USAGE_LIMIT_USD, QUOKY_EVAL_ARCHIVE) that the calling shell does not export, so a stale tmux global
+# environment never leaks into the session.
 #
 # Usage pre-check: before the build and before every mode, `npx ccusage@<pinned> blocks --active --json` (20 s timeout);
 # when the active block's cost is >= GATES_USAGE_PCT (95) % of QUOKY_USAGE_LIMIT_USD (218, the calibrated 5 h limit, with
@@ -25,7 +29,7 @@
 #  1. Pre-start estimate. After the build, every requested mode is planned (no model call). Its call cap is read from the plan
 #     output ("model calls this plan authorises: at most N", or "real summarisation calls ...: at most N"; else the plan JSON's
 #     `"caseIds": "<n> cases"` x `"runs"`, which is the guard's maxCalls). No parseable cap = unknown = BLOCK. est % of the 5 h
-#     window = calls x a per-call rate per model (sonnet 0.06 measured; haiku 0.03 and opus 0.15 are PLACEHOLDERS; an unknown
+#     window = calls x a per-call rate per model (sonnet 0.06 measured; haiku 0.003 measured 2026-11-04 (a haiku call costs about a tenth of a sonnet call), opus 0.15 is a PLACEHOLDER; an unknown
 #     model has no rate and blocks unless GATES_RATE_PCT_PER_CALL or GATES_OWNER_OK is set). Written to <archive>/estimate.txt and shown by `status`. The run is refused (DONE, exit 2, no
 #     run) when the sum over the modes exceeds GATES_MAX_EST_PCT (30), or current 5 h usage + estimate exceeds GATES_USAGE_PCT
 #     (95), or any cap is unknown, or the model is unknown, or the current usage is unknown (ccusage failed at start),
@@ -41,7 +45,8 @@
 # Environment: GATES_MODEL (haiku), GATES_RUNS (3), GATES_CONCURRENCY (4), GATES_REDTEAM_MODEL (unset: the Claude CLI
 # default summariser), GATES_HELP_SCOPE_MODEL (unset: the classifier's production stronger tier), QUOKY_USAGE_LIMIT_USD (218), GATES_USAGE_PCT (95), GATES_RETRY_WAIT_SEC (900, used when no
 # active usage block is reported), GATES_RESET_MARGIN_SEC (60, slack after a block end), GATES_NO_RETRY,
-# QUOKY_EVAL_ARCHIVE (archive root), GATES_MAX_EST_PCT (30), GATES_OWNER_OK, GATES_RATE_PCT_PER_CALL (overrides every rate) /
+# QUOKY_EVAL_ARCHIVE (archive root), GATES_PROMPT_REV (v73|v74|v77, unset = the mode's active prompt), GATES_PLAN_REV, GATES_CASES (id,id,...: eval:nl --cases),
+# GATES_MAX_EST_PCT (30), GATES_OWNER_OK, GATES_RATE_PCT_PER_CALL (overrides every rate) /
 # GATES_RATE_PCT_HAIKU / _SONNET / _OPUS, GATES_STOP_PCT (85), GATES_WATCH_SEC (60), GATES_STOP_GRACE_SEC (15).
 #
 # Exit status of `run` (foreground; start's tmux window shows it): 0 all modes PASSED/NON-GATING, 1 any FAILED, 2 any
@@ -71,10 +76,10 @@ MAX_EST_PCT="${GATES_MAX_EST_PCT:-30}"
 STOP_PCT="${GATES_STOP_PCT:-85}"
 WATCH_SEC="${GATES_WATCH_SEC:-60}"
 STOP_GRACE_SEC="${GATES_STOP_GRACE_SEC:-15}"
-# Per-call cost in % of the 5 h window. sonnet: measured 2026-11-03 (~1,300 calls = 81 %). haiku / opus: PLACEHOLDERS, not
-# measured; replace them when measured.
+# Per-call cost in % of the 5 h window. sonnet: measured 2026-11-03 (~1,300 calls = 81 %). haiku: measured 2026-11-04
+# (0.003; the old 0.03 placeholder was ten times too high). opus: PLACEHOLDER, not measured; replace it when measured.
 RATE_SONNET="${GATES_RATE_PCT_SONNET:-0.06}"
-RATE_HAIKU="${GATES_RATE_PCT_HAIKU:-0.03}"
+RATE_HAIKU="${GATES_RATE_PCT_HAIKU:-0.003}"
 RATE_OPUS="${GATES_RATE_PCT_OPUS:-0.15}"
 CHILD_PID=""
 CHILD_PGID=""
@@ -192,7 +197,9 @@ common_args() {
       case "$1" in
         agent-plan) [ -n "${GATES_PLAN_REV:-}" ] && printf -- ' --plan-rev %s' "$GATES_PLAN_REV" ;;
         intent|action|read-regression|r2) [ -n "${GATES_PROMPT_REV:-}" ] && printf -- ' --prompt-rev %s' "$GATES_PROMPT_REV" ;;
-      esac ;;
+      esac
+      # GATES_CASES (id,id,...): the exact case list of eval:nl (intent, action, read-regression, r2); bound into the digest.
+      case "$1" in intent|action|read-regression|r2) [ -n "${GATES_CASES:-}" ] && printf -- ' --cases %s' "$GATES_CASES" ;; esac ;;
   esac
   return 0
 }
@@ -442,7 +449,25 @@ plan_one() {
   fi
   echo "$digest" > "$A/$m.digest"
   echo "$m $digest" >> "$A/digests.txt"
+  prompt_of "$A/$m.plan.log" > "$A/$m.prompt"
+  log "$m: prompt=$(cat "$A/$m.prompt") (plan digest $digest)"
   return 0
+}
+
+# "<version>[ rev=<rev>]" the plan names (promptVersion / promptRev of the plan JSON), or "unknown" (no such key).
+prompt_of() {
+  local v r
+  v=$(sed -n 's/^ *"promptVersion": *"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -1)
+  r=$(sed -n 's/^ *"promptRev": *"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -1)
+  if [ -z "$v" ]; then echo unknown; return 0; fi
+  echo "$v${r:+ rev=$r}"
+}
+
+# The DONE-line suffix of a mode: " prompt=<version>[ rev=<rev>]" (spaces inside kept as "," so the line stays one token).
+prompt_tag() {
+  local p
+  p=$(cat "$A/$1.prompt" 2>/dev/null); [ -n "$p" ] || p=unknown
+  printf ' prompt=%s' "$(printf '%s' "$p" | tr ' ' ',')"
 }
 
 # Run one planned mode with the stored digest under the watchdog; returns the eval's exit status, or 6 on USAGE-STOP.
@@ -570,7 +595,7 @@ cmd_run() {
     if plan_one "$m"; then planned="$planned $m"; fi
   done
   if [ -n "$planned" ] && ! estimate_guard $planned; then
-    for m in $MODES; do echo "$m exit=2 status=BLOCKED-ESTIMATE" >> "$A/modes.txt"; done
+    for m in $MODES; do echo "$m exit=2 status=BLOCKED-ESTIMATE$(prompt_tag "$m")" >> "$A/modes.txt"; done
     { cat "$A/modes.txt"; echo "stopped: the pre-start estimate guard refused the run (see estimate.txt); nothing was run"; date; } > "$A/DONE"
     rm -f "$A/RUNNING"
     exit 2
@@ -578,7 +603,7 @@ cmd_run() {
   for m in $MODES; do
     case " $planned " in
       *" $m "*) ;;
-      *) echo "$m exit=2 status=$(status_word 2)" >> "$A/modes.txt"; echo "$m exit=2" >> "$A/digests.txt"; n_other=$((n_other + 1)); continue ;;
+      *) echo "$m exit=2 status=$(status_word 2)$(prompt_tag "$m")" >> "$A/modes.txt"; echo "$m exit=2" >> "$A/digests.txt"; n_other=$((n_other + 1)); continue ;;
     esac
     wait_for_usage
     retried=0
@@ -609,9 +634,9 @@ cmd_run() {
     esac
     if [ "$rc" -eq "$EXIT_USAGE_STOP" ]; then
       ustop_pct=$(cat "$A/USAGE-STOP" 2>/dev/null)
-      echo "$m exit=$rc status=USAGE-STOP pct=$ustop_pct" >> "$A/modes.txt"
+      echo "$m exit=$rc status=USAGE-STOP pct=$ustop_pct$(prompt_tag "$m")" >> "$A/modes.txt"
     else
-      echo "$m exit=$rc status=$(status_word "$rc")" >> "$A/modes.txt"
+      echo "$m exit=$rc status=$(status_word "$rc")$(prompt_tag "$m")" >> "$A/modes.txt"
     fi
     echo "$m exit=$rc" >> "$A/digests.txt"
     case "$rc" in
@@ -657,11 +682,19 @@ cmd_start() {
   fi
   mkdir -p "$ARCHIVE_ROOT/$N"
   # A running tmux server does not inherit this shell's environment: hand the settings over explicitly.
-  local envs="" v
+  local envs="" v unset_args="" known exported
   for v in $(compgen -e | grep -E '^(GATES_[A-Z_]+|QUOKY_USAGE_LIMIT_USD|QUOKY_EVAL_ARCHIVE)$'); do
     envs="$envs $v=$(printf '%q' "${!v}")"
   done
-  tmux new-session -d -s "$S" "env TMUX_SESSION='$S'$envs bash '$SELF' run '$W' '$N' $*; echo; echo '[run-gates] finished; this window closes in 1 h'; sleep 3600"
+  # A setting this script knows but the calling shell does not export must be UNSET inside the session: a stale tmux global
+  # environment (set-environment -g, or the server's own start-up environment) would otherwise leak into the run (incident
+  # 2026-11-04: a stale GATES_PROMPT_REV=v74 turned a v71 baseline into a v75 run).
+  exported=" $(compgen -e | tr '\n' ' ') "
+  known=$(grep -oE 'GATES_[A-Z]+(_[A-Z]+)*|QUOKY_USAGE_LIMIT_USD|QUOKY_EVAL_ARCHIVE' "$SELF" | sort -u)
+  for v in $known; do
+    case "$exported" in *" $v "*) ;; *) unset_args="$unset_args -u $v" ;; esac
+  done
+  tmux new-session -d -s "$S" "env$unset_args TMUX_SESSION='$S'$envs bash '$SELF' run '$W' '$N' $*; echo; echo '[run-gates] finished; this window closes in 1 h'; sleep 3600"
   echo "started tmux session $S"
   echo "  archive: $ARCHIVE_ROOT/$N"
   echo "  watch:   tmux attach -t $S   (detach: C-b d)"
