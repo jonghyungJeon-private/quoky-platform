@@ -221,5 +221,43 @@ has "start passes the exported setting" "$T/tmux.log" "GATES_RUNS=2"
 check "start never unsets a name that is not a setting" "$(grep -oE -- '-u [A-Za-z_]+' "$T/tmux.log" | grep -vcE -- '-u (GATES_[A-Z_]+|QUOKY_USAGE_LIMIT_USD|QUOKY_EVAL_ARCHIVE)$')" 0
 rm -f "$STUB/tmux"
 
+# 17. behavioural: the tmux stub EXECUTES the session command under a stale tmux global environment; a probe `bash` and
+#     `sleep` placed first on the child's PATH record what the run-gates child process actually sees.
+PROBE="$T/probe"; mkdir -p "$PROBE"
+cat > "$PROBE/bash" <<'SH'
+#!/bin/bash
+{
+  for v in GATES_PROMPT_REV GATES_CASES QUOKY_USAGE_LIMIT_USD GATES_RUNS TMUX_SESSION; do printf '%s=%s\n' "$v" "${!v-<unset>}"; done
+  printf 'ARGS=%s\n' "$*"
+} > "$PROBE_OUT.env"
+printf '%s' "${GATES_OWNER_OK-<unset>}" > "$PROBE_OUT.owner"
+exit 0
+SH
+printf '#!/bin/bash\nexit 0\n' > "$PROBE/sleep"
+chmod +x "$PROBE/bash" "$PROBE/sleep"
+cat > "$STUB/tmux" <<'SH'
+#!/bin/bash
+case "$1" in
+  has-session) exit 1 ;;
+  new-session)
+    # new-session -d -s NAME CMD: run CMD like tmux does (a shell), inside the stale server environment
+    cmd="${@: -1}"
+    env GATES_PROMPT_REV=v74 GATES_CASES=stale-case QUOKY_USAGE_LIMIT_USD=1 PATH="$PROBE_DIR:$PATH" PROBE_OUT="$PROBE_OUT" /bin/bash -c "$cmd" > /dev/null 2>&1 ;;
+esac
+exit 0
+SH
+chmod +x "$STUB/tmux"
+WEIRD='a b  "dq" '"'"'sq'"'"' $HOME `x` \n ; & # end'
+PROBE_DIR="$PROBE" PROBE_OUT="$T/e17" GATES_PATH_PREFIX="$STUB" QUOKY_EVAL_ARCHIVE="$T/arch" GATES_RUNS=2 GATES_OWNER_OK="$WEIRD" \
+  bash "$GATES" start "$T/wt" e17 action > "$T/e17.out" 2>&1
+has "child ran" "$T/e17.env" "ARGS=$GATES run"
+has "stale GATES_PROMPT_REV absent in the child" "$T/e17.env" "GATES_PROMPT_REV=<unset>"
+has "stale GATES_CASES absent in the child" "$T/e17.env" "GATES_CASES=<unset>"
+has "stale QUOKY_USAGE_LIMIT_USD absent in the child" "$T/e17.env" "QUOKY_USAGE_LIMIT_USD=<unset>"
+has "caller GATES_RUNS survives" "$T/e17.env" "GATES_RUNS=2"
+has "TMUX_SESSION reaches the child" "$T/e17.env" "TMUX_SESSION=gates-e17"
+check "value with spaces, quotes, \$, backtick, backslash, ; & # round-trips" "$(cat "$T/e17.owner" 2>/dev/null)" "$WEIRD"
+rm -f "$STUB/tmux"
+
 echo; echo "passed $pass, failed $failn"
 [ "$failn" -eq 0 ]
