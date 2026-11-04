@@ -32706,11 +32706,13 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   answer), so later analysis needs no rerun. The doc comment that said the raw args were scored was corrected.
 - **Rules (B), general, in the action-mode part only (rule 8 plus one rule-2 line).** No phrase list, no corpus text, no examples
   (`example-contamination.test.ts` lints the v77 / v78 prompts too):
-  - F1: asking to be reminded or notified of something at a time (a time, the thing, and a request to remind or tell the owner) is
-    reminder.create, also when the thing is a meeting or an appointment; calendar.events only asks what the calendar holds (a period or
-    schedule list, whether something is scheduled, when something is). The rule-2 slot where the read text said `"<time>에 … 알려줘" sets
-    a reminder: none` carries the positive pointer ("A time, a thing and a request to be reminded or notified of it is reminder.create
-    (rule 8), not a lookup.") instead of nothing.
+  - F1 (rev. after Codex P2 round 1): reminder.create needs the moment at which the owner wants to be notified (a clock time, a delay such
+    as "in N minutes", or a time stated as when to be told) together with the thing to be told, or an explicit reminder or notification
+    word; then it is reminder.create, also when the thing is a meeting or an appointment. A day or period alone with a show or tell verb
+    ("tell me tomorrow's meetings", "this week's schedule") asks what the calendar holds now: calendar.events, as does whether something is
+    scheduled or when something is. If it is unclear whether the owner wants to be notified later or shown now, NEEDS_CLARIFICATION with
+    both (rule 7). The rule-2 slot carries the pointer "A request to be notified later, at a stated moment, of a stated thing is
+    reminder.create (rule 8); a day alone is a lookup."
   - F3: a todo.add title and a reminder body are the task itself; a leading clause that only says when the owner will get to it (after
     something, once something is done) is not part of the span; the span is still one contiguous part of the owner's own words.
   - F4: any time word the owner wrote in a reminder request, even a vague one, goes in `when`; the owner did imply a time, so rule 5 does
@@ -32718,11 +32720,17 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   Why general: each rule states a category (what a remind request is, what a title is, what `when` holds) and delegates the decision to Core's
   existing validation; none names a case, a verb list or a sample sentence. The read prompt v74 and planner v11 bytes are unchanged
   (the lines are inserted only when `actions` is given).
+- **Codex P2 round 1.** (1) The first F1 wording equated "a time, a thing and a request to tell the owner" with reminder.create and so
+  overlapped rule 1's lookup meaning of 알려줘 (a lookup of tomorrow's meetings could become a reminder). F1 now requires an explicit
+  future-notification moment (or an explicit reminder word) and treats a bare day or period with a show or tell verb as calendar.events,
+  with NEEDS_CLARIFICATION for the unclear case; only v77 / v78 bytes changed, all other pins held. (2) `run-gates.test.sh` gained
+  behavioural tests: a tmux stub that executes the `new-session` command under a simulated stale global environment, checking that stale
+  `GATES_*` values do not reach the child, a caller value survives, and values with spaces, quotes and `$` round-trip exactly.
 - **Versioning.** `NlPromptRev` gains `'v77'`, valid only with `actions`: action `nl-select.v77`, R2 `nl-select.v78` (`NL_V77_PROMPT_VERSIONS`);
   `buildSelectionPrompt` and `nlPromptVersionFor` reject `v77` in read mode, and `--prompt-rev v77` is a usage error for the read modes.
   v71 / v72 (default), v75 / v76 (`rev: 'v74'` + actions) and read v73 / v74 bytes are unchanged (sha256 pins in `selection-prompt-v74.test.ts`:
   v71 `24bbbd32...f06f`, v72 `768bcf90...7c34`, v75 `e08bc9a7...2544`, v76 `8ffb282c...a333`, read v74 `c6af3597...ea55`, planner v11
-  `a8869372...e11d`; new v77 `dd8ef699...f079`, v78 `f4c767fc...4704`). The default action revision stays `v73` in this change: the flip
+  `a8869372...e11d`; new v77 `386d45fe...2cda`, v78 `44b2c6b5...b6c9`, after Codex P2 round 1). The default action revision stays `v73` in this change: the flip
   is a separate commit after the D12 gates (action, read-regression, r2 on `--prompt-rev v77`) pass. The runtime service's eval-only
   `promptRev` dependency already carries any revision.
 - **Eval tools (C).** `eval:nl --cases id1,id2` now also works for `--mode action`, `read-regression` and `r2` (not `help-scope`): the exact

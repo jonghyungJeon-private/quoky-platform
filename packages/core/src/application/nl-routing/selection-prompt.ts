@@ -659,7 +659,7 @@ const ACTION_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
 const V77_LINE_REPLACEMENTS: Readonly<Record<string, readonly string[]>> = {
   '   asked politely ("would you mind sending this out for me?"). Writes are never an entry. "<time>에 … 알려줘" sets a reminder: none.': [
     '   asked politely ("would you mind sending this out for me?"), EXCEPT the action entries of rule 8 that are in the catalog.',
-    '   A time, a thing and a request to be reminded or notified of it is reminder.create (rule 8), not a lookup.',
+    '   A request to be notified later, at a stated moment, of a stated thing is reminder.create (rule 8); a day alone is a lookup.',
   ],
 };
 
@@ -668,9 +668,12 @@ const V77_RULE_ANCHOR = '   invent an item, an id, a title or a number.';
 
 /** v77 (A6 action / R2): the three general residual rules, placed in rule 8 so that read v74 and planner v11 stay unchanged. */
 const V77_ACTION_RULES: readonly string[] = [
-  '   Asking to be reminded or notified of something at a time (a time, the thing, and a request to remind or tell the owner)',
-  '   is reminder.create, also when the thing is a meeting or an appointment. calendar.events only asks what the calendar',
-  '   holds: a period or schedule list, whether something is scheduled, when something is.',
+  '   reminder.create needs the moment at which the owner wants to be notified (a clock time, a delay such as "in N minutes",',
+  '   or a time stated as when to be told) together with the thing to be told, or an explicit reminder or notification word;',
+  '   then it is reminder.create, also when the thing is a meeting or an appointment. A day or period alone with a show or',
+  '   tell verb ("tell me tomorrow\'s meetings", "this week\'s schedule") asks what the calendar holds now: calendar.events,',
+  '   as does whether something is scheduled or when something is. If it is unclear whether the owner wants to be notified',
+  '   later or shown now, NEEDS_CLARIFICATION with both (rule 7).',
   '   A todo.add title and a reminder body are the task itself: a leading clause that only says when the owner will get to',
   '   it (after something, once something is done) is not part of the span; the span is still one contiguous part of the',
   '   owner\'s own words.',
