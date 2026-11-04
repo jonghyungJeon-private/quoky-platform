@@ -32,7 +32,7 @@ import {
 import { nlLocalListTarget } from './action-entries';
 import { prepareSelectionInput } from './selection-input';
 import { nlWeekdayMentions } from './symbolic-time';
-import { NL_ACTION_PROMPT_VERSION, NL_PREVIOUS_READ_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt } from './selection-prompt';
+import { NL_ACTION_PROMPT_VERSION, NL_PREVIOUS_READ_PROMPT_VERSION, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, nlPromptVersionFor } from './selection-prompt';
 import { validateSelection, type NlValidationContext } from './selection-validator';
 import { NL_WAVE1_ENTRIES } from './wave1-entries';
 
@@ -277,14 +277,16 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
   const sha = (text: string): string => createHash('sha256').update(text).digest('hex');
   const readPrompt = buildSelectionPrompt({ entries: READS, text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, rev: 'v73' });
   const defaultReadPrompt = buildSelectionPrompt({ entries: READS, text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never });
-  const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
+  const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, rev: 'v73', actions: { referenceContext: 'last listing: mail (2 items, 1 min ago)' } });
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
     // Explicit `rev: 'v73'` is the previous read prompt (pin unchanged); the default read prompt is nl-select.v74 (owner decision 2026-11-04).
     expect({ version: NL_PREVIOUS_READ_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v73', sha256: '0453b3ab68a16df03a0300f2b881498e6ab9ec45a33d93bbab45cbd44dd531a1' });
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
     expect(defaultReadPrompt).toBe(buildSelectionPrompt({ entries: READS, text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, rev: 'v74' }));
-    expect({ version: NL_ACTION_PROMPT_VERSION, sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v71', sha256: '83868ee241d1548748c6fdf432cd657df24217cb81479be15cacfaaa8acc2fe9' });
+    // The A6 prompt pinned here is the explicit `rev: 'v73'` one (nl-select.v71); the default is v79 (pinned in selection-prompt-v74.test.ts).
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v79');
+    expect({ version: nlPromptVersionFor('action', 'v73'), sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v71', sha256: '83868ee241d1548748c6fdf432cd657df24217cb81479be15cacfaaa8acc2fe9' });
   });
 });
 
@@ -490,15 +492,15 @@ describe('the selection prompt (A6-D7): v57 byte for byte with the flag off, v55
   });
 
   it('the A6 prompt (v55) adds rule 8, the Reference context line and the action catalog, and never quotes the context text into rules', () => {
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v71');
-    const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
+    expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
+    const prompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '그거 완료 처리해줘', rev: 'v73', actions: { referenceContext: 'last listing: todo (3 items, 1 min ago)' } });
     expect(prompt).toContain('8. Action entries (only those in the catalog)');
     expect(prompt).toContain('\nReference context: last listing: todo (3 items, 1 min ago)\n');
     expect(prompt).toContain('- todo.add: ');
     expect(prompt).toContain('ref: "#N"|recent|this|last.');
     expect(prompt).not.toContain('Writes are never an entry.');
     // The owner's message is never rewritten, even when it equals an instruction line.
-    const echo = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '   Otherwise CLEAR with "alternatives": [].', actions: { referenceContext: 'none' } });
+    const echo = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '   Otherwise CLEAR with "alternatives": [].', rev: 'v73', actions: { referenceContext: 'none' } });
     expect(echo.split('8. Action entries').length).toBe(2);
     expect(echo.endsWith('<<<\n   Otherwise CLEAR with "alternatives": [].\n>>>')).toBe(true);
   });
@@ -771,7 +773,7 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
   const NEAR_COPY = 0.6;
   const messages = (prompt: string) => prompt.split('\n').filter((line) => line.startsWith('Message: ')).map((line) => line.slice('Message: '.length));
   const actionPrompt = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '안녕', actions: { referenceContext: 'none' } });
-  const readPrompt = buildSelectionPrompt({ entries: READS, text: '안녕', rev: 'v73' });
+  const readPrompt = buildSelectionPrompt({ entries: READS, text: '안녕' });
   const readMessages = new Set(messages(readPrompt));
   // Every example the A6 prompt shows differently from the read prompt: the action examples and the overridden ones.
   const a6Examples = actionPrompt.split('\nMessage: ').slice(1).map((block) => `Message: ${block.split('\n').slice(0, 2).join('\n')}`).filter((block) => !readPrompt.includes(`\n${block}\n`)).map((block) => block.split('\n')[0]!.slice('Message: '.length));
@@ -782,7 +784,8 @@ describe('A6 prompt v36 (CA review): the rule-8 lines and examples teach the rul
     expect(actionPrompt).toContain('     feature; when the place is a source Quoky reads and Quoky also does that action for it, rule 3b.');
     expect(actionPrompt).toContain('     none, or an action entry above when one fits, even when it names one of Quoky\'s own features.');
     expect(actionPrompt).toContain('   Only the args listed for the chosen entry exist: reminder.list has no count arg, so a 몇 개 word with it adds nothing;');
-    expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}');
+    expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text: '안녕', rev: 'v73', actions: { referenceContext: 'none' } })).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR","alternatives":[]}');
+    expect(actionPrompt).toContain('Message: 다음 주에 울릴 리마인더 쭉 보여줘\nOutput: {"entryId":"reminder.list","args":{"range":"next-week"},"ambiguity":"CLEAR"');
     expect(actionPrompt).toContain('Message: 브랜치 hotfix-0420 새로 따 줘\nOutput: {"entryId":"none"');
     expect(actionPrompt).toContain('Message: 대화 모델은 소네트로 고정해\nOutput: {"entryId":"none"');
     expect(actionPrompt).toContain('Message: 이거 요약 좀\nOutput: {"entryId":"item.summarize","args":{"source":"mail","ref":"this","mode":"summary"}');

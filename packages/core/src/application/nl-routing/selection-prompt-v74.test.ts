@@ -10,6 +10,8 @@ import {
   NL_CANDIDATE_PROMPT_VERSIONS,
   NL_PREVIOUS_READ_PROMPT_VERSION,
   NL_SELECTION_PROMPT_VERSION,
+  NL_V77_PROMPT_VERSIONS,
+  NL_V79_PROMPT_VERSIONS,
   buildSelectionPrompt,
   nlPromptVersionFor,
 } from './selection-prompt';
@@ -17,8 +19,8 @@ import { NL_WAVE1_ENTRIES } from './wave1-entries';
 import { AGENT_PLAN_PREVIOUS_PROMPT_VERSION, AGENT_PLAN_PROMPT_VERSION, agentPlanPromptVersion, buildAgentPlanPrompt } from '../agent/plan-prompt';
 
 // Enablement of `nl-select.v74` (read) and `agent-plan.v11` (planner) by default (owner decision 2026-11-04, after the D12
-// gates). The A6 action / R2 prompts stay on the v73 rule text (nl-select.v71 / v72; the v75 / v76 candidates failed their
-// gate and are built only with an explicit `rev: 'v74'`). The `rev` option is explicit-only for the other direction too:
+// gates). The A6 action / R2 prompts are `nl-select.v79` / `v80` by default (owner decision 2026-11-04, D12 gates passed);
+// the old v71 / v72 are built only with an explicit `rev: 'v73'`, the v75 / v76 candidates with `rev: 'v74'`. The `rev` option is explicit-only for the other direction too:
 // `rev: 'v73'` builds the previous read prompt and `rev: 'v10'` the previous planner byte for byte.
 
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -30,12 +32,12 @@ const ACTION_CONTEXT = { referenceContext: 'last listing: mail (2 items, 1 min a
 const R2_ENTRIES: readonly NlCatalogEntry[] = [...READS, ...ACTIONS.filter((entry) => entry.id !== 'item.summarize'), nlItemSummarizeEntry(['jira', 'slack'])];
 
 describe('per-mode default revision (owner decision 2026-11-04)', () => {
-  it('names the active versions: read v74, action v71, R2 v72; v75 / v76 are the only candidates', () => {
+  it('names the active versions: read v74, action v79, R2 v80; v71 / v72 are explicit v73 only', () => {
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
     expect(NL_PREVIOUS_READ_PROMPT_VERSION).toBe('nl-select.v73');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v71');
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v72');
-    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v73' });
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v79');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v80');
+    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v79' });
     expect(NL_CANDIDATE_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v75', r2: 'nl-select.v76' });
   });
 
@@ -43,10 +45,10 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(nlPromptVersionFor('read')).toBe('nl-select.v74');
     expect(nlPromptVersionFor('read', 'v73')).toBe('nl-select.v73');
     expect(nlPromptVersionFor('read', 'v74')).toBe('nl-select.v74');
-    expect(nlPromptVersionFor('action')).toBe('nl-select.v71');
+    expect(nlPromptVersionFor('action')).toBe('nl-select.v79');
     expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
     expect(nlPromptVersionFor('action', 'v74')).toBe('nl-select.v75');
-    expect(nlPromptVersionFor('r2')).toBe('nl-select.v72');
+    expect(nlPromptVersionFor('r2')).toBe('nl-select.v80');
     expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
     expect(nlPromptVersionFor('r2', 'v74')).toBe('nl-select.v76');
   });
@@ -60,15 +62,24 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(sha(buildSelectionPrompt({ entries: READS, text, rev: 'v73' }))).toBe(PINNED_V73_READ);
   });
 
-  it('action and R2 prompts without rev stay the v73-text prompts (v71 / v72, unchanged bytes)', () => {
+  it('action and R2 prompts without rev are the gated v79 / v80 bytes; explicit v73 is the old v71 / v72 bytes', () => {
     const action = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT });
-    expect(sha(action)).toBe(PINNED_V71_ACTION);
-    expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v73' })).toBe(action);
+    expect(sha(action)).toBe(PINNED_V79_ACTION);
+    expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v79' })).toBe(action);
+    expect(sha(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v73' }))).toBe(PINNED_V71_ACTION);
     const r2 = buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT });
-    expect(sha(r2)).toBe(PINNED_V72_R2);
-    expect(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v73' })).toBe(r2);
+    expect(sha(r2)).toBe(PINNED_V80_R2);
+    expect(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v79' })).toBe(r2);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v73' }))).toBe(PINNED_V72_R2);
     // The candidates are explicit-only.
-    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v74' }))).not.toBe(PINNED_V72_R2);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v74' }))).toBe(PINNED_V76_R2);
+  });
+
+  it('the version ids follow the default: v73 is v71 / v72, absent is v79 / v80', () => {
+    expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
+    expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
+    expect(nlPromptVersionFor('action')).toBe(nlPromptVersionFor('action', 'v79'));
+    expect(nlPromptVersionFor('r2')).toBe(nlPromptVersionFor('r2', 'v79'));
   });
 });
 
@@ -136,6 +147,110 @@ describe('nl-select.v74 (rev v74)', () => {
   });
 });
 
+describe('nl-select.v77 / v78 (rev v77, action and R2 only)', () => {
+  const entries = [...READS, ...ACTIONS];
+  const v75 = buildSelectionPrompt({ entries, text, rev: 'v74', actions: ACTION_CONTEXT });
+  const v77 = buildSelectionPrompt({ entries, text, rev: 'v77', actions: ACTION_CONTEXT });
+  const v76 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v74', actions: ACTION_CONTEXT });
+  const v78 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v77', actions: ACTION_CONTEXT });
+
+  it('names the versions and rejects v77 in read mode', () => {
+    expect(NL_V77_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v77', r2: 'nl-select.v78' });
+    expect(nlPromptVersionFor('action', 'v77')).toBe('nl-select.v77');
+    expect(nlPromptVersionFor('r2', 'v77')).toBe('nl-select.v78');
+    expect(() => nlPromptVersionFor('read', 'v77')).toThrow(/v77/);
+    expect(() => buildSelectionPrompt({ entries: READS, text, rev: 'v77' })).toThrow(/v77/);
+  });
+
+  it('keeps v71 / v72 / v75 / v76 / read v73 / v74 bytes and pins v77 / v78', () => {
+    expect(sha(buildSelectionPrompt({ entries, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
+    expect(sha(v75)).toBe(PINNED_V74_ACTION);
+    expect(sha(v76)).toBe(PINNED_V76_R2);
+    expect(sha(buildSelectionPrompt({ entries: READS, text }))).toBe(PINNED_V74_READ);
+    expect(sha(v77)).toBe(PINNED_V77_ACTION);
+    expect(sha(v78)).toBe(PINNED_V78_R2);
+  });
+
+  it('is the v75 / v76 text plus the F1 / F3 / F4 lines (generic rules, no phrase list)', () => {
+    for (const [added, base] of [[v77, v75], [v78, v76]] as const) {
+      const baseLines = new Set(base.split('\n'));
+      const extra = added.split('\n').filter((line) => !baseLines.has(line));
+      const kept = base.split('\n').filter((line) => !new Set(added.split('\n')).has(line));
+      expect(extra.join('\n')).toContain('then it is reminder.create also when the thing is a meeting or an appointment');
+      expect(extra.join('\n')).toContain('only when the owner affirmatively asks to be notified later');
+      expect(extra.join('\n')).not.toContain('explicit reminder or notification word');
+      expect(extra.join('\n')).toContain('is not part of the span');
+      expect(extra.join('\n')).toContain('even a vague one, goes in `when`');
+      // The only v75 line that goes away is the rule-2 line carrying the stale "sets a reminder: none".
+      expect(kept).toHaveLength(0);
+      expect(added).not.toContain('sets a reminder: none');
+    }
+    expect(v75).not.toContain('a leading clause that only says when');
+  });
+
+  it('puts the lines in rule 8 only and keeps rule 5 intact', () => {
+    expect(v77.indexOf('is reminder.create also when')).toBeGreaterThan(v77.indexOf('8. Action entries'));
+    expect(v77).toContain('5. Use only the arg names and values listed for the chosen entry. Omit every arg the owner did not imply; never guess.');
+    expect(v77.indexOf('rule 5 does not omit it')).toBeGreaterThan(v77.indexOf('8. Action entries'));
+  });
+});
+
+describe('nl-select.v79 / v80 (rev v79 = v77 with the Korean glosses restored)', () => {
+  const entries = [...READS, ...ACTIONS];
+  const v77 = buildSelectionPrompt({ entries, text, rev: 'v77', actions: ACTION_CONTEXT });
+  const v79 = buildSelectionPrompt({ entries, text, rev: 'v79', actions: ACTION_CONTEXT });
+  const v78 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v77', actions: ACTION_CONTEXT });
+  const v80 = buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v79', actions: ACTION_CONTEXT });
+  const stripGlosses = (prompt: string, list: readonly NlCatalogEntry[]): string => {
+    let out = prompt;
+    for (const entry of list) {
+      const gloss = ` (${entry.description.ko})`;
+      const lines = out.split('\n').map((line) => (line.startsWith(`- ${entry.id}: `) && line.endsWith(gloss) ? line.slice(0, -gloss.length) : line));
+      out = lines.join('\n');
+    }
+    return out;
+  };
+
+  it('names the versions and rejects v79 in read mode', () => {
+    expect(NL_V79_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v79', r2: 'nl-select.v80' });
+    expect(nlPromptVersionFor('action', 'v79')).toBe('nl-select.v79');
+    expect(nlPromptVersionFor('r2', 'v79')).toBe('nl-select.v80');
+    expect(() => nlPromptVersionFor('read', 'v79')).toThrow(/v79/);
+    expect(() => buildSelectionPrompt({ entries: READS, text, rev: 'v79' })).toThrow(/v79/);
+  });
+
+  it('keeps every earlier pin and pins v79 / v80', () => {
+    expect(sha(buildSelectionPrompt({ entries, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V71_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v73', actions: ACTION_CONTEXT }))).toBe(PINNED_V72_R2);
+    expect(sha(buildSelectionPrompt({ entries, text, rev: 'v74', actions: ACTION_CONTEXT }))).toBe(PINNED_V74_ACTION);
+    expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, rev: 'v74', actions: ACTION_CONTEXT }))).toBe(PINNED_V76_R2);
+    expect(sha(v77)).toBe(PINNED_V77_ACTION);
+    expect(sha(v78)).toBe(PINNED_V78_R2);
+    expect(sha(buildSelectionPrompt({ entries: READS, text }))).toBe(PINNED_V74_READ);
+    expect(sha(v79)).toBe(PINNED_V79_ACTION);
+    expect(sha(v80)).toBe(PINNED_V80_R2);
+  });
+
+  it('has the Korean gloss on every catalog entry line in v79 / v80 and on none in v77 / v78', () => {
+    for (const [with79, with77, list] of [[v79, v77, entries], [v80, v78, R2_ENTRIES]] as const) {
+      for (const entry of list) {
+        const line79 = with79.split('\n').find((line) => line.startsWith(`- ${entry.id}: `));
+        const line77 = with77.split('\n').find((line) => line.startsWith(`- ${entry.id}: `));
+        expect(line79?.endsWith(` (${entry.description.ko})`), entry.id).toBe(true);
+        expect(line77?.endsWith(` (${entry.description.ko})`), entry.id).toBe(false);
+      }
+    }
+  });
+
+  it('is v77 / v78 plus the glosses and nothing else (S5 sentence removal stays)', () => {
+    expect(stripGlosses(v79, entries)).toBe(v77);
+    expect(stripGlosses(v80, R2_ENTRIES)).toBe(v78);
+    expect(v79).not.toContain('Pick it whenever the message names');
+    expect(v79.length).toBeGreaterThan(v77.length);
+  });
+});
+
 describe('agent-plan.v11 (rev v11, the default)', () => {
   const v10 = buildAgentPlanPrompt({ entries: READS, text, rev: 'v10' });
   const v11 = buildAgentPlanPrompt({ entries: READS, text });
@@ -171,4 +286,9 @@ const PINNED_V11 = 'a8869372f6257c6254bdc84842f4223ca630bda777525f35b31372900438
 const PINNED_V73_READ = '974bd1183d5f7f31f4fbbc5ac98191203a14a2d565437c725b853e61711e4ed2';
 const PINNED_V71_ACTION = '24bbbd3230e3475ccf7ae8618a90a74156cc3512f06b1fe0c1b6532e1c83f06f';
 const PINNED_V72_R2 = '768bcf90328082066a2722180cc7a67f81cb228030a89535c02c35e563e57c34';
+const PINNED_V76_R2 = '8ffb282c8e8714667ce57c2a72acdd8dfe5de2b4d0784870df174bc498dfa333';
+const PINNED_V77_ACTION = 'c4313c45ab3f847b65a57e09f481561b26b073c9c2705f9871700b7c3459582f';
+const PINNED_V78_R2 = 'a93c69ddf32e3a2fdfbcefc1f5bd480952dc8e12280075d460e882bea2ce19ff';
+const PINNED_V79_ACTION = 'e46c310d21de33774acf628a58225f2068a6395d7227034e99ec571fc34d357a';
+const PINNED_V80_R2 = 'fef5c6842cb36cbf72d770195651901da5e66b3687c9a1f996f5fb70694991fd';
 const PINNED_V10 = '6543ae28546a0657c41985c4a27a4be4eb65a216759c2e031da762f1fa8892d6';

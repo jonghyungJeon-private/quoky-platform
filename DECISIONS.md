@@ -32679,3 +32679,110 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   planner set `AGENT_PLAN_ACTIVE_REV` back to `'v10'` and `AGENT_PLAN_PROMPT_VERSION` to `agent-plan.v10` (swap the two version
   constants). The previous bytes are still built by the explicit revisions, so nothing else moves.
 - **Not done.** No model call was made in this change; nothing was deployed.
+
+## A6 action prompt on the v74 text with residual-rule fixes (nl-select.v77 / v78 candidates) and span scoring on Core's final args (2026-11-04, branch `claude/v5-action-residuals`)
+
+- **Owner decisions (2026-11-04).** (1) What is tested must be what runs live: production runs `QUOKY_NL_ACTIONS=local`, so every live
+  chat-route selection uses the A6 action prompt (`nl-select.v71`, v73 rule text) or the R2 prompt (`nl-select.v72`); the read prompt v74
+  enabled in the previous change is not used by live chat turns. The goal is an action / R2 prompt on the v74 rule text, gated, then made
+  the live default (a separate later commit after the D12 gates). (2) `spanExact` is computed from Core's FINAL args, the same args the
+  outcome uses; this confirms item 1 of "A6 R2 item.summarize scoring and labels" (2026-10-19, "one rule, Core's final args"), which the
+  span check had never followed. (3) The old raw-selector span stays as a non-gating diagnostic.
+- **Offline analysis of the v75 gate runs** (archive `gates-v74v11-B-39813d9a-20261104` and a second v75 run, haiku; v75 passed 4 of 6
+  runs, every failure on spanExact):
+  - `reminder.create-019` ("<time>에 점심 약속 알려주세요"): read as calendar.events almost always. The action prompt's
+    `ACTION_LINE_REPLACEMENTS` drop the read line `"<time>에 … 알려줘" sets a reminder: none` and put no positive rule in its place;
+    rule 1 lists 알려줘 as a lookup and the calendar description mentions appointments.
+  - `reminder.create-027` ("20분 후에 '…' 알려줘"): Core's normalisation repairs `when` "20분 후에" to "20분 후" and the outcome is a hit, but
+    `spanExact` scored the selector's RAW args, so a case Core had already settled counted as a span failure. A scorer defect, not a prompt one.
+  - `todo.add-906`: the title keeps a leading "when I will do it" clause ("... 끝나고"); nothing said such a clause is not the title.
+  - `reminder.create-035` ("나중에 …"; gold ask, Core reason `time-outside-when`): the model omitted `when`; rule 5 "omit what the owner did
+    not imply" invites that although the owner did write a (vague) time.
+- **Scoring (A).** `scoreActionDecision` (the one scorer of the action, read-regression-on-A6 and R2 modes; selector-rag does not call it)
+  computes `spanExact` from Core's final args: the executed command's args for an executed gold, `coreFinalArgs` (`nlCoreSelectionArgs`)
+  for a gold ask or refusal and for an execute gold Core did not execute. Gate thresholds are unchanged (`spanExact >= 0.95`, now on final
+  args). `spanExactRaw` (record and summary) is the old raw-args comparison and never gates. Every record with a parsed selector output
+  also stores `rawArgs`, the model's JSON args only (at most 12 keys, string values cut at 200 characters, scalars only; no prompt, no raw
+  answer), so later analysis needs no rerun. The doc comment that said the raw args were scored was corrected.
+- **Rules (B), general, in the action-mode part only (rule 8 plus one rule-2 line).** No phrase list, no corpus text, no examples
+  (`example-contamination.test.ts` lints the v77 / v78 prompts too):
+  - F1 (rev. after Codex P2 round 2): a time plus a show or tell verb is reminder.create only when the owner affirmatively asks to be
+    notified later: the time is the moment to be told (a clock time, a delay such as "in N minutes", or a time stated as when to be told)
+    and the message names the thing to be told; then it is reminder.create also when the thing is a meeting or an appointment. Asking to
+    see or count existing reminders is reminder.list, and a negated or past-tense remark is none (rule 2). A day or period alone with a
+    show or tell verb ("tell me tomorrow's meetings", "this week's schedule") asks what the calendar holds now: calendar.events, as does
+    whether something is scheduled or when something is. If it is unclear whether the owner wants to be notified later or shown now,
+    NEEDS_CLARIFICATION with
+    both (rule 7). The rule-2 slot carries the pointer "A request to be notified later, at a stated moment, of a stated thing is
+    reminder.create (rule 8); a day alone is a lookup."
+  - F3: a todo.add title and a reminder body are the task itself; a leading clause that only says when the owner will get to it (after
+    something, once something is done) is not part of the span; the span is still one contiguous part of the owner's own words.
+  - F4: any time word the owner wrote in a reminder request, even a vague one, goes in `when`; the owner did imply a time, so rule 5 does
+    not omit it; Core decides whether it is too vague and asks (the existing `time-outside-when` path).
+  Why general: each rule states a category (what a remind request is, what a title is, what `when` holds) and delegates the decision to Core's
+  existing validation; none names a case, a verb list or a sample sentence. The read prompt v74 and planner v11 bytes are unchanged
+  (the lines are inserted only when `actions` is given).
+- **Codex P2 round 1.** (1) The first F1 wording equated "a time, a thing and a request to tell the owner" with reminder.create and so
+  overlapped rule 1's lookup meaning of 알려줘 (a lookup of tomorrow's meetings could become a reminder). F1 now requires an explicit
+  future-notification moment (or an explicit reminder word) and treats a bare day or period with a show or tell verb as calendar.events,
+  with NEEDS_CLARIFICATION for the unclear case; only v77 / v78 bytes changed, all other pins held. (2) `run-gates.test.sh` gained
+  behavioural tests: a tmux stub that executes the `new-session` command under a simulated stale global environment, checking that stale
+  `GATES_*` values do not reach the child, a caller value survives, and values with spaces, quotes and `$` round-trip exactly.
+- **Codex P2 round 2.** The round-1 F1 made "an explicit reminder or notification word" sufficient, so a request to SEE reminders
+  (a reminder.list request) or a negated notification request could satisfy the create condition. F1 now requires an affirmative request
+  to be notified later (word presence is never enough), names reminder.list for seeing or counting existing reminders and defers negated
+  or past-tense remarks to rule 2. Second fix of the same finding (fix-loop cap 2); only v77 / v78 bytes changed.
+- **Versioning.** `NlPromptRev` gains `'v77'`, valid only with `actions`: action `nl-select.v77`, R2 `nl-select.v78` (`NL_V77_PROMPT_VERSIONS`);
+  `buildSelectionPrompt` and `nlPromptVersionFor` reject `v77` in read mode, and `--prompt-rev v77` is a usage error for the read modes.
+  v71 / v72 (default), v75 / v76 (`rev: 'v74'` + actions) and read v73 / v74 bytes are unchanged (sha256 pins in `selection-prompt-v74.test.ts`:
+  v71 `24bbbd32...f06f`, v72 `768bcf90...7c34`, v75 `e08bc9a7...2544`, v76 `8ffb282c...a333`, read v74 `c6af3597...ea55`, planner v11
+  `a8869372...e11d`; new v77 `c4313c45...582f`, v78 `a93c69dd...19ff`, after Codex P2 round 2). The default action revision stays `v73` in this change: the flip
+  is a separate commit after the D12 gates (action, read-regression, r2 on `--prompt-rev v77`) pass. The runtime service's eval-only
+  `promptRev` dependency already carries any revision.
+- **Eval tools (C).** `eval:nl --cases id1,id2` now also works for `--mode action`, `read-regression` and `r2` (not `help-scope`): the exact
+  list, bound into the digest as `selectedCases`, an unknown id is refused (usage error, "unknown case <id>"), the plan lists the ids in
+  corpus order, the call cap and the guard's `maxCalls` follow the selected cases. A plan without `--cases` is byte-identical to before,
+  so existing digests do not move.
+- **What changed in the gates.** The action (and R2) gate's `spanExact` now measures final args, so a v71 / v75 baseline run recorded
+  before this change is not comparable on that line; rerun the baseline with the new scorer (records carry `rawArgs`, so a rerun is only
+  needed for the model's behaviour, not for rescoring). The R2 report is no longer span-free: records carry the bounded `rawArgs`.
+- **run-gates incident and fix (D).** 2026-11-04: a stale `GATES_PROMPT_REV=v74` in the tmux global environment turned a v71 baseline into a
+  v75 run unnoticed. `start` now hands the exported settings over and passes `env -u NAME` for every `GATES_*`, `QUOKY_USAGE_LIMIT_USD`
+  and `QUOKY_EVAL_ARCHIVE` name found in the script's own source that the calling shell does not export. After each mode's plan the
+  plan's `promptVersion` (and `promptRev`) is written to `run.log` and to the DONE line (`<mode> exit=.. status=.. prompt=<version>[,rev=<rev>]`),
+  so the version actually run is visible in the archive. Haiku default rate placeholder 0.03 -> 0.003 (measured). Optional
+  `GATES_CASES` is passed as `--cases` to intent, action, read-regression and r2.
+- **Not done.** No model call and no gate run was made; nothing was deployed; the live default is unchanged (v71 / v72).
+
+### v79 / v80: Korean glosses restored (read-regression failure of the v77 gate)
+
+- **Cause.** The v77 read-regression gate (archive `gates-v77-rr-r2-9db19ef9-20261104`) FAILED 2/3 runs; `jira.release` hit 25/28 in run 3.
+  `a8-06` ("이 릴리스 이슈 정리해줘 <release link>") and `a8-11` ("OP26 프로젝트 릴리스 목록 보여줘") started asking instead of selecting once the
+  v74 S3 change removed the Korean gloss from each catalog entry line (21/21 hits across seven v71 archives, which carry the glosses; misses on
+  v75 and v77, which do not). The action gate of v77 PASSED 3/3 (`gates-v77-action-9db19ef9-20261104`) and r2 v78 PASSED 3/3, so the rules F1 / F3 / F4
+  are not at fault; the gloss removal is.
+- **Change.** `rev: 'v79'` (action) / `nl-select.v79`, R2 `nl-select.v80` = rev v77 EXACTLY except that every entry line is
+  `- <id>: <en, with the v74 Slack / Confluence sentence removed> (<ko>)`. Only S3 of v74 is reverted; S5 (the source-name principle in rule 1,
+  no "Pick it whenever the message names X as the place to look" sentence) stays. All glosses are restored, not only `jira.release`: picking one
+  gloss would be gold fitting. Rejected in read mode like v77; `--prompt-rev v79` for eval:nl action / read-regression / r2.
+- **Size** (full live action prompt: every `NL_ACTION_EVAL_ENTRIES` entry, referenceContext none, short message; chars / UTF-8 bytes):
+  v71 37733 / 42871; v77 34577 / 38379; v79 35507 / 40407 (v79 vs v77 +930 / +2028; vs v71 -2226 / -2464).
+  R2: v72 40730 / 46230; v78 37485 / 41573; v80 38468 / 43730 (v80 vs v78 +983 / +2157; vs v72 -2262 / -2500).
+  The glosses cost about 0.9k chars (2.0k bytes) but the prompt stays about 6% shorter than the live v71 / v72 text.
+- **Superseded.** v77 / v78 are superseded and not to be enabled (they stay buildable for the archives and pins). The active default stays
+  v71 / v72 until v79 / v80 pass the D12 gates. No model call was made in this change.
+### Enabled: nl-select.v79 (A6 action) and nl-select.v80 (A6 R2) as the live defaults (2026-11-04)
+
+Owner approved enabling them (2026-11-04) after the D12 gates (haiku, 3 runs, head 6a5c47c9) all PASSED.
+
+- **Gates.** read-regression `--prompt-rev v79`, 3/3 PASSED (archive `gates-v79-rr-6a5c47c9-20261104`): overall 0.971 / 0.981 / 0.981. Action
+  `nl-select.v79`, 3/3 PASSED (`gates-v79-action-r2-6a5c47c9-20261104`): overall 0.986 / 0.984 / 0.986, spanExact 1 / 0.989 / 1. R2 `nl-select.v80`, 3/3 PASSED
+  (same archive): overall 1.000 / 0.993 / 0.993. Wrong targets 0, negative captures 0, action captures 0 in every run.
+- **Change.** `NL_ACTIVE_PROMPT_REVS` is `{ read: 'v74', action: 'v79' }`; `NL_ACTION_PROMPT_VERSION` is `nl-select.v79` and `NL_ACTION_R2_PROMPT_VERSION`
+  `nl-select.v80` (the old ids live on as `NL_PREVIOUS_ACTION_PROMPT_VERSION` / `NL_PREVIOUS_ACTION_R2_PROMPT_VERSION`, built by an explicit `rev: 'v73'`).
+  No rule text changed: the default action / R2 bytes equal the gated `rev: 'v79'` bytes (pinned sha256 asserted in `selection-prompt-v74.test.ts`);
+  `rev: 'v73'` still builds v71 / v72, `rev: 'v74'` v75 / v76, `rev: 'v77'` v77 / v78 byte for byte. Read v74 and planner v11 unchanged.
+  The read + write probe follows the action default (`AGENT_READ_WRITE_PROBE_PROMPT_VERSION` = `nl-select.v79`).
+- **Eval CLIs.** An absent `--prompt-rev` on action / read-regression / r2 is v79 (no stored rev); `--prompt-rev v73` is stored and reaches v71 / v72.
+- **Size.** Live action prompt 37,733 -> 35,507 chars; R2 40,730 -> 38,468.
+- **Rollback.** Set `NL_ACTIVE_PROMPT_REVS.action` back to `'v73'` and the two active ids back to `nl-select.v71` / `nl-select.v72`.

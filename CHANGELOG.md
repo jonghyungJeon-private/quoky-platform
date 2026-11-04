@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — enable nl-select.v79 (A6 action) and nl-select.v80 (A6 R2) as the live defaults (owner decision 2026-11-04)
+
+- **Changed.** `NL_ACTIVE_PROMPT_REVS.action` is `'v79'`: `buildSelectionPrompt` with `actions` and no `rev` builds the gated v79 bytes (R2 the v80 bytes);
+  `NL_ACTION_PROMPT_VERSION` / `NL_ACTION_R2_PROMPT_VERSION` are `nl-select.v79` / `nl-select.v80`. Live action prompt 37,733 -> 35,507 chars, R2 40,730 -> 38,468.
+  The previous ids are `NL_PREVIOUS_ACTION_PROMPT_VERSION` / `NL_PREVIOUS_ACTION_R2_PROMPT_VERSION` (`rev: 'v73'`, explicit only; bytes unchanged).
+- **Changed (eval tools).** Absent `--prompt-rev` on action / read-regression / r2 is v79; `--prompt-rev v73` is stored in the plan and builds v71 / v72.
+- **Unchanged.** Rule text, all earlier sha pins, read v74, planner v11, gate thresholds.
+
+## Unreleased — A6 action / R2 candidates nl-select.v79 / v80 restore the Korean glosses on the v77 text (owner decision 2026-11-04)
+
+- **Added.** `NlPromptRev` `'v79'` (action / R2 only): `nl-select.v79` / `nl-select.v80` = v77 / v78 with the Korean gloss back on every catalog entry
+  line (the v77 read-regression gate failed 2/3, `jira.release` 25/28). `--prompt-rev v79` for `eval:nl` action / read-regression / r2. v77 / v78 are
+  superseded; active prompts unchanged (read v74, action v71, R2 v72, planner v11).
+
+## Unreleased — A6 action / R2 candidates nl-select.v77 / v78; spanExact on Core's final args (owner decision 2026-11-04)
+
+- **Added.** `NlPromptRev` `'v77'` (action / R2 only): `nl-select.v77` / `nl-select.v78` = the v74 text plus general rules for reminder requests
+  (also for meetings), leading when-clauses in titles and any written time word in `when`. `--prompt-rev v77` for `eval:nl` action /
+  read-regression / r2; `eval:nl --cases` for those modes. `spanExactRaw` and `rawArgs` on action records.
+- **Changed.** `spanExact` is scored on Core's final args (same args as the outcome); the raw-selector span is the non-gating `spanExactRaw`.
+  `run-gates.sh start` unsets unexported settings in the tmux session, DONE and `run.log` name the prompt version, haiku rate 0.003, `GATES_CASES`.
+- **Unchanged.** Default action / R2 prompts (v71 / v72), v75 / v76, read v73 / v74, planner v10 / v11 bytes; gate thresholds.
+
 ## Unreleased — enable nl-select.v74 (read) and agent-plan.v11 (planner) (owner decision 2026-11-04)
 
 - **Changed.** `buildSelectionPrompt` without `rev` builds the read prompt `nl-select.v74` and the action / R2 prompts on the v73 rule
@@ -19,7 +42,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — eval gate quota guards (ops, `run-gates.sh`)
 
 - **Added.** Pre-start estimate guard: the planned call cap x a per-model rate (sonnet 0.06 % of the 5 h window per call, measured;
-  haiku 0.03 / opus 0.15 placeholders) is written to `estimate.txt` and shown by `status`; a start over `GATES_MAX_EST_PCT` (30), over
+  haiku 0.03 (replaced by the measured 0.003 on 2026-11-04) / opus 0.15 placeholders) is written to `estimate.txt` and shown by `status`; a start over `GATES_MAX_EST_PCT` (30), over
   the 95 % pause threshold with current usage, or with an unreadable cap is refused unless `GATES_OWNER_OK=<yyyymmdd-reason>`.
   In-run brake: a watchdog stops the eval process group at `GATES_STOP_PCT` (85) % of the ccusage limit; `DONE` carries
   `USAGE-STOP at <pct>%`, `run` exits 6, no retry (owner order 2026-11-04, after the 2026-11-03 run that took 0 % to 81 % in 12 min).

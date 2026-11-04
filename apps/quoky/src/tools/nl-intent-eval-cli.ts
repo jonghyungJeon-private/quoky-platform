@@ -2,7 +2,7 @@
  * Natural-language selection evaluation CLI (ADR-0120 D12).
  *
  *   pnpm eval:nl -- --mode plan [--model haiku] [--effort low] [--entries jira.issues,help.topic] [--negatives true|false] [--per-entry N] [--runs N] [--concurrency N]
- *                   [--prompt-rev v73|v74] [--fixture homonym-heldout] [--cases id1,id2,...]
+ *                   [--prompt-rev v73|v74|v77|v79] [--fixture homonym-heldout] [--cases id1,id2,...]
  *   pnpm eval:nl -- --mode run  <the same options> --approved-plan-digest <sha256 from plan>
  *   (or: pnpm --filter @quoky/app nl-eval -- …)
  *
@@ -150,11 +150,12 @@ Options: --model <claude model alias or full model id (recommended: a full id pi
          --entries <id,id,...>  --negatives true|false (default true)
          --per-entry <N, 0 = all>  --runs <1-5, default 1>  --concurrency <1-8, default 4>
          --timeout-ms <2000-10000, default QUOKY_NL_INTENT_TIMEOUT_MS if valid, else ${NL_EVAL_RUNTIME_TIMEOUT_MS}>
-Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, absent = the ACTIVE revision of the mode: read modes v74 (nl-select.v74), action / read-regression / r2 modes the v73 text (v71 / v72)>; explicit v73 on a read mode = the previous read prompt, explicit v74 on action / r2 = the candidates v75 / v76.
+Prompt revision (owner decision 2026-11-04): --prompt-rev <${NL_EVAL_PROMPT_REVS.join('|')}, absent = the ACTIVE revision of the mode: read modes v74 (nl-select.v74), action / read-regression / r2 modes the v73 text (v71 / v72)>; explicit v73 on a read mode = the previous read prompt, explicit v74 on action / r2 = the candidates v75 / v76, explicit v77 (action / read-regression / r2 only) = the candidates v77 / v78 (superseded), explicit v79 = v77 with the Korean glosses restored (candidates v79 / v80).
          It applies to the plan/run, action, read-regression and r2 modes (not help-scope), is printed in the plan, recorded in the report and
          bound into the plan digest: a plan made for one revision cannot be run under another (the digest differs, exit 3).
 Held-out fixture (plan/run only): --fixture <${Object.keys(NL_EVAL_FIXTURE_PATHS).join('|')}> adds the owner-approved held-out cases to the corpus (bound into the digest);
          --cases <id,id,...> restricts the plan to exactly these case ids (every id must exist; the list is bound into the digest).
+         --cases also works for --mode action, read-regression and r2 (not help-scope): exactly these ids, an unknown id is refused, the list is bound into the digest.
 Gate: >= ${NL_EVAL_GATE.overall * 100}% overall, >= ${NL_EVAL_GATE.perEntry * 100}% per entry, ${NL_EVAL_GATE.wrongCaptures} data-read wrong captures, help.topic captures <= ceil(${NL_EVAL_GATE.helpCaptureRate * 100}% of the negatives) (owner decision 2026-10-22).
 
 A6 (ADR-0120 amendment A6):
@@ -222,7 +223,7 @@ export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; opt
   }
   const mode = options['--mode'];
   if (mode === 'action' || mode === 'read-regression' || mode === 'r2' || mode === 'help-scope') {
-    for (const name of ['--entries', '--negatives', '--per-entry', '--fixture', '--cases']) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
+    for (const name of ['--entries', '--negatives', '--per-entry', '--fixture', ...(mode === 'help-scope' ? ['--cases'] : [])]) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
     if (mode === 'help-scope' && '--prompt-rev' in options) throw new UsageError('--prompt-rev is not an option of --mode help-scope (the classifier has its own prompt)');
     return { mode, options };
   }
@@ -486,7 +487,8 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
   if (flag !== undefined && timeoutMs === undefined) throw new UsageError('--timeout-ms must be a whole number of milliseconds from 2000 to 10000');
   // D4: for `--mode help-scope` `--model` / `--effort` override the STRONGER tier (production defaults sonnet / low).
   const stronger = mode === 'help-scope';
-  const promptRev = asUsage(() => parseNlPromptRev(options['--prompt-rev']));
+  const promptRev = asUsage(() => parseNlPromptRev(options['--prompt-rev'], 'action'));
+  const selectedCases = asUsage(() => parseCaseIds(options['--cases']));
   const settings = {
     model: options['--model'] ?? (stronger ? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL : DEFAULT_CLAUDE_INTENT_SELECTION_MODEL),
     effort: stronger ? strongerSelectionEffort(options) : selectionEffort(options),
@@ -494,6 +496,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
     concurrency: integer(options['--concurrency'], 4),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(promptRev !== undefined ? { promptRev } : {}),
+    ...(selectedCases !== undefined ? { cases: selectedCases } : {}),
   };
   const approved = options['--approved-plan-digest'];
   if (mode === 'r2') return await runR2Cli(settings, approved, deps);
@@ -531,7 +534,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
       deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
       return EXIT_BLOCKED;
     }
-    const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+    const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.caseIds.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
     const startedAt = deps.now();
     const records = await runActionEvaluation({ corpus, plan, provider: guard.provider, now: deps.now });
     await guard.settle();
@@ -574,7 +577,7 @@ export async function runActionCli(mode: 'action' | 'read-regression' | 'r2' | '
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.caseIds.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   const records = await runReadRegression({ cases, plan, provider: guard.provider, now: deps.now });
   await guard.settle();
@@ -616,7 +619,7 @@ function finishInvalid(
 }
 
 /** `--mode r2` (A6 R2): the agent-drafted, owner-approved R2 corpus through the real selector with R2 offered. */
-async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number; promptRev?: NlPromptRev }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
+async function runR2Cli(settings: { model: string; runs: number; concurrency: number; timeoutMs?: number; promptRev?: NlPromptRev; cases?: readonly string[] }, approved: string | undefined, deps: CliDeps & ActionCliDeps): Promise<number> {
   const { corpus, sha256, files } = (deps.loadR2ActionCorpus ?? loadR2ActionCorpus)();
   const problems = validateActionCorpus(corpus, NL_ACTION_R2_EVAL_ENTRIES);
   deps.stdout(`R2 corpus: ${corpus.cases.length} cases from ${files.length} file(s); schema problems: ${problems.length}`);
@@ -650,7 +653,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.caseIds.length * plan.runs, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   const records = await runActionEvaluation({ corpus, plan, provider: guard.provider, now: deps.now });
   await guard.settle();
@@ -662,7 +665,7 @@ async function runR2Cli(settings: { model: string; runs: number; concurrency: nu
   for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${JSON.stringify(summary)}`);
   deps.stdout(formatProviderOutcomes(outage));
   deps.stdout(formatGateRuns(`R2 gate (${plan.promptVersion})`, summaries, outageNoteOf(outage)));
-  // Content-free: ids, outcomes, entries and reasons only (never an owner text or a raw model answer).
+  // Ids, outcomes, entries, reasons and the bounded raw selector args (the model JSON args only; never a prompt or a raw model answer).
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
@@ -701,7 +704,7 @@ async function runHelpScopeCli(settings: { model: string; effort?: string; runs:
     deps.stderr('BLOCKED: the Claude CLI is not available; nothing was executed');
     return EXIT_BLOCKED;
   }
-  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: corpus.cases.length * plan.runs, intentSelectionTier: plan.tier, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.caseIds.length * plan.runs, intentSelectionTier: plan.tier, ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
   const startedAt = deps.now();
   const records = await runHelpScopeEvaluation({ cases: corpus.cases, plan, provider: guard.provider });
   await guard.settle();
