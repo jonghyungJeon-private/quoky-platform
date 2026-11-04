@@ -23,8 +23,7 @@ import { resolve } from 'node:path';
 import {
   Capability,
   NL_CATALOG_ENTRY_IDS,
-  NL_CANDIDATE_PROMPT_VERSIONS,
-  NL_SELECTION_PROMPT_VERSION,
+  nlPromptVersionFor,
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
@@ -49,7 +48,7 @@ import {
 } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
-import { parseNlPromptRev } from './prompt-rev';
+import { parseNlPromptRev, storedNlPromptRev } from './prompt-rev';
 
 export const NL_EVAL_GATE = { overall: 0.95, perEntry: 0.9, wrongCaptures: 0, helpCaptureRate: 0.01 } as const;
 
@@ -204,7 +203,7 @@ export interface NlEvalPlanOptions {
 export interface NlEvalPlan {
   readonly kind: 'nl-intent-eval';
   readonly promptVersion: string;
-  /** Present only for a non-default revision (`v74`): the plan then differs from, and cannot be run as, a v73 plan. */
+  /** Present only when the revision differs from the read mode's active one (`v73` = the previous read prompt): the plan then cannot be run as an active-revision plan. */
   readonly promptRev?: NlPromptRev;
   /** Present only with `--fixture`. */
   readonly fixture?: string;
@@ -257,11 +256,11 @@ export function buildPlan(corpus: NlEvalCorpus, corpusSha256: string, options: N
   }
   return {
     kind: 'nl-intent-eval',
-    promptVersion: rev === 'v74' ? NL_CANDIDATE_PROMPT_VERSIONS.read : NL_SELECTION_PROMPT_VERSION,
-    ...(rev === 'v74' ? { promptRev: rev } : {}),
+    promptVersion: nlPromptVersionFor('read', rev),
+    ...(storedNlPromptRev('read', rev) !== undefined ? { promptRev: storedNlPromptRev('read', rev) } : {}),
     ...(options.fixture !== undefined ? { fixture: options.fixture } : {}),
     ...(options.cases !== undefined ? { selectedCases: [...options.cases] } : {}),
-    promptSha256: createHash('sha256').update(buildSelectionPrompt({ entries: ALL_ENTRIES, text: '', ...(rev === 'v74' ? { rev } : {}) })).digest('hex'),
+    promptSha256: createHash('sha256').update(buildSelectionPrompt({ entries: ALL_ENTRIES, text: '', ...(storedNlPromptRev('read', rev) !== undefined ? { rev: storedNlPromptRev('read', rev) } : {}) })).digest('hex'),
     corpusSha256,
     model: options.model,
     ...(options.effort !== undefined ? { effort: options.effort } : {}),
@@ -517,7 +516,7 @@ export async function runEvaluation(input: {
         const prompt = buildSelectionPrompt({
           entries: ALL_ENTRIES,
           text: prepared.text,
-          ...(input.plan.promptRev === 'v74' ? { rev: 'v74' as const } : {}),
+          ...(input.plan.promptRev !== undefined ? { rev: input.plan.promptRev } : {}),
           ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId)
             ? { previous: priorPromptInput(golden.prior) }
             : {}),

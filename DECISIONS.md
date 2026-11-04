@@ -32580,7 +32580,7 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
 - **Evidence.** `.claude/skills/quoky-ship/scripts/run-gates.test.sh` (stub pnpm / npx, no model call).
 ## Prompt slimming and the source-name principle (nl-select.v74 / agent-plan.v11 candidates) (2026-11-04, branch `claude/v5-planner-slim`)
 
-- **Status: candidate, NOT deployed, NOT enabled.** The active prompts are still `nl-select.v73` (read), `v71` (A6), `v72` (R2)
+- **Status: candidate, NOT deployed, NOT enabled (superseded 2026-11-04: read v74 and planner v11 are enabled, see "Enable nl-select.v74 (read)" below).** The active prompts are still `nl-select.v73` (read), `v71` (A6), `v72` (R2)
   and `agent-plan.v10`; their bytes and pins are unchanged. The candidates are selected only by `rev: 'v74'` on
   `buildSelectionPrompt` (A6 `nl-select.v75`, R2 `nl-select.v76`, ids in `NL_CANDIDATE_PROMPT_VERSIONS`) and `rev: 'v11'` on
   `buildAgentPlanPrompt` (`agent-plan.v11`). No config, runtime path, eval default or gate uses them. Enabling them needs the D12
@@ -32641,3 +32641,41 @@ amendment 3 Live UAT note ("에이전트 중지 does not close an already-open u
   runtime never sets it). `run-gates.sh` passes `GATES_PROMPT_REV` / `GATES_PLAN_REV` identically to plan and run.
 - **Not done.** No model call was made; the screen runs (haiku and sonnet, runs 3) wait for the owner's quota approval of their
   digests. The selector-rag experiment's gold list (`selector-rag/gold.ts`) does not include the fixture (its digests stay put).
+
+## Enable nl-select.v74 (read) and agent-plan.v11 (planner); A6 stays v71/v72 (2026-11-04, branch `claude/v5-enable-v74`)
+
+- **Owner decision (2026-11-04).** Enable ONLY the read selector `nl-select.v74` and the planner `agent-plan.v11` in production. The A6
+  action prompt stays `nl-select.v71` and the A6 R2 prompt `nl-select.v72` (both built from the v73 rule text), byte for byte unchanged.
+- **Gates (D12, haiku).** Archive `gates-v74v11-A-39813d9a-20261104`: intent (nl-select.v74) 3/3 and agent-plan (agent-plan.v11) 3/3
+  PASSED. Archive `gates-v74v11-B-39813d9a-20261104`: read-regression 3/3 and r2 (nl-select.v76) 3/3 PASSED. The action candidate
+  `nl-select.v75` FAILED (spanExact 2/3), so it is not enabled and the action / R2 prompts stay on the v73 text.
+- **Per-mode default design.** `NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v73' }` (selection-prompt.ts). `buildSelectionPrompt`
+  without `rev` uses the read value when no `actions` are given and the action value otherwise (R2 follows action); an explicit `rev`
+  always wins (`rev: 'v73'` = the previous read prompt, `rev: 'v74'` with `actions` = the candidates v75 / v76). `nlPromptVersionFor(mode, rev?)`
+  maps (read | action | r2, rev?) to `nl-select.v73|v74|v71|v72|v75|v76`, and `nlEffectivePromptRev` to the revision; `NlSelectionService`
+  (cache key) and the eval tools use it instead of their own ternaries. `NL_SELECTION_PROMPT_VERSION` = `nl-select.v74`,
+  `NL_PREVIOUS_READ_PROMPT_VERSION` = `nl-select.v73`; `NL_CANDIDATE_PROMPT_VERSIONS` = `{ action: v75, r2: v76 }`.
+  Planner: `AGENT_PLAN_PROMPT_VERSION` = `agent-plan.v11`, `AGENT_PLAN_ACTIVE_REV` = `v11`; `rev: 'v10'` builds v10 byte for byte
+  (it passes `rev: 'v73'` explicitly to the read builder). `agent-run-service` and its shadow log follow. The `promptRev` dependency
+  of `NlSelectionService` stays eval-only (an explicit override). `read-write-probe` stays on `NL_ACTION_PROMPT_VERSION` (v71); the
+  warmup probe (read prompt) follows the read default.
+- **Byte identity.** Default read prompt sha256 = the gated `rev: 'v74'` read text (`c6af3597...ea55`); default planner = the gated
+  v11 text (`a8869372...e11d`); default action = v71 text (`24bbbd32...f06f`, unchanged from before this change), default R2 = v72
+  text (`768bcf90...7c34`, unchanged); explicit v73 read = `974bd118...4ed2` and explicit v10 planner = `6543ae28...92d6`. All pinned in
+  `selection-prompt-v74.test.ts`; the older pins (`nl-action-entries.test.ts` v73 read / v71, `plan-prompt.test.ts` v10, golden
+  `nl-select.v73.prompts.json`) did not change and now run with an explicit `rev: 'v73'` / `'v10'`. The rule text was not edited.
+- **Eval-CLI default semantics.** An absent `--prompt-rev` / `--plan-rev` now means the ACTIVE revision of the mode (read modes
+  v74; action, read-regression and r2 modes the v73 text = v71 / v72; planner v11) instead of "v73 / v10". A plan stores `promptRev` /
+  `planRev` only when it differs from the mode's active revision (`storedNlPromptRev` / `storedAgentPlanRev` in `prompt-rev.ts`); its
+  `promptVersion` and `promptSha256` always match the prompt built, so a plan made without the option reproduces the production
+  prompt. Explicit values keep working (`--prompt-rev v73` on a read mode = the old v73 read; `--prompt-rev v74` on action / r2 =
+  v75 / v76; `--plan-rev v10`).
+- **Digests that change.** Default-plan digests of the read modes (`eval:nl --mode plan|run`) and of `eval:agent-plan` now hash
+  `nl-select.v74` / `agent-plan.v11` and their prompt sha256; selector-rag and context-eval plans that embed the read version
+  follow the constant. Action / read-regression / r2 default plans (v71 / v72) keep their digests. A plan approved before this change
+  is refused after it (digest mismatch, exit 3); explicit `--prompt-rev v73` / `--plan-rev v10` plans carry the old version and
+  prompt hash plus the stored rev, so their digest is new too (they did not exist as stored revs before).
+- **Rollback.** Set `NL_ACTIVE_PROMPT_REVS.read` back to `'v73'` and `NL_SELECTION_PROMPT_VERSION` to `nl-select.v73`; for the
+  planner set `AGENT_PLAN_ACTIVE_REV` back to `'v10'` and `AGENT_PLAN_PROMPT_VERSION` to `agent-plan.v10` (swap the two version
+  constants). The previous bytes are still built by the explicit revisions, so nothing else moves.
+- **Not done.** No model call was made in this change; nothing was deployed.

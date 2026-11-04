@@ -188,7 +188,7 @@ common_args() {
     # not reach it; the gate measures the production default (sonnet / low) unless GATES_HELP_SCOPE_MODEL is set.
     help-scope) printf -- '--runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_HELP_SCOPE_MODEL:-}" ] && printf -- ' --model %s' "$GATES_HELP_SCOPE_MODEL" ;;
     *) printf -- '--model %s --runs %s --concurrency %s' "$MODEL" "$RUNS" "$CONC"
-      # Prompt revision (owner decision 2026-11-04): GATES_PROMPT_REV (v73|v74) / GATES_PLAN_REV (v10|v11), identical in plan and run.
+      # Prompt revision (owner decision 2026-11-04): GATES_PROMPT_REV (v73|v74) / GATES_PLAN_REV (v10|v11), identical in plan and run; unset = the ACTIVE revision of the mode (read v74, action/r2 v73 text, planner v11).
       case "$1" in
         agent-plan) [ -n "${GATES_PLAN_REV:-}" ] && printf -- ' --plan-rev %s' "$GATES_PLAN_REV" ;;
         intent|action|read-regression|r2) [ -n "${GATES_PROMPT_REV:-}" ] && printf -- ' --prompt-rev %s' "$GATES_PROMPT_REV" ;;

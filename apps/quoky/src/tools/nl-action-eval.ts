@@ -34,8 +34,7 @@ import {
   NL_ACTION_ENTRIES,
   NL_ACTION_ENTRY_IDS,
   NL_ACTION_PROMPT_VERSION,
-  NL_ACTION_R2_PROMPT_VERSION,
-  NL_CANDIDATE_PROMPT_VERSIONS,
+  nlPromptVersionFor,
   NL_CATALOG_ENTRY_IDS,
   NL_PENDING_METADATA_KEY,
   NL_SELECTION_TIMEOUT_MS,
@@ -78,7 +77,7 @@ import {
   type Session,
 } from '@quoky/core';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
-import { parseNlPromptRev } from './prompt-rev';
+import { parseNlPromptRev, storedNlPromptRev } from './prompt-rev';
 import { NL_EVAL_HELP_ENTRY, NL_EVAL_RELEASE_LINK_OUTPUT, helpCaptureAllowance, nlEvalPriorFor, priorPromptInput, type NlEvalCase } from './nl-intent-eval';
 // The `@quoky/core` export, never a relative path into the core sources (the built CLI cannot load a .ts file).
 import { LAST_READ_METADATA_KEY, NL_ITEM_SUMMARIZE_SOURCES, formatNlRef, isJiraReleaseLinkOnly, nlInheritHeldRange, nlOneStepClauseGroundedFlags, nlOwnerStatedRange, parseNlRef, withLastRead } from '@quoky/core';
@@ -428,7 +427,7 @@ export async function decideActionCase(
   };
   const service = new NlSelectionService({
     mode: 'active',
-    ...(options.promptRev === 'v74' ? { promptRev: options.promptRev } : {}),
+    ...(options.promptRev !== undefined ? { promptRev: options.promptRev } : {}),
     router: { select: async () => provider },
     sessions: {
       updateMetadataEntry: async (_ref, key, update) => {
@@ -702,7 +701,7 @@ export type NlActionEvalKind = 'nl-action-eval' | 'nl-read-regression' | 'nl-act
 export interface NlActionPlan {
   readonly kind: NlActionEvalKind;
   readonly promptVersion: string;
-  /** Present only for a non-default revision (`v74` = nl-select.v75 / v76): the plan then cannot be run as an active-revision plan. */
+  /** Present only for a non-active revision (action / R2 modes: `v74` = nl-select.v75 / v76): the plan then cannot be run as an active-revision plan. */
   readonly promptRev?: NlPromptRev;
   readonly promptSha256: string;
   readonly corpusSha256: string;
@@ -725,7 +724,7 @@ export interface NlActionPlan {
 
 /** The v19 instruction text with every entry offered and nothing referenced: any prompt edit changes the digest. */
 export function actionPromptSha256(entries: readonly NlCatalogEntry[] = NL_ACTION_EVAL_ENTRIES, rev?: NlPromptRev): string {
-  return createHash('sha256').update(buildSelectionPrompt({ entries, text: '', actions: { referenceContext: 'none' }, ...(rev === 'v74' ? { rev } : {}) })).digest('hex');
+  return createHash('sha256').update(buildSelectionPrompt({ entries, text: '', actions: { referenceContext: 'none' }, ...(storedNlPromptRev('action', rev) !== undefined ? { rev } : {}) })).digest('hex');
 }
 
 export function buildActionPlan(
@@ -739,11 +738,11 @@ export function buildActionPlan(
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127}$/.test(options.model)) throw new Error('invalid model');
   const r2 = kind === 'nl-action-r2-eval';
   const rev = parseNlPromptRev(options.promptRev);
-  const candidate = rev === 'v74';
+  const stored = storedNlPromptRev('action', rev);
   return {
     kind,
-    promptVersion: candidate ? (r2 ? NL_CANDIDATE_PROMPT_VERSIONS.r2 : NL_CANDIDATE_PROMPT_VERSIONS.action) : r2 ? NL_ACTION_R2_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION,
-    ...(candidate ? { promptRev: rev } : {}),
+    promptVersion: nlPromptVersionFor(r2 ? 'r2' : 'action', rev),
+    ...(stored !== undefined ? { promptRev: stored } : {}),
     promptSha256: r2 ? actionPromptSha256(NL_ACTION_R2_EVAL_ENTRIES, rev) : actionPromptSha256(undefined, rev),
     corpusSha256,
     model: options.model,
@@ -959,7 +958,7 @@ export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimes
   return buildSelectionPrompt({
     entries: NL_ACTION_EVAL_ENTRIES,
     text: prepared.text,
-    ...(rev === 'v74' ? { rev } : {}),
+    ...(storedNlPromptRev('action', rev) !== undefined ? { rev } : {}),
     actions: { referenceContext: golden.context === undefined ? 'none' : renderReferenceContext(readRegressionReferenceState(golden.context, now)) },
     ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: priorPromptInput(golden.prior) } : {}),
   });

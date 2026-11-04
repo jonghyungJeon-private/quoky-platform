@@ -80,7 +80,7 @@ import {
   type NlCatalogEntry,
   type ValidatedAgentStep,
 } from '@quoky/core';
-import { parseAgentPlanRev, type AgentPlanEvalRev } from './prompt-rev';
+import { parseAgentPlanRev, storedAgentPlanRev, type AgentPlanEvalRev } from './prompt-rev';
 import { sameJiraReleaseOutcome } from './jira-world-snapshot';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import { EvalCallTimeout, helpCaptureAllowance, withTimeout } from './nl-intent-eval';
@@ -978,7 +978,7 @@ export function applyReadWriteProbe(
 }
 
 export function agentPlanPromptSha256(rev?: AgentPlanEvalRev): string {
-  return sha256(buildAgentPlanPrompt({ entries: READ_ENTRIES, text: '', ...(rev === 'v11' ? { rev } : {}) }));
+  return sha256(buildAgentPlanPrompt({ entries: READ_ENTRIES, text: '', ...(storedAgentPlanRev(rev) !== undefined ? { rev } : {}) }));
 }
 
 export function buildAgentPlanEvalPlan(
@@ -1013,7 +1013,7 @@ export function buildAgentPlanEvalPlan(
   return {
     kind: 'agent-plan-eval',
     promptVersion: agentPlanPromptVersion(rev),
-    ...(rev === 'v11' ? { planRev: rev } : {}),
+    ...(storedAgentPlanRev(rev) !== undefined ? { planRev: rev } : {}),
     ...(options.heldout !== undefined ? { heldout: options.heldout } : {}),
     ...(options.cases !== undefined ? { selectedCases: [...options.cases] } : {}),
     promptSha256: agentPlanPromptSha256(rev),
@@ -1128,7 +1128,7 @@ export async function runAgentPlanEvaluation(input: {
           const prompt = buildAgentPlanPrompt({
             entries: READ_ENTRIES,
             text: prepared.text,
-            ...(input.plan.planRev === 'v11' ? { rev: 'v11' as const } : {}),
+            ...(input.plan.planRev !== undefined ? { rev: input.plan.planRev } : {}),
             ...(golden.prior !== undefined && isNlWave1EntryId(golden.prior.entryId) ? { previous: { entryId: golden.prior.entryId, args: golden.prior.args } } : {}),
           });
           const started = clock();

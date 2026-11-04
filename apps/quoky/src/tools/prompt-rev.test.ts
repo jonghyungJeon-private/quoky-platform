@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { NL_CANDIDATE_PROMPT_VERSIONS, NL_SELECTION_PROMPT_VERSION, type AiProvider } from '@quoky/core';
+import { NL_CANDIDATE_PROMPT_VERSIONS, NL_CATALOG_ENTRY_IDS, NL_SELECTION_PROMPT_VERSION, NL_WAVE1_ENTRIES, buildSelectionPrompt, type AiProvider } from '@quoky/core';
 import { AGENT_PLAN_EVAL_REVS, NL_EVAL_PROMPT_REVS, parseAgentPlanRev, parseCaseIds, parseNlPromptRev } from './prompt-rev';
 import { actionPromptSha256, buildActionPlan, computeActionPlanDigest, decideActionCase } from './nl-action-eval';
 import { buildPlan, computePlanDigest, loadCorpus, loadScoredCorpus, loadScoredCorpusWithFixture, nlEvalFixturePath, scoreOutput } from './nl-intent-eval';
@@ -43,33 +44,38 @@ describe('prompt revision options (owner decision 2026-11-04)', () => {
     expect(parseCaseIds(' a1 , b2 ')).toEqual(['a1', 'b2']);
   });
 
-  it('eval:nl plan: the default stays v73 with no new plan key; v74 changes the version, the prompt hash and the digest', () => {
+  it('eval:nl plan: the default is the active read v74 with no new plan key; explicit v73 (the previous prompt) stores its rev and changes the version, the prompt hash and the digest', () => {
     const { corpus, sha256 } = loadScoredCorpus();
     const base = buildPlan(corpus, sha256, BASE);
     expect(base.promptVersion).toBe(NL_SELECTION_PROMPT_VERSION);
+    expect(base.promptVersion).toBe('nl-select.v74');
+    expect(base.promptSha256).toBe(createHash('sha256').update(buildSelectionPrompt({ entries: NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]), text: '' })).digest('hex'));
     expect(Object.keys(base)).not.toContain('promptRev');
     expect(Object.keys(base)).not.toContain('fixture');
     expect(Object.keys(base)).not.toContain('selectedCases');
-    expect(computePlanDigest(buildPlan(corpus, sha256, { ...BASE, promptRev: 'v73' }))).toBe(computePlanDigest(base));
-    const candidate = buildPlan(corpus, sha256, { ...BASE, promptRev: 'v74' });
-    expect(candidate).toMatchObject({ promptVersion: NL_CANDIDATE_PROMPT_VERSIONS.read, promptRev: 'v74' });
+    expect(computePlanDigest(buildPlan(corpus, sha256, { ...BASE, promptRev: 'v74' }))).toBe(computePlanDigest(base));
+    const candidate = buildPlan(corpus, sha256, { ...BASE, promptRev: 'v73' });
+    expect(candidate).toMatchObject({ promptVersion: 'nl-select.v73', promptRev: 'v73' });
     expect(candidate.promptSha256).not.toBe(base.promptSha256);
     expect(computePlanDigest(candidate)).not.toBe(computePlanDigest(base));
     expect(() => buildPlan(corpus, sha256, { ...BASE, promptRev: 'v99' as never })).toThrow(/--prompt-rev/);
   });
 
-  it('eval:nl CLI: an unknown rev is a usage error, and a v73 digest is refused for v74 before any provider exists', async () => {
+  it('eval:nl CLI: an unknown rev is a usage error, and a default-rev digest is refused for v73 before any provider exists', async () => {
     expect(() => planOptions({ '--prompt-rev': 'v75' })).toThrow(/--prompt-rev must be one of/);
     const bad = nlDeps();
     expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--prompt-rev', 'v75'], bad)).toBe(EXIT_USAGE);
     const planned = nlDeps();
     expect(await runCli(['--mode', 'plan', '--per-entry', '1'], planned)).toBe(EXIT_OK);
     const candidate = nlDeps();
-    expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--prompt-rev', 'v74'], candidate)).toBe(EXIT_OK);
+    expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--prompt-rev', 'v73'], candidate)).toBe(EXIT_OK);
     expect(digestOf(candidate.out)).not.toBe(digestOf(planned.out));
-    expect(candidate.out.join('\n')).toContain('"promptRev": "v74"');
+    expect(candidate.out.join('\n')).toContain('"promptRev": "v73"');
+    const explicitActive = nlDeps();
+    expect(await runCli(['--mode', 'plan', '--per-entry', '1', '--prompt-rev', 'v74'], explicitActive)).toBe(EXIT_OK);
+    expect(digestOf(explicitActive.out)).toBe(digestOf(planned.out));
     const crossed = nlDeps();
-    expect(await runCli(['--mode', 'run', '--per-entry', '1', '--prompt-rev', 'v74', '--approved-plan-digest', digestOf(planned.out)], crossed)).toBe(EXIT_BLOCKED);
+    expect(await runCli(['--mode', 'run', '--per-entry', '1', '--prompt-rev', 'v73', '--approved-plan-digest', digestOf(planned.out)], crossed)).toBe(EXIT_BLOCKED);
     expect(await runCli(['--mode', 'run', '--per-entry', '1', '--approved-plan-digest', digestOf(candidate.out)], nlDeps())).toBe(EXIT_BLOCKED);
   });
 
@@ -82,11 +88,14 @@ describe('prompt revision options (owner decision 2026-11-04)', () => {
     }
   });
 
-  it('A6 plans: v74 is nl-select.v75 (action) / v76 (R2) with its own prompt hash and digest; the default is untouched', () => {
+  it('A6 plans: the default is nl-select.v71 (action) / v72 (R2) and stores no rev; explicit v74 is v75 / v76 with its own prompt hash and digest', () => {
     const options = { model: 'haiku', runs: 3, concurrency: 4 };
     const base = buildActionPlan('nl-action-eval', ['x'], 'sha', options);
     const candidate = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v74' });
     expect(Object.keys(base)).not.toContain('promptRev');
+    expect(base.promptVersion).toBe('nl-select.v71');
+    expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', options).promptVersion).toBe('nl-select.v72');
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v73' }))).toBe(computeActionPlanDigest(base));
     expect(candidate).toMatchObject({ promptVersion: NL_CANDIDATE_PROMPT_VERSIONS.action, promptRev: 'v74' });
     expect(computeActionPlanDigest(candidate)).not.toBe(computeActionPlanDigest(base));
     expect(actionPromptSha256(undefined, 'v74')).not.toBe(actionPromptSha256());
@@ -161,14 +170,15 @@ describe('eval:agent-plan revision, fixture and subset', () => {
   const hashes = { corpusSha256: loaded.sha256, oneStepCorpusSha256: loaded.oneStepSha256 };
   const options = { model: 'haiku', effort: 'low', runs: 3, concurrency: 4, includePending: false, gitHead: 'a'.repeat(40) };
 
-  it('the default stays v10 with no new plan key; v11 changes the version, the prompt hash and the digest', () => {
+  it('the default is the active v11 with no new plan key; explicit v10 stores its rev and changes the version, the prompt hash and the digest', () => {
     const base = buildAgentPlanEvalPlan(cases, hashes, loaded.corpus.fixture, options);
-    expect(base.promptVersion).toBe('agent-plan.v10');
+    expect(base.promptVersion).toBe('agent-plan.v11');
+    expect(base.promptSha256).toBe(agentPlanPromptSha256('v11'));
     for (const key of ['planRev', 'heldout', 'selectedCases']) expect(Object.keys(base)).not.toContain(key);
-    expect(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(cases, hashes, loaded.corpus.fixture, { ...options, planRev: 'v10' }))).toBe(computeAgentPlanEvalDigest(base));
-    const candidate = buildAgentPlanEvalPlan(cases, hashes, loaded.corpus.fixture, { ...options, planRev: 'v11' });
-    expect(candidate).toMatchObject({ promptVersion: 'agent-plan.v11', planRev: 'v11' });
-    expect(candidate.promptSha256).toBe(agentPlanPromptSha256('v11'));
+    expect(computeAgentPlanEvalDigest(buildAgentPlanEvalPlan(cases, hashes, loaded.corpus.fixture, { ...options, planRev: 'v11' }))).toBe(computeAgentPlanEvalDigest(base));
+    const candidate = buildAgentPlanEvalPlan(cases, hashes, loaded.corpus.fixture, { ...options, planRev: 'v10' });
+    expect(candidate).toMatchObject({ promptVersion: 'agent-plan.v10', planRev: 'v10' });
+    expect(candidate.promptSha256).toBe(agentPlanPromptSha256('v10'));
     expect(candidate.promptSha256).not.toBe(base.promptSha256);
     expect(computeAgentPlanEvalDigest(candidate)).not.toBe(computeAgentPlanEvalDigest(base));
     expect(() => buildAgentPlanEvalPlan(cases, hashes, loaded.corpus.fixture, { ...options, planRev: 'v12' as never })).toThrow(/--plan-rev/);
@@ -201,11 +211,11 @@ describe('eval:agent-plan revision, fixture and subset', () => {
     const v10 = planDeps();
     const v11 = planDeps();
     expect(await runPlanCli(['--mode', 'plan', ...screen], v10)).toBe(PLAN_OK);
-    expect(await runPlanCli(['--mode', 'plan', ...screen, '--plan-rev', 'v11'], v11)).toBe(PLAN_OK);
+    expect(await runPlanCli(['--mode', 'plan', ...screen, '--plan-rev', 'v10'], v11)).toBe(PLAN_OK);
     expect(digestOf(v10.out)).not.toBe(digestOf(v11.out));
-    expect(v11.out.join('\n')).toContain('"planRev": "v11"');
+    expect(v11.out.join('\n')).toContain('"planRev": "v10"');
     expect(v10.out.join('\n')).toMatch(/at most 66 \(\(21 planner calls/);
-    expect(await runPlanCli(['--mode', 'run', ...screen, '--plan-rev', 'v11', '--approved-plan-digest', digestOf(v10.out)], planDeps())).toBe(PLAN_BLOCKED);
+    expect(await runPlanCli(['--mode', 'run', ...screen, '--plan-rev', 'v10', '--approved-plan-digest', digestOf(v10.out)], planDeps())).toBe(PLAN_BLOCKED);
     expect(await runPlanCli(['--mode', 'run', ...screen, '--approved-plan-digest', digestOf(v11.out)], planDeps())).toBe(PLAN_BLOCKED);
   });
 });

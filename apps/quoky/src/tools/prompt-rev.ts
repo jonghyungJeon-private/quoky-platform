@@ -1,16 +1,28 @@
-import type { NlPromptRev } from '@quoky/core';
+import { AGENT_PLAN_ACTIVE_REV, nlEffectivePromptRev, type NlPromptMode, type NlPromptRev } from '@quoky/core';
 
 /**
  * Prompt-revision option of the eval CLIs (owner decision 2026-11-04, "평가 도구 연결 진행해": the tools must compare the
- * active prompt with the candidate). `v73` is the active rule text, `v74` the candidate (its read / A6 action / A6 R2
- * prompts are nl-select.v74 / .v75 / .v76); the planner's `v10` is active and `v11` the candidate. An absent value is the
- * active revision, so a plan made without the option keeps its digest.
+ * active prompt with the other revision). An ABSENT value is the ACTIVE revision of the plan's mode (owner decision
+ * 2026-11-04, enablement): read modes v74 (nl-select.v74), action / read-regression / R2 modes v73 text (nl-select.v71 /
+ * v72), planner v11. Explicit values keep working: `--prompt-rev v73` on a read mode = the previous read v73;
+ * `--prompt-rev v74` on an action / R2 mode = the candidates v75 / v76; `--plan-rev v10` = the previous planner. A plan
+ * stores a revision only when it differs from its mode's active one ({@link storedNlPromptRev}), so a plan made without
+ * the option reproduces the production prompt of that mode.
  */
 export const NL_EVAL_PROMPT_REVS = ['v73', 'v74'] as const;
-export const NL_EVAL_DEFAULT_PROMPT_REV: NlPromptRev = 'v73';
 export const AGENT_PLAN_EVAL_REVS = ['v10', 'v11'] as const;
 export type AgentPlanEvalRev = (typeof AGENT_PLAN_EVAL_REVS)[number];
-export const AGENT_PLAN_EVAL_DEFAULT_REV: AgentPlanEvalRev = 'v10';
+export const AGENT_PLAN_EVAL_DEFAULT_REV: AgentPlanEvalRev = AGENT_PLAN_ACTIVE_REV;
+
+/** The revision a plan of `mode` records: the explicit one when it differs from the mode's active revision, else none. */
+export function storedNlPromptRev(mode: NlPromptMode, rev: NlPromptRev | undefined): NlPromptRev | undefined {
+  return rev !== undefined && rev !== nlEffectivePromptRev(mode) ? rev : undefined;
+}
+
+/** The planner revision a plan records: only a non-active one (`v10`). */
+export function storedAgentPlanRev(rev: AgentPlanEvalRev | undefined): AgentPlanEvalRev | undefined {
+  return rev !== undefined && rev !== AGENT_PLAN_EVAL_DEFAULT_REV ? rev : undefined;
+}
 
 /** Validate a `--prompt-rev` value; `undefined` stays `undefined` (the active revision). Throws on an unknown one. */
 export function parseNlPromptRev(value: string | undefined): NlPromptRev | undefined {

@@ -262,8 +262,10 @@ function assertContentFree(lines: readonly LogFields[], forbidden: readonly stri
 describe('selection prompt — S1 narrowing follow-up rule', () => {
   it('tells the selector that a narrowing follow-up with no previous selection is a clarification, never CLEAR or none', async () => {
     const { buildSelectionPrompt, NL_SELECTION_PROMPT_VERSION } = await import('./selection-prompt');
-    const prompt = buildSelectionPrompt({ entries: ALL, text: '그 중에 스크럼만' });
-    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v73');
+    const prompt = buildSelectionPrompt({ entries: ALL, text: '그 중에 스크럼만', rev: 'v73' });
+    expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
+    // The default read prompt (v74) carries the same rule-7 sentence.
+    expect(buildSelectionPrompt({ entries: ALL, text: '그 중에 스크럼만' })).toContain('names only a period or a reference with Previous selection none');
     // v73: rule 7 covers it (a period or a reference with Previous selection none does not settle one entry).
     expect(prompt).toContain('names only a period or a reference with Previous selection none ("이번 주 거", "그 중에 X만", "among those, only X");');
     expect(prompt).toContain('never CLEAR and never none');

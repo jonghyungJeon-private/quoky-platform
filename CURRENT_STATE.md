@@ -5,12 +5,20 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Enable nl-select.v74 (read) and agent-plan.v11 (planner) (2026-11-04, branch `claude/v5-enable-v74`)
+
+- **Active prompt versions: read `nl-select.v74`, action `nl-select.v71`, R2 `nl-select.v72`, planner `agent-plan.v11`.** The A6 action
+  and R2 prompts are the v73 rule text byte for byte (the v75 candidate failed its gate, 2/3 spanExact); `rev: 'v73'` (read) and
+  `rev: 'v10'` (planner) still build the previous prompts. Defaults live in `NL_ACTIVE_PROMPT_REVS` / `AGENT_PLAN_ACTIVE_REV`.
+- **Eval CLIs.** An absent `--prompt-rev` / `--plan-rev` is the active revision of the mode (read modes v74, action / read-regression /
+  r2 v73 text, planner v11); a plan stores a revision only when it differs. Record: DECISIONS "Enable nl-select.v74 (read)".
+
 ### nl-select.v74 / agent-plan.v11 candidate prompts (2026-11-04, branch `claude/v5-planner-slim`)
 
 - **Done (Core, offline, no model call).** Candidate prompts behind `rev: 'v74'` / `rev: 'v11'`: the source-name principle and the S1-S5
   de-duplication (selector 27,924 -> 23,906 chars, planner 32,637 -> 28,619). Active prompts (`v73`/`v71`/`v72`, `agent-plan.v10`)
   and their pins are untouched. Record: DECISIONS "Prompt slimming and the source-name principle".
-- **Not enabled.** Nothing selects the candidates; they need the D12 gates (haiku and sonnet tiers) and the owner's approval of the eval
+- **Not enabled (superseded 2026-11-04: read v74 and planner v11 are now the defaults, see the section above).** Nothing selects the candidates; they need the D12 gates (haiku and sonnet tiers) and the owner's approval of the eval
   quota first. The 16-case held-out homonym set is owner-approved (2026-11-04, "16건 승인, 평가 도구 연결 진행해") as
   `golden/nl-intent.homonym-heldout.v1.json`.
 - **Eval tools wired (offline, no model call).** `eval:nl --prompt-rev v73|v74`, `eval:agent-plan --plan-rev v10|v11`,

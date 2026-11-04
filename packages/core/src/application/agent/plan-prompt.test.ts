@@ -109,8 +109,9 @@ describe('agent-plan.v9 prompt', () => {
   });
 
   it('is pinned byte for byte (a change needs a new version and its gate run)', () => {
-    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v10');
-    const full = buildAgentPlanPrompt({ entries: READS, text: 'x' });
+    expect(AGENT_PLAN_PROMPT_VERSION).toBe('agent-plan.v11');
+    // `rev: 'v10'` is the previous planner prompt (pin unchanged); the default is v11 (pinned in selection-prompt-v74.test.ts).
+    const full = buildAgentPlanPrompt({ entries: READS, text: 'x', rev: 'v10' });
     expect(createHash('sha256').update(full).digest('hex')).toBe(PINNED_SHA256);
   });
 });

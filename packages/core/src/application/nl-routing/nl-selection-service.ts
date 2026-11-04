@@ -95,7 +95,7 @@ import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput }
 import { nlSelectionParseFailure, parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
 import { nlSameEgress as sameEgress } from './selection-egress';
-import { NL_ACTION_PROMPT_VERSION, NL_ACTION_R2_PROMPT_VERSION, NL_CANDIDATE_PROMPT_VERSIONS, NL_SELECTION_PROMPT_VERSION, buildSelectionPrompt, offersR2ItemSources, type NlPromptRev } from './selection-prompt';
+import { buildSelectionPrompt, nlPromptVersionFor, offersR2ItemSources, type NlPromptRev } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlFrameIsCopularReference, nlIsRequestForm, nlRequestsSomething } from './request-shape';
 import { nlReadNotRequest } from './read-statement';
@@ -318,7 +318,7 @@ export type NlSelectionDecision =
 
 export interface NlSelectionServiceDeps {
   readonly mode: NlIntentMode;
-  /** Evaluation only: the prompt revision of the rule text (`v74` = the candidate). Absent = the active revision, byte for byte. */
+  /** Evaluation only: an explicit prompt revision of the rule text. Absent = the active revision of the turn's mode (read v74, action / R2 v73 text). */
   readonly promptRev?: NlPromptRev;
   readonly router: { select(capability: Capability, context?: ProviderSelectionContext): Promise<AiProvider> };
   /** ADR-0120 amendment A2 (`QUOKY_NL_GRAMMAR_YIELD=on`): Class B listing grammars may yield to selection. Default off. */
@@ -2563,10 +2563,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
       text: prepared.text,
       previous,
       entryIds: turn.entries.map((entry) => entry.id),
-      promptVersion:
-        this.deps.promptRev === 'v74'
-          ? actionsOn ? (offersR2ItemSources(turn.entries) ? NL_CANDIDATE_PROMPT_VERSIONS.r2 : NL_CANDIDATE_PROMPT_VERSIONS.action) : NL_CANDIDATE_PROMPT_VERSIONS.read
-          : actionsOn ? (offersR2ItemSources(turn.entries) ? NL_ACTION_R2_PROMPT_VERSION : NL_ACTION_PROMPT_VERSION) : NL_SELECTION_PROMPT_VERSION,
+      promptVersion: nlPromptVersionFor(actionsOn ? (offersR2ItemSources(turn.entries) ? 'r2' : 'action') : 'read', this.deps.promptRev),
     });
     const hit = bypass ? undefined : this.cache.get(cacheKey);
     if (hit !== undefined && clock() - hit.at < NL_SELECTION_CACHE_TTL_MS && !(actionsOn && !isCacheableOutput(hit.output))) {
@@ -2576,7 +2573,7 @@ export class NlSelectionService implements TurnDeliveryObserver {
     const prompt = buildSelectionPrompt({
       entries: turn.entries,
       text: prepared.text,
-      ...(this.deps.promptRev === 'v74' ? { rev: 'v74' as const } : {}),
+      ...(this.deps.promptRev !== undefined ? { rev: this.deps.promptRev } : {}),
       ...(previous !== undefined ? { previous } : {}),
       ...(reference !== undefined ? { actions: { referenceContext: renderReferenceContext(reference) } } : {}),
     });
