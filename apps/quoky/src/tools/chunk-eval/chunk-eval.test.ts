@@ -597,6 +597,32 @@ describe('harder synthetic set v2 (ADR-0124 section 16)', () => {
     expect(dup.some((item) => item.shape === 'adr-file' && item.needleKind === 'code-line' && item.prepared.includes('```ts\nconst MAX_RETRY_'))).toBe(true);
   });
 
+  it('dense cases hold at least three times v1\'s same-kind decoys, all present in the item', () => {
+    const dense = v2.filter((item) => item.tags.includes('dense'));
+    expect(dense.length).toBeGreaterThan(100);
+    for (const item of dense) {
+      const base = item.length <= 6_000 ? 2 : item.length <= 20_000 ? 3 : 5;
+      expect(item.sameKindDecoys.length, item.id).toBeGreaterThanOrEqual(3 * base);
+      for (const text of item.sameKindDecoys) {
+        expect(item.prepared.includes(text), item.id).toBe(true);
+        expect(text, item.id).not.toBe(item.needle.text);
+      }
+    }
+  });
+
+  it('no near-duplicate decoy contains an answer value of the needle', () => {
+    for (const item of v2.filter((candidate) => candidate.nearDuplicates.length > 0)) {
+      for (const near of item.nearDuplicates) for (const answer of item.answers) expect(near.text.includes(answer), `${item.id} ${answer}`).toBe(false);
+    }
+  });
+
+  it('needleFraction is the needle offset inside its paragraph, recomputed from the spans', () => {
+    for (const item of v2.filter((candidate) => candidate.longParagraph !== undefined)) {
+      const span = item.longParagraph as NonNullable<ChunkEvalCaseV2['longParagraph']>;
+      expect(span.needleFraction, item.id).toBe(Math.round(((item.needle.start - span.start) / (span.end - span.start)) * 1000) / 1000);
+    }
+  });
+
   it('uses only fictional names and no link, address or token-like literal', () => {
     for (const item of v2) expect(item.prepared, item.id).not.toMatch(/https?:\/\/|@[a-z]+\.|sk-[A-Za-z0-9]{8}/);
   });

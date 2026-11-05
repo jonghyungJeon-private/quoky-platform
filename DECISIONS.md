@@ -32469,13 +32469,14 @@ model, no embedder, no network; the lexical arm (EL) and today's clip (baseline)
 This note changes no ratified text, no chunker, Core parameter, BM25 setting or threshold. CH1-CH7 thresholds stay **proposals**.
 Phase 0 only: no LLM, no embedder, no Ollama, no network; baseline clip and the lexical arm EL. Reports under `data/eval/` (gitignored).
 
+- **Regenerated after review (generator correctness, not tuning).** The corpus was regenerated to fix three spec violations found in review: (a) `dense` cases now hold at least 3x v1's count of same-kind decoys (a dense case draws only decoys of the needle's kind; the field `sameKindDecoys` records them; a test checks every dense case), (b) a near-duplicate decoy never contains an answer value of the needle (values are redrawn until distinct; tested), (c) `needleFraction` is the needle's offset inside its own paragraph, not counting an adjacent decoy (tested against a recomputation for every long-paragraph case). No template, question bank, scorer or chunker setting changed. The numbers of the previous commit (0dc241d3) are superseded and not recorded.
 - **Why.** The v1 corpus could not tell whether chunking should differ by data type: every question carried the needle's rare
   codename (EL 100% in six shapes), no paragraph passed the 1,200 cap (the split and overlap path never ran) and no question named a
   section (headings had nothing to show). The owner approved a harder set before any per-shape parameter decision.
 - **Built.** `--set v2` (`corpus-v2.ts`, `chunk-eval-v2.ts`; record `chunk-eval-corpus.freeze.v2.json`; same BLOCKED /
   `regenerate-freeze` semantics; v1 `f395110d...` and drive-format `4cec7f4c...` unchanged and verified, tested). Seed
   `quoky-adr-0124-ch1-v2-2026-11-05`, v1's syllable tables, fictional names only, Korean / English / mixed. **v2 sha256
-  `09bf8552e2f573a2c263d9f2865b559f64da3149cd1587747d66eae46d4671f4`, 447 cases** = 7 shapes x 4 tiers x 5 depths x 3 languages (420),
+  `299e4b76299763f5ee5f1f2b9e3cea93e81a0a70db87bbe2b05687597e552e34`, 447 cases** = 7 shapes x 4 tiers x 5 depths x 3 languages (420),
   + the 2 MiB ADR tier **reduced to 3 cases** (v1 had 15; one per language at depths 30/50/70; v1's 2 MiB cases cost ~18 s and added nothing),
   + 24 Markdown twins of the Drive section-name cases. A run takes ~25 s. Per case: needle topic phrase and codename, answer values, question
   mode, feature tags, long-paragraph span, near-duplicates (with the slots that render them), named section (number, title, range).
@@ -32493,37 +32494,34 @@ Phase 0 only: no LLM, no embedder, no Ollama, no network; baseline clip and the 
   (mail, thread), repeated template paragraphs (Drive, Jira, Slack, ADR), look-alike rows, a fenced block of near-identical `MAX_RETRY_*` lines.
   (5) *dense* (222): 3x the same-kind decoys plus decoys that reuse the question's attribute words and decoys that name the target topic.
   The question and decoy template banks were written before any scorer ran.
-- **Assignment rule, one correction before the numbers below.** The first draft (digest `8ec8374c...`, headline EL 36.0%, baseline 9.6%) used
-  `cell % 5` for the question mode, which left depths 50 and 90 with **no** `named` case (depth was confounded with the control share). The rule is
-  now a linear form with a coefficient on every coordinate (and a mod-4 rule for near-duplicates); shares per depth, length and language
-  are balanced (named 14-21 per depth). No template or scorer setting changed; the 8ec8374c numbers are not used.
-- **Window recall (hits/n; baseline | EL).** All 46/447 = 10.3% | 166/447 = 37.1% (EL R@1 0.159, R@5 0.447, MRR 0.289). By shape: mail
-  8/60 | 22/60, thread 6/60 | 22/60, Drive doc 13/84 | 29/84, workbook 2/60 | 25/60, Jira 6/60 | 26/60, Slack 3/60 | 22/60, ADR file 8/63 | 20/63.
-  By feature: `named` 5/84 | 72/84 (86%); `paraphrase` 29/291 | 75/291 (26%); `section-name` 12/72 | 19/72; `long-paragraph` 14/147 | 48/147; `lp-middle`
-  12/72 | 26/72; `lp-cut` 2/75 | 22/75; `near-duplicate` 4/96 | 42/96; `dense` 29/222 | 79/222; `topic-shared` 7/51 | 33/51 (65%); `topic-disjoint` 22/240 | 42/240 (18%).
-  EL by length 6k 50.5%, 20k 45.1%, 60k 28.8%, 87k 25.2%, 2 MiB 0/3; by depth 10/30/50/70/90 = 37/38/39/39/33%; by language ko 42%, en 31%, mixed 38%.
-- **Shape x feature (EL hits/n: named, paraphrase, long paragraph, near-duplicate).** mail 11/12, 11/48, 7/20, 5/15; thread 10/12, 12/48, 6/20, 6/15;
-  Drive 10/12, 6/24 (+ 13/48 section-name), 4/26, 4/10; workbook 11/12, 14/48, 13/20, 7/15; Jira 9/12, 17/48, 7/20, 8/15; Slack 11/12, 11/48, 6/20, 6/15;
-  ADR file 10/12, 4/27 (+ 6/24 section-name), 5/21, 6/11. Baseline on the same cells is 0-38% (the 38% is mail `topic-shared`, 3/8; the workbook is 0-4%).
-- **Exact EL misses by shape x needle kind (misses/n; total 281 of 447).** mail amount 9/15, date 9/15, decision 10/15, role 10/15; thread date 12/20,
-  decision 14/20, role 12/20; Drive doc amount 11/22, date 16/22, decision 15/20, role 13/20; workbook sheet-row 35/60; Jira amount 10/15, date 7/15,
-  decision 8/15, role 9/15; Slack date 11/20, decision 13/20, role 14/20; ADR file code-line 20/23, date 10/20, decision 13/20. (Baseline misses 401: mail
-  52, thread 54, Drive 71, workbook 58, Jira 54, Slack 57, ADR 55.) The 12 `named` misses: role 6, decision 2, code-line 2, sheet-row 1, amount 1.
+- **Assignment rule.** The question mode, long paragraph, near-duplicate and dense assignments are linear forms with a coefficient on every cell coordinate, so each feature's share is balanced over depth, length and language (named 14-21 per depth). No template or scorer setting depends on it.
+- **Window recall (hits/n; baseline | EL).** All 46/447 = 10.3% | 155/447 = 34.7% (EL R@1 0.148, R@5 0.430, MRR 0.275). By shape: mail
+  8/60 | 18/60, thread 6/60 | 26/60, Drive doc 13/84 | 26/84, workbook 2/60 | 22/60, Jira 6/60 | 25/60, Slack 3/60 | 18/60, ADR file 8/63 | 20/63 (EL 30-43%).
+  By feature: `named` 5/84 | 70/84 (83%); `paraphrase` 29/291 | 68/291 (23%); `section-name` 12/72 | 17/72; `long-paragraph` 14/147 | 46/147; `lp-middle`
+  12/72 | 28/72; `lp-cut` 2/75 | 18/75; `near-duplicate` 4/96 | 42/96; `dense` 29/222 | 67/222; `topic-shared` 7/51 | 35/51 (69%); `topic-disjoint` 22/240 | 33/240 (14%).
+  EL by length 6k 52.3%, 20k 36.9%, 60k 27.0%, 87k 23.4%, 2 MiB 0/3; by depth 10/30/50/70/90 = 36/34/38/33/31%; by language ko 39%, en 31%, mixed 34%.
+- **Shape x feature (EL hits/n: named, paraphrase, long paragraph, near-duplicate).** mail 9/12, 9/48, 5/20, 5/15; thread 10/12, 16/48, 6/20, 8/15;
+  Drive 9/12, 6/24 (+ 11/48 section-name), 5/26, 4/10; workbook 12/12, 10/48, 10/20, 7/15; Jira 10/12, 15/48, 9/20, 7/15; Slack 10/12, 8/48, 6/20, 6/15;
+  ADR file 10/12, 4/27 (+ 6/24 section-name), 5/21, 5/11. Baseline on the same cells is 0-38% (the 38% is mail `topic-shared`, 3/8; the workbook is 0-4%).
+- **Exact EL misses by shape x needle kind (misses/n; total 292 of 447).** mail amount 10/15, date 9/15, decision 11/15, role 12/15; thread date 12/20,
+  decision 11/20, role 11/20; Drive doc amount 14/22, date 16/22, decision 13/20, role 15/20; workbook sheet-row 38/60; Jira amount 9/15, date 9/15,
+  decision 9/15, role 8/15; Slack date 13/20, decision 15/20, role 14/20; ADR file code-line 19/23, date 10/20, decision 14/20. (Baseline misses 401: mail
+  52, thread 54, Drive 71, workbook 58, Jira 54, Slack 57, ADR 55.) The 14 `named` misses: role 7, decision 3, amount 2, code-line 1, date 1.
 - **Chunker on long paragraphs.** The split and overlap path now runs: passages per long paragraph 3.6-4.0 (max 6); overlap passages in long-paragraph cases
-  mail 94, thread 93, Drive 122, Jira 88, Slack 75, ADR 97 (3-9% of their passages; **0 in every other case**); the workbook splits a long row into 4 passages and
-  has no overlap by rule. The needle is held by two passages in 0 of 147 cases, and lies inside an overlap span in 17 (mail 5, thread 2, Drive 3, Jira 1, Slack 2, ADR 4).
+  mail 96, thread 90, Drive 129, Jira 87, Slack 74, ADR 97 (3-9% of their passages; **0 in every other case**); the workbook splits a long row into 4 passages and
+  has no overlap by rule. The needle is held by two passages in 0 of 147 cases, and lies inside an overlap span in 18 (mail 6, thread 3, Drive 1, Jira 1, Slack 5, ADR 2).
   `overCap` stays **0** in every shape: it marks a passage over 1,200 code points, which only an unsplittable grapheme can cause, not a long paragraph. Passage
-  size per shape (mean): mail 787, thread 716, Drive 744, workbook 668, Jira 587, Slack 370, ADR 646.
-- **Drive Markdown vs plain text on section-name questions (24 pairs).** Baseline 4/24 both (no difference). EL text 5/24 (20.8%) -> Markdown 8/24 (33.3%):
-  both 3, text only 2, Markdown only 5, neither 14; by language en 2 -> 2, ko 2 -> 3, mixed 1 -> 3 (of 8 each); by tier 6k 3 -> 1, 20k 2 -> 3, 60k 0 -> 2, 87k 0 -> 2 (of 6 each);
-  EL Recall@1 0.083 -> 0.083, MRR 0.208 -> 0.238. A 5-2 split of 7 discordant pairs (two-sided exact p about 0.45) is **not significant**. ADR file (native `##`) section-name: EL 6/24.
+  size per shape (mean): mail 787, thread 717, Drive 745, workbook 667, Jira 587, Slack 369, ADR 645.
+- **Drive Markdown vs plain text on section-name questions (24 pairs).** Baseline 4/24 both (no difference). EL text 4/24 (16.7%) -> Markdown 7/24 (29.2%):
+  both 2, text only 2, Markdown only 5, neither 15; by language en 3 -> 2, ko 1 -> 2, mixed 0 -> 3 (of 8 each); by tier 6k 2 -> 1, 20k 2 -> 1, 60k 0 -> 3, 87k 0 -> 2 (of 6 each);
+  EL Recall@1 0.042 -> 0.083, MRR 0.184 -> 0.226. A 5-2 split of 7 discordant pairs (two-sided exact p about 0.45) is **not significant**. ADR file (native `##`) section-name: EL 6/24.
 - **Observations only (per-shape parameters and thresholds stay owner decisions).** (1) What moves lexical recall in this set is shared words and length, not shape:
-  paraphrase 26% vs named 86%; topic with a shared word 65% vs none 18%; by length 50% at 6k falling to 25% at 87k. The seven shapes sit in a 32-43% band (n = 60 each, about
-  +-12 points), with no shape separated except the ADR code-line needle (3/23, same-pattern lines). (2) Long paragraphs did not hurt EL (paraphrase 21% in 94 long-paragraph cases vs 28% in 197
-  others; named 77% vs 89%/95%, small n): the sentence split plus overlap kept the needle findable, and no needle straddled two passages. (3) Markdown headings moved EL toward
-  more hits when the question names the section (5 vs 2 discordant pairs), in the 20k-87k tiers (the 6k tier went the other way, 3 -> 1), but the sample is too small to call. (4) Nothing here argues for a different passage size per shape; Slack's
+  paraphrase 23% vs named 83%; topic with a shared word 69% vs none 14%; by length 52% at 6k falling to 23% at 87k. The seven shapes sit in a 30-43% band (n = 60 each, about
+  +-12 points), with no shape separated except the ADR code-line needle (4/23, same-pattern lines). (2) Long paragraphs did not hurt EL (paraphrase 19% in 94 long-paragraph cases vs 25% in 197
+  others; named 77% vs 88%, small n): the sentence split plus overlap kept the needle findable, and no needle straddled two passages. (3) Markdown headings moved EL toward
+  more hits when the question names the section (5 vs 2 discordant pairs), in the 60k and 87k tiers (the 6k and 20k tiers went the other way, 2 -> 1), but the sample is too small to call. (4) Nothing here argues for a different passage size per shape; Slack's
   370-code-point passages and Jira's 587 are products of short messages, not of a measured loss.
-- **What phase 0 still cannot tell.** The paraphrase set is built to defeat a lexical arm, so 18-26% is a floor for BM25, not a forecast; whether a multilingual embedder (E0-E3) or the hybrid
+- **What phase 0 still cannot tell.** The paraphrase set is built to defeat a lexical arm, so 14-23% is a floor for BM25, not a forecast; whether a multilingual embedder (E0-E3) or the hybrid
   arm (EH) recovers the topic-disjoint cases, and across Korean questions about English code, needs those arms. One 3,000-code-point window is the only readout; recall with two windows is untested. The
   heading effect uses synthetic titles and one layout, 24 pairs. Real mail and Drive text (tables, lists, signatures, forwarded chains) differs from these templates. Per-shape parameters should be
   decided after E0-E3 / EH on this set.

@@ -107,6 +107,8 @@ export interface ChunkEvalCaseV2 extends ChunkEvalCase {
   /** The paragraph (or sheet row) holding the needle, for long-paragraph cases. Code-point range in `prepared`. */
   readonly longParagraph?: { readonly placement: 'middle' | 'cut'; readonly start: number; readonly end: number; readonly needleFraction: number };
   readonly nearDuplicates: readonly NearDuplicate[];
+  /** The decoys of the needle's own kind (other topic and codename); a `dense` case holds at least three times v1's count (2 / 3 / 5 by tier). */
+  readonly sameKindDecoys: readonly string[];
   /** The named section (section-name cases): its number, title and code-point range (title line through the section's last block). */
   readonly section?: { readonly number: number; readonly title: string; readonly start: number; readonly end: number };
   /** Drive doc, section-name cases only: the text / Markdown pair. */
@@ -518,10 +520,14 @@ export function buildCaseV2(coordinates: V2Coordinates): ChunkEvalCaseV2[] {
   // the needle
   const needleSlots = slotValues(kind, language, random, code, needleTopicText(targetTopic, kind));
   const needleText = renderNeedle(kind, language, needleSlots);
+  // Decoys of the needle's own kind (the `sameKindDecoys` field). A dense case draws only decoys of that kind; the others keep v1's mix.
+  const sameKindTexts: string[] = [];
   const sameKindDecoy = (): string => {
-    const decoyKind = (random() < 0.5 ? kind : pick(random, table ? (['sheet-row'] as const) : kinds)) as NeedleKind;
+    const decoyKind = (feature.dense || random() < 0.5 ? kind : pick(random, table ? (['sheet-row'] as const) : kinds)) as NeedleKind;
     const index = otherTopic();
-    return renderNeedle(decoyKind, language, slotValues(decoyKind, language, random, freshCode(decoyKind), needleTopicText(index, decoyKind)));
+    const text = renderNeedle(decoyKind, language, slotValues(decoyKind, language, random, freshCode(decoyKind), needleTopicText(index, decoyKind)));
+    if (decoyKind === kind) sameKindTexts.push(text);
+    return text;
   };
 
   // the long paragraph's size and target offset: reachable at the requested depth (generic rule, fixed before any run)
@@ -617,10 +623,14 @@ export function buildCaseV2(coordinates: V2Coordinates): ChunkEvalCaseV2[] {
   const nearTexts: string[] = [];
   if (feature.nearDuplicate) {
     for (let n = 0; n < 3; n += 1) {
-      const slots = slotValues(kind, language, random, freshCode(kind), needleTopicText(otherTopic(), kind));
-      const merged: SlotsV2 = kind === 'date' ? { ...slots, a: needleSlots.a } : slots;
-      nearSlots.push(merged);
-      nearTexts.push(renderNeedle(kind, language, merged));
+      // The answer value changes: redraw until no answer value of the needle occurs in the decoy.
+      let slots = slotValues(kind, language, random, freshCode(kind), needleTopicText(otherTopic(), kind));
+      for (let tries = 0; tries < 200 && answersOf(kind, needleSlots).some((answer) => renderNeedle(kind, language, slots).includes(answer)); tries += 1) {
+        slots = slotValues(kind, language, random, freshCode(kind), needleTopicText(otherTopic(), kind));
+      }
+      if (answersOf(kind, needleSlots).some((answer) => renderNeedle(kind, language, slots).includes(answer))) throw new Error(`corpus-v2: no distinct near-duplicate value for ${id}`);
+      nearSlots.push(slots);
+      nearTexts.push(renderNeedle(kind, language, slots));
     }
   }
   const quoted = (text: string, depthMarks: number): string => {
@@ -634,16 +644,20 @@ export function buildCaseV2(coordinates: V2Coordinates): ChunkEvalCaseV2[] {
   // the needle unit (possibly a long paragraph or a fenced block) and its cluster with adjacent near-duplicates
   let needleUnit = needleText;
   let needleOffset = 0;
+  /** The needle's offset inside its own unit (the paragraph, the row, the fenced block), before any adjacent decoy is added. */
+  let unitOffset = 0;
   let lpPlacement: 'middle' | 'cut' | undefined;
   if (feature.longParagraph !== false) {
     const built = longParagraph(random, language, decoyNames, code, longSize, needleText, longTarget, table, feature.longParagraph === 'middle');
     needleUnit = built.text;
     needleOffset = built.needleOffset;
+    unitOffset = built.needleOffset;
     lpPlacement = feature.longParagraph;
   } else if (codeBlock && nearTexts.length > 0) {
     const lines = [nearTexts[0] as string, nearTexts[1] as string, needleText, nearTexts[2] as string];
     needleUnit = `\`\`\`ts\n${lines.join('\n')}\n\`\`\``;
     needleOffset = cpLength(`\`\`\`ts\n${lines.slice(0, 2).join('\n')}\n`);
+    unitOffset = needleOffset;
   }
   let cluster = needleUnit;
   if (nearTexts.length > 0 && !codeBlock) {
@@ -782,7 +796,8 @@ export function buildCaseV2(coordinates: V2Coordinates): ChunkEvalCaseV2[] {
       tags,
       ...(lpPlacement === undefined
         ? {}
-        : { longParagraph: { placement: lpPlacement, ...range(needleUnit), needleFraction: Math.round((needleOffset / cpLength(needleUnit)) * 1000) / 1000 } }),
+        : { longParagraph: { placement: lpPlacement, ...range(needleUnit), needleFraction: Math.round((unitOffset / cpLength(needleUnit)) * 1000) / 1000 } }),
+      sameKindDecoys: sameKindTexts,
       nearDuplicates: nearTexts.map((text, at) => ({ kind, slots: nearSlots[at] as SlotsV2, text, ...range(text) })),
       ...(section === undefined ? {} : { section }),
       ...(titled && shape === 'drive-doc' ? { pairId: id, format } : {}),
@@ -832,6 +847,7 @@ function caseDigest(item: ChunkEvalCaseV2): string {
         item.tags,
         item.longParagraph ?? null,
         item.nearDuplicates,
+        item.sameKindDecoys,
         item.section ?? null,
         item.pairId ?? null,
         item.format ?? null,
