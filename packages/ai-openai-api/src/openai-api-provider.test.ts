@@ -636,3 +636,14 @@ describe('PRV-3 usage report (ADR-0115 D8)', () => {
     expect(result.usage).toEqual({ label: `openai:${MODEL}` });
   });
 });
+
+describe('systemPrompt (selector prompt caching): no system channel, so the request is the joined text', () => {
+  it('sends exactly systemPrompt + newline + prompt as the one user input, like an unsplit request', async () => {
+    const split = fakeFetch(() => reply('Hello!'));
+    const whole = fakeFetch(() => reply('Hello!'));
+    await chat(split.fetch).execute({ ...CHAT_REQUEST, prompt: 'turn part', systemPrompt: 'stable part' });
+    await chat(whole.fetch).execute({ ...CHAT_REQUEST, prompt: 'stable part\nturn part' });
+    expect(String(split.calls[0]!.init.body)).toBe(String(whole.calls[0]!.init.body));
+    expect(String(split.calls[0]!.init.body)).not.toContain('systemPrompt');
+  });
+});

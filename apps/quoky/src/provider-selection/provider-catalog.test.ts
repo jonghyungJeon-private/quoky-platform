@@ -149,6 +149,22 @@ describe('ProviderCatalog choices', () => {
     expect(view.executionLocality).toBeUndefined();
   });
 
+  it('a chat-tier view forwards the request untouched, systemPrompt included (the inner provider decides how to use it)', async () => {
+    const seen: unknown[] = [];
+    const view = chatTierView({
+      id: 'inner',
+      capabilities: [{ capability: Capability.GENERAL_CHAT, priority: 50 }],
+      isAvailable: async () => true,
+      execute: async (request) => {
+        seen.push(request);
+        return { text: 'ok' };
+      },
+    }, 'inner:view');
+    const request = { capability: Capability.GENERAL_CHAT, prompt: 'turn', systemPrompt: 'stable' };
+    await view.execute(request);
+    expect(seen).toEqual([request]);
+  });
+
   it('a chat-tier model variant keeps its base provider as its family (claude-cli:opus -> claude-cli)', () => {
     const inner = { id: 'inner', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: 'ok' }) };
     expect(chatTierView(inner, 'claude-cli:opus').family).toBe('claude-cli');

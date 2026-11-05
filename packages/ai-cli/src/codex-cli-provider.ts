@@ -11,6 +11,7 @@ import {
   ProviderProbeIndeterminateError,
   readGeneralChatReplyPolicy,
 } from '@quoky/core';
+import { unsplitRequest } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
@@ -529,6 +530,7 @@ export class CodexCliProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     if (!CODEX_CHAT_CAPABILITIES.includes(request.capability)) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'codex provider serves chat-tier capabilities only');
     }

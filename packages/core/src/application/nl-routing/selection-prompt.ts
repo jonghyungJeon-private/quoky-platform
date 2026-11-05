@@ -217,8 +217,8 @@ export const NL_PREVIOUS_READ_PROMPT_VERSION = 'nl-select.v73';
  * v71 = v70 with the rule-conflict cleanup of read v73 (rule 8 points to rule 3b).
  */
 export const NL_PREVIOUS_ACTION_PROMPT_VERSION = 'nl-select.v71';
-/** The ACTIVE A6 action prompt id (owner decision 2026-11-04: `rev: 'v79'`, nl-select.v79); the old v71 is `rev: 'v73'`, explicit only. */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v79';
+/** The ACTIVE A6 action prompt id (candidate, gates pending: `rev: 'v81'`, nl-select.v81 = the v79 text on the split transport); `rev: 'v79'` (nl-select.v79) is the rollback, the old v71 is `rev: 'v73'`, explicit only. */
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v81';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -259,8 +259,8 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v79';
  * v72 = the v48 R2 lines on top of v71 (the rule-conflict cleanup; not the read v72).
  */
 export const NL_PREVIOUS_ACTION_R2_PROMPT_VERSION = 'nl-select.v72';
-/** The ACTIVE A6 R2 prompt id (owner decision 2026-11-04: `rev: 'v79'`, nl-select.v80); the old v72 is `rev: 'v73'`, explicit only. */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v80';
+/** The ACTIVE A6 R2 prompt id (candidate, gates pending: `rev: 'v81'`, nl-select.v82 = the v80 text on the split transport); `rev: 'v79'` (nl-select.v80) is the rollback, the old v72 is `rev: 'v73'`, explicit only. */
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v82';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -295,7 +295,7 @@ export interface NlSelectionPromptInput {
   readonly replaceStaticExamples?: boolean;
   /**
    * Prompt revision of the rule text. Absent: the active revision of the mode ({@link NL_ACTIVE_PROMPT_REVS}: read `v74`,
-   * action / R2 `v79`; an explicit `v73` with actions builds the old v71 / v72). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
+   * action / R2 `v81`; an explicit `v73` with actions builds the old v71 / v72). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
    * source-name principle (nl-select.v74)"); enabled for read mode only (owner decision 2026-11-04), so `v74` with
    * `actions` is the candidate A6 / R2 text (v75 / v76, gate failed). `v77` (only with `actions`) = that text plus the
    * residual rules F1 / F3 / F4 (nl-select.v77 / v78 candidates). An explicit value always wins (eval, rollback).
@@ -304,14 +304,14 @@ export interface NlSelectionPromptInput {
 }
 
 /** The selectable prompt revisions of the rule text. */
-export type NlPromptRev = 'v73' | 'v74' | 'v77' | 'v79';
+export type NlPromptRev = 'v73' | 'v74' | 'v77' | 'v79' | 'v81';
 
 /**
  * `v77` exists only with `actions`: the A6 action / R2 prompt on the v74 rule text plus the three general residual rules
  * (DECISIONS "A6 action prompt on the v74 text with residual-rule fixes (nl-select.v77 / v78 candidates)"). The read mode
  * has no `v77`: {@link buildSelectionPrompt} and {@link nlPromptVersionFor} reject it there.
  */
-export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77', 'v79'];
+export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77', 'v79', 'v81'];
 
 /**
  * `v79` (action / R2 only) = `v77` EXACTLY, except that every catalog entry line keeps its Korean gloss as before v74
@@ -319,6 +319,19 @@ export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77', 'v79']
  * principle (the Slack / Confluence sentence removal) stays; only the v74 S3 change is reverted.
  */
 export const NL_V79_PROMPT_VERSIONS = { action: 'nl-select.v79', r2: 'nl-select.v80' } as const;
+
+/**
+ * `v81` (action / R2 only) = `v79` text EXACTLY (rule text unchanged), sent on the split transport: the stable part
+ * ({@link buildSelectionPromptParts}) as the system prompt and the per-turn part as the user message. The model sees the
+ * same words in a different role, so gates measure it as its own version (DECISIONS "Selector prompt caching: stable
+ * prefix as system prompt (nl-select.v81 / v82)"). `rev: 'v79'` stays the unsplit rollback.
+ */
+export const NL_V81_PROMPT_VERSIONS = { action: 'nl-select.v81', r2: 'nl-select.v82' } as const;
+
+/** Whether a prompt rev is sent split (stable part as system prompt, per-turn part as the user message). Provider-neutral. */
+export function nlPromptRevIsSplit(rev: NlPromptRev): boolean {
+  return rev === 'v81';
+}
 
 /** Version ids of the `rev: 'v77'` candidate prompts: A6 action and A6 R2. */
 export const NL_V77_PROMPT_VERSIONS = { action: 'nl-select.v77', r2: 'nl-select.v78' } as const;
@@ -328,10 +341,10 @@ export type NlPromptMode = 'read' | 'action' | 'r2';
 
 /**
  * The revision each mode builds when `rev` is absent (owner decision 2026-11-04): read `v74`; the A6 action and R2 prompts
- * are `v79` (nl-select.v79 / v80; D12 gates passed, owner decision 2026-11-04). Rollback = set `read` to `'v73'` (and
+ * are `v81` (nl-select.v81 / v82, candidate, D12 gates pending; the v79 text on the split transport). Rollback to the unsplit v79 = set `action` to `'v79'`. Older rollback = set `read` to `'v73'` (and
  * `NL_SELECTION_PROMPT_VERSION` back to `nl-select.v73`) and `action` to `'v73'` (and the two active ids back to v71 / v72).
  */
-export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v79' } as const satisfies Record<'read' | 'action', NlPromptRev>;
+export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v81' } as const satisfies Record<'read' | 'action', NlPromptRev>;
 
 /** Version ids of the candidate (`rev: 'v74'` with actions) prompts: A6 action and A6 R2 (the read v74 is active, not a candidate). */
 export const NL_CANDIDATE_PROMPT_VERSIONS = { action: 'nl-select.v75', r2: 'nl-select.v76' } as const;
@@ -341,12 +354,12 @@ export function nlEffectivePromptRev(mode: NlPromptMode, rev?: NlPromptRev): NlP
   return rev ?? NL_ACTIVE_PROMPT_REVS[mode === 'read' ? 'read' : 'action'];
 }
 
-/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78|v79|v80`. Throws for `v77` / `v79` in read mode. */
+/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78|v79|v80|v81|v82`. Throws for `v77` / `v79` / `v81` in read mode. */
 export function nlPromptVersionFor(mode: NlPromptMode, rev?: NlPromptRev): string {
   const effective = nlEffectivePromptRev(mode, rev);
-  if (effective === 'v77' || effective === 'v79') {
+  if (effective === 'v77' || effective === 'v79' || effective === 'v81') {
     if (mode === 'read') throw new Error(`prompt rev '${effective}' is valid only with action entries (action / r2 mode)`);
-    const versions = effective === 'v77' ? NL_V77_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
+    const versions = effective === 'v77' ? NL_V77_PROMPT_VERSIONS : effective === 'v81' ? NL_V81_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
     return mode === 'action' ? versions.action : versions.r2;
   }
   const v74 = effective === 'v74';
@@ -695,11 +708,37 @@ const V77_ACTION_RULES: readonly string[] = [
   '   rule 5 does not omit it; Core decides whether it is too vague and asks.',
 ];
 
-/** The full instruction text for one selection call. */
+/** The full instruction text for one selection call (stable part, a newline, per-turn part: see {@link buildSelectionPromptParts}). */
 export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
+  const parts = buildSelectionPromptParts(input);
+  return `${parts.stable}\n${parts.turn}`;
+}
+
+/**
+ * What one selection model call sends: a split rev (see {@link nlPromptRevIsSplit}) sends the stable part as
+ * `systemPrompt` and the per-turn part as `prompt`; every other rev sends the whole text as `prompt`. The single place
+ * the service and the eval tools share, so gates measure what live sends. `prompt` joined after `systemPrompt` with a
+ * newline is always {@link buildSelectionPrompt}.
+ */
+export function buildSelectionRequestText(input: NlSelectionPromptInput): { readonly prompt: string; readonly systemPrompt?: string } {
   const effectiveRev = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev);
-  if ((effectiveRev === 'v77' || effectiveRev === 'v79') && input.actions === undefined) throw new Error(`prompt rev '${effectiveRev}' is valid only with action entries`);
-  const v79 = effectiveRev === 'v79';
+  if (!nlPromptRevIsSplit(effectiveRev)) return { prompt: buildSelectionPrompt(input) };
+  const parts = buildSelectionPromptParts(input);
+  return { systemPrompt: parts.stable, prompt: parts.turn };
+}
+
+/**
+ * The selection prompt in its two halves. `stable` is everything that does not depend on this turn's owner message: the
+ * rule header, the catalog and the static examples (it ends with the blank separator line, or just before the retrieved /
+ * swapped examples block, which is chosen per message and rides in `turn`). `turn` is the
+ * per-turn part: previous selection, reference context and the owner message. Invariant, for every input and rev:
+ * `stable + '\n' + turn === buildSelectionPrompt(input)`. `stable` never holds the owner text, the previous selection
+ * or the reference context.
+ */
+export function buildSelectionPromptParts(input: NlSelectionPromptInput): { readonly stable: string; readonly turn: string } {
+  const effectiveRev = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev);
+  if ((effectiveRev === 'v77' || effectiveRev === 'v79' || effectiveRev === 'v81') && input.actions === undefined) throw new Error(`prompt rev '${effectiveRev}' is valid only with action entries`);
+  const v79 = effectiveRev === 'v79' || effectiveRev === 'v81';
   const v77 = effectiveRev === 'v77' || v79;
   const v74 = effectiveRev === 'v74' || v77;
   const offered = new Set(input.entries.map((entry) => entry.id));
@@ -851,8 +890,10 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
   const swap = retrieved !== undefined && input.replaceStaticExamples === true;
   const r2 = r2SourcesOf(input.entries);
   const examples = swap ? [] : examplesFor(offered, input.actions, r2);
+  // Retrieved examples are chosen per message and may carry owner-derived text: they are never part of `stable`.
+  const volatile: string[] = swap ? ['', renderSwappedExamplesBlock(retrieved)] : [];
   if (swap) {
-    lines.push('', renderSwappedExamplesBlock(retrieved));
+    // the swapped block replaces the static examples and rides in the per-turn part
   } else if (examples.length > 0) {
     lines.push('', 'Examples:');
     for (const example of examples) {
@@ -863,9 +904,13 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
       lines.push(`Message: ${example.text.replace(/\n/g, ' ')}`, `Output: ${output}`);
     }
   }
-  if (retrieved !== undefined && !swap) lines.push('', renderRetrievedBlock(retrieved));
-  lines.push(
-    '',
+  if (retrieved !== undefined && !swap) volatile.push('', renderRetrievedBlock(retrieved));
+  // Without a retrieved block the blank separator closes the stable part; with one the stable part ends before it and the
+  // block opens the per-turn part (join identity either way: stable + '\n' + turn).
+  if (volatile.length === 0) lines.push('');
+  const turn = [
+    ...volatile,
+    ...(volatile.length > 0 ? [''] : []),
     ...renderPreviousSelection(input.previous),
     ...(input.actions !== undefined ? [`Reference context: ${boundedContext(input.actions.referenceContext)}`] : []),
     '',
@@ -873,9 +918,9 @@ export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
     '<<<',
     input.text,
     '>>>',
-  );
-  if (input.actions === undefined) return lines.join('\n');
-  return withActionRules(lines, r2, v77).join('\n');
+  ];
+  const stableLines = input.actions === undefined ? lines : withActionRules(lines, r2, v77);
+  return { stable: stableLines.join('\n'), turn: turn.join('\n') };
 }
 
 /**

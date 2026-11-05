@@ -1,6 +1,6 @@
 import type { NlCatalogEntry } from '../nl-routing/catalog';
 import { isNlActionEntryId } from '../nl-routing/catalog';
-import { NL_ACTION_PROMPT_VERSION, buildSelectionPrompt } from '../nl-routing/selection-prompt';
+import { NL_V79_PROMPT_VERSIONS, buildSelectionPrompt } from '../nl-routing/selection-prompt';
 import { parseSelectionOutput } from '../nl-routing/selection-output';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { validateSelection } from '../nl-routing/selection-validator';
@@ -19,8 +19,8 @@ import { agentClauseHasWriteWord, agentUncoveredClauses, type AgentPlanValidatio
  * the prompt and judges the answer.
  */
 
-/** The A6 selection prompt version the probe uses (the deployed A6 prompt). */
-export const AGENT_READ_WRITE_PROBE_PROMPT_VERSION = NL_ACTION_PROMPT_VERSION;
+/** The A6 selection prompt version the probe uses: pinned to the unsplit v79 text (the probe sends one joined prompt). */
+export const AGENT_READ_WRITE_PROBE_PROMPT_VERSION: string = NL_V79_PROMPT_VERSIONS.action;
 
 /** The uncovered clauses of a validated plan, or `[]` (no probe needed). */
 export function agentReadWriteProbeClauses(plan: ValidatedAgentPlan, groundingText: string): string[] {
@@ -41,7 +41,7 @@ export function agentReadWriteProbeClauses(plan: ValidatedAgentPlan, groundingTe
  * outcome except to hide the write. Structural: by the catalog's own action ids, no per-case rule.
  */
 export function agentReadWriteProbePrompt(input: { readonly text: string; readonly entries: readonly NlCatalogEntry[]; readonly referenceContext?: string }): string {
-  return buildSelectionPrompt({ entries: agentReadWriteProbeEntries(input.entries), text: input.text, actions: { referenceContext: input.referenceContext ?? 'none' } });
+  return buildSelectionPrompt({ entries: agentReadWriteProbeEntries(input.entries), text: input.text, rev: 'v79', actions: { referenceContext: input.referenceContext ?? 'none' } });
 }
 
 /** The entries the probe offers: the A6 action entries among those offered this turn (a read selection is never a write). */

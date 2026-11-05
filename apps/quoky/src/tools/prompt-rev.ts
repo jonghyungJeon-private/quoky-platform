@@ -3,13 +3,14 @@ import { AGENT_PLAN_ACTIVE_REV, nlEffectivePromptRev, type NlPromptMode, type Nl
 /**
  * Prompt-revision option of the eval CLIs (owner decision 2026-11-04, "평가 도구 연결 진행해": the tools must compare the
  * active prompt with the other revision). An ABSENT value is the ACTIVE revision of the plan's mode (owner decision
- * 2026-11-04, enablement): read modes v74 (nl-select.v74), action / read-regression / R2 modes v79 (nl-select.v79 /
- * v80), planner v11. Explicit values keep working: `--prompt-rev v73` = the previous read v73 (read) or the old v71 / v72 (action / R2);
+ * 2026-11-04, enablement): read modes v74 (nl-select.v74), action / read-regression / R2 modes v81 (nl-select.v81 /
+ * v82, candidate, gates pending: the v79 text with the stable part sent as the system prompt), planner v11. `--prompt-rev v79` = the unsplit
+ * v79 / v80 (rollback). Explicit values keep working: `--prompt-rev v73` = the previous read v73 (read) or the old v71 / v72 (action / R2);
  * `--prompt-rev v74` on an action / R2 mode = the candidates v75 / v76; `--plan-rev v10` = the previous planner. A plan
  * stores a revision only when it differs from its mode's active one ({@link storedNlPromptRev}), so a plan made without
  * the option reproduces the production prompt of that mode.
  */
-export const NL_EVAL_PROMPT_REVS = ['v73', 'v74', 'v77', 'v79'] as const;
+export const NL_EVAL_PROMPT_REVS = ['v73', 'v74', 'v77', 'v79', 'v81'] as const;
 export const AGENT_PLAN_EVAL_REVS = ['v10', 'v11'] as const;
 export type AgentPlanEvalRev = (typeof AGENT_PLAN_EVAL_REVS)[number];
 export const AGENT_PLAN_EVAL_DEFAULT_REV: AgentPlanEvalRev = AGENT_PLAN_ACTIVE_REV;
@@ -26,13 +27,13 @@ export function storedAgentPlanRev(rev: AgentPlanEvalRev | undefined): AgentPlan
 
 /**
  * Validate a `--prompt-rev` value; `undefined` stays `undefined` (the active revision). Throws on an unknown one.
- * `v77` / `v79` (nl-select.v77 / v78, v79 / v80) are action / R2 texts: they are rejected for the read modes (`read`).
+ * `v77` / `v79` / `v81` (nl-select.v77 / v78, v79 / v80, v81 / v82) are action / R2 texts: they are rejected for the read modes (`read`).
  */
 export function parseNlPromptRev(value: string | undefined, mode: 'read' | 'action' = 'read'): NlPromptRev | undefined {
   if (value === undefined) return undefined;
   if (!(NL_EVAL_PROMPT_REVS as readonly string[]).includes(value)) throw new Error(`--prompt-rev must be one of ${NL_EVAL_PROMPT_REVS.join(', ')} (got ${JSON.stringify(value)})`);
-  if ((value === 'v77' || value === 'v79') && mode === 'read') {
-    throw new Error(`--prompt-rev ${value} is an action / R2 prompt (${value === 'v77' ? 'nl-select.v77 / v78' : 'nl-select.v79 / v80'}); it is not valid for the read modes`);
+  if ((value === 'v77' || value === 'v79' || value === 'v81') && mode === 'read') {
+    throw new Error(`--prompt-rev ${value} is an action / R2 prompt (${value === 'v77' ? 'nl-select.v77 / v78' : value === 'v81' ? 'nl-select.v81 / v82' : 'nl-select.v79 / v80'}); it is not valid for the read modes`);
   }
   return value as NlPromptRev;
 }

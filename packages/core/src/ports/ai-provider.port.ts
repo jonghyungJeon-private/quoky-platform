@@ -46,6 +46,13 @@ export interface AiRequest {
   /** The rendered instruction text (produced by the PromptRenderer). */
   prompt: string;
   /**
+   * Optional, additive: a stable, owner-content-free instruction prefix (the NL selector's rule header, catalog and
+   * examples). A provider that can cache it sends it as a system prompt and `prompt` as the user message; every other
+   * provider MUST behave exactly as if it had received `prompt = systemPrompt + '\n' + prompt` (use
+   * {@link joinedPrompt}), so a provider without the feature is byte-identical to a request that never split.
+   */
+  systemPrompt?: string;
+  /**
    * Memory injected as files. The core generates these from Quoky Memory;
    * the provider's only job is to ensure the CLI can see them (typically by
    * having them written into the workspace before invocation).
@@ -76,6 +83,21 @@ export interface AiRequest {
    * and effort that means.
    */
   intentSelectionTier?: 'stronger';
+}
+
+/**
+ * The single prompt text of a request for a provider that has no system-prompt channel: `systemPrompt + '\n' + prompt`
+ * when a `systemPrompt` is present, else `prompt` untouched.
+ */
+export function joinedPrompt(request: Pick<AiRequest, 'prompt' | 'systemPrompt'>): string {
+  return request.systemPrompt === undefined ? request.prompt : `${request.systemPrompt}\n${request.prompt}`;
+}
+
+/** The request as a provider without a system-prompt channel sees it: `prompt` holds the joined text, `systemPrompt` is gone. */
+export function unsplitRequest<T extends Pick<AiRequest, 'prompt' | 'systemPrompt'>>(request: T): T {
+  if (request.systemPrompt === undefined) return request;
+  const { systemPrompt: _systemPrompt, ...rest } = request;
+  return { ...rest, prompt: joinedPrompt(request) } as unknown as T;
 }
 
 /**

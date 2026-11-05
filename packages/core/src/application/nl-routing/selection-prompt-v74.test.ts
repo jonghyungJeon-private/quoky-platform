@@ -32,12 +32,12 @@ const ACTION_CONTEXT = { referenceContext: 'last listing: mail (2 items, 1 min a
 const R2_ENTRIES: readonly NlCatalogEntry[] = [...READS, ...ACTIONS.filter((entry) => entry.id !== 'item.summarize'), nlItemSummarizeEntry(['jira', 'slack'])];
 
 describe('per-mode default revision (owner decision 2026-11-04)', () => {
-  it('names the active versions: read v74, action v79, R2 v80; v71 / v72 are explicit v73 only', () => {
+  it('names the active versions: read v74, action v81, R2 v82 (candidate, gates pending); v71 / v72 are explicit v73 only', () => {
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
     expect(NL_PREVIOUS_READ_PROMPT_VERSION).toBe('nl-select.v73');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v79');
-    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v80');
-    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v79' });
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v81');
+    expect(NL_ACTION_R2_PROMPT_VERSION).toBe('nl-select.v82');
+    expect(NL_ACTIVE_PROMPT_REVS).toEqual({ read: 'v74', action: 'v81' });
     expect(NL_CANDIDATE_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v75', r2: 'nl-select.v76' });
   });
 
@@ -45,10 +45,12 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(nlPromptVersionFor('read')).toBe('nl-select.v74');
     expect(nlPromptVersionFor('read', 'v73')).toBe('nl-select.v73');
     expect(nlPromptVersionFor('read', 'v74')).toBe('nl-select.v74');
-    expect(nlPromptVersionFor('action')).toBe('nl-select.v79');
+    expect(nlPromptVersionFor('action')).toBe('nl-select.v81');
+    expect(nlPromptVersionFor('action', 'v79')).toBe('nl-select.v79');
     expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
     expect(nlPromptVersionFor('action', 'v74')).toBe('nl-select.v75');
-    expect(nlPromptVersionFor('r2')).toBe('nl-select.v80');
+    expect(nlPromptVersionFor('r2')).toBe('nl-select.v82');
+    expect(nlPromptVersionFor('r2', 'v79')).toBe('nl-select.v80');
     expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
     expect(nlPromptVersionFor('r2', 'v74')).toBe('nl-select.v76');
   });
@@ -62,7 +64,7 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(sha(buildSelectionPrompt({ entries: READS, text, rev: 'v73' }))).toBe(PINNED_V73_READ);
   });
 
-  it('action and R2 prompts without rev are the gated v79 / v80 bytes; explicit v73 is the old v71 / v72 bytes', () => {
+  it('action and R2 prompts without rev are the v79 / v80 bytes (v81 / v82 split the same text); explicit v73 is the old v71 / v72 bytes', () => {
     const action = buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT });
     expect(sha(action)).toBe(PINNED_V79_ACTION);
     expect(buildSelectionPrompt({ entries: [...READS, ...ACTIONS], text, actions: ACTION_CONTEXT, rev: 'v79' })).toBe(action);
@@ -75,11 +77,11 @@ describe('per-mode default revision (owner decision 2026-11-04)', () => {
     expect(sha(buildSelectionPrompt({ entries: R2_ENTRIES, text, actions: ACTION_CONTEXT, rev: 'v74' }))).toBe(PINNED_V76_R2);
   });
 
-  it('the version ids follow the default: v73 is v71 / v72, absent is v79 / v80', () => {
+  it('the version ids follow the default: v73 is v71 / v72, absent is v81 / v82', () => {
     expect(nlPromptVersionFor('action', 'v73')).toBe('nl-select.v71');
     expect(nlPromptVersionFor('r2', 'v73')).toBe('nl-select.v72');
-    expect(nlPromptVersionFor('action')).toBe(nlPromptVersionFor('action', 'v79'));
-    expect(nlPromptVersionFor('r2')).toBe(nlPromptVersionFor('r2', 'v79'));
+    expect(nlPromptVersionFor('action')).toBe(nlPromptVersionFor('action', 'v81'));
+    expect(nlPromptVersionFor('r2')).toBe(nlPromptVersionFor('r2', 'v81'));
   });
 });
 

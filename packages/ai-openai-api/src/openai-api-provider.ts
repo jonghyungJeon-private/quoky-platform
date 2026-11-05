@@ -8,6 +8,7 @@ import {
   newId,
   now,
 } from '@quoky/core';
+import { unsplitRequest } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
@@ -432,6 +433,7 @@ export class OpenAiApiProvider extends OpenAiApiProviderBase {
   }
 
   async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     if (!OPENAI_CHAT_CAPABILITIES.includes(request.capability)) this.refuse('chat-tier capabilities only');
     if ((request.images?.length ?? 0) > 0) this.refuse('the chat instance does not accept images');
     if (request.workspace !== undefined) this.refuse('never runs in a workspace');
@@ -453,6 +455,7 @@ export class OpenAiApiVisionProvider extends OpenAiApiProviderBase {
   }
 
   async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     if (request.capability !== Capability.IMAGE_UNDERSTANDING) this.refuse('IMAGE_UNDERSTANDING only');
     if (request.workspace !== undefined) this.refuse('never runs in a workspace');
     const images = request.images ?? [];

@@ -300,6 +300,25 @@ describe('context eval runner — dry, over the production AppModule', () => {
     expect(free.selectorSaw?.previousEntry).toBe('jira.release');
   }, 120_000);
 
+  it('the selector hook receives the raw split request exactly as live sends it (systemPrompt + per-turn prompt), while the recording is joined', async () => {
+    const seen: Array<{ systemPrompt?: string; prompt: string }> = [];
+    world = await bootContextEvalWorld('deployed', {
+      select: async (request) => {
+        seen.push({ ...(request.systemPrompt !== undefined ? { systemPrompt: request.systemPrompt } : {}), prompt: request.prompt });
+        return JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+      },
+      chat: async () => '',
+      summarize: async () => '',
+    });
+    const owner = await world.beginScenario(0, corpus.worlds.office ?? {});
+    const turn = await world.turn(owner, '내일 일정 뭐있어', owner.dm);
+    expect(turn.selectionCalls).toBeGreaterThan(0);
+    expect(seen[0]?.systemPrompt).toContain('Catalog:');
+    expect(seen[0]?.prompt).not.toContain('Catalog:');
+    expect(seen[0]?.prompt).toContain('<<<\n내일 일정 뭐있어\n>>>');
+    expect(turn.selectorSaw).toBeDefined();
+  }, 120_000);
+
   it('P-time (ii) over the real runtime: Strict run 2 sc-calendar-todo-interview t3 ("그 면접 몇 시였지?" → {keyword: 면접}) reads tomorrow', async () => {
     world = await bootContextEvalWorld('deployed', {
       select: async (request) => {

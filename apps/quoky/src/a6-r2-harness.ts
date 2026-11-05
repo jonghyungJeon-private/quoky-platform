@@ -246,7 +246,9 @@ export async function bootR2Harness(env: Record<string, string>): Promise<R2Harn
       async isAvailable() {
         return true;
       },
-      async execute(request: AiRequest) {
+      async execute(rawRequest: AiRequest) {
+        // A real provider without a system-prompt channel sees the split selector request as one joined prompt.
+        const request = core.unsplitRequest(rawRequest);
         requests.push(request);
         if (request.capability === SELECTION) return { text: state.selector, artifacts: [] };
         if (request.capability === SUMMARIZATION) return { text: state.summarizeRequest !== undefined ? await state.summarizeRequest(request) : state.summarizer(request.prompt), artifacts: [] };

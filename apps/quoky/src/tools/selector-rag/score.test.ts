@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSelectionPrompt } from '@quoky/core';
+import { buildSelectionPrompt, joinedPrompt } from '@quoky/core';
 import { experimentCases, loadGold } from './gold';
 import { contextOfCase, loadScoringCases, promptContextOf, scoreExact } from './score';
 import { NL_ACTION_EVAL_ENTRIES, decideActionCase } from '../nl-action-eval';
@@ -89,7 +89,7 @@ describe('prompt context fidelity (the A0 prompt of the harness is the prompt th
           capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }],
           isAvailable: async () => true,
           execute: async (request) => {
-            captured = request.prompt;
+            captured = joinedPrompt(request);
             return { text: answer('none'), artifacts: [] };
           },
         };

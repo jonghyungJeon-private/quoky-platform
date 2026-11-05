@@ -147,7 +147,7 @@ describe('Personal v5 - A6 natural-language actions over the production AppModul
           return true;
         },
         async execute(request: AiRequest) {
-          requests.push(request);
+          requests.push(core.unsplitRequest(request)); // a provider without a system-prompt channel sees one joined prompt
           if (request.capability === SELECTION) return { text: typeof selectorAnswer === 'function' ? await selectorAnswer() : selectorAnswer, artifacts: [] };
           if (request.capability === SUMMARIZATION) return { text: SUMMARY, artifacts: [] };
           return { text: CHAT_REPLY, artifacts: [] };

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { AiFailureKind, AiProviderError, ArtifactKind, newId, now, ProviderProbeIndeterminateError } from '@quoky/core';
+import { unsplitRequest } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
@@ -246,6 +247,7 @@ export class ClaudeCliVisionProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     if (request.capability !== Capability.IMAGE_UNDERSTANDING) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'claude vision provider serves IMAGE_UNDERSTANDING only');
     }
