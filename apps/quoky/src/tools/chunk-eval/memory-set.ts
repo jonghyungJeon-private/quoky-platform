@@ -49,9 +49,9 @@ export interface MemorySet {
 
 // ---------------------------------------------------------------- vocabulary (hand-written pairs: memory wording | query wording)
 
-type Pair = readonly [string, string];
+export type Pair = readonly [string, string];
 
-const EN_OBJECTS: readonly Pair[] = [
+export const EN_OBJECTS: readonly Pair[] = [
   ['bicycle', 'pedal cycle'],
   ['laptop', 'portable computer'],
   ['umbrella', 'rain shield'],
@@ -69,7 +69,7 @@ const EN_OBJECTS: readonly Pair[] = [
   ['scooter', 'foot-pushed ride'],
   ['speaker', 'sound box'],
 ];
-const EN_MODS: readonly Pair[] = [
+export const EN_MODS: readonly Pair[] = [
   ['blue', 'sky-coloured'],
   ['old', 'well-used'],
   ['red', 'crimson'],
@@ -81,7 +81,7 @@ const EN_MODS: readonly Pair[] = [
   ['borrowed', 'lent-out'],
   ['second-hand', 'pre-owned'],
 ];
-const EN_ATTRS: readonly Pair[] = [
+export const EN_ATTRS: readonly Pair[] = [
   ['{S} was bought for {V} coins at a market stall.', 'What did {S} set me back?'],
   ['The warranty on {S} ends in month {V}.', 'When does the guarantee for {S} run out?'],
   ['{S} needs servicing every {V} weeks.', 'How frequently must someone inspect {S}?'],
@@ -97,7 +97,7 @@ const EN_ATTRS: readonly Pair[] = [
   ['{S} performs fine after {V} minutes of charging.', 'How long must {S} be plugged in before it works properly?'],
   ['I plan to sell {S} for at least {V} coins.', 'What is the minimum amount I would accept when parting with {S}?'],
 ];
-const KO_OBJECTS: readonly Pair[] = [
+export const KO_OBJECTS: readonly Pair[] = [
   ['자전거', '두 바퀴 탈것'],
   ['노트북', '휴대용 컴퓨터'],
   ['우산', '빗물막이'],
@@ -115,7 +115,7 @@ const KO_OBJECTS: readonly Pair[] = [
   ['킥보드', '발로 구르는 이동수단'],
   ['스피커', '소리 내는 상자'],
 ];
-const KO_MODS: readonly Pair[] = [
+export const KO_MODS: readonly Pair[] = [
   ['파란', '하늘색'],
   ['낡은', '오랫동안 사용한'],
   ['빨간', '붉은'],
@@ -127,7 +127,7 @@ const KO_MODS: readonly Pair[] = [
   ['빌린', '얻어 온'],
   ['중고', '이미 쓰던'],
 ];
-const KO_ATTRS: readonly Pair[] = [
+export const KO_ATTRS: readonly Pair[] = [
   ['{S은는} 시장 가판대에서 {V}코인에 샀다.', '{S을를} 살 때 얼마나 냈더라?'],
   ['{S}의 품질보증은 {V}월에 끝난다.', '{S}에 딸린 무상수리 기간은 언제 만료되지?'],
   ['{S은는} {V}주마다 점검을 받아야 한다.', '{S}의 정비 주기는 어느 정도야?'],
