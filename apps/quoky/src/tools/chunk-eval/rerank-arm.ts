@@ -29,7 +29,11 @@ export const RERANK_SYSTEM_PROMPT =
 export const RERANK_QUESTION_HEAD = 'Question: ';
 export const RERANK_CANDIDATES_HEAD = 'Candidates:';
 export const RERANK_ANSWER_TAIL = 'Answer with the JSON array of candidate numbers, best first.';
-export const RERANK_FORMAT = 'json';
+/**
+ * Structured output: a JSON array of integers. Plain `'json'` made qwen3:8b answer an error object in the stage D probe
+ * (2026-11-06, 17 of 20 fallbacks); the array schema returns the ranking itself.
+ */
+export const RERANK_FORMAT = { type: 'array', items: { type: 'integer' } } as const;
 
 /** sha256 over everything that shapes the text the model sees (system prompt and the user message layout). */
 export const RERANK_PROMPT_SHA = createHash('sha256')
@@ -174,7 +178,7 @@ export class RerankCache {
   /** `message` is the rendered user message, so the same ids with a different question or candidate text never hit. */
   static key(pin: Pick<RerankerPin, 'digest12'>, queryId: string, candidateIds: readonly string[], message: string): string {
     const messageSha = createHash('sha256').update(message).digest('hex');
-    return createHash('sha256').update(JSON.stringify({ digest12: pin.digest12, prompt: RERANK_PROMPT_SHA, cap: CANDIDATE_CAP_UNITS, seed: RERANK_SEED, queryId, candidateIds, messageSha })).digest('hex');
+    return createHash('sha256').update(JSON.stringify({ digest12: pin.digest12, prompt: RERANK_PROMPT_SHA, cap: CANDIDATE_CAP_UNITS, seed: RERANK_SEED, format: RERANK_FORMAT, queryId, candidateIds, messageSha })).digest('hex');
   }
   get(key: string): RerankRecord | undefined {
     return this.entries.get(key);

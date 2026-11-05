@@ -177,7 +177,7 @@ describe('LlmReranker', () => {
     const result = await reranker.rerank('q1', 'question?', candidates);
     expect(result).toMatchObject({ order: [1, 2, 0], fallback: false, cached: false, ms: 5, promptTokens: 100, evalTokens: 20 });
     const body = f.chatBodies[0];
-    expect(body).toMatchObject({ model: 'qwen3:8b', stream: false, think: false, format: 'json', keep_alive: '2m', options: { temperature: 0, seed: 7 } });
+    expect(body).toMatchObject({ model: 'qwen3:8b', stream: false, think: false, format: { type: 'array', items: { type: 'integer' } }, keep_alive: '2m', options: { temperature: 0, seed: 7 } });
     expect(body?.messages[0]?.content).toBe(RERANK_SYSTEM_PROMPT);
     expect(f.urls.filter((url) => url.endsWith('/api/chat')).every((url) => url.startsWith('http://127.0.0.1:'))).toBe(true);
     expect(() => new LlmReranker(result as never, { baseUrl: 'http://example.com:11434' })).toThrow(/loopback/u);
