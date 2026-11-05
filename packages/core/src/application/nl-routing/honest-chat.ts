@@ -411,20 +411,19 @@ function removeActionReplySentences(text: string, entries: readonly NlCatalogEnt
   const parts = text.split(SENTENCE_SPLIT);
   const kept: string[] = [];
   let removed = false;
-  let staleRemoved = false;
   for (let index = 0; index < parts.length; index += 2) {
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
     const staleSentence = quoted && quotesStale(sentence);
     if (staleSentence || vocabulary?.offending(sentence, parts[index - 2] ?? '') === true) {
       removed = true;
-      staleRemoved ||= staleSentence;
       continue;
     }
     kept.push(sentence, separator);
   }
-  // A quote spanning sentences (no single sentence carries it) cannot be placed: the whole reply is replaced, as before.
-  if (quoted && !staleRemoved) return { text: renderRestate(language), guarded: true };
+  // Codex P2: a quote spanning sentences (no single sentence carries it) cannot be placed. Whatever else was removed, if
+  // the kept text still quotes a stale command the whole reply is replaced, as before.
+  if (quoted && quotesStale(kept.join(''))) return { text: renderRestate(language), guarded: true };
   if (!removed) return { text, guarded: false };
   return closeGuardedReply(kept.join('').trim(), text, language, ownerAsksOfferedAction(ownerMessage, vocabulary));
 }
@@ -436,7 +435,8 @@ function removeActionReplySentences(text: string, entries: readonly NlCatalogEnt
  */
 function closeGuardedReply(rest: string, original: string, language: 'ko' | 'en', restate: boolean): FalseIncapabilityGuardResult {
   if (rest.length === 0) return { text: renderRestate(language), guarded: true };
-  if (!restate) return { text: rest, guarded: true };
+  // Codex P2: a kept sentence that already is the restate is not followed by a second one.
+  if (!restate || rest.includes(renderRestate(language))) return { text: rest, guarded: true };
   return { text: `${rest}${/\n/u.test(original) ? '\n' : ' '}${renderRestate(language)}`, guarded: true };
 }
 

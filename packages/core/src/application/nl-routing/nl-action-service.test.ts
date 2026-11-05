@@ -759,6 +759,14 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
   it('still replaces the whole reply when a stale quote spans sentences', () => {
     const reply = '좋아요. "내일 아침. 9시에 알려줘"라고 보내 주세요.';
     expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: RESTATE, guarded: true });
+    // Codex P2: a placeable stale quote removed elsewhere does not hide the spanning one.
+    const both = '좋아요. "완료 처리: 2"라고 보내 주세요. "내일 아침. 9시에 알려줘"라고 보내 주세요.';
+    expect(guardFalseIncapabilityClaims(both, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: RESTATE, guarded: true });
+  });
+
+  it('does not add a second restate when a kept sentence already is the restate', () => {
+    const reply = `"완료 처리: 2"라고 보내 주세요. ${RESTATE}`;
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko')).toEqual({ text: RESTATE, guarded: true });
   });
 });
 
