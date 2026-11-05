@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Chat guard keeps the rest of the reply (2026-11-05, branch `claude/v5-dm8-guard-strip`)
+
+- Dead-end offers / stale command quotes are removed per sentence; the restate is appended only after an owner message naming an offered action, and is the whole reply only when nothing is left. No prompt change.
+
 ### Candidate, gates pending: nl-select.v81 (A6 action) / nl-select.v82 (A6 R2) (branch `claude/v5-selector-prompt-cache`)
 
 - **Candidate, gates pending: action `nl-select.v81` / R2 `nl-select.v82` (the v79 / v80 text with the stable part sent as the system prompt).** Read stays `nl-select.v74`,

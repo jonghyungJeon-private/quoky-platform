@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — dead-end / stale-command chat guard keeps the rest of the reply
+
+- **Fixed.** A chat reply with one dead-end offer ("…추가할까요?") or one stale command quote is no longer replaced as a whole: only
+  that sentence is removed. The "무엇을/어느 항목을 다시 말씀해 주세요." restate closes the kept sentences only when the owner's message
+  names an offered action (existing closed vocabulary), and is the whole reply only when nothing is left (deploy smoke 2026-11-05, DM8).
+- **Unchanged.** What counts as an offending sentence; a stale quote spanning sentences still replaces the whole reply.
+
 ## Unreleased — ADR-0124 harder synthetic set v2 for `eval:chunk` (phase 0, no model)
 
 - **Added.** `--set v2`: 447 hash-frozen, feature-tagged cases (paraphrased questions, long paragraphs, section-name questions with Drive plain-text / Markdown pairs, near-duplicates, dense decoys; fictional names;

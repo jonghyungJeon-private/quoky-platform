@@ -590,6 +590,7 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       const incapable = guardFalseIncapabilityClaims(listing.text, nlFacts.entries, language, this.contributedHelpLines, {
         ...(controls !== undefined ? { controls } : {}),
         ...(nlFacts.listing !== undefined ? { held: nlFacts.listing.shown } : {}),
+        ownerMessage: currentUserMessage,
       });
       if (!incapable.guarded) return listing;
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });

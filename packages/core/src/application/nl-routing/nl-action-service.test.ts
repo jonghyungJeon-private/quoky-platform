@@ -727,6 +727,47 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
     expect(guardFalseIncapabilityClaims(reply, ALL, 'ko')).toEqual({ text: '무엇을/어느 항목을 다시 말씀해 주세요.', guarded: true });
     expect(guardFalseIncapabilityClaims(reply, READS, 'ko')).toEqual({ text: reply, guarded: false });
   });
+
+  // Live smoke 2026-11-05 (DM8): one offer sentence replaced a whole empathetic reply.
+  const RESTATE = '무엇을/어느 항목을 다시 말씀해 주세요.';
+  const EMPATHY = '요즘 정말 바쁘셨겠어요. 잠깐 쉬어 가셔도 괜찮아요.';
+  const OFFER = "할 일 목록에 '업무 정리'를 추가할까요?";
+
+  it('drops only the dead-end offer and keeps the rest when the owner asked for no action', () => {
+    const reply = `${EMPATHY} ${OFFER}`;
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '요즘 일이 너무 많아서 답답해' })).toEqual({ text: EMPATHY, guarded: true });
+    // Owner message unknown: the restate still closes the kept sentences (unchanged behaviour).
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko')).toEqual({ text: `${EMPATHY} ${RESTATE}`, guarded: true });
+  });
+
+  it('keeps the restate after the kept sentences when the owner message names an offered action', () => {
+    const reply = `${EMPATHY} ${OFFER}`;
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '보고서 검토 할 일 추가해 줘' })).toEqual({ text: `${EMPATHY} ${RESTATE}`, guarded: true });
+  });
+
+  it('answers with the restate alone when every sentence is removed', () => {
+    expect(guardFalseIncapabilityClaims(OFFER, ALL, 'ko', [], { ownerMessage: '요즘 일이 너무 많아서 답답해' })).toEqual({ text: RESTATE, guarded: true });
+  });
+
+  it('removes only the sentence that quotes a stale command phrase', () => {
+    const reply = '좋아요. 할 일을 완료하려면 "완료 처리: 2"라고 보내 주세요.';
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: '좋아요.', guarded: true });
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '2번 완료해 줘' })).toEqual({ text: `좋아요. ${RESTATE}`, guarded: true });
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko')).toEqual({ text: `좋아요. ${RESTATE}`, guarded: true });
+  });
+
+  it('still replaces the whole reply when a stale quote spans sentences', () => {
+    const reply = '좋아요. "내일 아침. 9시에 알려줘"라고 보내 주세요.';
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: RESTATE, guarded: true });
+    // Codex P2: a placeable stale quote removed elsewhere does not hide the spanning one.
+    const both = '좋아요. "완료 처리: 2"라고 보내 주세요. "내일 아침. 9시에 알려줘"라고 보내 주세요.';
+    expect(guardFalseIncapabilityClaims(both, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: RESTATE, guarded: true });
+  });
+
+  it('does not add a second restate when a kept sentence already is the restate', () => {
+    const reply = `"완료 처리: 2"라고 보내 주세요. ${RESTATE}`;
+    expect(guardFalseIncapabilityClaims(reply, ALL, 'ko')).toEqual({ text: RESTATE, guarded: true });
+  });
 });
 
 describe('round 2: pending answers meet the input guard (Codex review P2)', () => {
