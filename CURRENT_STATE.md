@@ -148,6 +148,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - **C2 follow-up (2026-11-05).** `eval:chunk` reports per-shape recall (shape x depth/length/language/needle kind) and per-shape chunker
   statistics; `--set drive-format` compares Drive plain text with Markdown headings on identical content (own freeze record; v1 digest unchanged).
   Phase 0, lexical only: EL 100% in six shapes, 83% in the ADR file (11 code-line and 2 decision misses); text vs Markdown recall equal. No parameter or chunker change; DECISIONS ADR-0124 section 15.
+- **C2 harder set v2 (2026-11-05).** `eval:chunk --set v2`: 447 hash-frozen feature-tagged cases (paraphrased questions, long paragraphs, section-name questions with Drive text / Markdown pairs,
+  near-duplicates, dense decoys; digest `09bf8552...`, own freeze record). Phase 0, lexical only: EL 37.1% (baseline 10.3%); named 72/84, paraphrase 75/291, topic-shared 33/51 vs disjoint 42/240; EL misses 281 of 447
+  (mail 38/60, thread 38/60, Drive 55/84, workbook 35/60, Jira 34/60, Slack 38/60, ADR file 43/63); long paragraphs exercise split and overlap (`overCap` stays 0); Drive Markdown vs text on section-name questions 5/24 -> 8/24
+  (not significant). No chunker, parameter or threshold change; per-shape parameters need E0-E3 / EH. DECISIONS ADR-0124 section 16.
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 

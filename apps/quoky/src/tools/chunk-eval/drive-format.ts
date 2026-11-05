@@ -203,7 +203,7 @@ function structureOf(cases: readonly DriveFormatCase[]): FormatStructure {
   };
 }
 
-function pairedArm(texts: readonly boolean[], marks: readonly boolean[], depths: readonly number[]): PairedArm {
+export function pairedArm(texts: readonly boolean[], marks: readonly boolean[], depths: readonly number[]): PairedArm {
   const count = (pick: (a: boolean, b: boolean) => boolean): number => texts.filter((value, at) => pick(value, marks[at] as boolean)).length;
   const recall = (list: readonly boolean[]): number => round4(mean(list.map((hit) => (hit ? 1 : 0))));
   const byDepth: Record<string, { text: number; markdown: number; delta: number }> = {};
