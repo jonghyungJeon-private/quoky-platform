@@ -32526,6 +32526,56 @@ Phase 0 only: no LLM, no embedder, no Ollama, no network; baseline clip and the 
   heading effect uses synthetic titles and one layout, 24 pairs. Real mail and Drive text (tables, lists, signatures, forwarded chains) differs from these templates. Per-shape parameters should be
   decided after E0-E3 / EH on this set.
 
+## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
+
+This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,
+the parameters, … and the decision rules before any run"). Stage A (this change) is offline code only: **no model was called by anything run for it**; the tests use a
+fake fetch. Stage B (the probe) and the real runs are separate, **Strict** actions that need the owner's yes on a plan digest (AGENTS.md). CH1-CH7 thresholds stay **proposals**.
+
+- **Sets (hash-frozen; a run whose set differs from its record is BLOCKED, exit 3).**
+  - CH1 v1: `f395110d15bb635851a85b290d5867ac897160514e71420a0df73e051f8c4ed5`, 435 cases (unchanged).
+  - CH1 v2: `299e4b76299763f5ee5f1f2b9e3cea93e81a0a70db87bbe2b05687597e552e34`, 447 cases (unchanged).
+  - CH7 memory (new, `memory-set.ts`, record `chunk-eval-memory.freeze.v1.json`, seed `quoky-adr-0124-ch7-memory-2026-11-05`): `91b929720971ded0f094ee1b8990cadb3f3481261fcb35be6f560d4e2a5c9906`.
+    171 synthetic memories (57 English, 57 Korean, 57 mixed; 21 long that span 5-15 C1 passages, 9 of them over the 8,000 UTF-16 unit cut) and 192 queries, each with
+    exactly its gold memory id. Fictional objects and numbers only (a modifier x object subject, one of 14 attributes); queries are written as synonym / paraphrase pairs
+    (subject and attribute both said in other words; no honorific-pair queries in this version) or name the subject as the memory does (`shared`, 68 queries). **122 of 192 queries share no content term**
+    with their memory (measured with Core `lexicalTerms`: Hangul bigrams and Latin words of four letters or more; stored per query as `sharedTerms`). 42 queries target long memories (the middle and the last fact; 9 ask for a
+    fact that starts after the cut). No real person or company, no real personal data, no token-like literal (tested). The vocabulary tables were written once, by hand, before any embedder
+    ran; nothing was fitted to a score. The v1, v2 and drive-format digests are verified unchanged by the tests.
+- **Arms, pinned per run (model, digest12, Ollama version, space id and prefix policy are read from the loopback daemon at run start and printed in the report; they are part of the plan digest).**
+
+  | Arm | Model | Query side | Document side |
+  |---|---|---|---|
+  | E0 | `nomic-embed-text` | `search_query: ` | `search_document: ` |
+  | E1 | `nomic-embed-text-v2-moe` | `search_query: ` | `search_document: ` |
+  | E2 | `bge-m3` | none | none |
+  | E3 | `qwen3-embedding:0.6b` | `Instruct: Given a question, retrieve the passages that answer it\nQuery: ` | raw |
+  | EL | no embedder (Core BM25, unchanged) | | |
+  | EH(x) | reciprocal rank fusion, k = 60, of arm x's ranking and the EL BM25 **full** ranking (no extra embedding); one EH per available embedder arm | | |
+
+  **Section 6 says the owner pulls models and no agent pulls them**: the harness reads the pins and never pulls; `bge-m3` and `qwen3-embedding:0.6b` are pulled by the owner. A model that is not installed
+  is **dropped from the run with a note** in the report (not a failure). Cloud names are refused and the daemon must be loopback.
+- **Scope (owner decision 2026-11-05).** The v1 `adr-file` shape (the 2 MB tier, ~39k passages) runs on **E0 only**; every other v1 shape and all of v2 run on every available arm. `--scope phase1` (default) encodes this;
+  `--scope all` removes the exclusion; `--shapes a,b` narrows every set. The scope and the shape filter are part of the plan digest.
+- **Parameters (frozen).** Batch 16, concurrency 1 (one local model at a time, section 3.7; the arm's model is asked to unload after its run), `truncate: false` (a passage or memory over the model context is an explicit error counted as `overContext`, never cut;
+  a refused batch is retried one by one to count exactly), `keep_alive` 2 min. Ranking: cosine, ties by ordinal. Window: the EL arm's greedy one-window packing (3,000 code points / 1,800 estimated tokens) over the arm ranking. No parameter was tuned on any set.
+  Embeddings of synthetic text are cached under `data/eval/embed-cache` (gitignored), keyed by space id and sha256(prefix + text); a rerun or a shared passage never re-embeds.
+- **Metrics.** CH1 (v1, v2), per arm, EH and EL on the same cases: Recall@1/3/5/10 (any relevant passage in the top k), MRR, nDCG@10 (binary gains), window recall (the needle is in the packed window), stratified by language, needle kind, shape and depth
+  (v2 also by feature tag and shape x feature). Fit: tokens per Hangul syllable and per code point from `prompt_eval_count` (upper bounds: the prefix and special tokens are included; mixed text includes its Latin part) and the `overContext` count.
+  Cost: per-call latency p50 / p95 (warm: the first call excluded), the first (cold) call, **time for 1 query + 200 passage embeddings** (see below), resident memory from loopback `/api/ps` after the arm.
+  CH7 (memory), per arm: Recall@5 and MRR per query language, for the **single-vector** path (the whole memory cut at 8,000 UTF-16 units, as today) and the **multi-vector** path (one vector per C1 passage, score = max cosine, section 5), and both on the
+  long memories (plus the queries whose fact is past the cut); EL (BM25 over the whole memory text) as the baseline.
+- **Latency bar (section 3.8).** One query call, then the fixed 200-passage sample (v2 C1 passages in case order, de-duplicated, fixed stride; language-grouped batches of 16), cache bypassed, **warm** (one untimed warm-up call first in the memory run; the probe
+  runs a cold block then a warm block). The bar is 8 s for the whole block.
+- **Decision rule (ratified by the owner on 2026-11-05: "응 셋 다 권장안대로 진행해" — the section 6 rule as proposed; the same answer approved the four arms and the scope above).** Among the arms that meet the latency bar, choose the
+  highest **Korean Recall@5 on CH7**, provided it is not more than 2 percentage points worse than E0 on English; a tie goes to the smaller model (the parameter count the daemon reports in `/api/show` `details.parameter_size`, pinned with the arm and part of the plan digest; if it is missing, the smaller on-disk size from `/api/tags`, also pinned; then the arm order). An arm whose latency block did not meet the bar (a refused input, no successful call, fewer than 200 passages, or over 8 s) is not eligible, and the report records the reason; if E0 itself is not eligible it is reported and kept only when no eligible arm beats it by 5 points; if no arm beats E0 on Korean by at least 5 points, keep E0.
+  Inputs are the **multi-vector** Recall@5 for Korean (`ko`) and English (`en`) queries; comparisons are in basis points (exactly +5.00 qualifies, exactly -2.00 on English is allowed). The memory run **computes the verdict mechanically** (`decideEmbedder`) and prints the verdict
+  string with the inputs; **if any planned arm is missing it prints "no arm is chosen until all planned arms ran"**. Changing the model is a new space: the collection is rebuilt (section 5.3). The verdict does not pass or fail a gate (CH7's multi-vector +10 points bar stays a proposal).
+- **How it is run (each step is a command of `pnpm eval:chunk`).** `--mode plan` (zero model calls: pins from `/api/version` and `/api/tags`, counts after cache hits, prints the **plan digest** = sha256 of the three set digests, arms, pins, scope, shapes and parameters);
+  `--mode probe --plan-digest <d>` (stage B: the 200-passage sample + 1 query per arm, cold and warm, tokens per syllable, memory); `--set v1|v2|memory --arms ... --plan-digest <d> --mode run`. A missing or different digest is BLOCKED (exit 3) before any embedding call;
+  a provider outage is INVALID (exit 5), never a gate failure; a completed run exits 4 NON-GATING. Existing runs without `--arms` are unchanged.
+- **What this record does not decide.** No arm is chosen, no threshold is ratified, no flag changes, Core is unchanged (the harness is tool-layer code; `selector-rag/embed.ts` only gained an exported loopback check and a `ModelNotInstalledError` subclass with the same message).
+
 ## ADR-0115 D8 note — Claude CLI JSON print mode reports token usage (2026-11-03)
 
 - **Owner request (2026-11-03).** Measure real token usage so the input-token estimates can be calibrated.
