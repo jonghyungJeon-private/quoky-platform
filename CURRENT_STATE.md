@@ -5,6 +5,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Candidate, gates pending: nl-select.v81 (A6 action) / nl-select.v82 (A6 R2) (branch `claude/v5-selector-prompt-cache`)
+
+- **Active action `nl-select.v81` / R2 `nl-select.v82` in code (candidate, gates pending): the v79 / v80 text with the stable part sent as the system prompt.** Read stays `nl-select.v74`,
+  planner `agent-plan.v11`. Required before enable: D12 gates (action, read-regression, R2) on v81 / v82. Rollback = explicit `rev: 'v79'` (unsplit v79 / v80).
+  Record: DECISIONS "Selector prompt caching: stable prefix as system prompt (nl-select.v81 / v82)".
+
 ### Enabled: nl-select.v79 (A6 action) / nl-select.v80 (A6 R2) (2026-11-04, branch `claude/v5-action-residuals`)
 
 - **Active prompt versions: read `nl-select.v74`, action `nl-select.v79`, R2 `nl-select.v80`, planner `agent-plan.v11`.** D12 gates passed (haiku, 3 runs);

@@ -32833,3 +32833,35 @@ Owner approved enabling them (2026-11-04) after the D12 gates (haiku, 3 runs, he
 - **Eval CLIs.** An absent `--prompt-rev` on action / read-regression / r2 is v79 (no stored rev); `--prompt-rev v73` is stored and reaches v71 / v72.
 - **Size.** Live action prompt 37,733 -> 35,507 chars; R2 40,730 -> 38,468.
 - **Rollback.** Set `NL_ACTIVE_PROMPT_REVS.action` back to `'v73'` and the two active ids back to `nl-select.v71` / `nl-select.v72`.
+### Selector prompt caching: stable prefix as system prompt (nl-select.v81 / v82)
+
+Candidate, D12 gates pending. Status: the code defaults to `v81` / `v82`, which changes live behaviour only after the gates below pass; until then
+the production owner decision stays v79 / v80 and the explicit `rev: 'v79'` is the rollback.
+
+- **Measured (probe, not re-measured here).** The NL selector calls `claude -p` with the whole selection prompt (~35k chars, ~19.6k tokens) on stdin as the user
+  message. In that shape the CLI cache-WRITES the whole user message on every call (~17-19.7k tokens at 1.25x) and only re-reads its own 2.6k default system
+  prompt. With the static part passed through `--append-system-prompt-file <file>` (same cwd), the 2nd and later calls read ~19.2k tokens from cache (0.1x)
+  and write ~0.6k; the TTL is 1h (`ephemeral_1h`). The CLI system prompt includes the cwd, so the cwd must stay constant (production already uses `os.tmpdir()`).
+  `--system-prompt-file` also works but replaces the CLI default; `--append-system-prompt-file` is used.
+- **Design.** `buildSelectionPromptParts(input)` returns `{ stable, turn }` with `stable + '\n' + turn === buildSelectionPrompt(input)` byte for byte (every mode and rev).
+  `stable` = rule header, catalog, examples, retrieved block; `turn` = previous selection, reference context, owner message. `buildSelectionPrompt` is unchanged
+  (all hash pins pass). Two stale/earlier-previous rule lines of the header depend on the previous selection's age and history (fixed text, no content), so
+  `stable` has up to four variants per entry set; each caches on its own.
+- **Port.** `AiRequest.systemPrompt?` is a stable, owner-content-free instruction prefix. A provider that can cache it sends it as a system prompt (only the Claude CLI
+  does); every other provider behaves as if `prompt = systemPrompt + '\n' + prompt` (`joinedPrompt` / `unsplitRequest` in the port module), so Codex, Ollama, the
+  OpenAI / Gemini API providers and the vision / embedding providers are byte-identical to an unsplit request. Wrappers forward the request unchanged. Core does not
+  branch on a provider: the split is chosen by the prompt revision (`nlPromptRevIsSplit`) and sent as a provider-neutral field.
+- **Claude CLI.** The system text is written to `<sha256>.txt` (0600) in a private directory made once per process by `mkdtemp` under `os.tmpdir()` (0700), written
+  atomically (tmp + rename) only when absent, reused across calls and removed at exit. The owner text stays on stdin; the system text never enters argv (only the path);
+  `--tools ""` stays the last argv entry; `CLAUDE_CHILD_ENV` and the cwd are unchanged.
+- **Revisions.** `rev: 'v81'` (action only) = the v79 text on the split transport (`nl-select.v81` action, `nl-select.v82` R2 = the v80 text split). It is the active action
+  rev (`NL_ACTIVE_PROMPT_REVS.action`); read mode stays v74 unsplit and rejects v81 like v77 / v79. The rule text is unchanged (pinned: v81 joined == v79 bytes, v82 joined == v80
+  bytes), but the model now sees the stable part as the system prompt, so behaviour can differ and the gates measure it as its own version; the selection cache key carries
+  the version and changes with it. The plan's `promptSha256` is the joined text hash (equal for v79 and v81 by design); `promptVersion` carries the transport.
+- **Logging.** `promptChars` / `promptBytes` stay the joined length (comparable with earlier logs); `cacheWrite` (`cache_creation_input_tokens`) is logged next to `cacheRead`.
+- **Eval.** The action / read-regression / R2 evals send the same split request as the service (`buildSelectionRequestText`); `--prompt-rev v79` still evaluates the unsplit prompt.
+- **Warm-up.** Unchanged: the entry set a default owner turn offers is per actor (action level, R2 sources, connector-contributed handler catalogs), so it is not knowable at
+  startup without inventing one. The catalog-less probe stays.
+- **Required before enable.** The D12 gates on `v81` / `v82`: action, read-regression and R2 (`--prompt-rev` absent = v81 / v82). No model call was made in this change.
+- **Rollback.** Explicit `rev: 'v79'` (unsplit v79 / v80, byte-identical to before), or set `NL_ACTIVE_PROMPT_REVS.action` back to `'v79'` and the two active ids to
+  `nl-select.v79` / `nl-select.v80`.
