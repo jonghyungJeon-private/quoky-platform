@@ -40,7 +40,7 @@ export interface Embedder {
   embed(texts: readonly string[]): Promise<number[][]>;
 }
 
-function assertLoopback(baseUrl: string): URL {
+export function assertLoopback(baseUrl: string): URL {
   const url = new URL(baseUrl);
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
     throw new Error('the embedding harness talks to a loopback Ollama only');
@@ -50,6 +50,9 @@ function assertLoopback(baseUrl: string): URL {
 
 export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
+/** Thrown by `readPin` when the model is not installed; the message is unchanged. Callers that drop a missing model catch this. */
+export class ModelNotInstalledError extends Error {}
+
 export async function readPin(model: string, baseUrl: string = DEFAULT_OLLAMA_URL, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<EmbeddingPin> {
   if (/cloud/i.test(model)) throw new Error('cloud-served embedding models are refused (ADR-0098 D8)');
   const root = assertLoopback(baseUrl).origin;
@@ -57,7 +60,7 @@ export async function readPin(model: string, baseUrl: string = DEFAULT_OLLAMA_UR
   const tags = (await (await fetchImpl(`${root}/api/tags`)).json()) as { models?: Array<{ name: string; digest: string }> };
   const wanted = model.includes(':') ? model : `${model}:latest`;
   const found = tags.models?.find((entry) => entry.name === wanted);
-  if (found === undefined) throw new Error(`embedding model ${wanted} is not installed (the harness never pulls)`);
+  if (found === undefined) throw new ModelNotInstalledError(`embedding model ${wanted} is not installed (the harness never pulls)`);
   if (typeof version.version !== 'string') throw new Error('Ollama did not report a version');
   const digest12 = found.digest.slice(0, 12);
   return { model, digest12, ollamaVersion: version.version, spaceId: spaceIdOf(model, digest12, version.version), prefix: EMBEDDING_PREFIX };

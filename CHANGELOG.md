@@ -12,6 +12,16 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   names an offered action (existing closed vocabulary), and is the whole reply only when nothing is left (deploy smoke 2026-11-05, DM8).
 - **Unchanged.** What counts as an offending sentence; a stale quote spanning sentences still replaces the whole reply.
 
+## Unreleased — ADR-0124 phase 1 stage A: embedder arms E0-E3 / EH and the CH7 memory set for `eval:chunk` (offline code, no model run)
+
+- **Added.** `eval:chunk --arms E0,E1,E2,E3` (loopback Ollama only; batch 16, concurrency 1, `truncate: false` with `overContext` counted; on-disk cache of synthetic vectors under `data/eval`) and the hybrid EH(x) (RRF k = 60 with the EL BM25 ranking);
+  Recall@1/3/5/10, MRR, nDCG@10, window recall by language / needle kind / shape / depth (v2 also by feature), fit (tokens per Hangul syllable, over-context), cost (latency p50 / p95, cold call, time for 200 passages + 1 query, resident memory).
+  New hash-frozen CH7 synthetic memory set (`--set memory`, 171 memories incl. 21 long, 192 queries, digest `91b92972...`, own freeze record `chunk-eval-memory.freeze.v1.json`) with single-vector vs multi-vector Recall@5 and the EL baseline.
+  New modes `--mode plan` (zero model calls, prints a plan digest) and `--mode probe`; a run with embedder arms needs the matching `--plan-digest` (mismatch or missing: BLOCKED, exit 3, no embedding call). `--scope phase1|all` and `--shapes` (owner scope: the v1 `adr-file` shape on E0 only).
+  The memory run computes the ratified section 6 verdict mechanically.
+- **Unchanged.** Runs without `--arms` (v1, drive-format, v2) are byte-identical; v1 `f395110d...`, v2 `299e4b76...`, drive-format sets, Core, the chunker, BM25, all thresholds (proposals). `selector-rag/embed.ts` exports `assertLoopback` and `ModelNotInstalledError` (same behaviour).
+- **Not run.** No model was called; the real runs are separate owner-approved steps. Recorded in DECISIONS "ADR-0124 phase 1 measurement record".
+
 ## Unreleased — ADR-0124 harder synthetic set v2 for `eval:chunk` (phase 0, no model)
 
 - **Added.** `--set v2`: 447 hash-frozen, feature-tagged cases (paraphrased questions, long paragraphs, section-name questions with Drive plain-text / Markdown pairs, near-duplicates, dense decoys; fictional names;
