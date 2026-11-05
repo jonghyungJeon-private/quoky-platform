@@ -32835,8 +32835,9 @@ Owner approved enabling them (2026-11-04) after the D12 gates (haiku, 3 runs, he
 - **Rollback.** Set `NL_ACTIVE_PROMPT_REVS.action` back to `'v73'` and the two active ids back to `nl-select.v71` / `nl-select.v72`.
 ### Selector prompt caching: stable prefix as system prompt (nl-select.v81 / v82)
 
-Candidate, D12 gates pending. Status: the code defaults to `v81` / `v82`, which changes live behaviour only after the gates below pass; until then
-the production owner decision stays v79 / v80 and the explicit `rev: 'v79'` is the rollback.
+Candidate, D12 gates pending. `NL_ACTIVE_PROMPT_REVS.action = 'v81'` goes live on deploy, so v81 / v82 become active on merge: the branch is merged and
+deployed only after the D12 gates action, read-regression and r2 PASS on its final head (quoky-ship §3.5). Rollback = set the active action rev back to `'v79'`
+(or pass the explicit `rev: 'v79'`).
 
 - **Measured (probe, not re-measured here).** The NL selector calls `claude -p` with the whole selection prompt (~35k chars, ~19.6k tokens) on stdin as the user
   message. In that shape the CLI cache-WRITES the whole user message on every call (~17-19.7k tokens at 1.25x) and only re-reads its own 2.6k default system
@@ -32844,15 +32845,21 @@ the production owner decision stays v79 / v80 and the explicit `rev: 'v79'` is t
   and write ~0.6k; the TTL is 1h (`ephemeral_1h`). The CLI system prompt includes the cwd, so the cwd must stay constant (production already uses `os.tmpdir()`).
   `--system-prompt-file` also works but replaces the CLI default; `--append-system-prompt-file` is used.
 - **Design.** `buildSelectionPromptParts(input)` returns `{ stable, turn }` with `stable + '\n' + turn === buildSelectionPrompt(input)` byte for byte (every mode and rev).
-  `stable` = rule header, catalog, examples, retrieved block; `turn` = previous selection, reference context, owner message. `buildSelectionPrompt` is unchanged
+  `stable` = rule header, catalog, static examples; `turn` = (retrieved / swapped examples block, chosen per message and possibly owner-derived), previous selection,
+  reference context, owner message. The stable part ends before the retrieved block and before a swapped `Examples:` block, so nothing owner-derived reaches the system prompt file. `buildSelectionPrompt` is unchanged
   (all hash pins pass). Two stale/earlier-previous rule lines of the header depend on the previous selection's age and history (fixed text, no content), so
   `stable` has up to four variants per entry set; each caches on its own.
 - **Port.** `AiRequest.systemPrompt?` is a stable, owner-content-free instruction prefix. A provider that can cache it sends it as a system prompt (only the Claude CLI
   does); every other provider behaves as if `prompt = systemPrompt + '\n' + prompt` (`joinedPrompt` / `unsplitRequest` in the port module), so Codex, Ollama, the
   OpenAI / Gemini API providers and the vision / embedding providers are byte-identical to an unsplit request. Wrappers forward the request unchanged. Core does not
   branch on a provider: the split is chosen by the prompt revision (`nlPromptRevIsSplit`) and sent as a provider-neutral field.
-- **Claude CLI.** The system text is written to `<sha256>.txt` (0600) in a private directory made once per process by `mkdtemp` under `os.tmpdir()` (0700), written
-  atomically (tmp + rename) only when absent, reused across calls and removed at exit. The owner text stays on stdin; the system text never enters argv (only the path);
+- **Claude CLI.** The system text is written to `<sha256>.txt` (0600) in ONE directory per uid, `<os.tmpdir()>/quoky-sysprompt-<uid>` (0700), `lstat`-checked on every
+  use (real directory, owned by the uid, exactly 0700, else fail closed with `AiProviderError(EXECUTION_FAILED)`; recreated when absent). A file is reused only after
+  `lstat` (regular, not a symlink, owned by the uid, 0600) and a byte comparison with the expected text; otherwise it is rewritten through a temp file opened
+  `O_CREAT | O_EXCL | O_NOFOLLOW` (0600) and renamed over (the project's private-file convention; content addressing plus rename makes concurrent processes safe, and an
+  ENOENT / EEXIST race retries once). Every filesystem failure is classified (`EXECUTION_FAILED`). **Growth bound:** at the first use per process, files in that
+  directory whose name matches `<sha256>.txt`, that are regular and owned by the uid, and whose mtime is older than 7 days are deleted (a reused file's mtime is
+  refreshed when older than a day). An empty `systemPrompt` is not dropped: it joins as newline + prompt like any provider. The owner text stays on stdin; the system text never enters argv (only the path);
   `--tools ""` stays the last argv entry; `CLAUDE_CHILD_ENV` and the cwd are unchanged.
 - **Revisions.** `rev: 'v81'` (action only) = the v79 text on the split transport (`nl-select.v81` action, `nl-select.v82` R2 = the v80 text split). It is the active action
   rev (`NL_ACTIVE_PROMPT_REVS.action`); read mode stays v74 unsplit and rejects v81 like v77 / v79. The rule text is unchanged (pinned: v81 joined == v79 bytes, v82 joined == v80

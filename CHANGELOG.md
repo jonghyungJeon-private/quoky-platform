@@ -20,7 +20,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   `joinedPrompt` / `unsplitRequest`, and `rev: 'v81'` (action only: `nl-select.v81` action = the v79 text, `nl-select.v82` R2 = the v80 text, sent split). The Claude CLI writes the
   system text to a content-addressed 0600 file in a private 0700 directory and passes `--append-system-prompt-file <path>`; every other provider joins the two parts
   (byte-identical to before). Usage logs gain `cacheWrite` next to `cacheRead`; `promptChars` / `promptBytes` stay the joined length.
-- **Changed.** `NL_ACTIVE_PROMPT_REVS.action` is `'v81'` and the active action / R2 ids are `nl-select.v81` / `nl-select.v82` (candidate: D12 gates pending). The eval CLIs
+- **Changed.** `NL_ACTIVE_PROMPT_REVS.action` is `'v81'` and the active action / R2 ids are `nl-select.v81` / `nl-select.v82` (becomes active on merge, which happens only after the D12 gates pass on the final head). The eval CLIs
   send the same split request as the service; `--prompt-rev v79` evaluates the old unsplit prompt. Read mode (v74) and the read + write probe (pinned to v79) are unsplit.
 - **Rollback.** Explicit `rev: 'v79'`. Record: DECISIONS "Selector prompt caching: stable prefix as system prompt (nl-select.v81 / v82)".
 
