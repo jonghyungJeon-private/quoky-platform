@@ -53,6 +53,10 @@ interface FakeOptions {
   readonly version?: string;
   /** an input longer than this many code points is refused with a 400 context error */
   readonly contextLimit?: number;
+  /** model name -> details.parameter_size answered by /api/show (absent = no details) */
+  readonly parameterSizes?: Readonly<Record<string, string>>;
+  /** model name -> on-disk size in /api/tags */
+  readonly sizes?: Readonly<Record<string, number>>;
 }
 const DIM = 64;
 const hashOf = (term: string): number => {
@@ -76,7 +80,12 @@ function fakeOllama(options: FakeOptions = {}) {
     const path = new URL(url).pathname;
     const reply = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
     if (path === '/api/version') return reply(200, { version: options.version ?? '0.12.3' });
-    if (path === '/api/tags') return reply(200, { models: Object.entries(models).map(([name, digest]) => ({ name, digest })) });
+    if (path === '/api/tags') return reply(200, { models: Object.entries(models).map(([name, digest]) => ({ name, digest, size: options.sizes?.[name] ?? 1000 })) });
+    if (path === '/api/show') {
+      const asked = (JSON.parse(init?.body ?? '{}') as { model: string }).model;
+      const size = options.parameterSizes?.[asked];
+      return reply(200, size === undefined ? {} : { details: { parameter_size: size } });
+    }
     if (path === '/api/ps') return reply(200, { models: [{ name: 'nomic-embed-text:latest', size: 400 * 1024 * 1024, size_vram: 0 }] });
     if (path === '/api/embed') {
       const body = JSON.parse(init?.body ?? '{}') as { model: string; input: string[]; truncate: boolean; keep_alive: unknown };
@@ -90,6 +99,7 @@ function fakeOllama(options: FakeOptions = {}) {
   return { fetchImpl, urls, embedBodies, embedCalls: () => embedBodies.filter((body) => body.input.length > 0) };
 }
 
+const bigSample = Array.from({ length: 200 }, (_, at) => ({ text: `sample passage ${at}`, language: 'en' as const }));
 const scratch = mkdtempSync(join(tmpdir(), 'chunk-embed-test-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -128,7 +138,7 @@ describe('arm pins', () => {
     expect(resolved.available.map((pin) => pin.arm)).toEqual(['E0']);
     expect(resolved.dropped.map((d) => d.arm)).toEqual(['E2', 'E3']);
     expect(resolved.dropped[0]?.reason).toMatch(/not installed.*never pulls/);
-    expect(fake.urls.every((url) => /\/api\/(version|tags)$/.test(url))).toBe(true);
+    expect(fake.urls.every((url) => /\/api\/(version|tags|show)$/.test(url))).toBe(true);
     const broken: FetchLike = async () => {
       throw new Error('connection refused');
     };
@@ -375,7 +385,7 @@ describe('CH7 memory set', () => {
 
   it('single-vector vs multi-vector, per language, with the fake daemon; the report has the verdict and the EL baseline', async () => {
     const embedder = await embedderOf('E0');
-    const run = await runMemoryArm(embedder, set, { sample: [{ text: 'sample passage', language: 'en' }], query: { text: 'q', language: 'en' } });
+    const run = await runMemoryArm(embedder, set, { sample: bigSample, query: { text: 'q', language: 'en' } });
     expect(run.single.overall.n).toBe(set.queries.length);
     expect(run.multi.longMemories.n).toBe(set.queries.filter((query) => query.targetLong).length);
     expect(Object.keys(run.multi.byLanguage)).toEqual(['ko', 'en', 'mixed']);
@@ -400,7 +410,8 @@ describe('CH7 memory set', () => {
 // ---------------------------------------------------------------- decision rule
 
 describe('decision rule (section 6, ratified 2026-11-05)', () => {
-  const input = (arm: ArmId, ko: number, en: number, ms = 1000): ArmDecisionInput => ({ arm, koRecallAt5: ko, enRecallAt5: en, time200Ms: ms, nominalParamsM: ARM_SPECS[arm].nominalParamsM });
+  const PARAMS: Record<ArmId, number> = { E0: 137, E1: 475, E2: 568, E3: 596 };
+  const input = (arm: ArmId, ko: number, en: number, ms = 1000, bar = true): ArmDecisionInput => ({ arm, koRecallAt5: ko, enRecallAt5: en, time200Ms: ms, paramsM: PARAMS[arm], sizeBytes: null, latencyMeetsBar: bar, latencyReason: bar ? null : 'input(s) refused as over the model context' });
   const base = input('E0', 0.4, 0.8);
 
   it('says no arm is chosen until all planned arms ran when one is missing or E0 is absent', () => {
@@ -496,7 +507,7 @@ describe('CLI embedder modes', () => {
     const a = make();
     expect(await runCli(['--mode', 'plan'], a.deps)).toBe(EXIT_OK);
     expect(a.fake.embedBodies).toEqual([]);
-    expect(a.fake.urls.every((url) => /\/api\/(version|tags)$/.test(url))).toBe(true);
+    expect(a.fake.urls.every((url) => /\/api\/(version|tags|show)$/.test(url))).toBe(true);
     const digest = digestOf(a.out);
     expect(digest).toMatch(/^[0-9a-f]{64}$/);
     expect(a.out.join('\n')).toMatch(/E0 nomic-embed-text@a{12}/);
@@ -695,20 +706,21 @@ describe('cache integrity, cached refusals, timed refusals, plan digest coverage
   it('a refusal inside a timed block counts in calls and overContext, and the block cannot meet the latency bar', async () => {
     const fake = fakeOllama({ contextLimit: 20 });
     const embedder = await embedderOf('E2', fake);
-    const sample = [texts[0] as (typeof texts)[number], { text: 'z'.repeat(50), language: 'en' as const }];
+    const sample = [...bigSample.slice(0, 199), { text: 'z'.repeat(50), language: 'en' as const }];
     const block = await measureLatency(embedder, { text: 'q', language: 'en' }, sample, false);
     expect(block.overContext).toBe(1);
     expect(block.meetsBar).toBe(false);
     expect(block.reason).toMatch(/refused/);
     expect(block.calls).toBeGreaterThanOrEqual(4);
+    expect(block.reason).not.toMatch(/smaller/);
     expect(embedder.overContext).toBe(1);
-    const clean = await measureLatency(await embedderOf('E2', fakeOllama()), { text: 'q', language: 'en' }, [texts[0] as (typeof texts)[number]], false);
+    const clean = await measureLatency(await embedderOf('E2', fakeOllama()), { text: 'q', language: 'en' }, bigSample, false);
     expect(clean).toMatchObject({ meetsBar: true, reason: null, overContext: 0 });
   });
 
   it('a latency block with no successful call cannot qualify', async () => {
     const fake = fakeOllama({ contextLimit: 1 });
-    const block = await measureLatency(await embedderOf('E2', fake), { text: 'qq', language: 'en' }, [{ text: 'pp', language: 'en' }], false);
+    const block = await measureLatency(await embedderOf('E2', fake), { text: 'qq', language: 'en' }, bigSample, false);
     expect(block.meetsBar).toBe(false);
     expect(block.reason).toMatch(/refused|no successful call/);
   });
@@ -736,5 +748,91 @@ describe('cache integrity, cached refusals, timed refusals, plan digest coverage
       holder[last] = Array.isArray(old) ? [...old, 99] : typeof old === 'number' ? old + 1 : typeof old === 'boolean' ? !old : `${String(old)}!`;
       expect(planDigest(inputs, clone), path.join('.')).not.toBe(base);
     }
+  });
+});
+
+
+describe('round-2 review fixes', () => {
+  const PARAMS: Record<ArmId, number> = { E0: 137, E1: 475, E2: 568, E3: 596 };
+  const di = (arm: ArmId, ko: number, en: number, bar = true, extra: Partial<ArmDecisionInput> = {}): ArmDecisionInput => ({ arm, koRecallAt5: ko, enRecallAt5: en, time200Ms: 1000, paramsM: PARAMS[arm], sizeBytes: null, latencyMeetsBar: bar, latencyReason: bar ? null : 'sample smaller than the bar', ...extra });
+
+  it('the verdict excludes an arm whose latency block did not meet the bar, with the recorded reason', () => {
+    const verdict = decideEmbedder(['E0', 'E1'], [di('E0', 0.4, 0.8), di('E1', 0.9, 0.8, false)]);
+    expect(verdict.verdict).toBe('KEEP_E0');
+    expect(verdict.reasons.join('\n')).toMatch(/E1:.*NOT ELIGIBLE: sample smaller than the bar/);
+    expect(verdict.inputs.find((i) => i.arm === 'E1')?.latencyOk).toBe(false);
+  });
+
+  it('when E0 itself fails the bar it is reported, and E0 is kept only if no eligible arm beats it by 5 points', () => {
+    const keep = decideEmbedder(['E0', 'E1'], [di('E0', 0.4, 0.8, false), di('E1', 0.42, 0.8)]);
+    expect(keep.verdict).toBe('KEEP_E0');
+    expect(keep.reasons.join('\n')).toMatch(/E0 itself fails the latency bar/);
+    const choose = decideEmbedder(['E0', 'E1'], [di('E0', 0.4, 0.8, false), di('E1', 0.5, 0.8)]);
+    expect(choose.chosen).toBe('E1');
+    expect(choose.reasons.join('\n')).toMatch(/E0 itself fails the latency bar/);
+  });
+
+  it('a missing latency block makes the memory report treat the arm as ineligible', async () => {
+    const set = generateMemorySet();
+    const run = await runMemoryArm(await embedderOf('E0'), set);
+    const report = buildMemoryReport(set, memoryDigest(set), { E0: run }, { digest: null, planned: ['E0'], dropped: [] }, true);
+    expect(report.verdict?.reasons.join('\n')).toMatch(/latency block not run/);
+  });
+
+  it('cached query first, then fresh passages in another dimension: the stale cached query is re-embedded, never compared', async () => {
+    const fake = fakeOllama();
+    const pin = await pinOf('E0');
+    const bundle = bundleOf(buildCase('mail', 6_000, 50, 'ko', 0));
+    const cache = new EmbeddingCache();
+    cache.set(EmbeddingCache.key(pin.spaceId, `search_query: ${bundle.item.question}`), new Float32Array(3).fill(1));
+    const embedder = await embedderOf('E0', fake, cache);
+    const run = await runArmOnSet(embedder, { set: 'v1', bundles: [bundle], scope: 'phase1' });
+    expect(run.embedder.overall.n).toBe(1);
+    expect(embedder.cacheRejected).toBeGreaterThanOrEqual(1);
+    expect(fake.embedCalls().some((body) => body.input[0]?.startsWith('search_query: '))).toBe(true);
+  });
+
+  it('a cache that disagrees with the daemon after a cached vector was served fails loudly instead of mixing sizes', async () => {
+    const fake = fakeOllama();
+    const pin = await pinOf('E0');
+    const cache = new EmbeddingCache();
+    cache.set(EmbeddingCache.key(pin.spaceId, 'search_query: only cached'), new Float32Array(3).fill(1));
+    const embedder = await embedderOf('E0', fake, cache);
+    await embedder.embed('query', [{ text: 'only cached', language: 'en' }]);
+    await expect(embedder.embed('document', [{ text: 'fresh', language: 'en' }])).rejects.toThrow(/remove the cache file/);
+  });
+
+  it('a block with zero passages or fewer than 200 cannot meet the bar', async () => {
+    const embedder = await embedderOf('E2');
+    const zero = await measureLatency(embedder, { text: 'q', language: 'en' }, [], false);
+    expect(zero.meetsBar).toBe(false);
+    expect(zero.reason).toBe('sample smaller than the bar (0 of 200 passages)');
+    const small = await measureLatency(embedder, { text: 'q', language: 'en' }, bigSample.slice(0, 199), false);
+    expect(small).toMatchObject({ meetsBar: false });
+    expect(small.reason).toMatch(/^sample smaller than the bar/);
+  });
+
+  it('pins the parameter count from /api/show and the on-disk size from /api/tags (metadata only), in the plan digest', async () => {
+    const fake = fakeOllama({ parameterSizes: { 'nomic-embed-text:latest': '137M', 'bge-m3:latest': '566.70M', 'qwen3-embedding:0.6b': '0.6B' }, sizes: { 'nomic-embed-text:latest': 274_000_000 } });
+    const e0 = await pinOf('E0', fake);
+    expect(e0).toMatchObject({ parameterSize: '137M', paramsM: 137, sizeBytes: 274_000_000 });
+    expect((await pinOf('E2', fake)).paramsM).toBe(566.7);
+    expect((await pinOf('E3', fake)).paramsM).toBe(600);
+    expect((await pinOf('E1', fake)).paramsM).toBeNull();
+    expect(fake.embedBodies).toEqual([]);
+    expect(fake.urls.filter((url) => url.endsWith('/api/embed'))).toEqual([]);
+    const digestWith = async (f: ReturnType<typeof fakeOllama>): Promise<string> =>
+      planDigest({ sets: { v1: { digest: 'a' }, v2: { digest: 'b' }, memory: { digest: 'c' } }, resolved: await resolveArms(['E0'], undefined, f.fetchImpl), scope: 'phase1' });
+    expect(await digestWith(fake)).not.toBe(await digestWith(fakeOllama({ parameterSizes: { 'nomic-embed-text:latest': '138M' }, sizes: { 'nomic-embed-text:latest': 274_000_000 } })));
+    expect(await digestWith(fake)).not.toBe(await digestWith(fakeOllama({ parameterSizes: { 'nomic-embed-text:latest': '137M' }, sizes: { 'nomic-embed-text:latest': 275_000_000 } })));
+  });
+
+  it('the tie-break uses the pinned parameter count, then the on-disk size when a count is missing, then the arm order', () => {
+    const tie = (e1: Partial<ArmDecisionInput>, e2: Partial<ArmDecisionInput>): ArmId | null =>
+      decideEmbedder(['E0', 'E1', 'E2'], [di('E0', 0.4, 0.8), di('E1', 0.7, 0.8, true, e1), di('E2', 0.7, 0.8, true, e2)]).chosen;
+    expect(tie({ paramsM: 900 }, { paramsM: 100 })).toBe('E2');
+    expect(tie({ paramsM: null, sizeBytes: 5 }, { paramsM: null, sizeBytes: 9 })).toBe('E1');
+    expect(tie({ paramsM: null, sizeBytes: 9 }, { paramsM: 100, sizeBytes: 5 })).toBe('E2');
+    expect(tie({ paramsM: null, sizeBytes: null }, { paramsM: null, sizeBytes: null })).toBe('E1');
   });
 });

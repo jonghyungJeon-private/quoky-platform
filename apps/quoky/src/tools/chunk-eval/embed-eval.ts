@@ -155,6 +155,7 @@ export async function runArmOnSet(embedder: ArmEmbedder, options: RunOptions): P
   const bundles = options.bundles.filter((bundle) => inScope(options.scope, options.shapes, options.set, arm, bundle.item));
   const otherModelsResidentBefore = await embedder.otherResident();
   const { queries, passages } = itemsFor(bundles);
+  await embedder.settle([{ role: 'query', items: queries }, { role: 'document', items: passages }]);
   const queryVectors = await embedder.embed('query', queries);
   const passageVectors = await embedder.embed('document', passages);
   const lexical: CaseScore[] = [];

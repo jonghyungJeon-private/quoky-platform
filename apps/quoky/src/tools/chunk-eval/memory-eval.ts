@@ -86,7 +86,7 @@ export function memoryItems(set: MemorySet): { queries: EmbedItem[]; singles: Em
 }
 
 export interface MemoryArmRun {
-  readonly pin: { readonly model: string; readonly digest12: string; readonly ollamaVersion: string; readonly spaceId: string; readonly queryPrefix: string; readonly documentPrefix: string };
+  readonly pin: { readonly model: string; readonly digest12: string; readonly ollamaVersion: string; readonly spaceId: string; readonly queryPrefix: string; readonly documentPrefix: string; readonly paramsM: number | null; readonly sizeBytes: number | null };
   readonly single: PathMetrics;
   readonly multi: PathMetrics;
   /** Multi-vector Recall@5 minus single-vector Recall@5 on the long memories, in percentage points (CH7 proposal: >= +10; not ratified). */
@@ -98,6 +98,7 @@ export interface MemoryArmRun {
 
 export async function runMemoryArm(embedder: ArmEmbedder, set: MemorySet, latency?: { sample: readonly EmbedItem[]; query: EmbedItem }): Promise<MemoryArmRun> {
   const items = memoryItems(set);
+  await embedder.settle([{ role: 'query', items: items.queries }, { role: 'document', items: items.singles }, { role: 'document', items: items.passages }]);
   const queryVectors = await embedder.embed('query', items.queries);
   const singleVectors = await embedder.embed('document', items.singles);
   const passageVectors = await embedder.embed('document', items.passages);
@@ -121,7 +122,7 @@ export async function runMemoryArm(embedder: ArmEmbedder, set: MemorySet, latenc
   // the latency block runs last, cache bypassed, so its calls do not enter the cost and fit figures above
   const block = latency === undefined ? null : await measureLatency(embedder, latency.query, latency.sample, true);
   return {
-    pin: { model: embedder.pin.model, digest12: embedder.pin.digest12, ollamaVersion: embedder.pin.ollamaVersion, spaceId: embedder.pin.spaceId, queryPrefix: embedder.pin.queryPrefix, documentPrefix: embedder.pin.documentPrefix },
+    pin: { model: embedder.pin.model, digest12: embedder.pin.digest12, ollamaVersion: embedder.pin.ollamaVersion, spaceId: embedder.pin.spaceId, queryPrefix: embedder.pin.queryPrefix, documentPrefix: embedder.pin.documentPrefix, paramsM: embedder.pin.paramsM, sizeBytes: embedder.pin.sizeBytes },
     single,
     multi,
     multiMinusSinglePointsOnLong: Math.round((multi.longMemories.recallAt5 - single.longMemories.recallAt5) * 10_000) / 100,
@@ -139,7 +140,12 @@ export interface ArmDecisionInput {
   readonly enRecallAt5: number;
   /** Measured: 1 query + 200 passage embeddings, warm. */
   readonly time200Ms: number;
-  readonly nominalParamsM: number;
+  /** Pinned from the daemon: parameter count in millions and on-disk size (the tie-break uses the first both arms have). */
+  readonly paramsM: number | null;
+  readonly sizeBytes: number | null;
+  /** The recorded latency block: false (with its reason) makes the arm ineligible. */
+  readonly latencyMeetsBar: boolean;
+  readonly latencyReason: string | null;
 }
 export interface Verdict {
   readonly verdict: 'INCOMPLETE' | 'KEEP_E0' | 'CHOOSE';
@@ -148,6 +154,13 @@ export interface Verdict {
   readonly reasons: readonly string[];
   readonly rule: string;
   readonly inputs: readonly (ArmDecisionInput & { readonly latencyOk: boolean; readonly englishWithin2Points: boolean })[];
+}
+
+/** Negative when `a` is the smaller model: parameter count when both are pinned, else on-disk size when both are pinned, else 0. */
+function smaller(a: ArmDecisionInput, b: ArmDecisionInput): number {
+  if (a.paramsM !== null && b.paramsM !== null && a.paramsM !== b.paramsM) return a.paramsM - b.paramsM;
+  if ((a.paramsM === null || b.paramsM === null || a.paramsM === b.paramsM) && a.sizeBytes !== null && b.sizeBytes !== null) return a.sizeBytes - b.sizeBytes;
+  return 0;
 }
 
 export const DECISION_RULE =
@@ -166,7 +179,7 @@ export function decideEmbedder(planned: readonly ArmId[], inputs: readonly ArmDe
   const e0 = inputs.find((input) => input.arm === 'E0');
   const annotated = inputs.map((input) => ({
     ...input,
-    latencyOk: input.time200Ms <= budgetMs,
+    latencyOk: input.latencyMeetsBar && input.time200Ms <= budgetMs,
     englishWithin2Points: e0 !== undefined && bp(e0.enRecallAt5) - bp(input.enRecallAt5) <= ENGLISH_TOLERANCE_BP,
   }));
   if (missing.length > 0 || e0 === undefined) {
@@ -175,10 +188,11 @@ export function decideEmbedder(planned: readonly ArmId[], inputs: readonly ArmDe
   }
   const reasons = annotated.map(
     (input) =>
-      `${input.arm}: ko R@5 ${input.koRecallAt5} (${(bp(input.koRecallAt5) - bp(e0.koRecallAt5)) / 100} points vs E0), en R@5 ${input.enRecallAt5} (${(bp(input.enRecallAt5) - bp(e0.enRecallAt5)) / 100} points vs E0), time for 200 passages + 1 query ${input.time200Ms} ms ${input.latencyOk ? 'within' : 'over'} ${budgetMs} ms`,
+      `${input.arm}: ko R@5 ${input.koRecallAt5} (${(bp(input.koRecallAt5) - bp(e0.koRecallAt5)) / 100} points vs E0), en R@5 ${input.enRecallAt5} (${(bp(input.enRecallAt5) - bp(e0.enRecallAt5)) / 100} points vs E0), time for 200 passages + 1 query ${input.time200Ms} ms ${input.latencyOk ? 'within' : 'over'} ${budgetMs} ms${input.latencyOk ? '' : ` — NOT ELIGIBLE: ${input.latencyReason ?? 'over the latency bar'}`}`,
   );
+  if (!annotated.find((input) => input.arm === 'E0')?.latencyOk) reasons.push(`E0 itself fails the latency bar (${e0.latencyReason ?? 'over the bar'}); it is not eligible, and E0 is kept only because the rule keeps E0 when no eligible arm beats it by 5 points`);
   const candidates = annotated.filter((input) => input.latencyOk && input.englishWithin2Points);
-  const order = (a: ArmDecisionInput, b: ArmDecisionInput): number => bp(b.koRecallAt5) - bp(a.koRecallAt5) || a.nominalParamsM - b.nominalParamsM || a.arm.localeCompare(b.arm);
+  const order = (a: ArmDecisionInput, b: ArmDecisionInput): number => bp(b.koRecallAt5) - bp(a.koRecallAt5) || smaller(a, b) || a.arm.localeCompare(b.arm);
   const winner = [...candidates].sort(order)[0];
   const e0Model = ARM_SPECS.E0.model;
   if (winner === undefined || winner.arm === 'E0' || bp(winner.koRecallAt5) - bp(e0.koRecallAt5) < KOREAN_GAIN_BP) {
@@ -216,7 +230,10 @@ export function buildMemoryReport(
     koRecallAt5: run.multi.byLanguage.ko?.recallAt5 ?? 0,
     enRecallAt5: run.multi.byLanguage.en?.recallAt5 ?? 0,
     time200Ms: run.latency?.time200Ms ?? Number.POSITIVE_INFINITY,
-    nominalParamsM: ARM_SPECS[arm as ArmId].nominalParamsM,
+    paramsM: run.pin.paramsM,
+    sizeBytes: run.pin.sizeBytes,
+    latencyMeetsBar: run.latency?.meetsBar ?? false,
+    latencyReason: run.latency === null ? 'latency block not run' : run.latency.reason,
   }));
   return {
     kind: 'chunk-eval-memory',

@@ -33,20 +33,17 @@ export interface ArmSpec {
   readonly model: string;
   readonly queryPrefix: string;
   readonly documentPrefix: string;
-  /** Nominal published parameter count in millions; only the tie-break "smaller model" reads it. */
-  readonly nominalParamsM: number;
   readonly prefixPolicy: string;
 }
 
 const NOMIC = { queryPrefix: 'search_query: ', documentPrefix: 'search_document: ', prefixPolicy: 'search_query: / search_document: ' } as const;
 export const ARM_SPECS: Readonly<Record<ArmId, ArmSpec>> = {
-  E0: { id: 'E0', model: 'nomic-embed-text', nominalParamsM: 137, ...NOMIC },
-  E1: { id: 'E1', model: 'nomic-embed-text-v2-moe', nominalParamsM: 475, ...NOMIC },
-  E2: { id: 'E2', model: 'bge-m3', nominalParamsM: 568, queryPrefix: '', documentPrefix: '', prefixPolicy: 'none' },
+  E0: { id: 'E0', model: 'nomic-embed-text', ...NOMIC },
+  E1: { id: 'E1', model: 'nomic-embed-text-v2-moe', ...NOMIC },
+  E2: { id: 'E2', model: 'bge-m3', queryPrefix: '', documentPrefix: '', prefixPolicy: 'none' },
   E3: {
     id: 'E3',
     model: 'qwen3-embedding:0.6b',
-    nominalParamsM: 596,
     queryPrefix: 'Instruct: Given a question, retrieve the passages that answer it\nQuery: ',
     documentPrefix: '',
     prefixPolicy: 'instruction on the query side only; documents raw',
@@ -57,13 +54,42 @@ export interface ArmPin extends EmbeddingPin {
   readonly arm: ArmId;
   readonly queryPrefix: string;
   readonly documentPrefix: string;
-  readonly nominalParamsM: number;
+  /** From the daemon's `/api/show` (`details.parameter_size`, metadata only; no model is loaded), as reported, and in millions. null when absent. */
+  readonly parameterSize: string | null;
+  readonly paramsM: number | null;
+  /** On-disk size from `/api/tags`; the tie-break falls back to it when the parameter count is missing. */
+  readonly sizeBytes: number | null;
+}
+
+/** "137M", "566.70M", "7B", "0.6B" -> millions; null when it does not parse. */
+export function parseParameterSize(text: unknown): number | null {
+  if (typeof text !== 'string') return null;
+  const match = /^\s*([0-9]+(?:\.[0-9]+)?)\s*([KMBT])\s*$/iu.exec(text);
+  if (match === null) return null;
+  const scale: Record<string, number> = { K: 0.001, M: 1, B: 1000, T: 1_000_000 };
+  return Math.round(Number(match[1]) * (scale[(match[2] as string).toUpperCase()] as number) * 1000) / 1000;
 }
 
 /** Reads the pin from the loopback daemon (version and tags only; no model call). Cloud names and non-loopback URLs throw. */
-export async function pinArm(spec: ArmSpec, baseUrl: string = DEFAULT_OLLAMA_URL, fetchImpl?: FetchLike): Promise<ArmPin> {
+export async function pinArm(spec: ArmSpec, baseUrl: string = DEFAULT_OLLAMA_URL, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<ArmPin> {
   const base = await readPin(spec.model, baseUrl, fetchImpl);
-  return { ...base, prefix: spec.documentPrefix, arm: spec.id, queryPrefix: spec.queryPrefix, documentPrefix: spec.documentPrefix, nominalParamsM: spec.nominalParamsM };
+  const root = assertLoopback(baseUrl).origin;
+  const wanted = spec.model.includes(':') ? spec.model : `${spec.model}:latest`;
+  let sizeBytes: number | null = null;
+  let parameterSize: string | null = null;
+  try {
+    const tags = (await (await fetchImpl(`${root}/api/tags`)).json()) as { models?: Array<{ name: string; size?: number }> };
+    const size = tags.models?.find((entry) => entry.name === wanted)?.size;
+    sizeBytes = typeof size === 'number' && size > 0 ? size : null;
+    const show = await fetchImpl(`${root}/api/show`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: wanted }) });
+    if (show.ok) {
+      const size12 = ((await show.json()) as { details?: { parameter_size?: unknown } }).details?.parameter_size;
+      parameterSize = typeof size12 === 'string' ? size12 : null;
+    }
+  } catch {
+    // metadata only: a missing size leaves the tie-break to the next rule
+  }
+  return { ...base, prefix: spec.documentPrefix, arm: spec.id, queryPrefix: spec.queryPrefix, documentPrefix: spec.documentPrefix, parameterSize, paramsM: parseParameterSize(parameterSize), sizeBytes };
 }
 
 export interface ResolvedArms {
@@ -236,6 +262,8 @@ export class ArmEmbedder {
   cacheRejected = 0;
   private dim: number | undefined;
   private freshDim: number | undefined;
+  /** A dimension some cached vector was returned with before any fresh vector fixed the run's dimension. */
+  private servedCacheDim: number | undefined;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly cache: EmbeddingCache;
@@ -285,6 +313,22 @@ export class ArmEmbedder {
     return { unique: unique.length, cacheHits: unique.length - missing.length, toEmbed: missing.length, calls: batchesOf(missing).length };
   }
 
+  /**
+   * Fixes the arm's dimension before any vector is returned: when the run has an uncached text, the first one is embedded
+   * first (its vector sets the dimension), so a cached vector of another size can never be returned ahead of it. With
+   * everything cached the dimension is the cache's own, and rows of another size are misses.
+   */
+  async settle(groups: readonly { readonly role: Role; readonly items: readonly EmbedItem[] }[]): Promise<void> {
+    if (this.freshDim !== undefined) return;
+    for (const group of groups) {
+      const first = group.items.find((item) => this.lookup(group.role, item, false) === undefined);
+      if (first !== undefined) {
+        await this.embed(group.role, [first]);
+        return;
+      }
+    }
+  }
+
   /** Vectors by text (`null` = over the model context). Cache hits make no call. */
   async embed(role: Role, items: readonly EmbedItem[]): Promise<Map<string, Float32Array | null>> {
     const out = new Map<string, Float32Array | null>();
@@ -325,6 +369,8 @@ export class ArmEmbedder {
         const again = this.dedupe(items).filter((item) => staleTexts.has(item.text));
         await fresh(again);
       }
+    } else {
+      for (const vector of out.values()) if (vector !== null) this.servedCacheDim = vector.length;
     }
     return out;
   }
@@ -380,6 +426,9 @@ export class ArmEmbedder {
       if (vector.length === 0 || !finite(vector)) throw new Error('the daemon returned an unusable embedding (empty or non-finite)');
       if (this.freshDim === undefined) {
         // the first fresh vector of the run fixes the arm's dimension; cached rows of another dimension become misses
+        if (this.servedCacheDim !== undefined && this.servedCacheDim !== vector.length) {
+          throw new Error(`the cache for this space holds ${this.servedCacheDim}-dimensional vectors but the daemon returns ${vector.length}; remove the cache file for ${this.pin.spaceId}`);
+        }
         this.freshDim = vector.length;
         this.dim = vector.length;
       } else if (vector.length !== this.freshDim) throw new Error(`the daemon returned a ${vector.length}-dimensional embedding, expected ${this.freshDim}`);
@@ -606,7 +655,7 @@ export async function measureLatency(embedder: ArmEmbedder, query: EmbedItem, sa
   const total = q.ms + p.ms;
   const refused = q.refused + p.refused;
   const succeeded = q.successfulCalls + p.successfulCalls;
-  const reason = refused > 0 ? `${refused} input(s) refused as over the model context` : succeeded === 0 ? 'no successful call' : total > LATENCY_BUDGET_MS ? `over the ${LATENCY_BUDGET_MS} ms budget` : null;
+  const reason = sample.length < LATENCY_PASSAGES ? `sample smaller than the bar (${sample.length} of ${LATENCY_PASSAGES} passages)` : refused > 0 ? `${refused} input(s) refused as over the model context` : succeeded === 0 ? 'no successful call' : total > LATENCY_BUDGET_MS ? `over the ${LATENCY_BUDGET_MS} ms budget` : null;
   return {
     passages: sample.length,
     calls: q.calls + p.calls,

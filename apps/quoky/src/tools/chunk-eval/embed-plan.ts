@@ -74,7 +74,7 @@ export interface PlanInputs {
   readonly shapes?: readonly string[];
 }
 
-const pinKey = (pin: ArmPin): object => ({ arm: pin.arm, model: pin.model, digest12: pin.digest12, ollamaVersion: pin.ollamaVersion, spaceId: pin.spaceId, queryPrefix: pin.queryPrefix, documentPrefix: pin.documentPrefix });
+const pinKey = (pin: ArmPin): object => ({ arm: pin.arm, model: pin.model, digest12: pin.digest12, ollamaVersion: pin.ollamaVersion, spaceId: pin.spaceId, queryPrefix: pin.queryPrefix, documentPrefix: pin.documentPrefix, parameterSize: pin.parameterSize, paramsM: pin.paramsM, sizeBytes: pin.sizeBytes });
 
 export function planDigest(input: PlanInputs, parameters: unknown = PLAN_PARAMETERS): string {
   const body = {
