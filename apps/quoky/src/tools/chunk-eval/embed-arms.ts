@@ -14,7 +14,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chunking } from '@quoky/core';
 import { DEFAULT_OLLAMA_URL, EMBED_BATCH_SIZE, ModelNotInstalledError, assertLoopback, percentiles, readPin, type EmbeddingPin, type FetchLike } from '../selector-rag/embed';
-import { lexicalWindow, type ArmWindow, type LexicalOutcome } from './arms';
+import { PACK_MISS_LIMIT, lexicalWindow, type ArmWindow, type LexicalOutcome } from './arms';
 import { LANGUAGES, type ChunkEvalCase, type Language } from './corpus';
 
 export const ARM_IDS = ['E0', 'E1', 'E2', 'E3'] as const;
@@ -26,6 +26,7 @@ export const BATCH_SIZE = EMBED_BATCH_SIZE;
 /** ADR section 3.8: 1 query embedding plus 200 passage embeddings inside the 8 s embedding sub-budget. */
 export const LATENCY_PASSAGES = 200;
 export const LATENCY_BUDGET_MS = 8_000;
+export const LATENCY_QUERIES = 1;
 
 export interface ArmSpec {
   readonly id: ArmId;
@@ -109,20 +110,48 @@ const unb64 = (text: string): Float32Array => {
   return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
 };
 
-/** Vectors of synthetic text only. A `null` entry records a passage the model refused as over its context. */
+const checksum = (key: string, dim: number, payload: string): string => createHash('sha256').update(`${key}|${dim}|${payload}`).digest('hex').slice(0, 16);
+const finite = (vector: ArrayLike<number>): boolean => {
+  for (let at = 0; at < vector.length; at += 1) if (!Number.isFinite(vector[at])) return false;
+  return true;
+};
+
+/**
+ * Vectors of synthetic text only. A `null` entry records a passage the model refused as over its context. Every row carries its
+ * key, its dimension and a checksum over both and the payload; a row that does not verify (torn, edited, non-finite) is dropped
+ * at load and counted in `rejectedAtLoad`, so its text is simply embedded again.
+ */
 export class EmbeddingCache {
   private readonly entries = new Map<string, Float32Array | null>();
+  /** Rows that failed validation when the file was read. */
+  rejectedAtLoad = 0;
+  /** The most common dimension among the valid rows (undefined for an empty cache). */
+  readonly storedDimension: number | undefined;
   constructor(private readonly file?: string) {
-    if (file === undefined || !existsSync(file)) return;
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
-      if (line === '') continue;
-      try {
-        const row = JSON.parse(line) as { k: string; v?: string; o?: number };
-        this.entries.set(row.k, row.v === undefined ? null : unb64(row.v));
-      } catch {
-        // a torn trailing line from an interrupted run is ignored; the text is simply embedded again
+    const dims = new Map<number, number>();
+    if (file !== undefined && existsSync(file)) {
+      for (const line of readFileSync(file, 'utf8').split('\n')) {
+        if (line === '') continue;
+        try {
+          const row = JSON.parse(line) as { k?: unknown; v?: unknown; d?: unknown; o?: unknown; h?: unknown };
+          if (typeof row.k !== 'string' || !/^[0-9a-f]{64}$/u.test(row.k) || typeof row.h !== 'string') throw new Error('shape');
+          if (row.o === 1) {
+            if (row.h !== checksum(row.k, 0, 'o')) throw new Error('checksum');
+            this.entries.set(row.k, null);
+            continue;
+          }
+          if (typeof row.v !== 'string' || typeof row.d !== 'number' || !Number.isInteger(row.d) || row.d <= 0) throw new Error('shape');
+          if (row.h !== checksum(row.k, row.d, row.v)) throw new Error('checksum');
+          const vector = unb64(row.v);
+          if (vector.length !== row.d || !finite(vector)) throw new Error('vector');
+          this.entries.set(row.k, vector);
+          dims.set(row.d, (dims.get(row.d) ?? 0) + 1);
+        } catch {
+          this.rejectedAtLoad += 1;
+        }
       }
     }
+    this.storedDimension = [...dims.entries()].sort((x, y) => y[1] - x[1] || x[0] - y[0])[0]?.[0];
   }
   static key(spaceId: string, prefixedText: string): string {
     return createHash('sha256').update(`${spaceId}\n${prefixedText}`).digest('hex');
@@ -134,7 +163,8 @@ export class EmbeddingCache {
     this.entries.set(key, vector);
     if (this.file === undefined) return;
     mkdirSync(resolve(this.file, '..'), { recursive: true });
-    appendFileSync(this.file, `${JSON.stringify(vector === null ? { k: key, o: 1 } : { k: key, v: b64(vector) })}\n`);
+    const row = vector === null ? { k: key, o: 1, h: checksum(key, 0, 'o') } : { k: key, d: vector.length, v: b64(vector), h: checksum(key, vector.length, b64(vector)) };
+    appendFileSync(this.file, `${JSON.stringify(row)}\n`);
   }
   get size(): number {
     return this.entries.size;
@@ -158,6 +188,8 @@ export interface CallRecord {
   readonly promptTokens: number | undefined;
   readonly hangulSyllables: number;
   readonly codePoints: number;
+  /** The call was refused as over the model context (counted in calls; carries no tokens and no latency sample). */
+  readonly refused: boolean;
 }
 export interface PlanCount {
   readonly unique: number;
@@ -194,9 +226,16 @@ export interface EmbedderOptions {
 
 export class ArmEmbedder {
   readonly calls: CallRecord[] = [];
+  /** Inputs over the model context: fresh refusals and cached refusals alike, so fit does not depend on cache history. */
   overContext = 0;
+  /** Of `overContext`, the ones answered from the cache (a prior refusal). */
+  cachedRefusals = 0;
   cacheHits = 0;
   cacheMisses = 0;
+  /** Cached rows rejected (failed validation at load, or a dimension that differs from this arm's). */
+  cacheRejected = 0;
+  private dim: number | undefined;
+  private freshDim: number | undefined;
   private readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly cache: EmbeddingCache;
@@ -209,6 +248,8 @@ export class ArmEmbedder {
     this.fetchImpl = options.fetchImpl ?? (fetch as unknown as FetchLike);
     this.cache = options.cache ?? new EmbeddingCache();
     this.clock = options.clock ?? (() => performance.now());
+    this.cacheRejected = this.cache.rejectedAtLoad;
+    this.dim = this.cache.storedDimension;
   }
 
   private prefix(role: Role): string {
@@ -226,10 +267,21 @@ export class ArmEmbedder {
     return out;
   }
 
+  /** A cached row, or undefined when absent or unusable (a vector of another dimension is a miss, counted once per lookup when `count`). */
+  private lookup(role: Role, item: EmbedItem, count: boolean): Float32Array | null | undefined {
+    const hit = this.cache.get(EmbeddingCache.key(this.pin.spaceId, `${this.prefix(role)}${item.text}`));
+    if (hit === undefined || hit === null) return hit;
+    if (this.dim !== undefined && hit.length !== this.dim) {
+      if (count) this.cacheRejected += 1;
+      return undefined;
+    }
+    return hit;
+  }
+
   /** Counts what `embed` would send, from the cache only. No call. */
   plan(role: Role, items: readonly EmbedItem[]): PlanCount {
     const unique = this.dedupe(items);
-    const missing = unique.filter((item) => this.cache.get(EmbeddingCache.key(this.pin.spaceId, `${this.prefix(role)}${item.text}`)) === undefined);
+    const missing = unique.filter((item) => this.lookup(role, item, false) === undefined);
     return { unique: unique.length, cacheHits: unique.length - missing.length, toEmbed: missing.length, calls: batchesOf(missing).length };
   }
 
@@ -238,33 +290,53 @@ export class ArmEmbedder {
     const out = new Map<string, Float32Array | null>();
     const missing: EmbedItem[] = [];
     for (const item of this.dedupe(items)) {
-      const hit = this.cache.get(EmbeddingCache.key(this.pin.spaceId, `${this.prefix(role)}${item.text}`));
+      const hit = this.lookup(role, item, true);
       if (hit === undefined) missing.push(item);
       else {
         out.set(item.text, hit);
         this.cacheHits += 1;
+        if (hit === null) {
+          this.overContext += 1;
+          this.cachedRefusals += 1;
+        }
       }
     }
+    const fresh = async (list: readonly EmbedItem[]): Promise<void> => {
+      for (const batch of batchesOf(list)) {
+        const vectors = await this.callBatch(role, batch);
+        batch.forEach((item, at) => {
+          const vector = vectors[at] ?? null;
+          out.set(item.text, vector);
+          this.cache.set(EmbeddingCache.key(this.pin.spaceId, `${this.prefix(role)}${item.text}`), vector);
+        });
+      }
+    };
     this.cacheMisses += missing.length;
-    for (const batch of batchesOf(missing)) {
-      const vectors = await this.callBatch(role, batch);
-      batch.forEach((item, at) => {
-        const vector = vectors[at] ?? null;
-        out.set(item.text, vector);
-        this.cache.set(EmbeddingCache.key(this.pin.spaceId, `${this.prefix(role)}${item.text}`), vector);
-        if (vector === null) this.overContext += 1;
-      });
+    await fresh(missing);
+    // the first fresh vector of the run fixes the dimension: a cached vector of another size is rejected and embedded again
+    if (this.freshDim !== undefined) {
+      const missed = new Set(missing.map((item) => item.text));
+      const stale = [...out.entries()].filter(([text, vector]) => vector !== null && vector.length !== this.freshDim && !missed.has(text));
+      if (stale.length > 0) {
+        this.cacheRejected += stale.length;
+        this.cacheHits -= stale.length;
+        this.cacheMisses += stale.length;
+        const staleTexts = new Set(stale.map(([text]) => text));
+        const again = this.dedupe(items).filter((item) => staleTexts.has(item.text));
+        await fresh(again);
+      }
     }
     return out;
   }
 
-  /** One batched `/api/embed` call, cache bypassed (latency measurement). Returns the call's wall time. */
-  async timed(role: Role, items: readonly EmbedItem[]): Promise<{ ms: number; calls: number; firstCallMs: number }> {
+  /** Batched calls over `items`, cache bypassed. Context refusals count in `calls` and `refused` (inputs); `successfulCalls` excludes them. */
+  async timed(role: Role, items: readonly EmbedItem[]): Promise<{ ms: number; calls: number; successfulCalls: number; refused: number; firstCallMs: number }> {
     const before = this.calls.length;
+    const refusedBefore = this.overContext;
     const started = this.clock();
     for (const batch of batchesOf(items)) await this.callBatch(role, batch);
     const made = this.calls.slice(before);
-    return { ms: this.clock() - started, calls: made.length, firstCallMs: made[0]?.ms ?? 0 };
+    return { ms: this.clock() - started, calls: made.length, successfulCalls: made.filter((call) => !call.refused).length, refused: this.overContext - refusedBefore, firstCallMs: made[0]?.ms ?? 0 };
   }
 
   private async post(path: string, body: object): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }> {
@@ -279,7 +351,11 @@ export class ArmEmbedder {
     if (!response.ok) {
       const detail = ((await response.json().catch(() => ({}))) as { error?: unknown }).error;
       if (response.status === 400 && typeof detail === 'string' && /context|length/i.test(detail)) {
-        if (batch.length === 1) return [null];
+        this.calls.push({ role, language: (batch[0] as EmbedItem).language, texts: batch.length, ms: this.clock() - started, promptTokens: undefined, hangulSyllables: 0, codePoints: 0, refused: true });
+        if (batch.length === 1) {
+          this.overContext += 1;
+          return [null];
+        }
         // which passage is over the context is not known from a batch error: ask one by one (an explicit count, never a silent cut)
         const singles: (Float32Array | null)[] = [];
         for (const item of batch) singles.push(...(await this.callBatch(role, [item])));
@@ -297,8 +373,18 @@ export class ArmEmbedder {
       promptTokens: typeof body.prompt_eval_count === 'number' ? body.prompt_eval_count : undefined,
       hangulSyllables: prefixed.reduce((sum, text) => sum + hangulCount(text), 0),
       codePoints: prefixed.reduce((sum, text) => sum + points(text), 0),
+      refused: false,
     });
-    return body.embeddings.map((vector) => Float32Array.from(vector));
+    const vectors = body.embeddings.map((vector) => Float32Array.from(vector));
+    for (const vector of vectors) {
+      if (vector.length === 0 || !finite(vector)) throw new Error('the daemon returned an unusable embedding (empty or non-finite)');
+      if (this.freshDim === undefined) {
+        // the first fresh vector of the run fixes the arm's dimension; cached rows of another dimension become misses
+        this.freshDim = vector.length;
+        this.dim = vector.length;
+      } else if (vector.length !== this.freshDim) throw new Error(`the daemon returned a ${vector.length}-dimensional embedding, expected ${this.freshDim}`);
+    }
+    return vectors;
   }
 
   /** Resident memory of this arm's model from the loopback `/api/ps` (null when it is not listed or the call fails). */
@@ -344,8 +430,8 @@ export function cosine32(a: Float32Array, b: Float32Array): number {
   let dot = 0;
   let na = 0;
   let nb = 0;
-  const length = Math.min(a.length, b.length);
-  for (let at = 0; at < length; at += 1) {
+  if (a.length !== b.length) throw new Error(`cosine over vectors of different dimensions (${a.length} and ${b.length})`);
+  for (let at = 0; at < a.length; at += 1) {
     const x = a[at] as number;
     const y = b[at] as number;
     dot += x * y;
@@ -379,7 +465,7 @@ export function packRankedWindow(item: ChunkEvalCase, passages: readonly chunkin
   for (const ordinal of ranking) {
     const trial = [...chosen, ordinal];
     if (chunking.packWindows(item.prepared, passages, trial).length === 1) chosen.push(ordinal);
-    else if ((misses += 1) >= 8) break;
+    else if ((misses += 1) >= PACK_MISS_LIMIT) break;
   }
   const windows = chosen.length === 0 ? [] : chunking.packWindows(item.prepared, passages, chosen);
   const only = windows.length === 1 ? (windows[0] as chunking.Window) : undefined;
@@ -422,10 +508,14 @@ export interface CostReport {
   readonly warmFullBatchMs: { readonly p50: number; readonly p95: number };
   readonly cacheHits: number;
   readonly cacheMisses: number;
+  /** Cached rows rejected by validation or a dimension mismatch (re-embedded). */
+  readonly cacheRejected: number;
   readonly resident: ResidentMemory | null;
 }
 export interface FitReport {
   readonly overContext: number;
+  /** Of `overContext`, the refusals answered from the cache. */
+  readonly cachedRefusals: number;
   readonly byLanguage: Readonly<Record<string, { readonly calls: number; readonly tokens: number; readonly hangulSyllables: number; readonly codePoints: number; readonly tokensPerHangulSyllable: number | null; readonly tokensPerCodePoint: number | null }>>;
   readonly note: string;
 }
@@ -434,7 +524,7 @@ const r3 = (value: number): number => Math.round(value * 1000) / 1000;
 const rp = (p: { p50: number; p95: number }): { p50: number; p95: number } => ({ p50: r3(p.p50), p95: r3(p.p95) });
 
 export function costOf(embedder: ArmEmbedder, resident: ResidentMemory | null): CostReport {
-  const warm = embedder.calls.slice(1);
+  const warm = embedder.calls.slice(1).filter((call) => !call.refused);
   const full = warm.filter((call) => call.role === 'document' && call.texts === BATCH_SIZE);
   return {
     calls: embedder.calls.length,
@@ -443,6 +533,7 @@ export function costOf(embedder: ArmEmbedder, resident: ResidentMemory | null): 
     warmFullBatchMs: rp(percentiles(full.map((call) => call.ms))),
     cacheHits: embedder.cacheHits,
     cacheMisses: embedder.cacheMisses,
+    cacheRejected: embedder.cacheRejected,
     resident,
   };
 }
@@ -466,6 +557,7 @@ export function fitOf(embedder: ArmEmbedder): FitReport {
   }
   return {
     overContext: embedder.overContext,
+    cachedRefusals: embedder.cachedRefusals,
     byLanguage,
     note: 'tokens come from prompt_eval_count per call and include the prefix and special tokens, so per-syllable and per-code-point figures are upper bounds; mixed text includes its Latin part',
   };
@@ -496,6 +588,10 @@ export interface LatencyBlock {
   readonly time200Ms: number;
   readonly firstCallMs: number;
   readonly meetsBar: boolean;
+  /** Why the block cannot qualify for the bar (a refused input, no successful call, over the budget); null when it qualifies. */
+  readonly reason: string | null;
+  /** Inputs refused as over the model context during the block. */
+  readonly overContext: number;
   readonly budgetMs: number;
 }
 
@@ -508,6 +604,9 @@ export async function measureLatency(embedder: ArmEmbedder, query: EmbedItem, sa
   const q = await embedder.timed('query', [query]);
   const p = await embedder.timed('document', sample);
   const total = q.ms + p.ms;
+  const refused = q.refused + p.refused;
+  const succeeded = q.successfulCalls + p.successfulCalls;
+  const reason = refused > 0 ? `${refused} input(s) refused as over the model context` : succeeded === 0 ? 'no successful call' : total > LATENCY_BUDGET_MS ? `over the ${LATENCY_BUDGET_MS} ms budget` : null;
   return {
     passages: sample.length,
     calls: q.calls + p.calls,
@@ -515,7 +614,9 @@ export async function measureLatency(embedder: ArmEmbedder, query: EmbedItem, sa
     passagesMs: r3(p.ms),
     time200Ms: r3(total),
     firstCallMs: r3(q.firstCallMs),
-    meetsBar: total <= LATENCY_BUDGET_MS,
+    meetsBar: reason === null,
+    reason,
+    overContext: refused,
     budgetMs: LATENCY_BUDGET_MS,
   };
 }

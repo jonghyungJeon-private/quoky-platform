@@ -153,6 +153,10 @@ export interface Verdict {
 export const DECISION_RULE =
   'Among the arms that meet the latency bar (1 query + 200 passage embeddings within the 8 s embedding sub-budget, warm), choose the highest Korean Recall@5 on CH7, provided it is not more than 2 percentage points worse than E0 on English; a tie goes to the smaller model; if no arm beats E0 on Korean by at least 5 points, keep E0. No arm is chosen until all planned arms ran.';
 
+/** Decision thresholds in basis points: English may be at most 2 points worse than E0; Korean must gain at least 5 points. */
+export const ENGLISH_TOLERANCE_BP = 200;
+export const KOREAN_GAIN_BP = 500;
+
 const bp = (value: number): number => Math.round(value * 10_000);
 
 /** Pure: the section 6 verdict from the measured numbers. Percentage-point comparisons are done in basis points (no float drift). */
@@ -163,7 +167,7 @@ export function decideEmbedder(planned: readonly ArmId[], inputs: readonly ArmDe
   const annotated = inputs.map((input) => ({
     ...input,
     latencyOk: input.time200Ms <= budgetMs,
-    englishWithin2Points: e0 !== undefined && bp(e0.enRecallAt5) - bp(input.enRecallAt5) <= 200,
+    englishWithin2Points: e0 !== undefined && bp(e0.enRecallAt5) - bp(input.enRecallAt5) <= ENGLISH_TOLERANCE_BP,
   }));
   if (missing.length > 0 || e0 === undefined) {
     const why = e0 === undefined && missing.length === 0 ? 'E0 was not planned, so there is nothing to compare against' : `missing: ${missing.join(', ')}`;
@@ -177,7 +181,7 @@ export function decideEmbedder(planned: readonly ArmId[], inputs: readonly ArmDe
   const order = (a: ArmDecisionInput, b: ArmDecisionInput): number => bp(b.koRecallAt5) - bp(a.koRecallAt5) || a.nominalParamsM - b.nominalParamsM || a.arm.localeCompare(b.arm);
   const winner = [...candidates].sort(order)[0];
   const e0Model = ARM_SPECS.E0.model;
-  if (winner === undefined || winner.arm === 'E0' || bp(winner.koRecallAt5) - bp(e0.koRecallAt5) < 500) {
+  if (winner === undefined || winner.arm === 'E0' || bp(winner.koRecallAt5) - bp(e0.koRecallAt5) < KOREAN_GAIN_BP) {
     const best = winner === undefined ? 'no arm met the latency bar and the English bound' : `the best eligible arm is ${winner.arm}`;
     return { verdict: 'KEEP_E0', chosen: 'E0', text: `keep E0 (${e0Model}): no arm beats E0 on Korean Recall@5 by at least 5 points (${best})`, reasons, rule: DECISION_RULE, inputs: annotated };
   }

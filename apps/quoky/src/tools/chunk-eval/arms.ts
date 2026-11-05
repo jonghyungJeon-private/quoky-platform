@@ -15,6 +15,9 @@ import { buildUntrustedDocumentReadout, chunking, type UntrustedDocumentSource }
 import { firstRelevantRank } from './metrics';
 import type { ChunkEvalCase, Shape } from './corpus';
 
+/** The greedy one-window packing stops after this many passages that do not fit. */
+export const PACK_MISS_LIMIT = 8;
+
 export const NOT_RUN_ARMS = ['E0', 'E1', 'E2', 'E3', 'EH'] as const;
 
 const SOURCE: Readonly<Record<Shape, UntrustedDocumentSource>> = {
@@ -82,7 +85,7 @@ export function lexicalWindow(item: ChunkEvalCase): LexicalOutcome {
     if ((scores[ordinal] ?? 0) <= 0) break;
     const trial = [...chosen, ordinal];
     if (chunking.packWindows(item.prepared, passages, trial).length === 1) chosen.push(ordinal);
-    else if ((misses += 1) >= 8) break;
+    else if ((misses += 1) >= PACK_MISS_LIMIT) break;
   }
   const windows = chosen.length === 0 ? [] : chunking.packWindows(item.prepared, passages, chosen);
   const only = windows.length === 1 ? (windows[0] as chunking.Window) : undefined;

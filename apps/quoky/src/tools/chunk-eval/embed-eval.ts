@@ -29,6 +29,9 @@ import {
   type Scope,
 } from './embed-arms';
 
+export const RECALL_KS = [1, 3, 5, 10] as const;
+export const NDCG_K = 10;
+
 export interface MetricRow {
   readonly n: number;
   readonly recallAt1: number;
@@ -52,10 +55,10 @@ export function metricRow(scores: readonly CaseScore[]): MetricRow {
   const at = (k: number): number => round4(mean(scores.map((s) => recallAtK(s.rank, k))));
   return {
     n: scores.length,
-    recallAt1: at(1),
-    recallAt3: at(3),
-    recallAt5: at(5),
-    recallAt10: at(10),
+    recallAt1: at(RECALL_KS[0]),
+    recallAt3: at(RECALL_KS[1]),
+    recallAt5: at(RECALL_KS[2]),
+    recallAt10: at(RECALL_KS[3]),
     mrr: round4(mean(scores.map((s) => reciprocalRank(s.rank)))),
     ndcgAt10: round4(mean(scores.map((s) => s.ndcg))),
     windowRecall: round4(mean(scores.map((s) => (s.windowHit ? 1 : 0)))),
@@ -136,7 +139,7 @@ export const PARAMETERS = { batch: 16, concurrency: 1 as const, truncate: false 
 
 function scoreCase(bundle: CaseBundle, ranking: readonly number[], window: ReturnType<typeof packRankedWindow>): CaseScore {
   const relevant = relevantPassages(bundle.lexical.passages, bundle.item.needle.start, bundle.item.needle.end);
-  return { item: bundle.item, rank: firstRelevantRank(ranking, relevant), ndcg: ndcgAtK(ranking, relevant, 10), windowHit: windowHasNeedle(window, bundle.item) };
+  return { item: bundle.item, rank: firstRelevantRank(ranking, relevant), ndcg: ndcgAtK(ranking, relevant, NDCG_K), windowHit: windowHasNeedle(window, bundle.item) };
 }
 
 export interface RunOptions {

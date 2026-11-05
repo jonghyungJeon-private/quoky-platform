@@ -2,7 +2,7 @@
  * ADR-0124 phase 1 stage A: offline tests of the embedder arms E0-E3, EH(x), the CH7 memory set, the plan digest and the
  * decision rule. A fake Ollama (a fetch function) answers every call; nothing here can reach a real daemon or a model.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chunking } from '@quoky/core';
@@ -29,7 +29,9 @@ import {
   bundleOf,
   batchesOf,
   cachePath,
+  cosine32,
   inScope,
+  measureLatency,
   latencySample,
   pinArm,
   rankByScores,
@@ -38,6 +40,7 @@ import {
   type ArmId,
   type ArmPin,
 } from './embed-arms';
+import { PLAN_PARAMETERS, planDigest } from './embed-plan';
 import { metricRow, runArmOnSet, type CaseScore } from './embed-eval';
 import { decideEmbedder, runMemoryArm, buildMemoryReport, type ArmDecisionInput } from './memory-eval';
 import { generateMemorySet, memoryDigest, MEMORY_SEED, MEMORY_VERSION, MEMORY_CUT_UNITS, singleVectorText } from './memory-set';
@@ -630,5 +633,108 @@ describe('CLI embedder modes', () => {
     expect(run.fake.urls).toEqual([]);
     expect(Object.keys(run.written)[0]).toMatch(/^chunk-eval-[0-9a-f]{12}-/);
     expect((Object.values(run.written)[0]?.report as { kind: string }).kind).toBe('chunk-eval');
+  });
+});
+
+
+// ---------------------------------------------------------------- review fixes (Codex P2)
+
+describe('cache integrity, cached refusals, timed refusals, plan digest coverage', () => {
+  const texts = [
+    { text: 'alpha beta', language: 'en' as const },
+    { text: 'gamma delta', language: 'en' as const },
+  ];
+
+  it('rejects an invalid cached row (bad checksum, wrong dimension, non-finite, torn) as a miss, counts cacheRejected, and re-embeds', async () => {
+    const fake = fakeOllama();
+    const file = cachePath(join(scratch, 'integrity'), (await pinOf('E0')).spaceId);
+    const first = await embedderOf('E0', fake, new EmbeddingCache(file));
+    await first.embed('document', texts);
+    const rows = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rows.length).toBe(2);
+    // row 0: payload edited after the checksum; row 1 stays valid; plus a torn line and a non-finite vector with a matching checksum
+    writeFileSync(file, `${JSON.stringify({ ...rows[0], v: Buffer.from(new Float32Array(DIM).fill(1).buffer).toString('base64') })}\n${JSON.stringify(rows[1])}\n{"k":"torn\n`);
+    const second = await embedderOf('E0', fake, new EmbeddingCache(file));
+    expect(second.cacheRejected).toBe(2);
+    const before = fake.embedCalls().length;
+    expect(second.plan('document', texts)).toMatchObject({ cacheHits: 1, toEmbed: 1 });
+    await second.embed('document', texts);
+    expect(fake.embedCalls().length).toBe(before + 1);
+  });
+
+  it('a cached vector of another dimension than the arm is a miss (counted), and cosine32 throws on a dimension mismatch', async () => {
+    const fake = fakeOllama();
+    const spaceId = (await pinOf('E0')).spaceId;
+    const cache = new EmbeddingCache();
+    cache.set(EmbeddingCache.key(spaceId, 'search_document: alpha beta'), new Float32Array(3).fill(1));
+    const embedder = await embedderOf('E0', fake, cache);
+    const vectors = await embedder.embed('document', [texts[0] as (typeof texts)[number], texts[1] as (typeof texts)[number]]);
+    expect(vectors.get('alpha beta')?.length).toBe(DIM);
+    expect(embedder.cacheRejected).toBe(1);
+    expect(fake.embedCalls().length).toBe(2);
+    expect(() => cosine32(new Float32Array(3), new Float32Array(4))).toThrow(/different dimensions/);
+    expect(() => cosine32(Float32Array.from([1, 0]), Float32Array.from([1, 0]))).not.toThrow();
+  });
+
+  it('a cached refusal still counts in overContext, with its own cachedRefusals count, so fit does not depend on cache history', async () => {
+    const fake = fakeOllama({ contextLimit: 20 });
+    const long = [{ text: 'y'.repeat(50), language: 'en' as const }, texts[0] as (typeof texts)[number]];
+    const cache = new EmbeddingCache();
+    const fresh = await embedderOf('E2', fake, cache);
+    await fresh.embed('document', long);
+    expect(fresh.overContext).toBe(1);
+    expect(fresh.cachedRefusals).toBe(0);
+    const again = await embedderOf('E2', fake, cache);
+    const calls = fake.embedCalls().length;
+    await again.embed('document', long);
+    expect(fake.embedCalls().length).toBe(calls);
+    expect(again.overContext).toBe(1);
+    expect(again.cachedRefusals).toBe(1);
+  });
+
+  it('a refusal inside a timed block counts in calls and overContext, and the block cannot meet the latency bar', async () => {
+    const fake = fakeOllama({ contextLimit: 20 });
+    const embedder = await embedderOf('E2', fake);
+    const sample = [texts[0] as (typeof texts)[number], { text: 'z'.repeat(50), language: 'en' as const }];
+    const block = await measureLatency(embedder, { text: 'q', language: 'en' }, sample, false);
+    expect(block.overContext).toBe(1);
+    expect(block.meetsBar).toBe(false);
+    expect(block.reason).toMatch(/refused/);
+    expect(block.calls).toBeGreaterThanOrEqual(4);
+    expect(embedder.overContext).toBe(1);
+    const clean = await measureLatency(await embedderOf('E2', fakeOllama()), { text: 'q', language: 'en' }, [texts[0] as (typeof texts)[number]], false);
+    expect(clean).toMatchObject({ meetsBar: true, reason: null, overContext: 0 });
+  });
+
+  it('a latency block with no successful call cannot qualify', async () => {
+    const fake = fakeOllama({ contextLimit: 1 });
+    const block = await measureLatency(await embedderOf('E2', fake), { text: 'qq', language: 'en' }, [{ text: 'pp', language: 'en' }], false);
+    expect(block.meetsBar).toBe(false);
+    expect(block.reason).toMatch(/refused|no successful call/);
+  });
+
+  it('the plan digest covers every concrete measurement parameter: changing any one value changes it', async () => {
+    const resolved = await resolveArms(['E0'], undefined, fakeOllama().fetchImpl);
+    const inputs = { sets: { v1: { digest: 'a' }, v2: { digest: 'b' }, memory: { digest: 'c' } }, resolved, scope: 'phase1' as const };
+    const base = planDigest(inputs);
+    expect(planDigest(inputs, PLAN_PARAMETERS)).toBe(base);
+    const paths: string[][] = [];
+    const walk = (value: unknown, path: string[]): void => {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) for (const [key, inner] of Object.entries(value)) walk(inner, [...path, key]);
+      else paths.push(path);
+    };
+    walk(PLAN_PARAMETERS, []);
+    const names = paths.map((path) => path.join('.'));
+    for (const must of ['passage.maxCodePoints', 'passage.maxEstTokens', 'passage.targetCodePoints', 'passage.overlapMaxCodePoints', 'passage.overlapMaxFraction', 'window.maxCodePoints', 'window.maxEstTokens', 'window.packingMissLimit', 'rrfK', 'recallKs', 'ndcgK', 'memoryCutUnits', 'batch', 'keepAlive', 'latency.passages', 'latency.queries', 'latency.budgetMs', 'decision.englishToleranceBp', 'decision.koreanGainBp'])
+      expect(names, must).toContain(must);
+    for (const path of paths) {
+      const clone = JSON.parse(JSON.stringify(PLAN_PARAMETERS)) as Record<string, unknown>;
+      let holder = clone;
+      for (const key of path.slice(0, -1)) holder = holder[key] as Record<string, unknown>;
+      const last = path[path.length - 1] as string;
+      const old = holder[last];
+      holder[last] = Array.isArray(old) ? [...old, 99] : typeof old === 'number' ? old + 1 : typeof old === 'boolean' ? !old : `${String(old)}!`;
+      expect(planDigest(inputs, clone), path.join('.')).not.toBe(base);
+    }
   });
 });

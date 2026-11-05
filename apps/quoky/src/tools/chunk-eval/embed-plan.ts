@@ -11,6 +11,7 @@ import {
   KEEP_ALIVE,
   LATENCY_BUDGET_MS,
   LATENCY_PASSAGES,
+  LATENCY_QUERIES,
   RRF_K,
   costOf,
   fitOf,
@@ -29,7 +30,10 @@ import {
   type ResolvedArms,
   type Scope,
 } from './embed-arms';
-import { memoryItems } from './memory-eval';
+import { chunking } from '@quoky/core';
+import { PACK_MISS_LIMIT } from './arms';
+import { NDCG_K, RECALL_KS } from './embed-eval';
+import { ENGLISH_TOLERANCE_BP, KOREAN_GAIN_BP, memoryItems } from './memory-eval';
 import { MEMORY_CUT_UNITS, type MemorySet } from './memory-set';
 
 export const PLAN_VERSION = 'chunk-embed-plan.v1';
@@ -47,12 +51,20 @@ export const PLAN_PARAMETERS = {
   truncate: false,
   keepAlive: KEEP_ALIVE,
   rrfK: RRF_K,
-  ks: [1, 3, 5, 10],
-  ndcgK: 10,
+  recallKs: [...RECALL_KS],
+  ndcgK: NDCG_K,
   memoryCutUnits: MEMORY_CUT_UNITS,
-  latency: { passages: LATENCY_PASSAGES, queries: 1, budgetMs: LATENCY_BUDGET_MS, sample: 'v2 C1 passage texts in case order, de-duplicated, fixed stride, language-grouped batches of 16', memoryRun: 'one untimed warm-up call, then the timed block', probe: 'a cold block then a warm block, both cache bypassed' },
-  window: 'EL greedy one-window packing over the arm ranking',
-  verdictInput: 'multi-vector Recall@5 per language on CH7',
+  passage: {
+    targetCodePoints: chunking.PASSAGE_TARGET_CODE_POINTS,
+    maxCodePoints: chunking.PASSAGE_MAX_CODE_POINTS,
+    maxEstTokens: chunking.PASSAGE_MAX_TOKENS,
+    overlapMaxCodePoints: chunking.OVERLAP_MAX_CODE_POINTS,
+    overlapMaxFraction: chunking.OVERLAP_MAX_FRACTION,
+    tableHeaderRepeatMaxCodePoints: chunking.TABLE_HEADER_REPEAT_MAX_CODE_POINTS,
+  },
+  window: { maxCodePoints: chunking.DEFAULT_WINDOW_BUDGET.maxCodePoints, maxEstTokens: chunking.DEFAULT_WINDOW_BUDGET.maxEstTokens, packingMissLimit: PACK_MISS_LIMIT, packing: 'EL greedy one-window packing over the arm ranking' },
+  latency: { passages: LATENCY_PASSAGES, queries: LATENCY_QUERIES, budgetMs: LATENCY_BUDGET_MS, sample: 'v2 C1 passage texts in case order, de-duplicated, fixed stride, language-grouped batches of 16', memoryRun: 'one untimed warm-up call, then the timed block', probe: 'a cold block then a warm block, both cache bypassed' },
+  decision: { englishToleranceBp: ENGLISH_TOLERANCE_BP, koreanGainBp: KOREAN_GAIN_BP, input: 'multi-vector Recall@5 per language on CH7' },
 } as const;
 
 export interface PlanInputs {
@@ -64,7 +76,7 @@ export interface PlanInputs {
 
 const pinKey = (pin: ArmPin): object => ({ arm: pin.arm, model: pin.model, digest12: pin.digest12, ollamaVersion: pin.ollamaVersion, spaceId: pin.spaceId, queryPrefix: pin.queryPrefix, documentPrefix: pin.documentPrefix });
 
-export function planDigest(input: PlanInputs): string {
+export function planDigest(input: PlanInputs, parameters: unknown = PLAN_PARAMETERS): string {
   const body = {
     version: PLAN_VERSION,
     sets: input.sets,
@@ -73,7 +85,7 @@ export function planDigest(input: PlanInputs): string {
     dropped: input.resolved.dropped.map((d) => d.arm),
     scope: input.scope,
     shapes: input.shapes === undefined || input.shapes.length === 0 ? null : [...input.shapes].sort(),
-    parameters: PLAN_PARAMETERS,
+    parameters,
   };
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
