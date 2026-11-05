@@ -144,6 +144,12 @@ export interface HonestChatOptions {
    * and titles). A denial naming one of its values (a project key, an item key or title) is about that read: rewritten.
    */
   readonly held?: ShownListing;
+  /**
+   * Live smoke 2026-11-05 (DM8): the owner's own message this turn. When it names no offered action (the families' closed
+   * vocabulary), a removed dead-end or stale-command sentence is dropped without the restate, so the rest of the reply
+   * stands as written; the restate is still the whole reply when nothing is left. Absent: the restate always closes.
+   */
+  readonly ownerMessage?: string;
 }
 
 /**
@@ -256,15 +262,14 @@ export function guardFalseControlDenials(text: string, language: 'ko' | 'en'): F
 }
 
 /**
- * ADR-0120 amendment A6-D6: the D9 stale-command guard. While an action family is offered, a chat reply that quotes that
- * family's own fixed command phrase (its entry's `staleCommands`, a closed set) is replaced by the deterministic
- * "무엇을/어느 항목을 다시 말씀해 주세요". Families that are not offered keep today's behaviour.
+ * ADR-0120 amendment A6-D6: the D9 stale-command guard. While an action family is offered, a chat reply sentence that quotes
+ * that family's own fixed command phrase (its entry's `staleCommands`, a closed set) is removed, together with the dead-end
+ * sentences below, and the deterministic "무엇을/어느 항목을 다시 말씀해 주세요" closes the reply (see `closeGuardedReply`).
+ * A quote the sentence split cannot place (it spans sentences) still replaces the whole reply. Families that are not offered
+ * keep today's behaviour.
  */
-export function guardStaleActionCommands(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en'): FalseIncapabilityGuardResult {
-  if (typeof text !== 'string' || text.length === 0) return { text, guarded: false };
-  const quoted = entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(text)));
-  if (quoted) return { text: renderRestate(language), guarded: true };
-  return guardDeadEndActionReplies(text, entries, language);
+export function guardStaleActionCommands(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en', ownerMessage?: string): FalseIncapabilityGuardResult {
+  return removeActionReplySentences(text, entries, language, true, ownerMessage);
 }
 
 /**
@@ -284,14 +289,26 @@ const EXPLANATION = /방법|설명|어떻게|사용법|\bhow (?:to|do|can)\b|\be
  * Live test 4 (2026-10-17, turns 39 and 53): while an action family is offered, a chat reply cannot act on a yes, and a
  * chat reply saying Quoky cannot do an offered action is false. A sentence that names an offered action (that family's own
  * closed vocabulary, `actionGrounding`) and either offers it as a yes/no question ("3번도 완료할까요?", "Shall I add it?")
- * or states that Quoky cannot do it ("여기서는 제가 직접 취소할 수 없어요") turns the reply into the deterministic
- * "무엇을/어느 항목을 다시 말씀해 주세요": the owner restates and Core decides. A sentence that names a source Quoky only
+ * or states that Quoky cannot do it ("여기서는 제가 직접 취소할 수 없어요") is removed, and the deterministic
+ * "무엇을/어느 항목을 다시 말씀해 주세요" closes the reply: the owner restates and Core decides (live smoke 2026-11-05: not
+ * after an owner message that names no offered action, see `closeGuardedReply`). A sentence that names a source Quoky only
  * reads (a calendar, Slack, a mail) is about that source and is left alone: "일정은 취소할 수 없어요" is true. Families
  * that are not offered keep today's reply.
  */
-export function guardDeadEndActionReplies(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en'): FalseIncapabilityGuardResult {
+export function guardDeadEndActionReplies(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en', ownerMessage?: string): FalseIncapabilityGuardResult {
+  return removeActionReplySentences(text, entries, language, false, ownerMessage);
+}
+
+interface DeadEndVocabulary {
+  /** The sentence names an offered action (the families' closed vocabulary). */
+  readonly namesAction: (sentence: string, withSpeech: boolean) => boolean;
+  /** The sentence offers an offered action as a yes/no question or denies Quoky can do it. */
+  readonly offending: (raw: string, previous: string) => boolean;
+}
+
+function deadEndVocabulary(entries: readonly NlCatalogEntry[]): DeadEndVocabulary | undefined {
   const actions = entries.filter((entry) => entry.risk === 'LOCAL_WRITE' && (entry.actionGrounding ?? []).length > 0);
-  if (actions.length === 0) return { text, guarded: false };
+  if (actions.length === 0) return undefined;
   const words = [...new Set(actions.flatMap((entry) => entry.actionGrounding ?? []).map((word) => word.toLowerCase()))];
   const readNouns = entries
     .filter((entry) => entry.risk === 'READ' && entry.sourceNames !== undefined && entry.id !== 'todo.list' && entry.id !== 'reminder.list')
@@ -375,23 +392,58 @@ export function guardDeadEndActionReplies(text: string, entries: readonly NlCata
     const offer = KO_YES_NO_OFFER.test(sentence) || EN_YES_NO_OFFER.test(sentence);
     return offer || koIncapable(sentence, timed) || enIncapable?.test(sentence) === true;
   };
-  // CA P2 (2026-10-19): only the offending sentences go; every other sentence of the reply is kept as written, and the
-  // restate closes the reply once.
-  const parts = text.split(/((?<=[.!?。？])\s+|\n+)/u);
+  return { namesAction, offending };
+}
+
+const SENTENCE_SPLIT = /((?<=[.!?。？])\s+|\n+)/u;
+
+/**
+ * CA P2 (2026-10-19): only the offending sentences go (a stale-command quote, when `stale`, and the dead-end offers and
+ * denials); every other sentence of the reply is kept as written.
+ */
+function removeActionReplySentences(text: string, entries: readonly NlCatalogEntry[], language: 'ko' | 'en', stale: boolean, ownerMessage: string | undefined): FalseIncapabilityGuardResult {
+  if (typeof text !== 'string' || text.length === 0) return { text, guarded: false };
+  const staleCommands = stale ? entries.filter((entry) => entry.risk !== 'READ').flatMap((entry) => entry.staleCommands ?? []) : [];
+  const quotesStale = (sentence: string): boolean => staleCommands.some((pattern) => pattern.test(sentence));
+  const quoted = quotesStale(text);
+  const vocabulary = deadEndVocabulary(entries);
+  if (!quoted && vocabulary === undefined) return { text, guarded: false };
+  const parts = text.split(SENTENCE_SPLIT);
   const kept: string[] = [];
   let removed = false;
+  let staleRemoved = false;
   for (let index = 0; index < parts.length; index += 2) {
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
-    if (offending(sentence, parts[index - 2] ?? '')) {
+    const staleSentence = quoted && quotesStale(sentence);
+    if (staleSentence || vocabulary?.offending(sentence, parts[index - 2] ?? '') === true) {
       removed = true;
+      staleRemoved ||= staleSentence;
       continue;
     }
     kept.push(sentence, separator);
   }
+  // A quote spanning sentences (no single sentence carries it) cannot be placed: the whole reply is replaced, as before.
+  if (quoted && !staleRemoved) return { text: renderRestate(language), guarded: true };
   if (!removed) return { text, guarded: false };
-  const rest = kept.join('').trim();
-  return { text: rest.length === 0 ? renderRestate(language) : `${rest}${/\n/u.test(text) ? '\n' : ' '}${renderRestate(language)}`, guarded: true };
+  return closeGuardedReply(kept.join('').trim(), text, language, ownerAsksOfferedAction(ownerMessage, vocabulary));
+}
+
+/**
+ * Live smoke 2026-11-05 (DM8): the restate asks the owner to say again what Quoky should do. It closes the kept sentences
+ * only when the owner's own message names an offered action (or is not known); a reply to a message that asks for no action
+ * ("요즘 일이 너무 많아서 답답해") keeps its other sentences alone. Nothing kept: the restate is the reply.
+ */
+function closeGuardedReply(rest: string, original: string, language: 'ko' | 'en', restate: boolean): FalseIncapabilityGuardResult {
+  if (rest.length === 0) return { text: renderRestate(language), guarded: true };
+  if (!restate) return { text: rest, guarded: true };
+  return { text: `${rest}${/\n/u.test(original) ? '\n' : ' '}${renderRestate(language)}`, guarded: true };
+}
+
+function ownerAsksOfferedAction(message: string | undefined, vocabulary: DeadEndVocabulary | undefined): boolean {
+  if (message === undefined || vocabulary === undefined) return true;
+  const lowered = message.trim().toLowerCase();
+  return lowered.length === 0 || vocabulary.namesAction(lowered, containsNlTimeExpression(lowered));
 }
 
 function bounded(text: string, max: number): string {
@@ -461,15 +513,17 @@ export function guardFalseIncapabilityClaims(
   if (options.controls !== undefined) {
     const control = guardFalseControlDenials(raw, language);
     if (control.guarded) {
-      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines, options.held !== undefined ? { held: options.held } : {});
+      const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines, {
+        ...(options.held !== undefined ? { held: options.held } : {}),
+        ...(options.ownerMessage !== undefined ? { ownerMessage: options.ownerMessage } : {}),
+      });
       return { text: rest.text, guarded: true };
     }
   }
-  // A6-D6: a reply quoting an offered action family's command phrase is stale (checked before the D5 exemption below).
-  if (entries.some((entry) => entry.risk !== 'READ' && (entry.staleCommands ?? []).some((pattern) => pattern.test(raw)))) return { text: renderRestate(language), guarded: true };
-  // Live test 4: the dead-end action sentences go first, but that partial filter is not the whole guard (Codex P2): the
+  // A6-D6: a sentence quoting an offered action family's command phrase is stale (removed before the D5 exemption below),
+  // and live test 4: the dead-end action sentences go too, but that partial filter is not the whole guard (Codex P2): the
   // rest of the reply still meets the source-incapability check below.
-  const deadEnd = guardDeadEndActionReplies(raw, entries, language);
+  const deadEnd = guardStaleActionCommands(raw, entries, language, options.ownerMessage);
   const text = deadEnd.text;
   const unchanged = { text, guarded: deadEnd.guarded };
   // A reply that hands the owner one of Quoky's own commands is already the right answer (D5): never replaced.
