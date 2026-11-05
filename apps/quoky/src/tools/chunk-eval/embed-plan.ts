@@ -206,4 +206,3 @@ export function probeLines(report: ProbeReport): string[] {
   out.push('status: NON-GATING');
   return out;
 }
-
