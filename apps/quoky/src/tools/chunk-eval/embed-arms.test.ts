@@ -414,6 +414,17 @@ describe('decision rule (section 6, ratified 2026-11-05)', () => {
   const input = (arm: ArmId, ko: number, en: number, ms = 1000, bar = true): ArmDecisionInput => ({ arm, koRecallAt5: ko, enRecallAt5: en, time200Ms: ms, paramsM: PARAMS[arm], sizeBytes: null, latencyMeetsBar: bar, latencyReason: bar ? null : 'input(s) refused as over the model context' });
   const base = input('E0', 0.4, 0.8);
 
+  it('breaks a tie with one size metric for the whole tied group, whatever the input order (Codex P2, round 3)', () => {
+    const tied = (arm: ArmId, paramsM: number | null, sizeBytes: number | null): ArmDecisionInput => ({ ...input(arm, 0.9, 0.8), paramsM, sizeBytes });
+    const arms = [tied('E1', 100, 900), tied('E2', 200, 100), tied('E3', null, 500)];
+    const orders = [arms, [...arms].reverse(), [arms[1], arms[2], arms[0]] as ArmDecisionInput[]];
+    // E3 has no parameter count, so the on-disk size decides for all three: E2 (100 bytes).
+    for (const order of orders) expect(decideEmbedder(['E0', 'E1', 'E2', 'E3'], [base, ...order]).chosen).toBe('E2');
+    // With every count pinned, the parameter count decides: E1.
+    const pinned = [tied('E1', 100, 900), tied('E2', 200, 100), tied('E3', 300, 500)];
+    for (const order of [pinned, [...pinned].reverse()]) expect(decideEmbedder(['E0', 'E1', 'E2', 'E3'], [base, ...order]).chosen).toBe('E1');
+  });
+
   it('says no arm is chosen until all planned arms ran when one is missing or E0 is absent', () => {
     const verdict = decideEmbedder(['E0', 'E1', 'E2'], [base, input('E1', 0.9, 0.8)]);
     expect(verdict.verdict).toBe('INCOMPLETE');

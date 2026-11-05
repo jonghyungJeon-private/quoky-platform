@@ -156,11 +156,17 @@ export interface Verdict {
   readonly inputs: readonly (ArmDecisionInput & { readonly latencyOk: boolean; readonly englishWithin2Points: boolean })[];
 }
 
-/** Negative when `a` is the smaller model: parameter count when both are pinned, else on-disk size when both are pinned, else 0. */
-function smaller(a: ArmDecisionInput, b: ArmDecisionInput): number {
-  if (a.paramsM !== null && b.paramsM !== null && a.paramsM !== b.paramsM) return a.paramsM - b.paramsM;
-  if ((a.paramsM === null || b.paramsM === null || a.paramsM === b.paramsM) && a.sizeBytes !== null && b.sizeBytes !== null) return a.sizeBytes - b.sizeBytes;
-  return 0;
+/**
+ * Codex P2 (round 3): the tie-break metric is chosen once for the whole tied group, so the order is transitive. Parameter
+ * count when every tied arm has it pinned, else on-disk size when every tied arm has that, else arm order alone.
+ */
+function smallestOf<T extends ArmDecisionInput>(tied: readonly T[]): T | undefined {
+  const metric: ((input: ArmDecisionInput) => number) | undefined = tied.every((input) => input.paramsM !== null)
+    ? (input) => input.paramsM as number
+    : tied.every((input) => input.sizeBytes !== null)
+      ? (input) => input.sizeBytes as number
+      : undefined;
+  return [...tied].sort((a, b) => (metric === undefined ? 0 : metric(a) - metric(b)) || a.arm.localeCompare(b.arm))[0];
 }
 
 export const DECISION_RULE =
@@ -192,8 +198,8 @@ export function decideEmbedder(planned: readonly ArmId[], inputs: readonly ArmDe
   );
   if (!annotated.find((input) => input.arm === 'E0')?.latencyOk) reasons.push(`E0 itself fails the latency bar (${e0.latencyReason ?? 'over the bar'}); it is not eligible, and E0 is kept only because the rule keeps E0 when no eligible arm beats it by 5 points`);
   const candidates = annotated.filter((input) => input.latencyOk && input.englishWithin2Points);
-  const order = (a: ArmDecisionInput, b: ArmDecisionInput): number => bp(b.koRecallAt5) - bp(a.koRecallAt5) || smaller(a, b) || a.arm.localeCompare(b.arm);
-  const winner = [...candidates].sort(order)[0];
+  const topKorean = Math.max(...candidates.map((input) => bp(input.koRecallAt5)));
+  const winner = smallestOf(candidates.filter((input) => bp(input.koRecallAt5) === topKorean));
   const e0Model = ARM_SPECS.E0.model;
   if (winner === undefined || winner.arm === 'E0' || bp(winner.koRecallAt5) - bp(e0.koRecallAt5) < KOREAN_GAIN_BP) {
     const best = winner === undefined ? 'no arm met the latency bar and the English bound' : `the best eligible arm is ${winner.arm}`;
