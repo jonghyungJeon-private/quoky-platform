@@ -416,18 +416,19 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
         return true;
       },
       async execute(rawRequest: AiRequest) {
-        // A real provider without a system-prompt channel sees the split selector request as one joined prompt.
+        // `request` (joined) serves only the recording and the router / classifier checks; the provider hooks (a real provider) get
+        // the raw request exactly as live sends it, systemPrompt included.
         const request = core.unsplitRequest(rawRequest);
         requests.push({ ...request, locality });
         if (request.capability === core.Capability.INTENT_SELECTION) {
           // D4: the help-scope classifier is its own call, answered by its own provider hook.
-          if (core.isHelpScopeClassifierPrompt(request.prompt)) return { text: state.providers.classify === undefined ? '{"answer":null}' : await state.providers.classify(request), artifacts: [] };
+          if (core.isHelpScopeClassifierPrompt(request.prompt)) return { text: state.providers.classify === undefined ? '{"answer":null}' : await state.providers.classify(rawRequest), artifacts: [] };
           // Only the router prompt is natural-language selection; any other INTENT_SELECTION call (a planner) gets none.
           if (!request.prompt.startsWith(routerHead)) return { text: JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] }), artifacts: [] };
-          return { text: await state.providers.select(request), artifacts: [] };
+          return { text: await state.providers.select(rawRequest), artifacts: [] };
         }
-        if (request.capability === core.Capability.SUMMARIZATION) return { text: await state.providers.summarize(request), artifacts: [] };
-        return { text: await state.providers.chat(request), artifacts: [] };
+        if (request.capability === core.Capability.SUMMARIZATION) return { text: await state.providers.summarize(rawRequest), artifacts: [] };
+        return { text: await state.providers.chat(rawRequest), artifacts: [] };
       },
     });
   };
