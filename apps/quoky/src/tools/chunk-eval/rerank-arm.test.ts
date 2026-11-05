@@ -209,19 +209,24 @@ describe('LlmReranker', () => {
     await second.rerank('q1', 'question?', [...candidates].reverse());
     await second.rerank('q2', 'question?', candidates);
     expect(f.chatBodies.length).toBe(3);
+    // same ids, different question or candidate text: a miss (Codex P2)
+    await second.rerank('q1', 'another question?', candidates);
+    await second.rerank('q1', 'question?', candidates.map((candidate) => ({ ...candidate, text: `${candidate.text} changed` })));
+    expect(f.chatBodies.length).toBe(5);
     appendFileSync(file, '{"k":"torn\n');
     writeFileSync(`${file}.copy`, '');
     expect(new RerankCache(file).rejectedAtLoad).toBe(1);
     // the probe bypasses the cache both ways
     await second.rerank('q1', 'question?', candidates, false);
-    expect(f.chatBodies.length).toBe(4);
+    expect(f.chatBodies.length).toBe(6);
   });
 
   it('the cache key covers the model digest and the prompt sha', async () => {
     const pin = await pinReranker(undefined, fake().fetchImpl);
-    const a = RerankCache.key(pin, 'q', ['x']);
-    expect(RerankCache.key({ digest12: 'f'.repeat(12) }, 'q', ['x'])).not.toBe(a);
-    expect(RerankCache.key(pin, 'q', ['x', 'y'])).not.toBe(a);
+    const a = RerankCache.key(pin, 'q', ['x'], 'm');
+    expect(RerankCache.key({ digest12: 'f'.repeat(12) }, 'q', ['x'], 'm')).not.toBe(a);
+    expect(RerankCache.key(pin, 'q', ['x', 'y'], 'm')).not.toBe(a);
+    expect(RerankCache.key(pin, 'q', ['x'], 'm2')).not.toBe(a);
     expect(RERANK_PROMPT_SHA).toMatch(/^[0-9a-f]{64}$/u);
   });
 });

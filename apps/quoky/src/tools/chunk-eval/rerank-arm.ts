@@ -171,8 +171,10 @@ export class RerankCache {
       }
     }
   }
-  static key(pin: Pick<RerankerPin, 'digest12'>, queryId: string, candidateIds: readonly string[]): string {
-    return createHash('sha256').update(JSON.stringify({ digest12: pin.digest12, prompt: RERANK_PROMPT_SHA, cap: CANDIDATE_CAP_UNITS, seed: RERANK_SEED, queryId, candidateIds })).digest('hex');
+  /** `message` is the rendered user message, so the same ids with a different question or candidate text never hit. */
+  static key(pin: Pick<RerankerPin, 'digest12'>, queryId: string, candidateIds: readonly string[], message: string): string {
+    const messageSha = createHash('sha256').update(message).digest('hex');
+    return createHash('sha256').update(JSON.stringify({ digest12: pin.digest12, prompt: RERANK_PROMPT_SHA, cap: CANDIDATE_CAP_UNITS, seed: RERANK_SEED, queryId, candidateIds, messageSha })).digest('hex');
   }
   get(key: string): RerankRecord | undefined {
     return this.entries.get(key);
@@ -226,7 +228,7 @@ export class LlmReranker {
 
   /** Reorders `candidates` for `question`. `useCache: false` (the probe) neither reads nor writes the cache. */
   async rerank(queryId: string, question: string, candidates: readonly Candidate[], useCache = true): Promise<RerankResult> {
-    const key = RerankCache.key(this.pin, queryId, candidates.map((candidate) => candidate.id));
+    const key = RerankCache.key(this.pin, queryId, candidates.map((candidate) => candidate.id), userMessage(question, candidates));
     if (useCache) {
       const hit = this.cache.get(key);
       if (hit !== undefined && hit.order.length === candidates.length) {
