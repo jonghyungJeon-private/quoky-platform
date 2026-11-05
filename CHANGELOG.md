@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — `eval:chunk` embedder arms: a 413 batch refusal is split, not fatal
+
+- **Fixed.** HTTP 413 from the local Ollama on a large batch splits the batch; a single input still refused counts as over-context (ADR-0124 phase 1 stage C).
+
 ## Unreleased — dead-end / stale-command chat guard keeps the rest of the reply
 
 - **Fixed.** A chat reply with one dead-end offer ("…추가할까요?") or one stale command quote is no longer replaced as a whole: only

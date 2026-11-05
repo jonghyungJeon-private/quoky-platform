@@ -53,6 +53,10 @@ interface FakeOptions {
   readonly version?: string;
   /** an input longer than this many code points is refused with a 400 context error */
   readonly contextLimit?: number;
+  /** a request whose inputs together exceed this many code points is refused with 413 (request too large) */
+  readonly requestLimit?: number;
+  /** answer every embed request with this status (a daemon fault) */
+  readonly failStatus?: number;
   /** model name -> details.parameter_size answered by /api/show (absent = no details) */
   readonly parameterSizes?: Readonly<Record<string, string>>;
   /** model name -> on-disk size in /api/tags */
@@ -91,6 +95,8 @@ function fakeOllama(options: FakeOptions = {}) {
       const body = JSON.parse(init?.body ?? '{}') as { model: string; input: string[]; truncate: boolean; keep_alive: unknown };
       embedBodies.push(body);
       if (body.input.length === 0) return reply(200, { embeddings: [] });
+      if (options.failStatus !== undefined) return reply(options.failStatus, { error: 'daemon fault' });
+      if (options.requestLimit !== undefined && body.input.reduce((sum, text) => sum + Array.from(text).length, 0) > options.requestLimit) return reply(413, { error: 'request entity too large' });
       if (options.contextLimit !== undefined && body.input.some((text) => Array.from(text).length > (options.contextLimit as number))) return reply(400, { error: 'the input length exceeds the context length' });
       return reply(200, { embeddings: body.input.map(embedText), prompt_eval_count: body.input.reduce((sum, text) => sum + Math.ceil(Array.from(text).length / 2), 0) });
     }
@@ -395,6 +401,29 @@ describe('CH7 memory set', () => {
     expect(report.EL.overall.n).toBe(set.queries.length);
     expect(report.verdict?.verdict).toBe('KEEP_E0');
     expect(buildMemoryReport(set, memoryDigest(set), {}, { digest: null, planned: [], dropped: [] }, false).verdict).toBeNull();
+  });
+
+  it('splits a batch the daemon refuses as too large (413) and embeds every input that fits alone (stage C, 2026-11-05)', async () => {
+    // one whole memory (cut at 8,000 units) plus its prefix always fits alone; 16 of them together do not
+    const longest = Math.min(8_000, Math.max(...set.memories.map((memory) => Array.from(memory.text).length)));
+    const fake = fakeOllama({ requestLimit: longest + 200 });
+    const embedder = await embedderOf('E0', fake);
+    const run = await runMemoryArm(embedder, set);
+    expect(run.fit.singleOverContext).toBe(0);
+    expect(run.fit.passageOverContext).toBe(0);
+    expect(fake.embedBodies.some((body) => body.input.length > 1)).toBe(true);
+  });
+
+  it('counts a single input still refused as too large (413) as over the model context, never a silent cut', async () => {
+    const fake = fakeOllama({ requestLimit: 3_000 });
+    const embedder = await embedderOf('E0', fake);
+    const run = await runMemoryArm(embedder, set);
+    expect(run.fit.singleOverContext).toBeGreaterThan(0);
+  });
+
+  it('still fails the run on any other daemon error', async () => {
+    const embedder = await embedderOf('E0', fakeOllama({ failStatus: 500 }));
+    await expect(runMemoryArm(embedder, set)).rejects.toThrow(/status 500/);
   });
 
   it('counts a whole memory over the model context as single-vector overContext while the passages still fit', async () => {
