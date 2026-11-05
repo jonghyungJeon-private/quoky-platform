@@ -6,6 +6,9 @@ import { firstRelevantRank, mean, ndcgAtK, recallAtK, reciprocalRank } from './m
 import { runChunkEval } from './chunk-eval';
 import { DRIVE_FORMAT_VERSION, driveDocSources, driveFormatDigest, generateDriveFormatSet, renderDriveDoc, runDriveFormat, SECTION_TARGET_CODE_POINTS } from './drive-format';
 import { DRIVE_FORMAT_FREEZE_PATH, EXIT_BLOCKED, EXIT_INVALID, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, FREEZE_PATH, parseArguments, runCli, type CliDeps, type FreezeRecord } from '../chunk-eval-cli';
+import { CORPUS_V2_SEED, CORPUS_V2_VERSION, corpusV2Digest, generateCorpusV2, renderNeedle, sectionName, FEATURE_TAGS, type ChunkEvalCaseV2 } from './corpus-v2';
+import { runChunkEvalV2 } from './chunk-eval-v2';
+import { V2_FREEZE_PATH } from '../chunk-eval-cli';
 import { buildUntrustedDocumentReadout, chunking } from '@quoky/core';
 
 const corpus = generateCorpus();
@@ -415,6 +418,276 @@ describe('cli', () => {
       expect(await runCli(['--set', 'drive-format', '--mode', 'verify'], run.deps)).toBe(EXIT_OK);
       expect(await runCli(['--set', 'drive-format', '--mode', 'run', '--out', '/tmp/chunk-eval-test'], run.deps)).toBe(EXIT_NON_GATING);
       expect(run.written.name).toMatch(/^chunk-eval-drive-format-[0-9a-f]{12}-2026-11-03T00-00-00-000Z\.json$/);
+      expect(run.out.join('\n')).not.toMatch(/PASSED/);
+    });
+  });
+});
+
+// ---------------------------------------------------------------- v2 (ADR-0124 section 16)
+
+describe('harder synthetic set v2 (ADR-0124 section 16)', () => {
+  const v2 = generateCorpusV2();
+  const cp = (text: string): number => Array.from(text).length;
+  /** The paragraph (a sheet row for a workbook) of the prepared text that holds the needle. */
+  const paragraphOf = (item: ChunkEvalCaseV2): string => {
+    const points = Array.from(item.prepared);
+    const at = item.needle.start;
+    const boundary = item.shape === 'workbook' ? '\n' : '\n\n';
+    const text = item.prepared;
+    const unitStart = text.lastIndexOf(boundary, points.slice(0, at).join('').length - 1);
+    const from = unitStart < 0 ? 0 : unitStart + boundary.length;
+    const to = text.indexOf(boundary, points.slice(0, at).join('').length);
+    return text.slice(from, to < 0 ? text.length : to);
+  };
+
+  it('keeps v1 and the Drive-format variant byte-identical and verified (digests unchanged)', () => {
+    expect(corpusDigest(corpus)).toBe('f395110d15bb635851a85b290d5867ac897160514e71420a0df73e051f8c4ed5');
+    expect(driveFormatDigest(generateDriveFormatSet())).toBe('4cec7f4cc4bb1244ff4987ef39f2684bfbea898bdad215dc38b5c34d79a84f4b');
+  });
+
+  it('has the v1 shapes, tiers and depths, 300-500 cases, a reduced 2 MiB ADR tier, and Drive section-name pairs', () => {
+    expect(v2.length).toBeGreaterThanOrEqual(300);
+    expect(v2.length).toBeLessThanOrEqual(500);
+    expect(new Set(v2.map((item) => item.id)).size).toBe(v2.length);
+    expect(new Set(v2.map((item) => item.shape))).toEqual(new Set(SHAPES));
+    expect([...new Set(v2.filter((item) => item.length !== ADR_FILE_BYTES).map((item) => item.length))]).toEqual([...LENGTHS]);
+    expect([...new Set(v2.map((item) => item.depth))].sort((a, b) => a - b)).toEqual([...DEPTHS]);
+    expect(v2.filter((item) => item.length === ADR_FILE_BYTES).length).toBe(3);
+    const pairs = v2.filter((item) => item.format === 'text');
+    expect(pairs.length).toBeGreaterThan(0);
+    expect(v2.filter((item) => item.format === 'markdown').length).toBe(pairs.length);
+    expect(pairs.every((item) => item.shape === 'drive-doc' && item.mode === 'section')).toBe(true);
+  });
+
+  it('is deterministic and matches its own freeze record, which is separate from v1 and drive-format', () => {
+    expect(corpusV2Digest(generateCorpusV2())).toBe(corpusV2Digest(v2));
+    const record = JSON.parse(readFileSync(V2_FREEZE_PATH, 'utf8')) as FreezeRecord;
+    expect(V2_FREEZE_PATH).not.toBe(FREEZE_PATH);
+    expect(record.version).toBe(CORPUS_V2_VERSION);
+    expect(record.seed).toBe(CORPUS_V2_SEED);
+    expect(record.cases).toBe(v2.length);
+    expect(corpusV2Digest(v2)).toBe(record.sha256);
+    expect(corpusV2Digest(v2.map((item, at) => (at === 5 ? { ...item, tags: [...item.tags, 'dense' as const] } : item)))).not.toBe(record.sha256);
+  });
+
+  it('puts the needle once in every item, at the requested depth within the documented tolerance', () => {
+    // 0.05 everywhere; a section-name case may be as far off as the named section is wide (its share of the item), because the needle
+    // must lie inside the one section the requested depth falls into: that share is 0.10-0.5 in the 6k and 20k tiers, below 0.05 above.
+    for (const item of v2) {
+      const points = Array.from(item.prepared);
+      expect(points.slice(item.needle.start, item.needle.end).join(''), item.id).toBe(item.needle.text);
+      expect(item.prepared.split(item.needle.text).length - 1, item.id).toBe(1);
+      const share = item.section === undefined ? 0 : (item.section.end - item.section.start) / points.length;
+      const tolerance = Math.max(0.05, share);
+      expect(Math.abs(item.needle.start / points.length - item.depth / 100), item.id).toBeLessThanOrEqual(tolerance);
+    }
+  });
+
+  it('tags every case and has every shape x feature cell the report stratifies by', () => {
+    for (const item of v2) expect(item.tags.every((tag) => FEATURE_TAGS.includes(tag)), item.id).toBe(true);
+    for (const shape of SHAPES) {
+      const cells = v2.filter((item) => item.shape === shape);
+      for (const tag of ['named', 'paraphrase', 'long-paragraph', 'lp-middle', 'lp-cut', 'near-duplicate', 'dense'] as const) {
+        expect(cells.filter((item) => item.tags.includes(tag)).length, `${shape} ${tag}`).toBeGreaterThanOrEqual(5);
+      }
+    }
+    for (const shape of ['drive-doc', 'adr-file'] as const) expect(v2.filter((item) => item.shape === shape && item.mode === 'section').length).toBeGreaterThanOrEqual(10);
+    expect(v2.filter((item) => item.shape !== 'drive-doc' && item.shape !== 'adr-file').every((item) => item.mode !== 'section')).toBe(true);
+  });
+
+  it('paraphrase and section questions contain neither the codename, nor an answer value, nor the needle topic phrase', () => {
+    for (const item of v2.filter((candidate) => candidate.mode !== 'named')) {
+      const lower = item.question.toLowerCase();
+      expect(lower.includes(item.codename.toLowerCase()), item.id).toBe(false);
+      for (const answer of item.answers) expect(lower.includes(answer.toLowerCase()), `${item.id} ${answer}`).toBe(false);
+      expect(lower.includes(item.topic.needle.toLowerCase()), item.id).toBe(false);
+      expect(item.needle.text.toLowerCase().includes(item.codename.toLowerCase()), item.id).toBe(true);
+    }
+    for (const item of v2.filter((candidate) => candidate.mode === 'named')) expect(item.question.includes(item.codename), item.id).toBe(true);
+    expect(v2.filter((item) => item.mode === 'paraphrase').length).toBeGreaterThan(100);
+  });
+
+  it('long-paragraph cases hold the needle in one paragraph of 1,300-4,000 code points with no blank line inside', () => {
+    const long = v2.filter((item) => item.tags.includes('long-paragraph'));
+    expect(long.length).toBeGreaterThan(100);
+    for (const item of long) {
+      const text = paragraphOf(item);
+      expect(text.includes(item.needle.text), item.id).toBe(true);
+      expect(cp(text), item.id).toBeGreaterThan(1_200);
+      expect(cp(text), item.id).toBeGreaterThanOrEqual(1_300);
+      expect(cp(text), item.id).toBeLessThanOrEqual(4_010);
+      expect(item.longParagraph?.end).toBe((item.longParagraph?.start ?? 0) + cp(text));
+      if (item.shape !== 'workbook') expect(text.includes('\n\n'), item.id).toBe(false);
+      if (item.tags.includes('lp-middle')) {
+        const fraction = (item.needle.start - (item.longParagraph?.start ?? 0)) / cp(text);
+        expect(fraction, item.id).toBeGreaterThanOrEqual(1 / 3);
+        expect(fraction, item.id).toBeLessThanOrEqual(2 / 3);
+      }
+    }
+    // a case without the feature has no needle paragraph beyond the cap (v1's situation)
+    for (const item of v2.filter((candidate) => !candidate.tags.includes('long-paragraph') && candidate.nearDuplicates.length === 0)) expect(cp(paragraphOf(item)), item.id).toBeLessThanOrEqual(1_200);
+  });
+
+  it('the chunker splits long paragraphs and uses its overlap there (the path v1 never ran)', () => {
+    const sample = v2.filter((item) => item.tags.includes('long-paragraph') && item.length <= 20_000 && item.shape !== 'workbook').slice(0, 12);
+    for (const item of sample) {
+      const passages = lexicalWindow(item).passages;
+      const span = item.longParagraph as { start: number; end: number };
+      const inside = passages.filter((passage) => passage.span.start < span.end && passage.span.end > span.start);
+      expect(inside.length, item.id).toBeGreaterThanOrEqual(2);
+    }
+    expect(sample.some((item) => lexicalWindow(item).passages.some((passage) => passage.overlap !== undefined))).toBe(true);
+  });
+
+  it('section-name cases name a section by its title, hold the needle inside it, and keep same-kind near-duplicates out', () => {
+    const named = v2.filter((item) => item.mode === 'section');
+    expect(named.length).toBeGreaterThan(40);
+    for (const item of named) {
+      const section = item.section as NonNullable<ChunkEvalCaseV2['section']>;
+      expect(section.start, item.id).toBeLessThanOrEqual(item.needle.start);
+      expect(section.end, item.id).toBeGreaterThanOrEqual(item.needle.end);
+      expect(item.nearDuplicates, item.id).toHaveLength(0);
+      const name = sectionName(item.language, section.number - 1);
+      expect(name.title).toBe(section.title);
+      expect(item.question.startsWith(name.reference), item.id).toBe(true);
+      const heading = Array.from(item.prepared).slice(section.start, section.start + cp(section.title) + 3).join('');
+      expect(heading.includes(section.title), item.id).toBe(true);
+    }
+  });
+
+  it('renders each Drive section-name case as a plain-text and a Markdown case that differ only in heading markup', () => {
+    const texts = v2.filter((item) => item.format === 'text');
+    for (const text of texts) {
+      const mark = v2.find((candidate) => candidate.id === `${text.pairId}-markdown`) as ChunkEvalCaseV2;
+      expect(mark.pairId).toBe(text.pairId);
+      expect(text.id).toBe(`${text.pairId}-text`);
+      expect(mark.question).toBe(text.question);
+      expect(mark.needle.text).toBe(text.needle.text);
+      expect(mark.answers).toEqual(text.answers);
+      expect(mark.tags).toEqual(text.tags);
+      expect(mark.section?.title).toBe(text.section?.title);
+      const stripped = mark.prepared
+        .split('\n\n')
+        .map((block) => (block.startsWith('## ') ? block.slice(3) : block.startsWith('# ') ? block.slice(2) : block))
+        .join('\n\n');
+      expect(stripped, text.id).toBe(text.prepared);
+      expect(mark.prepared).not.toBe(text.prepared);
+      expect(mark.prepared.split('\n').filter((line) => line.startsWith('## ')).length, text.id).toBeGreaterThanOrEqual(2);
+      expect(text.prepared.split('\n').some((line) => line.startsWith('#')), text.id).toBe(false);
+    }
+  });
+
+  it('near-duplicate cases hold at least one same-kind decoy rendered from the needle template, with another topic and codename', () => {
+    const dup = v2.filter((item) => item.tags.includes('near-duplicate'));
+    expect(dup.length).toBeGreaterThan(50);
+    for (const item of dup) {
+      expect(item.nearDuplicates.length, item.id).toBeGreaterThanOrEqual(1);
+      for (const near of item.nearDuplicates) {
+        expect(near.kind).toBe(item.needleKind);
+        expect(item.prepared.includes(near.text), item.id).toBe(true);
+        expect(renderNeedle(near.kind, item.language, near.slots)).toBe(near.text);
+        expect(near.text).not.toBe(item.needle.text);
+        expect(near.slots.subject).not.toBe(item.codename);
+        expect(near.slots.topic).not.toBe(item.topic.needle);
+      }
+    }
+    // quoted earlier messages carry `>` markers in mail and thread
+    expect(dup.filter((item) => item.shape === 'mail' || item.shape === 'thread').every((item) => item.prepared.split('\n').some((line) => line.startsWith('> ')))).toBe(true);
+    // a code-line near-duplicate in the ADR file sits in a fenced block with near-identical lines
+    expect(dup.some((item) => item.shape === 'adr-file' && item.needleKind === 'code-line' && item.prepared.includes('```ts\nconst MAX_RETRY_'))).toBe(true);
+  });
+
+  it('dense cases hold at least three times v1\'s same-kind decoys, all present in the item', () => {
+    const dense = v2.filter((item) => item.tags.includes('dense'));
+    expect(dense.length).toBeGreaterThan(100);
+    for (const item of dense) {
+      const base = item.length <= 6_000 ? 2 : item.length <= 20_000 ? 3 : 5;
+      expect(item.sameKindDecoys.length, item.id).toBeGreaterThanOrEqual(3 * base);
+      for (const text of item.sameKindDecoys) {
+        expect(item.prepared.includes(text), item.id).toBe(true);
+        expect(text, item.id).not.toBe(item.needle.text);
+      }
+    }
+  });
+
+  it('no near-duplicate decoy contains an answer value of the needle', () => {
+    for (const item of v2.filter((candidate) => candidate.nearDuplicates.length > 0)) {
+      for (const near of item.nearDuplicates) for (const answer of item.answers) expect(near.text.includes(answer), `${item.id} ${answer}`).toBe(false);
+    }
+  });
+
+  it('needleFraction is the needle offset inside its paragraph, recomputed from the spans', () => {
+    for (const item of v2.filter((candidate) => candidate.longParagraph !== undefined)) {
+      const span = item.longParagraph as NonNullable<ChunkEvalCaseV2['longParagraph']>;
+      expect(span.needleFraction, item.id).toBe(Math.round(((item.needle.start - span.start) / (span.end - span.start)) * 1000) / 1000);
+    }
+  });
+
+  it('uses only fictional names and no link, address or token-like literal', () => {
+    for (const item of v2) expect(item.prepared, item.id).not.toMatch(/https?:\/\/|@[a-z]+\.|sk-[A-Za-z0-9]{8}/);
+  });
+
+  describe('run and cli', () => {
+    const slice = v2.filter((item) => item.length === 6_000 && item.language === 'en' && (item.shape !== 'adr-file' || item.depth === 50));
+    const report = runChunkEvalV2(slice, corpusV2Digest(slice));
+
+    it('reports window recall by feature and by shape x feature, exact misses, overlap use, and the section-name pairs', () => {
+      expect(report.kind).toBe('chunk-eval-v2');
+      expect(report.status).toBe('NON-GATING');
+      expect(report.gate.verdict).toBe('NOT_RUN');
+      expect(report.features.EL.all?.n).toBe(slice.length);
+      expect(report.features.baseline.paraphrase?.n).toBe(slice.filter((item) => item.tags.includes('paraphrase')).length);
+      expect(Object.keys(report.byShapeFeature.EL)).toEqual(expect.arrayContaining([...SHAPES]));
+      const cellTotal = Object.values(report.misses.EL).flatMap((kinds) => Object.values(kinds)).reduce((sum, cell) => sum + cell.n, 0);
+      expect(cellTotal).toBe(slice.length);
+      const missed = Object.values(report.misses.EL).flatMap((kinds) => Object.values(kinds)).reduce((sum, cell) => sum + cell.misses, 0);
+      expect(missed).toBe(report.misses.ELMissIds.length);
+      expect(report.chunkerLongParagraph.byShape.mail?.longParagraphCases?.cases).toBeGreaterThan(0);
+      expect(report.sectionNameDrivePairs.pairs).toBe(slice.filter((item) => item.format === 'text').length);
+      expect(JSON.stringify(report)).not.toContain(slice[0]?.needle.text ?? '\u0000');
+    });
+
+    const makeCli = (record?: FreezeRecord, corpusOf: () => ChunkEvalCaseV2[] = () => slice) => {
+      const out: string[] = [];
+      const err: string[] = [];
+      const written: { name?: string; report?: unknown } = {};
+      let current = record;
+      const deps: CliDeps = {
+        stdout: (line) => out.push(line),
+        stderr: (line) => err.push(line),
+        now: () => new Date('2026-11-05T00:00:00Z'),
+        corpus: () => [],
+        readFreeze: () => undefined,
+        writeFreeze: () => undefined,
+        writeReport: (dir, name, body) => {
+          Object.assign(written, { name, report: body });
+          return `${dir}/${name}`;
+        },
+        v2: { corpus: corpusOf, readFreeze: () => current, writeFreeze: (next) => { current = next; } },
+      };
+      return { deps, out, err, written, record: () => current };
+    };
+    const v2Record = (): FreezeRecord => ({ version: CORPUS_V2_VERSION, seed: CORPUS_V2_SEED, cases: slice.length, sha256: corpusV2Digest(slice) });
+
+    it('is BLOCKED without a record or when the set differs, and never writes a report then', async () => {
+      const none = makeCli();
+      expect(parseArguments(['--set', 'v2', '--mode', 'run']).set).toBe('v2');
+      expect(await runCli(['--set', 'v2', '--mode', 'run'], none.deps)).toBe(EXIT_BLOCKED);
+      const stale = makeCli({ ...v2Record(), sha256: 'a'.repeat(64) });
+      expect(await runCli(['--set', 'v2', '--mode', 'verify'], stale.deps)).toBe(EXIT_BLOCKED);
+      expect(await runCli(['--set', 'v2', '--mode', 'run'], stale.deps)).toBe(EXIT_BLOCKED);
+      expect(stale.written.report).toBeUndefined();
+      const changed = makeCli(v2Record(), () => slice.map((item, at) => (at === 0 ? { ...item, question: `${item.question}?` } : item)));
+      expect(await runCli(['--set', 'v2', '--mode', 'run'], changed.deps)).toBe(EXIT_BLOCKED);
+    });
+
+    it('records its own freeze only through regenerate-freeze, then verifies and runs NON-GATING', async () => {
+      const run = makeCli();
+      expect(await runCli(['--set', 'v2', '--mode', 'regenerate-freeze'], run.deps)).toBe(EXIT_OK);
+      expect(run.record()?.sha256).toBe(corpusV2Digest(slice));
+      expect(await runCli(['--set', 'v2', '--mode', 'verify'], run.deps)).toBe(EXIT_OK);
+      expect(await runCli(['--set', 'v2', '--mode', 'run', '--out', '/tmp/chunk-eval-test'], run.deps)).toBe(EXIT_NON_GATING);
+      expect(run.written.name).toMatch(/^chunk-eval-v2-[0-9a-f]{12}-2026-11-05T00-00-00-000Z\.json$/);
       expect(run.out.join('\n')).not.toMatch(/PASSED/);
     });
   });

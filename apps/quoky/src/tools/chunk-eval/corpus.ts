@@ -45,7 +45,7 @@ export const SHAPE_SECTIONS: Readonly<Record<Shape, number>> = {
   'slack-thread': 121,
   'adr-file': 0,
 };
-const SHAPE_KINDS: Readonly<Record<Shape, readonly NeedleKind[]>> = {
+export const SHAPE_KINDS: Readonly<Record<Shape, readonly NeedleKind[]>> = {
   mail: ['date', 'amount', 'decision', 'role'],
   thread: ['date', 'decision', 'role'],
   'drive-doc': ['date', 'amount', 'decision', 'role'],
@@ -85,9 +85,9 @@ export interface ChunkEvalCase {
 
 // ---------------------------------------------------------------- PRNG
 
-type Random = () => number;
+export type Random = () => number;
 
-function seeded(label: string): Random {
+export function seeded(label: string): Random {
   let state = createHash('sha256').update(label).digest().readUInt32LE(0);
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -97,8 +97,8 @@ function seeded(label: string): Random {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const pick = <T>(random: Random, list: readonly T[]): T => list[Math.floor(random() * list.length)] as T;
-const between = (random: Random, low: number, high: number): number => low + Math.floor(random() * (high - low + 1));
+export const pick = <T>(random: Random, list: readonly T[]): T => list[Math.floor(random() * list.length)] as T;
+export const between = (random: Random, low: number, high: number): number => low + Math.floor(random() * (high - low + 1));
 
 // ---------------------------------------------------------------- fictional vocabulary
 
@@ -110,27 +110,27 @@ const EN_FIRST = ['Dovrin', 'Halte', 'Mirel', 'Osk', 'Tavin', 'Rhea', 'Yoru', 'K
 const EN_LAST = ['Quen', 'Vael', 'Brask', 'Ondri', 'Sarn', 'Teller'];
 const KO_FIRST = ['도린', '하르', '미렐', '오스', '타빈', '레아', '요루', '켈드'];
 const KO_LAST = ['퀸', '바엘', '브라', '온드', '사른', '텔러'];
-const EN_TOPIC = ['tracker', 'roadmap', 'dashboard', 'checklist', 'handbook', 'pipeline', 'archive', 'rollout'];
-const ITEM_WORDS = ['licenses', 'travel', 'training', 'hosting', 'supplies', 'catering', 'storage', 'audit', 'printing', 'support'];
-const OPTIONS_EN = ['keep the current vendor', 'postpone the migration to the next quarter', 'merge the two review stages', 'split the release into two parts', 'drop the optional export feature'];
-const OPTIONS_KO = ['기존 업체를 계속 유지', '이전 작업을 다음 분기로 연기', '두 검토 단계를 하나로 통합', '릴리스를 두 부분으로 분리', '선택 내보내기 기능을 제외'];
+export const EN_TOPIC = ['tracker', 'roadmap', 'dashboard', 'checklist', 'handbook', 'pipeline', 'archive', 'rollout'];
+export const ITEM_WORDS = ['licenses', 'travel', 'training', 'hosting', 'supplies', 'catering', 'storage', 'audit', 'printing', 'support'];
+export const OPTIONS_EN = ['keep the current vendor', 'postpone the migration to the next quarter', 'merge the two review stages', 'split the release into two parts', 'drop the optional export feature'];
+export const OPTIONS_KO = ['기존 업체를 계속 유지', '이전 작업을 다음 분기로 연기', '두 검토 단계를 하나로 통합', '릴리스를 두 부분으로 분리', '선택 내보내기 기능을 제외'];
 
-const latinName = (random: Random, used: Set<string>): string => {
+export const latinName = (random: Random, used: Set<string>): string => {
   for (;;) {
     const name = `${pick(random, LATIN_HEAD)}${pick(random, LATIN_TAIL)}`;
     if (!used.has(name)) return (used.add(name), name);
   }
 };
-const hangulName = (random: Random, used: Set<string>): string => {
+export const hangulName = (random: Random, used: Set<string>): string => {
   for (;;) {
     const name = `${pick(random, HANGUL_HEAD)}${pick(random, HANGUL_HEAD)}${pick(random, HANGUL_TAIL)}`;
     if (!used.has(name)) return (used.add(name), name);
   }
 };
-const person = (random: Random, language: Language): string =>
+export const person = (random: Random, language: Language): string =>
   language === 'ko' ? `${pick(random, KO_FIRST)} ${pick(random, KO_LAST)}` : `${pick(random, EN_FIRST)} ${pick(random, EN_LAST)}`;
-const money = (random: Random): string => `${between(random, 12, 98)},${between(random, 100, 999)}`;
-const day = (random: Random, language: Language): string => {
+export const money = (random: Random): string => `${between(random, 12, 98)},${between(random, 100, 999)}`;
+export const day = (random: Random, language: Language): string => {
   const month = between(random, 1, 12);
   const date = between(random, 1, 28);
   if (language === 'ko') return `${month}월 ${date}일`;
@@ -140,19 +140,19 @@ const day = (random: Random, language: Language): string => {
 
 // ---------------------------------------------------------------- templates
 
-interface Slots {
+export interface Slots {
   readonly subject: string;
   readonly a: string;
   readonly b: string;
 }
-interface NeedleTemplate {
+export interface NeedleTemplate {
   readonly text: (s: Slots) => string;
   readonly question: (subject: string) => string;
 }
 
 const topicWord = (language: Language, random: Random): string => (language === 'ko' ? pick(random, ['일정표', '현황판', '체크리스트', '로드맵']) : pick(random, EN_TOPIC));
 
-function needleTemplate(kind: NeedleKind, language: Language): NeedleTemplate {
+export function needleTemplate(kind: NeedleKind, language: Language): NeedleTemplate {
   const L = language;
   switch (kind) {
     case 'date':
@@ -212,7 +212,7 @@ function slotValues(kind: NeedleKind, language: Language, random: Random, subjec
   }
 }
 
-function fillerSentence(random: Random, language: Language, names: readonly string[], target: string): string {
+export function fillerSentence(random: Random, language: Language, names: readonly string[], target: string): string {
   const subject = random() < 0.05 ? target : pick(random, names);
   const topic = topicWord(language, random);
   const p = person(random, language);
@@ -258,7 +258,7 @@ function fillerSentence(random: Random, language: Language, names: readonly stri
   return pick(random, language === 'ko' ? ko : language === 'en' ? en : mixed);
 }
 
-function paragraph(random: Random, language: Language, names: readonly string[], target: string, shape: Shape, unitPoints: number): string {
+export function paragraph(random: Random, language: Language, names: readonly string[], target: string, shape: Shape, unitPoints: number): string {
   if (shape === 'adr-file' && random() < 0.12) {
     const lines = [`const MAX_RETRY_${pick(random, names).toUpperCase().replace(/[^A-Z]/g, 'X')} = ${between(random, 2, 97)};`, `const TIMEOUT_MS = ${between(random, 5, 90) * 100};`];
     return `\`\`\`ts\n${lines.join('\n')}\n\`\`\``;
@@ -281,9 +281,9 @@ function tableRow(random: Random, language: Language, names: readonly string[]):
 
 // ---------------------------------------------------------------- one case
 
-const cpLength = (text: string): number => Array.from(text).length;
+export const cpLength = (text: string): number => Array.from(text).length;
 
-function frameOf(shape: Shape, language: Language, index: number, total: number): string {
+export function frameOf(shape: Shape, language: Language, index: number, total: number): string {
   const ko = language === 'ko';
   switch (shape) {
     case 'thread':

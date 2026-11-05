@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 harder synthetic set v2 for `eval:chunk` (phase 0, no model)
+
+- **Added.** `--set v2`: 447 hash-frozen, feature-tagged cases (paraphrased questions, long paragraphs, section-name questions with Drive plain-text / Markdown pairs, near-duplicates, dense decoys; fictional names;
+  Korean / English / mixed; the 2 MiB ADR tier reduced to 3 cases) with its own freeze record `chunk-eval-corpus.freeze.v2.json` (digest `299e4b76...`, same BLOCKED / `regenerate-freeze` semantics) and a report by feature, shape x feature, exact misses
+  by shape x needle kind, long-paragraph overlap use, and the paired Drive result. `eval:chunk` exports a few helpers from `corpus.ts` / `drive-format.ts` (no behaviour change).
+- **Unchanged.** The v1 corpus (`f395110d...`) and the drive-format set (`4cec7f4c...`), the chunker, every Core parameter, BM25 settings, all thresholds (CH1-CH7 stay proposals).
+- **Measured (lexical arm, synthetic).** EL window recall 34.7% (baseline 10.3%): 83% with the codename in the question, 23% paraphrased (69% when the question keeps a topic word, 14% when not); the split / overlap path runs on long
+  paragraphs (overlap in 3-9% of their passages); Markdown vs plain text on section-name questions 4/24 -> 7/24 hits (not significant). The corpus was regenerated after review to fix three generator invariants (dense decoy count, near-duplicate answer values, `needleFraction`); the earlier commit's numbers are superseded. Recorded in DECISIONS ADR-0124 section 16.
+
 ## Unreleased — ADR-0124 per-shape breakdown and Drive Markdown-vs-text variant for `eval:chunk` (phase 0, no model)
 
 - **Added.** `eval:chunk` reports window recall by shape x depth / length / language / needle kind for both arms, and per-shape C1 chunker
