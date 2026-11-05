@@ -57,6 +57,8 @@ export interface LexicalOutcome {
   readonly ranking: readonly number[];
   readonly relevant: ReadonlySet<number>;
   readonly passageCount: number;
+  /** The chunker's passages for the item (structural; reused by the per-shape statistics). */
+  readonly passages: readonly chunking.Passage[];
 }
 
 /** The passages that overlap the needle's code-point range. */
@@ -89,6 +91,7 @@ export function lexicalWindow(item: ChunkEvalCase): LexicalOutcome {
     ranking,
     relevant,
     passageCount: passages.length,
+    passages,
   };
 }
 

@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 per-shape breakdown and Drive Markdown-vs-text variant for `eval:chunk` (phase 0, no model)
+
+- **Added.** `eval:chunk` reports window recall by shape x depth / length / language / needle kind for both arms, and per-shape C1 chunker
+  statistics (passages, passage size, windows, `overCap`, overlap use, kind distribution; the cut-boundary level is not exposed by the
+  chunker, so it is skipped). `--set drive-format` runs a SEPARATE hash-frozen variant set (60 Drive-doc pairs: plain text vs Markdown
+  headings, identical content) with its own freeze record `chunk-eval-drive-format.freeze.v1.json` (digest `4cec7f4c...`) and paired report.
+- **Unchanged.** The v1 corpus and its digest (`f395110d...`), the chunker, every Core parameter, all thresholds (CH1-CH7 stay proposals).
+- **Measured (lexical arm, synthetic).** EL window recall 100% in six shapes, ADR file 83% (11 code-line and 2 decision misses); Markdown vs plain text: recall equal
+  (100%), 19x fewer section-crossing passages, 19% more passages. Recorded in DECISIONS ADR-0124 section 15.
+
 ## Unreleased — enable nl-select.v79 (A6 action) and nl-select.v80 (A6 R2) as the live defaults (owner decision 2026-11-04)
 
 - **Changed.** `NL_ACTIVE_PROMPT_REVS.action` is `'v79'`: `buildSelectionPrompt` with `actions` and no `rev` builds the gated v79 bytes (R2 the v80 bytes);

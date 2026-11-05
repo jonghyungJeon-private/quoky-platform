@@ -138,6 +138,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - **Code.** Docs only in C0; C1 adds the pure Core chunker (`application/chunking/`), not wired into any handler.
 - **C2 (2026-11-03).** `pnpm eval:chunk` runs CH1 with the baseline clip and the lexical arm only (no model; 435 hash-frozen
   synthetic cases incl. a 2 MiB ADR file; exit 4 NON-GATING). Window recall baseline 12.6%, EL 97.0%; E0-E3 and EH not run; thresholds remain proposals.
+- **C2 follow-up (2026-11-05).** `eval:chunk` reports per-shape recall (shape x depth/length/language/needle kind) and per-shape chunker
+  statistics; `--set drive-format` compares Drive plain text with Markdown headings on identical content (own freeze record; v1 digest unchanged).
+  Phase 0, lexical only: EL 100% in six shapes, 83% in the ADR file (11 code-line and 2 decision misses); text vs Markdown recall equal. No parameter or chunker change; DECISIONS ADR-0124 section 15.
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 
