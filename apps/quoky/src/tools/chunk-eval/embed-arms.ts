@@ -396,16 +396,20 @@ export class ArmEmbedder {
     const response = await this.post('/api/embed', { model: this.pin.model, input: prefixed, truncate: false, keep_alive: KEEP_ALIVE });
     if (!response.ok) {
       const detail = ((await response.json().catch(() => ({}))) as { error?: unknown }).error;
-      if (response.status === 400 && typeof detail === 'string' && /context|length/i.test(detail)) {
+      // Stage C (2026-11-05): the daemon answers 413 for a request it will not take (16 whole memories of up to 8,000 units
+      // in one batch). Like a context refusal, the batch is split and a single input still refused counts as over the
+      // model context: an explicit count, never a silent cut.
+      const contextRefusal = response.status === 400 && typeof detail === 'string' && /context|length/i.test(detail);
+      if (contextRefusal || response.status === 413) {
         this.calls.push({ role, language: (batch[0] as EmbedItem).language, texts: batch.length, ms: this.clock() - started, promptTokens: undefined, hangulSyllables: 0, codePoints: 0, refused: true });
         if (batch.length === 1) {
           this.overContext += 1;
           return [null];
         }
-        // which passage is over the context is not known from a batch error: ask one by one (an explicit count, never a silent cut)
-        const singles: (Float32Array | null)[] = [];
-        for (const item of batch) singles.push(...(await this.callBatch(role, [item])));
-        return singles;
+        // which input is refused is not known from a batch error: halve the batch (one by one in the end), an explicit
+        // count, never a silent cut
+        const half = Math.ceil(batch.length / 2);
+        return [...(await this.callBatch(role, batch.slice(0, half))), ...(await this.callBatch(role, batch.slice(half)))];
       }
       throw new Error(`embedding call failed with status ${response.status}`);
     }
