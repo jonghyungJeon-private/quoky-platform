@@ -5,6 +5,9 @@
  *   pnpm eval:chunk -- --mode run [--out <dir>]     verify the corpus hash, run baseline + EL, write data/eval/chunk-eval-*.json
  *   pnpm eval:chunk -- --mode verify                check the generated corpus against the recorded hash (no run)
  *   pnpm eval:chunk -- --mode regenerate-freeze     SEPARATE command: record the current corpus hash (after a deliberate corpus change)
+ *   pnpm eval:chunk -- --set drive-format --mode run|verify|regenerate-freeze
+ *                                                   the SEPARATE Drive plain-text vs Markdown variant set (ADR-0124 open question 10),
+ *                                                   with its own freeze record; the v1 corpus and its record are never touched by it
  *
  * Exit codes (as the other eval tools): 0 PASSED, 1 FAILED, 2 USAGE, 3 BLOCKED (corpus differs from the recorded hash, or
  * no record), 4 NON-GATING (a completed run: CH1 thresholds are proposals, so a run never reports PASSED), 5 INVALID
@@ -14,7 +17,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { corpusDigest, CORPUS_SEED, CORPUS_VERSION, generateCorpus, type ChunkEvalCase } from './chunk-eval/corpus';
-import { runChunkEval, summaryLines, type ChunkEvalReport } from './chunk-eval/chunk-eval';
+import { runChunkEval, summaryLines } from './chunk-eval/chunk-eval';
+import { DRIVE_FORMAT_VERSION, driveFormatDigest, driveFormatSummaryLines, generateDriveFormatSet, runDriveFormat, type DriveFormatCase } from './chunk-eval/drive-format';
 
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
@@ -25,13 +29,15 @@ export const EXIT_INVALID = 5;
 
 const repoRoot = resolve(__dirname, '../../../..');
 export const FREEZE_PATH = resolve(repoRoot, 'apps/quoky/src/tools/chunk-eval/chunk-eval-corpus.freeze.v1.json');
+export const DRIVE_FORMAT_FREEZE_PATH = resolve(repoRoot, 'apps/quoky/src/tools/chunk-eval/chunk-eval-drive-format.freeze.v1.json');
 const DEFAULT_OUT_DIR = resolve(repoRoot, 'data/eval');
 
 const HELP = [
-  'usage: pnpm eval:chunk -- --mode run|verify|regenerate-freeze [--out <dir>]',
+  'usage: pnpm eval:chunk -- [--set v1|drive-format] --mode run|verify|regenerate-freeze [--out <dir>]',
   '  run                 verify the corpus hash (exit 3 if it differs), run baseline and lexical arms, write the report (exit 4 NON-GATING)',
   '  verify              check the generated corpus against the recorded hash (exit 0 or 3)',
   '  regenerate-freeze   record the current corpus hash (a deliberate, separate step; exit 0)',
+  '  --set drive-format  the Drive text-vs-Markdown variant set instead of the v1 corpus (own freeze record, same exit codes)',
 ].join('\n');
 
 export interface FreezeRecord {
@@ -48,8 +54,26 @@ export interface CliDeps {
   readonly corpus: () => ChunkEvalCase[];
   readonly readFreeze: () => FreezeRecord | undefined;
   readonly writeFreeze: (record: FreezeRecord) => void;
-  readonly writeReport: (dir: string, name: string, report: ChunkEvalReport) => string;
+  readonly writeReport: (dir: string, name: string, report: object) => string;
+  /** The Drive-format variant set; defaults to the real generator and its own freeze record. */
+  readonly variant?: {
+    readonly corpus: () => DriveFormatCase[];
+    readonly readFreeze: () => FreezeRecord | undefined;
+    readonly writeFreeze: (record: FreezeRecord) => void;
+  };
 }
+
+const defaultVariant = (): NonNullable<CliDeps['variant']> => ({
+  corpus: generateDriveFormatSet,
+  readFreeze: () => {
+    try {
+      return JSON.parse(readFileSync(DRIVE_FORMAT_FREEZE_PATH, 'utf8')) as FreezeRecord;
+    } catch {
+      return undefined;
+    }
+  },
+  writeFreeze: (record) => writeFileSync(DRIVE_FORMAT_FREEZE_PATH, `${JSON.stringify(record, null, 2)}\n`),
+});
 
 export function defaultDeps(): CliDeps {
   return {
@@ -74,25 +98,28 @@ export function defaultDeps(): CliDeps {
   };
 }
 
-type Parsed = { mode: 'run' | 'verify' | 'regenerate-freeze' | 'help'; out?: string };
+type Parsed = { mode: 'run' | 'verify' | 'regenerate-freeze' | 'help'; out?: string; set: 'v1' | 'drive-format' };
 class UsageError extends Error {}
 
 export function parseArguments(argv: readonly string[]): Parsed {
   const tokens = argv[0] === '--' ? argv.slice(1) : [...argv];
-  if (tokens.length === 0 || tokens.includes('--help') || tokens.includes('-h')) return { mode: 'help' };
+  if (tokens.length === 0 || tokens.includes('--help') || tokens.includes('-h')) return { mode: 'help', set: 'v1' };
   let mode: string | undefined;
   let out: string | undefined;
+  let set: string = 'v1';
   for (let at = 0; at < tokens.length; at += 2) {
     const name = tokens[at] as string;
     const value = tokens[at + 1];
-    if (name !== '--mode' && name !== '--out') throw new UsageError(`unknown option ${name}`);
+    if (name !== '--mode' && name !== '--out' && name !== '--set') throw new UsageError(`unknown option ${name}`);
     if (value === undefined || value.startsWith('--')) throw new UsageError(`${name} needs a value`);
     if (name === '--mode') mode = value;
+    else if (name === '--set') set = value;
     else out = value;
   }
   if (mode !== 'run' && mode !== 'verify' && mode !== 'regenerate-freeze') throw new UsageError('--mode must be run, verify or regenerate-freeze');
+  if (set !== 'v1' && set !== 'drive-format') throw new UsageError('--set must be v1 or drive-format');
   if (out !== undefined && mode !== 'run') throw new UsageError('--out applies to --mode run only');
-  return { mode, ...(out === undefined ? {} : { out }) };
+  return { mode, set, ...(out === undefined ? {} : { out }) };
 }
 
 export async function runCli(argv: readonly string[], deps: CliDeps = defaultDeps()): Promise<number> {
@@ -108,6 +135,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stdout(HELP);
     return EXIT_OK;
   }
+  if (parsed.set === 'drive-format') return runVariant(parsed, deps);
   const cases = deps.corpus();
   const digest = corpusDigest(cases);
   if (parsed.mode === 'regenerate-freeze') {
@@ -142,6 +170,41 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   return EXIT_NON_GATING;
 }
 
+async function runVariant(parsed: Parsed, deps: CliDeps): Promise<number> {
+  const variant = deps.variant ?? defaultVariant();
+  const cases = variant.corpus();
+  const digest = driveFormatDigest(cases);
+  if (parsed.mode === 'regenerate-freeze') {
+    variant.writeFreeze({ version: DRIVE_FORMAT_VERSION, seed: CORPUS_SEED, cases: cases.length, sha256: digest });
+    deps.stdout(`recorded drive-format set ${digest} (${cases.length} cases)`);
+    return EXIT_OK;
+  }
+  const record = variant.readFreeze();
+  if (record === undefined) {
+    deps.stderr('BLOCKED: no recorded drive-format hash; run --set drive-format --mode regenerate-freeze once, review, and commit the record');
+    return EXIT_BLOCKED;
+  }
+  if (record.sha256 !== digest || record.version !== DRIVE_FORMAT_VERSION || record.seed !== CORPUS_SEED || record.cases !== cases.length) {
+    deps.stderr(`BLOCKED: the drive-format set differs from the recorded hash (recorded ${record.sha256}, generated ${digest}); nothing was run`);
+    return EXIT_BLOCKED;
+  }
+  if (parsed.mode === 'verify') {
+    deps.stdout(`drive-format set matches the record: ${digest} (${cases.length} cases)`);
+    return EXIT_OK;
+  }
+  const report = runDriveFormat(cases, digest);
+  const invalid =
+    report.formats.text.baseline.refusedOrEmpty > 0 || report.formats.markdown.baseline.refusedOrEmpty > 0 || cases.some((item) => !item.prepared.includes(item.needle.text));
+  const stamp = deps.now().toISOString().replace(/[:.]/g, '-');
+  const path = deps.writeReport(parsed.out === undefined ? DEFAULT_OUT_DIR : resolve(parsed.out), `chunk-eval-drive-format-${digest.slice(0, 12)}-${stamp}.json`, report);
+  for (const line of driveFormatSummaryLines(report)) deps.stdout(line);
+  deps.stdout(`report: ${path}`);
+  if (invalid) {
+    deps.stderr('INVALID: the baseline refused an item or a needle is missing from its item; the numbers are not trustworthy');
+    return EXIT_INVALID;
+  }
+  return EXIT_NON_GATING;
+}
 
 if (require.main === module) {
   runCli(process.argv.slice(2)).then(

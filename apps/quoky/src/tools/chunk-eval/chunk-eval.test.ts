@@ -4,7 +4,8 @@ import { baselineWindow, lexicalWindow, relevantPassages, windowHasNeedle } from
 import { ADR_FILE_BYTES, buildCase, corpusDigest, CORPUS_SEED, CORPUS_VERSION, DEPTHS, generateCorpus, LANGUAGES, LENGTHS, lengthsOf, SHAPES, type ChunkEvalCase } from './corpus';
 import { firstRelevantRank, mean, ndcgAtK, recallAtK, reciprocalRank } from './metrics';
 import { runChunkEval } from './chunk-eval';
-import { EXIT_BLOCKED, EXIT_INVALID, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, FREEZE_PATH, parseArguments, runCli, type CliDeps, type FreezeRecord } from '../chunk-eval-cli';
+import { DRIVE_FORMAT_VERSION, driveDocSources, driveFormatDigest, generateDriveFormatSet, renderDriveDoc, runDriveFormat, SECTION_TARGET_CODE_POINTS } from './drive-format';
+import { DRIVE_FORMAT_FREEZE_PATH, EXIT_BLOCKED, EXIT_INVALID, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, FREEZE_PATH, parseArguments, runCli, type CliDeps, type FreezeRecord } from '../chunk-eval-cli';
 import { buildUntrustedDocumentReadout, chunking } from '@quoky/core';
 
 const corpus = generateCorpus();
@@ -185,6 +186,118 @@ describe('run on a small slice', () => {
     expect(report.arms.EL.retrieval.recallAt10).toBeGreaterThanOrEqual(report.arms.EL.retrieval.recallAt1);
     expect(JSON.stringify(report)).not.toContain(slice[0]?.needle.text ?? '\u0000');
   });
+
+  it('breaks window recall down by shape x depth, length, language and needle kind, for both arms', () => {
+    for (const arm of [report.arms.baseline, report.arms.EL]) {
+      expect(Object.keys(arm.byShapeDepth)).toEqual([...SHAPES]);
+      expect(Object.keys(arm.byShapeLength['mail'] ?? {})).toEqual(['6000']);
+      expect(Object.keys(arm.byShapeLanguage['mail'] ?? {})).toEqual(['en']);
+      expect(Object.keys(arm.byShapeNeedleKind['workbook'] ?? {})).toEqual(['sheet-row']);
+      // every cell's n adds back up to the shape's n, and the cell recalls average back to the shape's recall
+      for (const shape of SHAPES) {
+        const cells = Object.values(arm.byShapeDepth[shape] ?? {});
+        expect(cells.reduce((sum, cell) => sum + cell.n, 0)).toBe(arm.byShape[shape]?.n);
+        expect(cells.reduce((sum, cell) => sum + cell.n * cell.windowRecall, 0) / (arm.byShape[shape]?.n ?? 1)).toBeCloseTo(arm.byShape[shape]?.windowRecall ?? 0, 3);
+      }
+    }
+  });
+
+  it('reports per-shape chunker statistics and says the boundary level is not exposed', () => {
+    expect(Object.keys(report.chunker.byShape)).toEqual([...SHAPES]);
+    for (const shape of SHAPES) {
+      const stats = report.chunker.byShape[shape];
+      expect(stats?.cases).toBe(slice.filter((item) => item.shape === shape).length);
+      expect(stats?.passagesPerCase.max).toBeGreaterThanOrEqual(stats?.passagesPerCase.mean ?? 0);
+      expect(stats?.passageCodePoints.p95).toBeLessThanOrEqual(stats?.passageCodePoints.max ?? 0);
+      expect(stats?.passageCodePoints.max).toBeLessThanOrEqual(1_200);
+      expect(stats?.windowsPerCase.mean).toBeGreaterThanOrEqual(1);
+      expect(Object.values(stats?.kinds ?? {}).reduce((sum, n) => sum + n, 0)).toBeGreaterThan(0);
+    }
+    expect(Object.keys(report.chunker.byShape['workbook']?.kinds ?? {})).toEqual(['table']);
+    expect(report.chunker.boundaryLevel).toMatch(/not exposed/);
+  });
+});
+
+describe('Drive format variant set (ADR-0124 open question 10)', () => {
+  const sources = driveDocSources();
+  const set = generateDriveFormatSet();
+  const HEADING = /^#{1,2} /gmu;
+
+  it('is built from the v1 drive-doc cases: the same 60 cases, each rendered twice', () => {
+    expect(sources.length).toBe(LENGTHS.length * DEPTHS.length * LANGUAGES.length);
+    expect(set.length).toBe(sources.length * 2);
+    const v1 = corpus.filter((item) => item.shape === 'drive-doc');
+    expect(sources.map((item) => item.id)).toEqual(v1.map((item) => item.id));
+    expect(sources.map((item) => item.prepared)).toEqual(v1.map((item) => item.prepared));
+    expect(new Set(set.map((item) => item.id)).size).toBe(set.length);
+  });
+
+  it('renders identical content: the markdown differs from the text only by the heading markers', () => {
+    for (const source of sources) {
+      const text = renderDriveDoc(source, 'text');
+      const markdown = renderDriveDoc(source, 'markdown');
+      expect(markdown.prepared.replace(HEADING, '')).toBe(text.prepared);
+      expect(text.prepared).not.toMatch(/^#/mu);
+      expect(markdown.question).toBe(text.question);
+      expect(markdown.needle.text).toBe(text.needle.text);
+      expect(markdown.depth).toBe(text.depth);
+      expect(markdown.language).toBe(text.language);
+      expect(markdown.length).toBe(text.length);
+      expect(markdown.titleStarts.length).toBe(text.titleStarts.length);
+      expect(markdown.titleStarts.length).toBeGreaterThanOrEqual(2);
+      // every v1 paragraph, in order, is still there
+      const body = (source.parts[0] as { body: string }).body.split('\n\n');
+      let from = 0;
+      for (const paragraph of body) {
+        const at = text.prepared.indexOf(paragraph, from);
+        expect(at).toBeGreaterThanOrEqual(0);
+        from = at + paragraph.length;
+      }
+      // titles sit where titleStarts says, in code points
+      for (const variant of [text, markdown]) {
+        const points = Array.from(variant.prepared);
+        for (const at of variant.titleStarts) expect(at === 0 || points.slice(at - 2, at).join('')).toBe(at === 0 ? true : '\n\n');
+        expect(points.slice(variant.needle.start, variant.needle.end).join('')).toBe(variant.needle.text);
+      }
+    }
+  });
+
+  it('keeps a section near its target size and uses no codename or attribute word in a title', () => {
+    for (const item of set.filter((candidate) => candidate.format === 'markdown')) {
+      const sections = item.prepared.split(/^## /mu).slice(1);
+      expect(sections.length).toBeGreaterThanOrEqual(2);
+      for (const section of sections.slice(0, -1)) expect(Array.from(section).length).toBeGreaterThanOrEqual(SECTION_TARGET_CODE_POINTS);
+      const titles = [...item.prepared.matchAll(/^#{1,2} (.*)$/gmu)].map((match) => match[1] as string).join(' ');
+      expect(titles).not.toMatch(/budget|review|owner|decision|meeting|MAX_RETRY/iu);
+    }
+  });
+
+  it('is frozen with its own digest, separate from the v1 record', () => {
+    const record = JSON.parse(readFileSync(DRIVE_FORMAT_FREEZE_PATH, 'utf8')) as FreezeRecord;
+    expect(record.version).toBe(DRIVE_FORMAT_VERSION);
+    expect(record.seed).toBe(CORPUS_SEED);
+    expect(record.cases).toBe(set.length);
+    expect(driveFormatDigest(set)).toBe(record.sha256);
+    expect(driveFormatDigest(generateDriveFormatSet())).toBe(record.sha256);
+    expect(record.sha256).not.toBe(corpusDigest(corpus));
+    expect(driveFormatDigest(set.map((item, at) => (at === 3 ? { ...item, question: `${item.question}?` } : item)))).not.toBe(record.sha256);
+    expect(driveFormatDigest(set.map((item, at) => (at === 3 ? { ...item, format: 'text' as const } : item)))).not.toBe(record.sha256);
+    expect(JSON.parse(readFileSync(FREEZE_PATH, 'utf8')).sha256).toBe(corpusDigest(corpus));
+  });
+
+  it('reports a paired difference over a small slice, content-free and non-gating', () => {
+    const slice = set.filter((item) => item.length === 6_000 && item.language === 'en');
+    const report = runDriveFormat(slice, driveFormatDigest(slice));
+    expect(report.status).toBe('NON-GATING');
+    expect(report.paired.pairs).toBe(slice.length / 2);
+    for (const arm of [report.paired.baseline, report.paired.EL]) {
+      expect(arm.bothHit + arm.onlyText + arm.onlyMarkdown + arm.neither).toBe(report.paired.pairs);
+      expect(arm.delta).toBeCloseTo(arm.recallMarkdown - arm.recallText, 4);
+    }
+    expect(report.formats.markdown.structure.passagesStartingAtTitle).toBeGreaterThan(report.formats.text.structure.passagesStartingAtTitle);
+    expect(report.formats.markdown.structure.crossingPassages).toBeLessThan(report.formats.text.structure.crossingPassages);
+    expect(JSON.stringify(report)).not.toContain(slice[0]?.needle.text ?? '\u0000');
+  });
 });
 
 describe('cli', () => {
@@ -266,5 +379,43 @@ describe('cli', () => {
     const broken = small.map((item, at) => (at === 0 ? { ...item, needle: { ...item.needle, text: 'absent needle text' } } : item));
     const run = make({ corpus: () => broken }, { ...frozen(), sha256: corpusDigest(broken) });
     expect(await runCli(['--mode', 'run', '--out', '/tmp/chunk-eval-test'], run.deps)).toBe(EXIT_INVALID);
+  });
+
+  describe('--set drive-format', () => {
+    const variantSet = generateDriveFormatSet().filter((item) => item.length === 6_000 && item.language === 'en' && item.depth === 50);
+    const variantRecord = (): FreezeRecord => ({ version: DRIVE_FORMAT_VERSION, seed: CORPUS_SEED, cases: variantSet.length, sha256: driveFormatDigest(variantSet) });
+    const makeVariant = (corpusOf: () => typeof variantSet, freeze?: FreezeRecord) => {
+      let record = freeze;
+      const base = make({}, undefined);
+      const deps: CliDeps = { ...base.deps, variant: { corpus: corpusOf, readFreeze: () => record, writeFreeze: (next) => { record = next; } } };
+      return { ...base, deps, record: () => record };
+    };
+
+    it('parses the flag and rejects unknown sets', async () => {
+      expect(parseArguments(['--set', 'drive-format', '--mode', 'run']).set).toBe('drive-format');
+      expect(parseArguments(['--mode', 'run']).set).toBe('v1');
+      expect(await runCli(['--set', 'nope', '--mode', 'run'], make().deps)).toBe(EXIT_USAGE);
+    });
+
+    it('is BLOCKED without a record or when the set differs, and never touches the v1 record', async () => {
+      const none = makeVariant(() => variantSet);
+      expect(await runCli(['--set', 'drive-format', '--mode', 'run'], none.deps)).toBe(EXIT_BLOCKED);
+      const stale = makeVariant(() => variantSet, { ...variantRecord(), sha256: 'a'.repeat(64) });
+      expect(await runCli(['--set', 'drive-format', '--mode', 'verify'], stale.deps)).toBe(EXIT_BLOCKED);
+      expect(await runCli(['--set', 'drive-format', '--mode', 'run'], stale.deps)).toBe(EXIT_BLOCKED);
+      expect(stale.written.report).toBeUndefined();
+      const changed = makeVariant(() => variantSet.map((item, at) => (at === 0 ? { ...item, prepared: `${item.prepared}\n` } : item)), variantRecord());
+      expect(await runCli(['--set', 'drive-format', '--mode', 'run'], changed.deps)).toBe(EXIT_BLOCKED);
+    });
+
+    it('records its own freeze only through regenerate-freeze, then verifies and runs NON-GATING', async () => {
+      const run = makeVariant(() => variantSet);
+      expect(await runCli(['--set', 'drive-format', '--mode', 'regenerate-freeze'], run.deps)).toBe(EXIT_OK);
+      expect(run.record()?.sha256).toBe(driveFormatDigest(variantSet));
+      expect(await runCli(['--set', 'drive-format', '--mode', 'verify'], run.deps)).toBe(EXIT_OK);
+      expect(await runCli(['--set', 'drive-format', '--mode', 'run', '--out', '/tmp/chunk-eval-test'], run.deps)).toBe(EXIT_NON_GATING);
+      expect(run.written.name).toMatch(/^chunk-eval-drive-format-[0-9a-f]{12}-2026-11-03T00-00-00-000Z\.json$/);
+      expect(run.out.join('\n')).not.toMatch(/PASSED/);
+    });
   });
 });
