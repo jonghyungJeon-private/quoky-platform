@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { NL_ACTION_UNDO_COMMAND, NL_ACTION_UNDO_HINT } from '../work-chat/work-chat-renderer';
 import { Capability, type Actor, type IsoTimestamp, type Session } from '../../domain';
-import type { AiProvider, AiRequest, LogFields, Logger } from '../../ports';
+import { unsplitRequest, type AiProvider, type AiRequest, type LogFields, type Logger } from '../../ports';
 import { LAST_LISTING_METADATA_KEY, withLabelledListing, withListing } from '../last-listing';
 import { NL_ACTION_ENTRIES } from './action-entries';
 import { ACTION_SWITCH_METADATA_KEY, NlActionSwitch } from './action-switch';
@@ -33,6 +33,8 @@ const NONE = out('none');
 interface World {
   service: NlSelectionService;
   calls: AiRequest[];
+  /** The requests exactly as the service sent them (a split rev carries `systemPrompt`). */
+  rawCalls: AiRequest[];
   logs: Array<{ event: string; fields?: LogFields }>;
   session(): Session;
   actor(): Actor;
@@ -40,8 +42,9 @@ interface World {
   decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean; direct?: boolean; surfaceEnforced?: boolean }): Promise<NlSelectionDecision>;
 }
 
-function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean } = {}): World {
+function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean; promptRev?: 'v79' | 'v81' } = {}): World {
   const calls: AiRequest[] = [];
+  const rawCalls: AiRequest[] = [];
   const logs: World['logs'] = [];
   const script = Array.isArray(options.script) ? [...options.script] : undefined;
   let session: Session = {
@@ -60,7 +63,9 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
       return true;
     },
     async execute(request) {
-      calls.push(request);
+      // A provider without a system-prompt channel sees one joined prompt; these tests assert on that text.
+      rawCalls.push(request);
+      calls.push(unsplitRequest(request));
       if (typeof options.script === 'function') return { text: options.script(request), artifacts: [] };
       const next = script?.shift();
       if (next === undefined) throw new Error('script exhausted');
@@ -98,6 +103,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
     actors,
     timeZone: 'Asia/Seoul',
     logger,
+    ...(options.promptRev !== undefined ? { promptRev: options.promptRev } : {}),
     ...(level === 'absent'
       ? {}
       : { actions: { level, ...(options.withSwitch === false ? {} : { killSwitch: new NlActionSwitch({ actors, logger }) }), ...(options.caps !== undefined ? { caps: options.caps } : {}) } }),
@@ -105,6 +111,7 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
   return {
     service,
     calls,
+    rawCalls,
     logs,
     session: () => session,
     actor: () => actor,
@@ -134,6 +141,39 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
 
 const todoListing = (labels: number[], minute = 0) => withLabelledListing(undefined, 'owner', 'todo', labels.map((label) => ({ label, id: `todo-${label}` })), at(minute), 'listing');
 const actionLogs = (w: World) => w.logs.filter((log) => log.event === NL_ACTION_LOG_EVENT);
+
+describe('selector prompt caching: the split request (nl-select.v81)', () => {
+  it('the active rev sends the stable part as systemPrompt and only the per-turn part as prompt; joined it is the v79 text', async () => {
+    const w = world({ script: [NONE] });
+    await w.decide('그거 완료 처리해줘');
+    const sent = w.rawCalls[0] as AiRequest;
+    expect(sent.systemPrompt).toContain('- todo.complete: ');
+    expect(sent.systemPrompt).toContain('Catalog:');
+    expect(sent.systemPrompt).not.toContain('그거 완료 처리해줘');
+    expect(sent.prompt).not.toContain('Catalog:');
+    expect(sent.prompt).toContain('<<<\n그거 완료 처리해줘\n>>>');
+    expect(`${sent.systemPrompt}\n${sent.prompt}`).toBe(w.calls[0]?.prompt);
+  });
+
+  it('logged sizes are those of the joined text (comparable with unsplit logs)', async () => {
+    const w = world({ script: [NONE] });
+    await w.decide('그거 완료 처리해줘');
+    const sent = w.rawCalls[0] as AiRequest;
+    const joined = `${sent.systemPrompt}\n${sent.prompt}`;
+    const fields = w.logs.find((log) => log.event === 'nl_selection.decided')?.fields;
+    expect(fields?.promptChars).toBe(joined.length);
+    expect(fields?.promptBytes).toBe(new TextEncoder().encode(joined).length);
+  });
+
+  it('the explicit v79 rollback sends one unsplit prompt, and the cache key differs per version', async () => {
+    const split = world({ script: [NONE] });
+    const unsplit = world({ script: [NONE], promptRev: 'v79' });
+    await split.decide('그거 완료 처리해줘');
+    await unsplit.decide('그거 완료 처리해줘');
+    expect('systemPrompt' in (unsplit.rawCalls[0] as AiRequest)).toBe(false);
+    expect(unsplit.rawCalls[0]?.prompt).toBe(split.calls[0]?.prompt);
+  });
+});
 
 describe('startup refusals (A6-D8)', () => {
   it('refuses external until R3', () => {
@@ -240,7 +280,7 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v79');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v81');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);

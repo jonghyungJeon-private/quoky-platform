@@ -11,6 +11,7 @@ import {
   loadActionCorpus,
   loadReadRegressionCorpus,
   readRegressionPrompt,
+  readRegressionRequestText,
   readRegressionReferenceState,
   runActionEvaluation,
   scoreActionDecision,
@@ -247,6 +248,29 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
 
 describe('read regression (A6-D7): 0 read cases captured by an action entry', () => {
   const { cases } = loadReadRegressionCorpus();
+
+  it('selector prompt caching: the eval sends the same split request as the live service under v81 and the unsplit text under v79', async () => {
+    const golden = { id: 'r', text: '오늘 메일 보여줘', expect: { entryId: 'mail.list', args: { range: 'today' } } } as const;
+    const active = readRegressionRequestText(golden, NOW);
+    expect(active?.systemPrompt).toContain('- item.summarize: ');
+    expect(active?.prompt).not.toContain('Catalog:');
+    expect(active?.prompt).toContain('<<<\n오늘 메일 보여줘\n>>>');
+    const rollback = readRegressionRequestText(golden, NOW, 'v79');
+    expect(rollback !== undefined && 'systemPrompt' in rollback).toBe(false);
+    // Same words either way: the joined v81 text is the v79 text.
+    expect(`${active?.systemPrompt}\n${active?.prompt}`).toBe(rollback?.prompt);
+    expect(readRegressionPrompt(golden, NOW)).toBe(rollback?.prompt);
+    // The runner passes exactly that request to the provider.
+    const seen: AiRequest[] = [];
+    const provider: AiProvider = { id: 'p', capabilities: [], isAvailable: async () => true, execute: async (request) => (seen.push(request), { text: '{"entryId":"none","args":{}}', artifacts: [] }) };
+    const { cases: all } = loadReadRegressionCorpus();
+    const one = all.find((c) => c.a6Skip === undefined);
+    expect(one).toBeDefined();
+    const plan = { caseIds: [one!.id], runs: 1, concurrency: 1, callTimeoutMs: 5000 } as never;
+    await runReadRegression({ cases: all, plan, provider, now: () => NOW });
+    expect(seen[0]?.systemPrompt).toContain('Catalog:');
+    expect(seen[0]?.prompt).not.toContain('Catalog:');
+  });
 
   it('builds the v21 prompt with every entry offered for each read case', () => {
     const prompt = readRegressionPrompt({ id: 'r', text: '오늘 메일 보여줘', expect: { entryId: 'mail.list', args: { range: 'today' } } }, NOW) ?? '';

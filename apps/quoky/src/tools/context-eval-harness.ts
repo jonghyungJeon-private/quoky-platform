@@ -415,7 +415,9 @@ export async function bootContextEvalWorld(profile: ContextEvalProfile, initial:
       async isAvailable() {
         return true;
       },
-      async execute(request: AiRequest) {
+      async execute(rawRequest: AiRequest) {
+        // A real provider without a system-prompt channel sees the split selector request as one joined prompt.
+        const request = core.unsplitRequest(rawRequest);
         requests.push({ ...request, locality });
         if (request.capability === core.Capability.INTENT_SELECTION) {
           // D4: the help-scope classifier is its own call, answered by its own provider hook.

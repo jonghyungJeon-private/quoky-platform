@@ -11,6 +11,8 @@ export interface CallUsageLogFields {
   readonly promptBytes: number;
   readonly inTok?: number;
   readonly cacheRead?: number;
+  /** Part of `inTok` the provider reported as written to its prompt cache (`cacheCreationInputTokens`); omitted when unreported. */
+  readonly cacheWrite?: number;
   readonly outTok?: number;
 }
 
@@ -21,12 +23,14 @@ function count(value: unknown): number | undefined {
 export function callUsageLogFields(prompt: string, usage: AiUsage | undefined): CallUsageLogFields {
   const inTok = count(usage?.inputTokens);
   const cacheRead = count(usage?.cachedInputTokens);
+  const cacheWrite = count(usage?.cacheCreationInputTokens);
   const outTok = count(usage?.outputTokens);
   return {
     promptChars: prompt.length,
     promptBytes: new TextEncoder().encode(prompt).length,
     ...(inTok !== undefined ? { inTok } : {}),
     ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
     ...(outTok !== undefined ? { outTok } : {}),
   };
 }

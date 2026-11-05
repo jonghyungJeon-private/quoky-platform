@@ -1,6 +1,6 @@
 import { AiProviderError } from '../../errors';
 import { AiFailureKind, Capability, type Actor, type ConversationContext, type InboundQuotedRange, type IsoTimestamp, type MessageBody, type Session } from '../../domain';
-import { executionLocalityOf, type AiExecutionLocality, type AiProvider } from '../../ports/ai-provider.port';
+import { executionLocalityOf, joinedPrompt, type AiExecutionLocality, type AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import { containsCredentialMaterial } from '../credential-guard';
@@ -95,7 +95,7 @@ import { normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput }
 import { nlSelectionParseFailure, parseSelectionOutput, type NlSelectionCandidate, type NlSelectionOutput } from './selection-output';
 import { nlSelectionMeaning } from './selection-meaning';
 import { nlSameEgress as sameEgress } from './selection-egress';
-import { buildSelectionPrompt, nlPromptVersionFor, offersR2ItemSources, type NlPromptRev } from './selection-prompt';
+import { buildSelectionPrompt, buildSelectionRequestText, nlPromptVersionFor, offersR2ItemSources, type NlPromptRev } from './selection-prompt';
 import { nlIsPastStatement } from './statement-guard';
 import { nlFrameIsCopularReference, nlIsRequestForm, nlRequestsSomething } from './request-shape';
 import { nlReadNotRequest } from './read-statement';
@@ -171,6 +171,8 @@ export interface SelectionCallMeta {
   readonly promptBytes?: number;
   readonly inTok?: number;
   readonly cacheRead?: number;
+  /** Part of `inTok` the provider reported as written to its prompt cache (omitted when unreported). */
+  readonly cacheWrite?: number;
   readonly outTok?: number;
   readonly sinceStartMs: number;
   readonly idleMs: number;
@@ -2570,7 +2572,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
       return { kind: 'output', output: hit.output, latencyMs: Math.max(0, clock() - started), cached: true, cacheKey };
     }
     if (hit !== undefined) this.cache.delete(cacheKey);
-    const prompt = buildSelectionPrompt({
+    // A split rev sends the stable part as `systemPrompt` and the per-turn part as `prompt` (provider-neutral field; a
+    // provider without a system-prompt channel joins them back byte for byte). Logged sizes are always the joined text.
+    const requestText = buildSelectionRequestText({
       entries: turn.entries,
       text: prepared.text,
       ...(this.deps.promptRev !== undefined ? { rev: this.deps.promptRev } : {}),
@@ -2579,11 +2583,12 @@ export class NlSelectionService implements TurnDeliveryObserver {
     });
     const bound = this.selectionBound(clock());
     const timeoutMs = bound.boundMs;
+    const prompt = joinedPrompt(requestText);
     let call: SelectionCallMeta = { ...callUsageLogFields(prompt, undefined), ...bound };
     let rawText: string;
     try {
       const result = await withTimeout(
-        provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, ...(signal !== undefined ? { signal } : {}) }),
+        provider.execute({ capability: Capability.INTENT_SELECTION, ...requestText, timeoutMs, ...(signal !== undefined ? { signal } : {}) }),
         timeoutMs,
       );
       rawText = result.text;

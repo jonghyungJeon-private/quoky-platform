@@ -8,6 +8,7 @@ import {
   NL_CATALOG_ENTRY_IDS,
   NL_WAVE1_ENTRIES,
   isNlWave1EntryId,
+  joinedPrompt,
   prepareSelectionInput,
   type AiProvider,
   type NlCatalogEntry,
@@ -46,7 +47,7 @@ function scriptedProvider(respond: (prompt: string) => string): AiProvider {
     id: 'selector-rag-scripted',
     capabilities: [{ capability: Capability.INTENT_SELECTION, priority: 1 }],
     isAvailable: async () => true,
-    execute: async (request) => ({ text: respond(request.prompt), artifacts: [] }),
+    execute: async (request) => ({ text: respond(joinedPrompt(request)), artifacts: [] }),
   };
 }
 

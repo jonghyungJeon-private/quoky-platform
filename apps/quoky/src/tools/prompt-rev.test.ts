@@ -32,7 +32,7 @@ const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([
 
 describe('prompt revision options (owner decision 2026-11-04)', () => {
   it('knows the revisions and rejects an unknown one', () => {
-    expect(NL_EVAL_PROMPT_REVS).toEqual(['v73', 'v74', 'v77', 'v79']);
+    expect(NL_EVAL_PROMPT_REVS).toEqual(['v73', 'v74', 'v77', 'v79', 'v81']);
     expect(AGENT_PLAN_EVAL_REVS).toEqual(['v10', 'v11']);
     expect(parseNlPromptRev(undefined)).toBeUndefined();
     expect(parseNlPromptRev('v74')).toBe('v74');
@@ -91,22 +91,28 @@ describe('prompt revision options (owner decision 2026-11-04)', () => {
     for (const mode of ['action', 'read-regression', 'r2']) expect(parseArguments(['--mode', mode, '--cases', 'neg-033']).options['--cases']).toBe('neg-033');
   });
 
-  it('A6 plans: the default is nl-select.v79 (action) / v80 (R2) and stores no rev; explicit v73 is v71 / v72 and v74 is v75 / v76, each with its own prompt hash and digest', () => {
+  it('A6 plans: the default is nl-select.v81 (action) / v82 (R2) and stores no rev; explicit v73 is v71 / v72 and v74 is v75 / v76, each with its own prompt hash and digest', () => {
     const options = { model: 'haiku', runs: 3, concurrency: 4 };
     const base = buildActionPlan('nl-action-eval', ['x'], 'sha', options);
     const candidate = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v74' });
     const previous = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v73' });
     expect(Object.keys(base)).not.toContain('promptRev');
-    expect(base.promptVersion).toBe('nl-select.v79');
-    expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', options).promptVersion).toBe('nl-select.v80');
-    expect(computeActionPlanDigest(buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v79' }))).toBe(computeActionPlanDigest(base));
+    expect(base.promptVersion).toBe('nl-select.v81');
+    expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', options).promptVersion).toBe('nl-select.v82');
+    // An explicit v81 is the active revision (stores no rev, same digest); the explicit v79 rollback is its own unsplit plan.
+    expect(computeActionPlanDigest(buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v81' }))).toBe(computeActionPlanDigest(base));
+    const rollback = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v79' });
+    expect(rollback).toMatchObject({ promptVersion: 'nl-select.v79', promptRev: 'v79' });
+    expect(computeActionPlanDigest(rollback)).not.toBe(computeActionPlanDigest(base));
+    // The rule text is unchanged: the joined prompt hash of v81 equals v79's; the version id carries the transport.
+    expect(rollback.promptSha256).toBe(base.promptSha256);
     expect(previous).toMatchObject({ promptVersion: 'nl-select.v71', promptRev: 'v73' });
     expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', { ...options, promptRev: 'v73' })).toMatchObject({ promptVersion: 'nl-select.v72', promptRev: 'v73' });
     expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v73' }).promptRev).toBe('v73');
     expect(computeActionPlanDigest(previous)).not.toBe(computeActionPlanDigest(base));
     expect(actionPromptSha256(undefined, 'v73')).not.toBe(actionPromptSha256());
     expect(previous.promptSha256).toBe(actionPromptSha256(undefined, 'v73'));
-    expect(base.promptSha256).toBe(actionPromptSha256(undefined, 'v79'));
+    expect(base.promptSha256).toBe(actionPromptSha256(undefined, 'v81'));
     expect(candidate).toMatchObject({ promptVersion: NL_CANDIDATE_PROMPT_VERSIONS.action, promptRev: 'v74' });
     expect(computeActionPlanDigest(candidate)).not.toBe(computeActionPlanDigest(base));
     expect(actionPromptSha256(undefined, 'v74')).not.toBe(actionPromptSha256());
@@ -130,15 +136,15 @@ describe('nl-select.v77 / v78 and --cases on the A6 modes', () => {
     expect(buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v74' }).promptVersion).toBe('nl-select.v75');
   });
 
-  it('v79 plans (the active revision) name nl-select.v79 / v80, store no rev and differ from v77 in prompt hash and digest', () => {
+  it('v79 plans (the explicit unsplit rollback) name nl-select.v79 / v80, store the rev and differ from v77 in prompt hash and digest', () => {
     const v77 = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v77' });
     const v79 = buildActionPlan('nl-action-eval', ['x'], 'sha', { ...options, promptRev: 'v79' });
     expect(v79.promptVersion).toBe('nl-select.v79');
-    expect(Object.keys(v79)).not.toContain('promptRev');
+    expect(v79.promptRev).toBe('v79');
     expect(computeActionPlanDigest(v79)).not.toBe(computeActionPlanDigest(v77));
     expect(actionPromptSha256(undefined, 'v79')).not.toBe(actionPromptSha256(undefined, 'v77'));
     expect(buildActionPlan('nl-action-r2-eval', ['x'], 'sha', { ...options, promptRev: 'v79' }).promptVersion).toBe('nl-select.v80');
-    expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v79' }).promptRev).toBeUndefined();
+    expect(buildActionPlan('nl-read-regression', ['x'], 'sha', { ...options, promptRev: 'v81' }).promptRev).toBeUndefined();
     expect(() => planOptions({ '--prompt-rev': 'v79' })).toThrow(/not valid for the read modes/);
   });
 

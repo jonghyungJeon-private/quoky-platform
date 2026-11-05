@@ -27,6 +27,7 @@ import {
   NL_SELECTION_TIMEOUT_MS,
   NL_WAVE1_ENTRIES,
   buildSelectionPrompt,
+  buildSelectionRequestText,
   isNlCatalogEntryId,
   isNlWave1EntryId,
   nlHelpSourceScope,
@@ -513,7 +514,7 @@ export async function runEvaluation(input: {
           input.onRecord?.(record);
           continue;
         }
-        const prompt = buildSelectionPrompt({
+        const requestText = buildSelectionRequestText({
           entries: ALL_ENTRIES,
           text: prepared.text,
           ...(input.plan.promptRev !== undefined ? { rev: input.plan.promptRev } : {}),
@@ -525,7 +526,7 @@ export async function runEvaluation(input: {
         let record: NlEvalRecord;
         try {
           const result = await withTimeout(
-            input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs }),
+            input.provider.execute({ capability: Capability.INTENT_SELECTION, ...requestText, timeoutMs: input.plan.callTimeoutMs }),
             input.plan.callTimeoutMs,
           );
           const scored = await scoreOutputInWorld(golden, result.text, input.now());

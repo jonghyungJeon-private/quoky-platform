@@ -42,6 +42,8 @@ import {
   NlActionSwitch,
   NlSelectionService,
   buildSelectionPrompt,
+  buildSelectionRequestText,
+  joinedPrompt,
   detectWorkChatCommand,
   executionLocalityOf,
   parseDriveQuestion,
@@ -990,9 +992,18 @@ export function loadScoredReadRegressionCorpus(mainPath: string = NL_INTENT_CORP
  * selection and its `context` as the Reference context (`none` without one).
  */
 export function readRegressionPrompt(golden: NlReadRegressionCase, now: IsoTimestamp, rev?: NlPromptRev): string | undefined {
+  const request = readRegressionRequestText(golden, now, rev);
+  return request === undefined ? undefined : joinedPrompt(request);
+}
+
+/**
+ * What the read-regression call sends: the same split as the live selector ({@link buildSelectionRequestText}), so the
+ * gate measures the transport the service uses (a split rev sends `systemPrompt` + the per-turn `prompt`).
+ */
+export function readRegressionRequestText(golden: NlReadRegressionCase, now: IsoTimestamp, rev?: NlPromptRev): { readonly prompt: string; readonly systemPrompt?: string } | undefined {
   const prepared = prepareSelectionInput(golden.text);
   if ('skip' in prepared) return undefined;
-  return buildSelectionPrompt({
+  return buildSelectionRequestText({
     entries: NL_ACTION_EVAL_ENTRIES,
     text: prepared.text,
     ...(storedNlPromptRev('action', rev) !== undefined ? { rev } : {}),
@@ -1015,14 +1026,14 @@ export async function runReadRegression(input: {
     const queue = input.plan.caseIds.map((id) => byId.get(id)).filter((golden): golden is NlReadRegressionCase => golden !== undefined);
     const worker = async (): Promise<void> => {
       for (let golden = queue.shift(); golden !== undefined; golden = queue.shift()) {
-        const prompt = golden.a6Skip !== undefined ? undefined : readRegressionPrompt(golden, input.now(), input.plan.promptRev);
-        if (prompt === undefined) {
+        const requestText = golden.a6Skip !== undefined ? undefined : readRegressionRequestText(golden, input.now(), input.plan.promptRev);
+        if (requestText === undefined) {
           records.push({ run, id: golden.id, outcome: 'skipped', relabeled: golden.a6Relabel !== undefined, latencyMs: 0 });
           continue;
         }
         const started = clock();
         try {
-          const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs: input.plan.callTimeoutMs });
+          const result = await input.provider.execute({ capability: Capability.INTENT_SELECTION, ...requestText, timeoutMs: input.plan.callTimeoutMs });
           const scored = await scoreReadRegressionInWorld(golden, result.text, input.now());
           // Like eval:nl read records: a non-hit keeps the raw output (bounded) and a malformed one says so.
           records.push({
