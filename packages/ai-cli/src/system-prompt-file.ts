@@ -10,19 +10,15 @@ import {
   readdirSync,
   renameSync,
   unlinkSync,
-  utimesSync,
   writeSync,
   chmodSync,
+  fchmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AiFailureKind, AiProviderError } from '@quoky/core';
 
 const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
-const FILE_NAME = /^[0-9a-f]{64}\.txt$/;
-/** Files of the directory older than this are removed at the first use of a process (growth bound, documented in DECISIONS). */
-export const SYSTEM_PROMPT_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const TOUCH_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const failure = (): AiProviderError => new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'claude CLI could not prepare its system prompt file');
 
@@ -37,11 +33,12 @@ const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoExc
  * (regular, not a symlink, owned by this uid, 0600) AND a byte comparison with the expected text; otherwise it is rewritten
  * through a temp file opened `O_CREAT | O_EXCL | O_NOFOLLOW` (0600) and renamed over. Several processes may share the
  * directory: content addressing plus rename is race-safe, and an ENOENT / EEXIST race retries once. Every filesystem
- * failure is an `AiProviderError(EXECUTION_FAILED)`. At the first use per process, files older than 7 days that match the
- * name pattern, are regular and owned by this uid are deleted. The text never reaches argv, only the path does.
+ * failure is an `AiProviderError(EXECUTION_FAILED)`. Nothing deletes a file: another process may be about to pass it to the
+ * CLI, so a sweep would race (Codex P2). Growth is bounded by the number of distinct stable prefixes (one per catalog
+ * variant and prompt revision, each tens of KiB); the OS temp cleaner may remove old files, and a vanished file or directory
+ * is simply rewritten on the next call. The text never reaches argv, only the path does.
  */
 export class SystemPromptFileStore {
-  private swept = false;
   private readonly uid: number | undefined;
 
   constructor(
@@ -93,10 +90,6 @@ export class SystemPromptFileStore {
       info = lstatSync(dir);
     }
     if (!info.isDirectory() || info.isSymbolicLink() || (this.uid !== undefined && info.uid !== this.uid) || (info.mode & 0o777) !== 0o700) throw failure();
-    if (!this.swept) {
-      this.swept = true;
-      this.sweep(dir);
-    }
     return dir;
   }
 
@@ -116,16 +109,7 @@ export class SystemPromptFileStore {
     } finally {
       closeSync(fd);
     }
-    if (!content.equals(bytes)) return false;
-    if (this.now() - info.mtimeMs > TOUCH_AFTER_MS) {
-      try {
-        const at = new Date(this.now());
-        utimesSync(file, at, at);
-      } catch {
-        // best effort: the sweep only affects a file in use once, and the next call rewrites it
-      }
-    }
-    return true;
+    return content.equals(bytes);
   }
 
   private pathOnce(bytes: Buffer): string {
@@ -137,6 +121,8 @@ export class SystemPromptFileStore {
     const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW, 0o600);
     try {
       try {
+        // The open mode is filtered by the umask; set 0600 explicitly before the file is published (Codex P2).
+        fchmodSync(fd, 0o600);
         writeSync(fd, bytes);
         fsyncSync(fd);
       } finally {
@@ -154,23 +140,6 @@ export class SystemPromptFileStore {
     return target;
   }
 
-  private sweep(dir: string): void {
-    try {
-      const cutoff = this.now() - SYSTEM_PROMPT_FILE_MAX_AGE_MS;
-      for (const name of readdirSync(dir)) {
-        if (!FILE_NAME.test(name)) continue;
-        try {
-          const file = join(dir, name);
-          const info = lstatSync(file);
-          if (info.isFile() && !info.isSymbolicLink() && (this.uid === undefined || info.uid === this.uid) && info.mtimeMs < cutoff) unlinkSync(file);
-        } catch {
-          // another process may have removed or replaced it
-        }
-      }
-    } catch {
-      // the sweep is best effort
-    }
-  }
 }
 
 /** The process-wide store the Claude CLI provider uses unless one is injected. */

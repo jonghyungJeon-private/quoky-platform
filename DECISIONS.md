@@ -32857,9 +32857,10 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
   use (real directory, owned by the uid, exactly 0700, else fail closed with `AiProviderError(EXECUTION_FAILED)`; recreated when absent). A file is reused only after
   `lstat` (regular, not a symlink, owned by the uid, 0600) and a byte comparison with the expected text; otherwise it is rewritten through a temp file opened
   `O_CREAT | O_EXCL | O_NOFOLLOW` (0600) and renamed over (the project's private-file convention; content addressing plus rename makes concurrent processes safe, and an
-  ENOENT / EEXIST race retries once). Every filesystem failure is classified (`EXECUTION_FAILED`). **Growth bound:** at the first use per process, files in that
-  directory whose name matches `<sha256>.txt`, that are regular and owned by the uid, and whose mtime is older than 7 days are deleted (a reused file's mtime is
-  refreshed when older than a day). An empty `systemPrompt` is not dropped: it joins as newline + prompt like any provider. The owner text stays on stdin; the system text never enters argv (only the path);
+  ENOENT / EEXIST race retries once). Every filesystem failure is classified (`EXECUTION_FAILED`). **Growth bound:** no file is ever deleted by Quoky (a sweep
+  would race with another process about to pass the file to the CLI, Codex round-2 P2); the directory holds one file per distinct stable prefix (catalog
+  variant x prompt revision, tens of KiB each), the OS temp cleaner may remove old ones, and a vanished file or directory is rewritten on the next call. A new
+  file is `fchmod`-ed to 0600 before it is renamed into place, so the umask cannot weaken it (Codex round-2 P2). An empty `systemPrompt` is not dropped: it joins as newline + prompt like any provider. The owner text stays on stdin; the system text never enters argv (only the path);
   `--tools ""` stays the last argv entry; `CLAUDE_CHILD_ENV` and the cwd are unchanged.
 - **Revisions.** `rev: 'v81'` (action only) = the v79 text on the split transport (`nl-select.v81` action, `nl-select.v82` R2 = the v80 text split). It is the active action
   rev (`NL_ACTIVE_PROMPT_REVS.action`); read mode stays v74 unsplit and rejects v81 like v77 / v79. The rule text is unchanged (pinned: v81 joined == v79 bytes, v82 joined == v80

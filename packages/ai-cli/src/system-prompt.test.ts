@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AiFailureKind, AiProviderError, Capability, joinedPrompt, unsplitRequest } from '@quoky/core';
 import type { AiRequest } from '@quoky/core';
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider } from './index';
-import { SYSTEM_PROMPT_FILE_MAX_AGE_MS, SystemPromptFileStore } from './system-prompt-file';
+import { SystemPromptFileStore } from './system-prompt-file';
 import type { CliRunOptions, CliRunner } from './cli-runner';
 
 const SYSTEM = 'STABLE-INSTRUCTIONS catalog and examples (no owner content)';
@@ -197,27 +197,23 @@ describe('SystemPromptFileStore hardening', () => {
     failsClosed(() => new SystemPromptFileStore(() => join(newBase(), 'missing', 'deeper')).directory());
   });
 
-  it('sweeps files older than 7 days (name pattern, regular, own uid) once per process and keeps the rest', () => {
+  it('never deletes files (no cross-process sweep) and writes 0600 even under a restrictive umask', () => {
     const base = newBase();
     const dir = newStore(base).directory();
-    const old = join(dir, hashName('old'));
-    const fresh = join(dir, hashName('fresh'));
-    const odd = join(dir, 'notes.txt');
-    for (const file of [old, fresh, odd]) writeFileSync(file, 'x', { mode: 0o600 });
-    const now = Date.now();
-    const longAgo = new Date(now - SYSTEM_PROMPT_FILE_MAX_AGE_MS - 60_000);
-    utimesSync(old, longAgo, longAgo);
-    utimesSync(odd, longAgo, longAgo);
-    const store = newStore(base, () => now);
-    store.pathFor(SYSTEM);
-    expect(existsSync(old)).toBe(false);
-    expect(existsSync(fresh)).toBe(true);
-    expect(existsSync(odd)).toBe(true);
-    // Once per process: a later old file is left alone by the same store.
-    writeFileSync(old, 'x', { mode: 0o600 });
-    utimesSync(old, longAgo, longAgo);
-    store.pathFor(SYSTEM);
-    expect(existsSync(old)).toBe(true);
+    const other = join(dir, hashName('other'));
+    writeFileSync(other, 'x', { mode: 0o600 });
+    const longAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    utimesSync(other, longAgo, longAgo);
+    const previous = process.umask(0o377);
+    let path: string;
+    try {
+      path = newStore(base).pathFor(SYSTEM);
+    } finally {
+      process.umask(previous);
+    }
+    expect(existsSync(other)).toBe(true);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readFileSync(path, 'utf8')).toBe(SYSTEM);
   });
 });
 
