@@ -729,7 +729,8 @@ export function buildSelectionRequestText(input: NlSelectionPromptInput): { read
 
 /**
  * The selection prompt in its two halves. `stable` is everything that does not depend on this turn's owner message: the
- * rule header, the catalog, the examples and the retrieved block (it ends with the blank separator line). `turn` is the
+ * rule header, the catalog and the static examples (it ends with the blank separator line, or just before the retrieved /
+ * swapped examples block, which is chosen per message and rides in `turn`). `turn` is the
  * per-turn part: previous selection, reference context and the owner message. Invariant, for every input and rev:
  * `stable + '\n' + turn === buildSelectionPrompt(input)`. `stable` never holds the owner text, the previous selection
  * or the reference context.
@@ -889,8 +890,10 @@ export function buildSelectionPromptParts(input: NlSelectionPromptInput): { read
   const swap = retrieved !== undefined && input.replaceStaticExamples === true;
   const r2 = r2SourcesOf(input.entries);
   const examples = swap ? [] : examplesFor(offered, input.actions, r2);
+  // Retrieved examples are chosen per message and may carry owner-derived text: they are never part of `stable`.
+  const volatile: string[] = swap ? ['', renderSwappedExamplesBlock(retrieved)] : [];
   if (swap) {
-    lines.push('', renderSwappedExamplesBlock(retrieved));
+    // the swapped block replaces the static examples and rides in the per-turn part
   } else if (examples.length > 0) {
     lines.push('', 'Examples:');
     for (const example of examples) {
@@ -901,10 +904,13 @@ export function buildSelectionPromptParts(input: NlSelectionPromptInput): { read
       lines.push(`Message: ${example.text.replace(/\n/g, ' ')}`, `Output: ${output}`);
     }
   }
-  if (retrieved !== undefined && !swap) lines.push('', renderRetrievedBlock(retrieved));
-  // The blank separator closes the stable part; the per-turn lines follow it (join identity: stable + '\n' + turn).
-  lines.push('');
+  if (retrieved !== undefined && !swap) volatile.push('', renderRetrievedBlock(retrieved));
+  // Without a retrieved block the blank separator closes the stable part; with one the stable part ends before it and the
+  // block opens the per-turn part (join identity either way: stable + '\n' + turn).
+  if (volatile.length === 0) lines.push('');
   const turn = [
+    ...volatile,
+    ...(volatile.length > 0 ? [''] : []),
     ...renderPreviousSelection(input.previous),
     ...(input.actions !== undefined ? [`Reference context: ${boundedContext(input.actions.referenceContext)}`] : []),
     '',

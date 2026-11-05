@@ -3,6 +3,7 @@ import { NL_ACTION_ENTRIES, nlItemSummarizeEntry } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
 import {
   NL_ACTIVE_PROMPT_REVS,
+  NL_RETRIEVED_EXAMPLES_HEADER,
   NL_V79_PROMPT_VERSIONS,
   NL_V81_PROMPT_VERSIONS,
   buildSelectionPrompt,
@@ -25,7 +26,7 @@ const OWNER = 'OWNERTEXT-zq7-내일 일정';
 const PREV_ARG = 'PREVARG-k3x';
 const EARLIER_ARG = 'EARLIERARG-m9w';
 const REFERENCE = 'REFCTX-last listing: p4v (2 items, 1 min ago)';
-const retrieved = [{ text: 'RETR-example-text', output: '{"entryId":"none","args":{},"ambiguity":"CLEAR"}' }] as never;
+const retrieved = [{ text: 'RETR-example-text', output: '{"entryId":"RETR-output-entry","args":{},"ambiguity":"CLEAR"}' }] as never;
 
 const previous = { entryId: 'calendar.events', args: { query: PREV_ARG }, turns: 2, earlier: [{ entryId: 'mail.list', args: { query: EARLIER_ARG }, turns: 3 }] } as never;
 
@@ -50,6 +51,39 @@ function inputs(): Array<{ name: string; input: NlSelectionPromptInput }> {
   out.push({ name: 'no entries', input: { entries: [], text: OWNER } });
   return out;
 }
+
+describe('retrieved examples never enter the stable part', () => {
+  const withRetrieved = [
+    ['read appended', { entries: READS, text: OWNER, retrievedExamples: retrieved }],
+    ['read swapped', { entries: READS, text: OWNER, retrievedExamples: retrieved, replaceStaticExamples: true }],
+    ['action appended', { entries: [...READS, ...ACTIONS], text: OWNER, retrievedExamples: retrieved, actions: { referenceContext: REFERENCE } }],
+    ['action swapped', { entries: [...READS, ...ACTIONS], text: OWNER, retrievedExamples: retrieved, replaceStaticExamples: true, actions: { referenceContext: REFERENCE } }],
+    ['r2 appended v81', { entries: R2_ENTRIES, text: OWNER, rev: 'v81', retrievedExamples: retrieved, actions: { referenceContext: REFERENCE } }],
+  ] as const satisfies ReadonlyArray<readonly [string, NlSelectionPromptInput]>;
+
+  it('the retrieved texts and outputs ride in the per-turn part; the join identity holds', () => {
+    for (const [name, input] of withRetrieved) {
+      const { stable, turn } = buildSelectionPromptParts(input);
+      expect(stable, name).not.toContain('RETR-example-text');
+      expect(stable, name).not.toContain('RETR-output-entry');
+      expect(stable, name).not.toContain(NL_RETRIEVED_EXAMPLES_HEADER);
+      expect(turn, name).toContain('RETR-example-text');
+      expect(`${stable}\n${turn}`, name).toBe(buildSelectionPrompt(input));
+    }
+  });
+
+  it('a swapped block replaces the static examples, so the stable part has no Examples block either', () => {
+    const { stable } = buildSelectionPromptParts({ entries: READS, text: OWNER, retrievedExamples: retrieved, replaceStaticExamples: true });
+    expect(stable).not.toContain('Examples:');
+    expect(stable).toContain('Catalog:');
+  });
+
+  it('the stable part is the same with and without retrieved examples (appended mode)', () => {
+    const plain = buildSelectionPromptParts({ entries: READS, text: OWNER });
+    const appended = buildSelectionPromptParts({ entries: READS, text: OWNER, retrievedExamples: retrieved });
+    expect(appended.stable.trimEnd()).toBe(plain.stable.trimEnd());
+  });
+});
 
 describe('buildSelectionPromptParts', () => {
   it('stable + newline + turn is the whole prompt byte for byte, for every mode and rev', () => {
