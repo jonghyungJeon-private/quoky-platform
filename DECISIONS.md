@@ -32417,6 +32417,53 @@ This note changes no ratified text. CH1-CH7 thresholds stay **proposals**.
   code blocks repeat the same constant pattern; reported and left untuned. The hybrid arm EH,
   which carries the proposed 95% bar, is not run, so no CH1 verdict exists.
 
+### 15. Implementation note: per-shape breakdown and Drive format variant (2026-11-05)
+
+This note changes no ratified text and no chunker or Core parameter. CH1-CH7 thresholds stay **proposals**. Phase 0 only: no
+model, no embedder, no network; the lexical arm (EL) and today's clip (baseline) only. Reports under `data/eval/` (gitignored).
+
+- **Built.** `pnpm eval:chunk -- --mode run` now also reports, per arm, window recall by shape x depth, shape x length tier,
+  shape x language and shape x needle kind, plus per-shape C1 chunker statistics (passages per case, passage size in code
+  points, windows needed to cover a whole item, `overCap`, overlap use, `kind` distribution). The **boundary level that produced
+  a cut is not exposed** by the chunker (a `Passage` has kind, span, overlap, `overCap`, not a cut reason) and the chunker was
+  not changed, so that column is skipped and the report says so. The v1 corpus is untouched: digest `f395110d...` unchanged,
+  `--mode verify` passes.
+- **Per-shape window recall (v1 corpus, 435 cases).** Baseline / EL: mail, thread, Drive doc, Jira, Slack thread 7-10% / 100%;
+  workbook 35% / 100%; ADR file 8% / 83%. EL is 100% at every depth and length tier in the six non-ADR shapes. The ADR file:
+  by depth 10/30/50/70/90 = 73/80/87/87/87%; by length 6k 100%, 20k 100%, 60k 60%, 87k 87%, 2 MiB 67%; by needle kind
+  code-line 56%, decision 92%, date 100%; by language ko 80%, en 84%, mixed 84%. So the whole EL shortfall (13 misses) sits in
+  one shape and one needle kind; the corpus does not separate the other six shapes for a lexical arm.
+- **Chunker statistics per shape** (passages per case mean/max; passage code points mean/p95; windows per case mean; kinds):
+  mail 55/131, 790/925, 18.7, prose; thread 62/140, 725/917, 19.8, prose; Drive doc 55/132, 788/926, 18.7, prose; workbook
+  65/120, 675/832, 18.1, table; Jira 79/164, 586/902, 22.4, prose; Slack thread 131/242, 367/784, 22.9, prose; ADR file
+  523/3,195, 634/946, 136, prose 38,914 + code 330. `overCap` 0 and overlap use 0% in every shape: **no corpus paragraph exceeds the
+  1,200 cap, so the split-paragraph and overlap path is not exercised by this corpus at all.** Short messages make Slack passages
+  small (mean 367) because each reply is packed on its own section boundary.
+- **Drive format variant (open question 10).** A SEPARATE set (`--set drive-format`; `drive-format.ts`; record
+  `chunk-eval-drive-format.freeze.v1.json`, digest `4cec7f4c...`, same BLOCKED semantics, own `regenerate-freeze`), built from
+  the v1 generator and seed: the 60 v1 Drive-doc cases, each rendered twice with identical content (document title line and a
+  section title line about every 2,000 code points; fictional word-pair titles, no codename, no attribute word): (a) plain text,
+  titles as ordinary lines; (b) Markdown, the same lines with `# ` / `## `. A test checks the Markdown text minus the markers equals the text.
+  Paired result over 60 pairs: window recall baseline 10.0% / 10.0% (identical, 6 hits both), EL 100% / 100% (no difference at any
+  depth, because both saturate). Where recall saturates, the ranking moves: EL Recall@1 text 0.817 -> Markdown 0.750, MRR
+  0.897 -> 0.869 (n = 60, a few cases; not a significant difference). Structure: passages per doc 55.4 -> 65.8 (+10.4); mean passage
+  792 -> 668 code points; passages that cross a section title 1,133 (18.9 per doc) -> 60 (1.0 per doc, the document title and the
+  first section title are two consecutive heading lines and stay in one passage); passages starting at a title 204 -> 1,277.
+- **Observations only (thresholds and parameters are owner decisions).** (1) Nothing here shows the passage size (800/1,200) or the
+  3,000 window needing to differ by shape for a lexical arm: passage sizes are near the 800 target in every shape except Slack
+  (367, small messages) and Jira (586), and window count per item is similar (18-23) apart from the 2 MiB-driven ADR file. (2) The
+  one weak cell is code lines inside an ADR file, and its cause is repeated constant lines in filler code blocks (a lexical
+  tie among near-identical lines), not chunk size; whether code needs another passage rule is a question for the embedder and
+  hybrid arms. (3) Markdown headings cut passages along sections (a 19-to-1 drop in section-crossing passages) at the cost of about 19% more,
+  smaller passages; on this corpus that bought no recall and slightly worse first-rank retrieval, because the question carries the
+  codename and section titles carry none. It does not measure what real headings are for (a question about a section by
+  name). So phase 0 gives no evidence for or against the Markdown export; it only shows the mechanics work as ADR section 3.4 says.
+- **What phase 0 cannot tell.** Real mail, Drive and Slack differ from synthetic text (long paragraphs that need splitting and
+  overlap, quoted replies, tables and lists in Docs, heading depth, code and prose mixed); the question carries a rare codename,
+  so lexical is near its ceiling; no semantic or hybrid arm ran, so paraphrased questions are untested; the Drive variant has
+  synthetic titles and one layout (about 2,000 code points per section), not tuned and not varied. Per-shape parameters should
+  be decided only after E0-E3 / EH on a corpus whose paragraphs exceed the cap.
+
 ## ADR-0115 D8 note — Claude CLI JSON print mode reports token usage (2026-11-03)
 
 - **Owner request (2026-11-03).** Measure real token usage so the input-token estimates can be calibrated.
