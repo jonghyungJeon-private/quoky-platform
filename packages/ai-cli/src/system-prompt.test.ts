@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Capability, joinedPrompt, unsplitRequest } from '@quoky/core';
+import { AiFailureKind, AiProviderError, Capability, joinedPrompt, unsplitRequest } from '@quoky/core';
 import type { AiRequest } from '@quoky/core';
 import { ClaudeCliProvider, CodexCliProvider, OllamaCliProvider } from './index';
-import { SystemPromptFileStore } from './system-prompt-file';
+import { SYSTEM_PROMPT_FILE_MAX_AGE_MS, SystemPromptFileStore } from './system-prompt-file';
 import type { CliRunOptions, CliRunner } from './cli-runner';
 
 const SYSTEM = 'STABLE-INSTRUCTIONS catalog and examples (no owner content)';
@@ -29,14 +29,26 @@ const recording = (stdout: string): { runner: CliRunner; calls: Call[] } => {
 
 const claudeEnvelope = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '{"entryId":"none"}', usage: { input_tokens: 5, cache_read_input_tokens: 7, cache_creation_input_tokens: 3, output_tokens: 2 } });
 
-const stores: SystemPromptFileStore[] = [];
+const bases: string[] = [];
 afterEach(() => {
-  while (stores.length > 0) stores.pop()?.dispose();
+  while (bases.length > 0) rmSync(bases.pop() as string, { recursive: true, force: true });
 });
-const newStore = (): SystemPromptFileStore => {
-  const store = new SystemPromptFileStore();
-  stores.push(store);
-  return store;
+const newBase = (): string => {
+  const base = mkdtempSync(join(tmpdir(), 'quoky-sysprompt-test-'));
+  bases.push(base);
+  return base;
+};
+const newStore = (base: string = newBase(), now: () => number = Date.now): SystemPromptFileStore => new SystemPromptFileStore(() => base, now);
+const hashName = (text: string): string => `${createHash('sha256').update(text).digest('hex')}.txt`;
+const failsClosed = (fn: () => unknown): void => {
+  try {
+    fn();
+  } catch (error) {
+    expect(error).toBeInstanceOf(AiProviderError);
+    expect((error as AiProviderError).kind).toBe(AiFailureKind.EXECUTION_FAILED);
+    return;
+  }
+  throw new Error('expected a classified failure');
 };
 
 describe('joinedPrompt / unsplitRequest', () => {
@@ -90,7 +102,14 @@ describe('ClaudeCliProvider: systemPrompt goes by file path only', () => {
     expect(calls[0]?.opts.input).toBe('whole prompt');
   });
 
-  it('the file and its directory are private (0600 / 0700), written once and reused across calls', async () => {
+  it('an empty systemPrompt is not dropped: it joins as newline + prompt, with no file and no flag', async () => {
+    const { runner, calls } = recording(claudeEnvelope);
+    await new ClaudeCliProvider('claude', { runner, systemPromptFiles: newStore() }).execute({ capability: Capability.INTENT_SELECTION, prompt: TURN, systemPrompt: '' });
+    expect(calls[0]?.args).not.toContain('--append-system-prompt-file');
+    expect(calls[0]?.opts.input).toBe(`\n${TURN}`);
+  });
+
+  it('the file and its per-uid directory are private (0600 / 0700), written once and reused across calls', async () => {
     const { runner, calls } = recording(claudeEnvelope);
     const store = newStore();
     const claude = new ClaudeCliProvider('claude', { runner, systemPromptFiles: store });
@@ -99,6 +118,7 @@ describe('ClaudeCliProvider: systemPrompt goes by file path only', () => {
     const paths = calls.map((call) => call.args[call.args.indexOf('--append-system-prompt-file') + 1] as string);
     expect(paths[0]).toBe(paths[1]);
     const dir = store.directory();
+    expect(dir).toMatch(/quoky-sysprompt-\d+$/);
     expect(paths[0]?.startsWith(`${dir}/`)).toBe(true);
     expect(statSync(dir).mode & 0o777).toBe(0o700);
     expect(statSync(paths[0] as string).mode & 0o777).toBe(0o600);
@@ -110,16 +130,94 @@ describe('ClaudeCliProvider: systemPrompt goes by file path only', () => {
     expect(readdirSync(dir)).toHaveLength(2);
     expect(readdirSync(dir).every((name) => /^[0-9a-f]{64}\.txt$/.test(name))).toBe(true);
   });
+});
 
-  it('dispose removes the directory; a later call makes a fresh one', () => {
-    const store = newStore();
-    const first = store.pathFor(SYSTEM);
+describe('SystemPromptFileStore hardening', () => {
+  it('rejects a symlinked directory and a directory with a wrong mode (fail closed, classified)', () => {
+    const base = newBase();
+    const other = join(base, 'elsewhere');
+    mkdirSync(other, { mode: 0o700 });
+    const probe = newStore(base);
+    const dirName = probe.directory().split('/').pop() as string;
+    rmSync(join(base, dirName), { recursive: true });
+    symlinkSync(other, join(base, dirName));
+    failsClosed(() => newStore(base).pathFor(SYSTEM));
+    expect(readdirSync(other)).toHaveLength(0);
+    rmSync(join(base, dirName));
+    mkdirSync(join(base, dirName), { mode: 0o755 });
+    chmodSync(join(base, dirName), 0o755);
+    failsClosed(() => newStore(base).pathFor(SYSTEM));
+  });
+
+  it('rejects a directory owned by another uid', () => {
+    const base = newBase();
+    const mine = process.getuid?.() ?? 0;
+    failsClosed(() => new SystemPromptFileStore(() => base, Date.now, mine).directory() && new SystemPromptFileStore(() => base, Date.now, mine + 1).pathFor(SYSTEM));
+  });
+
+  it('does not follow a symlink at the file name: it is replaced by a real file, the target untouched', () => {
+    const base = newBase();
+    const store = newStore(base);
     const dir = store.directory();
-    store.dispose();
-    expect(existsSync(dir)).toBe(false);
-    const second = store.pathFor(SYSTEM);
-    expect(second).not.toBe(first);
-    expect(readFileSync(second, 'utf8')).toBe(SYSTEM);
+    const victim = join(base, 'victim.txt');
+    writeFileSync(victim, 'untouched');
+    symlinkSync(victim, join(dir, hashName(SYSTEM)));
+    const path = store.pathFor(SYSTEM);
+    expect(readFileSync(victim, 'utf8')).toBe('untouched');
+    expect(readFileSync(path, 'utf8')).toBe(SYSTEM);
+    expect(statSync(path).isFile()).toBe(true);
+  });
+
+  it('rewrites a file with the wrong mode and a tampered file of the same size', () => {
+    const store = newStore();
+    const path = store.pathFor(SYSTEM);
+    chmodSync(path, 0o644);
+    expect(store.pathFor(SYSTEM)).toBe(path);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    const tampered = `${SYSTEM.slice(0, -1)}!`;
+    expect(tampered.length).toBe(SYSTEM.length);
+    writeFileSync(path, tampered, { mode: 0o600 });
+    expect(store.pathFor(SYSTEM)).toBe(path);
+    expect(readFileSync(path, 'utf8')).toBe(SYSTEM);
+  });
+
+  it('recreates a vanished directory and still returns a good file', () => {
+    const base = newBase();
+    const store = newStore(base);
+    const dir = store.directory();
+    store.pathFor(SYSTEM);
+    rmSync(dir, { recursive: true });
+    const path = store.pathFor(SYSTEM);
+    expect(readFileSync(path, 'utf8')).toBe(SYSTEM);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it('classifies a filesystem failure (a base directory that cannot exist) instead of leaking a raw errno', () => {
+    failsClosed(() => new SystemPromptFileStore(() => join(newBase(), 'missing', 'deeper')).pathFor(SYSTEM));
+    failsClosed(() => new SystemPromptFileStore(() => join(newBase(), 'missing', 'deeper')).directory());
+  });
+
+  it('sweeps files older than 7 days (name pattern, regular, own uid) once per process and keeps the rest', () => {
+    const base = newBase();
+    const dir = newStore(base).directory();
+    const old = join(dir, hashName('old'));
+    const fresh = join(dir, hashName('fresh'));
+    const odd = join(dir, 'notes.txt');
+    for (const file of [old, fresh, odd]) writeFileSync(file, 'x', { mode: 0o600 });
+    const now = Date.now();
+    const longAgo = new Date(now - SYSTEM_PROMPT_FILE_MAX_AGE_MS - 60_000);
+    utimesSync(old, longAgo, longAgo);
+    utimesSync(odd, longAgo, longAgo);
+    const store = newStore(base, () => now);
+    store.pathFor(SYSTEM);
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(odd)).toBe(true);
+    // Once per process: a later old file is left alone by the same store.
+    writeFileSync(old, 'x', { mode: 0o600 });
+    utimesSync(old, longAgo, longAgo);
+    store.pathFor(SYSTEM);
+    expect(existsSync(old)).toBe(true);
   });
 });
 

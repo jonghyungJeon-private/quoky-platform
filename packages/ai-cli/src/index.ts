@@ -517,13 +517,15 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
     refuseImages(request, 'claude CLI'); // ADR-0111 D5: no image egress to the Claude CLI.
+    // An empty systemPrompt is not dropped: the port contract joins it ('' + newline + prompt), like every other provider.
+    if (request.systemPrompt === '') request = unsplitRequest(request);
     const input = request.prompt; // already rendered by the core PromptRenderer (ADR-0029)
     // Neutral cwd avoids ingesting the repo's CLAUDE.md; a workspace task may set its own.
     const cwd = request.workspace?.rootPath ?? tmpdir();
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
     // ADR-0121 S0 L1: the child gets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and nothing else beyond the allow-list.
-    const systemPromptFile = request.systemPrompt !== undefined && request.systemPrompt !== '' ? this.systemPromptFiles.pathFor(request.systemPrompt) : undefined;
+    const systemPromptFile = request.systemPrompt !== undefined ? this.systemPromptFiles.pathFor(request.systemPrompt) : undefined;
     const result = await this.runner(this.bin, this.buildArgs(request, systemPromptFile), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, maxStdoutBytes: CLAUDE_JSON_STDOUT_CAPTURE_BYTES, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
