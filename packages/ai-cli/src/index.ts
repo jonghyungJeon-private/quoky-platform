@@ -10,6 +10,7 @@ import {
   ProviderProbeIndeterminateError,
   readGeneralChatReplyPolicy,
 } from '@quoky/core';
+import { unsplitRequest } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
@@ -19,6 +20,7 @@ import type {
   Artifact,
 } from '@quoky/core';
 import { BaseCliAiProvider, Capability } from './base-cli-provider';
+import { SystemPromptFileStore, defaultSystemPromptFiles } from './system-prompt-file';
 import { CLAUDE_CHILD_ENV, MAX_STDOUT_CAPTURE_BYTES, defaultCliRunner, maskSecrets } from './cli-runner';
 
 /** JSON escaping inflates the reply inside the `--output-format json` envelope, so the Claude text provider captures 2x. */
@@ -40,6 +42,7 @@ import {
 } from './ollama-embedding-provider';
 
 export { BaseCliAiProvider };
+export { SystemPromptFileStore } from './system-prompt-file';
 /**
  * The provider-neutral chat output hygiene (ADR-0098 D2 and amendment D2), exported so the composition root can apply
  * the same reply hygiene to a non-CLI chat provider (the OpenAI API adapter, ADR-0115) without an adapter-to-adapter
@@ -396,6 +399,8 @@ export interface ClaudeCliProviderOptions extends CliProviderOptions {
   strongerIntentSelectionModel?: string;
   /** D4: the `--effort` of that request (instead of the capability effort). Default {@link DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT}. */
   strongerIntentSelectionEffort?: ClaudeEffortLevel;
+  /** Where `AiRequest.systemPrompt` is materialised (tests inject one). Default: the process-wide private store. */
+  systemPromptFiles?: SystemPromptFileStore;
 }
 
 /**
@@ -410,6 +415,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   readonly executionLocality: AiExecutionLocality = 'REMOTE';
   protected readonly bin: string;
   private readonly runner: CliRunner;
+  private readonly systemPromptFiles: SystemPromptFileStore;
   private readonly defaultTimeoutMs: number;
   private readonly model: string;
   private readonly intentSelectionModel: string;
@@ -439,6 +445,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     super();
     this.bin = bin;
     this.runner = options.runner ?? defaultCliRunner;
+    this.systemPromptFiles = options.systemPromptFiles ?? defaultSystemPromptFiles;
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
     this.model = validatedClaudeModel(options.model ?? DEFAULT_CLAUDE_MODEL);
     this.intentSelectionModel = validatedClaudeModel(options.intentSelectionModel ?? DEFAULT_CLAUDE_INTENT_SELECTION_MODEL);
@@ -464,7 +471,7 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
    * and nothing written to the owner's session history (`--no-session-persistence`). Without this a reply could
    * describe the owner's own connectors ("Google Calendar 커넥터를 승인해 주세요") as if Quoky could use them.
    */
-  buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace' | 'intentSelectionTier'>): string[] {
+  buildArgs(request?: Pick<AiRequest, 'capability' | 'workspace' | 'intentSelectionTier'>, systemPromptFile?: string): string[] {
     const model = this.modelFor(request);
     const args = [
       '-p', '--model', model, '--strict-mcp-config', '--no-session-persistence', '--setting-sources', '',
@@ -474,6 +481,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     if (request === undefined) return args;
     const effort = this.isStrongerSelection(request) ? this.strongerIntentSelectionEffort : this.effortByCapability[request.capability];
     if (effort !== undefined) args.push('--effort', effort);
+    // A request's `systemPrompt` (stable, owner-content-free) is passed by FILE PATH only; its text never enters argv.
+    if (systemPromptFile !== undefined) args.push('--append-system-prompt-file', systemPromptFile);
     // `--tools` is variadic and must stay the LAST argv entry so it cannot swallow other flags.
     if (request.workspace === undefined) args.push('--tools', '');
     return args;
@@ -514,7 +523,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
     const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 
     // ADR-0121 S0 L1: the child gets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 and nothing else beyond the allow-list.
-    const result = await this.runner(this.bin, this.buildArgs(request), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, maxStdoutBytes: CLAUDE_JSON_STDOUT_CAPTURE_BYTES, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
+    const systemPromptFile = request.systemPrompt !== undefined && request.systemPrompt !== '' ? this.systemPromptFiles.pathFor(request.systemPrompt) : undefined;
+    const result = await this.runner(this.bin, this.buildArgs(request, systemPromptFile), { cwd, input, timeoutMs, env: CLAUDE_CHILD_ENV, maxStdoutBytes: CLAUDE_JSON_STDOUT_CAPTURE_BYTES, ...(request.signal !== undefined ? { signal: request.signal } : {}) });
 
     // Classified failure taxonomy (ADR-0015). stderr is masked before it leaves.
     if (result.timedOut) {
@@ -809,6 +819,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     refuseImages(request, 'ollama CLI'); // ADR-0111 D4: images go only to the separate vision provider instance.
     const serializedConversation = isChatCapability(request.capability)
       ? serializeGeneralChat(request.prompt)
@@ -1064,6 +1075,7 @@ export class OllamaCliVisionProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     if (request.capability !== Capability.IMAGE_UNDERSTANDING) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama vision provider serves IMAGE_UNDERSTANDING only');
     }

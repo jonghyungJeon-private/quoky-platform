@@ -9,6 +9,7 @@ import {
   ProviderProbeIndeterminateError,
   readEmbeddingRole,
 } from '@quoky/core';
+import { unsplitRequest } from '@quoky/core';
 import type {
   AiCapabilityDescriptor,
   AiExecutionLocality,
@@ -284,6 +285,7 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
+    request = unsplitRequest(request); // no system-prompt channel: byte-identical to an unsplit request
     if (request.capability !== Capability.EMBEDDING) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama embedding provider serves EMBEDDING only');
     }
