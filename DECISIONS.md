@@ -32432,7 +32432,7 @@ model, no embedder, no network; the lexical arm (EL) and today's clip (baseline)
   workbook 35% / 100%; ADR file 8% / 83%. EL is 100% at every depth and length tier in the six non-ADR shapes. The ADR file:
   by depth 10/30/50/70/90 = 73/80/87/87/87%; by length 6k 100%, 20k 100%, 60k 60%, 87k 87%, 2 MiB 67%; by needle kind
   code-line 56%, decision 92%, date 100%; by language ko 80%, en 84%, mixed 84%. So the whole EL shortfall (13 misses) sits in
-  one shape and one needle kind; the corpus does not separate the other six shapes for a lexical arm.
+  one shape: 11 code-line misses (14/25 hit) and 2 decision misses (23/25 hit); the corpus does not separate the other six shapes for a lexical arm.
 - **Chunker statistics per shape** (passages per case mean/max; passage code points mean/p95; windows per case mean; kinds):
   mail 55/131, 790/925, 18.7, prose; thread 62/140, 725/917, 19.8, prose; Drive doc 55/132, 788/926, 18.7, prose; workbook
   65/120, 675/832, 18.1, table; Jira 79/164, 586/902, 22.4, prose; Slack thread 131/242, 367/784, 22.9, prose; ADR file
@@ -32452,8 +32452,8 @@ model, no embedder, no network; the lexical arm (EL) and today's clip (baseline)
 - **Observations only (thresholds and parameters are owner decisions).** (1) Nothing here shows the passage size (800/1,200) or the
   3,000 window needing to differ by shape for a lexical arm: passage sizes are near the 800 target in every shape except Slack
   (367, small messages) and Jira (586), and window count per item is similar (18-23) apart from the 2 MiB-driven ADR file. (2) The
-  one weak cell is code lines inside an ADR file, and its cause is repeated constant lines in filler code blocks (a lexical
-  tie among near-identical lines), not chunk size; whether code needs another passage rule is a question for the embedder and
+  weak cells are inside the ADR file: mostly code lines, whose likely cause is repeated constant lines in filler code blocks (a
+  lexical tie among near-identical lines), not chunk size, plus 2 decision misses that were not analysed; whether code needs another passage rule is a question for the embedder and
   hybrid arms. (3) Markdown headings cut passages along sections (a 19-to-1 drop in section-crossing passages) at the cost of about 19% more,
   smaller passages; on this corpus that bought no recall and slightly worse first-rank retrieval, because the question carries the
   codename and section titles carry none. It does not measure what real headings are for (a question about a section by
