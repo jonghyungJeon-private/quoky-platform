@@ -48,6 +48,7 @@ import { assertPrivateEnvFile } from './ops/env-file-guard';
 import { startupExitCode } from './ops/exit-codes';
 import { acquireInstanceLock, instanceLockPath } from './ops/instance-lock';
 import { createOpsRuntime } from './ops/ops-runtime';
+import { MEMORY_VECTOR_BACKFILL, type MemoryVectorBackfill } from './memory-vector-backfill';
 import { applyInboundGate, startupIdentityExpectation, verifyStartupIdentity } from './ops/startup-identity-check';
 import { recordOpsUiErrors, startOpsUi } from './ops-ui/ops-ui-wiring';
 import {
@@ -231,6 +232,9 @@ async function bootstrap(): Promise<void> {
   // Startup recovery (FIRING → DELIVERY_UNCERTAIN, never resent) runs inside start(); the first tick then delivers
   // a missed one-time reminder late once and catches a recurring one up only within 60 minutes.
   await reminderDriver.start();
+  // ADR-0124 section 5.4: vector backfill and sweep, outside turns (null when embeddings are off); first tick after a delay.
+  const vectorBackfill = app.get<MemoryVectorBackfill | null>(MEMORY_VECTOR_BACKFILL);
+  vectorBackfill?.start();
   // ADR-0113 (OPS-1): the loopback-only, token-gated, read-only operations UI; off unless QUOKY_OPS_UI_ENABLED=true.
   const opsUi = await startOpsUi({ app, config, ops, instanceLockHeld: lockPath !== undefined, identityVerified: identity !== undefined });
   // ADR-0120 A3 follow-up: one content-free background selection call a few seconds after start (shadow/active only).
@@ -244,6 +248,7 @@ async function bootstrap(): Promise<void> {
     stopping = true;
     haltRelease?.cancel();
     cancelNlWarmup();
+    await vectorBackfill?.stop();
     // S1 W1: abort a c-shadow background selection in flight (its claude child process is terminated).
     app.get<NlSelectionService>(NL_SELECTION).stopBackground();
     // ADR-0121 S2: abort an agent shadow planner job in flight (its claude child process is terminated).

@@ -26,6 +26,7 @@ const realIo: VectorStoreIo = {
   mkdir: async (path) => {
     await fsPromises.mkdir(path, { recursive: true });
   },
+  readdir: (path) => fsPromises.readdir(path),
 };
 
 describe('LocalVectorProvider (ADR-0098 D8)', () => {
@@ -341,5 +342,31 @@ describe('LocalVectorProvider (ADR-0098 D8)', () => {
     await store.upsert('beta', [{ id: 'b', vector: [1] }]);
     expect(readdirSync(storePath).sort()).toEqual(['alpha.json', 'beta.json']);
     expect((await store.query('alpha', [1], 5)).map((r) => r.id)).toEqual(['a']);
+  });
+
+  it('lists the collections that exist (and none for a missing directory or a store io without readdir)', async () => {
+    const storePath = freshRoot();
+    const store = new LocalVectorProvider(storePath, { io: realIo });
+    expect(await store.listCollections()).toEqual([]);
+    await store.upsert('durable-memory-v2-aaa', [{ id: 'a', vector: [1, 0] }]);
+    await store.upsert('learning-example-v1', [{ id: 'b', vector: [1, 0] }]);
+    writeFileSync(join(storePath, 'durable-memory-v2-aaa.corrupt-2026.json'), '{}');
+    expect(await store.listCollections()).toEqual(['durable-memory-v2-aaa', 'learning-example-v1']);
+    const { readdir: _unused, ...withoutReaddir } = realIo;
+    expect(await new LocalVectorProvider(storePath, { io: withoutReaddir }).listCollections()).toEqual([]);
+  });
+
+  it.each(['EIO', 'EACCES'])('listCollections rethrows a %s read error so a forget cannot report success', async (code) => {
+    const io: VectorStoreIo = { ...realIo, readdir: async () => { throw Object.assign(new Error('read failed'), { code }); } };
+    await expect(new LocalVectorProvider(freshRoot(), { io }).listCollections()).rejects.toMatchObject({ code });
+  });
+
+  it('listCollections includes collections held in memory that are not on disk yet', async () => {
+    const storePath = freshRoot();
+    const io: VectorStoreIo = { ...realIo, writeFile: async () => { throw new Error('disk full'); } };
+    const store = new LocalVectorProvider(storePath, { io });
+    await expect(store.upsert('durable-memory-v2-pending', [{ id: 'a', vector: [1, 0] }])).rejects.toThrow('disk full');
+    await store.query('durable-memory-v2-loaded', [1, 0], 1);
+    expect(await store.listCollections()).toEqual(['durable-memory-v2-loaded', 'durable-memory-v2-pending']);
   });
 });

@@ -2,25 +2,28 @@
  * ADR-0124 phase 2 step P2-1 (owner decision 2026-11-06), CH7 memory set only: the RUNTIME-path recall measurement, stage R.
  *
  * Phases 1 stages A-E rank the CH7 memories with a harness-side scorer over ALL memories. The live service does something else:
- * `DefaultMemoryRetriever` takes the most recently updated candidates only (`findDurableCandidates`, ORDER BY updatedAt DESC,
- * LIMIT max(limit * 5, 50)), applies the eligibility filters, scores lexically plus recency, asks the optional
- * `SemanticRecallScorer` (lazy embedding: at most 4 new documents per turn, 3 s turn budget, one vector per memory, cosine) and
- * blends 0.7 semantic / 0.3 lexical. "Gates must match live": this stage runs the CH7 queries through those real classes.
+ * `DefaultMemoryRetriever` takes the most recently updated candidates (`findDurableCandidates`, ORDER BY updatedAt DESC,
+ * LIMIT max(limit * 5, 50)), since P2-2 widened by the memories nearest to the query in the vector store
+ * (`findDurableCandidatesByIds`, K = 50, same SQL filters), applies the eligibility filters, scores lexically plus recency, asks the
+ * optional `SemanticRecallScorer` (lazy embedding: at most 4 new vectors per turn, 3 s turn budget, one vector per passage of a long
+ * memory, max cosine, collection per embedding space) and blends 0.7 semantic / 0.3 lexical. "Gates must match live": this stage
+ * runs the CH7 queries through those real classes.
  *
  * What is real (constructed from the production classes, no re-implementation of any scoring or blending):
- *   - `SqliteStorageProvider` (its `memories` repository and its real `findDurableCandidates`) on a temp file,
+ *   - `SqliteStorageProvider` (its `memories` repository, real `findDurableCandidates` and `findDurableCandidatesByIds`) on a temp file,
  *   - `OllamaCliEmbeddingProvider` (`ollama run`, its OWN default role prefixes, not the harness ARM_SPECS prefixes),
  *   - `LocalVectorProvider` (fresh temp dir per arm and mode),
- *   - `SemanticRecallScorer` behind `localOnlyProviderSelector`, `DefaultMemoryRetriever` with default options.
- * What mirrors `app.module.ts` / `context-builder-provider.ts` by hand (`createProductionContextBuilder` builds the retriever
- * inside and does not expose it): the scorer wiring and the three request constants (`maxNewEmbeddingsPerTurn` 4,
+ *   - `createProductionMemoryScorer` of `context-builder-provider.ts` (the SAME function production uses: local-only selector,
+ *     multi-vector, collection per space), `DefaultMemoryRetriever` with default options.
+ * What mirrors `app.module.ts` / `context-builder.ts` by hand (`createProductionContextBuilder` builds the retriever inside and
+ * does not expose it): the three request constants (`maxNewEmbeddingsPerTurn` 4,
  * `embeddingTimeoutMs` 3000 from config.ts, `maxResults` 10 and the authority fitness from context-builder.ts). The provider
  * selector is a fixed one (the router is not needed to pick the only EMBEDDING provider); like the router at startup, the run
  * probes `isAvailable()` once and lets the warm-up settle before the first query.
  *
  * Arms: L (no semantic scorer, no model), E0 (`nomic-embed-text`, the live model), E4 (`embeddinggemma:300m`). Semantic arms run in
  * two modes: `live` (empty vector store, lazy embedding as a fresh switch experiences it) and `warm` (every memory embedded first
- * through the same scorer, so only the candidate cap, the single vector and the blend remain). Status NON-GATING.
+ * through the same scorer, so only the candidate widening, the passage vectors and the blend remain). Status NON-GATING.
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
@@ -34,35 +37,42 @@ import {
   DEFAULT_MAX_NEW_EMBEDDINGS_PER_TURN,
   DEFAULT_SEMANTIC_TURN_BUDGET_MS,
   DEFAULT_SEMANTIC_WEIGHT,
-  DURABLE_MEMORY_VECTOR_COLLECTION,
   DefaultMemoryRetriever,
+  MAX_PASSAGES_PER_MEMORY,
+  SEMANTIC_CANDIDATE_TOP_K,
   MemoryType,
   NoProviderAvailableError,
-  SemanticRecallScorer,
   createMemoryRetrievalRequest,
+  durableMemoryCollectionFor,
   localOnlyProviderSelector,
+  memoryVectorUnits,
   type AiProvider,
   type DurableMemoryAuthorityLevel,
+  type DurableMemoryByIdsQuery,
   type DurableMemoryQuery,
   type Logger,
   type MemoryRecord,
   type MemoryRepository,
   type ProviderSelector,
   type SemanticRecallScoring,
+  type SemanticRecallSession,
 } from '@quoky/core';
+import type { SemanticRecallScorer } from '@quoky/core';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { LocalVectorProvider } from '@quoky/vector-local';
+import { BACKFILL_BATCH } from '../../memory-vector-backfill';
+import { createProductionMemoryBackfill, createProductionMemoryScorer } from '../../context-builder-provider';
 import { percentiles, type FetchLike } from '../selector-rag/embed';
 import { ARM_SPECS, resolveArms, type ArmPin } from './embed-arms';
 import { LANGUAGES, seeded } from './corpus';
 import { pathMetrics, type PathMetrics } from './memory-eval';
 import type { MemorySet } from './memory-set';
 
-export const STAGE_R_PLAN_VERSION = 'runtime-recall-plan.v1';
+export const STAGE_R_PLAN_VERSION = 'runtime-recall-plan.v2';
 export const STAGE_R_ARM_IDS = ['L', 'E0', 'E4'] as const;
 export type StageRArmId = (typeof STAGE_R_ARM_IDS)[number];
 export type SemanticArmId = Exclude<StageRArmId, 'L'>;
-export type RunMode = 'lexical' | 'live' | 'warm';
+export type RunMode = 'lexical' | 'live' | 'backfilled' | 'warm';
 
 export const parseStageRArm = (token: string): StageRArmId | undefined => (STAGE_R_ARM_IDS as readonly string[]).includes(token) ? (token as StageRArmId) : undefined;
 export const isSemanticArm = (arm: StageRArmId): arm is SemanticArmId => arm !== 'L';
@@ -93,7 +103,10 @@ export const RUNTIME_CONSTANTS = {
   semanticTurnBudgetMs: DEFAULT_SEMANTIC_TURN_BUDGET_MS,
   vectorQueryLimit: DEFAULT_MAX_INDEXED_VECTORS,
   maxEmbeddingInputChars: MAX_EMBEDDING_INPUT_CHARS,
-  vectorCollection: DURABLE_MEMORY_VECTOR_COLLECTION,
+  vectorCollection: 'durable-memory-v2-<space slug>-<hash12>, space = <model>/<digest12>/p<prefix scheme hash8>',
+  multiVector: true,
+  maxPassagesPerMemory: MAX_PASSAGES_PER_MEMORY,
+  semanticCandidateTopK: SEMANTIC_CANDIDATE_TOP_K,
   retrieverDefaultLimit: DEFAULT_DURABLE_RECALL_LIMIT,
   candidateFetchMultiplier: 5,
   candidateFetchMin: 50,
@@ -101,7 +114,7 @@ export const RUNTIME_CONSTANTS = {
   recencyHalfLifeMs: 30 * 24 * 60 * 60 * 1_000,
   semanticWeight: DEFAULT_SEMANTIC_WEIGHT,
   ollamaBin: 'ollama',
-  candidatePool: 'findDurableCandidates: newest updatedAt first, LIMIT max(maxResults * 5, 50) = 50',
+  candidatePool: 'findDurableCandidates (newest updatedAt first, LIMIT max(maxResults * 5, 50) = 50) plus findDurableCandidatesByIds (the K memories nearest to the query in the vector store, same SQL filters), deduplicated by id',
 } as const;
 
 // ---------------------------------------------------------------- implementation identity (part of the plan digest)
@@ -112,6 +125,19 @@ export const IMPLEMENTATION_FILES = [
   'packages/core/src/application/memory-retriever.ts',
   'packages/core/src/application/recall/semantic-recall-scorer.ts',
   'packages/core/src/application/recall/embedding-envelope.ts',
+  'packages/core/src/application/recall/memory-passages.ts',
+  'packages/core/src/application/chunking/boundaries.ts',
+  'packages/core/src/application/chunking/code-points.ts',
+  'packages/core/src/application/chunking/coverage.ts',
+  'packages/core/src/application/chunking/index.ts',
+  'packages/core/src/application/chunking/lexical.ts',
+  'packages/core/src/application/chunking/pack.ts',
+  'packages/core/src/application/chunking/passages.ts',
+  'packages/core/src/application/chunking/readout.ts',
+  'packages/core/src/application/chunking/token-estimate.ts',
+  'packages/core/src/application/chunking/types.ts',
+  'apps/quoky/src/context-builder-provider.ts',
+  'apps/quoky/src/memory-vector-backfill.ts',
   'packages/core/src/application/semantic-relevance.ts',
   'packages/ai-cli/src/ollama-embedding-provider.ts',
   'packages/ai-cli/src/cli-runner.ts',
@@ -139,10 +165,10 @@ export const STAGE_R_PARAMETERS = {
   actorId: ACTOR_ID,
   storage: 'real SqliteStorageProvider on a temp file, memories saved as LONG_TERM durable (USER_PROVIDED, SEMANTIC) for one actor',
   runtime: RUNTIME_CONSTANTS,
-  warmCompleteness: 'warm mode requires a stored vector for every memory (store read + scorer pass) before any query; otherwise the warm run is INVALID with the missing count',
-  modes: { live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new documents per turn, 3 s turn budget)', warm: 'every memory embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
+  warmCompleteness: 'warm mode requires a stored vector for every vector unit (the memory id for a short memory, one per passage for a long one) in the space collection before any query; otherwise the warm run is INVALID with the missing count',
+  modes: { backfilled: 'the real production backfill job (memory-vector-backfill.ts, batch 8 per tick) runs to completion before the queries, then the same queries; requires a stored vector for every vector unit, otherwise INVALID', live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new vectors per turn, passages count one each, 3 s turn budget); an empty store widens nothing', warm: 'every vector unit embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
   ranking: 'the retriever results (top 10); gold rank outside the top 10 counts as a miss, so MRR is MRR@10 here',
-  diagnostics: ['gold not in the candidate pool (recent-50 cap)', 'gold without a semantic score', 'scorer fallbacks by reason', 'retrieval latency p50 / p95'],
+  diagnostics: ['gold not in the candidate pool (recent 50 plus the semantic top-K)', 'gold without a semantic score', 'scorer fallbacks by reason', 'retrieval latency p50 / p95'],
   status: 'NON-GATING',
 } as const;
 
@@ -188,7 +214,10 @@ export async function runtimePrefixesOf(model: string): Promise<{ query: string;
   const provider = new OllamaCliEmbeddingProvider({
     model,
     warmUp: false,
-    runner: async (_bin, _args, options) => {
+    runner: async (_bin, args, options) => {
+      // the provider asks `ollama list` for the model digest before it produces any vector (fail-closed space id)
+      if (args[0] === '--version') return { code: 0, stdout: 'ollama version is 0.0.0\n', stderr: '', timedOut: false } as never;
+      if (args[0] === 'list') return { code: 0, stdout: `NAME ID SIZE MODIFIED\n${model.includes(':') ? model : `${model}:latest`} ${'0'.repeat(12)} 1 GB now\n`, stderr: '', timedOut: false } as never;
       seen.push(options.input ?? '');
       return { code: 0, stdout: '[0.5,0.5]', stderr: '', timedOut: false } as never;
     },
@@ -265,6 +294,11 @@ export interface StageRPlanReport {
   readonly note: string;
 }
 
+/** Every vector the production scorer stores for the set: the memory id (short) or `<id>#<ordinal>` per passage (long). */
+export function vectorUnitsOf(set: Pick<MemorySet, 'memories'>): Array<{ memoryId: string; vectorId: string }> {
+  return set.memories.flatMap((memory) => memoryVectorUnits(memory.id, memory.text, true).map((unit) => ({ memoryId: memory.id, vectorId: unit.vectorId })));
+}
+
 export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm: string }[], set: Pick<MemorySet, 'memories' | 'queries'>): StageRPlanReport['runs'] {
   const gone = new Set(dropped.map((d) => d.arm));
   const out: Array<StageRPlanReport['runs'][number]> = [];
@@ -274,7 +308,9 @@ export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm:
     else {
       const perQuery = 1 + RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn;
       out.push({ arm, mode: 'live', queries: set.queries.length, modelCallsUpperBound: set.queries.length * perQuery });
-      out.push({ arm, mode: 'warm', queries: set.queries.length, modelCallsUpperBound: set.queries.length + Math.ceil(set.memories.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) * perQuery + set.memories.length });
+      const units = vectorUnitsOf(set);
+      out.push({ arm, mode: 'backfilled', queries: set.queries.length, modelCallsUpperBound: set.queries.length + units.length + Math.ceil(units.length / BACKFILL_BATCH) + 20 });
+      out.push({ arm, mode: 'warm', queries: set.queries.length, modelCallsUpperBound: set.queries.length + Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) * perQuery + units.length });
     }
   }
   return out;
@@ -291,7 +327,7 @@ export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memor
     pins: input.pins,
     runs: runsOf(input.planned, input.dropped, set),
     parameters: STAGE_R_PARAMETERS,
-    note: 'Zero model calls in plan mode: pins come from the loopback daemon (version, tags) and the runtime prefixes from the real provider class run against a recording runner. A run calls `ollama run` once per query embedding and once per document embedding through the real provider; counts are upper bounds (the lazy scorer embeds at most 4 new documents per turn).',
+    note: 'Zero model calls in plan mode: pins come from the loopback daemon (version, tags) and the runtime prefixes from the real provider class run against a recording runner. A run calls `ollama run` once per query embedding and once per document embedding through the real provider; counts are upper bounds (the lazy scorer embeds at most 4 new vectors per turn).',
   };
 }
 
@@ -309,7 +345,7 @@ export function planLinesR(plan: StageRPlanReport): string[] {
 
 export interface RuntimeDiagnostics {
   readonly queries: number;
-  /** Gold memory not among the candidates `findDurableCandidates` returned (the recent-50 cap). */
+  /** Gold memory not among the candidates offered (the recent 50 plus the semantic top-K widening). */
   readonly goldNotInPool: { readonly n: number; readonly share: number };
   /** Gold memory with no semantic score in that retrieval (null scorer result, or lazy embedding had not reached it). Semantic arms only. */
   readonly goldNoSemanticScore: { readonly n: number; readonly share: number } | null;
@@ -385,6 +421,12 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
         poolSizes.push(records.length);
         return records;
       },
+      findDurableCandidatesByIds: async (query: DurableMemoryByIdsQuery) => {
+        const records = await storage.memories.findDurableCandidatesByIds!(query);
+        for (const record of records) poolIds.add(record.id);
+        poolSizes[poolSizes.length - 1] = poolIds.size;
+        return records;
+      },
       findShortTermByUser: (userId) => storage.memories.findShortTermByUser(userId),
     };
     const fallbackReasons: Record<string, number> = {};
@@ -412,46 +454,89 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       const vectors = new LocalVectorProvider(join(options.workDir, 'vectors'));
       await vectors.init();
       let dimension = 0;
+      let spaceId: string | undefined;
       const observed = {
         upsert: (collection: string, records: Parameters<LocalVectorProvider['upsert']>[1]) => {
-          for (const record of records) dimension = record.vector.length;
+          for (const record of records) {
+            dimension = record.vector.length;
+            if (typeof record.metadata?.space === 'string') spaceId = record.metadata.space;
+          }
           return vectors.upsert(collection, records);
         },
         query: (collection: string, vector: number[], topK: number) => vectors.query(collection, vector, topK),
         delete: (collection: string, ids: Parameters<LocalVectorProvider['delete']>[1]) => vectors.delete(collection, ids),
       } as unknown as LocalVectorProvider;
-      // mirrors context-builder-provider.ts: local-only selector, the production collection default, 4 per turn, 3 s call bound
-      scorer = new SemanticRecallScorer(
-        { selector: localOnlyProviderSelector(fixedSelector(provider)), vectors: observed, logger },
-        { maxNewEmbeddingsPerTurn: RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn, embeddingTimeoutMs: RUNTIME_CONSTANTS.embeddingTimeoutMs },
-      );
+      // the production scorer itself (context-builder-provider.ts): local-only selector, multi-vector, collection per space
+      scorer = createProductionMemoryScorer({
+        selector: fixedSelector(provider),
+        vectors: observed,
+        logger,
+        timeoutMs: RUNTIME_CONSTANTS.embeddingTimeoutMs,
+        maxNewPerTurn: RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn,
+      });
       // like the router at startup: one availability probe, then let the background warm-up finish before any turn
       await provider.isAvailable().catch(() => false);
       await provider.warmUpSettled?.();
-      if (mode === 'warm') {
+      if (mode === 'warm' || mode === 'backfilled') {
         const candidates = set.memories.map((memory) => ({ id: memory.id, content: memory.text }));
+        const units = vectorUnitsOf(set);
+        const wanted = new Set(units.map((unit) => unit.vectorId));
+        const countStored = async (): Promise<number> => {
+          if (dimension === 0 || spaceId === undefined) return 0;
+          const inStore = await vectors.query(durableMemoryCollectionFor(spaceId), new Array<number>(dimension).fill(1), RUNTIME_CONSTANTS.vectorQueryLimit);
+          return new Set(inStore.filter((hit) => wanted.has(hit.id) && hit.metadata?.space === spaceId).map((hit) => hit.id)).size;
+        };
         let stored = 0;
         let calls = 0;
-        const limit = Math.ceil(candidates.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) + 20;
-        while (stored < candidates.length && calls < limit) {
-          calls += 1;
-          const scores = await scorer.score('warm-up', candidates);
-          stored = scores?.size ?? stored;
+        if (mode === 'backfilled') {
+          // the REAL production backfill job (ADR-0124 5.4) runs to completion before any query: what the owner has once it caught up
+          const job = createProductionMemoryBackfill(storage, {
+            selector: fixedSelector(provider),
+            vectors: observed,
+            timeoutMs: RUNTIME_CONSTANTS.embeddingTimeoutMs,
+            maxNewPerTurn: RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn,
+          });
+          const limit = Math.ceil(units.length / BACKFILL_BATCH) + 20;
+          let ticks = 0;
+          for (; ticks < limit; ticks += 1) {
+            const tick = await job.runOnce();
+            if (tick.state !== 'working') break;
+          }
+          calls = ticks + 1;
+          stored = await countStored();
+        } else {
+          const limit = Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) + 20;
+          while (stored < units.length && calls < limit) {
+            calls += 1;
+            await scorer.score('warm-up', candidates);
+            stored = await countStored();
+          }
         }
-        // the store itself must hold a vector (of the arm's space) for every memory
-        const ids = new Set(candidates.map((candidate) => candidate.id));
-        const inStore = dimension === 0 ? [] : await vectors.query(DURABLE_MEMORY_VECTOR_COLLECTION, new Array<number>(dimension).fill(1), RUNTIME_CONSTANTS.vectorQueryLimit);
-        const storeCount = new Set(inStore.filter((hit) => ids.has(hit.id) && hit.metadata?.space !== undefined).map((hit) => hit.id)).size;
-        const missing = Math.max(candidates.length - storeCount, candidates.length - stored);
-        prewarm = { stored, of: candidates.length, scoringCalls: calls, storeCount, missing };
-        if (missing > 0) return invalidRun(arm, mode, prewarm, `warm prewarming incomplete: ${missing} of ${candidates.length} memories have no stored vector after ${calls} scoring calls`);
+        // the store itself must hold a vector (of the arm's space) for every unit
+        const missing = units.length - stored;
+        prewarm = { stored, of: units.length, scoringCalls: calls, storeCount: stored, missing };
+        if (missing > 0) return invalidRun(arm, mode, prewarm, `${mode} prewarming incomplete: ${missing} of ${units.length} vectors are not stored after ${calls} passes`);
       }
       const inner = scorer;
+      // observer only: records the scores the real scorer session returned and changes nothing
       semantic = {
         async score(query, candidates) {
           const result = await inner.score(query, candidates);
           lastScores = result;
           return result;
+        },
+        async openSession(query) {
+          const session = await inner.openSession(query);
+          if (session === null) return null;
+          const observedSession: SemanticRecallSession = {
+            nearestMemoryIds: (limit) => session.nearestMemoryIds(limit),
+            async score(candidates) {
+              const result = await session.score(candidates);
+              lastScores = result;
+              return result;
+            },
+          };
+          return observedSession;
         },
       };
     }

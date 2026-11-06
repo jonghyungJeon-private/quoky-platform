@@ -8,6 +8,7 @@ import {
   CONTINUATION_BINDING_REPOSITORY,
   QUEUE_PROVIDER,
   VECTOR_PROVIDER,
+  RecallActivityGauge,
   WORKSPACE_PROVIDER,
   GIT_PROVIDER,
   WORKSPACE_WRITER,
@@ -104,7 +105,8 @@ import { loadConfig } from './config';
 import { ActorIdentityProvisioner } from './actor-identity-provisioner';
 import { createConnectorProviders } from './connector-providers';
 import { ConsoleLogger } from './console-logger';
-import { createProductionContextBuilder, curatedExampleOptionsOf, learningRemoteDisclosureOf } from './context-builder-provider';
+import { createProductionContextBuilder, createProductionMemoryBackfill, curatedExampleOptionsOf, learningRemoteDisclosureOf } from './context-builder-provider';
+import { MEMORY_VECTOR_BACKFILL } from './memory-vector-backfill';
 import { logImageUnderstandingSelection, visionModelsOf } from './image-understanding-provider';
 import { isCliPresent } from './provider-selection/cli-presence';
 import { ProviderCatalog } from './provider-selection/provider-catalog';
@@ -160,6 +162,8 @@ const providerSelectionStore = new ProviderSelectionStore(
   new ConsoleLogger('provider-selection'),
 );
 logImageUnderstandingSelection(config.imageUnderstanding, new ConsoleLogger('image-understanding'));
+// One gauge for the recall scorer (marks each turn) and the vector backfill (yields to a turn).
+const recallActivity = new RecallActivityGauge();
 const providerCatalog = new ProviderCatalog({
   ai: config.ai,
   vision: visionModelsOf(config),
@@ -571,11 +575,28 @@ const application: Provider[] = [
               timeoutMs: config.embedding.timeoutMs,
               maxNewPerTurn: config.embedding.maxNewPerTurn,
               logger: new ConsoleLogger('recall'),
+              activity: recallActivity,
             }
           : undefined,
         curatedExampleOptionsOf(config, learning, new ConsoleLogger('learning-examples')),
       ),
     inject: [MemoryManager, STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER, LEARNING_REPOSITORY],
+  },
+  {
+    // ADR-0124 section 5.4: the background vector backfill and sweep; null (never started) when embeddings are off.
+    provide: MEMORY_VECTOR_BACKFILL,
+    useFactory: (storage: StorageProvider, selector: ProviderSelector, vectors: VectorProvider) =>
+      config.embedding.enabled
+        ? createProductionMemoryBackfill(storage, {
+            selector,
+            vectors,
+            timeoutMs: config.embedding.timeoutMs,
+            maxNewPerTurn: config.embedding.maxNewPerTurn,
+            logger: new ConsoleLogger('recall-backfill'),
+            activity: recallActivity,
+          })
+        : null,
+    inject: [STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER],
   },
   { provide: PromptComposer, useFactory: () => new PromptComposer() },
   {

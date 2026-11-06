@@ -149,6 +149,15 @@ export interface DurableMemoryQuery {
   archiveExpiredBy?: IsoTimestamp;
 }
 
+/**
+ * ADR-0124 section 5 (P2-2) candidate widening: the same filters as {@link DurableMemoryQuery} (long-term type, scope,
+ * `excludeIds`, expiry, supersession, archive) restricted to the given record ids. `limit` is not used: at most
+ * `ids.length` records come back.
+ */
+export interface DurableMemoryByIdsQuery extends Omit<DurableMemoryQuery, 'limit'> {
+  ids: string[];
+}
+
 export interface MemoryRepository extends Repository<MemoryRecord> {
   /**
    * Records in `scope` (optionally of one `type`). Never returns an archived record (ADR-0106 amendment), so every
@@ -157,6 +166,12 @@ export interface MemoryRepository extends Repository<MemoryRecord> {
    */
   findByScope(scope: MemoryScope, type?: MemoryType): Promise<MemoryRecord[]>;
   findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]>;
+  /**
+   * ADR-0124 section 5 (P2-2): the records among `query.ids` that pass exactly the filters `findDurableCandidates`
+   * applies. An id that does not exist, belongs to another scope or user, or fails any filter is simply absent.
+   * Optional: a repository without it leaves recall on the recent pool.
+   */
+  findDurableCandidatesByIds?(query: DurableMemoryByIdsQuery): Promise<MemoryRecord[]>;
   /**
    * ADR-0106 D5 (W2-L01): every `SHORT_TERM` conversation-history record whose `scope.userId` is `userId` — the
    * platform user id the turn was recorded under — oldest first. Only the forget/edit history purge reads it.

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import {
   AiFailureKind,
@@ -58,6 +59,35 @@ export function ollamaListIncludesModel(listOutput: string, model: string): bool
     .some((line) => line.trim().split(/\s+/u)[0] === wanted);
 }
 
+/**
+ * The 12-hex content id `ollama list` shows for `model` (its ID column), or `undefined` when the model is not listed
+ * or the column is not a 12-character hex id. Same exact-name match as {@link ollamaListIncludesModel}.
+ */
+export function ollamaListDigestOf(listOutput: string, model: string): string | undefined {
+  const wanted = model.includes(':') ? model : `${model}:latest`;
+  for (const line of listOutput.split('\n').slice(1)) {
+    const columns = line.trim().split(/\s+/u);
+    if (columns[0] !== wanted) continue;
+    const id = columns[1];
+    return id !== undefined && /^[0-9a-f]{12}$/.test(id) ? id : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The runtime version from `ollama --version` ("ollama version is 0.40.14", optionally followed by client warnings),
+ * or `undefined` when no such line with a plain dotted version is present. Strict: a missing, malformed or
+ * ambiguous (two different "version is" lines) answer is unknown, never guessed.
+ */
+export function ollamaVersionOf(versionOutput: string): string | undefined {
+  const found = new Set<string>();
+  for (const line of versionOutput.split('\n')) {
+    const match = /^ollama version is (\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[0-9A-Za-z.]{1,20})?)\s*$/u.exec(line.trim());
+    if (match?.[1] !== undefined) found.add(match[1]);
+  }
+  return found.size === 1 ? [...found][0] : undefined;
+}
+
 export function sanitizedOllamaModelName(model: string): string {
   return /^[A-Za-z0-9._:/-]{1,200}$/.test(model) ? model : '[redacted]';
 }
@@ -109,6 +139,11 @@ const NOMIC_ROLE_PREFIXES: EmbeddingRolePrefixes = Object.freeze({
   query: 'search_query: ',
   document: 'search_document: ',
 });
+/** `embeddinggemma` model card (task-specific prompts): the query and document forms differ. */
+const EMBEDDINGGEMMA_ROLE_PREFIXES: EmbeddingRolePrefixes = Object.freeze({
+  query: 'task: search result | query: ',
+  document: 'title: none | text: ',
+});
 const NO_ROLE_PREFIXES: EmbeddingRolePrefixes = Object.freeze({ query: '', document: '' });
 
 export interface OllamaCliEmbeddingProviderOptions {
@@ -146,10 +181,32 @@ function validatedKeepAlive(value: string): string {
   return value;
 }
 
-function defaultRolePrefixes(model: string): EmbeddingRolePrefixes {
+export function defaultRolePrefixes(model: string): EmbeddingRolePrefixes {
   const base = model.split(':')[0] ?? model;
-  return base === DEFAULT_OLLAMA_EMBEDDING_MODEL ? NOMIC_ROLE_PREFIXES : NO_ROLE_PREFIXES;
+  if (base === DEFAULT_OLLAMA_EMBEDDING_MODEL) return NOMIC_ROLE_PREFIXES;
+  if (base === 'embeddinggemma') return EMBEDDINGGEMMA_ROLE_PREFIXES;
+  return NO_ROLE_PREFIXES;
 }
+
+/** Short hash of a prefix scheme: part of the vector space id, so a changed scheme starts a new space. */
+export function rolePrefixSchemeHash(prefixes: EmbeddingRolePrefixes): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ query: prefixes.query, document: prefixes.document }), 'utf8')
+    .digest('hex')
+    .slice(0, 8);
+}
+
+/**
+ * ADR-0123 D3 / ADR-0124 section 5.3: the embedding space id is `<model>/<digest12>/v<ollamaVersion>/p<prefixHash8>`.
+ * Model, model content id, runtime version (a changed runtime version is a changed space) and prefix scheme each
+ * change the vectors, so each changes the id; vectors of different ids never mix.
+ */
+export function embeddingSpaceId(model: string, digest12: string, version: string, prefixes: EmbeddingRolePrefixes): string {
+  return `${model}/${digest12}/v${version}/p${rolePrefixSchemeHash(prefixes)}`;
+}
+
+/** How long a failed identity lookup (digest or version unknown) is remembered before `ollama` is asked again. */
+export const OLLAMA_IDENTITY_NEGATIVE_CACHE_MS = 30_000;
 
 /** Bound the input without splitting a UTF-16 surrogate pair. */
 function boundedInput(text: string): string {
@@ -184,6 +241,11 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
   private readonly clock: () => IsoTimestamp;
   /** The previous readiness answer; a warm-up follows the first ready answer and every not-ready -> ready change. */
   private lastProbeReady: boolean | undefined;
+  /** The model's 12-hex content id and the runtime version of the last identity lookup; both or neither. */
+  private identity: { digest: string; version: string } | undefined;
+  /** When the last identity lookup failed (negative cache: no second `ollama list` spawn per turn). */
+  private identityFailedAtMs: number | undefined;
+  private identityInFlight: Promise<{ digest: string; version: string } | undefined> | undefined;
   private warmUpInFlight: Promise<void> | undefined;
   private lastWarmUpStartedAtMs: number | undefined;
 
@@ -233,8 +295,66 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
     // A timed-out probe is no answer (live QA D16): the previous readiness (and the warm-up state) is kept.
     if (r.timedOut) throw new ProviderProbeIndeterminateError('ollama list timed out');
     const ready = r.code === 0 && ollamaListIncludesModel(r.stdout, this.model);
+    // Every ready answer refreshes the identity (a re-pulled tag or an upgraded runtime changes it); not ready clears it.
+    if (ready) {
+      const digest = ollamaListDigestOf(r.stdout, this.model);
+      const version = digest === undefined ? undefined : await this.readVersion();
+      this.setIdentity(digest !== undefined && version !== undefined ? { digest, version } : undefined);
+    } else {
+      this.setIdentity(undefined);
+    }
     this.noteReadiness(ready);
     return ready;
+  }
+
+  private setIdentity(identity: { digest: string; version: string } | undefined): void {
+    this.identity = identity;
+    this.identityFailedAtMs = identity === undefined ? this.nowMs() : undefined;
+  }
+
+  private async readVersion(): Promise<string | undefined> {
+    try {
+      const r = await this.runner(this.bin, ['--version'], {
+        cwd: tmpdir(),
+        input: '',
+        timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
+        env: OLLAMA_COLOR_ENV,
+      });
+      return r.code === 0 && !r.timedOut ? ollamaVersionOf(`${r.stdout}\n${r.stderr}`) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The model digest and runtime version as last probed. Without a probe result it asks `ollama list` and
+   * `ollama --version` once (single flight); a failed lookup is remembered for
+   * {@link OLLAMA_IDENTITY_NEGATIVE_CACHE_MS} so a malformed answer does not cost two spawns on every turn. Never throws.
+   */
+  private async resolveIdentity(): Promise<{ digest: string; version: string } | undefined> {
+    if (this.identity !== undefined) return this.identity;
+    if (this.identityFailedAtMs !== undefined && this.nowMs() - this.identityFailedAtMs < OLLAMA_IDENTITY_NEGATIVE_CACHE_MS) {
+      return undefined;
+    }
+    this.identityInFlight ??= (async () => {
+      try {
+        const r = await this.runner(this.bin, ['list'], {
+          cwd: tmpdir(),
+          input: '',
+          timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
+          env: OLLAMA_COLOR_ENV,
+        });
+        const digest = r.code === 0 && !r.timedOut ? ollamaListDigestOf(r.stdout, this.model) : undefined;
+        const version = digest === undefined ? undefined : await this.readVersion();
+        this.setIdentity(digest !== undefined && version !== undefined ? { digest, version } : undefined);
+      } catch {
+        this.setIdentity(undefined);
+      }
+      return this.identity;
+    })().finally(() => {
+      this.identityInFlight = undefined;
+    });
+    return this.identityInFlight;
   }
 
   /** Startup or a not-ready -> ready change: load the model now, outside any turn, so the next call finds it warm. */
@@ -292,6 +412,12 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
     if (request.prompt.trim().length === 0) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama embedding input is empty');
     }
+    // Fail closed (ADR-0123 D3): a vector is never produced under an ambiguous space. Without the model's digest
+    // the space id cannot be formed, so recall falls back to lexical instead of storing unidentifiable vectors.
+    const identity = await this.resolveIdentity();
+    if (identity === undefined) {
+      throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'ollama embedding model digest or runtime version is unknown; no vector produced');
+    }
     const role = readEmbeddingRole(request.metadata);
     const prefix = role === undefined ? '' : this.rolePrefixes[role];
     const input = boundedInput(`${prefix}${request.prompt}`);
@@ -348,7 +474,7 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
 
     const model = sanitizedOllamaModelName(this.model);
     return {
-      text: formatEmbeddingEnvelope(parsed, model),
+      text: formatEmbeddingEnvelope(parsed, embeddingSpaceId(model, identity.digest, identity.version, this.rolePrefixes)),
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
       audit: {
         model,

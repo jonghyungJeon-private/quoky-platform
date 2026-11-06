@@ -40,6 +40,8 @@ export interface VectorStoreIo {
   rename(from: string, to: string): Promise<void>;
   unlink(path: string): Promise<void>;
   mkdir(path: string): Promise<void>;
+  /** Optional: file names in a directory (only `collections()` needs it). */
+  readdir?(path: string): Promise<string[]>;
 }
 
 /** What to do when an upsert would take a collection above its cap (ADR-0123 Q1 safeguard 1). */
@@ -106,6 +108,7 @@ const nodeIo: VectorStoreIo = {
   writeFile: (path, data) => fsPromises.writeFile(path, data, { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
   rename: (from, to) => fsPromises.rename(from, to),
   unlink: (path) => fsPromises.unlink(path),
+  readdir: (path) => fsPromises.readdir(path),
   mkdir: async (path) => {
     await fsPromises.mkdir(path, { recursive: true, mode: 0o700 });
   },
@@ -232,6 +235,25 @@ export class LocalVectorProvider implements VectorProvider {
       },
       () => changed,
     );
+  }
+
+  /**
+   * Names of the collections that exist: files in the store directory plus collections held in memory that are not on
+   * disk yet. A missing directory means none; any other read error is rethrown, so a forget never reports success
+   * while vectors may remain (the cleanup stays retryable).
+   */
+  async listCollections(): Promise<string[]> {
+    const names = new Set<string>(this.collections.keys());
+    if (this.io.readdir !== undefined) {
+      try {
+        for (const name of await this.io.readdir(this.storePath)) {
+          if (name.endsWith('.json')) names.add(name.slice(0, -'.json'.length));
+        }
+      } catch (error) {
+        if ((error as { code?: unknown } | null)?.code !== 'ENOENT') throw error;
+      }
+    }
+    return [...names].filter((name) => COLLECTION_NAME_PATTERN.test(name)).sort();
   }
 
   private filePath(collection: string): string {

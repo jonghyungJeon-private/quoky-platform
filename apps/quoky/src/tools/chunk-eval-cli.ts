@@ -1038,7 +1038,7 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
         continue;
       }
       const model = (resolution.pins.find((pin) => pin.arm === arm) as { model: string }).model;
-      for (const mode of ['live', 'warm'] as const) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
+      for (const mode of ['live', 'backfilled', 'warm'] as const) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
     }
   } catch (error) {
     deps.stderr(`INVALID: the runtime recall path failed during stage R run: ${errorText(error)}`);

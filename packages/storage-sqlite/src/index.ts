@@ -42,6 +42,7 @@ import type {
   CodeProposalRepository,
   CommandExecution,
   CommandExecutionRepository,
+  DurableMemoryByIdsQuery,
   DurableMemoryQuery,
   ExecutionKind,
   ExecutionReceipt,
@@ -1095,11 +1096,11 @@ class SqliteMemoryRepository extends JsonRepository<MemoryRecord> implements Mem
     return rows.map((row) => JSON.parse(row.data) as MemoryRecord);
   }
 
-  async findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]> {
-    if (!Number.isInteger(query.limit) || query.limit < 1) {
-      throw new RangeError('DurableMemoryQuery.limit must be a positive integer');
-    }
-
+  /**
+   * The WHERE clauses of a durable-candidate read. Shared by `findDurableCandidates` and `findDurableCandidatesByIds`
+   * so widening can never apply a looser filter than the recent pool.
+   */
+  private durableFilter(query: Omit<DurableMemoryQuery, 'limit'>): { clauses: string[]; params: unknown[] } {
     const clauses = [`type = 'LONG_TERM'`];
     const params: unknown[] = [];
     const columnScopes: ReadonlyArray<[keyof MemoryScope, string]> = [
@@ -1146,12 +1147,35 @@ class SqliteMemoryRepository extends JsonRepository<MemoryRecord> implements Mem
         params.push(query.archiveExpiredBy);
       }
     }
+    return { clauses, params };
+  }
 
+  async findDurableCandidates(query: DurableMemoryQuery): Promise<MemoryRecord[]> {
+    if (!Number.isInteger(query.limit) || query.limit < 1) {
+      throw new RangeError('DurableMemoryQuery.limit must be a positive integer');
+    }
+    const { clauses, params } = this.durableFilter(query);
     params.push(query.limit);
     const rows = this.db
       .prepare(
         `SELECT data FROM memories WHERE ${clauses.join(' AND ')}
          ORDER BY json_extract(data, '$.updatedAt') DESC, id ASC LIMIT ?`,
+      )
+      .all(...params) as Row[];
+    return rows.map((row) => JSON.parse(row.data) as MemoryRecord);
+  }
+
+  /** ADR-0124 section 5 (P2-2): the same filters as `findDurableCandidates`, plus `id IN (...)`. */
+  async findDurableCandidatesByIds(query: DurableMemoryByIdsQuery): Promise<MemoryRecord[]> {
+    const ids = [...new Set(query.ids)];
+    if (ids.length === 0) return [];
+    const { clauses, params } = this.durableFilter(query);
+    clauses.push(`id IN (${ids.map(() => '?').join(', ')})`);
+    params.push(...ids);
+    const rows = this.db
+      .prepare(
+        `SELECT data FROM memories WHERE ${clauses.join(' AND ')}
+         ORDER BY json_extract(data, '$.updatedAt') DESC, id ASC`,
       )
       .all(...params) as Row[];
     return rows.map((row) => JSON.parse(row.data) as MemoryRecord);
