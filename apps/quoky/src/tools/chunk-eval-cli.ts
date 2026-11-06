@@ -33,7 +33,7 @@ import { corpusDigest, CORPUS_SEED, CORPUS_VERSION, generateCorpus, type ChunkEv
 import { runChunkEval, summaryLines } from './chunk-eval/chunk-eval';
 import { CORPUS_V2_SEED, CORPUS_V2_VERSION, corpusV2Digest, generateCorpusV2, type ChunkEvalCaseV2 } from './chunk-eval/corpus-v2';
 import { runChunkEvalV2, summaryLinesV2 } from './chunk-eval/chunk-eval-v2';
-import type { FetchLike } from './selector-rag/embed';
+import { DEFAULT_OLLAMA_URL, type FetchLike } from './selector-rag/embed';
 import { ARM_IDS, STAGE_E_ARM_IDS, ArmEmbedder, EmbeddingCache, bundleOf, cachePath, latencySample, resolveArms, type ArmId, type Scope } from './chunk-eval/embed-arms';
 import { PARAMETERS, runArmOnSet, summaryLinesEmbed, type ChunkEmbedReport, type EmbedderRun } from './chunk-eval/embed-eval';
 import { buildPlanReport, planDigest, planLines, probeLines, runProbeArm, sampleDigest, type PlanInputs, type ProbeReport } from './chunk-eval/embed-plan';
@@ -177,6 +177,8 @@ export interface CliDeps {
     readonly clock?: () => number;
   };
   /** Stage R seams (tests inject a fake embedding provider and a clock; the real ones build `OllamaCliEmbeddingProvider`). */
+  /** Environment seen by stage R's daemon check (default: process.env). */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly runtime?: { readonly provider?: ProviderFactory; readonly clock?: () => number; readonly tmpRoot?: string };
   /** The loopback embedder transport (tests inject a fake fetch and a clock). `cacheDir: null` keeps the cache in memory only. */
   readonly embed?: { readonly baseUrl?: string; readonly fetch?: FetchLike; readonly cacheDir?: string | null; readonly clock?: () => number };
@@ -945,8 +947,45 @@ async function runStageE(parsed: Parsed, deps: CliDeps): Promise<number> {
 
 const DEFAULT_STAGE_R_ARMS: StageRArmId[] = ['L', 'E0', 'E4'];
 
+/**
+ * Stage R pins models from `--ollama-url` but executes through the `ollama` CLI, which talks to its own default daemon. Pins and
+ * execution must come from the same daemon, so only the default daemon is accepted, and an `OLLAMA_HOST` pointing elsewhere is refused.
+ */
+export function stageRDaemonProblem(url: string | undefined, ollamaHost: string | undefined): string | undefined {
+  const defaultOrigin = new URL(DEFAULT_OLLAMA_URL).origin;
+  if (url !== undefined) {
+    let origin = '';
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      origin = '';
+    }
+    if (origin !== defaultOrigin) return `--ollama-url ${url} is not the default daemon (${DEFAULT_OLLAMA_URL}) that the ollama CLI uses for stage R execution; stage R pins and runs against the same daemon only`;
+  }
+  if (ollamaHost !== undefined && ollamaHost.trim() !== '') {
+    const raw = ollamaHost.trim();
+    let host = '';
+    let port = '';
+    try {
+      const parsedHost = new URL(/^[a-z]+:\/\//iu.test(raw) ? raw : `http://${raw}`);
+      host = parsedHost.hostname;
+      port = parsedHost.port;
+    } catch {
+      host = '';
+    }
+    if (host !== '127.0.0.1' || (port !== '' && port !== '11434')) return `OLLAMA_HOST is set to ${raw}, which is not the default daemon (${DEFAULT_OLLAMA_URL}); the ollama CLI would follow it while stage R pins from the default daemon. Unset OLLAMA_HOST for stage R`;
+  }
+  return undefined;
+}
+
 /** `--set memory --stage R --mode plan|run`: plan digest (zero model calls) and the runtime-path run (live and warm per semantic arm). */
 async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
+  const daemonProblem = stageRDaemonProblem(deps.embed?.baseUrl ?? parsed.ollamaUrl, (deps.env ?? process.env).OLLAMA_HOST);
+  if (daemonProblem !== undefined) {
+    deps.stderr(daemonProblem);
+    deps.stderr(HELP);
+    return EXIT_USAGE;
+  }
   const memoryDeps = deps.memory ?? defaultMemory();
   const set = memoryDeps.corpus();
   const digest = memoryDigest(set);
@@ -1009,6 +1048,11 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
   const path = deps.writeReport(outDirOf(parsed), `chunk-eval-memory-stage-r-${digest.slice(0, 12)}-${stampOf(deps)}.json`, report);
   for (const line of summaryLinesStageR(report)) deps.stdout(line);
   deps.stdout(`report: ${path}`);
+  const invalid = runs.filter((run) => run.invalid !== null);
+  if (invalid.length > 0) {
+    deps.stderr(`INVALID: ${invalid.map((run) => `${run.arm}/${run.mode} (${(run.invalid as { reason: string }).reason})`).join('; ')}`);
+    return EXIT_INVALID;
+  }
   return EXIT_NON_GATING;
 }
 

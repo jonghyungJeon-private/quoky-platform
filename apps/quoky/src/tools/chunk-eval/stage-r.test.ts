@@ -2,15 +2,15 @@
  * ADR-0124 phase 2 P2-1: offline tests of stage R (the CH7 set through the real runtime recall path). The embedding provider is a
  * deterministic fake and the daemon a fake fetch; nothing here reaches a model. The retriever, scorer, sqlite and vector store are the real classes.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Capability, chunking, formatEmbeddingEnvelope, type AiProvider } from '@quoky/core';
 import { afterAll, describe, expect, it } from 'vitest';
-import { EXIT_BLOCKED, EXIT_NON_GATING, EXIT_OK, runCli, parseArguments, type CliDeps } from '../chunk-eval-cli';
+import { EXIT_BLOCKED, EXIT_INVALID, EXIT_NON_GATING, EXIT_OK, EXIT_USAGE, runCli, parseArguments, type CliDeps } from '../chunk-eval-cli';
 import type { FetchLike } from '../selector-rag/embed';
 import { generateMemorySet, memoryDigest, MEMORY_SEED, MEMORY_VERSION, type MemorySet } from './memory-set';
-import { runArmFresh, runtimePrefixesOf, seededUpdatedAt, type RuntimeEmbeddingProvider } from './stage-r';
+import { IMPLEMENTATION_FILES, RUNTIME_CONSTANTS, STAGE_R_PARAMETERS, implementationHashes, runArmFresh, runtimePrefixesOf, seededUpdatedAt, stageRDigest, type RuntimeEmbeddingProvider, type StageRInputs } from './stage-r';
 
 const scratch = mkdtempSync(join(tmpdir(), 'stage-r-test-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -219,5 +219,91 @@ describe('stage R: CLI gating and reporting', () => {
     const report = run.reports.find((entry) => entry.name.startsWith('chunk-eval-memory-stage-r-'))?.report as { runs: Array<{ arm: string }> };
     expect(report.runs.some((r) => r.arm === 'E4')).toBe(false);
     expect(run.built()).toBe(2);
+  }, 60_000);
+});
+
+
+describe('stage R: daemon rule', () => {
+  it('rejects an --ollama-url that is not the default daemon (USAGE) and an OLLAMA_HOST pointing elsewhere', async () => {
+    const other = harness();
+    expect(await runCli([...base, '--mode', 'plan', '--ollama-url', 'http://127.0.0.1:12345'], other.deps)).toBe(EXIT_USAGE);
+    expect(other.err.join('\n')).toContain('not the default daemon');
+    const hosted = harness();
+    hosted.deps.env = { OLLAMA_HOST: '10.0.0.5:11434' };
+    expect(await runCli([...base, '--mode', 'plan'], hosted.deps)).toBe(EXIT_USAGE);
+    expect(hosted.err.join('\n')).toContain('OLLAMA_HOST');
+    expect(hosted.built()).toBe(0);
+    const same = harness();
+    same.deps.env = { OLLAMA_HOST: '127.0.0.1:11434' };
+    expect(await runCli([...base, '--mode', 'plan', '--ollama-url', 'http://127.0.0.1:11434'], same.deps)).toBe(EXIT_OK);
+  });
+});
+
+describe('stage R: the plan digest binds parameters and implementation identity', () => {
+  const inputs: StageRInputs = { set: { digest: 'd'.repeat(64), memories: 1, queries: 1 }, planned: ['L'], pins: [], dropped: [] };
+  it('changes with any runtime parameter or any source hash, and a run with a stale digest is BLOCKED', async () => {
+    const hashes = implementationHashes();
+    const reference = stageRDigest(inputs, STAGE_R_PARAMETERS, hashes);
+    expect(stageRDigest(inputs)).toBe(reference);
+    for (const key of ['maxNewEmbeddingsPerTurn', 'embeddingTimeoutMs', 'semanticTurnBudgetMs', 'vectorQueryLimit', 'maxEmbeddingInputChars', 'candidateFetchMultiplier', 'candidateFetchMin', 'recencyWeight', 'recencyHalfLifeMs', 'semanticWeight', 'maxResults'] as const) {
+      expect(RUNTIME_CONSTANTS[key]).toBeGreaterThan(0);
+      const changed = { ...STAGE_R_PARAMETERS, runtime: { ...RUNTIME_CONSTANTS, [key]: RUNTIME_CONSTANTS[key] + 1 } };
+      expect(stageRDigest(inputs, changed, hashes)).not.toBe(reference);
+    }
+    expect(stageRDigest(inputs, { ...STAGE_R_PARAMETERS, runtime: { ...RUNTIME_CONSTANTS, authorityFitness: ['USER_CLAIM_OR_INTENT'] } }, hashes)).not.toBe(reference);
+    expect(Object.keys(hashes).sort()).toEqual([...IMPLEMENTATION_FILES].sort());
+    for (const file of IMPLEMENTATION_FILES) expect(stageRDigest(inputs, STAGE_R_PARAMETERS, { ...hashes, [file]: '0'.repeat(64) })).not.toBe(reference);
+
+    const plan = harness();
+    await runCli([...base, '--mode', 'plan'], plan.deps);
+    expect(digestOf(plan.out)).toMatch(/^[0-9a-f]{64}$/u);
+    const run = harness();
+    const stale = stageRDigest({ set: { digest: memoryDigest(smallSet()), memories: SIZE, queries: SIZE }, planned: ['L', 'E0', 'E4'], pins: [], dropped: [] }, { ...STAGE_R_PARAMETERS, runtime: { ...RUNTIME_CONSTANTS, recencyWeight: 0.9 } });
+    expect(await runCli([...base, '--mode', 'run', '--plan-digest', stale], run.deps)).toBe(EXIT_BLOCKED);
+    expect(run.built()).toBe(0);
+  });
+
+  it('literals that production does not export match the production source', () => {
+    const root = join(__dirname, '../../../../..');
+    const read = (file: string): string => readFileSync(join(root, file), 'utf8');
+    const retriever = read('packages/core/src/application/memory-retriever.ts');
+    expect(retriever).toContain(`const CANDIDATE_FETCH_MULTIPLIER = ${RUNTIME_CONSTANTS.candidateFetchMultiplier};`);
+    expect(retriever).toContain(`const MIN_CANDIDATE_FETCH = ${RUNTIME_CONSTANTS.candidateFetchMin};`);
+    expect(retriever).toContain(`const DEFAULT_RECENCY_WEIGHT = ${RUNTIME_CONSTANTS.recencyWeight};`);
+    expect(retriever).toContain('const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1_000;');
+    const builder = read('packages/core/src/application/context-builder.ts');
+    expect(builder).toContain(`const DURABLE_RECALL_LIMIT = ${RUNTIME_CONSTANTS.maxResults};`);
+    for (const level of RUNTIME_CONSTANTS.authorityFitness) expect(builder).toContain(`'${level}',`);
+    expect(read('apps/quoky/src/config.ts')).toContain(`const DEFAULT_EMBEDDING_TIMEOUT_MS = ${RUNTIME_CONSTANTS.embeddingTimeoutMs};`);
+  });
+});
+
+describe('stage R: warm prewarming must be complete', () => {
+  const stuckProvider = (): RuntimeEmbeddingProvider => {
+    const inner = fakeProvider();
+    return {
+      ...inner,
+      execute: async (request) => {
+        if (request.prompt.includes('note 7 ')) throw new Error('embedding failed');
+        return inner.execute(request);
+      },
+    } as RuntimeEmbeddingProvider;
+  };
+  it('an arm whose memories cannot all be embedded is INVALID with the missing count and runs no queries', async () => {
+    const run = await runArmFresh({ arm: 'E0', mode: 'warm', set: smallSet(), provider: stuckProvider(), tmpRoot: scratch });
+    expect(run.invalid).not.toBeNull();
+    expect(run.invalid?.missing).toBeGreaterThan(0);
+    expect(run.prewarm?.missing).toBe(run.invalid?.missing);
+    expect(run.diagnostics.queries).toBe(0);
+  }, 60_000);
+
+  it('the CLI reports it and exits INVALID (5), still writing the report', async () => {
+    const plan = harness();
+    await runCli([...base, '--mode', 'plan'], plan.deps);
+    const run = harness();
+    run.deps.runtime = { ...run.deps.runtime, provider: () => stuckProvider() };
+    expect(await runCli([...base, '--mode', 'run', '--plan-digest', digestOf(plan.out)], run.deps)).toBe(EXIT_INVALID);
+    expect(run.out.join('\n')).toContain('E0/warm: INVALID');
+    expect(run.reports.some((entry) => entry.name.startsWith('chunk-eval-memory-stage-r-'))).toBe(true);
   }, 60_000);
 });

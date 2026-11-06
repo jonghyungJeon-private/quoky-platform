@@ -23,12 +23,18 @@
  * through the same scorer, so only the candidate cap, the single vector and the blend remain). Status NON-GATING.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { OllamaCliEmbeddingProvider } from '@quoky/ai-cli';
+import { join, resolve } from 'node:path';
+import { MAX_EMBEDDING_INPUT_CHARS, OllamaCliEmbeddingProvider } from '@quoky/ai-cli';
 import {
   Capability,
+  DEFAULT_DURABLE_RECALL_LIMIT,
+  DEFAULT_MAX_INDEXED_VECTORS,
+  DEFAULT_MAX_NEW_EMBEDDINGS_PER_TURN,
+  DEFAULT_SEMANTIC_TURN_BUDGET_MS,
+  DEFAULT_SEMANTIC_WEIGHT,
+  DURABLE_MEMORY_VECTOR_COLLECTION,
   DefaultMemoryRetriever,
   MemoryType,
   NoProviderAvailableError,
@@ -73,16 +79,55 @@ export const SPREAD_DAYS = 180;
 export const ACTOR_ID = 'ch7-runtime-actor';
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-/** Mirrors `ContextBuilder` (DURABLE_RECALL_LIMIT, DURABLE_AUTHORITY_FITNESS) and config.ts (embedding defaults). */
+/**
+ * Mirrors `ContextBuilder` (DURABLE_RECALL_LIMIT, DURABLE_AUTHORITY_FITNESS) and config.ts (embedding timeout default). Where the
+ * production module EXPORTS a constant it is imported; the rest are literals pinned against the production source by tests
+ * (`stage-r.test.ts`: "literals match the production source"): maxResults and authorityFitness (context-builder.ts),
+ * embeddingTimeoutMs (config.ts), the candidate fetch multiplier / minimum, recency weight and half-life (memory-retriever.ts).
+ */
 export const RUNTIME_CONSTANTS = {
   maxResults: 10,
   authorityFitness: ['USER_CLAIM_OR_INTENT', 'ASSISTANT_NON_AUTHORITATIVE', 'NON_AUTHORITATIVE_BACKGROUND'] as readonly DurableMemoryAuthorityLevel[],
-  maxNewEmbeddingsPerTurn: 4,
+  maxNewEmbeddingsPerTurn: DEFAULT_MAX_NEW_EMBEDDINGS_PER_TURN,
   embeddingTimeoutMs: 3_000,
+  semanticTurnBudgetMs: DEFAULT_SEMANTIC_TURN_BUDGET_MS,
+  vectorQueryLimit: DEFAULT_MAX_INDEXED_VECTORS,
+  maxEmbeddingInputChars: MAX_EMBEDDING_INPUT_CHARS,
+  vectorCollection: DURABLE_MEMORY_VECTOR_COLLECTION,
+  retrieverDefaultLimit: DEFAULT_DURABLE_RECALL_LIMIT,
+  candidateFetchMultiplier: 5,
+  candidateFetchMin: 50,
+  recencyWeight: 0.25,
+  recencyHalfLifeMs: 30 * 24 * 60 * 60 * 1_000,
+  semanticWeight: DEFAULT_SEMANTIC_WEIGHT,
   ollamaBin: 'ollama',
-  retrieverOptions: 'default (limit 10, recency weight 0.25, half-life 30 days, semantic weight 0.7)',
   candidatePool: 'findDurableCandidates: newest updatedAt first, LIMIT max(maxResults * 5, 50) = 50',
 } as const;
+
+// ---------------------------------------------------------------- implementation identity (part of the plan digest)
+
+const REPO_ROOT = resolve(__dirname, '../../../../..');
+/** The source files of the runtime classes a stage R run exercises (plus this file), repo-relative. */
+export const IMPLEMENTATION_FILES = [
+  'packages/core/src/application/memory-retriever.ts',
+  'packages/core/src/application/recall/semantic-recall-scorer.ts',
+  'packages/core/src/application/semantic-relevance.ts',
+  'packages/ai-cli/src/ollama-embedding-provider.ts',
+  'packages/vector-local/src/index.ts',
+  'packages/storage-sqlite/src/index.ts',
+  'apps/quoky/src/tools/chunk-eval/stage-r.ts',
+] as const;
+
+export type ImplementationHashes = Readonly<Record<string, string>>;
+let hashCache: ImplementationHashes | undefined;
+/** sha256 of each runtime source file, read from the repo (cached per process). */
+export function implementationHashes(root: string = REPO_ROOT): ImplementationHashes {
+  if (root === REPO_ROOT && hashCache !== undefined) return hashCache;
+  const out: Record<string, string> = {};
+  for (const file of IMPLEMENTATION_FILES) out[file] = createHash('sha256').update(readFileSync(join(root, file))).digest('hex');
+  if (root === REPO_ROOT) hashCache = out;
+  return out;
+}
 
 export const STAGE_R_PARAMETERS = {
   seed: SEED_LABEL,
@@ -92,6 +137,7 @@ export const STAGE_R_PARAMETERS = {
   actorId: ACTOR_ID,
   storage: 'real SqliteStorageProvider on a temp file, memories saved as LONG_TERM durable (USER_PROVIDED, SEMANTIC) for one actor',
   runtime: RUNTIME_CONSTANTS,
+  warmCompleteness: 'warm mode requires a stored vector for every memory (store read + scorer pass) before any query; otherwise the warm run is INVALID with the missing count',
   modes: { live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new documents per turn, 3 s turn budget)', warm: 'every memory embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
   ranking: 'the retriever results (top 10); gold rank outside the top 10 counts as a miss, so MRR is MRR@10 here',
   diagnostics: ['gold not in the candidate pool (recent-50 cap)', 'gold without a semantic score', 'scorer fallbacks by reason', 'retrieval latency p50 / p95'],
@@ -173,8 +219,8 @@ export interface StageRInputs {
   readonly dropped: readonly { readonly arm: string; readonly reason: string }[];
 }
 
-export function stageRDigest(input: StageRInputs, parameters: unknown = STAGE_R_PARAMETERS): string {
-  const body = { version: STAGE_R_PLAN_VERSION, stage: 'R', set: input.set, planned: input.planned, pins: input.pins, dropped: input.dropped.map((d) => d.arm), parameters };
+export function stageRDigest(input: StageRInputs, parameters: unknown = STAGE_R_PARAMETERS, implementation: ImplementationHashes = implementationHashes()): string {
+  const body = { version: STAGE_R_PLAN_VERSION, stage: 'R', set: input.set, planned: input.planned, pins: input.pins, dropped: input.dropped.map((d) => d.arm), parameters, implementation };
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
@@ -280,7 +326,9 @@ export interface RuntimeArmRun {
   readonly model: string | null;
   readonly metrics: PathMetrics;
   readonly diagnostics: RuntimeDiagnostics;
-  readonly prewarm: { readonly stored: number; readonly of: number; readonly scoringCalls: number } | null;
+  readonly prewarm: { readonly stored: number; readonly of: number; readonly scoringCalls: number; readonly storeCount: number; readonly missing: number } | null;
+  /** Set when the run cannot be reported as a valid measurement (warm prewarming incomplete). */
+  readonly invalid: { readonly reason: string; readonly missing: number } | null;
 }
 
 export interface RunOptions {
@@ -299,6 +347,16 @@ const fixedSelector = (provider: AiProvider): ProviderSelector => ({
     if (capability !== Capability.EMBEDDING) throw new NoProviderAvailableError(capability);
     return provider;
   },
+});
+
+const invalidRun = (arm: StageRArmId, mode: RunMode, prewarm: NonNullable<RuntimeArmRun['prewarm']>, reason: string): RuntimeArmRun => ({
+  arm,
+  mode,
+  model: arm === 'L' ? null : stageRModel(arm),
+  metrics: pathMetrics({ memories: [], queries: [] } as unknown as MemorySet, []),
+  diagnostics: { queries: 0, goldNotInPool: share(0, 0), goldNoSemanticScore: null, goldInPoolNoSemanticScore: null, poolSize: { min: 0, max: 0 }, scorerNullQueries: 0, fallbackReasons: {}, embeddedDocuments: 0, latencyMs: { p50: 0, p95: 0 } },
+  prewarm,
+  invalid: { reason, missing: prewarm.missing },
 });
 
 export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun> {
@@ -351,9 +409,18 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       const provider = options.provider as RuntimeEmbeddingProvider;
       const vectors = new LocalVectorProvider(join(options.workDir, 'vectors'));
       await vectors.init();
+      let dimension = 0;
+      const observed = {
+        upsert: (collection: string, records: Parameters<LocalVectorProvider['upsert']>[1]) => {
+          for (const record of records) dimension = record.vector.length;
+          return vectors.upsert(collection, records);
+        },
+        query: (collection: string, vector: number[], topK: number) => vectors.query(collection, vector, topK),
+        delete: (collection: string, ids: Parameters<LocalVectorProvider['delete']>[1]) => vectors.delete(collection, ids),
+      } as unknown as LocalVectorProvider;
       // mirrors context-builder-provider.ts: local-only selector, the production collection default, 4 per turn, 3 s call bound
       scorer = new SemanticRecallScorer(
-        { selector: localOnlyProviderSelector(fixedSelector(provider)), vectors, logger },
+        { selector: localOnlyProviderSelector(fixedSelector(provider)), vectors: observed, logger },
         { maxNewEmbeddingsPerTurn: RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn, embeddingTimeoutMs: RUNTIME_CONSTANTS.embeddingTimeoutMs },
       );
       // like the router at startup: one availability probe, then let the background warm-up finish before any turn
@@ -369,7 +436,13 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
           const scores = await scorer.score('warm-up', candidates);
           stored = scores?.size ?? stored;
         }
-        prewarm = { stored, of: candidates.length, scoringCalls: calls };
+        // the store itself must hold a vector (of the arm's space) for every memory
+        const ids = new Set(candidates.map((candidate) => candidate.id));
+        const inStore = dimension === 0 ? [] : await vectors.query(DURABLE_MEMORY_VECTOR_COLLECTION, new Array<number>(dimension).fill(1), RUNTIME_CONSTANTS.vectorQueryLimit);
+        const storeCount = new Set(inStore.filter((hit) => ids.has(hit.id) && hit.metadata?.space !== undefined).map((hit) => hit.id)).size;
+        const missing = Math.max(candidates.length - storeCount, candidates.length - stored);
+        prewarm = { stored, of: candidates.length, scoringCalls: calls, storeCount, missing };
+        if (missing > 0) return invalidRun(arm, mode, prewarm, `warm prewarming incomplete: ${missing} of ${candidates.length} memories have no stored vector after ${calls} scoring calls`);
       }
       const inner = scorer;
       semantic = {
@@ -428,6 +501,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
         latencyMs: (({ p50, p95 }) => ({ p50: Math.round(p50 * 10) / 10, p95: Math.round(p95 * 10) / 10 }))(percentiles(latencies)),
       },
       prewarm,
+      invalid: null,
     };
   } finally {
     await storage.close();
@@ -469,6 +543,10 @@ export function summaryLinesStageR(report: StageRReport): string[] {
   const out = [`eval:chunk stage R (runtime-path recall, NON-GATING) - plan ${report.plan.digest.slice(0, 12)}, memory set ${report.memorySetDigest.slice(0, 12)}`];
   out.push('Recall@5 / MRR@10 (n per language ' + String(report.runs[0]?.metrics.byLanguage.ko?.n ?? 0) + '):');
   for (const run of report.runs) {
+    if (run.invalid !== null) {
+      out.push(`${run.arm}/${run.mode}: INVALID - ${run.invalid.reason} (missing vectors ${run.invalid.missing}); no queries were run`);
+      continue;
+    }
     const by = (language: string): string => `${language} ${f3(run.metrics.byLanguage[language]?.recallAt5 ?? 0)}`;
     out.push(`${run.arm}/${run.mode}: all ${f3(run.metrics.overall.recallAt5)} (MRR ${f3(run.metrics.overall.mrr)}) ${LANGUAGES.map(by).join(' ')} long ${f3(run.metrics.longMemories.recallAt5)} short ${f3(run.metrics.shortMemories.recallAt5)}`);
     const d = run.diagnostics;
