@@ -28,6 +28,8 @@ export {
 } from './semantic-recall-scorer';
 export type {
   SemanticRecallCandidate,
+  SemanticRecallMaintenance,
+  SemanticRecallMaintenanceOptions,
   SemanticRecallScorerDeps,
   SemanticRecallScorerOptions,
   SemanticRecallScoring,

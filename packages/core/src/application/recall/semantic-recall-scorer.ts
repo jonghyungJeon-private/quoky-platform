@@ -80,6 +80,27 @@ export interface SemanticRecallScoring {
   openSession?(query: string): Promise<SemanticRecallSession | null>;
 }
 
+/** What one maintenance pass (ADR-0124 section 5.4, outside any turn) did. */
+export interface SemanticRecallMaintenance {
+  readonly space: string;
+  readonly collection: string;
+  /** Vectors embedded and stored in this pass. */
+  readonly embedded: number;
+  /** Vector units of live memories that are still missing after this pass. */
+  readonly remaining: number;
+  /** Stored vectors removed: a memory no longer live, or a passage ordinal beyond the memory's current units. */
+  readonly deleted: number;
+}
+
+export interface SemanticRecallMaintenanceOptions {
+  /** New vectors embedded in this pass (each passage counts one). Default: the per-turn bound. */
+  readonly maxNew?: number;
+  /** Wall-clock bound for the pass. Default: 30 s. */
+  readonly budgetMs?: number;
+  /** False when `live` may be a truncated list: nothing is swept, because absence from it proves nothing. */
+  readonly sweep?: boolean;
+}
+
 export interface SemanticRecallScorerDeps {
   readonly selector: ProviderSelector;
   readonly vectors: VectorProvider;
@@ -194,6 +215,90 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
     if (this.eligibleOf(candidates).length === 0) return null;
     const session = await this.openSession(query);
     return session === null ? null : session.score(candidates);
+  }
+
+  /**
+   * Maintenance pass for the space's collection, run by an app-layer job and never inside a turn (ADR-0124 section
+   * 5.4). `live` is every live durable memory (the caller applies the recall filters). It embeds at most `maxNew`
+   * missing or stale vector units, newest memory first, through the same provider selection, credential rule and
+   * unit mapping as scoring, and (with `sweep`) deletes every stored id that is not a unit of a live memory: a
+   * forgotten, archived, superseded, expired or deleted memory, and passage ordinals beyond a memory's current
+   * units. Returns `null` when the provider is unavailable or anything fails (the caller backs off).
+   */
+  async maintain(
+    live: readonly SemanticRecallCandidate[],
+    options: SemanticRecallMaintenanceOptions = {},
+  ): Promise<SemanticRecallMaintenance | null> {
+    const startedAtMs = this.nowMs();
+    const deadline: TurnDeadline = { expiresAtMs: startedAtMs + (options.budgetMs ?? 30_000), expired: false };
+    const maxNew = positiveInteger(options.maxNew ?? this.maxNew, 'maxNew');
+    let embedded = 0;
+    try {
+      const provider = await this.within(deadline, this.selectProvider());
+      // The space is only known from an envelope: a fixed content-free text identifies it.
+      const probe = await this.within(deadline, this.embed(provider, 'index maintenance', 'query', deadline));
+      const collection = this.collectionFor === undefined ? this.collection : this.collectionFor(probe.space);
+      const stored = await this.within(deadline, this.deps.vectors.query(collection, [...probe.vector], this.maxIndexed));
+      const byId = new Map(stored.map((hit) => [hit.id, hit]));
+
+      const wanted = new Set<Id>();
+      const missing: Array<{ memoryId: Id; vectorId: Id; text: string; contentHash: string }> = [];
+      for (const candidate of this.eligibleOf(live)) {
+        for (const unit of memoryVectorUnits(candidate.id, candidate.content, this.multiVector)) {
+          wanted.add(unit.vectorId);
+          const contentHash = contentHashOf(unit.text);
+          const hit = byId.get(unit.vectorId);
+          const fresh =
+            hit !== undefined &&
+            hit.metadata?.contentHash === contentHash &&
+            hit.metadata?.space === probe.space &&
+            hit.metadata?.dimensions === probe.dimensions;
+          if (!fresh) missing.push({ memoryId: candidate.id, vectorId: unit.vectorId, text: unit.text, contentHash });
+        }
+      }
+
+      let deleted = 0;
+      if (options.sweep !== false) {
+        const surplus = stored.filter((hit) => !wanted.has(hit.id)).map((hit) => hit.id);
+        if (surplus.length > 0) {
+          await this.within(deadline, this.deps.vectors.delete(collection, surplus));
+          deleted = surplus.length;
+        }
+      }
+
+      const batch: VectorRecord[] = [];
+      for (const item of missing.slice(0, maxNew)) {
+        const envelope = await this.within(deadline, this.embed(provider, item.text, 'document', deadline));
+        if (envelope.space !== probe.space || envelope.dimensions !== probe.dimensions) throw new SemanticRecallFallback('ERROR');
+        embedded += 1;
+        batch.push({
+          id: item.vectorId,
+          vector: [...envelope.vector],
+          metadata: {
+            contentHash: item.contentHash,
+            space: envelope.space,
+            dimensions: envelope.dimensions,
+            ...(item.vectorId === item.memoryId ? {} : { memoryId: item.memoryId }),
+          },
+        });
+      }
+      if (batch.length > 0) await this.within(deadline, this.deps.vectors.upsert(collection, batch));
+      this.logger.info('semantic index maintained', {
+        live: live.length,
+        embedded,
+        remaining: missing.length - embedded,
+        deleted,
+        latencyMs: this.nowMs() - startedAtMs,
+      });
+      return { space: probe.space, collection, embedded, remaining: missing.length - embedded, deleted };
+    } catch (error) {
+      this.logger.warn('semantic index maintenance unavailable', {
+        reason: error instanceof SemanticRecallFallback ? error.reason : 'ERROR',
+        embedded,
+        latencyMs: this.nowMs() - startedAtMs,
+      });
+      return null;
+    }
   }
 
   async openSession(query: string): Promise<SemanticRecallSession | null> {

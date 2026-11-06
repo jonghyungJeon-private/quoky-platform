@@ -16,6 +16,7 @@ import {
   type VectorProvider,
 } from '@quoky/core';
 import type { QuokyConfig } from './config';
+import { MemoryVectorBackfill } from './memory-vector-backfill';
 
 /**
  * Opt-in semantic recall composition (ADR-0098 D8). Passed only when `QUOKY_EMBEDDING_ENABLED=true`; without it
@@ -100,6 +101,21 @@ export function createProductionMemoryScorer(semanticRecall: ProductionSemanticR
       embeddingTimeoutMs: semanticRecall.timeoutMs,
     },
   );
+}
+
+/**
+ * The production backfill job (ADR-0124 section 5.4): the SAME scorer as recall, so it embeds locally only and under
+ * the same credential rule; started by `main.ts` after the application is up.
+ */
+export function createProductionMemoryBackfill(
+  storage: Pick<StorageProvider, 'memories'>,
+  semanticRecall: ProductionSemanticRecallOptions,
+): MemoryVectorBackfill {
+  return new MemoryVectorBackfill({
+    scorer: createProductionMemoryScorer(semanticRecall),
+    memories: () => storage.memories,
+    ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
+  });
 }
 
 /** The production retriever over `repository`: the scorer above when semantic recall is on, lexical otherwise. */
