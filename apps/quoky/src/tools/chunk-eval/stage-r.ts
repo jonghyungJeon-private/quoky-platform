@@ -111,8 +111,10 @@ const REPO_ROOT = resolve(__dirname, '../../../../..');
 export const IMPLEMENTATION_FILES = [
   'packages/core/src/application/memory-retriever.ts',
   'packages/core/src/application/recall/semantic-recall-scorer.ts',
+  'packages/core/src/application/recall/embedding-envelope.ts',
   'packages/core/src/application/semantic-relevance.ts',
   'packages/ai-cli/src/ollama-embedding-provider.ts',
+  'packages/ai-cli/src/cli-runner.ts',
   'packages/vector-local/src/index.ts',
   'packages/storage-sqlite/src/index.ts',
   'apps/quoky/src/tools/chunk-eval/stage-r.ts',
