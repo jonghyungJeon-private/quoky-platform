@@ -109,6 +109,29 @@ describe('stage R: the runtime path on a set larger than the candidate pool', ()
   });
 });
 
+describe('stage R: backfilled mode runs the real backfill job before the queries', () => {
+  it('stores every vector unit through the job, then measures like warm; live stays a fresh switch without backfill', async () => {
+    const set = smallSet();
+    const live = await runArmFresh({ arm: 'E0', mode: 'live', set, provider: fakeProvider(), tmpRoot: scratch });
+    const backfilled = await runArmFresh({ arm: 'E0', mode: 'backfilled', set, provider: fakeProvider(), tmpRoot: scratch });
+    expect(live.prewarm).toBeNull();
+    expect(backfilled.invalid).toBeNull();
+    expect(backfilled.prewarm).toMatchObject({ stored: SIZE, of: SIZE, missing: 0 });
+    expect(backfilled.diagnostics.embeddedDocuments).toBe(0);
+    expect(backfilled.diagnostics.goldNotInPool.n).toBe(0);
+    expect(backfilled.metrics.overall.recallAt5).toBeGreaterThan(0.9);
+    expect(backfilled.metrics.overall.recallAt5).toBeGreaterThan(live.metrics.overall.recallAt5);
+  }, 60_000);
+
+  it('an arm the job cannot complete is INVALID with the missing count', async () => {
+    const inner = fakeProvider();
+    const stuck = { ...inner, execute: async (request: Parameters<typeof inner.execute>[0]) => { if (request.prompt.includes('note 7 ')) throw new Error('embedding failed'); return inner.execute(request); } } as RuntimeEmbeddingProvider;
+    const run = await runArmFresh({ arm: 'E0', mode: 'backfilled', set: smallSet(), provider: stuck, tmpRoot: scratch });
+    expect(run.invalid?.missing).toBeGreaterThan(0);
+    expect(run.diagnostics.queries).toBe(0);
+  }, 60_000);
+});
+
 describe('stage R: the real CH7 set on the lexical arm', () => {
   it('runs all 192 queries through sqlite and the retriever with a 50-memory pool', async () => {
     const run = await runArmFresh({ arm: 'L', mode: 'lexical', set: generateMemorySet(), tmpRoot: scratch });
@@ -208,7 +231,7 @@ describe('stage R: CLI gating and reporting', () => {
     expect(await runCli([...base, '--mode', 'run', '--plan-digest', digest], run.deps)).toBe(EXIT_NON_GATING);
     const report = run.reports.find((entry) => entry.name.startsWith('chunk-eval-memory-stage-r-'))?.report as { status: string; runs: Array<{ arm: string; mode: string }> };
     expect(report.status).toBe('NON-GATING');
-    expect(report.runs.map((r) => `${r.arm}/${r.mode}`)).toEqual(['L/lexical', 'E0/live', 'E0/warm', 'E4/live', 'E4/warm']);
+    expect(report.runs.map((r) => `${r.arm}/${r.mode}`)).toEqual(['L/lexical', 'E0/live', 'E0/backfilled', 'E0/warm', 'E4/live', 'E4/backfilled', 'E4/warm']);
     expect(run.out.join('\n')).toContain('E4/warm:');
   }, 60_000);
 
@@ -223,7 +246,7 @@ describe('stage R: CLI gating and reporting', () => {
     expect(run.out.join('\n')).toContain('dropped E4:');
     const report = run.reports.find((entry) => entry.name.startsWith('chunk-eval-memory-stage-r-'))?.report as { runs: Array<{ arm: string }> };
     expect(report.runs.some((r) => r.arm === 'E4')).toBe(false);
-    expect(run.built()).toBe(2);
+    expect(run.built()).toBe(3);
   }, 60_000);
 });
 
@@ -246,7 +269,7 @@ describe('stage R: daemon rule', () => {
 
 describe('stage R: the plan digest binds parameters and implementation identity', () => {
   it('the hashed implementation list covers the chunker, the passage mapping and the shared production wiring', () => {
-    for (const file of ['packages/core/src/application/recall/memory-passages.ts', 'packages/core/src/application/chunking/passages.ts', 'packages/core/src/application/chunking/boundaries.ts', 'packages/core/src/application/chunking/code-points.ts', 'packages/core/src/application/chunking/token-estimate.ts', 'apps/quoky/src/context-builder-provider.ts']) {
+    for (const file of ['packages/core/src/application/recall/memory-passages.ts', 'packages/core/src/application/chunking/passages.ts', 'packages/core/src/application/chunking/boundaries.ts', 'packages/core/src/application/chunking/code-points.ts', 'packages/core/src/application/chunking/token-estimate.ts', 'apps/quoky/src/context-builder-provider.ts', 'apps/quoky/src/memory-vector-backfill.ts']) {
       expect(IMPLEMENTATION_FILES).toContain(file);
     }
     // every non-test source file of the chunker is hashed

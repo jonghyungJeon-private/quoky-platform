@@ -60,7 +60,8 @@ import {
 import type { SemanticRecallScorer } from '@quoky/core';
 import { SqliteStorageProvider } from '@quoky/storage-sqlite';
 import { LocalVectorProvider } from '@quoky/vector-local';
-import { createProductionMemoryScorer } from '../../context-builder-provider';
+import { BACKFILL_BATCH } from '../../memory-vector-backfill';
+import { createProductionMemoryBackfill, createProductionMemoryScorer } from '../../context-builder-provider';
 import { percentiles, type FetchLike } from '../selector-rag/embed';
 import { ARM_SPECS, resolveArms, type ArmPin } from './embed-arms';
 import { LANGUAGES, seeded } from './corpus';
@@ -71,7 +72,7 @@ export const STAGE_R_PLAN_VERSION = 'runtime-recall-plan.v2';
 export const STAGE_R_ARM_IDS = ['L', 'E0', 'E4'] as const;
 export type StageRArmId = (typeof STAGE_R_ARM_IDS)[number];
 export type SemanticArmId = Exclude<StageRArmId, 'L'>;
-export type RunMode = 'lexical' | 'live' | 'warm';
+export type RunMode = 'lexical' | 'live' | 'backfilled' | 'warm';
 
 export const parseStageRArm = (token: string): StageRArmId | undefined => (STAGE_R_ARM_IDS as readonly string[]).includes(token) ? (token as StageRArmId) : undefined;
 export const isSemanticArm = (arm: StageRArmId): arm is SemanticArmId => arm !== 'L';
@@ -136,6 +137,7 @@ export const IMPLEMENTATION_FILES = [
   'packages/core/src/application/chunking/token-estimate.ts',
   'packages/core/src/application/chunking/types.ts',
   'apps/quoky/src/context-builder-provider.ts',
+  'apps/quoky/src/memory-vector-backfill.ts',
   'packages/core/src/application/semantic-relevance.ts',
   'packages/ai-cli/src/ollama-embedding-provider.ts',
   'packages/ai-cli/src/cli-runner.ts',
@@ -164,7 +166,7 @@ export const STAGE_R_PARAMETERS = {
   storage: 'real SqliteStorageProvider on a temp file, memories saved as LONG_TERM durable (USER_PROVIDED, SEMANTIC) for one actor',
   runtime: RUNTIME_CONSTANTS,
   warmCompleteness: 'warm mode requires a stored vector for every vector unit (the memory id for a short memory, one per passage for a long one) in the space collection before any query; otherwise the warm run is INVALID with the missing count',
-  modes: { live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new vectors per turn, passages count one each, 3 s turn budget); an empty store widens nothing', warm: 'every vector unit embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
+  modes: { backfilled: 'the real production backfill job (memory-vector-backfill.ts, batch 8 per tick) runs to completion before the queries, then the same queries; requires a stored vector for every vector unit, otherwise INVALID', live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new vectors per turn, passages count one each, 3 s turn budget); an empty store widens nothing', warm: 'every vector unit embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
   ranking: 'the retriever results (top 10); gold rank outside the top 10 counts as a miss, so MRR is MRR@10 here',
   diagnostics: ['gold not in the candidate pool (recent 50 plus the semantic top-K)', 'gold without a semantic score', 'scorer fallbacks by reason', 'retrieval latency p50 / p95'],
   status: 'NON-GATING',
@@ -307,6 +309,7 @@ export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm:
       const perQuery = 1 + RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn;
       out.push({ arm, mode: 'live', queries: set.queries.length, modelCallsUpperBound: set.queries.length * perQuery });
       const units = vectorUnitsOf(set);
+      out.push({ arm, mode: 'backfilled', queries: set.queries.length, modelCallsUpperBound: set.queries.length + units.length + Math.ceil(units.length / BACKFILL_BATCH) + 20 });
       out.push({ arm, mode: 'warm', queries: set.queries.length, modelCallsUpperBound: set.queries.length + Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) * perQuery + units.length });
     }
   }
@@ -474,7 +477,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       // like the router at startup: one availability probe, then let the background warm-up finish before any turn
       await provider.isAvailable().catch(() => false);
       await provider.warmUpSettled?.();
-      if (mode === 'warm') {
+      if (mode === 'warm' || mode === 'backfilled') {
         const candidates = set.memories.map((memory) => ({ id: memory.id, content: memory.text }));
         const units = vectorUnitsOf(set);
         const wanted = new Set(units.map((unit) => unit.vectorId));
@@ -485,16 +488,34 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
         };
         let stored = 0;
         let calls = 0;
-        const limit = Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) + 20;
-        while (stored < units.length && calls < limit) {
-          calls += 1;
-          await scorer.score('warm-up', candidates);
+        if (mode === 'backfilled') {
+          // the REAL production backfill job (ADR-0124 5.4) runs to completion before any query: what the owner has once it caught up
+          const job = createProductionMemoryBackfill(storage, {
+            selector: fixedSelector(provider),
+            vectors: observed,
+            timeoutMs: RUNTIME_CONSTANTS.embeddingTimeoutMs,
+            maxNewPerTurn: RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn,
+          });
+          const limit = Math.ceil(units.length / BACKFILL_BATCH) + 20;
+          let ticks = 0;
+          for (; ticks < limit; ticks += 1) {
+            const tick = await job.runOnce();
+            if (tick.state !== 'working') break;
+          }
+          calls = ticks + 1;
           stored = await countStored();
+        } else {
+          const limit = Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) + 20;
+          while (stored < units.length && calls < limit) {
+            calls += 1;
+            await scorer.score('warm-up', candidates);
+            stored = await countStored();
+          }
         }
         // the store itself must hold a vector (of the arm's space) for every unit
         const missing = units.length - stored;
         prewarm = { stored, of: units.length, scoringCalls: calls, storeCount: stored, missing };
-        if (missing > 0) return invalidRun(arm, mode, prewarm, `warm prewarming incomplete: ${missing} of ${units.length} vectors are not stored after ${calls} scoring calls`);
+        if (missing > 0) return invalidRun(arm, mode, prewarm, `${mode} prewarming incomplete: ${missing} of ${units.length} vectors are not stored after ${calls} passes`);
       }
       const inner = scorer;
       // observer only: records the scores the real scorer session returned and changes nothing

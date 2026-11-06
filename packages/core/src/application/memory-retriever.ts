@@ -281,21 +281,25 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     if (session === null || this.repository.findDurableCandidatesByIds === undefined) return recent;
     try {
       const known = new Set(recent.map((record) => record.id));
+      const recentIds = new Set(known);
       const nearest = await session.nearestMemoryIds(SEMANTIC_CANDIDATE_TOP_K * SEMANTIC_CANDIDATE_OVERFETCH);
       const ids = nearest.filter((id) => !known.has(id));
       if (ids.length === 0) return recent;
       const found = new Map((await this.repository.findDurableCandidatesByIds({ ...filter, ids })).map((record) => [record.id, record]));
-      // Nearest first; ids the store's filters dropped are skipped and the next nearest takes the slot. K counts
-      // memories that are in the pool, including the ones the recent pool already holds.
-      let kept = nearest.length - ids.length;
+      // Walk the nearest ids in order: a memory already in the recent pool counts toward K, a fetched record is added
+      // and counts, an id the store's filters dropped is skipped and the next nearest takes its slot.
+      let kept = 0;
       const merged = [...recent];
-      for (const id of ids) {
+      for (const id of nearest) {
         if (kept >= SEMANTIC_CANDIDATE_TOP_K) break;
         const record = found.get(id);
-        if (record === undefined || known.has(id)) continue;
-        known.add(id);
-        merged.push(record);
-        kept += 1;
+        if (record !== undefined && !known.has(id)) {
+          known.add(id);
+          merged.push(record);
+          kept += 1;
+        } else if (record === undefined && recentIds.has(id)) {
+          kept += 1;
+        }
       }
       return merged;
     } catch {
