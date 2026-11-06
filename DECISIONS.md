@@ -33087,3 +33087,20 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
 - **Review fixes (Codex P1, P2, P2).** Digest coverage: the plan digest now also binds every effective runtime parameter (max new embeddings per turn, per-call timeout, semantic turn budget, vector query limit, max embedding input chars, candidate fetch multiplier / minimum, recency weight and half-life, semantic weight, maxResults, authority levels; exported production constants are imported, the rest are literals pinned against the production source by a test) and the sha256 of the runtime source files (memory-retriever, semantic-recall-scorer, semantic-relevance, ollama-embedding-provider, vector-local index, storage-sqlite index, stage-r.ts), read from the repo; a digest computed under other parameters or hashes is BLOCKED. Daemon rule: stage R pins from `--ollama-url` but runs through the `ollama` CLI's default daemon, so only the default daemon is accepted (other `--ollama-url`: USAGE, exit 2) and an `OLLAMA_HOST` set to anything else is refused (USAGE). Warm completeness: before warm queries every memory must have a stored vector (store read plus scorer pass); otherwise that warm run is INVALID with the missing count, runs no queries, the report is still written and the exit code is 5.
 - **Not run.** No model was called by anything run for this change; the tests use a fake embedding provider and a fake daemon. `--mode run` needs the owner's yes on the plan digest.
 - Codex r2 (digest identity): `embedding-envelope.ts` and `cli-runner.ts` added to the hashed implementation files. Residual risk accepted (fix-loop cap): the digest hashes sources, not the built JavaScript; the orchestrator runs `pnpm build` from the same clean tree right before `--mode run`, so build and source match for the recorded run.
+
+### P2-1 measurement (2026-11-06, plan c5785f97, Ollama 0.40.14, nomic-embed-text@0a109f422b47, embeddinggemma:300m@85462619ee72)
+
+- Run took 96 s; exit 4 (NON-GATING). Recall@5 (MRR@10) through the live recall path, n=192 (64 per language):
+
+| Arm / mode | all | ko | en | mixed | long | gold not in candidate pool | query latency p50 / p95 |
+|---|---|---|---|---|---|---|---|
+| L (lexical only) | 0.146 (0.111) | 0.094 | 0.156 | 0.188 | 0.214 | 69.8% | 2 / 3 ms |
+| E0 live (today) | 0.198 (0.159) | 0.094 | 0.281 | 0.219 | 0.238 | 69.8% | 69 / 273 ms |
+| E0 warm | 0.198 (0.159) | 0.094 | 0.281 | 0.219 | 0.238 | 69.8% | 74 / 102 ms |
+| E4 live | 0.255 (0.217) | 0.219 | 0.297 | 0.250 | 0.214 | 69.8% | 72 / 297 ms |
+| E4 warm | 0.255 (0.217) | 0.219 | 0.297 | 0.250 | 0.214 | 69.8% | 64 / 81 ms |
+
+- The candidate pool dominates: `findDurableCandidates` returns the 50 most recently updated memories, so for 134 of 192 queries (69.8%) the gold memory is never offered to any scorer. The stage A-E harness ranked all 171 memories, which the live path cannot do. Within the 58 queries whose gold is in the pool, E4 places 49 in the top 5 and E0 38.
+- Live and warm agree because only the 50 pool members are ever embedded (4 per turn fills them within the first turns).
+- E4 here runs without its model-card prefixes (the runtime applies none to `embeddinggemma`), single vector per memory.
+- Consequence for P2-2 (owner-approved candidate widening): semantic candidates must come from the vector store over all of the actor's memories, then pass the same scope / authority / expiry / supersession / archive filters, so the pool is no longer the recent 50. P2-2 also adds the E4 prefixes and multi-vector passages; its verification is this stage R with the widened path.
