@@ -150,6 +150,8 @@ export class MemoryVectorBackfill {
   /** Fingerprint of the live memories at the last idle tick, and how many idle ticks since the last full pass. */
   private idleFingerprint: string | undefined;
   private idleSkips = 0;
+  /** The previous tick changed the store: its chain keeps the cached space; the first tick of a chain re-reads it. */
+  private chaining = false;
   private readonly batch: number;
   private readonly stopBoundMs: number;
   private readonly delays: { start: number; active: number; idle: number; retry: number };
@@ -228,7 +230,8 @@ export class MemoryVectorBackfill {
       if (this.turnActive()) return { state: 'paused', ...none };
       const memories = this.deps.memories();
       const at = (): IsoTimestamp | undefined => this.deps.clock?.();
-      if (this.idleFingerprint !== undefined && this.idleSkips < BACKFILL_FULL_PASS_EVERY_IDLE_TICKS) {
+      const forced = this.idleSkips >= BACKFILL_FULL_PASS_EVERY_IDLE_TICKS;
+      if (this.idleFingerprint !== undefined && !forced) {
         // nothing added, edited or removed since the last complete pass: skip the embedder probe and the store read
         const now = await liveDurableMemories(memories, at());
         if (now.fingerprint === this.idleFingerprint) {
@@ -247,17 +250,22 @@ export class MemoryVectorBackfill {
           maxNew: this.batch,
           signal: this.abort.signal,
           shouldYield: () => this.turnActive(),
+          // the first pass after idle time and the hourly forced one re-read the space (a re-pulled model or an upgraded
+          // Ollama is noticed); ticks of one working chain reuse it
+          refreshSpace: forced || !this.chaining,
           confirmLive: (ids) => confirmLiveMemories(memories, ids, at()),
         },
       );
       if (result === null) {
         this.idleFingerprint = undefined;
+        this.chaining = false;
         return { state: 'unavailable', ...none };
       }
       // `working` whenever this pass changed the store: a memory forgotten while it ran is then caught by the next one
       const changed = result.embedded > 0 || result.deleted > 0;
       const working = result.remaining > 0 || changed;
       if (result.yielded === true && !changed) return { state: 'paused', ...none };
+      this.chaining = working;
       this.idleFingerprint = working ? undefined : fingerprint;
       this.idleSkips = 0;
       return { state: working ? 'working' : 'idle', embedded: result.embedded, remaining: result.remaining, deleted: result.deleted };

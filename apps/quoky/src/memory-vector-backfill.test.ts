@@ -18,6 +18,7 @@ import {
 import { MemoryVectorBackfill, confirmLiveMemories, liveDurableMemories } from './memory-vector-backfill';
 
 const SPACE = 'fake-embed/aaaaaaaaaaaa/v0.40.14/p12345678';
+const SPACE_B = 'fake-embed/bbbbbbbbbbbb/v0.41.0/p12345678';
 const COLLECTION = durableMemoryCollectionFor(SPACE);
 const NOW = '2026-11-06T00:00:00.000Z';
 
@@ -28,6 +29,7 @@ class Provider implements AiProvider {
   readonly capabilities = [{ capability: Capability.EMBEDDING, priority: 100 }];
   readonly prompts: string[] = [];
   down = false;
+  space = SPACE;
   onPrompt: ((prompt: string) => void) | undefined;
   hang: ((prompt: string) => boolean) | undefined;
   concurrent = 0;
@@ -41,7 +43,7 @@ class Provider implements AiProvider {
     await new Promise((resolve) => setTimeout(resolve, 1));
     this.concurrent -= 1;
     this.prompts.push(request.prompt);
-    return { text: formatEmbeddingEnvelope(vectorOf(request.prompt), SPACE) };
+    return { text: formatEmbeddingEnvelope(vectorOf(request.prompt), this.space) };
   }
 }
 
@@ -49,7 +51,8 @@ class Store implements VectorProvider {
   readonly collections = new Map<string, Map<string, VectorRecord>>();
   of(name: string) { let found = this.collections.get(name); if (!found) this.collections.set(name, (found = new Map())); return found; }
   async init() {}
-  async upsert(collection: string, records: VectorRecord[]) { for (const record of records) this.of(collection).set(record.id, record); }
+  beforeUpsert: (() => void) | undefined;
+  async upsert(collection: string, records: VectorRecord[]) { this.beforeUpsert?.(); for (const record of records) this.of(collection).set(record.id, record); }
   onQuery: (() => void) | undefined;
   async query(collection: string, vector: number[], topK: number): Promise<VectorQueryResult[]> {
     this.onQuery?.();
@@ -69,7 +72,7 @@ function setup(records: MemoryRecord[], batch = 2, extra: { activity?: RecallAct
   const provider = new Provider();
   const vectors = new Store();
   const scorer = new SemanticRecallScorer(
-    { selector: { select: async () => provider }, vectors },
+    { selector: { select: async () => { if (provider.down) throw new Error('provider down'); return provider; } }, vectors },
     { collectionFor: durableMemoryCollectionFor, multiVector: true, ...extra.scorerOptions },
   );
   let current = records;
@@ -317,11 +320,69 @@ describe('idle ticks (P3)', () => {
     expect(provider.prompts.length).toBeGreaterThan(embeds);
   });
 
-  it('reuses the space of the last embedding instead of a probe embedding on every tick', async () => {
+  it('reuses the space inside a working chain; the first pass after idle time re-reads it', async () => {
     const { job, provider, set, get } = setup([record('a', '고양이')], 1);
     await job.runToCompletion();
     set([...get(), record('b', '커피', {}, { userId: 'owner' }, '2026-11-06T01:00:00.000Z'), record('c', 'x', {}, { userId: 'owner' }, '2026-11-06T02:00:00.000Z')]);
     await job.runToCompletion();
-    expect(provider.prompts.filter((p) => p === 'index maintenance')).toHaveLength(1);
+    // chain 1: one probe; chain 2: one refresh probe at its start, none on the following working ticks
+    expect(provider.prompts.filter((p) => p === 'index maintenance')).toHaveLength(2);
+  });
+});
+
+describe('review round 3', () => {
+  it('a forget landing between the pre-write check and the upsert leaves no vector after the call returns', async () => {
+    const { job, vectors, set, get } = setup([record('keep', '고양이'), record('gone', '커피')], 10);
+    vectors.beforeUpsert = () => set(get().filter((entry) => entry.id !== 'gone'));
+    const tick = await job.runOnce();
+    expect(vectors.ids()).toEqual(['keep']);
+    expect(tick.state).toBe('working');
+    expect(tick.deleted).toBe(1);
+  });
+
+  it('yields before selecting the provider, and before every model step', async () => {
+    const provider = new Provider();
+    let selects = 0;
+    const scorer = new SemanticRecallScorer({ selector: { select: async () => { selects += 1; return provider; } }, vectors: new Store() }, { collectionFor: durableMemoryCollectionFor });
+    const live = async () => ({ candidates: [{ id: 'a', content: '고양이' }], truncated: false });
+    const confirmLive = async (ids: readonly string[]) => new Set(ids);
+    expect(await scorer.maintain(live, { confirmLive, shouldYield: () => true })).toMatchObject({ yielded: true, embedded: 0 });
+    expect(selects).toBe(0);
+    // first check passes, the one before the provider selection says yield
+    let calls = 0;
+    expect(await scorer.maintain(live, { confirmLive, shouldYield: () => ++calls > 1 })).toMatchObject({ yielded: true, embedded: 0 });
+    expect(selects).toBe(0);
+    expect(provider.prompts).toEqual([]);
+  });
+
+  it('with the space known the sweep runs while the provider is down', async () => {
+    const { job, provider, vectors, set, get } = setup([record('a', '고양이'), record('b', '커피')], 10);
+    await job.runToCompletion();
+    provider.down = true;
+    set(get().filter((entry) => entry.id !== 'b'));
+    const tick = await job.runOnce();
+    expect(tick.deleted).toBe(1);
+    expect(vectors.ids()).toEqual(['a']);
+  });
+
+  it('a re-pulled model or upgraded runtime is noticed on the next full pass: the cached space is dropped and the new space is filled', async () => {
+    const { job, provider, vectors, set, get } = setup([record('a', '고양이')], 10);
+    await job.runToCompletion();
+    expect(vectors.ids()).toEqual(['a']);
+    provider.space = SPACE_B;
+    set([...get(), record('b', '커피', {}, { userId: 'owner' }, '2026-11-06T01:00:00.000Z')]);
+    await job.runToCompletion();
+    const next = vectors.of(durableMemoryCollectionFor(SPACE_B));
+    expect([...next.keys()].sort()).toEqual(['a', 'b']);
+    expect([...next.values()].every((r) => r.metadata?.space === SPACE_B)).toBe(true);
+  });
+
+  it('the abort listener is removed when the pass ends', async () => {
+    const provider = new Provider();
+    const scorer = new SemanticRecallScorer({ selector: { select: async () => provider }, vectors: new Store() }, { collectionFor: durableMemoryCollectionFor });
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, 'removeEventListener');
+    await scorer.maintain(async () => ({ candidates: [], truncated: false }), { confirmLive: async () => new Set(), signal: controller.signal });
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });

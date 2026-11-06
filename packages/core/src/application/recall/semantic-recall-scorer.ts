@@ -118,6 +118,12 @@ export interface SemanticRecallMaintenanceOptions {
   readonly signal?: AbortSignal;
   /** Checked before each embedding: true ends the batch (a recall turn is active). */
   readonly shouldYield?: () => boolean;
+  /**
+   * Re-read the space after the sweep (the sweep itself runs on the cached space, without the model): a re-pulled model
+   * or an upgraded runtime is noticed, and the pass ends so the next one works in the new space. An unavailable
+   * provider is ignored here. The caller sets it on the first pass after idle time and on the forced full pass.
+   */
+  readonly refreshSpace?: boolean;
 }
 
 export interface SemanticRecallScorerDeps {
@@ -259,19 +265,34 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
     const startedAtMs = this.nowMs();
     const deadline: TurnDeadline = { expiresAtMs: startedAtMs + (options.budgetMs ?? 30_000), expired: false };
     const maxNew = positiveInteger(options.maxNew ?? this.maxNew, 'maxNew');
+    const onAbort = (): void => rejectAborted(new SemanticRecallFallback('ERROR'));
+    let rejectAborted: (error: Error) => void = () => undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
-      if (options.signal?.aborted) reject(new SemanticRecallFallback('ERROR'));
-      options.signal?.addEventListener('abort', () => reject(new SemanticRecallFallback('ERROR')), { once: true });
+      rejectAborted = reject;
     });
     aborted.catch(() => undefined);
+    if (options.signal?.aborted) onAbort();
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     const step = <T>(work: Promise<T>): Promise<T> => Promise.race([this.within(deadline, work), aborted]);
+    const yieldNow = (): boolean => options.shouldYield?.() === true;
     let embedded = 0;
     try {
-      const provider = await step(this.selectProvider());
+      if (yieldNow()) return { space: '', collection: '', embedded: 0, remaining: 0, deleted: 0, yielded: true };
+      // The provider is selected only when a step needs the model: with the space known, the sweep runs without it.
+      let provider: AiProvider | undefined;
+      const modelProvider = async (): Promise<AiProvider | null> => {
+        if (yieldNow()) return null;
+        provider ??= await step(this.selectProvider());
+        return provider;
+      };
       // The space is only known from an envelope: reuse the last one seen, else a fixed content-free text identifies it.
       let known = this.knownSpace;
+      let probedThisPass = false;
       if (known === undefined) {
-        const probe = await step(this.embed(provider, 'index maintenance', 'query', deadline));
+        probedThisPass = true;
+        const first = await modelProvider();
+        if (first === null || yieldNow()) return { space: '', collection: '', embedded: 0, remaining: 0, deleted: 0, yielded: true };
+        const probe = await step(this.embed(first, 'index maintenance', 'query', deadline));
         known = this.noteSpace(probe);
       }
       const space = known.space;
@@ -316,6 +337,21 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
         }
       }
 
+      if (options.refreshSpace === true && !probedThisPass) {
+        let probed: EmbeddingEnvelope | undefined;
+        try {
+          const refresher = await modelProvider();
+          if (refresher !== null) probed = await step(this.embed(refresher, 'index maintenance', 'query', deadline));
+        } catch (error) {
+          if (options.signal?.aborted) throw error;
+        }
+        if (probed !== undefined && (probed.space !== space || probed.dimensions !== known.dimensions)) {
+          this.noteSpace(probed);
+          const next = this.collectionFor === undefined ? this.collection : this.collectionFor(probed.space);
+          return { space: probed.space, collection: next, embedded: 0, remaining: Math.max(1, missing.length), deleted };
+        }
+      }
+
       if (wanted.size > this.maxIndexed) {
         if (!this.capWarned) {
           this.capWarned = true;
@@ -328,11 +364,12 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
       const batch: Array<VectorRecord & { memoryId: Id }> = [];
       for (const item of missing.slice(0, maxNew)) {
         if (options.signal?.aborted) throw new SemanticRecallFallback('ERROR');
-        if (options.shouldYield?.() === true) {
+        const embedder = await modelProvider();
+        if (embedder === null) {
           yielded = true;
           break;
         }
-        const envelope = await step(this.embed(provider, item.text, 'document', deadline));
+        const envelope = await step(this.embed(embedder, item.text, 'document', deadline));
         if (envelope.space !== space || envelope.dimensions !== known.dimensions) {
           // the identity changed under us: forget the cached space so the next pass re-probes
           this.knownSpace = undefined;
@@ -353,9 +390,20 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
       if (batch.length > 0) {
         // just before the write: a memory forgotten while its vector was being embedded must not get one back
         const stillLive = await step(options.confirmLive([...new Set(batch.map((item) => item.memoryId))]));
-        const records = batch.filter((item) => stillLive.has(item.memoryId)).map(({ memoryId: _memoryId, ...record }) => record);
+        const kept = batch.filter((item) => stillLive.has(item.memoryId));
+        const records = kept.map(({ memoryId: _memoryId, ...record }) => record);
         if (records.length > 0) await step(this.deps.vectors.upsert(collection, records));
         embedded = records.length;
+        if (kept.length > 0) {
+          // post-write verify: a forget that landed between the check above and the write must not leave a vector
+          const afterWrite = await step(options.confirmLive([...new Set(kept.map((item) => item.memoryId))]));
+          const stale = kept.filter((item) => !afterWrite.has(item.memoryId));
+          if (stale.length > 0) {
+            await step(this.deps.vectors.delete(collection, stale.map((item) => item.id)));
+            embedded -= stale.length;
+            deleted += stale.length;
+          }
+        }
       }
       this.logger.info('semantic index maintained', {
         live: live.candidates.length,
@@ -372,6 +420,8 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
         latencyMs: this.nowMs() - startedAtMs,
       });
       return null;
+    } finally {
+      options.signal?.removeEventListener('abort', onAbort);
     }
   }
 
