@@ -33,7 +33,7 @@ import { corpusDigest, CORPUS_SEED, CORPUS_VERSION, generateCorpus, type ChunkEv
 import { runChunkEval, summaryLines } from './chunk-eval/chunk-eval';
 import { CORPUS_V2_SEED, CORPUS_V2_VERSION, corpusV2Digest, generateCorpusV2, type ChunkEvalCaseV2 } from './chunk-eval/corpus-v2';
 import { runChunkEvalV2, summaryLinesV2 } from './chunk-eval/chunk-eval-v2';
-import type { FetchLike } from './selector-rag/embed';
+import { DEFAULT_OLLAMA_URL, type FetchLike } from './selector-rag/embed';
 import { ARM_IDS, STAGE_E_ARM_IDS, ArmEmbedder, EmbeddingCache, bundleOf, cachePath, latencySample, resolveArms, type ArmId, type Scope } from './chunk-eval/embed-arms';
 import { PARAMETERS, runArmOnSet, summaryLinesEmbed, type ChunkEmbedReport, type EmbedderRun } from './chunk-eval/embed-eval';
 import { buildPlanReport, planDigest, planLines, probeLines, runProbeArm, sampleDigest, type PlanInputs, type ProbeReport } from './chunk-eval/embed-plan';
@@ -89,6 +89,24 @@ import {
   type StageEInputs,
   type StageEProbeReport,
 } from './chunk-eval/stage-e';
+import {
+  STAGE_R_PLAN_VERSION,
+  STAGE_R_ARM_IDS,
+  buildStageRPlan,
+  buildStageRReport,
+  defaultProviderFactory,
+  isSemanticArm,
+  parseStageRArm,
+  planLinesR,
+  resolveStageR,
+  runArmFresh,
+  stageRDigest,
+  summaryLinesStageR,
+  type ProviderFactory,
+  type RuntimeArmRun,
+  type StageRArmId,
+  type StageRInputs,
+} from './chunk-eval/stage-r';
 import { DRIVE_FORMAT_VERSION, driveFormatDigest, driveFormatSummaryLines, generateDriveFormatSet, runDriveFormat, type DriveFormatCase } from './chunk-eval/drive-format';
 
 export const EXIT_OK = 0;
@@ -110,6 +128,7 @@ const HELP = [
   'usage: pnpm eval:chunk -- [--set v1|drive-format|v2|memory] --mode run|verify|regenerate-freeze [--out <dir>]',
   '       pnpm eval:chunk -- --mode plan|probe [--arms E0,E1,E2,E3] [--scope phase1|all] [--shapes <shape,...>] [--plan-digest <sha256>]',
   '       pnpm eval:chunk -- --set v1|v2|memory --arms E0,E1,E2,E3 --plan-digest <sha256> --mode run   (embedder arms; needs the digest printed by plan)',
+  '       pnpm eval:chunk -- --set memory --stage R --arms L,E0,E4 --mode plan|run [--plan-digest <sha256>]   (stage R: CH7 through the REAL runtime recall path, live and warm; ADR-0124 phase 2 P2-1)',
   '       pnpm eval:chunk -- --set memory --stage E --arms E1,E2,X(E1),X(E2),X50(E2) --mode plan|probe|run [--plan-digest <sha256>] [--reranker-dir <path>]   (stage E: local cross-encoder arms X / X50 and the optional embedder arm E4)',
   '       pnpm eval:chunk -- --set memory --stage D --arms E1,E2,R(E1),R(E2) --mode plan|probe|run [--plan-digest <sha256>]   (stage D: rerank arms and the memory-path latency bar; quote R(..) in a shell)',
   '  run                 verify the corpus hash (exit 3 if it differs), run baseline and lexical arms, write the report (exit 4 NON-GATING)',
@@ -157,6 +176,10 @@ export interface CliDeps {
     readonly load?: (dir: string) => Promise<PairScorer & { dispose?: () => Promise<void> }>;
     readonly clock?: () => number;
   };
+  /** Stage R seams (tests inject a fake embedding provider and a clock; the real ones build `OllamaCliEmbeddingProvider`). */
+  /** Environment seen by stage R's daemon check (default: process.env). */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly runtime?: { readonly provider?: ProviderFactory; readonly clock?: () => number; readonly tmpRoot?: string };
   /** The loopback embedder transport (tests inject a fake fetch and a clock). `cacheDir: null` keeps the cache in memory only. */
   readonly embed?: { readonly baseUrl?: string; readonly fetch?: FetchLike; readonly cacheDir?: string | null; readonly clock?: () => number };
   /** The harder synthetic set v2; defaults to the real generator and its own freeze record. */
@@ -233,9 +256,10 @@ type Parsed = {
   setGiven: boolean;
   arms?: ArmId[];
   /** `--stage D`: the arm list may also carry rerank arms R(E0..E3). `--stage E`: also X(Ex), X50(Ex) and the embedder arm E4. */
-  stage?: 'D' | 'E';
+  stage?: 'D' | 'E' | 'R';
   stageDArms?: StageDArmId[];
   stageEArms?: StageEArmId[];
+  stageRArms?: StageRArmId[];
   rerankerDir?: string;
   planDigest?: string;
   scope: Scope;
@@ -266,16 +290,21 @@ export function parseArguments(argv: readonly string[]): Parsed {
   if (set !== 'v1' && set !== 'drive-format' && set !== 'v2' && set !== 'memory') throw new UsageError('--set must be v1, drive-format, v2 or memory');
   if (out !== undefined && mode !== 'run' && mode !== 'plan' && mode !== 'probe') throw new UsageError('--out applies to --mode run, plan and probe only');
   const stage = values.get('--stage');
-  if (stage !== undefined && stage !== 'D' && stage !== 'E') throw new UsageError('--stage must be D or E');
+  if (stage !== undefined && stage !== 'D' && stage !== 'E' && stage !== 'R') throw new UsageError('--stage must be D, E or R');
   if (stage !== undefined) {
     if (values.get('--set') !== 'memory') throw new UsageError(`--stage ${stage} needs --set memory`);
     if (mode !== 'plan' && mode !== 'probe' && mode !== 'run') throw new UsageError(`--stage ${stage} applies to --mode plan, probe and run`);
+    if (stage === 'R' && mode === 'probe') throw new UsageError('--stage R applies to --mode plan and run (no probe)');
   }
   if (values.has('--reranker-dir') && stage !== 'E') throw new UsageError('--reranker-dir applies to --stage E only');
   let arms: ArmId[] | undefined;
   let stageDArms: StageDArmId[] | undefined;
   let stageEArms: StageEArmId[] | undefined;
-  if (stage === 'E' && values.has('--arms')) {
+  let stageRArms: StageRArmId[] | undefined;
+  if (stage === 'R' && values.has('--arms')) {
+    stageRArms = list(values.get('--arms') as string).map((token) => parseStageRArm(token) as StageRArmId);
+    if (stageRArms.length === 0 || stageRArms.some((arm) => arm === undefined) || new Set(stageRArms).size !== stageRArms.length) throw new UsageError(`--arms must be a list of ${STAGE_R_ARM_IDS.join(', ')} without repeats`);
+  } else if (stage === 'E' && values.has('--arms')) {
     stageEArms = list(values.get('--arms') as string).map((token) => parseStageEArm(token) as StageEArmId);
     if (stageEArms.length === 0 || stageEArms.some((arm) => arm === undefined) || new Set(stageEArms).size !== stageEArms.length) throw new UsageError(`--arms must be a list of ${STAGE_E_ARM_IDS.join(', ')}, R(E0)..R(E3), X(E0)..X(E4) and X50(E0)..X50(E4) without repeats (quote the parentheses in a shell)`);
   } else if (stage === 'D' && values.has('--arms')) {
@@ -309,6 +338,7 @@ export function parseArguments(argv: readonly string[]): Parsed {
     ...(stage === undefined ? {} : { stage }),
     ...(stageDArms === undefined ? {} : { stageDArms }),
     ...(stageEArms === undefined ? {} : { stageEArms }),
+    ...(stageRArms === undefined ? {} : { stageRArms }),
     ...(values.has('--reranker-dir') ? { rerankerDir: values.get('--reranker-dir') as string } : {}),
     ...(planDigestValue === undefined ? {} : { planDigest: planDigestValue }),
     ...(shapes === undefined ? {} : { shapes }),
@@ -332,6 +362,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
   }
   if (parsed.stage === 'D') return runStageD(parsed, deps);
   if (parsed.stage === 'E') return runStageE(parsed, deps);
+  if (parsed.stage === 'R') return runStageR(parsed, deps);
   if (parsed.mode === 'plan' || parsed.mode === 'probe') return runEmbedPlanOrProbe(parsed, deps);
   if (parsed.set === 'memory') return runMemory(parsed, deps);
   if (parsed.arms !== undefined && parsed.mode === 'run') return runEmbedSet(parsed, deps);
@@ -910,6 +941,119 @@ async function runStageE(parsed: Parsed, deps: CliDeps): Promise<number> {
   } finally {
     await scorer?.dispose?.();
   }
+}
+
+// ---------------------------------------------------------------- ADR-0124 phase 2 P2-1 stage R (CH7 memory set through the real runtime recall path)
+
+const DEFAULT_STAGE_R_ARMS: StageRArmId[] = ['L', 'E0', 'E4'];
+
+/**
+ * Stage R pins models from `--ollama-url` but executes through the `ollama` CLI, which talks to its own default daemon. Pins and
+ * execution must come from the same daemon, so only the default daemon is accepted, and an `OLLAMA_HOST` pointing elsewhere is refused.
+ */
+export function stageRDaemonProblem(url: string | undefined, ollamaHost: string | undefined): string | undefined {
+  const defaultOrigin = new URL(DEFAULT_OLLAMA_URL).origin;
+  if (url !== undefined) {
+    let origin = '';
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      origin = '';
+    }
+    if (origin !== defaultOrigin) return `--ollama-url ${url} is not the default daemon (${DEFAULT_OLLAMA_URL}) that the ollama CLI uses for stage R execution; stage R pins and runs against the same daemon only`;
+  }
+  if (ollamaHost !== undefined && ollamaHost.trim() !== '') {
+    const raw = ollamaHost.trim();
+    let host = '';
+    let port = '';
+    try {
+      const parsedHost = new URL(/^[a-z]+:\/\//iu.test(raw) ? raw : `http://${raw}`);
+      host = parsedHost.hostname;
+      port = parsedHost.port;
+    } catch {
+      host = '';
+    }
+    if (host !== '127.0.0.1' || (port !== '' && port !== '11434')) return `OLLAMA_HOST is set to ${raw}, which is not the default daemon (${DEFAULT_OLLAMA_URL}); the ollama CLI would follow it while stage R pins from the default daemon. Unset OLLAMA_HOST for stage R`;
+  }
+  return undefined;
+}
+
+/** `--set memory --stage R --mode plan|run`: plan digest (zero model calls) and the runtime-path run (live and warm per semantic arm). */
+async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
+  const daemonProblem = stageRDaemonProblem(deps.embed?.baseUrl ?? parsed.ollamaUrl, (deps.env ?? process.env).OLLAMA_HOST);
+  if (daemonProblem !== undefined) {
+    deps.stderr(daemonProblem);
+    deps.stderr(HELP);
+    return EXIT_USAGE;
+  }
+  const memoryDeps = deps.memory ?? defaultMemory();
+  const set = memoryDeps.corpus();
+  const digest = memoryDigest(set);
+  const problem = freezeProblem('memory set', '--set memory', memoryDeps.readFreeze(), digest, MEMORY_VERSION, MEMORY_SEED, set.memories.length + set.queries.length);
+  if (problem !== undefined) {
+    deps.stderr(problem);
+    return EXIT_BLOCKED;
+  }
+  const baseUrl = deps.embed?.baseUrl ?? parsed.ollamaUrl;
+  let resolution;
+  try {
+    resolution = await resolveStageR(parsed.stageRArms ?? DEFAULT_STAGE_R_ARMS, { ...(baseUrl === undefined ? {} : { baseUrl }), ...(deps.embed?.fetch === undefined ? {} : { fetchImpl: deps.embed.fetch }) });
+  } catch (error) {
+    deps.stderr(`INVALID: could not pin the models (loopback daemon pins): ${errorText(error)}`);
+    return EXIT_INVALID;
+  }
+  const inputs: StageRInputs = { set: { digest, memories: set.memories.length, queries: set.queries.length }, planned: resolution.planned, pins: resolution.pins, dropped: resolution.dropped };
+  const planDigestNow = stageRDigest(inputs);
+  if (parsed.mode !== 'plan') {
+    if (parsed.planDigest === undefined) {
+      deps.stderr(`BLOCKED: a model-in-the-loop ${parsed.mode} needs --plan-digest from --mode plan (current plan digest ${planDigestNow}); nothing was called`);
+      return EXIT_BLOCKED;
+    }
+    if (parsed.planDigest !== planDigestNow) {
+      deps.stderr(`BLOCKED: --plan-digest ${parsed.planDigest} does not match the current stage R plan digest ${planDigestNow} (set, arms, pins, prefixes, seeds or parameters changed); nothing was called`);
+      return EXIT_BLOCKED;
+    }
+  }
+  if (parsed.mode === 'plan') {
+    const plan = buildStageRPlan(inputs, set);
+    const path = deps.writeReport(outDirOf(parsed), `chunk-eval-stage-r-plan-${plan.digest.slice(0, 12)}-${stampOf(deps)}.json`, plan);
+    for (const line of planLinesR(plan)) deps.stdout(line);
+    deps.stdout(`report: ${path}`);
+    return EXIT_OK;
+  }
+  const gone = new Set(resolution.dropped.map((d) => d.arm));
+  const arms = resolution.planned.filter((arm) => !gone.has(arm));
+  for (const dropped of resolution.dropped) deps.stdout(`dropped ${dropped.arm}: ${dropped.reason}`);
+  if (arms.length === 0) {
+    deps.stderr('INVALID: no arm is available; nothing was called');
+    return EXIT_INVALID;
+  }
+  const factory = deps.runtime?.provider ?? defaultProviderFactory;
+  const runs: RuntimeArmRun[] = [];
+  try {
+    for (const arm of arms) {
+      const common = { set, ...(deps.runtime?.clock === undefined ? {} : { clock: deps.runtime.clock }), ...(deps.runtime?.tmpRoot === undefined ? {} : { tmpRoot: deps.runtime.tmpRoot }) };
+      if (!isSemanticArm(arm)) {
+        runs.push(await runArmFresh({ ...common, arm, mode: 'lexical' }));
+        continue;
+      }
+      const model = (resolution.pins.find((pin) => pin.arm === arm) as { model: string }).model;
+      for (const mode of ['live', 'warm'] as const) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
+    }
+  } catch (error) {
+    deps.stderr(`INVALID: the runtime recall path failed during stage R run: ${errorText(error)}`);
+    return EXIT_INVALID;
+  }
+  const report = buildStageRReport(digest, { version: STAGE_R_PLAN_VERSION, digest: planDigestNow, pins: resolution.pins, planned: resolution.planned, dropped: resolution.dropped }, runs);
+  const path = deps.writeReport(outDirOf(parsed), `chunk-eval-memory-stage-r-${digest.slice(0, 12)}-${stampOf(deps)}.json`, report);
+  for (const line of summaryLinesStageR(report)) deps.stdout(line);
+  deps.stdout(`report: ${path}`);
+  const invalid = runs.filter((run) => run.invalid !== null);
+  if (invalid.length > 0) {
+    deps.stderr(`INVALID: ${invalid.map((run) => `${run.arm}/${run.mode} (${(run.invalid as { reason: string }).reason})`).join('; ')}`);
+    return EXIT_INVALID;
+  }
+  return EXIT_NON_GATING;
 }
 
 if (require.main === module) {

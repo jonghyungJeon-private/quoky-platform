@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 2 P2-1: runtime-path recall measurement for `eval:chunk` (offline tooling, no model run)
+
+- **Added.** `--set memory --stage R --arms L,E0,E4 --mode plan|run`: the CH7 memory set run through the real runtime recall path (sqlite `findDurableCandidates` recent-50 pool, `DefaultMemoryRetriever`, `SemanticRecallScorer` with lazy embedding, `OllamaCliEmbeddingProvider` with its own prefixes, `LocalVectorProvider`), per semantic arm in `live` (empty vector store) and `warm` (pre-embedded) modes, plus a lexical-only arm. Reports Recall@5 / MRR@10 by language and long/short and diagnostics (gold outside the candidate pool, gold without semantic score, latency p50 / p95). Plan digest gating as the other stages (BLOCKED 3, NON-GATING 4, INVALID 5). No runtime behaviour changed; no model was called.
+
 ## Unreleased — ADR-0124 phase 1 stage E: local cross-encoder reranker arms for `eval:chunk` (offline code, no Ollama run)
 
 - **Added.** `--set memory --stage E`: arms `X(Ex)` / `X50(Ex)` (multi-vector first-stage top 20 / 50 reordered by a pinned local multilingual cross-encoder, ONNX int8 on CPU), the optional embedder arm `E4` (`embeddinggemma:300m` with its model card prefixes), plan `chunk-embed-plan.v3` (covers the model revision and file hashes, runtime versions, N, max_length, batch, threads), a probe with a sanity check and `--reranker-dir`. The model directory is verified against `SHA256SUMS` and pinned hashes before loading (fail closed); no network at run time.
