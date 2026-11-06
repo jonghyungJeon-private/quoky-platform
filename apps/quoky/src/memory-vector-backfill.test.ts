@@ -355,6 +355,16 @@ describe('review round 3', () => {
     expect(provider.prompts).toEqual([]);
   });
 
+  it('yields when a recall turn starts while the provider selection is awaited (review round 4)', async () => {
+    const provider = new Provider();
+    let turnActive = false;
+    const scorer = new SemanticRecallScorer({ selector: { select: async () => { turnActive = true; return provider; } }, vectors: new Store() }, { collectionFor: durableMemoryCollectionFor });
+    const live = async () => ({ candidates: [{ id: 'a', content: '고양이' }], truncated: false });
+    const confirmLive = async (ids: readonly string[]) => new Set(ids);
+    expect(await scorer.maintain(live, { confirmLive, shouldYield: () => turnActive })).toMatchObject({ yielded: true, embedded: 0 });
+    expect(provider.prompts).toEqual([]);
+  });
+
   it('with the space known the sweep runs while the provider is down', async () => {
     const { job, provider, vectors, set, get } = setup([record('a', '고양이'), record('b', '커피')], 10);
     await job.runToCompletion();

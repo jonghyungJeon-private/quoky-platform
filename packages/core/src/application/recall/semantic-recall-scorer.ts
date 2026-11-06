@@ -283,7 +283,8 @@ export class SemanticRecallScorer implements SemanticRecallScoring {
       const modelProvider = async (): Promise<AiProvider | null> => {
         if (yieldNow()) return null;
         provider ??= await step(this.selectProvider());
-        return provider;
+        // a recall turn may have started while the selection was awaited: yield before any model call
+        return yieldNow() ? null : provider;
       };
       // The space is only known from an envelope: reuse the last one seen, else a fixed content-free text identifies it.
       let known = this.knownSpace;
