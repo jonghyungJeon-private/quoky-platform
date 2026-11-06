@@ -17,8 +17,11 @@ import { DEFAULT_OLLAMA_URL, EMBED_BATCH_SIZE, ModelNotInstalledError, assertLoo
 import { PACK_MISS_LIMIT, lexicalWindow, type ArmWindow, type LexicalOutcome } from './arms';
 import { LANGUAGES, type ChunkEvalCase, type Language } from './corpus';
 
+/** The pinned embedder arms of stages A-D. Their defaults, digests and the `--arms` validation of those stages use exactly this list. */
 export const ARM_IDS = ['E0', 'E1', 'E2', 'E3'] as const;
-export type ArmId = (typeof ARM_IDS)[number];
+/** Stage E adds one optional embedder arm (EmbeddingGemma, Ollama). It is not part of `ARM_IDS`, so stage A-D behaviour and digests are unchanged. */
+export const STAGE_E_ARM_IDS = [...ARM_IDS, 'E4'] as const;
+export type ArmId = (typeof STAGE_E_ARM_IDS)[number];
 
 export const RRF_K = 60;
 export const KEEP_ALIVE = '2m';
@@ -48,6 +51,8 @@ export const ARM_SPECS: Readonly<Record<ArmId, ArmSpec>> = {
     documentPrefix: '',
     prefixPolicy: 'instruction on the query side only; documents raw',
   },
+  // EmbeddingGemma model card prompts (stage E, optional arm): retrieval query and document prefixes.
+  E4: { id: 'E4', model: 'embeddinggemma:300m', queryPrefix: 'task: search result | query: ', documentPrefix: 'title: none | text: ', prefixPolicy: 'task: search result | query: / title: none | text: (EmbeddingGemma model card)' },
 };
 
 export interface ArmPin extends EmbeddingPin {

@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 1 stage E: local cross-encoder reranker arms for `eval:chunk` (offline code, no Ollama run)
+
+- **Added.** `--set memory --stage E`: arms `X(Ex)` / `X50(Ex)` (multi-vector first-stage top 20 / 50 reordered by a pinned local multilingual cross-encoder, ONNX int8 on CPU), the optional embedder arm `E4` (`embeddinggemma:300m` with its model card prefixes), plan `chunk-embed-plan.v3` (covers the model revision and file hashes, runtime versions, N, max_length, batch, threads), a probe with a sanity check and `--reranker-dir`. The model directory is verified against `SHA256SUMS` and pinned hashes before loading (fail closed); no network at run time.
+- **Dependencies.** devDependencies `onnxruntime-node@1.30.0`, `@huggingface/tokenizers@0.2.0` (no postinstall download on darwin arm64). Stage A-D commands, `ARM_IDS` and their digests are unchanged. Recorded in DECISIONS "ADR-0124 phase 1 stage E".
+
 ## Unreleased — ADR-0124 phase 1 stage D: rerank arms and the memory-path latency bar for `eval:chunk` (offline code, no model run)
 
 - **Added.** `--set memory --stage D`: arms `R(E1)` / `R(E2)` (first-stage multi-vector top 20 reordered by the local `qwen3:8b` listwise reranker, set-agnostic prompt, jsonl cache), plan `chunk-embed-plan.v2` with its own digest, a probe (20 rerank queries, memory-path query-embed latency) and a stage D decision.

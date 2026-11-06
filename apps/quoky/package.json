@@ -40,5 +40,9 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "undici": "6.24.1"
+  },
+  "devDependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "onnxruntime-node": "1.30.0"
   }
 }
