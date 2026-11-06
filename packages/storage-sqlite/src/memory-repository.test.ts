@@ -268,4 +268,3 @@ describe('SqliteMemoryRepository findDurableCandidatesByIds (ADR-0124 P2-2 candi
     await store.close();
   });
 });
-
