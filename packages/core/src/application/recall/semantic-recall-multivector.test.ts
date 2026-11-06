@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Capability } from '../../domain';
 import type { AiProvider, AiRequest, ProviderSelector, VectorProvider, VectorQueryResult, VectorRecord } from '../../ports';
+import { MAX_DURABLE_CONTENT_CHARACTERS } from '../memory-writer';
 import { allMemoryVectorIds, MAX_PASSAGES_PER_MEMORY, memoryVectorUnits } from './memory-passages';
+import { chunk } from '../chunking';
 import { cosineSimilarity, formatEmbeddingEnvelope, readEmbeddingRole } from './embedding-envelope';
 import { DURABLE_MEMORY_V2_COLLECTION_PREFIX, durableMemoryCollectionFor, SemanticRecallScorer } from './semantic-recall-scorer';
 
@@ -86,6 +88,29 @@ describe('durable memory vector units (ADR-0124 section 5.1, 5.2)', () => {
     expect(ids.slice(0, 3)).toEqual(['x', 'x#0', 'x#1']);
     const units = memoryVectorUnits(LONG_ID, LONG, true);
     for (const unit of units) expect(allMemoryVectorIds(LONG_ID)).toContain(unit.vectorId);
+  });
+});
+
+describe('passage bound (ADR-0124 section 5.6: nothing silently unembedded)', () => {
+  it('the chunker never yields more than MAX_PASSAGES_PER_MEMORY for a memory of the maximum length, for any shape', () => {
+    const max = MAX_DURABLE_CONTENT_CHARACTERS;
+    const shapes: Record<string, string> = {
+      oneLongParagraph: 'word '.repeat(max).slice(0, max),
+      shortLines: 'a\n'.repeat(max).slice(0, max),
+      blankLineSeparated: 'x\n\n'.repeat(max).slice(0, max),
+      sentences: '가나다라. '.repeat(max).slice(0, max),
+      bullets: '- item\n'.repeat(max).slice(0, max),
+      noBreaks: 'a'.repeat(max),
+      combiningMarks: `e${'\u0301'.repeat(max - 1)}`,
+      emoji: '😀'.repeat(max / 2),
+      table: '| a | b |\n'.repeat(max).slice(0, max),
+    };
+    for (const [name, text] of Object.entries(shapes)) {
+      const units = memoryVectorUnits('m', text, true);
+      expect(units.length, name).toBeLessThanOrEqual(MAX_PASSAGES_PER_MEMORY);
+      // nothing is cut: with this few passages every passage is a unit
+      expect(chunk(text).length, name).toBeLessThanOrEqual(MAX_PASSAGES_PER_MEMORY);
+    }
   });
 });
 

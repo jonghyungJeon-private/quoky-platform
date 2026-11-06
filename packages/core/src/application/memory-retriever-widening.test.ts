@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Capability, createMemoryRetrievalRequest, MemoryType, type MemoryRecord } from '../domain';
 import type { DurableMemoryByIdsQuery, DurableMemoryQuery, MemoryRepository } from '../ports';
-import { DefaultMemoryRetriever, SEMANTIC_CANDIDATE_TOP_K } from './memory-retriever';
+import { DefaultMemoryRetriever, SEMANTIC_CANDIDATE_OVERFETCH, SEMANTIC_CANDIDATE_TOP_K } from './memory-retriever';
 import type { SemanticRecallCandidate, SemanticRecallScoring, SemanticRecallSession } from './recall/semantic-recall-scorer';
 
 const NOW = '2026-11-06T00:00:00.000Z';
@@ -119,6 +119,42 @@ describe('candidate widening (ADR-0124 section 5, owner decision 2026-11-06 b)',
     expect(seen.byIds.at(-1)?.excludeIds).toEqual(['old']);
   });
 
+  it('requests 2K ids from the vector store and keeps the first K that pass the store filter', async () => {
+    const dead = Array.from({ length: SEMANTIC_CANDIDATE_TOP_K }, (_, at) => record(`dead-${at}`, 'superseded', {}, { supersededBy: 'x' }));
+    const alive = Array.from({ length: SEMANTIC_CANDIDATE_TOP_K + 5 }, (_, at) => record(`alive-${at}`, `alive ${at}`));
+    const seen = { byIds: [] as DurableMemoryByIdsQuery[], recent: [] as DurableMemoryQuery[] };
+    const base = repo([recentOne], [recentOne, ...dead, ...alive], seen);
+    // like the store: the filter drops what is not live
+    const filtered: MemoryRepository = { ...base, findDurableCandidatesByIds: async (query) => (await base.findDurableCandidatesByIds!(query)).filter((entry) => entry.metadata?.supersededBy === undefined) };
+    const nearest = [...dead.map((entry) => entry.id), ...alive.map((entry) => entry.id)];
+    let requested = 0;
+    let offered: string[] = [];
+    const scorer = scorerOf(nearest, {});
+    const open = scorer.openSession!.bind(scorer);
+    scorer.openSession = async (query) => {
+      const session = await open(query);
+      return session === null ? null : { ...session, nearestMemoryIds: async (limit) => { requested = limit; return nearest.slice(0, limit); }, score: async (candidates) => { offered = candidates.map((candidate) => candidate.id); return new Map(candidates.map((candidate) => [candidate.id, 0.5])); } };
+    };
+    const results = await new DefaultMemoryRetriever(filtered, { clock: () => NOW, semanticScorer: scorer }).retrieve(ask(100));
+    expect(requested).toBe(SEMANTIC_CANDIDATE_TOP_K * SEMANTIC_CANDIDATE_OVERFETCH);
+    expect(seen.byIds[0]?.ids).toHaveLength(SEMANTIC_CANDIDATE_TOP_K * SEMANTIC_CANDIDATE_OVERFETCH);
+    // 50 dead hits are skipped; the 50 nearest live ones fill K; the recent record is separate
+    expect(offered.filter((id) => id.startsWith('alive-')).sort()).toEqual(alive.slice(0, SEMANTIC_CANDIDATE_TOP_K).map((entry) => entry.id).sort());
+    expect(offered.some((id) => id.startsWith('dead-'))).toBe(false);
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('an old memory of another session or project with a perfect vector hit is not returned', async () => {
+    const otherSession = record('other-session', 'passport somewhere', { scope: { userId: 'owner', sessionId: 'session-2' } });
+    const otherProject = record('other-project', 'passport elsewhere', { scope: { userId: 'owner', sessionId: 'session-1', projectId: 'p2' } });
+    const mine = record('mine', 'passport in my drawer', { scope: { userId: 'owner', sessionId: 'session-1', projectId: 'p1' } });
+    const all = [otherSession, otherProject, mine];
+    const perfect = { 'other-session': 1, 'other-project': 1, mine: 0.9 };
+    const retriever = new DefaultMemoryRetriever(repo([], all), { clock: () => NOW, semanticScorer: scorerOf(['other-session', 'other-project', 'mine'], perfect) });
+    const results = await retriever.retrieve(createMemoryRetrievalRequest({ query: 'passport', capability: Capability.GENERAL_CHAT, scope: { actorId: 'owner', sessionId: 'session-1', projectId: 'p1' }, authorityFitness: ['USER_CLAIM_OR_INTENT'], maxResults: 10 }));
+    expect(results.map((result) => result.memory.id)).toEqual(['mine']);
+  });
+
   it('the widening count is the named constant K = 50', () => {
     expect(SEMANTIC_CANDIDATE_TOP_K).toBe(50);
   });
@@ -129,7 +165,8 @@ describe('candidate widening (ADR-0124 section 5, owner decision 2026-11-06 b)',
   ])('falls back to the lexical ranking of the recent pool when %s', async (_name, hooks) => {
     const retriever = new DefaultMemoryRetriever(repo([recentOne], [recentOne, old]), { clock: () => NOW, semanticScorer: scorerOf(['old'], { old: 1 }, hooks) });
     const results = await retriever.retrieve(ask());
-    expect(results.map((result) => result.memory.id)).toEqual(hooks.failNearest ? ['recent'] : ['recent', 'old']);
+    // no semantic signal: exactly today's behaviour, the recent pool only (a widened record is discarded, not ranked)
+    expect(results.map((result) => result.memory.id)).toEqual(['recent']);
     expect(results.every((result) => result.retrievalMode === 'lexical')).toBe(true);
   });
 

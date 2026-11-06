@@ -21,6 +21,11 @@ const MIN_CANDIDATE_FETCH = 50;
  * recent pool as candidates, however old they are.
  */
 export const SEMANTIC_CANDIDATE_TOP_K = 50;
+/**
+ * Ids requested from the vector store per K kept: a superseded, expired or archived memory can still hold vectors
+ * until the maintenance sweep removes them, and such a hit must not use up a slot of the K.
+ */
+export const SEMANTIC_CANDIDATE_OVERFETCH = 2;
 const DEFAULT_RECENCY_WEIGHT = 0.25;
 const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1_000;
 /** ADR-0098 owner default: share of relevance given to the semantic score when one is available. */
@@ -173,6 +178,7 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     // `session` null and recall runs lexically on the recent pool, exactly as without a scorer.
     const session = await this.openSemanticSession(request.query);
     const records = await this.withSemanticCandidates(recent, session, filter);
+    const recentIds = new Set(recent.map((record) => record.id));
 
     const eligible = records.flatMap((record) => {
       if (!scopeMatches(record, request.scope) || request.excludeIds.includes(record.id)) return [];
@@ -203,7 +209,10 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     // any of them is already absent. Only eligible candidates are offered to the scorer, and a score for any other
     // id is ignored.
     const semanticScores = await this.semanticScoresFor(request.query, eligible, session);
-    const scored = eligible.map((candidate) => {
+    // Without a semantic signal this turn (no scorer, error, timeout) recall is exactly today's: the recent pool only.
+    // Widened records exist only because of the vector store, so they are discarded rather than ranked lexically.
+    const ranked = semanticScores === null ? eligible.filter((candidate) => recentIds.has(candidate.memory.id)) : eligible;
+    const scored = ranked.map((candidate) => {
       const rawSemanticScore = semanticScores?.get(candidate.memory.id);
       if (rawSemanticScore === undefined || !Number.isFinite(rawSemanticScore)) {
         return { ...candidate, semanticScore: undefined as number | undefined };
@@ -272,14 +281,21 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     if (session === null || this.repository.findDurableCandidatesByIds === undefined) return recent;
     try {
       const known = new Set(recent.map((record) => record.id));
-      const ids = (await session.nearestMemoryIds(SEMANTIC_CANDIDATE_TOP_K)).filter((id) => !known.has(id));
+      const nearest = await session.nearestMemoryIds(SEMANTIC_CANDIDATE_TOP_K * SEMANTIC_CANDIDATE_OVERFETCH);
+      const ids = nearest.filter((id) => !known.has(id));
       if (ids.length === 0) return recent;
-      const widened = await this.repository.findDurableCandidatesByIds({ ...filter, ids });
+      const found = new Map((await this.repository.findDurableCandidatesByIds({ ...filter, ids })).map((record) => [record.id, record]));
+      // Nearest first; ids the store's filters dropped are skipped and the next nearest takes the slot. K counts
+      // memories that are in the pool, including the ones the recent pool already holds.
+      let kept = nearest.length - ids.length;
       const merged = [...recent];
-      for (const record of widened) {
-        if (known.has(record.id)) continue;
-        known.add(record.id);
+      for (const id of ids) {
+        if (kept >= SEMANTIC_CANDIDATE_TOP_K) break;
+        const record = found.get(id);
+        if (record === undefined || known.has(id)) continue;
+        known.add(id);
         merged.push(record);
+        kept += 1;
       }
       return merged;
     } catch {

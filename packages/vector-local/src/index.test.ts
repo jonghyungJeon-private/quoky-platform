@@ -355,4 +355,18 @@ describe('LocalVectorProvider (ADR-0098 D8)', () => {
     const { readdir: _unused, ...withoutReaddir } = realIo;
     expect(await new LocalVectorProvider(storePath, { io: withoutReaddir }).listCollections()).toEqual([]);
   });
+
+  it.each(['EIO', 'EACCES'])('listCollections rethrows a %s read error so a forget cannot report success', async (code) => {
+    const io: VectorStoreIo = { ...realIo, readdir: async () => { throw Object.assign(new Error('read failed'), { code }); } };
+    await expect(new LocalVectorProvider(freshRoot(), { io }).listCollections()).rejects.toMatchObject({ code });
+  });
+
+  it('listCollections includes collections held in memory that are not on disk yet', async () => {
+    const storePath = freshRoot();
+    const io: VectorStoreIo = { ...realIo, writeFile: async () => { throw new Error('disk full'); } };
+    const store = new LocalVectorProvider(storePath, { io });
+    await expect(store.upsert('durable-memory-v2-pending', [{ id: 'a', vector: [1, 0] }])).rejects.toThrow('disk full');
+    await store.query('durable-memory-v2-loaded', [1, 0], 1);
+    expect(await store.listCollections()).toEqual(['durable-memory-v2-loaded', 'durable-memory-v2-pending']);
+  });
 });

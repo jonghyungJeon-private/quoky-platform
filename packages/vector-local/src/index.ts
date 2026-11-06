@@ -237,20 +237,23 @@ export class LocalVectorProvider implements VectorProvider {
     );
   }
 
-  /** Names of the collections whose file exists in the store (a missing directory means none). */
+  /**
+   * Names of the collections that exist: files in the store directory plus collections held in memory that are not on
+   * disk yet. A missing directory means none; any other read error is rethrown, so a forget never reports success
+   * while vectors may remain (the cleanup stays retryable).
+   */
   async listCollections(): Promise<string[]> {
-    if (this.io.readdir === undefined) return [];
-    let names: string[];
-    try {
-      names = await this.io.readdir(this.storePath);
-    } catch {
-      return [];
+    const names = new Set<string>(this.collections.keys());
+    if (this.io.readdir !== undefined) {
+      try {
+        for (const name of await this.io.readdir(this.storePath)) {
+          if (name.endsWith('.json')) names.add(name.slice(0, -'.json'.length));
+        }
+      } catch (error) {
+        if ((error as { code?: unknown } | null)?.code !== 'ENOENT') throw error;
+      }
     }
-    return names
-      .filter((name) => name.endsWith('.json'))
-      .map((name) => name.slice(0, -'.json'.length))
-      .filter((name) => COLLECTION_NAME_PATTERN.test(name))
-      .sort();
+    return [...names].filter((name) => COLLECTION_NAME_PATTERN.test(name)).sort();
   }
 
   private filePath(collection: string): string {
