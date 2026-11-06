@@ -40,6 +40,34 @@ import { buildPlanReport, planDigest, planLines, probeLines, runProbeArm, sample
 import { buildMemoryReport, runMemoryArm, summaryLinesMemory, type MemoryArmRun } from './chunk-eval/memory-eval';
 import { generateMemorySet, memoryDigest, MEMORY_SEED, MEMORY_VERSION, type MemorySet } from './chunk-eval/memory-set';
 import { SHAPES } from './chunk-eval/corpus';
+import { LlmReranker, RerankCache, rerankCachePath } from './chunk-eval/rerank-arm';
+import {
+  buildStageDPlan,
+  buildStageDReport,
+  isRerankArm,
+  baseOf,
+  measureQueryLatency,
+  parseStageDArm,
+  planLinesD,
+  probeLinesD,
+  probeRerankArm,
+  resolveStageD,
+  runRerankArm,
+  runStageDEmbedder,
+  firstStageOf,
+  sampleQueries,
+  stageDDigest,
+  summaryLinesStageD,
+  MEMORY_LATENCY_QUERIES,
+  type FirstStage,
+  type QueryLatencyBlock,
+  type RerankArmId,
+  type RerankArmRun,
+  type StageDArmId,
+  type StageDEmbedderRun,
+  type StageDInputs,
+  type StageDProbeReport,
+} from './chunk-eval/stage-d';
 import { DRIVE_FORMAT_VERSION, driveFormatDigest, driveFormatSummaryLines, generateDriveFormatSet, runDriveFormat, type DriveFormatCase } from './chunk-eval/drive-format';
 
 export const EXIT_OK = 0;
@@ -61,6 +89,7 @@ const HELP = [
   'usage: pnpm eval:chunk -- [--set v1|drive-format|v2|memory] --mode run|verify|regenerate-freeze [--out <dir>]',
   '       pnpm eval:chunk -- --mode plan|probe [--arms E0,E1,E2,E3] [--scope phase1|all] [--shapes <shape,...>] [--plan-digest <sha256>]',
   '       pnpm eval:chunk -- --set v1|v2|memory --arms E0,E1,E2,E3 --plan-digest <sha256> --mode run   (embedder arms; needs the digest printed by plan)',
+  '       pnpm eval:chunk -- --set memory --stage D --arms E1,E2,R(E1),R(E2) --mode plan|probe|run [--plan-digest <sha256>]   (stage D: rerank arms and the memory-path latency bar; quote R(..) in a shell)',
   '  run                 verify the corpus hash (exit 3 if it differs), run baseline and lexical arms, write the report (exit 4 NON-GATING)',
   '  verify              check the generated corpus against the recorded hash (exit 0 or 3)',
   '  regenerate-freeze   record the current corpus hash (a deliberate, separate step; exit 0)',
@@ -175,6 +204,9 @@ type Parsed = {
   set: 'v1' | 'drive-format' | 'v2' | 'memory';
   setGiven: boolean;
   arms?: ArmId[];
+  /** `--stage D`: the arm list may also carry rerank arms R(E0..E3). */
+  stage?: 'D';
+  stageDArms?: StageDArmId[];
   planDigest?: string;
   scope: Scope;
   shapes?: string[];
@@ -189,7 +221,7 @@ export function parseArguments(argv: readonly string[]): Parsed {
   const tokens = argv[0] === '--' ? argv.slice(1) : [...argv];
   if (tokens.length === 0 || tokens.includes('--help') || tokens.includes('-h')) return { mode: 'help', set: 'v1', setGiven: false, scope: 'phase1' };
   const values = new Map<string, string>();
-  const NAMES = ['--mode', '--out', '--set', '--arms', '--plan-digest', '--scope', '--shapes', '--cache-dir', '--ollama-url'];
+  const NAMES = ['--mode', '--out', '--set', '--arms', '--plan-digest', '--scope', '--shapes', '--cache-dir', '--ollama-url', '--stage'];
   for (let at = 0; at < tokens.length; at += 2) {
     const name = tokens[at] as string;
     const value = tokens[at + 1];
@@ -203,8 +235,18 @@ export function parseArguments(argv: readonly string[]): Parsed {
   if (mode !== 'run' && mode !== 'verify' && mode !== 'regenerate-freeze' && mode !== 'plan' && mode !== 'probe') throw new UsageError('--mode must be run, verify, regenerate-freeze, plan or probe');
   if (set !== 'v1' && set !== 'drive-format' && set !== 'v2' && set !== 'memory') throw new UsageError('--set must be v1, drive-format, v2 or memory');
   if (out !== undefined && mode !== 'run' && mode !== 'plan' && mode !== 'probe') throw new UsageError('--out applies to --mode run, plan and probe only');
+  const stage = values.get('--stage');
+  if (stage !== undefined && stage !== 'D') throw new UsageError('--stage must be D');
+  if (stage === 'D') {
+    if (values.get('--set') !== 'memory') throw new UsageError('--stage D needs --set memory');
+    if (mode !== 'plan' && mode !== 'probe' && mode !== 'run') throw new UsageError('--stage D applies to --mode plan, probe and run');
+  }
   let arms: ArmId[] | undefined;
-  if (values.has('--arms')) {
+  let stageDArms: StageDArmId[] | undefined;
+  if (stage === 'D' && values.has('--arms')) {
+    stageDArms = list(values.get('--arms') as string).map((token) => parseStageDArm(token) as StageDArmId);
+    if (stageDArms.length === 0 || stageDArms.some((arm) => arm === undefined) || new Set(stageDArms).size !== stageDArms.length) throw new UsageError(`--arms must be a list of ${ARM_IDS.join(', ')} and R(E0)..R(E3) without repeats (quote the parentheses in a shell)`);
+  } else if (values.has('--arms')) {
     arms = list(values.get('--arms') as string) as ArmId[];
     if (arms.length === 0 || arms.some((arm) => !ARM_IDS.includes(arm)) || new Set(arms).size !== arms.length) throw new UsageError(`--arms must be a list of ${ARM_IDS.join(', ')} without repeats`);
     if (mode === 'verify' || mode === 'regenerate-freeze') throw new UsageError('--arms applies to --mode run, plan and probe only');
@@ -219,9 +261,9 @@ export function parseArguments(argv: readonly string[]): Parsed {
     shapes = list(values.get('--shapes') as string);
     if (shapes.length === 0 || shapes.some((shape) => !(SHAPES as readonly string[]).includes(shape))) throw new UsageError(`--shapes must be a list of ${SHAPES.join(', ')}`);
   }
-  if ((mode === 'plan' || mode === 'probe') && values.has('--set')) throw new UsageError('--mode plan and probe cover every set; do not pass --set');
+  if ((mode === 'plan' || mode === 'probe') && values.has('--set') && stage !== 'D') throw new UsageError('--mode plan and probe cover every set; do not pass --set');
   const embedderOnly = ['--plan-digest', '--scope', '--shapes', '--cache-dir', '--ollama-url'].filter((name) => values.has(name));
-  if (embedderOnly.length > 0 && arms === undefined && mode !== 'plan' && mode !== 'probe') throw new UsageError(`${embedderOnly.join(', ')} apply to embedder runs (--arms), plan and probe only`);
+  if (embedderOnly.length > 0 && arms === undefined && stage === undefined && mode !== 'plan' && mode !== 'probe') throw new UsageError(`${embedderOnly.join(', ')} apply to embedder runs (--arms), plan and probe only`);
   return {
     mode,
     set,
@@ -229,6 +271,8 @@ export function parseArguments(argv: readonly string[]): Parsed {
     scope,
     ...(out === undefined ? {} : { out }),
     ...(arms === undefined ? {} : { arms }),
+    ...(stage === undefined ? {} : { stage }),
+    ...(stageDArms === undefined ? {} : { stageDArms }),
     ...(planDigestValue === undefined ? {} : { planDigest: planDigestValue }),
     ...(shapes === undefined ? {} : { shapes }),
     ...(values.has('--cache-dir') ? { cacheDir: values.get('--cache-dir') as string } : {}),
@@ -249,6 +293,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
     deps.stdout(HELP);
     return EXIT_OK;
   }
+  if (parsed.stage === 'D') return runStageD(parsed, deps);
   if (parsed.mode === 'plan' || parsed.mode === 'probe') return runEmbedPlanOrProbe(parsed, deps);
   if (parsed.set === 'memory') return runMemory(parsed, deps);
   if (parsed.arms !== undefined && parsed.mode === 'run') return runEmbedSet(parsed, deps);
@@ -563,6 +608,124 @@ async function runMemory(parsed: Parsed, deps: CliDeps): Promise<number> {
   for (const line of summaryLinesMemory(report)) deps.stdout(line);
   deps.stdout(`report: ${path}`);
   return EXIT_NON_GATING;
+}
+
+// ---------------------------------------------------------------- ADR-0124 phase 1 stage D (CH7 memory set: rerank arms, memory-path latency bar)
+
+const DEFAULT_STAGE_D_ARMS: StageDArmId[] = ['E1', 'E2', 'R(E1)', 'R(E2)'];
+
+/** `--set memory --stage D --mode plan|probe|run`: plan v2 digest, the probe (rerank latency, memory-path embed latency) and the run. */
+async function runStageD(parsed: Parsed, deps: CliDeps): Promise<number> {
+  const memoryDeps = deps.memory ?? defaultMemory();
+  const v2Deps = deps.v2 ?? defaultV2();
+  const set = memoryDeps.corpus();
+  const v2 = v2Deps.corpus();
+  const digests = { memory: memoryDigest(set), v2: corpusV2Digest(v2) };
+  const problems = [
+    freezeProblem('memory set', '--set memory', memoryDeps.readFreeze(), digests.memory, MEMORY_VERSION, MEMORY_SEED, set.memories.length + set.queries.length),
+    freezeProblem('v2 corpus', '--set v2', v2Deps.readFreeze(), digests.v2, CORPUS_V2_VERSION, CORPUS_V2_SEED, v2.length),
+  ].filter((problem): problem is string => problem !== undefined);
+  if (problems.length > 0) {
+    for (const problem of problems) deps.stderr(problem);
+    return EXIT_BLOCKED;
+  }
+  const baseUrl = deps.embed?.baseUrl ?? parsed.ollamaUrl;
+  let resolution;
+  try {
+    resolution = await resolveStageD(parsed.stageDArms ?? DEFAULT_STAGE_D_ARMS, baseUrl, deps.embed?.fetch);
+  } catch (error) {
+    deps.stderr(`INVALID: could not read the pins from the loopback daemon: ${errorText(error)}`);
+    return EXIT_INVALID;
+  }
+  const inputs: StageDInputs = { sets: { memory: { digest: digests.memory }, v2: { digest: digests.v2 } }, planned: resolution.planned, resolved: resolution.resolved, reranker: resolution.reranker, dropped: resolution.dropped };
+  const digest = stageDDigest(inputs);
+  if (parsed.mode !== 'plan') {
+    if (parsed.planDigest === undefined) {
+      deps.stderr(`BLOCKED: a model-in-the-loop ${parsed.mode} needs --plan-digest from --mode plan (current plan digest ${digest}); nothing was called`);
+      return EXIT_BLOCKED;
+    }
+    if (parsed.planDigest !== digest) {
+      deps.stderr(`BLOCKED: --plan-digest ${parsed.planDigest} does not match the current stage D plan digest ${digest} (sets, arms, pins, reranker, prompt or parameters changed); nothing was called`);
+      return EXIT_BLOCKED;
+    }
+  }
+  const cacheDir = deps.embed?.cacheDir === undefined ? (parsed.cacheDir === undefined ? DEFAULT_CACHE_DIR : resolve(parsed.cacheDir)) : deps.embed.cacheDir;
+  const embedders = resolution.resolved.available.map(
+    (pin) =>
+      new ArmEmbedder(pin, {
+        ...(baseUrl === undefined ? {} : { baseUrl }),
+        ...(deps.embed?.fetch === undefined ? {} : { fetchImpl: deps.embed.fetch }),
+        ...(deps.embed?.clock === undefined ? {} : { clock: deps.embed.clock }),
+        cache: new EmbeddingCache(cacheDir === null ? undefined : cachePath(cacheDir, pin.spaceId)),
+      }),
+  );
+  const droppedArms = new Set(resolution.dropped.map((d) => d.arm));
+  const rerankArms: RerankArmId[] = resolution.rerankArms.filter((arm) => !droppedArms.has(arm));
+  const reranker =
+    resolution.reranker === null || rerankArms.length === 0
+      ? null
+      : new LlmReranker(resolution.reranker, {
+          ...(baseUrl === undefined ? {} : { baseUrl }),
+          ...(deps.embed?.fetch === undefined ? {} : { fetchImpl: deps.embed.fetch }),
+          ...(deps.embed?.clock === undefined ? {} : { clock: deps.embed.clock }),
+          cache: new RerankCache(cacheDir === null ? undefined : rerankCachePath(cacheDir, resolution.reranker)),
+        });
+  if (parsed.mode === 'plan') {
+    const plan = buildStageDPlan(inputs, embedders, set, rerankArms);
+    const path = deps.writeReport(outDirOf(parsed), `chunk-eval-stage-d-plan-${plan.digest.slice(0, 12)}-${stampOf(deps)}.json`, plan);
+    for (const line of planLinesD(plan)) deps.stdout(line);
+    deps.stdout(`report: ${path}`);
+    return EXIT_OK;
+  }
+  if (embedders.length === 0) {
+    deps.stderr('INVALID: no embedder arm is available (every planned model is missing); nothing was called');
+    return EXIT_INVALID;
+  }
+  const bundles = v2.map(bundleOf);
+  const sample = latencySample(bundles);
+  const first = bundles[0] as (typeof bundles)[number];
+  const planBlock = { digest, planned: inputs.planned as readonly string[], dropped: resolution.dropped };
+  const stages = new Map<ArmId, FirstStage[]>();
+  const needed = new Set(rerankArms.map(baseOf));
+  const stamp = stampOf(deps);
+  try {
+    if (parsed.mode === 'probe') {
+      const memoryPath: Record<string, QueryLatencyBlock> = {};
+      for (const embedder of embedders) {
+        const arm = embedder.pin.arm;
+        memoryPath[arm] = await measureQueryLatency(embedder, sampleQueries(set.queries, MEMORY_LATENCY_QUERIES, 'memory-path-latency'));
+        if (needed.has(arm)) stages.set(arm, await firstStageOf(embedder, set));
+        await embedder.unload();
+      }
+      const rerank: StageDProbeReport['rerank'] = {};
+      for (const arm of rerankArms) (rerank as Record<string, StageDProbeReport['rerank'][string]>)[arm] = await probeRerankArm(reranker as LlmReranker, set, stages.get(baseOf(arm)) as FirstStage[]);
+      await reranker?.unload();
+      const report: StageDProbeReport = { kind: 'chunk-eval-stage-d-probe', status: 'NON-GATING', plan: planBlock, reranker: resolution.reranker, memoryPath, rerank };
+      const path = deps.writeReport(outDirOf(parsed), `chunk-eval-stage-d-probe-${digest.slice(0, 12)}-${stamp}.json`, report);
+      for (const line of probeLinesD(report)) deps.stdout(line);
+      deps.stdout(`report: ${path}`);
+      return EXIT_NON_GATING;
+    }
+    const embedderRuns: Record<string, StageDEmbedderRun> = {};
+    for (const embedder of embedders) {
+      const arm = embedder.pin.arm;
+      const done = await runStageDEmbedder(embedder, set, { sample, query: { text: first.item.question, language: first.item.language } });
+      embedderRuns[arm] = done.run;
+      if (needed.has(arm)) stages.set(arm, done.firstStage);
+      await embedder.unload();
+    }
+    const rerankRuns: Record<string, RerankArmRun> = {};
+    for (const arm of rerankArms) rerankRuns[arm] = await runRerankArm(reranker as LlmReranker, baseOf(arm), set, stages.get(baseOf(arm)) as FirstStage[]);
+    await reranker?.unload();
+    const report = buildStageDReport(set, digests.memory, { embedders: embedderRuns, rerank: rerankRuns }, { version: 'chunk-embed-plan.v2', ...planBlock }, resolution.reranker);
+    const path = deps.writeReport(outDirOf(parsed), `chunk-eval-memory-stage-d-${digests.memory.slice(0, 12)}-${stamp}.json`, report);
+    for (const line of summaryLinesStageD(report)) deps.stdout(line);
+    deps.stdout(`report: ${path}`);
+    return EXIT_NON_GATING;
+  } catch (error) {
+    deps.stderr(`INVALID: the local model provider failed during stage D ${parsed.mode}: ${errorText(error)}`);
+    return EXIT_INVALID;
+  }
 }
 
 if (require.main === module) {

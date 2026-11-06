@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 1 stage D: rerank arms and the memory-path latency bar for `eval:chunk` (offline code, no model run)
+
+- **Added.** `--set memory --stage D`: arms `R(E1)` / `R(E2)` (first-stage multi-vector top 20 reordered by the local `qwen3:8b` listwise reranker, set-agnostic prompt, jsonl cache), plan `chunk-embed-plan.v2` with its own digest, a probe (20 rerank queries, memory-path query-embed latency) and a stage D decision.
+- **Changed.** On the memory path an arm is latency-eligible when the warm single query embed p95 is <= 1000 ms (owner 2026-11-06). The connector path bar (1 query + 200 passages within 8 s) and the v1 / v2 / stage A-C commands are unchanged.
+- **Not run.** No model was called. Recorded in DECISIONS "ADR-0124 phase 1 stage D".
+
 ## Unreleased — `eval:chunk` embedder arms: a 413 batch refusal is split, not fatal
 
 - **Fixed.** HTTP 413 from the local Ollama on a large batch splits the batch; a single input still refused counts as over-context (ADR-0124 phase 1 stage C).

@@ -61,7 +61,7 @@ export function pathMetrics(set: MemorySet, ranks: readonly (number | null)[]): 
 }
 
 /** The first gold memory's rank in a ranking of memory indexes. */
-function goldRank(set: MemorySet, ranking: readonly number[], gold: readonly string[]): number | null {
+export function goldRank(set: MemorySet, ranking: readonly number[], gold: readonly string[]): number | null {
   const relevant = new Set(set.memories.map((memory, at) => (gold.includes(memory.id) ? at : -1)).filter((at) => at >= 0));
   return firstRelevantRank(ranking, relevant);
 }
@@ -71,7 +71,7 @@ export function lexicalMemoryMetrics(set: MemorySet): PathMetrics {
   return pathMetrics(set, set.queries.map((query) => goldRank(set, index.rank(query.text), query.gold)));
 }
 
-const memoryPassageTexts = (text: string): string[] => {
+export const memoryPassageTexts = (text: string): string[] => {
   const index = new chunking.CodePointIndex(text);
   return chunking.chunk(text).map((passage) => index.slice(passage.span.start, passage.span.end));
 };
@@ -160,8 +160,8 @@ export interface Verdict {
  * Codex P2 (round 3): the tie-break metric is chosen once for the whole tied group, so the order is transitive. Parameter
  * count when every tied arm has it pinned, else on-disk size when every tied arm has that, else arm order alone.
  */
-function smallestOf<T extends ArmDecisionInput>(tied: readonly T[]): T | undefined {
-  const metric: ((input: ArmDecisionInput) => number) | undefined = tied.every((input) => input.paramsM !== null)
+export function smallestOf<T extends Pick<ArmDecisionInput, 'paramsM' | 'sizeBytes'> & { readonly arm: string }>(tied: readonly T[]): T | undefined {
+  const metric: ((input: Pick<ArmDecisionInput, 'paramsM' | 'sizeBytes'>) => number) | undefined = tied.every((input) => input.paramsM !== null)
     ? (input) => input.paramsM as number
     : tied.every((input) => input.sizeBytes !== null)
       ? (input) => input.sizeBytes as number

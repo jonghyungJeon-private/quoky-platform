@@ -32997,3 +32997,40 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
 
 - **Trigger.** The first stage C memory-set run (plan `ac687ad6…`) stopped INVALID after 42 s: `/api/embed` answered HTTP 413 to a batch of 16 whole memories (single-vector path, up to 8,000 UTF-16 units each). No measurement was recorded.
 - **Fix.** A 413 is handled like a context refusal. The batch is halved until single inputs remain, and a single input that is still refused counts as `overContext`, never a silent cut. Any other daemon error still fails the run. The plan parameters and the plan digest do not change. The memory set is rerun after the v2 / v1 runs, one local model at a time.
+
+## ADR-0124 phase 1 stage D: rerank arm and memory-path latency bar (owner decisions 2026-11-06)
+
+- **Trigger.** Phase 1 (Recall@5, multi-vector, CH7): E1 `nomic-embed-text-v2-moe` ko 0.688 / mixed 0.797; E2 `bge-m3` ko 0.844 / mixed 0.844, but E2 failed the 8 s "1 query + 200 passages" bar (9.2 s). The owner wants Recall@5 of at least 95%.
+- **Owner decisions (2026-11-06).** The owner answered "응 셋 다 권장안대로 진행해" to three proposals:
+  1. Add a rerank stage: a first-stage arm retrieves the top-N memories, then a LOCAL LLM already installed in Ollama, `qwen3:8b` (digest prefix `500a1f067a9f`), reorders them. No new model pull.
+  2. Split the latency bar for the memory path: memories are embedded at write time, so on the memory path an arm is latency-eligible when a warm single query embed takes <= 1000 ms (p50 and p95 over a sample of queries; eligibility on p95). The connector path keeps the 8 s / 200-passage bar unchanged.
+  3. The KURE embedder is deferred (nothing done).
+- **Design (CH7 memory set only; v1 / v2 runs get no rerank).**
+  - `rerank-arm.ts`: `LlmReranker` calls loopback `POST /api/chat` (temperature 0, seed 7, `think: false`, `format: json`, `keep_alive` as the embedders, `num_predict` 160). The reranker is pinned from `/api/version`, `/api/tags`, `/api/show` (digest12 must equal the ratified one, else the R arms are dropped with a note). One generic listwise prompt (set-agnostic; no phrase list, synonym table or set vocabulary; tested against the memory-set tables); its sha256 is part of the plan digest. Parsing keeps valid unique in-range numbers in order, appends the missing candidates in first-stage order, and falls back to first-stage order (counted as `fallbacks`) when nothing is parseable.
+  - Candidates: the top N = 20 memories of the multi-vector first stage; a long memory is shown as the passage the first-stage scoring matched best, otherwise the memory text; each candidate is cut at 600 UTF-16 units. Memories after the top N keep their first-stage order.
+  - Cache: jsonl `rerank-<digest12>.jsonl` in the embed-cache dir, keyed by (model digest, prompt sha, cap, seed, query id, candidate id list); rows carry a checksum and the original latency. The probe bypasses it.
+  - Arms `R(E1)`, `R(E2)` (any `R(E0..E3)` is accepted). Per arm: overall / byLanguage / long / short Recall@5 and MRR (as `PathMetrics`), first-stage Recall@N (the ceiling), rerank latency p50 / p95 per query, fallbacks, token counts.
+  - Memory-path latency (`stage-d.ts`): for every embedder arm, one warm-up then 50 queries (fixed, seeded order) embedded one at a time, cache bypassed; p50 / p95 / max reported; eligible when p95 <= 1000 ms. The old 1 query + 200 passage block still runs and is reported as information only.
+  - Decision (`decideStageD`, a sibling used by the stage D run only): candidates are the plain arms and R(E1) / R(E2); eligibility is the memory-path bar of the first-stage embedder (rerank latency is reported, NOT a gate; the owner decides later); then the ratified rule: highest Korean Recall@5 on CH7, English at most 2 points below E0, a Korean gain of at least 5 points over E0 else keep E0, tie to the smaller model by `smallestOf` (an R arm counts embedder plus reranker, so an equal score goes to the plain arm), nothing chosen until all planned arms ran. E0 is always planned.
+  - The 95% target is the owner's informational target: each arm reports whether it reaches 95% on Korean and mixed. It is not a relaxed gold and changes no verdict.
+  - Plan version `chunk-embed-plan.v2` (stage D): the digest covers the memory and v2 set digests, arms, pins (Ollama is now 0.40.14, so pins re-resolve), the reranker pin, prompt sha, N, candidate cap, seed, latency sample size and both bars. Stages A-C keep plan v1 unchanged.
+- **CLI.** `pnpm -s eval:chunk -- --set memory --stage D --arms 'E1,E2,R(E1),R(E2)' --mode plan|probe|run [--plan-digest <d>]` (quote the parentheses). Exit codes unchanged: BLOCKED 3 on a digest mismatch, NON-GATING 4, INVALID 5. The probe embeds the memory set for the first-stage arms (cached on disk, reused by the run), prints the memory-path query-embed latency, then makes 20 uncached rerank calls (fixed seeded selection) per R arm and prints per-query latency.
+- **Not run.** No model was called by anything run for this change; the tests use a fake daemon. The probe and the run are separate Strict actions that need the owner's yes on the plan digest.
+
+### Stage D measurement (2026-11-06, plan 9c4b1373, Ollama 0.40.14, qwen3:8b@500a1f067a9f)
+
+- Probe 1 (plan 58b00b23) showed 17 of 20 rerank fallbacks: with `format: 'json'` the model answered an error object. The reranker now asks for an integer-array JSON schema (commit 2f825c04, new plan digest 9c4b1373); probe 2 had 0 fallbacks.
+- CH7 multi-vector Recall@5 (n=192; ko/en/mixed n=64 each):
+
+| Arm | all | ko | en | mixed | long | memory-path query embed p95 | rerank p50 / p95 |
+|---|---|---|---|---|---|---|---|
+| E0 | 0.599 | 0.156 | 0.969 | 0.672 | 0.833 | 11 ms | - |
+| E1 | 0.813 | 0.688 | 0.953 | 0.797 | 0.929 | 19 ms | - |
+| E2 | 0.865 | 0.844 | 0.906 | 0.844 | 0.619 | 29 ms | - |
+| R(E1) | 0.719 | 0.578 | 0.859 | 0.719 | 0.619 | - | 12.8 s / 34.6 s |
+| R(E2) | 0.896 | 0.844 | 0.922 | 0.922 | 0.714 | - | 9.8 s / 17.4 s |
+
+- First-stage Recall@20 (the rerank ceiling): E2 ko 1.000, en 1.000, mixed 0.938; E1 ko 0.906, en 0.969, mixed 0.969.
+- Verdict under the rule: E1. E2 and R(E2) beat E1 on Korean but fail the English tolerance (E0 en 0.969; E2 0.906 and R(E2) 0.922 are more than 2 points below). R(E1) is worse than E1 on every slice: the general-purpose listwise reranker hurts a ranking that is already good.
+- The owner's 95% target (informational) is not met by any arm on ko or mixed. The gold sits in E2's top 20 for every Korean query, so the gap is the reranker, not recall. A general 8B chat model reranking 20 candidates also takes 10 to 35 s per query, which is far too slow for a chat turn.
+- Next candidates (owner decision): a dedicated multilingual cross-encoder reranker (needs a local runtime and a model download, both new), or the Google open models (EmbeddingGemma, a small Gemma 4) pulled by the owner.

@@ -158,6 +158,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   (not significant). No chunker, parameter or threshold change; per-shape parameters need E0-E3 / EH. DECISIONS ADR-0124 section 16.
 - **Phase 1 stage A (2026-11-05, branch `claude/v5-chunk-embed-arms`, offline code only).** `eval:chunk` gained the embedder arms E0-E3 and EH(x), the hash-frozen CH7 memory set (`--set memory`, digest `91b92972...`, 171 memories / 192 queries), `--mode plan` (zero model calls, plan digest) and `--mode probe`;
   runs with `--arms` need the matching `--plan-digest` (BLOCKED otherwise) and the v1 `adr-file` shape runs on E0 only (`--scope phase1`). No model was called; the real runs, the owner pulls of `bge-m3` / `qwen3-embedding:0.6b` and the verdict are pending. DECISIONS "ADR-0124 phase 1 measurement record".
+- **Phase 1 stage D (2026-11-06, branch `claude/v5-chunk-embed-boost`, offline code only).** Owner decisions: a local rerank stage (`qwen3:8b`, top-20 of the multi-vector first stage), a memory-path latency bar (warm single query embed p95 <= 1000 ms; connector path 8 s / 200 passages unchanged), KURE deferred. `eval:chunk --set memory --stage D --arms 'E1,E2,R(E1),R(E2)' --mode plan|probe|run` (plan v2 digest). The 95% Recall@5 target is informational. No model was called; probe and run need the owner's yes on the digest. DECISIONS "ADR-0124 phase 1 stage D".
 
 ### Durable-memory embeddings local-only (2026-10-28, branch `claude/memory-embed-local-only`)
 
