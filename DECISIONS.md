@@ -33127,3 +33127,21 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
 - **Residual (not fixed, recorded).** The local vector store caps a collection at 20,000 vectors and evicts the oldest-written ones beyond it, and every write rewrites the collection file. With about 3 vectors per long memory the owner corpus is tiny today; revisit the eviction policy and the write cost when the store exceeds **5,000 live memories** (about a quarter of the cap) or a collection file exceeds **50 MB**.
 - **Open risks.** (1) A memory becomes reachable by widening once the backfill has embedded it (minutes after a start with a backlog, 8 vectors per second at most while the embedder is free). (2) Old memories lose the 0.25 recency share in the blend, so a close old memory can rank below a mediocre recent one. (3) Stale-identity window between probes. (4) 0.9 floor stays nomic-calibrated until P2-3.
 - Codex round 4 (P2): the backfill re-checks `shouldYield` after the provider selection is awaited, before any model call (a recall turn starting during the selection no longer competes with the refresh probe or a document embed). Test pinned. Fix loop closed here (cap).
+
+### P2-2 measurement (2026-11-06, stage R plan 615f76c6, Ollama 0.40.14; owner-approved second local run)
+
+- Run took 269 s; exit 4 (NON-GATING). Recall@5 (MRR@10) through the live recall path with widening and multi-vector, n=192:
+
+| Arm / mode | all | ko | en | mixed | gold not in pool | query p50 / p95 |
+|---|---|---|---|---|---|---|
+| L (lexical) | 0.146 (0.111) | 0.094 | 0.156 | 0.188 | 69.8% | 2 / 2 ms |
+| E0 live (fresh space, no backfill) | 0.172 (0.129) | 0.078 | 0.219 | 0.219 | 69.8% | 87 / 463 ms |
+| E0 backfilled | 0.286 (0.201) | 0.078 | 0.500 | 0.281 | 0.5% | 84 / 98 ms |
+| E4 live | 0.255 (0.227) | 0.234 | 0.281 | 0.250 | 69.8% | 100 / 480 ms |
+| E4 backfilled | 0.599 (0.459) | 0.406 | 0.781 | 0.609 | 0.0% | 96 / 113 ms |
+
+- Warm equals backfilled for both arms (the real backfill job fills all 343 vector units in 44 calls).
+- Widening works: with the backfill the gold is in the candidate pool for 100% (E4) of queries (69.8% missing at P2-1).
+- The next bottleneck is the ranking formula, not recall. Inside the pool, the stage E harness (pure semantic multi-vector ranking) reaches E4 ko 0.906. The live blend (0.7 semantic cosine + 0.3 lexical, then 0.25 recency with a 30-day half-life) reaches 0.406. Cosine differences between candidates are small. For paraphrase queries with no shared word, a distractor's lexical overlap and a newer `updatedAt` outweigh them.
+- Changing the blend is an owner decision (ADR-0098 owner default). Proposal: a stage R blend comparison that reuses one embedding pass, with the choice made on one half of the queries and confirmed on the other half.
+- The E0 live row is below P2-1 (0.172 vs 0.198) because the new space starts empty. It is a transient: the backfill fills it within about a minute of start.
