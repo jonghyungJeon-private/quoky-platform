@@ -214,6 +214,7 @@ export async function runtimePrefixesOf(model: string): Promise<{ query: string;
     warmUp: false,
     runner: async (_bin, args, options) => {
       // the provider asks `ollama list` for the model digest before it produces any vector (fail-closed space id)
+      if (args[0] === '--version') return { code: 0, stdout: 'ollama version is 0.0.0\n', stderr: '', timedOut: false } as never;
       if (args[0] === 'list') return { code: 0, stdout: `NAME ID SIZE MODIFIED\n${model.includes(':') ? model : `${model}:latest`} ${'0'.repeat(12)} 1 GB now\n`, stderr: '', timedOut: false } as never;
       seen.push(options.input ?? '');
       return { code: 0, stdout: '[0.5,0.5]', stderr: '', timedOut: false } as never;

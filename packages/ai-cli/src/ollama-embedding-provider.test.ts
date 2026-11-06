@@ -19,7 +19,9 @@ import {
   OllamaCliEmbeddingProvider,
   defaultRolePrefixes,
   embeddingSpaceId,
+  OLLAMA_IDENTITY_NEGATIVE_CACHE_MS,
   ollamaListDigestOf,
+  ollamaVersionOf,
   rolePrefixSchemeHash,
 } from './ollama-embedding-provider';
 import type { OllamaCliEmbeddingProviderOptions } from './ollama-embedding-provider';
@@ -42,6 +44,7 @@ const DEFAULT_LIST =
 function recordingRunner(result: Partial<CliRunResult> = {}, listPassthrough = false): { runner: CliRunner; calls: Call[] } {
   const calls: Call[] = [];
   const runner: CliRunner = async (bin, args, options) => {
+    if (args[0] === '--version') return { code: 0, stdout: 'ollama version is 0.40.14\n', stderr: '', timedOut: false };
     if (args[0] === 'list' && !listPassthrough) return { code: 0, stdout: DEFAULT_LIST, stderr: '', timedOut: false };
     calls.push({ bin, args, options });
     return { code: 0, stdout: OK_VECTOR, stderr: '', timedOut: false, ...result };
@@ -100,7 +103,7 @@ describe('OllamaCliEmbeddingProvider (ADR-0098 D8)', () => {
     const result = await embedder.execute(embeddingRequest());
     expect(parseEmbeddingEnvelope(result.text)).toEqual({
       schema: 'quoky.embedding.v1',
-      space: expect.stringMatching(/^nomic-embed-text\/abcdef012345\/p[0-9a-f]{8}$/),
+      space: expect.stringMatching(/^nomic-embed-text\/abcdef012345\/v0\.40\.14\/p[0-9a-f]{8}$/),
       dimensions: 4,
       vector: [0.25, -0.5, 0.001, 0],
     });
@@ -248,6 +251,7 @@ describe('OllamaCliEmbeddingProvider (ADR-0098 D8)', () => {
       const calls: Call[] = [];
       const runner: CliRunner = async (bin, args, options) => {
         calls.push({ bin, args, options });
+        if (args[0] === '--version') return { code: 0, stdout: 'ollama version is 0.40.14\n', stderr: '', timedOut: false };
         if (args[0] === 'list') {
           return daemon.up
             ? { code: 0, stdout: LIST, stderr: '', timedOut: false }
@@ -412,49 +416,78 @@ describe('embedding prefixes and space identity (ADR-0124 P2-2, ADR-0123 D3)', (
     expect(ollamaListDigestOf('NAME ID SIZE MODIFIED\nbge-m3:latest abc 1 GB now\n', 'bge-m3')).toBeUndefined();
   });
 
-  it('the space id changes with the model, the digest and the prefix scheme', () => {
+  it('reads the runtime version strictly', () => {
+    expect(ollamaVersionOf('ollama version is 0.40.14\n')).toBe('0.40.14');
+    expect(ollamaVersionOf('Warning: could not connect to a running Ollama instance\nWarning: client version is 0.40.14\n')).toBeUndefined();
+    expect(ollamaVersionOf('ollama version is 0.40.14\nWarning: client version is 0.41.0\n')).toBe('0.40.14');
+    expect(ollamaVersionOf('ollama version is 0.40.14\nollama version is 0.41.0\n')).toBeUndefined();
+    expect(ollamaVersionOf('ollama version is latest\n')).toBeUndefined();
+    expect(ollamaVersionOf('')).toBeUndefined();
+  });
+
+  it('the space id changes with the model, the digest, the runtime version and the prefix scheme', () => {
     const nomic = defaultRolePrefixes('nomic-embed-text');
-    const base = embeddingSpaceId('nomic-embed-text', 'abcdef012345', nomic);
-    expect(base).toMatch(/^nomic-embed-text\/abcdef012345\/p[0-9a-f]{8}$/);
-    expect(embeddingSpaceId('nomic-embed-text', '000000000000', nomic)).not.toBe(base);
-    expect(embeddingSpaceId('other', 'abcdef012345', nomic)).not.toBe(base);
-    expect(embeddingSpaceId('nomic-embed-text', 'abcdef012345', { ...nomic, query: 'q: ' })).not.toBe(base);
+    const base = embeddingSpaceId('nomic-embed-text', 'abcdef012345', '0.40.14', nomic);
+    expect(base).toMatch(/^nomic-embed-text\/abcdef012345\/v0\.40\.14\/p[0-9a-f]{8}$/);
+    expect(embeddingSpaceId('nomic-embed-text', '000000000000', '0.40.14', nomic)).not.toBe(base);
+    expect(embeddingSpaceId('nomic-embed-text', 'abcdef012345', '0.41.0', nomic)).not.toBe(base);
+    expect(embeddingSpaceId('other', 'abcdef012345', '0.40.14', nomic)).not.toBe(base);
+    expect(embeddingSpaceId('nomic-embed-text', 'abcdef012345', '0.40.14', { ...nomic, query: 'q: ' })).not.toBe(base);
     expect(rolePrefixSchemeHash(nomic)).toBe(rolePrefixSchemeHash({ ...nomic }));
   });
 
-  it('stamps vectors with the digest and prefix scheme of the model as listed', async () => {
+  it('stamps vectors with the digest, runtime version and prefix scheme of the model as listed', async () => {
     const { embedder } = provider({}, { model: 'embeddinggemma:300m' });
     const envelope = parseEmbeddingEnvelope((await embedder.execute(embeddingRequest())).text);
-    expect(envelope?.space).toBe(embeddingSpaceId('embeddinggemma:300m', '85462619ee72', defaultRolePrefixes('embeddinggemma:300m')));
+    expect(envelope?.space).toBe(embeddingSpaceId('embeddinggemma:300m', '85462619ee72', '0.40.14', defaultRolePrefixes('embeddinggemma:300m')));
   });
 
-  it('a re-pulled tag (new digest at the next probe) starts a new space', async () => {
+  it('a re-pulled tag or an upgraded runtime (seen at the next probe) starts a new space', async () => {
     let digest = 'aaaaaaaaaaaa';
-    const runner: CliRunner = async (_bin, args) =>
-      args[0] === 'list'
-        ? { code: 0, stdout: `NAME ID SIZE MODIFIED\nnomic-embed-text:latest ${digest} 274 MB now\n`, stderr: '', timedOut: false }
-        : { code: 0, stdout: OK_VECTOR, stderr: '', timedOut: false };
-    const embedder = new OllamaCliEmbeddingProvider({ runner, warmUp: false });
-    await embedder.isAvailable();
-    const before = parseEmbeddingEnvelope((await embedder.execute(embeddingRequest())).text)?.space;
-    digest = 'bbbbbbbbbbbb';
-    await embedder.isAvailable();
-    const after = parseEmbeddingEnvelope((await embedder.execute(embeddingRequest())).text)?.space;
-    expect(before).toContain('/aaaaaaaaaaaa/');
-    expect(after).toContain('/bbbbbbbbbbbb/');
-  });
-
-  it('fails closed when the digest is unknown: no model run, no vector (UNAVAILABLE)', async () => {
-    const calls: string[] = [];
+    let version = '0.40.14';
     const runner: CliRunner = async (_bin, args) => {
-      calls.push(args[0] ?? '');
+      if (args[0] === '--version') return { code: 0, stdout: `ollama version is ${version}\n`, stderr: '', timedOut: false };
       return args[0] === 'list'
-        ? { code: 0, stdout: 'NAME ID SIZE MODIFIED\nnomic-embed-text:latest abc 274 MB now\n', stderr: '', timedOut: false }
+        ? { code: 0, stdout: `NAME ID SIZE MODIFIED\nnomic-embed-text:latest ${digest} 274 MB now\n`, stderr: '', timedOut: false }
         : { code: 0, stdout: OK_VECTOR, stderr: '', timedOut: false };
     };
     const embedder = new OllamaCliEmbeddingProvider({ runner, warmUp: false });
-    const error = await failureOf(embedder.execute(embeddingRequest()));
-    expect(error.kind).toBe(AiFailureKind.UNAVAILABLE);
-    expect(calls).toEqual(['list']);
+    const spaceNow = async () => parseEmbeddingEnvelope((await embedder.execute(embeddingRequest())).text)?.space;
+    await embedder.isAvailable();
+    const first = await spaceNow();
+    digest = 'bbbbbbbbbbbb';
+    await embedder.isAvailable();
+    const second = await spaceNow();
+    version = '0.41.0';
+    await embedder.isAvailable();
+    const third = await spaceNow();
+    expect(first).toContain('/aaaaaaaaaaaa/v0.40.14/');
+    expect(second).toContain('/bbbbbbbbbbbb/v0.40.14/');
+    expect(third).toContain('/bbbbbbbbbbbb/v0.41.0/');
+  });
+
+  it.each([
+    ['an unknown digest', 'NAME ID SIZE MODIFIED\nnomic-embed-text:latest abc 274 MB now\n', 'ollama version is 0.40.14\n'],
+    ['an unknown version', 'NAME ID SIZE MODIFIED\nnomic-embed-text:latest abcdef012345 274 MB now\n', 'garbage\n'],
+  ])('fails closed on %s: no model run, no vector (UNAVAILABLE), and the failure is remembered', async (_name, list, version) => {
+    const calls: string[] = [];
+    let nowMs = Date.parse('2026-11-06T00:00:00.000Z');
+    const runner: CliRunner = async (_bin, args) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === '--version') return { code: 0, stdout: version, stderr: '', timedOut: false };
+      return args[0] === 'list'
+        ? { code: 0, stdout: list, stderr: '', timedOut: false }
+        : { code: 0, stdout: OK_VECTOR, stderr: '', timedOut: false };
+    };
+    const embedder = new OllamaCliEmbeddingProvider({ runner, warmUp: false, clock: () => new Date(nowMs).toISOString() });
+    expect((await failureOf(embedder.execute(embeddingRequest()))).kind).toBe(AiFailureKind.UNAVAILABLE);
+    expect(calls).not.toContain('run');
+    const spawned = calls.length;
+    // negative cache: a second turn inside the interval spawns nothing
+    expect((await failureOf(embedder.execute(embeddingRequest()))).kind).toBe(AiFailureKind.UNAVAILABLE);
+    expect(calls).toHaveLength(spawned);
+    nowMs += OLLAMA_IDENTITY_NEGATIVE_CACHE_MS;
+    await failureOf(embedder.execute(embeddingRequest()));
+    expect(calls.length).toBeGreaterThan(spawned);
   });
 });

@@ -460,6 +460,7 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
     let captured: { args: string[]; options: CliRunOptions } | undefined;
     await run(async (_bin, args, options) => {
       // the embedding provider's model-digest lookup (fail-closed space id) is not the run under test
+      if (args[0] === '--version') return { code: 0, stdout: 'ollama version is 0.40.14\n', stderr: '', timedOut: false };
       if (args[0] === 'list') {
         return { code: 0, stdout: 'NAME ID SIZE MODIFIED\nnomic-embed-text:latest abcdef012345 274 MB now\n', stderr: '', timedOut: false };
       }
