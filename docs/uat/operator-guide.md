@@ -51,7 +51,7 @@ line to use the default.
 | `QUOKY_REMINDERS_CHANNEL_DELIVERY` | `false` | `true` posts reminders in the originating channel, so every channel member can read the text. Live PASS 2026-10-06 in the owner's `#reminder` channel (v2 QA record PC-3). The daily brief is DM-only regardless |
 | `QUOKY_TIMEZONE` | `Asia/Seoul` | IANA zone; invalid is a startup error |
 | `QUOKY_WORK_SUMMARY_ENABLED` | `true` | With Ollama not ready, connector summaries fall back to Claude, so corporate connector text can leave the host through the owner's Claude subscription (owner decision, ADR-0100 #2). Set `false` where policy forbids it; lookups then return the deterministic list |
-| `QUOKY_EMBEDDING_ENABLED` | `false` | Local embedding recall. Run `ollama pull nomic-embed-text` first; falls back to lexical recall on any failure |
+| `QUOKY_EMBEDDING_ENABLED` | `false` | Local embedding recall. Run `ollama pull nomic-embed-text` first; falls back to lexical recall on any failure. Enabling it starts a background backfill that embeds all stored memories (8 per tick, paused while a turn runs) and removes vectors of forgotten ones; a changed model, model digest or Ollama version is a new space and re-embeds the corpus (the first minutes after such a change recall is partly lexical). Files of old spaces (`vectors/durable-memory-v2-*.json`) are not removed automatically: stop the service and delete the ones you no longer need |
 | `QUOKY_EMBEDDING_MODEL` | `nomic-embed-text` | A name or tag containing `cloud` is refused |
 | `QUOKY_EMBEDDING_TIMEOUT_MS` | `3000` | 100-30000 |
 | `QUOKY_CONTEXT_MAX_TOKENS` | `6000` | Keep below the Ollama server context window (see 0.5) |
@@ -321,8 +321,8 @@ snapshot failed. `backup-status.json` is best-effort, advisory telemetry (writte
 concurrent merges of the service and the manual process can lose a field until the next write.
 
 Restore = DB copy and the same-named snapshot together (quickstart section 7). A copy without a snapshot (older
-backups, or a failed one): restore the DB alone and leave `vectors/` moved aside; semantic recall rebuilds lazily (at
-most 4 embeddings per turn, lexical ranking until then) and never serves a vector whose memory id and content hash do
+backups, or a failed one): restore the DB alone and leave `vectors/` moved aside; semantic recall rebuilds (the background
+backfill, plus at most 4 embeddings per turn, lexical ranking until then) and never serves a vector whose memory id and content hash do
 not match.
 
 **Calendar (ADR-0110 and its amendment).**

@@ -8,6 +8,7 @@ import {
   CONTINUATION_BINDING_REPOSITORY,
   QUEUE_PROVIDER,
   VECTOR_PROVIDER,
+  RecallActivityGauge,
   WORKSPACE_PROVIDER,
   GIT_PROVIDER,
   WORKSPACE_WRITER,
@@ -161,6 +162,8 @@ const providerSelectionStore = new ProviderSelectionStore(
   new ConsoleLogger('provider-selection'),
 );
 logImageUnderstandingSelection(config.imageUnderstanding, new ConsoleLogger('image-understanding'));
+// One gauge for the recall scorer (marks each turn) and the vector backfill (yields to a turn).
+const recallActivity = new RecallActivityGauge();
 const providerCatalog = new ProviderCatalog({
   ai: config.ai,
   vision: visionModelsOf(config),
@@ -572,6 +575,7 @@ const application: Provider[] = [
               timeoutMs: config.embedding.timeoutMs,
               maxNewPerTurn: config.embedding.maxNewPerTurn,
               logger: new ConsoleLogger('recall'),
+              activity: recallActivity,
             }
           : undefined,
         curatedExampleOptionsOf(config, learning, new ConsoleLogger('learning-examples')),
@@ -589,6 +593,7 @@ const application: Provider[] = [
             timeoutMs: config.embedding.timeoutMs,
             maxNewPerTurn: config.embedding.maxNewPerTurn,
             logger: new ConsoleLogger('recall-backfill'),
+            activity: recallActivity,
           })
         : null,
     inject: [STORAGE_PROVIDER, PROVIDER_SELECTOR, VECTOR_PROVIDER],

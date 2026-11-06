@@ -3,6 +3,7 @@ import {
   CuratedExampleSelector,
   DefaultMemoryRetriever,
   LEARNING_EXAMPLE_VECTOR_COLLECTION,
+  RecallActivityGauge,
   SemanticRecallScorer,
   durableMemoryCollectionFor,
   localOnlyProviderSelector,
@@ -34,6 +35,11 @@ export interface ProductionSemanticRecallOptions {
   /** Document embeddings created per turn (fixed at 4 by configuration). */
   maxNewPerTurn: number;
   logger?: Logger;
+  /**
+   * Shared between the recall scorer (marks each turn) and the background backfill (yields to a turn), so the two are
+   * wired from one gauge in the composition root.
+   */
+  activity?: RecallActivityGauge;
 }
 
 /**
@@ -93,6 +99,7 @@ export function createProductionMemoryScorer(semanticRecall: ProductionSemanticR
       selector: localOnlyProviderSelector(semanticRecall.selector),
       vectors: semanticRecall.vectors,
       ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
+      ...(semanticRecall.activity === undefined ? {} : { activity: semanticRecall.activity }),
     },
     {
       collectionFor: durableMemoryCollectionFor,
@@ -114,6 +121,7 @@ export function createProductionMemoryBackfill(
   return new MemoryVectorBackfill({
     scorer: createProductionMemoryScorer(semanticRecall),
     memories: () => storage.memories,
+    ...(semanticRecall.activity === undefined ? {} : { activity: semanticRecall.activity }),
     ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
   });
 }

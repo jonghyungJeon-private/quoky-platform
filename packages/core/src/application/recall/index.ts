@@ -28,6 +28,7 @@ export {
 } from './semantic-recall-scorer';
 export type {
   SemanticRecallCandidate,
+  SemanticRecallLiveSet,
   SemanticRecallMaintenance,
   SemanticRecallMaintenanceOptions,
   SemanticRecallScorerDeps,
@@ -42,3 +43,5 @@ export {
   passageVectorId,
 } from './memory-passages';
 export type { MemoryVectorUnit } from './memory-passages';
+export { RecallActivityGauge } from './recall-activity';
+export type { RecallActivity, RecallActivityReader } from './recall-activity';
