@@ -2,7 +2,11 @@ import type { Actor, ExternalIdentity, Id, MemoryRecord, Session } from '../../d
 import { MemoryType } from '../../domain';
 import type { LearningMemoryForgetCascade, MemoryRepository, VectorProvider } from '../../ports';
 import { plainTextOf } from '../message-rendering';
-import { DURABLE_MEMORY_VECTOR_COLLECTION } from '../recall/semantic-recall-scorer';
+import { allMemoryVectorIds } from '../recall/memory-passages';
+import {
+  DURABLE_MEMORY_V2_COLLECTION_PREFIX,
+  DURABLE_MEMORY_VECTOR_COLLECTION,
+} from '../recall/semantic-recall-scorer';
 import {
   MEMORY_CONFIRM_PREVIEW_MAX_CHARS,
   MEMORY_PREVIEW_MAX_CHARS,
@@ -44,11 +48,15 @@ export interface MemoryRemovalCascade {
 }
 
 /**
- * Removes the durable-memory vectors (ADR-0098 D8 cache: vector ids equal memory ids) through the existing
- * `VectorProvider.delete`. The cache is rebuildable; this keeps a forgotten memory's embedding off the disk.
+ * Removes the durable-memory vectors (ADR-0098 D8 cache) through the existing `VectorProvider.delete`. The cache is
+ * rebuildable; this keeps a forgotten memory's embeddings off the disk. ADR-0124 section 5.5: a memory can have a
+ * vector per passage (`<memoryId>#<ordinal>`) in the collection of every embedding space it was ever embedded in
+ * (`durable-memory-v2-*`), so ALL of them go: the memory id and every possible passage id, from every v2 collection
+ * the store lists, plus the legacy v1 collection (one vector per memory, left in place for rollback but still
+ * cleared of forgotten memories). Idempotent; a collection that does not exist is not created.
  */
 export function createVectorRemovalCascade(
-  vectors: Pick<VectorProvider, 'delete'>,
+  vectors: Pick<VectorProvider, 'delete'> & Partial<Pick<VectorProvider, 'listCollections'>>,
   collection: string = DURABLE_MEMORY_VECTOR_COLLECTION,
 ): MemoryRemovalCascade {
   return {
@@ -57,6 +65,11 @@ export function createVectorRemovalCascade(
       const ids = [...new Set([...event.memoryIds, ...event.vectorIds])];
       if (ids.length === 0) return;
       await vectors.delete(collection, ids);
+      if (vectors.listCollections === undefined) return;
+      const v2 = (await vectors.listCollections()).filter((name) => name.startsWith(DURABLE_MEMORY_V2_COLLECTION_PREFIX));
+      if (v2.length === 0) return;
+      const everyId = [...new Set(ids.flatMap((id) => allMemoryVectorIds(id)))];
+      for (const name of v2) await vectors.delete(name, everyId);
     },
   };
 }

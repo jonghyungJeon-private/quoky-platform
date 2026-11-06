@@ -4,6 +4,7 @@ import {
   DefaultMemoryRetriever,
   LEARNING_EXAMPLE_VECTOR_COLLECTION,
   SemanticRecallScorer,
+  durableMemoryCollectionFor,
   localOnlyProviderSelector,
   type ContextBuilderConfig,
   type LearningRepository,
@@ -79,6 +80,40 @@ export function learningRemoteDisclosureOf(config: Pick<QuokyConfig, 'learning'>
 }
 
 /**
+ * The production durable-memory scorer (ADR-0124 section 5, P2-2): multi-vector (one vector per passage of a long
+ * memory), one collection per embedding space (`durable-memory-v2-<space>`), ADR-0110 D4 local-only provider
+ * selection. Exported so the stage R measurement builds exactly the same wiring.
+ */
+export function createProductionMemoryScorer(semanticRecall: ProductionSemanticRecallOptions): SemanticRecallScorer {
+  return new SemanticRecallScorer(
+    {
+      // ADR-0110 D4: durable memory text is the owner's personal content and must not reach a remote model,
+      // so a non-LOCAL embedding provider is treated as absent (fail closed to lexical, never remote).
+      selector: localOnlyProviderSelector(semanticRecall.selector),
+      vectors: semanticRecall.vectors,
+      ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
+    },
+    {
+      collectionFor: durableMemoryCollectionFor,
+      multiVector: true,
+      maxNewEmbeddingsPerTurn: semanticRecall.maxNewPerTurn,
+      embeddingTimeoutMs: semanticRecall.timeoutMs,
+    },
+  );
+}
+
+/** The production retriever over `repository`: the scorer above when semantic recall is on, lexical otherwise. */
+export function createProductionMemoryRetriever(
+  repository: MemoryRepository,
+  semanticRecall?: ProductionSemanticRecallOptions,
+): DefaultMemoryRetriever {
+  return new DefaultMemoryRetriever(
+    repository,
+    semanticRecall === undefined ? {} : { semanticScorer: createProductionMemoryScorer(semanticRecall) },
+  );
+}
+
+/**
  * Construct the production ContextBuilder while preserving the storage provider's
  * post-init repository ownership. Nest creates application services before
  * SqliteStorageProvider.init(), so each operation must resolve `memories` lazily.
@@ -97,29 +132,14 @@ export function createProductionContextBuilder(
     list: () => storage.memories.list(),
     findByScope: (scope, type) => storage.memories.findByScope(scope, type),
     findDurableCandidates: (query) => storage.memories.findDurableCandidates(query),
+    findDurableCandidatesByIds: async (query) =>
+      storage.memories.findDurableCandidatesByIds === undefined
+        ? []
+        : storage.memories.findDurableCandidatesByIds(query),
     findShortTermByUser: (userId) => storage.memories.findShortTermByUser(userId),
   };
 
-  const retriever = new DefaultMemoryRetriever(
-    repository,
-    semanticRecall === undefined
-      ? {}
-      : {
-          semanticScorer: new SemanticRecallScorer(
-            {
-              // ADR-0110 D4: durable memory text is the owner's personal content and must not reach a remote model,
-              // so a non-LOCAL embedding provider is treated as absent (fail closed to lexical, never remote).
-              selector: localOnlyProviderSelector(semanticRecall.selector),
-              vectors: semanticRecall.vectors,
-              ...(semanticRecall.logger === undefined ? {} : { logger: semanticRecall.logger }),
-            },
-            {
-              maxNewEmbeddingsPerTurn: semanticRecall.maxNewPerTurn,
-              embeddingTimeoutMs: semanticRecall.timeoutMs,
-            },
-          ),
-        },
-  );
+  const retriever = createProductionMemoryRetriever(repository, semanticRecall);
   const exampleSelector =
     curatedExamples === undefined
       ? undefined

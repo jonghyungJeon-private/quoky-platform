@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 2 P2-2: multi-vector memory recall, space identity and candidate widening (default model unchanged)
+
+- **Changed.** Durable memory recall embeds the query once per turn and widens the candidate pool with the 50 memories nearest to it in the vector store (`MemoryRepository.findDurableCandidatesByIds`, same SQL filters; every candidate still passes the same eligibility checks, so only the pool grows). Long memories get one vector per passage (`<memoryId>#<ordinal>`, score = max cosine) in a collection per embedding space (`durable-memory-v2-<space>`); the v1 file is left untouched and no longer read. The Ollama embedding provider stamps vectors with `<model>/<digest12>/p<prefixHash8>` and refuses to produce a vector when the model digest is unknown. `embeddinggemma` gets its model-card prefixes. Forget removes every passage vector from every space. `eval:chunk` stage R mirrors the new wiring (plan `runtime-recall-plan.v2`). No `.env.local` change; the embedder stays `nomic-embed-text` until the owner switches it after P2-3.
+
 ## Unreleased — ADR-0124 phase 2 P2-1: runtime-path recall measurement for `eval:chunk` (offline tooling, no model run)
 
 - **Added.** `--set memory --stage R --arms L,E0,E4 --mode plan|run`: the CH7 memory set run through the real runtime recall path (sqlite `findDurableCandidates` recent-50 pool, `DefaultMemoryRetriever`, `SemanticRecallScorer` with lazy embedding, `OllamaCliEmbeddingProvider` with its own prefixes, `LocalVectorProvider`), per semantic arm in `live` (empty vector store) and `warm` (pre-embedded) modes, plus a lexical-only arm. Reports Recall@5 / MRR@10 by language and long/short and diagnostics (gold outside the candidate pool, gold without semantic score, latency p50 / p95). Plan digest gating as the other stages (BLOCKED 3, NON-GATING 4, INVALID 5). No runtime behaviour changed; no model was called.

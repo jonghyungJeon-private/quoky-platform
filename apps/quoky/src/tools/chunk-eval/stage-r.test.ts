@@ -2,7 +2,7 @@
  * ADR-0124 phase 2 P2-1: offline tests of stage R (the CH7 set through the real runtime recall path). The embedding provider is a
  * deterministic fake and the daemon a fake fetch; nothing here reaches a model. The retriever, scorer, sqlite and vector store are the real classes.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Capability, chunking, formatEmbeddingEnvelope, type AiProvider } from '@quoky/core';
@@ -92,13 +92,18 @@ describe('stage R: the runtime path on a set larger than the candidate pool', ()
     expect(live.diagnostics.goldInPoolNoSemanticScore?.n).toBeGreaterThan(0);
     expect(live.diagnostics.goldNoSemanticScore?.n).toBeGreaterThanOrEqual(live.diagnostics.goldNotInPool.n);
 
-    expect(warm.prewarm).toMatchObject({ stored: SIZE, of: SIZE });
+    expect(warm.prewarm).toMatchObject({ stored: SIZE, of: SIZE, missing: 0 });
     expect(warm.diagnostics.embeddedDocuments).toBe(0);
     expect(warm.diagnostics.goldInPoolNoSemanticScore?.n).toBe(0);
-    // only the pool cap remains: every gold outside the pool is unscored, every other one is scored
+    // the pool is the recent 50 plus the semantic nearest; every gold is scored
     expect(warm.diagnostics.goldNoSemanticScore?.n).toBe(warm.diagnostics.goldNotInPool.n);
+    // P2-2 candidate widening: with every vector stored, an old memory outside the recent 50 is a candidate again
+    expect(warm.diagnostics.goldNotInPool.n).toBe(0);
+    expect(warm.diagnostics.goldNoSemanticScore?.n).toBe(0);
+    expect(warm.diagnostics.poolSize.max).toBeGreaterThan(50);
+    expect(warm.metrics.overall.recallAt5).toBeGreaterThan(0.9);
     expect(warm.metrics.overall.recallAt5).toBeGreaterThanOrEqual(live.metrics.overall.recallAt5);
-    expect(warm.diagnostics.goldNoSemanticScore?.n).toBeLessThan(live.diagnostics.goldNoSemanticScore?.n as number);
+    expect(warm.diagnostics.goldNoSemanticScore?.n).toBeLessThanOrEqual(live.diagnostics.goldNoSemanticScore?.n as number);
     // the fake saw the document embeddings of the pre-warm and only query embeddings afterwards
     expect(warmProvider.calls()).toBeGreaterThan(SIZE);
   });
@@ -114,9 +119,9 @@ describe('stage R: the real CH7 set on the lexical arm', () => {
 });
 
 describe('stage R: the real provider supplies its own prefixes', () => {
-  it('nomic-embed-text gets the nomic prefixes; embeddinggemma gets none (the model-card prefixes are NOT applied by the runtime)', async () => {
+  it('nomic-embed-text gets the nomic prefixes; embeddinggemma gets its model-card prefixes (P2-2)', async () => {
     expect(await runtimePrefixesOf('nomic-embed-text')).toEqual({ query: 'search_query: ', document: 'search_document: ' });
-    expect(await runtimePrefixesOf('embeddinggemma:300m')).toEqual({ query: '', document: '' });
+    expect(await runtimePrefixesOf('embeddinggemma:300m')).toEqual({ query: 'task: search result | query: ', document: 'title: none | text: ' });
   });
 });
 
@@ -240,6 +245,16 @@ describe('stage R: daemon rule', () => {
 });
 
 describe('stage R: the plan digest binds parameters and implementation identity', () => {
+  it('the hashed implementation list covers the chunker, the passage mapping and the shared production wiring', () => {
+    for (const file of ['packages/core/src/application/recall/memory-passages.ts', 'packages/core/src/application/chunking/passages.ts', 'packages/core/src/application/chunking/boundaries.ts', 'packages/core/src/application/chunking/code-points.ts', 'packages/core/src/application/chunking/token-estimate.ts', 'apps/quoky/src/context-builder-provider.ts']) {
+      expect(IMPLEMENTATION_FILES).toContain(file);
+    }
+    // every non-test source file of the chunker is hashed
+    const dir = join(__dirname, '../../../../../packages/core/src/application/chunking');
+    const sources = readdirSync(dir).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
+    for (const name of sources) expect(IMPLEMENTATION_FILES).toContain(`packages/core/src/application/chunking/${name}`);
+  });
+
   const inputs: StageRInputs = { set: { digest: 'd'.repeat(64), memories: 1, queries: 1 }, planned: ['L'], pins: [], dropped: [] };
   it('changes with any runtime parameter or any source hash, and a run with a stale digest is BLOCKED', async () => {
     const hashes = implementationHashes();
@@ -269,6 +284,7 @@ describe('stage R: the plan digest binds parameters and implementation identity'
     const retriever = read('packages/core/src/application/memory-retriever.ts');
     expect(retriever).toContain(`const CANDIDATE_FETCH_MULTIPLIER = ${RUNTIME_CONSTANTS.candidateFetchMultiplier};`);
     expect(retriever).toContain(`const MIN_CANDIDATE_FETCH = ${RUNTIME_CONSTANTS.candidateFetchMin};`);
+    expect(retriever).toContain(`export const SEMANTIC_CANDIDATE_TOP_K = ${RUNTIME_CONSTANTS.semanticCandidateTopK};`);
     expect(retriever).toContain(`const DEFAULT_RECENCY_WEIGHT = ${RUNTIME_CONSTANTS.recencyWeight};`);
     expect(retriever).toContain('const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1_000;');
     const builder = read('packages/core/src/application/context-builder.ts');

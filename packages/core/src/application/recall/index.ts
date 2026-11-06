@@ -21,12 +21,22 @@ export {
   DEFAULT_MAX_INDEXED_VECTORS,
   DEFAULT_MAX_NEW_EMBEDDINGS_PER_TURN,
   DEFAULT_SEMANTIC_TURN_BUDGET_MS,
+  DURABLE_MEMORY_V2_COLLECTION_PREFIX,
   DURABLE_MEMORY_VECTOR_COLLECTION,
   SemanticRecallScorer,
+  durableMemoryCollectionFor,
 } from './semantic-recall-scorer';
 export type {
   SemanticRecallCandidate,
   SemanticRecallScorerDeps,
   SemanticRecallScorerOptions,
   SemanticRecallScoring,
+  SemanticRecallSession,
 } from './semantic-recall-scorer';
+export {
+  MAX_PASSAGES_PER_MEMORY,
+  allMemoryVectorIds,
+  memoryVectorUnits,
+  passageVectorId,
+} from './memory-passages';
+export type { MemoryVectorUnit } from './memory-passages';

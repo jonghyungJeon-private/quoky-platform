@@ -222,3 +222,50 @@ describe('SqliteMemoryRepository archive exclusion (ADR-0106 amendment)', () => 
     await store.close();
   });
 });
+
+describe('SqliteMemoryRepository findDurableCandidatesByIds (ADR-0124 P2-2 candidate widening)', () => {
+  const live = (id: string, scope: MemoryScope = { userId: 'actor-1' }, extra: Record<string, unknown> = {}) =>
+    memory(id, scope, { metadata: { kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT', ...extra } });
+
+  it('applies exactly the filters of findDurableCandidates plus the id list', async () => {
+    const store = await freshStore();
+    for (const record of [
+      live('ok'),
+      live('archived', { userId: 'actor-1' }, { archivedAt: '2026-10-01T00:00:00.000Z' }),
+      live('expired', { userId: 'actor-1' }, { expiresAt: '2000-01-01T00:00:00.000Z' }),
+      live('superseded', { userId: 'actor-1' }, { supersededBy: 'next' }),
+      live('foreign', { userId: 'actor-2' }),
+      live('other-session', { userId: 'actor-1', sessionId: 'other' }),
+      live('not-asked'),
+      memory('short-term', { userId: 'actor-1' }, { type: MemoryType.SHORT_TERM }),
+    ]) {
+      await store.memories.save(record);
+    }
+    const asked = ['ok', 'archived', 'expired', 'superseded', 'foreign', 'short-term', 'ghost'];
+    const filter = { scope: { userId: 'actor-1' }, excludeExpired: true, excludeSuperseded: true, archived: 'exclude' as const };
+    const byIds = await store.memories.findDurableCandidatesByIds!({ ...filter, ids: asked });
+    expect(byIds.map(({ id }) => id)).toEqual(['ok']);
+    // the same answer as the recent-pool read narrowed to those ids: one filter implementation, two entry points
+    const pool = await store.memories.findDurableCandidates({ ...filter, limit: 50 });
+    expect(pool.map(({ id }) => id).filter((id) => asked.includes(id))).toEqual(['ok']);
+    // session scope narrows exactly as in the pool read
+    const scoped = await store.memories.findDurableCandidatesByIds!({ ...filter, scope: { userId: 'actor-1', sessionId: 'other' }, ids: ['ok', 'other-session'] });
+    expect(scoped.map(({ id }) => id)).toEqual(['other-session']);
+    expect(await store.memories.findDurableCandidatesByIds!({ ...filter, ids: [] })).toEqual([]);
+    await store.close();
+  });
+
+  it('honours excludeIds and returns an old record that the recent pool cap would miss', async () => {
+    const store = await freshStore();
+    await store.memories.save(live('old', { userId: 'actor-1' }));
+    for (let at = 0; at < 5; at += 1) {
+      await store.memories.save(memory(`new-${at}`, { userId: 'actor-1' }, { updatedAt: `2026-10-0${at + 1}T00:00:00.000Z` }));
+    }
+    const filter = { scope: { userId: 'actor-1' }, excludeExpired: true, excludeSuperseded: true, archived: 'exclude' as const };
+    expect((await store.memories.findDurableCandidates({ ...filter, limit: 3 })).map(({ id }) => id)).not.toContain('old');
+    expect((await store.memories.findDurableCandidatesByIds!({ ...filter, ids: ['old'] })).map(({ id }) => id)).toEqual(['old']);
+    expect(await store.memories.findDurableCandidatesByIds!({ ...filter, excludeIds: ['old'], ids: ['old'] })).toEqual([]);
+    await store.close();
+  });
+});
+

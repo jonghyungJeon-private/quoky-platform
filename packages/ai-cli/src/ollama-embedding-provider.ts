@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import {
   AiFailureKind,
@@ -58,6 +59,21 @@ export function ollamaListIncludesModel(listOutput: string, model: string): bool
     .some((line) => line.trim().split(/\s+/u)[0] === wanted);
 }
 
+/**
+ * The 12-hex content id `ollama list` shows for `model` (its ID column), or `undefined` when the model is not listed
+ * or the column is not a 12-character hex id. Same exact-name match as {@link ollamaListIncludesModel}.
+ */
+export function ollamaListDigestOf(listOutput: string, model: string): string | undefined {
+  const wanted = model.includes(':') ? model : `${model}:latest`;
+  for (const line of listOutput.split('\n').slice(1)) {
+    const columns = line.trim().split(/\s+/u);
+    if (columns[0] !== wanted) continue;
+    const id = columns[1];
+    return id !== undefined && /^[0-9a-f]{12}$/.test(id) ? id : undefined;
+  }
+  return undefined;
+}
+
 export function sanitizedOllamaModelName(model: string): string {
   return /^[A-Za-z0-9._:/-]{1,200}$/.test(model) ? model : '[redacted]';
 }
@@ -109,6 +125,11 @@ const NOMIC_ROLE_PREFIXES: EmbeddingRolePrefixes = Object.freeze({
   query: 'search_query: ',
   document: 'search_document: ',
 });
+/** `embeddinggemma` model card (task-specific prompts): the query and document forms differ. */
+const EMBEDDINGGEMMA_ROLE_PREFIXES: EmbeddingRolePrefixes = Object.freeze({
+  query: 'task: search result | query: ',
+  document: 'title: none | text: ',
+});
 const NO_ROLE_PREFIXES: EmbeddingRolePrefixes = Object.freeze({ query: '', document: '' });
 
 export interface OllamaCliEmbeddingProviderOptions {
@@ -146,9 +167,29 @@ function validatedKeepAlive(value: string): string {
   return value;
 }
 
-function defaultRolePrefixes(model: string): EmbeddingRolePrefixes {
+export function defaultRolePrefixes(model: string): EmbeddingRolePrefixes {
   const base = model.split(':')[0] ?? model;
-  return base === DEFAULT_OLLAMA_EMBEDDING_MODEL ? NOMIC_ROLE_PREFIXES : NO_ROLE_PREFIXES;
+  if (base === DEFAULT_OLLAMA_EMBEDDING_MODEL) return NOMIC_ROLE_PREFIXES;
+  if (base === 'embeddinggemma') return EMBEDDINGGEMMA_ROLE_PREFIXES;
+  return NO_ROLE_PREFIXES;
+}
+
+/** Short hash of a prefix scheme: part of the vector space id, so a changed scheme starts a new space. */
+export function rolePrefixSchemeHash(prefixes: EmbeddingRolePrefixes): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ query: prefixes.query, document: prefixes.document }), 'utf8')
+    .digest('hex')
+    .slice(0, 8);
+}
+
+/**
+ * ADR-0123 D3 / ADR-0124 section 5.3: the embedding space id is `<model>/<digest12>/p<prefixHash8>`. Model, model
+ * content id and prefix scheme each change the vectors, so each must change the id; vectors of different ids never
+ * mix. The Ollama runtime version is deliberately not part of it: the digest pins the weights, reading the version
+ * costs an extra process spawn per probe, and a daemon upgrade can happen between probes without the CLI noticing.
+ */
+export function embeddingSpaceId(model: string, digest12: string, prefixes: EmbeddingRolePrefixes): string {
+  return `${model}/${digest12}/p${rolePrefixSchemeHash(prefixes)}`;
 }
 
 /** Bound the input without splitting a UTF-16 surrogate pair. */
@@ -184,6 +225,8 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
   private readonly clock: () => IsoTimestamp;
   /** The previous readiness answer; a warm-up follows the first ready answer and every not-ready -> ready change. */
   private lastProbeReady: boolean | undefined;
+  /** The model's 12-hex content id from the last `ollama list`; `undefined` until a probe saw it. */
+  private modelDigest: string | undefined;
   private warmUpInFlight: Promise<void> | undefined;
   private lastWarmUpStartedAtMs: number | undefined;
 
@@ -233,8 +276,27 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
     // A timed-out probe is no answer (live QA D16): the previous readiness (and the warm-up state) is kept.
     if (r.timedOut) throw new ProviderProbeIndeterminateError('ollama list timed out');
     const ready = r.code === 0 && ollamaListIncludesModel(r.stdout, this.model);
+    // Every answer refreshes the digest: a re-pulled tag changes it, an unlisted model clears it.
+    this.modelDigest = ready ? ollamaListDigestOf(r.stdout, this.model) : undefined;
     this.noteReadiness(ready);
     return ready;
+  }
+
+  /** The digest of the model as last listed; asks `ollama list` once when no probe has run yet. Never throws. */
+  private async resolveModelDigest(): Promise<string | undefined> {
+    if (this.modelDigest !== undefined) return this.modelDigest;
+    try {
+      const r = await this.runner(this.bin, ['list'], {
+        cwd: tmpdir(),
+        input: '',
+        timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
+        env: OLLAMA_COLOR_ENV,
+      });
+      if (r.code === 0 && !r.timedOut) this.modelDigest = ollamaListDigestOf(r.stdout, this.model);
+    } catch {
+      // unknown stays unknown
+    }
+    return this.modelDigest;
   }
 
   /** Startup or a not-ready -> ready change: load the model now, outside any turn, so the next call finds it warm. */
@@ -292,6 +354,12 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
     if (request.prompt.trim().length === 0) {
       throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama embedding input is empty');
     }
+    // Fail closed (ADR-0123 D3): a vector is never produced under an ambiguous space. Without the model's digest
+    // the space id cannot be formed, so recall falls back to lexical instead of storing unidentifiable vectors.
+    const digest = await this.resolveModelDigest();
+    if (digest === undefined) {
+      throw new AiProviderError(AiFailureKind.UNAVAILABLE, 'ollama embedding model digest is unknown; no vector produced');
+    }
     const role = readEmbeddingRole(request.metadata);
     const prefix = role === undefined ? '' : this.rolePrefixes[role];
     const input = boundedInput(`${prefix}${request.prompt}`);
@@ -348,7 +416,7 @@ export class OllamaCliEmbeddingProvider extends BaseCliAiProvider {
 
     const model = sanitizedOllamaModelName(this.model);
     return {
-      text: formatEmbeddingEnvelope(parsed, model),
+      text: formatEmbeddingEnvelope(parsed, embeddingSpaceId(model, digest, this.rolePrefixes)),
       raw: { exitCode: result.code, stderr: maskSecrets(result.stderr).slice(0, 1000) },
       audit: {
         model,

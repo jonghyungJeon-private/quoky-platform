@@ -8,14 +8,19 @@ import type {
   RetrievedMemory,
 } from '../domain';
 import { createDurableMemory, createRetrievedMemory, isArchivedMemory } from '../domain';
-import type { MemoryRepository } from '../ports';
+import type { DurableMemoryByIdsQuery, MemoryRepository } from '../ports';
 import { now } from '../util/clock';
 import { scoreSemanticRelevance } from './semantic-relevance';
-import type { SemanticRecallScoring } from './recall/semantic-recall-scorer';
+import type { SemanticRecallScoring, SemanticRecallSession } from './recall/semantic-recall-scorer';
 
 export const DEFAULT_DURABLE_RECALL_LIMIT = 10;
 const CANDIDATE_FETCH_MULTIPLIER = 5;
 const MIN_CANDIDATE_FETCH = 50;
+/**
+ * ADR-0124 section 5 (P2-2): how many memories nearest to the query (max-sim over a memory's vectors) may join the
+ * recent pool as candidates, however old they are.
+ */
+export const SEMANTIC_CANDIDATE_TOP_K = 50;
 const DEFAULT_RECENCY_WEIGHT = 0.25;
 const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1_000;
 /** ADR-0098 owner default: share of relevance given to the semantic score when one is available. */
@@ -148,18 +153,26 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     const limit = Math.min(request.maxResults, this.limit);
     // ADR-0073 amendment: fail closed without an actor; query by actor only.
     if (!request.scope.actorId) return [];
-    const records = await this.repository.findDurableCandidates({
+    const filter = {
       scope: {
         ...(request.scope.sessionId ? { sessionId: request.scope.sessionId } : {}),
         ...(request.scope.projectId ? { projectId: request.scope.projectId } : {}),
         userId: request.scope.actorId,
       },
-      limit: Math.max(limit * CANDIDATE_FETCH_MULTIPLIER, MIN_CANDIDATE_FETCH),
       excludeIds: [...request.excludeIds],
       excludeExpired: true,
       excludeSuperseded: true,
-      archived: 'exclude',
+      archived: 'exclude' as const,
+    };
+    const recent = await this.repository.findDurableCandidates({
+      ...filter,
+      limit: Math.max(limit * CANDIDATE_FETCH_MULTIPLIER, MIN_CANDIDATE_FETCH),
     });
+
+    // One embedding of the query per turn serves both candidate generation and scoring. Any failure leaves
+    // `session` null and recall runs lexically on the recent pool, exactly as without a scorer.
+    const session = await this.openSemanticSession(request.query);
+    const records = await this.withSemanticCandidates(recent, session, filter);
 
     const eligible = records.flatMap((record) => {
       if (!scopeMatches(record, request.scope) || request.excludeIds.includes(record.id)) return [];
@@ -184,9 +197,12 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
       }
     });
 
-    // Semantic re-ranking never widens eligibility: only the candidates that passed every filter above are
-    // offered, and a score for any other id is ignored.
-    const semanticScores = await this.semanticScoresFor(request.query, eligible);
+    // Invariant (ADR-0124 section 5): semantic similarity widens the candidate POOL, never eligibility. Every
+    // candidate, whether it came from the recent pool or from a vector hit, went through the same repository
+    // filters and the same scope / expiry / supersession / archive / authority checks above; a vector hit that fails
+    // any of them is already absent. Only eligible candidates are offered to the scorer, and a score for any other
+    // id is ignored.
+    const semanticScores = await this.semanticScoresFor(request.query, eligible, session);
     const scored = eligible.map((candidate) => {
       const rawSemanticScore = semanticScores?.get(candidate.memory.id);
       if (rawSemanticScore === undefined || !Number.isFinite(rawSemanticScore)) {
@@ -233,9 +249,48 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     return results;
   }
 
+  private async openSemanticSession(query: string): Promise<SemanticRecallSession | null> {
+    if (this.semanticScorer?.openSession === undefined) return null;
+    try {
+      return await this.semanticScorer.openSession(query);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The recent pool plus the memories nearest to the query, deduplicated by id. The extra records come from the
+   * repository's own filtered read (`findDurableCandidatesByIds`), so scope, user, expiry, supersession and archive
+   * filters are applied by the store exactly as for the recent pool; an id that no longer exists or fails any filter
+   * is dropped silently. Any failure keeps the recent pool alone.
+   */
+  private async withSemanticCandidates(
+    recent: MemoryRecord[],
+    session: SemanticRecallSession | null,
+    filter: Omit<DurableMemoryByIdsQuery, 'ids'>,
+  ): Promise<MemoryRecord[]> {
+    if (session === null || this.repository.findDurableCandidatesByIds === undefined) return recent;
+    try {
+      const known = new Set(recent.map((record) => record.id));
+      const ids = (await session.nearestMemoryIds(SEMANTIC_CANDIDATE_TOP_K)).filter((id) => !known.has(id));
+      if (ids.length === 0) return recent;
+      const widened = await this.repository.findDurableCandidatesByIds({ ...filter, ids });
+      const merged = [...recent];
+      for (const record of widened) {
+        if (known.has(record.id)) continue;
+        known.add(record.id);
+        merged.push(record);
+      }
+      return merged;
+    } catch {
+      return recent;
+    }
+  }
+
   private async semanticScoresFor(
     query: string,
     eligible: ReadonlyArray<{ memory: DurableMemory }>,
+    session: SemanticRecallSession | null,
   ): Promise<ReadonlyMap<string, number> | null> {
     if (this.semanticScorer === undefined || eligible.length === 0) return null;
     // Newest first, so a just-saved memory is embedded within the scorer's per-turn bound.
@@ -246,6 +301,9 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
       )
       .map(({ memory }) => ({ id: memory.id, content: memory.content }));
     try {
+      if (session !== null) return await session.score(candidates);
+      // A scorer that offers sessions but returned none has no semantic signal this turn: do not retry it.
+      if (this.semanticScorer.openSession !== undefined) return null;
       return await this.semanticScorer.score(query, candidates);
     } catch {
       return null;
