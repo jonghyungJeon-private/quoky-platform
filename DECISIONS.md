@@ -33049,3 +33049,24 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
   - Plan `chunk-embed-plan.v3`: the digest covers the set digests, planned arms, embedder pins (E4 prefixes), the reranker identity (repo, revision, every file sha256), the `onnxruntime-node` and tokenizers versions, N values (20 / 50), `max_length`, batch, threads, the probe sample and both bars. Plan mode hashes the model files (a local read) but does not load the ONNX model.
 - **CLI.** `pnpm -s eval:chunk -- --set memory --stage E --arms 'E1,E2,X(E1),X(E2),X50(E2)' --mode plan|probe|run [--plan-digest <d>] [--reranker-dir <path>]`. Exit codes unchanged (BLOCKED 3, NON-GATING 4, INVALID 5; a tampered model directory or a failed sanity check is INVALID). The probe runs the sanity check, 20 fixed seeded queries per X arm with per-query latency and the memory-path query-embed latency.
 - **Not run.** No Ollama model was called by anything run for this change. The one real-model check is an opt-in unit test (`QUOKY_CROSS_ENCODER_DIR`): load about 1.9 s including hashing 544 MB, three scoring calls about 0.7 s; the relevant pair outscored the unrelated one in English and Korean. The probe and the run are separate Strict actions that need the owner's yes on the plan digest.
+
+### Stage E measurement (2026-11-06, plan 187872ed, Ollama 0.40.14, embeddinggemma:300m@85462619ee72, bge-reranker-v2-m3 int8 @6f5ff6529851)
+
+- Probe (20 queries per X arm): sanity check passed (relevant 3.524 vs unrelated -11.009); every X arm had 17 of 20 golds in the top 5. The full run took 3872 s; exit 4 (NON-GATING).
+- CH7 multi-vector Recall@5 (n=192; ko/en/mixed n=64 each), MRR in brackets:
+
+| Arm | all | ko | en | mixed | long | memory-path query embed p95 | cross-encoder p50 / p95 per query |
+|---|---|---|---|---|---|---|---|
+| E0 | 0.599 (0.528) | 0.156 | 0.969 | 0.672 | 0.833 | 16 ms | - |
+| E1 | 0.813 (0.693) | 0.688 | 0.953 | 0.797 | 0.929 | 30 ms | - |
+| E2 | 0.865 (0.760) | 0.844 | 0.906 | 0.844 | 0.619 | 36 ms | - |
+| E4 | 0.943 (0.867) | 0.906 | 1.000 | 0.922 | 0.905 | 19 ms | - |
+| X(E1) | 0.896 (0.766) | 0.859 | 0.906 | 0.922 | 0.881 | - | 5.0 s / 5.8 s |
+| X(E2) | 0.927 (0.775) | 0.969 | 0.891 | 0.922 | 0.810 | - | 3.0 s / 5.0 s |
+| X50(E2) | 0.922 (0.763) | 0.969 | 0.891 | 0.906 | 0.833 | - | 8.9 s / 11.3 s |
+| X(E4) | 0.932 (0.769) | 0.906 | 0.938 | 0.953 | 0.833 | - | 3.1 s / 4.6 s |
+
+- First-stage Recall@20 (the rerank ceiling): E4 1.000 overall (ko, en, mixed 1.000); E2 ko 1.000, en 1.000, mixed 0.938; E1 0.948.
+- Verdict under the rule: **E4** (`embeddinggemma:300m`), Korean Recall@5 0.906 vs E0 0.156, English 1.000 (no loss), memory-path p95 19 ms. Every X arm fails the English tolerance (E0 en 0.969, so the floor is 0.949; X arms 0.891 to 0.938): the cross-encoder lifts Korean (X(E2) 0.969) but demotes English golds, and it lowers MRR on every first stage (E4 0.867 to X(E4) 0.769). It also costs 3 to 9 s per query on CPU, which a chat turn cannot afford.
+- The owner's 95% target (informational) is not met by E4 (ko 0.906, mixed 0.922). X(E2) and X50(E2) meet it on ko only, X(E4) on mixed only; no arm meets both, and none of them passes the English rule.
+- Next (owner decision): phase 2 plan to switch the memory embedder to E4 (re-embed migration, rollback), and whether to look further for the remaining gap (for example a Korean-tuned reranker used only on Korean-script queries, which needs its own plan and an ONNX export).
