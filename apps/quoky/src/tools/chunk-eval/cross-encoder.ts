@@ -90,7 +90,7 @@ export async function verifyModelDir(dir: string, expected: Readonly<Record<stri
     listed.set(path, match[1] as string);
   }
   for (const path of Object.keys(expected)) if (!listed.has(path)) throw new Error(`cross-encoder SHA256SUMS does not list ${path}`);
-  for (const path of listed.keys()) if (!(path in expected)) throw new Error(`cross-encoder SHA256SUMS lists an unexpected file ${path}`);
+  for (const path of listed.keys()) if (!Object.hasOwn(expected, path)) throw new Error(`cross-encoder SHA256SUMS lists an unexpected file ${path}`);
   const verified: Record<string, string> = {};
   for (const [path, pinned] of Object.entries(expected)) {
     if (listed.get(path) !== pinned) throw new Error(`cross-encoder SHA256SUMS hash for ${path} differs from the pin`);
@@ -119,6 +119,10 @@ export interface PairTokenizer {
 export function truncatePairIds(ids: readonly number[], maxLength: number, eosId: number): number[] {
   if (maxLength < 2) throw new Error('maxLength must be at least 2');
   if (ids.length <= maxLength) return [...ids];
+  // The query ends at the first closing token; `</s></s>` then one passage token and the final `</s>` must still fit,
+  // otherwise truncation would cut into the query or the separators (Codex P2): refuse instead of scoring a broken pair.
+  const separator = ids.indexOf(eosId);
+  if (separator < 0 || separator + 2 + 1 + 1 > maxLength) throw new Error(`cross-encoder query is too long for max_length ${maxLength}: no room left for the passage`);
   return [...ids.slice(0, maxLength - 1), eosId];
 }
 

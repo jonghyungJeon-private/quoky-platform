@@ -90,6 +90,11 @@ describe('verifyModelDir', () => {
     writeFileSync(join(extra.dir, 'SHA256SUMS'), `${readFileSync(join(extra.dir, 'SHA256SUMS'), 'utf8')}${sha('x')}  extra.bin\n`);
     await expect(verifyModelDir(extra.dir, extra.expected)).rejects.toThrow(/unexpected file extra\.bin/u);
 
+    // an inherited name (Object.prototype) is still an unexpected entry (Codex P2)
+    const inherited = fakeModelDir('inherited');
+    writeFileSync(join(inherited.dir, 'SHA256SUMS'), `${readFileSync(join(inherited.dir, 'SHA256SUMS'), 'utf8')}${sha('x')}  toString\n`);
+    await expect(verifyModelDir(inherited.dir, inherited.expected)).rejects.toThrow(/unexpected file toString/u);
+
     const forged = fakeModelDir('forged');
     writeFileSync(join(forged.dir, 'config.json'), 'forged');
     writeFileSync(join(forged.dir, 'SHA256SUMS'), readFileSync(join(forged.dir, 'SHA256SUMS'), 'utf8').replace(forged.expected['config.json'] as string, sha('forged')));
@@ -118,6 +123,13 @@ describe('pair helpers', () => {
   it('truncates from the passage side and keeps the closing special token', () => {
     expect(truncatePairIds([0, 5, 2, 2, 7, 8, 9, 2], 8, 2)).toEqual([0, 5, 2, 2, 7, 8, 9, 2]);
     expect(truncatePairIds([0, 5, 2, 2, 7, 8, 9, 10, 11, 2], 7, 2)).toEqual([0, 5, 2, 2, 7, 8, 2]);
+  });
+
+  it('refuses a query that leaves no room for the separators and a passage token (Codex P2)', () => {
+    // query of 4 tokens: <s> q q q q </s></s> p p </s> = 10 ids; max 7 cannot keep `</s></s> p </s>` after the query
+    expect(() => truncatePairIds([0, 5, 6, 7, 8, 2, 2, 9, 10, 2], 7, 2)).toThrow(/query is too long/u);
+    // max 9 keeps the whole query, both separators, one passage token and the closing token
+    expect(truncatePairIds([0, 5, 6, 7, 8, 2, 2, 9, 10, 2], 9, 2)).toEqual([0, 5, 6, 7, 8, 2, 2, 9, 2]);
   });
 
   it('pads dynamically to the batch longest row', () => {
