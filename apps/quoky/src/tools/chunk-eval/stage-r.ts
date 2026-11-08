@@ -328,7 +328,8 @@ export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm:
   return out;
 }
 
-export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memories' | 'queries'>, modes?: readonly RunMode[]): StageRPlanReport {
+/** The modes come only from `input.modes` (part of the digest), so the reported runs, modes and digest always agree. */
+export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memories' | 'queries'>): StageRPlanReport {
   return {
     kind: 'chunk-eval-stage-r-plan',
     version: STAGE_R_PLAN_VERSION,
@@ -338,7 +339,7 @@ export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memor
     dropped: input.dropped,
     modes: canonicalModes(input.modes),
     pins: input.pins,
-    runs: runsOf(input.planned, input.dropped, set, canonicalModes(input.modes ?? modes)),
+    runs: runsOf(input.planned, input.dropped, set, canonicalModes(input.modes)),
     parameters: STAGE_R_PARAMETERS,
     note: 'Zero model calls in plan mode: pins come from the loopback daemon (version, tags) and the runtime prefixes from the real provider class run against a recording runner. A run calls `ollama run` once per query embedding and once per document embedding through the real provider; counts are upper bounds (the lazy scorer embeds at most 4 new vectors per turn).',
   };
