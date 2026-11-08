@@ -97,6 +97,7 @@ import {
   defaultProviderFactory,
   isSemanticArm,
   parseStageRArm,
+STAGE_R_SEMANTIC_MODES,
   planLinesR,
   resolveStageR,
   runArmFresh,
@@ -104,7 +105,8 @@ import {
   summaryLinesStageR,
   type ProviderFactory,
   type RuntimeArmRun,
-  type StageRArmId,
+  type RunMode,
+type StageRArmId,
   type StageRInputs,
 } from './chunk-eval/stage-r';
 import { DRIVE_FORMAT_VERSION, driveFormatDigest, driveFormatSummaryLines, generateDriveFormatSet, runDriveFormat, type DriveFormatCase } from './chunk-eval/drive-format';
@@ -128,7 +130,7 @@ const HELP = [
   'usage: pnpm eval:chunk -- [--set v1|drive-format|v2|memory] --mode run|verify|regenerate-freeze [--out <dir>]',
   '       pnpm eval:chunk -- --mode plan|probe [--arms E0,E1,E2,E3] [--scope phase1|all] [--shapes <shape,...>] [--plan-digest <sha256>]',
   '       pnpm eval:chunk -- --set v1|v2|memory --arms E0,E1,E2,E3 --plan-digest <sha256> --mode run   (embedder arms; needs the digest printed by plan)',
-  '       pnpm eval:chunk -- --set memory --stage R --arms L,E0,E4 --mode plan|run [--plan-digest <sha256>]   (stage R: CH7 through the REAL runtime recall path, live and warm; ADR-0124 phase 2 P2-1)',
+  '       pnpm eval:chunk -- --set memory --stage R --arms L,E0,E4 --mode plan|run [--modes live,backfilled,warm] [--plan-digest <sha256>]   (stage R: CH7 through the REAL runtime recall path, live and warm; ADR-0124 phase 2 P2-1)',
   '       pnpm eval:chunk -- --set memory --stage E --arms E1,E2,X(E1),X(E2),X50(E2) --mode plan|probe|run [--plan-digest <sha256>] [--reranker-dir <path>]   (stage E: local cross-encoder arms X / X50 and the optional embedder arm E4)',
   '       pnpm eval:chunk -- --set memory --stage D --arms E1,E2,R(E1),R(E2) --mode plan|probe|run [--plan-digest <sha256>]   (stage D: rerank arms and the memory-path latency bar; quote R(..) in a shell)',
   '  run                 verify the corpus hash (exit 3 if it differs), run baseline and lexical arms, write the report (exit 4 NON-GATING)',
@@ -260,6 +262,8 @@ type Parsed = {
   stageDArms?: StageDArmId[];
   stageEArms?: StageEArmId[];
   stageRArms?: StageRArmId[];
+  /** `--stage R --modes live,backfilled,warm`: restricts the semantic run modes (default all three). */
+  stageRModes?: RunMode[];
   rerankerDir?: string;
   planDigest?: string;
   scope: Scope;
@@ -275,7 +279,7 @@ export function parseArguments(argv: readonly string[]): Parsed {
   const tokens = argv[0] === '--' ? argv.slice(1) : [...argv];
   if (tokens.length === 0 || tokens.includes('--help') || tokens.includes('-h')) return { mode: 'help', set: 'v1', setGiven: false, scope: 'phase1' };
   const values = new Map<string, string>();
-  const NAMES = ['--mode', '--out', '--set', '--arms', '--plan-digest', '--scope', '--shapes', '--cache-dir', '--ollama-url', '--stage', '--reranker-dir'];
+  const NAMES = ['--mode', '--out', '--set', '--arms', '--plan-digest', '--scope', '--shapes', '--cache-dir', '--ollama-url', '--stage', '--reranker-dir', '--modes'];
   for (let at = 0; at < tokens.length; at += 2) {
     const name = tokens[at] as string;
     const value = tokens[at + 1];
@@ -295,6 +299,12 @@ export function parseArguments(argv: readonly string[]): Parsed {
     if (values.get('--set') !== 'memory') throw new UsageError(`--stage ${stage} needs --set memory`);
     if (mode !== 'plan' && mode !== 'probe' && mode !== 'run') throw new UsageError(`--stage ${stage} applies to --mode plan, probe and run`);
     if (stage === 'R' && mode === 'probe') throw new UsageError('--stage R applies to --mode plan and run (no probe)');
+  }
+  let stageRModes: RunMode[] | undefined;
+  if (values.has('--modes')) {
+    if (stage !== 'R') throw new UsageError('--modes applies to --stage R only');
+    stageRModes = list(values.get('--modes') as string) as RunMode[];
+    if (stageRModes.length === 0 || stageRModes.some((m) => !(STAGE_R_SEMANTIC_MODES as readonly string[]).includes(m)) || new Set(stageRModes).size !== stageRModes.length) throw new UsageError(`--modes must be a list of ${STAGE_R_SEMANTIC_MODES.join(', ')} without repeats`);
   }
   if (values.has('--reranker-dir') && stage !== 'E') throw new UsageError('--reranker-dir applies to --stage E only');
   let arms: ArmId[] | undefined;
@@ -339,6 +349,7 @@ export function parseArguments(argv: readonly string[]): Parsed {
     ...(stageDArms === undefined ? {} : { stageDArms }),
     ...(stageEArms === undefined ? {} : { stageEArms }),
     ...(stageRArms === undefined ? {} : { stageRArms }),
+    ...(stageRModes === undefined ? {} : { stageRModes }),
     ...(values.has('--reranker-dir') ? { rerankerDir: values.get('--reranker-dir') as string } : {}),
     ...(planDigestValue === undefined ? {} : { planDigest: planDigestValue }),
     ...(shapes === undefined ? {} : { shapes }),
@@ -1015,7 +1026,7 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
     }
   }
   if (parsed.mode === 'plan') {
-    const plan = buildStageRPlan(inputs, set);
+    const plan = buildStageRPlan(inputs, set, parsed.stageRModes);
     const path = deps.writeReport(outDirOf(parsed), `chunk-eval-stage-r-plan-${plan.digest.slice(0, 12)}-${stampOf(deps)}.json`, plan);
     for (const line of planLinesR(plan)) deps.stdout(line);
     deps.stdout(`report: ${path}`);
@@ -1038,7 +1049,7 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
         continue;
       }
       const model = (resolution.pins.find((pin) => pin.arm === arm) as { model: string }).model;
-      for (const mode of ['live', 'backfilled', 'warm'] as const) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
+      for (const mode of STAGE_R_SEMANTIC_MODES.filter((m) => parsed.stageRModes === undefined || parsed.stageRModes.includes(m))) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
     }
   } catch (error) {
     deps.stderr(`INVALID: the runtime recall path failed during stage R run: ${errorText(error)}`);
@@ -1048,9 +1059,9 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
   const path = deps.writeReport(outDirOf(parsed), `chunk-eval-memory-stage-r-${digest.slice(0, 12)}-${stampOf(deps)}.json`, report);
   for (const line of summaryLinesStageR(report)) deps.stdout(line);
   deps.stdout(`report: ${path}`);
-  const invalid = runs.filter((run) => run.invalid !== null);
+  const invalid = runs.filter((run) => run.invalid !== null || run.blendSweep?.invalid != null);
   if (invalid.length > 0) {
-    deps.stderr(`INVALID: ${invalid.map((run) => `${run.arm}/${run.mode} (${(run.invalid as { reason: string }).reason})`).join('; ')}`);
+    deps.stderr(`INVALID: ${invalid.map((run) => `${run.arm}/${run.mode} (${(run.invalid?.reason ?? run.blendSweep?.invalid?.reason) as string})`).join('; ')}`);
     return EXIT_INVALID;
   }
   return EXIT_NON_GATING;

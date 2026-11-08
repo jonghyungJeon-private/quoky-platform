@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 2 P2-3: stage R blend comparison sweep (offline tooling, no model run)
+
+- **Added.** `eval:chunk` stage R re-ranks the observed candidate table of `backfilled` and `warm` runs offline under 11 pre-declared blend formulas (B0 current .. B10 RRF), on a pre-declared select / confirm split with a deterministic selection rule, plus a fidelity check (B0 offline must equal the real retriever on every query, else INVALID) and floor-calibration percentiles of gold and best non-gold semantic scores. New `--modes live,backfilled,warm` restricts the semantic run modes. Plan `runtime-recall-plan.v3`. Harness only: no Core or production change. Recorded in DECISIONS "ADR-0124 phase 2 P2-3".
+
 ## Unreleased — ADR-0124 phase 2 P2-2: multi-vector memory recall, space identity and candidate widening (default model unchanged)
 
 - **Changed.** Durable memory recall embeds the query once per turn and widens the candidate pool with the 50 memories nearest to it in the vector store (`MemoryRepository.findDurableCandidatesByIds`, same SQL filters; every candidate still passes the same eligibility checks, so only the pool grows). Long memories get one vector per passage (`<memoryId>#<ordinal>`, score = max cosine) in a collection per embedding space (`durable-memory-v2-<space>`); the v1 file is left untouched and no longer read. The Ollama embedding provider stamps vectors with `<model>/<digest12>/v<ollamaVersion>/p<prefixHash8>` and refuses to produce a vector when the digest or version is unknown. A background job backfills missing vectors and sweeps vectors of memories that are no longer live, outside turns. `embeddinggemma` gets its model-card prefixes. Forget removes every passage vector from every space. `eval:chunk` stage R mirrors the new wiring (plan `runtime-recall-plan.v2`). No `.env.local` change; the embedder stays `nomic-embed-text` until the owner switches it after P2-3.
