@@ -98,6 +98,7 @@ import {
   isSemanticArm,
   parseStageRArm,
 STAGE_R_SEMANTIC_MODES,
+canonicalModes,
   planLinesR,
   resolveStageR,
   runArmFresh,
@@ -1013,7 +1014,7 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
     deps.stderr(`INVALID: could not pin the models (loopback daemon pins): ${errorText(error)}`);
     return EXIT_INVALID;
   }
-  const inputs: StageRInputs = { set: { digest, memories: set.memories.length, queries: set.queries.length }, planned: resolution.planned, pins: resolution.pins, dropped: resolution.dropped };
+  const inputs: StageRInputs = { set: { digest, memories: set.memories.length, queries: set.queries.length }, planned: resolution.planned, pins: resolution.pins, dropped: resolution.dropped, ...(parsed.stageRModes === undefined ? {} : { modes: parsed.stageRModes }) };
   const planDigestNow = stageRDigest(inputs);
   if (parsed.mode !== 'plan') {
     if (parsed.planDigest === undefined) {
@@ -1026,7 +1027,7 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
     }
   }
   if (parsed.mode === 'plan') {
-    const plan = buildStageRPlan(inputs, set, parsed.stageRModes);
+    const plan = buildStageRPlan(inputs, set);
     const path = deps.writeReport(outDirOf(parsed), `chunk-eval-stage-r-plan-${plan.digest.slice(0, 12)}-${stampOf(deps)}.json`, plan);
     for (const line of planLinesR(plan)) deps.stdout(line);
     deps.stdout(`report: ${path}`);
@@ -1049,7 +1050,7 @@ async function runStageR(parsed: Parsed, deps: CliDeps): Promise<number> {
         continue;
       }
       const model = (resolution.pins.find((pin) => pin.arm === arm) as { model: string }).model;
-      for (const mode of STAGE_R_SEMANTIC_MODES.filter((m) => parsed.stageRModes === undefined || parsed.stageRModes.includes(m))) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
+      for (const mode of canonicalModes(parsed.stageRModes)) runs.push(await runArmFresh({ ...common, arm, mode, provider: factory(model) }));
     }
   } catch (error) {
     deps.stderr(`INVALID: the runtime recall path failed during stage R run: ${errorText(error)}`);

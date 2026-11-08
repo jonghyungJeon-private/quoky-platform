@@ -93,7 +93,7 @@ function ranksBy(rows: readonly BlendRow[], value: (row: BlendRow) => number | u
 }
 
 /** Scores every row under `candidate` (higher is better). */
-function scoresOf(rows: readonly BlendRow[], candidate: BlendCandidate): Map<string, number> {
+export function scoresOf(rows: readonly BlendRow[], candidate: BlendCandidate): Map<string, number> {
   const out = new Map<string, number>();
   if (candidate.kind === 'linear') {
     const { semanticWeight: wS, recencyWeight: wR } = candidate;
@@ -170,10 +170,26 @@ export interface FloorCalibration {
   readonly goldUnscored: number;
 }
 
+export interface MismatchRow { readonly id: string; readonly lexical: number; readonly recency: number; readonly semantic: number | undefined; readonly score: number }
+export interface FidelityMismatch {
+  readonly queryIndex: number;
+  readonly language: string;
+  readonly actualTop: readonly string[];
+  readonly offlineTop: readonly string[];
+  /** The first position where the two lists differ (null when only the lengths differ), with both rows' signals and offline B0 scores. */
+  readonly firstDifference: { readonly position: number; readonly actual: MismatchRow | null; readonly offline: MismatchRow | null } | null;
+}
+
+export const MAX_MISMATCH_DETAILS = 5;
+
 export interface BlendSweep {
   readonly candidates: readonly { readonly id: string; readonly label: string }[];
   readonly split: Readonly<Record<Half, Readonly<Record<string, number>>>>;
   readonly fidelity: { readonly queries: number; readonly mismatches: number };
+  /** Up to 5 mismatching queries in detail, for diagnosis. */
+  readonly mismatchDetails: readonly FidelityMismatch[];
+  /** Rows per query table (the candidates the retriever ranked). */
+  readonly tableSize: { readonly min: number; readonly max: number };
   /** Set when the sweep cannot be trusted (fidelity mismatch); the numbers are then informational only and nothing is selected. */
   readonly invalid: { readonly reason: string } | null;
   readonly results: readonly CandidateResult[];
@@ -210,10 +226,22 @@ export function buildBlendSweep(queries: readonly BlendQuery[], languages: reado
     split.confirm[language] = queries.filter((query, at) => query.language === language && halves[at] === 'confirm').length;
   }
   const current = candidates[0] as BlendCandidate;
-  const mismatches = queries.filter((query) => {
+  const mismatchDetails: FidelityMismatch[] = [];
+  let mismatches = 0;
+  queries.forEach((query, queryIndex) => {
     const offline = rankIds(query.rows, current, limit);
-    return offline.length !== query.actual.length || offline.some((id, at) => id !== query.actual[at]);
-  }).length;
+    if (offline.length === query.actual.length && offline.every((id, at) => id === query.actual[at])) return;
+    mismatches += 1;
+    if (mismatchDetails.length >= MAX_MISMATCH_DETAILS) return;
+    const scores = scoresOf(query.rows, current);
+    const describe = (id: string | undefined): MismatchRow | null => {
+      const found = id === undefined ? undefined : query.rows.find((candidate) => candidate.id === id);
+      return found === undefined ? null : { id: found.id, lexical: found.lexical, recency: found.recency, semantic: found.semantic, score: scores.get(found.id) as number };
+    };
+    const position = offline.findIndex((id, at) => id !== query.actual[at]);
+    const at = position >= 0 ? position : Math.min(offline.length, query.actual.length);
+    mismatchDetails.push({ queryIndex, language: query.language, actualTop: query.actual, offlineTop: offline, firstDifference: { position: at, actual: describe(query.actual[at]), offline: describe(offline[at]) } });
+  });
   const results: CandidateResult[] = candidates.map((candidate) => {
     const items = queries.map((query, at) => ({ language: query.language, half: halves[at] as Half, rank: rankOf(rankIds(query.rows, candidate, limit), query.gold) }));
     return {
@@ -242,6 +270,8 @@ export function buildBlendSweep(queries: readonly BlendQuery[], languages: reado
     candidates: candidates.map((candidate) => ({ id: candidate.id, label: labelOf(candidate) })),
     split,
     fidelity: { queries: queries.length, mismatches },
+    mismatchDetails,
+    tableSize: { min: queries.length === 0 ? 0 : Math.min(...queries.map((query) => query.rows.length)), max: queries.length === 0 ? 0 : Math.max(...queries.map((query) => query.rows.length)) },
     invalid,
     results,
     selected,
@@ -261,6 +291,10 @@ export function blendSweepLines(sweep: BlendSweep, languages: readonly string[])
     out.push(`  ${result.label}: select ${langLine(result.select, languages)} | confirm ${langLine(result.confirm, languages)} | MRR ${f3(result.select.overall.mrrAt10)}/${f3(result.confirm.overall.mrrAt10)}${result.id === sweep.selected ? ' <- selected' : ''}`);
   }
   out.push(`  selected ${sweep.selected ?? 'none'}; fidelity ${sweep.fidelity.mismatches} mismatches in ${sweep.fidelity.queries} queries`);
+  const row3 = (r: MismatchRow | null): string => (r === null ? '-' : `${r.id} lex ${r.lexical.toFixed(4)} rec ${r.recency.toFixed(4)} sem ${r.semantic === undefined ? '-' : r.semantic.toFixed(4)} score ${r.score.toFixed(6)}`);
+  for (const m of sweep.mismatchDetails) {
+    out.push(`  fidelity mismatch q${m.queryIndex} (${m.language}): actual [${m.actualTop.slice(0, 5).join(',')}] offline [${m.offlineTop.slice(0, 5).join(',')}]${m.firstDifference === null ? '' : `; first diff at ${m.firstDifference.position}: actual ${row3(m.firstDifference.actual)} | offline ${row3(m.firstDifference.offline)}`}`);
+  }
   if (sweep.confirmB0VsSelected !== null) {
     const { b0, selected } = sweep.confirmB0VsSelected;
     out.push(`  confirm half B0 vs ${sweep.selected}: B0 ${langLine(b0, languages)} (all ${f3(b0.overall.recallAt5)}, MRR ${f3(b0.overall.mrrAt10)}) | ${sweep.selected} ${langLine(selected, languages)} (all ${f3(selected.overall.recallAt5)}, MRR ${f3(selected.overall.mrrAt10)})`);

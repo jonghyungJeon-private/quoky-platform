@@ -254,10 +254,15 @@ export interface StageRInputs {
   readonly planned: readonly StageRArmId[];
   readonly pins: readonly StageRPin[];
   readonly dropped: readonly { readonly arm: string; readonly reason: string }[];
+  /** The selected semantic run modes (default: all); part of the digest, so a plan authorizes exactly those modes. */
+  readonly modes?: readonly RunMode[];
 }
 
+/** Sorted, deduplicated modes; undefined means all of them. */
+export const canonicalModes = (modes?: readonly RunMode[]): RunMode[] => STAGE_R_SEMANTIC_MODES.filter((mode) => (modes ?? STAGE_R_SEMANTIC_MODES).includes(mode));
+
 export function stageRDigest(input: StageRInputs, parameters: unknown = STAGE_R_PARAMETERS, implementation: ImplementationHashes = implementationHashes()): string {
-  const body = { version: STAGE_R_PLAN_VERSION, stage: 'R', set: input.set, planned: input.planned, pins: input.pins, dropped: input.dropped.map((d) => d.arm), parameters, implementation };
+  const body = { version: STAGE_R_PLAN_VERSION, stage: 'R', set: input.set, planned: input.planned, pins: input.pins, dropped: input.dropped.map((d) => d.arm), modes: canonicalModes(input.modes), parameters, implementation };
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
@@ -294,6 +299,7 @@ export interface StageRPlanReport {
   readonly set: StageRInputs['set'];
   readonly planned: readonly StageRArmId[];
   readonly dropped: StageRInputs['dropped'];
+  readonly modes: readonly RunMode[];
   readonly pins: readonly StageRPin[];
   readonly runs: readonly { readonly arm: StageRArmId; readonly mode: RunMode; readonly queries: number; readonly modelCallsUpperBound: number | null }[];
   readonly parameters: typeof STAGE_R_PARAMETERS;
@@ -330,8 +336,9 @@ export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memor
     set: input.set,
     planned: input.planned,
     dropped: input.dropped,
+    modes: canonicalModes(input.modes),
     pins: input.pins,
-    runs: runsOf(input.planned, input.dropped, set, modes),
+    runs: runsOf(input.planned, input.dropped, set, canonicalModes(input.modes ?? modes)),
     parameters: STAGE_R_PARAMETERS,
     note: 'Zero model calls in plan mode: pins come from the loopback daemon (version, tags) and the runtime prefixes from the real provider class run against a recording runner. A run calls `ollama run` once per query embedding and once per document embedding through the real provider; counts are upper bounds (the lazy scorer embeds at most 4 new vectors per turn).',
   };
@@ -341,6 +348,7 @@ export function planLinesR(plan: StageRPlanReport): string[] {
   const out = [`eval:chunk stage R plan (no model call) - ${plan.version}, memory set ${plan.set.digest.slice(0, 12)} (${plan.set.memories} memories, ${plan.set.queries} queries)`];
   out.push(`planned arms: ${plan.planned.join(', ')}${plan.dropped.length > 0 ? `; dropped: ${plan.dropped.map((d) => `${d.arm} (${d.reason})`).join('; ')}` : ''}`);
   for (const pin of plan.pins) out.push(`${pin.arm} ${pin.model}@${pin.digest12} ollama${pin.ollamaVersion}: runtime prefixes query ${JSON.stringify(pin.runtimeQueryPrefix)} document ${JSON.stringify(pin.runtimeDocumentPrefix)} (the provider's own defaults)`);
+  out.push(`semantic run modes: ${plan.modes.join(', ')} (part of the digest)`);
   out.push(`seed ${STAGE_R_PARAMETERS.seed}: updatedAt spread over ${SPREAD_DAYS} days before ${RETRIEVAL_TIME}; actor ${ACTOR_ID}`);
   for (const run of plan.runs) out.push(`run ${run.arm}/${run.mode}: ${run.queries} queries${run.modelCallsUpperBound === null || run.modelCallsUpperBound === 0 ? ', no model call' : `, up to ${run.modelCallsUpperBound} ollama calls`}`);
   out.push(`plan digest: ${plan.digest}`);
@@ -418,6 +426,8 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
     // observers only: they record what the real classes returned and change nothing
     let poolIds = new Set<string>();
     let recentIds = new Set<string>();
+    // the exact list the retriever offered the scorer (its eligible set after the top-K merge), observed at the scorer
+    let offered: readonly { id: string }[] | null = null;
     const poolSizes: number[] = [];
     const repository: MemoryRepository = {
       get: (id) => storage.memories.get(id),
@@ -532,6 +542,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       // observer only: records the scores the real scorer session returned and changes nothing
       semantic = {
         async score(query, candidates) {
+          offered = candidates;
           const result = await inner.score(query, candidates);
           lastScores = result;
           return result;
@@ -542,6 +553,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
           const observedSession: SemanticRecallSession = {
             nearestMemoryIds: (limit) => session.nearestMemoryIds(limit),
             async score(candidates) {
+              offered = candidates;
               const result = await session.score(candidates);
               lastScores = result;
               return result;
@@ -566,6 +578,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
     observing = true;
     for (const query of set.queries) {
       lastScores = null;
+      offered = null;
       poolIds = new Set();
       recentIds = new Set();
       const started = clock();
@@ -578,7 +591,11 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       if (sweepOn) {
         // the candidate table as the retriever saw it: without a semantic result only the recent pool is ranked (memory-retriever.ts)
         const scores = lastScores as ReadonlyMap<string, number> | null;
-        const rows = [...poolIds].filter((id) => scores !== null || recentIds.has(id)).map((id) => {
+        // with a scorer result the table is exactly what the retriever offered it (records fetched by id but cut by the top-K merge never were);
+        // without one the retriever ranks the eligible recent pool alone (every CH7 memory of the actor is eligible)
+        const offeredIds = offered as readonly { id: string }[] | null;
+        const tableIds = scores !== null && offeredIds !== null ? offeredIds.map((candidate) => candidate.id) : [...recentIds];
+        const rows = tableIds.map((id) => {
           const content = textOf.get(id) as string;
           const updatedAt = stamps.get(id) as string;
           const raw = scores?.get(id);

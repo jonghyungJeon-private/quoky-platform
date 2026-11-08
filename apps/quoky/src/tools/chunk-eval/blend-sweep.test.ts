@@ -144,6 +144,28 @@ describe('blend sweep: stage R integration', () => {
     expect(live.blendSweep).toBeNull();
   }, 60_000);
 
+  it('records fetched by id but cut by the top-K merge never enter the table (170 memories: recent 50 + at most K = 50)', async () => {
+    const big: MemorySet = {
+      memories: Array.from({ length: 170 }, (_, at) => ({ id: `big-${at}`, language: 'en' as const, text: `note ${at} about ${WORDS[at % 10]} ${WORDS[(at * 3 + 1) % 10]} item${at}x`, long: false, factOffsets: [] })),
+      queries: Array.from({ length: 12 }, (_, at) => ({ id: `bq-${at}`, language: (['ko', 'en', 'mixed'] as const)[at % 3], text: `what about item${at * 13}x ${WORDS[(at * 13) % 10]}`, gold: [`big-${at * 13}`], mode: 'shared' as const, sharedTerms: 2, targetLong: false, factIndex: null, beyondCut: false })),
+    };
+    const run = await runArmFresh({ arm: 'E0', mode: 'backfilled', set: big, provider: provider(), tmpRoot: scratch });
+    // the retriever fetched up to 100 by id (2 x K) but keeps K: a pool-based table would reach 150 rows
+    expect(run.blendSweep?.tableSize.max).toBeLessThanOrEqual(100);
+    expect(run.blendSweep?.tableSize.max).toBeGreaterThan(50);
+    expect(run.blendSweep?.fidelity.mismatches).toBe(0);
+  }, 60_000);
+
+  it('a mismatch carries diagnosis details (at most 5) with the first differing position', () => {
+    const rows = [row('g', { semantic: 0.9, lexical: 0.5 }), row('x', { semantic: 0.3, lexical: 0.2 })];
+    const bad: BlendQuery = { language: 'en', gold: ['g'], actual: ['x', 'g'], rows };
+    const sweep = buildBlendSweep(Array.from({ length: 8 }, () => bad), ['ko', 'en', 'mixed']);
+    expect(sweep.fidelity.mismatches).toBe(8);
+    expect(sweep.mismatchDetails).toHaveLength(5);
+    expect(sweep.mismatchDetails[0]).toMatchObject({ queryIndex: 0, language: 'en', actualTop: ['x', 'g'], offlineTop: ['g', 'x'] });
+    expect(sweep.mismatchDetails[0]?.firstDifference).toMatchObject({ position: 0, actual: { id: 'x' }, offline: { id: 'g', semantic: 0.9 } });
+  });
+
   it('the plan digest changes when the candidate list changes', () => {
     const inputs: StageRInputs = { set: { digest: 'd', memories: 1, queries: 1 }, planned: ['E0'], pins: [], dropped: [] };
     const reference = stageRDigest(inputs);
