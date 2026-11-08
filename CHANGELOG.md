@@ -5,9 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — ADR-0124 phase 2 P2-3: stage R blend comparison sweep (offline tooling, no model run)
+## Unreleased — ADR-0124 phase 2 P2-3: stage R blend comparison sweep (offline tooling) and measurement
 
 - **Added.** `eval:chunk` stage R re-ranks the observed candidate table of `backfilled` and `warm` runs offline under 11 pre-declared blend formulas (B0 current .. B10 RRF), on a pre-declared select / confirm split with a deterministic selection rule, plus a fidelity check (B0 offline must equal the real retriever on every query, else INVALID) and floor-calibration percentiles of gold and best non-gold semantic scores. New `--modes live,backfilled,warm` restricts the semantic run modes. Plan `runtime-recall-plan.v3`. Harness only: no Core or production change. Recorded in DECISIONS "ADR-0124 phase 2 P2-3".
+- **Measured (2026-11-09, NON-GATING).** E4 backfilled Recall@5 all: current blend 0.599 (ko .406); recency weight 0 with wS 0.7 (B2) 0.958 (ko .906 / en 1.0 / mixed .969), selected on the select half and confirmed on the other (all .969). The production blend is unchanged pending the owner decision.
 
 ## Unreleased — ADR-0124 phase 2 P2-2: multi-vector memory recall, space identity and candidate widening (default model unchanged)
 
