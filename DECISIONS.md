@@ -32543,8 +32543,8 @@ handler: no reply, prompt, provider choice or log line of the running service ch
    no call is retried. Only two cases fall back to today's path, byte-identically: `QUOKY_CHUNK_ITEMS` is not `on`, or no
    ready `LOCAL` `SUMMARIZATION` provider exists **at the start** of the request (before any call).
 3. **CH1 for an S3-only `on`.** CH1 measures selection by search; S3 selects by position only (I2). The owner asks the
-   Chief Architect to rule CH1 **not applicable** to an S3-only `on`. **Status: pending the CA ruling.** Until it is
-   recorded, CH1 stays in the `on` precondition list of section 7 as written.
+   Chief Architect to rule CH1 **not applicable** to an S3-only `on`. **Status: ruled by the CA in review round 1
+   (2026-11-09), under conditions (a)-(d) recorded below.**
 4. **CH3, CH5 and CH6 thresholds ratified as written** in section 7 (Product Owner, 2026-11-09): CH3 coverage ≥ 80%,
    invented points 0 in ≥ 95% of items, S3 preferred over today (one-sided binomial, p < 0.05, ≥ 25 non-tie pairs); CH5
    the section 3.7 bounds; CH6 all 0, `chunk-injection` ≥ 40 cases, 0 successes over 3 runs. The runs themselves stay
@@ -32594,7 +32594,7 @@ handler: no reply, prompt, provider choice or log line of the running service ch
     `logger`.
   - Outcomes: `{ kind: 'today', reason: 'off' | 'shadow' | 'not-ready' | 'not-chunkable' }` (the caller runs today's path untouched; `not-chunkable` is sections that do not tile the text);
     `{ kind: 'S1' }` (the item fits one window; today's path); `{ kind: 'refused', reason: 'credential' | 'empty' }` (as
-    today: the whole item, never redacted); `{ kind: 'summary' }` and `{ kind: 'partial', reason }`, both with the
+    today: the whole item, never redacted); `{ kind: 'summary' }` and `{ kind: 'partial', reason }` (review round 1 below), both with the
     summary text, the Core coverage line (`renderCoverageLine`), the fixed history note and a content-free audit.
   - Flow: guard the full item; `chunk` → `singleWindow` (fits → `S1`); `packWindows` when the whole item packs into at most
     6 windows, else `selectStratified(…, 6)` (position only); one map call per window, then one reduce call. Bounds: W ≤ 6,
@@ -32608,7 +32608,56 @@ handler: no reply, prompt, provider choice or log line of the running service ch
 
 **Left for later slices.** Handler wiring for mail, thread (repeated-quote removal), Drive and Sheets and the `shadow` log
 line (slice 2); the PN progress notice (slice 3); the eval harness for CH3/CH5/CH6 (slice 4). `on` needs the gates of
-section 7 (with the CH1 ruling of decision 3) and an independent Chief Architect review.
+section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and an independent Chief Architect review.
+
+**Review round 1 (Chief Architect and Codex, 2026-11-09): rulings and fixes.**
+
+- **CA ruling, CH1 for an S3-only `on`: not applicable, under four conditions.** (a) `on` enables S3 only: no `focus`, no S2
+  and no score-based selection is reachable, and T2-1 (the metamorphic test) stays. (b) The CH3 set includes items above
+  the 6-window cap with key points at depths 10-90%, reported per depth stratum. (c) A model-free test replaces CH1 for S3:
+  over the CH1 shapes and lengths, every item that packs into at most 6 windows ends with `coverage.complete`
+  (`item-summary/s3-ch1-coverage.test.ts`, added in C5a). (d) CH1 stays required for S2 (C5b), S4 and any later `on`
+  that adds S2.
+- **CA ruling, the reduce readout (P2a).** The notes readout is `truncated: false`. The reused document-summary prompt tells
+  the model that a `truncated=true` item shows "its beginning and its end" and asks it to mention the omission; for a
+  stratified selection that is false, and a model-written coverage statement is what N5 reserves for Core. Coverage is
+  stated only by Core's coverage line.
+- **Claim checks (P1, ADR-0104 D1 / ADR-0118 D8).** The model-derived text of every S3 reply (the reduce answer, or the
+  finished notes of a partial reply) passes today's `checkDocumentSummaryClaims` (the ADR-0104 guard, the document claim
+  guard, the addition-claim check, the length bound). A claim gives today's fixed notice, an over-long text the fixed
+  too-long notice (`withheld: 'claim' | 'too-long'`). There is **no regeneration** (decision 2: no retry). The coverage line
+  is Core copy and is appended after the check. Slice 2 still runs the handler's delivered-text check on the shown body.
+- **Totality (P2b).** A throwing or rejecting dependency (clock, timer, gate, selector) is caught: before any model call the
+  outcome is `today: 'not-ready'` (nothing was sent); after one, a partial reply (`internal`), never today's remote path.
+- **A rejected note stops the run (P2e).** A map answer that fails the note guard ends the run with the partial reply from
+  the notes already finished; no further map and no reduce. (A window whose readout the readout guard refuses is still
+  skipped without a call and counted unread, per the `windowReadout` contract.)
+- **Selection inside the wall (P2f).** The 90 s wall starts at entry; provider selection is raced against the remaining wall
+  budget, so a stalled readiness probe ends as `today: 'not-ready'` with no call.
+- **A local alias of a cloud model (P2c).** The name rule cannot see through `ollama cp` or a Modelfile `FROM` a cloud
+  model. Fix: every production `OllamaCliProvider` generation run sets `OLLAMA_NO_CLOUD=1` (the CLI refuses cloud-served
+  models; local models are unaffected). The contained runner admits `OLLAMA_NO_CLOUD` from a caller with the value `1`
+  only (it only restricts). The embedding provider and the readiness probe are unchanged. A digest pin checked in
+  `isAvailable` (decision 1's pinned `qwen3:8b`) is specified for slice 2, with the provider registration.
+- **How decision 1 works (P2d, specified for slice 2, no routing change today).** `OllamaCliProvider` advertises
+  `GENERAL_CHAT`/`SUMMARIZATION` at priority 100 against Claude's 50, so registering it without a policy would move chat.
+  The service already runs a `ProviderSelectionPolicy` (`ProviderSelectionService.preferenceFor` receives the context). Slice 2
+  registers the long-item Ollama provider under its own key and changes the policy so that (1) for every request **without**
+  `requiredLocality` that key is never in `eligible` (chat and short summaries stay on Claude; the live configuration sets
+  `QUOKY_CHAT_PROVIDER=claude` explicitly), and (2) for a `SUMMARIZATION` request **with** `requiredLocality: 'LOCAL'`,
+  `eligible` is exactly that key (otherwise the intersection with a Claude-only list would be empty and every S3 run would be
+  `not-ready`). The policy's `isEligible` mirrors both rules for the dispatch check. Slice 2 tests: chat and an
+  unconstrained summary never select the Ollama key; a constrained summary selects only it.
+- **Smaller items (P3).** `not-chunkable` is a pre-start fallback (no local call has started), consistent with decision 2.
+  `exclusive` stays optional in Core, but **slice 2 must pass it at the composition root** (the gate shared with embedding,
+  T3-5), with a slice-2 test that the composed S3 path has it. The rendered map request is re-guarded (both detectors,
+  `map-guard`), and Quoky's section frames are guarded with the full item (a credential in a frame refuses the whole item).
+  The Ollama CLI adapter ignores `request.signal`: an abandoned call is still killed by the runner at its `timeoutMs`, which
+  the pipeline sets to the call's remaining budget; aborting the child on the signal is a slice-2 adapter follow-up. One
+  reader, `declaresLocalExecution`, serves the router and the dispatch check. A locality re-check that fails before the
+  first call ends in a partial reply (fail closed), not today's path. **`requiredLocality` and a future
+  `allowedExecutionLocalities`:** when both are set the allowed set is their intersection (`requiredLocality: 'LOCAL'` keeps
+  only `LOCAL`); either alone keeps its own meaning.
 
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
