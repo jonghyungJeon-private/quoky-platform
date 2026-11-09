@@ -331,10 +331,11 @@ describe('contained CLI runner: parent environment isolation', () => {
 
   it('accepts the allow-listed caller environment names', async () => {
     const run = startRun({
-      env: { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' },
+      env: { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', OLLAMA_NO_CLOUD: '1' },
     });
     await closeWith(run);
     const env = childEnvOf(run);
+    expect(env.OLLAMA_NO_CLOUD).toBe('1');
     expect(env.NO_COLOR).toBe('1');
     expect(env.CLICOLOR).toBe('0');
     expect(env.CLICOLOR_FORCE).toBe('0');
@@ -484,10 +485,11 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
       new OllamaCliProvider({ runner }).execute({ capability: Capability.GENERAL_CHAT, prompt: 'hello' }),
     );
 
-  it('an embedding run builds exactly the same child environment as a production Ollama chat run', async () => {
+  it('an embedding run builds the same child environment as a production Ollama chat run, apart from OLLAMA_NO_CLOUD=1', async () => {
     const embedding = await embeddingOptions();
     const chat = await chatOptions();
-    expect(embedding.options.env).toEqual(chat.options.env);
+    // ADR-0124 Part L C5a (review P2c): a generation run also sets OLLAMA_NO_CLOUD=1; the embedding run is unchanged.
+    expect(chat.options.env).toEqual({ ...embedding.options.env, OLLAMA_NO_CLOUD: '1' });
     expect(embedding.options.environmentProfile).toBeUndefined();
     expect(chat.options.environmentProfile).toBeUndefined();
     expect(embedding.options.downloadMarkerPolicy).toBe(chat.options.downloadMarkerPolicy);
@@ -512,7 +514,8 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
     expect(embeddingEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
     const { TMPDIR: embeddingTmp, ...embeddingRest } = embeddingEnv;
     const { TMPDIR: chatTmp, ...chatRest } = chatEnv;
-    expect(embeddingRest).toEqual(chatRest);
+    expect({ ...embeddingRest, OLLAMA_NO_CLOUD: '1' }).toEqual(chatRest);
+    expect(chatEnv.OLLAMA_HOST).toBeUndefined();
     // Default profile: the owner's HOME (model inventory) is kept, TMPDIR is the runner-owned directory.
     expect(embeddingEnv.HOME).toBe(PARENT_WITH_SECRETS.HOME);
     expect(embeddingTmp).toBe(embeddingRun.created[0]);
@@ -523,9 +526,11 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
   });
 
   it.each<Record<string, string>>([
-    { OLLAMA_NO_CLOUD: '1' },
+    { OLLAMA_NO_CLOUD: '0' },
+    { OLLAMA_NO_CLOUD: '' },
+    { OLLAMA_NO_CLOUD: 'false' },
     { OLLAMA_HOST: 'http://127.0.0.1:11434' },
-    { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', OLLAMA_NO_CLOUD: '1' },
+    { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', OLLAMA_NO_CLOUD: '0' },
     { NO_COLOR: '1', CLICOLOR: '0', CLICOLOR_FORCE: '0', OLLAMA_HOST: 'http://127.0.0.1:11434', OLLAMA_NO_CLOUD: '1' },
   ])('refuses a caller %j outside the validation profile without spawning', async (env) => {
     const run = startRun({ env, downloadMarkerPolicy: 'OLLAMA_PULL_STDERR' });
@@ -537,10 +542,11 @@ describe('contained CLI runner: embedding environment contract (ADR-0098 D8)', (
     expect(buildChildEnvironment(PARENT_WITH_SECRETS, '/tmp/owned', env).ok).toBe(false);
   });
 
-  it('keeps the caller allowlist at the chat colour variables plus the Claude L1 traffic switch only', () => {
+  it('keeps the caller allowlist at the chat colour variables, the Claude L1 traffic switch and OLLAMA_NO_CLOUD (value 1 only)', () => {
     expect([...CALLER_ENV_ALLOWLIST]).toEqual([
-      'NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+      'NO_COLOR', 'CLICOLOR', 'CLICOLOR_FORCE', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'OLLAMA_NO_CLOUD',
     ]);
+    expect(buildChildEnvironment(PARENT_WITH_SECRETS, '/tmp/owned', { OLLAMA_NO_CLOUD: '1' }).ok).toBe(true);
     expect([...INHERITED_ENV_ALLOWLIST]).toEqual(['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'LC_CTYPE']);
   });
 });

@@ -103,7 +103,15 @@ export const CALLER_ENV_ALLOWLIST = [
   'CLICOLOR',
   'CLICOLOR_FORCE',
   'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+  'OLLAMA_NO_CLOUD',
 ] as const;
+
+/**
+ * ADR-0124 Part L C5a (review P2c): names a caller may set to ONE fixed value only. `OLLAMA_NO_CLOUD=1` makes the Ollama CLI
+ * refuse cloud-served models, so a local alias of a cloud model (whose name carries no `cloud`) cannot run off this host. It
+ * only restricts; any other value is refused before spawn.
+ */
+const CALLER_ENV_FIXED_VALUES: Readonly<Record<string, string>> = Object.freeze({ OLLAMA_NO_CLOUD: '1' });
 
 /**
  * ADR-0121 S0 L1 (design §2.9): the ONE variable every Claude CLI child receives besides the inherited allow-list.
@@ -189,6 +197,8 @@ export function buildChildEnvironment(
         return { ok: false, reason: REASON_ENV_REJECTED };
       }
       const value = callerEnv[name];
+      const fixed = CALLER_ENV_FIXED_VALUES[name];
+      if (fixed !== undefined && value !== fixed) return { ok: false, reason: REASON_ENV_REJECTED };
       if (typeof value === 'string') env[name] = value;
     }
   }
