@@ -14751,6 +14751,149 @@
     "acceptsAnyQuestion": true
    },
    "note": "owner decision (b) of 2026-10-19 (live test 4, turn 25, executed live): the noun that decides the entry is garbled (리마이너 for 리마인더) and no correct list noun is present, so Core asks \"'리마인더' 말씀이세요?\" (`garbled-noun`); written like complete-018 (reason ambiguous, any question) [owner-approved 2026-10-19]"
+  },
+  {
+   "id": "a6-own-recall-none-001",
+   "family": "negative",
+   "text": "내가 베란다 화분에 물 주는 요일을 언제라고 했지?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-002",
+   "family": "negative",
+   "text": "내가 매주 독서 모임에 나가는 날은 무슨 요일이라고 했었지?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-003",
+   "family": "negative",
+   "text": "내가 치과 가기로 한 날을 너한테 언제라고 말했더라?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-004",
+   "family": "negative",
+   "text": "내가 바닷가로 여행 떠난다고 얘기한 거 언제였지?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-005",
+   "family": "negative",
+   "text": "내가 원고 마감을 언제까지라고 했었지?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-006",
+   "family": "negative",
+   "text": "내가 아침에 운동하는 습관에 대해 너한테 뭐라고 했더라?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-007",
+   "family": "negative",
+   "text": "내가 동생이랑 자주 가는 식당은 어디라고 했었지?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-008",
+   "family": "negative",
+   "text": "What did I tell you about my preferred time for watering the herbs?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-009",
+   "family": "negative",
+   "text": "When did I say I was leaving for my hiking trip?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-none-010",
+   "family": "negative",
+   "text": "내가 weekly meetup에 어느 요일에 간다고 너한테 말했지?",
+   "expect": "none",
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-read-001",
+   "family": "negative",
+   "text": "내가 설정한 알림은 언제 울리게 해놨었지?",
+   "expect": {
+    "entryId": "reminder.list",
+    "args": {},
+    "outcome": "execute"
+   },
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-read-002",
+   "family": "negative",
+   "text": "내일 일정에 뭐가 몇 시로 잡혀 있었지?",
+   "expect": {
+    "entryId": "calendar.events",
+    "args": {
+     "range": "tomorrow"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-read-003",
+   "family": "negative",
+   "text": "내 할 일 목록에는 뭘 넣어놨었더라?",
+   "expect": {
+    "entryId": "todo.list",
+    "args": {},
+    "outcome": "execute"
+   },
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-read-004",
+   "family": "negative",
+   "text": "내일 캘린더에 치과 예약은 몇 시로 들어가 있었지?",
+   "expect": {
+    "entryId": "calendar.events",
+    "args": {
+     "range": "tomorrow",
+     "keyword": "치과"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-read-005",
+   "family": "negative",
+   "text": "What reminders did I set for myself?",
+   "expect": {
+    "entryId": "reminder.list",
+    "args": {},
+    "outcome": "execute"
+   },
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
+  },
+  {
+   "id": "a6-own-recall-read-006",
+   "family": "negative",
+   "text": "내일 리마인더에는 뭘 등록해놨었지?",
+   "expect": {
+    "entryId": "reminder.list",
+    "args": {
+     "range": "tomorrow"
+    },
+    "outcome": "execute"
+   },
+   "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
   }
  ]
 }
