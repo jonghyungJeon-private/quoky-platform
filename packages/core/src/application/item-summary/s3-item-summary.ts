@@ -84,7 +84,10 @@ export interface S3ItemSummaryInput {
   readonly prepared: string;
   /** Quoky's own sections tiling `prepared` (thread messages, sheets). */
   readonly sections?: readonly ChunkSection[];
-  /** The source already cut the item (its 256 KiB bound). */
+  /**
+   * The source already cut the item (its 256 KiB bound, a thread shown in part, a capped body). The coverage is then never
+   * `complete` and Core's coverage line says the source was cut.
+   */
   readonly sourceTruncated?: boolean;
   /** The owner's request text: the reply-language fact of both prompts and the reduce prompt's task. */
   readonly requestText: string;
@@ -149,7 +152,7 @@ interface S3Delivered {
   readonly text: string;
   /** The summary (or the partial reply's lead and notes) without the coverage line. */
   readonly body: string;
-  /** Core's fixed coverage line (N5), rendered from counts after the model output. */
+  /** Core's fixed coverage line (N5), rendered from counts after the model output; it states an upstream cut. */
   readonly coverageLine: string;
   readonly coverage: Coverage;
   /** The fixed history note (the history never keeps summary or chunk text). */
@@ -188,6 +191,23 @@ const NOTHING_READ = {
   ko: '긴 문서를 이 기기에서 요약하지 못했어요.',
   en: 'I could not summarize this long item on this device.',
 } as const;
+
+/** CA P2 (round 2): the source was cut upstream (a thread shown in part, a capped body); Core says so, never the model. */
+const SOURCE_CUT = {
+  ko: '원본은 받아올 때 이미 일부만 가져온 것이라, 항목 전체를 읽은 것은 아니에요.',
+  en: 'The source was already cut before I received it, so I did not read the whole item.',
+} as const;
+
+/**
+ * The coverage and Core's coverage line (N5). When the source was cut upstream, the coverage is never `complete` and the
+ * line states the cut: the parts are parts of what Quoky received, not of the whole item.
+ */
+function coverageReport(coverage: Coverage, input: S3ItemSummaryInput): { readonly coverage: Coverage; readonly coverageLine: string } {
+  if (input.sourceTruncated !== true) return { coverage, coverageLine: renderCoverageLine(coverage, input.language) };
+  const cut: Coverage = { ...coverage, complete: false };
+  const line = renderCoverageLine(cut, input.language);
+  return { coverage: cut, coverageLine: input.language === 'en' ? `${line} ${SOURCE_CUT.en}` : `${line}. ${SOURCE_CUT.ko}` };
+}
 
 function defaultWait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -275,8 +295,7 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
 
 /** The partial reply when even the ordinary one could not be built: the fixed notice and a 0-read coverage line. */
 function lastResortPartial(input: S3ItemSummaryInput, total: number): S3ItemSummaryOutcome {
-  const coverage: Coverage = { total, read: 0, complete: false, codePointsTotal: 0, codePointsRead: 0 };
-  const coverageLine = renderCoverageLine(coverage, input.language);
+  const { coverage, coverageLine } = coverageReport({ total, read: 0, complete: false, codePointsTotal: 0, codePointsRead: 0 }, input);
   const body = NOTHING_READ[input.language];
   return {
     kind: 'partial',
@@ -494,8 +513,7 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
     body: string,
     withheld: 'claim' | 'too-long' | undefined,
   ): S3ItemSummaryOutcome => {
-    const coverage = computeCoverage(passages, notes.flatMap((note) => note.ordinals));
-    const coverageLine = renderCoverageLine(coverage, input.language);
+    const { coverage, coverageLine } = coverageReport(computeCoverage(passages, notes.flatMap((note) => note.ordinals)), input);
     const a = audit(coverage);
     log({
       outcome: kind,

@@ -522,6 +522,37 @@ describe('runS3ItemSummary: review round 1 (CA P1, P2a, P2b; Codex P2f)', () => 
   });
 });
 
+describe('runS3ItemSummary: review round 2 (CA P2 source cut, CA P3 locality)', () => {
+  it('a source cut upstream never reads as complete: Core\'s coverage line states the cut (summary and partial)', async () => {
+    const whole = setup();
+    const full = delivered(await runS3ItemSummary(input(item(12)), whole.deps));
+    expect(full.coverage.complete).toBe(true);
+    for (const language of ['ko', 'en'] as const) {
+      const env = setup();
+      const cut = delivered(await runS3ItemSummary(input(item(12), { sourceTruncated: true, language }), env.deps));
+      expect(cut.kind).toBe('summary');
+      expect(cut.coverage).toMatchObject({ complete: false, read: full.coverage.total, total: full.coverage.total });
+      expect(cut.coverageLine).not.toContain(language === 'ko' ? '모두' : 'all');
+      expect(cut.coverageLine).toContain(language === 'ko' ? '원본은 받아올 때 이미 일부만 가져온 것' : 'The source was already cut');
+      expect(cut.text.endsWith(cut.coverageLine)).toBe(true);
+    }
+    const failing = setup({ local: () => Promise.reject(new Error('down')) });
+    const partial = delivered(await runS3ItemSummary(input(item(12), { sourceTruncated: true }), failing.deps));
+    expect(partial).toMatchObject({ kind: 'partial', reason: 'model', coverage: { complete: false } });
+    expect(partial.coverageLine).toContain('원본은 받아올 때 이미 일부만 가져온 것');
+  });
+
+  it('isStillEligible false from the start: partial reason locality, 0 calls, 0 remote calls', async () => {
+    const env = setup();
+    const selector: ProviderSelector = { select: env.deps.selector.select, isStillEligible: () => false };
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...env.deps, selector }));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'locality' });
+    expect(outcome.audit).toMatchObject({ mapCalls: 0, reduceCalls: 0, read: 0 });
+    expect(env.local.requests).toHaveLength(0);
+    expect(env.remote.requests).toHaveLength(0);
+  });
+});
+
 describe('runS3ItemSummary: content-free logs, audit and history (T1-1, N1)', () => {
   it('a canary in the item never reaches a log line, the audit or the history note', async () => {
     const prepared = item(40, (text, index) => (index === 17 ? `${text} The code word is ${CANARY}.` : text));
