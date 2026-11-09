@@ -98,6 +98,8 @@ export interface MailCompositionOptions {
   /** Offline acceptance only: replaces the configured adapter (production passes none). */
   readonly reader?: MailReader;
   readonly logger?: Logger;
+  /** ADR-0124 Part L C5a-2: `QUOKY_CHUNK_ITEMS` is `shadow` or `on` (summary outcomes carry the whole item). */
+  readonly longItems?: boolean;
 }
 
 export function createMailProviders(options: MailCompositionOptions): Provider[] {
@@ -116,7 +118,14 @@ export function createMailProviders(options: MailCompositionOptions): Provider[]
       provide: MAIL_TURN_HANDLERS,
       // The session manager is optional: without it a listing's numbers live only in memory (no persistence).
       useFactory: (mailReader: MailReader, sessions?: SessionManager): readonly ConversationTurnHandler[] => [
-        createMailTurnHandler({ reader: mailReader, timeZone, logger, copy: GMAIL_MAIL_COPY, ...(sessions !== undefined ? { sessions } : {}) }),
+        createMailTurnHandler({
+          reader: mailReader,
+          timeZone,
+          logger,
+          copy: GMAIL_MAIL_COPY,
+          ...(sessions !== undefined ? { sessions } : {}),
+          ...(options.longItems === true ? { longItems: true } : {}),
+        }),
       ],
       inject: [MAIL_READER, { token: SessionManager, optional: true }],
     },

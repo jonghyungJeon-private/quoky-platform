@@ -26,6 +26,12 @@ export interface SelectionFixtureOptions {
   readonly inventory?: OllamaModelInventory;
   /** Providers left unstubbed (their real probe and execution run; tests give them a fake transport). */
   readonly unstubbed?: (provider: AiProvider) => boolean;
+  /** ADR-0124 Part L C5a-2: providers registered after the chat providers (the catalog's `extra`). */
+  readonly extra?: readonly AiProvider[];
+  /** ADR-0124 Part L C5a-2: the long-item provider's key for the policy. */
+  readonly longItemKey?: string;
+  /** ADR-0124 Part L C5a-2: the manager's `uncached` option. */
+  readonly uncached?: (provider: AiProvider) => boolean;
 }
 
 export interface SelectionFixture {
@@ -72,6 +78,7 @@ export function selectionFixture(options: SelectionFixtureOptions = {}): Selecti
     vision: visionModelsOf(config),
     ...(options.persistedChat ? { persistedChat: options.persistedChat } : {}),
     cliPresent: (bin) => present.includes(bin),
+    ...(options.extra !== undefined ? { extra: options.extra } : {}),
     logger,
   });
   // Real adapter instances (construction spawns nothing); their probes and execution are replaced here, and every
@@ -105,7 +112,7 @@ export function selectionFixture(options: SelectionFixtureOptions = {}): Selecti
   } as unknown as StorageProvider;
   const sessions = new SessionManager(storage);
   const store = new ProviderSelectionStore(options.io ?? providerSelectionFileIo(undefined), logger);
-  const manager = new AiProviderManager(catalog.providers, { availabilityTtlMs: 0 });
+  const manager = new AiProviderManager(catalog.providers, { availabilityTtlMs: 0, ...(options.uncached !== undefined ? { uncached: options.uncached } : {}) });
   const fixture: SelectionFixture = {
     catalog,
     store,
@@ -147,6 +154,7 @@ export function selectionFixture(options: SelectionFixtureOptions = {}): Selecti
     ollamaModels: async () => fixture.inventory,
     logger,
     clock: () => '2026-10-07T01:00:00.000Z',
+    ...(options.longItemKey !== undefined ? { longItemKey: options.longItemKey } : {}),
   });
   Object.assign(fixture, { service, router: new CapabilityRouter(manager, service) });
   return fixture;

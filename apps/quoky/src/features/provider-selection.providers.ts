@@ -32,6 +32,8 @@ export interface ProviderSelectionComposition {
   };
   readonly catalog: ProviderCatalog;
   readonly store: ProviderSelectionStore;
+  /** ADR-0124 Part L C5a-2: the long-item provider's key (`QUOKY_CHUNK_ITEMS=on` only). */
+  readonly longItemKey?: string;
 }
 
 export function createProviderSelectionProviders(input: ProviderSelectionComposition): Provider[] {
@@ -57,6 +59,7 @@ export function createProviderSelectionProviders(input: ProviderSelectionComposi
           ollamaModels: () => ollamaInventory.list(),
           logger: new ConsoleLogger('provider-selection'),
           ...(config.work?.textVendorAllowed === true ? { workTextVendorAllowed: true } : {}),
+          ...(input.longItemKey !== undefined ? { longItemKey: input.longItemKey } : {}),
         }),
       inject: [STORAGE_PROVIDER, AiProviderManager, SessionManager],
     },

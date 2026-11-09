@@ -143,6 +143,18 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.AGENT_MODE_REQUIRES_NL_ACTIVE]: 'QUOKY_AGENT_MODE=shadow needs QUOKY_NL_INTENT_MODE=active.',
   // ADR-0124 Part L C5a. Names and shapes only, never a value.
   [QuokyConfigErrorCode.CHUNK_ITEMS_INVALID]: 'QUOKY_CHUNK_ITEMS must be unset, "off", "shadow", or "on".',
+  [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_INVALID]:
+    'QUOKY_CHUNK_ITEMS_MODEL must be one Ollama model token (name or name:tag, letters, digits, ".", "_", "-", "/").',
+  [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_CLOUD_REFUSED]:
+    'QUOKY_CHUNK_ITEMS_MODEL must be a model that runs on this machine; a cloud-served model is refused.',
+  [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_DIGEST_REQUIRED]:
+    'QUOKY_CHUNK_ITEMS_MODEL needs QUOKY_CHUNK_ITEMS_MODEL_DIGEST (the 12-hex ID that `ollama list` prints for it).',
+  [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_DIGEST_INVALID]:
+    'QUOKY_CHUNK_ITEMS_MODEL_DIGEST must be exactly 12 lowercase hex digits (the ID column of `ollama list`).',
+  [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_DIGEST_WITHOUT_MODEL]:
+    'QUOKY_CHUNK_ITEMS_MODEL_DIGEST is set but QUOKY_CHUNK_ITEMS_MODEL is not; set both or neither.',
+  [QuokyConfigErrorCode.CHUNK_ITEMS_ON_REQUIRES_MODEL]:
+    'QUOKY_CHUNK_ITEMS=on needs QUOKY_CHUNK_ITEMS_MODEL and QUOKY_CHUNK_ITEMS_MODEL_DIGEST; use "shadow" or "off" without them.',
   // ADR-0121 S0 egress guard and traffic ledger. Names and shapes only, never a value.
   [QuokyConfigErrorCode.EGRESS_GUARD_INVALID]:
     'QUOKY_EGRESS_GUARD must be unset (observe), "off", "observe", or "enforce" (exactly, lowercase).',

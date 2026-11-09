@@ -94,6 +94,8 @@ export interface DriveCompositionOptions {
   /** Offline acceptance only: replaces the configured adapter (production passes none). */
   readonly reader?: DriveReader;
   readonly logger?: Logger;
+  /** ADR-0124 Part L C5a-2: `QUOKY_CHUNK_ITEMS` is `shadow` or `on` (summary outcomes carry the whole item). */
+  readonly longItems?: boolean;
 }
 
 export function createDriveProviders(options: DriveCompositionOptions): Provider[] {
@@ -109,7 +111,14 @@ export function createDriveProviders(options: DriveCompositionOptions): Provider
       provide: DRIVE_TURN_HANDLERS,
       // The session manager is optional: without it a listing's numbers live only in memory (no persistence).
       useFactory: (driveReader: DriveReader, sessions?: SessionManager): readonly ConversationTurnHandler[] => [
-        createDriveTurnHandler({ reader: driveReader, timeZone, logger, copy: GDRIVE_DRIVE_COPY, ...(sessions !== undefined ? { sessions } : {}) }),
+        createDriveTurnHandler({
+          reader: driveReader,
+          timeZone,
+          logger,
+          copy: GDRIVE_DRIVE_COPY,
+          ...(sessions !== undefined ? { sessions } : {}),
+          ...(options.longItems === true ? { longItems: true } : {}),
+        }),
       ],
       inject: [DRIVE_READER, { token: SessionManager, optional: true }],
     },
