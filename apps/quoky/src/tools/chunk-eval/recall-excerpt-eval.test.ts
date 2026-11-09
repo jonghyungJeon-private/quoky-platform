@@ -5,12 +5,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Capability, chunking, formatEmbeddingEnvelope, renderRecallContent, type AiProvider } from '@quoky/core';
+import { Capability, ContextBuilder, IntentType, RiskLevel, TaskStatus, chunking, containsCredentialMaterial, createDurableMemory, createRetrievedMemory, formatEmbeddingEnvelope, type AiProvider, type MemoryManager, type MemoryRetriever, type RetrievedMemory, type Task } from '@quoky/core';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { MemorySet } from './memory-set';
 import {
-  DELIVERED_ENTRY_LIMIT,
-  EXCERPT_VERDICT_RULE,
+    EXCERPT_VERDICT_RULE,
   buildExcerptComparison,
   deliveredFor,
   excerptComparisonLines,
@@ -37,29 +36,51 @@ describe('fact sentence and delivery', () => {
     expect(factSentenceOf(memory, 3)).toBeUndefined();
   });
 
-  it('delivery mirrors the builder: retriever order, no repeated id or content, at most 10 entries, rank = position among delivered', () => {
-    expect(DELIVERED_ENTRY_LIMIT).toBe(10);
+  const retrieved = (id: string, content: string, updatedAt: string, matchedPassageOrdinal?: number): RetrievedMemory =>
+    createRetrievedMemory({
+      memory: createDurableMemory({ id, content, kind: 'SEMANTIC', provenance: 'USER_PROVIDED', authorityLevel: 'USER_CLAIM_OR_INTENT', scope: { actorId: 'ch7-runtime-actor' }, createdAt: updatedAt, updatedAt, metadata: { sourceRecordId: `s-${id}` } }),
+      relevanceScore: 0.5,
+      retrievalReason: 'test',
+      ...(matchedPassageOrdinal === undefined ? {} : { matchedPassageOrdinal }),
+    });
+  const production = async (results: RetrievedMemory[], variant: 'V0' | 'V1' | 'V2'): Promise<string[]> => {
+    const retriever: MemoryRetriever = { retrieve: async () => results };
+    const manager = { recentShortTerm: async () => [], projectMemory: async () => undefined } as unknown as MemoryManager;
+    const task = { id: 't', title: 't', description: 'q', status: TaskStatus.PENDING, intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'q' }, riskLevel: RiskLevel.LOW, context: { platform: 'p', channelId: 'c', userId: 'u', direct: true }, actorId: 'ch7-runtime-actor', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } as Task;
+    return ((await new ContextBuilder(manager, {}, retriever, undefined, variant).build(task)).durableRecall ?? []).map((entry) => entry.content);
+  };
+
+  it('delivery is the real builder output: credential filter, chronological order, dedup and the 10-entry limit (fidelity, V0)', async () => {
+    const credential = ['pass', 'word'].join('') + ': ' + ['hunter', '2'].join('');
+    expect(containsCredentialMaterial(credential)).toBe(true);
     const results = [
-      { id: 'a', content: 'same' },
-      { id: 'a', content: 'other' },
-      { id: 'b', content: 'same' },
-      ...Array.from({ length: 12 }, (_, at) => ({ id: `m${at}`, content: `memory ${at}` })),
+      retrieved('cred', credential, '2026-03-01T00:00:00.000Z'),
+      retrieved('newer', 'the newer note', '2026-02-01T00:00:00.000Z'),
+      retrieved('older', 'the older note', '2026-01-01T00:00:00.000Z'),
+      retrieved('dup', 'the newer note', '2026-01-15T00:00:00.000Z'),
+      ...Array.from({ length: 12 }, (_, at) => retrieved(`m${at}`, `memory ${at}`, `2026-01-${String(at + 2).padStart(2, '0')}T00:00:00.000Z`)),
     ];
-    const out = deliveredFor(results, 'V0');
-    expect(out.map((entry) => entry.id)).toEqual(['a', 'm0', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8']);
-    const body = (n: number): string => `${'가'.repeat(n)}`;
-    const long = `${body(590)}\n\n${body(590)}\n\n${body(590)}`;
-    const ranked = Array.from({ length: 5 }, (_, at) => ({ id: `r${at}`, content: `${long}${at}`, matchedPassageOrdinal: 0 }));
-    const v2 = deliveredFor(ranked, 'V2');
-    expect(v2.map((entry) => entry.text.length)).toEqual([1_201, 1_201, 1_201, 401, 401]);
-    // a duplicate that is skipped does not use up a top rank
-    const skipped = deliveredFor([{ id: 'x', content: long, matchedPassageOrdinal: 0 }, { id: 'x', content: long, matchedPassageOrdinal: 0 }, ...ranked], 'V2');
-    expect(skipped.map((entry) => entry.text.length)).toEqual([1_201, 1_201, 1_201, 401, 401, 401]);
+    for (const variant of ['V0', 'V1', 'V2'] as const) {
+      const harness = await deliveredFor(results, variant);
+      expect(harness.map((entry) => entry.text), variant).toEqual(await production(results, variant));
+    }
+    const ids = (await deliveredFor(results, 'V0')).map((entry) => entry.id);
+    expect(ids).not.toContain('cred');
+    expect(ids).not.toContain('dup');
+    expect(ids).toHaveLength(10);
+    expect(ids.indexOf('older')).toBeLessThan(ids.indexOf('newer'));
   });
 
-  it('the V0 delivery is the pure function at V0', () => {
-    const results = [{ id: 'a', content: 'x'.repeat(900), matchedPassageOrdinal: 1 }];
-    expect(deliveredFor(results, 'V0')[0]?.text).toBe(renderRecallContent('x'.repeat(900), 1, 1, 'V0'));
+  it('V1 and V2 deliver the matched passage through the builder', async () => {
+    const body = (n: number): string => '가'.repeat(n);
+    const long = `${body(590)}\n\n${body(590)}x\n\n${body(590)}`;
+    const results = [retrieved('a', long, '2026-01-01T00:00:00.000Z', 1)];
+    const v0 = (await deliveredFor(results, 'V0'))[0]?.text as string;
+    const v1 = (await deliveredFor(results, 'V1'))[0]?.text as string;
+    const v2 = (await deliveredFor(results, 'V2'))[0]?.text as string;
+    expect(v0.startsWith('…')).toBe(false);
+    expect(v1.startsWith('…')).toBe(true);
+    expect(v2.length).toBeGreaterThan(v1.length);
   });
 
   it('fact delivered needs gold delivered AND the whole fact sentence in the text, ellipses ignored', () => {

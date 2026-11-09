@@ -181,6 +181,37 @@ describe('matched passage ordinal plumbing', () => {
     }
   });
 
+  it('the argmax uses raw cosines: with all-negative cosines (clamped to 0) the least negative passage wins; the score stays the clamped max', async () => {
+    const negative = (text: string): number[] => [/아래/u.test(text) ? -0.8 : /위/u.test(text) ? -0.2 : 0, 1 - 0.99 * 0, 0];
+    const query = [1, 0, 0];
+    const content = [paragraph('아래 이야기'), paragraph('위 이야기')].join('\n\n');
+    expect(memoryVectorUnits('m', content, true).length).toBe(2);
+    const provider: AiProvider = { id: 'neg', capabilities: [{ capability: Capability.EMBEDDING, priority: 100 }], isAvailable: async () => true, execute: async (request: AiRequest) => ({ text: formatEmbeddingEnvelope(request.prompt.includes('QUERY') ? query : negative(request.prompt), SPACE) }) } as AiProvider;
+    const scorer = new SemanticRecallScorer({ selector: { select: async () => provider }, vectors: new Store() }, { collectionFor: durableMemoryCollectionFor, multiVector: true, maxNewEmbeddingsPerTurn: 20 });
+    const session = (await scorer.openSession('QUERY')) as SemanticRecallSession;
+    const scores = await session.score([{ id: 'm', content }]);
+    expect(scores?.get('m')).toBe(0);
+    expect(session.matchedPassageOrdinals?.().get('m')).toBe(1);
+  });
+
+  it('equal cosines go to the lowest ordinal, with a partially cached store and with a warm one alike', async () => {
+    const flat = (text: string): number[] => [1, 0, text.length > 0 ? 0 : 0];
+    const content = [paragraph('가 이야기'), paragraph('나 이야기'), paragraph('다 이야기')].join('\n\n');
+    const provider: AiProvider = { id: 'flat', capabilities: [{ capability: Capability.EMBEDDING, priority: 100 }], isAvailable: async () => true, execute: async (request: AiRequest) => ({ text: formatEmbeddingEnvelope(flat(request.prompt), SPACE) }) } as AiProvider;
+    const results: Array<number | undefined> = [];
+    for (const maxNew of [1, 2, 20]) {
+      const vectors = new Store();
+      const scorer = new SemanticRecallScorer({ selector: { select: async () => provider }, vectors }, { collectionFor: durableMemoryCollectionFor, multiVector: true, maxNewEmbeddingsPerTurn: maxNew });
+      for (const turn of [1, 2, 3]) {
+        const session = (await scorer.openSession('q')) as SemanticRecallSession;
+        await session.score([{ id: 'm', content }]);
+        results.push(session.matchedPassageOrdinals?.().get('m'));
+        void turn;
+      }
+    }
+    expect(new Set(results)).toEqual(new Set([0]));
+  });
+
   it('score() keeps returning the same plain score map', async () => {
     const scores = await newScorer().score('커피', [{ id: 'long', content: LONG }]);
     expect(scores).toBeInstanceOf(Map);

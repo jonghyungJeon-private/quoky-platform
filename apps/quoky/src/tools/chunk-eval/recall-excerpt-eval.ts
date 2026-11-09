@@ -2,15 +2,14 @@
  * ADR-0124 phase 2 P2-6: offline measurement of matched-passage excerpts for long recalled memories (stage R, CH7).
  *
  * For every query the REAL retriever results (top 10) are turned into what the context builder would deliver under each
- * rendering variant (`renderRecallContent`, the pure function production calls; `context-builder.ts` itself is tested to
- * produce the same V0 text). Selection mirrors `ContextBuilder.selectDurableRecall` (retriever order, no repeated id or
- * content, at most 10 entries, no token budget: the harness has none).
+ * rendering variant by running them through the real `ContextBuilder` (constructed with the variant), so selection, the
+ * credential filter, dedup, limits and ordering are production's (no token budget: the harness configures none).
  *
  * Metrics per variant: fact delivered (long-memory queries: gold delivered AND the asked fact sentence fully contained in
  * the delivered text, the added ellipses ignored), gold delivered (all queries), delivered characters per query.
  * The verdict is pre-declared (it is part of the plan digest) and printed with the summary.
  */
-import { renderRecallContent, type RecallExcerptVariant } from '@quoky/core';
+import { Capability, ContextBuilder, IntentType, RiskLevel, TaskStatus, type MemoryManager, type MemoryRetriever, type RecallExcerptVariant, type RetrievedMemory, type Task } from '@quoky/core';
 import type { MemoryItem, MemoryQuery } from './memory-set';
 
 export const EXCERPT_VARIANTS: readonly RecallExcerptVariant[] = ['V0', 'V1', 'V2'];
@@ -26,32 +25,34 @@ export const EXCERPT_VERDICT_RULE = {
   factDelivered: 'targetLong query AND a gold memory delivered AND the fact sentence (trimmed) occurs in the delivered text of that memory with the added ellipses removed',
 } as const;
 
-export interface RetrievedLike {
-  readonly id: string;
-  readonly content: string;
-  readonly matchedPassageOrdinal?: number | undefined;
-}
-
 export interface DeliveredEntry {
   readonly id: string;
   readonly text: string;
 }
 
-/** What the context builder delivers for the retriever results under `variant` (rank = position among delivered entries). */
-export function deliveredFor(results: readonly RetrievedLike[], variant: RecallExcerptVariant): DeliveredEntry[] {
-  const seenIds = new Set<string>();
-  const seenContent: string[] = [];
-  const out: DeliveredEntry[] = [];
-  for (const result of results) {
-    if (out.length >= DELIVERED_ENTRY_LIMIT) break;
-    if (seenIds.has(result.id) || seenContent.includes(result.content)) continue;
-    const text = renderRecallContent(result.content, result.matchedPassageOrdinal, out.length + 1, variant);
-    if (text.length === 0) continue;
-    out.push({ id: result.id, text });
-    seenIds.add(result.id);
-    seenContent.push(result.content);
-  }
-  return out;
+const HARNESS_TASK: Task = {
+  id: 'excerpt-eval-task',
+  title: 'excerpt eval',
+  description: 'excerpt eval',
+  status: TaskStatus.PENDING,
+  intent: { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'excerpt eval' },
+  riskLevel: RiskLevel.LOW,
+  context: { platform: 'eval', channelId: 'eval', userId: 'eval', direct: true },
+  actorId: 'ch7-runtime-actor',
+  createdAt: '2026-11-06T00:00:00.000Z',
+  updatedAt: '2026-11-06T00:00:00.000Z',
+};
+const NO_MEMORY = { recentShortTerm: async () => [], projectMemory: async () => undefined } as unknown as MemoryManager;
+
+/**
+ * What the REAL `ContextBuilder` delivers for the retriever results under `variant`: selection, credential filter, dedup,
+ * limits, excerpting and final ordering are production's (the builder is constructed with the variant). Entries come back
+ * in the builder's order.
+ */
+export async function deliveredFor(results: readonly RetrievedMemory[], variant: RecallExcerptVariant): Promise<DeliveredEntry[]> {
+  const retriever: MemoryRetriever = { retrieve: async () => [...results] };
+  const bundle = await new ContextBuilder(NO_MEMORY, {}, retriever, undefined, variant).build(HARNESS_TASK);
+  return (bundle.durableRecall ?? []).map((entry) => ({ id: entry.source.memoryId, text: entry.content }));
 }
 
 /** The asked fact sentence of a long memory (see `EXCERPT_VERDICT_RULE.factSentence`). */

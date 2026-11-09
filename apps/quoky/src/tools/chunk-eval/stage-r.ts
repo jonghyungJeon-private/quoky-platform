@@ -607,7 +607,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       );
       latencies.push(clock() - started);
       for (const variant of EXCERPT_VARIANTS) {
-        const delivered = deliveredFor(results.map((result) => ({ id: result.memory.id, content: result.memory.content, matchedPassageOrdinal: result.matchedPassageOrdinal })), variant);
+        const delivered = await deliveredFor(results, variant);
         excerptOutcomes[variant].push(excerptOutcome(query, memoryById, delivered));
       }
       const at = results.findIndex((result) => query.gold.includes(result.memory.id));

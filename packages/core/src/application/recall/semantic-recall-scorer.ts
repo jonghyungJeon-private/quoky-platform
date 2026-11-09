@@ -561,6 +561,7 @@ class Session implements SemanticRecallSession {
   private readonly byVectorId: Map<Id, VectorQueryResult>;
   private embedded = 0;
   private readonly matched = new Map<Id, number>();
+  private readonly matchedRaw = new Map<Id, number>();
   private readonly matchedScore = new Map<Id, number>();
 
   constructor(
@@ -632,30 +633,40 @@ class Session implements SemanticRecallSession {
     }
   }
 
-  /** Raise the memory's score and, for a passage vector (`<memoryId>#<ordinal>`), remember which passage is the best. */
-  private note(scores: Map<Id, number>, memoryId: Id, vectorId: Id, value: number): void {
-    const previous = scores.get(memoryId);
-    raise(scores, memoryId, value);
-    if (previous !== undefined && !(value > previous)) return;
+  /**
+   * Raise the memory's score (clamped max, as always) and, for a passage vector (`<memoryId>#<ordinal>`), track the best
+   * passage by the RAW cosine, ties to the lowest ordinal, so the answer depends neither on clamping nor on whether a
+   * passage came from the cache or was embedded this turn.
+   */
+  private note(scores: Map<Id, number>, memoryId: Id, vectorId: Id, raw: number): void {
+    raise(scores, memoryId, clampUnit(raw));
     if (vectorId === memoryId || !vectorId.startsWith(`${memoryId}#`)) {
       this.matched.delete(memoryId);
+      this.matchedRaw.delete(memoryId);
       return;
     }
     const ordinal = Number(vectorId.slice(memoryId.length + 1));
-    if (Number.isInteger(ordinal) && ordinal >= 0) this.matched.set(memoryId, ordinal);
+    if (!Number.isInteger(ordinal) || ordinal < 0 || !Number.isFinite(raw)) return;
+    const bestRaw = this.matchedRaw.get(memoryId);
+    const bestOrdinal = this.matched.get(memoryId);
+    if (bestRaw === undefined || bestOrdinal === undefined || raw > bestRaw || (raw === bestRaw && ordinal < bestOrdinal)) {
+      this.matchedRaw.set(memoryId, raw);
+      this.matched.set(memoryId, ordinal);
+    }
   }
 
   private async scoreAll(eligible: readonly SemanticRecallCandidate[]): Promise<ReadonlyMap<Id, number>> {
     const internals = this.ctx;
     const scores = new Map<Id, number>();
     this.matched.clear();
+    this.matchedRaw.clear();
     const missing: Array<{ memoryId: Id; vectorId: Id; text: string; contentHash: string }> = [];
     for (const candidate of eligible) {
       for (const unit of memoryVectorUnits(candidate.id, candidate.content, internals.multiVector)) {
         const contentHash = contentHashOf(unit.text);
         const hit = this.byVectorId.get(unit.vectorId);
         if (hit !== undefined && hit.metadata?.contentHash === contentHash && this.usable(hit)) {
-          this.note(scores, candidate.id, unit.vectorId, clampUnit(hit.score));
+          this.note(scores, candidate.id, unit.vectorId, hit.score);
         } else {
           missing.push({ memoryId: candidate.id, vectorId: unit.vectorId, text: unit.text, contentHash });
         }
@@ -676,7 +687,7 @@ class Session implements SemanticRecallSession {
         scores,
         item.memoryId,
         item.vectorId,
-        clampUnit(cosineSimilarity(this.queryEnvelope.vector, documentEnvelope.vector)),
+        cosineSimilarity(this.queryEnvelope.vector, documentEnvelope.vector),
       );
       fresh.push({
         id: item.vectorId,
