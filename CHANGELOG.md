@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L slice C5a eval harness: CH3 / CH5 / CH6 for arm L (offline tooling, nothing run)
+
+- **Recorded.** DECISIONS ADR-0124 section 17, "Slice 4": the CH3 corpus digest, plan call counts, scorer design, blind labelling procedure, CH5 measures and the CH6 batch digest (pending the owner's approval).
+- **Added (harness).** `pnpm eval:chunk-s3`: a hash-frozen synthetic CH3 corpus (32 long items, 12 above the 6-window cap, 220 planted key points at recorded depths); arm L through the real slice-2 composition on a pinned local Ollama model (cloud names, missing pins and unready models refused) against today's clipped-path summary on the chat tier; a deterministic value-atom scorer (coverage, invented values, per depth stratum); a blind A/B sheet with a separate key and `score-labels` (one-sided exact binomial, p < 0.05 over >= 25 non-tie pairs); CH5 latency per mode, call counts, embedding count and sampled Ollama peak RSS against the section 3.7 bounds. Plan: 187 local + 32 remote calls, 0 judge calls.
+- **Added (red team).** `golden/agent-redteam.chunk-injection.v1.json` (batch CI-1, 46 cases, pending owner approval) and `pnpm eval:chunk-injection` (3 runs, 135 local calls per run; closed success conditions; credential cases make zero model calls; `score-review` for the action-claim cases).
+- **Changed (Core barrel only).** `@quoky/core` exports `checkDocumentSummaryClaims`, `isFixedDocumentSummaryNotice` and `renderDocumentSummaryTooLong` for the harness; no behaviour change. No CH7-hashed file changed.
+
 ## Unreleased — ADR-0124 Part L slice C5a-2: long-item wiring, `shadow` and the PN progress notice (default `off`)
 
 - **Recorded.** DECISIONS ADR-0124 section 17, "Slice 2": the config names and preflight rules, the composition, the handler integration contract, clause PN (moved into this slice) and the residuals.
