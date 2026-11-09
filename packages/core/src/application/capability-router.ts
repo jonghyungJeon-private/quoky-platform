@@ -1,6 +1,6 @@
 import { AiProviderError, NoProviderAvailableError } from '../errors';
 import { AiFailureKind, type Capability } from '../domain';
-import { executionLocalityOf } from '../ports';
+import { declaresLocalExecution } from '../ports';
 import type {
   AiProvider,
   ProviderPreference,
@@ -46,7 +46,7 @@ export class CapabilityRouter implements ProviderSelector {
     const local = context.requiredLocality === 'LOCAL';
     const candidates = local
       ? await this.manager.readyAmong(
-          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter(declaresLocal),
+          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter(declaresLocalExecution),
         )
       : preference === null
         ? await this.manager.availableFor(capability)
@@ -72,7 +72,7 @@ export class CapabilityRouter implements ProviderSelector {
    */
   isStillEligible(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean {
     if (!provider.capabilities.some((c) => c.capability === capability)) return false;
-    if (context.requiredLocality === 'LOCAL' && !declaresLocal(provider)) return false;
+    if (context.requiredLocality === 'LOCAL' && !declaresLocalExecution(provider)) return false;
     const check = this.policy?.isEligible;
     if (check === undefined) return true;
     try {
@@ -132,18 +132,6 @@ export class CapabilityRouter implements ProviderSelector {
   private priority(provider: AiProvider, capability: Capability): number {
     const desc = provider.capabilities.find((c) => c.capability === capability);
     return desc ? desc.priority : Number.NEGATIVE_INFINITY;
-  }
-}
-
-/**
- * Whether the provider declares `LOCAL` execution (ADR-0107 D6, read as data, failing closed: absent, unknown or a throwing
- * declaration is not `LOCAL`). A cloud-served model is declared `REMOTE` by its adapter.
- */
-function declaresLocal(provider: AiProvider): boolean {
-  try {
-    return executionLocalityOf(provider) === 'LOCAL';
-  } catch {
-    return false;
   }
 }
 

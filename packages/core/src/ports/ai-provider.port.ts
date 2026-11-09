@@ -146,6 +146,18 @@ export function executionLocalityOf(provider: Pick<AiProvider, 'executionLocalit
 }
 
 /**
+ * ADR-0124 Part L C5a: whether the provider declares `LOCAL` execution, total (a throwing declaration is not `LOCAL`). The one
+ * reader the `requiredLocality` constraint uses, in the router and at dispatch.
+ */
+export function declaresLocalExecution(provider: Pick<AiProvider, 'executionLocality'>): boolean {
+  try {
+    return executionLocalityOf(provider) === 'LOCAL';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * PORT: an AI execution backend. v1 implementations wrap CLIs
  * (ClaudeCliProvider, CodexCliProvider, OllamaCliProvider); an HTTP API adapter may
  * serve the chat tier and IMAGE_UNDERSTANDING only (ADR-0115).
