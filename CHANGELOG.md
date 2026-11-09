@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L C5a: `document-map.v2` after CH3 run 2 FAILED
+
+- **Changed (long-item map prompt only).** `document-map.v2`: asks for specific facts copied exactly, most important first, and states a per-part line and character budget as a Core fact (`documentMapNoteBudget`, the same fair share `notesBody` uses). Parser, 8 x 160 bounds, 3,000-cp windows, W <= 6, 20 s / 90 s and the reduce prompt unchanged.
+- **Recorded.** DECISIONS ADR-0124 section 17.1.
+
 ## Unreleased — ADR-0124 Part L C5a: CH3 run 1 (INVALID) fixes
 
 - **Fixed (long-item provider only).** `ollama run --nowordwrap --think=false --hidethinking` (new `OllamaCliProvider` option `noThinking`, set by `composeLongItems`); an output that still starts with a reasoning block (`Thinking...` / `<think>`) fails closed. Other Ollama providers unchanged.

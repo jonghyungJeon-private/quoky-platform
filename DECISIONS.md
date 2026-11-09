@@ -33009,6 +33009,29 @@ taken from it. Two defects, both fixed in code; nothing in the bars, corpus, pro
   so **the re-run needs a new owner yes on the new plan digest**; the yes given for `ecb9ccd82e6645af` does not carry
   over.
 
+#### 17.1 document-map.v2 (owner decision 2026-11-09: improve arm L after CH3 run 2 FAILED)
+
+CH3 run 2 on `qwen3:8b` FAILED its bars: S3 coverage 16.4% against today's 15.9% (bar 80%); invented-free 71.9% against
+46.9% (bar 95%); CH5 p50 66 s, 7 wall breaches, 13 call timeouts; completed summaries covered 11 of 66 planted facts.
+Three causes: (1) the `document-map.v1` prompt asked only for "the key points", and the 8B model wrote generic summaries of
+routine sentences and dropped the specific facts; (2) model-free loss in `notesBody`: each note gets a fair share of the
+3,000-code-point reduce readout (about 498 for 6 notes) and whole lines are kept in order until the share is full, while a
+note may be 8 x 160 = 1,280 code points, so lines after roughly the third were silently dropped before the reduce; (3)
+latency: map calls averaged 11 s (p95 20 s), much of it spent generating long lines that (2) then discarded.
+
+**Change (prompt `document-map.v2`, nothing else).** The map prompt now says the notes are all the later summary step
+will see of the part, asks to keep each specific fact with what it is about and to copy values exactly as written, to
+prefer specific facts over general status, to put the most important first, and, when the part has none, to write one or
+two lines on what it is about (general wording, no example phrases). Core adds an AUTHORITATIVE_CURRENT_FACT stating this
+part's budget, "at most N lines and at most C characters in total", computed by `documentMapNoteBudget(W)` from the same
+fair share `notesBody` uses (single source of truth), so a note that respects the budget passes through `notesBody` whole,
+and with most-important-first notes any truncation drops the least important lines. `parseDocumentMapNote` is unchanged
+(the ADR bounds stay the only hard limits; a note over the budget is still accepted).
+
+**Within the ratified bounds:** at most 8 lines of 160 code points per note, 3,000-code-point windows, W <= 6, the 20 s /
+90 s bounds, and the reduce prompt (the document-summary prompt) unchanged. The prompt rendering pin and the plan digests
+move (they hash prompts); the re-run needs a new owner yes on the new plan digest.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,

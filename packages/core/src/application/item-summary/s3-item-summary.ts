@@ -34,7 +34,7 @@ import {
   type UntrustedDocumentReadout,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, parseDocumentMapNote } from './document-map-prompt';
+import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, documentMapNoteBudget, parseDocumentMapNote } from './document-map-prompt';
 
 /**
  * ADR-0124 Part L, slice C5a: S3, the whole-item summary of ONE long item, arm L (every model call on a `LOCAL`
@@ -247,7 +247,7 @@ function passageTotals(passages: readonly Passage[]): { readonly codePoints: num
 /** Whole notes lines under `[Part i/W]` frames, each note within its fair share of the readout bound. */
 function notesBody(notes: readonly Note[], windows: number): string {
   const separator = '\n\n';
-  const share = Math.floor((UNTRUSTED_DOCUMENT_BODY_MAX_CHARS - separator.length * Math.max(0, notes.length - 1)) / Math.max(1, notes.length));
+  const { share } = documentMapNoteBudget(notes.length);
   const parts: string[] = [];
   for (const note of notes) {
     let part = `[Part ${note.window + 1}/${windows}]`;
