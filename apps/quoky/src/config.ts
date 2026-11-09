@@ -17,6 +17,7 @@ import type { NlSelectionConfig } from './nl-selection/nl-selection-config';
 import { EgressConfigErrorCode, parseEgressConfig } from './security/egress-config';
 import { ChannelGrantsConfigErrorCode, parseChannelGrantsConfig, type ChannelGrantsConfig } from './surface-grants/channel-grants-config';
 import { AgentConfigErrorCode, parseAgentConfig, type AgentConfig } from './agent/agent-config';
+import { ChunkItemsConfigErrorCode, parseChunkItemsConfig, type ChunkItemsConfig } from './item-summary/chunk-items-config';
 import type { EgressGuardConfig } from './security/egress-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
 import type { ReminderConfig } from './reminders/reminder-config';
@@ -135,6 +136,11 @@ export interface QuokyConfig {
    * startup until the D11 gates pass; `shadow` needs `QUOKY_NL_INTENT_MODE=active`). See `agent/agent-config.ts`.
    */
   agent: AgentConfig;
+  /**
+   * ADR-0124 Part L C5a: `QUOKY_CHUNK_ITEMS` (`off` | `shadow` | `on`, default `off`; anything else is refused at startup).
+   * Validated only; no handler reads it yet. See `item-summary/chunk-items-config.ts`.
+   */
+  chunkItems: ChunkItemsConfig;
   /**
    * Opt-in local embedding recall (ADR-0098 D8). `model` is a bounded token and never a cloud-served model.
    * `timeoutMs` bounds one embedding call; `maxNewPerTurn` is fixed at 4.
@@ -328,6 +334,7 @@ export const QuokyConfigErrorCode = {
   ...EgressConfigErrorCode,
   ...ChannelGrantsConfigErrorCode,
   ...AgentConfigErrorCode,
+  ...ChunkItemsConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
   DISCORD_EXPECTED_BOT_ID_REQUIRED: 'DISCORD_EXPECTED_BOT_ID_REQUIRED',
@@ -593,6 +600,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const nlSelection = parseNlSelectionConfig(env);
   const egress = parseEgressConfig(env);
   const agent = parseAgentConfig(env);
+  const chunkItems = parseChunkItemsConfig(env);
   const discordGuildId = env.DISCORD_GUILD_ID;
   const discordChannelIds = parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID);
   const channelGrants = parseChannelGrantsConfig(env, {
@@ -644,6 +652,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     egress,
     channelGrants,
     agent,
+    chunkItems,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),
       model: parseEmbeddingModel(env.QUOKY_EMBEDDING_MODEL),

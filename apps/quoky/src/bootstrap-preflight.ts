@@ -141,6 +141,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.AGENT_MODE_ACTIVE_NOT_RELEASED]:
     'QUOKY_AGENT_MODE=active is not released yet (ADR-0121 D11 gates); use "shadow" or "off".',
   [QuokyConfigErrorCode.AGENT_MODE_REQUIRES_NL_ACTIVE]: 'QUOKY_AGENT_MODE=shadow needs QUOKY_NL_INTENT_MODE=active.',
+  // ADR-0124 Part L C5a. Names and shapes only, never a value.
+  [QuokyConfigErrorCode.CHUNK_ITEMS_INVALID]: 'QUOKY_CHUNK_ITEMS must be unset, "off", "shadow", or "on".',
   // ADR-0121 S0 egress guard and traffic ledger. Names and shapes only, never a value.
   [QuokyConfigErrorCode.EGRESS_GUARD_INVALID]:
     'QUOKY_EGRESS_GUARD must be unset (observe), "off", "observe", or "enforce" (exactly, lowercase).',
