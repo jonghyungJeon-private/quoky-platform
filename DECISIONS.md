@@ -32788,7 +32788,7 @@ ruling), an independent Chief Architect review and the live checks below.
 - **Clause PN.** Core copy only (`renderLongItemProgressNotice`, the window count only), sent through
   `LongItemSummaryOptions.notify`, which the composition root binds to `PlatformAdapter.sendMessage`. Sent only when the
   mode is `on`, `notify` is set and the conversation is a DM; at most once, after 8 s, once S3 has reported its window
-  count (`onStart`, after a successful selection, before the first call); never stored in history. It is awaited before
+  count (`onStart`, at the first dispatched call: review round 1 below); never stored in history. It is awaited before
   the reply so the two arrive in order; a failed send is logged and ignored. The notice timer never bounds the run: the
   90 s wall stays S3's, Core and the orchestrator add no turn timeout, and a per-call timeout or wall breach gives the
   partial reply, never a remote call.
@@ -32800,12 +32800,61 @@ ruling), an independent Chief Architect review and the live checks below.
   remote call); thread long item and dedup; adapter signal; uncached probe. `stage-r-v2.test.ts` passes.
 - **Residuals and open items.**
   - The ≤90 s window between the fresh probe and the last call (above).
-  - Gate contention: when the local model is busy (an embedding call or another S3 run), S3 waits in the gate inside its
-    own budget; a run that cannot start a call in time gives a partial reply that read nothing, not today's path.
-  - An embedding call can wait behind an S3 run for up to 90 s; recall then falls back on its own timeout as today.
+  - Gate contention (as amended by review round 1 below, decision 2): when the local model is busy (an embedding call or
+    another S3 run), S3 waits in the gate for at most what is left of the 90 s wall. If no call of this request was
+    dispatched by then, the outcome is `today: 'not-ready'` (nothing was sent; count-only log `gate-busy`); after a call
+    it is the partial reply (`wall`).
+  - An embedding call waits behind at most the one S3 call that holds the gate (at most 20 s each, since every S3 call
+    takes the gate on its own) plus whatever is queued ahead of it; a queued embedding call whose `timeoutMs` ran out
+    while it waited is dropped as a timeout, and otherwise it runs with only the time it has left. Recall falls back on
+    its own timeout as today.
+  - Not covered by the gate: the other local Ollama providers (the local chat model when `QUOKY_OLLAMA_ENABLED` is set,
+    and a local vision provider if configured) call the daemon without taking the gate, so their calls can overlap an S3
+    call. Live, chat runs on Claude (`QUOKY_CHAT_PROVIDER=claude`), so the overlap is the owner's explicit local-chat
+    setup only; gating them is a later composition change.
   - Owner operations before `on`: live checks (1)-(4) of review round 2 and P3-b check (5) (`OLLAMA_NO_CLOUD=1` on the
     daemon refusing a cloud alias; if it does, a required step).
   - The CH3/CH5/CH6 eval harness is slice 4; the I7 offer stays deferred.
+
+**Slice 2 review round 1 (Chief Architect: changes required; Codex), 2026-11-09: fixes.**
+
+- **A busy gate before any call is today's path (CA P1, Codex P2; decision 2).** In `runS3ItemSummary` the gate wait is
+  bounded only by the remaining wall, and the 20 s per-call timer starts at dispatch (inside the gated work, after the
+  dispatch-time locality check), never before the gate wait. A busy gate, or any wall breach, with no call dispatched yet
+  (`state.calls === 0`, read after the abort that fences the dispatch: a work the gate lets in later sees the abort and
+  sends nothing) is `today: 'not-ready'` with the count-only log `gate-busy`. The fail-closed exception stays: a failed
+  locality re-check before the first call is still the zero-call partial reply (`locality`).
+- **The start is the first dispatch (CA P1).** `onStart` (and so the PN eligibility) fires once, right after the first
+  local `execute` was issued, never after selection alone, so the progress notice can never precede a fallback to
+  today's path.
+- **`shadow` never answers from S3 (CA P2).** The runtime returns today's path whenever the mode is not `on`, including
+  an S3 `refused: credential` (S3 guards the whole prepared text and Quoky's frames again); S3 logs
+  every refusal as a count only (`outcome: 'refused'`, `reason`).
+- **A partial reply that read nothing makes no summarize claim (CA P2).** With `coverage.read === 0` the footer is Core's
+  `renderLongItemUnreadFooter` (the text was not sent to the chat model; Quoky wrote or sent nothing), not the handler's
+  "summarized in parts on this device" footer.
+- **Repeated-quote removal narrowed (CA P2).** A `>`-marked line is dropped when its text (markers removed) appeared in an
+  earlier message (and a markers-only line always); an unmarked line is dropped only inside a run of at least three
+  consecutive repeated unmarked lines (blank lines continue a run without counting), so a short repeated reply (a
+  one-line acknowledgement from another sender) survives. A message left empty reads `(only quotes earlier messages)`
+  only when every removed line was marked, else `(only repeats earlier messages)`.
+- **Pre-existing residual shared with today's path (Codex P2; not changed in this slice, N2: no new port).** Thread bodies
+  reach S3 already reduced by the Gmail adapter's `stripQuotedMailHistory` (`gmail-mail-reader.ts:292`): every
+  `>`-marked line is removed and everything after the first reply header line (an "On … wrote:" style header) is cut. So
+  a reply that answers inline below a reply header loses its own unique lines (Codex finding). Reproduction: a thread message
+  `Short lead.` + reply header + quoted original interleaved with unmarked inline answers reaches both today's readout and
+  S3 as `Short lead.` only. Today's remote path reads the same bodies, so this slice adds no loss. Candidate for a later
+  slice: raw bodies to S3 behind the full-item guard, with the structural dedup above doing the removal.
+- **Smaller fixes (CA P3).** Queued gated embedding calls drop or shorten as above; a spreadsheet read to its first sheet
+  only marks the long item `sourceTruncated` (the coverage line states the cut); the PN send is raced against 3 s
+  (`LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS`), so a stalled platform send never holds the reply longer.
+- **Tests.** S3: busy gate until the wall (today, zero calls, gate wait = remaining wall, no `onStart`, fenced work sends
+  nothing); wall breach at the gate after a call (partial `wall`); a 25 s gate wait does not eat the per-call bound and
+  `onStart` fires after the first dispatch. Runtime: busy gate gives today's reply byte for byte with no notice; the
+  notice follows the first dispatch; `shadow` with an S3-only credential refusal keeps today's reply; the nothing-read
+  partial uses the unread footer; a stalled notice send is cut at 3 s. Thread dedup: a one-line acknowledgement survives;
+  runs of three unmarked repeats are dropped; the note says which. Composition: an expired queued embedding call is
+  dropped, a waiting one gets the time left.
 
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
