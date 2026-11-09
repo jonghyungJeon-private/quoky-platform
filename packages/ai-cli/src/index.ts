@@ -25,7 +25,8 @@ import { CLAUDE_CHILD_ENV, MAX_STDOUT_CAPTURE_BYTES, defaultCliRunner, maskSecre
 
 /** JSON escaping inflates the reply inside the `--output-format json` envelope, so the Claude text provider captures 2x. */
 const CLAUDE_JSON_STDOUT_CAPTURE_BYTES = MAX_STDOUT_CAPTURE_BYTES * 2;
-import type { CliRunner } from './cli-runner';
+import type { CliRunner, CliRunOptions } from './cli-runner';
+import { ollamaModelfileFromLocalBlob, ollamaShowDeclaresRemote, validatedOllamaPinnedDigest } from './ollama-local-weights';
 import { KNOWN_RESULT_SUBTYPES, classifyClaudeCliFailure, parseClaudeResultUsage, validatedClaudeModel } from './claude-vision-provider';
 import {
   sanitizeGeneralChatText,
@@ -36,10 +37,12 @@ import {
   OLLAMA_COLOR_ENV,
   OLLAMA_PROBE_TIMEOUT_MS,
   classifyOllamaExitStderr,
+  ollamaListDigestOf,
   ollamaListIncludesModel,
   ollamaModelExecutionLocality,
   sanitizedOllamaModelName,
 } from './ollama-embedding-provider';
+import { OLLAMA_SHOW_TIMEOUT_MS } from './ollama-models';
 
 export { BaseCliAiProvider };
 export { SystemPromptFileStore } from './system-prompt-file';
@@ -101,6 +104,7 @@ export {
   parseOllamaShowCapabilities,
   sameOllamaModel,
 } from './ollama-models';
+export { ollamaModelfileFromLocalBlob, ollamaShowDeclaresRemote } from './ollama-local-weights';
 export type { OllamaChatModelInventoryOptions, OllamaListEntry, OllamaModelInventory } from './ollama-models';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
@@ -746,6 +750,8 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   private readonly runner: CliRunner;
   private readonly defaultTimeoutMs: number;
   private readonly validationHost: string | null;
+  /** ADR-0124 Part L C5a: `null` = today's readiness; otherwise the local-weights check (and the optional digest pin). */
+  private readonly localWeights: { readonly pinnedDigest: string | undefined } | null;
 
   // ADR-0098 amendment: no POLICY_SENSITIVE_CHAT — the local model did not meet the chat-policy bar in Live QA
   // (fabricated an external action, followed an injection, answered Japanese in Korean).
@@ -769,6 +775,13 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     runner?: CliRunner;
     timeoutMs?: number;
     validationHost?: string;
+    /**
+     * ADR-0124 Part L C5a (review round 2): for the provider used under `requiredLocality: 'LOCAL'` (the long-item
+     * summary, wired in slice 2). Readiness then also requires positive local evidence from the daemon's metadata
+     * (no remote fields in `ollama show`, a local weights blob in `ollama show --modelfile`) and, when `pinnedDigest` is
+     * set, the `ollama list` ID to equal it. Absent: today's readiness, unchanged.
+     */
+    localWeights?: { readonly pinnedDigest?: string };
   } = {}) {
     super();
     this.id = options.providerId ?? 'ollama-cli';
@@ -779,6 +792,8 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     this.defaultTimeoutMs = options.timeoutMs ?? 120_000;
     this.validationHost = options.validationHost === undefined
       ? null : approvedLoopbackHost(options.validationHost);
+    this.localWeights = options.localWeights === undefined
+      ? null : { pinnedDigest: validatedOllamaPinnedDigest(options.localWeights.pinnedDigest) };
   }
 
   /**
@@ -799,25 +814,55 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   override async isAvailable(): Promise<boolean> {
     let r;
     try {
-      r = await this.runner(this.bin, ['list'], {
-        cwd: tmpdir(),
-        input: '',
-        timeoutMs: OLLAMA_PROBE_TIMEOUT_MS,
-        env: this.validationHost === null ? OLLAMA_COLOR_ENV : {
-          ...OLLAMA_COLOR_ENV,
-          OLLAMA_HOST: this.validationHost,
-          OLLAMA_NO_CLOUD: '1',
-        },
-        ...(this.validationHost === null ? {} : {
-          environmentProfile: 'ISOLATED_OLLAMA_VALIDATION' as const,
-        }),
-      });
+      r = await this.runner(this.bin, ['list'], this.probeOptions(OLLAMA_PROBE_TIMEOUT_MS));
     } catch {
       return false;
     }
-    // A timed-out probe is no answer (live QA D16): the previous readiness is kept.
-    if (r.timedOut) throw new ProviderProbeIndeterminateError('ollama list timed out');
-    return r.code === 0 && ollamaListIncludesModel(r.stdout, this.model);
+    // Under the local-weights check a timeout is not ready (fail closed); otherwise a timed-out probe is no answer
+    // (live QA D16): the previous readiness is kept.
+    if (r.timedOut) {
+      if (this.localWeights !== null) return false;
+      throw new ProviderProbeIndeterminateError('ollama list timed out');
+    }
+    if (r.code !== 0 || !ollamaListIncludesModel(r.stdout, this.model)) return false;
+    if (this.localWeights === null) return true;
+    const pin = this.localWeights.pinnedDigest;
+    if (pin !== undefined && ollamaListDigestOf(r.stdout, this.model) !== pin) return false;
+    return this.hasLocalWeights();
+  }
+
+  /**
+   * ADR-0124 Part L C5a: positive local evidence from the daemon's metadata. `ollama show <model>` must report no remote
+   * field and `ollama show --modelfile <model>` must name a local weights blob. Read-only, no input sent; any probe error,
+   * timeout or non-zero exit is not ready.
+   */
+  private async hasLocalWeights(): Promise<boolean> {
+    try {
+      const info = await this.runner(this.bin, ['show', this.model], this.probeOptions(OLLAMA_SHOW_TIMEOUT_MS));
+      if (info.timedOut || info.code !== 0 || ollamaShowDeclaresRemote(info.stdout)) return false;
+      const modelfile = await this.runner(this.bin, ['show', '--modelfile', this.model], this.probeOptions(OLLAMA_SHOW_TIMEOUT_MS));
+      if (modelfile.timedOut || modelfile.code !== 0) return false;
+      return ollamaModelfileFromLocalBlob(modelfile.stdout);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The bounded, input-free options of a metadata probe (`list`, `show`), in the provider's environment profile. */
+  private probeOptions(timeoutMs: number): CliRunOptions {
+    return {
+      cwd: tmpdir(),
+      input: '',
+      timeoutMs,
+      env: this.validationHost === null ? OLLAMA_COLOR_ENV : {
+        ...OLLAMA_COLOR_ENV,
+        OLLAMA_HOST: this.validationHost,
+        OLLAMA_NO_CLOUD: '1',
+      },
+      ...(this.validationHost === null ? {} : {
+        environmentProfile: 'ISOLATED_OLLAMA_VALIDATION' as const,
+      }),
+    };
   }
 
   override async execute(request: AiRequest): Promise<AiExecutionResult> {
