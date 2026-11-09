@@ -33032,7 +33032,9 @@ and with most-important-first notes any truncation drops the least important lin
 
 **Within the ratified bounds:** at most 8 lines of 160 code points per note, 3,000-code-point windows, W <= 6, the 20 s /
 90 s bounds, and the reduce prompt (the document-summary prompt) unchanged. The prompt rendering pin and the plan digests
-move (they hash prompts); the re-run needs a new owner yes on the new plan digest.
+move (they hash prompts); the re-run needs a new owner yes on the new plan digest. New plan digests (`pnpm build`, then
+plan mode, zero model calls, qwen3:8b@500a1f067a9f): CH3 `a8b438407e0d36da` (prompts document-map.v2 `951892bc8cdf`, document
+summary `fe40ddb36043`, scorer v2) and CH6 `dcafe35d3bd03bb4`.
 
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
