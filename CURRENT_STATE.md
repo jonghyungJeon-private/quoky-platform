@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (2026-11-09, branch `claude/v5-recall-judgment`)
+
+- Offline harness only, production unchanged: stage R reports `L-word` vs `L-bm25` (pre-declared verdict) and a new CH9 own-memory set measures the own-memory hit rule F0 against calibrated F1/F2 (safety bar: zero false hits); the single local E4 run awaits the plan digests and the owner go.
+
 ### Chat guard keeps the rest of the reply (2026-11-05, branch `claude/v5-dm8-guard-strip`)
 
 - Dead-end offers / stale command quotes are removed per sentence; the restate is appended only after an owner message naming an offered action, and is the whole reply only when nothing is left. No prompt change.

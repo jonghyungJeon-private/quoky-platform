@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (offline tooling)
+
+- **Added (harness only, production unchanged).** Stage R CH7 sweep and CH8 validation gain the offline lexical variants `L-word` vs `L-bm25` under the production weights with a pre-declared adopt/keep verdict; new hand-written CH9 own-memory set (70 memories, 140 questions, `--set memory-own`) and `own-memory-eval` measuring the production own-memory hit rule F0 against offline families F1/F2 with pre-declared calibration (+0.03 margin) and a zero-false-hit verdict. Core exports `sharesTopicWord` (no behaviour change). CH7 and CH8 plan digests change (expected).
+
 ## Unreleased — ADR-0124 phase 2 P2-4: durable recall recency weight 0.10
 
 - **Changed.** `DefaultMemoryRetriever` default recency weight 0.25 -> 0.10 (owner decision 2026-11-09, verdict B1 of the P2-3 CH8 validation: E4 Recall@5 0.867 -> 0.993, newer-first kept 19/22). Semantic weight, half-life and widening unchanged. Stage R harness follows production: fidelity is checked against the frozen candidate equal to the production weights (B1), INVALID when none matches; B0 is labelled previous production; plan digests change. Rollback: revert. The `embeddinggemma:300m` switch is an operator `.env.local` step (`QUOKY_EMBEDDING_MODEL`), no code change. DECISIONS "ADR-0124 phase 2 P2-4".
