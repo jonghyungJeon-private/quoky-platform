@@ -230,10 +230,12 @@ export function buildMailThreadReadout(thread: MailThread): MailThreadReadoutRes
 }
 
 /**
- * ADR-0124 Part L C5a-2: what a thread message reads as in the S3 input when every line of it repeats earlier messages
- * (Core-authored, inside the untrusted body; no mail text).
+ * ADR-0124 Part L C5a-2: what a thread message reads as in the S3 input when every line removed from it was a quote of
+ * earlier messages (Core-authored, inside the untrusted body; no mail text).
  */
 export const MAIL_THREAD_QUOTE_ONLY_NOTE = '(only quotes earlier messages)';
+/** The same, when some removed lines were unmarked repeats (a forwarded or top-posted history without `>`). */
+export const MAIL_THREAD_REPEAT_ONLY_NOTE = '(only repeats earlier messages)';
 
 /** A line of only quote markers (`>`, `> >`): structure, no text. */
 const QUOTE_MARKERS_ONLY = /^\s*>[\s>]*$/u;
@@ -244,6 +246,8 @@ const LEADING_QUOTE_MARKERS = /^(?:\s*>)+/u;
  * that holds an `i/n` fraction, rewritten to parentheses so only Core writes a frame. Structural (brackets and digits).
  */
 const FRAME_IMITATION = /\[([^[\]\n]{0,40}?\d{1,3}\s*\/\s*\d{1,3}[^[\]\n]{0,80}?)\]/gu;
+/** Unmarked repeated lines are dropped only in runs of at least this many (review round 1, CA P2). */
+const UNMARKED_REPEAT_RUN = 3;
 
 /** The comparison key of a line: without its quote markers, whitespace collapsed. */
 function quoteKey(line: string): string {
@@ -252,25 +256,57 @@ function quoteKey(line: string): string {
 
 /**
  * Owner Q12 (2026-11-09), structural only: a reply that quotes the messages before it repeats lines the S3 input already
- * holds. In each message, a line whose text (quote markers removed) appeared in an EARLIER message of the shown thread is
- * dropped, and so is a line of quote markers only. No phrase is matched. A message left with nothing reads as
- * {@link MAIL_THREAD_QUOTE_ONLY_NOTE}.
+ * holds. No phrase is matched. In each message (review round 1, CA P2):
+ *
+ * - a `>`-marked line whose text (markers removed) appeared in an EARLIER message of the shown thread is dropped, and so is
+ *   a line of quote markers only;
+ * - an unmarked line is dropped only inside a run of at least {@link UNMARKED_REPEAT_RUN} consecutive repeated unmarked
+ *   lines (blank lines continue a run but do not count), so a short reply that happens to repeat an earlier line (a
+ *   one-line acknowledgement from another sender) survives;
+ * - a message left with nothing reads as {@link MAIL_THREAD_QUOTE_ONLY_NOTE} when every removed line was marked, else as
+ *   {@link MAIL_THREAD_REPEAT_ONLY_NOTE}.
  */
 export function withoutRepeatedQuotes(bodies: readonly string[]): string[] {
   const seen = new Set<string>();
   return bodies.map((body) => {
     const lines = body.split('\n');
-    const kept = lines.filter((line) => {
-      if (QUOTE_MARKERS_ONLY.test(line)) return false;
-      const key = quoteKey(line);
-      return key.length === 0 || !seen.has(key);
-    });
-    for (const line of lines) {
-      const key = quoteKey(line);
+    const keys = lines.map(quoteKey);
+    const marked = lines.map((line) => LEADING_QUOTE_MARKERS.test(line));
+    const drop = lines.map((line, index) => QUOTE_MARKERS_ONLY.test(line) || (marked[index] === true && (keys[index] ?? '').length > 0 && seen.has(keys[index] ?? '')));
+    // Runs of repeated unmarked lines (blank lines continue a run without counting).
+    let runStart = -1;
+    let runCount = 0;
+    const closeRun = (end: number): void => {
+      if (runStart >= 0 && runCount >= UNMARKED_REPEAT_RUN) {
+        for (let index = runStart; index < end; index += 1) {
+          if ((keys[index] ?? '').length > 0) drop[index] = true;
+        }
+      }
+      runStart = -1;
+      runCount = 0;
+    };
+    for (let index = 0; index < lines.length; index += 1) {
+      const key = keys[index] ?? '';
+      if (key.length === 0 || marked[index] === true) {
+        if (marked[index] === true) closeRun(index);
+        continue;
+      }
+      if (seen.has(key)) {
+        if (runStart < 0) runStart = index;
+        runCount += 1;
+      } else {
+        closeRun(index);
+      }
+    }
+    closeRun(lines.length);
+    for (const key of keys) {
       if (key.length > 0) seen.add(key);
     }
+    const kept = lines.filter((_, index) => drop[index] !== true);
     const text = kept.join('\n').replace(/\n{3,}/gu, '\n\n').trim();
-    return text.length > 0 ? text : MAIL_THREAD_QUOTE_ONLY_NOTE;
+    if (text.length > 0) return text;
+    const removedUnmarked = lines.some((line, index) => drop[index] === true && marked[index] !== true && !QUOTE_MARKERS_ONLY.test(line));
+    return removedUnmarked ? MAIL_THREAD_REPEAT_ONLY_NOTE : MAIL_THREAD_QUOTE_ONLY_NOTE;
   });
 }
 

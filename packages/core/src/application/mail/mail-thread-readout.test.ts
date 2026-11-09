@@ -9,7 +9,7 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentReadout,
 } from '../untrusted-document-readout';
-import { MAIL_THREAD_QUOTE_ONLY_NOTE, MAIL_THREAD_WITHHELD_BODY_NOTE, buildMailThreadLongItem, buildMailThreadReadout, withoutRepeatedQuotes } from './mail-thread-readout';
+import { MAIL_THREAD_QUOTE_ONLY_NOTE, MAIL_THREAD_REPEAT_ONLY_NOTE, MAIL_THREAD_WITHHELD_BODY_NOTE, buildMailThreadLongItem, buildMailThreadReadout, withoutRepeatedQuotes } from './mail-thread-readout';
 
 // GML-2 (ADR-0118 amendment of 2026-10-12): one thread, bounded and guarded like one mail.
 
@@ -190,6 +190,24 @@ describe('buildMailThreadLongItem', () => {
     const quoteOnly = first.split('\n').map((line) => `> ${line}`).join('\n');
     expect(withoutRepeatedQuotes([first, quoteOnly])).toEqual([first, MAIL_THREAD_QUOTE_ONLY_NOTE]);
     expect(withoutRepeatedQuotes(['a\nb\na'])).toEqual(['a\nb\na']);
+  });
+
+  it('review round 1: a short unmarked repeat (a one-line acknowledgement from another sender) survives', () => {
+    const ack = '확인했습니다.';
+    expect(withoutRepeatedQuotes([`${first}\n${ack}`, ack, `새 내용\n${ack}`])).toEqual([`${first}\n${ack}`, ack, `새 내용\n${ack}`]);
+    // Two repeated unmarked lines are still below the run of three.
+    const two = first.split('\n').slice(0, 2).join('\n');
+    expect(withoutRepeatedQuotes([first, `답장\n${two}`])).toEqual([first, `답장\n${two}`]);
+  });
+
+  it('review round 1: unmarked repeats are dropped in runs of three or more (blank lines continue a run); the note says which', () => {
+    const unmarked = first.split('\n').join('\n\n');
+    expect(withoutRepeatedQuotes([first, `답장입니다.\n${unmarked}`])).toEqual([first, '답장입니다.']);
+    expect(withoutRepeatedQuotes([first, first])).toEqual([first, MAIL_THREAD_REPEAT_ONLY_NOTE]);
+    const mixed = `> ${first.split('\n')[0] ?? ''}\n${first}`;
+    expect(withoutRepeatedQuotes([first, mixed])).toEqual([first, MAIL_THREAD_REPEAT_ONLY_NOTE]);
+    // A marked line that repeats is dropped on its own (no run needed).
+    expect(withoutRepeatedQuotes([first, `> ${first.split('\n')[1] ?? ''}\n새 답`])).toEqual([first, '새 답']);
   });
 
   it('a body that imitates a Core frame is rewritten; a credential anywhere is no long item (the readout refuses it)', () => {
