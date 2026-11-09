@@ -7,6 +7,8 @@ export * from './project-manager';
 export * from './project-analyzer';
 export * from './ai-provider-manager';
 export * from './capability-router';
+export * from './local-provider-dispatch';
+export * from './item-summary';
 export * from './intent-classifier';
 export * from './planner';
 export * from './context-builder';

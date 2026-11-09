@@ -1,5 +1,6 @@
 import { AiProviderError, NoProviderAvailableError } from '../errors';
 import { AiFailureKind, type Capability } from '../domain';
+import { declaresLocalExecution } from '../ports';
 import type {
   AiProvider,
   ProviderPreference,
@@ -41,9 +42,15 @@ export class CapabilityRouter implements ProviderSelector {
    */
   async resolve(capability: Capability, context: ProviderSelectionContext = {}): Promise<ResolvedProviderSelection> {
     const preference = this.policy ? await this.policy.preferenceFor(capability, context) : null;
-    const candidates = preference === null
-      ? await this.manager.availableFor(capability)
-      : await this.manager.readyAmong(this.eligible(capability, preference));
+    // ADR-0124 Part L C5a: under `requiredLocality` only providers that declare `LOCAL` are probed and ranked.
+    const local = context.requiredLocality === 'LOCAL';
+    const candidates = local
+      ? await this.manager.readyAmong(
+          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter(declaresLocalExecution),
+        )
+      : preference === null
+        ? await this.manager.availableFor(capability)
+        : await this.manager.readyAmong(this.eligible(capability, preference));
     if (candidates.length === 0) {
       throw new NoProviderAvailableError(capability);
     }
@@ -65,6 +72,7 @@ export class CapabilityRouter implements ProviderSelector {
    */
   isStillEligible(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean {
     if (!provider.capabilities.some((c) => c.capability === capability)) return false;
+    if (context.requiredLocality === 'LOCAL' && !declaresLocalExecution(provider)) return false;
     const check = this.policy?.isEligible;
     if (check === undefined) return true;
     try {
@@ -72,6 +80,11 @@ export class CapabilityRouter implements ProviderSelector {
     } catch {
       return false;
     }
+  }
+
+  /** Registered providers that advertise the capability (unprobed). */
+  private advertising(capability: Capability): AiProvider[] {
+    return this.manager.all().filter((p) => p.capabilities.some((c) => c.capability === capability));
   }
 
   /** Registered providers that advertise the capability and whose key the preference lists (unprobed). */

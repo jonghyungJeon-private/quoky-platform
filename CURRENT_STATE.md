@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 Part L slice C5a: S3 whole-item summary, arm L, unwired (2026-11-09, branch `claude/v5-partl-c5a`)
+
+- Core only, nothing wired: the `requiredLocality: 'LOCAL'` selection constraint (re-checked before dispatch), the `document-map.v1` map prompt, and `runS3ItemSummary` behind injected dependencies; `QUOKY_CHUNK_ITEMS` validated at startup (default `off`, unread). Owner decisions of 2026-11-09 and the interfaces: DECISIONS ADR-0124 section 17. Next: handler wiring and `shadow` (slice 2, with the local-model gate), the PN notice, the CH3/CH5/CH6 harness; CH1 for S3 awaits the Chief Architect ruling.
+
 ### Candidate, gates pending: nl-select.v83 (A6 action) / nl-select.v84 (A6 R2) and the narrowed one-option rule (2026-11-09, branch `claude/v5-nl-own-memory-when`)
 
 - **Candidate, gates pending: action `nl-select.v83` / R2 `nl-select.v84` (the v81 / v82 text plus one rule: "what did I tell you" recall questions are none, memory answers them).** Read stays `nl-select.v74`,

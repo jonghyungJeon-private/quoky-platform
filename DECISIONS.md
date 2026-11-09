@@ -32526,6 +32526,194 @@ Phase 0 only: no LLM, no embedder, no Ollama, no network; baseline clip and the 
   heading effect uses synthetic titles and one layout, 24 pairs. Real mail and Drive text (tables, lists, signatures, forwarded chains) differs from these templates. Per-shape parameters should be
   decided after E0-E3 / EH on this set.
 
+### 17. Implementation note: slice C5a, S3 whole-item summary, arm L, unwired (owner decisions 2026-11-09)
+
+This note records the owner's answers to the Part L plan questions and, per ADR-0121 D12 ("interfaces recorded before
+code"), the interfaces of slice C5a **before** the code. It changes no ratified Part L text. Nothing here is wired into a
+handler: no reply, prompt, provider choice or log line of the running service changes in this slice.
+
+**Owner decisions (2026-11-09, the recommended answer to each of the six plan questions).**
+
+1. **Local model on the service.** An Ollama provider pinned to `qwen3:8b` by digest will be registered on the service
+   **only** for long-item local summaries (S3, `requiredLocality` LOCAL); chat stays on Claude. Registering it, the
+   `.env.local` change and the model pull are owner operations steps, not part of any code slice.
+2. **No remote fallback once a local S3 run has started.** A failure after the first local call (a model error, a per-call
+   timeout, the wall, a locality re-check that fails, a note or reduce guard) ends in a **deterministic partial reply**
+   built from the notes already finished, plus the coverage line; the item is **never re-sent to a remote provider** and
+   no call is retried. Only cases where **no local call was made** fall back to today's path, byte-identically: the flag
+   is `off` or `shadow` (`today: 'off' | 'shadow'`); no ready `LOCAL` `SUMMARIZATION` provider at the start, including a
+   selection that does not answer within the wall (`today: 'not-ready'`); sections that do not tile the text
+   (`today: 'not-chunkable'`); and an error before any call (a throwing clock, timer, selector or gate, or a gate that
+   rejects before dispatch: `today: 'not-ready'`). A locality re-check that fails before the first call is the one
+   pre-call case that stays a partial reply (fail closed; see P3 below).
+3. **CH1 for an S3-only `on`.** CH1 measures selection by search; S3 selects by position only (I2). The owner asks the
+   Chief Architect to rule CH1 **not applicable** to an S3-only `on`. **Status: ruled by the CA in review round 1
+   (2026-11-09), under conditions (a)-(d) recorded below.**
+4. **CH3, CH5 and CH6 thresholds ratified as written** in section 7 (Product Owner, 2026-11-09): CH3 coverage ≥ 80%,
+   invented points 0 in ≥ 95% of items, S3 preferred over today (one-sided binomial, p < 0.05, ≥ 25 non-tie pairs); CH5
+   the section 3.7 bounds; CH6 all 0, `chunk-injection` ≥ 40 cases, 0 successes over 3 runs. The runs themselves stay
+   Strict (owner yes on each plan digest).
+5. **Arms H and R2** (slice C6) are built and measured **only if arm L fails CH3**.
+6. **The "다른 구간도 볼까요?" offer (I7)** is deferred until after `on`. Until then a partial or stratified reply shows the
+   coverage line only.
+
+**Interfaces recorded before code (C5a).**
+
+- **The locality constraint (data on the existing selection context; no new port, no new DI token).**
+  `ProviderSelectionContext.requiredLocality?: 'LOCAL'` (type `RequiredExecutionLocality`). Absent means no constraint, and
+  selection is exactly as before. With `'LOCAL'`, `CapabilityRouter` probes and ranks only providers whose declared
+  `executionLocalityOf(provider)` is `LOCAL` (absent or unknown is `REMOTE`, fail closed); none ready is
+  `NoProviderAvailableError`, and `isStillEligible` answers `false` for any non-`LOCAL` provider. Core reads only the
+  existing locality data: it never parses a model name. A cloud-served Ollama model is refused because the adapter
+  already declares any model whose name or tag contains `cloud` (case-insensitive) `REMOTE` (ADR-0107 D6, the
+  ADR-0098 D8 rule); the constraint then excludes it.
+- **Typed selection and dispatch check (Core application, over the existing `ProviderSelector` port).**
+  `selectRequiredLocalProvider(selector, capability, context): Promise<{ kind: 'selected'; provider } | { kind: 'not-ready' }>`
+  never throws; it adds `requiredLocality: 'LOCAL'` to the context and re-reads the returned provider's locality (the
+  port's answer is not trusted), so a selector that returns a `REMOTE` provider is `not-ready` with no call.
+  `isRequiredLocalDispatchAllowed(selector, capability, context, provider): boolean` is synchronous and runs immediately
+  before every `execute`: the provider must still declare `LOCAL` and, where the selector has `isStillEligible`, still be
+  eligible under the constraint. `false` means no call.
+- **Compatibility with the ADR-0121 D12 amendment proposal (not ratified, not depended on).** The proposal's
+  `allowedExecutionLocalities` is a set of allowed localities derived from labels and grants; `requiredLocality: 'LOCAL'`
+  is the one-element case of it (`['LOCAL']`). If the proposal is ratified, `requiredLocality` maps onto it without a
+  behaviour change. C5a ratifies nothing of D12 and adds no `allowedExecutionLocalities` field.
+- **The map prompt.** `document-map.v1` (`DOCUMENT_MAP_PROMPT_VERSION`), a Core prompt built in code and pinned by the
+  sha256 of its rendering for a fixed input (as `agent-plan.*` is). One window readout under the existing untrusted
+  framing (`renderUntrustedDocumentForPrompt`), no tools, no context files, no transcript; output at most 8 lines of at
+  most 160 code points, no URL. `parseDocumentMapNote(text, source)` is the note guard: shape (lines, line length,
+  bytes), links, both credential detectors, the card-spoof line check, and the document action-claim guard per line (a
+  claiming line is dropped, never repaired). A failed note is not read and the coverage line counts it as unread.
+- **The reduce prompt** reuses the document-summary prompt unchanged: `composeDocumentSummaryPrompt(requestText,
+  readout)` is the existing composer body made callable without a `Task` (byte-identical to `PromptComposer.compose` for a
+  document readout). The notes enter it as one readout of the item's source whose body is the notes under Core frames
+  `[Part i/W]`, within the 3,000-code-point readout bound, re-validated by `isSummarizableDocumentReadout`. Notes carry
+  the label `UNTRUSTED` + `MODEL_DERIVED` (the item's label joined with `LOCAL_MODEL_ONLY`, never widened).
+- **The S3 pipeline entry point (Core application, `item-summary/`, behind injected dependencies, unwired).**
+  `runS3ItemSummary(input, deps): Promise<S3ItemSummaryOutcome>`, total (never throws).
+  - `input`: `mode` (`off | shadow | on`), the item's `source`, `title`, `author`, `date`, the `prepared` text and optional
+    `sections` (the chunker's contract), the owner's `requestText`, the reply `language`, an optional item `label`.
+  - `deps`: `selector` (`ProviderSelector`) and its base `selectionContext`, a monotonic `now()`, an optional `wait(ms, signal)`
+    (the timer; default `setTimeout`), an optional `exclusive(work)` (the single-in-flight local model gate), an optional
+    `logger`.
+  - Outcomes: `{ kind: 'today', reason: 'off' | 'shadow' | 'not-ready' | 'not-chunkable' }` (the caller runs today's path untouched; `not-chunkable` is sections that do not tile the text);
+    `{ kind: 'S1' }` (the item fits one window; today's path); `{ kind: 'refused', reason: 'credential' | 'empty' }` (as
+    today: the whole item, never redacted); `{ kind: 'summary' }` and `{ kind: 'partial', reason }` (review round 1 below), both with the
+    summary text, the Core coverage line (`renderCoverageLine`), the fixed history note and a content-free audit.
+  - Flow: guard the full item; `chunk` → `singleWindow` (fits → `S1`); `packWindows` when the whole item packs into at most
+    6 windows, else `selectStratified(…, 6)` (position only); one map call per window, then one reduce call. Bounds: W ≤ 6,
+    ≤ 7 local calls, 20 s per call, 90 s wall, calls strictly one at a time; a breach is a partial reply, never a retry,
+    never remote. Logs and audit carry counts only (`passageAuditView` totals, W, read, calls, timings).
+- **The flag.** `QUOKY_CHUNK_ITEMS` = exactly `off`, `shadow` or `on`, default `off`; any other value is refused at
+  startup (`CHUNK_ITEMS_INVALID`, value never echoed). C5a parses and validates it; no handler reads it yet.
+- **The single-in-flight gate.** No local-model mutex exists in the repository yet (the embedding provider has none
+  either). Within one request the pipeline makes its calls strictly one after another; the cross-request gate shared
+  with embedding (RQ-3 T3-5) is the `exclusive` dependency, **wired in slice 2** with the handlers.
+
+**Left for later slices.** Handler wiring for mail, thread (repeated-quote removal), Drive and Sheets and the `shadow` log
+line (slice 2); the PN progress notice (slice 3); the eval harness for CH3/CH5/CH6 (slice 4). `on` needs the gates of
+section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and an independent Chief Architect review.
+
+**Review round 1 (Chief Architect and Codex, 2026-11-09): rulings and fixes.**
+
+- **CA ruling, CH1 for an S3-only `on`: not applicable, under four conditions.** (a) `on` enables S3 only: no `focus`, no S2
+  and no score-based selection is reachable, and T2-1 (the metamorphic test) stays. (b) The CH3 set includes items above
+  the 6-window cap with key points at depths 10-90%, reported per depth stratum. (c) A model-free test replaces CH1 for S3:
+  over the CH1 shapes and lengths, every item that packs into at most 6 windows ends with `coverage.complete`
+  (`item-summary/s3-ch1-coverage.test.ts`, added in C5a). (d) CH1 stays required for S2 (C5b), S4 and any later `on`
+  that adds S2.
+- **CA ruling, the reduce readout (P2a).** The notes readout is `truncated: false`. The reused document-summary prompt tells
+  the model that a `truncated=true` item shows "its beginning and its end" and asks it to mention the omission; for a
+  stratified selection that is false, and a model-written coverage statement is what N5 reserves for Core. Coverage is
+  stated only by Core's coverage line.
+- **Claim checks (P1, ADR-0104 D1 / ADR-0118 D8).** The model-derived text of every S3 reply (the reduce answer, or the
+  finished notes of a partial reply) passes today's `checkDocumentSummaryClaims` (the ADR-0104 guard, the document claim
+  guard, the addition-claim check, the length bound). A claim gives today's fixed notice, an over-long text the fixed
+  too-long notice (`withheld: 'claim' | 'too-long'`). There is **no regeneration** (decision 2: no retry). The coverage line
+  is Core copy and is appended after the check. Slice 2 still runs the handler's delivered-text check on the shown body.
+- **Totality (P2b).** A throwing or rejecting dependency (clock, timer, gate, selector) is caught: before any model call the
+  outcome is `today: 'not-ready'` (nothing was sent); after one, a partial reply (`internal`), never today's remote path.
+- **A rejected note stops the run (P2e).** A map answer that fails the note guard ends the run with the partial reply from
+  the notes already finished; no further map and no reduce. (A window whose readout the readout guard refuses is still
+  skipped without a call and counted unread, per the `windowReadout` contract.)
+- **Selection inside the wall (P2f).** The 90 s wall starts at entry; provider selection is raced against the remaining wall
+  budget, so a stalled readiness probe ends as `today: 'not-ready'` with no call.
+- **A local alias of a cloud model (P2c).** The name rule cannot see through `ollama cp` or a Modelfile `FROM` a cloud
+  model. Round 1 set `OLLAMA_NO_CLOUD=1` on `ollama run`; **superseded in review round 2** (below): that variable is a
+  daemon (`ollama serve`) setting, not the control.
+- **How decision 1 works (P2d, specified for slice 2, no routing change today).** `OllamaCliProvider` advertises
+  `GENERAL_CHAT`/`SUMMARIZATION` at priority 100 against Claude's 50, so registering it without a policy would move chat.
+  The service already runs a `ProviderSelectionPolicy` (`ProviderSelectionService.preferenceFor` receives the context). Slice 2
+  registers the long-item Ollama provider under its own key and changes the policy so that (1) for every request **without**
+  `requiredLocality` that key is never in `eligible` (chat and short summaries stay on Claude; the live configuration sets
+  `QUOKY_CHAT_PROVIDER=claude` explicitly), and (2) for a `SUMMARIZATION` request **with** `requiredLocality: 'LOCAL'`,
+  `eligible` is exactly that key (otherwise the intersection with a Claude-only list would be empty and every S3 run would be
+  `not-ready`). The policy's `isEligible` mirrors both rules for the dispatch check. The long-item provider is registered
+  with the `SUMMARIZATION` capability **only** (not chat, document analysis, lookup or code), with `localWeights` set
+  (review round 2) and the pinned digest, and `isEligible` answers `false` for its key whenever `requiredLocality` is
+  absent. Slice 2 tests: chat and an unconstrained summary never select the Ollama key; a constrained summary selects only
+  it; the key never appears in the 모델 변경 (runtime model switch) list; and it is never a local fallback candidate of
+  any other path.
+- **Smaller items (P3).** `not-chunkable` is a pre-start fallback (no local call has started), consistent with decision 2.
+  `exclusive` stays optional in Core, but **slice 2 must pass it at the composition root** (the gate shared with embedding,
+  T3-5), with a slice-2 test that the composed S3 path has it. The rendered map request is re-guarded (both detectors,
+  `map-guard`), and Quoky's section frames are guarded with the full item (a credential in a frame refuses the whole item).
+  The Ollama CLI adapter ignores `request.signal`: an abandoned call is still killed by the runner at its `timeoutMs`, which
+  the pipeline sets to the call's remaining budget; aborting the child on the signal is a slice-2 adapter follow-up. One
+  reader, `declaresLocalExecution`, serves the router and the dispatch check. A locality re-check that fails before the
+  first call ends in a partial reply (fail closed), not today's path. **`requiredLocality` and a future
+  `allowedExecutionLocalities`:** when both are set the allowed set is their intersection (`requiredLocality: 'LOCAL'` keeps
+  only `LOCAL`); either alone keeps its own meaning.
+
+**Review round 2 (Chief Architect and Codex, 2026-11-09): fixes.**
+
+- **The CH7 plan digest stays frozen.** Round 1 edited `packages/ai-cli/src/cli-runner.ts` and
+  `ollama-embedding-provider.ts`; both are in stage R's `IMPLEMENTATION_FILES`, so `stageRDigest` moved and the frozen-record
+  test (`stage-r-v2.test.ts`, "CH7 plan digest is unchanged by the CH8 work") failed. Both files are back to base byte for
+  byte; the pinned digest was **not** re-recorded (C5a has no reason to change the CH7 plan).
+- **The cloud-alias control (Codex P1, CA P2): local-weights readiness.** `OllamaCliProvider` gains an opt-in
+  `localWeights: { pinnedDigest? }`, set only on the long-item provider (slice 2). Its `isAvailable` then requires
+  **positive local evidence** from the daemon's own metadata, read-only and with no input sent: `ollama show <model>`
+  reports no remote field (CLI rows `Remote …`, JSON `remote_*`), every `FROM` of `ollama show --modelfile <model>` is an
+  absolute `sha256-<64 hex>` weights blob, and, when a digest is pinned, the `ollama list` ID equals it (a malformed pin
+  throws at construction). Any probe error, non-zero exit or timeout (`ollama list` included) is not ready; under
+  `requiredLocality` the provider is then never selected, so no input reaches it. Without the option readiness is
+  unchanged. **`OLLAMA_NO_CLOUD` is not the control and is no longer set on `ollama run`**: the installed CLI (0.40.15)
+  documents it only under `ollama serve --help` (a daemon setting, "Disable Ollama cloud features"); `ollama run --help`
+  does not read it, and keeping it would have edited the CH7-hashed runner. Setting it on the owner's daemon is an
+  optional owner operations step (defence in depth), not a code change.
+  **Still to verify live before `on` (owner operations, no pull in a code slice):** on the service's Ollama version,
+  that (1) a cloud-served model, (2) an `ollama cp` copy of it under a name without `cloud`, and (3) a Modelfile alias
+  `FROM` it each print a `Remote …` row in `ollama show` and/or a non-blob `FROM` in `ollama show --modelfile`, so the
+  provider is not ready for each; and (4) the pinned `qwen3:8b` passes. Verified so far, read-only on 0.40.15: installed
+  local models print no remote row and only blob-path `FROM` lines.
+- **Strict parsing (review round 3, Codex P2 ×2 + CA P3-c; structural, not a third heuristic).** `ollama show` counts as
+  local only when it is the recognized CLI table (a header line exactly `Model` with an `architecture` row in that
+  section) and carries no remote row or `remote…` key (snake or camel case): empty or unknown output is not ready. The
+  modelfile is parsed under a closed grammar: blank and `#` lines skipped; every other line outside a `"""` block is an
+  upper-case directive at column 0 followed by a value; `"""` blocks (TEMPLATE, LICENSE, SYSTEM) are skipped whole, so a
+  `FROM` inside them neither counts nor spoils; every `FROM` is exactly one absolute `sha256-<64 hex>` blob path (the
+  `sha256:` spelling is no longer accepted, matching this note); at least one `FROM`; an unterminated block, an indented
+  or lower-case directive, or a bare or multi-token `FROM` is refused. Checked read-only against the installed
+  `gemma3:4b`, `granite3.3:8b` and `embeddinggemma:300m` outputs: all pass. Carried to slice 2 from the CA round-2
+  approval: P3-a fresh probe for S3 selection (invalidate or TTL 0; record the ≤90 s residual window and threat model),
+  P3-b live check (5) `OLLAMA_NO_CLOUD=1` on the daemon refusing a cloud alias (if it does, a required owner step before
+  `on`), P3-d the long-item provider always sets `pinnedDigest` (composition-root test).
+- **Grammar loop closed (review round 4, Codex P2 ×2).** Directive words now come from Ollama's closed Modelfile set
+  (FROM, PARAMETER, TEMPLATE, SYSTEM, ADAPTER, LICENSE, MESSAGE, REQUIRES; unknown → refused) and a quoted value's closing
+  `"""` must end its line (trailing text → refused). Per quoky-ship §3.5 this closes the parsing review loop: the security
+  evidence is the positive blob `FROM` plus the absence of remote rows, and any further strictness can only turn a model
+  not ready (fail closed), which live check (4) would surface. Further grammar-strictness findings are recorded here as
+  fail-closed residuals, not chased.
+- **An upstream source cut (CA P2).** With `sourceTruncated` (a thread shown in part, a capped body), the coverage is never
+  `complete` and Core's coverage line appends a fixed Core sentence that the source was already cut, in the summary, the
+  partial reply and the last-resort partial. No model text states coverage.
+- **A gate rejection before dispatch (Codex P2, CA P3).** An `exclusive` gate that rejects before `execute` is reached is
+  not a model failure: it goes to the outer call-count guard (`today: 'not-ready'` with zero calls; a partial reply after a
+  call). A rejection after dispatch stays the model's (`partial: 'model'`).
+- **Tests (CA P3).** `isStillEligible` false from the start ends in `partial: 'locality'` with zero local and zero remote
+  calls.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,

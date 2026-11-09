@@ -200,6 +200,8 @@ describe('CapabilityRouter with a ProviderSelectionPolicy (ADR-0092 amendment, r
         '../errors', '../domain', '../ports', './ai-provider-manager', 'execute', 'listed', 'function',
         // ADR-0116 D3: the selection-source values.
         'OWNER_SELECTED', 'NOT_OWNER_SELECTED',
+        // ADR-0124 Part L C5a: the required execution locality (declared data, never a provider name).
+        'LOCAL',
       ]),
     );
     const port = readFileSync(new URL('../ports/provider-selection-policy.port.ts', import.meta.url), 'utf8');
