@@ -25,7 +25,6 @@ import { isRequiredLocalDispatchAllowed, selectRequiredLocalProvider, withRequir
 import { composeDocumentSummaryPrompt } from '../prompt-composer';
 import { PromptRenderer } from '../prompt-renderer';
 import {
-  UNTRUSTED_DOCUMENT_BODY_MAX_CHARS,
   UNTRUSTED_DOCUMENT_READOUT_KIND,
   buildUntrustedDocumentReadout,
   isSummarizableDocumentReadout,
@@ -34,7 +33,7 @@ import {
   type UntrustedDocumentReadout,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, parseDocumentMapNote } from './document-map-prompt';
+import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, documentMapNoteBudget, parseDocumentMapNote } from './document-map-prompt';
 
 /**
  * ADR-0124 Part L, slice C5a: S3, the whole-item summary of ONE long item, arm L (every model call on a `LOCAL`
@@ -47,7 +46,7 @@ import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, parseDocumentMapN
  * - **S1.** An item that fits one window is `S1`: the caller keeps today's path, byte for byte.
  * - **Selection by position only (RQ-2 I2).** The whole item when it packs into at most {@link S3_LIMITS}.maxWindows windows,
  *   else `selectStratified(…, maxWindows)`. W, the locality and the number of calls never depend on the content.
- * - **Calls.** One map call per window (`document-map.v1`) and one reduce call (the existing document-summary prompt over the
+ * - **Calls.** One map call per window (`document-map.v2`) and one reduce call (the existing document-summary prompt over the
  *   notes), strictly one at a time, at most {@link S3_LIMITS}.maxLocalCalls, each bounded to `callTimeoutMs` and all within
  *   `wallMs`. The provider is selected once with `requiredLocality: 'LOCAL'` and re-checked synchronously before every call.
  * - **No remote, no retry (owner decision 2, 2026-11-09).** No ready local provider at the start (selection bounded by the
@@ -247,7 +246,7 @@ function passageTotals(passages: readonly Passage[]): { readonly codePoints: num
 /** Whole notes lines under `[Part i/W]` frames, each note within its fair share of the readout bound. */
 function notesBody(notes: readonly Note[], windows: number): string {
   const separator = '\n\n';
-  const share = Math.floor((UNTRUSTED_DOCUMENT_BODY_MAX_CHARS - separator.length * Math.max(0, notes.length - 1)) / Math.max(1, notes.length));
+  const { share } = documentMapNoteBudget(notes.length);
   const parts: string[] = [];
   for (const note of notes) {
     let part = `[Part ${note.window + 1}/${windows}]`;

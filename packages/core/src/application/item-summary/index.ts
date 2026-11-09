@@ -16,9 +16,10 @@ export {
   DOCUMENT_MAP_PROMPT_VERSION,
   buildDocumentMapRequest,
   composeDocumentMapPrompt,
+  documentMapNoteBudget,
   parseDocumentMapNote,
 } from './document-map-prompt';
-export type { DocumentMapNoteFailure, DocumentMapNoteResult, DocumentMapPart } from './document-map-prompt';
+export type { DocumentMapNoteBudget, DocumentMapNoteFailure, DocumentMapNoteResult, DocumentMapPart } from './document-map-prompt';
 export {
   LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
   LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS,

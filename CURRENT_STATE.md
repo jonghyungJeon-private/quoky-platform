@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 Part L C5a: `document-map.v2` after CH3 run 2 FAILED (2026-11-09, branch `claude/v5-partl-map-v2`)
+
+- The map prompt asks for specific facts (values copied exactly, most important first) and states a per-part line budget from the shared `documentMapNoteBudget(W)`, the same fair share `notesBody` keeps whole; bounds and the reduce prompt unchanged. Not yet re-measured; the re-run needs a new owner yes on the new plan digest. DECISIONS ADR-0124 section 17.1.
+
 ### ADR-0124 Part L C5a: CH3 run 1 INVALID, two defects fixed (2026-11-09, branch `claude/v5-partl-c5a-runs`)
 
 - CH3 run 1 (plan `ecb9ccd82e6645af`) was INVALID: qwen3:8b reasoning exhausted the 20 s bound (28/32 items), and an abandoned call misclassified UNAVAILABLE spoiled the next item's readiness probe (4/32). Fixed: the long-item provider runs with `--think=false --hidethinking` (reasoning output fails closed); an aborted call is TIMEOUT. New plan digests CH3 `de1af603b3273c75`, CH6 `7865551e150fc49a`; the re-run waits for the owner's yes. DECISIONS ADR-0124 section 17 "CH3 run 1 (INVALID)".
