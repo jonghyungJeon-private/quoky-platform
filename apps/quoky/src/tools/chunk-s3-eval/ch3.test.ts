@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import type { CliRunner } from '@quoky/ai-cli';
 import { Capability, containsCredentialFileContent, containsCredentialMaterial, type AiProvider } from '@quoky/core';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +9,7 @@ import { binomialOneSidedP, buildBlindSheet, loadRubricWording, scoreFilledSheet
 import { CH3_CORPUS_SEED, CH3_CORPUS_VERSION, DEPTH_STRATA, ch3CorpusDigest, generateCh3Corpus, type Ch3Case } from './ch3-corpus';
 import { buildCh3Plan, buildCh3Report, buildCh5, latencyStats, type Ch3ItemRun, type S3ItemRun } from './ch3-eval';
 import { hasAtom, scoreSummary, valueAtoms } from './ch3-score';
+import { S3_EVAL_IMPLEMENTATION_FILES, implementationHashes } from './implementation';
 import { itemSourceText, s3InputOf, todayReadoutOf } from './items';
 import { composeLocalArm, parsePsRss, startRssSampler } from './local-arm';
 
@@ -16,6 +19,7 @@ import { composeLocalArm, parsePsRss, startRssSampler } from './local-arm';
  */
 
 const CASES = generateCh3Corpus();
+const REPO = resolve(__dirname, '../../../../..');
 const PIN = ['0a1b', '2c3d', '4e5f'].join('');
 const OTHER_PIN = ['9f8e', '7d6c', '5b4a'].join('');
 const MODEL = 'notes-model:8b';
@@ -142,11 +146,33 @@ describe('CH3 scorer', () => {
     const all = c.keyPoints.map((key) => `${key.subject}: ${rendered(key.atom)}`).join('\n');
     const full = scoreSummary(c, all, source);
     expect(full.covered).toBe(c.keyPoints.length);
-    expect(full.coveredWithSubject).toBe(c.keyPoints.length);
+    expect(full.valuePresent).toBe(c.keyPoints.length);
+    expect(full.unanchored).toBe(0);
     expect(full.invented).toEqual([]);
     const invented = scoreSummary(c, `${all}\n총 98765건`, source);
     expect(invented.invented).toEqual(['num:98765']);
     expect(scoreSummary(c, '요약할 내용이 없습니다', source).covered).toBe(0);
+  });
+
+  it('a bare dump of the item values scores no coverage and is flagged; a value needs its own subject in the same unit', () => {
+    for (const c of CASES) {
+      const source = valueAtoms(`${itemSourceText(c.item)}\n${c.item.requestText}`);
+      // Every planted value, as a list and as one sentence: present, never beside its subject.
+      for (const dump of [c.keyPoints.map((key) => `- ${rendered(key.atom)}`).join('\n'), `Values: ${c.keyPoints.map((key) => rendered(key.atom)).join(', ')}.`]) {
+        const score = scoreSummary(c, dump, source);
+        expect(score.covered, c.item.id).toBe(0);
+        expect(score.valuePresent, c.item.id).toBe(c.keyPoints.length);
+        expect(score.unanchored, c.item.id).toBe(c.keyPoints.length);
+      }
+    }
+    const c = CASES.find((x) => new Set(x.keyPoints.map((key) => key.subject)).size >= 2) as Ch3Case;
+    const [first, second] = c.keyPoints.filter((key, at, all) => all.findIndex((k) => k.subject === key.subject) === at) as [Ch3Case['keyPoints'][number], Ch3Case['keyPoints'][number]];
+    const source = valueAtoms(itemSourceText(c.item));
+    // Subjects swapped across sentences: neither value is credited.
+    expect(scoreSummary(c, `${second.subject} moved. Then ${rendered(first.atom)} was set.\n${first.subject}: ${rendered(second.atom)}`, source).covered).toBe(
+      first.subject === second.subject ? 2 : 0,
+    );
+    expect(scoreSummary(c, `${first.subject}: ${rendered(first.atom)}. ${second.subject} is at ${rendered(second.atom)}.`, source).covered).toBe(2);
   });
 });
 
@@ -247,6 +273,28 @@ describe('CH3 plan', () => {
     expect(plan.today.calls).toBe(CASES.length);
     expect(plan.judge.calls).toBe(0);
     expect(plan.ownerLabels).toEqual({ pairs: CASES.length, labels: 2 * CASES.length, preferences: CASES.length });
+  });
+
+  it('hashes every implementation file into the digest: editing one listed file changes it', () => {
+    const digest = ch3CorpusDigest(CASES);
+    const real = implementationHashes();
+    expect(Object.keys(real)).toEqual([...S3_EVAL_IMPLEMENTATION_FILES]);
+    const root = mkdtempSync(join(tmpdir(), 'ch3-impl-'));
+    try {
+      for (const file of S3_EVAL_IMPLEMENTATION_FILES) {
+        mkdirSync(dirname(join(root, file)), { recursive: true });
+        copyFileSync(join(REPO, file), join(root, file));
+      }
+      expect(implementationHashes(root)).toEqual(real);
+      const plan = buildCh3Plan({ cases: CASES, corpusDigest: digest, local: LOCAL, today: TODAY, implementation: implementationHashes(root) });
+      for (const file of ['packages/core/src/application/item-summary/s3-item-summary.ts', 'apps/quoky/src/tools/chunk-s3-eval/ch3-score.ts', 'packages/ai-cli/src/ollama-local-weights.ts']) {
+        writeFileSync(join(root, file), `${readFileSync(join(root, file), 'utf8')}\n// edited\n`);
+        const edited = buildCh3Plan({ cases: CASES, corpusDigest: digest, local: LOCAL, today: TODAY, implementation: implementationHashes(root) });
+        expect(edited.digest, file).not.toBe(plan.digest);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

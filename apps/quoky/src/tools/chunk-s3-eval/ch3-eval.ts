@@ -33,6 +33,7 @@ import {
   type ProviderSelector,
   type UntrustedDocumentReadout,
 } from '@quoky/core';
+import { implementationHashes, type ImplementationHashes } from './implementation';
 import { CANARY_CLAUSE, providerFailureReason, type ProviderOutageReport } from '../eval-provider-guard';
 import { CH3_CORPUS_SEED, CH3_CORPUS_VERSION, type Ch3Case } from './ch3-corpus';
 import { CH3_SCORER_VERSION, aggregate, scoreSummary, valueAtoms, type ArmAggregate, type ItemScore } from './ch3-score';
@@ -74,6 +75,8 @@ export interface Ch3PlanInputs {
   readonly local: { readonly model: string; readonly digest: string };
   /** The chat-tier provider of the baseline (the Claude CLI) and its model flag, `null` = the CLI default. */
   readonly today: { readonly provider: 'claude-cli'; readonly model: string | null };
+  /** sha256 per implementation file (default: read from the repo); tests pass an edited map. */
+  readonly implementation?: ImplementationHashes;
 }
 
 export interface Ch3Plan {
@@ -99,6 +102,7 @@ export interface Ch3Plan {
   readonly scorer: string;
   readonly bars: typeof CH3_BARS;
   readonly ownerLabels: { readonly pairs: number; readonly labels: number; readonly preferences: number };
+  readonly implementation: ImplementationHashes;
   readonly digest: string;
 }
 
@@ -135,6 +139,7 @@ export function buildCh3Plan(inputs: Ch3PlanInputs): Ch3Plan {
     scorer: CH3_SCORER_VERSION,
     bars: CH3_BARS,
     ownerLabels: { pairs: inputs.cases.length, labels: inputs.cases.length * 2, preferences: inputs.cases.length },
+    implementation: inputs.implementation ?? implementationHashes(),
   };
   return { ...body, digest: sha(JSON.stringify(body)).slice(0, 16) };
 }
@@ -148,6 +153,7 @@ export function planLinesCh3(plan: Ch3Plan): string[] {
     `  ${plan.canaries} per guarded provider`,
     `  owner blind labels: ${plan.ownerLabels.pairs} pairs = ${plan.ownerLabels.labels} labels + ${plan.ownerLabels.preferences} preferences`,
     `  prompts: ${plan.prompts.mapVersion} ${plan.prompts.mapSha256.slice(0, 12)}, document summary ${plan.prompts.documentSummarySha256.slice(0, 12)}; scorer ${plan.scorer}`,
+    `  implementation: ${Object.keys(plan.implementation).length} source files hashed into the digest`,
     `  run: --mode run --digest ${plan.digest} (Strict: needs the owner's yes on this digest)`,
   ];
 }
@@ -356,8 +362,8 @@ export interface Ch3ItemReport {
   readonly aboveCap: boolean;
   readonly windows: number;
   readonly stratified: boolean;
-  readonly s3: { readonly kind: string; readonly reason?: string; readonly withheld?: string; readonly calls: number; readonly read: number; readonly total: number; readonly wallMs: number; readonly covered: number; readonly coveredWithSubject: number; readonly keyPoints: number; readonly invented: number };
-  readonly today: { readonly outcome: string; readonly reason?: string; readonly wallMs: number; readonly covered: number; readonly coveredWithSubject: number; readonly keyPoints: number; readonly invented: number };
+  readonly s3: { readonly kind: string; readonly reason?: string; readonly withheld?: string; readonly calls: number; readonly read: number; readonly total: number; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
+  readonly today: { readonly outcome: string; readonly reason?: string; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
 }
 
 export interface Ch3Report {
@@ -419,7 +425,8 @@ export function buildCh3Report(
         total: run.s3.total,
         wallMs: run.s3.wallMs,
         covered: s3.covered,
-        coveredWithSubject: s3.coveredWithSubject,
+        valuePresent: s3.valuePresent,
+        unanchored: s3.unanchored,
         keyPoints: s3.keyPoints,
         invented: s3.invented.length,
       },
@@ -428,7 +435,8 @@ export function buildCh3Report(
         ...(run.today.reason !== undefined ? { reason: run.today.reason } : {}),
         wallMs: run.today.wallMs,
         covered: today.covered,
-        coveredWithSubject: today.coveredWithSubject,
+        valuePresent: today.valuePresent,
+        unanchored: today.unanchored,
         keyPoints: today.keyPoints,
         invented: today.invented.length,
       },
@@ -463,7 +471,7 @@ export function summaryLinesCh3(report: Ch3Report): string[] {
   const strata = (arm: ArmAggregate): string => Object.entries(arm.aboveCapPerStratum).map(([id, s]) => `${id} ${pct(s.coverage)}`).join(', ');
   return [
     `CH3 ${report.status} (plan ${report.planDigest})`,
-    `  S3   coverage ${pct(report.arms.S3.coverage)} (bar ${pct(CH3_BARS.coverage)}), with subject ${pct(report.arms.S3.coverageWithSubject)}, invented-free items ${pct(report.arms.S3.inventedFreeShare)} (bar ${pct(CH3_BARS.inventedFreeShare)})`,
+    `  S3   coverage ${pct(report.arms.S3.coverage)} (bar ${pct(CH3_BARS.coverage)}), values present anywhere ${pct(report.arms.S3.valuePresentShare)}, items with unanchored values ${report.arms.S3.itemsWithUnanchored}, invented-free items ${pct(report.arms.S3.inventedFreeShare)} (bar ${pct(CH3_BARS.inventedFreeShare)})`,
     `  today coverage ${pct(report.arms.today.coverage)}, invented-free items ${pct(report.arms.today.inventedFreeShare)}`,
     `  above-cap per stratum: S3 ${strata(report.arms.S3)}; today ${strata(report.arms.today)}`,
     `  CH5 ${report.ch5.verdict}: S3 p50/p95 ${report.ch5.modes.s3.p50}/${report.ch5.modes.s3.p95} ms, today p50/p95 ${report.ch5.modes.today.p50}/${report.ch5.modes.today.p95} ms, local call p95 ${report.ch5.localCalls.p95} ms, peak RSS ${report.ch5.peakRss.measured ? `${report.ch5.peakRss.peakProcessKiB} KiB` : 'not measured'}`,
