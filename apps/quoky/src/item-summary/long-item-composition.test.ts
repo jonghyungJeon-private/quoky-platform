@@ -248,4 +248,34 @@ describe('the single-in-flight gate (RQ-3 T3-5)', () => {
     await wrapped?.execute({ capability: Capability.EMBEDDING, prompt: 'q' });
     expect(inner.calls).toBe(1);
   });
+
+  it('review round 1: a queued call whose timeout ran out while it waited is dropped; otherwise it gets only the time left', async () => {
+    const gate = createLocalModelGate();
+    let clock = 0;
+    const seen: (number | undefined)[] = [];
+    const inner: AiProvider = {
+      id: 'embed-fake',
+      capabilities: [{ capability: Capability.EMBEDDING, priority: 10 }],
+      executionLocality: 'LOCAL',
+      isAvailable: async () => true,
+      execute: async (request: AiRequest) => {
+        seen.push(request.timeoutMs);
+        return { text: '[]' };
+      },
+    };
+    const wrapped = gatedProvider(inner, gate, () => clock);
+    const hold = (ms: number) => gate(async () => {
+      clock += ms;
+    });
+    const busy = hold(5_000);
+    const expired = wrapped.execute({ capability: Capability.EMBEDDING, prompt: 'q', timeoutMs: 4_000 });
+    await busy;
+    await expect(expired).rejects.toThrow();
+    const busyAgain = hold(1_500);
+    const shortened = wrapped.execute({ capability: Capability.EMBEDDING, prompt: 'q', timeoutMs: 4_000 });
+    await busyAgain;
+    await shortened;
+    await wrapped.execute({ capability: Capability.EMBEDDING, prompt: 'q' });
+    expect(seen).toEqual([2_500, undefined]);
+  });
 });

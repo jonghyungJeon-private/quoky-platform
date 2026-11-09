@@ -58,20 +58,27 @@ export function summarizationOnlyView(inner: AiProvider, id: string): AiProvider
 
 /**
  * `inner` with every `execute` taken through `gate` (same key, capabilities, locality and readiness). A call whose signal
- * was aborted while it waited for the gate is not run.
+ * was aborted while it waited for the gate is not run. Review round 1 (CA P3): a call with a `timeoutMs` is bounded from
+ * when it was asked, not from when the gate let it in: one whose time ran out while it waited is dropped (a timeout, never
+ * spawned) and otherwise it gets only the time it has left.
  */
-export function gatedProvider(inner: AiProvider, gate: ExclusiveGate): AiProvider {
+export function gatedProvider(inner: AiProvider, gate: ExclusiveGate, now: () => number = () => performance.now()): AiProvider {
   return {
     id: inner.id,
     ...(inner.family !== undefined ? { family: inner.family } : {}),
     capabilities: inner.capabilities,
     ...(inner.executionLocality !== undefined ? { executionLocality: inner.executionLocality } : {}),
     isAvailable: () => inner.isAvailable(),
-    execute: (request) =>
-      gate(async () => {
+    execute: (request) => {
+      const askedAt = now();
+      return gate(async () => {
         if (request.signal?.aborted === true) throw new AiProviderError(AiFailureKind.TIMEOUT, 'the local model call was abandoned while it waited');
-        return inner.execute(request);
-      }),
+        if (request.timeoutMs === undefined) return inner.execute(request);
+        const left = Math.floor(request.timeoutMs - Math.max(0, now() - askedAt));
+        if (left <= 0) throw new AiProviderError(AiFailureKind.TIMEOUT, 'the local model call timed out while it waited');
+        return inner.execute(left === request.timeoutMs ? request : { ...request, timeoutMs: left });
+      });
+    },
   };
 }
 

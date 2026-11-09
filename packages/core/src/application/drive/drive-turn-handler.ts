@@ -316,7 +316,8 @@ export class DriveTurnHandler implements ConversationTurnHandler {
         date: document.modifiedAt,
         prepared: sheets?.prepared ?? preparedLongItemBody(document.text),
         ...(sheets !== undefined ? { sections: sheets.sections } : {}),
-        sourceTruncated: document.textTruncated === true || sheets?.dropped === true,
+        // Review round 1 (CA P3): a spreadsheet read to its first sheet only is a source cut too.
+        sourceTruncated: document.textTruncated === true || sheets?.dropped === true || read.firstSheetOnly !== undefined,
         footer: renderDriveSummaryLocalFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
         refused: this.reply(ctx, renderDriveSummaryRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized'),
       },
