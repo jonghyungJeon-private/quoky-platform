@@ -32789,7 +32789,8 @@ ruling), an independent Chief Architect review and the live checks below.
   `LongItemSummaryOptions.notify`, which the composition root binds to `PlatformAdapter.sendMessage`. Sent only when the
   mode is `on`, `notify` is set and the conversation is a DM; at most once, after 8 s, once S3 has reported its window
   count (`onStart`, at the first dispatched call: review round 1 below); never stored in history. It is awaited before
-  the reply so the two arrive in order; a failed send is logged and ignored. The notice timer never bounds the run: the
+  the reply, bounded at 3 s (best effort: a send cut at 3 s may still arrive after the reply); a failed send is logged
+  and ignored. The notice timer never bounds the run: the
   90 s wall stays S3's, Core and the orchestrator add no turn timeout, and a per-call timeout or wall breach gives the
   partial reply, never a remote call.
 - **Tests.** Preflight matrix; composition (`off`/`shadow` byte-identical providers, one pinned SUMMARIZATION-only provider
