@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L C5a: CH3 run 1 (INVALID) fixes
+
+- **Fixed (long-item provider only).** `ollama run --nowordwrap --think=false --hidethinking` (new `OllamaCliProvider` option `noThinking`, set by `composeLongItems`); an output that still starts with a reasoning block (`Thinking...` / `<think>`) fails closed. Other Ollama providers unchanged.
+- **Fixed (Ollama adapter).** A call whose request signal was aborted is TIMEOUT ("abandoned by its caller"), not UNAVAILABLE, so it no longer invalidates the provider and discards the next item's in-flight fresh readiness probe (the 4 `today (not-ready)` items of CH3 run 1).
+- **Recorded.** DECISIONS ADR-0124 section 17, "CH3 run 1 (INVALID)": plan `ecb9ccd82e6645af`, causes, fixes, new plan digests CH3 `de1af603b3273c75` / CH6 `7865551e150fc49a` (the re-run needs a new owner yes).
+
 ## Unreleased — ADR-0124 Part L slice C5a eval harness: CH3 / CH5 / CH6 for arm L (offline tooling, nothing run)
 
 - **Recorded.** DECISIONS ADR-0124 section 17, "Slice 4": the CH3 corpus digest, plan call counts, scorer design, blind labelling procedure, CH5 measures and the CH6 batch digest (pending the owner's approval).
