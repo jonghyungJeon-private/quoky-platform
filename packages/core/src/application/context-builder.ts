@@ -23,6 +23,8 @@ import type { CuratedExampleSource } from './feedback/curated-example-selector';
 import type { MemoryManager } from './memory-manager';
 import type { MemoryRetriever } from './memory-retriever';
 import { isDirectConversation } from './message-rendering';
+import { renderRecallContent } from './recall/recall-excerpt';
+import type { RecallExcerptVariant } from './recall/recall-excerpt';
 import { scoreSemanticRelevance } from './semantic-relevance';
 
 /** Default number of recent turns to include (ADR-0017). */
@@ -39,6 +41,11 @@ const MAX_PROJECT_CHARS = 1200;
 const DEFAULT_MINIMUM_COMPRESSION_CHARACTERS = 80;
 /** ContextBuilder owns the final bounded durable-recall output. */
 const DURABLE_RECALL_LIMIT = 10;
+/**
+ * ADR-0124 P2-6: how long recalled memories are cut. Stays 'V0' (head, as before) until the offline measurement
+ * (stage R CH7) has been run and the owner adopts a variant.
+ */
+export const RECALL_EXCERPT_VARIANT: RecallExcerptVariant = 'V0';
 const DURABLE_AUTHORITY_FITNESS: readonly DurableMemoryAuthorityLevel[] = [
   'USER_CLAIM_OR_INTENT',
   'ASSISTANT_NON_AUTHORITATIVE',
@@ -124,6 +131,8 @@ export class ContextBuilder {
      * `QUOKY_LEARNING_EXAMPLES_ENABLED=true`. Absent → no `curatedExamples` key (the v2 bundle, byte-identical).
      */
     private readonly curatedExamples?: CuratedExampleSource,
+    /** ADR-0124 P2-6: recall excerpt variant; defaults to `RECALL_EXCERPT_VARIANT`. Offline measurement passes others. */
+    private readonly recallExcerptVariant: RecallExcerptVariant = RECALL_EXCERPT_VARIANT,
   ) {
     this.ranking = ContextBuilder.validateConfig(config);
   }
@@ -174,7 +183,12 @@ export class ContextBuilder {
           task.id,
           transcript,
           project,
-          ContextBuilder.selectDurableRecall(deduplicatedDurableCandidates),
+          ContextBuilder.selectDurableRecall(
+            deduplicatedDurableCandidates,
+            undefined,
+            undefined,
+            this.recallExcerptVariant,
+          ),
         ),
         ...(curatedExamples.length > 0 ? { curatedExamples } : {}),
       };
@@ -218,6 +232,7 @@ export class ContextBuilder {
       deduplicatedDurableCandidates,
       budget,
       remainingBudget,
+      this.recallExcerptVariant,
     );
 
     return {
@@ -288,6 +303,9 @@ export class ContextBuilder {
               retrievalReason: candidate.retrievalReason,
               ...(candidate.retrievalMode !== undefined ? { retrievalMode: candidate.retrievalMode } : {}),
               ...(candidate.semanticScore !== undefined ? { semanticScore: candidate.semanticScore } : {}),
+              ...(candidate.matchedPassageOrdinal !== undefined
+                ? { matchedPassageOrdinal: candidate.matchedPassageOrdinal }
+                : {}),
             }),
           ];
         } catch {
@@ -322,6 +340,7 @@ export class ContextBuilder {
     candidates: Awaited<ReturnType<MemoryRetriever['retrieve']>>,
     budget?: ContextBudget,
     availableBudget?: number,
+    variant: RecallExcerptVariant = RECALL_EXCERPT_VARIANT,
   ): NonNullable<ContextBundle['durableRecall']> {
     let remaining = availableBudget ?? Number.POSITIVE_INFINITY;
     const seenIds = new Set<Id>();
@@ -341,7 +360,12 @@ export class ContextBuilder {
         continue;
       }
 
-      const boundedContent = ContextBuilder.truncate(candidate.memory.content, MAX_MEMORY_CHARS);
+      const boundedContent = renderRecallContent(
+        candidate.memory.content,
+        candidate.matchedPassageOrdinal,
+        selected.length + 1,
+        variant,
+      );
       const content = budget ? budget.truncate(boundedContent, remaining) : boundedContent;
       if (content.length === 0) continue;
 

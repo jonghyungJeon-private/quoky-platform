@@ -63,6 +63,12 @@ export interface SemanticRecallSession {
   nearestMemoryIds(limit: number): Promise<Id[]>;
   /** Scores for the eligible candidates; `null` means no semantic signal (any failure or timeout). */
   score(candidates: readonly SemanticRecallCandidate[]): Promise<ReadonlyMap<Id, number> | null>;
+  /**
+   * ADR-0124 P2-6: after `score()`, the ordinal of the passage whose vector gave each memory its maximum score, for
+   * multi-unit memories only (a single-vector memory has no entry). Optional and read-only; absent or empty means
+   * "unknown", and every caller must work without it.
+   */
+  matchedPassageOrdinals?(): ReadonlyMap<Id, number>;
 }
 
 /**
@@ -554,6 +560,8 @@ interface SessionContext {
 class Session implements SemanticRecallSession {
   private readonly byVectorId: Map<Id, VectorQueryResult>;
   private embedded = 0;
+  private readonly matched = new Map<Id, number>();
+  private readonly matchedScore = new Map<Id, number>();
 
   constructor(
     private readonly ctx: SessionContext,
@@ -591,6 +599,10 @@ class Session implements SemanticRecallSession {
       .map(([id]) => id);
   }
 
+  matchedPassageOrdinals(): ReadonlyMap<Id, number> {
+    return this.matched;
+  }
+
   async score(candidates: readonly SemanticRecallCandidate[]): Promise<ReadonlyMap<Id, number> | null> {
     const internals = this.ctx;
     const eligible = internals.eligibleOf(candidates);
@@ -620,16 +632,30 @@ class Session implements SemanticRecallSession {
     }
   }
 
+  /** Raise the memory's score and, for a passage vector (`<memoryId>#<ordinal>`), remember which passage is the best. */
+  private note(scores: Map<Id, number>, memoryId: Id, vectorId: Id, value: number): void {
+    const previous = scores.get(memoryId);
+    raise(scores, memoryId, value);
+    if (previous !== undefined && !(value > previous)) return;
+    if (vectorId === memoryId || !vectorId.startsWith(`${memoryId}#`)) {
+      this.matched.delete(memoryId);
+      return;
+    }
+    const ordinal = Number(vectorId.slice(memoryId.length + 1));
+    if (Number.isInteger(ordinal) && ordinal >= 0) this.matched.set(memoryId, ordinal);
+  }
+
   private async scoreAll(eligible: readonly SemanticRecallCandidate[]): Promise<ReadonlyMap<Id, number>> {
     const internals = this.ctx;
     const scores = new Map<Id, number>();
+    this.matched.clear();
     const missing: Array<{ memoryId: Id; vectorId: Id; text: string; contentHash: string }> = [];
     for (const candidate of eligible) {
       for (const unit of memoryVectorUnits(candidate.id, candidate.content, internals.multiVector)) {
         const contentHash = contentHashOf(unit.text);
         const hit = this.byVectorId.get(unit.vectorId);
         if (hit !== undefined && hit.metadata?.contentHash === contentHash && this.usable(hit)) {
-          raise(scores, candidate.id, clampUnit(hit.score));
+          this.note(scores, candidate.id, unit.vectorId, clampUnit(hit.score));
         } else {
           missing.push({ memoryId: candidate.id, vectorId: unit.vectorId, text: unit.text, contentHash });
         }
@@ -646,7 +672,12 @@ class Session implements SemanticRecallSession {
       ) {
         throw new SemanticRecallFallback('ERROR');
       }
-      raise(scores, item.memoryId, clampUnit(cosineSimilarity(this.queryEnvelope.vector, documentEnvelope.vector)));
+      this.note(
+        scores,
+        item.memoryId,
+        item.vectorId,
+        clampUnit(cosineSimilarity(this.queryEnvelope.vector, documentEnvelope.vector)),
+      );
       fresh.push({
         id: item.vectorId,
         vector: [...documentEnvelope.vector],

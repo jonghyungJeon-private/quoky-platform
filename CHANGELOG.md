@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 2 P2-6: matched-passage excerpts for long recalled memories (measurement harness; production unchanged)
+
+- **Added.** `SemanticRecallSession.matchedPassageOrdinals?()` and `RetrievedMemory.matchedPassageOrdinal` (optional); pure `renderRecallContent` with variants V0/V1/V2; `ContextBuilder` takes an optional variant (default `RECALL_EXCERPT_VARIANT = 'V0'`, behaviour unchanged). Stage R CH7 reports fact-delivered / gold-delivered / delivered characters per variant with a pre-declared verdict; plan version `runtime-recall-plan.v4` (CH7 and CH8 digests change, expected).
+
 ## Unreleased — ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (offline tooling)
 
 - **Measured (2026-11-09, NON-GATING, E4).** Lexical: keep `L-word` (CH8 0.993 vs `L-bm25` 0.933; CH7 0.927 vs 0.797). Own-memory judgment: keep F0; no calibrated cosine rule reached 0 validate false hits with a +0.20 paraphrase gain (F1 .080 at 0 false hits; F2 .400 with 1 false hit). Production unchanged.

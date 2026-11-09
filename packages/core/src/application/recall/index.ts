@@ -39,9 +39,17 @@ export type {
 export {
   MAX_PASSAGES_PER_MEMORY,
   allMemoryVectorIds,
+  memoryPassageStartOffset,
   memoryVectorUnits,
   passageVectorId,
 } from './memory-passages';
 export type { MemoryVectorUnit } from './memory-passages';
+export {
+  RECALL_EXCERPT_DEFAULT_CHARS,
+  RECALL_EXCERPT_TOP_RANKS,
+  RECALL_EXCERPT_TOP_RANK_CHARS,
+  renderRecallContent,
+} from './recall-excerpt';
+export type { RecallExcerptVariant } from './recall-excerpt';
 export { RecallActivityGauge } from './recall-activity';
 export type { RecallActivity, RecallActivityReader } from './recall-activity';
