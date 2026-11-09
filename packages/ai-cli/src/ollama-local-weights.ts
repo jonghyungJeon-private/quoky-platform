@@ -88,12 +88,16 @@ export function ollamaModelfileFromLocalBlob(modelfile: string): boolean {
       froms += 1;
       continue;
     }
-    const count = tripleCount(value);
+    // MESSAGE carries its role before the content (`MESSAGE user """…"""`, as Ollama serializes it); the quote rule
+    // applies to the content after that role word.
+    const content = word === 'MESSAGE' ? (/^\S+[ \t]+(\S.*)$/u.exec(value)?.[1] ?? '') : value;
+    if (word === 'MESSAGE' && content === '') return false;
+    const count = tripleCount(content);
     if (count === 0) continue;
     // A quoted value opens with `"""`; it either closes at the very end of the same line or opens a block.
-    if (!value.startsWith(TRIPLE)) return false;
+    if (!content.startsWith(TRIPLE)) return false;
     if (count === 1) inBlock = true;
-    else if (count !== 2 || value.length < 6 || !value.endsWith(TRIPLE)) return false;
+    else if (count !== 2 || content.length < 6 || !content.endsWith(TRIPLE)) return false;
   }
   return !inBlock && froms > 0;
 }

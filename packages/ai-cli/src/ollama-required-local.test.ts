@@ -155,6 +155,11 @@ describe('Ollama local-weights parsers fail closed on unknown or malformed forma
       '{{ end }}"""',
       'PARAMETER stop <end_of_turn>',
       'SYSTEM """one line"""',
+      'MESSAGE user """hello"""',
+      'MESSAGE assistant """multi',
+      'FROM not-a-blob:latest',
+      'line"""',
+      'MESSAGE user plain text',
       'LICENSE """Terms',
       `FROM ${BLOB}`,
       'end of terms"""',
@@ -183,6 +188,8 @@ describe('Ollama local-weights parsers fail closed on unknown or malformed forma
       `FROM ${BLOB}\nSYSTEM """open\nclose""" trailing\n`,
       `FROM ${BLOB}\nSYSTEM """open\nclose""" again """\n`,
       `FROM ${BLOB}\nSYSTEM text """\n`,
+      `FROM ${BLOB}\nMESSAGE user\n`,
+      `FROM ${BLOB}\nMESSAGE user """hi""" trailing\n`,
     ]) {
       expect(ollamaModelfileFromLocalBlob(modelfile), JSON.stringify(modelfile)).toBe(false);
     }
