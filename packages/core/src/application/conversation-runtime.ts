@@ -110,6 +110,7 @@ export type {
   ApplyPreviewAnchorIdentity,
   ConversationRuntimeDeps,
   ConversationRuntimeOptions,
+  LongItemSummaryOptions,
 } from './conversation-runtime/types';
 
 /** ADR-0122 D2.3: the anchor statuses whose pending decision intercepts every turn. */

@@ -53,12 +53,14 @@ import { now } from '../../util/clock';
 import type { ExecutionOutcome, ExecutionOutcomeStatus } from '../execution-orchestrator';
 import { BoundedShownItems, SurfaceDeniedError, orderTurnHandlers, sameRepositoryIdentity, toReplyStatus, type HostingIdentityLookup } from './helpers';
 import { interpretDecision, toTestResultDetail } from './turn-intents';
-import type { ApplyPreviewAnchor, ConversationRuntimeDeps, ConversationRuntimeOptions, RuntimeTurnStatus, TurnResult } from './types';
+import type { ApplyPreviewAnchor, ConversationRuntimeDeps, ConversationRuntimeOptions, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
 
 export abstract class ConversationRuntimeBase {
   protected readonly clock: () => IsoTimestamp;
   protected readonly gitRemoteEnabled: boolean;
   protected readonly gitMergeEnabled: boolean;
+  /** ADR-0124 Part L C5a-2: the S3 options (absent = every summary on today's path). */
+  protected readonly longItemSummary: LongItemSummaryOptions | undefined;
   /**
    * ADR-0111 amendment A2: which declared provider localities may receive image bytes (default `LOCAL` only) — fixed
    * at composition, or resolved per image turn from the effective selection (runtime switching).
@@ -124,6 +126,7 @@ export abstract class ConversationRuntimeBase {
     this.clock = options.clock ?? now;
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
     this.gitMergeEnabled = options.gitMergeEnabled ?? false;
+    this.longItemSummary = options.longItemSummary;
     const localities = options.imageUnderstandingLocalities;
     this.imagePolicy = typeof localities === 'function' ? localities : imageUnderstandingPolicyOf(localities);
     this.approvalDecisions = new ApprovalDecisionService(

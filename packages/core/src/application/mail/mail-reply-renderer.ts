@@ -379,6 +379,16 @@ export function renderMailSummaryFooter(language: MailLanguage): string {
     : '(메일 1건의 본문을 대화 모델에 보내 요약했어요 · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)';
 }
 
+/**
+ * ADR-0124 Part L C5a-2: the disclosure of a summary made part by part on this device's LOCAL model (S3). It never says
+ * the body was sent to the chat model, because it was not.
+ */
+export function renderMailSummaryLocalFooter(language: MailLanguage): string {
+  return language === 'en'
+    ? "(This email's body was summarized in parts by a local model on this device; it was not sent to the chat model · the mailbox was only read; nothing was sent or changed · nothing was written or sent anywhere by Quoky in this reply)"
+    : '(메일 1건의 본문을 이 기기 로컬 모델로 나눠 요약했어요 · 본문은 대화 모델에 보내지 않았어요 · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)';
+}
+
 /** What a mail reply did, for its history note (review P3-7): listed mail, read nothing, or read but showed nothing. */
 export type MailHistoryKind = 'listed' | 'not-read' | 'not-summarized';
 
@@ -522,4 +532,17 @@ export function renderMailThreadSummaryFooter(shown: number, total: number, lang
   const read = partial ? `${total}통 중 첫 메일과 최근 ${shown - 1}통` : `메일 ${shown}통`;
   const skipped = withheld > 0 ? ` · ${withheld}통은 본문이 너무 길어 안전하게 요약하지 않았어요` : '';
   return `(스레드 1개의 ${read} 본문을 대화 모델에 보내 요약했어요${skipped} · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)`;
+}
+
+/** ADR-0124 Part L C5a-2: {@link renderMailThreadSummaryFooter} for a thread summarized on this device's LOCAL model (S3). */
+export function renderMailThreadSummaryLocalFooter(shown: number, total: number, language: MailLanguage, withheld = 0): string {
+  const partial = total > shown;
+  if (language === 'en') {
+    const read = partial ? `the first and the latest ${shown - 1} of its ${total} emails` : `its ${shown} email${shown === 1 ? '' : 's'}`;
+    const skipped = withheld > 0 ? ` · ${withheld} body${withheld === 1 ? ' was' : 'ies were'} too long to check safely and not summarized` : '';
+    return `(One thread — ${read} — was summarized in parts by a local model on this device; it was not sent to the chat model${skipped} · the mailbox was only read; nothing was sent or changed · nothing was written or sent anywhere by Quoky in this reply)`;
+  }
+  const read = partial ? `${total}통 중 첫 메일과 최근 ${shown - 1}통` : `메일 ${shown}통`;
+  const skipped = withheld > 0 ? ` · ${withheld}통은 본문이 너무 길어 안전하게 요약하지 않았어요` : '';
+  return `(스레드 1개의 ${read} 본문을 이 기기 로컬 모델로 나눠 요약했어요 · 본문은 대화 모델에 보내지 않았어요${skipped} · 메일은 읽기만 했고 아무것도 보내거나 바꾸지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)`;
 }

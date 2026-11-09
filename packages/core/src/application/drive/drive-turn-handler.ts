@@ -37,6 +37,7 @@ import {
   untrustedDocumentFullHistoryNote,
   type UntrustedDocumentReadout,
 } from '../untrusted-document-readout';
+import { preparedLongItemBody, sheetLongItemText, type LongItemSummaryInput } from '../item-summary/long-item';
 import { parseDriveQuestion, type DriveLanguage, type DriveQuestion, type DriveSummaryTarget } from './drive-question';
 import {
   renderDriveDmOnly,
@@ -44,6 +45,7 @@ import {
   renderDriveListing,
   renderDriveReadFailure,
   renderDriveSummaryFooter,
+  renderDriveSummaryLocalFooter,
   renderDriveSummaryNeedsListing,
   renderDriveSummaryNotText,
   renderDriveSummaryOutOfRange,
@@ -93,6 +95,11 @@ export interface DriveTurnHandlerDeps {
   readonly copy?: DriveSourceCopy;
   /** Persists the last listing's displayed ids in `Session.metadata` (see the mail handler); absent = in-memory only. */
   readonly sessions?: Pick<SessionManager, 'updateMetadataEntry'>;
+  /**
+   * ADR-0124 Part L C5a-2: the composition root turned long items on (`QUOKY_CHUNK_ITEMS` = `shadow` or `on`); a summary
+   * outcome then carries the whole prepared document or spreadsheet (`longItem`). Absent or false: today's outcome.
+   */
+  readonly longItems?: boolean;
 }
 
 class DriveReadTimeout extends Error {
@@ -282,6 +289,37 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       readout: read.readout,
       fallbackText: renderDriveSummaryUnavailable(language),
       footer: renderDriveSummaryFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+      ...this.longItemOf(ctx, read, language),
+    };
+  }
+
+  /**
+   * ADR-0124 Part L C5a-2: the whole prepared document (a spreadsheet as `[Sheet i/n]` table sections) for the runtime's S3
+   * path, attached only while long items are on. Nothing when the sheets carry no text (today's builder refused it).
+   */
+  private longItemOf(
+    ctx: TurnHandlerContext,
+    read: { readonly document: DriveDocument; readonly firstSheetOnly?: ReturnType<typeof firstSheetOnlyOf>; readonly hiddenSheets: ReturnType<typeof hiddenSheetsOf> },
+    language: DriveLanguage,
+  ): { readonly longItem?: LongItemSummaryInput } {
+    if (this.deps.longItems !== true) return {};
+    const { document } = read;
+    const sheets = Array.isArray(document.sections) && document.sections.length > 0
+      ? sheetLongItemText(document.sections.map((section) => ({ title: section.title, body: section.text, ...(section.textTruncated === true ? { truncated: true } : {}) })))
+      : undefined;
+    if (Array.isArray(document.sections) && document.sections.length > 0 && sheets === undefined) return {};
+    return {
+      longItem: {
+        source: 'drive',
+        title: document.name,
+        author: document.ownerName,
+        date: document.modifiedAt,
+        prepared: sheets?.prepared ?? preparedLongItemBody(document.text),
+        ...(sheets !== undefined ? { sections: sheets.sections } : {}),
+        sourceTruncated: document.textTruncated === true || sheets?.dropped === true,
+        footer: renderDriveSummaryLocalFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+        refused: this.reply(ctx, renderDriveSummaryRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized'),
+      },
     };
   }
 
@@ -310,6 +348,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
         readout: read.readout,
         fallbackText: renderDriveSummaryUnavailable(language),
         footer: renderDriveSummaryFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+        ...this.longItemOf(ctx, read, language),
       };
     }
     this.log('info', 'drive.turn_handler.full_text', { truncated: read.readout.truncated, sections: read.sections });
@@ -335,6 +374,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
         readonly sections: number;
         readonly firstSheetOnly?: ReturnType<typeof firstSheetOnlyOf>;
         readonly hiddenSheets: ReturnType<typeof hiddenSheetsOf>;
+        readonly document: DriveDocument;
       }
   > {
     if (file.kind !== undefined && !isDriveTextExportable(file.kind)) {
@@ -393,6 +433,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       sections: Array.isArray(document.sections) ? Math.min(document.sections.length, DRIVE_SHEETS_MAX) : 0,
       ...(firstSheetOnly !== undefined ? { firstSheetOnly } : {}),
       hiddenSheets: hiddenSheetsOf(document.hiddenSheetsSkipped),
+      document,
     };
   }
 

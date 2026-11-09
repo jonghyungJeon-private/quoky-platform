@@ -22,6 +22,8 @@ import type { NlActionReceipt, NlCatalogEntry, NlClassBProbe, NlGrammarSelection
 // Type-only, like the catalog above: the closed ADR-0122 capability groups (plain string ids).
 import type { SurfaceGroupId } from '../application/surface-grants/surface-groups';
 import type { SurfacePermit } from '../application/surface-grants/surface-permit';
+// Type-only, like the readouts above: the whole prepared item for the ADR-0124 Part L S3 summary (plain data).
+import type { LongItemSummaryInput } from '../application/item-summary/long-item';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -172,6 +174,13 @@ export interface TurnHandlerSummarizeReply {
    * summary before it is shown (the output scrub; the prompt text was already pseudonymised).
    */
   readonly participants?: readonly { readonly handle: string; readonly label: string }[];
+  /**
+   * ADR-0124 Part L C5a-2: the WHOLE prepared item (mail, thread, Drive document or spreadsheet), attached by a handler
+   * whose composition turned long items on (`QUOKY_CHUNK_ITEMS` = `shadow` or `on`). The runtime runs the S3 whole-item
+   * summary on a `LOCAL` model before today's path; an item that fits one window, `off`, `shadow` or no ready local model
+   * keeps today's path byte for byte. Absent: today's path. Host-only data: never logged or stored.
+   */
+  readonly longItem?: LongItemSummaryInput;
 }
 
 /**

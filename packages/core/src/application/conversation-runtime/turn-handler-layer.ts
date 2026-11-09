@@ -24,7 +24,9 @@ import {
   namesApprovedWriteStepVerb,
 } from '../connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
-import { outboundMessage, withOutboundBody } from '../message-rendering';
+import { isDirectConversation, joinBody, outboundMessage, withOutboundBody } from '../message-rendering';
+import { runS3ItemSummary, type S3ItemSummaryOutcome } from '../item-summary/s3-item-summary';
+import { LONG_ITEM_PROGRESS_NOTICE_AFTER_MS, renderLongItemProgressNotice, type LongItemSummaryInput } from '../item-summary/long-item';
 import { renderActionSwitchStopNotice } from '../nl-routing/action-switch';
 import { renderActionStoppedApprovalClosed } from '../nl-routing/nl-action-policy';
 import { interpretStrayDecisionUtterance, isPendingCancelUtterance } from '../approval-decision';
@@ -69,7 +71,7 @@ import { ConversationRuntimeChatLayer } from './chat-layer';
 import { ActionStoppedError, SurfaceDeniedError, frozenPlainSnapshot, nlConfirmToRecord } from './helpers';
 import type { NlChatFacts, RecentConnectorWrite } from './internal-types';
 import { connectorWriteChoiceIndex, explicitDurableMemoryContent, interpretDecision, nlReplyKindOf } from './turn-intents';
-import type { ApplyPreviewAnchor, RuntimeTurnStatus, TurnResult } from './types';
+import type { ApplyPreviewAnchor, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
 
 export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRuntimeChatLayer {
   /** Non-execution routes after classification: (L) work surface, (B) registration, (D) analysis, (E)/(F) chat. */
@@ -520,6 +522,14 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       this.deps.logger.warn('document summary readout rejected', { messageId: message.id, sessionId: session.id });
       return fallback();
     }
+    // ADR-0124 Part L C5a-2: a long item the handler attached is summarized part by part on a LOCAL model first; `off`,
+    // `shadow`, an item that fits one window and no ready local model keep today's path below, byte for byte.
+    const long = summary.longItem;
+    const longOptions = this.longItemSummary;
+    if (long !== undefined && longOptions !== undefined && longOptions.mode !== 'off') {
+      const local = await this.respondLongItemSummary(message, session, actor, userMemoryId, summary, long, longOptions);
+      if (local !== undefined) return local;
+    }
     const intent: Intent = {
       type: IntentType.SUMMARIZE,
       capability: Capability.SUMMARIZATION,
@@ -561,6 +571,137 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     this.deps.logger.info('document summary replaced after the delivered-text check', { messageId: message.id });
     const notice = verdict.kind === 'claim' ? verdict.notice : renderDocumentSummaryTooLong(language);
     return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(notice, summary.footer)) };
+  }
+
+  /**
+   * ADR-0124 Part L C5a-2 (DECISIONS ADR-0124 section 17, slice 2): the S3 whole-item summary of ONE long item, arm L.
+   * `undefined` means "today's path" (`off`, `shadow`, `S1`, no ready `LOCAL` provider, sections that do not tile): the
+   * caller continues exactly as before, so no local call has been made and nothing differs. Otherwise:
+   *
+   * - `refused`: the handler's own refusal of the item (recorded like any handler reply).
+   * - `summary` / `partial`: the body (model-derived text or Core's partial copy) as today's untrusted summary body, then
+   *   Core's coverage line and the handler's LOCAL footer. Today's delivered-text checks run on the shown lines (the
+   *   card-spoof check for R2 sources and `checkDocumentSummaryClaims`); a flagged text becomes today's fixed notice (no
+   *   regeneration, owner decision 2). The history keeps the fixed note S3 returns, never the summary.
+   * - Clause PN: while the run is still going after {@link LONG_ITEM_PROGRESS_NOTICE_AFTER_MS}, ONE fixed Core notice
+   *   (the window count only) goes out through `notify`, in a DM only, with no history entry; it is awaited before the
+   *   reply so the two arrive in order. The 90 s wall lives in S3; nothing here bounds the run earlier, and no outcome
+   *   leads to a remote provider once a local call was made.
+   *
+   * No Task or TaskRun is created for an S3 run (several local calls, not one provider execution); its audit is the
+   * content-free `item_summary.s3` log line S3 writes (counts and timings only).
+   */
+  protected async respondLongItemSummary(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    userMemoryId: Id,
+    summary: TurnHandlerSummarizeReply,
+    long: LongItemSummaryInput,
+    options: LongItemSummaryOptions,
+  ): Promise<TurnResult | undefined> {
+    const language = noticeLanguage(undefined, message.text);
+    const outcome = await this.runLongItemWithNotice(message, session, actor, long, options, language);
+    if (outcome.kind === 'today' || outcome.kind === 'S1') return undefined;
+    if (outcome.kind === 'refused') {
+      // An empty item never reaches here with a readout (today's builder refused it first); keep today's path for it.
+      if (outcome.reason !== 'credential') return undefined;
+      return this.recordTurnHandlerReply(message, session, userMemoryId, long.refused);
+    }
+    const footer = joinBody([outcome.coverageLine, long.footer]);
+    const bodyText = summary.participants !== undefined ? pseudonymiseParticipants(outcome.body, summary.participants) : outcome.body;
+    let body = documentSummaryReply(bodyText, footer).body;
+    if (outcome.withheld === undefined && !isFixedDocumentSummaryNotice(bodyText, long.source)) {
+      const shown = documentSummaryReply(bodyText, footer).shown;
+      if (isR2DocumentSource(long.source) && containsCardSpoofLine(shown)) {
+        this.deps.logger.info('long item summary replaced after the card-spoof check', { messageId: message.id });
+        body = documentSummaryReplyBody(renderCardSpoofNotice(language), footer);
+      } else {
+        const verdict = checkDocumentSummaryClaims(shown, message.text, long.source, language, generalChatReplyPolicy(message.text));
+        if (verdict.kind !== 'clean') {
+          this.deps.logger.info('long item summary replaced after the delivered-text check', { messageId: message.id });
+          body = documentSummaryReplyBody(verdict.kind === 'claim' ? verdict.notice : renderDocumentSummaryTooLong(language), footer);
+        }
+      }
+    }
+    // N5 / ADR-0118 D7: the history keeps the fixed note, never the summary or any chunk text.
+    await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
+    return { status: 'RESPONDED', reply: outboundMessage(message.context, body), sessionId: session.id };
+  }
+
+  /** Runs S3 with the clause-PN notice timer beside it (the notice is sent at most once, DM only, never stored). */
+  private async runLongItemWithNotice(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    long: LongItemSummaryInput,
+    options: LongItemSummaryOptions,
+    language: 'ko' | 'en',
+  ): Promise<S3ItemSummaryOutcome> {
+    const notify = options.notify;
+    const noticeAllowed = options.mode === 'on' && notify !== undefined && isDirectConversation(message.context);
+    let windows: number | undefined;
+    let due = false;
+    let finished = false;
+    let notice: Promise<void> | undefined;
+    const sendNotice = (): void => {
+      if (!noticeAllowed || notice !== undefined || finished || !due || windows === undefined) return;
+      const count = windows;
+      notice = Promise.resolve()
+        .then(() => notify(outboundMessage(message.context, renderLongItemProgressNotice(count, language))))
+        .then(
+          () => this.deps.logger.info('item_summary.s3.progress_notice', { windows: count }),
+          (err: unknown) => this.deps.logger.warn('item_summary.s3.progress_notice_failed', { errorName: err instanceof Error ? err.name : typeof err }),
+        );
+    };
+    const timer = new AbortController();
+    if (noticeAllowed) {
+      const wait = options.wait ?? waitFor;
+      void Promise.resolve()
+        .then(() => wait(LONG_ITEM_PROGRESS_NOTICE_AFTER_MS, timer.signal))
+        .then(
+          () => {
+            if (timer.signal.aborted) return;
+            due = true;
+            sendNotice();
+          },
+          () => undefined,
+        );
+    }
+    let outcome: S3ItemSummaryOutcome;
+    try {
+      outcome = await runS3ItemSummary(
+        {
+          mode: options.mode,
+          source: long.source,
+          title: long.title,
+          author: long.author,
+          date: long.date,
+          prepared: long.prepared,
+          ...(long.sections !== undefined ? { sections: long.sections } : {}),
+          ...(long.sourceTruncated ? { sourceTruncated: true } : {}),
+          requestText: message.text,
+          language,
+        },
+        {
+          selector: this.deps.router,
+          selectionContext: { sessionId: session.id, actorId: actor.id },
+          now: options.now ?? monotonicNow,
+          ...(options.wait !== undefined ? { wait: options.wait } : {}),
+          exclusive: options.exclusive,
+          logger: this.deps.logger,
+          onStart: (plan) => {
+            windows = plan.windows;
+            sendNotice();
+          },
+        },
+      );
+    } finally {
+      finished = true;
+      timer.abort();
+    }
+    if (notice !== undefined) await notice;
+    return outcome;
   }
 
   // ── ADR-0112 / ADR-0110 amendment: connector writes behind exact-payload one-time approvals (CWR-2) ──────────
@@ -1065,4 +1206,29 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
         return null;
     }
   }
+}
+
+/** ADR-0124 Part L C5a-2: the default monotonic clock of an S3 run. */
+function monotonicNow(): number {
+  return performance.now();
+}
+
+/** ADR-0124 Part L C5a-2: the default notice timer (resolves after `ms`, or at once when `signal` aborts). */
+function waitFor(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, Math.max(0, ms));
+    timer.unref?.();
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }

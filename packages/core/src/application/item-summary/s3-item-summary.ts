@@ -113,6 +113,11 @@ export interface S3ItemSummaryDeps {
   readonly exclusive?: <T>(work: () => Promise<T>) => Promise<T>;
   /** Counts only. */
   readonly logger?: { info(message: string, fields?: LogFields): void };
+  /**
+   * Slice 2 (clause PN): told once, after a ready `LOCAL` provider was selected and before the first local call, how many
+   * windows the run will read. Counts only; a throwing listener never changes the outcome.
+   */
+  readonly onStart?: (plan: { readonly windows: number }) => void;
 }
 
 export type S3PartialReason =
@@ -417,6 +422,11 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
   }
   const provider: AiProvider = selection.provider;
   const callMs: number[] = [];
+  try {
+    deps.onStart?.({ windows: W });
+  } catch {
+    // A progress listener never changes the outcome.
+  }
 
   const callLocal = async (request: AiRequest): Promise<CallResult> => {
     const startedAt = clock();

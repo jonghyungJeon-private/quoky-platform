@@ -28,6 +28,13 @@ export interface AiProviderManagerOptions {
   notReadyReprobeGraceMs?: number;
   clock?: () => IsoTimestamp;
   /**
+   * ADR-0124 Part L C5a-2 (CA round-2 P3-a): providers whose readiness is NEVER served from the cache (TTL 0 for them).
+   * Every routing decision that probes such a provider runs its own probe and waits for it (no shared in-flight probe, no
+   * not-ready grace); an indeterminate answer is not ready. The composition root passes it only for the long-item
+   * provider, so an S3 selection always rests on a probe made for that request. Absent: every provider is cached as before.
+   */
+  uncached?: (provider: AiProvider) => boolean;
+  /**
    * Receives one `provider became ready` line when a provider that answered "not ready" answers ready, and one
    * `provider became unavailable` line (with a reason) when a ready provider definitively answers "not ready".
    */
@@ -80,6 +87,7 @@ export class AiProviderManager {
   private readonly graceMs: number;
   private readonly clock: () => IsoTimestamp;
   private readonly logger: Logger;
+  private readonly uncached: (provider: AiProvider) => boolean;
   private readonly probes = new Map<AiProvider, ProbeEntry>();
   /** Background re-probes of "not ready" providers (single-flight per provider). */
   private readonly refreshes = new Map<AiProvider, Promise<boolean>>();
@@ -103,6 +111,14 @@ export class AiProviderManager {
     this.graceMs = Math.max(0, options.notReadyReprobeGraceMs ?? DEFAULT_NOT_READY_REPROBE_GRACE_MS);
     this.clock = options.clock ?? now;
     this.logger = options.logger ?? NO_OP_LOGGER;
+    const uncached = options.uncached;
+    this.uncached = uncached === undefined ? () => false : (provider) => {
+      try {
+        return uncached(provider) === true;
+      } catch {
+        return true;
+      }
+    };
   }
 
   all(): readonly AiProvider[] {
@@ -169,6 +185,7 @@ export class AiProviderManager {
 
   /** In-flight probes are shared too, so concurrent routing does not spawn duplicate CLIs. */
   private cachedProbe(p: AiProvider): Promise<boolean> {
+    if (this.uncached(p)) return this.freshProbe(p);
     const startedAtMs = this.nowMs();
     const cached = this.probes.get(p);
     if (cached !== undefined && !cached.settled) return cached.result;
@@ -200,6 +217,18 @@ export class AiProviderManager {
     };
     this.probes.set(p, entry);
     return entry.result;
+  }
+
+  /**
+   * ADR-0124 Part L C5a-2: a probe made for this decision only. Its answer is recorded (transition logs) but never cached;
+   * an indeterminate answer, or one discarded by {@link invalidate} while in flight, is not ready (fail closed).
+   */
+  private freshProbe(p: AiProvider): Promise<boolean> {
+    const generation = this.generationOf(p);
+    return this.safeProbe(p).then((answer) => {
+      if (this.generationOf(p) !== generation || !answer.definitive) return false;
+      return this.settle(p, answer);
+    });
   }
 
   /**

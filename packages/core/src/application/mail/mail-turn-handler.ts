@@ -48,7 +48,8 @@ import {
   type UntrustedDocumentReadout,
 } from '../untrusted-document-readout';
 import { parseMailQuestion, type MailLanguage, type MailQuestion } from './mail-question';
-import { buildMailThreadReadout } from './mail-thread-readout';
+import { buildMailThreadLongItem, buildMailThreadReadout } from './mail-thread-readout';
+import { preparedLongItemBody, type LongItemSummaryInput } from '../item-summary/long-item';
 import {
   renderMailDmOnly,
   renderMailHistoryNote,
@@ -65,8 +66,10 @@ import {
   renderMailThreadWithheld,
   renderMailSummaryWithheld,
   renderMailThreadSummaryFooter,
+  renderMailThreadSummaryLocalFooter,
   renderMailThreadSummaryUnavailable,
   renderMailSummaryFooter,
+  renderMailSummaryLocalFooter,
   renderMailSummaryNeedsListing,
   renderMailSummaryOutOfRange,
   renderMailSummaryRefused,
@@ -121,6 +124,12 @@ export interface MailTurnHandlerDeps {
    * restart; the persisted record wins over the in-memory cache. Absent = in-memory only.
    */
   readonly sessions?: Pick<SessionManager, 'updateMetadataEntry'>;
+  /**
+   * ADR-0124 Part L C5a-2: the composition root turned long items on (`QUOKY_CHUNK_ITEMS` = `shadow` or `on`). A summary
+   * outcome then carries the whole prepared item (`longItem`) for the runtime's S3 path. Absent or false: the outcome is
+   * exactly today's.
+   */
+  readonly longItems?: boolean;
 }
 
 /** GML-2: a listing reply waiting for its delivery receipt. */
@@ -397,6 +406,21 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       readout: read.readout,
       fallbackText: renderMailSummaryUnavailable(language),
       footer: renderMailSummaryFooter(language),
+      ...(this.deps.longItems === true ? { longItem: this.messageLongItem(ctx, read.message, language) } : {}),
+    };
+  }
+
+  /** ADR-0124 Part L C5a-2: the whole prepared mail for the runtime's S3 path (attached only while long items are on). */
+  private messageLongItem(ctx: TurnHandlerContext, message: MailMessage, language: MailLanguage): LongItemSummaryInput {
+    return {
+      source: 'mail',
+      title: message.subject,
+      author: message.sender.name.trim().length > 0 ? message.sender.name : message.sender.address,
+      date: message.receivedAt,
+      prepared: preparedLongItemBody(message.bodyText),
+      sourceTruncated: message.bodyTruncated,
+      footer: renderMailSummaryLocalFooter(language),
+      refused: this.reply(ctx, renderMailSummaryRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized'),
     };
   }
 
@@ -405,7 +429,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     ctx: TurnHandlerContext,
     id: string,
     language: MailLanguage,
-  ): Promise<{ readonly reply: TurnHandlerReply } | { readonly readout: UntrustedDocumentReadout; readonly totalChars: number }> {
+  ): Promise<{ readonly reply: TurnHandlerReply } | { readonly readout: UntrustedDocumentReadout; readonly totalChars: number; readonly message: MailMessage }> {
     let message: MailMessage;
     try {
       message = await this.withTimeout(this.deps.reader.getMessage(id));
@@ -432,7 +456,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       this.log('info', 'mail.turn_handler.summary_refused', { refusal: built.refusal });
       return { reply: this.reply(ctx, renderMailSummaryRefused(built.refusal, language), 'RESPONDED', language, 'not-summarized') };
     }
-    return { readout: built.readout, totalChars: preparedBodyLength(message.bodyText) };
+    return { readout: built.readout, totalChars: preparedBodyLength(message.bodyText), message };
   }
 
   /**
@@ -475,11 +499,27 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     if ('reply' in read) return read.reply;
     const { readout, shown, total, withheld } = read;
     this.log('info', 'mail.turn_handler.summarize', { kind: 'thread', shown, total, truncated: readout.truncated });
+    const long = this.deps.longItems === true ? buildMailThreadLongItem(read.thread, language) : undefined;
     return {
       kind: 'summarize',
       readout,
       fallbackText: renderMailThreadSummaryUnavailable(language),
       footer: renderMailThreadSummaryFooter(shown, total, language, withheld),
+      ...(long !== undefined
+        ? {
+            longItem: {
+              source: 'mail-thread' as const,
+              title: long.title,
+              author: long.author,
+              date: long.date,
+              prepared: long.prepared,
+              sections: long.sections,
+              sourceTruncated: long.sourceTruncated,
+              footer: renderMailThreadSummaryLocalFooter(shown, total, language, withheld),
+              refused: this.reply(ctx, renderMailThreadRefused('CREDENTIAL_SHAPED', language), 'RESPONDED', language, 'not-summarized'),
+            },
+          }
+        : {}),
     };
   }
 
@@ -490,7 +530,14 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     language: MailLanguage,
   ): Promise<
     | { readonly reply: TurnHandlerReply }
-    | { readonly readout: UntrustedDocumentReadout; readonly totalChars: number; readonly shown: number; readonly total: number; readonly withheld: number }
+    | {
+        readonly readout: UntrustedDocumentReadout;
+        readonly totalChars: number;
+        readonly shown: number;
+        readonly total: number;
+        readonly withheld: number;
+        readonly thread: MailThread;
+      }
   > {
     const reader = this.deps.reader;
     if (typeof reader.getThread !== 'function') {
@@ -511,7 +558,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       const text = result.refusal === 'EMPTY' && withheld > 0 ? renderMailThreadWithheld(language) : renderMailThreadRefused(result.refusal, language);
       return { reply: this.reply(ctx, text, 'RESPONDED', language, 'not-summarized') };
     }
-    return { readout: result.readout, totalChars: thread.messages.reduce((sum, message) => sum + preparedBodyLength(message.bodyText), 0), shown, total, withheld };
+    return { readout: result.readout, totalChars: thread.messages.reduce((sum, message) => sum + preparedBodyLength(message.bodyText), 0), shown, total, withheld, thread };
   }
 
   /**

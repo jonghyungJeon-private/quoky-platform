@@ -472,3 +472,43 @@ describe('AiProviderManager definitive vs indeterminate probes (live QA D16)', (
     expect(chatProvider.probeCount).toBe(2);
   });
 });
+
+// ADR-0124 Part L C5a-2 (CA P3-a): a provider the composition root marks `uncached` is probed afresh on every decision.
+describe('AiProviderManager uncached providers', () => {
+  function counting(id: string, answers: boolean[] = [true]) {
+    let probes = 0;
+    const provider = {
+      id,
+      capabilities: [],
+      isAvailable: async () => answers[Math.min(probes++, answers.length - 1)] as boolean,
+      execute: async () => ({ text: '' }),
+      get probes() {
+        return probes;
+      },
+    };
+    return provider;
+  }
+
+  it('probes the uncached provider on every call while the others stay cached for the TTL', async () => {
+    const fresh = counting('fresh', [true, false, true]);
+    const cached = counting('cached');
+    const manager = new AiProviderManager([fresh, cached], { uncached: (provider) => provider === fresh });
+    expect((await manager.readyAmong([fresh, cached])).map((p) => p.id)).toEqual(['fresh', 'cached']);
+    expect((await manager.readyAmong([fresh, cached])).map((p) => p.id)).toEqual(['cached']);
+    expect((await manager.readyAmong([fresh, cached])).map((p) => p.id)).toEqual(['fresh', 'cached']);
+    expect([fresh.probes, cached.probes]).toEqual([3, 1]);
+  });
+
+  it('an indeterminate or throwing probe of an uncached provider is not ready (fail closed)', async () => {
+    const indeterminate = {
+      id: 'slow',
+      capabilities: [],
+      isAvailable: async () => {
+        throw new ProviderProbeIndeterminateError('timed out');
+      },
+      execute: async () => ({ text: '' }),
+    };
+    const manager = new AiProviderManager([indeterminate], { uncached: () => true });
+    expect(await manager.readyAmong([indeterminate])).toEqual([]);
+  });
+});
