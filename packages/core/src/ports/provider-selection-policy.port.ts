@@ -20,7 +20,17 @@ export interface ProviderSelectionContext {
    * provider; absent means no constraint (every other request, mail and Drive included).
    */
   readonly workText?: true;
+  /**
+   * ADR-0124 Part L, slice C5a (DECISIONS ADR-0124 section 17): the request may run ONLY on a provider whose declared
+   * execution locality (`executionLocalityOf`) is `LOCAL`. A data-only constraint: the router never probes, ranks or returns
+   * any other provider, and its dispatch-time check answers `false` for one. Absent means no constraint (selection is
+   * exactly as before). It is the one-element case of the unratified ADR-0121 D12 `allowedExecutionLocalities` proposal.
+   */
+  readonly requiredLocality?: RequiredExecutionLocality;
 }
+
+/** The only locality a request can require (ADR-0124 Part L C5a): `LOCAL`, the request never leaves this host. */
+export type RequiredExecutionLocality = 'LOCAL';
 
 /**
  * The owner's selection for one capability, as DATA (never a branch on a concrete provider):
