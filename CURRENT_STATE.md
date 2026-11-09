@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 Part L slice C5a-2: long-item wiring, `shadow` and PN (2026-11-09, branch `claude/v5-partl-c5a-wire`)
+
+- Wired behind `QUOKY_CHUNK_ITEMS` (default `off`, byte-identical): mail, thread, Drive and Sheets summaries attach the whole item; `shadow` logs S3 counts and keeps today's reply; `on` (needs `QUOKY_CHUNK_ITEMS_MODEL` + `QUOKY_CHUNK_ITEMS_MODEL_DIGEST`) summarizes long items on the pinned local model only, with the coverage line, a local footer and the PN notice (DM, 8 s, once). Before `on`: CH3/CH5/CH6 harness (slice 4) and gates, Chief Architect review, owner live checks (1)-(5). DECISIONS ADR-0124 section 17 "Slice 2".
+
 ### ADR-0124 Part L slice C5a: S3 whole-item summary, arm L, unwired (2026-11-09, branch `claude/v5-partl-c5a`)
 
 - Core only, nothing wired: the `requiredLocality: 'LOCAL'` selection constraint (re-checked before dispatch), the `document-map.v1` map prompt, and `runS3ItemSummary` behind injected dependencies; `QUOKY_CHUNK_ITEMS` validated at startup (default `off`, unread). Owner decisions of 2026-11-09 and the interfaces: DECISIONS ADR-0124 section 17. Next: handler wiring and `shadow` (slice 2, with the local-model gate), the PN notice, the CH3/CH5/CH6 harness; CH1 for S3 awaits the Chief Architect ruling.

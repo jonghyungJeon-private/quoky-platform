@@ -32714,6 +32714,99 @@ section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and
 - **Tests (CA P3).** `isStillEligible` false from the start ends in `partial: 'locality'` with zero local and zero remote
   calls.
 
+**Slice 2 (C5a-2, 2026-11-09, branch `claude/v5-partl-c5a-wire`): wiring, `shadow` and the PN notice.** Recorded before
+the code (ADR-0121 D12). The PN notice moves from slice 3 into this slice; the "slice 3" mentions above are superseded
+(slice 3 no longer exists; the eval harness stays slice 4). `on` still needs the section 7 gates (CH3/CH5/CH6 with the CH1
+ruling), an independent Chief Architect review and the live checks below.
+
+- **Configuration (composition root only, value-free errors; the code is the message).**
+  - `QUOKY_CHUNK_ITEMS` = `off` | `shadow` | `on` (unchanged, default `off`).
+  - `QUOKY_CHUNK_ITEMS_MODEL`: the Ollama model of the long-item provider, configured separately from
+    `QUOKY_OLLAMA_ENABLED` / `OLLAMA_MODEL` (chat is not moved). A bounded `name[:tag]` token with no `..`
+    (`CHUNK_ITEMS_MODEL_INVALID`); any value containing `cloud`, any case, is refused (`CHUNK_ITEMS_MODEL_CLOUD_REFUSED`,
+    ADR-0107 D6).
+  - `QUOKY_CHUNK_ITEMS_MODEL_DIGEST`: the 12 lower-case hex ID `ollama list` prints for that model. Required whenever a
+    model is set (`CHUNK_ITEMS_MODEL_DIGEST_REQUIRED`); malformed is `CHUNK_ITEMS_MODEL_DIGEST_INVALID`; set without a model
+    is `CHUNK_ITEMS_MODEL_DIGEST_WITHOUT_MODEL`.
+  - `on` without a model (and so without a digest) is refused at startup (`CHUNK_ITEMS_ON_REQUIRES_MODEL`). `shadow`
+    makes no model call and needs neither; a model set under `shadow` or `off` registers nothing.
+  - `bootstrap-preflight.ts` gives a value-free hint per code; `.env.example` documents the three names.
+- **Composition (`apps/quoky/src/item-summary/long-item-composition.ts`; Core never names the provider).**
+  - `on` only: an `OllamaCliProvider` on the configured model with `timeoutMs` = the S3 per-call limit and **always**
+    `localWeights: { pinnedDigest }` (P3-d), exposed as a SUMMARIZATION-only view under its own key
+    `ollama-cli-long-item` (any other capability is refused before a spawn). It is registered after the chat and
+    embedding providers.
+  - Policy (`ProviderSelectionService`, dep `longItemKey`): for a request **with** `requiredLocality` the preference is
+    `[longItemKey]` for SUMMARIZATION and `[]` for any other capability, so the eligible set of a constrained summary is
+    exactly that key (the existing llama3.1 / granite registrations are never in it). For a request **without**
+    `requiredLocality`, `preferenceFor` is today's and `isEligible` is `false` for the long-item key. So chat, short
+    summaries and every other path never select it, it is not in the 모델 변경 list (that list is built from
+    unconstrained eligibility), and it is never a local fallback candidate.
+  - **Fresh probe (CA P3-a).** `AiProviderManager` gains an `uncached(provider)` option; the composition passes it for the
+    long-item provider only, so its readiness is probed fresh on every selection (TTL 0; a throwing predicate counts as
+    uncached; an indeterminate probe is not ready). **Residual window:** the probe answers at selection; the run that
+    follows lasts at most 90 s and does not re-probe before each call. A model swapped under the same name (or the pinned
+    ID changed) inside that window is not seen until the next request. Threat model: doing that needs write access to the
+    owner's local Ollama daemon on the same user account, which already grants reading the mail cache and the
+    configuration; it is outside what the probe defends (an accidental cloud model or alias), and the pinned digest makes
+    any swap visible on the next request.
+  - **Single-in-flight gate (RQ-3 T3-5).** One FIFO gate per process (`createLocalModelGate`). S3 takes it per call as
+    `exclusive`; the local embedding providers are wrapped at the composition root (`gatedProvider`) so their calls take
+    the same gate. The embedding adapter and the recall modules are CH7-hashed and are not edited; `stageRDigest` is
+    unchanged. A call whose signal aborted while it waited is not run.
+  - `shadow`: no provider, no wrap, no fresh probe; the runtime gets a pass-through `exclusive`. `off` or unset: nothing is
+    registered, wrapped or passed; the provider list and routing are byte-identical to today (composition test).
+  - The settings reach Core as `ConversationRuntimeOptions.longItemSummary` (`{ mode, exclusive, notify }`, plus test-only
+    `now` / `wait`), not as new `ConversationRuntimeDeps` keys (the deps baseline of 36 stays).
+- **The adapter honours the signal.** `OllamaCliProvider.execute` passes `request.signal` to its runner, so an abandoned
+  call is killed at once instead of at `timeoutMs` (`packages/ai-cli/src/index.ts`, not CH7-hashed; the runner already
+  accepts a signal).
+- **Handler integration contract (`TurnHandlerSummarizeReply.longItem?: LongItemSummaryInput`).** A handler composed with
+  `longItems` (`shadow` or `on`) attaches the whole prepared item to today's `summarize` outcome: `source`, raw `title` /
+  `author` / `date`, `prepared` (today's normalization and link neutralization), optional `sections` (Quoky's frames
+  tiling `prepared`), `sourceTruncated`, the handler's LOCAL `footer` and its credential `refused` reply. With the flag
+  `off` nothing is attached. Sources:
+  - mail summary: the message body;
+  - mail thread: messages as `[메시지 i/n] sender (domain) · date` sections (`[Message i/n]` in English) under today's
+    thread bounds and withheld rules. **Repeated-quote removal (owner Q12) is structural:** a line whose text, with quote
+    markers stripped, already appeared in an earlier message is dropped, as is a line made only of quote markers; a
+    message left empty says so with a fixed note. No phrase list is used;
+  - Drive document: the read body; Google Sheets: one `table` section per sheet under today's `[Sheet i/n] "title"`
+    frame (`sheetLongItemText`), so a window repeats a sheet's header row;
+  - unchanged: mail `full` mode and Calendar (calendar stays local-only, ADR-0110 D4).
+- **Outcome mapping (Core, `respondLongItemSummary`).** It runs after today's readout is built and re-validated, before
+  today's provider call:
+  - `today` (including every `shadow` run and `not-ready`) and `S1` take today's path byte for byte;
+  - `refused: credential` returns the handler's refusal; `refused: empty` keeps today's path (today's builder refused it
+    first);
+  - `summary` / `partial`: the S3 body (participants pseudonymised as today), then Core's coverage line and the LOCAL
+    footer ("summarized in parts by a model on this device; the body was not sent to the chat model"), never the remote
+    disclosure. The shown body passes the card-spoof check (R2 sources) and `checkDocumentSummaryClaims`; a flagged text
+    becomes today's fixed notice (no regeneration). The history records S3's fixed note only. No Task or TaskRun is
+    created for an S3 run; its audit is the content-free `item_summary.s3` log line.
+  - `shadow` logs counts only (the S3 shadow line) and returns today's reply.
+- **Clause PN.** Core copy only (`renderLongItemProgressNotice`, the window count only), sent through
+  `LongItemSummaryOptions.notify`, which the composition root binds to `PlatformAdapter.sendMessage`. Sent only when the
+  mode is `on`, `notify` is set and the conversation is a DM; at most once, after 8 s, once S3 has reported its window
+  count (`onStart`, after a successful selection, before the first call); never stored in history. It is awaited before
+  the reply so the two arrive in order; a failed send is logged and ignored. The notice timer never bounds the run: the
+  90 s wall stays S3's, Core and the orchestrator add no turn timeout, and a per-call timeout or wall breach gives the
+  partial reply, never a remote call.
+- **Tests.** Preflight matrix; composition (`off`/`shadow` byte-identical providers, one pinned SUMMARIZATION-only provider
+  under `on`, policy for constrained and unconstrained requests, absent from the model list, fresh probe, gate never
+  overlaps, embedding wrapped); runtime (`off`/`shadow` golden for mail, thread, Drive and Sheets; `on` summary with
+  coverage and local footer and no remote call; partial; not-ready and S1 stay today; credential refusal; claim notice;
+  PN once, DM only, none in a channel, none before 8 s, with a fake clock; per-call timeout gives a partial reply with no
+  remote call); thread long item and dedup; adapter signal; uncached probe. `stage-r-v2.test.ts` passes.
+- **Residuals and open items.**
+  - The ≤90 s window between the fresh probe and the last call (above).
+  - Gate contention: when the local model is busy (an embedding call or another S3 run), S3 waits in the gate inside its
+    own budget; a run that cannot start a call in time gives a partial reply that read nothing, not today's path.
+  - An embedding call can wait behind an S3 run for up to 90 s; recall then falls back on its own timeout as today.
+  - Owner operations before `on`: live checks (1)-(4) of review round 2 and P3-b check (5) (`OLLAMA_NO_CLOUD=1` on the
+    daemon refusing a cloud alias; if it does, a required step).
+  - The CH3/CH5/CH6 eval harness is slice 4; the I7 offer stays deferred.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,

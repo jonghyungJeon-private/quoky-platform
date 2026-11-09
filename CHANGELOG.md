@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L slice C5a-2: long-item wiring, `shadow` and the PN progress notice (default `off`)
+
+- **Recorded.** DECISIONS ADR-0124 section 17, "Slice 2": the config names and preflight rules, the composition, the handler integration contract, clause PN (moved into this slice) and the residuals.
+- **Added (config).** `QUOKY_CHUNK_ITEMS_MODEL` (bounded `name[:tag]`, `cloud` refused) and `QUOKY_CHUNK_ITEMS_MODEL_DIGEST` (12 hex `ollama list` ID, required with a model); `on` without both is refused at startup (`CHUNK_ITEMS_ON_REQUIRES_MODEL`); value-free preflight hints; `.env.example`.
+- **Added (composition, `on` only).** A SUMMARIZATION-only `ollama-cli-long-item` provider, always pinned with `localWeights.pinnedDigest`; the selection policy makes it the only eligible key of a `requiredLocality: 'LOCAL'` summary and ineligible everywhere else (not in the model list, never a fallback); a fresh readiness probe for it (`AiProviderManager` `uncached`); one process-wide single-in-flight gate shared by S3 and the gated local embedding providers. `off` / unset: provider set and routing byte-identical (tested).
+- **Added (Core).** `TurnHandlerSummarizeReply.longItem` attached by mail, thread (`[메시지 i/n]` sections, structural repeated-quote removal), Drive and Sheets (`[Sheet i/n]` table sections) handlers under `shadow` / `on`; the runtime runs S3 first and maps `today` / `S1` to today's path, a credential refusal to the handler's refusal, `summary` / `partial` to the body + coverage line + LOCAL footer after the claim checks (history: fixed note). `shadow` logs counts only and keeps today's reply. Clause PN: one fixed notice after 8 s, DM only, once, no history, through `PlatformAdapter.sendMessage`. Mail `full` and Calendar unchanged.
+- **Changed (ai-cli).** `OllamaCliProvider.execute` passes `request.signal` to its runner (abandoned calls are killed at once). No CH7-hashed file changed; `stageRDigest` unchanged.
+
 ## Unreleased — ADR-0124 Part L slice C5a: S3 whole-item summary, arm L (local only), unwired
 
 - **Recorded.** DECISIONS ADR-0124 section 17: the owner's 2026-11-09 decisions (Ollama `qwen3:8b` only for long-item local summaries, chat stays Claude; no remote fallback once a local S3 run started; CH1 not-applicable to S3 pending the Chief Architect; CH3/CH5/CH6 thresholds ratified; arms H/R2 only if L fails CH3; the I7 offer deferred) and the C5a interfaces, recorded before the code (ADR-0121 D12).
