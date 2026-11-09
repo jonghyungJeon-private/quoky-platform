@@ -6,6 +6,7 @@ import {
   NL_RETRIEVED_EXAMPLES_HEADER,
   NL_V79_PROMPT_VERSIONS,
   NL_V81_PROMPT_VERSIONS,
+  NL_V83_PROMPT_VERSIONS,
   buildSelectionPrompt,
   buildSelectionPromptParts,
   buildSelectionRequestText,
@@ -40,7 +41,7 @@ function inputs(): Array<{ name: string; input: NlSelectionPromptInput }> {
   }
   out.push({ name: 'read retrieved block', input: { entries: READS, text: OWNER, retrievedExamples: retrieved } });
   out.push({ name: 'read swapped examples', input: { entries: READS, text: OWNER, retrievedExamples: retrieved, replaceStaticExamples: true } });
-  for (const rev of [undefined, 'v73', 'v74', 'v77', 'v79', 'v81'] as const) {
+  for (const rev of [undefined, 'v73', 'v74', 'v77', 'v79', 'v81', 'v83'] as const) {
     for (const [mode, entries] of [['action', [...READS, ...ACTIONS]], ['r2', R2_ENTRIES]] as const) {
       for (const withPrevious of [false, true]) {
         out.push({ name: `${mode} rev=${rev ?? 'active'} previous=${withPrevious}`, input: { entries, text: OWNER, ...(rev !== undefined ? { rev } : {}), ...(withPrevious ? { previous } : {}), actions: { referenceContext: REFERENCE } } });
@@ -131,17 +132,19 @@ describe('buildSelectionPromptParts', () => {
   });
 });
 
-describe('nl-select.v81 / v82 (the v79 / v80 text on the split transport)', () => {
+const OWN_MEMORY_RULE_START = 'A question that asks Quoky to recall what the owner earlier told it, said, decided or planned';
+
+describe('nl-select.v81 / v82 (the v79 / v80 text on the split transport; the rollback of v83 / v84)', () => {
   const action = { entries: [...READS, ...ACTIONS], text: OWNER, previous, actions: { referenceContext: REFERENCE } } as const;
   const r2 = { entries: R2_ENTRIES, text: OWNER, previous, actions: { referenceContext: REFERENCE } } as const;
 
-  it('names the versions and is the active action revision', () => {
+  it('names the versions; v83 is the active action revision', () => {
     expect(NL_V81_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v81', r2: 'nl-select.v82' });
-    expect(NL_ACTIVE_PROMPT_REVS.action).toBe('v81');
+    expect(NL_ACTIVE_PROMPT_REVS.action).toBe('v83');
     expect(nlPromptVersionFor('action', 'v81')).toBe('nl-select.v81');
     expect(nlPromptVersionFor('r2', 'v81')).toBe('nl-select.v82');
     expect(nlPromptVersionFor('action', 'v79')).toBe(NL_V79_PROMPT_VERSIONS.action);
-    expect(nlEffectivePromptRev('action')).toBe('v81');
+    expect(nlEffectivePromptRev('action')).toBe('v83');
     expect(nlEffectivePromptRev('read')).toBe('v74');
   });
 
@@ -154,16 +157,18 @@ describe('nl-select.v81 / v82 (the v79 / v80 text on the split transport)', () =
   it('joined v81 text is the v79 text byte for byte and joined v82 is the v80 text', () => {
     expect(buildSelectionPrompt({ ...action, rev: 'v81' })).toBe(buildSelectionPrompt({ ...action, rev: 'v79' }));
     expect(buildSelectionPrompt({ ...r2, rev: 'v81' })).toBe(buildSelectionPrompt({ ...r2, rev: 'v79' }));
-    // Absent rev is the active one: v81.
-    expect(buildSelectionPrompt(action)).toBe(buildSelectionPrompt({ ...action, rev: 'v79' }));
+    // Absent rev is the active one: v83, which is NOT the v79 text.
+    expect(buildSelectionPrompt(action)).toBe(buildSelectionPrompt({ ...action, rev: 'v83' }));
+    expect(buildSelectionPrompt(action)).not.toBe(buildSelectionPrompt({ ...action, rev: 'v79' }));
   });
 
   it('only a split rev sends a systemPrompt; explicit v79 and older revs stay one unsplit prompt', () => {
     expect(nlPromptRevIsSplit('v81')).toBe(true);
+    expect(nlPromptRevIsSplit('v83')).toBe(true);
     for (const rev of ['v73', 'v74', 'v77', 'v79'] as const) expect(nlPromptRevIsSplit(rev)).toBe(false);
     const split = buildSelectionRequestText(action);
     expect(split.systemPrompt).toBeDefined();
-    expect(`${split.systemPrompt}\n${split.prompt}`).toBe(buildSelectionPrompt({ ...action, rev: 'v79' }));
+    expect(`${split.systemPrompt}\n${split.prompt}`).toBe(buildSelectionPrompt({ ...action, rev: 'v83' }));
     expect(split.systemPrompt).not.toContain('OWNERTEXT-zq7');
     expect(split.prompt).toContain('OWNERTEXT-zq7');
     for (const rev of ['v73', 'v77', 'v79'] as const) {
@@ -175,5 +180,47 @@ describe('nl-select.v81 / v82 (the v79 / v80 text on the split transport)', () =
     const read = buildSelectionRequestText({ entries: READS, text: OWNER });
     expect('systemPrompt' in read).toBe(false);
     expect(read.prompt).toBe(buildSelectionPrompt({ entries: READS, text: OWNER }));
+  });
+});
+
+describe('nl-select.v83 / v84 (the v81 / v82 text plus the own-memory recall rule)', () => {
+  const action = { entries: [...READS, ...ACTIONS], text: OWNER, previous, actions: { referenceContext: REFERENCE } } as const;
+  const r2 = { entries: R2_ENTRIES, text: OWNER, previous, actions: { referenceContext: REFERENCE } } as const;
+
+  it('names the versions: action v83, R2 v84', () => {
+    expect(NL_V83_PROMPT_VERSIONS).toEqual({ action: 'nl-select.v83', r2: 'nl-select.v84' });
+    expect(nlPromptVersionFor('action', 'v83')).toBe('nl-select.v83');
+    expect(nlPromptVersionFor('r2', 'v83')).toBe('nl-select.v84');
+  });
+
+  it('is rejected in read mode', () => {
+    expect(() => nlPromptVersionFor('read', 'v83')).toThrow(/v83/);
+    expect(() => buildSelectionPrompt({ entries: READS, text: OWNER, rev: 'v83' })).toThrow(/v83/);
+  });
+
+  it('adds the rule to the action and R2 stable parts, next to the past-tense-question sentence, and to nothing else', () => {
+    for (const input of [action, r2]) {
+      const v83 = buildSelectionPromptParts({ ...input, rev: 'v83' });
+      expect(v83.stable).toContain(OWN_MEMORY_RULE_START);
+      expect(v83.stable).toContain('is none: Quoky\'s memory answers it in chat.');
+      expect(v83.stable).toContain('past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup, unless it asks what the owner told Quoky:\n   A question that asks Quoky to recall');
+      expect(v83.stable).toContain('stays a lookup.');
+      // The rule is stable text: the per-turn part carries none of it.
+      expect(v83.turn).not.toContain('recall what the owner earlier told it');
+      // Every older rev keeps its bytes: none of them holds the rule.
+      for (const rev of ['v73', 'v74', 'v77', 'v79', 'v81'] as const) expect(buildSelectionPrompt({ ...input, rev }), rev).not.toContain(OWN_MEMORY_RULE_START);
+      // Removing the rule lines and restoring the one qualified sentence gives the v81 text exactly.
+      const lines = buildSelectionPrompt({ ...input, rev: 'v83' }).split('\n');
+      const at = lines.findIndex((line) => line.includes('is still a lookup, unless it asks what the owner told Quoky:'));
+      expect(at).toBeGreaterThan(0);
+      const end = lines.findIndex((line, index) => index > at && line.endsWith('stays a lookup.'));
+      const restored = [...lines.slice(0, at), '   past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.', ...lines.slice(end + 1)];
+      expect(restored.join('\n')).toBe(buildSelectionPrompt({ ...input, rev: 'v81' }));
+    }
+  });
+
+  it('the read prompt (v74, no action entries) never holds the rule', () => {
+    expect(buildSelectionPrompt({ entries: READS, text: OWNER })).not.toContain(OWN_MEMORY_RULE_START);
+    expect(buildSelectionPrompt({ entries: READS, text: OWNER, rev: 'v74' })).not.toContain(OWN_MEMORY_RULE_START);
   });
 });

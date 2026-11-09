@@ -429,6 +429,16 @@ describe('A6-D3a amendment 1: corpus negatives through validateSelection (nl-act
 
   // Core refuses these for every LOCAL_WRITE lure, whatever the selector answers: must never execute.
   const VETOED: readonly string[] = [
+    'a6-own-recall-none-001',
+    'a6-own-recall-none-002',
+    'a6-own-recall-none-003',
+    'a6-own-recall-none-004',
+    'a6-own-recall-none-005',
+    'a6-own-recall-none-006',
+    'a6-own-recall-none-007',
+    'a6-own-recall-none-008',
+    'a6-own-recall-none-009',
+    'a6-own-recall-none-010',
     'a6-paraphrase-todo.add-009', // "할 일 하나 추가할게. …": first-person volition (owner 2026-10-16: none)
     'a6-reference-none-001',
     // Elliptical continuation (D12 gate v44 run 3): no action word, no request form, so no target lure executes; with the

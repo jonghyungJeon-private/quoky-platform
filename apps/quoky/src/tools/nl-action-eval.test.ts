@@ -249,7 +249,7 @@ describe('scoring (A6-D7): a wrong target is never a question; negatives capture
 describe('read regression (A6-D7): 0 read cases captured by an action entry', () => {
   const { cases } = loadReadRegressionCorpus();
 
-  it('selector prompt caching: the eval sends the same split request as the live service under v81 and the unsplit text under v79', async () => {
+  it('selector prompt caching: the eval sends the same split request as the live service under v83 and the unsplit text under v79', async () => {
     const golden = { id: 'r', text: '오늘 메일 보여줘', expect: { entryId: 'mail.list', args: { range: 'today' } } } as const;
     const active = readRegressionRequestText(golden, NOW);
     expect(active?.systemPrompt).toContain('- item.summarize: ');
@@ -257,9 +257,12 @@ describe('read regression (A6-D7): 0 read cases captured by an action entry', ()
     expect(active?.prompt).toContain('<<<\n오늘 메일 보여줘\n>>>');
     const rollback = readRegressionRequestText(golden, NOW, 'v79');
     expect(rollback !== undefined && 'systemPrompt' in rollback).toBe(false);
-    // Same words either way: the joined v81 text is the v79 text.
-    expect(`${active?.systemPrompt}\n${active?.prompt}`).toBe(rollback?.prompt);
-    expect(readRegressionPrompt(golden, NOW)).toBe(rollback?.prompt);
+    // The joined v83 text is the v81 text plus the own-memory rule; the v81 split request is the v79 text.
+    const v81 = readRegressionRequestText(golden, NOW, 'v81');
+    expect(`${v81?.systemPrompt}\n${v81?.prompt}`).toBe(rollback?.prompt);
+    expect(active?.systemPrompt).toContain('asks Quoky to recall what the owner earlier told it');
+    expect(v81?.systemPrompt).not.toContain('asks Quoky to recall what the owner earlier told it');
+    expect(readRegressionPrompt(golden, NOW)).toBe(`${active?.systemPrompt}\n${active?.prompt}`);
     // The runner passes exactly that request to the provider.
     const seen: AiRequest[] = [];
     const provider: AiProvider = { id: 'p', capabilities: [], isAvailable: async () => true, execute: async (request) => (seen.push(request), { text: '{"entryId":"none","args":{}}', artifacts: [] }) };

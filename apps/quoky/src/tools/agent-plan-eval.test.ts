@@ -136,11 +136,11 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
   });
 
   it('references every nl-intent.v1.json case as one-step gold by id (Q11), never a copy', () => {
-    expect(CORPUS.oneStep.count).toBe(873);
+    expect(CORPUS.oneStep.count).toBe(889);
     expect(CORPUS.oneStep.ids).toEqual(ONE_STEP.map((golden) => golden.id));
     const oneStepTexts = new Set(ONE_STEP.map((golden) => golden.text));
     expect(NEW.filter((golden) => oneStepTexts.has(golden.text)).map((golden) => golden.id)).toEqual([]);
-    expect(CASES.filter((golden) => golden.family === 'one-step')).toHaveLength(873);
+    expect(CASES.filter((golden) => golden.family === 'one-step')).toHaveLength(889);
   });
 
   it('a perfect planner scores 100% in both groups (the widened date rule grounds calendar-019 and calendar-038)', async () => {
@@ -153,7 +153,7 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     // positives (ap-p185..ap-p189; owner decision of 2026-10-26, the one-shot list + item summary).
     expect(summary.groups.multiStep).toEqual({ total: 185, exact: 185, rate: 1 });
     // + the four capability-help one-step plan golds of the owner's decisions of 2026-10-26 (ap-p181..ap-p184).
-    expect(summary.groups.oneStep).toEqual({ total: 678, exact: 678, rate: 1 });
+    expect(summary.groups.oneStep).toEqual({ total: 684, exact: 684, rate: 1 });
     expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
     expect(summary.wrongOnNegatives).toBe(0);
     // Every negative is none; only inputs the D3 preparation empties (two one-step cases) make no call at all.
@@ -422,19 +422,19 @@ describe('plan digest', () => {
     }
   });
 
-  it('approved-only scores the 873 one-step cases and the approved new cases; --include-pending adds every pending case; the bound is cases x runs', () => {
+  it('approved-only scores the 889 one-step cases and the approved new cases; --include-pending adds every pending case; the bound is cases x runs', () => {
     const approved = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS);
     const pending = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
-    const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
-    expect(approvedCount).toBe(873 + 260);
+    const approvedCount = 889 + NEW.filter((golden) => golden.status === 'approved').length;
+    expect(approvedCount).toBe(889 + 260);
     expect(approved.caseIds).toHaveLength(approvedCount);
-    expect(pending.caseIds).toHaveLength(873 + NEW.length);
+    expect(pending.caseIds).toHaveLength(889 + NEW.length);
     // The read + write probe bound (owner-ratified 2026-10-26): one more call for each case of two or more conjuncts.
     expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v79', maxCallsPerRun: expect.any(Number) });
     expect(approved.readWriteProbe.maxCallsPerRun).toBeGreaterThan(0);
     expect(approved.readWriteProbe.maxCallsPerRun).toBeLessThan(approvedCount);
     expect(approved.maxCalls).toBe((approvedCount + approved.readWriteProbe.maxCallsPerRun) * 3);
-    expect(pending.maxCalls).toBe((873 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
+    expect(pending.maxCalls).toBe((889 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
     expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v11', callTimeoutMs: 10000, fixture: FIXTURE });
@@ -517,7 +517,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(text).toContain('"promptVersion": "agent-plan.v11"');
     expect(text).toContain(`"corpusSha256": "${LOADED.sha256}"`);
     expect(text).toContain(`"gitHead": "${'a'.repeat(40)}"`);
-    const approvedCount = 873 + NEW.filter((golden) => golden.status === 'approved').length;
+    const approvedCount = 889 + NEW.filter((golden) => golden.status === 'approved').length;
     const bound = /at most (\d+) \(\((\d+) planner calls \+ up to (\d+) read \+ write probe calls, nl-select\.v79\) x 3 run\(s\)/.exec(text);
     expect(bound).not.toBeNull();
     const [, total, planner, probes] = (bound as RegExpExecArray).map(Number);
@@ -528,7 +528,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3', '--include-pending'], withPending)).toBe(EXIT_OK);
     expect(digestOf(withPending.out)).not.toBe(digestOf(planned.out));
     const pendingPlan = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
-    expect(withPending.out.join('\n')).toContain(`at most ${(873 + NEW.length + pendingPlan.readWriteProbe.maxCallsPerRun) * 3}`);
+    expect(withPending.out.join('\n')).toContain(`at most ${(889 + NEW.length + pendingPlan.readWriteProbe.maxCallsPerRun) * 3}`);
   });
 
   it('run exits 3 before any provider is constructed without the digest, with a wrong one, or with another plan\'s', async () => {
@@ -580,7 +580,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(created).toEqual(['haiku']);
     const skipped = CASES.filter((golden) => 'skip' in prepareSelectionInput(golden.text, golden.attachments)).length;
     expect(skipped).toBeLessThanOrEqual(2);
-    expect(calls).toBe(873 + NEW.length - skipped);
+    expect(calls).toBe(889 + NEW.length - skipped);
     const everything = [...ran.reports, ...ran.out, ...ran.err].join('\n');
     expect(everything).not.toContain(canary);
     const texts = CASES.map((golden) => golden.text).filter((text) => Array.from(text).length >= 12);
@@ -588,7 +588,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     for (const value of ['인사발령', '마이그레이션 가이드', '김부장님', 'security policy']) expect(everything).not.toContain(value);
     const report = JSON.parse(ran.reports[0] as string) as { plan: { digest: string }; records: AgentPlanEvalRecord[] };
     expect(report.plan.digest).toBe(digest);
-    expect(report.records).toHaveLength(873 + NEW.length);
+    expect(report.records).toHaveLength(889 + NEW.length);
     expect(Object.keys(report.records[0] as object).sort()).toEqual(expect.arrayContaining(['id', 'family', 'outcome', 'latencyMs', 'run']));
   });
 
@@ -599,7 +599,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     await runCli(['--mode', 'plan', '--runs', '3'], planned);
     const ran = { ...deps(created), load: () => approved };
     expect(await runCli(['--mode', 'run', '--runs', '3', '--approved-plan-digest', digestOf(planned.out)], ran)).toBe(EXIT_OK);
-    expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 678/678 (100.0%)  ask: 12/12');
+    expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 684/684 (100.0%)  ask: 12/12');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v11): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
     const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };

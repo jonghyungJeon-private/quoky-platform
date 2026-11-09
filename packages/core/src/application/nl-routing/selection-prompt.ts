@@ -217,8 +217,8 @@ export const NL_PREVIOUS_READ_PROMPT_VERSION = 'nl-select.v73';
  * v71 = v70 with the rule-conflict cleanup of read v73 (rule 8 points to rule 3b).
  */
 export const NL_PREVIOUS_ACTION_PROMPT_VERSION = 'nl-select.v71';
-/** The ACTIVE A6 action prompt id (candidate, gates pending: `rev: 'v81'`, nl-select.v81 = the v79 text on the split transport); `rev: 'v79'` (nl-select.v79) is the rollback, the old v71 is `rev: 'v73'`, explicit only. */
-export const NL_ACTION_PROMPT_VERSION = 'nl-select.v81';
+/** The ACTIVE A6 action prompt id (candidate, gates pending: `rev: 'v83'`, nl-select.v83 = the v81 text plus the own-memory recall rule); `rev: 'v81'` (nl-select.v81) is the rollback, then `rev: 'v79'` (unsplit), the old v71 is `rev: 'v73'`, explicit only. */
+export const NL_ACTION_PROMPT_VERSION = 'nl-select.v83';
 /**
  * ADR-0120 amendment A6 R2: the A6 prompt when `item.summarize` offers a Jira or Slack source (`QUOKY_NL_ITEM_R2` not
  * `off`). v43 = v42 with rule 8's `item.summarize` lines naming the offered R2 sources, `scope: thread` for Slack and the
@@ -259,8 +259,8 @@ export const NL_ACTION_PROMPT_VERSION = 'nl-select.v81';
  * v72 = the v48 R2 lines on top of v71 (the rule-conflict cleanup; not the read v72).
  */
 export const NL_PREVIOUS_ACTION_R2_PROMPT_VERSION = 'nl-select.v72';
-/** The ACTIVE A6 R2 prompt id (candidate, gates pending: `rev: 'v81'`, nl-select.v82 = the v80 text on the split transport); `rev: 'v79'` (nl-select.v80) is the rollback, the old v72 is `rev: 'v73'`, explicit only. */
-export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v82';
+/** The ACTIVE A6 R2 prompt id (candidate, gates pending: `rev: 'v83'`, nl-select.v84 = the v82 text plus the own-memory recall rule); `rev: 'v81'` (nl-select.v82) is the rollback, then `rev: 'v79'` (nl-select.v80, unsplit), the old v72 is `rev: 'v73'`, explicit only. */
+export const NL_ACTION_R2_PROMPT_VERSION = 'nl-select.v84';
 
 /** A6 R2: whether this catalog's `item.summarize` offers a Jira or Slack source (the R2 prompt applies). */
 export function offersR2ItemSources(entries: readonly NlCatalogEntry[]): boolean {
@@ -295,7 +295,7 @@ export interface NlSelectionPromptInput {
   readonly replaceStaticExamples?: boolean;
   /**
    * Prompt revision of the rule text. Absent: the active revision of the mode ({@link NL_ACTIVE_PROMPT_REVS}: read `v74`,
-   * action / R2 `v81`; an explicit `v73` with actions builds the old v71 / v72). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
+   * action / R2 `v83`; an explicit `v73` with actions builds the old v71 / v72). `v74` is the slimmed text with the one source-name principle (DECISIONS "Prompt slimming and the
    * source-name principle (nl-select.v74)"); enabled for read mode only (owner decision 2026-11-04), so `v74` with
    * `actions` is the candidate A6 / R2 text (v75 / v76, gate failed). `v77` (only with `actions`) = that text plus the
    * residual rules F1 / F3 / F4 (nl-select.v77 / v78 candidates). An explicit value always wins (eval, rollback).
@@ -304,14 +304,14 @@ export interface NlSelectionPromptInput {
 }
 
 /** The selectable prompt revisions of the rule text. */
-export type NlPromptRev = 'v73' | 'v74' | 'v77' | 'v79' | 'v81';
+export type NlPromptRev = 'v73' | 'v74' | 'v77' | 'v79' | 'v81' | 'v83';
 
 /**
  * `v77` exists only with `actions`: the A6 action / R2 prompt on the v74 rule text plus the three general residual rules
  * (DECISIONS "A6 action prompt on the v74 text with residual-rule fixes (nl-select.v77 / v78 candidates)"). The read mode
  * has no `v77`: {@link buildSelectionPrompt} and {@link nlPromptVersionFor} reject it there.
  */
-export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77', 'v79', 'v81'];
+export const NL_ACTION_ONLY_PROMPT_REVS: readonly NlPromptRev[] = ['v77', 'v79', 'v81', 'v83'];
 
 /**
  * `v79` (action / R2 only) = `v77` EXACTLY, except that every catalog entry line keeps its Korean gloss as before v74
@@ -328,9 +328,19 @@ export const NL_V79_PROMPT_VERSIONS = { action: 'nl-select.v79', r2: 'nl-select.
  */
 export const NL_V81_PROMPT_VERSIONS = { action: 'nl-select.v81', r2: 'nl-select.v82' } as const;
 
+/**
+ * `v83` (action / R2 only) = the `v81` text plus ONE meaning-level rule next to the past-tense-question sentence of rule 2: a
+ * question that asks Quoky to recall what the owner earlier told it, said, decided or planned is none (Quoky's memory
+ * answers it in chat) unless it names a source's stored items as the place to look; the past-tense lookup sentence is
+ * qualified by it (DECISIONS "v5 item 4 — own-memory recall questions vs read entries (nl-select.v83 / v84)"). Sent on the
+ * same split transport as v81. The rule is in the action / R2 prompts only: the read prompt (v74) and every older rev keep
+ * their bytes. `rev: 'v81'` (nl-select.v81 / v82) is the rollback.
+ */
+export const NL_V83_PROMPT_VERSIONS = { action: 'nl-select.v83', r2: 'nl-select.v84' } as const;
+
 /** Whether a prompt rev is sent split (stable part as system prompt, per-turn part as the user message). Provider-neutral. */
 export function nlPromptRevIsSplit(rev: NlPromptRev): boolean {
-  return rev === 'v81';
+  return rev === 'v81' || rev === 'v83';
 }
 
 /** Version ids of the `rev: 'v77'` candidate prompts: A6 action and A6 R2. */
@@ -341,10 +351,10 @@ export type NlPromptMode = 'read' | 'action' | 'r2';
 
 /**
  * The revision each mode builds when `rev` is absent (owner decision 2026-11-04): read `v74`; the A6 action and R2 prompts
- * are `v81` (nl-select.v81 / v82, candidate, D12 gates pending; the v79 text on the split transport). Rollback to the unsplit v79 = set `action` to `'v79'`. Older rollback = set `read` to `'v73'` (and
+ * are `v83` (nl-select.v83 / v84, candidate, D12 gates pending; the v81 text plus the own-memory recall rule). Rollback = set `action` to `'v81'` (nl-select.v81 / v82); the unsplit v79 = `'v79'`. Older rollback = set `read` to `'v73'` (and
  * `NL_SELECTION_PROMPT_VERSION` back to `nl-select.v73`) and `action` to `'v73'` (and the two active ids back to v71 / v72).
  */
-export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v81' } as const satisfies Record<'read' | 'action', NlPromptRev>;
+export const NL_ACTIVE_PROMPT_REVS = { read: 'v74', action: 'v83' } as const satisfies Record<'read' | 'action', NlPromptRev>;
 
 /** Version ids of the candidate (`rev: 'v74'` with actions) prompts: A6 action and A6 R2 (the read v74 is active, not a candidate). */
 export const NL_CANDIDATE_PROMPT_VERSIONS = { action: 'nl-select.v75', r2: 'nl-select.v76' } as const;
@@ -354,12 +364,12 @@ export function nlEffectivePromptRev(mode: NlPromptMode, rev?: NlPromptRev): NlP
   return rev ?? NL_ACTIVE_PROMPT_REVS[mode === 'read' ? 'read' : 'action'];
 }
 
-/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78|v79|v80|v81|v82`. Throws for `v77` / `v79` / `v81` in read mode. */
+/** The prompt version id built for (mode, rev?): `nl-select.v73|v74|v71|v72|v75|v76|v77|v78|v79|v80|v81|v82|v83|v84`. Throws for `v77` / `v79` / `v81` / `v83` in read mode. */
 export function nlPromptVersionFor(mode: NlPromptMode, rev?: NlPromptRev): string {
   const effective = nlEffectivePromptRev(mode, rev);
-  if (effective === 'v77' || effective === 'v79' || effective === 'v81') {
+  if (effective === 'v77' || effective === 'v79' || effective === 'v81' || effective === 'v83') {
     if (mode === 'read') throw new Error(`prompt rev '${effective}' is valid only with action entries (action / r2 mode)`);
-    const versions = effective === 'v77' ? NL_V77_PROMPT_VERSIONS : effective === 'v81' ? NL_V81_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
+    const versions = effective === 'v77' ? NL_V77_PROMPT_VERSIONS : effective === 'v83' ? NL_V83_PROMPT_VERSIONS : effective === 'v81' ? NL_V81_PROMPT_VERSIONS : NL_V79_PROMPT_VERSIONS;
     return mode === 'action' ? versions.action : versions.r2;
   }
   const v74 = effective === 'v74';
@@ -708,6 +718,19 @@ const V77_ACTION_RULES: readonly string[] = [
   '   rule 5 does not omit it; Core decides whether it is too vague and asks.',
 ];
 
+/**
+ * v83 (A6 action / R2): the own-memory recall rule, placed after the past-tense-question sentence of rule 2 (the sentence
+ * above it is qualified by it). Meaning level, no phrase list: it separates "what did I tell you" from a lookup of stored
+ * items by what the question asks about, and the two examples of each side are generic.
+ */
+const V83_OWN_MEMORY_RULE: readonly string[] = [
+  '   A question that asks Quoky to recall what the owner earlier told it, said, decided or planned ("…라고 했지?", "…다고',
+  '   했었지?", "what did I tell you about …?") is none: Quoky\'s memory answers it in chat. It is a lookup only when it names',
+  '   a source\'s stored items as the place to look (알림/리마인더, 일정/캘린더, 할 일, or an offered entry\'s source name: "알림',
+  '   언제로 해놨지?"); a plain question about the owner\'s data that does not ask what the owner said ("내일 일정 언제야?")',
+  '   stays a lookup.',
+];
+
 /** The full instruction text for one selection call (stable part, a newline, per-turn part: see {@link buildSelectionPromptParts}). */
 export function buildSelectionPrompt(input: NlSelectionPromptInput): string {
   const parts = buildSelectionPromptParts(input);
@@ -737,8 +760,9 @@ export function buildSelectionRequestText(input: NlSelectionPromptInput): { read
  */
 export function buildSelectionPromptParts(input: NlSelectionPromptInput): { readonly stable: string; readonly turn: string } {
   const effectiveRev = nlEffectivePromptRev(input.actions !== undefined ? 'action' : 'read', input.rev);
-  if ((effectiveRev === 'v77' || effectiveRev === 'v79' || effectiveRev === 'v81') && input.actions === undefined) throw new Error(`prompt rev '${effectiveRev}' is valid only with action entries`);
-  const v79 = effectiveRev === 'v79' || effectiveRev === 'v81';
+  if ((effectiveRev === 'v77' || effectiveRev === 'v79' || effectiveRev === 'v81' || effectiveRev === 'v83') && input.actions === undefined) throw new Error(`prompt rev '${effectiveRev}' is valid only with action entries`);
+  const v83 = effectiveRev === 'v83';
+  const v79 = effectiveRev === 'v79' || effectiveRev === 'v81' || v83;
   const v77 = effectiveRev === 'v77' || v79;
   const v74 = effectiveRev === 'v74' || v77;
   const offered = new Set(input.entries.map((entry) => entry.id));
@@ -770,7 +794,12 @@ export function buildSelectionPromptParts(input: NlSelectionPromptInput): { read
     ...(v74
       ? [
           '   A remark about what already happened or how it went ("…했어", "…끝났다", "…더라", "…었는데 …") is none; a',
-          '   past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.',
+          ...(v83
+            ? [
+                '   past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup, unless it asks what the owner told Quoky:',
+                ...V83_OWN_MEMORY_RULE,
+              ]
+            : ['   past-tense question ("…뭐 있었지?", "…왔어?") is still a lookup.']),
           '   A message whose main predicate states how the owner feels or what state they are in (답답해, 불안해, 지친다, 막막하다,',
           '   stressed, worried, overwhelmed) and that asks for nothing is none: a question word inside the clause that only gives',
           '   the reason for the feeling does not make it a question. A feeling followed by its own question or request in the',

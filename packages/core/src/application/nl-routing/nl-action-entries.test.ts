@@ -285,7 +285,7 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
     expect(defaultReadPrompt).toBe(buildSelectionPrompt({ entries: READS, text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, rev: 'v74' }));
     // The A6 prompt pinned here is the explicit `rev: 'v73'` one (nl-select.v71); the default is v79 (pinned in selection-prompt-v74.test.ts).
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v81');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v83');
     expect({ version: nlPromptVersionFor('action', 'v73'), sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v71', sha256: '83868ee241d1548748c6fdf432cd657df24217cb81479be15cacfaaa8acc2fe9' });
   });
 });
