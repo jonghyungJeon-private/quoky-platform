@@ -42,14 +42,14 @@ describe('document-map.v2 (ADR-0124 Part L C5a)', () => {
     expect(request.prompt).toContain('part 1 of 3 parts');
   });
 
-  it('states this part\'s line and character budget as an authoritative Core fact, from the shared helper', () => {
+  it('states this part\'s line budget as an authoritative Core fact, from the shared helper', () => {
     for (let count = 1; count <= 6; count += 1) {
-      const { lines, characters } = documentMapNoteBudget(count);
+      const { lines } = documentMapNoteBudget(count);
       const request = buildDocumentMapRequest(READOUT, { index: 1, count }, 'summarize this mail', 20_000);
       const fact = JSON.stringify({
         provenance: 'CORE_RUNTIME',
         epistemicStatus: 'AUTHORITATIVE_CURRENT_FACT',
-        content: `Write at most ${lines} lines and at most ${characters} characters in total for this part.`,
+        content: `Write at most ${lines} lines for this part.`,
       });
       expect(request.prompt).toContain(fact);
     }
@@ -57,20 +57,21 @@ describe('document-map.v2 (ADR-0124 Part L C5a)', () => {
 
   it('keeps the specific-facts guidance and no longer asks only for key points', () => {
     const request = buildDocumentMapRequest(READOUT, { index: 1, count: 3 }, 'summarize this mail', 20_000);
-    expect(request.prompt).toContain('copy values exactly as written');
-    expect(request.prompt).toContain('the most important first');
+    expect(request.prompt).toContain('copied as written, never codes, passwords or credentials');
+    expect(request.prompt).toContain('most important first');
+    expect(request.prompt).toContain('is not a fact');
     expect(request.prompt).not.toContain('Write only the key points');
   });
 });
 
 describe('documentMapNoteBudget', () => {
-  it('gives sensible lines and a character budget within the fair share for W = 1..6', () => {
+  it('gives at least 2 lines, at most the maximum, and the full-width note fits the share for W = 1..6', () => {
     for (let count = 1; count <= 6; count += 1) {
-      const { share, lines, characters } = documentMapNoteBudget(count);
+      const { share, lines } = documentMapNoteBudget(count);
+      const frameWidth = Array.from(`[Part ${count}/${count}]`).length;
       expect(lines).toBeGreaterThanOrEqual(2);
       expect(lines).toBeLessThanOrEqual(DOCUMENT_MAP_NOTE_MAX_LINES);
-      expect(characters).toBeGreaterThan(0);
-      expect(characters).toBeLessThanOrEqual(share);
+      expect(frameWidth + lines + lines * DOCUMENT_MAP_NOTE_LINE_MAX_CODE_POINTS).toBeLessThanOrEqual(share);
       expect(share * count + 2 * (count - 1)).toBeLessThanOrEqual(UNTRUSTED_DOCUMENT_BODY_MAX_CHARS);
     }
     expect(documentMapNoteBudget(1).lines).toBe(DOCUMENT_MAP_NOTE_MAX_LINES);
@@ -82,7 +83,7 @@ describe('documentMapNoteBudget', () => {
   });
 });
 
-const PINNED_SHA256 = 'bf5e28a78bf0c09e1a858e65bedd6680b607d237a5b551978f035b10dbcefced';
+const PINNED_SHA256 = 'd26d11c6c53e4b418862b88f771c0605c688534d2c5fdc780fac5f1555577b67';
 
 describe('parseDocumentMapNote: each note passes the existing guards', () => {
   it('keeps clean lines, trimmed, blank lines removed', () => {

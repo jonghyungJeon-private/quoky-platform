@@ -7,7 +7,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### ADR-0124 Part L C5a: `document-map.v2` after CH3 run 2 FAILED (2026-11-09, branch `claude/v5-partl-map-v2`)
 
-- The map prompt asks for specific facts (values copied exactly, most important first) and states a per-part line and character budget from the shared `documentMapNoteBudget(W)`, the same fair share `notesBody` keeps whole; bounds and the reduce prompt unchanged. Not yet re-measured; the re-run needs a new owner yes on the new plan digest. DECISIONS ADR-0124 section 17.1.
+- The map prompt asks for specific facts (values copied exactly, most important first) and states a per-part line budget from the shared `documentMapNoteBudget(W)`, the same fair share `notesBody` keeps whole; bounds and the reduce prompt unchanged. Not yet re-measured; the re-run needs a new owner yes on the new plan digest. DECISIONS ADR-0124 section 17.1.
 
 ### ADR-0124 Part L C5a: CH3 run 1 INVALID, two defects fixed (2026-11-09, branch `claude/v5-partl-c5a-runs`)
 

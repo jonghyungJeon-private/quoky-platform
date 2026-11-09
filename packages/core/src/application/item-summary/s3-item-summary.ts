@@ -46,7 +46,7 @@ import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, documentMapNoteBu
  * - **S1.** An item that fits one window is `S1`: the caller keeps today's path, byte for byte.
  * - **Selection by position only (RQ-2 I2).** The whole item when it packs into at most {@link S3_LIMITS}.maxWindows windows,
  *   else `selectStratified(…, maxWindows)`. W, the locality and the number of calls never depend on the content.
- * - **Calls.** One map call per window (`document-map.v1`) and one reduce call (the existing document-summary prompt over the
+ * - **Calls.** One map call per window (`document-map.v2`) and one reduce call (the existing document-summary prompt over the
  *   notes), strictly one at a time, at most {@link S3_LIMITS}.maxLocalCalls, each bounded to `callTimeoutMs` and all within
  *   `wallMs`. The provider is selected once with `requiredLocality: 'LOCAL'` and re-checked synchronously before every call.
  * - **No remote, no retry (owner decision 2, 2026-11-09).** No ready local provider at the start (selection bounded by the

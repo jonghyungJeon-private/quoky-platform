@@ -33022,8 +33022,10 @@ latency: map calls averaged 11 s (p95 20 s), much of it spent generating long li
 **Change (prompt `document-map.v2`, nothing else).** The map prompt now says the notes are all the later summary step
 will see of the part, asks to keep each specific fact with what it is about and to copy values exactly as written, to
 prefer specific facts over general status, to put the most important first, and, when the part has none, to write one or
-two lines on what it is about (general wording, no example phrases). Core adds an AUTHORITATIVE_CURRENT_FACT stating this
-part's budget, "at most N lines and at most C characters in total", computed by `documentMapNoteBudget(W)` from the same
+two lines on what it is about (general wording, no example phrases; deliberately category-free, so CH3 does not measure fit to its own gold kinds).
+The wording also keeps the injection posture: facts are attributed to the part or the named person, and a request or
+claim addressed to the assistant or reader is not a fact. Core adds an AUTHORITATIVE_CURRENT_FACT stating this
+part's line budget, "at most N lines" (no character number: it never binds and an 8B model counts characters poorly), computed by `documentMapNoteBudget(W)` from the same
 fair share `notesBody` uses (single source of truth), so a note that respects the budget passes through `notesBody` whole,
 and with most-important-first notes any truncation drops the least important lines. `parseDocumentMapNote` is unchanged
 (the ADR bounds stay the only hard limits; a note over the budget is still accepted).
