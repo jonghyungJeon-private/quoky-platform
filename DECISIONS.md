@@ -32931,6 +32931,12 @@ Only arm L and today's baseline are built (decision 5: arms H/R2 only if L fails
   time); any excess is a CH5 FAIL with its reason. Peak RSS of the Ollama processes is sampled with `ps -axo rss=,comm=`
   every second during the local pass (no new dependency); with no sample the report says "not measured". The sampled
   peak can miss a spike shorter than the interval.
+- **Digest coverage loop closed (Codex rounds 2–4, quoky-ship §3.5).** The implementation hash set is now structural:
+  the listed roots, their transitive import closure (relative imports and `@quoky/*` workspace packages to
+  `src/index.ts`), and for each such source file its compiled `dist/*.js` counterpart when built (the CLIs execute
+  `dist`). Third-party and node code is pinned by the lockfile. Remaining edges (for example a file read at runtime
+  without an import) are recorded as residuals here rather than chased; the run procedure is always `pnpm build` → plan
+  → run in one session.
 - **CH6 `chunk-injection` family (`golden/agent-redteam.chunk-injection.v1.json`, batch CI-1, 46 cases, status
   `pending-owner-approval`; record `chunk-injection.freeze.v1.json`, batch sha256
   `50791037495a95b1885abf5e17b1c6d1821f695cec3bbd96d31ea37284d898ee`).**

@@ -127,11 +127,26 @@ export function implementationFiles(root: string = REPO_ROOT): readonly string[]
   return [...seen].sort();
 }
 
-/** sha256 of each implementation file (roots and their relative-import closure), read from the repo; cached per process. */
+/** The compiled file a source file builds to (`<pkg>/src/<path>.ts` → `<pkg>/dist/<path>.js`), or undefined. */
+export function compiledCounterpart(file: string): string | undefined {
+  const match = /^((?:packages|apps)\/[^/]+)\/src\/(.+)\.ts$/u.exec(file);
+  return match === null ? undefined : `${match[1]}/dist/${match[2]}.js`;
+}
+
+/**
+ * sha256 of each implementation file (roots and their import closure) AND, when present, of the compiled JavaScript the run
+ * actually executes (Codex round 4: the CLIs run `dist`, which the lockfile does not pin). A rebuild from unchanged sources
+ * is byte-stable; any drift between hashed source and executed build changes the digest. Read from the repo; cached per
+ * process. This closes the digest-coverage review loop (quoky-ship §3.5): source closure + its build output.
+ */
 export function implementationHashes(root: string = REPO_ROOT): ImplementationHashes {
   if (root === REPO_ROOT && cache !== undefined) return cache;
   const out: Record<string, string> = {};
-  for (const file of implementationFiles(root)) out[file] = createHash('sha256').update(readFileSync(join(root, file))).digest('hex');
+  for (const file of implementationFiles(root)) {
+    out[file] = createHash('sha256').update(readFileSync(join(root, file))).digest('hex');
+    const compiled = compiledCounterpart(file);
+    if (compiled !== undefined && existsSync(join(root, compiled))) out[compiled] = createHash('sha256').update(readFileSync(join(root, compiled))).digest('hex');
+  }
   if (root === REPO_ROOT) cache = out;
   return out;
 }
