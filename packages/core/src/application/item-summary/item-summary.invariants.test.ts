@@ -28,6 +28,7 @@ describe('item-summary/ invariants (ADR-0124 Part L C5a)', () => {
       '../chat-policy/chat-response-policy',
       '../chunking',
       '../credential-guard',
+      '../document-summary-claim-check',
       '../document-summary-claim-guard',
       '../link-neutralizer',
       '../local-provider-dispatch',

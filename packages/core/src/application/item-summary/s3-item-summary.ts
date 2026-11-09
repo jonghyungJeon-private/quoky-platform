@@ -18,7 +18,9 @@ import {
   type Passage,
   type Window,
 } from '../chunking';
+import { generalChatReplyPolicy } from '../chat-policy/chat-response-policy';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
+import { checkDocumentSummaryClaims, renderDocumentSummaryTooLong } from '../document-summary-claim-check';
 import { isRequiredLocalDispatchAllowed, selectRequiredLocalProvider, withRequiredLocal } from '../local-provider-dispatch';
 import { composeDocumentSummaryPrompt } from '../prompt-composer';
 import { PromptRenderer } from '../prompt-renderer';
@@ -48,11 +50,14 @@ import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, parseDocumentMapN
  * - **Calls.** One map call per window (`document-map.v1`) and one reduce call (the existing document-summary prompt over the
  *   notes), strictly one at a time, at most {@link S3_LIMITS}.maxLocalCalls, each bounded to `callTimeoutMs` and all within
  *   `wallMs`. The provider is selected once with `requiredLocality: 'LOCAL'` and re-checked synchronously before every call.
- * - **No remote, no retry (owner decision 2, 2026-11-09).** No ready local provider at the start is `today` (nothing was
- *   called). Once a call has been made, any breach (wall, per-call timeout, model failure, failed locality re-check, a reduce
- *   guard) ends in a deterministic partial reply from the notes already finished plus the coverage line.
+ * - **No remote, no retry (owner decision 2, 2026-11-09).** No ready local provider at the start (selection bounded by the
+ *   wall) is `today` (nothing was called). Once a call has been made, any breach (wall, per-call timeout, model failure,
+ *   failed locality re-check, a rejected note, a map or reduce guard, a throwing dependency) ends in a deterministic partial
+ *   reply from the notes already finished plus the coverage line. A throw before any call is `today: 'not-ready'`.
  * - **Notes.** Each map answer passes the note guard (`parseDocumentMapNote`); a note is `UNTRUSTED` + `MODEL_DERIVED` with the
- *   item's label joined with `LOCAL_MODEL_ONLY` (never widened). A failed note is unread and the coverage line says so.
+ *   item's label joined with `LOCAL_MODEL_ONLY` (never widened). A rejected note stops the run (partial reply).
+ * - **Claim checks (ADR-0104 D1, ADR-0118 D8).** The model-derived text of a summary or a partial reply passes today's
+ *   `checkDocumentSummaryClaims`; a claim (or an over-long text) replaces it by the fixed notice, with no regeneration.
  * - **N1 / content-free.** Nothing is stored; passages, windows and notes live in this call only. The log line and the audit
  *   carry counts and timings only (`passageAuditView` totals, W, read, calls, milliseconds), never text, a frame or a note.
  */
@@ -107,7 +112,18 @@ export interface S3ItemSummaryDeps {
   readonly logger?: { info(message: string, fields?: LogFields): void };
 }
 
-export type S3PartialReason = 'wall' | 'call-timeout' | 'model' | 'locality' | 'call-bound' | 'no-notes' | 'reduce-guard' | 'reduce-empty';
+export type S3PartialReason =
+  | 'wall'
+  | 'call-timeout'
+  | 'model'
+  | 'locality'
+  | 'call-bound'
+  | 'no-notes'
+  | 'map-guard'
+  | 'note-guard'
+  | 'reduce-guard'
+  | 'reduce-empty'
+  | 'internal';
 
 /** Counts and timings only. */
 export interface S3Audit {
@@ -139,6 +155,8 @@ interface S3Delivered {
   /** The fixed history note (the history never keeps summary or chunk text). */
   readonly historyNote: string;
   readonly audit: S3Audit;
+  /** The model-derived text was replaced by today's fixed notice (`checkDocumentSummaryClaims`; no regeneration). */
+  readonly withheld?: 'claim' | 'too-long';
 }
 
 export type S3ItemSummaryOutcome =
@@ -217,12 +235,91 @@ function notesBody(notes: readonly Note[], windows: number): string {
   return parts.join(separator);
 }
 
+
 type CallResult = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: 'wall' | 'call-timeout' | 'model' | 'locality' | 'call-bound' };
 
-/** Run ONE S3 request. Total: never throws. */
+/** What the outer guard needs when a dependency throws: whether a call was made, how to abort it, how to end. */
+interface RunState {
+  calls: number;
+  total: number;
+  abort?: () => void;
+  partial?: (reason: S3PartialReason) => S3ItemSummaryOutcome;
+}
+
+/**
+ * Run ONE S3 request. Total: never throws. A throwing dependency (the clock, the timer, the gate, the selector) before any
+ * model call is `today: 'not-ready'` (nothing was sent); after one, a partial reply (never today's remote path).
+ */
 export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps): Promise<S3ItemSummaryOutcome> {
   if (input.mode !== 'shadow' && input.mode !== 'on') return { kind: 'today', reason: 'off' };
-  const wallStart = deps.now();
+  const state: RunState = { calls: 0, total: 0 };
+  try {
+    return await run(input, deps, state);
+  } catch {
+    try {
+      state.abort?.();
+    } catch {
+      // Aborting is best effort.
+    }
+    if (state.calls === 0) return { kind: 'today', reason: 'not-ready' };
+    if (state.partial !== undefined) {
+      try {
+        return state.partial('internal');
+      } catch {
+        // Fall through to the last-resort partial reply.
+      }
+    }
+    return lastResortPartial(input, state.total);
+  }
+}
+
+/** The partial reply when even the ordinary one could not be built: the fixed notice and a 0-read coverage line. */
+function lastResortPartial(input: S3ItemSummaryInput, total: number): S3ItemSummaryOutcome {
+  const coverage: Coverage = { total, read: 0, complete: false, codePointsTotal: 0, codePointsRead: 0 };
+  const coverageLine = renderCoverageLine(coverage, input.language);
+  const body = NOTHING_READ[input.language];
+  return {
+    kind: 'partial',
+    reason: 'internal',
+    text: `${body}\n\n${coverageLine}`,
+    body,
+    coverageLine,
+    coverage,
+    historyNote: renderUntrustedDocumentHistoryNote(input.source, input.language),
+    audit: {
+      promptVersion: DOCUMENT_MAP_PROMPT_VERSION,
+      passages: total,
+      codePoints: 0,
+      estTokens: 0,
+      windows: 0,
+      stratified: false,
+      selected: 0,
+      read: 0,
+      mapCalls: 0,
+      reduceCalls: 0,
+      notesRejected: 0,
+      linesDropped: 0,
+      callMs: [],
+      wallMs: 0,
+      locality: 'LOCAL',
+    },
+  };
+}
+
+function hasCredential(text: string): boolean {
+  return containsCredentialMaterial(text) || containsCredentialFileContent(text) || isUntrustedTextCredentialShaped(text);
+}
+
+async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: RunState): Promise<S3ItemSummaryOutcome> {
+  // The 90 s wall starts here, before the guard, the chunker and the provider selection.
+  let lastNow = 0;
+  const clock = (): number => {
+    const value = deps.now();
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError('clock');
+    lastNow = value;
+    return value;
+  };
+  const wallStart = clock();
   const log = (fields: LogFields): void => {
     try {
       deps.logger?.info('item_summary.s3', { mode: input.mode, source: input.source, ...fields });
@@ -231,7 +328,8 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
     }
   };
 
-  // N4: today's full-item guard, before any split; then both detectors on the exact text the chunker reads.
+  // N4: today's full-item guard, before any split; then both detectors on the exact text the chunker reads and on Quoky's
+  // own section frames (a frame is read into a window, so a credential in a frame refuses the whole item too).
   const built = buildUntrustedDocumentReadout({
     source: input.source,
     title: input.title,
@@ -241,17 +339,18 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
     ...(input.sourceTruncated === true ? { sourceTruncated: true } : {}),
   });
   if (!built.ok) return { kind: 'refused', reason: built.refusal === 'EMPTY' ? 'empty' : 'credential' };
-  if (containsCredentialMaterial(input.prepared) || containsCredentialFileContent(input.prepared) || isUntrustedTextCredentialShaped(input.prepared)) {
-    return { kind: 'refused', reason: 'credential' };
-  }
+  const frames = (input.sections ?? []).map((section) => (typeof section?.frame === 'string' ? section.frame : '')).join('\n');
+  if (hasCredential(input.prepared) || (frames.length > 0 && hasCredential(frames))) return { kind: 'refused', reason: 'credential' };
   const meta = { source: input.source, title: built.readout.title, author: built.readout.author, date: built.readout.date };
 
   let passages: Passage[];
   try {
     passages = chunk(input.prepared, input.sections);
   } catch {
+    // Pre-start fallback (decision 2): sections that do not tile the text; no local call has started.
     return { kind: 'today', reason: 'not-chunkable' };
   }
+  state.total = passages.length;
   const totals = passageTotals(passages);
   if (singleWindow(input.prepared, passages) !== undefined) {
     log({ outcome: 'S1', passages: passages.length, codePoints: totals.codePoints, estTokens: totals.estTokens, windows: 1 });
@@ -278,46 +377,59 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
 
   const capability = Capability.SUMMARIZATION;
   const context = withRequiredLocal(deps.selectionContext ?? {});
-  const selection = await selectRequiredLocalProvider(deps.selector, capability, context);
+  const wait = deps.wait ?? defaultWait;
+
+  // Selection is bounded by what is left of the wall: a stalled readiness probe is `not-ready` (no call was made).
+  const selectionTimer = new AbortController();
+  state.abort = () => selectionTimer.abort();
+  const selectionBudget = S3_LIMITS.wallMs - (clock() - wallStart);
+  const selection =
+    selectionBudget <= 0
+      ? ({ kind: 'not-ready' } as const)
+      : await Promise.race([
+          selectRequiredLocalProvider(deps.selector, capability, context),
+          wait(selectionBudget, selectionTimer.signal).then(() => ({ kind: 'not-ready' }) as const),
+        ]);
+  selectionTimer.abort();
+  state.abort = undefined;
   if (selection.kind !== 'selected') {
     log({ outcome: 'not-ready', ...counts });
     return { kind: 'today', reason: 'not-ready' };
   }
   const provider: AiProvider = selection.provider;
-  const wait = deps.wait ?? defaultWait;
   const callMs: number[] = [];
-  let calls = 0;
 
   const callLocal = async (request: AiRequest): Promise<CallResult> => {
-    const startedAt = deps.now();
+    const startedAt = clock();
     const remainingWall = S3_LIMITS.wallMs - (startedAt - wallStart);
     if (remainingWall <= 0) return { ok: false, reason: 'wall' };
-    if (calls >= S3_LIMITS.maxLocalCalls) return { ok: false, reason: 'call-bound' };
+    if (state.calls >= S3_LIMITS.maxLocalCalls) return { ok: false, reason: 'call-bound' };
     const budget = Math.min(S3_LIMITS.callTimeoutMs, remainingWall);
     const overrun: 'wall' | 'call-timeout' = budget < S3_LIMITS.callTimeoutMs ? 'wall' : 'call-timeout';
     const call = new AbortController();
     const timer = new AbortController();
+    state.abort = () => {
+      call.abort();
+      timer.abort();
+    };
     type Settled = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'locality' | 'aborted' | 'error' | 'timeout' };
     const work = async (): Promise<Settled> => {
       if (call.signal.aborted) return { kind: 'aborted' };
       // The dispatch-time check: synchronous, immediately before `execute`, nothing awaited in between.
       if (!isRequiredLocalDispatchAllowed(deps.selector, capability, context, provider)) return { kind: 'locality' };
-      calls += 1;
+      state.calls += 1;
       const result = await provider.execute({ ...request, timeoutMs: budget, signal: call.signal });
       return { kind: 'text', text: typeof result?.text === 'string' ? result.text : '' };
     };
-    let running: Promise<Settled>;
-    try {
-      running = (deps.exclusive !== undefined ? deps.exclusive(work) : work()).then(
-        (value) => value,
-        (): Settled => ({ kind: 'error' }),
-      );
-    } catch {
-      running = Promise.resolve({ kind: 'error' });
-    }
+    // A gate that throws synchronously propagates to the outer guard (before any call: today; after one: partial).
+    const running: Promise<Settled> = (deps.exclusive !== undefined ? deps.exclusive(work) : work()).then(
+      (value) => value,
+      (): Settled => ({ kind: 'error' }),
+    );
     const settled = await Promise.race([running, wait(budget, timer.signal).then((): Settled => ({ kind: 'timeout' }))]);
     timer.abort();
-    const elapsed = Math.max(0, deps.now() - startedAt);
+    const elapsed = Math.max(0, clock() - startedAt);
+    state.abort = undefined;
     if (settled.kind === 'timeout' || settled.kind === 'aborted') {
       call.abort();
       callMs.push(elapsed);
@@ -342,57 +454,53 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
   let linesDropped = 0;
   let mapCalls = 0;
   let reduceCalls = 0;
-  let breach: S3PartialReason | undefined;
-
-  for (let index = 0; index < W; index += 1) {
-    const window = windows[index] as Window;
-    const readout = windowReadout(window, meta, true);
-    if (readout === undefined) {
-      notesRejected += 1;
-      continue;
-    }
-    const request = buildDocumentMapRequest(readout, { index: index + 1, count: W }, input.requestText, S3_LIMITS.callTimeoutMs);
-    const before = calls;
-    const result = await callLocal(request);
-    mapCalls += calls - before;
-    if (!result.ok) {
-      breach = result.reason;
-      break;
-    }
-    const parsed = parseDocumentMapNote(result.text, input.source);
-    if (!parsed.ok) {
-      notesRejected += 1;
-      continue;
-    }
-    linesDropped += parsed.dropped;
-    notes.push({ window: index, ordinals: window.ordinals, lines: parsed.lines, label: noteLabel });
-  }
-
-  const coverage = computeCoverage(passages, notes.flatMap((note) => note.ordinals));
-  const coverageLine = renderCoverageLine(coverage, input.language);
   const historyNote = renderUntrustedDocumentHistoryNote(input.source, input.language);
-  const audit = (): S3Audit => ({
-    promptVersion: DOCUMENT_MAP_PROMPT_VERSION,
-    passages: passages.length,
-    codePoints: totals.codePoints,
-    estTokens: totals.estTokens,
-    windows: W,
-    stratified,
-    selected: selected.length,
-    read: coverage.read,
-    mapCalls,
-    reduceCalls,
-    notesRejected,
-    linesDropped,
-    callMs: [...callMs],
-    wallMs: Math.max(0, deps.now() - wallStart),
-    locality: 'LOCAL',
-  });
-  const finish = (outcome: Extract<S3ItemSummaryOutcome, { readonly kind: 'summary' | 'partial' }>): S3ItemSummaryOutcome => {
-    const a = outcome.audit;
+
+  const audit = (coverage: Coverage): S3Audit => {
+    let now = lastNow;
+    try {
+      now = clock();
+    } catch {
+      // The audit keeps the last reading of a clock that failed.
+    }
+    return {
+      promptVersion: DOCUMENT_MAP_PROMPT_VERSION,
+      passages: passages.length,
+      codePoints: totals.codePoints,
+      estTokens: totals.estTokens,
+      windows: W,
+      stratified,
+      selected: selected.length,
+      read: coverage.read,
+      mapCalls,
+      reduceCalls,
+      notesRejected,
+      linesDropped,
+      callMs: [...callMs],
+      wallMs: Math.max(0, now - wallStart),
+      locality: 'LOCAL',
+    };
+  };
+  // ADR-0104 D1 / ADR-0118 D8: today's claim checks on the model-derived text; a claim is the fixed notice (no regeneration).
+  const claimChecked = (modelText: string): { readonly text: string; readonly withheld?: 'claim' | 'too-long' } => {
+    const verdict = checkDocumentSummaryClaims(modelText, input.requestText, input.source, input.language, generalChatReplyPolicy(input.requestText));
+    if (verdict.kind === 'clean') return { text: modelText };
+    if (verdict.kind === 'claim') return { text: verdict.notice, withheld: 'claim' };
+    return { text: renderDocumentSummaryTooLong(input.language), withheld: 'too-long' };
+  };
+  const finish = (
+    kind: 'summary' | 'partial',
+    reason: S3PartialReason | undefined,
+    body: string,
+    withheld: 'claim' | 'too-long' | undefined,
+  ): S3ItemSummaryOutcome => {
+    const coverage = computeCoverage(passages, notes.flatMap((note) => note.ordinals));
+    const coverageLine = renderCoverageLine(coverage, input.language);
+    const a = audit(coverage);
     log({
-      outcome: outcome.kind,
-      ...(outcome.kind === 'partial' ? { reason: outcome.reason } : {}),
+      outcome: kind,
+      ...(reason !== undefined ? { reason } : {}),
+      ...(withheld !== undefined ? { withheld } : {}),
       ...counts,
       read: a.read,
       mapCalls: a.mapCalls,
@@ -403,23 +511,50 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
       callMsMax: a.callMs.reduce((max, ms) => Math.max(max, ms), 0),
       wallMs: a.wallMs,
     });
-    return outcome;
+    const delivered = { text: `${body}\n\n${coverageLine}`, body, coverageLine, coverage, historyNote, audit: a, ...(withheld !== undefined ? { withheld } : {}) };
+    return kind === 'summary' ? { kind: 'summary', ...delivered } : { kind: 'partial', reason: reason ?? 'internal', ...delivered };
   };
   const partial = (reason: S3PartialReason): S3ItemSummaryOutcome => {
-    const body =
-      notes.length === 0 ? NOTHING_READ[input.language] : [PARTIAL_LEAD[input.language], ...notes.map((note) => note.lines.join('\n'))].join('\n\n');
-    return finish({ kind: 'partial', reason, text: `${body}\n\n${coverageLine}`, body, coverageLine, coverage, historyNote, audit: audit() });
+    if (notes.length === 0) return finish('partial', reason, NOTHING_READ[input.language], undefined);
+    const checked = claimChecked(notes.map((note) => note.lines.join('\n')).join('\n\n'));
+    const body = checked.withheld !== undefined ? checked.text : `${PARTIAL_LEAD[input.language]}\n\n${checked.text}`;
+    return finish('partial', reason, body, checked.withheld);
   };
+  state.partial = partial;
 
-  if (breach !== undefined) return partial(breach);
+  for (let index = 0; index < W; index += 1) {
+    const window = windows[index] as Window;
+    const readout = windowReadout(window, meta, true);
+    if (readout === undefined) {
+      // The window is not sendable (the readout guard): no call, unread in the coverage line (readout.ts contract).
+      notesRejected += 1;
+      continue;
+    }
+    const request = buildDocumentMapRequest(readout, { index: index + 1, count: W }, input.requestText, S3_LIMITS.callTimeoutMs);
+    // N4: both detectors again on the exact rendered map prompt.
+    if (containsCredentialMaterial(request.prompt) || containsCredentialFileContent(request.prompt)) return partial('map-guard');
+    const before = state.calls;
+    const result = await callLocal(request);
+    mapCalls += state.calls - before;
+    if (!result.ok) return partial(result.reason);
+    const parsed = parseDocumentMapNote(result.text, input.source);
+    if (!parsed.ok) {
+      // A rejected note stops the run: the partial reply from the notes already finished (Codex P2e).
+      notesRejected += 1;
+      return partial('note-guard');
+    }
+    linesDropped += parsed.dropped;
+    notes.push({ window: index, ordinals: window.ordinals, lines: parsed.lines, label: noteLabel });
+  }
   if (notes.length === 0) return partial('no-notes');
 
   // The reduce: the existing document-summary prompt over ONE readout whose body is the notes (UNTRUSTED + MODEL_DERIVED).
+  // `truncated` is false (CA P2a): coverage is stated only by Core's coverage line (N5), never by the model.
   const notesReadout: UntrustedDocumentReadout = {
     kind: UNTRUSTED_DOCUMENT_READOUT_KIND,
     ...meta,
     body: notesBody(notes, W),
-    truncated: !coverage.complete || input.sourceTruncated === true,
+    truncated: false,
   };
   if (!isSummarizableDocumentReadout(notesReadout)) return partial('reduce-guard');
   const reduceRequest = new PromptRenderer().render(composeDocumentSummaryPrompt(input.requestText, notesReadout), {
@@ -427,12 +562,13 @@ export async function runS3ItemSummary(input: S3ItemSummaryInput, deps: S3ItemSu
     timeoutMs: S3_LIMITS.callTimeoutMs,
   });
   if (containsCredentialMaterial(reduceRequest.prompt) || containsCredentialFileContent(reduceRequest.prompt)) return partial('reduce-guard');
-  const before = calls;
+  const before = state.calls;
   const reduced = await callLocal(reduceRequest);
-  reduceCalls += calls - before;
+  reduceCalls += state.calls - before;
   if (!reduced.ok) return partial(reduced.reason);
   const summary = reduced.text.trim();
   if (summary.length === 0) return partial('reduce-empty');
   if (containsCredentialMaterial(summary) || containsCredentialFileContent(summary)) return partial('reduce-guard');
-  return finish({ kind: 'summary', text: `${summary}\n\n${coverageLine}`, body: summary, coverageLine, coverage, historyNote, audit: audit() });
+  const checked = claimChecked(summary);
+  return finish('summary', undefined, checked.text, checked.withheld);
 }

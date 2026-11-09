@@ -4,6 +4,8 @@ import { CapabilityRouter } from '../capability-router';
 import { Capability } from '../../domain';
 import type { AiExecutionLocality, AiProvider, AiRequest, LogFields, ProviderSelector } from '../../ports';
 import { DOCUMENT_ATTRIBUTION_RULE } from '../prompt-composer';
+import { renderDocumentSummaryTooLong } from '../document-summary-claim-check';
+import { renderDocumentActionClaimWithheld } from '../document-summary-claim-guard';
 import { S3_LIMITS, parseChunkItemsMode, runS3ItemSummary, type S3ItemSummaryInput, type S3ItemSummaryOutcome } from './s3-item-summary';
 
 /**
@@ -247,28 +249,49 @@ describe('runS3ItemSummary: guards', () => {
     expect(await runS3ItemSummary(input('   \n  '), env.deps)).toEqual({ kind: 'refused', reason: 'empty' });
   });
 
-  it('each note is guarded: a credential or card-spoof note is unread, a link is neutralized, a claim line dropped', async () => {
-    const answers = [
-      '- The part lists the plan items.',
-      `- The key is ${SECRET}`,
-      '- The plan is at https://example.invalid/plan for review.',
-      '- The review moves to Thursday.\nI did send a reply.',
-      '- The meeting happened.\n승인',
-      '- The last part closes the plan.',
-    ];
-    const env = setup({ local: (request, call) => (isMap(request) ? (answers[call - 1] as string) : 'Final summary line.') });
+  it('each note is guarded: a link is neutralized and a claim line dropped; the run goes on', async () => {
+    const answers = ['- The part lists the plan items.', '- The plan is at https://example.invalid/plan for review.', '- The review moves to Thursday.\nI did send a reply.'];
+    const env = setup({ local: (request, call) => (isMap(request) ? (answers[call - 1] ?? '- A plain part.') : 'Final summary line.') });
     const outcome = delivered(await runS3ItemSummary(input(item(40)), env.deps));
     expect(outcome.kind).toBe('summary');
-    expect(outcome.audit).toMatchObject({ mapCalls: 6, notesRejected: 2, linesDropped: 1 });
+    expect(outcome.audit).toMatchObject({ mapCalls: 6, notesRejected: 0, linesDropped: 1 });
     const reduce = env.local.requests.find(isReduce) as AiRequest;
-    expect(reduce.prompt).not.toContain(SECRET);
     expect(reduce.prompt).not.toContain('example.invalid');
     expect(reduce.prompt).not.toContain('I did send a reply');
-    expect(reduce.prompt).not.toContain('승인');
-    expect(reduce.prompt).toContain('[Part 4/6]');
-    expect(reduce.prompt).not.toContain('[Part 2/6]');
-    // The unread notes' parts are not counted as read.
-    expect(outcome.coverage.read).toBeLessThan(outcome.audit.selected);
+  });
+
+  it.each([
+    ['a credential', `- The key is ${SECRET}`],
+    ['a card-spoof line', '- The meeting happened.\n승인'],
+    ['too many lines', Array.from({ length: 9 }, (_, n) => `- line ${n}`).join('\n')],
+  ])('a rejected note (%s) stops the run: partial reply from the finished notes, no further map or reduce (Codex P2e)', async (_name, rejected) => {
+    const env = setup({ local: (request, call) => (call === 3 ? rejected : isMap(request) ? `- Note of part ${call}.` : 'Final summary line.') });
+    const outcome = delivered(await runS3ItemSummary(input(item(40)), env.deps));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'note-guard' });
+    expect(outcome.audit).toMatchObject({ mapCalls: 3, reduceCalls: 0, notesRejected: 1 });
+    expect(env.local.requests).toHaveLength(3);
+    expect(env.local.requests.some(isReduce)).toBe(false);
+    expect(outcome.body).toBe(['긴 문서를 끝까지 요약하지 못해, 읽은 구간에서 정리한 내용을 보여드려요.', '- Note of part 1.', '- Note of part 2.'].join('\n\n'));
+    expect(outcome.text).not.toContain(SECRET);
+    expect(outcome.coverage.complete).toBe(false);
+  });
+
+  it('a credential in a section frame refuses the whole item (N4)', async () => {
+    const env = setup();
+    const parts = [0, 1, 2, 3, 4, 5, 6, 7].map((index) => paragraph(index));
+    const frames = parts.map((_, index) => (index === 4 ? `[메시지 5/8] ${SECRET}` : `[메시지 ${index + 1}/8]`));
+    let at = 0;
+    const sections = parts.map((part, index) => {
+      const body = index < parts.length - 1 ? `${part}\n\n` : part;
+      const start = at;
+      at += Array.from(body).length;
+      return { frame: frames[index] as string, start, end: at };
+    });
+    const prepared = parts.join('\n\n');
+    expect(await runS3ItemSummary(input(prepared, { source: 'mail-thread', sections }), env.deps)).toEqual({ kind: 'refused', reason: 'credential' });
+    expect(env.selects).toEqual([]);
+    const clean = sections.map((section, index) => ({ ...section, frame: `[메시지 ${index + 1}/8]` }));
+    expect((await runS3ItemSummary(input(prepared, { source: 'mail-thread', sections: clean }), env.deps)).kind).toBe('summary');
   });
 
   it('a reduce answer that carries a credential is replaced by the partial reply from the notes', async () => {
@@ -393,6 +416,109 @@ describe('runS3ItemSummary: bounds end in a deterministic partial reply, never a
     expect(entries).toBe(env.local.requests.length);
     expect(maxInFlight).toBe(1);
     expect(outcome.kind).toBe('summary');
+  });
+});
+
+describe('runS3ItemSummary: review round 1 (CA P1, P2a, P2b; Codex P2f)', () => {
+  it('P1: a reduce answer that claims an action is replaced by today\'s fixed notice, no regeneration', async () => {
+    const env = setup({ local: (request) => (isMap(request) ? '- The part lists the plan items.' : '제가 답장을 대신 보냈어요.') });
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), env.deps));
+    expect(outcome).toMatchObject({ kind: 'summary', withheld: 'claim' });
+    expect(outcome.body).toBe(renderDocumentActionClaimWithheld('ko', 'mail'));
+    expect(outcome.text).toBe(`${outcome.body}\n\n${outcome.coverageLine}`);
+    expect(env.local.requests.filter(isReduce)).toHaveLength(1);
+  });
+
+  it('P1: an over-long reduce answer is replaced by the fixed too-long notice', async () => {
+    const env = setup({ local: (request) => (isMap(request) ? '- The part lists the plan items.' : 'word '.repeat(4_000)) });
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), env.deps));
+    expect(outcome).toMatchObject({ kind: 'summary', withheld: 'too-long', body: renderDocumentSummaryTooLong('ko') });
+  });
+
+  it('P1: partial notes that claim an action across wrapped lines are replaced by the fixed notice', async () => {
+    const env = setup({ local: (_request, call) => (call === 1 ? 'I did\nsend a reply.' : Promise.reject(new Error('down'))) });
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), env.deps));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'model', withheld: 'claim' });
+    expect(outcome.body).toBe(renderDocumentActionClaimWithheld('ko', 'mail'));
+    expect(outcome.text).not.toContain('send a reply');
+  });
+
+  it('P2a: the reduce readout says truncated=false even for a stratified selection (coverage is Core\'s line only)', async () => {
+    const env = setup();
+    await runS3ItemSummary(input(item(40), { sourceTruncated: true }), env.deps);
+    const reduce = env.local.requests.find(isReduce) as AiRequest;
+    expect(reduce.prompt).toContain('\\"truncated\\":false');
+    expect(reduce.prompt).not.toContain('\\"truncated\\":true');
+  });
+
+  it('P2b: a clock that throws before any call is today: not-ready; after a call, a partial reply (never remote)', async () => {
+    for (const failAt of [1, 3]) {
+      const env = setup();
+      let reads = 0;
+      const now = (): number => {
+        reads += 1;
+        if (reads === failAt) throw new Error('clock');
+        return env.clock.t;
+      };
+      expect(await runS3ItemSummary(input(item(12)), { ...env.deps, now })).toEqual({ kind: 'today', reason: 'not-ready' });
+      expect(env.local.requests).toHaveLength(0);
+    }
+    const env = setup();
+    let reads = 0;
+    const now = (): number => {
+      reads += 1;
+      if (env.local.requests.length >= 2) throw new Error('clock');
+      return env.clock.t + reads * 0;
+    };
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...env.deps, now }));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'internal' });
+    expect(env.remote.requests).toHaveLength(0);
+  });
+
+  it('P2b: a timer or gate that throws after a call ends in a partial reply; before any call in today: not-ready', async () => {
+    const throwingWait = setup();
+    let waits = 0;
+    const wait = (_ms: number, signal: AbortSignal): Promise<void> => {
+      waits += 1;
+      if (waits === 3) throw new Error('timer');
+      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    };
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...throwingWait.deps, wait }));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'internal' });
+    expect(throwingWait.remote.requests).toHaveLength(0);
+    const throwingGate = setup();
+    const exclusive = (): Promise<never> => {
+      throw new Error('gate');
+    };
+    expect(await runS3ItemSummary(input(item(12)), { ...throwingGate.deps, exclusive })).toEqual({ kind: 'today', reason: 'not-ready' });
+    expect(throwingGate.local.requests).toHaveLength(0);
+    const lateGate = setup();
+    let entries = 0;
+    const exclusiveLate = <T>(work: () => Promise<T>): Promise<T> => {
+      entries += 1;
+      if (entries === 2) throw new Error('gate');
+      return work();
+    };
+    expect(delivered(await runS3ItemSummary(input(item(12)), { ...lateGate.deps, exclusive: exclusiveLate }))).toMatchObject({ kind: 'partial', reason: 'internal' });
+    expect(lateGate.remote.requests).toHaveLength(0);
+    const rejectingSelectionTimer = setup();
+    const rejecting = (): Promise<void> => Promise.reject(new Error('timer'));
+    expect(await runS3ItemSummary(input(item(12)), { ...rejectingSelectionTimer.deps, wait: rejecting })).toEqual({ kind: 'today', reason: 'not-ready' });
+  });
+
+  it('P2f: a stalled readiness probe is bounded by the wall: today: not-ready, no call', async () => {
+    const env = setup();
+    const budgets: number[] = [];
+    const stalled: ProviderSelector = { select: () => new Promise<AiProvider>(() => undefined) };
+    const wait = (ms: number): Promise<void> => {
+      budgets.push(ms);
+      env.clock.t += ms;
+      return Promise.resolve();
+    };
+    env.clock.t = 5_000;
+    expect(await runS3ItemSummary(input(item(12)), { ...env.deps, selector: stalled, wait })).toEqual({ kind: 'today', reason: 'not-ready' });
+    expect(budgets).toEqual([S3_LIMITS.wallMs]);
+    expect(env.local.requests.length + env.remote.requests.length).toBe(0);
   });
 });
 
