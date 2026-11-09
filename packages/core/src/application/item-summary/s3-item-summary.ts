@@ -431,24 +431,32 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
       call.abort();
       timer.abort();
     };
-    type Settled = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'locality' | 'aborted' | 'error' | 'timeout' };
+    type Settled = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'locality' | 'aborted' | 'error' | 'timeout' | 'gate' };
+    let dispatched = false;
     const work = async (): Promise<Settled> => {
       if (call.signal.aborted) return { kind: 'aborted' };
       // The dispatch-time check: synchronous, immediately before `execute`, nothing awaited in between.
       if (!isRequiredLocalDispatchAllowed(deps.selector, capability, context, provider)) return { kind: 'locality' };
+      dispatched = true;
       state.calls += 1;
       const result = await provider.execute({ ...request, timeoutMs: budget, signal: call.signal });
       return { kind: 'text', text: typeof result?.text === 'string' ? result.text : '' };
     };
-    // A gate that throws synchronously propagates to the outer guard (before any call: today; after one: partial).
+    // A gate that throws (synchronously, or by rejecting before `execute` was reached) is not a model failure: it goes to
+    // the outer guard, which decides by the call count (no call made: today: not-ready; after one: a partial reply).
+    // Only a rejection after dispatch is the model's (`error`).
     const running: Promise<Settled> = (deps.exclusive !== undefined ? deps.exclusive(work) : work()).then(
       (value) => value,
-      (): Settled => ({ kind: 'error' }),
+      (): Settled => (dispatched ? { kind: 'error' } : { kind: 'gate' }),
     );
     const settled = await Promise.race([running, wait(budget, timer.signal).then((): Settled => ({ kind: 'timeout' }))]);
     timer.abort();
     const elapsed = Math.max(0, clock() - startedAt);
     state.abort = undefined;
+    if (settled.kind === 'gate') {
+      call.abort();
+      throw new Error('gate');
+    }
     if (settled.kind === 'timeout' || settled.kind === 'aborted') {
       call.abort();
       callMs.push(elapsed);

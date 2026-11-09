@@ -522,7 +522,7 @@ describe('runS3ItemSummary: review round 1 (CA P1, P2a, P2b; Codex P2f)', () => 
   });
 });
 
-describe('runS3ItemSummary: review round 2 (CA P2 source cut, CA P3 locality)', () => {
+describe('runS3ItemSummary: review round 2 (CA P2 source cut, Codex P2 / CA P3 gate, CA P3 locality)', () => {
   it('a source cut upstream never reads as complete: Core\'s coverage line states the cut (summary and partial)', async () => {
     const whole = setup();
     const full = delivered(await runS3ItemSummary(input(item(12)), whole.deps));
@@ -540,6 +540,29 @@ describe('runS3ItemSummary: review round 2 (CA P2 source cut, CA P3 locality)', 
     const partial = delivered(await runS3ItemSummary(input(item(12), { sourceTruncated: true }), failing.deps));
     expect(partial).toMatchObject({ kind: 'partial', reason: 'model', coverage: { complete: false } });
     expect(partial.coverageLine).toContain('원본은 받아올 때 이미 일부만 가져온 것');
+  });
+
+  it('an exclusive gate that rejects before any provider call is today: not-ready with zero calls (not partial/model)', async () => {
+    const env = setup();
+    let entries = 0;
+    const rejecting = <T>(_work: () => Promise<T>): Promise<T> => {
+      entries += 1;
+      return Promise.reject(new Error('gate busy'));
+    };
+    expect(await runS3ItemSummary(input(item(12)), { ...env.deps, exclusive: rejecting })).toEqual({ kind: 'today', reason: 'not-ready' });
+    expect(entries).toBe(1);
+    expect(env.local.requests.length + env.remote.requests.length).toBe(0);
+    // A rejection after a call was made goes to the same outer guard: a partial reply, never remote.
+    const late = setup();
+    let lateEntries = 0;
+    const rejectingLate = <T>(work: () => Promise<T>): Promise<T> => {
+      lateEntries += 1;
+      return lateEntries === 2 ? Promise.reject(new Error('gate busy')) : work();
+    };
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...late.deps, exclusive: rejectingLate }));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'internal' });
+    expect(late.local.requests).toHaveLength(1);
+    expect(late.remote.requests).toHaveLength(0);
   });
 
   it('isStillEligible false from the start: partial reason locality, 0 calls, 0 remote calls', async () => {
