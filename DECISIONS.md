@@ -32540,8 +32540,12 @@ handler: no reply, prompt, provider choice or log line of the running service ch
 2. **No remote fallback once a local S3 run has started.** A failure after the first local call (a model error, a per-call
    timeout, the wall, a locality re-check that fails, a note or reduce guard) ends in a **deterministic partial reply**
    built from the notes already finished, plus the coverage line; the item is **never re-sent to a remote provider** and
-   no call is retried. Only two cases fall back to today's path, byte-identically: `QUOKY_CHUNK_ITEMS` is not `on`, or no
-   ready `LOCAL` `SUMMARIZATION` provider exists **at the start** of the request (before any call).
+   no call is retried. Only cases where **no local call was made** fall back to today's path, byte-identically: the flag
+   is `off` or `shadow` (`today: 'off' | 'shadow'`); no ready `LOCAL` `SUMMARIZATION` provider at the start, including a
+   selection that does not answer within the wall (`today: 'not-ready'`); sections that do not tile the text
+   (`today: 'not-chunkable'`); and an error before any call (a throwing clock, timer, selector or gate, or a gate that
+   rejects before dispatch: `today: 'not-ready'`). A locality re-check that fails before the first call is the one
+   pre-call case that stays a partial reply (fail closed; see P3 below).
 3. **CH1 for an S3-only `on`.** CH1 measures selection by search; S3 selects by position only (I2). The owner asks the
    Chief Architect to rule CH1 **not applicable** to an S3-only `on`. **Status: ruled by the CA in review round 1
    (2026-11-09), under conditions (a)-(d) recorded below.**
@@ -32635,10 +32639,8 @@ section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and
 - **Selection inside the wall (P2f).** The 90 s wall starts at entry; provider selection is raced against the remaining wall
   budget, so a stalled readiness probe ends as `today: 'not-ready'` with no call.
 - **A local alias of a cloud model (P2c).** The name rule cannot see through `ollama cp` or a Modelfile `FROM` a cloud
-  model. Fix: every production `OllamaCliProvider` generation run sets `OLLAMA_NO_CLOUD=1` (the CLI refuses cloud-served
-  models; local models are unaffected). The contained runner admits `OLLAMA_NO_CLOUD` from a caller with the value `1`
-  only (it only restricts). The embedding provider and the readiness probe are unchanged. A digest pin checked in
-  `isAvailable` (decision 1's pinned `qwen3:8b`) is specified for slice 2, with the provider registration.
+  model. Round 1 set `OLLAMA_NO_CLOUD=1` on `ollama run`; **superseded in review round 2** (below): that variable is a
+  daemon (`ollama serve`) setting, not the control.
 - **How decision 1 works (P2d, specified for slice 2, no routing change today).** `OllamaCliProvider` advertises
   `GENERAL_CHAT`/`SUMMARIZATION` at priority 100 against Claude's 50, so registering it without a policy would move chat.
   The service already runs a `ProviderSelectionPolicy` (`ProviderSelectionService.preferenceFor` receives the context). Slice 2
@@ -32646,8 +32648,12 @@ section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and
   `requiredLocality` that key is never in `eligible` (chat and short summaries stay on Claude; the live configuration sets
   `QUOKY_CHAT_PROVIDER=claude` explicitly), and (2) for a `SUMMARIZATION` request **with** `requiredLocality: 'LOCAL'`,
   `eligible` is exactly that key (otherwise the intersection with a Claude-only list would be empty and every S3 run would be
-  `not-ready`). The policy's `isEligible` mirrors both rules for the dispatch check. Slice 2 tests: chat and an
-  unconstrained summary never select the Ollama key; a constrained summary selects only it.
+  `not-ready`). The policy's `isEligible` mirrors both rules for the dispatch check. The long-item provider is registered
+  with the `SUMMARIZATION` capability **only** (not chat, document analysis, lookup or code), with `localWeights` set
+  (review round 2) and the pinned digest, and `isEligible` answers `false` for its key whenever `requiredLocality` is
+  absent. Slice 2 tests: chat and an unconstrained summary never select the Ollama key; a constrained summary selects only
+  it; the key never appears in the 모델 변경 (runtime model switch) list; and it is never a local fallback candidate of
+  any other path.
 - **Smaller items (P3).** `not-chunkable` is a pre-start fallback (no local call has started), consistent with decision 2.
   `exclusive` stays optional in Core, but **slice 2 must pass it at the composition root** (the gate shared with embedding,
   T3-5), with a slice-2 test that the composed S3 path has it. The rendered map request is re-guarded (both detectors,
@@ -32658,6 +32664,37 @@ section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and
   first call ends in a partial reply (fail closed), not today's path. **`requiredLocality` and a future
   `allowedExecutionLocalities`:** when both are set the allowed set is their intersection (`requiredLocality: 'LOCAL'` keeps
   only `LOCAL`); either alone keeps its own meaning.
+
+**Review round 2 (Chief Architect and Codex, 2026-11-09): fixes.**
+
+- **The CH7 plan digest stays frozen.** Round 1 edited `packages/ai-cli/src/cli-runner.ts` and
+  `ollama-embedding-provider.ts`; both are in stage R's `IMPLEMENTATION_FILES`, so `stageRDigest` moved and the frozen-record
+  test (`stage-r-v2.test.ts`, "CH7 plan digest is unchanged by the CH8 work") failed. Both files are back to base byte for
+  byte; the pinned digest was **not** re-recorded (C5a has no reason to change the CH7 plan).
+- **The cloud-alias control (Codex P1, CA P2): local-weights readiness.** `OllamaCliProvider` gains an opt-in
+  `localWeights: { pinnedDigest? }`, set only on the long-item provider (slice 2). Its `isAvailable` then requires
+  **positive local evidence** from the daemon's own metadata, read-only and with no input sent: `ollama show <model>`
+  reports no remote field (CLI rows `Remote …`, JSON `remote_*`), every `FROM` of `ollama show --modelfile <model>` is an
+  absolute `sha256-<64 hex>` weights blob, and, when a digest is pinned, the `ollama list` ID equals it (a malformed pin
+  throws at construction). Any probe error, non-zero exit or timeout (`ollama list` included) is not ready; under
+  `requiredLocality` the provider is then never selected, so no input reaches it. Without the option readiness is
+  unchanged. **`OLLAMA_NO_CLOUD` is not the control and is no longer set on `ollama run`**: the installed CLI (0.40.15)
+  documents it only under `ollama serve --help` (a daemon setting, "Disable Ollama cloud features"); `ollama run --help`
+  does not read it, and keeping it would have edited the CH7-hashed runner. Setting it on the owner's daemon is an
+  optional owner operations step (defence in depth), not a code change.
+  **Still to verify live before `on` (owner operations, no pull in a code slice):** on the service's Ollama version,
+  that (1) a cloud-served model, (2) an `ollama cp` copy of it under a name without `cloud`, and (3) a Modelfile alias
+  `FROM` it each print a `Remote …` row in `ollama show` and/or a non-blob `FROM` in `ollama show --modelfile`, so the
+  provider is not ready for each; and (4) the pinned `qwen3:8b` passes. Verified so far, read-only on 0.40.15: installed
+  local models print no remote row and only blob-path `FROM` lines.
+- **An upstream source cut (CA P2).** With `sourceTruncated` (a thread shown in part, a capped body), the coverage is never
+  `complete` and Core's coverage line appends a fixed Core sentence that the source was already cut, in the summary, the
+  partial reply and the last-resort partial. No model text states coverage.
+- **A gate rejection before dispatch (Codex P2, CA P3).** An `exclusive` gate that rejects before `execute` is reached is
+  not a model failure: it goes to the outer call-count guard (`today: 'not-ready'` with zero calls; a partial reply after a
+  call). A rejection after dispatch stays the model's (`partial: 'model'`).
+- **Tests (CA P3).** `isStillEligible` false from the start ends in `partial: 'locality'` with zero local and zero remote
+  calls.
 
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
