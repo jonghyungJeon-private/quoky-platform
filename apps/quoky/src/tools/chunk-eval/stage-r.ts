@@ -67,12 +67,16 @@ import { ARM_SPECS, resolveArms, type ArmPin } from './embed-arms';
 import { LANGUAGES, seeded } from './corpus';
 import { pathMetrics, type PathMetrics } from './memory-eval';
 import type { MemorySet } from './memory-set';
+import { BLEND_CANDIDATES, BLEND_RULES, blendSweepLines, buildBlendSweep, clamp01, contentKeyOf, lexicalScoreOf, recencyOf, type BlendQuery, type BlendSweep } from './blend-sweep';
 
-export const STAGE_R_PLAN_VERSION = 'runtime-recall-plan.v2';
+export const STAGE_R_PLAN_VERSION = 'runtime-recall-plan.v3';
 export const STAGE_R_ARM_IDS = ['L', 'E0', 'E4'] as const;
 export type StageRArmId = (typeof STAGE_R_ARM_IDS)[number];
 export type SemanticArmId = Exclude<StageRArmId, 'L'>;
 export type RunMode = 'lexical' | 'live' | 'backfilled' | 'warm';
+
+/** The semantic run modes, in run order. */
+export const STAGE_R_SEMANTIC_MODES = ['live', 'backfilled', 'warm'] as const;
 
 export const parseStageRArm = (token: string): StageRArmId | undefined => (STAGE_R_ARM_IDS as readonly string[]).includes(token) ? (token as StageRArmId) : undefined;
 export const isSemanticArm = (arm: StageRArmId): arm is SemanticArmId => arm !== 'L';
@@ -144,6 +148,7 @@ export const IMPLEMENTATION_FILES = [
   'packages/vector-local/src/index.ts',
   'packages/storage-sqlite/src/index.ts',
   'apps/quoky/src/tools/chunk-eval/stage-r.ts',
+  'apps/quoky/src/tools/chunk-eval/blend-sweep.ts',
 ] as const;
 
 export type ImplementationHashes = Readonly<Record<string, string>>;
@@ -167,6 +172,7 @@ export const STAGE_R_PARAMETERS = {
   runtime: RUNTIME_CONSTANTS,
   warmCompleteness: 'warm mode requires a stored vector for every vector unit (the memory id for a short memory, one per passage for a long one) in the space collection before any query; otherwise the warm run is INVALID with the missing count',
   modes: { backfilled: 'the real production backfill job (memory-vector-backfill.ts, batch 8 per tick) runs to completion before the queries, then the same queries; requires a stored vector for every vector unit, otherwise INVALID', live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new vectors per turn, passages count one each, 3 s turn budget); an empty store widens nothing', warm: 'every vector unit embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
+  blend: { candidates: BLEND_CANDIDATES, rules: BLEND_RULES, status: 'offline re-ranking of the observed candidate table; semantic arms in backfilled and warm mode only; recency caveat: CH7 updatedAt values are synthetic (spread over 180 days), so the set cannot show recency real-world benefit' },
   ranking: 'the retriever results (top 10); gold rank outside the top 10 counts as a miss, so MRR is MRR@10 here',
   diagnostics: ['gold not in the candidate pool (recent 50 plus the semantic top-K)', 'gold without a semantic score', 'scorer fallbacks by reason', 'retrieval latency p50 / p95'],
   status: 'NON-GATING',
@@ -248,10 +254,15 @@ export interface StageRInputs {
   readonly planned: readonly StageRArmId[];
   readonly pins: readonly StageRPin[];
   readonly dropped: readonly { readonly arm: string; readonly reason: string }[];
+  /** The selected semantic run modes (default: all); part of the digest, so a plan authorizes exactly those modes. */
+  readonly modes?: readonly RunMode[];
 }
 
+/** Sorted, deduplicated modes; undefined means all of them. */
+export const canonicalModes = (modes?: readonly RunMode[]): RunMode[] => STAGE_R_SEMANTIC_MODES.filter((mode) => (modes ?? STAGE_R_SEMANTIC_MODES).includes(mode));
+
 export function stageRDigest(input: StageRInputs, parameters: unknown = STAGE_R_PARAMETERS, implementation: ImplementationHashes = implementationHashes()): string {
-  const body = { version: STAGE_R_PLAN_VERSION, stage: 'R', set: input.set, planned: input.planned, pins: input.pins, dropped: input.dropped.map((d) => d.arm), parameters, implementation };
+  const body = { version: STAGE_R_PLAN_VERSION, stage: 'R', set: input.set, planned: input.planned, pins: input.pins, dropped: input.dropped.map((d) => d.arm), modes: canonicalModes(input.modes), parameters, implementation };
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 
@@ -288,6 +299,7 @@ export interface StageRPlanReport {
   readonly set: StageRInputs['set'];
   readonly planned: readonly StageRArmId[];
   readonly dropped: StageRInputs['dropped'];
+  readonly modes: readonly RunMode[];
   readonly pins: readonly StageRPin[];
   readonly runs: readonly { readonly arm: StageRArmId; readonly mode: RunMode; readonly queries: number; readonly modelCallsUpperBound: number | null }[];
   readonly parameters: typeof STAGE_R_PARAMETERS;
@@ -299,7 +311,7 @@ export function vectorUnitsOf(set: Pick<MemorySet, 'memories'>): Array<{ memoryI
   return set.memories.flatMap((memory) => memoryVectorUnits(memory.id, memory.text, true).map((unit) => ({ memoryId: memory.id, vectorId: unit.vectorId })));
 }
 
-export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm: string }[], set: Pick<MemorySet, 'memories' | 'queries'>): StageRPlanReport['runs'] {
+export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm: string }[], set: Pick<MemorySet, 'memories' | 'queries'>, modes: readonly RunMode[] = STAGE_R_SEMANTIC_MODES): StageRPlanReport['runs'] {
   const gone = new Set(dropped.map((d) => d.arm));
   const out: Array<StageRPlanReport['runs'][number]> = [];
   for (const arm of planned) {
@@ -307,15 +319,16 @@ export function runsOf(planned: readonly StageRArmId[], dropped: readonly { arm:
     if (arm === 'L') out.push({ arm, mode: 'lexical', queries: set.queries.length, modelCallsUpperBound: 0 });
     else {
       const perQuery = 1 + RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn;
-      out.push({ arm, mode: 'live', queries: set.queries.length, modelCallsUpperBound: set.queries.length * perQuery });
+      if (modes.includes('live')) out.push({ arm, mode: 'live', queries: set.queries.length, modelCallsUpperBound: set.queries.length * perQuery });
       const units = vectorUnitsOf(set);
-      out.push({ arm, mode: 'backfilled', queries: set.queries.length, modelCallsUpperBound: set.queries.length + units.length + Math.ceil(units.length / BACKFILL_BATCH) + 20 });
-      out.push({ arm, mode: 'warm', queries: set.queries.length, modelCallsUpperBound: set.queries.length + Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) * perQuery + units.length });
+      if (modes.includes('backfilled')) out.push({ arm, mode: 'backfilled', queries: set.queries.length, modelCallsUpperBound: set.queries.length + units.length + Math.ceil(units.length / BACKFILL_BATCH) + 20 });
+      if (modes.includes('warm')) out.push({ arm, mode: 'warm', queries: set.queries.length, modelCallsUpperBound: set.queries.length + Math.ceil(units.length / RUNTIME_CONSTANTS.maxNewEmbeddingsPerTurn) * perQuery + units.length });
     }
   }
   return out;
 }
 
+/** The modes come only from `input.modes` (part of the digest), so the reported runs, modes and digest always agree. */
 export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memories' | 'queries'>): StageRPlanReport {
   return {
     kind: 'chunk-eval-stage-r-plan',
@@ -324,8 +337,9 @@ export function buildStageRPlan(input: StageRInputs, set: Pick<MemorySet, 'memor
     set: input.set,
     planned: input.planned,
     dropped: input.dropped,
+    modes: canonicalModes(input.modes),
     pins: input.pins,
-    runs: runsOf(input.planned, input.dropped, set),
+    runs: runsOf(input.planned, input.dropped, set, canonicalModes(input.modes)),
     parameters: STAGE_R_PARAMETERS,
     note: 'Zero model calls in plan mode: pins come from the loopback daemon (version, tags) and the runtime prefixes from the real provider class run against a recording runner. A run calls `ollama run` once per query embedding and once per document embedding through the real provider; counts are upper bounds (the lazy scorer embeds at most 4 new vectors per turn).',
   };
@@ -335,6 +349,7 @@ export function planLinesR(plan: StageRPlanReport): string[] {
   const out = [`eval:chunk stage R plan (no model call) - ${plan.version}, memory set ${plan.set.digest.slice(0, 12)} (${plan.set.memories} memories, ${plan.set.queries} queries)`];
   out.push(`planned arms: ${plan.planned.join(', ')}${plan.dropped.length > 0 ? `; dropped: ${plan.dropped.map((d) => `${d.arm} (${d.reason})`).join('; ')}` : ''}`);
   for (const pin of plan.pins) out.push(`${pin.arm} ${pin.model}@${pin.digest12} ollama${pin.ollamaVersion}: runtime prefixes query ${JSON.stringify(pin.runtimeQueryPrefix)} document ${JSON.stringify(pin.runtimeDocumentPrefix)} (the provider's own defaults)`);
+  out.push(`semantic run modes: ${plan.modes.join(', ')} (part of the digest)`);
   out.push(`seed ${STAGE_R_PARAMETERS.seed}: updatedAt spread over ${SPREAD_DAYS} days before ${RETRIEVAL_TIME}; actor ${ACTOR_ID}`);
   for (const run of plan.runs) out.push(`run ${run.arm}/${run.mode}: ${run.queries} queries${run.modelCallsUpperBound === null || run.modelCallsUpperBound === 0 ? ', no model call' : `, up to ${run.modelCallsUpperBound} ollama calls`}`);
   out.push(`plan digest: ${plan.digest}`);
@@ -364,6 +379,8 @@ export interface RuntimeArmRun {
   readonly model: string | null;
   readonly metrics: PathMetrics;
   readonly diagnostics: RuntimeDiagnostics;
+  /** The offline blend comparison (P2-3); null for the lexical arm and live mode. */
+  readonly blendSweep: BlendSweep | null;
   readonly prewarm: { readonly stored: number; readonly of: number; readonly scoringCalls: number; readonly storeCount: number; readonly missing: number } | null;
   /** Set when the run cannot be reported as a valid measurement (warm prewarming incomplete). */
   readonly invalid: { readonly reason: string; readonly missing: number } | null;
@@ -393,6 +410,7 @@ const invalidRun = (arm: StageRArmId, mode: RunMode, prewarm: NonNullable<Runtim
   model: arm === 'L' ? null : stageRModel(arm),
   metrics: pathMetrics({ memories: [], queries: [] } as unknown as MemorySet, []),
   diagnostics: { queries: 0, goldNotInPool: share(0, 0), goldNoSemanticScore: null, goldInPoolNoSemanticScore: null, poolSize: { min: 0, max: 0 }, scorerNullQueries: 0, fallbackReasons: {}, embeddedDocuments: 0, latencyMs: { p50: 0, p95: 0 } },
+  blendSweep: null,
   prewarm,
   invalid: { reason, missing: prewarm.missing },
 });
@@ -408,6 +426,9 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
 
     // observers only: they record what the real classes returned and change nothing
     let poolIds = new Set<string>();
+    let recentIds = new Set<string>();
+    // the exact list the retriever offered the scorer (its eligible set after the top-K merge), observed at the scorer
+    let offered: readonly { id: string }[] | null = null;
     const poolSizes: number[] = [];
     const repository: MemoryRepository = {
       get: (id) => storage.memories.get(id),
@@ -418,6 +439,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       findDurableCandidates: async (query: DurableMemoryQuery) => {
         const records = await storage.memories.findDurableCandidates(query);
         poolIds = new Set(records.map((record) => record.id));
+        recentIds = new Set(poolIds);
         poolSizes.push(records.length);
         return records;
       },
@@ -521,6 +543,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       // observer only: records the scores the real scorer session returned and changes nothing
       semantic = {
         async score(query, candidates) {
+          offered = candidates;
           const result = await inner.score(query, candidates);
           lastScores = result;
           return result;
@@ -531,6 +554,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
           const observedSession: SemanticRecallSession = {
             nearestMemoryIds: (limit) => session.nearestMemoryIds(limit),
             async score(candidates) {
+              offered = candidates;
               const result = await session.score(candidates);
               lastScores = result;
               return result;
@@ -542,6 +566,10 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
     }
 
     const retriever = new DefaultMemoryRetriever(repository, { clock: () => RETRIEVAL_TIME, ...(semantic === undefined ? {} : { semanticScorer: semantic }) });
+    const sweepOn = arm !== 'L' && (mode === 'backfilled' || mode === 'warm');
+    const stamps = seededUpdatedAt(set);
+    const textOf = new Map(set.memories.map((memory) => [memory.id, memory.text]));
+    const tables: BlendQuery[] = [];
     const ranks: (number | null)[] = [];
     const latencies: number[] = [];
     let notInPool = 0;
@@ -551,7 +579,9 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
     observing = true;
     for (const query of set.queries) {
       lastScores = null;
+      offered = null;
       poolIds = new Set();
+      recentIds = new Set();
       const started = clock();
       const results = await retriever.retrieve(
         createMemoryRetrievalRequest({ query: query.text, capability: Capability.GENERAL_CHAT, scope: { actorId: ACTOR_ID }, authorityFitness: RUNTIME_CONSTANTS.authorityFitness, maxResults: RUNTIME_CONSTANTS.maxResults }),
@@ -559,6 +589,21 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
       latencies.push(clock() - started);
       const at = results.findIndex((result) => query.gold.includes(result.memory.id));
       ranks.push(at < 0 ? null : at + 1);
+      if (sweepOn) {
+        // the candidate table as the retriever saw it: without a semantic result only the recent pool is ranked (memory-retriever.ts)
+        const scores = lastScores as ReadonlyMap<string, number> | null;
+        // with a scorer result the table is exactly what the retriever offered it (records fetched by id but cut by the top-K merge never were);
+        // without one the retriever ranks the eligible recent pool alone (every CH7 memory of the actor is eligible)
+        const offeredIds = offered as readonly { id: string }[] | null;
+        const tableIds = scores !== null && offeredIds !== null ? offeredIds.map((candidate) => candidate.id) : [...recentIds];
+        const rows = tableIds.map((id) => {
+          const content = textOf.get(id) as string;
+          const updatedAt = stamps.get(id) as string;
+          const raw = scores?.get(id);
+          return { id, contentKey: contentKeyOf(content), updatedAt, lexical: lexicalScoreOf(query.text, content), recency: recencyOf(updatedAt, RETRIEVAL_TIME, RUNTIME_CONSTANTS.recencyHalfLifeMs), semantic: raw === undefined || !Number.isFinite(raw) ? undefined : clamp01(raw) };
+        });
+        tables.push({ language: query.language, gold: query.gold, actual: results.map((result) => result.memory.id), rows });
+      }
       const goldInPool = query.gold.some((id) => poolIds.has(id));
       if (!goldInPool) notInPool += 1;
       if (arm !== 'L') {
@@ -587,6 +632,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
         embeddedDocuments,
         latencyMs: (({ p50, p95 }) => ({ p50: Math.round(p50 * 10) / 10, p95: Math.round(p95 * 10) / 10 }))(percentiles(latencies)),
       },
+      blendSweep: sweepOn ? buildBlendSweep(tables, LANGUAGES) : null,
       prewarm,
       invalid: null,
     };
@@ -639,6 +685,12 @@ export function summaryLinesStageR(report: StageRReport): string[] {
     const d = run.diagnostics;
     out.push(`  gold not in pool ${pct(d.goldNotInPool)}; gold unscored ${pct(d.goldNoSemanticScore)} (in pool but unscored ${pct(d.goldInPoolNoSemanticScore)}); scorer null ${d.scorerNullQueries}; embedded ${d.embeddedDocuments}; pool ${d.poolSize.min}-${d.poolSize.max}; latency p50 ${d.latencyMs.p50} ms / p95 ${d.latencyMs.p95} ms${run.prewarm === null ? '' : `; prewarm ${run.prewarm.stored}/${run.prewarm.of} in ${run.prewarm.scoringCalls} calls`}${Object.keys(d.fallbackReasons).length === 0 ? '' : `; fallbacks ${JSON.stringify(d.fallbackReasons)}`}`);
   }
+  for (const run of report.runs) {
+    if (run.blendSweep === null) continue;
+    out.push(`${run.arm}/${run.mode} blend comparison (ADR-0124 P2-3, offline, NON-GATING):`);
+    out.push(...blendSweepLines(run.blendSweep, LANGUAGES));
+  }
+  out.push('blend caveat: CH7 updatedAt values are synthetic (spread over 180 days); the set cannot show the real-world benefit of recency and structurally favors a low recency weight. Any recency change is an owner decision.');
   out.push(`reference: ${report.harnessReference}`);
   return out;
 }

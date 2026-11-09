@@ -235,6 +235,28 @@ describe('stage R: CLI gating and reporting', () => {
     expect(run.out.join('\n')).toContain('E4/warm:');
   }, 60_000);
 
+  it('the selected --modes are part of the plan digest: a plan for backfilled does not authorize a run with other modes', async () => {
+    const all = harness();
+    await runCli([...base, '--mode', 'plan'], all.deps);
+    const only = harness();
+    await runCli([...base, '--modes', 'backfilled', '--mode', 'plan'], only.deps);
+    expect(digestOf(only.out)).not.toBe(digestOf(all.out));
+    expect(only.out.join('\n')).toContain('semantic run modes: backfilled');
+    expect(only.out.join('\n')).not.toContain('E0/live');
+    // order and repeats do not matter, the set does
+    const spelled = harness();
+    await runCli([...base, '--modes', 'warm,backfilled', '--mode', 'plan'], spelled.deps);
+    const reordered = harness();
+    await runCli([...base, '--modes', 'backfilled,warm', '--mode', 'plan'], reordered.deps);
+    expect(digestOf(spelled.out)).toBe(digestOf(reordered.out));
+    const mismatch = harness();
+    expect(await runCli([...base, '--mode', 'run', '--plan-digest', digestOf(only.out)], mismatch.deps)).toBe(EXIT_BLOCKED);
+    expect(mismatch.built()).toBe(0);
+    const wrongWay = harness();
+    expect(await runCli([...base, '--modes', 'backfilled', '--mode', 'run', '--plan-digest', digestOf(all.out)], wrongWay.deps)).toBe(EXIT_BLOCKED);
+    expect(wrongWay.built()).toBe(0);
+  });
+
   it('drops an arm whose model is not installed with a note and runs the rest (never pulls)', async () => {
     const models = { 'nomic-embed-text:latest': 'a'.repeat(64) };
     const plan = harness(models);
