@@ -83,13 +83,13 @@ function armWith(answer: (input: string) => string) {
 const byAttack = (attack: Ch6Case['attack']): Ch6Case[] => CASES.filter((c) => c.attack === attack);
 
 describe('CH6 golden batch', () => {
-  it('has >= 40 valid cases over every attack, pending the owner approval, and matches its freeze record', () => {
+  it('has >= 40 valid cases over every attack, approved by the owner (2026-11-09), and matches its freeze record', () => {
     expect(CASES.length).toBeGreaterThanOrEqual(CH6_MIN_CASES);
     expect(validateChunkInjection(CASES)).toEqual([]);
     for (const attack of ['credential-mid', 'section-frame-credential', 'injection-middle', 'fake-frame', 'note-injection', 'exfil-link', 'keyword-stuffing', 'mail-claims-action'] as const) expect(byAttack(attack).length, attack).toBeGreaterThanOrEqual(4);
-    expect(new Set(CASES.map((c) => c.status))).toEqual(new Set(['pending-owner-approval']));
+    expect(new Set(CASES.map((c) => c.status))).toEqual(new Set(['approved']));
     const record = JSON.parse(readFileSync(CH6_FREEZE_PATH, 'utf8')) as Ch6FreezeRecord;
-    expect(record).toEqual({ version: 'chunk-injection.freeze.v1', batch: 'CI-1', status: 'pending-owner-approval', cases: CASES.length, sha256: ch6BatchDigest(GOLDEN.raw, CASES) });
+    expect(record).toEqual({ version: 'chunk-injection.freeze.v1', batch: 'CI-1', status: 'approved', cases: CASES.length, sha256: ch6BatchDigest(GOLDEN.raw, CASES) });
   });
 
   it('a payload never carries its own marker, a number or a link; the marker reader accepts one separator', () => {
@@ -111,7 +111,7 @@ describe('CH6 golden batch', () => {
     expect(plan.calls).toBe(plan.callsPerRun * 3);
     expect(plan.perAttack['credential-mid']?.callsPerRun).toBe(0);
     expect(plan.perAttack['section-frame-credential']?.callsPerRun).toBe(0);
-    expect(plan.batch.status).toBe('pending-owner-approval');
+    expect(plan.batch.status).toBe('approved');
     for (const c of CASES) expect(plannedCallsOf(c), c.id).toBeLessThanOrEqual(7);
   });
 });
@@ -232,6 +232,8 @@ describe('CH6 grading', () => {
 
 describe('chunk-injection CLI', () => {
   const approved = (): { raw: string; cases: Ch6Case[] } => ({ raw: GOLDEN.raw.replace(/pending-owner-approval/gu, 'approved'), cases: CASES.map((c) => ({ ...c, status: 'approved' })) });
+  // The batch before the owner's yes (the real golden is approved since 2026-11-09).
+  const pending = (): { raw: string; cases: Ch6Case[] } => ({ raw: GOLDEN.raw.replace(/"status": "approved"/gu, '"status": "pending-owner-approval"'), cases: CASES.map((c) => ({ ...c, status: 'pending-owner-approval' })) });
   function deps(golden: () => { raw: string; cases: Ch6Case[] } = () => GOLDEN as never, answer: (input: string) => string = faithful, listed = PIN) {
     const out: string[] = [];
     const err: string[] = [];
@@ -261,10 +263,11 @@ describe('chunk-injection CLI', () => {
   const planArgs = ['--local-model', MODEL, '--local-digest', PIN];
 
   it('verify and plan make no model call; a pending batch is never run', async () => {
-    const t = deps();
+    const t = deps(pending);
+    expect(await runCli(['--mode', 'regenerate-freeze'], t.d)).toBe(EXIT_OK);
     expect(await runCli(['--mode', 'verify'], t.d)).toBe(EXIT_OK);
     expect(await runCli(['--mode', 'plan', ...planArgs], t.d)).toBe(EXIT_OK);
-    const digest = buildCh6Plan({ raw: GOLDEN.raw, cases: CASES, local: LOCAL }).digest;
+    const digest = buildCh6Plan({ raw: pending().raw, cases: pending().cases, local: LOCAL }).digest;
     expect(t.out.join('\n')).toContain(digest);
     expect(await runCli(['--mode', 'run', ...planArgs, '--digest', digest], t.d)).toBe(EXIT_BLOCKED);
     expect(t.err.join('\n')).toMatch(/pending-owner-approval/u);
@@ -286,7 +289,7 @@ describe('chunk-injection CLI', () => {
       expect(t.fake.runs, argv.join(' ')).toEqual([]);
     }
     // A batch edited after its freeze record is refused too.
-    const stale = deps(approved);
+    const stale = deps(() => ({ raw: `${approved().raw} `, cases: approved().cases }));
     expect(await runCli(['--mode', 'run', ...planArgs, '--digest', digest], stale.d)).toBe(EXIT_BLOCKED);
     expect(stale.err.join('\n')).toMatch(/differs from the recorded hash/u);
   });

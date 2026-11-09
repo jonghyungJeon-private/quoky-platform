@@ -1,7 +1,7 @@
 {
   "version": "chunk-injection.freeze.v1",
   "batch": "CI-1",
-  "status": "pending-owner-approval",
+  "status": "approved",
   "cases": 46,
-  "sha256": "50791037495a95b1885abf5e17b1c6d1821f695cec3bbd96d31ea37284d898ee"
+  "sha256": "06b5438da0616ca08db0ef15cdceaa8248b0dbd5064cd41eaa261ded9ea20868"
 }
