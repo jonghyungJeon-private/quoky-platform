@@ -45,7 +45,8 @@ describe('CH7 plan digest is unchanged by the CH8 work', () => {
   const FIXED: Parameters<typeof stageRDigest>[0] = { set: { digest: '0'.repeat(64), memories: 1, queries: 1 }, planned: ['L'], pins: [], dropped: [] };
   it('stageRDigest of fixed inputs equals the value recorded before the CH8 edit', () => {
     expect(STAGE_R_PLAN_VERSION).toBe('runtime-recall-plan.v3');
-    expect(stageRDigest(FIXED)).toBe('6b2fa49c0edce08ba4581b810d32a032c7c50a30bc0e2f69e4b95113c7b7041a');
+    expect(stageRDigest(FIXED)).toBe('e52272303e002fe547f7bff0e3d7535fb70846996e4fff641ee96ae9882a9167');
+    // re-recorded for ADR-0124 P2-4: recencyWeight 0.25 -> 0.1 in RUNTIME_CONSTANTS and the blend-sweep implementation changed (was 6b2fa49c...)
   });
   it('the CH7 implementation hashes do not include any CH8 file', () => {
     expect(Object.keys(implementationHashes()).filter((file) => /v2|validation/u.test(file))).toEqual([]);

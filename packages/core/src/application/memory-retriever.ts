@@ -26,7 +26,8 @@ export const SEMANTIC_CANDIDATE_TOP_K = 50;
  * until the maintenance sweep removes them, and such a hit must not use up a slot of the K.
  */
 export const SEMANTIC_CANDIDATE_OVERFETCH = 2;
-const DEFAULT_RECENCY_WEIGHT = 0.25;
+/** ADR-0124 P2-3/P2-4 (owner decision 2026-11-09): recency weight 0.10, was the ADR-0098 default 0.25. */
+const DEFAULT_RECENCY_WEIGHT = 0.1;
 const DEFAULT_RECENCY_HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1_000;
 /** ADR-0098 owner default: share of relevance given to the semantic score when one is available. */
 export const DEFAULT_SEMANTIC_WEIGHT = 0.7;

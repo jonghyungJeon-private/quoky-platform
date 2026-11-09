@@ -4,7 +4,7 @@
  * recomputed with the production formulas), it re-ranks the same candidates under a PRE-DECLARED set of blend formulas, scores them
  * on a pre-declared select / confirm split, and applies a pre-declared deterministic selection rule.
  *
- * Fidelity first: the CURRENT production formula (B0) is recomputed from the table and must reproduce the ids the real retriever
+ * Fidelity first: the CURRENT production formula (the linear candidate equal to the runtime weights, B1 since ADR-0124 P2-4) is recomputed from the table and must reproduce the ids the real retriever
  * returned for every query; any mismatch marks the whole sweep INVALID. The candidates and rules below are frozen and are never
  * tuned to the data. This module only measures; it never changes the production ranking.
  */
@@ -16,7 +16,7 @@ export type BlendCandidate = LinearCandidate | RrfCandidate;
 
 const linear = (id: string, semanticWeight: number, recencyWeight: number): LinearCandidate => ({ id, kind: 'linear', semanticWeight, recencyWeight });
 
-/** Pre-declared and frozen (part of the stage R plan digest). B0 is the current production formula. */
+/** Pre-declared and frozen (part of the stage R plan digest). B0 is the PREVIOUS production formula (0.25, ADR-0098); the production candidate is the one equal to the runtime weights (B1 since P2-4). */
 export const BLEND_CANDIDATES: readonly BlendCandidate[] = [
   linear('B0', 0.7, 0.25),
   linear('B1', 0.7, 0.1),
@@ -34,14 +34,28 @@ export const BLEND_CANDIDATES: readonly BlendCandidate[] = [
 export const BLEND_RULES = {
   split: 'within each language, queries in set order: even position (0,2,4,..) = select, odd = confirm',
   selection: 'maximize min over languages of Recall@5 on the select half; ties: higher overall MRR@10 on select; further ties: lower candidate index',
-  fidelity: 'B0 recomputed from the table must equal the real retriever result ids for every query, else the sweep is INVALID',
+  fidelity: 'the linear candidate equal to the production weights, recomputed from the table, must equal the real retriever result ids for every query; INVALID when none matches or any query differs',
   floor: 'report only: percentiles of the gold memory semantic score (max over gold ids) and of the best non-gold semantic score per query',
 } as const;
 
-export const labelOf = (candidate: BlendCandidate): string =>
-  candidate.kind === 'linear'
-    ? `${candidate.id} wS${candidate.semanticWeight.toFixed(2).replace(/^0/u, '').replace(/0$/u, '')} wR${candidate.recencyWeight === 0 ? '0' : candidate.recencyWeight.toFixed(2).replace(/^0/u, '').replace(/0$/u, '')}`
-    : `${candidate.id} rrf${candidate.k} ${candidate.signals.join('+')}`;
+export interface ProductionBlend { readonly semanticWeight: number; readonly recencyWeight: number }
+
+/** The frozen linear candidate whose weights equal the production (runtime) weights; undefined when none does. */
+export const productionCandidateOf = (candidates: readonly BlendCandidate[], production: ProductionBlend): LinearCandidate | undefined =>
+  candidates.find((candidate): candidate is LinearCandidate => candidate.kind === 'linear' && candidate.semanticWeight === production.semanticWeight && candidate.recencyWeight === production.recencyWeight);
+
+export const noProductionCandidateReason = (production: ProductionBlend): string =>
+  `fidelity: no frozen linear candidate equals the production weights (semantic ${production.semanticWeight}, recency ${production.recencyWeight})`;
+
+export const labelOf = (candidate: BlendCandidate, production?: ProductionBlend): string => {
+  const base =
+    candidate.kind === 'linear'
+      ? `${candidate.id} wS${candidate.semanticWeight.toFixed(2).replace(/^0/u, '').replace(/0$/u, '')} wR${candidate.recencyWeight === 0 ? '0' : candidate.recencyWeight.toFixed(2).replace(/^0/u, '').replace(/0$/u, '')}`
+      : `${candidate.id} rrf${candidate.k} ${candidate.signals.join('+')}`;
+  if (production === undefined) return base;
+  if (candidate.kind === 'linear' && candidate.semanticWeight === production.semanticWeight && candidate.recencyWeight === production.recencyWeight) return `${base} (production)`;
+  return candidate.id === 'B0' ? `${base} (previous production 0.25)` : base;
+};
 
 export interface BlendRow {
   readonly id: string;
@@ -218,17 +232,18 @@ export function selectCandidate(results: readonly CandidateResult[], languages: 
   return best === null ? null : (results[(best as { at: number }).at] as CandidateResult).id;
 }
 
-export function buildBlendSweep(queries: readonly BlendQuery[], languages: readonly string[], candidates: readonly BlendCandidate[] = BLEND_CANDIDATES, limit: number = RANK_LIMIT): BlendSweep {
+export function buildBlendSweep(queries: readonly BlendQuery[], languages: readonly string[], production: ProductionBlend, candidates: readonly BlendCandidate[] = BLEND_CANDIDATES, limit: number = RANK_LIMIT): BlendSweep {
   const halves = splitOf(queries.map((query) => query.language));
   const split: Record<Half, Record<string, number>> = { select: {}, confirm: {} };
   for (const language of languages) {
     split.select[language] = queries.filter((query, at) => query.language === language && halves[at] === 'select').length;
     split.confirm[language] = queries.filter((query, at) => query.language === language && halves[at] === 'confirm').length;
   }
-  const current = candidates[0] as BlendCandidate;
+  const current = productionCandidateOf(candidates, production);
   const mismatchDetails: FidelityMismatch[] = [];
   let mismatches = 0;
   queries.forEach((query, queryIndex) => {
+    if (current === undefined) return;
     const offline = rankIds(query.rows, current, limit);
     if (offline.length === query.actual.length && offline.every((id, at) => id === query.actual[at])) return;
     mismatches += 1;
@@ -246,15 +261,15 @@ export function buildBlendSweep(queries: readonly BlendQuery[], languages: reado
     const items = queries.map((query, at) => ({ language: query.language, half: halves[at] as Half, rank: rankOf(rankIds(query.rows, candidate, limit), query.gold) }));
     return {
       id: candidate.id,
-      label: labelOf(candidate),
+      label: labelOf(candidate, production),
       select: halfMetrics(languages, items.filter((item) => item.half === 'select')),
       confirm: halfMetrics(languages, items.filter((item) => item.half === 'confirm')),
       all: halfMetrics(languages, items),
     };
   });
-  const invalid = mismatches > 0 ? { reason: `fidelity: the offline current formula (${current.id}) disagrees with the real retriever on ${mismatches} of ${queries.length} queries` } : null;
+  const invalid = current === undefined ? { reason: noProductionCandidateReason(production) } : mismatches > 0 ? { reason: `fidelity: the offline production formula (${current.id}) disagrees with the real retriever on ${mismatches} of ${queries.length} queries` } : null;
   const selected = invalid === null ? selectCandidate(results, languages) : null;
-  const b0 = results[0] as CandidateResult;
+  const b0 = results.find((result) => result.id === current?.id);
   const chosen = results.find((result) => result.id === selected);
   const goldScores: number[] = [];
   const otherScores: number[] = [];
@@ -267,7 +282,7 @@ export function buildBlendSweep(queries: readonly BlendQuery[], languages: reado
     if (others.length > 0) otherScores.push(Math.max(...others));
   }
   return {
-    candidates: candidates.map((candidate) => ({ id: candidate.id, label: labelOf(candidate) })),
+    candidates: candidates.map((candidate) => ({ id: candidate.id, label: labelOf(candidate, production) })),
     split,
     fidelity: { queries: queries.length, mismatches },
     mismatchDetails,
@@ -275,7 +290,7 @@ export function buildBlendSweep(queries: readonly BlendQuery[], languages: reado
     invalid,
     results,
     selected,
-    confirmB0VsSelected: chosen === undefined ? null : { b0: b0.confirm, selected: chosen.confirm },
+    confirmB0VsSelected: chosen === undefined || b0 === undefined ? null : { b0: b0.confirm, selected: chosen.confirm },
     floor: { goldSemantic: percentiles7(goldScores), bestNonGoldSemantic: percentiles7(otherScores), goldUnscored },
   };
 }
@@ -297,7 +312,7 @@ export function blendSweepLines(sweep: BlendSweep, languages: readonly string[])
   }
   if (sweep.confirmB0VsSelected !== null) {
     const { b0, selected } = sweep.confirmB0VsSelected;
-    out.push(`  confirm half B0 vs ${sweep.selected}: B0 ${langLine(b0, languages)} (all ${f3(b0.overall.recallAt5)}, MRR ${f3(b0.overall.mrrAt10)}) | ${sweep.selected} ${langLine(selected, languages)} (all ${f3(selected.overall.recallAt5)}, MRR ${f3(selected.overall.mrrAt10)})`);
+    out.push(`  confirm half production vs ${sweep.selected}: production ${langLine(b0, languages)} (all ${f3(b0.overall.recallAt5)}, MRR ${f3(b0.overall.mrrAt10)}) | ${sweep.selected} ${langLine(selected, languages)} (all ${f3(selected.overall.recallAt5)}, MRR ${f3(selected.overall.mrrAt10)})`);
   }
   out.push(`  floor calibration: gold semantic ${pctLine(sweep.floor.goldSemantic)} (gold unscored ${sweep.floor.goldUnscored})`);
   out.push(`  floor calibration: best non-gold semantic ${pctLine(sweep.floor.bestNonGoldSemantic)}`);
