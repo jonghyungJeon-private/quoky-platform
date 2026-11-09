@@ -30,7 +30,7 @@ import { createMailTurnHandler } from './mail/mail-turn-handler';
 import { createDriveTurnHandler } from './drive/drive-turn-handler';
 import { renderMailSummaryLocalFooter, renderMailSummaryRefused, renderMailThreadSummaryLocalFooter } from './mail/mail-reply-renderer';
 import { renderDriveSummaryLocalFooter } from './drive/drive-reply-renderer';
-import { renderLongItemProgressNotice, preparedLongItemBody, type LongItemSummaryInput } from './item-summary/long-item';
+import { renderLongItemProgressNotice, renderLongItemUnreadFooter, preparedLongItemBody, type LongItemSummaryInput } from './item-summary/long-item';
 import type { ChunkItemsMode } from './item-summary/s3-item-summary';
 
 /**
@@ -75,6 +75,10 @@ interface HarnessOptions {
   readonly driveSections?: readonly DriveDocumentSection[];
   readonly local?: LocalMode;
   readonly extraHandler?: ConversationTurnHandler;
+  /** The single-in-flight gate is held by another local call for the whole test (review round 1, CA P1). */
+  readonly gateBusy?: boolean;
+  /** The platform send of the progress notice never settles (review round 1, CA P3). */
+  readonly noticeStalls?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -290,7 +294,7 @@ function harness(opts: HarnessOptions = {}) {
     logger,
   };
 
-  const exclusiveCalls = { count: 0 };
+  const exclusiveCalls = { count: 0, held: [] as (() => Promise<unknown>)[] };
   const longItemSummary: LongItemSummaryOptions | undefined =
     opts.mode === undefined || opts.mode === 'absent'
       ? undefined
@@ -298,10 +302,15 @@ function harness(opts: HarnessOptions = {}) {
           mode: opts.mode,
           exclusive: async (work) => {
             exclusiveCalls.count += 1;
+            if (opts.gateBusy === true) {
+              exclusiveCalls.held.push(work);
+              return new Promise<never>(() => undefined);
+            }
             return work();
           },
           notify: async (message) => {
             notices.push(message);
+            if (opts.noticeStalls === true) await new Promise<never>(() => undefined);
           },
           now: () => 0,
           // The fake clock: S3's bounds never fire on their own; the 8 s notice timer fires when the test says so.
@@ -464,7 +473,7 @@ describe('ADR-0124 Part L C5a-2: on', () => {
 });
 
 /** A handler that answers any message with a long-item summarize outcome (to test the notice in a DM and in a channel). */
-function longItemHandler(): ConversationTurnHandler {
+function longItemHandler(prepared: string = preparedLongItemBody(LONG_BODY)): ConversationTurnHandler {
   return {
     id: 'test-long-item',
     stage: 'pre-classify',
@@ -476,7 +485,7 @@ function longItemHandler(): ConversationTurnHandler {
         title: '긴 문서',
         author: 'Planner',
         date: T0,
-        prepared: preparedLongItemBody(LONG_BODY),
+        prepared,
         sourceTruncated: false,
         footer: renderDriveSummaryLocalFooter('ko'),
         refused: { reply: { context: ctx.message.context, text: 'refused' }, status: 'RESPONDED' },
@@ -542,5 +551,84 @@ describe('ADR-0124 Part L C5a-2: clause PN (fake clock)', () => {
     h.releaseLocal();
     expect(result.reply.text).toContain('긴 문서를 이 기기에서 요약하지 못했어요');
     expect(h.remoteCalls).toEqual([]);
+    // Review round 1 (CA P2): nothing was read, so the footer makes no "summarized on this device" claim.
+    expect(result.reply.text).toContain(renderLongItemUnreadFooter('ko'));
+    expect(result.reply.text).not.toContain('로컬 모델로 나눠 요약했어요');
+  });
+});
+
+const flush = async (rounds = 20) => {
+  for (let at = 0; at < rounds; at += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+describe('ADR-0124 Part L C5a-2: review round 1', () => {
+  it('CA P1: a busy gate until the wall is today\'s reply byte for byte, zero local calls, no notice, a count-only log', async () => {
+    const today = await run(SCENARIOS[0] as Scenario, { mode: 'absent', longItems: false });
+    const h = harness({ mode: 'on', local: 'ok', gateBusy: true });
+    await h.send(SCENARIOS[0]?.list ?? '');
+    const pending = h.send(SCENARIOS[0]?.ask ?? '');
+    await flush();
+    expect(h.exclusiveCalls.count).toBe(1);
+    // The gate wait is bounded by the wall only (never by the 20 s per-call bound), and the 8 s notice never fires while
+    // no call has been dispatched.
+    expect(h.timers.some((timer) => timer.ms === 20_000)).toBe(false);
+    h.fireNoticeTimer();
+    await flush();
+    for (const timer of h.timers) if (timer.ms === 90_000) timer.fire();
+    const result = await pending;
+    expect(view(result)).toEqual(view(today.result));
+    expect(h.localCalls).toEqual([]);
+    expect(h.notices).toEqual([]);
+    expect(h.logs.find((entry) => entry.message === 'item_summary.s3')?.fields).toMatchObject({ outcome: 'not-ready', reason: 'gate-busy' });
+    // The fenced call that the gate lets in later is never sent.
+    await h.exclusiveCalls.held[0]?.();
+    expect(h.localCalls).toEqual([]);
+  });
+
+  it('CA P1: the notice is armed only by the first dispatched call (onStart after dispatch)', async () => {
+    const h = harness({ mode: 'on', local: 'blocked', extraHandler: longItemHandler() });
+    const pending = h.send('긴 문서 요약');
+    await h.localStartedPromise;
+    expect(h.localCalls).toHaveLength(1);
+    h.fireNoticeTimer();
+    await flush();
+    expect(h.notices).toHaveLength(1);
+    h.releaseLocal();
+    await pending;
+  });
+
+  it('CA P2: shadow, where only the S3 guard refuses the item, keeps today\'s reply byte for byte and logs the refusal as a count', async () => {
+    const middle = LONG_BODY.split('\n\n');
+    middle.splice(6, 0, `token: ${SECRET}`);
+    const handler = () => longItemHandler(preparedLongItemBody(middle.join('\n\n')));
+    const today = harness({ mode: 'absent', extraHandler: handler() });
+    const shadow = harness({ mode: 'shadow', extraHandler: handler() });
+    const expected = await today.send('긴 문서 요약');
+    const result = await shadow.send('긴 문서 요약');
+    expect(view(result)).toEqual(view(expected));
+    expect(result.reply.text).not.toBe('refused');
+    expect(shadow.recordAssistant).toEqual(today.recordAssistant);
+    expect(shadow.localCalls).toEqual([]);
+    const line = shadow.logs.find((entry) => entry.message === 'item_summary.s3');
+    expect(line?.fields).toEqual({ mode: 'shadow', source: 'drive', outcome: 'refused', reason: 'credential' });
+    expect(JSON.stringify(shadow.logs)).not.toContain(SECRET);
+    // Under `on` the same item is the handler's refusal.
+    const on = harness({ mode: 'on', local: 'ok', extraHandler: handler() });
+    expect((await on.send('긴 문서 요약')).reply.text).toBe('refused');
+  });
+
+  it('CA P3: a stalled notice send holds the reply for at most the send bound (3 s)', async () => {
+    const h = harness({ mode: 'on', local: 'blocked', extraHandler: longItemHandler(), noticeStalls: true });
+    const pending = h.send('긴 문서 요약');
+    await h.localStartedPromise;
+    h.fireNoticeTimer();
+    await flush();
+    expect(h.notices).toHaveLength(1);
+    h.releaseLocal();
+    await flush();
+    for (const timer of h.timers) if (timer.ms === 3_000) timer.fire();
+    const result = await pending;
+    expect(result.reply.text.startsWith(LOCAL_SUMMARY)).toBe(true);
+    expect(h.logs.some((entry) => entry.message === 'item_summary.s3.progress_notice_failed')).toBe(true);
   });
 });

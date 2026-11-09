@@ -19,5 +19,12 @@ export {
   parseDocumentMapNote,
 } from './document-map-prompt';
 export type { DocumentMapNoteFailure, DocumentMapNoteResult, DocumentMapPart } from './document-map-prompt';
-export { LONG_ITEM_PROGRESS_NOTICE_AFTER_MS, preparedLongItemBody, renderLongItemProgressNotice, sheetLongItemText } from './long-item';
+export {
+  LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
+  LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS,
+  preparedLongItemBody,
+  renderLongItemProgressNotice,
+  renderLongItemUnreadFooter,
+  sheetLongItemText,
+} from './long-item';
 export type { LongItemSummaryInput } from './long-item';

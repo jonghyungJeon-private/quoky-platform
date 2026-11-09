@@ -26,7 +26,13 @@ import {
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
 import { isDirectConversation, joinBody, outboundMessage, withOutboundBody } from '../message-rendering';
 import { runS3ItemSummary, type S3ItemSummaryOutcome } from '../item-summary/s3-item-summary';
-import { LONG_ITEM_PROGRESS_NOTICE_AFTER_MS, renderLongItemProgressNotice, type LongItemSummaryInput } from '../item-summary/long-item';
+import {
+  LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
+  LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS,
+  renderLongItemProgressNotice,
+  renderLongItemUnreadFooter,
+  type LongItemSummaryInput,
+} from '../item-summary/long-item';
 import { renderActionSwitchStopNotice } from '../nl-routing/action-switch';
 import { renderActionStoppedApprovalClosed } from '../nl-routing/nl-action-policy';
 import { interpretStrayDecisionUtterance, isPendingCancelUtterance } from '../approval-decision';
@@ -602,13 +608,17 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
   ): Promise<TurnResult | undefined> {
     const language = noticeLanguage(undefined, message.text);
     const outcome = await this.runLongItemWithNotice(message, session, actor, long, options, language);
+    // Review round 1 (CA P2): only `on` ever answers from S3. `shadow` keeps today's reply in every case, a refusal
+    // included (S3 logged it as a count only).
+    if (options.mode !== 'on') return undefined;
     if (outcome.kind === 'today' || outcome.kind === 'S1') return undefined;
     if (outcome.kind === 'refused') {
       // An empty item never reaches here with a readout (today's builder refused it first); keep today's path for it.
       if (outcome.reason !== 'credential') return undefined;
       return this.recordTurnHandlerReply(message, session, userMemoryId, long.refused);
     }
-    const footer = joinBody([outcome.coverageLine, long.footer]);
+    // Review round 1 (CA P2): a partial reply that read nothing makes no "summarized on this device" claim.
+    const footer = joinBody([outcome.coverageLine, outcome.coverage.read === 0 ? renderLongItemUnreadFooter(language) : long.footer]);
     const bodyText = summary.participants !== undefined ? pseudonymiseParticipants(outcome.body, summary.participants) : outcome.body;
     let body = documentSummaryReply(bodyText, footer).body;
     if (outcome.withheld === undefined && !isFixedDocumentSummaryNotice(bodyText, long.source)) {
@@ -647,8 +657,18 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     const sendNotice = (): void => {
       if (!noticeAllowed || notice !== undefined || finished || !due || windows === undefined) return;
       const count = windows;
-      notice = Promise.resolve()
-        .then(() => notify(outboundMessage(message.context, renderLongItemProgressNotice(count, language))))
+      // Review round 1 (CA P3): a stalled platform send never holds the reply for more than a few seconds.
+      const sendTimer = new AbortController();
+      const wait = options.wait ?? waitFor;
+      notice = Promise.race([
+        Promise.resolve().then(() => notify(outboundMessage(message.context, renderLongItemProgressNotice(count, language)))),
+        Promise.resolve()
+          .then(() => wait(LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS, sendTimer.signal))
+          .then(() => {
+            if (!sendTimer.signal.aborted) throw new Error('progress notice send timed out');
+          }),
+      ])
+        .finally(() => sendTimer.abort())
         .then(
           () => this.deps.logger.info('item_summary.s3.progress_notice', { windows: count }),
           (err: unknown) => this.deps.logger.warn('item_summary.s3.progress_notice_failed', { errorName: err instanceof Error ? err.name : typeof err }),

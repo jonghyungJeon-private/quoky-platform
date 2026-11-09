@@ -68,3 +68,19 @@ const PROGRESS_NOTICE = {
 
 /** Clause PN: the notice goes out after this long (8 s), at most once per request, in a DM only. */
 export const LONG_ITEM_PROGRESS_NOTICE_AFTER_MS = 8_000;
+
+/** Clause PN (review round 1, CA P3): the reply waits for the notice send at most this long (3 s). */
+export const LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS = 3_000;
+
+/**
+ * Review round 1 (CA P2): the footer of a partial S3 reply that read no part of the item. It makes no claim that anything
+ * was summarized; it says only that the item was not sent to the chat model (true of every S3 run).
+ */
+export function renderLongItemUnreadFooter(language: 'ko' | 'en'): string {
+  return UNREAD_FOOTER[language];
+}
+
+const UNREAD_FOOTER = {
+  ko: '(본문은 대화 모델에 보내지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)',
+  en: '(The text was not sent to the chat model · nothing was written or sent anywhere by Quoky in this reply)',
+} as const;
