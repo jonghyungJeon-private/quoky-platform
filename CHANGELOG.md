@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L slice C5a: S3 whole-item summary, arm L (local only), unwired
+
+- **Recorded.** DECISIONS ADR-0124 section 17: the owner's 2026-11-09 decisions (Ollama `qwen3:8b` only for long-item local summaries, chat stays Claude; no remote fallback once a local S3 run started; CH1 not-applicable to S3 pending the Chief Architect; CH3/CH5/CH6 thresholds ratified; arms H/R2 only if L fails CH3; the I7 offer deferred) and the C5a interfaces, recorded before the code (ADR-0121 D12).
+- **Added (Core, unwired).** `ProviderSelectionContext.requiredLocality: 'LOCAL'` honoured by `CapabilityRouter` (selection and the dispatch-time check), `selectRequiredLocalProvider` / `isRequiredLocalDispatchAllowed`; the `document-map.v1` map prompt and note guard; `runS3ItemSummary` (chunk, S1 check, pack or stratified selection, ≤ 6 map + 1 reduce local calls, 20 s per call, 90 s wall, partial reply plus coverage line on any breach, never remote); `composeDocumentSummaryPrompt` (the existing document-summary prompt, byte-identical). `QUOKY_CHUNK_ITEMS` (`off|shadow|on`, default `off`) is parsed and validated at startup; no handler reads it. No reply, prompt, provider choice or log line of the running service changes.
+
 ## Unreleased — own-memory recall questions vs read entries (nl-select.v83 / v84, candidate, gates pending; one-option rule narrowed)
 
 - **Changed (prompt).** `rev: 'v83'` (action / R2 only; `nl-select.v83` action, `nl-select.v84` R2, split transport like v81): one rule next to rule 2's past-tense-question sentence: a question that asks Quoky to recall what the owner earlier told it, said, decided or planned is none (memory answers it in chat), a lookup only when it names a source's stored items as the place to look. `NL_ACTIVE_PROMPT_REVS.action` is `'v83'` (becomes active on merge, only after the D12 gates action / read-regression / r2 pass). Read v74, v81 and older revs are byte-identical. Eval CLIs: `--prompt-rev v83`; absent = v83 / v84.

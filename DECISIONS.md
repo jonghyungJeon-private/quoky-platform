@@ -32526,6 +32526,90 @@ Phase 0 only: no LLM, no embedder, no Ollama, no network; baseline clip and the 
   heading effect uses synthetic titles and one layout, 24 pairs. Real mail and Drive text (tables, lists, signatures, forwarded chains) differs from these templates. Per-shape parameters should be
   decided after E0-E3 / EH on this set.
 
+### 17. Implementation note: slice C5a, S3 whole-item summary, arm L, unwired (owner decisions 2026-11-09)
+
+This note records the owner's answers to the Part L plan questions and, per ADR-0121 D12 ("interfaces recorded before
+code"), the interfaces of slice C5a **before** the code. It changes no ratified Part L text. Nothing here is wired into a
+handler: no reply, prompt, provider choice or log line of the running service changes in this slice.
+
+**Owner decisions (2026-11-09, the recommended answer to each of the six plan questions).**
+
+1. **Local model on the service.** An Ollama provider pinned to `qwen3:8b` by digest will be registered on the service
+   **only** for long-item local summaries (S3, `requiredLocality` LOCAL); chat stays on Claude. Registering it, the
+   `.env.local` change and the model pull are owner operations steps, not part of any code slice.
+2. **No remote fallback once a local S3 run has started.** A failure after the first local call (a model error, a per-call
+   timeout, the wall, a locality re-check that fails, a note or reduce guard) ends in a **deterministic partial reply**
+   built from the notes already finished, plus the coverage line; the item is **never re-sent to a remote provider** and
+   no call is retried. Only two cases fall back to today's path, byte-identically: `QUOKY_CHUNK_ITEMS` is not `on`, or no
+   ready `LOCAL` `SUMMARIZATION` provider exists **at the start** of the request (before any call).
+3. **CH1 for an S3-only `on`.** CH1 measures selection by search; S3 selects by position only (I2). The owner asks the
+   Chief Architect to rule CH1 **not applicable** to an S3-only `on`. **Status: pending the CA ruling.** Until it is
+   recorded, CH1 stays in the `on` precondition list of section 7 as written.
+4. **CH3, CH5 and CH6 thresholds ratified as written** in section 7 (Product Owner, 2026-11-09): CH3 coverage ≥ 80%,
+   invented points 0 in ≥ 95% of items, S3 preferred over today (one-sided binomial, p < 0.05, ≥ 25 non-tie pairs); CH5
+   the section 3.7 bounds; CH6 all 0, `chunk-injection` ≥ 40 cases, 0 successes over 3 runs. The runs themselves stay
+   Strict (owner yes on each plan digest).
+5. **Arms H and R2** (slice C6) are built and measured **only if arm L fails CH3**.
+6. **The "다른 구간도 볼까요?" offer (I7)** is deferred until after `on`. Until then a partial or stratified reply shows the
+   coverage line only.
+
+**Interfaces recorded before code (C5a).**
+
+- **The locality constraint (data on the existing selection context; no new port, no new DI token).**
+  `ProviderSelectionContext.requiredLocality?: 'LOCAL'` (type `RequiredExecutionLocality`). Absent means no constraint, and
+  selection is exactly as before. With `'LOCAL'`, `CapabilityRouter` probes and ranks only providers whose declared
+  `executionLocalityOf(provider)` is `LOCAL` (absent or unknown is `REMOTE`, fail closed); none ready is
+  `NoProviderAvailableError`, and `isStillEligible` answers `false` for any non-`LOCAL` provider. Core reads only the
+  existing locality data: it never parses a model name. A cloud-served Ollama model is refused because the adapter
+  already declares any model whose name or tag contains `cloud` (case-insensitive) `REMOTE` (ADR-0107 D6, the
+  ADR-0098 D8 rule); the constraint then excludes it.
+- **Typed selection and dispatch check (Core application, over the existing `ProviderSelector` port).**
+  `selectRequiredLocalProvider(selector, capability, context): Promise<{ kind: 'selected'; provider } | { kind: 'not-ready' }>`
+  never throws; it adds `requiredLocality: 'LOCAL'` to the context and re-reads the returned provider's locality (the
+  port's answer is not trusted), so a selector that returns a `REMOTE` provider is `not-ready` with no call.
+  `isRequiredLocalDispatchAllowed(selector, capability, context, provider): boolean` is synchronous and runs immediately
+  before every `execute`: the provider must still declare `LOCAL` and, where the selector has `isStillEligible`, still be
+  eligible under the constraint. `false` means no call.
+- **Compatibility with the ADR-0121 D12 amendment proposal (not ratified, not depended on).** The proposal's
+  `allowedExecutionLocalities` is a set of allowed localities derived from labels and grants; `requiredLocality: 'LOCAL'`
+  is the one-element case of it (`['LOCAL']`). If the proposal is ratified, `requiredLocality` maps onto it without a
+  behaviour change. C5a ratifies nothing of D12 and adds no `allowedExecutionLocalities` field.
+- **The map prompt.** `document-map.v1` (`DOCUMENT_MAP_PROMPT_VERSION`), a Core prompt built in code and pinned by the
+  sha256 of its rendering for a fixed input (as `agent-plan.*` is). One window readout under the existing untrusted
+  framing (`renderUntrustedDocumentForPrompt`), no tools, no context files, no transcript; output at most 8 lines of at
+  most 160 code points, no URL. `parseDocumentMapNote(text, source)` is the note guard: shape (lines, line length,
+  bytes), links, both credential detectors, the card-spoof line check, and the document action-claim guard per line (a
+  claiming line is dropped, never repaired). A failed note is not read and the coverage line counts it as unread.
+- **The reduce prompt** reuses the document-summary prompt unchanged: `composeDocumentSummaryPrompt(requestText,
+  readout)` is the existing composer body made callable without a `Task` (byte-identical to `PromptComposer.compose` for a
+  document readout). The notes enter it as one readout of the item's source whose body is the notes under Core frames
+  `[Part i/W]`, within the 3,000-code-point readout bound, re-validated by `isSummarizableDocumentReadout`. Notes carry
+  the label `UNTRUSTED` + `MODEL_DERIVED` (the item's label joined with `LOCAL_MODEL_ONLY`, never widened).
+- **The S3 pipeline entry point (Core application, `item-summary/`, behind injected dependencies, unwired).**
+  `runS3ItemSummary(input, deps): Promise<S3ItemSummaryOutcome>`, total (never throws).
+  - `input`: `mode` (`off | shadow | on`), the item's `source`, `title`, `author`, `date`, the `prepared` text and optional
+    `sections` (the chunker's contract), the owner's `requestText`, the reply `language`, an optional item `label`.
+  - `deps`: `selector` (`ProviderSelector`) and its base `selectionContext`, a monotonic `now()`, an optional `wait(ms, signal)`
+    (the timer; default `setTimeout`), an optional `exclusive(work)` (the single-in-flight local model gate), an optional
+    `logger`.
+  - Outcomes: `{ kind: 'today', reason: 'off' | 'shadow' | 'not-ready' }` (the caller runs today's path untouched);
+    `{ kind: 'S1' }` (the item fits one window; today's path); `{ kind: 'refused', reason: 'credential' | 'empty' }` (as
+    today: the whole item, never redacted); `{ kind: 'summary' }` and `{ kind: 'partial', reason }`, both with the
+    summary text, the Core coverage line (`renderCoverageLine`), the fixed history note and a content-free audit.
+  - Flow: guard the full item; `chunk` → `singleWindow` (fits → `S1`); `packWindows` when the whole item packs into at most
+    6 windows, else `selectStratified(…, 6)` (position only); one map call per window, then one reduce call. Bounds: W ≤ 6,
+    ≤ 7 local calls, 20 s per call, 90 s wall, calls strictly one at a time; a breach is a partial reply, never a retry,
+    never remote. Logs and audit carry counts only (`passageAuditView` totals, W, read, calls, timings).
+- **The flag.** `QUOKY_CHUNK_ITEMS` = exactly `off`, `shadow` or `on`, default `off`; any other value is refused at
+  startup (`CHUNK_ITEMS_INVALID`, value never echoed). C5a parses and validates it; no handler reads it yet.
+- **The single-in-flight gate.** No local-model mutex exists in the repository yet (the embedding provider has none
+  either). Within one request the pipeline makes its calls strictly one after another; the cross-request gate shared
+  with embedding (RQ-3 T3-5) is the `exclusive` dependency, **wired in slice 2** with the handlers.
+
+**Left for later slices.** Handler wiring for mail, thread (repeated-quote removal), Drive and Sheets and the `shadow` log
+line (slice 2); the PN progress notice (slice 3); the eval harness for CH3/CH5/CH6 (slice 4). `on` needs the gates of
+section 7 (with the CH1 ruling of decision 3) and an independent Chief Architect review.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,
