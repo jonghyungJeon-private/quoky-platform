@@ -25,7 +25,6 @@ import { isRequiredLocalDispatchAllowed, selectRequiredLocalProvider, withRequir
 import { composeDocumentSummaryPrompt } from '../prompt-composer';
 import { PromptRenderer } from '../prompt-renderer';
 import {
-  UNTRUSTED_DOCUMENT_BODY_MAX_CHARS,
   UNTRUSTED_DOCUMENT_READOUT_KIND,
   buildUntrustedDocumentReadout,
   isSummarizableDocumentReadout,
