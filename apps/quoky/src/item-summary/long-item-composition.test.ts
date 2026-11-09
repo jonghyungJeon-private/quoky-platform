@@ -105,6 +105,17 @@ describe('composeLongItems: on', () => {
     expect(composed.runtimeOption(async () => undefined)?.exclusive).toBe(composed.gate);
   });
 
+  it('CH3 run 1: the long-item model runs with reasoning off and hidden; a reasoning block is a failed call', async () => {
+    const pinned = daemon(PIN);
+    const provider = composeLongItems({ chunkItems: ON, ollamaBin: 'ollama', runner: pinned.runner }).provider as AiProvider;
+    const result = await provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+    expect(pinned.calls.at(-1)).toEqual(['run', '--nowordwrap', '--think=false', '--hidethinking', MODEL]);
+    expect(result.text).toBe('- a note line');
+    const thinking: CliRunner = async (_bin, args) => ({ code: 0, stdout: args[0] === 'run' ? 'Thinking...\nTRACE\n...done thinking.\n\n- a note' : '', stderr: '', timedOut: false }) as never;
+    const leaky = composeLongItems({ chunkItems: ON, ollamaBin: 'ollama', runner: thinking }).provider as AiProvider;
+    await expect(leaky.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' })).rejects.toThrow();
+  });
+
   function onFixture(env: Readonly<Record<string, string>> = {}, ready = true) {
     const composed = composeLongItems({ chunkItems: ON, ollamaBin: 'ollama', runner: daemon(PIN).runner });
     const long = composed.provider as AiProvider;

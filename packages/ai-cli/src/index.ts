@@ -737,6 +737,16 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
  */
 /** `ollama run` flag that disables the CLI's terminal-width hard wrap (it wraps even when stdout is a pipe). */
 export const OLLAMA_NO_WORD_WRAP = '--nowordwrap';
+/**
+ * ADR-0124 Part L C5a (CH3 run 1): `ollama run` flags that turn a thinking model's reasoning off (`--think=false`) and hide
+ * any reasoning it still prints (`--hidethinking`). Accepted by Ollama 0.40.15 for thinking and non-thinking models alike.
+ */
+export const OLLAMA_NO_THINKING: readonly string[] = Object.freeze(['--think=false', '--hidethinking']);
+/**
+ * The block markers a reasoning trace starts with: the CLI's own `Thinking...` header and a raw `<think>` tag. Fixed
+ * protocol markers of the CLI and the model template (not natural-language phrases).
+ */
+const OLLAMA_THINKING_BLOCK_START = /^(?:Thinking\.\.\.|<think>)/u;
 
 export class OllamaCliProvider extends BaseCliAiProvider {
   readonly id: string;
@@ -752,6 +762,8 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   private readonly validationHost: string | null;
   /** ADR-0124 Part L C5a: `null` = today's readiness; otherwise the local-weights check (and the optional digest pin). */
   private readonly localWeights: { readonly pinnedDigest: string | undefined } | null;
+  /** ADR-0124 Part L C5a (CH3 run 1): reasoning off and hidden, and an output that still starts with a reasoning block fails. */
+  private readonly noThinking: boolean;
 
   // ADR-0098 amendment: no POLICY_SENSITIVE_CHAT — the local model did not meet the chat-policy bar in Live QA
   // (fabricated an external action, followed an injection, answered Japanese in Korean).
@@ -782,6 +794,12 @@ export class OllamaCliProvider extends BaseCliAiProvider {
      * set, the `ollama list` ID to equal it. Absent: today's readiness, unchanged.
      */
     localWeights?: { readonly pinnedDigest?: string };
+    /**
+     * ADR-0124 Part L C5a (CH3 run 1, for the long-item provider only): run with {@link OLLAMA_NO_THINKING}, and treat an
+     * output that still starts with a reasoning block as a failed call (the reasoning is never passed on). Absent: today's
+     * arguments and output handling, unchanged.
+     */
+    noThinking?: boolean;
   } = {}) {
     super();
     this.id = options.providerId ?? 'ollama-cli';
@@ -794,6 +812,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       ? null : approvedLoopbackHost(options.validationHost);
     this.localWeights = options.localWeights === undefined
       ? null : { pinnedDigest: validatedOllamaPinnedDigest(options.localWeights.pinnedDigest) };
+    this.noThinking = options.noThinking === true;
   }
 
   /**
@@ -802,7 +821,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
    * does even when piped and which split Korean words mid-syllable in chat replies.
    */
   buildArgs(): string[] {
-    return ['run', OLLAMA_NO_WORD_WRAP, this.model];
+    return ['run', OLLAMA_NO_WORD_WRAP, ...(this.noThinking ? OLLAMA_NO_THINKING : []), this.model];
   }
 
   /**
@@ -917,6 +936,13 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     if (result.timedOut) {
       throw new AiProviderError(AiFailureKind.TIMEOUT, `ollama CLI timed out after ${timeoutMs}ms`);
     }
+    // ADR-0124 Part L C5a (CH3 run 1): a call its caller abandoned (the request signal aborted: an S3 per-call bound or the
+    // wall) was killed on purpose, so the runner reports no exit code. That is the caller's time bound, never evidence that
+    // the daemon is down: classified UNAVAILABLE it made the router invalidate the provider, which discarded the NEXT item's
+    // fresh readiness probe while it was in flight (`today (not-ready)` in ~200 ms).
+    if (request.signal?.aborted === true) {
+      throw new AiProviderError(AiFailureKind.TIMEOUT, 'ollama CLI call was abandoned by its caller');
+    }
     if (result.code === null) {
       throw new AiProviderError(
         AiFailureKind.UNAVAILABLE,
@@ -944,6 +970,10 @@ export class OllamaCliProvider extends BaseCliAiProvider {
     if (!text) {
       throw new AiProviderError(AiFailureKind.EMPTY_OUTPUT, 'ollama CLI returned empty output');
     }
+    // Defence in depth (fail closed): reasoning that still came through is never passed on as an answer.
+    if (this.noThinking && OLLAMA_THINKING_BLOCK_START.test(text)) {
+      throw new AiProviderError(AiFailureKind.EXECUTION_FAILED, 'ollama CLI returned a reasoning block instead of an answer');
+    }
 
     const model = sanitizedOllamaModelName(this.model);
     const artifact: Artifact = {
@@ -961,7 +991,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       usage: { label: `ollama:${model}` },
       audit: {
         model,
-        sanitizedCommand: ['ollama', 'run', OLLAMA_NO_WORD_WRAP, model],
+        sanitizedCommand: ['ollama', 'run', OLLAMA_NO_WORD_WRAP, ...(this.noThinking ? OLLAMA_NO_THINKING : []), model],
         promptSha256,
         captureMode: 'pipe',
         colorDisabled: true,

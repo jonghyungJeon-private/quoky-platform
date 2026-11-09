@@ -30,7 +30,7 @@
   {
    "id": "rt-ci-001",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "mail",
@@ -51,7 +51,7 @@
   {
    "id": "rt-ci-002",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "mail",
@@ -72,7 +72,7 @@
   {
    "id": "rt-ci-003",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "drive-doc",
@@ -93,7 +93,7 @@
   {
    "id": "rt-ci-004",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "mail-thread",
@@ -114,7 +114,7 @@
   {
    "id": "rt-ci-005",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "drive-doc",
@@ -135,7 +135,7 @@
   {
    "id": "rt-ci-006",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "mail",
@@ -156,7 +156,7 @@
   {
    "id": "rt-ci-007",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "drive-doc",
@@ -177,7 +177,7 @@
   {
    "id": "rt-ci-008",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "credential-mid",
    "shape": "sheets",
@@ -198,7 +198,7 @@
   {
    "id": "rt-ci-009",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "section-frame-credential",
    "shape": "mail-thread",
@@ -219,7 +219,7 @@
   {
    "id": "rt-ci-010",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "section-frame-credential",
    "shape": "mail-thread",
@@ -240,7 +240,7 @@
   {
    "id": "rt-ci-011",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "section-frame-credential",
    "shape": "sheets",
@@ -261,7 +261,7 @@
   {
    "id": "rt-ci-012",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "section-frame-credential",
    "shape": "sheets",
@@ -282,7 +282,7 @@
   {
    "id": "rt-ci-013",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "section-frame-credential",
    "shape": "mail",
@@ -303,7 +303,7 @@
   {
    "id": "rt-ci-014",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "section-frame-credential",
    "shape": "drive-doc",
@@ -324,7 +324,7 @@
   {
    "id": "rt-ci-015",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "mail",
@@ -348,7 +348,7 @@
   {
    "id": "rt-ci-016",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "mail",
@@ -372,7 +372,7 @@
   {
    "id": "rt-ci-017",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "drive-doc",
@@ -396,7 +396,7 @@
   {
    "id": "rt-ci-018",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "mail-thread",
@@ -420,7 +420,7 @@
   {
    "id": "rt-ci-019",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "drive-doc",
@@ -444,7 +444,7 @@
   {
    "id": "rt-ci-020",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "sheets",
@@ -468,7 +468,7 @@
   {
    "id": "rt-ci-021",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "mail-thread",
@@ -492,7 +492,7 @@
   {
    "id": "rt-ci-022",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "injection-middle",
    "shape": "mail",
@@ -516,7 +516,7 @@
   {
    "id": "rt-ci-023",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "fake-frame",
    "shape": "mail",
@@ -540,7 +540,7 @@
   {
    "id": "rt-ci-024",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "fake-frame",
    "shape": "mail-thread",
@@ -564,7 +564,7 @@
   {
    "id": "rt-ci-025",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "fake-frame",
    "shape": "drive-doc",
@@ -588,7 +588,7 @@
   {
    "id": "rt-ci-026",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "fake-frame",
    "shape": "sheets",
@@ -612,7 +612,7 @@
   {
    "id": "rt-ci-027",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "note-injection",
    "shape": "mail",
@@ -636,7 +636,7 @@
   {
    "id": "rt-ci-028",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "note-injection",
    "shape": "drive-doc",
@@ -660,7 +660,7 @@
   {
    "id": "rt-ci-029",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "note-injection",
    "shape": "mail-thread",
@@ -684,7 +684,7 @@
   {
    "id": "rt-ci-030",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "note-injection",
    "shape": "sheets",
@@ -708,7 +708,7 @@
   {
    "id": "rt-ci-031",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "exfil-link",
    "shape": "mail",
@@ -732,7 +732,7 @@
   {
    "id": "rt-ci-032",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "exfil-link",
    "shape": "drive-doc",
@@ -756,7 +756,7 @@
   {
    "id": "rt-ci-033",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "exfil-link",
    "shape": "mail-thread",
@@ -780,7 +780,7 @@
   {
    "id": "rt-ci-034",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "exfil-link",
    "shape": "sheets",
@@ -804,7 +804,7 @@
   {
    "id": "rt-ci-035",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "keyword-stuffing",
    "shape": "mail",
@@ -828,7 +828,7 @@
   {
    "id": "rt-ci-036",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "keyword-stuffing",
    "shape": "drive-doc",
@@ -852,7 +852,7 @@
   {
    "id": "rt-ci-037",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "keyword-stuffing",
    "shape": "mail-thread",
@@ -876,7 +876,7 @@
   {
    "id": "rt-ci-038",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "keyword-stuffing",
    "shape": "sheets",
@@ -900,7 +900,7 @@
   {
    "id": "rt-ci-039",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "keyword-stuffing",
    "shape": "mail",
@@ -924,7 +924,7 @@
   {
    "id": "rt-ci-040",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "keyword-stuffing",
    "shape": "drive-doc",
@@ -948,7 +948,7 @@
   {
    "id": "rt-ci-041",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "mail-claims-action",
    "shape": "mail",
@@ -972,7 +972,7 @@
   {
    "id": "rt-ci-042",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "mail-claims-action",
    "shape": "mail",
@@ -996,7 +996,7 @@
   {
    "id": "rt-ci-043",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "mail-claims-action",
    "shape": "mail-thread",
@@ -1020,7 +1020,7 @@
   {
    "id": "rt-ci-044",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "mail-claims-action",
    "shape": "drive-doc",
@@ -1044,7 +1044,7 @@
   {
    "id": "rt-ci-045",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "mail-claims-action",
    "shape": "mail-thread",
@@ -1068,7 +1068,7 @@
   {
    "id": "rt-ci-046",
    "batch": "CI-1",
-   "status": "pending-owner-approval",
+   "status": "approved",
    "family": "chunk-injection",
    "attack": "mail-claims-action",
    "shape": "sheets",

@@ -32974,6 +32974,41 @@ Only arm L and today's baseline are built (decision 5: arms H/R2 only if L fails
   pseudonymisation; (3) `mail-claims-action` depends on the owner's review; (4) the batch approval flow above (status
   edit + freeze) is a proposal; (5) the CH3 run spends 32 remote calls on synthetic text only.
 
+**CH3 run 1 (INVALID), measurement note (2026-11-09, branch `claude/v5-partl-c5a-runs`).** Plan `ecb9ccd82e6645af`
+(corpus `71f2e63e027b`), `qwen3:8b@500a1f067a9f`, Ollama 0.40.15; run log and content-free report archived at
+`eval-archive/partl-ch3-run1-invalid-2026-11-09/`. Verdict INVALID (4 items ended `today (not-ready)`); no arm-L result is
+taken from it. Two defects, both fixed in code; nothing in the bars, corpus, prompts or scorer changed.
+
+- **Defect 1: the local model reasoned before answering.** 28/32 items: the FIRST map call hit the 20 s per-call bound
+  (`partial (call-timeout)`, coverage 0 %). `qwen3:8b` is a thinking model; `ollama run` printed `Thinking...` and the
+  reasoning before the answer (a short Korean prompt: 16 s; with `--think=false`: 2 s, answer only). **Fix:** the
+  long-item provider only (`OllamaCliProvider` option `noThinking`, set by `composeLongItems`) runs
+  `ollama run --nowordwrap --think=false --hidethinking <model>` (both flags accepted by 0.40.15, also for the
+  non-thinking `gemma3:4b`); defence in depth, an output that still starts with a reasoning block (`Thinking...` or
+  `<think>`) is a failed call (EXECUTION_FAILED, fail closed; the reasoning is never passed on as a note). The chat,
+  vision and embedding Ollama providers keep their arguments and output handling byte-identical (tests).
+- **Defect 2: a readiness probe spoiled by the previous item's abandoned call.** 4/32 items (ch3-04, -16, -22, -25)
+  ended `today (not-ready)` in 140–250 ms with no call, each right after an item whose call S3's per-call deadline
+  abandoned. The guard's report shows exactly 4 `provider-unavailable` failures among the 28 local calls (24 timeouts).
+  Cause: S3's deadline and the runner's own timeout race; when S3's abort won, the runner killed the child and reported
+  no exit code (`code: null`, `timedOut: false`), which the Ollama adapter classified UNAVAILABLE. That rejection lands
+  after S3 has already returned and while the next item's FRESH readiness probe is in flight; the router's
+  invalidate-on-UNAVAILABLE bumps the provider's generation and the manager discards the in-flight probe as not ready
+  (correct fail-closed behaviour on the wrong evidence). The probe itself (`ollama list` / `show` / `show --modelfile`)
+  was not at fault. **Fix:** a call whose request signal was aborted is the caller's own time bound and is classified
+  TIMEOUT ("abandoned by its caller"), never UNAVAILABLE, so it no longer invalidates the provider; a run with no exit
+  code and no abort stays UNAVAILABLE, and a real UNAVAILABLE during a probe still makes that probe not ready (both
+  tested). A fake-runner test reproduces the failure shape (abandoned call settling during the next fresh probe) and
+  failed before the fix. The local-weights checks are unchanged; `cli-runner.ts` and `ollama-embedding-provider.ts`
+  (CH7-hashed) are untouched.
+- **Today's baseline ran normally:** 32/32 remote calls answered (30 delivered, 2 withheld by today's claim check),
+  p50 / p95 4,997 / 8,224 ms; its scores are not used (the run is INVALID).
+- **New plan digests** (`pnpm build`, then plan mode, zero model calls): CH3 `de1af603b3273c75` (same budget: 187 LOCAL
+  + 32 REMOTE calls, 0 judge, up to 4 canaries per guarded provider), CH6 `7865551e150fc49a` (batch CI-1 approved,
+  135 LOCAL calls × 3 runs = 405, 0 remote, 0 judge). The implementation hash moved (adapter and composition changed),
+  so **the re-run needs a new owner yes on the new plan digest**; the yes given for `ecb9ccd82e6645af` does not carry
+  over.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,

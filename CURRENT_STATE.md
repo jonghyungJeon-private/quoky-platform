@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 Part L C5a: CH3 run 1 INVALID, two defects fixed (2026-11-09, branch `claude/v5-partl-c5a-runs`)
+
+- CH3 run 1 (plan `ecb9ccd82e6645af`) was INVALID: qwen3:8b reasoning exhausted the 20 s bound (28/32 items), and an abandoned call misclassified UNAVAILABLE spoiled the next item's readiness probe (4/32). Fixed: the long-item provider runs with `--think=false --hidethinking` (reasoning output fails closed); an aborted call is TIMEOUT. New plan digests CH3 `de1af603b3273c75`, CH6 `7865551e150fc49a`; the re-run waits for the owner's yes. DECISIONS ADR-0124 section 17 "CH3 run 1 (INVALID)".
+
 ### ADR-0124 Part L slice C5a eval harness: CH3 / CH5 / CH6 (2026-11-09, branch `claude/v5-partl-c5a-eval`)
 
 - Offline tooling, nothing run: `pnpm eval:chunk-s3` (CH3 + CH5: 32-item frozen corpus, arm L on the pinned local model vs today's path, value-atom scorer, blind A/B sheet + binomial `score-labels`) and `pnpm eval:chunk-injection` (CH6: batch CI-1, 46 cases, pending owner approval, 3 runs). Each run needs the owner's yes on its plan digest (CH3: 187 local + 32 remote calls; CH6: 405 local calls). DECISIONS ADR-0124 section 17 "Slice 4".
