@@ -32592,7 +32592,7 @@ handler: no reply, prompt, provider choice or log line of the running service ch
   - `deps`: `selector` (`ProviderSelector`) and its base `selectionContext`, a monotonic `now()`, an optional `wait(ms, signal)`
     (the timer; default `setTimeout`), an optional `exclusive(work)` (the single-in-flight local model gate), an optional
     `logger`.
-  - Outcomes: `{ kind: 'today', reason: 'off' | 'shadow' | 'not-ready' }` (the caller runs today's path untouched);
+  - Outcomes: `{ kind: 'today', reason: 'off' | 'shadow' | 'not-ready' | 'not-chunkable' }` (the caller runs today's path untouched; `not-chunkable` is sections that do not tile the text);
     `{ kind: 'S1' }` (the item fits one window; today's path); `{ kind: 'refused', reason: 'credential' | 'empty' }` (as
     today: the whole item, never redacted); `{ kind: 'summary' }` and `{ kind: 'partial', reason }`, both with the
     summary text, the Core coverage line (`renderCoverageLine`), the fixed history note and a content-free audit.
