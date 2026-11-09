@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AiProviderManager, Capability, CapabilityRouter, selectRequiredLocalProvider } from '@quoky/core';
+import { AiFailureKind, AiProviderManager, Capability, CapabilityRouter, selectRequiredLocalProvider } from '@quoky/core';
 import type { CliRunner, CliRunOptions } from './cli-runner';
 import { OllamaCliProvider, ollamaModelfileFromLocalBlob, ollamaShowIsLocalModel } from './index';
 
@@ -220,6 +220,151 @@ describe('Ollama execute honours request.signal', () => {
     const provider = new OllamaCliProvider({ model: 'notes-model:8b', runner });
     const call = new AbortController();
     call.abort();
-    await expect(provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000, signal: call.signal })).rejects.toThrow();
+    // CH3 run 1: the caller's own bound, never UNAVAILABLE (which would make the router invalidate the provider).
+    await expect(provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000, signal: call.signal })).rejects.toMatchObject({ kind: AiFailureKind.TIMEOUT });
+  });
+
+  it('without an aborted signal a run with no exit code is still UNAVAILABLE (today\'s classification)', async () => {
+    const runner: CliRunner = async () => ({ code: null, stdout: '', stderr: 'spawn failed', timedOut: false }) as never;
+    const provider = new OllamaCliProvider({ model: 'notes-model:8b', runner });
+    await expect(provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000, signal: new AbortController().signal })).rejects.toMatchObject({ kind: AiFailureKind.UNAVAILABLE });
+    await expect(provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000 })).rejects.toMatchObject({ kind: AiFailureKind.UNAVAILABLE });
+  });
+});
+
+/**
+ * ADR-0124 Part L C5a, CH3 run 1 (INVALID): 4/32 items ended `today (not-ready)` in 140-250 ms with no call, each right
+ * after an item whose call the S3 per-call bound abandoned. The failure shape, reproduced with a fake runner: S3's deadline
+ * aborts the call, the runner kills the child and reports no exit code (`code: null`, `timedOut: false`) a few hundred ms
+ * later; S3 has already moved on and the next item's FRESH readiness probe is in flight. Classified UNAVAILABLE, the
+ * router's `invalidate` bumped the provider's generation and the manager discarded that in-flight probe as not ready.
+ */
+describe('CH3 run 1: an abandoned call never spoils the next item\'s readiness probe', () => {
+  const MODEL = 'notes-model:8b';
+  const BLOB = `/home/owner/.ollama/models/blobs/sha256-${'0123456789abcdef'.repeat(4)}`;
+  const SHOW = ['  Model', '    architecture    qwen3', '', '  Capabilities', '    completion', ''].join('\n');
+
+  function deferred(): { promise: Promise<void>; release: () => void } {
+    let release: () => void = () => undefined;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  }
+
+  it('the abandoned call settles TIMEOUT while the next fresh probe is in flight, and that probe still selects the model', async () => {
+    const teardown = deferred();
+    let probeHold: { promise: Promise<void>; release: () => void } | undefined;
+    const runner: CliRunner = async (_bin, args, options) => {
+      if (args[0] === 'run') {
+        // The child is killed on abort; its exit (no code) arrives only after the teardown.
+        await new Promise<void>((resolve) => options.signal?.addEventListener('abort', () => resolve(), { once: true }));
+        await teardown.promise;
+        return { code: null, stdout: '', stderr: '', timedOut: false } as never;
+      }
+      if (args[0] === 'list' && probeHold !== undefined) await probeHold.promise;
+      const stdout = args[0] === 'list' ? `NAME ID SIZE MODIFIED\n${MODEL} 0a1b2c3d4e5f 5.2 GB now\n`
+        : args[1] === '--modelfile' ? `FROM ${BLOB}\n` : SHOW;
+      return { code: 0, stdout, stderr: '', timedOut: false } as never;
+    };
+    const provider = new OllamaCliProvider({ model: MODEL, runner, localWeights: { pinnedDigest: '0a1b2c3d4e5f' }, noThinking: true });
+    const router = new CapabilityRouter(new AiProviderManager([provider], { uncached: (candidate) => candidate === provider }));
+
+    const first = await selectRequiredLocalProvider(router, Capability.SUMMARIZATION);
+    if (first.kind !== 'selected') throw new Error('first selection not ready');
+    const call = new AbortController();
+    const abandoned = first.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 20_000, signal: call.signal });
+    const outcome = abandoned.then(() => 'answered', (error: unknown) => (error as { kind?: string }).kind);
+    call.abort(); // S3's per-call deadline fired; S3 moves on to the next item.
+
+    probeHold = deferred();
+    const next = selectRequiredLocalProvider(router, Capability.SUMMARIZATION); // the next item's fresh probe, in flight
+    teardown.release(); // the killed child exits while that probe is running
+    const kind = await outcome;
+    probeHold.release();
+    expect((await next).kind).toBe('selected');
+    expect(kind).toBe(AiFailureKind.TIMEOUT);
+  });
+
+  it('a real UNAVAILABLE settling during the probe still makes that probe not ready (fail closed is kept)', async () => {
+    let probeHold: { promise: Promise<void>; release: () => void } | undefined;
+    let fail: () => void = () => undefined;
+    const runner: CliRunner = async (_bin, args) => {
+      if (args[0] === 'run') {
+        await new Promise<void>((resolve) => {
+          fail = resolve;
+        });
+        return { code: null, stdout: '', stderr: 'daemon gone', timedOut: false } as never;
+      }
+      if (args[0] === 'list' && probeHold !== undefined) await probeHold.promise;
+      const stdout = args[0] === 'list' ? `NAME ID SIZE MODIFIED\n${MODEL} 0a1b2c3d4e5f 5.2 GB now\n`
+        : args[1] === '--modelfile' ? `FROM ${BLOB}\n` : SHOW;
+      return { code: 0, stdout, stderr: '', timedOut: false } as never;
+    };
+    const provider = new OllamaCliProvider({ model: MODEL, runner, localWeights: {}, noThinking: true });
+    const router = new CapabilityRouter(new AiProviderManager([provider], { uncached: (candidate) => candidate === provider }));
+    const first = await selectRequiredLocalProvider(router, Capability.SUMMARIZATION);
+    if (first.kind !== 'selected') throw new Error('first selection not ready');
+    const failed = first.provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 20_000 }).then(() => 'answered', (error: unknown) => (error as { kind?: string }).kind);
+    probeHold = deferred();
+    const next = selectRequiredLocalProvider(router, Capability.SUMMARIZATION);
+    await Promise.resolve();
+    fail();
+    expect(await failed).toBe(AiFailureKind.UNAVAILABLE);
+    probeHold.release();
+    expect(await next).toEqual({ kind: 'not-ready' });
+  });
+});
+
+/**
+ * ADR-0124 Part L C5a, CH3 run 1 (INVALID): qwen3:8b reasoned before it answered (`Thinking...` on stdout) and the first
+ * map call of 28/32 items hit the 20 s bound. The long-item provider runs with reasoning off and hidden, and an output that
+ * still starts with a reasoning block is a failed call. Every other Ollama provider's arguments and output are unchanged.
+ */
+describe('Ollama noThinking (the long-item provider only)', () => {
+  const MODEL = 'notes-model:8b';
+
+  function recording(stdout: string) {
+    const args: string[][] = [];
+    const runner: CliRunner = async (_bin, argv) => {
+      args.push([...argv]);
+      return { code: 0, stdout, stderr: '', timedOut: false } as never;
+    };
+    return { runner, args };
+  }
+
+  it('noThinking adds --think=false --hidethinking to `ollama run` (argv and audit); without it the args are byte-identical', async () => {
+    const plain = recording('- a note');
+    const today = new OllamaCliProvider({ model: MODEL, runner: plain.runner });
+    expect(today.buildArgs()).toEqual(['run', '--nowordwrap', MODEL]);
+    const todayResult = await today.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+    expect(plain.args).toEqual([['run', '--nowordwrap', MODEL]]);
+    expect(todayResult.audit?.sanitizedCommand).toEqual(['ollama', 'run', '--nowordwrap', MODEL]);
+
+    const off = recording('- a note');
+    const longItem = new OllamaCliProvider({ model: MODEL, runner: off.runner, noThinking: true });
+    expect(longItem.buildArgs()).toEqual(['run', '--nowordwrap', '--think=false', '--hidethinking', MODEL]);
+    const result = await longItem.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+    expect(off.args).toEqual([['run', '--nowordwrap', '--think=false', '--hidethinking', MODEL]]);
+    expect(result.audit?.sanitizedCommand).toEqual(['ollama', 'run', '--nowordwrap', '--think=false', '--hidethinking', MODEL]);
+    expect(result.text).toBe('- a note');
+  });
+
+  it('an output that still starts with a reasoning block fails closed; the reasoning is never returned', async () => {
+    for (const stdout of ['Thinking...\nSECRET-TRACE the user wants notes.\n...done thinking.\n\n- a note\n', '  <think>\nSECRET-TRACE\n</think>\n- a note', '\u001b[1mThinking...\u001b[0m\nSECRET-TRACE\n']) {
+      const provider = new OllamaCliProvider({ model: MODEL, runner: recording(stdout).runner, noThinking: true });
+      const error = await provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' }).then(() => undefined, (caught: unknown) => caught as { kind?: string; message?: string });
+      expect(error?.kind, stdout).toBe(AiFailureKind.EXECUTION_FAILED);
+      expect(error?.message ?? '').not.toContain('SECRET-TRACE');
+    }
+    // A note that mentions thinking later is an answer.
+    const ok = new OllamaCliProvider({ model: MODEL, runner: recording('- Thinking... about the budget (owner)').runner, noThinking: true });
+    expect((await ok.execute({ capability: Capability.SUMMARIZATION, prompt: 'p' })).text).toBe('- Thinking... about the budget (owner)');
+  });
+
+  it('without noThinking the same output is today\'s answer (existing providers unchanged)', async () => {
+    const stdout = 'Thinking...\nreasoning\n...done thinking.\n\n- a note';
+    const result = await new OllamaCliProvider({ model: MODEL, runner: recording(stdout).runner }).execute({ capability: Capability.SUMMARIZATION, prompt: 'p' });
+    expect(result.text).toBe(stdout);
   });
 });

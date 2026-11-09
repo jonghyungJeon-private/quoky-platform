@@ -15,6 +15,8 @@ import type { ChunkItemsConfig } from './chunk-items-config';
  * - **The single-in-flight gate** (RQ-3 T3-5): one local model call at a time in this process. S3 takes it per call
  *   (`exclusive`); the local embedding provider is wrapped here so its calls take the same gate (the embedding adapter and
  *   the recall modules are CH7-hashed, so the gate is applied around the provider, never inside them).
+ * - **No reasoning** (CH3 run 1): the provider runs `ollama run --nowordwrap --think=false --hidethinking`, and an output
+ *   that still starts with a reasoning block is a failed call.
  * - **Fresh readiness** (CA P3-a): the provider manager never serves the long-item provider's readiness from its cache.
  *
  * With `QUOKY_CHUNK_ITEMS` unset or `off` nothing is registered, wrapped or passed: the provider set, the routing and the
@@ -118,6 +120,8 @@ export function composeLongItems(input: LongItemCompositionInput): LongItemCompo
           providerId: LONG_ITEM_PROVIDER_ID,
           timeoutMs: S3_LIMITS.callTimeoutMs,
           localWeights: { pinnedDigest: model.digest },
+          // CH3 run 1: a thinking model (qwen3) otherwise reasons for most of the 20 s per-call bound before it answers.
+          noThinking: true,
           ...(input.runner !== undefined ? { runner: input.runner } : {}),
         }),
         LONG_ITEM_PROVIDER_ID,
