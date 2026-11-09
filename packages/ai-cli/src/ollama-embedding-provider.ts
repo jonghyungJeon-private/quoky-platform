@@ -220,8 +220,8 @@ function boundedInput(text: string): string {
 /**
  * Ollama CLI embedding provider (ADR-0098 D8). Advertises ONLY `EMBEDDING`; `OllamaCliProvider` no longer does.
  * Runs `ollama run <model>` with the text on stdin through the existing contained `CliRunner` in its DEFAULT
- * profile — like production Ollama chat (which also sets `OLLAMA_NO_CLOUD=1`): a neutral cwd, the colour variables, no
- * `OLLAMA_HOST` (the runner would refuse it), so the child talks to the CLI's default local
+ * profile — exactly like production Ollama chat: a neutral cwd, only the chat colour variables, no
+ * `OLLAMA_HOST`/`OLLAMA_NO_CLOUD` (the runner would refuse them), so the child talks to the CLI's default local
  * daemon. It never pulls: `OLLAMA_PULL_STDERR` aborts the run at the first download marker and the run fails
  * UNAVAILABLE (recall falls back to lexical; the owner pulls the model manually). Stdout must be one JSON array
  * of finite numbers; the vector is returned as the canonical Core envelope in `AiExecutionResult.text`.

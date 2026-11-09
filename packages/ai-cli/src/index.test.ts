@@ -505,8 +505,6 @@ describe('OllamaCliProvider (CAP-009, ADR-0030) — suggest-only local code gene
       NO_COLOR: '1',
       CLICOLOR: '0',
       CLICOLOR_FORCE: '0',
-      // ADR-0124 Part L C5a (review P2c): the CLI refuses a cloud-served model even behind a local alias.
-      OLLAMA_NO_CLOUD: '1',
     });
     expect(res.text).toBe('proposed change');
     expect(res.artifacts?.[0]?.kind).toBe(ArtifactKind.MARKDOWN_REPORT);

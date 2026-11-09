@@ -734,13 +734,6 @@ function parseClaudePrintJson(stdout: string): ClaudePrintJson | undefined {
 /** `ollama run` flag that disables the CLI's terminal-width hard wrap (it wraps even when stdout is a pipe). */
 export const OLLAMA_NO_WORD_WRAP = '--nowordwrap';
 
-/**
- * The production environment of an Ollama generation run (ADR-0124 Part L C5a, review P2c): the colour controls plus
- * `OLLAMA_NO_CLOUD=1`, so the CLI refuses a cloud-served model even when a local copy or Modelfile alias hides `cloud` from
- * its name (the name rule of {@link ollamaModelExecutionLocality} cannot see through an alias). Local models are unaffected.
- */
-export const OLLAMA_GENERATION_ENV = Object.freeze({ ...OLLAMA_COLOR_ENV, OLLAMA_NO_CLOUD: '1' } as const);
-
 export class OllamaCliProvider extends BaseCliAiProvider {
   readonly id: string;
   /**
@@ -847,7 +840,7 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       cwd,
       input,
       timeoutMs,
-      env: this.validationHost === null ? OLLAMA_GENERATION_ENV : {
+      env: this.validationHost === null ? OLLAMA_COLOR_ENV : {
         ...OLLAMA_COLOR_ENV,
         OLLAMA_HOST: this.validationHost,
         OLLAMA_NO_CLOUD: '1',
