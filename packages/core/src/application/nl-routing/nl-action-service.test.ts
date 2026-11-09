@@ -42,7 +42,7 @@ interface World {
   decide(text: string, opts?: { now?: IsoTimestamp; entries?: readonly NlCatalogEntry[]; pending?: PendingQuestion | null; replyTo?: string; codeFormatted?: boolean; direct?: boolean; surfaceEnforced?: boolean }): Promise<NlSelectionDecision>;
 }
 
-function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean; promptRev?: 'v79' | 'v81' } = {}): World {
+function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | ((request: AiRequest) => string); caps?: NlActionCaps; withSwitch?: boolean; promptRev?: 'v79' | 'v81' | 'v83' } = {}): World {
   const calls: AiRequest[] = [];
   const rawCalls: AiRequest[] = [];
   const logs: World['logs'] = [];
@@ -142,8 +142,8 @@ function world(options: { level?: NlActionLevel | 'absent'; script?: string[] | 
 const todoListing = (labels: number[], minute = 0) => withLabelledListing(undefined, 'owner', 'todo', labels.map((label) => ({ label, id: `todo-${label}` })), at(minute), 'listing');
 const actionLogs = (w: World) => w.logs.filter((log) => log.event === NL_ACTION_LOG_EVENT);
 
-describe('selector prompt caching: the split request (nl-select.v81)', () => {
-  it('the active rev sends the stable part as systemPrompt and only the per-turn part as prompt; joined it is the v79 text', async () => {
+describe('selector prompt caching: the split request (nl-select.v81 / v83)', () => {
+  it('the active rev sends the stable part as systemPrompt and only the per-turn part as prompt; joined it is the whole v83 text', async () => {
     const w = world({ script: [NONE] });
     await w.decide('그거 완료 처리해줘');
     const sent = w.rawCalls[0] as AiRequest;
@@ -165,13 +165,19 @@ describe('selector prompt caching: the split request (nl-select.v81)', () => {
     expect(fields?.promptBytes).toBe(new TextEncoder().encode(joined).length);
   });
 
-  it('the explicit v79 rollback sends one unsplit prompt, and the cache key differs per version', async () => {
-    const split = world({ script: [NONE] });
+  it('the explicit v81 rollback is split and the explicit v79 rollback is unsplit, both without the v83 rule; the cache key differs per version', async () => {
+    const active = world({ script: [NONE] });
+    const v81 = world({ script: [NONE], promptRev: 'v81' });
     const unsplit = world({ script: [NONE], promptRev: 'v79' });
-    await split.decide('그거 완료 처리해줘');
+    await active.decide('그거 완료 처리해줘');
+    await v81.decide('그거 완료 처리해줘');
     await unsplit.decide('그거 완료 처리해줘');
     expect('systemPrompt' in (unsplit.rawCalls[0] as AiRequest)).toBe(false);
-    expect(unsplit.rawCalls[0]?.prompt).toBe(split.calls[0]?.prompt);
+    expect('systemPrompt' in (v81.rawCalls[0] as AiRequest)).toBe(true);
+    expect(unsplit.rawCalls[0]?.prompt).toBe(v81.calls[0]?.prompt);
+    expect(active.calls[0]?.prompt).not.toBe(v81.calls[0]?.prompt);
+    expect(active.rawCalls[0]?.systemPrompt).toContain('asks Quoky to recall what the owner earlier told it');
+    expect(v81.rawCalls[0]?.systemPrompt).not.toContain('asks Quoky to recall what the owner earlier told it');
   });
 });
 
@@ -280,7 +286,7 @@ describe('cache rule and lastSelection (A6-D3)', () => {
     const keys = ['nl-select.v18', 'nl-select.v20', 'nl-select.v21', 'nl-select.v22', 'nl-select.v23', 'nl-select.v24', 'nl-select.v25', NL_SELECTION_PROMPT_VERSION, NL_ACTION_PROMPT_VERSION].map((promptVersion) => nlSelectionCacheKey({ ...base, promptVersion }));
     expect(new Set(keys).size).toBe(9);
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
-    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v81');
+    expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v83');
     // The same turn entries every time; only the kill switch decides the prompt (stopped: v24, running: v25).
     const w = world({ script: [NONE, NONE, NONE] });
     await w.service.handleSwitchPhrase(w.actor(), '에이전트 중지', T0);

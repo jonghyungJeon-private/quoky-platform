@@ -651,6 +651,33 @@ describe('NlSelectionService — validation, clarification and follow-ups (D4, D
     expect(await keyword.decide('내 지라 이슈 보여줘')).toMatchObject({ kind: 'ask' });
   });
 
+  it('owner decision of 2026-11-09: a hedging selector\'s one read runs only when the owner\'s own words name that entry', async () => {
+    const hedged = (keyword: string) => out('calendar.events', { keyword }, { ambiguity: 'NEEDS_CLARIFICATION' });
+    // An alias of the entry (일정) in the owner's own words: the hedge keeps running (owner decision 2026-10-28).
+    const named = harness({ script: [hedged('독서')] });
+    expect(await named.decide('독서 일정 언제야?')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events', args: { keyword: '독서' } } });
+    expect(named.logs.some((log) => log.event === 'nl_selection.one_option_ran')).toBe(true);
+    // No alias or source name in the words (a "what did I say" recall question): the numbered one-option question is asked.
+    const recall = harness({ script: [hedged('독서')] });
+    const asked = await recall.decide('주중에 독서 모임이 언제라고 했지?');
+    expect(asked).toMatchObject({ kind: 'ask' });
+    expect((asked as { text: string }).text).toContain('1. ');
+    expect(recall.session.metadata?.[NL_PENDING_METADATA_KEY]).toMatchObject({ options: [{ entryId: 'calendar.events', args: { keyword: '독서' } }] });
+    expect(recall.logs.some((log) => log.event === 'nl_selection.one_option_ran')).toBe(false);
+    expect(recall.logs.find((log) => log.event === 'nl_selection.one_option_ungrounded_asked')?.fields).toEqual({ entryId: 'calendar.events' });
+    // The alias only inside pasted text ({...} is data, not the owner's prose): asked as well.
+    const pasted = harness({ script: [hedged('독서')] });
+    expect(await pasted.decide('주중에 독서 모임이 언제라고 했지? {일정 공유: 독서 모임}')).toMatchObject({ kind: 'ask' });
+    expect(pasted.logs.some((log) => log.event === 'nl_selection.one_option_ungrounded_asked')).toBe(true);
+    // A CLEAR single option runs as before, with or without a name in the words.
+    const clear = harness({ script: [out('calendar.events', { keyword: '독서' })] });
+    expect(await clear.decide('주중에 독서 모임이 언제라고 했지?')).toMatchObject({ kind: 'execute', command: { entryId: 'calendar.events' } });
+    expect(clear.logs.some((log) => log.event === 'nl_selection.one_option_ungrounded_asked')).toBe(false);
+    // The general help entry reads no owner data: its selector hedge still runs without a source named.
+    const help = harness({ script: [out('help.topic', { topic: 'reminder' }, { ambiguity: 'NEEDS_CLARIFICATION' })] });
+    expect(await help.decide('이거 어떻게 해')).toMatchObject({ kind: 'execute', command: { entryId: 'help.topic' } });
+  });
+
   it('a follow-up refines lastSelection; a keyword grounded only in the previous args is accepted', async () => {
     const h = harness({
       script: [

@@ -26,7 +26,9 @@ export interface NlHelpScope {
 /** At most this many source names are shown (and stored) in one help-scope question. */
 export const NL_HELP_SCOPE_MAX_SOURCES = 3;
 
-const HELP_ENTRY_ID = 'help.topic';
+/** The general help entry: it reads no owner data, only Quoky's own help text. */
+export const NL_HELP_ENTRY_ID = 'help.topic';
+const HELP_ENTRY_ID = NL_HELP_ENTRY_ID;
 
 /** Each source family once: the entries that share one `sourceNames` set (`jira.issues` and `jira.release`). */
 const SOURCE_FAMILIES: readonly (readonly string[])[] = (() => {

@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — own-memory recall questions vs read entries (nl-select.v83 / v84, candidate, gates pending; one-option rule narrowed)
+
+- **Changed (prompt).** `rev: 'v83'` (action / R2 only; `nl-select.v83` action, `nl-select.v84` R2, split transport like v81): one rule next to rule 2's past-tense-question sentence: a question that asks Quoky to recall what the owner earlier told it, said, decided or planned is none (memory answers it in chat), a lookup only when it names a source's stored items as the place to look. `NL_ACTIVE_PROMPT_REVS.action` is `'v83'` (becomes active on merge, only after the D12 gates action / read-regression / r2 pass). Read v74, v81 and older revs are byte-identical. Eval CLIs: `--prompt-rev v83`; absent = v83 / v84.
+- **Changed (behaviour).** When the selector returns `NEEDS_CLARIFICATION` and one validated read option remains, it runs only if the owner's own words name that entry (a catalog alias or source name, pasted text excluded); otherwise the numbered one-option question is asked (`nl_selection.one_option_ungrounded_asked`). CLEAR options, `help.topic` and the date-only-drop read are unchanged.
+- **Rollback.** Prompt: active rev back to `'v81'` (explicit `rev: 'v81'`). The service rule: revert. Record: DECISIONS "v5 item 4 — own-memory recall questions vs read entries".
+
 ## Unreleased — ADR-0124 phase 2 P2-6: matched-passage excerpts for long recalled memories (measured; production now V1)
 
 - **Changed (behaviour).** `RECALL_EXCERPT_VARIANT` is now `'V1'`: recalled long memories show the matched passage (CH7: fact delivered 0/42 -> 32/42, gold delivered unchanged 184/192, p95 chars 2934 -> 2940).

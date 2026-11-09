@@ -123,7 +123,7 @@ import {
 import { groundingWordIn, validateSelection, type NlValidatedSelection, type NlValidationContext, type NlValidationResult } from './selection-validator';
 import { NL_ACTION_UNDO_COMMAND } from '../work-chat/work-chat-renderer';
 import { buildHelpScopeClassifierPrompt, helpScopeClassifierReply, parseHelpScopeClassifierOutput } from './help-scope-classifier';
-import { NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
+import { NL_HELP_ENTRY_ID, NL_HELP_SCOPE_MAX_SOURCES, nlHelpSourceScope, renderHelpScopeAppReply, renderHelpScopeOptions, renderHelpScopeQuestion } from './help-scope';
 import { NL_HELP_TOPICS, nlWave1Entry } from './wave1-entries';
 import { nlKeywordHasWeekdayForm, nlWeekdayMentions, resolveNlRange, type NlResolvedRange } from './symbolic-time';
 import { nlOneStepClauseGroundedFlags } from './clause-flags';
@@ -1266,7 +1266,9 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // existing period reader; a bare 8-digit release name such as "20261022" is not one), an option that rests only on a
     // date range the selector read into them is dropped, as long as another option remains. The rest is decided as usual
     // (one unchanged read option runs; see below).
+    let dateOnlyDropped = false;
     if (dateOnly.includes(true) && dateOnly.includes(false) && !nlNamesPeriod(prepared.groundingText)) {
+      dateOnlyDropped = true;
       for (let index = options.length - 1; index >= 0; index -= 1) {
         if (dateOnly[index] !== true) continue;
         this.log('info', 'nl_selection.date_only_option_dropped', { entryId: (options[index] as NlValidatedSelection).entry.id });
@@ -1298,10 +1300,26 @@ export class NlSelectionService implements TurnDeliveryObserver {
       // replaced a value the selector gave, e.g. a keyword grounded only in pasted text). The red-team invariant holds:
       // a hostile or ungrounded selection never runs a read by repair. Owner decision of 2026-11-02 narrows the last case
       // (`onlyEnumDroppedFromNamedEntry`): "드라이브 문서 목록 보여줘" read as `drive.files {kind: document}` (a plain 문서 is
-      // no type) runs as the Drive listing instead of a one-option question.
+      // no type) runs as the Drive listing instead of a one-option question. Owner decision of 2026-11-09 narrows the
+      // 2026-10-28 rule for a selector that ITSELF hedged (`NEEDS_CLARIFICATION`): its one remaining read runs only when
+      // the owner's own words (outside pasted text) name that entry (an alias or source name). A read the selector
+      // guessed from words that name no source (a keyword read out of a "what did I tell you" recall question) is not run
+      // on its hedge; the numbered one-option question is asked instead (the owner chose "ask"). Unchanged: a CLEAR single
+      // option, the general help entry (it reads no owner data; owner decision A above), and the read that survives the
+      // date-range-only drop (the 2026-10-28 rule above, a8-09 / a8-27).
       if (optionChanged[0] !== true) {
-        this.log('info', 'nl_selection.one_option_ran', { entryId: (options[0] as NlValidatedSelection).entry.id });
-        return this.complete(options[0] as NlValidatedSelection, turn, last, language, prepared.groundingText);
+        const option = options[0] as NlValidatedSelection;
+        const hedgedUngrounded =
+          output.ambiguity === 'NEEDS_CLARIFICATION' &&
+          option.entry.id !== NL_HELP_ENTRY_ID &&
+          !dateOnlyDropped &&
+          !ownWordsNameEntry(option.entry, prepared.groundingText);
+        if (hedgedUngrounded) {
+          this.log('info', 'nl_selection.one_option_ungrounded_asked', { entryId: option.entry.id });
+        } else {
+          this.log('info', 'nl_selection.one_option_ran', { entryId: option.entry.id });
+          return this.complete(option, turn, last, language, prepared.groundingText);
+        }
       }
     }
     if (options.length === 0) {
@@ -2856,8 +2874,17 @@ function onlyEnumDroppedFromNamedEntry(repaired: NlValidatedSelection, given: Nl
     const value = givenArgs[name];
     return spec?.kind === 'enum' && typeof value === 'string' && spec.values?.includes(value) === true;
   })) return false;
+  return ownWordsNameEntry(repaired.entry, groundingText);
+}
+
+/**
+ * Whether the owner's own words, outside pasted structures, name `entry`: one of its catalog aliases or source names
+ * appears there as a word. The grounding both {@link onlyEnumDroppedFromNamedEntry} (2026-11-02) and the one-option rule
+ * for a hedging selector (2026-11-09) rest on.
+ */
+function ownWordsNameEntry(entry: NlValidatedSelection['entry'], groundingText: string): boolean {
   const prose = normalizeForMatch(withoutStructures(groundingText));
-  return [...repaired.entry.aliases, ...(repaired.entry.sourceNames ?? [])].some((name) => groundingWordIn(prose, normalizeForMatch(name)));
+  return [...entry.aliases, ...(entry.sourceNames ?? [])].some((name) => groundingWordIn(prose, normalizeForMatch(name)));
 }
 
 /** Args as a canonical string (key order ignored), to tell an unchanged selection from a repaired one. */

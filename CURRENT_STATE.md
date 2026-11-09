@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Candidate, gates pending: nl-select.v83 (A6 action) / nl-select.v84 (A6 R2) and the narrowed one-option rule (2026-11-09, branch `claude/v5-nl-own-memory-when`)
+
+- **Candidate, gates pending: action `nl-select.v83` / R2 `nl-select.v84` (the v81 / v82 text plus one rule: "what did I tell you" recall questions are none, memory answers them).** Read stays `nl-select.v74`,
+  planner `agent-plan.v11`. v83 / v84 become active on merge, only after the D12 gates action, read-regression and r2 PASS on the final head (owner approved 2026-11-09); rollback = active action rev back to `'v81'`.
+  A hedging selector's one read now runs only when the owner's own words name that entry, else it asks (`nl_selection.one_option_ungrounded_asked`).
+  Record: DECISIONS "v5 item 4 — own-memory recall questions vs read entries".
+
 ### ADR-0124 phase 2 P2-6: matched-passage recall excerpts (2026-11-09, branch `claude/v5-recall-excerpt`)
 
 - Core exposes the matched passage ordinal; `renderRecallContent` V0/V1/V2 plus the stage R excerpt comparison are in; measured on CH7 (V1 fact delivered 32/42 vs 0/42), production variant is now V1. DECISIONS "P2-6".
