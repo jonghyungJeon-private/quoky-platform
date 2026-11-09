@@ -205,6 +205,8 @@ export * as chunking from './chunking';
 // ADR-0120 amendment A6 R2 (D11): the card-spoof check of a Jira / Slack summary.
 export * from './card-spoof';
 export * from './document-summary-claim-guard';
+// ADR-0124 Part L C5a slice 3: today's delivered-text check, reachable by the CH3 / CH6 eval harness (no behaviour change).
+export { checkDocumentSummaryClaims, isFixedDocumentSummaryNotice, renderDocumentSummaryTooLong } from './document-summary-claim-check';
 export * from './mail';
 // ADR-0118 Drive read (DRV-1): the Drive sub-barrel (the readout, neutralizer and claim guard are shared with mail).
 export * from './drive';

@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 Part L slice C5a eval harness: CH3 / CH5 / CH6 (2026-11-09, branch `claude/v5-partl-c5a-eval`)
+
+- Offline tooling, nothing run: `pnpm eval:chunk-s3` (CH3 + CH5: 32-item frozen corpus, arm L on the pinned local model vs today's path, value-atom scorer, blind A/B sheet + binomial `score-labels`) and `pnpm eval:chunk-injection` (CH6: batch CI-1, 46 cases, pending owner approval, 3 runs). Each run needs the owner's yes on its plan digest (CH3: 187 local + 32 remote calls; CH6: 405 local calls). DECISIONS ADR-0124 section 17 "Slice 4".
+
 ### ADR-0124 Part L slice C5a-2: long-item wiring, `shadow` and PN (2026-11-09, branch `claude/v5-partl-c5a-wire`)
 
 - Wired behind `QUOKY_CHUNK_ITEMS` (default `off`, byte-identical): mail, thread, Drive and Sheets summaries attach the whole item; `shadow` logs S3 counts and keeps today's reply; `on` (needs `QUOKY_CHUNK_ITEMS_MODEL` + `QUOKY_CHUNK_ITEMS_MODEL_DIGEST`) summarizes long items on the pinned local model only, with the coverage line, a local footer and the PN notice (DM, 8 s, once). Before `on`: CH3/CH5/CH6 harness (slice 4) and gates, Chief Architect review, owner live checks (1)-(5). DECISIONS ADR-0124 section 17 "Slice 2".
