@@ -113,11 +113,18 @@ const retrieverOf = (...entries: ReturnType<typeof retrieved>[]): MemoryRetrieve
 const delivered = async (builder: ContextBuilder): Promise<string[]> => ((await builder.build(task)).durableRecall ?? []).map((entry) => entry.content);
 
 describe('ContextBuilder recall excerpts', () => {
-  it('production variant is V0 and its output equals the former head truncation, matched ordinal or not', async () => {
-    expect(RECALL_EXCERPT_VARIANT).toBe('V0');
+  it('production variant is V1: a multi-passage memory shows its matched passage, a memory without an ordinal its head', async () => {
+    expect(RECALL_EXCERPT_VARIANT).toBe('V1');
+    const out = await delivered(new ContextBuilder(memoryManager, {}, retrieverOf(retrieved('c', LONG, 1), retrieved('a', SHORT), retrieved('d', `${LONG}z`))));
+    expect(out).toContain(renderRecallContent(LONG, 1, 1, 'V1'));
+    expect(out).toContain(SHORT);
+    expect(out).toContain(renderRecallContent(`${LONG}z`, undefined, 2, 'V0'));
+  });
+
+  it('a builder given V0 still delivers the former head cut, matched ordinal or not', async () => {
     const former = (text: string): string => (text.length > 400 ? `${text.slice(0, 400)}…` : text);
     const entries = [retrieved('a', SHORT), retrieved('b', MID, undefined), retrieved('c', LONG, 1), retrieved('d', `${'x'.repeat(401)}`)];
-    const out = await delivered(new ContextBuilder(memoryManager, {}, retrieverOf(...entries)));
+    const out = await delivered(new ContextBuilder(memoryManager, {}, retrieverOf(...entries), undefined, 'V0'));
     expect(out.sort()).toEqual([SHORT, MID, LONG, 'x'.repeat(401)].map(former).sort());
   });
 

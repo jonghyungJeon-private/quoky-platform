@@ -5,9 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — ADR-0124 phase 2 P2-6: matched-passage excerpts for long recalled memories (measurement harness; production unchanged)
+## Unreleased — ADR-0124 phase 2 P2-6: matched-passage excerpts for long recalled memories (measured; production now V1)
 
-- **Added.** `SemanticRecallSession.matchedPassageOrdinals?()` and `RetrievedMemory.matchedPassageOrdinal` (optional); pure `renderRecallContent` with variants V0/V1/V2; `ContextBuilder` takes an optional variant (default `RECALL_EXCERPT_VARIANT = 'V0'`, behaviour unchanged). Stage R CH7 reports fact-delivered / gold-delivered / delivered characters per variant with a pre-declared verdict; plan version `runtime-recall-plan.v4` (CH7 and CH8 digests change, expected).
+- **Changed (behaviour).** `RECALL_EXCERPT_VARIANT` is now `'V1'`: recalled long memories show the matched passage (CH7: fact delivered 0/42 -> 32/42, gold delivered unchanged 184/192, p95 chars 2934 -> 2940).
+- **Added.** `SemanticRecallSession.matchedPassageOrdinals?()` and `RetrievedMemory.matchedPassageOrdinal` (optional); pure `renderRecallContent` with variants V0/V1/V2; `ContextBuilder` takes an optional variant (default `RECALL_EXCERPT_VARIANT`). Stage R CH7 reports fact-delivered / gold-delivered / delivered characters per variant with a pre-declared verdict; plan version `runtime-recall-plan.v4` (CH7 and CH8 digests change, expected).
 
 ## Unreleased — ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (offline tooling)
 

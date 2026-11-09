@@ -42,10 +42,10 @@ const DEFAULT_MINIMUM_COMPRESSION_CHARACTERS = 80;
 /** ContextBuilder owns the final bounded durable-recall output. */
 const DURABLE_RECALL_LIMIT = 10;
 /**
- * ADR-0124 P2-6: how long recalled memories are cut. Stays 'V0' (head, as before) until the offline measurement
- * (stage R CH7) has been run and the owner adopts a variant.
+ * ADR-0124 P2-6: how long recalled memories are cut. 'V1' (owner-approved after the CH7 measurement, verdict adopt V1):
+ * a multi-passage memory shows the passage that matched, else the head. 'V0' is the former head cut.
  */
-export const RECALL_EXCERPT_VARIANT: RecallExcerptVariant = 'V0';
+export const RECALL_EXCERPT_VARIANT: RecallExcerptVariant = 'V1';
 const DURABLE_AUTHORITY_FITNESS: readonly DurableMemoryAuthorityLevel[] = [
   'USER_CLAIM_OR_INTENT',
   'ASSISTANT_NON_AUTHORITATIVE',

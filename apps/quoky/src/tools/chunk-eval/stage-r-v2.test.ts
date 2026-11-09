@@ -45,7 +45,7 @@ describe('CH7 plan digest is unchanged by the CH8 work', () => {
   const FIXED: Parameters<typeof stageRDigest>[0] = { set: { digest: '0'.repeat(64), memories: 1, queries: 1 }, planned: ['L'], pins: [], dropped: [] };
   it('stageRDigest of fixed inputs equals the value recorded before the CH8 edit', () => {
     expect(STAGE_R_PLAN_VERSION).toBe('runtime-recall-plan.v4');
-    expect(stageRDigest(FIXED)).toBe('3b066d43a25e23e9ab1498d039a8602cd33b36a713dc09bba9edb4cede54a204');
+    expect(stageRDigest(FIXED)).toBe('ae15cac0608d79ff146bc9bec94375f9c4dc7099ec42f1296e34b891bcafd2cc');
     // re-recorded for ADR-0124 P2-6: recall-excerpt sources joined the hashed files, the parameters gained `recallExcerpts`, plan version v4 (was 645234b4...)
     // re-recorded for ADR-0124 P2-4: recencyWeight 0.25 -> 0.1 in RUNTIME_CONSTANTS and the blend-sweep implementation changed (was 6b2fa49c...)
     // re-recorded for ADR-0124 P2-5: the lexical-variant module joined the hashed sources and the parameters gained `lexicalVariants` (was e5227230...)
