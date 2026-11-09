@@ -589,8 +589,17 @@ export class PromptComposer {
    * matches it.
    */
   private composeDocumentSummary(task: Task, readout: UntrustedDocumentReadout, retry = false): PromptSpec {
+    return this.composeDocumentSummaryFor(task.description, readout, retry);
+  }
+
+  /**
+   * The document-summary prompt from the owner's request text alone (no `Task`): exactly what {@link compose} builds for
+   * an untrusted-document readout whose task description is `requestText`. ADR-0124 Part L C5a reuses it, unchanged, for
+   * the S3 reduce call over the map notes.
+   */
+  composeDocumentSummaryFor(requestText: string, readout: UntrustedDocumentReadout, retry = false): PromptSpec {
     const currentFacts = [
-      PromptComposer.label('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', replyLanguageFact(task.description)),
+      PromptComposer.label('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', replyLanguageFact(requestText)),
     ];
     const background = [
       PromptComposer.label('CORE_RUNTIME', 'NON_AUTHORITATIVE_BACKGROUND', renderUntrustedDocumentForPrompt(readout)),
@@ -602,9 +611,9 @@ export class PromptComposer {
         PromptComposer.section('1. Current-turn facts supplied by Core', currentFacts),
         PromptComposer.section('2. Background resources', background),
       ].join('\n\n'),
-      task: isWorkSummaryRequestTextWithheld(task.description)
+      task: isWorkSummaryRequestTextWithheld(requestText)
         ? PromptComposer.label('CORE_RUNTIME', 'AUTHORITATIVE_CURRENT_FACT', UNTRUSTED_DOCUMENT_REQUEST_WITHHELD_NOTICE)
-        : PromptComposer.label('USER', 'USER_CLAIM_OR_INTENT', task.description),
+        : PromptComposer.label('USER', 'USER_CLAIM_OR_INTENT', requestText),
     };
   }
 
@@ -917,4 +926,13 @@ export class PromptComposer {
   private static sectionFromBody(title: string, body: string): string {
     return `## ${title}\n${body}`;
   }
+}
+
+/**
+ * ADR-0124 Part L C5a (DECISIONS ADR-0124 section 17): the existing document-summary prompt, byte-identical to what
+ * {@link PromptComposer.compose} builds for an untrusted-document readout, from the owner's request text alone. The S3
+ * reduce call reuses it over a readout whose body is the map notes.
+ */
+export function composeDocumentSummaryPrompt(requestText: string, readout: UntrustedDocumentReadout, retry = false): PromptSpec {
+  return new PromptComposer().composeDocumentSummaryFor(requestText, readout, retry);
 }
