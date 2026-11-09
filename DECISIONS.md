@@ -32687,6 +32687,18 @@ section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and
   `FROM` it each print a `Remote …` row in `ollama show` and/or a non-blob `FROM` in `ollama show --modelfile`, so the
   provider is not ready for each; and (4) the pinned `qwen3:8b` passes. Verified so far, read-only on 0.40.15: installed
   local models print no remote row and only blob-path `FROM` lines.
+- **Strict parsing (review round 3, Codex P2 ×2 + CA P3-c; structural, not a third heuristic).** `ollama show` counts as
+  local only when it is the recognized CLI table (a header line exactly `Model` with an `architecture` row in that
+  section) and carries no remote row or `remote…` key (snake or camel case): empty or unknown output is not ready. The
+  modelfile is parsed under a closed grammar: blank and `#` lines skipped; every other line outside a `"""` block is an
+  upper-case directive at column 0 followed by a value; `"""` blocks (TEMPLATE, LICENSE, SYSTEM) are skipped whole, so a
+  `FROM` inside them neither counts nor spoils; every `FROM` is exactly one absolute `sha256-<64 hex>` blob path (the
+  `sha256:` spelling is no longer accepted, matching this note); at least one `FROM`; an unterminated block, an indented
+  or lower-case directive, or a bare or multi-token `FROM` is refused. Checked read-only against the installed
+  `gemma3:4b`, `granite3.3:8b` and `embeddinggemma:300m` outputs: all pass. Carried to slice 2 from the CA round-2
+  approval: P3-a fresh probe for S3 selection (invalidate or TTL 0; record the ≤90 s residual window and threat model),
+  P3-b live check (5) `OLLAMA_NO_CLOUD=1` on the daemon refusing a cloud alias (if it does, a required owner step before
+  `on`), P3-d the long-item provider always sets `pinnedDigest` (composition-root test).
 - **An upstream source cut (CA P2).** With `sourceTruncated` (a thread shown in part, a capped body), the coverage is never
   `complete` and Core's coverage line appends a fixed Core sentence that the source was already cut, in the summary, the
   partial reply and the last-resort partial. No model text states coverage.

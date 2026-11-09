@@ -20,31 +20,59 @@ export function validatedOllamaPinnedDigest(pin: string | undefined): string | u
 }
 
 /**
- * True when `ollama show <model>` reports a remote-backed model. The daemon's show response carries `remote_model` and
- * `remote_host` for such a model; the CLI table prints them as rows whose field name starts with `Remote`. A line whose
- * first word is that field name (any case, `_`/space/`:` separated), or a JSON key `"remote_…"` anywhere, counts: a false
- * hit only makes a model unavailable (fail closed), never available.
+ * True only when `ollama show <model>` is the CLI table this adapter recognizes AND it reports no remote field (review
+ * round 3, Codex P2: an empty or unknown format is not evidence of a local model). Recognized means a section header line
+ * that is exactly `Model` and, inside that section, an `architecture` row. Remote means a row whose field name starts with
+ * `remote` (any case; the daemon's `remote_model`/`remote_host` print as `Remote …` rows) or a JSON-style key that starts
+ * with `remote` in either snake or camel case. A false "remote" hit only makes a model unavailable (fail closed).
  */
-export function ollamaShowDeclaresRemote(showOutput: string): boolean {
-  return showOutput.split('\n').some((line) => /^remote(?:[\s_:]|$)/iu.test(line.trim()) || /"remote_[a-z]+"\s*:/iu.test(line));
+export function ollamaShowIsLocalModel(showOutput: string): boolean {
+  const lines = showOutput.split(/\r?\n/u);
+  if (lines.some((line) => /^remote(?:[\s_:A-Z]|$)/iu.test(line.trim()) || /"remote[A-Za-z_]*"\s*:/u.test(line))) return false;
+  const header = lines.findIndex((line) => line.trim() === 'Model');
+  if (header < 0) return false;
+  for (const line of lines.slice(header + 1)) {
+    const row = line.trim();
+    if (row === '') break;
+    if (/^architecture\s+\S/u.test(row)) return true;
+  }
+  return false;
 }
 
-/** An absolute path whose last segment is a content-addressed weights blob (`sha256-<64 hex>`). */
+/** An absolute path whose last segment is a content-addressed weights blob (`sha256-<64 hex>`, as the daemon stores it). */
 function isLocalBlobPath(path: string): boolean {
   const absolute = path.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(path);
-  return absolute && /[\\/]sha256[-:][0-9a-f]{64}$/u.test(path);
+  return absolute && /[\\/]sha256-[0-9a-f]{64}$/u.test(path);
 }
 
 /**
- * True when `ollama show --modelfile <model>` names local weights: at least one `FROM` line, and every `FROM` line points
- * to a content-addressed blob on this host. A model the daemon serves from elsewhere has no local weights blob, so its
- * `FROM` names a model, not a blob path, and it is refused.
+ * True when `ollama show --modelfile <model>` parses under a strict grammar and names only local weights (review round 3,
+ * Codex P2 + CA P3-c). Grammar: blank lines and `#` comment lines are skipped; every other line outside a `"""` block
+ * starts at column 0 with an upper-case directive word followed by whitespace; a directive whose value opens `"""` without
+ * closing it on the same line starts a block that runs to the next line containing `"""` (block lines are never read as
+ * directives, so a `FROM` inside TEMPLATE/LICENSE/SYSTEM text cannot fake or spoil evidence). Every `FROM` directive must
+ * be exactly one absolute `sha256-<64 hex>` blob path, and there must be at least one. Anything else (a lower-case or
+ * indented directive, a bare or multi-token `FROM`, an unterminated block) is malformed and refused.
  */
 export function ollamaModelfileFromLocalBlob(modelfile: string): boolean {
-  const from = modelfile
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => /^FROM\s/iu.test(line))
-    .map((line) => line.slice(4).trim());
-  return from.length > 0 && from.every(isLocalBlobPath);
+  let inBlock = false;
+  let froms = 0;
+  for (const line of modelfile.split(/\r?\n/u)) {
+    if (inBlock) {
+      if (line.includes('"""')) inBlock = false;
+      continue;
+    }
+    if (line.trim() === '' || line.startsWith('#')) continue;
+    const directive = /^([A-Z]+)[ \t]+(\S.*)$/u.exec(line);
+    if (directive === null) return false;
+    const [, word, rawValue] = directive as unknown as [string, string, string];
+    const value = rawValue.trimEnd();
+    if (word === 'FROM') {
+      if (/\s/u.test(value) || !isLocalBlobPath(value)) return false;
+      froms += 1;
+      continue;
+    }
+    if (value.startsWith('"""') && !value.slice(3).includes('"""')) inBlock = true;
+  }
+  return !inBlock && froms > 0;
 }

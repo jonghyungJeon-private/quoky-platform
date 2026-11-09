@@ -26,7 +26,7 @@ import { CLAUDE_CHILD_ENV, MAX_STDOUT_CAPTURE_BYTES, defaultCliRunner, maskSecre
 /** JSON escaping inflates the reply inside the `--output-format json` envelope, so the Claude text provider captures 2x. */
 const CLAUDE_JSON_STDOUT_CAPTURE_BYTES = MAX_STDOUT_CAPTURE_BYTES * 2;
 import type { CliRunner, CliRunOptions } from './cli-runner';
-import { ollamaModelfileFromLocalBlob, ollamaShowDeclaresRemote, validatedOllamaPinnedDigest } from './ollama-local-weights';
+import { ollamaModelfileFromLocalBlob, ollamaShowIsLocalModel, validatedOllamaPinnedDigest } from './ollama-local-weights';
 import { KNOWN_RESULT_SUBTYPES, classifyClaudeCliFailure, parseClaudeResultUsage, validatedClaudeModel } from './claude-vision-provider';
 import {
   sanitizeGeneralChatText,
@@ -104,7 +104,7 @@ export {
   parseOllamaShowCapabilities,
   sameOllamaModel,
 } from './ollama-models';
-export { ollamaModelfileFromLocalBlob, ollamaShowDeclaresRemote } from './ollama-local-weights';
+export { ollamaModelfileFromLocalBlob, ollamaShowIsLocalModel } from './ollama-local-weights';
 export type { OllamaChatModelInventoryOptions, OllamaListEntry, OllamaModelInventory } from './ollama-models';
 
 type ProviderConversationRole = 'system' | 'user' | 'assistant' | 'unknown';
@@ -832,14 +832,14 @@ export class OllamaCliProvider extends BaseCliAiProvider {
   }
 
   /**
-   * ADR-0124 Part L C5a: positive local evidence from the daemon's metadata. `ollama show <model>` must report no remote
-   * field and `ollama show --modelfile <model>` must name a local weights blob. Read-only, no input sent; any probe error,
+   * ADR-0124 Part L C5a: positive local evidence from the daemon's metadata. `ollama show <model>` must be the recognized table
+   * with no remote field and `ollama show --modelfile <model>` must name a local weights blob. Read-only, no input sent; any probe error,
    * timeout or non-zero exit is not ready.
    */
   private async hasLocalWeights(): Promise<boolean> {
     try {
       const info = await this.runner(this.bin, ['show', this.model], this.probeOptions(OLLAMA_SHOW_TIMEOUT_MS));
-      if (info.timedOut || info.code !== 0 || ollamaShowDeclaresRemote(info.stdout)) return false;
+      if (info.timedOut || info.code !== 0 || !ollamaShowIsLocalModel(info.stdout)) return false;
       const modelfile = await this.runner(this.bin, ['show', '--modelfile', this.model], this.probeOptions(OLLAMA_SHOW_TIMEOUT_MS));
       if (modelfile.timedOut || modelfile.code !== 0) return false;
       return ollamaModelfileFromLocalBlob(modelfile.stdout);
