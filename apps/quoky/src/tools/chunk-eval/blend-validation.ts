@@ -1,14 +1,14 @@
 /**
  * ADR-0124 phase 2 P2-3 validation on the CH8 set: a pre-declared VALIDATION of three frozen blend candidates, not a selection.
  * Pure module (no model, no I/O). Same inputs as the sweep (the candidate table the REAL retriever observed, per query) plus the
- * CH8 tags (`category`, `staleId`). Candidates are fixed to B0 (production), B1 and B2 from the frozen `BLEND_CANDIDATES`; there is
- * no select/confirm split and nothing is selected. B0 recomputed offline must equal the real retriever's ids (fidelity), else INVALID.
+ * CH8 tags (`category`, `staleId`). Candidates are fixed to B0 (previous production 0.25), B1 and B2 from the frozen `BLEND_CANDIDATES`; there is
+ * no select/confirm split and nothing is selected. The frozen linear candidate equal to the production weights (B1 since P2-4), recomputed offline, must equal the real retriever's ids (fidelity); INVALID when none matches or any query differs.
  *
  * Extra metric `newer-first` (recency-wins queries only): the share of those queries where the gold (the newer memory) ranks above its
  * `staleId` in the candidate's top 10. A stale memory absent from the top 10 while the gold is present counts as newer-first; a gold
  * absent from the top 10 counts as not newer-first.
  */
-import { BLEND_CANDIDATES, labelOf, percentiles7, rankIds, type BlendCandidate, type BlendQuery, type FloorCalibration } from './blend-sweep';
+import { BLEND_CANDIDATES, labelOf, noProductionCandidateReason, percentiles7, productionCandidateOf, rankIds, type BlendCandidate, type ProductionBlend, type BlendQuery, type FloorCalibration } from './blend-sweep';
 
 export const VALIDATION_CANDIDATE_IDS = ['B0', 'B1', 'B2'] as const;
 export type ValidationCandidateId = (typeof VALIDATION_CANDIDATE_IDS)[number];
@@ -92,11 +92,12 @@ export function verdictOf(results: readonly CandidateValidation[]): Verdict {
   return 'no change recommended';
 }
 
-export function buildBlendValidation(queries: readonly ValidationQuery[], languages: readonly string[], categories: readonly string[], limit: number = RANK_AT): BlendValidation {
+export function buildBlendValidation(queries: readonly ValidationQuery[], languages: readonly string[], categories: readonly string[], production: ProductionBlend, limit: number = RANK_AT): BlendValidation {
   const candidates = validationCandidates();
-  const current = candidates[0] as BlendCandidate;
+  const current = productionCandidateOf(BLEND_CANDIDATES, production);
   let mismatches = 0;
   for (const query of queries) {
+    if (current === undefined) break;
     const offline = rankIds(query.rows, current, limit);
     if (!(offline.length === query.actual.length && offline.every((id, at) => id === query.actual[at]))) mismatches += 1;
   }
@@ -111,7 +112,7 @@ export function buildBlendValidation(queries: readonly ValidationQuery[], langua
     const newer = recency.filter((entry) => isNewerFirst(entry.top, entry.query.gold, entry.query.staleId as string)).length;
     return {
       id: candidate.id,
-      label: labelOf(candidate),
+      label: labelOf(candidate, production),
       overall: metrics5(items.map((item) => item.rank)),
       byLanguage,
       byCategory,
@@ -128,7 +129,7 @@ export function buildBlendValidation(queries: readonly ValidationQuery[], langua
     const others = query.rows.filter((row) => !query.gold.includes(row.id) && row.semantic !== undefined).map((row) => row.semantic as number);
     if (others.length > 0) otherScores.push(Math.max(...others));
   }
-  const invalid = mismatches > 0 ? { reason: `fidelity: the offline current formula (${current.id}) disagrees with the real retriever on ${mismatches} of ${queries.length} queries` } : null;
+  const invalid = current === undefined ? { reason: noProductionCandidateReason(production) } : mismatches > 0 ? { reason: `fidelity: the offline production formula (${current.id}) disagrees with the real retriever on ${mismatches} of ${queries.length} queries` } : null;
   return {
     kind: 'validation',
     fidelity: { queries: queries.length, mismatches },

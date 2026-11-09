@@ -12,6 +12,7 @@ const scratch = mkdtempSync(join(tmpdir(), 'blend-sweep-test-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 const row = (id: string, o: Partial<BlendRow> = {}): BlendRow => ({ id, contentKey: `content-${id}`, updatedAt: '2026-10-01T00:00:00.000Z', lexical: 0, recency: 0.5, semantic: undefined, ...o });
+const PRODUCTION = { semanticWeight: 0.7, recencyWeight: 0.1 };
 const byId = (id: string) => BLEND_CANDIDATES.find((candidate) => candidate.id === id) as (typeof BLEND_CANDIDATES)[number];
 
 describe('blend sweep: ranking formulas', () => {
@@ -74,11 +75,11 @@ describe('blend sweep: split, selection, fidelity', () => {
 
   const goodQuery = (language: string): BlendQuery => {
     const rows = [row('g', { semantic: 0.9, lexical: 0.5 }), row('x', { semantic: 0.3, lexical: 0.2 })];
-    return { language, gold: ['g'], actual: rankIds(rows, byId('B0'), 10), rows };
+    return { language, gold: ['g'], actual: rankIds(rows, byId('B1'), 10), rows };
   };
 
   it('zero mismatches: valid, a candidate is selected and floor data is reported', () => {
-    const sweep = buildBlendSweep([goodQuery('ko'), goodQuery('ko'), goodQuery('en'), goodQuery('en'), goodQuery('mixed'), goodQuery('mixed')], langs);
+    const sweep = buildBlendSweep([goodQuery('ko'), goodQuery('ko'), goodQuery('en'), goodQuery('en'), goodQuery('mixed'), goodQuery('mixed')], langs, PRODUCTION);
     expect(sweep.fidelity).toEqual({ queries: 6, mismatches: 0 });
     expect(sweep.invalid).toBeNull();
     expect(sweep.selected).toBe('B0');
@@ -90,11 +91,24 @@ describe('blend sweep: split, selection, fidelity', () => {
 
   it('a fidelity mismatch marks the sweep INVALID with the count and selects nothing', () => {
     const bad: BlendQuery = { ...goodQuery('en'), actual: ['x', 'g'] };
-    const sweep = buildBlendSweep([goodQuery('ko'), bad, bad], langs);
+    const sweep = buildBlendSweep([goodQuery('ko'), bad, bad], langs, PRODUCTION);
     expect(sweep.fidelity).toEqual({ queries: 3, mismatches: 2 });
     expect(sweep.invalid?.reason).toContain('2 of 3');
     expect(sweep.selected).toBeNull();
     expect(sweep.confirmB0VsSelected).toBeNull();
+  });
+
+  it('INVALID with a clear reason when no frozen candidate equals the production weights', () => {
+    const sweep = buildBlendSweep([goodQuery('ko')], langs, { semanticWeight: 0.7, recencyWeight: 0.11 });
+    expect(sweep.invalid?.reason).toContain('no frozen linear candidate equals the production weights');
+    expect(sweep.selected).toBeNull();
+    expect(sweep.fidelity.mismatches).toBe(0);
+  });
+
+  it('labels B0 as the previous production and the matching candidate as production', () => {
+    const sweep = buildBlendSweep([goodQuery('ko')], langs, PRODUCTION);
+    expect(sweep.candidates.find((c) => c.id === 'B0')?.label).toContain('previous production 0.25');
+    expect(sweep.candidates.find((c) => c.id === 'B1')?.label).toContain('(production)');
   });
 
   it('percentiles are null on no data', () => {
@@ -159,7 +173,7 @@ describe('blend sweep: stage R integration', () => {
   it('a mismatch carries diagnosis details (at most 5) with the first differing position', () => {
     const rows = [row('g', { semantic: 0.9, lexical: 0.5 }), row('x', { semantic: 0.3, lexical: 0.2 })];
     const bad: BlendQuery = { language: 'en', gold: ['g'], actual: ['x', 'g'], rows };
-    const sweep = buildBlendSweep(Array.from({ length: 8 }, () => bad), ['ko', 'en', 'mixed']);
+    const sweep = buildBlendSweep(Array.from({ length: 8 }, () => bad), ['ko', 'en', 'mixed'], PRODUCTION);
     expect(sweep.fidelity.mismatches).toBe(8);
     expect(sweep.mismatchDetails).toHaveLength(5);
     expect(sweep.mismatchDetails[0]).toMatchObject({ queryIndex: 0, language: 'en', actualTop: ['x', 'g'], offlineTop: ['g', 'x'] });

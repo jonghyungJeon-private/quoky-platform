@@ -50,20 +50,22 @@ describe('verdict rule boundaries (pre-declared)', () => {
   });
 });
 
-// two memories, same topic: stale (old, high lexical+semantic), gold (new, slightly lower semantic): recency decides under B0, not under B2
+// two memories, same topic: stale (old, high lexical+semantic), gold (new, slightly lower semantic): recency decides under B0 (0.25), not under B1 (production 0.10) or B2
 const rows = (): BlendRow[] => [
   { id: 'stale', contentKey: 'a', updatedAt: '2026-05-01T00:00:00.000Z', lexical: 1, recency: 0.02, semantic: 0.8 },
   { id: 'gold', contentKey: 'b', updatedAt: '2026-11-05T00:00:00.000Z', lexical: 0.5, recency: 0.98, semantic: 0.75 },
 ];
 const queryOf = (overrides: Partial<ValidationQuery> = {}): ValidationQuery => {
-  const [b0] = validationCandidates();
-  return { language: 'ko', gold: ['gold'], actual: rankIds(rows(), b0 as never, 10), rows: rows(), category: 'recency-wins', staleId: 'stale', ...overrides };
+  const production = validationCandidates()[1];
+  return { language: 'ko', gold: ['gold'], actual: rankIds(rows(), production as never, 10), rows: rows(), category: 'recency-wins', staleId: 'stale', ...overrides };
 };
 
+const PRODUCTION = { semanticWeight: 0.7, recencyWeight: 0.1 };
+
 describe('buildBlendValidation', () => {
-  it('reports per language, per category, newer-first, floor percentiles and the verdict; fidelity holds when B0 matches the actual ids', () => {
+  it('reports per language, per category, newer-first, floor percentiles and the verdict; fidelity holds when the production-matching candidate (B1) matches the actual ids', () => {
     const plain = queryOf({ category: 'shared', staleId: null });
-    const validation = buildBlendValidation([queryOf(), plain], ['ko', 'en'], ['recency-wins', 'shared']);
+    const validation = buildBlendValidation([queryOf(), plain], ['ko', 'en'], ['recency-wins', 'shared'], PRODUCTION);
     expect(validation.invalid).toBeNull();
     expect(validation.fidelity).toEqual({ queries: 2, mismatches: 0 });
     expect(validation.results.map((r) => r.id)).toEqual(['B0', 'B1', 'B2']);
@@ -78,15 +80,23 @@ describe('buildBlendValidation', () => {
   });
 
   it('recency flips newer-first between B0 and B2 on a stale-lexical topic', () => {
-    const validation = buildBlendValidation([queryOf()], ['ko'], ['recency-wins']);
+    const validation = buildBlendValidation([queryOf()], ['ko'], ['recency-wins'], PRODUCTION);
     const [b0, , b2] = validation.results as [CandidateValidation, CandidateValidation, CandidateValidation];
     expect(b0.newerFirst.rate).toBe(1);
     expect(b2.newerFirst.rate).toBe(0);
   });
 
   it('a fidelity mismatch marks the validation INVALID and gives no verdict', () => {
-    const validation = buildBlendValidation([queryOf({ actual: ['stale', 'gold'] })], ['ko'], ['recency-wins']);
+    const validation = buildBlendValidation([queryOf({ actual: ['gold', 'stale'] })], ['ko'], ['recency-wins'], PRODUCTION);
     expect(validation.invalid?.reason).toMatch(/fidelity/u);
+    expect(validation.verdict).toBeNull();
+  });
+});
+
+describe('buildBlendValidation production match', () => {
+  it('is INVALID with a clear reason when no frozen candidate equals the production weights', () => {
+    const validation = buildBlendValidation([queryOf()], ['ko'], ['recency-wins'], { semanticWeight: 0.7, recencyWeight: 0.11 });
+    expect(validation.invalid?.reason).toContain('no frozen linear candidate equals the production weights');
     expect(validation.verdict).toBeNull();
   });
 });

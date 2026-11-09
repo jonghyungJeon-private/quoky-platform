@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 phase 2 P2-4: durable recall recency weight 0.10
+
+- **Changed.** `DefaultMemoryRetriever` default recency weight 0.25 -> 0.10 (owner decision 2026-11-09, verdict B1 of the P2-3 CH8 validation: E4 Recall@5 0.867 -> 0.993, newer-first kept 19/22). Semantic weight, half-life and widening unchanged. Stage R harness follows production: fidelity is checked against the frozen candidate equal to the production weights (B1), INVALID when none matches; B0 is labelled previous production; plan digests change. Rollback: revert. The `embeddinggemma:300m` switch is an operator `.env.local` step (`QUOKY_EMBEDDING_MODEL`), no code change. DECISIONS "ADR-0124 phase 2 P2-4".
+
 ## Unreleased — ADR-0124 phase 2 P2-3: stage R blend comparison sweep (offline tooling) and measurement
 
 - **Added.** `eval:chunk` stage R re-ranks the observed candidate table of `backfilled` and `warm` runs offline under 11 pre-declared blend formulas (B0 current .. B10 RRF), on a pre-declared select / confirm split with a deterministic selection rule, plus a fidelity check (B0 offline must equal the real retriever on every query, else INVALID) and floor-calibration percentiles of gold and best non-gold semantic scores. New `--modes live,backfilled,warm` restricts the semantic run modes. Plan `runtime-recall-plan.v3`. Harness only: no Core or production change. Recorded in DECISIONS "ADR-0124 phase 2 P2-3".

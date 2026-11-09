@@ -163,6 +163,28 @@ describe('DefaultMemoryRetriever', () => {
     expect(results.map(({ memory }) => memory.id)).toEqual(['new', 'old']);
   });
 
+  it('defaults the recency weight to 0.10 (ADR-0124 P2-4): an older, more relevant memory outranks a recent, less relevant one that 0.25 would have put first', async () => {
+    const records = [
+      record('recent-less-relevant', 'blue sky preference', { updatedAt: CURRENT_TIME }),
+      record('old-more-relevant', 'blue sky preference color', {
+        createdAt: '2025-08-01T00:00:00.000Z',
+        updatedAt: '2025-08-01T00:00:00.000Z',
+      }),
+    ];
+    const fourKeywords = createMemoryRetrievalRequest({
+      query: 'blue sky preference color',
+      capability: Capability.GENERAL_CHAT,
+      scope: { actorId: 'actor-1' },
+      authorityFitness: ['USER_CLAIM_OR_INTENT'],
+      maxResults: 10,
+    });
+
+    const byDefault = await retriever(records).retrieve(fourKeywords);
+    expect(byDefault.map(({ memory }) => memory.id)).toEqual(['old-more-relevant', 'recent-less-relevant']);
+    const previous = await retriever(records, { recencyWeight: 0.25 }).retrieve(fourKeywords);
+    expect(previous.map(({ memory }) => memory.id)).toEqual(['recent-less-relevant', 'old-more-relevant']);
+  });
+
   it('excludes expired candidates even if a repository returns them', async () => {
     const expired = record('expired', 'blue sky preference', {
       metadata: {

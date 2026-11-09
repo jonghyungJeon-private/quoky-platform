@@ -114,7 +114,7 @@ export const RUNTIME_CONSTANTS = {
   retrieverDefaultLimit: DEFAULT_DURABLE_RECALL_LIMIT,
   candidateFetchMultiplier: 5,
   candidateFetchMin: 50,
-  recencyWeight: 0.25,
+  recencyWeight: 0.1,
   recencyHalfLifeMs: 30 * 24 * 60 * 60 * 1_000,
   semanticWeight: DEFAULT_SEMANTIC_WEIGHT,
   ollamaBin: 'ollama',
@@ -632,7 +632,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
         embeddedDocuments,
         latencyMs: (({ p50, p95 }) => ({ p50: Math.round(p50 * 10) / 10, p95: Math.round(p95 * 10) / 10 }))(percentiles(latencies)),
       },
-      blendSweep: sweepOn ? buildBlendSweep(tables, LANGUAGES) : null,
+      blendSweep: sweepOn ? buildBlendSweep(tables, LANGUAGES, RUNTIME_CONSTANTS) : null,
       prewarm,
       invalid: null,
     };

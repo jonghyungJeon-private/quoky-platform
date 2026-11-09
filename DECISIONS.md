@@ -33186,3 +33186,13 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
 - **E0 (`nomic-embed-text`) for reference:** B0 0.473 (ko .325), B1 0.580, B2 0.647 (ko .512); verdict no change. The live model is the larger limit.
 - **Floor data, E4:** gold p50 .589 / p95 .730 / max .829; best non-gold p50 .359 / p95 .590 / max .679 (CH7: max non-gold .700). The nomic-calibrated 0.9 floor is never reached by E4.
 - Production unchanged; the recency weight (ADR-0098 default 0.25 -> 0.10 per the verdict), the embedder switch and the floor remain owner decisions. Archive: `eval-archive/adr0124-phase2-P2-3-2026-11-09/` (ch8 report and log).
+
+### ADR-0124 phase 2 P2-4: recency weight 0.10 (owner decision 2026-11-09)
+
+Amends the ADR-0098 durable-recall default. Owner, after the P2-3 verdict B1: "응 권장안대로 1번부터 진행해".
+
+- **Evidence (recorded in P2-3, not re-measured).** CH7 (E4, backfilled): recency weight 0 with semantic weight 0.7 lifted Recall@5 from 0.599 to 0.958. Independent CH8 validation (E4, backfilled): B0 (wS .7, wR .25) 0.867 -> B1 (wS .7, wR .10) 0.993 (ko .988, en and mixed 1.0), fidelity 0 mismatches in 150 queries; B2 (wR 0) reaches 1.000 but loses newer-first (13/22 vs B1 19/22; B0 21/22). Pre-declared verdict: B1 recommended.
+- **What changes.** `DEFAULT_RECENCY_WEIGHT` in `memory-retriever.ts`: 0.25 -> 0.10. Semantic weight 0.7, half-life 30 days, candidate widening and every other retriever parameter are unchanged. The stage R harness mirrors production (`RUNTIME_CONSTANTS.recencyWeight` 0.1); its fidelity check now recomputes the frozen linear candidate whose weights equal `RUNTIME_CONSTANTS` (B1) and is INVALID with a stated reason when none matches. `BLEND_CANDIDATES` B0..B10 are unchanged; B0 is labelled "previous production (0.25)". Stage R plan digests change (constants and implementation hashes are in them).
+- **Embedder switch (operator step, no code change).** The switch to `embeddinggemma:300m` is deployed together with this change by setting `QUOKY_EMBEDDING_MODEL=embeddinggemma:300m` in `.env.local` and restarting; the backfill re-embeds into the new space. The own-memory floor 0.9 is kept unchanged by owner decision: E4 never reaches it (best gold max .829), so a paraphrase-only own-memory question gets the truthful "not in memory" reply, as today.
+- **Rollback.** Revert this PR (weight back to 0.25). The embedder rollback is separate: set `QUOKY_EMBEDDING_MODEL=nomic-embed-text` and restart; vectors per model space are kept.
+- **Open item (follow-up, not changed here).** `context-builder.ts` caps each recalled memory at `MAX_MEMORY_CHARS = 400` taken from the START of the content, so for a long multi-passage memory the passage that matched the query may not reach the prompt.

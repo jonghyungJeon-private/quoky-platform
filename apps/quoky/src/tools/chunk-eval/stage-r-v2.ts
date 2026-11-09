@@ -4,7 +4,7 @@
  * Same runtime path as stage R (the real SqliteStorageProvider, OllamaCliEmbeddingProvider, LocalVectorProvider, the production
  * memory scorer and DefaultMemoryRetriever with default options), with two differences for CH8: `updatedAt` comes from each memory's authored
  * `daysAgo` relative to the fixed retrieval time (not the seeded spread), and the blend comparison is the pre-declared VALIDATION of
- * `blend-validation.ts` (B0, B1, B2; Recall@5 / MRR@10 per language and category; newer-first rate; advisory verdict), not a sweep.
+ * `blend-validation.ts` (B0 previous production, B1, B2; Recall@5 / MRR@10 per language and category; newer-first rate; advisory verdict), not a sweep.
  *
  * This is a separate module on purpose: the stage R plan digest covers the bytes of `stage-r.ts` and `blend-sweep.ts`, and the CH7 plan
  * digests must not change, so the CH7 files are not edited. The run body below follows `runRuntimeArm` of `stage-r.ts` line by line
@@ -438,7 +438,7 @@ export async function runRuntimeArmV2(options: RunOptionsV2): Promise<RuntimeArm
         embeddedDocuments,
         latencyMs: (({ p50, p95 }) => ({ p50: Math.round(p50 * 10) / 10, p95: Math.round(p95 * 10) / 10 }))(percentiles(latencies)),
       },
-      blendValidation: sweepOn ? buildBlendValidation(tables, LANGUAGES, CH8_CATEGORIES) : null,
+      blendValidation: sweepOn ? buildBlendValidation(tables, LANGUAGES, CH8_CATEGORIES, RUNTIME_CONSTANTS) : null,
       prewarm,
       invalid: null,
     };
