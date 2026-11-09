@@ -188,6 +188,12 @@ export interface ProviderSelectionServiceDeps {
    * a local selection) still are. The owner's selection itself is never changed.
    */
   readonly workTextVendorAllowed?: boolean;
+  /**
+   * ADR-0124 Part L C5a-2 (P2d): the key of the long-item provider (`QUOKY_CHUNK_ITEMS=on`). It is never eligible for a
+   * request WITHOUT `requiredLocality`, and it is the ONLY eligible key of a SUMMARIZATION request with
+   * `requiredLocality: 'LOCAL'`. Absent: a constrained request has no eligible provider (nothing local is chosen for it).
+   */
+  readonly longItemKey?: string;
 }
 
 /** A6 R2 (D6): the chat choices this composition root knows to be HTTP API vendor adapters (ADR-0115). */
@@ -263,6 +269,8 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
 
   async preferenceFor(capability: Capability, context: ProviderSelectionContext): Promise<ProviderPreference | null> {
     const claudeKey = this.deps.catalog.claude.id;
+    // ADR-0124 Part L C5a-2: a request that must stay on this host is answered from configuration only (no session read).
+    if (context.requiredLocality !== undefined) return this.requiredLocalPreference(capability);
     try {
       return this.preferenceFrom(capability, await this.sessionSelection(context), context.workText === true);
     } catch {
@@ -282,6 +290,9 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
    */
   isEligible(capability: Capability, context: ProviderSelectionContext, providerKey: string): boolean {
     try {
+      // ADR-0124 Part L C5a-2 (P2d): the dispatch check mirrors both rules of the long-item key.
+      if (context.requiredLocality !== undefined) return this.requiredLocalPreference(capability).eligible.includes(providerKey);
+      if (this.deps.longItemKey !== undefined && providerKey === this.deps.longItemKey) return false;
       let session: SessionSelection = {};
       if (context.sessionId !== undefined && context.actorId !== undefined) {
         const key = overrideKey({ sessionId: context.sessionId, actorId: context.actorId });
@@ -295,6 +306,15 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * ADR-0124 Part L C5a-2 (P2d): under `requiredLocality: 'LOCAL'` only a SUMMARIZATION request may run, and only on the
+   * long-item provider; the owner's chat selection, the `OLLAMA_MODEL` instance and every on-demand model stay excluded.
+   */
+  private requiredLocalPreference(capability: Capability): ProviderPreference {
+    const key = this.deps.longItemKey;
+    return { eligible: capability === Capability.SUMMARIZATION && key !== undefined ? [key] : [], order: 'listed' };
   }
 
   /** The policy's answer for a known session selection (synchronous). */

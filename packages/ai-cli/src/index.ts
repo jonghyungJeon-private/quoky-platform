@@ -885,6 +885,9 @@ export class OllamaCliProvider extends BaseCliAiProvider {
       cwd,
       input,
       timeoutMs,
+      // ADR-0124 Part L C5a-2: an abandoned call (an S3 per-call bound or the wall) kills the child at once, like a timeout,
+      // instead of letting it run to `timeoutMs`; the runner never spawns for an already-aborted signal.
+      ...(request.signal !== undefined ? { signal: request.signal } : {}),
       env: this.validationHost === null ? OLLAMA_COLOR_ENV : {
         ...OLLAMA_COLOR_ENV,
         OLLAMA_HOST: this.validationHost,

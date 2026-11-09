@@ -255,6 +255,20 @@ function preparedSections(sections: readonly UntrustedDocumentSection[] | undefi
 }
 
 /**
+ * ADR-0124 Part L C5a-2: the prepared sections of an item exactly as {@link buildUntrustedDocumentReadout} frames them
+ * (`[Sheet i/n] "<title>"` for Drive, `[Part i/n]` otherwise), unclipped, for the chunker. `undefined` when there are no
+ * sections or none has text. The caller guards the full item first (the builder's guard reads the full titles).
+ */
+export function untrustedDocumentSectionParts(
+  sections: readonly UntrustedDocumentSection[] | undefined,
+  source: UntrustedDocumentSource,
+): { readonly list: readonly { readonly header: string; readonly body: string }[]; readonly dropped: boolean } | undefined {
+  const prepared = preparedSections(sections, source === 'drive' ? 'Sheet' : 'Part');
+  if (prepared === undefined || prepared.list.length === 0) return undefined;
+  return { list: prepared.list.map(({ header, body }) => ({ header, body })), dropped: prepared.dropped };
+}
+
+/**
  * DRV-2b fair clip: every section keeps its header, and the body budget left after the headers and separators is shared
  * between the sections (water-filling: a short section gives its unused share to the longer ones). Each longer section
  * is clipped head and tail into its share. The joins are newlines, so a clip boundary never joins two fragments into a

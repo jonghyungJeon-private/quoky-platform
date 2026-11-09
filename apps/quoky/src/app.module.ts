@@ -117,6 +117,7 @@ import {
   providerSelectionFilePath,
 } from './provider-selection/selection-store';
 import { createProviderSelectionProviders } from './features/provider-selection.providers';
+import { composeLongItems } from './item-summary/long-item-composition';
 import { createProductionConversationRuntime } from './conversation-runtime-provider';
 import { GitHubAppGitProvider } from './github-app-git-provider';
 import { createGitHubAppTokenSources } from './github-app-token-sources';
@@ -164,6 +165,9 @@ const providerSelectionStore = new ProviderSelectionStore(
 logImageUnderstandingSelection(config.imageUnderstanding, new ConsoleLogger('image-understanding'));
 // One gauge for the recall scorer (marks each turn) and the vector backfill (yields to a turn).
 const recallActivity = new RecallActivityGauge();
+// ADR-0124 Part L C5a-2: the long-item provider, the shared local-model gate and the S3 runtime option (all absent while
+// QUOKY_CHUNK_ITEMS is off, so the provider set and routing are exactly today's).
+const longItems = composeLongItems({ chunkItems: config.chunkItems, ollamaBin: config.ai.ollamaBin });
 const providerCatalog = new ProviderCatalog({
   ai: config.ai,
   vision: visionModelsOf(config),
@@ -172,15 +176,19 @@ const providerCatalog = new ProviderCatalog({
   cliPresent: (bin) => isCliPresent(bin),
   // ADR-0098 D8: opt-in local embeddings (QUOKY_EMBEDDING_ENABLED, default false). Advertises only EMBEDDING and runs
   // in the runner's default profile like Ollama chat; it never pulls a model.
-  extra: config.embedding.enabled
-    ? [
-        new OllamaCliEmbeddingProvider({
-          bin: config.ai.ollamaBin,
-          model: config.embedding.model,
-          timeoutMs: config.embedding.timeoutMs,
-        }),
-      ]
-    : [],
+  // ADR-0124 Part L C5a-2: with QUOKY_CHUNK_ITEMS=on the embedding calls take the shared single-in-flight gate (wrapped
+  // here, the embedding adapter is CH7-hashed) and the SUMMARIZATION-only long-item provider is registered after them.
+  extra: longItems.providersAfterChat(
+    config.embedding.enabled
+      ? [
+          new OllamaCliEmbeddingProvider({
+            bin: config.ai.ollamaBin,
+            model: config.embedding.model,
+            timeoutMs: config.embedding.timeoutMs,
+          }),
+        ]
+      : [],
+  ),
   logger: new ConsoleLogger('ai-providers'),
 });
 const runtimeProviderRouting = createProductionRuntimeProviderRoutingActivation({
@@ -396,7 +404,9 @@ const application: Provider[] = [
     provide: AiProviderManager,
     // Readiness is re-probed lazily with a backed-off interval for "not ready" providers, so a daemon that starts after
     // the service (Ollama at login) becomes usable without a restart; the change is logged once.
-    useFactory: (ai: readonly AiProvider[]) => new AiProviderManager(ai, { logger: new ConsoleLogger('quoky') }),
+    // ADR-0124 Part L C5a-2 (CA P3-a): the long-item provider's readiness is never served from the cache.
+    useFactory: (ai: readonly AiProvider[]) =>
+      new AiProviderManager(ai, { logger: new ConsoleLogger('quoky'), ...(longItems.uncached !== undefined ? { uncached: longItems.uncached } : {}) }),
     inject: [AI_PROVIDERS],
   },
   {
@@ -685,7 +695,11 @@ const application: Provider[] = [
       nlSelection: NlSelectionService | undefined,
       surfaceGrants: SurfaceGrantsComposition | undefined,
       agentRuns: AgentRunService | undefined,
+      platform: PlatformAdapter,
     ) => {
+      // ADR-0124 Part L C5a-2: the S3 option (absent while QUOKY_CHUNK_ITEMS is off). Clause PN: its one progress notice
+      // goes through the platform adapter's existing sendMessage, DM only, with no history entry.
+      const longItemSummary = longItems.runtimeOption((notice) => platform.sendMessage(notice));
       // ADR-0032: production ApprovalFlow — stateless, derived from existing aggregates
       // (Session.activeTaskId → Task.planId → approvals.findByExecutionPlan → PENDING); anchors the
       // in-flight {request, prior} on the in-focus Task so a later turn can resume. No new store.
@@ -776,6 +790,7 @@ const application: Provider[] = [
         // ADR-0111 amendment A2 + runtime switching: LOCAL only unless the EFFECTIVE image selection (session override →
         // operations-UI default → configuration) is the cloud (Claude) image provider — resolved per image turn.
         imageUnderstandingLocalities: (context) => providerSelection.imageLocalities(context),
+        ...(longItemSummary !== undefined ? { longItemSummary } : {}),
       });
     },
     inject: [
@@ -809,6 +824,7 @@ const application: Provider[] = [
       { token: NL_SELECTION, optional: true },
       { token: SURFACE_GRANTS, optional: true },
       { token: AGENT_RUNS, optional: true },
+      PLATFORM_ADAPTER,
     ],
   },
   // Thin platform-entry facade (ADR-0032): delegates to ConversationRuntime, then delivers.
@@ -882,13 +898,18 @@ const features: Provider[] = [
     writesEnabled: connectorWrites.calendarWritesEnabled,
   }),
   // ADR-0118 (GML-1): read-only Gmail (pre-classify order 140), bound only when Gmail is configured.
-  ...createMailProviders({ gmail: config.gmail, timeZone: config.reminders.timeZone }),
+  ...createMailProviders({ gmail: config.gmail, timeZone: config.reminders.timeZone, ...(longItems.handlersEnabled ? { longItems: true } : {}) }),
   // ADR-0118 (DRV-1): read-only Google Drive (pre-classify order 145), bound only when Drive is configured.
-  ...createDriveProviders({ drive: config.drive, timeZone: config.reminders.timeZone }),
+  ...createDriveProviders({ drive: config.drive, timeZone: config.reminders.timeZone, ...(longItems.handlersEnabled ? { longItems: true } : {}) }),
   // ADR-0112 (CWR-2): connector-write writers, receipts view and the optional runtime write flow.
   ...connectorWrites.providers,
   // ADR-0092 amendment (runtime switching): the effective selection service and the owner's model command (pre-classify 70).
-  ...createProviderSelectionProviders({ config, catalog: providerCatalog, store: providerSelectionStore }),
+  ...createProviderSelectionProviders({
+    config,
+    catalog: providerCatalog,
+    store: providerSelectionStore,
+    ...(longItems.provider !== undefined ? { longItemKey: longItems.provider.id } : {}),
+  }),
   // ADR-0120: natural-language capability selection over the turn handlers' catalog (QUOKY_NL_INTENT_MODE, default off).
   ...createNlSelectionProviders(() => ({ nlSelection: config.nlSelection, timeZone: config.reminders.timeZone })),
   // ADR-0122 (A9 P1): the surface gate and grant service; QUOKY_CHANNEL_GRANTS (P1 default `off`) and the deploy seed.

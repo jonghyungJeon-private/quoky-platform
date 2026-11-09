@@ -137,8 +137,9 @@ export interface QuokyConfig {
    */
   agent: AgentConfig;
   /**
-   * ADR-0124 Part L C5a: `QUOKY_CHUNK_ITEMS` (`off` | `shadow` | `on`, default `off`; anything else is refused at startup).
-   * Validated only; no handler reads it yet. See `item-summary/chunk-items-config.ts`.
+   * ADR-0124 Part L: `QUOKY_CHUNK_ITEMS` (`off` | `shadow` | `on`, default `off`; anything else is refused at startup), and
+   * (slice 2) the long-item model `QUOKY_CHUNK_ITEMS_MODEL` with its required pin `QUOKY_CHUNK_ITEMS_MODEL_DIGEST` (`on`
+   * needs both). See `item-summary/chunk-items-config.ts` and `item-summary/long-item-composition.ts`.
    */
   chunkItems: ChunkItemsConfig;
   /**

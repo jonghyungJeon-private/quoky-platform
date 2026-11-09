@@ -1,6 +1,6 @@
 /**
- * ADR-0124 Part L slice C5a: the S3 whole-item summary, arm L (LOCAL only). Unwired: no handler calls it yet
- * (DECISIONS ADR-0124 section 17).
+ * ADR-0124 Part L slice C5a: the S3 whole-item summary, arm L (LOCAL only). Slice 2 wires it behind `QUOKY_CHUNK_ITEMS`
+ * through the summarize outcome's `longItem` (DECISIONS ADR-0124 section 17).
  */
 export {
   CHUNK_ITEMS_MODES,
@@ -19,3 +19,12 @@ export {
   parseDocumentMapNote,
 } from './document-map-prompt';
 export type { DocumentMapNoteFailure, DocumentMapNoteResult, DocumentMapPart } from './document-map-prompt';
+export {
+  LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
+  LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS,
+  preparedLongItemBody,
+  renderLongItemProgressNotice,
+  renderLongItemUnreadFooter,
+  sheetLongItemText,
+} from './long-item';
+export type { LongItemSummaryInput } from './long-item';

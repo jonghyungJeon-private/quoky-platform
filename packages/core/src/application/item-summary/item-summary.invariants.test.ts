@@ -21,6 +21,8 @@ describe('item-summary/ invariants (ADR-0124 Part L C5a)', () => {
       '../../domain',
       '../../domain/flow-label',
       '../../ports/ai-provider.port',
+      // Slice 2: the handler integration contract (`LongItemSummaryInput.refused`), a type only.
+      '../../ports/conversation-turn-handler.port',
       '../../ports/logger.port',
       '../../ports/provider-selection-policy.port',
       '../../ports/provider-selector.port',

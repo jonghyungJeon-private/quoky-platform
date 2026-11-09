@@ -113,6 +113,12 @@ export interface S3ItemSummaryDeps {
   readonly exclusive?: <T>(work: () => Promise<T>) => Promise<T>;
   /** Counts only. */
   readonly logger?: { info(message: string, fields?: LogFields): void };
+  /**
+   * Slice 2 (clause PN): told once, when the FIRST local call has been dispatched (review round 1: never before, so a run
+   * that falls back to today's path never announced itself), how many windows the run will read. Counts only; a throwing
+   * listener never changes the outcome.
+   */
+  readonly onStart?: (plan: { readonly windows: number }) => void;
 }
 
 export type S3PartialReason =
@@ -256,7 +262,9 @@ function notesBody(notes: readonly Note[], windows: number): string {
 }
 
 
-type CallResult = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: 'wall' | 'call-timeout' | 'model' | 'locality' | 'call-bound' };
+type CallResult =
+  | { readonly ok: true; readonly text: string }
+  | { readonly ok: false; readonly reason: 'wall' | 'call-timeout' | 'model' | 'locality' | 'call-bound' | 'gate-busy' };
 
 /** What the outer guard needs when a dependency throws: whether a call was made, how to abort it, how to end. */
 interface RunState {
@@ -357,9 +365,16 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
     body: input.prepared,
     ...(input.sourceTruncated === true ? { sourceTruncated: true } : {}),
   });
-  if (!built.ok) return { kind: 'refused', reason: built.refusal === 'EMPTY' ? 'empty' : 'credential' };
+  if (!built.ok) {
+    const reason = built.refusal === 'EMPTY' ? 'empty' : 'credential';
+    log({ outcome: 'refused', reason });
+    return { kind: 'refused', reason };
+  }
   const frames = (input.sections ?? []).map((section) => (typeof section?.frame === 'string' ? section.frame : '')).join('\n');
-  if (hasCredential(input.prepared) || (frames.length > 0 && hasCredential(frames))) return { kind: 'refused', reason: 'credential' };
+  if (hasCredential(input.prepared) || (frames.length > 0 && hasCredential(frames))) {
+    log({ outcome: 'refused', reason: 'credential' });
+    return { kind: 'refused', reason: 'credential' };
+  }
   const meta = { source: input.source, title: built.readout.title, author: built.readout.author, date: built.readout.date };
 
   let passages: Passage[];
@@ -417,56 +432,102 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
   }
   const provider: AiProvider = selection.provider;
   const callMs: number[] = [];
+  let started = false;
 
+  /**
+   * One local call. Review round 1 (slice 2, CA P1 + Codex P2): the gate wait is bounded only by what is left of the wall,
+   * and the per-call timer starts at dispatch (never before the gate wait). `gate-busy` means no call was dispatched: the
+   * wall ran out while this call waited (or the dispatch was fenced by the abort), so the caller decides by the call count.
+   */
   const callLocal = async (request: AiRequest): Promise<CallResult> => {
     const startedAt = clock();
     const remainingWall = S3_LIMITS.wallMs - (startedAt - wallStart);
-    if (remainingWall <= 0) return { ok: false, reason: 'wall' };
+    if (remainingWall <= 0) return { ok: false, reason: 'gate-busy' };
     if (state.calls >= S3_LIMITS.maxLocalCalls) return { ok: false, reason: 'call-bound' };
-    const budget = Math.min(S3_LIMITS.callTimeoutMs, remainingWall);
-    const overrun: 'wall' | 'call-timeout' = budget < S3_LIMITS.callTimeoutMs ? 'wall' : 'call-timeout';
     const call = new AbortController();
-    const timer = new AbortController();
+    const gateTimer = new AbortController();
+    const callTimer = new AbortController();
     state.abort = () => {
       call.abort();
-      timer.abort();
+      gateTimer.abort();
+      callTimer.abort();
     };
-    type Settled = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'locality' | 'aborted' | 'error' | 'timeout' | 'gate' };
-    let dispatched = false;
+    type Settled = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'locality' | 'fenced' | 'error' | 'timeout' | 'gate' | 'gate-busy' };
+    let dispatch: { readonly at: number; readonly budget: number; readonly overrun: 'wall' | 'call-timeout'; readonly deadline: Promise<Settled> } | undefined;
+    let markDispatched: () => void = () => undefined;
+    const dispatched = new Promise<'dispatched'>((resolve) => {
+      markDispatched = () => resolve('dispatched');
+    });
     const work = async (): Promise<Settled> => {
-      if (call.signal.aborted) return { kind: 'aborted' };
+      if (call.signal.aborted) return { kind: 'fenced' };
       // The dispatch-time check: synchronous, immediately before `execute`, nothing awaited in between.
       if (!isRequiredLocalDispatchAllowed(deps.selector, capability, context, provider)) return { kind: 'locality' };
-      dispatched = true;
+      const at = clock();
+      const left = S3_LIMITS.wallMs - (at - wallStart);
+      if (left <= 0) return { kind: 'fenced' };
+      const budget = Math.min(S3_LIMITS.callTimeoutMs, left);
+      dispatch = {
+        at,
+        budget,
+        overrun: budget < S3_LIMITS.callTimeoutMs ? 'wall' : 'call-timeout',
+        deadline: wait(budget, callTimer.signal).then((): Settled => ({ kind: 'timeout' })),
+      };
       state.calls += 1;
-      const result = await provider.execute({ ...request, timeoutMs: budget, signal: call.signal });
+      const pending = provider.execute({ ...request, timeoutMs: budget, signal: call.signal });
+      markDispatched();
+      if (!started) {
+        // Clause PN: the run has started only once a local call is actually on its way (never before a fallback).
+        started = true;
+        try {
+          deps.onStart?.({ windows: W });
+        } catch {
+          // A progress listener never changes the outcome.
+        }
+      }
+      const result = await pending;
       return { kind: 'text', text: typeof result?.text === 'string' ? result.text : '' };
     };
     // A gate that throws (synchronously, or by rejecting before `execute` was reached) is not a model failure: it goes to
     // the outer guard, which decides by the call count (no call made: today: not-ready; after one: a partial reply).
     // Only a rejection after dispatch is the model's (`error`).
-    const running: Promise<Settled> = (deps.exclusive !== undefined ? deps.exclusive(work) : work()).then(
-      (value) => value,
-      (): Settled => (dispatched ? { kind: 'error' } : { kind: 'gate' }),
-    );
-    const settled = await Promise.race([running, wait(budget, timer.signal).then((): Settled => ({ kind: 'timeout' }))]);
-    timer.abort();
-    const elapsed = Math.max(0, clock() - startedAt);
+    const running: Promise<Settled> = Promise.resolve()
+      .then(() => (deps.exclusive !== undefined ? deps.exclusive(work) : work()))
+      .then(
+        (value) => value,
+        (): Settled => (dispatch !== undefined ? { kind: 'error' } : { kind: 'gate' }),
+      );
+    let settled = await Promise.race([
+      running,
+      dispatched,
+      wait(remainingWall, gateTimer.signal).then((): Settled => ({ kind: 'gate-busy' })),
+    ]);
+    gateTimer.abort();
+    if (settled !== 'dispatched' && settled.kind === 'gate-busy') {
+      // Fence the dispatch: a call still waiting in the gate sees the abort and is never sent.
+      call.abort();
+      if (dispatch !== undefined) settled = 'dispatched';
+    }
+    const active = dispatch;
+    if (settled === 'dispatched' && active !== undefined) settled = await Promise.race([running, active.deadline]);
+    callTimer.abort();
     state.abort = undefined;
+    if (settled === 'dispatched') settled = { kind: 'error' };
     if (settled.kind === 'gate') {
       call.abort();
       throw new Error('gate');
     }
-    if (settled.kind === 'timeout' || settled.kind === 'aborted') {
-      call.abort();
-      callMs.push(elapsed);
-      return { ok: false, reason: overrun };
-    }
+    if (settled.kind === 'gate-busy' || settled.kind === 'fenced') return { ok: false, reason: 'gate-busy' };
     if (settled.kind === 'locality') return { ok: false, reason: 'locality' };
+    if (active === undefined) return { ok: false, reason: 'model' };
+    const elapsed = Math.max(0, clock() - active.at);
     callMs.push(elapsed);
+    if (settled.kind === 'timeout') {
+      call.abort();
+      return { ok: false, reason: active.overrun };
+    }
     if (settled.kind !== 'text') return { ok: false, reason: 'model' };
     // An answer that came back after its bound is discarded (deterministic under the injected clock).
-    if (elapsed > budget) return { ok: false, reason: overrun };
+    if (elapsed > active.budget) return { ok: false, reason: active.overrun };
     return { ok: true, text: settled.text };
   };
 
@@ -547,6 +608,18 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
     return finish('partial', reason, body, checked.withheld);
   };
   state.partial = partial;
+  /**
+   * A failed call (review round 1, CA P1 + Codex P2, owner decision 2): when NO local call was dispatched yet, a busy gate
+   * or a wall breach is a pre-start fallback, `today: 'not-ready'` (nothing was sent; count-only log `gate-busy`). A failed
+   * locality re-check stays the fail-closed partial reply. After a call, every failure is a partial reply.
+   */
+  const failed = (reason: Exclude<CallResult, { readonly ok: true }>['reason']): S3ItemSummaryOutcome => {
+    if (state.calls === 0 && (reason === 'gate-busy' || reason === 'wall' || reason === 'call-timeout')) {
+      log({ outcome: 'not-ready', reason: 'gate-busy', ...counts });
+      return { kind: 'today', reason: 'not-ready' };
+    }
+    return partial(reason === 'gate-busy' ? 'wall' : reason);
+  };
 
   for (let index = 0; index < W; index += 1) {
     const window = windows[index] as Window;
@@ -562,7 +635,7 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
     const before = state.calls;
     const result = await callLocal(request);
     mapCalls += state.calls - before;
-    if (!result.ok) return partial(result.reason);
+    if (!result.ok) return failed(result.reason);
     const parsed = parseDocumentMapNote(result.text, input.source);
     if (!parsed.ok) {
       // A rejected note stops the run: the partial reply from the notes already finished (Codex P2e).
@@ -591,7 +664,7 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
   const before = state.calls;
   const reduced = await callLocal(reduceRequest);
   reduceCalls += state.calls - before;
-  if (!reduced.ok) return partial(reduced.reason);
+  if (!reduced.ok) return failed(reduced.reason);
   const summary = reduced.text.trim();
   if (summary.length === 0) return partial('reduce-empty');
   if (containsCredentialMaterial(summary) || containsCredentialFileContent(summary)) return partial('reduce-guard');

@@ -350,6 +350,24 @@ export function renderDriveSummaryFooter(
   return [...notes, disclosure].join('\n');
 }
 
+/** ADR-0124 Part L C5a-2: {@link renderDriveSummaryFooter} for a document summarized on this device's LOCAL model (S3). */
+export function renderDriveSummaryLocalFooter(
+  language: DriveLanguage,
+  firstSheetOnly?: DriveFirstSheetOnlyReason,
+  copy?: DriveSourceCopy,
+  hiddenSheetsSkipped = 0,
+): string {
+  const disclosure =
+    language === 'en'
+      ? "(This document's text was summarized in parts by a local model on this device; it was not sent to the chat model · the drive was only read; nothing was changed or shared · nothing was written or sent anywhere by Quoky in this reply)"
+      : '(문서 1건의 텍스트를 이 기기 로컬 모델로 나눠 요약했어요 · 텍스트는 대화 모델에 보내지 않았어요 · 드라이브는 읽기만 했고 아무것도 바꾸거나 공유하지 않았어요 · Quoky는 이 답변에서 아무 곳에도 쓰거나 보내지 않았어요)';
+  const notes = [
+    ...(firstSheetOnly === undefined ? [] : [renderDriveFirstSheetOnlyNote(firstSheetOnly, language, copy)]),
+    ...(hiddenSheetsSkipped > 0 ? [renderDriveHiddenSheetsNote(hiddenSheetsSkipped, language)] : []),
+  ];
+  return [...notes, disclosure].join('\n');
+}
+
 /** DRV-2b (CA review): hidden sheets are never read; the summary says how many were left out (never their names). */
 export function renderDriveHiddenSheetsNote(count: number, language: DriveLanguage): string {
   return language === 'en' ? `(${count} hidden sheet${count === 1 ? '' : 's'} skipped)` : `(숨김 시트 ${count}개 제외)`;

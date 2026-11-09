@@ -5,6 +5,7 @@ import { type NlSelectionService } from '../nl-routing/nl-selection-service';
 import { type AgentRunService } from '../agent/agent-run-service';
 import { type SurfaceGate } from '../surface-grants/surface-gate';
 import { type SurfaceGrantService } from '../surface-grants/surface-grant-service';
+import { type ChunkItemsMode } from '../item-summary/s3-item-summary';
 import { Capability, RiskLevel, TaskStatus } from '../../domain';
 import type {
   Actor,
@@ -924,4 +925,30 @@ export interface ConversationRuntimeOptions {
    * session, so the policy follows the owner's effective image selection; a failing resolver means `['LOCAL']`.
    */
   readonly imageUnderstandingLocalities?: readonly AiExecutionLocality[] | ImageUnderstandingLocalitiesResolver;
+  /**
+   * ADR-0124 Part L C5a-2 (DECISIONS ADR-0124 section 17, slice 2): the S3 whole-item summary of a long mail, thread or
+   * Drive item (`QUOKY_CHUNK_ITEMS`). Absent, or `mode: 'off'`: every summary takes today's path, byte for byte. A
+   * composition-time option like the ones above (configuration plus the composition root's machine-wide gate), not a
+   * deps key: the ConversationRuntimeDeps baseline is unchanged.
+   */
+  readonly longItemSummary?: LongItemSummaryOptions;
+}
+
+/** ADR-0124 Part L C5a-2: how the runtime runs S3 (see {@link ConversationRuntimeOptions.longItemSummary}). */
+export interface LongItemSummaryOptions {
+  readonly mode: ChunkItemsMode;
+  /**
+   * REQUIRED single-in-flight gate (RQ-3 T3-5): one local model call at a time in this process, shared with the local
+   * embedding calls by the composition root.
+   */
+  readonly exclusive: <T>(work: () => Promise<T>) => Promise<T>;
+  /**
+   * Clause PN: delivers the ONE fixed progress notice through the existing `PlatformAdapter.sendMessage` (DM only, no
+   * history entry). Absent: no notice.
+   */
+  readonly notify?: (message: OutboundMessage) => Promise<unknown>;
+  /** Monotonic milliseconds; default `performance.now`. */
+  readonly now?: () => number;
+  /** Resolves after `ms` or when `signal` aborts; default `setTimeout`. Shared by the S3 bounds and the notice timer. */
+  readonly wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }

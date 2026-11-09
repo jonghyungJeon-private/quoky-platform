@@ -195,3 +195,31 @@ describe('Ollama local-weights parsers fail closed on unknown or malformed forma
     }
   });
 });
+
+/** ADR-0124 Part L C5a-2: an abandoned S3 call kills the child (the runner's signal), it does not run to its timeout. */
+describe('Ollama execute honours request.signal', () => {
+  it('passes the request signal to the runner; no signal, no option', async () => {
+    const seen: CliRunOptions[] = [];
+    const runner: CliRunner = async (_bin, _args, options) => {
+      seen.push(options);
+      return { code: 0, stdout: 'note', stderr: '', timedOut: false } as never;
+    };
+    const provider = new OllamaCliProvider({ model: 'notes-model:8b', runner });
+    const call = new AbortController();
+    await provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000, signal: call.signal });
+    expect(seen[0]?.signal).toBe(call.signal);
+    await provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000 });
+    expect('signal' in (seen[1] as object)).toBe(false);
+  });
+
+  it('an aborted call is a failure, never an answer (the runner reports no exit code)', async () => {
+    const runner: CliRunner = async (_bin, _args, options) => {
+      expect(options.signal?.aborted).toBe(true);
+      return { code: null, stdout: '', stderr: '', timedOut: false } as never;
+    };
+    const provider = new OllamaCliProvider({ model: 'notes-model:8b', runner });
+    const call = new AbortController();
+    call.abort();
+    await expect(provider.execute({ capability: Capability.SUMMARIZATION, prompt: 'p', timeoutMs: 1_000, signal: call.signal })).rejects.toThrow();
+  });
+});
