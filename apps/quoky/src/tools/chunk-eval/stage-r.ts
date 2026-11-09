@@ -67,6 +67,7 @@ import { ARM_SPECS, resolveArms, type ArmPin } from './embed-arms';
 import { LANGUAGES, seeded } from './corpus';
 import { pathMetrics, type PathMetrics } from './memory-eval';
 import type { MemorySet } from './memory-set';
+import { LEXICAL_VARIANT_IDS, LEXICAL_VERDICT_RULE, buildLexicalComparison, lexicalComparisonLines, type LexicalComparison } from './lexical-variant';
 import { BLEND_CANDIDATES, BLEND_RULES, blendSweepLines, buildBlendSweep, clamp01, contentKeyOf, lexicalScoreOf, recencyOf, type BlendQuery, type BlendSweep } from './blend-sweep';
 
 export const STAGE_R_PLAN_VERSION = 'runtime-recall-plan.v3';
@@ -149,6 +150,7 @@ export const IMPLEMENTATION_FILES = [
   'packages/storage-sqlite/src/index.ts',
   'apps/quoky/src/tools/chunk-eval/stage-r.ts',
   'apps/quoky/src/tools/chunk-eval/blend-sweep.ts',
+  'apps/quoky/src/tools/chunk-eval/lexical-variant.ts',
 ] as const;
 
 export type ImplementationHashes = Readonly<Record<string, string>>;
@@ -173,6 +175,7 @@ export const STAGE_R_PARAMETERS = {
   warmCompleteness: 'warm mode requires a stored vector for every vector unit (the memory id for a short memory, one per passage for a long one) in the space collection before any query; otherwise the warm run is INVALID with the missing count',
   modes: { backfilled: 'the real production backfill job (memory-vector-backfill.ts, batch 8 per tick) runs to completion before the queries, then the same queries; requires a stored vector for every vector unit, otherwise INVALID', live: 'empty vector store; queries in the set order, one at a time; lazy embedding (<= 4 new vectors per turn, passages count one each, 3 s turn budget); an empty store widens nothing', warm: 'every vector unit embedded first through the same scorer (repeated scoring calls), then the same queries', lexical: 'no semantic scorer; no model' },
   blend: { candidates: BLEND_CANDIDATES, rules: BLEND_RULES, status: 'offline re-ranking of the observed candidate table; semantic arms in backfilled and warm mode only; recency caveat: CH7 updatedAt values are synthetic (spread over 180 days), so the set cannot show recency real-world benefit' },
+  lexicalVariants: { ids: LEXICAL_VARIANT_IDS, rule: LEXICAL_VERDICT_RULE, status: 'offline re-ranking of the observed candidate table under the production weights (ADR-0124 P2-5); semantic arms in backfilled and warm mode only; production unchanged' },
   ranking: 'the retriever results (top 10); gold rank outside the top 10 counts as a miss, so MRR is MRR@10 here',
   diagnostics: ['gold not in the candidate pool (recent 50 plus the semantic top-K)', 'gold without a semantic score', 'scorer fallbacks by reason', 'retrieval latency p50 / p95'],
   status: 'NON-GATING',
@@ -350,6 +353,7 @@ export function planLinesR(plan: StageRPlanReport): string[] {
   out.push(`planned arms: ${plan.planned.join(', ')}${plan.dropped.length > 0 ? `; dropped: ${plan.dropped.map((d) => `${d.arm} (${d.reason})`).join('; ')}` : ''}`);
   for (const pin of plan.pins) out.push(`${pin.arm} ${pin.model}@${pin.digest12} ollama${pin.ollamaVersion}: runtime prefixes query ${JSON.stringify(pin.runtimeQueryPrefix)} document ${JSON.stringify(pin.runtimeDocumentPrefix)} (the provider's own defaults)`);
   out.push(`semantic run modes: ${plan.modes.join(', ')} (part of the digest)`);
+  out.push(`lexical variants L-word (production) vs L-bm25 under the production weights; pre-declared verdict (in the digest): ${LEXICAL_VERDICT_RULE.text}`);
   out.push(`seed ${STAGE_R_PARAMETERS.seed}: updatedAt spread over ${SPREAD_DAYS} days before ${RETRIEVAL_TIME}; actor ${ACTOR_ID}`);
   for (const run of plan.runs) out.push(`run ${run.arm}/${run.mode}: ${run.queries} queries${run.modelCallsUpperBound === null || run.modelCallsUpperBound === 0 ? ', no model call' : `, up to ${run.modelCallsUpperBound} ollama calls`}`);
   out.push(`plan digest: ${plan.digest}`);
@@ -381,6 +385,8 @@ export interface RuntimeArmRun {
   readonly diagnostics: RuntimeDiagnostics;
   /** The offline blend comparison (P2-3); null for the lexical arm and live mode. */
   readonly blendSweep: BlendSweep | null;
+  /** The offline L-word / L-bm25 comparison under the production weights (P2-5); null for the lexical arm and live mode. */
+  readonly lexicalVariants: LexicalComparison | null;
   readonly prewarm: { readonly stored: number; readonly of: number; readonly scoringCalls: number; readonly storeCount: number; readonly missing: number } | null;
   /** Set when the run cannot be reported as a valid measurement (warm prewarming incomplete). */
   readonly invalid: { readonly reason: string; readonly missing: number } | null;
@@ -411,6 +417,7 @@ const invalidRun = (arm: StageRArmId, mode: RunMode, prewarm: NonNullable<Runtim
   metrics: pathMetrics({ memories: [], queries: [] } as unknown as MemorySet, []),
   diagnostics: { queries: 0, goldNotInPool: share(0, 0), goldNoSemanticScore: null, goldInPoolNoSemanticScore: null, poolSize: { min: 0, max: 0 }, scorerNullQueries: 0, fallbackReasons: {}, embeddedDocuments: 0, latencyMs: { p50: 0, p95: 0 } },
   blendSweep: null,
+  lexicalVariants: null,
   prewarm,
   invalid: { reason, missing: prewarm.missing },
 });
@@ -600,9 +607,9 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
           const content = textOf.get(id) as string;
           const updatedAt = stamps.get(id) as string;
           const raw = scores?.get(id);
-          return { id, contentKey: contentKeyOf(content), updatedAt, lexical: lexicalScoreOf(query.text, content), recency: recencyOf(updatedAt, RETRIEVAL_TIME, RUNTIME_CONSTANTS.recencyHalfLifeMs), semantic: raw === undefined || !Number.isFinite(raw) ? undefined : clamp01(raw) };
+          return { id, contentKey: contentKeyOf(content), updatedAt, lexical: lexicalScoreOf(query.text, content), recency: recencyOf(updatedAt, RETRIEVAL_TIME, RUNTIME_CONSTANTS.recencyHalfLifeMs), semantic: raw === undefined || !Number.isFinite(raw) ? undefined : clamp01(raw), text: content };
         });
-        tables.push({ language: query.language, gold: query.gold, actual: results.map((result) => result.memory.id), rows });
+        tables.push({ language: query.language, queryText: query.text, gold: query.gold, actual: results.map((result) => result.memory.id), rows });
       }
       const goldInPool = query.gold.some((id) => poolIds.has(id));
       if (!goldInPool) notInPool += 1;
@@ -633,6 +640,7 @@ export async function runRuntimeArm(options: RunOptions): Promise<RuntimeArmRun>
         latencyMs: (({ p50, p95 }) => ({ p50: Math.round(p50 * 10) / 10, p95: Math.round(p95 * 10) / 10 }))(percentiles(latencies)),
       },
       blendSweep: sweepOn ? buildBlendSweep(tables, LANGUAGES, RUNTIME_CONSTANTS) : null,
+      lexicalVariants: sweepOn ? buildLexicalComparison(tables, LANGUAGES, [], RUNTIME_CONSTANTS) : null,
       prewarm,
       invalid: null,
     };
@@ -689,6 +697,7 @@ export function summaryLinesStageR(report: StageRReport): string[] {
     if (run.blendSweep === null) continue;
     out.push(`${run.arm}/${run.mode} blend comparison (ADR-0124 P2-3, offline, NON-GATING):`);
     out.push(...blendSweepLines(run.blendSweep, LANGUAGES));
+    if (run.lexicalVariants !== null) out.push(...lexicalComparisonLines('ch7', run.lexicalVariants, LANGUAGES, []));
   }
   out.push('blend caveat: CH7 updatedAt values are synthetic (spread over 180 days); the set cannot show the real-world benefit of recency and structurally favors a low recency weight. Any recency change is an owner decision.');
   out.push(`reference: ${report.harnessReference}`);

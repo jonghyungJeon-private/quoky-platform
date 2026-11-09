@@ -42,6 +42,7 @@ import { pathMetrics, type PathMetrics } from './memory-eval';
 import type { MemorySet } from './memory-set';
 import { CH8_CATEGORIES, MEMORY_V2_RETRIEVAL_TIME, type Ch8Set } from './memory-set-v2';
 import { BLEND_RULES, clamp01, contentKeyOf, lexicalScoreOf, recencyOf } from './blend-sweep';
+import { LEXICAL_VARIANT_IDS, LEXICAL_VERDICT_RULE, buildLexicalComparison, lexicalComparisonLines, type LexicalComparison } from './lexical-variant';
 import { VALIDATION_CANDIDATE_IDS, VERDICT_RULE, blendValidationLines, buildBlendValidation, validationCandidates, type BlendValidation, type ValidationQuery } from './blend-validation';
 import {
   ACTOR_ID,
@@ -107,6 +108,7 @@ export const STAGE_R_V2_PARAMETERS = {
     verdictRule: VERDICT_RULE,
     semanticArms: 'backfilled and warm modes only (offline re-ranking of the observed candidate table)',
   },
+  lexicalVariants: { ids: LEXICAL_VARIANT_IDS, rule: LEXICAL_VERDICT_RULE, status: 'offline re-ranking of the observed candidate table under the production weights (ADR-0124 P2-5); backfilled and warm modes only; production unchanged' },
   ranking: STAGE_R_PARAMETERS.ranking,
   diagnostics: STAGE_R_PARAMETERS.diagnostics,
   status: 'NON-GATING (the verdict is advisory)',
@@ -172,6 +174,7 @@ export function planLinesRV2(plan: StageRV2PlanReport): string[] {
   for (const pin of plan.pins) out.push(`${pin.arm} ${pin.model}@${pin.digest12} ollama${pin.ollamaVersion}: runtime prefixes query ${JSON.stringify(pin.runtimeQueryPrefix)} document ${JSON.stringify(pin.runtimeDocumentPrefix)} (the provider's own defaults)`);
   out.push(`semantic run modes: ${plan.modes.join(', ')} (part of the digest)`);
   out.push(`validation (not selection): candidates ${VALIDATION_CANDIDATE_IDS.join(', ')}; verdict rule (in the digest): ${VERDICT_RULE.text}`);
+  out.push(`lexical variants L-word (production) vs L-bm25 under the production weights; pre-declared verdict (in the digest): ${LEXICAL_VERDICT_RULE.text}`);
   out.push(`updatedAt = authored daysAgo before ${MEMORY_V2_RETRIEVAL_TIME}; actor ${ACTOR_ID}`);
   for (const run of plan.runs) out.push(`run ${run.arm}/${run.mode}: ${run.queries} queries${run.modelCallsUpperBound === null || run.modelCallsUpperBound === 0 ? ', no model call' : `, up to ${run.modelCallsUpperBound} ollama calls`}`);
   out.push(`plan digest: ${plan.digest}`);
@@ -188,6 +191,8 @@ export interface RuntimeArmRunV2 {
   readonly diagnostics: RuntimeDiagnostics;
   /** The pre-declared B0/B1/B2 validation; null for the lexical arm and live mode. */
   readonly blendValidation: BlendValidation | null;
+  /** The offline L-word / L-bm25 comparison under the production weights (P2-5); null for the lexical arm and live mode. */
+  readonly lexicalVariants: LexicalComparison | null;
   readonly prewarm: { readonly stored: number; readonly of: number; readonly scoringCalls: number; readonly storeCount: number; readonly missing: number } | null;
   readonly invalid: { readonly reason: string; readonly missing: number } | null;
 }
@@ -217,6 +222,7 @@ const invalidRun = (arm: StageRArmId, mode: RunMode, prewarm: NonNullable<Runtim
   metrics: pathMetrics({ memories: [], queries: [] } as unknown as MemorySet, []),
   diagnostics: { queries: 0, goldNotInPool: share(0, 0), goldNoSemanticScore: null, goldInPoolNoSemanticScore: null, poolSize: { min: 0, max: 0 }, scorerNullQueries: 0, fallbackReasons: {}, embeddedDocuments: 0, latencyMs: { p50: 0, p95: 0 } },
   blendValidation: null,
+  lexicalVariants: null,
   prewarm,
   invalid: { reason, missing: prewarm.missing },
 });
@@ -406,9 +412,9 @@ export async function runRuntimeArmV2(options: RunOptionsV2): Promise<RuntimeArm
           const content = textOf.get(id) as string;
           const updatedAt = stamps.get(id) as string;
           const raw = scores?.get(id);
-          return { id, contentKey: contentKeyOf(content), updatedAt, lexical: lexicalScoreOf(query.text, content), recency: recencyOf(updatedAt, MEMORY_V2_RETRIEVAL_TIME, RUNTIME_CONSTANTS.recencyHalfLifeMs), semantic: raw === undefined || !Number.isFinite(raw) ? undefined : clamp01(raw) };
+          return { id, contentKey: contentKeyOf(content), updatedAt, lexical: lexicalScoreOf(query.text, content), recency: recencyOf(updatedAt, MEMORY_V2_RETRIEVAL_TIME, RUNTIME_CONSTANTS.recencyHalfLifeMs), semantic: raw === undefined || !Number.isFinite(raw) ? undefined : clamp01(raw), text: content };
         });
-        tables.push({ language: query.language, gold: query.gold, actual: results.map((result) => result.memory.id), rows, category: query.category, staleId: query.staleId });
+        tables.push({ language: query.language, queryText: query.text, gold: query.gold, actual: results.map((result) => result.memory.id), rows, category: query.category, staleId: query.staleId });
       }
       const goldInPool = query.gold.some((id) => poolIds.has(id));
       if (!goldInPool) notInPool += 1;
@@ -439,6 +445,7 @@ export async function runRuntimeArmV2(options: RunOptionsV2): Promise<RuntimeArm
         latencyMs: (({ p50, p95 }) => ({ p50: Math.round(p50 * 10) / 10, p95: Math.round(p95 * 10) / 10 }))(percentiles(latencies)),
       },
       blendValidation: sweepOn ? buildBlendValidation(tables, LANGUAGES, CH8_CATEGORIES, RUNTIME_CONSTANTS) : null,
+      lexicalVariants: sweepOn ? buildLexicalComparison(tables, LANGUAGES, CH8_CATEGORIES, RUNTIME_CONSTANTS) : null,
       prewarm,
       invalid: null,
     };
@@ -491,6 +498,7 @@ export function summaryLinesStageRV2(report: StageRV2Report): string[] {
     if (run.blendValidation === null) continue;
     out.push(`${run.arm}/${run.mode} blend validation (ADR-0124 P2-3, CH8, offline, NON-GATING):`);
     out.push(...blendValidationLines(run.blendValidation, LANGUAGES, CH8_CATEGORIES));
+    if (run.lexicalVariants !== null) out.push(...lexicalComparisonLines('ch8', run.lexicalVariants, LANGUAGES, CH8_CATEGORIES));
   }
   out.push('CH8 note: updatedAt values are authored (daysAgo), so recency-wins and old-relevant queries do exercise recency; the verdict is advisory and any production change is an owner decision.');
   return out;
