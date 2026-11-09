@@ -385,8 +385,11 @@ function topicWordMatches(stem: string, word: string): boolean {
   return false;
 }
 
-/** True when `content` shares a meaningful topic word with the question (see {@link topicWordMatches}). */
-function sharesTopicWord(question: OwnMemoryRecallQuestion, content: string): boolean {
+/**
+ * True when `content` shares a meaningful topic word with the question (see {@link topicWordMatches}). Exported for the
+ * offline measurement harness (CH9); behaviour is unchanged.
+ */
+export function sharesTopicWord(question: OwnMemoryRecallQuestion, content: string): boolean {
   const words = wordsOf(content);
   return meaningfulTopics(question).some((stem) => words.some((word) => topicWordMatches(stem, word)));
 }

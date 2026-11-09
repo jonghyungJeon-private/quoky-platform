@@ -53,5 +53,6 @@ export {
   hasOwnMemoryRecallHit,
   renderOwnMemoryDmOnly,
   renderOwnMemoryNotFound,
+  sharesTopicWord,
 } from './own-memory-recall';
 export type { OwnMemoryRecallContext, OwnMemoryRecallQuestion, OwnMemoryRelation } from './own-memory-recall';

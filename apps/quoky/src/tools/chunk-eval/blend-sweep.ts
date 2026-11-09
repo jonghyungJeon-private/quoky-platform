@@ -66,9 +66,13 @@ export interface BlendRow {
   readonly recency: number;
   /** Clamped to [0,1]; undefined when the scorer returned no (finite) score for this id. */
   readonly semantic: number | undefined;
+  /** The memory text (offline lexical variants, BM25, need it); optional so older tables stay valid. */
+  readonly text?: string;
 }
 
 export interface BlendQuery {
+  /** The query text (offline lexical variants need it); optional so older tables stay valid. */
+  readonly queryText?: string;
   readonly language: string;
   readonly gold: readonly string[];
   /** The ids the real retriever returned, in order. */
