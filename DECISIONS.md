@@ -32699,6 +32699,12 @@ section 7 (with the CH1 ruling of decision 3), **the PN notice of slice 3**, and
   approval: P3-a fresh probe for S3 selection (invalidate or TTL 0; record the ≤90 s residual window and threat model),
   P3-b live check (5) `OLLAMA_NO_CLOUD=1` on the daemon refusing a cloud alias (if it does, a required owner step before
   `on`), P3-d the long-item provider always sets `pinnedDigest` (composition-root test).
+- **Grammar loop closed (review round 4, Codex P2 ×2).** Directive words now come from Ollama's closed Modelfile set
+  (FROM, PARAMETER, TEMPLATE, SYSTEM, ADAPTER, LICENSE, MESSAGE, REQUIRES; unknown → refused) and a quoted value's closing
+  `"""` must end its line (trailing text → refused). Per quoky-ship §3.5 this closes the parsing review loop: the security
+  evidence is the positive blob `FROM` plus the absence of remote rows, and any further strictness can only turn a model
+  not ready (fail closed), which live check (4) would surface. Further grammar-strictness findings are recorded here as
+  fail-closed residuals, not chased.
 - **An upstream source cut (CA P2).** With `sourceTruncated` (a thread shown in part, a capped body), the coverage is never
   `complete` and Core's coverage line appends a fixed Core sentence that the source was already cut, in the summary, the
   partial reply and the last-resort partial. No model text states coverage.

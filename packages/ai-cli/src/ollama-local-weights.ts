@@ -51,28 +51,49 @@ function isLocalBlobPath(path: string): boolean {
  * starts at column 0 with an upper-case directive word followed by whitespace; a directive whose value opens `"""` without
  * closing it on the same line starts a block that runs to the next line containing `"""` (block lines are never read as
  * directives, so a `FROM` inside TEMPLATE/LICENSE/SYSTEM text cannot fake or spoil evidence). Every `FROM` directive must
- * be exactly one absolute `sha256-<64 hex>` blob path, and there must be at least one. Anything else (a lower-case or
- * indented directive, a bare or multi-token `FROM`, an unterminated block) is malformed and refused.
+ * be exactly one absolute `sha256-<64 hex>` blob path, and there must be at least one. Directive words come from Ollama's
+ * closed set; a quoted value's closing `"""` ends its line. Anything else (an unknown, lower-case or indented directive, a
+ * bare or multi-token `FROM`, text after a closing `"""`, an unterminated block) is malformed and refused.
  */
+/** The Modelfile directives Ollama defines (a closed set; an unknown word is malformed, fail closed). */
+const MODELFILE_DIRECTIVES: ReadonlySet<string> = new Set(['FROM', 'PARAMETER', 'TEMPLATE', 'SYSTEM', 'ADAPTER', 'LICENSE', 'MESSAGE', 'REQUIRES']);
+
+const TRIPLE = '"""';
+
+/** Occurrences of `"""` in a string. */
+function tripleCount(text: string): number {
+  return text.split(TRIPLE).length - 1;
+}
+
 export function ollamaModelfileFromLocalBlob(modelfile: string): boolean {
   let inBlock = false;
   let froms = 0;
   for (const line of modelfile.split(/\r?\n/u)) {
     if (inBlock) {
-      if (line.includes('"""')) inBlock = false;
+      const count = tripleCount(line);
+      if (count === 0) continue;
+      // A block closes on its one `"""`, which must end the line (nothing trails the closing quotes).
+      if (count !== 1 || !line.trimEnd().endsWith(TRIPLE)) return false;
+      inBlock = false;
       continue;
     }
     if (line.trim() === '' || line.startsWith('#')) continue;
     const directive = /^([A-Z]+)[ \t]+(\S.*)$/u.exec(line);
     if (directive === null) return false;
     const [, word, rawValue] = directive as unknown as [string, string, string];
+    if (!MODELFILE_DIRECTIVES.has(word)) return false;
     const value = rawValue.trimEnd();
     if (word === 'FROM') {
       if (/\s/u.test(value) || !isLocalBlobPath(value)) return false;
       froms += 1;
       continue;
     }
-    if (value.startsWith('"""') && !value.slice(3).includes('"""')) inBlock = true;
+    const count = tripleCount(value);
+    if (count === 0) continue;
+    // A quoted value opens with `"""`; it either closes at the very end of the same line or opens a block.
+    if (!value.startsWith(TRIPLE)) return false;
+    if (count === 1) inBlock = true;
+    else if (count !== 2 || value.length < 6 || !value.endsWith(TRIPLE)) return false;
   }
   return !inBlock && froms > 0;
 }

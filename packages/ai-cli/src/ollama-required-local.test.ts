@@ -178,6 +178,11 @@ describe('Ollama local-weights parsers fail closed on unknown or malformed forma
       `FROM ${BLOB}\nparameter temperature 1\n`,
       `FROM ${BLOB}\nPARAMETER\n`,
       'LICENSE """terms\n"""\n',
+      `FROM ${BLOB}\nUNKNOWN value\n`,
+      `FROM ${BLOB}\nSYSTEM """text""" trailing\n`,
+      `FROM ${BLOB}\nSYSTEM """open\nclose""" trailing\n`,
+      `FROM ${BLOB}\nSYSTEM """open\nclose""" again """\n`,
+      `FROM ${BLOB}\nSYSTEM text """\n`,
     ]) {
       expect(ollamaModelfileFromLocalBlob(modelfile), JSON.stringify(modelfile)).toBe(false);
     }
