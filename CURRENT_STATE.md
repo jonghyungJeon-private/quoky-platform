@@ -7,6 +7,8 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (2026-11-09, branch `claude/v5-recall-judgment`)
 
+- Measured 2026-11-09: both pre-declared verdicts keep production (lexical `L-word`; own-memory rule F0). DECISIONS "P2-5 measurement".
+
 - Offline harness only, production unchanged: stage R reports `L-word` vs `L-bm25` (pre-declared verdict) and a new CH9 own-memory set measures the own-memory hit rule F0 against calibrated F1/F2 (safety bar: zero false hits); the single local E4 run awaits the plan digests and the owner go.
 
 ### Chat guard keeps the rest of the reply (2026-11-05, branch `claude/v5-dm8-guard-strip`)

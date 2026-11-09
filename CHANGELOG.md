@@ -7,6 +7,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (offline tooling)
 
+- **Measured (2026-11-09, NON-GATING, E4).** Lexical: keep `L-word` (CH8 0.993 vs `L-bm25` 0.933; CH7 0.927 vs 0.797). Own-memory judgment: keep F0; no calibrated cosine rule reached 0 validate false hits with a +0.20 paraphrase gain (F1 .080 at 0 false hits; F2 .400 with 1 false hit). Production unchanged.
+
 - **Added (harness only, production unchanged).** Stage R CH7 sweep and CH8 validation gain the offline lexical variants `L-word` vs `L-bm25` under the production weights with a pre-declared adopt/keep verdict; new hand-written CH9 own-memory set (70 memories, 140 questions, `--set memory-own`) and `own-memory-eval` measuring the production own-memory hit rule F0 against offline families F1/F2 with pre-declared calibration (+0.03 margin) and a zero-false-hit verdict. Core exports `sharesTopicWord` (no behaviour change). CH7 and CH8 plan digests change (expected).
 
 ## Unreleased — ADR-0124 phase 2 P2-4: durable recall recency weight 0.10
