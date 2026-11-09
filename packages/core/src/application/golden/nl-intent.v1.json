@@ -10122,7 +10122,7 @@
     },
     {
       "id": "own-recall-none-002",
-      "text": "내가 매주 독서 모임에 나가는 날은 무슨 요일이라고 했었지?",
+      "text": "내가 매주 수영 모임에 나가는 날은 무슨 요일이라고 했었지?",
       "expect": "none",
       "note": "owner-approved 2026-11-09 own-memory recall boundary (item 4)"
     },
