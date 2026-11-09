@@ -239,9 +239,13 @@ describe('runS3ItemSummary: guards', () => {
     expect(await runS3ItemSummary(input(prepared), env.deps)).toEqual({ kind: 'refused', reason: 'credential' });
     expect(env.selects).toEqual([]);
     expect(env.local.requests.length + env.remote.requests.length).toBe(0);
-    // Shadow refuses it too (nothing is chunked or logged for a refused item).
+    // Shadow refuses it too (nothing is chunked; the refusal is logged as a count only, review round 1).
     expect(await runS3ItemSummary(input(prepared, { mode: 'shadow' }), env.deps)).toEqual({ kind: 'refused', reason: 'credential' });
-    expect(env.logs).toEqual([]);
+    expect(env.logs.map((line) => line.fields)).toEqual([
+      { mode: 'on', source: 'mail', outcome: 'refused', reason: 'credential' },
+      { mode: 'shadow', source: 'mail', outcome: 'refused', reason: 'credential' },
+    ]);
+    expect(JSON.stringify(env.logs)).not.toContain(SECRET);
   });
 
   it('an empty item is refused as today', async () => {
@@ -480,7 +484,8 @@ describe('runS3ItemSummary: review round 1 (CA P1, P2a, P2b; Codex P2f)', () => 
     let waits = 0;
     const wait = (_ms: number, signal: AbortSignal): Promise<void> => {
       waits += 1;
-      if (waits === 3) throw new Error('timer');
+      // 1 selection, 2 the first call's gate wait, 3 its per-call timer (armed at dispatch), 4 the second call's gate wait.
+      if (waits === 4) throw new Error('timer');
       return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
     };
     const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...throwingWait.deps, wait }));
@@ -605,5 +610,82 @@ describe('runS3ItemSummary: content-free logs, audit and history (T1-1, N1)', ()
       }
     }
     expect(JSON.stringify(env.logs)).not.toMatch(/Marker|Part \d|plan items/);
+  });
+});
+
+describe('runS3ItemSummary: slice 2 review round 1 (CA P1, Codex P2: the gate and the start)', () => {
+  it('a gate busy until the wall is today: not-ready with zero local calls; the gate wait is bounded by the wall only', async () => {
+    const env = setup();
+    const budgets: number[] = [];
+    let held: (() => Promise<unknown>) | undefined;
+    const starts: number[] = [];
+    const wait = (ms: number, signal: AbortSignal): Promise<void> => {
+      budgets.push(ms);
+      // The selection timer stays quiet; the gate wait fires at once, as the wall running out while it waits.
+      if (budgets.length === 1) return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      env.clock.t += ms;
+      return Promise.resolve();
+    };
+    const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
+      held = work;
+      return new Promise<T>(() => undefined);
+    };
+    const outcome = await runS3ItemSummary(input(item(12)), { ...env.deps, wait, exclusive, onStart: (plan) => starts.push(plan.windows) });
+    expect(outcome).toEqual({ kind: 'today', reason: 'not-ready' });
+    expect(budgets[1]).toBe(S3_LIMITS.wallMs);
+    expect(budgets).not.toContain(S3_LIMITS.callTimeoutMs);
+    expect(starts).toEqual([]);
+    expect(env.logs.at(-1)?.fields).toMatchObject({ outcome: 'not-ready', reason: 'gate-busy' });
+    // The fenced call, let in later, is never sent.
+    await held?.();
+    expect(env.local.requests.length + env.remote.requests.length).toBe(0);
+  });
+
+  it('a wall breach while waiting at the gate after a call is a partial reply (wall), never today', async () => {
+    const env = setup();
+    let entries = 0;
+    let waits = 0;
+    const wait = (ms: number, signal: AbortSignal): Promise<void> => {
+      waits += 1;
+      // 1 selection, 2 first gate wait, 3 first call timer, 4 second gate wait: the wall runs out there.
+      if (waits !== 4) return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      env.clock.t += ms;
+      return Promise.resolve();
+    };
+    const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
+      entries += 1;
+      return entries === 1 ? work() : new Promise<T>(() => undefined);
+    };
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...env.deps, wait, exclusive }));
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'wall' });
+    expect(env.local.requests).toHaveLength(1);
+    expect(env.remote.requests).toHaveLength(0);
+  });
+
+  it('the per-call timer starts at dispatch: a long gate wait does not eat the 20 s bound; onStart fires after the first dispatch', async () => {
+    const env = setup();
+    const budgets: number[] = [];
+    const starts: number[] = [];
+    const wait = (ms: number, signal: AbortSignal): Promise<void> => {
+      budgets.push(ms);
+      return new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    };
+    let first = true;
+    const exclusive = async <T>(work: () => Promise<T>): Promise<T> => {
+      if (first) {
+        first = false;
+        // Another local call held the gate for 25 s (more than one per-call bound).
+        env.clock.t += 25_000;
+      }
+      return work();
+    };
+    const onStart = (plan: { readonly windows: number }) => {
+      expect(env.local.requests).toHaveLength(1);
+      starts.push(plan.windows);
+    };
+    const outcome = delivered(await runS3ItemSummary(input(item(12)), { ...env.deps, wait, exclusive, onStart }));
+    expect(outcome.kind).toBe('summary');
+    expect(starts).toHaveLength(1);
+    expect(budgets).toContain(S3_LIMITS.callTimeoutMs);
   });
 });
