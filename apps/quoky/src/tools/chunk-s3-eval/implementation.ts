@@ -4,8 +4,8 @@
  * new digest and needs a new owner yes. (Stage R keeps its own list; this list does not add to it.)
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, posix, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, posix, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(__dirname, '../../../../..');
 
@@ -67,16 +67,34 @@ export type ImplementationHashes = Readonly<Record<string, string>>;
 
 let cache: ImplementationHashes | undefined;
 
-/** Relative module specifiers a TypeScript source imports or re-exports (static and dynamic). */
-function relativeImports(source: string): string[] {
+/** Module specifiers a TypeScript source imports or re-exports (static and dynamic, string literals only). */
+function moduleSpecifiers(source: string): string[] {
   const out: string[] = [];
-  const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/gu;
+  const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/gu;
   for (const match of source.matchAll(pattern)) out.push(match[1] as string);
   return out;
 }
 
-/** Repo-relative path of the `.ts` file a relative specifier names, or undefined when it is not a source file in the repo. */
-function resolveSource(root: string, fromFile: string, specifier: string): string | undefined {
+/** Workspace package name → its source entry (`packages/<dir>/src/index.ts`), read from each package.json. */
+function workspaceEntries(root: string): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const group of ['packages', 'apps']) {
+    const dir = join(root, group);
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      const manifest = join(dir, name, 'package.json');
+      const entry = `${group}/${name}/src/index.ts`;
+      if (!existsSync(manifest) || !existsSync(join(root, entry))) continue;
+      const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown };
+      if (typeof pkg.name === 'string') out.set(pkg.name, entry);
+    }
+  }
+  return out;
+}
+
+/** Repo-relative path of the `.ts` file a specifier names (relative, or a workspace package), or undefined. */
+function resolveSource(root: string, fromFile: string, specifier: string, workspace: ReadonlyMap<string, string>): string | undefined {
+  if (!specifier.startsWith('.')) return workspace.get(specifier);
   const base = posix.normalize(posix.join(posix.dirname(fromFile), specifier)).replace(/\.js$/u, '');
   for (const candidate of [`${base}.ts`, `${base}/index.ts`, base]) {
     const full = join(root, candidate);
@@ -88,10 +106,12 @@ function resolveSource(root: string, fromFile: string, specifier: string): strin
 /**
  * Review round 2 (Codex P1): the hashed set is the listed roots PLUS every source file they reach through relative imports,
  * transitively, so a guard or helper a listed module calls (for example the internal-action claim guard behind the summary
- * claim check) can never change answers without changing the digest. Workspace-package imports are covered because the
- * package entry files the run executes are listed as roots. Sorted for a stable digest.
+ * claim check) can never change answers without changing the digest. Round 3 (Codex P1): workspace-package imports
+ * (`@quoky/core`, `@quoky/ai-cli`, …) are followed to the package's `src/index.ts` and on through its closure; node
+ * built-ins and third-party packages are pinned by the lockfile, not hashed here. Sorted for a stable digest.
  */
 export function implementationFiles(root: string = REPO_ROOT): readonly string[] {
+  const workspace = workspaceEntries(root);
   const seen = new Set<string>();
   const queue: string[] = [...S3_EVAL_IMPLEMENTATION_FILES];
   while (queue.length > 0) {
@@ -99,8 +119,8 @@ export function implementationFiles(root: string = REPO_ROOT): readonly string[]
     if (seen.has(file)) continue;
     seen.add(file);
     const source = readFileSync(join(root, file), 'utf8');
-    for (const specifier of relativeImports(source)) {
-      const next = resolveSource(root, file, specifier);
+    for (const specifier of moduleSpecifiers(source)) {
+      const next = resolveSource(root, file, specifier, workspace);
       if (next !== undefined && !seen.has(next)) queue.push(next);
     }
   }

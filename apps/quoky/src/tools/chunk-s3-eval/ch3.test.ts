@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import type { CliRunner } from '@quoky/ai-cli';
@@ -284,15 +284,20 @@ describe('CH3 plan', () => {
     // The relative-import closure reaches guards no root names directly (Codex round 2 P1).
     expect(files).toContain('packages/core/src/application/chat-policy/internal-action-claim-guard.ts');
     expect(files).toContain('packages/core/src/application/chat-policy/internal-action-vocabulary.ts');
+    // Round 3: workspace-package entries and their closure (the @quoky/core barrel and what it re-exports).
+    expect(files).toContain('packages/core/src/index.ts');
+    expect(files).toContain('packages/core/src/application/ai-failure.ts');
     const root = mkdtempSync(join(tmpdir(), 'ch3-impl-'));
     try {
-      for (const file of files) {
+      // The workspace manifests map `@quoky/*` imports to their source entries (round 3).
+      const manifests = ['packages', 'apps'].flatMap((group) => readdirSync(join(REPO, group)).map((name) => `${group}/${name}/package.json`)).filter((file) => existsSync(join(REPO, file)));
+      for (const file of [...files, ...manifests]) {
         mkdirSync(dirname(join(root, file)), { recursive: true });
         copyFileSync(join(REPO, file), join(root, file));
       }
       expect(implementationHashes(root)).toEqual(real);
       const plan = buildCh3Plan({ cases: CASES, corpusDigest: digest, local: LOCAL, today: TODAY, implementation: implementationHashes(root) });
-      for (const file of ['packages/core/src/application/item-summary/s3-item-summary.ts', 'apps/quoky/src/tools/chunk-s3-eval/ch3-score.ts', 'packages/ai-cli/src/ollama-local-weights.ts', 'packages/core/src/application/chat-policy/internal-action-claim-guard.ts']) {
+      for (const file of ['packages/core/src/application/item-summary/s3-item-summary.ts', 'apps/quoky/src/tools/chunk-s3-eval/ch3-score.ts', 'packages/ai-cli/src/ollama-local-weights.ts', 'packages/core/src/application/chat-policy/internal-action-claim-guard.ts', 'packages/core/src/index.ts']) {
         writeFileSync(join(root, file), `${readFileSync(join(root, file), 'utf8')}\n// edited\n`);
         const edited = buildCh3Plan({ cases: CASES, corpusDigest: digest, local: LOCAL, today: TODAY, implementation: implementationHashes(root) });
         expect(edited.digest, file).not.toBe(plan.digest);
