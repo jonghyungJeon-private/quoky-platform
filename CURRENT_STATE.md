@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 phase 2 P2-6: matched-passage recall excerpts (2026-11-09, branch `claude/v5-recall-excerpt`)
+
+- Core exposes the matched passage ordinal; `renderRecallContent` V0/V1/V2 plus the stage R excerpt comparison are in; measured on CH7 (V1 fact delivered 32/42 vs 0/42), production variant is now V1. DECISIONS "P2-6".
+
 ### ADR-0124 phase 2 P2-5: lexical BM25 and own-memory judgment measurement harness (2026-11-09, branch `claude/v5-recall-judgment`)
 
 - Measured 2026-11-09: both pre-declared verdicts keep production (lexical `L-word`; own-memory rule F0). DECISIONS "P2-5 measurement".

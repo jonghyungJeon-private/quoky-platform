@@ -51,3 +51,23 @@ export function memoryVectorUnits(memoryId: Id, content: string, multiVector: bo
   });
   return units.length === 0 ? whole : units;
 }
+
+/**
+ * ADR-0124 P2-6: the UTF-16 offset in `content` at which passage `ordinal` starts, for a memory that is indexed as
+ * several passages (the same units `memoryVectorUnits(.., true)` yields). `undefined` for a single-unit memory, an
+ * unknown or empty passage, or a chunker failure: the caller then falls back to the head of the content.
+ */
+export function memoryPassageStartOffset(content: string, ordinal: number): number | undefined {
+  if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= MAX_PASSAGES_PER_MEMORY) return undefined;
+  try {
+    const passages = chunk(content);
+    if (passages.length <= 1) return undefined;
+    const passage = passages[ordinal];
+    if (passage === undefined) return undefined;
+    const index = new CodePointIndex(content);
+    if (index.slice(passage.span.start, passage.span.end).trim().length === 0) return undefined;
+    return index.toUnit(passage.span.start);
+  } catch {
+    return undefined;
+  }
+}

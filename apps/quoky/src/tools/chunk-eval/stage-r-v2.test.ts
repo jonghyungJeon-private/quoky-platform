@@ -44,8 +44,9 @@ describe('CH7 plan digest is unchanged by the CH8 work', () => {
   // (the daemon pins are part of that digest; this pin covers the code side: the hashed CH7 sources and parameters, with fixed inputs)
   const FIXED: Parameters<typeof stageRDigest>[0] = { set: { digest: '0'.repeat(64), memories: 1, queries: 1 }, planned: ['L'], pins: [], dropped: [] };
   it('stageRDigest of fixed inputs equals the value recorded before the CH8 edit', () => {
-    expect(STAGE_R_PLAN_VERSION).toBe('runtime-recall-plan.v3');
-    expect(stageRDigest(FIXED)).toBe('645234b499b00663a9968f81a64dcb5b5c49f5ec9b4f8f204707d1a7c71233dc');
+    expect(STAGE_R_PLAN_VERSION).toBe('runtime-recall-plan.v4');
+    expect(stageRDigest(FIXED)).toBe('ae15cac0608d79ff146bc9bec94375f9c4dc7099ec42f1296e34b891bcafd2cc');
+    // re-recorded for ADR-0124 P2-6: recall-excerpt sources joined the hashed files, the parameters gained `recallExcerpts`, plan version v4 (was 645234b4...)
     // re-recorded for ADR-0124 P2-4: recencyWeight 0.25 -> 0.1 in RUNTIME_CONSTANTS and the blend-sweep implementation changed (was 6b2fa49c...)
     // re-recorded for ADR-0124 P2-5: the lexical-variant module joined the hashed sources and the parameters gained `lexicalVariants` (was e5227230...)
   });
@@ -173,7 +174,7 @@ describe('CH8 CLI', () => {
   it('the CH7 path is untouched: --set memory plan still prints the CH7 plan version and a different digest', async () => {
     const ch7 = harness();
     expect(await runCli(['--set', 'memory', '--stage', 'R', '--arms', 'E0', '--modes', 'backfilled', '--mode', 'plan'], ch7.deps)).toBe(EXIT_OK);
-    expect(ch7.out.join('\n')).toContain('runtime-recall-plan.v3');
+    expect(ch7.out.join('\n')).toContain('runtime-recall-plan.v4');
     const ch8 = harness();
     await runCli([...base, '--mode', 'plan'], ch8.deps);
     expect(digestOf(ch8.out)).not.toBe(digestOf(ch7.out));

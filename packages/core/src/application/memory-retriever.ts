@@ -212,6 +212,7 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
     const semanticScores = await this.semanticScoresFor(request.query, eligible, session);
     // Without a semantic signal this turn (no scorer, error, timeout) recall is exactly today's: the recent pool only.
     // Widened records exist only because of the vector store, so they are discarded rather than ranked lexically.
+    const matchedOrdinals = semanticScores === null ? undefined : session?.matchedPassageOrdinals?.();
     const ranked = semanticScores === null ? eligible.filter((candidate) => recentIds.has(candidate.memory.id)) : eligible;
     const scored = ranked.map((candidate) => {
       const rawSemanticScore = semanticScores?.get(candidate.memory.id);
@@ -249,6 +250,9 @@ export class DefaultMemoryRetriever implements MemoryRetriever {
           ...(candidate.semanticScore === undefined
             ? { retrievalMode: 'lexical' as const }
             : { retrievalMode: 'semantic' as const, semanticScore: candidate.semanticScore }),
+          ...(matchedOrdinals?.get(candidate.memory.id) === undefined || candidate.semanticScore === undefined
+            ? {}
+            : { matchedPassageOrdinal: matchedOrdinals.get(candidate.memory.id) as number }),
           retrievalReason:
             `lexical=${candidate.lexicalScore.toFixed(4)}; recency=${candidate.recencyScore.toFixed(4)}` +
             (candidate.semanticScore === undefined ? '' : `; semantic=${candidate.semanticScore.toFixed(4)}`),

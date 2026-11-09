@@ -107,6 +107,11 @@ export interface RetrievedMemoryInput {
   retrievalMode?: MemoryRetrievalMode;
   /** The raw semantic score in [0, 1]; present exactly when `retrievalMode` is `semantic`. */
   semanticScore?: number;
+  /**
+   * ADR-0124 P2-6: ordinal of the passage that gave the memory its semantic score. Present only for a multi-passage
+   * memory when the scorer reported it; absent means unknown (consumers fall back to the head of the content).
+   */
+  matchedPassageOrdinal?: number;
 }
 
 export interface RetrievedMemory extends RetrievedMemoryInput {}
@@ -316,6 +321,12 @@ export function createRetrievedMemory(input: RetrievedMemoryInput): RetrievedMem
     if (!Number.isFinite(input.semanticScore) || input.semanticScore < 0 || input.semanticScore > 1) {
       throw new DurableMemoryValidationError('semanticScore must be between 0 and 1');
     }
+  }
+  if (
+    input.matchedPassageOrdinal !== undefined &&
+    (!Number.isInteger(input.matchedPassageOrdinal) || input.matchedPassageOrdinal < 0)
+  ) {
+    throw new DurableMemoryValidationError('matchedPassageOrdinal must be a non-negative integer');
   }
   return Object.freeze({ ...input });
 }
