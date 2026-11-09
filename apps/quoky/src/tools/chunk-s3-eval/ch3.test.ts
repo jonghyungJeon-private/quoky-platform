@@ -9,7 +9,7 @@ import { binomialOneSidedP, buildBlindSheet, loadRubricWording, scoreFilledSheet
 import { CH3_CORPUS_SEED, CH3_CORPUS_VERSION, DEPTH_STRATA, ch3CorpusDigest, generateCh3Corpus, type Ch3Case } from './ch3-corpus';
 import { buildCh3Plan, buildCh3Report, buildCh5, latencyStats, type Ch3ItemRun, type S3ItemRun } from './ch3-eval';
 import { hasAtom, scoreSummary, valueAtoms } from './ch3-score';
-import { S3_EVAL_IMPLEMENTATION_FILES, implementationHashes } from './implementation';
+import { S3_EVAL_IMPLEMENTATION_FILES, implementationFiles, implementationHashes } from './implementation';
 import { itemSourceText, s3InputOf, todayReadoutOf } from './items';
 import { composeLocalArm, parsePsRss, startRssSampler } from './local-arm';
 
@@ -278,16 +278,21 @@ describe('CH3 plan', () => {
   it('hashes every implementation file into the digest: editing one listed file changes it', () => {
     const digest = ch3CorpusDigest(CASES);
     const real = implementationHashes();
-    expect(Object.keys(real)).toEqual([...S3_EVAL_IMPLEMENTATION_FILES]);
+    const files = implementationFiles();
+    expect(Object.keys(real)).toEqual([...files]);
+    for (const root of S3_EVAL_IMPLEMENTATION_FILES) expect(files).toContain(root);
+    // The relative-import closure reaches guards no root names directly (Codex round 2 P1).
+    expect(files).toContain('packages/core/src/application/chat-policy/internal-action-claim-guard.ts');
+    expect(files).toContain('packages/core/src/application/chat-policy/internal-action-vocabulary.ts');
     const root = mkdtempSync(join(tmpdir(), 'ch3-impl-'));
     try {
-      for (const file of S3_EVAL_IMPLEMENTATION_FILES) {
+      for (const file of files) {
         mkdirSync(dirname(join(root, file)), { recursive: true });
         copyFileSync(join(REPO, file), join(root, file));
       }
       expect(implementationHashes(root)).toEqual(real);
       const plan = buildCh3Plan({ cases: CASES, corpusDigest: digest, local: LOCAL, today: TODAY, implementation: implementationHashes(root) });
-      for (const file of ['packages/core/src/application/item-summary/s3-item-summary.ts', 'apps/quoky/src/tools/chunk-s3-eval/ch3-score.ts', 'packages/ai-cli/src/ollama-local-weights.ts']) {
+      for (const file of ['packages/core/src/application/item-summary/s3-item-summary.ts', 'apps/quoky/src/tools/chunk-s3-eval/ch3-score.ts', 'packages/ai-cli/src/ollama-local-weights.ts', 'packages/core/src/application/chat-policy/internal-action-claim-guard.ts']) {
         writeFileSync(join(root, file), `${readFileSync(join(root, file), 'utf8')}\n// edited\n`);
         const edited = buildCh3Plan({ cases: CASES, corpusDigest: digest, local: LOCAL, today: TODAY, implementation: implementationHashes(root) });
         expect(edited.digest, file).not.toBe(plan.digest);

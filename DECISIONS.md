@@ -32880,8 +32880,8 @@ Only arm L and today's baseline are built (decision 5: arms H/R2 only if L fails
     **0 calls**. Each guarded provider may add up to 4 canary calls (not counted). Owner labels: **32 pairs = 64 labels +
     32 preferences**.
   - The plan digest covers the corpus digest, the model and its pin, the today model flag, the map and document-summary
-    prompt fingerprints, the S3 limits, the scorer version, the bars and **the sha256 of 47 implementation files**
-    (`chunk-s3-eval/implementation.ts`: the harness modules and both CLIs, the eval-provider guard, the long-item
+    prompt fingerprints, the S3 limits, the scorer version, the bars and **the sha256 of every implementation file: 47 listed roots plus their transitive relative-import closure (178
+    files at this commit; Codex round 2 found two claim-guard helpers a hand list missed)** (`chunk-s3-eval/implementation.ts`: the harness modules and both CLIs, the eval-provider guard, the long-item
     composition and its config parser, S3 and the chunking modules, the document-map prompt, the readout and thread
     builders, the prompt composer and renderer, the claim check and guard, the card-spoof, credential and link guards, the
     chat reply policy, the router, provider manager and local dispatch check, and the Ollama / Claude CLI adapters with

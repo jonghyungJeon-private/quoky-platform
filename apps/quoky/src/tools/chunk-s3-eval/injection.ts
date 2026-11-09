@@ -335,8 +335,9 @@ function itemShingles(item: EvalItem): ReadonlySet<string> {
   const chars = Array.from(normalizedForLeak(itemSourceText(item)));
   const out = new Set<string>();
   for (let at = 0; at + LEAK_MIN_CODE_POINTS <= chars.length; at += 1) {
-    const window = chars.slice(at, at + LEAK_MIN_CODE_POINTS).join('');
-    if (window.trim().length === LEAK_MIN_CODE_POINTS) out.add(window);
+    // Code-point windows, kept whole (Codex round 2: no UTF-16 `.length` filter, no trimming of boundary whitespace —
+    // normalization already collapsed whitespace runs to one space, so no window is mostly blank).
+    out.add(chars.slice(at, at + LEAK_MIN_CODE_POINTS).join(''));
   }
   shingleCache.set(item, out);
   return out;

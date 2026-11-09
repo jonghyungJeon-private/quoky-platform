@@ -4,8 +4,8 @@
  * new digest and needs a new owner yes. (Stage R keeps its own list; this list does not add to it.)
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, posix, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(__dirname, '../../../../..');
 
@@ -67,11 +67,51 @@ export type ImplementationHashes = Readonly<Record<string, string>>;
 
 let cache: ImplementationHashes | undefined;
 
-/** sha256 of each listed source file, read from the repo (cached per process for the repo root). */
+/** Relative module specifiers a TypeScript source imports or re-exports (static and dynamic). */
+function relativeImports(source: string): string[] {
+  const out: string[] = [];
+  const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/gu;
+  for (const match of source.matchAll(pattern)) out.push(match[1] as string);
+  return out;
+}
+
+/** Repo-relative path of the `.ts` file a relative specifier names, or undefined when it is not a source file in the repo. */
+function resolveSource(root: string, fromFile: string, specifier: string): string | undefined {
+  const base = posix.normalize(posix.join(posix.dirname(fromFile), specifier)).replace(/\.js$/u, '');
+  for (const candidate of [`${base}.ts`, `${base}/index.ts`, base]) {
+    const full = join(root, candidate);
+    if (candidate.endsWith('.ts') && existsSync(full) && statSync(full).isFile()) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Review round 2 (Codex P1): the hashed set is the listed roots PLUS every source file they reach through relative imports,
+ * transitively, so a guard or helper a listed module calls (for example the internal-action claim guard behind the summary
+ * claim check) can never change answers without changing the digest. Workspace-package imports are covered because the
+ * package entry files the run executes are listed as roots. Sorted for a stable digest.
+ */
+export function implementationFiles(root: string = REPO_ROOT): readonly string[] {
+  const seen = new Set<string>();
+  const queue: string[] = [...S3_EVAL_IMPLEMENTATION_FILES];
+  while (queue.length > 0) {
+    const file = queue.shift() as string;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const source = readFileSync(join(root, file), 'utf8');
+    for (const specifier of relativeImports(source)) {
+      const next = resolveSource(root, file, specifier);
+      if (next !== undefined && !seen.has(next)) queue.push(next);
+    }
+  }
+  return [...seen].sort();
+}
+
+/** sha256 of each implementation file (roots and their relative-import closure), read from the repo; cached per process. */
 export function implementationHashes(root: string = REPO_ROOT): ImplementationHashes {
   if (root === REPO_ROOT && cache !== undefined) return cache;
   const out: Record<string, string> = {};
-  for (const file of S3_EVAL_IMPLEMENTATION_FILES) out[file] = createHash('sha256').update(readFileSync(join(root, file))).digest('hex');
+  for (const file of implementationFiles(root)) out[file] = createHash('sha256').update(readFileSync(join(root, file))).digest('hex');
   if (root === REPO_ROOT) cache = out;
   return out;
 }
