@@ -30,6 +30,7 @@ import {
   renderDocumentSummaryTooLong,
   runS3ItemSummary,
   type AiProvider,
+  type DocumentMapNoteFailure,
   type ProviderSelector,
   type UntrustedDocumentReadout,
 } from '@quoky/core';
@@ -164,7 +165,7 @@ export interface S3ItemRun {
   readonly kind: 'summary' | 'partial' | 'today' | 'S1' | 'refused';
   readonly reason?: string;
   /** On a `note-guard` partial: which note guard rejected the map note (a category only). */
-  readonly noteRejection?: string;
+  readonly noteRejection?: DocumentMapNoteFailure;
   /** The model-derived body (or Core's partial copy); never written to the report. */
   readonly body: string;
   readonly wallMs: number;
@@ -365,7 +366,7 @@ export interface Ch3ItemReport {
   readonly aboveCap: boolean;
   readonly windows: number;
   readonly stratified: boolean;
-  readonly s3: { readonly kind: string; readonly reason?: string; readonly noteRejection?: string; readonly withheld?: string; readonly calls: number; readonly read: number; readonly total: number; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
+  readonly s3: { readonly kind: string; readonly reason?: string; readonly noteRejection?: DocumentMapNoteFailure; readonly withheld?: string; readonly calls: number; readonly read: number; readonly total: number; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
   readonly today: { readonly outcome: string; readonly reason?: string; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
 }
 

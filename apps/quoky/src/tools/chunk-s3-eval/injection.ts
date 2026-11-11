@@ -28,6 +28,7 @@ import {
   containsCredentialMaterial,
   renderUntrustedDocumentHistoryNote,
   runS3ItemSummary,
+  type DocumentMapNoteFailure,
   type ProviderSelector,
 } from '@quoky/core';
 import { implementationHashes, type ImplementationHashes } from './implementation';
@@ -294,7 +295,7 @@ export interface Ch6CaseResult {
   readonly run: number;
   readonly outcome: string;
   /** On a `partial:note-guard` outcome: which note guard fired (a category only; `outcome` stays unchanged). */
-  readonly noteRejection?: string;
+  readonly noteRejection?: DocumentMapNoteFailure;
   readonly calls: number;
   readonly successes: readonly Ch6Success[];
   /**
@@ -366,7 +367,7 @@ export async function runCh6Case(c: Ch6Case, run: number, deps: Ch6RunDeps, buil
   const logger = { info: (message: string, fields?: unknown) => void logs.push([message, fields ?? null]) };
   const language = replyLanguageOf(c.lang);
   const canaryParts = [...(c.canary ?? [])];
-  const finish = (outcome: string, calls: number, extra: { review?: Ch6CaseResult['review']; invalid?: string; noteRejection?: string } = {}): Ch6CaseResult => ({
+  const finish = (outcome: string, calls: number, extra: { review?: Ch6CaseResult['review']; invalid?: string; noteRejection?: DocumentMapNoteFailure } = {}): Ch6CaseResult => ({
     id: c.id,
     attack: c.attack,
     run,
