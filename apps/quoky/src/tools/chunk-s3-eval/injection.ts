@@ -293,6 +293,8 @@ export interface Ch6CaseResult {
   readonly attack: Ch6Attack;
   readonly run: number;
   readonly outcome: string;
+  /** On a `partial:note-guard` outcome: which note guard fired (a category only; `outcome` stays unchanged). */
+  readonly noteRejection?: string;
   readonly calls: number;
   readonly successes: readonly Ch6Success[];
   /**
@@ -364,11 +366,12 @@ export async function runCh6Case(c: Ch6Case, run: number, deps: Ch6RunDeps, buil
   const logger = { info: (message: string, fields?: unknown) => void logs.push([message, fields ?? null]) };
   const language = replyLanguageOf(c.lang);
   const canaryParts = [...(c.canary ?? [])];
-  const finish = (outcome: string, calls: number, extra: { review?: Ch6CaseResult['review']; invalid?: string } = {}): Ch6CaseResult => ({
+  const finish = (outcome: string, calls: number, extra: { review?: Ch6CaseResult['review']; invalid?: string; noteRejection?: string } = {}): Ch6CaseResult => ({
     id: c.id,
     attack: c.attack,
     run,
     outcome,
+    ...(extra.noteRejection !== undefined ? { noteRejection: extra.noteRejection } : {}),
     calls,
     successes: CH6_SUCCESS.filter((s) => successes.has(s)),
     ...(extra.review !== undefined ? { review: extra.review } : {}),
@@ -409,7 +412,7 @@ export async function runCh6Case(c: Ch6Case, run: number, deps: Ch6RunDeps, buil
   const fixedNote = renderUntrustedDocumentHistoryNote(sourceOf(c.shape), language);
   if (outcome.historyNote !== fixedNote || leaksChunkText(JSON.stringify([logs, outcome.historyNote, outcome.audit]), built.item, [...built.planted, ...canaryParts])) successes.add('chunk-text-in-logs');
   const review = c.oracle === 'review-canary' ? { body, claimGuard: shown.withheld ?? ('clean' as const) } : undefined;
-  return finish(`${outcome.kind}${outcome.kind === 'partial' ? `:${outcome.reason}` : ''}${outcome.withheld !== undefined ? `:withheld-${outcome.withheld}` : ''}`, calls, { review });
+  return finish(`${outcome.kind}${outcome.kind === 'partial' ? `:${outcome.reason}` : ''}${outcome.withheld !== undefined ? `:withheld-${outcome.withheld}` : ''}`, calls, { review, ...(outcome.kind === 'partial' && outcome.noteRejection !== undefined ? { noteRejection: outcome.noteRejection } : {}) });
 }
 
 // ---------------------------------------------------------------- verdict

@@ -33,7 +33,13 @@ import {
   type UntrustedDocumentReadout,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { DOCUMENT_MAP_PROMPT_VERSION, buildDocumentMapRequest, documentMapNoteBudget, parseDocumentMapNote } from './document-map-prompt';
+import {
+  DOCUMENT_MAP_PROMPT_VERSION,
+  buildDocumentMapRequest,
+  documentMapNoteBudget,
+  parseDocumentMapNote,
+  type DocumentMapNoteFailure,
+} from './document-map-prompt';
 
 /**
  * ADR-0124 Part L, slice C5a: S3, the whole-item summary of ONE long item, arm L (every model call on a `LOCAL`
@@ -175,7 +181,12 @@ export type S3ItemSummaryOutcome =
   /** As today: the whole item is refused, nothing is sent. */
   | { readonly kind: 'refused'; readonly reason: 'credential' | 'empty' }
   | ({ readonly kind: 'summary' } & S3Delivered)
-  | ({ readonly kind: 'partial'; readonly reason: S3PartialReason } & S3Delivered);
+  | ({
+      readonly kind: 'partial';
+      readonly reason: S3PartialReason;
+      /** Only on `note-guard`: which note guard rejected the map note (a category, never note text). Observability only. */
+      readonly noteRejection?: DocumentMapNoteFailure;
+    } & S3Delivered);
 
 /** A note's label (ADR-0124 N7, ADR-0121 D3/D4): untrusted, model-derived, the item's label never widened. */
 type NoteLabel = FlowLabel & { readonly trust: 'UNTRUSTED'; readonly derivation: 'MODEL_DERIVED' };
@@ -580,6 +591,7 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
     reason: S3PartialReason | undefined,
     body: string,
     withheld: 'claim' | 'too-long' | undefined,
+    noteRejection?: DocumentMapNoteFailure,
   ): S3ItemSummaryOutcome => {
     const { coverage, coverageLine } = coverageReport(computeCoverage(passages, notes.flatMap((note) => note.ordinals)), input);
     const a = audit(coverage);
@@ -587,6 +599,7 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
       outcome: kind,
       ...(reason !== undefined ? { reason } : {}),
       ...(withheld !== undefined ? { withheld } : {}),
+      ...(noteRejection !== undefined ? { noteRejection } : {}),
       ...counts,
       read: a.read,
       mapCalls: a.mapCalls,
@@ -598,13 +611,13 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
       wallMs: a.wallMs,
     });
     const delivered = { text: `${body}\n\n${coverageLine}`, body, coverageLine, coverage, historyNote, audit: a, ...(withheld !== undefined ? { withheld } : {}) };
-    return kind === 'summary' ? { kind: 'summary', ...delivered } : { kind: 'partial', reason: reason ?? 'internal', ...delivered };
+    return kind === 'summary' ? { kind: 'summary', ...delivered } : { kind: 'partial', reason: reason ?? 'internal', ...(noteRejection !== undefined ? { noteRejection } : {}), ...delivered };
   };
-  const partial = (reason: S3PartialReason): S3ItemSummaryOutcome => {
-    if (notes.length === 0) return finish('partial', reason, NOTHING_READ[input.language], undefined);
+  const partial = (reason: S3PartialReason, noteRejection?: DocumentMapNoteFailure): S3ItemSummaryOutcome => {
+    if (notes.length === 0) return finish('partial', reason, NOTHING_READ[input.language], undefined, noteRejection);
     const checked = claimChecked(notes.map((note) => note.lines.join('\n')).join('\n\n'));
     const body = checked.withheld !== undefined ? checked.text : `${PARTIAL_LEAD[input.language]}\n\n${checked.text}`;
-    return finish('partial', reason, body, checked.withheld);
+    return finish('partial', reason, body, checked.withheld, noteRejection);
   };
   state.partial = partial;
   /**
@@ -639,7 +652,7 @@ async function run(input: S3ItemSummaryInput, deps: S3ItemSummaryDeps, state: Ru
     if (!parsed.ok) {
       // A rejected note stops the run: the partial reply from the notes already finished (Codex P2e).
       notesRejected += 1;
-      return partial('note-guard');
+      return partial('note-guard', parsed.reason);
     }
     linesDropped += parsed.dropped;
     notes.push({ window: index, ordinals: window.ordinals, lines: parsed.lines, label: noteLabel });
