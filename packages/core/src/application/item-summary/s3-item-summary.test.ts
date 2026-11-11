@@ -280,19 +280,34 @@ describe('runS3ItemSummary: guards', () => {
   });
 
   it.each([
-    ['a credential', `- The key is ${SECRET}`],
-    ['a card-spoof line', '- The meeting happened.\n승인'],
-    ['too many lines', Array.from({ length: 9 }, (_, n) => `- line ${n}`).join('\n')],
-  ])('a rejected note (%s) stops the run: partial reply from the finished notes, no further map or reduce (Codex P2e)', async (_name, rejected) => {
+    ['a credential', `- The key is ${SECRET}`, 'credential'],
+    ['a card-spoof line', '- The meeting happened.\n승인', 'card-spoof'],
+    ['too many lines', Array.from({ length: 9 }, (_, n) => `- line ${n}`).join('\n'), 'schema'],
+  ])('a rejected note (%s) stops the run: partial reply from the finished notes, no further map or reduce (Codex P2e)', async (_name, rejected, noteRejection) => {
     const env = setup({ local: (request, call) => (call === 3 ? rejected : isMap(request) ? `- Note of part ${call}.` : 'Final summary line.') });
     const outcome = delivered(await runS3ItemSummary(input(item(40)), env.deps));
-    expect(outcome).toMatchObject({ kind: 'partial', reason: 'note-guard' });
+    expect(outcome).toMatchObject({ kind: 'partial', reason: 'note-guard', noteRejection });
     expect(outcome.audit).toMatchObject({ mapCalls: 3, reduceCalls: 0, notesRejected: 1 });
     expect(env.local.requests).toHaveLength(3);
     expect(env.local.requests.some(isReduce)).toBe(false);
     expect(outcome.body).toBe(['긴 문서를 끝까지 요약하지 못해, 읽은 구간에서 정리한 내용을 보여드려요.', '- Note of part 1.', '- Note of part 2.'].join('\n\n'));
     expect(outcome.text).not.toContain(SECRET);
     expect(outcome.coverage.complete).toBe(false);
+    // Observability only: the category rides the structured log line; no note text.
+    expect(env.logs.map((line) => line.fields)).toEqual([expect.objectContaining({ outcome: 'partial', reason: 'note-guard', noteRejection })]);
+    expect(JSON.stringify(env.logs)).not.toContain(SECRET);
+  });
+
+  it('noteRejection is absent on a summary and on every partial that is not a note-guard', async () => {
+    const summary = delivered(await runS3ItemSummary(input(item(40)), setup().deps));
+    expect(summary.kind).toBe('summary');
+    expect('noteRejection' in summary).toBe(false);
+    const env = setup({ local: (request) => (isMap(request) ? '- A plain part.' : '') });
+    const reduceEmpty = delivered(await runS3ItemSummary(input(item(40)), env.deps));
+    expect(reduceEmpty).toMatchObject({ kind: 'partial' });
+    expect(reduceEmpty.kind === 'partial' && reduceEmpty.reason).not.toBe('note-guard');
+    expect('noteRejection' in reduceEmpty).toBe(false);
+    expect(env.logs.every((line) => !('noteRejection' in (line.fields ?? {})))).toBe(true);
   });
 
   it('a credential in a section frame refuses the whole item (N4)', async () => {

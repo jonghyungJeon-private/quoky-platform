@@ -30,6 +30,7 @@ import {
   renderDocumentSummaryTooLong,
   runS3ItemSummary,
   type AiProvider,
+  type DocumentMapNoteFailure,
   type ProviderSelector,
   type UntrustedDocumentReadout,
 } from '@quoky/core';
@@ -163,6 +164,8 @@ export function planLinesCh3(plan: Ch3Plan): string[] {
 export interface S3ItemRun {
   readonly kind: 'summary' | 'partial' | 'today' | 'S1' | 'refused';
   readonly reason?: string;
+  /** On a `note-guard` partial: which note guard rejected the map note (a category only). */
+  readonly noteRejection?: DocumentMapNoteFailure;
   /** The model-derived body (or Core's partial copy); never written to the report. */
   readonly body: string;
   readonly wallMs: number;
@@ -227,6 +230,7 @@ export async function runS3Item(c: Ch3Case, deps: Pick<Ch3RunDeps, 'selector' | 
     return {
       kind: outcome.kind,
       ...(outcome.kind === 'partial' ? { reason: outcome.reason } : {}),
+      ...(outcome.kind === 'partial' && outcome.noteRejection !== undefined ? { noteRejection: outcome.noteRejection } : {}),
       body: shown.text,
       wallMs,
       calls: outcome.audit.mapCalls + outcome.audit.reduceCalls,
@@ -264,7 +268,7 @@ export async function runCh3(cases: readonly Ch3Case[], deps: Ch3RunDeps): Promi
   for (const [index, c] of cases.entries()) {
     const run = await runS3Item(c, deps);
     s3.push(run);
-    deps.progress?.(`  S3 ${index + 1}/${cases.length} ${c.item.id}: ${run.kind}${run.reason !== undefined ? ` (${run.reason})` : ''}, ${run.calls} calls, ${run.wallMs} ms`);
+    deps.progress?.(`  S3 ${index + 1}/${cases.length} ${c.item.id}: ${run.kind}${run.reason !== undefined ? ` (${run.reason}${run.noteRejection !== undefined ? `:${run.noteRejection}` : ''})` : ''}, ${run.calls} calls, ${run.wallMs} ms`);
   }
   await deps.afterLocal?.();
   const out: Ch3ItemRun[] = [];
@@ -362,7 +366,7 @@ export interface Ch3ItemReport {
   readonly aboveCap: boolean;
   readonly windows: number;
   readonly stratified: boolean;
-  readonly s3: { readonly kind: string; readonly reason?: string; readonly withheld?: string; readonly calls: number; readonly read: number; readonly total: number; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
+  readonly s3: { readonly kind: string; readonly reason?: string; readonly noteRejection?: DocumentMapNoteFailure; readonly withheld?: string; readonly calls: number; readonly read: number; readonly total: number; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
   readonly today: { readonly outcome: string; readonly reason?: string; readonly wallMs: number; readonly covered: number; readonly valuePresent: number; readonly unanchored: number; readonly keyPoints: number; readonly invented: number };
 }
 
@@ -419,6 +423,7 @@ export function buildCh3Report(
       s3: {
         kind: run.s3.kind,
         ...(run.s3.reason !== undefined ? { reason: run.s3.reason } : {}),
+        ...(run.s3.noteRejection !== undefined ? { noteRejection: run.s3.noteRejection } : {}),
         ...(run.s3.withheld !== undefined ? { withheld: run.s3.withheld } : {}),
         calls: run.s3.calls,
         read: run.s3.read,

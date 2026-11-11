@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L C5a: record the map note rejection reason
+
+- **Added (observability only).** S3 `partial` outcomes with reason `note-guard` carry `noteRejection` (`schema` | `link` | `credential` | `card-spoof` | `claim`), also in the `item_summary.s3` log, the CH3 per-item record and the CH6 case result; no behaviour change. DECISIONS ADR-0124 section 17.2.
+
 ## Unreleased — ADR-0124 Part L C5a: `document-map.v2` after CH3 run 2 FAILED
 
 - **Changed (long-item map prompt only).** `document-map.v2`: asks for specific facts copied exactly, most important first, and states a per-part line budget as a Core fact (`documentMapNoteBudget`, the same fair share `notesBody` uses). Parser, 8 x 160 bounds, 3,000-cp windows, W <= 6, 20 s / 90 s and the reduce prompt unchanged.

@@ -393,6 +393,16 @@ describe('arm L through the real composition (fake ollama runner)', () => {
     expect(arm.meter.maxInFlight()).toBe(1);
     expect(arm.meter.embeddings()).toBe(0);
   });
+
+  it('a rejected map note is recorded with its guard category beside the note-guard reason', async () => {
+    const tooMany = Array.from({ length: 9 }, (_, n) => `- line ${n}`).join('\n');
+    const arm = composeLocalArm({ ...LOCAL, runner: daemon(PIN, () => tooMany).runner, clock: ticking(), maxCalls: 7 });
+    expect(await arm.ready()).toBe(true);
+    const c = CASES.find((x) => x.aboveCap) as Ch3Case;
+    const { runS3Item } = await import('./ch3-eval');
+    const run = await runS3Item(c, { selector: arm.selector, exclusive: arm.exclusive, now: ticking() });
+    expect(run).toMatchObject({ kind: 'partial', reason: 'note-guard', noteRejection: 'schema' });
+  });
 });
 
 describe('chunk-s3-eval CLI', () => {

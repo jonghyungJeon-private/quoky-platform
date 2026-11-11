@@ -33036,6 +33036,17 @@ move (they hash prompts); the re-run needs a new owner yes on the new plan diges
 plan mode, zero model calls, qwen3:8b@500a1f067a9f): CH3 `a8b438407e0d36da` (prompts document-map.v2 `951892bc8cdf`, document
 summary `fe40ddb36043`, scorer v2) and CH6 `dcafe35d3bd03bb4`.
 
+#### 17.2 Record the map note rejection reason (observability only; no behaviour change)
+
+CH3 run 3 (`document-map.v2`, plan digest `a8b438407e0d36da`) ended 10 of 32 items as `partial (note-guard)` (run 2: 2), and the
+reports could not say which note guard fired: `parseDocumentMapNote` returns one of `schema`, `link`, `credential`,
+`card-spoof`, `claim`, but `runS3ItemSummary` dropped it on `partial('note-guard')`. This change carries that category
+(`DocumentMapNoteFailure`, a closed enum, never note text or document content) as an optional `noteRejection` on the
+`partial` outcome, only when the reason is `note-guard`, in the existing `item_summary.s3` log line, in the CH3 per-item `s3`
+record (progress line `partial (note-guard:schema)`) and as a separate `noteRejection` field on the CH6 case result; the CH6
+`outcome` string (`partial:note-guard`) is unchanged. The reply text, delivery, guards and control flow are unchanged. The plan
+digests move because they hash source files; prompts, golden files, freeze records, scorer versions and bars are untouched.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,
