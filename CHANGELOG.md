@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0124 Part L C5a closed: arm L parked
+
+- **Recorded (no code change).** CH3 FAILED on `qwen3:8b`, `granite3.3:8b` and `gemma3:4b` (coverage 0-7.3% against the 80% bar); the owner closed slice C5a on 2026-11-16. `QUOKY_CHUNK_ITEMS` stays `off`; arms H and R2 are not built. DECISIONS ADR-0124 section 17.3.
+
 ## Unreleased — ADR-0124 Part L C5a: record the map note rejection reason
 
 - **Added (observability only).** S3 `partial` outcomes with reason `note-guard` carry `noteRejection` (`schema` | `link` | `credential` | `card-spoof` | `claim`), also in the `item_summary.s3` log, the CH3 per-item record and the CH6 case result; no behaviour change. DECISIONS ADR-0124 section 17.2.

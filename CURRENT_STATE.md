@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0124 Part L C5a closed: arm L parked (2026-11-16, branch `claude/v5-partl-close`)
+
+- CH3 FAILED on all three local models (`qwen3:8b` 7.3%, `granite3.3:8b` 0%, `gemma3:4b` 6.8% coverage; bar 80%). Owner closed slice C5a: `QUOKY_CHUNK_ITEMS` stays `off`, long items keep today's summary, arms H/R2 not built, no further C5a runs. Code and harness stay in the tree, unwired by default; a reopen needs a new owner decision. DECISIONS ADR-0124 section 17.3.
+
 ### ADR-0124 Part L C5a: map note rejection reason recorded (2026-11-12, branch `claude/v5-partl-note-reason`)
 
 - CH3 run 3 had 10 note-guard partials with no sub-reason; S3 now records which note guard fired (`noteRejection`) in the log, the CH3 report and the CH6 result. Observability only; plan digests move (source files are hashed). DECISIONS ADR-0124 section 17.2.
