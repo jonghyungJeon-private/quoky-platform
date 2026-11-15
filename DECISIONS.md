@@ -33047,6 +33047,40 @@ record (progress line `partial (note-guard:schema)`) and as a separate `noteReje
 `outcome` string (`partial:note-guard`) is unchanged. The reply text, delivery, guards and control flow are unchanged. The plan
 digests move because they hash source files; prompts, golden files, freeze records, scorer versions and bars are untouched.
 
+#### 17.3 Slice C5a closed: arm L parked, arms H and R2 not built (owner decision 2026-11-16)
+
+**Measurements (all FAILED, bars unchanged).** CH3 on the 32-item frozen corpus, `document-map.v2`, today's path as the
+baseline (today's coverage 16.4% / 17.3% in these runs, so the scorer is strict, but the 80% bar was not relaxed):
+
+| Run | Local model | S3 coverage (bar 80%) | Invented-free (bar 95%) | Partials | CH5 |
+|---|---|---|---|---|---|
+| CH3 run 3 (2026-11-11) | `qwen3:8b` | 7.3% | 90.6% | 10 note-guard | - |
+| CH3 granite (2026-11-13, plan `3d23bc73fd1c6de1`) | `granite3.3:8b` | 0% | 96.9% | 22 call-timeout, 10 note-guard | FAILED (p95 50,312 ms, 22 calls over 20 s) |
+| CH3 gemma (2026-11-13, plan `d52e2c55519b8e72`) | `gemma3:4b` | 6.8% | 93.8% | 22 note-guard | PASSED |
+
+CH6 run 2 (`qwen3:8b`, `document-map.v2`) also FAILED (3 successes over 3 runs). CH6 was not run on granite or gemma (CH6
+runs only after a CH3 pass). The reports, items, blind sheets and keys are archived outside the repository; the keys were not
+opened (no owner labels were collected).
+
+**Reading.** Three local models on this hardware miss coverage by more than an order of magnitude; the 8B models either time
+out under the ratified 20 s / 90 s bounds or have most notes rejected by the note guards. Widening the windows, W or the
+bounds would need an ADR amendment and would not close a 10x coverage gap. Arm H (local selection, one final remote call)
+sends calendar, mail and Drive content to a remote model and needs an ADR-0110 D4 decision first.
+
+**Decision (owner, 2026-11-16: "닫고 배포 진행해").**
+
+1. Slice C5a is **closed**. Arm L is parked; decision 5 of section 17 (build arms H and R2 if arm L fails CH3) is **not
+   exercised**: no arm H or R2 code, prompts or runs.
+2. `QUOKY_CHUNK_ITEMS` stays `off` on the service; `shadow` and `on` are not enabled. Long items keep today's clipped-path
+   summary, byte-identically. The C5a code, prompts and eval harness stay in the tree, unwired by default, so a reopen starts
+   from them.
+3. No further CH3 / CH5 / CH6 runs, owner labelling or CH6 review for C5a. The `document-map.v2` note rejection reasons
+   (section 17.2) were never measured; that diagnostic run is dropped with the slice.
+4. **Reopening** needs a new owner decision, e.g. on materially faster local hardware or a stronger local model, or an
+   ADR-0110 D4 decision that would admit arm H. A reopen re-runs CH3 / CH5 / CH6 from a new plan digest with the bars of
+   section 17 decision 4 unchanged.
+5. Other Part L slices already shipped (sections, memory recall, embedder, rerank) are not affected.
+
 ## ADR-0124 phase 1 measurement record: embedder arms E0–E3 / EH and the CH7 memory set (2026-11-05, branch `claude/v5-chunk-embed-arms`)
 
 This record **freezes the inputs of the phase 1 embedder measurement before any run** (ADR-0124 section 7: "the measurement record freezes the sets' hashes,
