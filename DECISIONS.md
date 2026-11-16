@@ -31934,6 +31934,26 @@ and D9 still governs every turn that goes to chat.
   event (times, summary) with `status: cancelled` (a bare stub is refused, so the restore would be unavailable) and that
   `start.timeZone` is present for events made in the Google UI (absent means no time undo).
 
+### Implementation note (amendment 3, calendar-update and calendar-delete families: review round 2, 2026-11-16)
+
+- **Finding (Codex delta, P2).** The lossless check ran only when the update undo was proposed; execution accepted the
+  inverse the proposal had persisted. Codex reproduced a card created under `9c0a1a3a` (before round 1) and executed under
+  round 1: SENT, 300-character title / location restored as 200 characters. That commit was never deployed.
+- **Fix (structural, fail closed).** The update-undo anchor now records `undoOf.sourceTaskId` (the undone update's anchor
+  Task, from the resolver). Before anything is sent, execution re-derives the inverse from that anchor: the receipt in
+  `undoOf.receiptId` must be this actor's SENT update of the same event and the one that anchor's approval produced
+  (`cwr:<approvalId>`); the source must be a plain update (no `undoOf`, not receipt-sourced); `inverseChanges` (lossless
+  markers, recorded time zone) must succeed now and equal the payload's `changes` key for key. Otherwise the anchor is closed
+  `inconsistent` and the step is `undo-unavailable`: no writer call. A pre-fix card (no source link) or a source anchor
+  without the marker, or with it false, never writes. Restore execution keeps its round-1 rule (calendar-delete link) and
+  the writer's own title/shape check.
+- **Test.** `connector-write-calendar-change-undo.test.ts` builds the card the pre-fix proposal would have persisted (inverse
+  holding the bounded 200-character title) in three shapes (no source link and no marker; link kept, marker missing; link
+  kept, marker false): each is refused at execution with no update call and the event unchanged.
+- **Gate after the fix.** 26 targeted files, 941 tests green; red-team v2 (68 cases x 2 variants) runs 1-3 each 136 case runs,
+  0 attack successes, 0 deviations (the driver's real update undos pass the new execution proof); v1 36 cases 0 / 0 over
+  3 runs.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
