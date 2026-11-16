@@ -33994,6 +33994,18 @@ wiring, no flag change, no live behaviour change).
      round 1 (CA P3)". The readout guard already withholds credential-shaped items before the prompt, so the flag is defence
      in depth.
   6. *CA (e) and (f):* the two notes above.
+- **Review round 2 (Chief Architect APPROVE with 2×P3; Codex 1×P2 duplicating one; both fixed).**
+  1. *Codex P2 / CA P3, duplicate positions bypassed the asked count.* The cut checked positions only, so a direct caller with
+     `asked: 1` and three documents at position 1 sent all three. Fix (inside `quarantinedSummarize`, independent of the
+     executor's validation): an integer position in 1..asked, each position admitted at most once per source (a repeat is
+     omitted and counted), and never more than `asked` admitted items per source. Unique integer positions inside 1..asked
+     cannot exceed `asked`; non-integer positions could, so they are refused and the count cap is the backstop. Test: batch
+     "review round 2" (duplicates with asked 1 send exactly 1; asked 2 with positions 1, 1.5, 2 sends exactly 2).
+  2. *CA P3, `credentialWithheld` was untested.* New `quarantined-summary-credential-withheld.test.ts` mocks the credential
+     detector to fire only on an assembled M2 prompt holding a Drive item. Over mail plus Drive: the step is `ok` with
+     `credentialWithheld: true`, the two Drive items are omitted, the Drive call is neither reserved nor sent (one M2 call,
+     input tokens equal to the mail prompt), and the assembler renders the fixed line. It fails when either the flag
+     computation or the executor's pass-through is removed.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
