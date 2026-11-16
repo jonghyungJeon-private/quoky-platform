@@ -285,12 +285,17 @@ export interface CalendarEventDeleteRequest {
 /**
  * ADR-0112 amendment 3 (O3): the shape of the event an approved delete removed, from that delete's own bound expectation
  * (`CalendarEventExpectation` without its version: the provider reports no version for a delete). The restore refuses
- * (`NOT_SENT('TARGET_CHANGED')`) unless the event is still deleted and still has exactly this all-day shape, start and end.
+ * (`NOT_SENT('TARGET_CHANGED')`) unless the event is still deleted and still has exactly this all-day shape, start, end and title.
  */
 export interface CalendarEventRestoreExpectation {
   readonly allDay: boolean;
   readonly start: string;
   readonly end: string;
+  /**
+   * The deleted event's title as the delete's preview showed it (the bounded readout form, `boundCalendarText` at
+   * `CALENDAR_EVENT_TITLE_MAX_LENGTH`). The writer compares the deleted event's title in that same bounded form.
+   */
+  readonly title: string;
 }
 
 export interface CalendarEventRestoreRequest {

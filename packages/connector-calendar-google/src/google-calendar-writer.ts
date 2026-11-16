@@ -5,6 +5,7 @@ import {
   CALENDAR_EVENT_TITLE_MAX_LENGTH,
   CALENDAR_WINDOW_MAX_DAYS,
   ConnectorQueryError,
+  boundCalendarText,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
@@ -151,14 +152,23 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
   }
 
   async restoreEvent(request: CalendarEventRestoreRequest): Promise<ConnectorWriteOutcome> {
-    if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected)) return connectorWriteNotSent('INVALID_REQUEST');
-    const read = await this.readEventForWrite(request.eventId);
+    if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected) || typeof request.expected.title !== 'string') {
+      return connectorWriteNotSent('INVALID_REQUEST');
+    }
+    const read = await this.readEventForWrite(request.eventId, true);
     if ('status' in read) return read;
     const event = read.event;
     if (Array.isArray(event.recurrence) && event.recurrence.length > 0) return connectorWriteNotSent('RECURRING_SERIES_REFUSED');
     // Only the deleted event itself, unchanged in shape: a live event (restored or re-created meanwhile) or another shape is
-    // not what the approved delete removed. Its entity tag is required: the restore is always conditional on it.
-    if (event.id !== request.eventId || event.status !== 'cancelled' || !matchesShape(event, request.expected) || !isValidVersion(event.etag)) {
+    // not what the approved delete removed; so is another title (compared in the bounded form the delete's preview showed).
+    // Its entity tag is required: the restore is always conditional on it.
+    if (
+      event.id !== request.eventId ||
+      event.status !== 'cancelled' ||
+      !matchesShape(event, request.expected) ||
+      boundCalendarText(event.summary, CALENDAR_EVENT_TITLE_MAX_LENGTH) !== request.expected.title ||
+      !isValidVersion(event.etag)
+    ) {
       return connectorWriteNotSent('TARGET_CHANGED');
     }
     return this.write('PATCH', eventsUrl(request.eventId), { status: 'confirmed' }, 'restore', request.eventId, event.etag);
@@ -190,9 +200,10 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
   }
 
   /** One read of the event before a write (minimised fields). Every failure is a NOT_SENT outcome: nothing was written. */
-  private async readEventForWrite(eventId: string): Promise<{ readonly event: Record<string, unknown> & { readonly id: string } } | ConnectorWriteOutcome> {
+  private async readEventForWrite(eventId: string, withTitle = false): Promise<{ readonly event: Record<string, unknown> & { readonly id: string } } | ConnectorWriteOutcome> {
     const url = eventsUrl(eventId);
-    url.searchParams.set('fields', 'id,etag,status,recurrence,recurringEventId,start(date,dateTime),end(date,dateTime)');
+    // The title only for a restore (it is compared with the delete's preview); an update / delete pre-check never reads it.
+    url.searchParams.set('fields', `id,etag,status,${withTitle ? 'summary,' : ''}recurrence,recurringEventId,start(date,dateTime),end(date,dateTime)`);
     let response: Response;
     try {
       response = await this.send('GET', url, undefined, await this.currentAccessToken());
@@ -418,12 +429,15 @@ function isValidEventId(value: unknown): value is string {
 }
 
 /** The shape of the bound expectation (its version is checked separately: missing or malformed = TARGET_CHANGED). */
-function isValidExpectation<T extends CalendarEventRestoreExpectation>(value: T | undefined): value is T {
+function isValidExpectation<T extends EventShape>(value: T | undefined): value is T {
   if (!isRecord(value) || typeof value.allDay !== 'boolean') return false;
   if (typeof value.start !== 'string' || typeof value.end !== 'string') return false;
   if (value.allDay) return DATE.test(value.start) && DATE.test(value.end);
   return Number.isFinite(Date.parse(value.start)) && Number.isFinite(Date.parse(value.end));
 }
+
+/** The all-day shape, start and end every update / delete / restore expectation carries. */
+type EventShape = Pick<CalendarEventRestoreExpectation, 'allDay' | 'start' | 'end'>;
 
 function isValidVersion(value: unknown): value is string {
   return typeof value === 'string' && ETAG.test(value);
@@ -436,7 +450,7 @@ function matchesExpectation(event: Record<string, unknown>, expected: CalendarEv
 }
 
 /** The event read has the expected all-day shape, start and end. */
-function matchesShape(event: Record<string, unknown>, expected: CalendarEventRestoreExpectation): boolean {
+function matchesShape(event: Record<string, unknown>, expected: EventShape): boolean {
   const start = isRecord(event.start) ? event.start : undefined;
   const end = isRecord(event.end) ? event.end : undefined;
   if (start === undefined || end === undefined) return false;

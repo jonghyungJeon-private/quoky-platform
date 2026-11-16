@@ -651,6 +651,8 @@ const UNDO_REFUSAL_KO: Readonly<Record<Exclude<ExternalUndoFamily, 'calendar-cre
     'undo-nothing': '복원할 수 있는 방금 한 일정 삭제를 찾지 못했어요. (이 대화에서 방금 한 일정 삭제만 되돌릴 수 있어요.)',
     'undo-unavailable': '이 일정 삭제는 자동으로 되돌릴 수 없어요. 캘린더에서 직접 복원해 주세요.',
     'undo-event-present': '그 일정은 이미 캘린더에 다시 있어요. 복원하지 않았어요.',
+    'undo-event-gone': '복원할 수 없어요 — 캘린더가 그 일정을 더 이상 찾을 수 없다고 해요 (완전히 지워졌을 수 있어요). 새 일정을 따로 만들지 않았고, 캘린더를 바꾸지 않았어요.',
+    'undo-event-changed': '복원할 수 없어요 — 삭제한 뒤 그 일정이 바뀌었어요. 캘린더를 바꾸지 않았어요. 필요하면 캘린더에서 직접 확인해 주세요.',
   },
 };
 

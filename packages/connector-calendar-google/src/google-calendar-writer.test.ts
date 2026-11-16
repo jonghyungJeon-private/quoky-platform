@@ -431,11 +431,12 @@ describe('GoogleCalendarWriter — ADR-0112 amendment 3: post-update version and
   const ETAG = '"3181161784712000"';
   const AFTER_DELETE = '"3181161784799000"';
   const EXPECTED: CalendarEventExpectation = { allDay: false, start: '2026-10-07T06:00:00.000Z', end: '2026-10-07T07:00:00.000Z', version: ETAG };
-  const SHAPE = { allDay: false, start: '2026-10-07T06:00:00.000Z', end: '2026-10-07T07:00:00.000Z' };
+  const SHAPE = { allDay: false, start: '2026-10-07T06:00:00.000Z', end: '2026-10-07T07:00:00.000Z', title: '주간 회의' };
   const event = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
     id: 'evt123',
     etag: AFTER_DELETE,
     status: 'cancelled',
+    summary: '주간 회의',
     start: { dateTime: '2026-10-07T15:00:00+09:00' },
     end: { dateTime: '2026-10-07T16:00:00+09:00' },
     ...overrides,
@@ -455,6 +456,7 @@ describe('GoogleCalendarWriter — ADR-0112 amendment 3: post-update version and
     const [read, patch] = google.calendarCalls;
     expect(read!.init?.method).toBe('GET');
     expect(read!.url.pathname).toBe('/calendar/v3/calendars/primary/events/evt123');
+    expect(read!.url.searchParams.get('fields')).toContain('summary');
     expect(patch!.init?.method).toBe('PATCH');
     expect(patch!.url.pathname).toBe('/calendar/v3/calendars/primary/events/evt123');
     expect(patch!.url.searchParams.get('sendUpdates')).toBe('none');
@@ -477,6 +479,9 @@ describe('GoogleCalendarWriter — ADR-0112 amendment 3: post-update version and
       [event({ status: 'confirmed' }), 'TARGET_CHANGED'],
       [event({ start: { dateTime: '2026-10-07T17:00:00+09:00' } }), 'TARGET_CHANGED'],
       [event({ id: 'evt999' }), 'TARGET_CHANGED'],
+      // Review round 1 (P3-2): another title, compared in the bounded form the delete's preview showed.
+      [event({ summary: '다른 회의' }), 'TARGET_CHANGED'],
+      [event({ summary: undefined }), 'TARGET_CHANGED'],
       [event({ etag: undefined }), 'TARGET_CHANGED'],
       [event({ recurrence: ['RRULE:FREQ=WEEKLY'] }), 'RECURRING_SERIES_REFUSED'],
     ] as const) {
@@ -484,6 +489,13 @@ describe('GoogleCalendarWriter — ADR-0112 amendment 3: post-update version and
       expect(await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: SHAPE })).toEqual({ status: 'NOT_SENT', reason, retryable: false });
       expect(google.calendarCalls).toHaveLength(1);
     }
+  });
+
+  it('review round 1 (P3-2): the title is compared in its bounded readout form (a long title matches the delete preview\'s bounded title)', async () => {
+    const long = '회'.repeat(250);
+    const google = fakeGoogle([json(200, event({ summary: long })), json(200, { id: 'evt123', etag: '"restored"', status: 'confirmed', htmlLink: EVENT_LINK })]);
+    const bounded = `${'회'.repeat(199)}…`;
+    expect(await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: { ...SHAPE, title: bounded } })).toMatchObject({ status: 'SENT' });
   });
 
   it('a refused restore is reported as Google answered it: 403 FORBIDDEN, 412 TARGET_CHANGED, other 4xx REJECTED, 5xx UNCERTAIN', async () => {
@@ -511,7 +523,8 @@ describe('GoogleCalendarWriter — ADR-0112 amendment 3: post-update version and
     const google = fakeGoogle([]);
     const calendar = writer(google.fetchImpl);
     expect(await calendar.restoreEvent({ eventId: 'bad id', expected: SHAPE })).toEqual({ status: 'NOT_SENT', reason: 'INVALID_REQUEST', retryable: false });
-    expect(await calendar.restoreEvent({ eventId: 'evt123', expected: { allDay: true, start: 'x', end: 'y' } })).toEqual({ status: 'NOT_SENT', reason: 'INVALID_REQUEST', retryable: false });
+    expect(await calendar.restoreEvent({ eventId: 'evt123', expected: { allDay: false, start: SHAPE.start, end: SHAPE.end } as never })).toEqual({ status: 'NOT_SENT', reason: 'INVALID_REQUEST', retryable: false });
+    expect(await calendar.restoreEvent({ eventId: 'evt123', expected: { allDay: true, start: 'x', end: 'y', title: 'x' } })).toEqual({ status: 'NOT_SENT', reason: 'INVALID_REQUEST', retryable: false });
     expect(google.calendarCalls).toHaveLength(0);
     expect(google.tokenCalls).toHaveLength(0);
   });

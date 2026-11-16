@@ -1,6 +1,6 @@
 import { ApprovalStatus, Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../../domain';
 import type { Actor, ApprovalRequest, ConversationContext, ExecutionPlanRef, Id, IsoTimestamp, Session, Task } from '../../domain';
-import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
+import type { CalendarEvent, CalendarEventPresence, CalendarReader } from '../../ports/calendar-reader.port';
 import { CALENDAR_EVENTS_MAX_LIMIT, CALENDAR_EVENT_LOCATION_MAX_LENGTH, CALENDAR_EVENT_TITLE_MAX_LENGTH, boundCalendarText } from '../../ports/calendar-reader.port';
 import {
   CONNECTOR_WRITE_OPERATIONS,
@@ -124,6 +124,10 @@ export interface ConnectorWriteEventSummary {
   readonly location?: string;
   /** The provider's opaque event version at listing time (bound by an update / delete; never shown). */
   readonly version?: string;
+  /** The time zone the provider records for a timed event's start (never shown); an update undo restores a time only in it. */
+  readonly timeZone?: string;
+  /** Which shown text values are byte-identical to the provider's raw values (never shown); absent = unknown = lossy. */
+  readonly lossless?: { readonly title: boolean; readonly location: boolean };
 }
 
 /** EXACTLY what is sent (and hashed). Targets are bound by immutable identifiers (ADR-0112). */
@@ -1502,7 +1506,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       approval.reason !== expectedReason ||
       payload.operation !== operation ||
       connectorWritePayloadSha256(operation, target, sendableOf(payload)) !== payloadSha256 ||
-      !this.stillAllowed(payload)
+      !this.stillAllowed(payload) ||
+      // A restore is only ever the undo of this actor's own approved delete: without that link it never runs.
+      (payload.operation === 'CALENDAR_EVENT_RESTORE' && anchor.undoOf?.family !== 'calendar-delete')
     ) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
@@ -1800,7 +1806,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const version = resolved.receipt.data.version;
     // No post-update version (no etag) means no compare-and-set: it cannot be undone safely.
     if (!isEventVersion(version)) return refused('undo-unavailable');
-    const inverse = inverseChanges(updated.changes, shown.before, shown.timeZone);
+    const inverse = inverseChanges(updated.changes, shown.before);
     if (inverse === undefined) return refused('undo-unavailable');
     const read = await this.readOwnEvent(writer.target, eventId);
     if (read.kind === 'refused') return refused(read.reason);
@@ -1855,11 +1861,23 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return refused('undo-nothing');
     }
     if (!isExpectation(deleted.expected)) return refused('undo-unavailable');
-    const read = await this.readOwnEvent(writer.target, eventId);
-    if (read.kind === 'refused') return refused(read.reason);
-    // The reader reports a deleted event as absent; a live event with that id means it is back already (restored or re-created).
-    if (read.event !== undefined) return refused('undo-event-present');
-    const expected: CalendarEventRestoreExpectation = { allDay: deleted.expected.allDay, start: deleted.expected.start, end: deleted.expected.end };
+    const presence = await this.readOwnEventPresence(writer.target, eventId);
+    if (presence.kind === 'refused') return refused(presence.reason);
+    // A live event with that id is back already (restored or re-created); an id the calendar no longer knows (purged) cannot
+    // be restored. Only an event the reader POSITIVELY reports as deleted, with this id, is offered.
+    if (presence.kind === 'live') return refused('undo-event-present');
+    if (presence.kind === 'absent') return refused('undo-event-gone');
+    const expected: CalendarEventRestoreExpectation = {
+      allDay: deleted.expected.allDay,
+      start: deleted.expected.start,
+      end: deleted.expected.end,
+      title: shown.before.title,
+    };
+    const gone = presence.event;
+    const sameShape = expected.allDay
+      ? gone.allDay && gone.start === expected.start && gone.end === expected.end
+      : !gone.allDay && Date.parse(gone.start) === Date.parse(expected.start) && Date.parse(gone.end) === Date.parse(expected.end);
+    if (gone.id !== eventId || !sameShape || gone.title !== expected.title) return refused('undo-event-changed');
     return this.propose(
       input,
       'calendar',
@@ -1917,6 +1935,20 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     if (!reader?.getEvent) return { kind: 'refused', reason: 'calendar-read-failed' };
     try {
       return { kind: 'read', event: await this.withReadTimeout(reader.getEvent(calendarId, eventId)) };
+    } catch {
+      return { kind: 'refused', reason: 'calendar-read-failed' };
+    }
+  }
+
+  /** The same single read, with the deletion state (a restore needs a positive "deleted"). */
+  private async readOwnEventPresence(
+    calendarId: string,
+    eventId: string,
+  ): Promise<CalendarEventPresence | { readonly kind: 'refused'; readonly reason: ConnectorWriteRefusal }> {
+    const reader = this.deps.calendarReader;
+    if (!reader?.getEventPresence) return { kind: 'refused', reason: 'undo-unavailable' };
+    try {
+      return await this.withReadTimeout(reader.getEventPresence(calendarId, eventId));
     } catch {
       return { kind: 'refused', reason: 'calendar-read-failed' };
     }
@@ -2272,6 +2304,8 @@ function summaryOf(event: CalendarEvent): ConnectorWriteEventSummary {
     allDay: event.allDay,
     ...(event.location !== undefined ? { location: event.location } : {}),
     ...(event.version !== undefined ? { version: event.version } : {}),
+    ...(event.timeZone !== undefined ? { timeZone: event.timeZone } : {}),
+    ...(event.lossless !== undefined ? { lossless: { title: event.lossless.title === true, location: event.lossless.location === true } } : {}),
   };
 }
 
@@ -2312,7 +2346,7 @@ function ownerSentenceOf(text: string | undefined): { ownerSentence?: string } {
 
 /** The shape of a bound restore expectation. */
 function isRestoreExpectation(value: CalendarEventRestoreExpectation | undefined): value is CalendarEventRestoreExpectation {
-  return isExpectation(value as CalendarEventExpectation | undefined);
+  return isExpectation(value as CalendarEventExpectation | undefined) && typeof value?.title === 'string';
 }
 
 /** An event's own time as a `CalendarEventTime` (a timed event in `timeZone`). */
@@ -2322,23 +2356,27 @@ function eventTimeOf(event: { readonly allDay: boolean; readonly start: string; 
 
 /**
  * ADR-0112 amendment 3 (O2): the inverse of an update's changes — ONLY the fields the update changed, each set back to the value
- * its preview showed (`before`). `undefined` (no undo) when a changed field has no value that can be written back: the title
- * was empty, the event had no location, the description changed (the preview never holds one), or the old value would fail
- * the same checks a new write must pass. A time goes back to the exact old instants (in the zone the update used).
+ * its preview showed (`before`). `undefined` (no undo) when a changed field has no value that can be written back exactly:
+ * the title was empty, the event had no location, the description changed (the preview never holds one), a shown text value
+ * is not byte-identical to the original (review round 1: the readout bounds, collapses and cuts text, so only a value the
+ * reader marked lossless is written back), or the old value would fail the same checks a new write must pass. A time goes
+ * back to the exact old instants only for a timed event whose recorded start time zone is the very zone the update wrote;
+ * an all-day time, an unrecorded zone or a changed zone has no undo (never restamped in another zone).
  */
-function inverseChanges(changes: CalendarEventChanges, before: ConnectorWriteEventSummary, timeZone: string): CalendarEventChanges | undefined {
+function inverseChanges(changes: CalendarEventChanges, before: ConnectorWriteEventSummary): CalendarEventChanges | undefined {
   if (changes.description !== undefined) return undefined;
   const out: { title?: string; location?: string; time?: CalendarEventTime } = {};
   if (changes.title !== undefined) {
-    if (before.title.length === 0) return undefined;
+    if (before.title.length === 0 || before.lossless?.title !== true) return undefined;
     out.title = before.title;
   }
   if (changes.location !== undefined) {
-    if (before.location === undefined || before.location.length === 0) return undefined;
+    if (before.location === undefined || before.location.length === 0 || before.lossless?.location !== true) return undefined;
     out.location = before.location;
   }
   if (changes.time !== undefined) {
-    out.time = eventTimeOf(before, changes.time.allDay ? timeZone : changes.time.timeZone);
+    if (before.allDay || changes.time.allDay || before.timeZone === undefined || changes.time.timeZone !== before.timeZone) return undefined;
+    out.time = eventTimeOf(before, before.timeZone);
     if (!isValidEventTime(out.time)) return undefined;
   }
   if (out.title === undefined && out.location === undefined && out.time === undefined) return undefined;

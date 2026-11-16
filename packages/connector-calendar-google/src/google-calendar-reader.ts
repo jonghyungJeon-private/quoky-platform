@@ -9,6 +9,7 @@ import {
   toConnectorDueDate,
   zonedToUtc,
   type CalendarEvent,
+  type CalendarEventPresence,
   type CalendarEventQuery,
   type CalendarReader,
   type ConnectorQueryErrorReason,
@@ -20,9 +21,9 @@ import { refreshGoogleAccessToken, type GoogleAccessToken } from './oauth';
 export const GOOGLE_CALENDAR_API_ORIGIN = 'https://www.googleapis.com';
 /** The minimised partial response (ADR-0110 D1): no description, attendees, organizer, links or conference data. */
 export const GOOGLE_CALENDAR_EVENT_FIELDS =
-  'summary,nextPageToken,items(id,etag,status,summary,location,start(date,dateTime),end(date,dateTime))';
+  'summary,nextPageToken,items(id,etag,status,summary,location,start(date,dateTime,timeZone),end(date,dateTime))';
 /** The same minimised fields for one `events.get` (no list wrapper). */
-export const GOOGLE_CALENDAR_GET_FIELDS = 'id,etag,status,summary,location,start(date,dateTime),end(date,dateTime)';
+export const GOOGLE_CALENDAR_GET_FIELDS = 'id,etag,status,summary,location,start(date,dateTime,timeZone),end(date,dateTime)';
 export const GOOGLE_CALENDAR_MAX_CALENDARS = 10;
 /** Pages followed per calendar per call; with `limit ≤ 50` events per page this bounds one read. */
 const MAX_PAGES_PER_CALENDAR = 5;
@@ -51,6 +52,7 @@ export interface GoogleCalendarReaderConfig {
 interface GoogleEventTime {
   date?: unknown;
   dateTime?: unknown;
+  timeZone?: unknown;
 }
 
 interface MappedEvent {
@@ -110,6 +112,25 @@ export class GoogleCalendarReader implements CalendarReader {
    * an error. The ids are validated before they enter the URL path.
    */
   async getEvent(calendarId: string, eventId: string): Promise<CalendarEvent | undefined> {
+    const payload = await this.fetchEvent(calendarId, eventId);
+    if (payload === undefined || payload.status === 'cancelled') return undefined;
+    return this.mapEvent(payload, 'calendar')?.event;
+  }
+
+  /**
+   * ADR-0112 amendment 3 review round 1: the same single `events.get`, with the deletion state. `deleted` only when Google
+   * returns this very id with `status: cancelled`; 404 and 410 are `absent`; every other failure throws.
+   */
+  async getEventPresence(calendarId: string, eventId: string): Promise<CalendarEventPresence> {
+    const payload = await this.fetchEvent(calendarId, eventId);
+    if (payload === undefined) return { kind: 'absent' };
+    const mapped = this.mapEvent(payload, 'calendar', true);
+    if (mapped === undefined || mapped.event.id !== eventId) throw new GoogleCalendarResponseError('calendar');
+    return payload.status === 'cancelled' ? { kind: 'deleted', event: mapped.event } : { kind: 'live', event: mapped.event };
+  }
+
+  /** The one `events.get`; `undefined` for 404 / 410 (the id is not known), every other failure throws. */
+  private async fetchEvent(calendarId: string, eventId: string): Promise<Record<string, unknown> | undefined> {
     if (!isValidCalendarId(calendarId) || !/^[0-9a-v]{5,1024}$/.test(eventId)) {
       throw new GoogleCalendarResponseError('calendar');
     }
@@ -128,8 +149,7 @@ export class GoogleCalendarReader implements CalendarReader {
       }
       throw error;
     }
-    const mapped = this.mapEvent(payload, 'calendar');
-    return mapped?.event;
+    return payload;
   }
 
   private async listCalendar(
@@ -222,9 +242,9 @@ export class GoogleCalendarReader implements CalendarReader {
     return fresh.token;
   }
 
-  private mapEvent(value: unknown, calendarName: string): MappedEvent | undefined {
+  private mapEvent(value: unknown, calendarName: string, includeCancelled = false): MappedEvent | undefined {
     if (!isRecord(value)) throw new GoogleCalendarResponseError('calendar');
-    if (value.status === 'cancelled') return undefined;
+    if (value.status === 'cancelled' && !includeCancelled) return undefined;
     const id = value.id;
     if (typeof id !== 'string' || id.length === 0 || id.length > EVENT_ID_MAX_LENGTH) {
       throw new GoogleCalendarResponseError('calendar');
@@ -257,9 +277,11 @@ export class GoogleCalendarReader implements CalendarReader {
     }
 
     const location = boundCalendarText(value.location, CALENDAR_EVENT_LOCATION_MAX_LENGTH);
+    const title = boundCalendarText(value.summary, CALENDAR_EVENT_TITLE_MAX_LENGTH);
+    const zone = !allDay && typeof start.timeZone === 'string' && isValidTimeZone(start.timeZone) ? start.timeZone : undefined;
     const event: CalendarEvent = {
       id,
-      title: boundCalendarText(value.summary, CALENDAR_EVENT_TITLE_MAX_LENGTH),
+      title,
       start: startText,
       end: endText,
       allDay,
@@ -268,6 +290,9 @@ export class GoogleCalendarReader implements CalendarReader {
       calendarName,
       // The entity tag changes on every edit; a connector write binds it (ADR-0112). Opaque, never shown.
       ...(typeof value.etag === 'string' && /^[\x21-\x7e]{1,200}$/.test(value.etag) ? { version: value.etag } : {}),
+      ...(zone !== undefined ? { timeZone: zone } : {}),
+      // Byte-exact only when the bounded readout is the raw value itself (an absent field reads as exact absence).
+      lossless: { title: isExactText(value.summary, title), location: isExactText(value.location, location) },
     };
     // A zero-length timed event still occupies its start instant.
     return { event, startMs, endMs: endMs === startMs ? endMs + 1 : endMs };
@@ -368,4 +393,9 @@ function requireNonEmpty(value: unknown, label: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The bounded readout equals the raw provider value byte for byte (an absent raw value reads as an exact empty value). */
+function isExactText(raw: unknown, bounded: string): boolean {
+  return raw === undefined ? bounded.length === 0 : typeof raw === 'string' && raw === bounded;
 }

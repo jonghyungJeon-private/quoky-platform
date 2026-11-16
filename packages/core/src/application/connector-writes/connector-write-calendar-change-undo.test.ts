@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalStatus, SessionStatus } from '../../domain';
 import type { Actor, ApprovalRequest, Session, Task } from '../../domain';
-import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
+import { CALENDAR_EVENT_LOCATION_MAX_LENGTH, CALENDAR_EVENT_TITLE_MAX_LENGTH, boundCalendarText, type CalendarEvent, type CalendarReader } from '../../ports/calendar-reader.port';
 import {
   connectorWriteNotSent,
   connectorWriteSent,
@@ -98,20 +98,30 @@ interface HarnessOptions {
   readonly updateVersion?: boolean;
   /** What the writer answers to a restore instead of restoring (a refusal by the calendar). */
   readonly restoreOutcome?: ConnectorWriteOutcome;
+  /** The provider's RAW title / location: the reader shows them bounded and marks whether that is byte-exact (as the adapter). */
+  readonly rawTitle?: string;
+  readonly rawLocation?: string;
+  /** The event's recorded start time zone (`null`: the provider records none). Default: Asia/Seoul. */
+  readonly eventTimeZone?: string | null;
 }
 
 function harness(options: HarnessOptions = {}) {
   let version = 1;
+  const rawTitle = options.rawTitle ?? options.title ?? '주간 회의';
+  const shownTitle = boundCalendarText(rawTitle, CALENDAR_EVENT_TITLE_MAX_LENGTH);
+  const shownLocation = options.rawLocation !== undefined ? boundCalendarText(options.rawLocation, CALENDAR_EVENT_LOCATION_MAX_LENGTH) : undefined;
   const base: CalendarEvent = {
     id: EVENT_ID,
-    title: options.title ?? '주간 회의',
+    title: shownTitle,
     start: START,
     end: END,
     allDay: false,
     status: 'confirmed',
     calendarName: 'primary',
     version: `"v${version}"`,
-    ...('location' in options ? (options.location !== undefined ? { location: options.location } : {}) : { location: '3층' }),
+    ...(shownLocation !== undefined ? { location: shownLocation } : 'location' in options ? (options.location !== undefined ? { location: options.location } : {}) : { location: '3층' }),
+    ...(options.eventTimeZone === null ? {} : { timeZone: options.eventTimeZone ?? SEOUL }),
+    lossless: { title: shownTitle === rawTitle, location: options.rawLocation === undefined || shownLocation === options.rawLocation },
   };
   const live: { events: CalendarEvent[]; deleted: CalendarEvent[] } = { events: [base], deleted: [] };
   const sessions = new Map<string, Session>();
@@ -156,6 +166,13 @@ function harness(options: HarnessOptions = {}) {
       // Like the real adapter: a deleted (cancelled) event reads as absent.
       return live.events.find((event) => event.id === eventId);
     },
+    async getEventPresence(calendarId, eventId) {
+      reads.get.push({ calendarId, eventId });
+      const event = live.events.find((candidate) => candidate.id === eventId);
+      if (event !== undefined) return { kind: 'live', event };
+      const deleted = live.deleted.find((candidate) => candidate.id === eventId);
+      return deleted !== undefined ? { kind: 'deleted', event: deleted } : { kind: 'absent' };
+    },
   };
   const bump = (): string => `"v${(version += 1)}"`;
   const writer: CalendarEventWriter = {
@@ -197,7 +214,7 @@ function harness(options: HarnessOptions = {}) {
       if (options.restoreOutcome !== undefined) return options.restoreOutcome;
       const event = live.deleted.find((candidate) => candidate.id === request.eventId);
       if (event === undefined) return connectorWriteNotSent('NOT_FOUND');
-      if (event.allDay !== request.expected.allDay || event.start !== request.expected.start || event.end !== request.expected.end) {
+      if (event.allDay !== request.expected.allDay || event.start !== request.expected.start || event.end !== request.expected.end || event.title !== request.expected.title) {
         return connectorWriteNotSent('TARGET_CHANGED');
       }
       live.deleted = live.deleted.filter((candidate) => candidate.id !== request.eventId);
@@ -379,6 +396,42 @@ describe('ADR-0112 amendment 3 (O2): the undo of an approved calendar update', (
     expect(unversioned.writes.update).toHaveLength(1);
   });
 
+  it('review round 1 (P2): a changed text field whose shown value is not byte-exact is never written back (250-char title, newline title, long location); an exact one is restored byte for byte', async () => {
+    const long = '가'.repeat(250);
+    for (const [options, changes] of [
+      [{ rawTitle: long }, { title: '짧은 제목' }],
+      [{ rawTitle: '주간\n회의' }, { title: '새 제목' }],
+      [{ rawLocation: `${'3층 '.repeat(100)}끝` }, { location: '5층' }],
+    ] as const) {
+      const h = harness(options);
+      const { receiptId } = await h.updateEvent(changes);
+      const step = await h.undo('calendar-update-undo', receiptId, at(3));
+      expect(reason(step)).toBe('undo-unavailable');
+      expect(plainTextOf(renderConnectorWriteStep(step))).toContain('이 일정 변경은 자동으로 되돌릴 수 없어요');
+      expect(h.writes.update).toHaveLength(1);
+      expect((await h.flow.find(h.session()))?.anchor.status).not.toBe('APPROVAL_PENDING');
+    }
+    const exactTitle = `${'나'.repeat(198)}끝`;
+    const exact = harness({ rawTitle: exactTitle, rawLocation: '3층 대회의실' });
+    const { receiptId } = await exact.updateEvent({ title: '짧은 제목', location: '5층' });
+    expect((await exact.undo('calendar-update-undo', receiptId, at(3))).kind).toBe('preview');
+    await exact.approveAndExecute(at(4));
+    expect(exact.writes.update[1]?.changes).toEqual({ title: exactTitle, location: '3층 대회의실' });
+    expect(exact.live.events[0]).toMatchObject({ title: exactTitle, location: '3층 대회의실' });
+  });
+
+  it('review round 1 (P3-4): a time undo needs the event\'s recorded start time zone to be the zone the update wrote; otherwise it is refused, never restamped', async () => {
+    for (const eventTimeZone of [null, 'America/New_York'] as const) {
+      const h = harness({ eventTimeZone });
+      const { receiptId } = await h.updateEvent({ moveTo: { time: { hour: 16, minute: 0 } } });
+      expect(reason(await h.undo('calendar-update-undo', receiptId, at(3)))).toBe('undo-unavailable');
+      expect(h.writes.update).toHaveLength(1);
+    }
+    const same = harness();
+    const { receiptId } = await same.updateEvent({ moveTo: { time: { hour: 16, minute: 0 } } });
+    expect((await same.undo('calendar-update-undo', receiptId, at(3))).kind).toBe('preview');
+  });
+
   it('the event gone is undo-event-gone; a read is one event by its receipt id, never a listing', async () => {
     const h = harness();
     const { receiptId } = await h.updateEvent();
@@ -451,7 +504,7 @@ describe('ADR-0112 amendment 3 (O3, O6, O7): the restore of an approved calendar
 
     const outcome = await h.approveAndExecute(at(4));
     expect(outcome).toMatchObject({ kind: 'outcome', operation: 'CALENDAR_EVENT_RESTORE', outcome: { status: 'SENT', externalRef: EVENT_ID } });
-    expect(h.writes.restore).toEqual([{ eventId: EVENT_ID, expected: { allDay: false, start: START, end: END } }]);
+    expect(h.writes.restore).toEqual([{ eventId: EVENT_ID, expected: { allDay: false, start: START, end: END, title: '주간 회의' } }]);
     expect(h.writes.create).toBe(0);
     expect(h.live.events.map((event) => event.id)).toEqual([EVENT_ID]);
     expect(plainTextOf(renderConnectorWriteStep(outcome))).toBe('방금 삭제한 일정을 같은 일정으로 복원했어요. 알림 메일은 보내지 않았어요.');
@@ -514,6 +567,32 @@ describe('ADR-0112 amendment 3 (O3, O6, O7): the restore of an approved calendar
     expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_RESTORE')).toBeUndefined();
   });
 
+  it('review round 1 (P3-1): a purged event (the calendar no longer knows the id) gets a plain "복원할 수 없어요" and no approval card; a deleted event that changed is refused too', async () => {
+    const h = harness();
+    const { receiptId } = await h.deleteEvent();
+    const deleted = h.live.deleted.splice(0);
+    const purged = await h.undo('calendar-delete-undo', receiptId, at(3));
+    expect(reason(purged)).toBe('undo-event-gone');
+    expect(plainTextOf(renderConnectorWriteStep(purged))).toContain('복원할 수 없어요');
+    expect((await h.flow.find(h.session()))?.anchor.status).not.toBe('APPROVAL_PENDING');
+    h.live.deleted.push({ ...(deleted[0] as CalendarEvent), title: '다른 제목' });
+    expect(reason(await h.undo('calendar-delete-undo', receiptId, at(3)))).toBe('undo-event-changed');
+    expect(h.writes.restore).toHaveLength(0);
+  });
+
+  it('review round 1 (P3-3): an approved restore anchor without the calendar-delete undo link never executes', async () => {
+    const h = harness();
+    const { receiptId } = await h.deleteEvent();
+    expect((await h.undo('calendar-delete-undo', receiptId, at(3))).kind).toBe('preview');
+    const view = await h.flow.find(h.session());
+    const task = h.tasks.get(view?.taskId as string) as Task;
+    const anchor = task.metadata?.connectorWriteAnchor as Record<string, unknown>;
+    h.tasks.set(task.id, { ...task, metadata: { ...task.metadata, connectorWriteAnchor: { ...anchor, undoOf: { entryId: 'external.write', receiptId, family: 'calendar-update' } } } });
+    const step = await h.approveAndExecute(at(4));
+    expect(reason(step)).toBe('binding-mismatch');
+    expect(h.writes.restore).toHaveLength(0);
+  });
+
   it('the restore payload binds the delete\'s own expectation; a restore preview never lists the calendar', async () => {
     const h = harness();
     const { receiptId } = await h.deleteEvent();
@@ -521,7 +600,7 @@ describe('ADR-0112 amendment 3 (O3, O6, O7): the restore of an approved calendar
     const step = await h.undo('calendar-delete-undo', receiptId, at(3));
     expect(step.kind).toBe('preview');
     const view = await h.flow.find(h.session());
-    expect(view?.anchor.payload).toEqual({ operation: 'CALENDAR_EVENT_RESTORE', eventId: EVENT_ID, expected: { allDay: false, start: START, end: END } });
+    expect(view?.anchor.payload).toEqual({ operation: 'CALENDAR_EVENT_RESTORE', eventId: EVENT_ID, expected: { allDay: false, start: START, end: END, title: '주간 회의' } });
     expect(view?.anchor.target).toBe(`primary/${EVENT_ID}`);
     expect(h.reads.list).toBe(listsBefore);
     expect(h.reads.get.at(-1)).toEqual({ calendarId: 'primary', eventId: EVENT_ID });
