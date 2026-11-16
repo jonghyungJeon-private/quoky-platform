@@ -5,6 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 D12 amendment ratified; P3-3b #4–#7 acknowledged (2026-11-16, branch `claude/v5-s2-d12`)
+
+- Owner, 2026-11-16: D12 amendment "승인 (권장)"; P3-3b #4–#7 "모두 권장대로 확정 (권장)"; order "D12부터 바로 착수 (권장)". M2 will route
+  through `ProviderSelector` / `AiProvider` with `allowedExecutionLocalities` (no new port or token); #4 no grant = listing-only, #5
+  `HOST_ONLY` no model, #6 280 chars / 10 items, #7 mail and Drive only. Still open: the 62 + 34 pending golds, the ≥ 300 S2 read
+  red-team batch review, every model-in-the-loop run, shadow/active switches, the egress enforce flip, the remote batch slice.
+  DECISIONS "Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)".
+
 ### Chat guard keeps an offered command whose payload holds a stale-command word (2026-11-16, branch `claude/v5-chat-command-strip`)
 
 - The A6-D6 stale-command check exempts a phrase only inside the payload the connector-write parser extracts from a quoted or fenced Jira comment / Slack post command with a bound writer (`nlCommandPayload`, same command after blanking); a removed stale command shown as its own line makes the whole reply the restate. Reminder / calendar commands fail closed (removed as before). Fixes the live 11:34 DM (comment command stripped, dangling "아래 문구"). `…라고 댓글 달아줘` still routes to chat at `local` by design (no NL Jira comment in A6). Residuals: step phrases ("댓글 실행", "Jira 상태 되돌리기 실행") are not B1-runnable; the bare `/되돌리기/` pattern still removes a sentence naming "Jira 상태 되돌리기 실행".
@@ -158,7 +166,8 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   facts first, no URL from a model. Still `off`/`shadow` only: `active` is refused, nothing wired, no model called.
 - **Open.** Calendar, GitHub, Confluence, Jira and Slack are listing only (no readout shape or no work-text controls); mail and
   Drive are listing only until the owner decides how a `SummaryEgressGrant` is derived (no producer exists; no caller flag); nine
-  owner decisions in DECISIONS "ADR-0121 S2 implementation note — P3-3b".
+  owner decisions in DECISIONS "ADR-0121 S2 implementation note — P3-3b" (all answered by 2026-11-16; the D12 amendment is
+  ratified, see the 2026-11-16 entry above).
   Review round 2 applied (seam runtime barrier, per-run grants, input-fit, audit on every post-call status; owner decision 9 added).
   Review round 3 applied (asked-for count picks the model, metadata snapshot before egress, required run token, omitted = listed minus carried).
 - **Next (S2).** Adapter read ports with raw documents and the budgeted HTTP client, wiring, read+write path, S2 read red-team,

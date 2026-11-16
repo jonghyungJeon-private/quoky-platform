@@ -21463,6 +21463,9 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   end of this file.
   **Amended by A3a** (Accepted 2026-10-26): through A2 (A2-D1, A2-D3, A2-D6, A2-D7, A2-D19), D2, D11 and D12; no egress
   and no constitutional change; see "ADR-0121 amendment A3a" and its ratification record at the end of this file.
+  **D12 amended** (ratified 2026-11-16): M2 routes through `ProviderSelector` / `AiProvider` with an
+  `allowedExecutionLocalities` constraint; see D12 below and "Ratification record (ADR-0121 D12 amendment and P3-3b
+  #4–#7, 2026-11-16)".
 - **Date:** 2026-10-13
 - **Inputs:**
   - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
@@ -21658,6 +21661,18 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
     - The `FlowLabel` domain type is new.
     - The plan schema v2 is an extension of the ADR-0120 selection output.
     - Absent or `off`, behaviour is byte-identical. No new port or token, and no migration.
+    - *Amended 2026-11-16 (ratified; "Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)"):*
+      - M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no model-execution port or DI token.
+        This replaces the narrow `QuarantinedSummarizerModel` list.
+      - Core derives the allowed execution localities from the input labels, a valid summary grant and the asked-for
+        item count. It passes them as a data constraint on the existing `ProviderSelectionContext`
+        (`allowedExecutionLocalities`, beside `workText`).
+      - Candidates are the intersection of capability, owner policy, locality and `workText`. An unmet or unverifiable
+        constraint means listing-only.
+      - Policy and locality are re-checked immediately before dispatch.
+      - A request that was sent is never re-sent to another provider.
+      - Kept: no body fetch without a grant, no model for `HOST_ONLY`, the batch bound by the asked-for count, and the
+        sealed request and output.
 
 ### Staged rollout
 
@@ -31636,7 +31651,9 @@ and D9 still governs every turn that goes to chat.
   action-claim guard run on every entry (and again in the assembler; the action-claim guard does not run on the prompt), the assembler answers only the owner's DM, and a REMOTE summary carries a
   fixed disclosure line. `GitHub` labels in `flow-policy.ts` are NOT changed in this slice (GitHub has no readout, so it cannot
   reach M2); that is an open precondition (decision 7).
-- **Owner decisions needed (recommendations are not ratified text).**
+- **Owner decisions needed (recommendations are not ratified text).** *Answered:* #1–#3, #8 and #9 on 2026-11-03 (see
+  "ADR-0121 S2 P3-3b owner decisions and ADR-0121 D12 amendment proposal"); #4–#7 acknowledged as recommended and the D12
+  question below settled on 2026-11-16 ("Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)").
   1. Jira and Slack M2 labels and controls. Recommend: item content labelled C5, listing-only until pseudonyms, a work-summary
      flag and a `workText` provider constraint exist.
   2. How the summary grant is derived. Recommend: Core, per step and source, from the owner's non-quoted clause using existing
@@ -33059,6 +33076,8 @@ handler: no reply, prompt, provider choice or log line of the running service ch
   `allowedExecutionLocalities` is a set of allowed localities derived from labels and grants; `requiredLocality: 'LOCAL'`
   is the one-element case of it (`['LOCAL']`). If the proposal is ratified, `requiredLocality` maps onto it without a
   behaviour change. C5a ratifies nothing of D12 and adds no `allowedExecutionLocalities` field.
+  *Update 2026-11-16:* the D12 amendment is now ratified ("Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7,
+  2026-11-16)"); `requiredLocality` keeps its meaning and, when both are set, the allowed set is their intersection.
 - **The map prompt.** `document-map.v1` (`DOCUMENT_MAP_PROMPT_VERSION`), a Core prompt built in code and pinned by the
   sha256 of its rendering for a fixed input (as `agent-plan.*` is). One window readout under the existing untrusted
   framing (`renderUntrustedDocumentForPrompt`), no tools, no context files, no transcript; output at most 8 lines of at
@@ -33661,7 +33680,8 @@ fake fetch. Stage B (the probe) and the real runs are separate, **Strict** actio
        ratio, with a safety margin. That bound then replaces the UTF-8 byte bound and `util/token-estimator.ts` (`length / 4`, which undercounts
        Korean).
      - Until step 2, the UTF-8 byte bound stays.
-- **ADR-0121 D12 amendment proposal (consulted with Codex, 2026-11-03; the owner allowed amending the ADR).**
+- **ADR-0121 D12 amendment proposal (consulted with Codex, 2026-11-03; the owner allowed amending the ADR).** **Ratified
+  2026-11-16** (record below).
   - M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no model-execution port or DI token. This
     replaces the narrow `QuarantinedSummarizerModel` list.
   - Core derives the allowed execution localities from the input labels, a valid grant and the asked-for item count. It
@@ -33685,6 +33705,49 @@ fake fetch. Stage B (the probe) and the real runs are separate, **Strict** actio
     - The stop blocks new work at once.
     - An external call already sent runs to completion and is reported.
     - Open approvals waiting for an exact phrase (undo anchors included) are listed in the stop reply and closed.
+
+### Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)
+
+The Product Owner answered the open S2 M2 questions on 2026-11-16. Verbatim answers:
+
+| Item | Owner answer (verbatim) | Result |
+|---|---|---|
+| The "ADR-0121 D12 amendment proposal" bullet of the 2026-11-03 section above | "승인 (권장)" | **Ratified** as written there |
+| P3-3b open items #4–#7 ("ADR-0121 S2 implementation note — P3-3b", "Owner decisions needed") | "모두 권장대로 확정 (권장)" | **Acknowledged as recommended** |
+| Order of work | "D12부터 바로 착수 (권장)" | D12 is built next, in the ratified order |
+
+**Decisions.**
+
+1. **ADR-0121 D12 amendment: ratified.** M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no
+   model-execution port or DI token; the narrow `QuarantinedSummarizerModel` list is replaced. Core derives the allowed
+   execution localities from the input labels, a valid `SummaryEgressGrant` and the asked-for item count, and passes them
+   as `allowedExecutionLocalities` on the existing `ProviderSelectionContext` beside `workText`. Candidates are capability ∩
+   owner policy ∩ locality ∩ `workText`; an unmet or unverifiable constraint is listing-only. Policy and locality are
+   re-checked immediately before dispatch. A sent request is never re-sent to another provider. Kept: no body fetch without
+   a grant, no model for `HOST_ONLY`, the batch bound by the asked-for count, the sealed request and output. The D12 text
+   of ADR-0121 now carries this amendment.
+2. **P3-3b #4–#7: acknowledged as recommended.**
+   - #4: `REMOTE_ON_SUMMARY_REQUEST` content without a grant is listing-only (no body fetch, no local fallback).
+   - #5: `HOST_ONLY` content gets no model, not even a local one.
+   - #6: the M2 schema bounds are one sentence of at most 280 characters and at most 10 items per call.
+   - #7: the M2 readout sources are mail and Drive only. GitHub joins only after the RQ-1 `readOutputLabel` fix; calendar,
+     Confluence, Jira and Slack stay listing-only.
+3. **Order:** this record → the D12 text → the context constraint with a mandatory dispatch check → the model list
+   replaced → tests and an independent review (J1).
+
+**Still open (NOT decided by this record).**
+
+- The owner's review of the 62 pending `agent-plan` golds and the 34 pending read + write golds.
+- The owner's batch review of the ≥ 300-case S2 read red-team corpus (`agent-redteam.s2-read.v1.json`).
+- Every model-in-the-loop run (each is Strict and needs its own owner yes).
+- Every `QUOKY_AGENT_MODE` switch (`shadow`, `active`), and S2 wiring.
+- The `QUOKY_EGRESS_GUARD` `observe` → `enforce` flip.
+- The remote batch design of 2026-11-03 answer 3 (one sealed batch call per source, ≤ 3 parallel M2 calls, a
+  deterministic merge): decided by the owner, built in its own later slice.
+
+**Authorized by this record:** this docs change and the D12 code slice in Core (offline, unwired: no composition-root
+wiring, no flag change, no live behaviour change).
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112
