@@ -44,7 +44,8 @@ const doc = (position: number, body = `body ${position}`, extra: Partial<AgentSo
 
 /** A source with the grant of summarize step 1. */
 const RUN = newSummaryRunToken();
-const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, grant: mintSummaryEgressGrantForTest(1, entryId, RUN) });
+/** The caller asked for every document it passes (the asked-for count bounds what reaches a model: review round 1, CA P1). */
+const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, asked: documents.length, grant: mintSummaryEgressGrantForTest(1, entryId, RUN) });
 const mail = (...documents: AgentSourceDocument[]): AgentSummarySource => granted('mail.list', documents);
 
 /**

@@ -17,6 +17,7 @@ import { setSummaryGrantsForTest, summaryEntriesForAssembler, type AgentSourceDo
 
 type RunPlan = Extract<ValidatedAgentPlan, { steps: readonly ValidatedAgentStep[] }>;
 const read = (entryId: NlWave1EntryId): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: { limit: 1 }, provenance: {} });
+const wideRead = (entryId: NlWave1EntryId, limit: number): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: { limit }, provenance: {} });
 const summarize = (from: number[], schema: 'digest.v1' | 'meeting-digest.v1' = 'digest.v1'): ValidatedAgentStep => ({ kind: 'summarize', from, schema });
 const plan = (steps: ValidatedAgentStep[]): RunPlan => ({ kind: 'run', steps, connectorCalls: steps.filter((step) => step.kind === 'read').length });
 
@@ -170,7 +171,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
 
     it('model-omitted items make the run partial with an omitted count (3 documents, 1 summary is omitted 2)', async () => {
       const exec = new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2', 'm3'], docs('a', 'b', 'c')) }, summarizer: via(model('LOCAL', '{"items":[{"n":3,"summary":"third"}]}')) });
-      const result = await exec.execute(MAIL_PLAN());
+      const result = await exec.execute(plan([wideRead('mail.list', 3), summarize([1])]));
       expect(result.steps[1]).toMatchObject({ status: 'ok', omitted: 2 });
       expect(result.outcome).toBe('partial');
       expect(result.breach).toBeUndefined();
@@ -311,13 +312,14 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.steps[1]).toMatchObject({ status: 'failed', errorCode: 'CREDENTIAL' });
     });
 
-    it('M2 cap: the call over the cap is not made; the run is a deterministic partial result, not an error', async () => {
+    it('M2 cap: the call over the cap is not made or reserved; the step is listing-only (budget), a partial result, no breach (review round 1)', async () => {
       const fake = model('LOCAL');
       const exec = new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(fake), bounds: { maxM2Calls: 2 } });
       const result = await exec.execute(plan([read('mail.list'), summarize([1]), summarize([1]), summarize([1])]));
-      expect(result.steps.map((step) => step.status)).toEqual(['ok', 'ok', 'ok', 'not-run']);
+      expect(result.steps.map((step) => step.status)).toEqual(['ok', 'ok', 'ok', 'listing-only']);
+      expect(result.steps[3]).toMatchObject({ reason: 'budget' });
       expect(fake.requests).toHaveLength(2);
-      expect(result.breach).toBe('m2-calls');
+      expect(result.breach).toBeUndefined();
       expect(result.outcome).toBe('partial');
       expect(result.usage.m2Calls).toBe(2);
     });
@@ -331,13 +333,14 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.usage.m2Calls).toBe(3);
     });
 
-    it('the model-call and input-token bounds stop the call before it is made', async () => {
-      for (const [bounds, breach] of [[{ maxModelCalls: 0 }, 'model-calls'], [{ maxInputTokens: 10 }, 'input-tokens']] as const) {
+    it('the model-call and input-token bounds stop the call before it is made, with nothing reserved and no breach (review round 1)', async () => {
+      for (const bounds of [{ maxModelCalls: 0 }, { maxInputTokens: 10 }]) {
         const fake = model('LOCAL');
         const exec = new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(fake), bounds });
         const result = await exec.execute(MAIL_PLAN());
-        expect(result.steps[1], breach).toMatchObject({ status: 'not-run' });
-        expect(result.breach).toBe(breach);
+        expect(result.steps[1], JSON.stringify(bounds)).toMatchObject({ status: 'listing-only', reason: 'budget' });
+        expect(result.breach).toBeUndefined();
+        expect(result.usage).toMatchObject({ modelCalls: 0, inputTokens: 0 });
         expect(fake.requests).toHaveLength(0);
       }
     });
@@ -402,7 +405,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
 
     it('N1: a step refused before any call carries no audit', async () => {
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(model('REMOTE')), bounds: { maxModelCalls: 0 } }).execute(MAIL_PLAN());
-      expect(result.steps[1]).toMatchObject({ status: 'not-run' });
+      expect(result.steps[1]).toMatchObject({ status: 'listing-only', reason: 'budget' });
       expect(result.steps[1]).not.toHaveProperty('audits');
     });
 

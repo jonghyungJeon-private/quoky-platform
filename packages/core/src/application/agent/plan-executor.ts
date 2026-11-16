@@ -166,12 +166,11 @@ export type AgentStepResult =
       readonly omitted: number;
       /** One audit per sent call, in source order (at least one: the call that answered). */
       readonly audits: readonly QuarantinedCallAudit[];
+      /** A call of this step was refused because its prompt held credential-shaped text; its items are omitted (CA P3). */
+      readonly credentialWithheld?: true;
     }
-  /**
-   * D4: no model satisfied the inputs' egress label (or the content has no readout shape): no call was made. `audits` is set only
-   * when every call failed, the first one in source order was refused, and another one had been sent.
-   */
-  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'listing-only'; readonly from: readonly number[]; readonly schema: string; readonly reason: QuarantinedListingOnlyReason; readonly audits?: readonly QuarantinedCallAudit[] }
+  /** D4: no model satisfied the inputs' egress label (or the content has no readout shape, or no budget was left): no call was sent. */
+  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'listing-only'; readonly from: readonly number[]; readonly schema: string; readonly reason: QuarantinedListingOnlyReason }
   | { readonly step: number; readonly kind: 'summarize'; readonly status: 'failed'; readonly from: readonly number[]; readonly schema: string; readonly errorCode: 'SCHEMA' | 'CREDENTIAL' | 'MODEL'; readonly audits?: readonly QuarantinedCallAudit[] };
 
 export interface AgentRunResult {
@@ -305,8 +304,9 @@ export class AgentPlanExecutor {
 
     // Documents are asked for only when a covering summarize step could run: its source has a readout shape and work-text
     // controls, its label, grant and asked-for count admit a locality, and the selector names an allowed provider (D12).
-    // A read of several items counts its requested limit (an unstated limit counts as the item cap): `REMOTE` is allowed for
-    // one item only, so a multi-item read with no ready `LOCAL` provider never fetches bodies (N3).
+    // A read counts its requested limit (an unstated limit counts as the item cap). With a grant `LOCAL` and `REMOTE` are
+    // allowed for one item and for a batch alike (owner 2026-11-03 answer 3); the summary sends at most the asked-for items of
+    // each source (CA review round 1, P1).
     const route = this.deps.summarizer;
     let withDocuments = false;
     if (route !== undefined) {
@@ -371,7 +371,9 @@ export class AgentPlanExecutor {
       const covered = state.documents.get(from);
       if (covered === undefined) continue;
       const grant = summaryGrantFor(number, covered.entryId, state.run);
-      sources.push(grant !== undefined ? { ...covered, grant } : covered);
+      // The source's asked-for count bounds what reaches a model, whatever the port returned (CA review round 1, P1).
+      const asked = state.requested.get(from) ?? AGENT_M2_MAX_ITEMS;
+      sources.push({ ...covered, asked, ...(grant !== undefined ? { grant } : {}) });
     }
     if (sources.length === 0) {
       // Why no body was fetched, if the read decided so (no readout shape, no grant, no model); else nothing came back.
@@ -429,14 +431,24 @@ export class AgentPlanExecutor {
         return audits.length > 0 ? { audits } : {};
       };
       if (outcome === 'wall') return { ...base, status: 'not-run', ...callAudits() };
-      if (budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudits(outcome.audits) };
-      if (outcome.kind === 'summary') return { ...base, status: 'ok', summary: outcome.summary, omitted: Math.max(0, listedItems - outcome.summary.count), audits: outcome.audits };
-      if (outcome.kind === 'listing-only') return { ...base, status: 'listing-only', reason: outcome.reason, ...callAudits(outcome.audits) };
+      if (budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudits('audits' in outcome ? outcome.audits : undefined) };
+      if (outcome.kind === 'summary') {
+        return {
+          ...base,
+          status: 'ok',
+          summary: outcome.summary,
+          omitted: Math.max(0, listedItems - outcome.summary.count),
+          audits: outcome.audits,
+          ...(outcome.credentialWithheld === true ? { credentialWithheld: true as const } : {}),
+        };
+      }
+      // `listing-only` means nothing was sent (a sent call that failed makes the step `failed`, CA P2-a).
+      if (outcome.kind === 'listing-only') return { ...base, status: 'listing-only', reason: outcome.reason };
       if (outcome.kind === 'failed') {
         const errorCode = outcome.reason === 'schema' ? 'SCHEMA' : outcome.reason === 'credential' ? 'CREDENTIAL' : 'MODEL';
         return { ...base, status: 'failed', errorCode, ...callAudits(outcome.audits) };
       }
-      return { ...base, status: 'not-run', ...callAudits(outcome.audits) };
+      return { ...base, status: 'not-run', ...callAudits() };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       controller.abort();

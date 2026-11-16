@@ -25,6 +25,8 @@ import type { AgentStepsPlan } from './reply-notes';
 type RunPlan = Extract<ValidatedAgentPlan, { steps: readonly ValidatedAgentStep[] }>;
 const read = (entryId: NlWave1EntryId): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: { limit: 1 }, provenance: {} });
 const summarize = (from: number[]): ValidatedAgentStep => ({ kind: 'summarize', from, schema: 'digest.v1' });
+/** A read that asks for `limit` items (only the asked-for items of a source reach a model: CA review round 1, P1). */
+const wide = (entryId: NlWave1EntryId, limit: number): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args: { limit }, provenance: {} });
 const plan = (steps: ValidatedAgentStep[]): RunPlan => ({ kind: 'run', steps, connectorCalls: steps.filter((step) => step.kind === 'read').length });
 const doc = (position: number, body = 'body'): AgentSourceDocument => ({ id: `m${position}`, position, title: 't', author: 'a', date: '2026-11-01T09:00:00.000Z', body });
 const port = (ids: readonly string[], documents: readonly AgentSourceDocument[], more = false): AgentReadPort => ({
@@ -62,7 +64,7 @@ afterEach(() => setSummaryGrantsForTest());
 
 describe('reply assembler', () => {
   it('puts Core facts first, then notes, then the model summaries, then fixed status lines', async () => {
-    const r = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1', 'm2'], [doc(1), doc(2)]) }, SUMMARY);
+    const r = await run([wide('mail.list', 2), summarize([1])], { 'mail.list': port(['m1', 'm2'], [doc(1), doc(2)]) }, SUMMARY);
     const out = reply(r);
     expect(out.parts.map((part) => part.kind)).toEqual(['fact', 'status', 'summary', 'summary']);
     expect(out.parts[0]?.text).toBe('• 메일: 2개');
@@ -216,17 +218,23 @@ describe('reply assembler', () => {
   it('a failed summary and a bound stop are fixed status lines; a breach never throws', async () => {
     const failed = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json');
     expect(reply(failed, 'en').text).toContain('A summary could not be made');
-    const capped = await run([read('mail.list'), summarize([1]), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, ONE, { maxM2Calls: 1 });
+    const capped = await run([read('mail.list'), summarize([1]), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, ONE, { maxSteps: 2 });
     const out = reply(capped);
     expect(out.parts.at(-1)).toEqual({ kind: 'status', text: '한도에 도달해서 여기까지만 보여드려요.' });
     expect(out.parts.some((part) => part.kind === 'summary')).toBe(true);
+    // An M2 cap that leaves no call is the closed `budget` listing-only line, not a breach (review round 1, Codex P2).
+    const spent = await run([read('mail.list'), summarize([1]), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, ONE, { maxM2Calls: 1 });
+    expect(spent.result.breach).toBeUndefined();
+    const spentOut = reply(spent);
+    expect(spentOut.parts.at(-1)).toEqual({ kind: 'status', text: '이번 요청의 처리 한도가 남지 않아서 요약하지 않고 목록만 보여드려요.' });
+    expect(spentOut.text).not.toContain('한도에 도달해서');
   });
 
   it('the omitted count is stated after the summaries (items beyond the cap, and items the model left out)', async () => {
     const many = Array.from({ length: 12 }, (_, i) => doc(i + 1));
-    const capped = await run([read('mail.list'), summarize([1])], { 'mail.list': port(Array.from({ length: 12 }, (_, i) => `m${i + 1}`), many) }, '{"items":[{"n":1,"summary":"s"},{"n":2,"summary":"s"},{"n":3,"summary":"s"},{"n":4,"summary":"s"},{"n":5,"summary":"s"},{"n":6,"summary":"s"},{"n":7,"summary":"s"},{"n":8,"summary":"s"},{"n":9,"summary":"s"},{"n":10,"summary":"s"}]}');
+    const capped = await run([wide('mail.list', 10), summarize([1])], { 'mail.list': port(Array.from({ length: 12 }, (_, i) => `m${i + 1}`), many) }, '{"items":[{"n":1,"summary":"s"},{"n":2,"summary":"s"},{"n":3,"summary":"s"},{"n":4,"summary":"s"},{"n":5,"summary":"s"},{"n":6,"summary":"s"},{"n":7,"summary":"s"},{"n":8,"summary":"s"},{"n":9,"summary":"s"},{"n":10,"summary":"s"}]}');
     expect(reply(capped, 'en').parts.at(-1)?.text).toBe('2 items were left out of the summary.');
-    const skipped = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1', 'm2', 'm3'], [doc(1), doc(2), doc(3)]) }, '{"items":[{"n":2,"summary":"s"}]}');
+    const skipped = await run([wide('mail.list', 3), summarize([1])], { 'mail.list': port(['m1', 'm2', 'm3'], [doc(1), doc(2), doc(3)]) }, '{"items":[{"n":2,"summary":"s"}]}');
     const out = reply(skipped, 'en');
     expect(out.parts.at(-1)?.text).toBe('2 items were left out of the summary.');
     expect(skipped.result.outcome).toBe('partial');
@@ -267,6 +275,40 @@ describe('reply assembler', () => {
     expect(out.parts.filter((part) => part.text === disclosure)).toHaveLength(1);
     const onlyLocal: AgentStepResult = { ...refused, audits: [local, local] };
     expect(reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, onlyLocal] } }, 'en').text).not.toContain('outside model');
+  });
+
+  it('review round 1 (CA P2-a): a refused call then a sent call that fails is `failed` with its audit, never "nothing was sent"', async () => {
+    let calls = 0;
+    const provider: AiProvider = {
+      id: 'p-remote',
+      executionLocality: 'REMOTE',
+      capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async () => ({ text: 'not json' }),
+    };
+    // Checks: #1, #2 the two reads' readiness; #3 the summary's selection verdict; call 1 (mail): #4 (refused); call 2 (Drive):
+    // #5 and #6 (sent).
+    const route: QuarantinedSummarizerRoute = { selector: { select: async () => provider, isStillEligible: () => (calls += 1) !== 4 } };
+    const p = plan([wide('mail.list', 2), wide('drive.files', 1), summarize([1, 2])]);
+    const drive: AgentSourceDocument = { id: 'f00001', position: 1, title: 't', author: 'a', date: '', body: 'b' };
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2'], [doc(1), doc(2)]), 'drive.files': port(['f00001'], [drive]) }, summarizer: route }).execute(p);
+    expect(result.steps[2]).toMatchObject({ status: 'failed', errorCode: 'SCHEMA', audits: [{ locality: 'REMOTE', auditId: 'p-remote' }] });
+    const out = reply({ plan: p, result }, 'en');
+    expect(out.text).toContain('A summary could not be made');
+    expect(out.text).toContain('Part of the original text was sent to an outside model');
+    expect(out.text).not.toContain('nothing was sent');
+    expect(calls).toBe(6);
+  });
+
+  it('review round 1 (CA P3): a call refused for credential-shaped text in an ok step is one closed status line, no content', async () => {
+    const r = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });
+    const entry: SummaryEntry = { n: 1, entryId: 'mail.list', position: 1, text: 'fine', topics: [] };
+    const label = { trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED', egress: 'REMOTE_ON_SUMMARY_REQUEST', scope: 'OWNER_DM_ONLY', sources: ['mail'] } as never;
+    const step: AgentStepResult = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: sealQuarantinedSummaryForTest('digest.v1', label, [entry]), omitted: 1, audits: [{ locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 }], credentialWithheld: true };
+    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, step] } }, 'en');
+    expect(out.parts.filter((part) => part.text === 'Items that looked sensitive were left out of the summary.')).toHaveLength(1);
+    const plain = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, { ...step, credentialWithheld: undefined } as AgentStepResult] } }, 'en');
+    expect(plain.text).not.toContain('looked sensitive');
   });
 
   it('C3/N5: a throwing logger never fails the assembler', async () => {

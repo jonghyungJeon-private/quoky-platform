@@ -15,6 +15,7 @@ import {
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
 import { readOutputLabel } from './flow-policy';
+import { AGENT_RUN_BOUNDS } from './run-bounds';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
 
 /**
@@ -79,6 +80,12 @@ export interface AgentSummarySource {
   readonly grant?: SummaryEgressGrant;
   /** Documents the executor dropped on validation (shape, position, id): counted as omitted. */
   readonly dropped?: number;
+  /**
+   * The items the run ASKED for from this source (its read's limit; review round 1, CA P1). Only documents at listing positions
+   * 1..asked reach a model, whatever the port returned; the rest are omitted. Absent: {@link AGENT_M2_MAX_ITEMS} (the read
+   * limit's upper bound, ADR-0120 D4). A value that is not a positive integer admits nothing (fail closed).
+   */
+  readonly asked?: number;
 }
 
 /**
@@ -411,7 +418,9 @@ export type QuarantinedListingOnlyReason =
   | 'work-text-controls-not-built'
   | 'no-documents'
   | 'credential-in-prompt'
-  | 'dispatch-refused';
+  | 'dispatch-refused'
+  /** The run had no M2 call, model call or input bytes left for even one item: nothing reserved, no breach (review round 1). */
+  | 'budget';
 
 /** The closed reasons, for exhaustive renderers. */
 export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyReason[] = Object.freeze([
@@ -423,6 +432,7 @@ export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyRe
   'no-documents',
   'credential-in-prompt',
   'dispatch-refused',
+  'budget',
 ]);
 
 function sourceRefusal(entryId: NlWave1EntryId, schema: AgentSummarySchemaId): QuarantinedListingOnlyReason | undefined {
@@ -619,13 +629,13 @@ export interface QuarantinedSummaryRequest {
   /**
    * The input tokens the run still has (D7). The calls are planned up front so that the sum of their rendered prompts (UTF-8
    * bytes, the estimator) fits; the items that do not fit are counted as omitted (a partial run), never a bound breach. Absent:
-   * no fit.
+   * the run's full cap; NaN, negative or non-finite: 0 (fail closed).
    */
   readonly remainingInputTokens?: number;
   /**
    * The M2 calls the run may still start (the smaller of the M2 calls and the model calls left; owner decision 2026-11-16:
-   * split calls count). The calls are planned within it; items over it are omitted. Absent: no limit here (each `reserve` is
-   * the only gate).
+   * split calls count). The calls are planned within it; items over it are omitted. Absent: the run's full M2 cap; NaN,
+   * negative or non-finite: 0 (fail closed).
    */
   readonly remainingCalls?: number;
   /** The grants of this request belong to this run (see {@link newSummaryRunToken}); a grant of another run never matches. */
@@ -661,11 +671,13 @@ export type QuarantinedSummaryOutcome =
        */
       readonly omitted: number;
       readonly audits: readonly QuarantinedCallAudit[];
+      /** A call of the step was refused because its prompt held credential-shaped text (its items are omitted). */
+      readonly credentialWithheld?: true;
     }
   /** No model call was sent: the reply is the listing only. */
-  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason; readonly audits?: readonly QuarantinedCallAudit[] }
-  /** The bound refused the call (a partial result). */
-  | { readonly kind: 'bound'; readonly audits?: readonly QuarantinedCallAudit[] }
+  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
+  /** The bound refused the call and no call was sent (a partial result). */
+  | { readonly kind: 'bound' }
   | { readonly kind: 'failed'; readonly reason: QuarantinedOutputFailure | 'model'; readonly audits?: readonly QuarantinedCallAudit[] };
 
 /** One prepared item: its source, its listing position and its rendered untrusted readout. */
@@ -687,8 +699,8 @@ interface PlannedCall {
  * most {@link AGENT_M2_MAX_ITEMS} items each, more calls for a source whose items do not fit one; the calls stay within `maxCalls`
  * and the sum of their prompts' UTF-8 bytes within `maxBytes`. Items are placed in source order while they fit; the first item
  * that does not fit and every item after it are left out (a prefix, as the single call kept). Deterministic and pure.
- * If not even the first item can be placed, that one-item call is planned anyway, so the caller's reservation refuses it and the
- * bound says so (as a single call did before).
+ * If not even the first item can be placed, the plan is empty: no reservation, no breach (review round 1, Codex P2; the step is
+ * `listing-only` with the closed reason `budget`, and the run goes on).
  */
 function planQuarantinedCalls(
   schema: AgentSummarySchemaId,
@@ -732,11 +744,6 @@ function planQuarantinedCalls(
     }
     if (full) break;
   }
-  if (calls.length === 0) {
-    const first = groups.find((group) => group.length > 0)?.[0];
-    if (first === undefined) return { calls: [], left: total };
-    return { calls: [{ items: [first], first: 1, prompt: renderQuarantinedPrompt(schema, [first.rendered]) }], left: total - 1 };
-  }
   return { calls: calls.map(({ items, first, prompt }) => ({ items, first, prompt })), left: total - placed };
 }
 
@@ -763,7 +770,14 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     omitted += source.dropped ?? 0;
     held += source.documents.length + (source.dropped ?? 0);
     const group: PreparedItem[] = [];
+    // Only the asked-for items of this source may reach a model (CA P1): a port that returned more than its limit never widens
+    // what is sent. The excess is omitted.
+    const cap = askedOf(source.asked);
     for (const document of source.documents) {
+      if (!(document.position >= 1 && document.position <= cap)) {
+        omitted += 1;
+        continue;
+      }
       const built = buildUntrustedDocumentReadout({
         source: readoutSource,
         title: document.title,
@@ -794,8 +808,16 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   if (picked === undefined) return { kind: 'listing-only', reason: 'no-model' };
 
   // Plan the calls against what the run has left (N2 and the owner's 2026-11-16 caps): planned up front, so no call over-reserves.
-  const plan = planQuarantinedCalls(request.schema, groups, nonNegativeOr(request.remainingCalls), nonNegativeOr(request.remainingInputTokens));
+  // An absent limit is the run's full cap; an unreadable one is 0 (fail closed, CA P2-b).
+  const plan = planQuarantinedCalls(
+    request.schema,
+    groups,
+    limitOr(request.remainingCalls, AGENT_RUN_BOUNDS.maxM2Calls),
+    limitOr(request.remainingInputTokens, AGENT_RUN_BOUNDS.maxInputTokens),
+  );
   omitted += plan.left;
+  // Nothing fits what the run has left: no call, nothing reserved, no breach; the run goes on (Codex P2).
+  if (plan.calls.length === 0) return { kind: 'listing-only', reason: 'budget' };
 
   const now = request.now ?? Date.now;
   // Every call is launched in this synchronous loop: from each call's first dispatch check to its `execute` nothing is awaited.
@@ -816,17 +838,23 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     }
   }
   if (!succeeded) {
-    // Every call failed or was refused: the step reports the first reason in source order, with every sent call's audit.
+    // Every call failed or was refused. A call that was SENT makes the step `failed` with the first sent call's reason and every
+    // sent call's audit (CA P2-a: `listing-only` means nothing was sent). Only when nothing was sent does the step take the
+    // first outcome in source order.
+    const sent = outcomes.find((outcome): outcome is Extract<CallOutcome, { kind: 'failed' }> => outcome.kind === 'failed' && outcome.audit !== undefined);
+    if (sent !== undefined) return { kind: 'failed', reason: sent.reason, ...withAudits };
     const first = outcomes[0];
     if (first === undefined || first.kind === 'summary') return { kind: 'listing-only', reason: 'no-documents' };
-    if (first.kind === 'listing-only') return { kind: 'listing-only', reason: first.reason, ...withAudits };
-    if (first.kind === 'bound') return { kind: 'bound', ...withAudits };
-    return { kind: 'failed', reason: first.reason, ...withAudits };
+    if (first.kind === 'listing-only') return { kind: 'listing-only', reason: first.reason };
+    if (first.kind === 'bound') return { kind: 'bound' };
+    return { kind: 'failed', reason: first.reason };
   }
   // The deterministic merge: source order, global item numbers (no model call).
   entries.sort((a, b) => a.n - b.n);
   const label: ModelDerivedLabel = { ...joined, trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED' };
-  return { kind: 'summary', summary: sealSummary(request.schema, label, entries), omitted, audits: Object.freeze(audits) };
+  // A call refused because its prompt held credential-shaped text is reported by a closed code (CA P3), never by content.
+  const withheld = outcomes.some((outcome) => outcome.kind === 'listing-only' && outcome.reason === 'credential-in-prompt');
+  return { kind: 'summary', summary: sealSummary(request.schema, label, entries), omitted, audits: Object.freeze(audits), ...(withheld ? { credentialWithheld: true as const } : {}) };
 }
 
 /**
@@ -900,10 +928,17 @@ function launchCall(
   );
 }
 
-/** A non-negative integer limit, or no limit (absent or unreadable). */
-function nonNegativeOr(value: number | undefined): number {
-  if (typeof value !== 'number' || Number.isNaN(value)) return Number.POSITIVE_INFINITY;
-  return Math.max(0, Math.floor(value));
+/** A caller's limit: absent is `fallback` (the run's full cap); NaN, negative or non-finite is 0 (fail closed, CA P2-b). */
+function limitOr(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 0;
+  return Math.floor(value);
+}
+
+/** A source's asked-for count: absent is the read limit's bound; anything but a positive integer admits nothing. */
+function askedOf(value: number | undefined): number {
+  if (value === undefined) return AGENT_M2_MAX_ITEMS;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : 0;
 }
 
 const DISPATCH_REFUSED: unique symbol = Symbol('dispatch-refused');

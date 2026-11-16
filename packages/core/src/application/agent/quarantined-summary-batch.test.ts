@@ -22,6 +22,7 @@ import {
   type QuarantinedCallAudit,
   type QuarantinedSummarizerRoute,
 } from './quarantined-summary';
+import { AGENT_RUN_BOUNDS } from './run-bounds';
 
 // ADR-0121 remote batch (owner 2026-11-03 answer 3) with the owner's 2026-11-16 caps (split M2 calls count; M2 6, model 8, input
 // 120k bytes, wall 60 s): one sealed call per source, at most AGENT_M2_MAX_ITEMS items each, split calls run in parallel and
@@ -33,7 +34,13 @@ const mailDoc = (position: number): AgentSourceDocument => ({ id: `m${position}`
 const driveDoc = (position: number): AgentSourceDocument => ({ id: `f0000${position}`, position, title: `t${position}`, author: 'a', date: '', body: `drive body ${position}` });
 const mails = (n: number): AgentSourceDocument[] => Array.from({ length: n }, (_, i) => mailDoc(i + 1));
 const drives = (n: number): AgentSourceDocument[] => Array.from({ length: n }, (_, i) => driveDoc(i + 1));
-const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, grant: mintSummaryEgressGrantForTest(1, entryId, RUN) });
+/** A direct caller that asked for every document it passes (the executor passes each read's limit). */
+const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[], asked = documents.length): AgentSummarySource => ({
+  entryId,
+  documents,
+  asked,
+  grant: mintSummaryEgressGrantForTest(1, entryId, RUN),
+});
 const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: (): boolean => true, run: RUN };
 const PERMISSIVE: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
 
@@ -176,7 +183,7 @@ describe('remote batch: the calls are planned up front within what the run has l
 
   it('remaining input bytes: calls are added while the sum of their prompts fits; the item that does not fit and all after it are omitted', async () => {
     const ten = await promptBytes(granted('mail.list', mails(10)));
-    const eleventh = await promptBytes(granted('mail.list', [mailDoc(11)]));
+    const eleventh = await promptBytes(granted('mail.list', [mailDoc(11)], 11));
     const provider = answering('p', 'REMOTE');
     const reserved: number[] = [];
     // Room for the 10-item call and a 1-item call: item 12 and the Drive items do not fit.
@@ -203,46 +210,46 @@ describe('remote batch: the calls are planned up front within what the run has l
     setSummaryGrantsForTest(() => true);
     const provider = answering('p', 'REMOTE');
     const result = await new AgentPlanExecutor({
-      readers: { 'mail.list': port(mails(12)), 'drive.files': port(drives(3)) },
+      readers: { 'mail.list': port(mails(10)), 'drive.files': port(drives(3)) },
       summarizer: routeOf(provider),
-      bounds: { maxM2Calls: 2 },
-    }).execute(plan([wide('mail.list', 12), wide('drive.files', 3), summarize([1, 2])]));
+      bounds: { maxM2Calls: 1 },
+    }).execute(plan([wide('mail.list', 10), wide('drive.files', 3), summarize([1, 2])]));
     expect(result.breach).toBeUndefined();
-    expect(result.usage).toMatchObject({ m2Calls: 2, modelCalls: 2 });
-    expect(provider.requests).toHaveLength(2);
-    expect(result.steps[2]).toMatchObject({ status: 'ok', omitted: 3, audits: [{ locality: 'REMOTE' }, { locality: 'REMOTE' }] });
+    expect(result.usage).toMatchObject({ m2Calls: 1, modelCalls: 1 });
+    expect(provider.requests).toHaveLength(1);
+    expect(result.steps[2]).toMatchObject({ status: 'ok', omitted: 3, audits: [{ locality: 'REMOTE' }] });
     expect(result.outcome).toBe('partial');
   });
 
   it('executor: the model-call cap and the input budget plan the split too, with no breach', async () => {
     setSummaryGrantsForTest(() => true);
     const byModel = answering('p', 'REMOTE');
-    const capped = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(12)), 'drive.files': port(drives(3)) }, summarizer: routeOf(byModel), bounds: { maxModelCalls: 1 } }).execute(
-      plan([wide('mail.list', 12), wide('drive.files', 3), summarize([1, 2])]),
+    const capped = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(10)), 'drive.files': port(drives(3)) }, summarizer: routeOf(byModel), bounds: { maxModelCalls: 1 } }).execute(
+      plan([wide('mail.list', 10), wide('drive.files', 3), summarize([1, 2])]),
     );
     expect(capped.breach).toBeUndefined();
     expect(capped.usage).toMatchObject({ m2Calls: 1, modelCalls: 1 });
-    expect(capped.steps[2]).toMatchObject({ status: 'ok', omitted: 5 });
+    expect(capped.steps[2]).toMatchObject({ status: 'ok', omitted: 3 });
 
     const ten = await promptBytes(granted('mail.list', mails(10)));
     const byBytes = answering('p', 'REMOTE');
-    const tight = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(12)), 'drive.files': port(drives(3)) }, summarizer: routeOf(byBytes), bounds: { maxInputTokens: ten + 1 } }).execute(
-      plan([wide('mail.list', 12), wide('drive.files', 3), summarize([1, 2])]),
+    const tight = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(10)), 'drive.files': port(drives(3)) }, summarizer: routeOf(byBytes), bounds: { maxInputTokens: ten + 1 } }).execute(
+      plan([wide('mail.list', 10), wide('drive.files', 3), summarize([1, 2])]),
     );
     expect(tight.breach).toBeUndefined();
     expect(byBytes.requests).toHaveLength(1);
     expect(tight.usage.inputTokens).toBe(ten);
-    expect(tight.steps[2]).toMatchObject({ status: 'ok', omitted: 5 });
+    expect(tight.steps[2]).toMatchObject({ status: 'ok', omitted: 3 });
   });
 
-  it('executor: an ordinary split under the default caps (mail 12 + Drive 3) makes 3 calls and completes', async () => {
+  it('executor: an ordinary batch under the default caps (mail 10 + Drive 3) makes one call per source and completes', async () => {
     setSummaryGrantsForTest(() => true);
     const provider = answering('p', 'REMOTE');
-    const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(12)), 'drive.files': port(drives(3)) }, summarizer: routeOf(provider) }).execute(
-      plan([wide('mail.list', 12), wide('drive.files', 3), summarize([1, 2])]),
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(10)), 'drive.files': port(drives(3)) }, summarizer: routeOf(provider) }).execute(
+      plan([wide('mail.list', 10), wide('drive.files', 3), summarize([1, 2])]),
     );
     expect(result.breach).toBeUndefined();
-    expect(result.usage).toMatchObject({ m2Calls: 3, modelCalls: 3 });
+    expect(result.usage).toMatchObject({ m2Calls: 2, modelCalls: 2 });
     expect(result.steps[2]).toMatchObject({ status: 'ok', omitted: 0 });
     expect(result.outcome).toBe('complete');
   });
@@ -339,7 +346,9 @@ describe('remote batch: partial failure, audits, dispatch refusal, no retry', ()
   it('executor: the wall cuts a parallel call; the step is not-run and carries the audit of every call that was sent', async () => {
     setSummaryGrantsForTest(() => true);
     const provider = heldProvider('p-wall', 'REMOTE');
-    const pending = new AgentPlanExecutor({ readers: { 'mail.list': port(mails(12)) }, summarizer: routeOf(provider), bounds: { wallMs: 40 } }).execute(plan([wide('mail.list', 12), summarize([1])]));
+    const pending = new AgentPlanExecutor({ readers: { 'mail.list': port(mails(10)), 'drive.files': port(drives(3)) }, summarizer: routeOf(provider), bounds: { wallMs: 40 } }).execute(
+      plan([wide('mail.list', 10), wide('drive.files', 3), summarize([1, 2])]),
+    );
     await tick();
     await tick();
     // The first call answers; the second hangs until the wall.
@@ -348,7 +357,7 @@ describe('remote batch: partial failure, audits, dispatch refusal, no retry', ()
     const result = await pending;
     expect(provider.held).toHaveLength(2);
     expect(result.breach).toBe('wall-time');
-    expect(result.steps[1]).toMatchObject({ status: 'not-run', audits: [{ locality: 'REMOTE', auditId: 'p-wall' }, { locality: 'REMOTE', auditId: 'p-wall' }] });
+    expect(result.steps[2]).toMatchObject({ status: 'not-run', audits: [{ locality: 'REMOTE', auditId: 'p-wall' }, { locality: 'REMOTE', auditId: 'p-wall' }] });
     expect(provider.held.every((call) => call.request.signal === undefined || call.request.signal.aborted)).toBe(true);
   });
 
@@ -360,6 +369,90 @@ describe('remote batch: partial failure, audits, dispatch refusal, no retry', ()
     expect(outcome).toMatchObject({ kind: 'failed', reason: 'schema' });
     expect(failing.requests).toHaveLength(3);
     expect(other.requests).toHaveLength(0);
+  });
+});
+
+describe('review round 1 (Chief Architect and Codex)', () => {
+  it('CA P1: a port that returns 12 documents for "limit 3" sends exactly the 3 asked-for items; the rest are omitted', async () => {
+    setSummaryGrantsForTest(() => true);
+    const provider = answering('p', 'REMOTE');
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(12)) }, summarizer: routeOf(provider) }).execute(plan([wide('mail.list', 3), summarize([1])]));
+    expect(provider.requests).toHaveLength(1);
+    expect(bodiesOf((provider.requests[0] as AiRequest).prompt)).toEqual(['mail body 1', 'mail body 2', 'mail body 3']);
+    expect(result.steps[1]).toMatchObject({ status: 'ok', omitted: 9 });
+    // A direct caller is bounded the same way, and an absent asked count is the read limit's bound (10).
+    const direct = answering('d', 'REMOTE');
+    const outcome = await quarantinedSummarize({ ...base, sources: [granted('mail.list', mails(25), 3)], route: routeOf(direct) });
+    expect(direct.requests.flatMap((request) => bodiesOf(request.prompt))).toEqual(['mail body 1', 'mail body 2', 'mail body 3']);
+    expect(outcome).toMatchObject({ kind: 'summary', omitted: 22 });
+    const unstated = answering('u', 'REMOTE');
+    await quarantinedSummarize({ ...base, sources: [{ entryId: 'mail.list', documents: mails(25), grant: mintSummaryEgressGrantForTest(1, 'mail.list', RUN) }], route: routeOf(unstated) });
+    expect(unstated.requests.flatMap((request) => bodiesOf(request.prompt))).toHaveLength(AGENT_M2_MAX_ITEMS);
+    // An asked count that is not a positive integer admits nothing.
+    for (const asked of [0, -1, 1.5, Number.NaN]) {
+      const none = answering('n', 'REMOTE');
+      expect(await quarantinedSummarize({ ...base, sources: [granted('mail.list', mails(3), asked)], route: routeOf(none) }), String(asked)).toEqual({ kind: 'listing-only', reason: 'no-documents' });
+      expect(none.requests).toHaveLength(0);
+    }
+  });
+
+  it('CA P2-a: call 1 refused at dispatch and call 2 sent and failed is `failed` with call 2\'s audit', async () => {
+    const provider = answering('p-remote', 'REMOTE', () => 'not json');
+    let checks = 0;
+    const router = new CapabilityRouter(new AiProviderManager([provider]), PERMISSIVE);
+    // #1 selection verdict; call 1: #2 (refused); call 2: #3, #4.
+    const selector: ProviderSelector = { select: (capability, context) => router.select(capability, context), isStillEligible: () => (checks += 1) !== 2 };
+    const refused = await quarantinedSummarize({ ...base, sources: [granted('mail.list', mails(2)), granted('drive.files', drives(1))], route: { selector } });
+    expect(refused).toMatchObject({ kind: 'failed', reason: 'schema', audits: [{ locality: 'REMOTE', auditId: 'p-remote' }] });
+    expect((refused as { audits: readonly QuarantinedCallAudit[] }).audits).toHaveLength(1);
+    expect(provider.requests).toHaveLength(1);
+  });
+
+  it('CA P2-b: a direct caller with 70 asked-for documents and an always-yes reserve never exceeds the M2 cap; unreadable limits are 0', async () => {
+    const provider = answering('p', 'REMOTE');
+    const reserved: number[] = [];
+    const outcome = await quarantinedSummarize({ ...base, sources: [granted('mail.list', mails(70))], route: routeOf(provider), reserve: (tokens) => (reserved.push(tokens), true) });
+    expect(provider.requests).toHaveLength(AGENT_RUN_BOUNDS.maxM2Calls);
+    expect(reserved).toHaveLength(AGENT_RUN_BOUNDS.maxM2Calls);
+    expect(outcome).toMatchObject({ kind: 'summary', omitted: 70 - AGENT_RUN_BOUNDS.maxM2Calls * AGENT_M2_MAX_ITEMS });
+    for (const bad of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      for (const field of ['remainingCalls', 'remainingInputTokens'] as const) {
+        const none = answering('n', 'REMOTE');
+        expect(await quarantinedSummarize({ ...base, sources: [granted('mail.list', mails(2))], route: routeOf(none), [field]: bad }), `${field}=${bad}`).toEqual({ kind: 'listing-only', reason: 'budget' });
+        expect(none.requests).toHaveLength(0);
+      }
+    }
+  });
+
+  it('Codex P2: no M2 call, model call or input bytes left: listing-only (budget), nothing reserved, no breach, and a later read still runs', async () => {
+    setSummaryGrantsForTest(() => true);
+    for (const bounds of [{ maxM2Calls: 0 }, { maxModelCalls: 0 }, { maxInputTokens: 10 }]) {
+      const provider = answering('p', 'REMOTE');
+      const drive = port(drives(1));
+      let driveReads = 0;
+      const counted: AgentReadPort = { read: (request) => ((driveReads += 1), drive.read(request)) };
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(mails(2)), 'drive.files': counted }, summarizer: routeOf(provider), bounds }).execute(
+        plan([wide('mail.list', 2), summarize([1]), wide('drive.files', 1)]),
+      );
+      const label = JSON.stringify(bounds);
+      expect(result.breach, label).toBeUndefined();
+      expect(result.steps[1], label).toMatchObject({ status: 'listing-only', reason: 'budget' });
+      expect(result.steps[2], label).toMatchObject({ kind: 'read', status: 'ok' });
+      expect(driveReads, label).toBe(1);
+      expect(result.usage, label).toMatchObject({ m2Calls: 0, modelCalls: 0, inputTokens: 0 });
+      expect(provider.requests, label).toHaveLength(0);
+      expect(result.outcome, label).toBe('partial');
+    }
+  });
+
+  it('CA P3: a call refused for credential-shaped text in an ok step is reported by a closed flag only', async () => {
+    // Withheld before the prompt by the readout guard: omitted, no flag. The flag is set only when the FINAL prompt check of a
+    // planned call refuses it, which the readout guard makes unreachable for these fields; the assembler test pins its rendering.
+    const provider = answering('p', 'REMOTE');
+    const secret = { ...mailDoc(1), body: 'pass' + 'word: ' + 'Zx9Kd8sLq2Zp' };
+    const outcome = await quarantinedSummarize({ ...base, sources: [granted('mail.list', [secret, mailDoc(2)])], route: routeOf(provider) });
+    expect(outcome).toMatchObject({ kind: 'summary', omitted: 1 });
+    expect(JSON.stringify(outcome)).not.toContain('Zx9Kd8sLq2Zp');
   });
 });
 
