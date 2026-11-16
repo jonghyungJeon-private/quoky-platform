@@ -241,7 +241,7 @@ describe('R3 calendar-create undo red team over the production AppModule (amendm
     if (actor === null) throw new Error('owner actor missing');
     owner = actor;
     setSeam(); // production state: the shipped constant, no seam override
-    if (JSON.stringify(core.activeExternalUndoCapabilities()) !== JSON.stringify(['calendar-create'])) throw new Error('the production constant must open calendar-create for this gate');
+    if (!core.activeExternalUndoCapabilities().includes('calendar-create')) throw new Error('the production constant must open calendar-create for this gate');
   }, 120_000);
 
   afterAll(async () => {

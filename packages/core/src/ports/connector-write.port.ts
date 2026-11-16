@@ -72,8 +72,9 @@ export type ConnectorWriteOutcome =
       /** A link to the written item when the provider gives one (`https:` only). */
       readonly url?: string;
       /**
-       * The provider's opaque version of what was just written (a calendar create: the event's entity tag), so a later
-       * inverse can compare-and-set on Quoky's own post-write version (ADR-0112 amendment 3). Never shown to the owner.
+       * The provider's opaque version of what was just written (a calendar create, update or restore: the event's entity
+       * tag), so a later inverse can compare-and-set on Quoky's own post-write version (ADR-0112 amendment 3). Never shown
+       * to the owner.
        */
       readonly version?: string;
     }
@@ -135,6 +136,11 @@ export const ConnectorWriteOperation = {
   CALENDAR_EVENT_CREATE: 'CALENDAR_EVENT_CREATE',
   CALENDAR_EVENT_UPDATE: 'CALENDAR_EVENT_UPDATE',
   CALENDAR_EVENT_DELETE: 'CALENDAR_EVENT_DELETE',
+  /**
+   * ADR-0112 amendment 3 (O3/O6): restore the SAME event an approved delete removed (never a copy). Only ever the inverse of
+   * this actor's own SENT delete receipt; there is no owner-worded restore.
+   */
+  CALENDAR_EVENT_RESTORE: 'CALENDAR_EVENT_RESTORE',
 } as const;
 export type ConnectorWriteOperation = (typeof ConnectorWriteOperation)[keyof typeof ConnectorWriteOperation];
 export const CONNECTOR_WRITE_OPERATIONS: readonly ConnectorWriteOperation[] = Object.values(ConnectorWriteOperation);
@@ -277,6 +283,28 @@ export interface CalendarEventDeleteRequest {
 }
 
 /**
+ * ADR-0112 amendment 3 (O3): the shape of the event an approved delete removed, from that delete's own bound expectation
+ * (`CalendarEventExpectation` without its version: the provider reports no version for a delete). The restore refuses
+ * (`NOT_SENT('TARGET_CHANGED')`) unless the event is still deleted and still has exactly this all-day shape, start, end and title.
+ */
+export interface CalendarEventRestoreExpectation {
+  readonly allDay: boolean;
+  readonly start: string;
+  readonly end: string;
+  /**
+   * The deleted event's title as the delete's preview showed it (the bounded readout form, `boundCalendarText` at
+   * `CALENDAR_EVENT_TITLE_MAX_LENGTH`). The writer compares the deleted event's title in that same bounded form.
+   */
+  readonly title: string;
+}
+
+export interface CalendarEventRestoreRequest {
+  /** The id of the deleted event, from the delete's receipt (never from text). */
+  readonly eventId: string;
+  readonly expected: CalendarEventRestoreExpectation;
+}
+
+/**
  * Writes on the owner's PRIMARY calendar only (ADR-0110 amendment D2). Every request passes "no notifications"
  * (`sendUpdates=none`) and never sets attendees. Update and delete refuse a recurring series
  * (`NOT_SENT('RECURRING_SERIES_REFUSED')`); a single instance of a series is allowed.
@@ -286,8 +314,16 @@ export interface CalendarEventWriter {
   /** Always the primary calendar. */
   readonly target: 'primary';
   createEvent(request: CalendarEventCreateRequest): Promise<ConnectorWriteOutcome>;
+  /** `SENT` carries the event's post-update version (ADR-0112 amendment 3: the inverse compares-and-sets on it). */
   updateEvent(request: CalendarEventUpdateRequest): Promise<ConnectorWriteOutcome>;
   deleteEvent(request: CalendarEventDeleteRequest): Promise<ConnectorWriteOutcome>;
+  /**
+   * ADR-0112 amendment 3 (O3/O6): brings back the SAME event (same id) an approved delete removed; never creates a copy.
+   * Reads the event first: it must exist as a deleted (cancelled) event with the expected shape and must not be a recurring
+   * series; the restore request is conditional on the version that read returned. A provider refusal is reported as it is
+   * (`NOT_SENT('NOT_FOUND')` when the event can no longer be found, `NOT_SENT(<reason>)` otherwise).
+   */
+  restoreEvent(request: CalendarEventRestoreRequest): Promise<ConnectorWriteOutcome>;
 }
 
 // ── Shared pure validation ───────────────────────────────────────────────────────────────────────────────────────

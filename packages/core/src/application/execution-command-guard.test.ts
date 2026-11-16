@@ -96,6 +96,7 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
       ['calendarCreate', '일정 추가 실행'],
       ['calendarUpdate', '일정 변경 실행'],
       ['calendarDelete', '일정 삭제 실행'],
+      ['calendarRestore', '일정 복원 실행'],
     ]);
   });
 
@@ -178,7 +179,25 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
     ['calendarUpdate', '일정 변경 실행 안 해'],
     ['calendarDelete', '일정 삭제 실행 취소'],
     ['calendarDelete', '일정 삭제해줘'],
+    // ADR-0112 amendment 3 (O7): only the exact restore phrase; a bare verb, a question or another write's phrase never runs it.
+    ['calendarRestore', '복원 실행'],
+    ['calendarRestore', '삭제 실행'],
+    ['calendarRestore', '일정 복원 실행할까?'],
+    ['calendarRestore', '일정 복원해줘'],
+    ['calendarRestore', '일정 삭제 실행'],
+    ['calendarRestore', '일정 변경 실행'],
+    ['calendarDelete', '일정 복원 실행'],
+    ['calendarUpdate', '일정 복원 실행'],
   ] as const)('%s rejects "%s"', (gate, text) => {
     expect(isAcceptedExecutionPhrase(gate, text)).toBe(false);
+  });
+
+  it('ADR-0112 amendment 3 (O7): the restore gate accepts exactly its phrase, and no gate accepts a bare "복원 실행" / "삭제 실행"', () => {
+    expect(isAcceptedExecutionPhrase('calendarRestore', '일정 복원 실행')).toBe(true);
+    expect(isAcceptedExecutionPhrase('calendarRestore', '지금 일정 복원 실행')).toBe(true);
+    for (const gate of Object.keys(EXECUTION_PHRASES) as Array<keyof typeof EXECUTION_PHRASES>) {
+      expect(isAcceptedExecutionPhrase(gate, '복원 실행')).toBe(false);
+      expect(isAcceptedExecutionPhrase(gate, '삭제 실행')).toBe(false);
+    }
   });
 });

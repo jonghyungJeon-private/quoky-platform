@@ -108,6 +108,7 @@ export function surfaceWriteFamilyOfOperation(operation: ConnectorWriteOperation
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
+    case 'CALENDAR_EVENT_RESTORE':
       return 'calendar';
     default: {
       const unmapped: never = operation;

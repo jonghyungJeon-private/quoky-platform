@@ -5,6 +5,7 @@ import {
   CALENDAR_EVENT_TITLE_MAX_LENGTH,
   CALENDAR_WINDOW_MAX_DAYS,
   ConnectorQueryError,
+  boundCalendarText,
   connectorWriteNotSent,
   connectorWriteSent,
   connectorWriteUncertain,
@@ -16,6 +17,8 @@ import {
   type CalendarEventCreateRequest,
   type CalendarEventDeleteRequest,
   type CalendarEventExpectation,
+  type CalendarEventRestoreExpectation,
+  type CalendarEventRestoreRequest,
   type CalendarEventTime,
   type CalendarEventUpdateRequest,
   type CalendarEventWriter,
@@ -39,6 +42,11 @@ import { GOOGLE_CALENDAR_EVENTS_SCOPE, refreshGoogleAccessToken, type GoogleAcce
  *   (`TARGET_CHANGED`) — and the write itself always carries `If-Match` with it, so an edit racing the pre-check is
  *   refused by Google (412) instead of overwritten.
  * - Create derives the provider event id from the idempotency key, so a repeated create cannot add a second event.
+ * - Restore (ADR-0112 amendment 3, O3/O6) brings back the SAME event id an approved delete removed, never a copy: it reads
+ *   the event, which must be a deleted (`cancelled`) event with the approved shape and not a recurring series, then sends
+ *   one `PATCH {status: confirmed}` with `If-Match` on the entity tag that read returned. Not found / gone is
+ *   `NOT_SENT('NOT_FOUND')`; any other refusal is reported as it is.
+ * - Create, update and restore report the event's post-write entity tag on SENT (the inverse compares-and-sets on it).
  * - One write request per call, with a timeout and redirects refused; no retry of the write. Nothing is logged, and no
  *   outcome or error carries a token, a secret, the payload or a response body.
  */
@@ -53,6 +61,7 @@ const HTML_LINK = /^https:\/\/(?:www\.google\.com\/calendar\/|calendar\.google\.
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INSTANT_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 const MS_PER_DAY = 86_400_000;
+type WriteKind = 'create' | 'update' | 'delete' | 'restore';
 /** Google event ids use base32hex (`0-9a-v`), 5..1024 characters. */
 const BASE32HEX = '0123456789abcdefghijklmnopqrstuv';
 const EVENT_ID_DIGEST_DOMAIN = 'quoky.calendar.event-id.v1';
@@ -142,6 +151,29 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     return this.write('PATCH', eventsUrl(request.eventId), body, 'update', undefined, request.expected.version);
   }
 
+  async restoreEvent(request: CalendarEventRestoreRequest): Promise<ConnectorWriteOutcome> {
+    if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected) || typeof request.expected.title !== 'string') {
+      return connectorWriteNotSent('INVALID_REQUEST');
+    }
+    const read = await this.readEventForWrite(request.eventId, true);
+    if ('status' in read) return read;
+    const event = read.event;
+    if (Array.isArray(event.recurrence) && event.recurrence.length > 0) return connectorWriteNotSent('RECURRING_SERIES_REFUSED');
+    // Only the deleted event itself, unchanged in shape: a live event (restored or re-created meanwhile) or another shape is
+    // not what the approved delete removed; so is another title (compared in the bounded form the delete's preview showed).
+    // Its entity tag is required: the restore is always conditional on it.
+    if (
+      event.id !== request.eventId ||
+      event.status !== 'cancelled' ||
+      !matchesShape(event, request.expected) ||
+      boundCalendarText(event.summary, CALENDAR_EVENT_TITLE_MAX_LENGTH) !== request.expected.title ||
+      !isValidVersion(event.etag)
+    ) {
+      return connectorWriteNotSent('TARGET_CHANGED');
+    }
+    return this.write('PATCH', eventsUrl(request.eventId), { status: 'confirmed' }, 'restore', request.eventId, event.etag);
+  }
+
   async deleteEvent(request: CalendarEventDeleteRequest): Promise<ConnectorWriteOutcome> {
     if (!isValidEventId(request?.eventId) || !isValidExpectation(request.expected)) return connectorWriteNotSent('INVALID_REQUEST');
     if (!isValidVersion(request.expected.version)) return connectorWriteNotSent('TARGET_CHANGED');
@@ -156,8 +188,22 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
    * the write has not been sent.
    */
   private async precheckSingleEvent(eventId: string, expected: CalendarEventExpectation): Promise<ConnectorWriteOutcome | undefined> {
+    const read = await this.readEventForWrite(eventId);
+    if ('status' in read) return read;
+    const payload = read.event;
+    if (payload.status === 'cancelled') return connectorWriteNotSent('NOT_FOUND');
+    if (Array.isArray(payload.recurrence) && payload.recurrence.length > 0) {
+      return connectorWriteNotSent('RECURRING_SERIES_REFUSED');
+    }
+    if (payload.id !== eventId || !matchesExpectation(payload, expected)) return connectorWriteNotSent('TARGET_CHANGED');
+    return undefined;
+  }
+
+  /** One read of the event before a write (minimised fields). Every failure is a NOT_SENT outcome: nothing was written. */
+  private async readEventForWrite(eventId: string, withTitle = false): Promise<{ readonly event: Record<string, unknown> & { readonly id: string } } | ConnectorWriteOutcome> {
     const url = eventsUrl(eventId);
-    url.searchParams.set('fields', 'id,etag,status,recurrence,recurringEventId,start(date,dateTime),end(date,dateTime)');
+    // The title only for a restore (it is compared with the delete's preview); an update / delete pre-check never reads it.
+    url.searchParams.set('fields', `id,etag,status,${withTitle ? 'summary,' : ''}recurrence,recurringEventId,start(date,dateTime),end(date,dateTime)`);
     let response: Response;
     try {
       response = await this.send('GET', url, undefined, await this.currentAccessToken());
@@ -180,12 +226,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
       return connectorWriteNotSent('UNAVAILABLE');
     }
     if (!isRecord(payload) || typeof payload.id !== 'string') return connectorWriteNotSent('UNAVAILABLE');
-    if (payload.status === 'cancelled') return connectorWriteNotSent('NOT_FOUND');
-    if (Array.isArray(payload.recurrence) && payload.recurrence.length > 0) {
-      return connectorWriteNotSent('RECURRING_SERIES_REFUSED');
-    }
-    if (payload.id !== eventId || !matchesExpectation(payload, expected)) return connectorWriteNotSent('TARGET_CHANGED');
-    return undefined;
+    return { event: payload as Record<string, unknown> & { readonly id: string } };
   }
 
   /** Exactly one write request. Before it leaves → NOT_SENT; after → by the response (when in doubt UNCERTAIN). */
@@ -193,7 +234,7 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     method: 'POST' | 'PATCH' | 'DELETE',
     url: URL,
     body: Record<string, unknown> | undefined,
-    kind: 'create' | 'update' | 'delete',
+    kind: WriteKind,
     deletedId?: string,
     ifMatch?: string,
   ): Promise<ConnectorWriteOutcome> {
@@ -232,9 +273,12 @@ export class GoogleCalendarWriter implements CalendarEventWriter {
     if (!isRecord(payload) || typeof payload.id !== 'string' || !EVENT_ID.test(payload.id)) {
       return connectorWriteUncertain('INVALID_RESPONSE');
     }
+    // A restore must answer with the same event, live again; anything else cannot be confirmed as restored.
+    if (kind === 'restore' && (payload.id !== deletedId || payload.status !== 'confirmed')) return connectorWriteUncertain('INVALID_RESPONSE');
     const link = typeof payload.htmlLink === 'string' && HTML_LINK.test(payload.htmlLink) ? payload.htmlLink : undefined;
-    // A create reports the event's entity tag so its undo can compare-and-set on Quoky's own post-write version.
-    const version = kind === 'create' && isValidVersion(payload.etag) ? payload.etag : undefined;
+    // Every write that answers with the event reports its entity tag, so an inverse can compare-and-set on Quoky's own
+    // post-write version.
+    const version = isValidVersion(payload.etag) ? payload.etag : undefined;
     return connectorWriteSent(payload.id, link, version);
   }
 
@@ -385,12 +429,15 @@ function isValidEventId(value: unknown): value is string {
 }
 
 /** The shape of the bound expectation (its version is checked separately: missing or malformed = TARGET_CHANGED). */
-function isValidExpectation(value: CalendarEventExpectation | undefined): value is CalendarEventExpectation {
+function isValidExpectation<T extends EventShape>(value: T | undefined): value is T {
   if (!isRecord(value) || typeof value.allDay !== 'boolean') return false;
   if (typeof value.start !== 'string' || typeof value.end !== 'string') return false;
   if (value.allDay) return DATE.test(value.start) && DATE.test(value.end);
   return Number.isFinite(Date.parse(value.start)) && Number.isFinite(Date.parse(value.end));
 }
+
+/** The all-day shape, start and end every update / delete / restore expectation carries. */
+type EventShape = Pick<CalendarEventRestoreExpectation, 'allDay' | 'start' | 'end'>;
 
 function isValidVersion(value: unknown): value is string {
   return typeof value === 'string' && ETAG.test(value);
@@ -399,6 +446,11 @@ function isValidVersion(value: unknown): value is string {
 /** The live event (pre-check read) is still the approved one: same entity tag, all-day shape, start and end. */
 function matchesExpectation(event: Record<string, unknown>, expected: CalendarEventExpectation): boolean {
   if (typeof event.etag !== 'string' || event.etag !== expected.version) return false;
+  return matchesShape(event, expected);
+}
+
+/** The event read has the expected all-day shape, start and end. */
+function matchesShape(event: Record<string, unknown>, expected: EventShape): boolean {
   const start = isRecord(event.start) ? event.start : undefined;
   const end = isRecord(event.end) ? event.end : undefined;
   if (start === undefined || end === undefined) return false;
@@ -416,7 +468,7 @@ function precheckReason(status: number): ConnectorWriteNotSentReason {
 }
 
 /** A non-2xx answer to the write: 5xx (and anything unexpected) may have been applied; a 4xx certainly was not. */
-function failedWrite(status: number, kind: 'create' | 'update' | 'delete'): ConnectorWriteOutcome {
+function failedWrite(status: number, kind: WriteKind): ConnectorWriteOutcome {
   if (status >= 500 || status < 400) return connectorWriteUncertain('SERVER_ERROR');
   if (status === 401) return connectorWriteNotSent('UNAUTHORIZED');
   if (status === 403) return connectorWriteNotSent('FORBIDDEN');

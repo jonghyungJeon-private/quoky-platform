@@ -89,7 +89,7 @@ export type ConnectorWriteDraft =
  * carries the receipt id only, never an event id, text or link: the target comes from the receipt the session's own
  * `lastAction` names. One closed kind per family whose undo is built.
  */
-export type ExternalUndoDraftKind = 'calendar-create-undo';
+export type ExternalUndoDraftKind = 'calendar-create-undo' | 'calendar-update-undo' | 'calendar-delete-undo';
 export interface ExternalUndoDraft {
   readonly kind: ExternalUndoDraftKind;
   readonly receiptId: Id;
@@ -116,6 +116,8 @@ export function connectorWriteFamilyOf(draft: ConnectorWriteDraft): ConnectorWri
     case 'calendar-update':
     case 'calendar-delete':
     case 'calendar-create-undo':
+    case 'calendar-update-undo':
+    case 'calendar-delete-undo':
       return 'calendar';
     default: {
       // A new draft kind must name its family here: the compiler stops at this line until it does.

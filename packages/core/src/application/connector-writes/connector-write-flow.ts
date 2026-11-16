@@ -1,7 +1,7 @@
 import { ApprovalStatus, Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../../domain';
 import type { Actor, ApprovalRequest, ConversationContext, ExecutionPlanRef, Id, IsoTimestamp, Session, Task } from '../../domain';
-import type { CalendarEvent, CalendarReader } from '../../ports/calendar-reader.port';
-import { CALENDAR_EVENTS_MAX_LIMIT, CALENDAR_EVENT_TITLE_MAX_LENGTH, boundCalendarText } from '../../ports/calendar-reader.port';
+import type { CalendarEvent, CalendarEventPresence, CalendarReader } from '../../ports/calendar-reader.port';
+import { CALENDAR_EVENTS_MAX_LIMIT, CALENDAR_EVENT_LOCATION_MAX_LENGTH, CALENDAR_EVENT_TITLE_MAX_LENGTH, boundCalendarText } from '../../ports/calendar-reader.port';
 import {
   CONNECTOR_WRITE_OPERATIONS,
   ISSUE_TRANSITION_STATUS_MAX_LENGTH,
@@ -11,6 +11,7 @@ import {
   type CalendarEventChanges,
   type CalendarEventDraft,
   type CalendarEventExpectation,
+  type CalendarEventRestoreExpectation,
   type CalendarEventTime,
   type CalendarEventWriter,
   type ChannelMessageWriter,
@@ -43,7 +44,8 @@ import {
   type ConnectorWriteUsageTopic,
 } from './connector-write-draft';
 import { ConnectorWriteExecutor, ConnectorWriteRequestError } from './connector-write-executor';
-import { ExternalUndoResolver } from './external-undo-resolver';
+import { ExternalUndoResolver, type ExternalUndoResolution } from './external-undo-resolver';
+import { LAST_ACTION_EXTERNAL_ENTRY, type ExternalUndoFamily } from '../nl-routing/last-action';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
 import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from '../session-write-lock';
 
@@ -122,6 +124,10 @@ export interface ConnectorWriteEventSummary {
   readonly location?: string;
   /** The provider's opaque event version at listing time (bound by an update / delete; never shown). */
   readonly version?: string;
+  /** The time zone the provider records for a timed event's start (never shown); an update undo restores a time only in it. */
+  readonly timeZone?: string;
+  /** Which shown text values are byte-identical to the provider's raw values (never shown); absent = unknown = lossy. */
+  readonly lossless?: { readonly title: boolean; readonly location: boolean };
 }
 
 /** EXACTLY what is sent (and hashed). Targets are bound by immutable identifiers (ADR-0112). */
@@ -145,7 +151,9 @@ export type ConnectorWritePayload =
       readonly expected: CalendarEventExpectation;
       readonly changes: CalendarEventChanges;
     }
-  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly eventId: string; readonly expected: CalendarEventExpectation };
+  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly eventId: string; readonly expected: CalendarEventExpectation }
+  /** ADR-0112 amendment 3 (O3): restore the same event an approved delete removed (only ever an undo; never owner-worded). */
+  | { readonly operation: 'CALENDAR_EVENT_RESTORE'; readonly eventId: string; readonly expected: CalendarEventRestoreExpectation };
 
 /** What the deterministic preview shows (the payload plus display-only facts). */
 export type ConnectorWritePreview =
@@ -165,6 +173,10 @@ export type ConnectorWritePreview =
       readonly before: ConnectorWriteEventSummary;
       readonly after: { readonly title: string; readonly time: CalendarEventTime; readonly location?: string };
       readonly timeZone: string;
+      /** ADR-0112 amendment 3 (O2): the target came from Quoky's own SENT update receipt (an undo): the card shows the banner. */
+      readonly receiptSourced?: true;
+      /** The owner's own undo sentence, bounded, shown as quoted text and never read as an instruction. */
+      readonly ownerSentence?: string;
     }
   | {
       readonly operation: 'CALENDAR_EVENT_DELETE';
@@ -173,6 +185,14 @@ export type ConnectorWritePreview =
       /** The target came from Quoky's own SENT receipt (an undo), not from the owner's words: the card shows the banner. */
       readonly receiptSourced?: true;
       /** ADR-0112 amendment 1 S4: the owner's own undo sentence, bounded, shown on the card as quoted text and never read as an instruction. */
+      readonly ownerSentence?: string;
+    }
+  | {
+      /** ADR-0112 amendment 3 (O3): always the undo of this actor's own SENT delete; the event as that delete's preview showed it. */
+      readonly operation: 'CALENDAR_EVENT_RESTORE';
+      readonly before: ConnectorWriteEventSummary;
+      readonly timeZone: string;
+      readonly receiptSourced: true;
       readonly ownerSentence?: string;
     };
 
@@ -224,7 +244,18 @@ export interface ConnectorWriteAnchor {
    * ADR-0112 amendment 3: set when this write is the undo of an earlier SENT write of this actor (its entry and receipt id).
    * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
    */
-  readonly undoOf?: { readonly entryId: 'calendar.create'; readonly receiptId: Id };
+  readonly undoOf?: {
+    /** The undone record's entry: `calendar.create`, or `external.write` for a calendar update / delete. */
+    readonly entryId: 'calendar.create' | typeof LAST_ACTION_EXTERNAL_ENTRY;
+    readonly receiptId: Id;
+    /** The undone write's family (absent on anchors written before the update / delete families existed: `calendar-create`). */
+    readonly family?: ExternalUndoFamily;
+    /**
+     * Review round 2: the anchor Task of the undone write (set for a calendar-update undo). At execution the inverse is
+     * re-derived from that anchor and must equal the payload exactly; an undo card without it never runs.
+     */
+    readonly sourceTaskId?: Id;
+  };
 }
 
 /**
@@ -304,6 +335,8 @@ export type ConnectorWriteRefusal =
   | 'undo-unavailable'
   /** The event the receipt named is already gone. */
   | 'undo-event-gone'
+  /** A restore: the event the delete removed is on the calendar again (restored or re-created meanwhile); nothing to restore. */
+  | 'undo-event-present'
   /** The event changed after it was created (version, time or title differ from what Quoky wrote). */
   | 'undo-event-changed';
 
@@ -316,6 +349,8 @@ export type ConnectorWriteStep =
       readonly kind: 'refused';
       readonly reason: ConnectorWriteRefusal;
       readonly family: ConnectorWriteFamily;
+      /** ADR-0112 amendment 3: set on an undo's refusal, so its fixed copy names the write being undone. */
+      readonly undo?: ExternalUndoFamily;
       /** `transition-unavailable`: the statuses the issue can move to now (untrusted readout). */
       readonly availableStatuses?: readonly string[];
     }
@@ -585,6 +620,7 @@ export function connectorWriteTargetOf(preview: ConnectorWritePreview): Connecto
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
+    case 'CALENDAR_EVENT_RESTORE':
       return { kind: 'calendar' };
   }
 }
@@ -633,6 +669,8 @@ export function connectorWriteExecutionGate(operation: ConnectorWriteOperation):
       return 'calendarUpdate';
     case 'CALENDAR_EVENT_DELETE':
       return 'calendarDelete';
+    case 'CALENDAR_EVENT_RESTORE':
+      return 'calendarRestore';
   }
 }
 
@@ -655,6 +693,7 @@ const EXECUTION_STEP_MENTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>>
   CALENDAR_EVENT_CREATE: /일정추가실행|executeeventcreate/u,
   CALENDAR_EVENT_UPDATE: /일정변경실행|executeeventupdate/u,
   CALENDAR_EVENT_DELETE: /일정삭제실행|executeeventdelete/u,
+  CALENDAR_EVENT_RESTORE: /일정복원실행|executeeventrestore/u,
 };
 
 /** Explanation / how-to requests about a step are ordinary chat, not a question about the pending write. */
@@ -697,6 +736,7 @@ const STEP_WORDS: Readonly<Record<ConnectorWriteOperation, string>> = {
   CALENDAR_EVENT_CREATE: String.raw`(?:캘린더\s*)?일정\s*추가`,
   CALENDAR_EVENT_UPDATE: String.raw`(?:캘린더\s*)?일정\s*변경`,
   CALENDAR_EVENT_DELETE: String.raw`(?:캘린더\s*)?일정\s*삭제`,
+  CALENDAR_EVENT_RESTORE: String.raw`(?:캘린더\s*)?일정\s*복원`,
 };
 
 /** Imperative endings of "<step> 실행…" that the allow-list does not accept ("댓글 실행해", "게시 실행하자"). */
@@ -719,6 +759,8 @@ const DONE_QUESTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
     /^(?:캘린더\s*)?일정\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:변경됐|변경했|변경되었|바뀌었|바꿨|옮겨졌|옮겼|수정됐|수정했)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:캘린더\s*)?일정\s*변경\s*(?:은|이)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
   CALENDAR_EVENT_DELETE:
     /^(?:캘린더\s*)?일정\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:삭제됐|삭제했|삭제되었|지워졌|지웠|취소됐|취소했|빠졌)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:캘린더\s*)?일정\s*삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  // A restore is only ever an undo: only the structural "<step words> 됐어?" form, no verb list (owner rule: no phrase lists).
+  CALENDAR_EVENT_RESTORE: /^(?:캘린더\s*)?일정\s*복원\s*(?:은|이)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
 };
 /** A "did it happen?" ending that is a question by itself (no `?` needed). */
 const SELF_QUESTION_ENDING = /(?:나|나요|니|냐|지|죠)$/u;
@@ -1203,6 +1245,10 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       }
       case 'calendar-create-undo':
         return this.proposeCalendarCreateUndo(input, draft.receiptId);
+      case 'calendar-update-undo':
+        return this.proposeCalendarUpdateUndo(input, draft.receiptId);
+      case 'calendar-delete-undo':
+        return this.proposeCalendarDeleteUndo(input, draft.receiptId);
       case 'calendar-update':
       case 'calendar-delete': {
         const changes = draft.kind === 'calendar-update' ? draft.changes : undefined;
@@ -1465,10 +1511,18 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       approval.reason !== expectedReason ||
       payload.operation !== operation ||
       connectorWritePayloadSha256(operation, target, sendableOf(payload)) !== payloadSha256 ||
-      !this.stillAllowed(payload)
+      !this.stillAllowed(payload) ||
+      // A restore is only ever the undo of this actor's own approved delete: without that link it never runs.
+      (payload.operation === 'CALENDAR_EVENT_RESTORE' && anchor.undoOf?.family !== 'calendar-delete')
     ) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
+    }
+    // Review round 2: an update undo never trusts the inverse its proposal persisted. It is re-derived here from the undone
+    // update's own anchor (lossless markers included) and must equal the payload exactly; otherwise nothing is sent.
+    if (payload.operation === 'CALENDAR_EVENT_UPDATE' && anchor.undoOf !== undefined && !(await this.isExactUpdateInverse(anchor, payload))) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'calendar-update' } };
     }
     const send = this.sendFor(payload, `cwr:${approvalId}`);
     if (!send) {
@@ -1530,6 +1584,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         return this.deps.writers.calendarEvents !== undefined && isExpectation(payload.expected) && checkChanges(payload.changes) === null;
       case 'CALENDAR_EVENT_DELETE':
         return this.deps.writers.calendarEvents !== undefined && isExpectation(payload.expected);
+      case 'CALENDAR_EVENT_RESTORE':
+        return this.deps.writers.calendarEvents !== undefined && isRestoreExpectation(payload.expected);
     }
   }
 
@@ -1562,6 +1618,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         if (!calendarEvents) return null;
         if (!isEventVersion(payload.expected.version)) return async () => connectorWriteNotSent('TARGET_CHANGED');
         return () => calendarEvents.deleteEvent({ eventId: payload.eventId, expected: payload.expected });
+      case 'CALENDAR_EVENT_RESTORE':
+        return calendarEvents ? () => calendarEvents.restoreEvent({ eventId: payload.eventId, expected: payload.expected }) : null;
     }
   }
 
@@ -1695,7 +1753,166 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const writer = this.deps.writers.calendarEvents;
     if (!writer) return { kind: 'writes-off' };
     const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'calendar' });
-    // The live session row: the lastAction the resolver reads must be the one the owner's last turn left.
+    const resolved = await this.resolveOwnUndo(input, 'calendar-create', receiptId);
+    if (resolved.kind === 'refused') return refused(resolved.reason);
+    const created = resolved.anchor.payload;
+    const version = resolved.receipt.data.version;
+    if (created?.operation !== 'CALENDAR_EVENT_CREATE') return refused('undo-nothing');
+    // No version on the create (no etag) means no compare-and-set: it cannot be undone safely.
+    if (!isEventVersion(version)) return refused('undo-unavailable');
+    // The calendar and the event come from the receipt (ARCHITECTURE section 8 provenance), never from a read or the words.
+    const calendarId = resolved.receipt.target;
+    if (calendarId !== writer.target) return refused('undo-nothing');
+    const eventId = resolved.receipt.data.externalRef as string;
+    const read = await this.readOwnEvent(calendarId, eventId);
+    if (read.kind === 'refused') return refused(read.reason);
+    const event = read.event;
+    if (event === undefined) return refused('undo-event-gone');
+    if (event.id !== eventId || event.version !== version || !sameAsDraft(event, created.draft)) return refused('undo-event-changed');
+    const summary = summaryOf(event);
+    const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version };
+    return this.propose(
+      input,
+      'calendar',
+      writer.source,
+      `${writer.target}/${eventId}`,
+      { operation: 'CALENDAR_EVENT_DELETE', eventId, expected },
+      {
+        operation: 'CALENDAR_EVENT_DELETE',
+        before: summary,
+        timeZone: this.deps.timeZone,
+        receiptSourced: true,
+        ...ownerSentenceOf(input.ownerText),
+      },
+      undefined,
+      { entryId: 'calendar.create', receiptId: resolved.receipt.id },
+    );
+  }
+
+  /**
+   * ADR-0112 amendment 3 (O2): the undo of an approved calendar update. The draft carries a receipt id only; the resolver proves
+   * it is this session's own last write. The inverse PATCHes back ONLY the fields the update changed, to the values its preview
+   * showed (`preview.before`), as compare-and-set on Quoky's own post-update version (the update receipt's `version`, sent as
+   * `If-Match` by the writer). The event must still be exactly what the update left (version, title, time, location), else
+   * nothing is proposed (`undo-event-changed`); a field whose old value cannot be written back (an empty title, a location or
+   * description the event did not have) makes the whole undo unavailable (fail closed, never a partial inverse).
+   */
+  private async proposeCalendarUpdateUndo(input: FlowInput, receiptId: Id): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.calendarEvents;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'calendar', undo: 'calendar-update' });
+    const resolved = await this.resolveOwnUndo(input, 'calendar-update', receiptId);
+    if (resolved.kind === 'refused') return refused(resolved.reason);
+    const updated = resolved.anchor.payload;
+    const shown = resolved.anchor.preview;
+    if (updated?.operation !== 'CALENDAR_EVENT_UPDATE' || shown?.operation !== 'CALENDAR_EVENT_UPDATE') return refused('undo-nothing');
+    // An undo of an undo is never offered (the resolver refuses `action.undo` records); an update that itself carried a receipt
+    // banner was an undo and is never undone again.
+    if (shown.receiptSourced === true || resolved.anchor.undoOf !== undefined) return refused('undo-nothing');
+    const eventId = resolved.receipt.data.externalRef as string;
+    // The event comes from the receipt and must be the one the approved payload named, on the writer's calendar.
+    if (eventId !== updated.eventId || resolved.receipt.target !== `${writer.target}/${eventId}` || shown.before.id !== eventId) {
+      return refused('undo-nothing');
+    }
+    const version = resolved.receipt.data.version;
+    // No post-update version (no etag) means no compare-and-set: it cannot be undone safely.
+    if (!isEventVersion(version)) return refused('undo-unavailable');
+    const inverse = inverseChanges(updated.changes, shown.before);
+    if (inverse === undefined) return refused('undo-unavailable');
+    const read = await this.readOwnEvent(writer.target, eventId);
+    if (read.kind === 'refused') return refused(read.reason);
+    const event = read.event;
+    if (event === undefined) return refused('undo-event-gone');
+    if (event.id !== eventId || event.version !== version || !sameAsAfter(event, updated.changes, shown.after)) return refused('undo-event-changed');
+    const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version };
+    const now = summaryOf(event);
+    const afterLocation = inverse.location ?? event.location;
+    return this.propose(
+      input,
+      'calendar',
+      writer.source,
+      `${writer.target}/${eventId}`,
+      { operation: 'CALENDAR_EVENT_UPDATE', eventId, expected, changes: inverse },
+      {
+        operation: 'CALENDAR_EVENT_UPDATE',
+        before: now,
+        after: {
+          title: inverse.title ?? event.title,
+          time: inverse.time ?? eventTimeOf(event, shown.timeZone),
+          ...(afterLocation !== undefined ? { location: afterLocation } : {}),
+        },
+        timeZone: this.deps.timeZone,
+        receiptSourced: true,
+        ...ownerSentenceOf(input.ownerText),
+      },
+      undefined,
+      { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'calendar-update', sourceTaskId: resolved.anchorTaskId },
+    );
+  }
+
+  /**
+   * ADR-0112 amendment 3 (O3/O6): the restore of an approved calendar delete. The draft carries a receipt id only; the resolver
+   * proves it is this session's own last write. The SAME event id (from the delete receipt, never from text) is restored through
+   * `CalendarEventWriter.restoreEvent`, never re-created as a copy. The delete's own bound expectation (all-day shape, start,
+   * end) is what the writer checks the deleted event against; an event that is already on the calendar again is not restored.
+   */
+  private async proposeCalendarDeleteUndo(input: FlowInput, receiptId: Id): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.calendarEvents;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'calendar', undo: 'calendar-delete' });
+    const resolved = await this.resolveOwnUndo(input, 'calendar-delete', receiptId);
+    if (resolved.kind === 'refused') return refused(resolved.reason);
+    const deleted = resolved.anchor.payload;
+    const shown = resolved.anchor.preview;
+    if (deleted?.operation !== 'CALENDAR_EVENT_DELETE' || shown?.operation !== 'CALENDAR_EVENT_DELETE') return refused('undo-nothing');
+    // The delete that undid a create is itself an undo: it is never undone again (no restore of an undo).
+    if (shown.receiptSourced === true || resolved.anchor.undoOf !== undefined) return refused('undo-nothing');
+    const eventId = resolved.receipt.data.externalRef as string;
+    if (eventId !== deleted.eventId || resolved.receipt.target !== `${writer.target}/${eventId}` || shown.before.id !== eventId) {
+      return refused('undo-nothing');
+    }
+    if (!isExpectation(deleted.expected)) return refused('undo-unavailable');
+    const presence = await this.readOwnEventPresence(writer.target, eventId);
+    if (presence.kind === 'refused') return refused(presence.reason);
+    // A live event with that id is back already (restored or re-created); an id the calendar no longer knows (purged) cannot
+    // be restored. Only an event the reader POSITIVELY reports as deleted, with this id, is offered.
+    if (presence.kind === 'live') return refused('undo-event-present');
+    if (presence.kind === 'absent') return refused('undo-event-gone');
+    const expected: CalendarEventRestoreExpectation = {
+      allDay: deleted.expected.allDay,
+      start: deleted.expected.start,
+      end: deleted.expected.end,
+      title: shown.before.title,
+    };
+    const gone = presence.event;
+    const sameShape = expected.allDay
+      ? gone.allDay && gone.start === expected.start && gone.end === expected.end
+      : !gone.allDay && Date.parse(gone.start) === Date.parse(expected.start) && Date.parse(gone.end) === Date.parse(expected.end);
+    if (gone.id !== eventId || !sameShape || gone.title !== expected.title) return refused('undo-event-changed');
+    return this.propose(
+      input,
+      'calendar',
+      writer.source,
+      `${writer.target}/${eventId}`,
+      { operation: 'CALENDAR_EVENT_RESTORE', eventId, expected },
+      {
+        operation: 'CALENDAR_EVENT_RESTORE',
+        before: shown.before,
+        timeZone: this.deps.timeZone,
+        receiptSourced: true,
+        ...ownerSentenceOf(input.ownerText),
+      },
+      undefined,
+      { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'calendar-delete' },
+    );
+  }
+
+  /** The resolver over the LIVE session row (the lastAction the owner's last turn left), narrowed to one family and receipt. */
+  private async resolveOwnUndo(
+    input: FlowInput,
+    family: ExternalUndoFamily,
+    receiptId: Id,
+  ): Promise<Extract<ExternalUndoResolution, { kind: 'resolved' }> | { readonly kind: 'refused'; readonly reason: ConnectorWriteRefusal }> {
     const live = (await this.deps.store.sessions.get(input.session.id)) ?? input.session;
     const resolver = new ExternalUndoResolver({
       receipts: this.deps.receipts,
@@ -1712,49 +1929,64 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       ...(input.replyToMessageId !== undefined ? { replyToMessageId: input.replyToMessageId } : {}),
     });
     // The anchor that holds the approved payload and version could not be found (for example its save failed): the write
-    // is real, but there is nothing safe to compare against, so the owner is told to delete it by hand.
-    if (resolved.kind === 'nothing-to-undo' && resolved.reason === 'anchor-missing') return refused('undo-unavailable');
-    if (resolved.kind !== 'resolved' || resolved.family !== 'calendar-create' || resolved.draft.receiptId !== receiptId) {
-      return refused('undo-nothing');
+    // is real, but there is nothing safe to compare against, so the owner is told to fix it by hand.
+    if (resolved.kind === 'nothing-to-undo' && resolved.reason === 'anchor-missing') return { kind: 'refused', reason: 'undo-unavailable' };
+    if (resolved.kind !== 'resolved' || resolved.family !== family || resolved.draft.receiptId !== receiptId) {
+      return { kind: 'refused', reason: 'undo-nothing' };
     }
-    const created = resolved.anchor.payload;
-    const version = resolved.receipt.data.version;
-    if (created?.operation !== 'CALENDAR_EVENT_CREATE') return refused('undo-nothing');
-    // No version on the create (no etag) means no compare-and-set: it cannot be undone safely.
-    if (!isEventVersion(version)) return refused('undo-unavailable');
-    // The calendar and the event come from the receipt (ARCHITECTURE section 8 provenance), never from a read or the words.
-    const calendarId = resolved.receipt.target;
-    if (calendarId !== writer.target) return refused('undo-nothing');
-    const eventId = resolved.receipt.data.externalRef as string;
+    return resolved;
+  }
+
+  /** One authoritative read of ONE event by its receipt id: not a window, not a listing. Only "not found" means gone. */
+  private async readOwnEvent(
+    calendarId: string,
+    eventId: string,
+  ): Promise<{ readonly kind: 'read'; readonly event: CalendarEvent | undefined } | { readonly kind: 'refused'; readonly reason: ConnectorWriteRefusal }> {
     const reader = this.deps.calendarReader;
-    if (!reader?.getEvent) return refused('calendar-read-failed');
-    let event: CalendarEvent | undefined;
+    if (!reader?.getEvent) return { kind: 'refused', reason: 'calendar-read-failed' };
     try {
-      // One authoritative read of that one event: not a window, not a listing. Only "not found" means gone.
-      event = await this.withReadTimeout(reader.getEvent(calendarId, eventId));
+      return { kind: 'read', event: await this.withReadTimeout(reader.getEvent(calendarId, eventId)) };
     } catch {
-      return refused('calendar-read-failed');
+      return { kind: 'refused', reason: 'calendar-read-failed' };
     }
-    if (event === undefined) return refused('undo-event-gone');
-    if (event.id !== eventId || event.version !== version || !sameAsDraft(event, created.draft)) return refused('undo-event-changed');
-    const summary = summaryOf(event);
-    const expected: CalendarEventExpectation = { allDay: event.allDay, start: event.start, end: event.end, version };
-    return this.propose(
-      input,
-      'calendar',
-      writer.source,
-      `${writer.target}/${eventId}`,
-      { operation: 'CALENDAR_EVENT_DELETE', eventId, expected },
-      {
-        operation: 'CALENDAR_EVENT_DELETE',
-        before: summary,
-        timeZone: this.deps.timeZone,
-        receiptSourced: true,
-        ...(boundedOwnerSentence(input.ownerText) !== undefined ? { ownerSentence: boundedOwnerSentence(input.ownerText) as string } : {}),
-      },
-      undefined,
-      { entryId: 'calendar.create', receiptId: resolved.receipt.id },
-    );
+  }
+
+  /**
+   * Review round 2: the execution-time proof for an update undo. The undo anchor must name the undone update's anchor Task
+   * (`undoOf.sourceTaskId`); that anchor must be this actor's plain approved update whose approval produced the receipt in
+   * `undoOf.receiptId` (SENT, same event); and the inverse re-derived from it NOW (`inverseChanges`, which requires every
+   * changed text field to be marked lossless and the time zone to be the recorded one) must equal the payload's changes
+   * key for key. A legacy anchor (no marker, no source link) fails, so a pre-fix card never writes a lossy value.
+   */
+  private async isExactUpdateInverse(anchor: ConnectorWriteAnchor, payload: Extract<ConnectorWritePayload, { operation: 'CALENDAR_EVENT_UPDATE' }>): Promise<boolean> {
+    const link = anchor.undoOf;
+    if (link?.family !== 'calendar-update' || link.sourceTaskId === undefined) return false;
+    const receipt = await this.deps.receipts.findById(link.receiptId, anchor.actorId);
+    if (receipt === null || receipt.status !== 'SENT' || receipt.operation !== 'CALENDAR_EVENT_UPDATE' || receipt.data.externalRef !== payload.eventId) return false;
+    const task = await this.deps.store.tasks.get(link.sourceTaskId);
+    const source = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (source?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || source.actorId !== anchor.actorId || source.undoOf !== undefined) return false;
+    if (source.approvalId === undefined || receipt.idempotencyKey !== `cwr:${source.approvalId}`) return false;
+    const updated = source.payload;
+    const shown = source.preview;
+    if (updated?.operation !== 'CALENDAR_EVENT_UPDATE' || shown?.operation !== 'CALENDAR_EVENT_UPDATE' || shown.receiptSourced === true) return false;
+    if (updated.eventId !== payload.eventId || shown.before.id !== payload.eventId) return false;
+    const inverse = inverseChanges(updated.changes, shown.before);
+    return inverse !== undefined && stableJson(inverse) === stableJson(payload.changes);
+  }
+
+  /** The same single read, with the deletion state (a restore needs a positive "deleted"). */
+  private async readOwnEventPresence(
+    calendarId: string,
+    eventId: string,
+  ): Promise<CalendarEventPresence | { readonly kind: 'refused'; readonly reason: ConnectorWriteRefusal }> {
+    const reader = this.deps.calendarReader;
+    if (!reader?.getEventPresence) return { kind: 'refused', reason: 'undo-unavailable' };
+    try {
+      return await this.withReadTimeout(reader.getEventPresence(calendarId, eventId));
+    } catch {
+      return { kind: 'refused', reason: 'calendar-read-failed' };
+    }
   }
 
   private async proposeEventChange(
@@ -2107,6 +2339,8 @@ function summaryOf(event: CalendarEvent): ConnectorWriteEventSummary {
     allDay: event.allDay,
     ...(event.location !== undefined ? { location: event.location } : {}),
     ...(event.version !== undefined ? { version: event.version } : {}),
+    ...(event.timeZone !== undefined ? { timeZone: event.timeZone } : {}),
+    ...(event.lossless !== undefined ? { lossless: { title: event.lossless.title === true, location: event.lossless.location === true } } : {}),
   };
 }
 
@@ -2135,6 +2369,69 @@ function boundedOwnerSentence(text: string | undefined): string | undefined {
 function sameAsDraft(event: CalendarEvent, draft: CalendarEventDraft): boolean {
   if (event.title !== boundCalendarText(draft.title, CALENDAR_EVENT_TITLE_MAX_LENGTH)) return false;
   const time = draft.time;
+  if (time.allDay) return event.allDay && event.start === time.startDate && event.end === time.endDate;
+  return !event.allDay && Date.parse(event.start) === Date.parse(time.start) && Date.parse(event.end) === Date.parse(time.end);
+}
+
+/** The bounded owner sentence as an optional preview field. */
+function ownerSentenceOf(text: string | undefined): { ownerSentence?: string } {
+  const sentence = boundedOwnerSentence(text);
+  return sentence !== undefined ? { ownerSentence: sentence } : {};
+}
+
+/** The shape of a bound restore expectation. */
+function isRestoreExpectation(value: CalendarEventRestoreExpectation | undefined): value is CalendarEventRestoreExpectation {
+  return isExpectation(value as CalendarEventExpectation | undefined) && typeof value?.title === 'string';
+}
+
+/** An event's own time as a `CalendarEventTime` (a timed event in `timeZone`). */
+function eventTimeOf(event: { readonly allDay: boolean; readonly start: string; readonly end: string }, timeZone: string): CalendarEventTime {
+  return event.allDay ? { allDay: true, startDate: event.start, endDate: event.end } : { allDay: false, start: event.start, end: event.end, timeZone };
+}
+
+/**
+ * ADR-0112 amendment 3 (O2): the inverse of an update's changes — ONLY the fields the update changed, each set back to the value
+ * its preview showed (`before`). `undefined` (no undo) when a changed field has no value that can be written back exactly:
+ * the title was empty, the event had no location, the description changed (the preview never holds one), a shown text value
+ * is not byte-identical to the original (review round 1: the readout bounds, collapses and cuts text, so only a value the
+ * reader marked lossless is written back), or the old value would fail the same checks a new write must pass. A time goes
+ * back to the exact old instants only for a timed event whose recorded start time zone is the very zone the update wrote;
+ * an all-day time, an unrecorded zone or a changed zone has no undo (never restamped in another zone).
+ */
+function inverseChanges(changes: CalendarEventChanges, before: ConnectorWriteEventSummary): CalendarEventChanges | undefined {
+  if (changes.description !== undefined) return undefined;
+  const out: { title?: string; location?: string; time?: CalendarEventTime } = {};
+  if (changes.title !== undefined) {
+    if (before.title.length === 0 || before.lossless?.title !== true) return undefined;
+    out.title = before.title;
+  }
+  if (changes.location !== undefined) {
+    if (before.location === undefined || before.location.length === 0 || before.lossless?.location !== true) return undefined;
+    out.location = before.location;
+  }
+  if (changes.time !== undefined) {
+    if (before.allDay || changes.time.allDay || before.timeZone === undefined || changes.time.timeZone !== before.timeZone) return undefined;
+    out.time = eventTimeOf(before, before.timeZone);
+    if (!isValidEventTime(out.time)) return undefined;
+  }
+  if (out.title === undefined && out.location === undefined && out.time === undefined) return undefined;
+  return checkChanges(out) === null ? out : undefined;
+}
+
+/** JSON with object keys sorted (a key-for-key equality of two plain values). */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner,
+  );
+}
+
+/** The live event is still exactly what the approved update left: each changed field equals the update's value. */
+function sameAsAfter(event: CalendarEvent, changes: CalendarEventChanges, after: { readonly title: string; readonly time: CalendarEventTime; readonly location?: string }): boolean {
+  if (event.title !== boundCalendarText(after.title, CALENDAR_EVENT_TITLE_MAX_LENGTH)) return false;
+  if (changes.location !== undefined && event.location !== boundCalendarText(changes.location, CALENDAR_EVENT_LOCATION_MAX_LENGTH)) return false;
+  const time = after.time;
   if (time.allDay) return event.allDay && event.start === time.startDate && event.end === time.endDate;
   return !event.allDay && Date.parse(event.start) === Date.parse(time.start) && Date.parse(event.end) === Date.parse(time.end);
 }

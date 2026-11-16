@@ -117,6 +117,7 @@ describe('GoogleCalendarReader (ADR-0110 D1/D2)', () => {
         location: '회의실 A',
         status: 'confirmed',
         calendarName: '개인',
+        lossless: { title: true, location: true },
       },
       {
         id: 'evt-2',
@@ -126,6 +127,7 @@ describe('GoogleCalendarReader (ADR-0110 D1/D2)', () => {
         allDay: false,
         status: 'tentative',
         calendarName: '개인',
+        lossless: { title: true, location: true },
       },
     ]);
     expect(JSON.stringify(events)).not.toContain('must never be read');
@@ -518,6 +520,32 @@ describe('GoogleCalendarReader.getEvent (ADR-0112 amendment 3: one event by id)'
       const google = fakeGoogle({ calendar: handler });
       await expect(reader(google.fetchImpl).getEvent('primary', EVENT_ID)).resolves.toBeUndefined();
     }
+  });
+
+  it('review round 1: getEventPresence says deleted only for this id with status cancelled; 404/410 are absent; a live event is live', async () => {
+    const cancelled = timed(EVENT_ID, '팀 회의', '2026-10-06T09:00:00+09:00', '2026-10-06T10:00:00+09:00', { status: 'cancelled', etag: '"v9"' });
+    const deleted = await reader(fakeGoogle({ calendar: () => json(200, cancelled) }).fetchImpl).getEventPresence('primary', EVENT_ID);
+    expect(deleted).toMatchObject({ kind: 'deleted', event: { id: EVENT_ID, title: '팀 회의', start: '2026-10-06T00:00:00.000Z' } });
+    for (const status of [404, 410]) {
+      await expect(reader(fakeGoogle({ calendar: () => json(status, {}) }).fetchImpl).getEventPresence('primary', EVENT_ID)).resolves.toEqual({ kind: 'absent' });
+    }
+    const live = await reader(fakeGoogle({ calendar: () => json(200, timed(EVENT_ID, '팀 회의', '2026-10-06T09:00:00+09:00', '2026-10-06T10:00:00+09:00')) }).fetchImpl).getEventPresence('primary', EVENT_ID);
+    expect(live.kind).toBe('live');
+    // A bare cancelled stub (no times) is not a positive "deleted": it fails closed (throws), never offered for a restore.
+    await errorOf(reader(fakeGoogle({ calendar: () => json(200, { id: EVENT_ID, status: 'cancelled' }) }).fetchImpl).getEventPresence('primary', EVENT_ID));
+    // Another id in the answer is never this event.
+    await errorOf(reader(fakeGoogle({ calendar: () => json(200, { ...(cancelled as object), id: 'zzz0123456789v' }) }).fetchImpl).getEventPresence('primary', EVENT_ID));
+  });
+
+  it('review round 1: marks text byte-exact only when the readout is the raw value, and records the start time zone it reads', async () => {
+    const read = async (extra: Record<string, unknown>, summary = '팀 회의') =>
+      reader(fakeGoogle({ calendar: () => json(200, timed(EVENT_ID, summary, '2026-10-06T09:00:00+09:00', '2026-10-06T10:00:00+09:00', extra)) }).fetchImpl).getEvent('primary', EVENT_ID);
+    expect(await read({ location: '회의실 A', start: { dateTime: '2026-10-06T09:00:00+09:00', timeZone: 'Asia/Seoul' } })).toMatchObject({ lossless: { title: true, location: true }, timeZone: 'Asia/Seoul' });
+    expect((await read({}, '팀\n회의'))?.lossless).toEqual({ title: false, location: true });
+    expect((await read({}, '가'.repeat(250)))?.lossless).toEqual({ title: false, location: true });
+    expect((await read({ location: '층'.repeat(300) }))?.lossless).toEqual({ title: true, location: false });
+    expect(await read({ start: { dateTime: '2026-10-06T09:00:00+09:00', timeZone: 'Not/AZone' } })).not.toHaveProperty('timeZone');
+    expect(await read({})).not.toHaveProperty('timeZone');
   });
 
   it('throws (never "gone") for a 5xx, 403 or transport failure, and refuses malformed ids before any request', async () => {

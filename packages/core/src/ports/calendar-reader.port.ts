@@ -44,7 +44,28 @@ export interface CalendarEvent {
    * write binds it so an update or delete never applies to an event edited after the preview (ADR-0112).
    */
   readonly version?: string;
+  /**
+   * ADR-0112 amendment 3 review round 1 (additive): the time zone the provider records for a timed event's start (an IANA
+   * name), when it records one. An update undo restores a time only in this very zone, never restamped in another.
+   */
+  readonly timeZone?: string;
+  /**
+   * ADR-0112 amendment 3 review round 1 (additive): per text field, `true` only when the readout value is byte-identical to the
+   * provider's raw value (no control character replaced, no whitespace collapsed, not cut at the bound). Absent means
+   * unknown and is treated as lossy: an update undo never writes back a value that may not be the original.
+   */
+  readonly lossless?: { readonly title: boolean; readonly location: boolean };
 }
+
+/**
+ * ADR-0112 amendment 3 review round 1 (additive): what the provider positively reports for ONE event id, deleted events
+ * included. `deleted` only when the provider returns that id with a deleted (cancelled) status; `absent` when it does not know
+ * the id any more (not found, gone, purged).
+ */
+export type CalendarEventPresence =
+  | { readonly kind: 'live'; readonly event: CalendarEvent }
+  | { readonly kind: 'deleted'; readonly event: CalendarEvent }
+  | { readonly kind: 'absent' };
 
 /** `[from, to)` as ISO-8601 instants. An event is listed when it overlaps the window. */
 export interface CalendarEventQuery {
@@ -67,6 +88,12 @@ export interface CalendarReader {
    * cannot back an undo. Never takes an id from the owner's words.
    */
   getEvent?(calendarId: string, eventId: string): Promise<CalendarEvent | undefined>;
+  /**
+   * ADR-0112 amendment 3 review round 1 (additive read, same call as `getEvent`): ONE event by id with its deletion state, so a
+   * restore is offered only for an event the provider positively reports as deleted. Throws `ConnectorQueryError` for every
+   * other failure. Optional: a reader without it cannot back a restore.
+   */
+  getEventPresence?(calendarId: string, eventId: string): Promise<CalendarEventPresence>;
 }
 
 export interface ParsedCalendarEventQuery {

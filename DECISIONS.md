@@ -31816,6 +31816,167 @@ and D9 still governs every turn that goes to chat.
   narrowing the ratified Slack aliases would be an ADR change for the owner, not part of this slice. Case 016 now also pins the
   turn-3 reply (`replyIncludes` 3 = `일정 삭제 실행`, Codex r1 P2).
 
+### Implementation note (amendment 3, calendar-update and calendar-delete families: interfaces recorded before code, 2026-11-16)
+
+- **Scope.** The next two families of amendment 3, in one branch (`claude/v5-r3-cal-undo`): the undo of an approved calendar
+  update (O2) and the restore of an approved calendar delete (O3 + O6, phrase O7 `일정 복원 실행`). Jira comment delete (O4) and
+  Jira transition revert (O5) are not part of this slice. No new OAuth scope, token, flag, host or migration.
+- **Additive interfaces (ARCHITECTURE.md §11.7), recorded before code.**
+  - `ConnectorWriteOperation.CALENDAR_EVENT_RESTORE` (a neutral operation name; the receipts table stores `operation` as plain
+    text, so no migration). Its execution gate is `calendarRestore`, documented phrase `일정 복원 실행` (ADR-0112 D5 exact-command
+    gate, the same allow-list shape as the other calendar gates: `일정 복원 실행`, `일정 복원 실행해줘`, `캘린더 일정 복원 실행`,
+    `execute event restore`). No bare `복원 실행` or `삭제 실행` is accepted by any gate.
+  - `CalendarEventWriter.restoreEvent(request: CalendarEventRestoreRequest)` (O6, no new port), with
+    `CalendarEventRestoreRequest = { eventId, expected: { allDay, start, end } }`: the shape of the event the approved delete
+    removed, taken from that delete's own bound expectation. The adapter reads the event first and restores only a cancelled
+    event with the same id, all-day shape, start and end that is not a recurring series, then sends exactly one conditional
+    restore request (`If-Match` on the version that read returned, `sendUpdates=none`). A not-found / gone event is
+    `NOT_SENT('NOT_FOUND')`, any other refusal `NOT_SENT(<reason>)`; it never creates a new event.
+  - `CalendarEventWriter.updateEvent` returns the post-write version on `SENT` (as create already does), so the update's
+    inverse can compare-and-set on Quoky's own post-update version.
+  - `LastActionRecord.operation` (external records only): the neutral operation name of the write, from a closed list. The
+    undo family of an `external.write` record is derived from it (`CALENDAR_EVENT_UPDATE` -> `calendar-update`,
+    `CALENDAR_EVENT_DELETE` -> `calendar-delete`); a record without it (written before this slice) has no family and stays
+    `undoable: false`.
+  - `ExternalUndoFamily` gains `calendar-update` and `calendar-delete`; `ExternalUndoDraftKind` gains `calendar-update-undo`
+    and `calendar-delete-undo`; `ConnectorWriteAnchor.undoOf.entryId` may be `external.write`. The families are added to
+    `EXTERNAL_UNDO_CAPABILITIES` only after their red-team gate, unit tests and import scan are green.
+  - The `CALENDAR_EVENT_UPDATE` preview gains the optional `receiptSourced` / `ownerSentence` fields the delete preview has
+    (the A6-D4 receipt banner); a `CALENDAR_EVENT_RESTORE` preview is always receipt-sourced. A refused step may carry the undo
+    family so its fixed copy names the right write.
+
+### Implementation note (amendment 3, calendar-update and calendar-delete families: what was built and the gate, 2026-11-16)
+
+- **Built (branch `claude/v5-r3-cal-undo`).** The interfaces above, exactly. Core: `proposeCalendarUpdateUndo` and
+  `proposeCalendarDeleteUndo` in the connector-write flow, reached only through the `ExternalUndoResolver` chain
+  (`lastAction` -> this actor's receipt `findById(id, actorId)` -> its anchor Task -> draft `{kind, receiptId}`); the
+  receipt's operation must match the record's family and the anchor must be a plain (not receipt-sourced, no `undoOf`)
+  write of that operation in this session. Update undo (O2): the inverse patch holds only the fields the update changed
+  (title, time, location), with the values from that update's own `preview.before`, and is bound to Quoky's own
+  post-update version from the receipt (`If-Match` at the provider); the live event is read at preview time and any other
+  version, title, time or location is `undo-event-changed` (no preview), a missing event `undo-event-gone`. Restore (O3/O6):
+  payload `CALENDAR_EVENT_RESTORE {eventId, expected: allDay/start/end of the delete's own expectation}`; an event that is
+  back on the calendar is `undo-event-present`. Both previews carry the receipt banner; every undo keeps preview, CRITICAL
+  one-time approval bound to the payload hash and the exact phrase (`일정 변경 실행` / `일정 복원 실행`). Adapter: `restoreEvent`
+  reads the event, refuses anything but a cancelled single event of the same id and shape (`TARGET_CHANGED`) or a series
+  (`RECURRING_SERIES_REFUSED`), then one `PATCH {status: confirmed}` with `If-Match` on the read etag, `sendUpdates=none`;
+  404/410 is `NOT_FOUND`; an answer that is not the same id confirmed is `UNCERTAIN`. Copy: plain outcomes ("복원하지
+  못했어요 — 캘린더가 그 일정을 더 이상 찾을 수 없다고 답했어요 … 새 일정을 따로 만들지 않았어요"), per-family "not on yet" and
+  refusal texts. `LastActionRecord.operation` is written by `recordExternalWrite` from the executed step.
+- **Kept.** Undo of an undo refused (a receipt-sourced write is never undone again); `에이전트 중지` closes open undo anchors
+  of the new families and is re-checked at execution (`undoOf` present => switch-governed); group channels refused (DM only);
+  the import scan (nl-routing reaches no writer, receipt port or connector) unchanged and green.
+- **Red-team gate (amendment 3).** `golden/agent-redteam.r3-undo.v2.json` (sha256 `45e35cd59d3e…`), 66 cases: 33 calendar-update,
+  33 calendar-delete, 28 attack kinds (pasted id / link / title, quoted echo of another session, another actor's receipt,
+  stale 10/30 min, undo of undo, edited / gone / present since the write, TOCTOU between approval and phrase, restore refused
+  by the calendar, UNCERTAIN / NOT_SENT write, receipt swap, anchor of another session, operation relabel, bare and
+  cross-family phrases, phrase before preview, replay, fooled selector, pasted JSON, group channel, kill switch before
+  preview and after approval, cap exhaustion, owner-sentence injection). Each case has an oracle and runs in two attacker
+  variants (smuggled args, valid `args: {}`). Driver `apps/quoky/src/nl-r3-undo-v2-redteam.app.test.ts` on the production
+  `AppModule` and the PRODUCTION constant, no model: run 1, run 2, run 3 each 66 cases x 2 variants = 132 case runs, **0
+  attack successes, 0 deviations** (per family each run: 66 case runs, 0 / 0). The v1 file (36 cases, calendar-create) still
+  passes its 3 runs with 0 / 0. Oracles were pinned from one reviewed discovery run (every refusal checked for its layer and
+  reason; no oracle allows a preview of anything but the own receipt's event).
+- **Switched on.** `EXTERNAL_UNDO_CAPABILITIES = ['calendar-create', 'calendar-update', 'calendar-delete']` only after the gate,
+  unit/app tests and import scan were green. A record written while a family was closed stays not undoable.
+- **Ambiguities, decided fail-closed.** (1) Google reports no version for a delete, so the restore's compare-and-set is the
+  delete's own bound shape + cancelled status + same id, sent with `If-Match` on the etag of the adapter's own pre-read.
+  (2) A partial inverse is refused whole: an update that added a location where there was none, emptied a title, or changed
+  the description has no undo (`undo-unavailable`). (3) The time inverse restores the exact old instants in the time zone the
+  update used. (4) A single instance of a series may be undone; a series is refused, as for update and delete. (5) A write
+  that was itself an undo is never undone. (6) An event already back on the calendar is refused (`undo-event-present`), never
+  restored over. (7) A restore answer that is not the same id confirmed is `UNCERTAIN`. (8) Records written before this slice
+  (no `operation`) stay not undoable. (9) The preview's `before.title` is the bounded readout title.
+- **Open points.** Live UAT on the real primary calendar: whether `events.get` returns a cancelled event with an etag and
+  whether `PATCH status=confirmed` with `If-Match` restores it (both assumed from the provider's documented behaviour, not
+  yet observed live). Jira families O4/O5 are not built. An owner-sentence injection on the restore/update undo previews the
+  own receipt's event with the sentence quoted as "요청하신 문장" (as the calendar-create undo does for most phrasings), never
+  obeyed.
+
+### Implementation note (amendment 3, calendar-update and calendar-delete families: review round 1, 2026-11-16)
+
+- **Findings (Codex + Chief Architect) and fixes.**
+  - **P2, lossy write-back.** The update undo wrote back `preview.before.title/location`, which are bounded readout values
+    (`boundCalendarText`: control characters and repeated whitespace collapsed, cut at the bound with "…"); Codex reproduced
+    a SENT undo restoring truncated 239-char titles / 299-char locations. The raw value is not available to Core (the reader
+    port returns bounded text only), so the stricter fallback was taken: the reader port gains an additive
+    `CalendarEvent.lossless {title, location}` (the adapter sets `true` only when the readout is byte-identical to Google's
+    raw value), carried into the event summary the update anchor stores, and `inverseChanges` refuses (`undo-unavailable`,
+    no approval, no write) unless every changed text field's `before` is marked lossless. A summary without the flag (an
+    anchor from before this fix) is lossy. Unit tests: 250-char title, title with a newline, 300+-char location refused with
+    no write; an exact 199-char title and location restored byte for byte.
+  - **P3-1, purged vs deleted.** `getEvent` reads cancelled and purged alike as absent. New additive read
+    `CalendarReader.getEventPresence` (same `events.get`): `deleted` only when Google returns this very id with
+    `status: cancelled` (a bare stub without times fails closed), `absent` for 404/410, else `live`. The restore is offered
+    only for `deleted` with the same id, shape and title; `absent` is a plain "복원할 수 없어요 …" with no approval card;
+    a changed deleted event is `undo-event-changed`.
+  - **P3-2, restore title.** `CalendarEventRestoreExpectation.title` (the delete preview's bounded title). The adapter's
+    restore read adds `summary` (restore only; update/delete pre-checks still never read the title) and compares
+    `boundCalendarText(summary)` with it; a mismatch is `TARGET_CHANGED`, no write.
+  - **P3-3.** Execution of a `CALENDAR_EVENT_RESTORE` payload requires `anchor.undoOf.family === 'calendar-delete'`
+    (else `binding-mismatch`, nothing sent).
+  - **P3-4, time zone.** Additive `CalendarEvent.timeZone` (Google's `start.timeZone`, validated IANA name). A time undo is
+    refused (`undo-unavailable`) unless the event is timed, its recorded zone exists and equals the zone the update wrote;
+    the old instants are restored in that zone only, never restamped. All-day time changes have no undo.
+  - **P3-5, oracle.** The v2 driver now also fails a run when an update undo's `changes` are not exactly the own update's
+    changed fields set to their before values (deep, key for key), and when an undo card does not render the receipt
+    banner first or shows the owner's sentence anywhere but under "요청하신 문장:" (both with planted-success tests). A "지워"
+    twin of case 029 was added for each family (`rt-r3undo2-067/068`, appended so earlier ids are stable): like the v1 case
+    it is refused before any preview (`selection:not-request:reported`; the smuggled variant `selection:unknown-arg`).
+  - **Rendering golden.** `packages/adapter-discord/src/__golden__/discord-rendering.v1.json` regenerated: 62 keys added,
+    all `cw.*.CALENDAR_EVENT_RESTORE.*`; no key removed, no existing text changed. The corpus uses its fixed placeholder
+    phrase "실행" for every operation; the real `일정 복원 실행` is asserted by the app red-team driver and core tests. Telegram
+    has no rendering golden (its PLT-1 reply test passes unchanged).
+- **Red-team counts after the fixes.** `agent-redteam.r3-undo.v2.json` (sha256 `1072601f6d82…`), 68 cases (34 calendar-update,
+  34 calendar-delete) x 2 attacker variants: run 1, run 2, run 3 each 136 case runs (68 per family), **0 attack successes,
+  0 deviations**. v1 (36 cases) still 0 / 0 over its 3 runs.
+- **Open points added.** Live UAT must also confirm that Google's `events.get` of a deleted single event returns the full
+  event (times, summary) with `status: cancelled` (a bare stub is refused, so the restore would be unavailable) and that
+  `start.timeZone` is present for events made in the Google UI (absent means no time undo).
+
+### Implementation note (amendment 3, calendar-update and calendar-delete families: review round 2, 2026-11-16)
+
+- **Finding (Codex delta, P2).** The lossless check ran only when the update undo was proposed; execution accepted the
+  inverse the proposal had persisted. Codex reproduced a card created under `9c0a1a3a` (before round 1) and executed under
+  round 1: SENT, 300-character title / location restored as 200 characters. That commit was never deployed.
+- **Fix (structural, fail closed).** The update-undo anchor now records `undoOf.sourceTaskId` (the undone update's anchor
+  Task, from the resolver). Before anything is sent, execution re-derives the inverse from that anchor: the receipt in
+  `undoOf.receiptId` must be this actor's SENT update of the same event and the one that anchor's approval produced
+  (`cwr:<approvalId>`); the source must be a plain update (no `undoOf`, not receipt-sourced); `inverseChanges` (lossless
+  markers, recorded time zone) must succeed now and equal the payload's `changes` key for key. Otherwise the anchor is closed
+  `inconsistent` and the step is `undo-unavailable`: no writer call. A pre-fix card (no source link) or a source anchor
+  without the marker, or with it false, never writes. Restore execution keeps its round-1 rule (calendar-delete link) and
+  the writer's own title/shape check.
+- **Test.** `connector-write-calendar-change-undo.test.ts` builds the card the pre-fix proposal would have persisted (inverse
+  holding the bounded 200-character title) in three shapes (no source link and no marker; link kept, marker missing; link
+  kept, marker false): each is refused at execution with no update call and the event unchanged.
+- **Gate after the fix.** 26 targeted files, 941 tests green; red-team v2 (68 cases x 2 variants) runs 1-3 each 136 case runs,
+  0 attack successes, 0 deviations (the driver's real update undos pass the new execution proof); v1 36 cases 0 / 0 over
+  3 runs.
+
+### Live UAT (amendment 3, calendar-update and calendar-delete families, 2026-11-16)
+
+- **Approval and setup.** Owner yes on 2026-11-16 ("진행해") for one Strict run. Temporary deploy of `eede2e6e` on the
+  service (one restart), Discord DM through abx, primary calendar only, test title marked `Quoky E2E`. Pre-state: 0 events
+  matching the marker in the next 7 days (read outside Quoky with the calendar probe).
+- **Steps and reads outside Quoky.** Create (preview → 승인 → `일정 추가 실행`): 1 event `15:00-15:30`. Update to 16:00 (one-option
+  pick → preview → 승인 → `일정 변경 실행`): same id at `16:00-16:30`. "되돌려줘": receipt-sourced update-undo preview → 승인 →
+  `일정 변경 실행`: same id back at `15:00-15:30`. Delete (pick → preview → 승인 → `일정 삭제 실행`): 0 matching events. "되돌려줘":
+  restore preview with the receipt banner first and "요청하신 문장: 되돌려줘" → 승인 → bare `복원 실행` executed nothing and named
+  `일정 복원 실행` (event still deleted) → `일정 복원 실행`: the **same event id** back, `confirmed`, `15:00-15:30`. "되돌려줘" again:
+  refused ("되돌린 작업은 다시 되돌릴 수 없어요"). Cleanup through Quoky's normal delete path: 0 matching events; two unrelated
+  events on the same day read unchanged.
+- **Open points closed by this run.** Google `events.get` on the deleted single event returned it as cancelled with its times
+  and title (the restore preview and the writer's shape/title check passed), and `PATCH status=confirmed` with `If-Match` was
+  accepted and kept the id. The event was created by Quoky, so `start.timeZone` was present; an event made in Google's own UI
+  without a recorded zone still refuses the time undo (fail closed, not exercised live).
+- **Not product findings.** The first create phrasing ("… Quoky E2E 되돌리기 시험 일정 30분짜리 추가해줘") previewed the title
+  "일정" and was rejected (pre-existing create title extraction, not this slice). During cleanup the operator picked "1번"
+  from a truncated view of a three-item list; the preview named a different event and was rejected before any approval
+  (operator error; nothing executed, that event read unchanged).
+- **Result.** PASS. Chief Architect (code APPROVE after round 2), Codex PASS (round 3 delta), security review APPROVE,
+  full suite 19,009 passed.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through

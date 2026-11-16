@@ -377,7 +377,7 @@ describe('references, questions and the audit line', () => {
   });
 
   it('family OFF through the seam: "되돌려줘" after an approved calendar create answers the family copy exactly as before the undo slices', async () => {
-    setExternalUndoCapabilitiesForTest([]); // the family switched off through the seam (the shipped set is ['calendar-create'] since the 2026-11-03 gate)
+    setExternalUndoCapabilitiesForTest([]); // the family switched off through the seam (the shipped set holds calendar-create since the 2026-11-03 gate)
     onTestFinished(() => setExternalUndoCapabilitiesForTest());
     const w = world({ level: 'local', script: () => out('action.undo') });
     w.setMetadata(LAST_ACTION_METADATA_KEY, withLastAction(undefined, 'owner', { entryId: 'calendar.create', source: 'calendar', itemId: 'receipt-1', at: at(0), undoable: true, undone: false, outcome: 'SENT', anchorTaskId: 'task-1', echoReplyIds: [] }, at(0)));

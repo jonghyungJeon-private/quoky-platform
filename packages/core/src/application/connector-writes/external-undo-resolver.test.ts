@@ -170,7 +170,7 @@ describe('ExternalUndoResolver defence in depth (P3-4): the receipt must be the 
 
   it('refuses a record that is not undoable (a stored flag cannot open it, and the normaliser drops it with the family off)', async () => {
     expect(await resolver({ open: false }).resolve(input(record()))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
-    setExternalUndoCapabilitiesForTest([]); // the off path, through the seam (the shipped set is ['calendar-create'])
+    setExternalUndoCapabilitiesForTest([]); // the off path, through the seam (the shipped set is the three calendar families)
     expect(await resolver().resolve(input(record({ undoable: true })))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
   });
 });
@@ -178,5 +178,38 @@ describe('ExternalUndoResolver defence in depth (P3-4): the receipt must be the 
 describe('the receipt-sourced banner (A6-D4 variant)', () => {
   it('is the fixed sentence naming the receipt as the source of the target', () => {
     expect(CONNECTOR_UNDO_RECEIPT_BANNER).toBe('되돌리기 요청 — 대상은 Quoky가 보낸 기록(영수증)에서 가져왔어요. 문장에서 가져온 대상은 없어요');
+  });
+});
+
+describe('ExternalUndoResolver: amendment 3 calendar-update and calendar-delete families', () => {
+  const families = ['calendar-create', 'calendar-update', 'calendar-delete'] as const;
+  beforeEach(() => setExternalUndoCapabilitiesForTest(families));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+  const build = (operation: 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_DELETE', ref = EVENT_ID, capabilities: readonly ('calendar-create' | 'calendar-update' | 'calendar-delete')[] = families) =>
+    new ExternalUndoResolver({
+      receipts: { findById: async (id, actorId) => [receipt({ operation, target: `primary/${ref}`, data: { externalRef: ref } })].find((row) => row.id === id && row.actorId === actorId) ?? null },
+      tasks: { get: async (id) => (id === 'task-1' ? ({ id, metadata: { anchor: anchor({ operation, target: `primary/${ref}` }) } } as unknown as Task) : null) },
+      readAnchor: (task) => (task.metadata as { anchor?: ConnectorWriteAnchor } | undefined)?.anchor,
+      capabilities,
+    });
+  const input = (operation: string | undefined) => ({
+    session: sessionWith(record({ entryId: 'external.write', ...(operation !== undefined ? { operation: operation as LastActionRecord['operation'] } : {}) })),
+    actor: { id: ACTOR },
+    now: NOW,
+  });
+
+  it('resolves an update record to a calendar-update-undo draft and a delete record to a calendar-delete-undo draft', async () => {
+    expect(await build('CALENDAR_EVENT_UPDATE').resolve(input('CALENDAR_EVENT_UPDATE'))).toMatchObject({ kind: 'resolved', family: 'calendar-update', draft: { kind: 'calendar-update-undo', receiptId: 'receipt-1' } });
+    expect(await build('CALENDAR_EVENT_DELETE').resolve(input('CALENDAR_EVENT_DELETE'))).toMatchObject({ kind: 'resolved', family: 'calendar-delete', draft: { kind: 'calendar-delete-undo', receiptId: 'receipt-1' } });
+    // A changed or deleted event may have any provider id (an instance id included), never a malformed one.
+    expect(await build('CALENDAR_EVENT_UPDATE', 'evt123_20261007T010000Z').resolve(input('CALENDAR_EVENT_UPDATE'))).toMatchObject({ kind: 'resolved' });
+    expect(await build('CALENDAR_EVENT_UPDATE', 'bad id/../x').resolve(input('CALENDAR_EVENT_UPDATE'))).toEqual({ kind: 'nothing-to-undo', reason: 'malformed-ref' });
+  });
+
+  it('a record whose operation does not match the receipt, no operation, or a closed family resolves nothing', async () => {
+    expect(await build('CALENDAR_EVENT_DELETE').resolve(input('CALENDAR_EVENT_UPDATE'))).toEqual({ kind: 'nothing-to-undo', reason: 'receipt-mismatch' });
+    expect(await build('CALENDAR_EVENT_UPDATE').resolve(input(undefined))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
+    expect(await build('CALENDAR_EVENT_UPDATE', EVENT_ID, ['calendar-create']).resolve(input('CALENDAR_EVENT_UPDATE'))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
+    expect(await build('CALENDAR_EVENT_DELETE').resolve(input('CALENDAR_EVENT_RESTORE'))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
   });
 });
