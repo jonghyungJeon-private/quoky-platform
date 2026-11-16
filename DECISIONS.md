@@ -33848,6 +33848,121 @@ wiring, no flag change, no live behaviour change).
   the fix); the P3-3b "locality that changes after selection" test counts the extra read. CA round-1 P3 (an audit recorded
   when the wall ends in the same tick as a final-check refusal) is accepted: it over-reports, the conservative direction.
 
+## ADR-0121 D3/D7 amendment — split M2 calls count, raised run caps (owner 2026-11-16)
+
+- **Status:** Decided by the Product Owner on 2026-11-16. It amends the M2 count of ADR-0121 D3 ("A run makes at most 3 M2
+  calls") and the per-run model-call, wall-time and input bounds of D7. The ratified text above is kept as history; these numbers
+  supersede it. It also settles open P3-3a decision 6 (do split M2 calls count toward the M2 and model-call limits), which the
+  D12 implementation note above carried to the remote batch slice.
+- **Owner's words (verbatim):** "응 권장대로 상한에 넣고 진행해 상한은 좀 높아야 할거 같네? 현재는 로컬 LLM 을 거의 사용하진 않으니까
+  말야". Offered levels, the owner chose "중간 상향 (권장)".
+- **Decision.**
+  1. Every split M2 call of a remote batch (owner answer 3 of 2026-11-03) is an M2 call and a model call, charged on the
+     run's bounds like any other.
+  2. The caps are raised:
+
+     | Bound (per run) | Was | Now |
+     |---|---|---|
+     | M2 calls (D3) | 3 | **6** |
+     | Model calls (D7; planner, re-plan and M2) | 5 | **8** |
+     | Input (D7) | 40k | **120,000 UTF-8 bytes** |
+     | Wall time (D7) | 45 s | **60 s** |
+
+  3. The split in answer 3 ("at most the D3 cap of 3 M2 calls") is bound by what the run has left of these caps, shared with the
+     run's other summary steps: the remaining M2 calls, the remaining model calls and the remaining input bytes.
+- **Unchanged:** at most 6 steps, 1 re-plan, 10 connector queries (the 2026-10-23 interpretation note) and 50 HTTP requests
+  per run; 10 referenced values per run; per actor 30 runs an hour and 150 a day; at most 10 items and one 280-character sentence
+  per item per M2 call (P3-3b #6); a breach ends the run with a deterministic partial reply and no retry.
+- **Reason.** A remote batch needs room: a summary over mail and Drive is at least two calls, and a source over the item cap
+  is more. Split calls count, so the old caps would cut ordinary batches. The owner rarely uses a local LLM today, so remote
+  calls are the common case. The input bound is still the UTF-8 byte bound (2026-11-03 answer 9, step 1). It overcounts Korean
+  2–3×, so 120,000 bytes is roughly 40,000–60,000 tokens of Korean text. It stays until the calibrated estimator of step 2
+  replaces it.
+- **Not decided here:** the grant producer (none exists, so mail and Drive stay listing-only in production), wiring, every
+  `QUOKY_AGENT_MODE` switch and every model-in-the-loop run.
+
+### ADR-0121 S2 implementation note — remote batch M2 summaries and the raised caps (Core, offline, unwired; 2026-11-16, branch `claude/v5-s2-m2-batch`)
+
+- **Status: implemented, not active.** Applies owner answer 3 of 2026-11-03 and the D3/D7 amendment above. There is no
+  composition-root wiring, no flag change and no live behaviour change. No grant producer exists, so in production mail and
+  Drive are still listing-only with no body fetched. No new port, DI token or migration.
+- **Caps (`run-bounds.ts`).** `AGENT_RUN_BOUNDS` is M2 6, model calls 8, input 120,000, wall 60,000 ms; the rest is unchanged.
+  `AgentRunBudget.remainingM2Calls()` answers the smaller of the M2 calls and the model calls left (0 after any breach).
+- **Locality (`deriveM2Localities`).** `REMOTE_ON_SUMMARY_REQUEST` with a valid grant now allows `LOCAL` and `REMOTE` for a batch
+  too. This supersedes the single-item rule. Unchanged:
+  - `HOST_ONLY`: no model;
+  - a grant-needing input without its grant: no model and no `LOCAL` fallback;
+  - an unverifiable label or count: no model;
+  - `LOCAL_MODEL_ONLY`: `LOCAL`;
+  - the grant is still per step, per source and per run, and covers exactly the asked-for items.
+
+  The asked-for count must still be a positive integer.
+- **Planning (`quarantined-summary.ts`, module-private `planQuarantinedCalls`).** The calls are planned up front, before any
+  reservation:
+  - one sealed call per source (each covered read), with at most `AGENT_M2_MAX_ITEMS` items;
+  - a source with more items is split into more calls;
+  - the number of calls stays within `remainingCalls` (the executor passes `remainingM2Calls()`);
+  - the sum of the prompts' UTF-8 bytes stays within `remainingInputTokens`.
+
+  Items are placed in source order while they fit. The first item that does not fit, and every item after it, are omitted. They
+  count in `omitted`, the run is partial, and nothing is a breach: every planned reservation fits, so an ordinary run never
+  trips a sticky breach. If not even one item can be placed (no calls or bytes left), the one-item call is planned and its
+  reservation refuses it, so the bound reports it, as the single call did.
+- **Dispatch.** The provider is selected once per summarize step, under one derived context. The planned calls are launched in
+  one synchronous loop and run in parallel. Each call does its own work in order, with nothing awaited in between:
+  1. the credential check on its final prompt;
+  2. the abort check;
+  3. the dispatch check (a refusal charges nothing);
+  4. its own `reserve` (one M2 or model call plus its bytes);
+  5. its own `onCallStart`;
+  6. the final dispatch check immediately before `provider.execute`, including the round-2 locality re-read after the policy
+     verdict.
+
+  A refused call sends nothing. Its `onCallStart` reader then answers `undefined`, so no audit (and no `REMOTE` audit) is
+  written for it. No call is re-sent, retried or moved to another provider.
+- **Merge.** Each call numbers its own items from 1. The merge maps them to global numbers (1-based, in source order across the
+  step's calls) and sorts by that number, so the result does not depend on the model's entry order or on which call settled
+  first. The merge makes no model call. The label is the join of every covered read, as before.
+- **Partial failure.**
+  - A call that fails (model error, abort, schema, credential) or is refused (`dispatch-refused`, `credential-in-prompt`,
+    `bound`) omits its items.
+  - The step is `summary` if at least one call succeeded.
+  - If every call failed, the step takes the first call's outcome in source order: `failed` with its reason, `listing-only`
+    with its reason, or `bound`.
+- **Shape change.**
+  - `QuarantinedSummaryOutcome` and the executor's summarize `AgentStepResult` carry `audits: readonly QuarantinedCallAudit[]`
+    (one per sent call, in source order) instead of one `audit`. It is required on `ok` and optional on `not-run`, `failed` and
+    `listing-only`, and present only when a call was sent.
+  - On the wall path the executor reads every started call's reader, so a parallel call the wall cuts is still audited.
+  - The assembler shows the one fixed disclosure line when any audit of any summarize step is `REMOTE`. That covers every call
+    of a split batch, including a refused step whose other call was sent.
+  - The executor's log line is unchanged: counts only, with `m2Calls` from the budget.
+- **Tests.**
+  - `quarantined-summary-batch.test.ts` (14, new): parallel dispatch of a 12 + 3 split; sealed per-source prompts; a
+    deterministic merge under reverse settling; one selection and two checks per call; planning by remaining calls and by
+    remaining bytes; executor runs under a lower M2 cap, model cap and input bound with no breach; default caps complete with
+    3 calls; partial and total failure; a locality flip at one call's final check; a policy refusal at one call's first check;
+    a wall that cuts a parallel call; no retry.
+  - `run-bounds.test.ts`: the new values, the model cap binding M2, and `remainingM2Calls`.
+  - The updated P3-3b, D12, executor and assembler tests now expect a granted batch on `REMOTE`, with `audits` lists.
+  - Every new test fails on the code before this slice.
+- **Choices made in this slice (for review).**
+  1. When the caller passes no `remainingCalls` / `remainingInputTokens` (a direct caller, tests), planning has no limit there
+     and each `reserve` is the only gate.
+  2. A `credential-in-prompt` final-prompt hit now refuses that call only, not the whole step.
+  3. The disclosure stays one fixed line per reply rather than one line per call.
+  4. Items are placed as a prefix (the first item that does not fit stops placement), not first-fit, to keep the old fit's
+     shape.
+- **Open (for the owner or the Chief Architect).**
+  - **ADR-0118 D7.** Its text speaks of one explicit item ("`N번 메일 요약해줘`… reads one message body"). The D12 note asked
+    whether a multi-item remote summary needs its own ADR-0118 D7 amendment note. This slice reads owner answer 3 as that
+    explicit widening for the agent path, under a per-step, per-source grant derived from the owner's own words. No grant
+    producer exists, so nothing leaves the host today. The Chief Architect should confirm this reading, or ask for an
+    amendment note, before the grant producer slice.
+  - **Planner charging.** The planner and re-plan calls are not yet charged on the executor's budget (the wiring slice). With M2
+    at most 6 and the planner plus one re-plan at most 2, the 8 model calls cannot be exceeded. `remainingM2Calls()` already
+    accounts for them once they are charged.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112
