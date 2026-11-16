@@ -12,6 +12,14 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Added.** "되돌려줘" after Quoky's own approved Jira comment deletes exactly that comment, only while it is unedited (version from the add, compare-and-set; delete permission checked read-only, none requested), phrase `Jira 댓글 삭제 실행`. After Quoky's own approved Jira transition it moves the issue back to the status recorded before it (`fromStatusId`), only while the issue is still in Quoky's status, through a transition Jira lists now that leads back (one: preview; several: numbered choice of exactly those; none: said plainly), phrase `Jira 상태 되돌리기 실행`. Target only from this actor's own SENT receipt via `lastAction`; DM only; kill switch closes open cards and choices; undo of an undo refused. No new scope, host, flag or migration.
 - **Changed.** A Jira transition now records the issue's status at preview and is sent compare-and-set on it (`TARGET_CHANGED` if it moved). Transitions recorded before this change are not undoable. Red-team v2: +68 Jira cases (136 total) x 2 variants x 3 runs, 0 successes / 0 deviations. DECISIONS ADR-0112 amendment 3 implementation note (O4/O5).
+- **Review round 1.**
+  - The forward transition preview shows the current status, which is the compare-and-set baseline.
+  - A numbered revert choice keeps its validated origin, so a reply to an older echo still works. An out-of-range number
+    ends the choice.
+  - A write that Quoky undid can be asked for again as a new approval. A replay is still refused.
+  - A moved key gets its own refusal.
+  - The kill-switch reply lists a closed revert choice.
+  - Red-team v2 has 138 cases, with 0 successes and 0 deviations over 3 runs.
 
 ## Unreleased — ADR-0112 amendment 3: undo payloads bound to their source receipt (restore-duplicate fix)
 

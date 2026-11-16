@@ -32102,6 +32102,50 @@ and D9 still governs every turn that goes to chat.
   `already-sent`; a payload naming another receipt than its undo link never executes. Red-team v1 (36) and v2 (68) still 0 / 0
   over 3 runs each.
 
+### Implementation note (amendment 3, O4/O5 and restore-duplicate fix: review round 1, 2026-11-16)
+
+Security review APPROVE. Codex and Chief Architect findings fixed in new commits:
+
+- **P2-A (numbered choice lost its origin).** A choice offered on a reply to an older own echo (outside the 10-minute
+  window, inside 30) re-resolved the source from lastAction recency at the pick, without the reply binding, and answered
+  `undo-nothing`. The choice now keeps the origin validated when it was offered (source receipt id and source anchor Task id
+  in `undoOf`). At the pick, `ExternalUndoResolver.revalidate` re-checks the same receipt and anchor: actor, SENT, operation,
+  session, ref shape and approval binding. It does not look at lastAction again. A pinned receipt that was undone in the
+  meantime is `undo-nothing`.
+- **P2-B (out-of-range pick left the choice open).** `invalid-choice` now closes the choice anchor (`abandoned`) before it
+  answers. A later valid number reaches nothing, so no preview is made. Covered by a unit test and red-team case
+  `rt-r3undo2-137` ("3번" then "2번").
+- **P2-C (an undone write asked again was "이미 실행했어요").** Receipts now persist `data.undoes`, which is written at
+  prepare and kept through `complete`. A new repository query, `findSentUndoOf(actorId, receiptId)`, uses
+  `json_extract(data, '$.undoes')` and returns only SENT receipts of the same actor. Before `propose` answers
+  `already-sent`, it checks whether a SENT undo of the matching forward receipt exists. If one does, the request is a new
+  write and gets a new approval. This covers:
+  - a transition A->B, then its revert, then A->B again;
+  - a comment add, then its delete undo, then the same text again;
+  - a calendar create, then its undo, then the same create again.
+
+  Delete -> restore -> delete was already covered by `undoes` in the payload. Still refused:
+  - replaying the same approval (`repeat`);
+  - repeating a write that was not undone (`already-sent`);
+  - an undo payload, which is never exempted.
+- **P3.**
+  - Jira comment delete, new order: permission checks, then a final comment read immediately before the DELETE (edited,
+    other version or other author = `TARGET_CHANGED`). This narrows the TOCTOU window.
+  - Forward transition on a moved key: new refusal `target-changed` ("다른 키로 옮겨졌어요"), not
+    `transition-lookup-failed`.
+  - `fromStatus` with credential material is refused at the forward preview, re-checked at execution, and never shown in a
+    revert preview or choice.
+  - The kill-switch reply lists a closed revert choice ("Jira 상태 되돌리기 선택 — KEY").
+  - The forward transition preview shows "지금 상태: X (상태 ID n)", the compare-and-set baseline.
+- **Evidence.**
+  - Targeted suites: 71 files, 4,668 tests.
+  - Rendering golden: 10 keys added, none changed or removed.
+  - Red-team v2: 138 cases, two new jira-transition cases. `rt-r3undo2-138` replies to a 14-minute-old echo and then sends
+    "1번", which previews.
+  - Results over 3 runs: calendar-update 68, calendar-delete 68, jira-comment 64, jira-transition 76 case runs per run,
+    each with 0 successes and 0 deviations.
+  - v1: 72 case runs x 3, 0 / 0.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
