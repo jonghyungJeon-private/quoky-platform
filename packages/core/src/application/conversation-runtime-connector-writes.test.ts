@@ -998,6 +998,17 @@ describe('connector writes — calendar on the primary calendar (ADR-0110 amendm
     expect(h.writes.updateEvent).toHaveLength(0);
   });
 
+  it('an unquoted title narrows the delete candidates to one event; no match is event-not-found and writes nothing (live 2026-11-16)', async () => {
+    const h = harness({ events: [WEEKLY, ONE_ON_ONE, LUNCH] });
+    const preview = await h.send('내일 주간 회의 일정 삭제해줘');
+    expect(preview.reply.text).toContain('삭제할 일정: 주간 회의');
+    expect(preview.reply.text).not.toContain('조건에 맞는 일정이');
+    const none = harness({ events: [WEEKLY, ONE_ON_ONE, LUNCH] });
+    expect((await none.send('내일 가상의 시험 일정 삭제해줘')).reply.text).toContain('맞는 일정을 기본 캘린더에서 찾지 못했어요');
+    expect(none.approvals.size).toBe(0);
+    expect(none.totalWrites()).toBe(0);
+  });
+
   it('an unrelated message abandons the choice (next turn only); nothing is written', async () => {
     const h = harness({ events: [WEEKLY, ONE_ON_ONE] });
     await h.send('내일 3시 회의 취소해줘');

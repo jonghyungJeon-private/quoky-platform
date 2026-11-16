@@ -260,7 +260,9 @@ function titlePhraseOf(head: string): string | undefined {
   const verb = BOOKING_VERB.exec(head);
   const end = verb?.index ?? head.length;
   let start = 0;
-  for (const pattern of [DAY_WORD_ALL, CLOCK_ALL, RANGE_ALL, DURATION_ALL, ALL_DAY_ALL]) {
+  // The day / clock / range / all-day phrases bound the title phrase from the left. A duration does not: it is cut OUT of
+  // the phrase, so a title written before it ("… 시험 일정 30분짜리 추가해줘") is the owner's residual span too.
+  for (const pattern of [DAY_WORD_ALL, CLOCK_ALL, RANGE_ALL, ALL_DAY_ALL]) {
     pattern.lastIndex = 0;
     for (const match of head.matchAll(pattern)) {
       const matchEnd = (match.index ?? 0) + match[0].length;
@@ -268,14 +270,55 @@ function titlePhraseOf(head: string): string | undefined {
     }
   }
   if (start >= end) return undefined;
-  let phrase = head.slice(start, end).replace(LEADING_LINK, '').replace(/\s*(?:을|를|으로|로)\s*$/u, '').trim();
-  const words = phrase.split(/\s+/u).filter((word) => word.length > 0 && !FILLER.test(word));
-  if (words.length === 0 || !MEETING_NOUN.test(words.join(' '))) return undefined;
+  const segments = head.slice(start, end).replace(DURATION_ALL, '\u0000').split('\u0000');
+  let chosen: string[] | undefined;
+  for (const segment of segments) {
+    const phrase = segment.replace(LEADING_LINK, '').replace(/\s*(?:을|를|으로|로)\s*$/u, '').trim();
+    const words = phrase.split(/\s+/u).filter((word) => word.length > 0 && !FILLER.test(word));
+    if (words.length > 0 && MEETING_NOUN.test(words.join(' '))) chosen = words;
+  }
+  if (chosen === undefined) return undefined;
+  const words = chosen;
   // The generic trailing "일정" is dropped only when another meeting noun remains ("통화 일정" → "통화"). When it is the
   // phrase's only meeting noun the owner's words are kept whole ("Quoky E2E 테스트 일정", live UAT 2026-11-03; "중요한
   // 일정", not the bare modifier "중요한").
   if (words.length > 1 && words[words.length - 1] === '일정' && MEETING_NOUN.test(words.slice(0, -1).join(' '))) words.pop();
   return words.join(' ');
+}
+
+const GENERIC_NOUN_TOKEN = new RegExp(`^${MEETING_NOUN.source}$`, 'u');
+
+/**
+ * Title words of an UNQUOTED update / delete reference: the owner's residual words of the clause once the grammar's own
+ * day / clock / range / duration / all-day matches are cut out. A single-character leftover (a stranded particle such
+ * as "에", a deictic "그"), a filler and a bare generic meeting noun are not title words; one trailing object particle
+ * ("을" / "를") of the last token is dropped as `titlePhraseOf` does. Other postpositions are NOT stripped (no new list):
+ * a word that then misses the event title gives a safe `event-not-found`, never a broader set. Only for a reference that
+ * names a day: an undated one keeps resolving against the session's recent context ("방금 그 … 취소해줘").
+ */
+function residualTitleWords(part: string): string[] {
+  let rest = part;
+  for (const pattern of [RANGE_ALL, CLOCK_ALL, DURATION_ALL, ALL_DAY_ALL, DAY_WORD_ALL]) rest = rest.replace(pattern, ' ');
+  const tokens = rest.split(/[\s,，]+/u).filter((token) => token.length > 0);
+  // Whatever the read grammar's own `extractSpan` (via `namesDay`) or this grammar's clock / duration matchers recognize
+  // is a time expression, never a title word: a single token first, then two- and three-token windows made only of
+  // still-unrecognized tokens ("다음 주"), so a title word next to a day word is never swallowed.
+  const timeLike = tokens.map((token) => namesDay(token) || CLOCK_RE.test(token) || DURATION_RE.test(token) || ALL_DAY.test(token));
+  for (const size of [2, 3]) {
+    for (let i = 0; i + size <= tokens.length; i += 1) {
+      if (timeLike.slice(i, i + size).some(Boolean)) continue;
+      if (namesDay(tokens.slice(i, i + size).join(' '))) for (let j = i; j < i + size; j += 1) timeLike[j] = true;
+    }
+  }
+  const last = tokens.length - 1;
+  const words: string[] = [];
+  tokens.forEach((token, index) => {
+    if (timeLike[index]) return;
+    const word = index === last ? token.replace(/(?:을|를)$/u, '') : token;
+    if (Array.from(word).length < 2 || FILLER.test(word) || GENERIC_NOUN_TOKEN.test(word)) return;
+    words.push(word.toLowerCase());
+  });
+  return words;
 }
 
 /** Whether the text names a day at all (`extractSpan` defaults to today when it does not). */
@@ -297,7 +340,12 @@ function referenceOf(part: string, options: CalendarWriteGrammarOptions): Calend
     date: toLocal(date),
     window: { from: window.from, to: window.to },
     ...(startTime !== undefined ? { startTime } : {}),
-    titleWords: quoted === undefined ? [] : quoted.toLowerCase().split(/\s+/u).filter((w) => w.length > 0),
+    titleWords:
+      quoted !== undefined
+        ? quoted.toLowerCase().split(/\s+/u).filter((w) => w.length > 0)
+        : namesDay(part)
+          ? residualTitleWords(part)
+          : [],
     ...(namesDay(part) ? {} : { inferredDay: true as const }),
   };
 }
