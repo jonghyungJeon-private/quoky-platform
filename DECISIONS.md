@@ -31893,6 +31893,47 @@ and D9 still governs every turn that goes to chat.
   own receipt's event with the sentence quoted as "요청하신 문장" (as the calendar-create undo does for most phrasings), never
   obeyed.
 
+### Implementation note (amendment 3, calendar-update and calendar-delete families: review round 1, 2026-11-16)
+
+- **Findings (Codex + Chief Architect) and fixes.**
+  - **P2, lossy write-back.** The update undo wrote back `preview.before.title/location`, which are bounded readout values
+    (`boundCalendarText`: control characters and repeated whitespace collapsed, cut at the bound with "…"); Codex reproduced
+    a SENT undo restoring truncated 239-char titles / 299-char locations. The raw value is not available to Core (the reader
+    port returns bounded text only), so the stricter fallback was taken: the reader port gains an additive
+    `CalendarEvent.lossless {title, location}` (the adapter sets `true` only when the readout is byte-identical to Google's
+    raw value), carried into the event summary the update anchor stores, and `inverseChanges` refuses (`undo-unavailable`,
+    no approval, no write) unless every changed text field's `before` is marked lossless. A summary without the flag (an
+    anchor from before this fix) is lossy. Unit tests: 250-char title, title with a newline, 300+-char location refused with
+    no write; an exact 199-char title and location restored byte for byte.
+  - **P3-1, purged vs deleted.** `getEvent` reads cancelled and purged alike as absent. New additive read
+    `CalendarReader.getEventPresence` (same `events.get`): `deleted` only when Google returns this very id with
+    `status: cancelled` (a bare stub without times fails closed), `absent` for 404/410, else `live`. The restore is offered
+    only for `deleted` with the same id, shape and title; `absent` is a plain "복원할 수 없어요 …" with no approval card;
+    a changed deleted event is `undo-event-changed`.
+  - **P3-2, restore title.** `CalendarEventRestoreExpectation.title` (the delete preview's bounded title). The adapter's
+    restore read adds `summary` (restore only; update/delete pre-checks still never read the title) and compares
+    `boundCalendarText(summary)` with it; a mismatch is `TARGET_CHANGED`, no write.
+  - **P3-3.** Execution of a `CALENDAR_EVENT_RESTORE` payload requires `anchor.undoOf.family === 'calendar-delete'`
+    (else `binding-mismatch`, nothing sent).
+  - **P3-4, time zone.** Additive `CalendarEvent.timeZone` (Google's `start.timeZone`, validated IANA name). A time undo is
+    refused (`undo-unavailable`) unless the event is timed, its recorded zone exists and equals the zone the update wrote;
+    the old instants are restored in that zone only, never restamped. All-day time changes have no undo.
+  - **P3-5, oracle.** The v2 driver now also fails a run when an update undo's `changes` are not exactly the own update's
+    changed fields set to their before values (deep, key for key), and when an undo card does not render the receipt
+    banner first or shows the owner's sentence anywhere but under "요청하신 문장:" (both with planted-success tests). A "지워"
+    twin of case 029 was added for each family (`rt-r3undo2-067/068`, appended so earlier ids are stable): like the v1 case
+    it is refused before any preview (`selection:not-request:reported`; the smuggled variant `selection:unknown-arg`).
+  - **Rendering golden.** `packages/adapter-discord/src/__golden__/discord-rendering.v1.json` regenerated: 62 keys added,
+    all `cw.*.CALENDAR_EVENT_RESTORE.*`; no key removed, no existing text changed. The corpus uses its fixed placeholder
+    phrase "실행" for every operation; the real `일정 복원 실행` is asserted by the app red-team driver and core tests. Telegram
+    has no rendering golden (its PLT-1 reply test passes unchanged).
+- **Red-team counts after the fixes.** `agent-redteam.r3-undo.v2.json` (sha256 `1072601f6d82…`), 68 cases (34 calendar-update,
+  34 calendar-delete) x 2 attacker variants: run 1, run 2, run 3 each 136 case runs (68 per family), **0 attack successes,
+  0 deviations**. v1 (36 cases) still 0 / 0 over its 3 runs.
+- **Open points added.** Live UAT must also confirm that Google's `events.get` of a deleted single event returns the full
+  event (times, summary) with `status: cancelled` (a bare stub is refused, so the restore would be unavailable) and that
+  `start.timeZone` is present for events made in the Google UI (absent means no time undo).
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through

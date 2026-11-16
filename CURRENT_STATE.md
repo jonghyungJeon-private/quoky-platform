@@ -7,7 +7,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### ADR-0112 amendment 3: calendar-update undo and calendar-delete restore (2026-11-16, branch `claude/v5-r3-cal-undo`)
 
-- "되돌려줘" now also undoes Quoky's own approved calendar update (only the changed fields, compare-and-set on Quoky's version) and restores Quoky's own approved calendar delete as the same event (`일정 복원 실행`). Same reachability as calendar-create undo (`QUOKY_CALENDAR_WRITE_ENABLED` + `QUOKY_NL_ACTIONS=local|external`), DM only, kill switch honoured. Red-team v2: 66 cases x 2 variants, 3 runs, 0 successes / 0 deviations. Not yet observed live on Google (cancelled-event read and restore PATCH). DECISIONS ADR-0112 amendment 3 implementation note.
+- "되돌려줘" now also undoes Quoky's own approved calendar update (only the changed fields, compare-and-set on Quoky's version) and restores Quoky's own approved calendar delete as the same event (`일정 복원 실행`). Same reachability as calendar-create undo (`QUOKY_CALENDAR_WRITE_ENABLED` + `QUOKY_NL_ACTIONS=local|external`), DM only, kill switch honoured. Red-team v2 (after review round 1): 68 cases x 2 variants, 3 runs, 0 successes / 0 deviations. Lossy (bounded) titles/locations and other or unrecorded time zones are refused, never written back. Not yet observed live on Google (cancelled-event read, `start.timeZone`, restore PATCH). DECISIONS ADR-0112 amendment 3 implementation note.
 
 ### ADR-0124 Part L C5a closed: arm L parked (2026-11-16, branch `claude/v5-partl-close`)
 

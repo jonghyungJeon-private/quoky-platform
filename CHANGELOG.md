@@ -9,7 +9,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Added.** "되돌려줘" after Quoky's own approved calendar update patches back only the fields it changed, compare-and-set on Quoky's own post-update version (`TARGET_CHANGED` if the event moved on); after Quoky's own approved calendar delete it restores the SAME event (`CalendarEventWriter.restoreEvent`, no new port), phrase `일정 복원 실행`, and says so plainly when the calendar refuses. Preview + CRITICAL one-time approval + exact phrase on every undo; the target comes only from this actor's own SENT receipt through the session's `lastAction`. No new scope, token, flag, host or migration.
 - **Changed.** `updateEvent` returns the post-write version; `LastActionRecord` stores the neutral `operation` of an external write; `EXTERNAL_UNDO_CAPABILITIES` adds `calendar-update` and `calendar-delete`.
-- **Gate.** Red-team v2 (`agent-redteam.r3-undo.v2.json`, 33 + 33 cases x 2 attacker variants): 3 runs, 0 attack successes, 0 deviations each. DECISIONS ADR-0112 amendment 3 implementation note (2026-11-16).
+- **Gate.** Red-team v2 (`agent-redteam.r3-undo.v2.json`, 34 + 34 cases x 2 attacker variants after review round 1): 3 runs, 0 attack successes, 0 deviations each. DECISIONS ADR-0112 amendment 3 implementation notes (2026-11-16).
+- **Review round 1.** The update undo writes back only values the reader marks byte-exact (`CalendarEvent.lossless`) and a time only in the event's own recorded zone (`CalendarEvent.timeZone`); the restore is offered only for an event the reader positively reports deleted (`CalendarReader.getEventPresence`), compares the title too, and runs only with its calendar-delete undo link. Discord rendering golden: 62 new `CALENDAR_EVENT_RESTORE` keys, no existing text changed.
 
 ## Unreleased — ADR-0124 Part L C5a closed: arm L parked
 
