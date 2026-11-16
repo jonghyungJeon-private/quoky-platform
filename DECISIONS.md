@@ -34313,6 +34313,68 @@ wiring, no flag change, no live behaviour change).
   5. The open rule question (the summary word as the predicate of the owner's clause) stays as recorded in round 1 item 6.
   - Every round-2 fix test failed on the code before it and passes after, except the quote-swallowing URL input (already no
     grant in its tested form) and the plain-request pins; only targeted tests ran.
+- **Review round 3 (CA APPROVE with P2/P3 hardening notes; Codex 3 × P1, all marker-class gaps; final hardening round;
+  2026-11-16).** The closed classes are generalised, not extended case by case (`summary-grant.ts`).
+  - **Findings.**
+    - Codex P1s (each reproduced to a mock remote dispatch): a numeric host (`127.0.0.1:8080/요약`), a `+++` divider, and a
+      hyphenated header label (`Original-Message:`).
+    - CA P3s: zero-width characters inside `Fwd:`, a host and a divider; colon lookalikes (U+2236, U+A789, U+02F8, U+05C3);
+      dividers `═══`, `#####`, a whole-line `.....` and `〜〜〜`; quote glyphs (U+02DD, U+2E42, U+1F676–8, U+05F4,
+      U+02CA–B); a Cyrillic TLD and IP shapes.
+    - CA P2: chat-app copy framing (`[김팀장] [오후 3:30] …`, Slack/Discord `name — time` lines).
+  - **The generalised rules.** Each is checked on four forms of the text: as written, NFKC, with every `\p{Cf}` (zero-width
+    and direction marks) removed, and both.
+    - **Where the rules read.** The gate reads the prepared text with its line breaks kept, minus the `[files: N]` line the
+      preparation appends (`nlPreparedWithoutFilesLine`). Line-start rules therefore read real lines; no sentence-boundary
+      approximation is needed.
+    - **Quote glyphs.** Every `\p{Pi}`, `\p{Pf}`, `\p{Ps}`, `\p{Pe}`, ASCII quotes and apostrophe, backtick, acute accent,
+      primes, the modifier-letter quotes and accents, Hebrew geresh and gershayim, and dingbat and ornamental quotes.
+      - **Judgement:** ASCII `( ) [ ] { }` are not markers. Owners use them in ordinary prose ("(오늘 것)"). A bracketed chat
+        speaker or time is the chat-frame rule's job, and a pasted structure is `withoutStructures`'.
+      - Fullwidth `（ ）` and every CJK bracket are markers.
+    - **URL and host shapes.**
+      - `://` (with any colon-like and slash form) or `www.`.
+      - A whitespace-free token with a dot or a colon before a slash.
+      - A dotted IPv4.
+      - A dotted host whose TLD is any two or more letters in any script.
+    - **Divider.** A run of 3 or more of the same `\p{P}` or `\p{S}` character, at most one space apart.
+      - Emphasis runs of `. ~ 〜 … ! ?` and emoji count only on a line holding nothing else, so `요약해줘~~~`, `요약해줘...`,
+        `!!!` and `🙏🙏🙏` grant.
+    - **Header.**
+      - At a line start: a label of up to three tokens (`[\p{L}\p{N}_-]`) whose last token holds a letter and is
+        immediately followed by a colon-like character. A time (`3:30`) holds no letter.
+      - Anywhere: a 1–3 letter Latin, Cyrillic or Greek token immediately followed by one. `ok :)` and `pls :)` have a space
+        first.
+      - Colon-like characters: `:` `：` `∶` `꞉` `˸` `׃` `﹕` `︓` `︰` `⁚` `܃` `܄` `᠄` `⦂` `ː`.
+    - **Chat-copy framing at a line start.**
+      - `[x] [`, or a bracketed clock.
+      - `name — … clock`: an em dash, en dash or horizontal bar, with a clock in the next words.
+      - `name, [ … clock … ]`.
+  - **Tests** (`summary-grant.test.ts`).
+    - Each round-3 input gives no grant and is a marker. All 26 failed on the round-2 gate.
+    - These still grant: `최근 메일 3개 요약해줘`, `메일 요약해줘~~~`, `메일 요약해줘...`, `!!! ???`, `🙏🙏🙏`, `ok :)`, `pls :)`, `3:30`,
+      `오후 3:30`, `3~5개`, `(오늘 것)`, and a message with attachments. The round-2 gate wrongly blocked 4 of these:
+      `~~~`, `ok :)`, `pls :)` and `오후 3:30`.
+  - **CA test gaps closed** (`agent-run-service-active.test.ts`). These cover round-2 behaviour, so they pass on it.
+    - A hung `router.select` and a hung second switch read in `runPlanned` each end `bound` at the wall, and a follow-up run is
+      then admitted and completes.
+    - The service's shutdown signal has no listener after a full run and a run cut at the wall.
+  - **Residuals (fail-closed false positives, accepted).** The summary is listing-only for that message when the owner's own
+    request contains any of these:
+    - a contraction ("it's", "don't");
+    - a quoted word, or any CJK or fullwidth bracket;
+    - any URL, host or IP;
+    - a glued sentence such as `emails.Thanks` or `확인했어.요약해줘` (read as a dotted host);
+    - `***중요***`, `^^^`, `---` or any 3-run of a non-emphasis symbol;
+    - a line-start label (`조건: …`), or `요약해줘:)` (colon glued to the label);
+    - a short Latin token glued to a colon (`PS:`);
+    - an em-dash line with a clock (`메일 — 3:30 이후`);
+    - a `[x] [y]` line opening.
+  - **Residuals (not caught).**
+    - Pasted prose with no marker at all, and noun uses of the summary word. This is the open owner question of round 1
+      item 6: whether the summary word must be the predicate of the owner's own clause.
+    - `Fwd :` with a space before the colon, mid-line.
+    - A Hangul-jamo run used as a divider (`ㅡㅡㅡ`). Jamo runs are not marked because `ㅋㅋㅋ`/`ㅎㅎㅎ` are ordinary laughter.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
