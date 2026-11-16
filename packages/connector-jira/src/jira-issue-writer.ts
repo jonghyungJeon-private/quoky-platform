@@ -342,8 +342,9 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
 
   /**
    * Deletes exactly the comment Quoky added, only while it is still the same unedited comment. Jira has no conditional
-   * (If-Match) delete, so the re-read of the comment immediately before the single DELETE is the compare-and-set:
-   * a comment edited in the (small) window between that read and the DELETE cannot be detected.
+   * (If-Match) delete, so the compare-and-set is a re-read of the comment immediately before the single DELETE. Review round 1
+   * (P3): the slower checks (identity, permission) run first, then the final comment read, then the DELETE at once, so the
+   * window in which an edit cannot be detected is one read wide.
    */
   async deleteComment(request: IssueCommentDeleteRequest): Promise<ConnectorWriteOutcome> {
     if (!this.client.allowsIssue(request?.issueKey)) return connectorWriteNotSent('TARGET_NOT_ALLOWED');
@@ -353,18 +354,22 @@ export class JiraIssueCommentWriter implements IssueCommentWriter {
     const drifted = await this.client.confirmIssueKey(request.issueKey);
     if (drifted !== undefined) return drifted;
 
-    let comment: Awaited<ReturnType<JiraWriteClient['readComment']>>;
-    let deletable: boolean;
     try {
-      comment = await this.client.readComment(request.issueKey, request.commentId);
-      if (comment === undefined) return connectorWriteNotSent('NOT_FOUND');
-      deletable = await this.client.canDeleteComment(request.issueKey, comment.authorAccountId);
+      // The permission depends on the comment's author: one read for it, then the read-only permission check.
+      const first = await this.client.readComment(request.issueKey, request.commentId);
+      if (first === undefined) return connectorWriteNotSent('NOT_FOUND');
+      if (!first.unedited || first.version !== request.expected.version) return connectorWriteNotSent('TARGET_CHANGED');
+      if (!(await this.client.canDeleteComment(request.issueKey, first.authorAccountId))) return connectorWriteNotSent('FORBIDDEN');
+      // The final compare-and-set read, immediately before the DELETE.
+      const last = await this.client.readComment(request.issueKey, request.commentId);
+      if (last === undefined) return connectorWriteNotSent('NOT_FOUND');
+      if (!last.unedited || last.version !== request.expected.version || last.authorAccountId !== first.authorAccountId) {
+        return connectorWriteNotSent('TARGET_CHANGED');
+      }
     } catch (error) {
       // A pre-check read failed: the delete itself was never sent.
       return connectorWriteNotSent(notSentReasonOf(error));
     }
-    if (!comment.unedited || comment.version !== request.expected.version) return connectorWriteNotSent('TARGET_CHANGED');
-    if (!deletable) return connectorWriteNotSent('FORBIDDEN');
 
     const sent = await this.client.write(
       this.client.issueUrl(request.issueKey, `/comment/${encodeURIComponent(request.commentId)}`),

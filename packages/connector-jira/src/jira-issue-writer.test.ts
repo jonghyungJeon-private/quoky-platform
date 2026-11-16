@@ -473,9 +473,15 @@ describe('JiraIssueCommentWriter O4: version, inspectComment, deleteComment', ()
   });
 
   it('deleteComment sends exactly one DELETE to the comment path and returns SENT with the comment id', async () => {
-    const fake = fakeFetch(issue('PROJ-7'), comment(), perms(false, true), new Response(null, { status: 204 }));
+    const fake = fakeFetch(issue('PROJ-7'), comment(), perms(false, true), comment(), new Response(null, { status: 204 }));
     const outcome = await new JiraIssueCommentWriter(config(fake.fetchImpl)).deleteComment(DELETE_REQUEST);
     expect(outcome).toEqual({ status: 'SENT', externalRef: '10042' });
+    // Review round 1 (P3): permission first, then the final comment read, then the DELETE at once.
+    expect(fake.calls.map((call) => `${call.init?.method ?? 'GET'} ${new URL(call.url).pathname}`).slice(-3)).toEqual([
+      'GET /rest/api/3/mypermissions',
+      `GET ${new URL(COMMENT_URL).pathname}`,
+      `DELETE ${new URL(COMMENT_URL).pathname}`,
+    ]);
     const deletes = fake.calls.filter((call) => call.init?.method === 'DELETE');
     expect(deletes).toHaveLength(1);
     expect(deletes[0]!.url).toBe(COMMENT_URL);
@@ -531,8 +537,17 @@ describe('JiraIssueCommentWriter O4: version, inspectComment, deleteComment', ()
     expect(await run(comment(), json(200, {}))).toEqual(NOT_SENT('UNAVAILABLE'));
   });
 
+  it('review round 1 (P3): a comment edited or gone after the permission check (the final read) is never deleted', async () => {
+    const edited = fakeFetch(issue('PROJ-7'), comment(), perms(false, true), comment({ updated: '2026-11-16T10:09:00.000+0900' }));
+    expect(await new JiraIssueCommentWriter(config(edited.fetchImpl)).deleteComment(DELETE_REQUEST)).toEqual(NOT_SENT('TARGET_CHANGED'));
+    expect(edited.calls.some((call) => call.init?.method === 'DELETE')).toBe(false);
+    const gone = fakeFetch(issue('PROJ-7'), comment(), perms(false, true), json(404, {}));
+    expect(await new JiraIssueCommentWriter(config(gone.fetchImpl)).deleteComment(DELETE_REQUEST)).toEqual(NOT_SENT('NOT_FOUND'));
+    expect(gone.calls.some((call) => call.init?.method === 'DELETE')).toBe(false);
+  });
+
   it('deleteComment: DELETE 404 is NOT_FOUND, 500 is UNCERTAIN, and a thrown request is classified by the guard', async () => {
-    const pre = (): Reply[] => [issue('PROJ-7'), comment(), perms(false, true)];
+    const pre = (): Reply[] => [issue('PROJ-7'), comment(), perms(false, true), comment()];
     const notFound = fakeFetch(...pre(), json(404, {}));
     expect(await new JiraIssueCommentWriter(config(notFound.fetchImpl)).deleteComment(DELETE_REQUEST)).toEqual(NOT_SENT('NOT_FOUND'));
     const serverError = fakeFetch(...pre(), json(500, {}));
