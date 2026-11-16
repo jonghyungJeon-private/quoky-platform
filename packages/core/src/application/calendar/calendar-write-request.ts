@@ -174,14 +174,13 @@ function fieldsOf(text: string): { head: string; timeText: string; title?: strin
     if (key === '제목' && match[2] === undefined && !/[:：]/u.test(match[0]) && !/^[\s]*["“'‘「『]/u.test(raw)) {
       // A BARE label's value: only a trailing run of whole time / duration tokens is cut (as the unlabelled title does),
       // and that run is still read as the event's time. A label with a particle or colon keeps its value verbatim.
-      // The request ending and the trailing time run are peeled alternately ("… 잡아줘 내일 오후 3시에"), until stable.
-      let rest = raw;
-      for (;;) {
-        const request = stripTrailingRequest(rest);
-        const cut = withoutTrailingTime(request);
-        timeText += ` ${request.slice(cut.length)}`;
-        if (cut === rest) break;
-        rest = cut;
+      // The request ending, then the trailing time run; and, only when a time run was cut, at most ONE more booking
+      // request ("… 잡아줘 내일 오후 3시에"). Never a generic "-해줘" ending, never repeated.
+      const request = stripTrailingRequest(raw);
+      let rest = withoutTrailingTime(request);
+      if (rest.length < request.length) {
+        timeText += ` ${request.slice(rest.length)}`;
+        rest = rest.replace(BOOKING_REQUEST_END, '').replace(/[\s,，]+$/u, '');
       }
       value = stripQuotes(rest);
     } else {
@@ -298,6 +297,11 @@ function parseCreate(text: string, options: CalendarWriteGrammarOptions): Connec
  * participle inside the title ("넣어둔 제목 정리 회의") is not the verb.
  */
 const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)(?=\s*(?:줘|주세요|줄래|주실래요|줄\s*수)|\s*[.!~?]*$)/u;
+/** One booking request ending as the existing `BOOKING_VERB` knows it ("으로 잡아줘", "추가해 줘"). */
+const BOOKING_REQUEST_END = new RegExp(
+  String.raw`\s*(?:(?:으로|로)\s*)?${BOOKING_VERB.source}\s*(?:줘|주세요|줄래|주실래요)?\s*[.!~]*$`,
+  'u',
+);
 const DAY_WORD_ALL = new RegExp(DAY_WORD, 'gu');
 const CLOCK_ALL = new RegExp(CLOCK, 'gu');
 const RANGE_ALL = new RegExp(RANGE_RE.source, 'gu');

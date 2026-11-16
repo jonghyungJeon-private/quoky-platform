@@ -17085,6 +17085,11 @@ OPS-2b merge (no-bypass extraction).
     on main, where every labelled title is verbatim). The trailing-run cut only accepts a link particle attached to its
     time phrase, not a spaced "동안". Fails closed: the preview shows the exact title and time and the approval is exact.
 
+- **Review round 4** (Codex P2 on the round-3 fix): the alternating peel truncated title content ("제목 구해줘 30분짜리" gave
+  "구"). Now bounded: request ending, trailing time run, then at most ONE more request ending recognised by the existing
+  `BOOKING_VERB` (with the shared link particles), only when a time run was cut; no fixpoint loop, no generic -해줘 peel.
+  Tests: "구해줘" keeps its title with 30 minutes; "제목 QA 일정으로 잡아줘 내일 오후 3시에" still gives "QA 일정".
+
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
 - **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase

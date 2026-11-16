@@ -207,9 +207,11 @@ describe('field labels are structural, not words (v5 title-grammar residual)', (
     }
   });
 
-  it('a bare label value peels the request ending and the trailing time run alternately (review round 3)', () => {
+  it('a bare label value peels the trailing time run, then at most one booking request (review rounds 3-4)', () => {
     expect(draftOf('제목 QA 일정으로 잡아줘 내일 오후 3시에')).toEqual({ title: 'QA 일정', time: HOUR });
     expect(draftOf('제목 QA 일정으로 잡아줘 내일 오후 3시에 30분짜리')).toEqual({ title: 'QA 일정', time: HALF });
+    // A generic -해줘 ending inside the title is title content, never peeled.
+    expect(draftOf('내일 오후 3시에 일정 잡아줘 제목 구해줘 30분짜리')).toEqual({ title: '구해줘', time: HALF });
   });
 
   it('a participle before the title is not the booking verb', () => {
