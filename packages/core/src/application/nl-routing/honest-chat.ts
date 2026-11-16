@@ -151,19 +151,25 @@ export interface HonestChatOptions {
    */
   readonly ownerMessage?: string;
   /**
-   * Live DM 2026-11-16: how Core's grammar path reads a span sent alone (see {@link NlGrammarClaimOf}). With it, a
-   * stale-command phrase inside the payload of another command the grammar runs (a Jira comment that mentions
-   * "되돌리기") is the owner's content, not that family's command, and the command line stays. Absent: unchanged.
+   * Live DM 2026-11-16: the exact command and free-text payload Core's grammar extracts from a span sent alone (see
+   * {@link NlCommandPayloadOf}). With it, a stale-command phrase inside that payload (a Jira comment that mentions
+   * "되돌리기") is the owner's content, not that family's command, and the command stays. Absent: unchanged.
    */
-  readonly claimOf?: NlGrammarClaimOf;
+  readonly payloadOf?: NlCommandPayloadOf;
+}
+
+/** A command the grammar runs with owner text in it: its exact identity (kind and target) and the payload it extracted. */
+export interface NlCommandPayload {
+  readonly command: string;
+  readonly payload: string;
 }
 
 /**
- * Live DM 2026-11-16: how Core's grammar path would answer `span` sent alone in a DM, as a claim signature (which grammar
- * answers it, under which surface groups), or `undefined` when no grammar answers it (the chat model would). The runtime
- * supplies it from the same pure probes as the B1 quote check (`nlGrammarRuns`). Pure, never throws.
+ * Live DM 2026-11-16 (review round 1): the exact command and free-text payload of `span` sent alone in a DM, from the
+ * parser that runs it, or `undefined` when no payload-carrying grammar runs it (a keyword intent, a control phrase, a
+ * command without free text, an unbound writer). Supplied by the runtime. Pure, never throws.
  */
-export type NlGrammarClaimOf = (span: string) => string | undefined;
+export type NlCommandPayloadOf = (span: string) => NlCommandPayload | undefined;
 
 /**
  * Live DM test 2026-10-20: the chat model, asked about "에이전트 재", said there is no command to resume the agent. While
@@ -286,9 +292,9 @@ export function guardStaleActionCommands(
   entries: readonly NlCatalogEntry[],
   language: 'ko' | 'en',
   ownerMessage?: string,
-  claimOf?: NlGrammarClaimOf,
+  payloadOf?: NlCommandPayloadOf,
 ): FalseIncapabilityGuardResult {
-  return removeActionReplySentences(text, entries, language, true, ownerMessage, claimOf);
+  return removeActionReplySentences(text, entries, language, true, ownerMessage, payloadOf);
 }
 
 /**
@@ -418,71 +424,97 @@ const SENTENCE_SPLIT = /((?<=[.!?。？])\s+|\n+)/u;
 
 /** A neutral one-letter stand-in for a stale-phrase match when probing a command span (a payload never becomes empty). */
 const PAYLOAD_PROBE = 'x';
+/** A code-fence marker line. */
+const FENCE_LINE = /^\s*```/u;
+
+/** Live DM 2026-11-16 (review round 1): one line of a reply with its place in the text and whether a fence holds it. */
+interface ReplyLine {
+  readonly start: number;
+  readonly text: string;
+  readonly fenced: boolean;
+}
+
+/** The line of `text` that holds offset `at`; `fenced` when it sits between fence markers (a marker line is not). */
+function lineAt(text: string, at: number): ReplyLine {
+  const start = text.lastIndexOf('\n', at - 1) + 1;
+  const end = text.indexOf('\n', at);
+  const line = text.slice(start, end === -1 ? text.length : end);
+  const markers = text.slice(0, start).split('\n').filter((before) => FENCE_LINE.test(before)).length;
+  return { start, text: line, fenced: markers % 2 === 1 && !FENCE_LINE.test(line) };
+}
 
 /**
- * Live DM 2026-11-16: whether the stale-command match at [start, end) of `line` lies in the free payload of another command
- * the grammar runs. Some command span of the line (one of its quote / inline-code spans, or the whole line) holds the
- * match, the grammar answers that span, and it answers it the SAME way with the match replaced by a neutral letter: the
- * phrase is then the owner's content (a Jira comment that mentions "되돌리기"), not the family's own command. A match the
- * command needs ("완료 처리: 2", the bare "되돌리기", "할 일 추가: …") changes or ends the grammar's reading and stays a
- * stale quote, as does a match outside every answered span. Spans over the B1 bound are never commands (fail closed).
- * Structure only: the grammar's own probes decide, no phrase list of this guard's own. Pure.
+ * Live DM 2026-11-16 (review round 1): a line that shows a command: a line inside a code fence, or a line that is exactly one
+ * quote / inline-code span with at most trailing punctuation. Layout only; prose around a span makes it a sentence.
  */
-function inPayloadOfCommand(line: string, start: number, end: number, claimOf: NlGrammarClaimOf): boolean {
+function isShownCommandLine(line: ReplyLine): boolean {
+  if (line.fenced) return line.text.trim().length > 0;
+  const trimmed = line.text.trim().replace(/[.!?。？…~:：]+$/u, '');
+  const spans = [...trimmed.matchAll(QUOTE_SPAN)];
+  return spans.length === 1 && spans[0]?.index === 0 && (spans[0]?.[0].length ?? 0) === trimmed.length;
+}
+
+/**
+ * Live DM 2026-11-16, narrowed by review round 1: whether the stale-command match at [start, end) of `line` lies in the
+ * free payload of a command Core's grammar runs. The candidate spans are the line's quote / inline-code spans and, only
+ * for a fenced line, the line itself. A span counts when the payload grammar runs it (`payloadOf`: a Jira comment or a
+ * Slack post with a bound writer), the match sits inside the payload it extracted (never the command head), and the same
+ * span with the match replaced by a neutral letter is the SAME command with exactly that payload change. Anything else
+ * (a keyword intent, a control phrase, an A6 family's own command, a span over the B1 bound, a throwing probe) leaves the
+ * match a stale quote: fail closed. No phrase list of this guard's own. Pure.
+ */
+function inPayloadOfCommand(line: ReplyLine, start: number, end: number, payloadOf: NlCommandPayloadOf): boolean {
   const spans: Array<{ readonly from: number; readonly to: number }> = [];
-  for (const match of line.matchAll(QUOTE_SPAN)) {
+  for (const match of line.text.matchAll(QUOTE_SPAN)) {
     const inner = match.slice(1, 6).find((group) => typeof group === 'string');
     // Every opening mark QUOTE_SPAN knows is one UTF-16 unit long.
     if (inner !== undefined && match.index !== undefined) spans.push({ from: match.index + 1, to: match.index + 1 + inner.length });
   }
-  spans.push({ from: 0, to: line.length });
-  const claim = (span: string): string | undefined => {
-    const command = span.trim();
-    if (command.length === 0 || command.length > QUOTE_SPAN_MAX_CHARS) return undefined;
+  if (line.fenced) spans.push({ from: 0, to: line.text.length });
+  const read = (span: string): NlCommandPayload | undefined => {
+    if (span.trim().length === 0 || span.trim().length > QUOTE_SPAN_MAX_CHARS) return undefined;
     try {
-      return claimOf(command);
+      return payloadOf(span.trim());
     } catch {
       return undefined;
     }
   };
   return spans.some(({ from, to }) => {
     if (start < from || end > to) return false;
-    const answered = claim(line.slice(from, to));
-    return answered !== undefined && claim(`${line.slice(from, start)}${PAYLOAD_PROBE}${line.slice(end, to)}`) === answered;
-  });
-}
-
-/**
- * Whether `piece` (found at `offset` of `text`) quotes a stale command phrase: a match of one of `patterns` that is not in
- * the payload of another command on its line of `text` ({@link inPayloadOfCommand}; a match across a line break never is).
- * Without `claimOf` every match counts, exactly as before.
- */
-function quotesStaleCommand(piece: string, offset: number, text: string, patterns: readonly RegExp[], claimOf: NlGrammarClaimOf | undefined): boolean {
-  return patterns.some((pattern) => {
-    if (claimOf === undefined) return pattern.test(piece);
-    const all = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
-    for (const match of piece.matchAll(all)) {
-      const start = offset + (match.index ?? 0);
-      const end = start + match[0].length;
-      if (match[0].includes('\n')) return true;
-      const lineStart = text.lastIndexOf('\n', start - 1) + 1;
-      const lineEnd = text.indexOf('\n', end);
-      const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
-      if (!inPayloadOfCommand(line, start - lineStart, end - lineStart, claimOf)) return true;
+    const span = line.text.slice(from, to);
+    const read1 = read(span);
+    if (read1 === undefined || read1.payload.length === 0) return false;
+    // The match must sit inside one occurrence of the extracted payload (offsets relative to the span).
+    for (let at = span.indexOf(read1.payload); at !== -1; at = span.indexOf(read1.payload, at + 1)) {
+      const relStart = start - from - at;
+      const relEnd = end - from - at;
+      if (relStart < 0 || relEnd > read1.payload.length) continue;
+      const read2 = read(`${span.slice(0, start - from)}${PAYLOAD_PROBE}${span.slice(end - from)}`);
+      const expected = `${read1.payload.slice(0, relStart)}${PAYLOAD_PROBE}${read1.payload.slice(relEnd)}`;
+      if (read2 !== undefined && read2.command === read1.command && read2.payload === expected) return true;
     }
     return false;
   });
 }
 
 /**
- * Live DM 2026-11-16: a removed sentence that stood alone on its line without closing a sentence (a command shown as its
- * own line, inline code or a fenced block, with nothing of the prose around it) was what the rest of the reply points at
- * ("아래 문구를 보내 주세요"). Layout only: it is alone between line breaks and does not end in sentence punctuation.
+ * Whether `piece` (found at `offset` of `text`) quotes a stale command phrase: a match of one of `patterns` that is not in
+ * the payload of a command on its line of `text` ({@link inPayloadOfCommand}; a match across a line break never is).
+ * Without `payloadOf` every match counts, exactly as before.
  */
-function isDisplayLine(sentence: string, before: string | undefined, after: string | undefined): boolean {
-  const alone = (before === undefined || before.includes('\n')) && (after === undefined || after.includes('\n'));
-  const body = sentence.trim().replace(/["”」』`'’)\]]+$/u, '');
-  return alone && body.length > 0 && !/[.!?。？…~]$/u.test(body);
+function quotesStaleCommand(piece: string, offset: number, text: string, patterns: readonly RegExp[], payloadOf: NlCommandPayloadOf | undefined): boolean {
+  return patterns.some((pattern) => {
+    if (payloadOf === undefined) return pattern.test(piece);
+    const all = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    for (const match of piece.matchAll(all)) {
+      const start = offset + (match.index ?? 0);
+      const end = start + match[0].length;
+      if (match[0].includes('\n')) return true;
+      const line = lineAt(text, start);
+      if (!inPayloadOfCommand(line, start - line.start, end - line.start, payloadOf)) return true;
+    }
+    return false;
+  });
 }
 
 /**
@@ -495,11 +527,11 @@ function removeActionReplySentences(
   language: 'ko' | 'en',
   stale: boolean,
   ownerMessage: string | undefined,
-  claimOf?: NlGrammarClaimOf,
+  payloadOf?: NlCommandPayloadOf,
 ): FalseIncapabilityGuardResult {
   if (typeof text !== 'string' || text.length === 0) return { text, guarded: false };
   const staleCommands = stale ? entries.filter((entry) => entry.risk !== 'READ').flatMap((entry) => entry.staleCommands ?? []) : [];
-  const quoted = quotesStaleCommand(text, 0, text, staleCommands, claimOf);
+  const quoted = quotesStaleCommand(text, 0, text, staleCommands, payloadOf);
   const vocabulary = deadEndVocabulary(entries);
   if (!quoted && vocabulary === undefined) return { text, guarded: false };
   const parts = text.split(SENTENCE_SPLIT);
@@ -510,12 +542,13 @@ function removeActionReplySentences(
   for (let index = 0; index < parts.length; index += 2) {
     const sentence = parts[index] ?? '';
     const separator = parts[index + 1] ?? '';
-    const staleSentence = quoted && quotesStaleCommand(sentence, offset, text, staleCommands, claimOf);
+    const staleSentence = quoted && quotesStaleCommand(sentence, offset, text, staleCommands, payloadOf);
+    const at = offset;
     offset += sentence.length + separator.length;
     if (staleSentence || vocabulary?.offending(sentence, parts[index - 2] ?? '') === true) {
       removed = true;
       // A dead-end offer or denial is prose: its removal keeps the rest (DM8). Only a stale command shown as a line is pointed at.
-      if (staleSentence && isDisplayLine(sentence, parts[index - 1], parts[index + 1])) display = true;
+      if (staleSentence && sentence.trim().length > 0 && isShownCommandLine(lineAt(text, at + sentence.search(/\S/u)))) display = true;
       continue;
     }
     kept.push(sentence, separator);
@@ -523,8 +556,8 @@ function removeActionReplySentences(
   // Codex P2: a quote spanning sentences (no single sentence carries it) cannot be placed. Whatever else was removed, if
   // the kept text still quotes a stale command the whole reply is replaced, as before.
   const rest = kept.join('');
-  if (quoted && quotesStaleCommand(rest, 0, rest, staleCommands, claimOf)) return { text: renderRestate(language), guarded: true };
-  // Live DM 2026-11-16: a removed stale-command display line leaves the prose that points at it ("아래 문구를…") dangling;
+  if (quoted && quotesStaleCommand(rest, 0, rest, staleCommands, payloadOf)) return { text: renderRestate(language), guarded: true };
+  // Live DM 2026-11-16: a removed stale command shown as its own line leaves the prose that points at it ("아래 문구를…") dangling;
   // like a quote that cannot be placed, the whole reply is replaced.
   if (display) return { text: renderRestate(language), guarded: true };
   if (!removed) return { text, guarded: false };
@@ -619,7 +652,7 @@ export function guardFalseIncapabilityClaims(
       const rest = guardFalseIncapabilityClaims(control.text, entries, language, helpLines, {
         ...(options.held !== undefined ? { held: options.held } : {}),
         ...(options.ownerMessage !== undefined ? { ownerMessage: options.ownerMessage } : {}),
-        ...(options.claimOf !== undefined ? { claimOf: options.claimOf } : {}),
+        ...(options.payloadOf !== undefined ? { payloadOf: options.payloadOf } : {}),
       });
       return { text: rest.text, guarded: true };
     }
@@ -627,7 +660,7 @@ export function guardFalseIncapabilityClaims(
   // A6-D6: a sentence quoting an offered action family's command phrase is stale (removed before the D5 exemption below),
   // and live test 4: the dead-end action sentences go too, but that partial filter is not the whole guard (Codex P2): the
   // rest of the reply still meets the source-incapability check below.
-  const deadEnd = guardStaleActionCommands(raw, entries, language, options.ownerMessage, options.claimOf);
+  const deadEnd = guardStaleActionCommands(raw, entries, language, options.ownerMessage, options.payloadOf);
   const text = deadEnd.text;
   const unchanged = { text, guarded: deadEnd.guarded };
   // A reply that hands the owner one of Quoky's own commands is already the right answer (D5): never replaced.

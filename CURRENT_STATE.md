@@ -7,7 +7,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### Chat guard keeps an offered command whose payload holds a stale-command word (2026-11-16, branch `claude/v5-chat-command-strip`)
 
-- The A6-D6 stale-command check exempts a phrase only inside the payload of a span the grammar answers unchanged with the phrase blanked (`nlGrammarClaim`); a removed display line makes the whole reply the restate. Fixes the live 11:34 DM (comment command stripped, dangling "아래 문구"). `…라고 댓글 달아줘` still routes to chat at `local` by design (no NL Jira comment in A6). Residuals: step phrases ("댓글 실행", "Jira 상태 되돌리기 실행") are not B1-runnable; the bare `/되돌리기/` pattern still removes a sentence naming "Jira 상태 되돌리기 실행".
+- The A6-D6 stale-command check exempts a phrase only inside the payload the connector-write parser extracts from a quoted or fenced Jira comment / Slack post command with a bound writer (`nlCommandPayload`, same command after blanking); a removed stale command shown as its own line makes the whole reply the restate. Reminder / calendar commands fail closed (removed as before). Fixes the live 11:34 DM (comment command stripped, dangling "아래 문구"). `…라고 댓글 달아줘` still routes to chat at `local` by design (no NL Jira comment in A6). Residuals: step phrases ("댓글 실행", "Jira 상태 되돌리기 실행") are not B1-runnable; the bare `/되돌리기/` pattern still removes a sentence naming "Jira 상태 되돌리기 실행".
 
 ### ADR-0112 amendment 1 under amendment 3: undo of Quoky's own Slack post (2026-11-16, branch `claude/v5-r3-slack-undo`)
 

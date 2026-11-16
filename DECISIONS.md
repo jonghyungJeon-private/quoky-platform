@@ -34078,6 +34078,30 @@ clause changes; no prompt, selector or routing change.
   payloads, transition, A6-D6, display-line restate, B1, DET-1 and writer-off parity; 9 of them failed before the fix.
   `nl-action-service.test.ts`: the guard with a stand-in probe (payload kept, needed phrase stale, display line, throwing
   and over-long probes fail closed).
+- **Review round 1 (Codex P2×3, Chief Architect P1×2 / P2 / P3; supersedes points 1–3 of the fix above).** The first
+  exemption was too loose: the whole line was a candidate span, so a keyword intent anywhere on it (`코드 수정해 줄까요?`,
+  `프로젝트 분석해 드릴까요?`, `테스트 돌려 주세요`, `내 할 일 보여줘`, `리팩터링 전에 …`) kept a real stale command; an
+  `intent:` claim never changes under the substitution (`"되돌리기 하고 코드 수정해줘"`); and an equal handler/groups claim is
+  not the same command (`할 일 추가: 할 일 추가됐어?`, todo.add → todo.status). Fixed:
+  1. **Candidate spans.** Only the line's quote / inline-code spans, plus the whole line only inside a code fence.
+  2. **Only a payload grammar exempts.** `nlGrammarClaim` is gone (`nlGrammarRuns` is as on main). The runtime instead
+     passes `nlCommandPayload`: the work-chat parser's own connector-write draft (`detectWorkChatCommand`) for a Jira
+     comment or Slack post, claimed by a registered handler under `writes`, with a writer bound
+     (`connectorWriteFlow.supports`). Its exact identity (`issue-comment:<key>` / `channel-post:<channel>`) and the
+     payload it extracted are returned; keyword intents, control phrases, the A6 families and every other grammar have
+     none.
+  3. **Same command, match in the payload.** The match must lie inside the extracted payload (never the head), and the span
+     with the match replaced by a neutral letter must parse to the same identity with exactly that payload change; else
+     fail closed.
+  4. **Shown command line** (P2 / P3, one rule): a fenced line, or a line that is exactly one quote / inline-code span
+     with at most trailing punctuation (`` `완료 처리: 2`. `` counts). A prose line without a final period is a sentence,
+     so a listing above it stays (DM8 rule), as on main.
+  - Consequences: a reminder or calendar command whose text holds a stale phrase has no payload probe and is removed
+    as on main (fail closed; as a shown line the reply is the restate, with no dangling lead-in). With the comment writer
+    unbound nothing is exempted (residual (b) above no longer applies to this guard).
+  - Tests: the eight repros run on the real runtime (real `IntentClassifier`, real catalog) and give main's exact
+    output; the period-ended shown line now gets the restate. Run against an `origin/main` scratch worktree: the 8
+    repros pass there, the 10 cases this change alters (5 kept commands, 5 shown-line restates) fail there.
 
 ## ADR-0124 phase 1 stage C: a 413 from the daemon is a refusal, not a run failure (2026-11-05, branch `claude/v5-chunk-embed-413`)
 

@@ -7,7 +7,7 @@ import { LAST_LISTING_METADATA_KEY, withLabelledListing, withListing } from '../
 import { NL_ACTION_ENTRIES } from './action-entries';
 import { ACTION_SWITCH_METADATA_KEY, NlActionSwitch } from './action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { NO_YES_NO_OFFER_RULE, QUOTES_ARE_COMMANDS_RULE, guardFalseIncapabilityClaims, renderConfiguredSourcesFact } from './honest-chat';
+import { NO_YES_NO_OFFER_RULE, QUOTES_ARE_COMMANDS_RULE, guardFalseIncapabilityClaims, renderConfiguredSourcesFact, type NlCommandPayload } from './honest-chat';
 import { LAST_ACTION_METADATA_KEY, withLastAction } from './last-action';
 import { NL_ACTION_LOG_EVENT, NlActionCaps, renderGarbledAction, type NlActionLevel } from './nl-action-policy';
 import { NlActionsConfigError, NlSelectionService, nlSelectionCacheKey, type NlSelectionDecision } from './nl-selection-service';
@@ -776,42 +776,53 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
   });
 
   // Live DM 2026-11-16: a stale phrase inside another command's payload is the owner's content, not that family's command.
-  describe('the grammar claim (live DM 2026-11-16)', () => {
-    /** A stand-in for the runtime's grammar probes: "<KEY>에 댓글: <text>" is a comment command; the A6 phrases are theirs. */
-    const claimOf = (span: string): string | undefined =>
-      /^[A-Z]+-\d+에 댓글: \S/u.test(span) ? 'comment' : /^(?:되돌리기|완료 처리: \d+)$/u.test(span) ? 'a6' : undefined;
+  describe('the command payload (live DM 2026-11-16, review round 1)', () => {
+    /** A stand-in for the runtime's payload probe: "<KEY>에 댓글: <text>" is a comment command whose payload is <text>. */
+    const payloadOf = (span: string): NlCommandPayload | undefined => {
+      const match = /^([A-Z]+-\d+)에 댓글: (\S.*)$/u.exec(span);
+      return match === null ? undefined : { command: `comment:${match[1]}`, payload: match[2] as string };
+    };
     const COMMAND = 'BE-882에 댓글: Quoky E2E 되돌리기 시험 댓글';
     const LEAD = '아래 문구를 그대로 보내 주세요.';
+    const guard = (reply: string, options: { payloadOf?: typeof payloadOf } = { payloadOf }) => guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '고마워', ...options });
 
-    it('keeps a command line whose payload holds a stale phrase, inline or fenced; without the claim it is removed as before', () => {
+    it('keeps a command whose payload holds a stale phrase, inline, fenced or quoted; without the probe it is removed as before', () => {
       for (const reply of [`${LEAD}\n\n\`${COMMAND}\``, `${LEAD}\n\`\`\`\n${COMMAND}\n\`\`\``, `"${COMMAND}"라고 보내 주세요.`]) {
-        expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '고마워', claimOf })).toEqual({ text: reply, guarded: false });
+        expect(guard(reply)).toEqual({ text: reply, guarded: false });
       }
-      expect(guardFalseIncapabilityClaims(`"${COMMAND}"라고 보내 주세요.`, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: RESTATE, guarded: true });
+      expect(guard(`"${COMMAND}"라고 보내 주세요.`, {})).toEqual({ text: RESTATE, guarded: true });
     });
 
-    it('a phrase the command needs, or one outside every claimed span, is still stale', () => {
-      for (const reply of ['"완료 처리: 2"라고 보내 주세요.', '"되돌리기"라고 보내 주세요.', `되돌리기를 원하면 "${COMMAND}"를 보내지 마세요.`]) {
-        expect(guardFalseIncapabilityClaims(reply, ALL, 'ko', [], { ownerMessage: '고마워', claimOf })).toEqual({ text: RESTATE, guarded: true });
+    it('a stale phrase outside the payload, in the command head, or on an unmarked prose line is still stale', () => {
+      for (const reply of [
+        '"완료 처리: 2"라고 보내 주세요.',
+        `되돌리기를 원하면 "${COMMAND}"를 보내지 마세요.`,
+        // The whole line is a candidate only inside a fence: an unmarked line that parses as a comment is prose.
+        'BE-882에 댓글: 되돌리기 하세요.',
+        // The stale word in the head of a span the probe reads differently once replaced (no payload change).
+        '"되돌리기-1에 댓글: 확인"이라고 보내 주세요.',
+      ]) {
+        expect(guard(reply).text).toBe(RESTATE);
       }
     });
 
-    it('a removed display line replaces the whole reply, so nothing points at a removed line', () => {
-      expect(guardFalseIncapabilityClaims(`${LEAD}\n\n\`완료 처리: 2\`\n\n좋아요.`, ALL, 'ko', [], { ownerMessage: '고마워', claimOf })).toEqual({ text: RESTATE, guarded: true });
-      expect(guardFalseIncapabilityClaims(`${LEAD}\n\`\`\`\n되돌리기\n\`\`\``, ALL, 'ko', [], { ownerMessage: '고마워' })).toEqual({ text: RESTATE, guarded: true });
-      // A prose sentence on its own line is not a display line: the DM8 rule keeps the rest.
-      expect(guardFalseIncapabilityClaims('좋아요.\n"완료 처리: 2"라고 보내 주세요.', ALL, 'ko', [], { ownerMessage: '고마워', claimOf })).toEqual({ text: '좋아요.', guarded: true });
-      // A dead-end offer on its own line without punctuation is prose, not a shown command: the DM8 rule keeps the rest.
-      expect(guardFalseIncapabilityClaims("요즘 정말 바쁘셨겠어요.\n할 일 목록에 '업무 정리'를 추가할까요", ALL, 'ko', [], { ownerMessage: '요즘 일이 너무 많아서 답답해', claimOf })).toEqual({ text: '요즘 정말 바쁘셨겠어요.', guarded: true });
+    it('a stale command shown as its own line (fenced or one span, trailing period allowed) replaces the whole reply', () => {
+      expect(guard(`${LEAD}\n\n\`완료 처리: 2\`\n\n좋아요.`)).toEqual({ text: RESTATE, guarded: true });
+      expect(guard(`${LEAD}\n\n\`완료 처리: 2\`.`)).toEqual({ text: RESTATE, guarded: true });
+      expect(guard(`${LEAD}\n\`\`\`\n되돌리기\n\`\`\``, {})).toEqual({ text: RESTATE, guarded: true });
+      // A prose line around a quote is a sentence, punctuated or not: the DM8 rule keeps the rest (the listing stays).
+      expect(guard('좋아요.\n"완료 처리: 2"라고 보내 주세요.')).toEqual({ text: '좋아요.', guarded: true });
+      expect(guard('할 일 2개예요.\n1. 회고\n2. 정리\n끝내려면 "완료 처리: 2"라고 보내 주세요')).toEqual({ text: '할 일 2개예요.\n1. 회고\n2. 정리', guarded: true });
+      // A dead-end offer is prose too.
+      expect(guardFalseIncapabilityClaims("요즘 정말 바쁘셨겠어요.\n할 일 목록에 '업무 정리'를 추가할까요", ALL, 'ko', [], { ownerMessage: '요즘 일이 너무 많아서 답답해', payloadOf })).toEqual({ text: '요즘 정말 바쁘셨겠어요.', guarded: true });
     });
 
-    it('a throwing or over-long probe claims nothing (fail closed)', () => {
-      const throwing = (): string => {
+    it('a throwing or over-long probe exempts nothing (fail closed)', () => {
+      const throwing = (): NlCommandPayload => {
         throw new Error('probe');
       };
-      expect(guardFalseIncapabilityClaims(`"${COMMAND}"라고 보내 주세요.`, ALL, 'ko', [], { ownerMessage: '고마워', claimOf: throwing })).toEqual({ text: RESTATE, guarded: true });
-      const long = `BE-882에 댓글: 되돌리기 ${'가'.repeat(210)}`;
-      expect(guardFalseIncapabilityClaims(`"${long}"라고 보내 주세요.`, ALL, 'ko', [], { ownerMessage: '고마워', claimOf })).toEqual({ text: RESTATE, guarded: true });
+      expect(guard(`"${COMMAND}"라고 보내 주세요.`, { payloadOf: throwing }).text).toBe(RESTATE);
+      expect(guard(`"BE-882에 댓글: 되돌리기 ${'가'.repeat(210)}"라고 보내 주세요.`).text).toBe(RESTATE);
     });
   });
 });

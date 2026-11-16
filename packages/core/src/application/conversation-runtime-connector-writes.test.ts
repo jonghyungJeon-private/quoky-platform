@@ -2727,13 +2727,41 @@ describe('live DM 2026-11-16: a command the chat reply offers is never stripped 
   it.each([
     ['Slack post', '#dev에 게시: 되돌리기 점검은 완료 처리: 2 이후에 해요'],
     ['Jira comment with a to-do phrase', 'BE-882에 댓글: 할 일 추가: 회고 정리'],
-    ['reminder', '내일 오전 9시에 되돌리기 점검 알려줘'],
-    ['calendar add', '내일 오후 3시에 되돌리기 점검 회의 잡아줘'],
   ])('%s: a stale phrase inside its payload does not remove the command line', async (_label, command) => {
     const { text, h } = await chatTurn(`아래처럼 보내 주세요.\n\n\`${command}\``, '그거 어떻게 보내?');
     expect(text).toContain(`\`${command}\``);
     expect(text).not.toContain(RESTATE);
     expect(h.totalWrites()).toBe(0);
+  });
+
+  // Review round 1: only the connector-write payload parser exempts. A reminder or calendar command has no payload probe
+  // and fails closed: the stale line goes and, being a shown line, takes the reply with it (no dangling "아래처럼").
+  it.each([
+    ['reminder', '내일 오전 9시에 되돌리기 점검 알려줘'],
+    ['calendar add', '내일 오후 3시에 되돌리기 점검 회의 잡아줘'],
+  ])('%s: no payload probe, so the stale word removes it (fail closed) and the reply is the restate', async (_label, command) => {
+    const { text } = await chatTurn(`아래처럼 보내 주세요.\n\n\`${command}\``, '그거 어떻게 보내?');
+    expect(text).toBe(RESTATE);
+  });
+
+  // Review round 1 (CA P1×2, P3; Codex P2×3): every repro removes the stale command exactly as main does.
+  it.each([
+    ['a keyword intent elsewhere in the reply', '"되돌리기"라고 보내 주세요. 코드 수정해 줄까요?', OWNER_ASK, `코드 수정해 줄까요? ${RESTATE}`],
+    ['an analysis offer after it', '"완료 처리: 2"라고 보내 주세요. 프로젝트 분석해 드릴까요?', OWNER_ASK, `프로젝트 분석해 드릴까요? ${RESTATE}`],
+    ['inline code inside an unpunctuated prose line', '`완료 처리: 2` 보내시고 테스트 돌려 주세요', OWNER_ASK, RESTATE],
+    ['a listing request after it', '"완료 처리: 2"라고 보내 주세요. 내 할 일 보여줘', OWNER_ASK, `내 할 일 보여줘 ${RESTATE}`],
+    ['a keyword before it on the line', '리팩터링 전에 "완료 처리: 2"라고 보내 주세요.', OWNER_ASK, RESTATE],
+    ['a keyword intent inside the quoted span', '"되돌리기 하고 코드 수정해줘"라고 보내 주세요.', OWNER_ASK, RESTATE],
+    ['a to-do add whose payload changes its reading', '"할 일 추가: 할 일 추가됐어?"라고 보내 주세요.', OWNER_ASK, RESTATE],
+    ['a listing whose last prose line has no period (the listing stays)', '할 일 2개예요.\n1. 회고\n2. 정리\n끝내려면 "완료 처리: 2"라고 보내 주세요', '고마워', '할 일 2개예요.\n1. 회고\n2. 정리'],
+  ])('review round 1, %s: the stale command is removed as on main', async (_label, reply, ask, expected) => {
+    const { text } = await chatTurn(reply, ask);
+    expect(text).toBe(expected);
+  });
+
+  it('review round 1: a shown command line ending in a period is still a shown line (main left "아래 문구" dangling)', async () => {
+    const { text } = await chatTurn('아래 문구를 그대로 보내 주세요.\n\n`완료 처리: 2`.');
+    expect(text).toBe(RESTATE);
   });
 
   it('a Jira transition command (no payload) is untouched', async () => {
@@ -2771,11 +2799,9 @@ describe('live DM 2026-11-16: a command the chat reply offers is never stripped 
     expect(h.totalWrites()).toBe(0);
   });
 
-  it('with the comment writer off, the command reads exactly like the same command without the stale word (nothing newly offered)', async () => {
-    const plain = 'BE-882에 댓글: Quoky E2E 시험 댓글';
+  it('with the comment writer off, nothing is exempted: the stale command line goes as on main (nothing newly offered)', async () => {
     const withWord = await chatTurn(`${LEAD}\n\n\`${COMMAND}\``, OWNER_ASK, ['post']);
-    const without = await chatTurn(`${LEAD}\n\n\`${plain}\``, OWNER_ASK, ['post']);
-    expect(withWord.text.replace(COMMAND, plain)).toBe(without.text);
+    expect(withWord.text).toBe(RESTATE);
     // Sent alone, the grammar answers it with the fixed writes-off refusal; nothing is prepared or written.
     const h = harness({ writers: ['post'] });
     const refused = await h.send(COMMAND);
