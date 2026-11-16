@@ -211,6 +211,12 @@ export type ConnectorWritePreview =
       readonly toStatusId: string;
       readonly transitionName: string;
       readonly transitionId: string;
+      /**
+       * Review round 1 (P3): the status the issue is in now, read at preview (the compare-and-set baseline the transition is
+       * sent against). Absent when the writer cannot read it. The name is untrusted readout.
+       */
+      readonly fromStatus?: string;
+      readonly fromStatusId?: string;
     }
   /** ADR-0112 amendment 3 (O4): always the undo of this actor's own SENT comment; the text is the owner's own comment as approved. */
   | {
@@ -398,6 +404,8 @@ export type ConnectorWriteRefusal =
   | 'credential'
   | 'transition-unavailable'
   | 'transition-lookup-failed'
+  /** Review round 1 (P3): the issue answers under another key (it was moved) when a transition is previewed. */
+  | 'target-changed'
   | 'event-not-found'
   /** An undated reference with no recent calendar context and nothing on the calendar today or tomorrow. */
   | 'no-nearby-events'
@@ -1316,7 +1324,11 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           } catch {
             return refused('transition-lookup-failed');
           }
-          if (from.issueKey !== key || !isNumericId(from.statusId)) return refused('transition-lookup-failed');
+          // Review round 1 (P3): an issue that answers under another key was moved: said as such, not as a lookup failure.
+          if (from.issueKey !== key) return refused('target-changed');
+          if (!isNumericId(from.statusId)) return refused('transition-lookup-failed');
+          // Review round 1 (P3): the status name is stored and shown, so it gets the same credential check as `toStatus`.
+          if (containsCredentialMaterial(from.statusName)) return refused('credential');
         }
         let options: readonly IssueTransitionOption[];
         try {
@@ -1342,7 +1354,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           writer.source,
           key,
           { operation: 'ISSUE_TRANSITION', ...bound, ...recorded },
-          { operation: 'ISSUE_TRANSITION', ...bound },
+          { operation: 'ISSUE_TRANSITION', ...bound, ...recorded },
         );
       }
       case 'channel-post': {
@@ -1508,7 +1520,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       input.claim ?? (<T>(work: (held: SessionLockHold) => Promise<T>) => this.sessionLock.run(input.session.id, work, input.held));
     const claimed = await claim((held) => this.claimGrant(input, operation, held));
     if ('step' in claimed) return claimed.step;
-    const { consumed, send, approvalId, connector, target, payloadSha256, preview } = claimed;
+    const { consumed, send, approvalId, connector, target, payloadSha256, preview, undoes } = claimed;
     await this.reconcileOnce(input.now);
     const executor = new ConnectorWriteExecutor({ receipts: this.deps.receipts, now: () => input.now, newId: this.deps.newId });
     let outcome: ConnectorWriteOutcome;
@@ -1534,7 +1546,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       // nothing sent (NOT_SENT, no receipt).
       if (input.beforeSend !== undefined) await input.beforeSend();
       const result = await executor.executeOnce(
-        { actorId: input.actor.id, idempotencyKey: `cwr:${approvalId}`, connector, operation, target, payloadSha256 },
+        { actorId: input.actor.id, idempotencyKey: `cwr:${approvalId}`, connector, operation, target, payloadSha256, ...(undoes !== undefined ? { undoes } : {}) },
         sendOnce,
       );
       receiptId = result.receipt?.id;
@@ -1597,6 +1609,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         readonly target: string;
         readonly payloadSha256: string;
         readonly preview: ConnectorWritePreview;
+        /** Review round 1 (P2-C): the receipt an undo inverts (checked equal to `undoOf.receiptId` above), for its receipt. */
+        readonly undoes?: Id;
       }
   > {
     const { taskId } = input.view;
@@ -1678,7 +1692,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     // which a repeated phrase reports and never re-sends.
     const consumed: ConnectorWriteAnchor = { ...anchor, status: 'EXECUTING', consumedAt: input.now, updatedAt: input.now };
     await this.saveAnchor(taskId, input.session, consumed, { keepPointer: true }, held);
-    return { consumed, send, approvalId, connector, target, payloadSha256, preview };
+    const undoes = 'undoes' in payload ? payload.undoes : undefined;
+    return { consumed, send, approvalId, connector, target, payloadSha256, preview, ...(undoes !== undefined ? { undoes } : {}) };
   }
 
   async close(
@@ -1717,7 +1732,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           isNumericId(payload.transitionId) &&
           isNumericId(payload.toStatusId) &&
           (payload.fromStatusId === undefined || isNumericId(payload.fromStatusId)) &&
-          !containsCredentialMaterial(payload.toStatus)
+          !containsCredentialMaterial(payload.toStatus) &&
+          (payload.fromStatus === undefined || !containsCredentialMaterial(payload.fromStatus))
         );
       case 'ISSUE_COMMENT_DELETE':
         return (
@@ -2137,12 +2153,17 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   private async proposeJiraTransitionUndo(
     input: FlowInput,
     receiptId: Id,
-    chosen: { readonly pick: IssueTransitionOption; readonly ownerSentence?: string } | undefined = undefined,
+    chosen: { readonly pick: IssueTransitionOption; readonly ownerSentence?: string; readonly sourceTaskId: Id } | undefined = undefined,
   ): Promise<ConnectorWriteStep> {
     const writer = this.deps.writers.issueTransitions;
     if (!writer) return { kind: 'writes-off' };
     const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'issue-transition', undo: 'jira-transition' });
-    const resolved = await this.resolveOwnUndo(input, 'jira-transition', receiptId);
+    // Review round 1 (P2-A): a pick continues the origin resolved (window included) when the choice was offered: the same
+    // receipt and anchor pinned on the choice are re-validated, never re-resolved from `lastAction` recency.
+    const resolved =
+      chosen !== undefined
+        ? await this.revalidateOwnUndo(input, 'jira-transition', receiptId, chosen.sourceTaskId)
+        : await this.resolveOwnUndo(input, 'jira-transition', receiptId);
     if (resolved.kind === 'refused') return refused(resolved.reason);
     const moved = resolved.anchor.payload;
     if (moved?.operation !== 'ISSUE_TRANSITION' || resolved.anchor.preview?.operation !== 'ISSUE_TRANSITION' || resolved.anchor.undoOf !== undefined) {
@@ -2181,7 +2202,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     } else if (back.length === 1) {
       pick = back[0];
     } else {
-      return this.offerRevertChoice(input, issueKey, back, ownerSentence, link, { current: boundStatusName(now.statusName), to: moved.fromStatus ?? '' });
+      return this.offerRevertChoice(input, issueKey, back, ownerSentence, link, { current: displayStatusName(now.statusName), to: displayStatusName(moved.fromStatus ?? '') });
     }
     const target = pick as IssueTransitionOption;
     return this.propose(
@@ -2202,7 +2223,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       {
         operation: 'ISSUE_TRANSITION_REVERT',
         issueKey,
-        currentStatus: boundStatusName(now.statusName),
+        currentStatus: displayStatusName(now.statusName),
         currentStatusId: now.statusId,
         toStatus: target.toStatus,
         toStatusId: moved.fromStatusId,
@@ -2224,15 +2245,18 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     const { anchor } = input.view;
     const picked = choice.transitions[input.index - 1];
     if (!Number.isInteger(input.index) || picked === undefined) {
+      // Review round 1 (P2-B): a number outside the list ends the choice; a later number never reaches it.
+      await this.close(input.session, input.view, 'abandoned', input.now);
       return { kind: 'refused', reason: 'invalid-choice', family: anchor.family, undo: 'jira-transition' };
     }
     const link = anchor.undoOf;
-    if (link?.family !== 'jira-transition' || anchor.family !== 'issue-transition') {
+    if (link?.family !== 'jira-transition' || anchor.family !== 'issue-transition' || link.sourceTaskId === undefined) {
       await this.close(input.session, input.view, 'inconsistent', input.now);
       return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
     }
     const step = await this.proposeJiraTransitionUndo(input, link.receiptId, {
       pick: picked,
+      sourceTaskId: link.sourceTaskId,
       ...(choice.ownerSentence !== undefined ? { ownerSentence: choice.ownerSentence } : {}),
     });
     if (step.kind !== 'preview') await this.close(input.session, input.view, 'abandoned', input.now);
@@ -2348,6 +2372,31 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     if (resolved.kind !== 'resolved' || resolved.family !== family || resolved.draft.receiptId !== receiptId) {
       return { kind: 'refused', reason: 'undo-nothing' };
     }
+    return resolved;
+  }
+
+  /**
+   * Review round 1 (P2-A): re-validates the origin pinned on an undo choice (receipt and anchor resolved when the choice was
+   * offered): still this actor's own SENT write in this session with the same approval binding, the family still open, and
+   * not undone since (no SENT undo receipt names it). `lastAction` recency is not re-read.
+   */
+  private async revalidateOwnUndo(
+    input: FlowInput,
+    family: ExternalUndoFamily,
+    receiptId: Id,
+    anchorTaskId: Id,
+  ): Promise<Extract<ExternalUndoResolution, { kind: 'resolved' }> | { readonly kind: 'refused'; readonly reason: ConnectorWriteRefusal }> {
+    const resolver = new ExternalUndoResolver({
+      receipts: this.deps.receipts,
+      tasks: this.deps.store.tasks,
+      readAnchor: (task) => {
+        const anchor = task.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+        return anchor?.kind === CONNECTOR_WRITE_ANCHOR_KIND ? anchor : undefined;
+      },
+    });
+    const resolved = await resolver.revalidate({ session: input.session, actor: input.actor, family, receiptId, anchorTaskId });
+    if (resolved.kind !== 'resolved' || resolved.family !== family || resolved.draft.receiptId !== receiptId) return { kind: 'refused', reason: 'undo-nothing' };
+    if ((await this.deps.receipts.findSentUndoOf?.(input.actor.id, receiptId)) != null) return { kind: 'refused', reason: 'undo-nothing' };
     return resolved;
   }
 
@@ -2481,7 +2530,11 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       target,
       payloadSha256,
     });
-    if (sent) {
+    // Review round 1 (P2-C): a SENT forward write that this actor has since undone (a SENT undo receipt names it) is not a
+    // replay: asking for the same write again is a new write and gets a new approval. An undo payload (`undoes`) never takes
+    // this path, and a replay of the same approval stays refused by its idempotency key.
+    const undone = sent !== null && !('undoes' in payload && payload.undoes !== undefined) ? await this.deps.receipts.findSentUndoOf?.(input.actor.id, sent.id) : null;
+    if (sent && !undone) {
       return {
         kind: 'already-sent',
         operation,
@@ -2772,6 +2825,11 @@ function isNumericId(value: unknown): value is string {
 /** A status name read from the provider, for display only: single line, control characters removed, bounded. */
 function boundStatusName(name: string): string {
   return boundCalendarText(name, ISSUE_TRANSITION_STATUS_MAX_LENGTH);
+}
+
+/** Review round 1 (P3): a status name to show on an undo card: bounded, and empty (ids only) when it looks like a credential. */
+function displayStatusName(name: string): string {
+  return containsCredentialMaterial(name) ? '' : boundStatusName(name);
 }
 
 /**

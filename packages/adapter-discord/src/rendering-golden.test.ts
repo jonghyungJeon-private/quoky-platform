@@ -241,6 +241,8 @@ const PREVIEWS: readonly ConnectorWritePreview[] = [
     transitionId: '51',
     receiptSourced: true,
   },
+  // Review round 1: the forward transition preview shows the status read now (the compare-and-set baseline).
+  { operation: 'ISSUE_TRANSITION', issueKey: 'PROJ-12', fromStatus: '<#1> To_Do @here', fromStatusId: '1', toStatus: 'In *Review*', toStatusId: '31', transitionName: 'Send_to <review>', transitionId: '41' },
 ];
 
 const CANDIDATES: readonly ConnectorWriteEventSummary[] = TITLES.map((title, i) => ({
@@ -258,7 +260,7 @@ const TARGETS: readonly ConnectorWriteTargetSummary[] = [
   { kind: 'calendar' },
 ];
 
-const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found', 'undo-read-failed', 'undo-target-gone', 'undo-target-changed', 'undo-not-permitted', 'undo-no-path'];
+const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found', 'undo-read-failed', 'undo-target-gone', 'undo-target-changed', 'undo-not-permitted', 'undo-no-path', 'target-changed'];
 
 // --- review P3-5: mention case variants, astral clip boundaries, escape-limit crossings, purge copy, learning lists --
 const MENTION_CASES = ['@EVERYONE 공지', '@Here 확인', '@eVeRyOnE <@!1> @HERE', 'mail@Everyone.test <@&9>'];

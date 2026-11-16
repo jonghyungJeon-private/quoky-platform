@@ -198,4 +198,19 @@ describe('SqliteConnectorWriteReceiptRepository (ADR-0112 D3, schema v15)', () =
     expect(await repo.findById('missing', 'actor-1')).toBeNull();
     expect(await repo.findById('', 'actor-1')).toBeNull();
   });
+
+  it('keeps the undone receipt id through complete; findSentUndoOf finds only a SENT undo of the same actor (review round 1)', async () => {
+    const { repo, db } = setup();
+    await repo.prepare(receipt({ id: 'undo-1', idempotencyKey: 'cwr:undo-1', data: { undoes: 'r1' } }));
+    expect(await repo.findSentUndoOf('actor-1', 'r1')).toBeNull();
+    await repo.complete('undo-1', connectorWriteSent('PROJ-1:c1'), '2026-10-06T00:01:00.000Z');
+    expect((await repo.findById('undo-1', 'actor-1'))?.data.undoes).toBe('r1');
+    expect(await repo.findSentUndoOf('actor-1', 'r1')).toMatchObject({ id: 'undo-1', status: 'SENT' });
+    expect(await repo.findSentUndoOf('actor-2', 'r1')).toBeNull();
+    expect(await repo.findSentUndoOf('actor-1', 'r2')).toBeNull();
+    expect(await repo.findSentUndoOf('actor-1', "r1' OR '1'='1")).toBeNull();
+    await repo.prepare(receipt({ id: 'undo-2', idempotencyKey: 'cwr:undo-2', data: { undoes: 'r9' } }));
+    expect(await repo.findSentUndoOf('actor-1', 'r9')).toBeNull();
+    db.close();
+  });
 });

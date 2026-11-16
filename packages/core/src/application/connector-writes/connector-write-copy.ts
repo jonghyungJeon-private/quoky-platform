@@ -22,6 +22,7 @@ import type {
   ConnectorWritePreview,
   ConnectorWriteRefusal,
   ConnectorWriteRecentSend,
+  ConnectorWriteRevertChoice,
   ConnectorWriteStep,
   ConnectorWriteTargetSummary,
   ConnectorWriteUnconfirmedEarlier,
@@ -160,9 +161,13 @@ function previewBody(preview: ConnectorWritePreview): MessageBody[] {
     case 'ISSUE_TRANSITION':
       return [
         `대상: Jira ${preview.issueKey}`,
+        // Review round 1 (P3): the status read now is the compare-and-set baseline the transition is sent against.
+        ...(preview.fromStatusId !== undefined ? [messageBody('지금 상태: ', inline(preview.fromStatus ?? ''), ` (상태 ID ${preview.fromStatusId})`)] : []),
         messageBody('바꿀 상태: ', inline(preview.toStatus), ` (상태 ID ${preview.toStatusId})`),
         messageBody('전환: ', inline(preview.transitionName), ` (전환 ID ${preview.transitionId})`),
-        '실행할 때 이 전환이 그대로 이 상태로 이어질 때만 실행해요. 조건이 바뀌면 실행하지 않아요.',
+        preview.fromStatusId !== undefined
+          ? '실행할 때 이슈가 아직 지금 상태이고 이 전환이 그대로 이 상태로 이어질 때만 실행해요. 조건이 바뀌면 실행하지 않아요.'
+          : '실행할 때 이 전환이 그대로 이 상태로 이어질 때만 실행해요. 조건이 바뀌면 실행하지 않아요.',
       ];
     case 'ISSUE_COMMENT_DELETE':
       return [
@@ -648,6 +653,7 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   credential: '토큰·비밀번호 같은 비밀 값처럼 보이는 내용이 있어서 보내지 않아요.',
   'transition-unavailable': '이 이슈는 지금 그 상태로 바꿀 수 없어요.',
   'transition-lookup-failed': '이 이슈에서 바꿀 수 있는 상태를 확인하지 못했어요.',
+  'target-changed': '그 이슈는 다른 키로 옮겨졌어요. 옮겨진 이슈의 새 키로 다시 요청해 주세요.',
   'event-not-found': '그 날짜·시간에 맞는 일정을 기본 캘린더에서 찾지 못했어요.',
   'no-nearby-events':
     '어느 일정인지 알 수 없어요. 이 대화에서 최근에 다룬 일정이 없고 오늘·내일 기본 캘린더에도 일정이 없어요. 날짜와 시간을 함께 적어 주세요 (예: "금요일 3시 회의 취소해줘").',
@@ -752,6 +758,11 @@ export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, ca
  * ADR-0120 A6-D3 amendment (2026-11-03): one line of the stop reply for an approval the kill switch closed — the action kind
  * and the target label the preview already showed (an event title is an untrusted span, never markup).
  */
+/** Review round 1 (P3): the stop reply's line for a closed revert choice (it has no preview). */
+export function renderConnectorWriteChoiceStopLine(choice: ConnectorWriteRevertChoice): MessageBody {
+  return messageBody(`${connectorWriteLabel('ISSUE_TRANSITION_REVERT')} 선택 — `, inline(choice.issueKey));
+}
+
 export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): MessageBody {
   const label = connectorWriteLabel(preview.operation);
   switch (preview.operation) {

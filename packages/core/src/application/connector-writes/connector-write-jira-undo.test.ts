@@ -17,7 +17,7 @@ import { ConnectorQueryError } from '../../ports/connector-query';
 import { isAcceptedExecutionPhrase } from '../execution-command-guard';
 import { LAST_ACTION_METADATA_KEY, externalUndoFamilyOf, isExternalUndoOpen, setExternalUndoCapabilitiesForTest, withLastAction, type LastActionRecord } from '../nl-routing/last-action';
 import { plainTextOf } from '../message-rendering';
-import { CONNECTOR_UNDO_RECEIPT_BANNER, renderConnectorWriteStep } from './connector-write-copy';
+import { CONNECTOR_UNDO_RECEIPT_BANNER, renderConnectorWriteChoiceStopLine, renderConnectorWriteStep } from './connector-write-copy';
 import type { ExternalUndoDraftKind } from './connector-write-draft';
 import { StatelessConnectorWriteFlow, isActionSwitchGoverned, type ConnectorWriteStep } from './connector-write-flow';
 
@@ -45,7 +45,7 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
     const row = this.rows.get(id);
     if (!row || row.status !== 'PREPARED') return null;
     const data = outcome.status === 'SENT' ? { externalRef: outcome.externalRef, ...(outcome.version !== undefined ? { version: outcome.version } : {}) } : { reason: outcome.reason };
-    const next = { ...row, status: outcome.status, updatedAt: now, data };
+    const next = { ...row, status: outcome.status, updatedAt: now, data: { ...data, ...(row.data.undoes !== undefined ? { undoes: row.data.undoes } : {}) } };
     this.rows.set(id, next);
     return next;
   }
@@ -58,6 +58,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
   }
   async findLatestSent(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null> {
     return [...this.rows.values()].filter((row) => row.status === 'SENT' && row.actorId === match.actorId && row.operation === match.operation && row.target === match.target && row.payloadSha256 === match.payloadSha256).pop() ?? null;
+  }
+  async findSentUndoOf(actorId: string, undoneReceiptId: string): Promise<ConnectorWriteReceipt | null> {
+    return [...this.rows.values()].filter((row) => row.status === 'SENT' && row.actorId === actorId && row.data.undoes === undoneReceiptId).pop() ?? null;
   }
   async findLatestUnresolved(): Promise<ConnectorWriteReceipt | null> {
     return null;
@@ -219,7 +222,7 @@ function harness(options: HarnessOptions = {}) {
     return flow.execute({ session: session(), actor, now, view: view as NonNullable<typeof view> });
   }
 
-  function recordLastAction(input: { receiptId: string; anchorTaskId?: string; operation?: LastActionRecord['operation']; actorId?: string; at?: string; entryId?: LastActionRecord['entryId']; outcome?: LastActionRecord['outcome'] }): void {
+  function recordLastAction(input: { receiptId: string; anchorTaskId?: string; operation?: LastActionRecord['operation']; actorId?: string; at?: string; entryId?: LastActionRecord['entryId']; outcome?: LastActionRecord['outcome']; echoReplyIds?: string[] }): void {
     const entryId = input.entryId ?? 'external.write';
     const record: LastActionRecord = {
       entryId,
@@ -231,27 +234,27 @@ function harness(options: HarnessOptions = {}) {
       outcome: input.outcome ?? 'SENT',
       ...(input.operation !== undefined ? { operation: input.operation } : {}),
       ...(input.anchorTaskId !== undefined ? { anchorTaskId: input.anchorTaskId } : {}),
-      echoReplyIds: [],
+      echoReplyIds: input.echoReplyIds ?? [],
     };
     const current = session();
     sessions.set('sess-1', { ...current, metadata: { ...current.metadata, [LAST_ACTION_METADATA_KEY]: withLastAction(current.metadata?.[LAST_ACTION_METADATA_KEY], input.actorId ?? OWNER.id, record, record.at) } });
   }
 
-  async function runWrite(draft: Parameters<typeof flow.prepare>[0]['draft'], operation: 'ISSUE_COMMENT' | 'ISSUE_TRANSITION') {
+  async function runWrite(draft: Parameters<typeof flow.prepare>[0]['draft'], operation: 'ISSUE_COMMENT' | 'ISSUE_TRANSITION', echoReplyIds: string[] = []) {
     const preview = await flow.prepare({ session: session(), actor: OWNER, now: at(0), draft });
     expect(preview.kind).toBe('preview');
     const anchorTaskId = (await flow.find(session()))?.taskId as string;
     const step = await approveAndExecute(at(1));
     if (step.kind !== 'outcome' || step.receiptId === undefined || step.outcome.status !== 'SENT') throw new Error('the write did not run');
-    recordLastAction({ receiptId: step.receiptId, anchorTaskId, operation });
+    recordLastAction({ receiptId: step.receiptId, anchorTaskId, operation, echoReplyIds });
     return { receiptId: step.receiptId, anchorTaskId, step };
   }
 
   /** "RT-7에 댓글: 배포 확인했어요", approved and executed. */
   const addComment = () => runWrite({ kind: 'issue-comment', issueKey: KEY, text: '배포 확인했어요' }, 'ISSUE_COMMENT');
   /** "RT-7 진행 중으로 바꿔줘" (or the given status), approved and executed. */
-  const transition = (toStatus = '진행 중') => runWrite({ kind: 'issue-transition', issueKey: KEY, toStatus }, 'ISSUE_TRANSITION');
-  const undo = (kind: ExternalUndoDraftKind, receiptId: string, now: string, actor: Actor = OWNER, sessionId = 'sess-1', extra: { ownerText?: string } = {}) =>
+  const transition = (toStatus = '진행 중', echoReplyIds: string[] = []) => runWrite({ kind: 'issue-transition', issueKey: KEY, toStatus }, 'ISSUE_TRANSITION', echoReplyIds);
+  const undo = (kind: ExternalUndoDraftKind, receiptId: string, now: string, actor: Actor = OWNER, sessionId = 'sess-1', extra: { ownerText?: string; replyToMessageId?: string } = {}) =>
     flow.prepare({ session: session(sessionId), actor, now, draft: { kind, receiptId }, ...extra });
 
   return { flow, session, jira, writes, reads, receipts, tasks, approveAndExecute, recordLastAction, addComment, transition, undo };
@@ -443,7 +446,7 @@ describe('ADR-0112 amendment 3 (O5): the revert of Quoky\'s own Jira transition'
     expect(text(done)).toBe('방금 바꾼 Jira 이슈 상태를 바꾸기 전 상태로 되돌렸어요.');
   });
 
-  it('several lead back: a numbered choice of exactly the Core-listed transitions; the number picks one; a number outside the list previews nothing', async () => {
+  it('several lead back: a numbered choice of exactly the Core-listed transitions; the number picks one', async () => {
     const workflow = { ...DEFAULT_WORKFLOW, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '1'), option('31', '끝내기', '5')] };
     const h = harness({ workflow });
     const { receiptId } = await h.transition();
@@ -458,14 +461,63 @@ describe('ADR-0112 amendment 3 (O5): the revert of Quoky\'s own Jira transition'
     const choice = await h.flow.find(h.session());
     expect(choice?.anchor).toMatchObject({ status: 'AWAITING_CHOICE', family: 'issue-transition', undoOf: { family: 'jira-transition', receiptId } });
     expect(isActionSwitchGoverned(choice?.anchor as NonNullable<typeof choice>['anchor'])).toBe(true);
-    const outside = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 3 });
-    expect(reason(outside)).toBe('invalid-choice');
-    expect(text(outside)).toContain('목록에 없는 전환은 쓰지 않아요');
     const picked = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 2 });
     expect(picked.kind).toBe('preview');
     expect(picked.kind === 'preview' && picked.preview).toMatchObject({ operation: 'ISSUE_TRANSITION_REVERT', transitionId: '22', toStatusId: '1', ownerSentence: '되돌려줘' });
     await h.approveAndExecute(at(5));
     expect(h.writes.transition.at(-1)).toEqual({ issueKey: KEY, transitionId: '22', toStatusId: '1', fromStatusId: '3' });
+  });
+
+  it('review round 1 (P2-B): a number outside the list ends the choice; a later valid number previews nothing', async () => {
+    const workflow = { ...DEFAULT_WORKFLOW, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '1')] };
+    const h = harness({ workflow });
+    const { receiptId } = await h.transition();
+    expect((await h.undo('jira-transition-undo', receiptId, at(3))).kind).toBe('revert-choice');
+    const choice = await h.flow.find(h.session());
+    const outside = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 3 });
+    expect(reason(outside)).toBe('invalid-choice');
+    expect(text(outside)).toContain('목록에 없는 전환은 쓰지 않아요');
+    const closed = h.tasks.get(choice?.taskId as string)?.metadata?.connectorWriteAnchor as { status?: string; closedReason?: string };
+    expect(closed).toMatchObject({ status: 'CLOSED', closedReason: 'abandoned' });
+    const stale = (await h.flow.find(h.session())) ?? { ...(choice as NonNullable<typeof choice>), anchor: { ...(choice as NonNullable<typeof choice>).anchor, ...closed } };
+    const later = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(5), view: stale as NonNullable<typeof choice>, index: 2 });
+    expect(later.kind).not.toBe('preview');
+    expect(h.writes.transition).toHaveLength(1);
+    expect([...h.tasks.values()].filter((task) => (task.metadata?.connectorWriteAnchor as { operation?: string } | undefined)?.operation === 'ISSUE_TRANSITION_REVERT')).toEqual([]);
+  });
+
+  it('review round 1 (P2-A): a choice offered on a reply to an older echo keeps that origin; the pick re-validates the same receipt and anchor, not lastAction recency', async () => {
+    const workflow = { ...DEFAULT_WORKFLOW, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '1')] };
+    const h = harness({ workflow });
+    const { receiptId } = await h.transition('진행 중', ['echo-1']);
+    // 14 minutes later: outside the 10-minute window, reachable only as a reply to the write's own echo.
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(15)))).toBe('undo-nothing');
+    expect((await h.undo('jira-transition-undo', receiptId, at(15), OWNER, 'sess-1', { replyToMessageId: 'echo-1' })).kind).toBe('revert-choice');
+    const choice = await h.flow.find(h.session());
+    const picked = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(16), view: choice as NonNullable<typeof choice>, index: 1 });
+    expect(picked.kind).toBe('preview');
+    expect(picked.kind === 'preview' && picked.preview).toMatchObject({ operation: 'ISSUE_TRANSITION_REVERT', transitionId: '21', toStatusId: '1' });
+  });
+
+  it('review round 1 (P2-A): a pinned origin that was undone since, or whose anchor no longer holds, previews nothing at the pick', async () => {
+    const workflow = { ...DEFAULT_WORKFLOW, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '1')] };
+    for (const tamper of ['undone', 'anchor'] as const) {
+      const h = harness({ workflow });
+      const { receiptId, anchorTaskId } = await h.transition();
+      await h.undo('jira-transition-undo', receiptId, at(3));
+      const choice = await h.flow.find(h.session());
+      if (tamper === 'undone') {
+        await h.receipts.prepare({ id: 'undo-elsewhere', actorId: OWNER.id, idempotencyKey: 'cwr:elsewhere', connector: 'jira', operation: 'ISSUE_TRANSITION_REVERT', target: KEY, payloadSha256: 'e'.repeat(64), status: 'PREPARED', createdAt: at(3), updatedAt: at(3), data: { undoes: receiptId } });
+        await h.receipts.complete('undo-elsewhere', connectorWriteSent(`${KEY}:21`), at(3));
+      } else {
+        const source = h.tasks.get(anchorTaskId) as Task;
+        const anchor = source.metadata?.connectorWriteAnchor as Record<string, unknown>;
+        h.tasks.set(anchorTaskId, { ...source, metadata: { ...source.metadata, connectorWriteAnchor: { ...anchor, sessionId: 'sess-2' } } });
+      }
+      const picked = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 1 });
+      expect(reason(picked), tamper).toBe('undo-nothing');
+      expect(h.writes.transition).toHaveLength(1);
+    }
   });
 
   it('a pick no longer listed (or now leading elsewhere) when the preview is built proposes nothing', async () => {
@@ -542,5 +594,72 @@ describe('ADR-0112 amendment 3 (O5): the revert of Quoky\'s own Jira transition'
     expect(h.writes.transition).toHaveLength(1);
     expect(externalUndoFamilyOf('external.write', 'ISSUE_TRANSITION_REVERT')).toBeUndefined();
     for (const phrase of ['되돌리기 실행', '상태 되돌리기 실행', 'Jira 상태 변경 실행']) expect(isAcceptedExecutionPhrase('issueTransitionRevert', phrase), phrase).toBe(false);
+  });
+});
+
+describe('ADR-0112 amendment 3 review round 1: undone writes asked again, the forward transition baseline', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(OPEN));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  it('P2-C: the same transition asked again after its revert is a new write; its own approval replayed stays refused', async () => {
+    const h = harness();
+    const first = await h.transition();
+    expect((await h.undo('jira-transition-undo', first.receiptId, at(3))).kind).toBe('preview');
+    const reverted = await h.approveAndExecute(at(4));
+    if (reverted.kind !== 'outcome' || reverted.receiptId === undefined) throw new Error('revert did not run');
+    expect(h.receipts.rows.get(reverted.receiptId)?.data.undoes).toBe(first.receiptId);
+    const again = await h.transition();
+    expect(again.receiptId).not.toBe(first.receiptId);
+    expect(h.jira.status).toBe('3');
+    const view = await h.flow.find(h.session());
+    expect(await h.flow.execute({ session: h.session(), actor: OWNER, now: at(5), view: view as NonNullable<typeof view> })).toMatchObject({ kind: 'repeat', status: 'SENT' });
+    expect(h.writes.transition).toHaveLength(3);
+  });
+
+  it('P2-C: without an undo, the same transition asked again (the issue moved back outside Quoky) stays already-sent', async () => {
+    const h = harness();
+    await h.transition();
+    h.jira.status = '1';
+    expect((await h.flow.prepare({ session: h.session(), actor: OWNER, now: at(3), draft: { kind: 'issue-transition', issueKey: KEY, toStatus: '진행 중' } })).kind).toBe('already-sent');
+  });
+
+  it('P2-C: the same comment added again after its delete undo is a new comment; without the undo it stays already-sent', async () => {
+    const h = harness();
+    const first = await h.addComment();
+    expect((await h.undo('jira-comment-undo', first.receiptId, at(3))).kind).toBe('preview');
+    await h.approveAndExecute(at(4));
+    const again = await h.addComment();
+    expect(again.receiptId).not.toBe(first.receiptId);
+    expect(h.jira.comments).toHaveLength(1);
+    expect((await h.flow.prepare({ session: h.session(), actor: OWNER, now: at(6), draft: { kind: 'issue-comment', issueKey: KEY, text: '배포 확인했어요' } })).kind).toBe('already-sent');
+  });
+
+  it('P3: the forward preview shows the status read now (the compare-and-set baseline)', async () => {
+    const h = harness();
+    const step = await h.flow.prepare({ session: h.session(), actor: OWNER, now: at(0), draft: { kind: 'issue-transition', issueKey: KEY, toStatus: '진행 중' } });
+    expect(step.kind === 'preview' && step.preview).toMatchObject({ operation: 'ISSUE_TRANSITION', fromStatusId: '1', fromStatus: '할 일' });
+    expect(text(step)).toContain('지금 상태: 할 일 (상태 ID 1)');
+  });
+
+  it('P3: a moved key on the forward path is target-changed; a status name that looks like a credential is refused', async () => {
+    const moved = harness();
+    moved.jira.moved = true;
+    const step = await moved.flow.prepare({ session: moved.session(), actor: OWNER, now: at(0), draft: { kind: 'issue-transition', issueKey: KEY, toStatus: '진행 중' } });
+    expect(reason(step)).toBe('target-changed');
+    expect(text(step)).toContain('다른 키로 옮겨졌어요');
+    const secretName = ['password', 'x'.repeat(16)].join('=');
+    const leaky = harness();
+    (STATUS as Record<string, string>)['1'] = secretName;
+    try {
+      const refusedStep = await leaky.flow.prepare({ session: leaky.session(), actor: OWNER, now: at(0), draft: { kind: 'issue-transition', issueKey: KEY, toStatus: '진행 중' } });
+      expect(reason(refusedStep)).toBe('credential');
+      expect(text(refusedStep)).not.toContain(secretName);
+    } finally {
+      (STATUS as Record<string, string>)['1'] = '할 일';
+    }
+  });
+
+  it('P3: the stop reply line of a closed revert choice names it', () => {
+    expect(plainTextOf(renderConnectorWriteChoiceStopLine({ mode: 'transition-revert', issueKey: KEY, transitions: [] }))).toBe(`Jira 상태 되돌리기 선택 — ${KEY}`);
   });
 });
