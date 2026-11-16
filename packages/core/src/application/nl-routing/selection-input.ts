@@ -37,6 +37,14 @@ const QUOTE_TO_END = /^[ \t]*>>>/m;
 /** Private-use marker for a platform-quoted range while the text is rewritten (never sent). */
 const RANGE_MARK = '';
 
+/** The `[files: N]` line {@link prepareSelectionInput} appends to the prepared text when the message has attachments. */
+const FILES_LINE_AT_END = /\n\[files: \d+\]$/u;
+
+/** The prepared text without its appended `[files: N]` line: the owner's own lines, line breaks and placeholders kept. Pure. */
+export function nlPreparedWithoutFilesLine(text: string): string {
+  return text.replace(FILES_LINE_AT_END, '');
+}
+
 /** Prepare the owner's text, or say why selection is skipped. */
 export function prepareSelectionInput(
   rawText: string,

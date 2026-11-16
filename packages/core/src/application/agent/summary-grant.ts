@@ -2,7 +2,7 @@ import type { NlCatalogEntry, NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_MODE_SUMMARY_WORDS, withoutStructures } from '../nl-routing/action-entries';
 import { nlClauseNamesEntry, nlClauses, type NlClause } from '../nl-routing/clause-flags';
 import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
-import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, normalizeForMatch, type PreparedSelectionInput } from '../nl-routing/selection-input';
+import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, nlPreparedWithoutFilesLine, normalizeForMatch, type PreparedSelectionInput } from '../nl-routing/selection-input';
 import { groundingWordIn, nlItemReadVeto } from '../nl-routing/selection-validator';
 import { readOutputLabel } from './flow-policy';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
@@ -40,33 +40,89 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 export type OwnerText = Pick<PreparedSelectionInput, 'text' | 'groundingText'>;
 
 /**
- * Review round 2 (fail closed): the closed structural classes that mark a span the owner may not have written as a request.
- * No vocabulary: glyph classes and shapes only. Each is tested on the text as written and on its NFKC form (fullwidth and
- * compatibility forms fold onto the ASCII ones).
+ * Review rounds 2 and 3 (fail closed): the closed structural classes that mark a span the owner may not have written as a
+ * request. No vocabulary: Unicode categories, glyph classes and shapes only. The text is the prepared text with its line
+ * breaks kept (`[files: N]` line removed), so the line-start rules read real lines. Every rule is tested on four forms: as
+ * written, NFKC (fullwidth and compatibility forms fold), with every format character (`\p{Cf}`: zero-width and direction
+ * marks) removed, and both.
  */
-const UNTRUSTED_SPAN_MARKERS: readonly RegExp[] = [
-  // Any quote-like glyph: initial/final quote punctuation (“ ” ‘ ’ « » ‹ ›), the low-9 quotes, ASCII and fullwidth quotes and
-  // apostrophes, backticks and the acute accent, primes, the modifier-letter apostrophes, dingbat quotes, and the CJK and
-  // angle brackets used as quotes. ASCII ( ) [ ] { } are not quotes (pasted structures are set aside separately).
-  /[\p{Pi}\p{Pf}"'`´＂＇｀‚„′″‴‵‶‷ʹʺʻʼʽˮ❛❜❝❞「」『』｢｣《》〈〉【】〔〕〖〗〘〙〚〛〝〞〟⟨⟩]/u,
-  // The input preparation's own placeholders: a fenced block or a quoted line / platform quote range was in the message.
-  new RegExp(`${escapeRegExp(NL_FENCED_PLACEHOLDER)}|${escapeRegExp(NL_QUOTED_PLACEHOLDER)}`, 'u'),
-  // A URL-like token: any scheme separator, `www.`, a dotted host with a letter TLD (path or not: a label can carry a word),
-  // or a host with a port and a path.
-  /:\/\/|www\.|[\p{L}\p{N}-][.。｡][A-Za-z]{2,}(?![A-Za-z])|[A-Za-z]:\d{1,5}\//iu,
-  // A divider run: three or more of - _ = ~ * or a Unicode dash, optionally one space apart ("-----", "- - -").
-  /(?:[-_=~*\u2010-\u2015\u2212\u2500\u2501][ \t]?){2,}[-_=~*\u2010-\u2015\u2212\u2500\u2501]/u,
-  // A header shape: a Latin token of at most 3 letters and a colon anywhere (Fwd:, Fw:, RE:, AW:, WG:) ...
-  /(?<![\p{L}\p{N}])[A-Za-z]{1,3}[ \t]*:/u,
-  // ... or, at the start of the text or of a line, a short label holding a letter and a colon ("Subject:", "보낸 사람:"); a time
-  // ("3:30") is no label.
-  /(?:^|\n)[ \t]*(?=[\p{N}_ \t]*\p{L})[\p{L}\p{N}_][\p{L}\p{N}_ \t]{0,30}:/u,
+/** Colon-like characters: ASCII, fullwidth, ratio, modifier-letter colons, Hebrew sof pasuq, small/vertical/presentation forms, two-dot punctuation, Syriac and Mongolian colons, the Z-notation type colon and the IPA length mark. */
+const COLON = '[:：∶꞉˸׃﹕︓︰⁚܃܄᠄⦂ː]';
+const DOT = '[.。｡．]';
+const SLASH = '[/／⁄∕]';
+const CLOCK = `\\d{1,2}${COLON}\\d{2}`;
+/**
+ * A quote-like glyph: every initial and final quote (`\p{Pi}`, `\p{Pf}`), every opening and closing bracket (`\p{Ps}`,
+ * `\p{Pe}`) except ASCII ( ) [ ] { } (ordinary in owner prose; a bracketed chat speaker or time is the chat-frame rule), ASCII
+ * quotes and apostrophe, backtick and acute, primes, the modifier-letter quotes and accents, Hebrew geresh and gershayim,
+ * dingbat and ornamental quotes.
+ */
+const QUOTE_GLYPH = /[\p{Pi}\p{Pf}"'`´′″‴‵‶‷ʹʺʻʼʽˊˋˮ˝׳״❛❜❝❞❟❠\u{1F676}-\u{1F678}]|(?![()[\]{}])[\p{Ps}\p{Pe}]/u;
+const PLACEHOLDER = new RegExp(`${escapeRegExp(NL_FENCED_PLACEHOLDER)}|${escapeRegExp(NL_QUOTED_PLACEHOLDER)}`, 'u');
+/**
+ * A URL or host shape: a scheme separator or `www.` anywhere; a whitespace-free token with a dot or a colon before a slash
+ * (`x.io/…`, `127.0.0.1:8080/…`, `localhost:8080/…`); a dotted IPv4; a dotted host whose TLD is any two or more letters (any
+ * script).
+ */
+const URL_SHAPES: readonly RegExp[] = [
+  new RegExp(`${COLON}${SLASH}{2}|www${DOT}`, 'iu'),
+  new RegExp(`(?:${DOT}|${COLON})\\S*?${SLASH}`, 'u'),
+  new RegExp(`\\d{1,3}(?:${DOT}\\d{1,3}){3}`, 'u'),
+  new RegExp(`[\\p{L}\\p{N}-]${DOT}\\p{L}{2,}`, 'u'),
 ];
+/**
+ * Header shapes: at a line start, a label of up to three tokens whose last token holds a letter and is IMMEDIATELY followed by
+ * a colon-like character (`Subject:`, `Original-Message:`, `보낸 사람:`; a time `3:30` holds no letter); anywhere, a token of
+ * one to three Latin, Cyrillic or Greek letters immediately followed by one (`Fwd:`, `RE:`; `ok :)` has a space first).
+ */
+const HEADER_SHAPES: readonly RegExp[] = [
+  new RegExp(`^[ \\t]*(?:[\\p{L}\\p{N}_-]+[ \\t]){0,2}(?=[\\p{L}\\p{N}_-]*\\p{L})[\\p{L}\\p{N}_-]{1,30}${COLON}`, 'mu'),
+  new RegExp(`(?<![\\p{L}\\p{N}])[\\p{sc=Latin}\\p{sc=Cyrillic}\\p{sc=Greek}]{1,3}${COLON}`, 'u'),
+];
+/**
+ * Chat-copy framing at a line start: a bracketed speaker followed by another bracket (`[name] [time] …`), a bracketed time,
+ * `name — time` (an em dash, en dash or horizontal bar with a clock within the next words), and `name, [time]`.
+ */
+const CHAT_FRAMES: readonly RegExp[] = [
+  /^[ \t]*\[[^\]\n]{1,30}\][ \t]*\[/mu,
+  new RegExp(`^[ \\t]*\\[[^\\]\\n]*${CLOCK}[^\\]\\n]*\\]`, 'mu'),
+  new RegExp(`^[^\\n]{1,40}?[ \\t][—–―][ \\t][^\\n]{0,24}?${CLOCK}`, 'mu'),
+  new RegExp(`^[^\\n]{1,40}?,[ \\t]*\\[[^\\]\\n]*${CLOCK}[^\\]\\n]*\\]`, 'mu'),
+];
+/** A divider run: three or more of the same punctuation or symbol character, at most one space apart. */
+const DIVIDER_RUN = /([\p{P}\p{S}])(?:[ \t]?\1){2,}/gu;
+/** Run characters of ordinary emphasis (. ~ 〜 … ! ? and emoji): a divider only when the line holds nothing else. */
+const SOFT_RUN_CHAR = /^[.~〜…!?\p{Extended_Pictographic}]$/u;
+const SOFT_LINE = /^[.~〜…!?\p{Extended_Pictographic}\s]*$/u;
 
-/** Whether the owner's prepared text holds any untrusted-span marker (as written or in its NFKC form). Pure. */
+function hasDividerLine(text: string): boolean {
+  for (const line of text.split('\n')) {
+    for (const run of line.matchAll(DIVIDER_RUN)) {
+      if (!SOFT_RUN_CHAR.test(run[1] ?? '') || SOFT_LINE.test(line)) return true;
+    }
+  }
+  return false;
+}
+
+function hasMarkerIn(text: string): boolean {
+  return (
+    QUOTE_GLYPH.test(text) ||
+    PLACEHOLDER.test(text) ||
+    URL_SHAPES.some((shape) => shape.test(text)) ||
+    HEADER_SHAPES.some((shape) => shape.test(text)) ||
+    CHAT_FRAMES.some((shape) => shape.test(text)) ||
+    hasDividerLine(text)
+  );
+}
+
+/**
+ * Whether the owner's prepared text holds any untrusted-span marker, in any of its four forms (as written, NFKC, without
+ * format characters, both). The `[files: N]` line the preparation appends is not the owner's and is removed first. Pure.
+ */
 export function hasUntrustedSpanMarker(text: string): boolean {
-  const folded = text.normalize('NFKC');
-  return UNTRUSTED_SPAN_MARKERS.some((marker) => marker.test(text) || marker.test(folded));
+  const own = nlPreparedWithoutFilesLine(text);
+  const bare = own.replace(/\p{Cf}/gu, '');
+  return [own, own.normalize('NFKC'), bare, bare.normalize('NFKC')].some((form) => hasMarkerIn(form));
 }
 
 function escapeRegExp(literal: string): string {
