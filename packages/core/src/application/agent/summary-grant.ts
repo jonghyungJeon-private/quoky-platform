@@ -19,7 +19,8 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
  *   text (the prepared text with quoted lines, fenced blocks, platform quote ranges and attachments already removed by
  *   `prepareSelectionInput`) and the validated plan, whose `summarize` step only says WHICH summary exists, never that it was
  *   asked for. A forged or foreign basis is not in the module-private store and grants nothing.
- * - **The owner's own words only.** Inline quoted segments ({@link nlWithoutQuotedSegments}) and pasted structures
+ * - **The owner's own words only.** Quoted segments (an unclosed quote runs to the end), backtick code spans, URL tokens and
+ *   everything from a forward/reply header on ({@link nlWithoutQuotedSegments}), and pasted structures
  *   ({@link withoutStructures}) are set aside first, and a relayed request ("팀장이 3번 요약해달래", {@link nlItemReadVeto}) grants
  *   nothing.
  * - **The existing approved vocabulary.** The summary words are {@link NL_MODE_SUMMARY_WORDS} (A6 R2 ratification record C,

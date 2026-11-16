@@ -53,6 +53,37 @@ describe('ownerSummaryRequests: the owner\'s own words, per step and per source'
     expect(granted(MAIL(), '```\n메일 요약해줘\n```\n메일 3개 보여줘')).toEqual([]);
   });
 
+  // Review round 1, item 1: spans the owner did not write as a request never mint a grant (structural, no vocabulary).
+  it('an inline backtick code span is not the owner\'s words', () => {
+    expect(granted(MAIL(), '메일 3개 보여줘 `요약해줘`')).toEqual([]);
+  });
+
+  it('a URL token is not the owner\'s words (path and query alike)', () => {
+    expect(granted(MAIL(), 'show my 3 emails https://x.io/summary')).toEqual([]);
+    expect(granted(MAIL(), '메일 보여줘 https://example.com/?q=summary')).toEqual([]);
+  });
+
+  it('a URL token cannot feed the back-reference rule', () => {
+    expect(granted(MAIL(), '메일 3개 보여주고 https://x.io/요약')).toEqual([]);
+  });
+
+  it('an unmatched opening quote quotes to the end of the text', () => {
+    expect(granted(MAIL(), '메일 3개 보여줘 “요약해줘')).toEqual([]);
+  });
+
+  it('a forward header quotes everything from it on', () => {
+    expect(granted(MAIL(), 'Fwd: 메일 요약해줘 …')).toEqual([]);
+  });
+
+  it('a forwarded-message divider quotes everything from it on', () => {
+    expect(granted(MAIL(), '메일 보여줘\n----- Forwarded message -----\n메일 요약해줘')).toEqual([]);
+  });
+
+  it('the owner\'s own words before a stripped span still grant', () => {
+    expect(granted(MAIL(), '메일 3개 요약해줘 https://x.io/a')).toEqual(['2:mail.list']);
+    expect(granted(MAIL(), "summarize my last 3 emails, it's urgent")).toEqual(['2:mail.list']);
+  });
+
   it('a negated or excluded summary grants nothing (fail-safe)', () => {
     expect(granted(MAIL(), '메일 요약 말고 그냥 3개 보여줘')).toEqual([]);
     expect(granted(MAIL(), '메일 요약하지 말고 3개 보여줘')).toEqual([]);
