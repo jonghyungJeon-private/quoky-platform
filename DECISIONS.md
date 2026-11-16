@@ -31996,6 +31996,92 @@ and D9 still governs every turn that goes to chat.
 - **Result.** PASS. Chief Architect (code APPROVE after round 2), Codex PASS (round 3 delta), security review APPROVE,
   full suite 19,009 passed.
 
+### Implementation note (amendment 3, O4 Jira comment delete undo and O5 Jira transition revert, 2026-11-16)
+
+- **Interfaces first (written before the code).**
+  - Operations `ISSUE_COMMENT_DELETE` and `ISSUE_TRANSITION_REVERT`: undo-only, never owner-worded. Payloads:
+    `ISSUE_COMMENT_DELETE {issueKey, commentId, expected.version, undoes}` and
+    `ISSUE_TRANSITION_REVERT {issueKey, transitionId, transitionName, toStatusId, toStatus, fromStatusId, undoes}`.
+  - `ISSUE_TRANSITION` gains `fromStatusId` and `fromStatus`, recorded at preview from a read-only status read.
+  - Comment writer port (`IssueCommentWriter`):
+    - `addComment`'s SENT carries the comment `version`;
+    - optional `inspectComment(issueKey, commentId)` returns `absent`, `moved`, or `present {version, unedited, deletable}`;
+    - optional `deleteComment({issueKey, commentId, expected.version})`.
+  - Transition writer port: optional `readIssueStatus`, and `IssueTransitionRequest.fromStatusId` (compare-and-set).
+  - Draft kinds and families: `jira-comment-undo` / `jira-transition-undo`. `externalUndoFamilyOf` maps ISSUE_COMMENT to
+    `jira-comment` and ISSUE_TRANSITION to `jira-transition`. The undo operations themselves have no family, so an undo is
+    never undone again.
+  - Execution gates:
+    - `issueCommentDelete`: `Jira 댓글 삭제 실행`;
+    - `issueTransitionRevert`: `Jira 상태 되돌리기 실행`.
+    There is no bare `삭제 실행` or `되돌리기 실행`, and no phrase without the service name.
+  - New refusals: `undo-read-failed`, `undo-target-gone`, `undo-target-changed`, `undo-not-permitted`, `undo-no-path`.
+  - New step `revert-choice` and choice mode `transition-revert`.
+- **Built: core.** This mirrors the calendar undos:
+  - The resolver goes from `lastAction`, to this actor's own SENT receipt, to the anchor, to the draft.
+  - The card leads with the receipt banner, and the owner sentence appears only under "요청하신 문장:".
+  - Approval is CRITICAL, one-time, with the exact phrase.
+  - `undoOf` is set with `sourceTaskId`, so the kill switch closes open undo previews and revert choices.
+  - It works in DMs only. `undoes` is part of the payload hash.
+  - At execution the inverse is re-derived from the source anchor and receipt and must match exactly.
+  - Core has no provider branch: the Jira specifics stay in the adapter.
+- **Built: adapter (`connector-jira`).**
+  - `addComment` returns `updated` as the version, but only when it is a bounded stamp equal to `created`.
+  - `inspectComment` does the following:
+    - checks the allowlist;
+    - reads the issue identity (404 means absent; another key means moved);
+    - reads the comment: unedited means `created === updated` and `author.accountId === updateAuthor.accountId`;
+    - checks the delete permission read-only: `mypermissions` gives DELETE_ALL_COMMENTS, or DELETE_OWN_COMMENTS with
+      the author equal to `/myself`.
+  - `deleteComment` re-checks all of that against `expected.version` and then sends one DELETE inside the transport window.
+  - `readIssueStatus` reads `fields=status`.
+  - `transition` with `fromStatusId` re-reads the status and returns `TARGET_CHANGED` on a mismatch.
+  - No new OAuth scope, host, flag, migration or permission request.
+- **Reachability (O1).** `QUOKY_CONNECTOR_WRITES_ENABLED` plus `QUOKY_NL_ACTIONS=local|external`.
+  `EXTERNAL_UNDO_CAPABILITIES` now holds `calendar-create`, `calendar-update`, `calendar-delete`, `jira-comment` and
+  `jira-transition`. The Jira families were added only after their gate passed.
+- **Counts.**
+  - Unit tests: `connector-write-jira-undo.test.ts` (19). Adapter tests: `jira-issue-writer.test.ts` (35 in total, comment
+    and transition cases). Updated guard, copy, stray-phrase, gate and surface-map tests.
+  - Rendering golden: only new keys were added (148; none removed or changed).
+  - Red-team v2: 68 Jira cases appended to the existing 68 (ids `rt-r3undo2-069..136`; existing ids unchanged).
+    - jira-comment: 32 cases. jira-transition: 36 cases.
+    - 11 new attack kinds: pasted id, pasted link, pasted listing, edited comment, issue moved on, legacy receipt, no delete
+      permission, provider read failed, no path back, pick outside the listed set, pick no longer listed.
+    - Inverse oracles: a delete must target exactly the own comment and version, and a transition must be one of the
+      transitions leading back, from Quoky's status to the recorded status. The revert-choice oracle requires every offered
+      transition to lead back.
+    - Results: v2 driver on the production constant, 3 runs, each run jira-comment 32 x 2 = 64 and jira-transition 36 x 2 = 72 case runs (calendar-update 68, calendar-delete 68 unchanged): 0 attack successes, 0 deviations in every run; the driver also asserts no network. v1: 36 x 2 = 72 case runs x 3 runs, 0 / 0.
+- **Ambiguities, each decided fail-closed.**
+  1. Unedited cannot be proven: there is no version at SENT (a legacy receipt, or `updated != created` at add), or the
+     writer has no inspect/delete. The result is `undo-unavailable`. A different author/updater account, or a changed
+     version, means edited.
+  2. Any permission answer that is not exactly two booleans, or a missing `/myself` account, counts as a failed read: nothing
+     is proposed.
+  3. A moved issue (it answers with another key) counts as target-changed for both families.
+  4. A failed status read when a forward transition is previewed refuses that transition (`transition-lookup-failed`). The
+     alternative was to send it without `fromStatusId`, which would leave it silently non-undoable.
+  5. The forward transition is now also compare-and-set on the status read at preview. If the status moved between the
+     preview and the phrase, the result is `TARGET_CHANGED` and nothing is sent.
+  6. Revert paths are matched by status id only, never by name. They are deduped, numeric only, credential-filtered, and
+     capped at 10.
+  7. Revert choices:
+     - an out-of-range number is `invalid-choice` and closes the choice;
+     - "0번" is not a choice reply, so it goes to ordinary routing and nothing is written;
+     - a valid pick is re-validated with a fresh status read and a fresh listing; a pick no longer listed is
+       target-changed.
+  8. The kill switch closes an open revert choice. A number sent after the switch never reaches it.
+- **Open points (live Jira only; check on the BE test issue).**
+  - A fresh comment has `created === updated`, and `author.accountId === updateAuthor.accountId`.
+  - Editing the comment in Jira changes `updated`; Quoky must then refuse.
+  - `mypermissions` returns both keys with a boolean `havePermission`, and `/myself` returns `accountId`.
+  - Comment DELETE answers 204. Jira has no conditional DELETE, so a small window remains between the re-read and the
+    DELETE.
+  - `GET issue?fields=status` gives a numeric `status.id`, and a moved issue answers with its new key.
+  - The test issue's workflow: does a transition lead from the status Quoky set back to the original one? Zero transitions
+    gives `undo-no-path`; several give the numbered choice.
+  - Each forward transition now makes one extra status GET.
+
 ### Implementation note (amendment 3, restore-duplicate fix, 2026-11-16)
 
 - **Live finding (2026-11-16, after the calendar Live UAT).** Event deleted -> restored (`일정 복원 실행`) -> deleted again (the

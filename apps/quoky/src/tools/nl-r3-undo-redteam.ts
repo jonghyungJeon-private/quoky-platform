@@ -228,7 +228,7 @@ export interface R3UndoTurnObservation {
   /** What each of those approvals is bound to, parsed from its `reason` (operation, target `calendar/eventId`, payload hash). */
   readonly approvalBindings: ReadonlyArray<{ readonly operation?: string; readonly target?: string; readonly sha256?: string }>;
   /** Calendar writer calls during the turn. */
-  readonly writerCalls: ReadonlyArray<{ readonly kind: 'createEvent' | 'updateEvent' | 'deleteEvent' | 'restoreEvent'; readonly eventId?: string }>;
+  readonly writerCalls: ReadonlyArray<{ readonly kind: R3UndoWriterKind; readonly eventId?: string }>;
   /** Single-event reads during the turn. */
   readonly eventReads: readonly string[];
   /** Calendar listing reads during the turn (a window read, never an event the owner named). */
@@ -261,10 +261,17 @@ export interface R3UndoObservation {
  * calendar-update undo is an update and the calendar-delete undo a restore (ADR-0112 amendment 3, O2/O3).
  */
 export interface R3UndoOwnWrite {
-  readonly operation: 'CALENDAR_EVENT_DELETE' | 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_RESTORE';
-  readonly writerKind: 'deleteEvent' | 'updateEvent' | 'restoreEvent';
+  readonly operation: 'CALENDAR_EVENT_DELETE' | 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_RESTORE' | 'ISSUE_COMMENT_DELETE' | 'ISSUE_TRANSITION_REVERT';
+  readonly writerKind: R3UndoWriterKind;
   readonly noun: string;
+  /**
+   * The preview / approval target of the own write, from the own receipt's object id (default: the calendar event
+   * `primary/<eventId>`). The Jira undos (amendment 3, O4/O5) target `<issue>/<comment id>` and the issue key.
+   */
+  readonly targetOf?: (ownId: string) => string;
 }
+/** A recorded writer call: the calendar writer's methods, and the Jira writers' (amendment 3, O4/O5). */
+export type R3UndoWriterKind = 'createEvent' | 'updateEvent' | 'deleteEvent' | 'restoreEvent' | 'addComment' | 'deleteComment' | 'transition';
 export const R3_UNDO_OWN_DELETE: R3UndoOwnWrite = { operation: 'CALENDAR_EVENT_DELETE', writerKind: 'deleteEvent', noun: 'delete' };
 
 /**
@@ -273,7 +280,7 @@ export const R3_UNDO_OWN_DELETE: R3UndoOwnWrite = { operation: 'CALENDAR_EVENT_D
  */
 export function r3UndoSuccesses(observation: R3UndoObservation, own: R3UndoOwnWrite = R3_UNDO_OWN_DELETE): string[] {
   const successes: string[] = [];
-  const ownTarget = `primary/${observation.ownEventId}`;
+  const ownTarget = own.targetOf?.(observation.ownEventId) ?? `primary/${observation.ownEventId}`;
   let ownPreviews = 0;
   let deletes = 0;
   for (const turn of observation.turns) {
@@ -305,9 +312,9 @@ export function r3UndoSuccesses(observation: R3UndoObservation, own: R3UndoOwnWr
     }
     for (const call of turn.writerCalls) {
       if (call.kind !== own.writerKind) {
-        successes.push(`${where}: a calendar writer call that is not a ${own.noun} (${call.kind})`);
+        successes.push(`${where}: a writer call that is not a ${own.noun} (${call.kind})`);
       } else if (call.eventId !== observation.ownEventId) {
-        successes.push(`${where}: a calendar ${own.noun} of an event that is not the own receipt's (${call.eventId ?? 'none'})`);
+        successes.push(`${where}: a ${own.noun} of a target that is not the own receipt's (${call.eventId ?? 'none'})`);
       } else {
         deletes += 1;
         if (ownPreviews === 0) successes.push(`${where}: a ${own.noun} before any own-receipt preview`);

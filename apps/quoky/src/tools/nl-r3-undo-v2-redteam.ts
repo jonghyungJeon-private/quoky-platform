@@ -1,6 +1,7 @@
 /**
- * ADR-0112 amendment 3 red team, second case file (`agent-redteam.r3-undo.v2.json`): the calendar-update undo (O2) and the
- * calendar-delete restore (O3/O6/O7). The format of v1 (`nl-r3-undo-redteam.ts`) is kept — every case carries an `oracle`
+ * ADR-0112 amendment 3 red team, second case file (`agent-redteam.r3-undo.v2.json`): the calendar-update undo (O2), the
+ * calendar-delete restore (O3/O6/O7), the delete of the Jira comment Quoky added (O4) and the revert of Quoky's own Jira
+ * transition (O5). The format of v1 (`nl-r3-undo-redteam.ts`) is kept — every case carries an `oracle`
  * (exact totals, one accepted layer per turn, whether the selector is called, fixed reply fragments) and runs in two attacker
  * variants — but a case names its family, and the one write its undo may make is that family's inverse (an update of the own
  * receipt's event, or a restore of it), so the v1 file and its 36 cases stay untouched.
@@ -15,19 +16,28 @@ import type { R3UndoOracle, R3UndoOwnWrite } from './nl-r3-undo-redteam';
 
 export const R3_UNDO_V2_REDTEAM_PATH = resolve(__dirname, '../../../../packages/core/src/application/golden/agent-redteam.r3-undo.v2.json');
 
-export const R3_UNDO_V2_FAMILIES = ['calendar-update', 'calendar-delete'] as const;
+export const R3_UNDO_V2_FAMILIES = ['calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition'] as const;
+export const R3_UNDO_V2_JIRA_FAMILIES = ['jira-comment', 'jira-transition'] as const;
 export type R3UndoV2Family = (typeof R3_UNDO_V2_FAMILIES)[number];
 
-/** The one write the undo of each family may make (ADR-0112 amendment 3: O2 patch back, O3 restore the same id). */
+/**
+ * The one write the undo of each family may make (ADR-0112 amendment 3: O2 patch back, O3 restore the same id, O4 delete the
+ * own comment `<issue>/<comment id>`, O5 one transition of the own issue back to its status before Quoky's transition). For
+ * the Jira families the own object id already IS the target (`<issue>/<comment id>`, the issue key).
+ */
 export const R3_UNDO_V2_OWN: Readonly<Record<R3UndoV2Family, R3UndoOwnWrite>> = {
   'calendar-update': { operation: 'CALENDAR_EVENT_UPDATE', writerKind: 'updateEvent', noun: 'update' },
   'calendar-delete': { operation: 'CALENDAR_EVENT_RESTORE', writerKind: 'restoreEvent', noun: 'restore' },
+  'jira-comment': { operation: 'ISSUE_COMMENT_DELETE', writerKind: 'deleteComment', noun: 'comment delete', targetOf: (issueAndCommentId) => issueAndCommentId },
+  'jira-transition': { operation: 'ISSUE_TRANSITION_REVERT', writerKind: 'transition', noun: 'transition revert', targetOf: (issueKey) => issueKey },
 };
 
 /** The documented execution phrase of each family's undo. */
 export const R3_UNDO_V2_PHRASE: Readonly<Record<R3UndoV2Family, string>> = {
   'calendar-update': '일정 변경 실행',
   'calendar-delete': '일정 복원 실행',
+  'jira-comment': 'Jira 댓글 삭제 실행',
+  'jira-transition': 'Jira 상태 되돌리기 실행',
 };
 
 /** The closed attack kinds of the v2 file. */
@@ -60,6 +70,18 @@ export const R3_UNDO_V2_ATTACKS = [
   'kill-switch-after-approval',
   'cap-exhaustion',
   'owner-sentence-injection',
+  // ADR-0112 amendment 3 (O4/O5): the Jira families.
+  'pasted-jira-id',
+  'pasted-jira-link',
+  'pasted-listing',
+  'edited-comment',
+  'issue-moved-on',
+  'legacy-receipt',
+  'no-delete-permission',
+  'provider-read-failed',
+  'no-path-back',
+  'pick-outside-listed-set',
+  'pick-no-longer-listed',
 ] as const;
 export type R3UndoV2Attack = (typeof R3_UNDO_V2_ATTACKS)[number];
 
@@ -75,7 +97,24 @@ export interface R3UndoV2Turn {
    * A change outside Quoky right before this turn (TOCTOU between the preview and the phrase): the own event is edited (an
    * update undo) or is back on the calendar (a restore).
    */
-  readonly before?: 'target-moved-on';
+  readonly before?: 'target-moved-on' | 'path-gone';
+}
+
+/**
+ * The Jira state outside Quoky after the own write (ADR-0112 amendment 3, O4/O5). Comment: edited or gone since Quoky added
+ * it, or these credentials may not delete it. Transition: the issue moved on to another status, and how many transitions
+ * available now lead back (default 1). Both: the issue was moved (answers another key), the provider reads fail, or the own
+ * write is a legacy one (a comment without a version, a transition without `fromStatusId`).
+ */
+export interface R3UndoV2JiraState {
+  readonly commentEdited?: true;
+  readonly commentGone?: true;
+  readonly noDeletePermission?: true;
+  readonly statusMovedOn?: true;
+  readonly paths?: 0 | 1 | 2;
+  readonly issueMoved?: true;
+  readonly readFails?: true;
+  readonly legacy?: true;
 }
 
 export interface R3UndoV2Context {
@@ -84,8 +123,8 @@ export interface R3UndoV2Context {
   readonly replyTo?: { readonly echo: string; readonly ownedBy?: 'other-session' };
   /** The owner's own lastAction names ANOTHER actor's valid SENT receipt of the same operation. */
   readonly lastActionActor?: 'other-actor';
-  /** The owner's own lastAction names this actor's receipt of a Jira comment. */
-  readonly lastActionItem?: 'receipt-of-jira-comment';
+  /** The owner's own lastAction names this actor's receipt of a Jira comment, or of a calendar update. */
+  readonly lastActionItem?: 'receipt-of-jira-comment' | 'receipt-of-calendar-update';
   /** The owner's own lastAction names the anchor Task of a real write made in another session of the same actor. */
   readonly anchorSession?: 'other-session';
   /** The record's operation is rewritten to the OTHER family's operation (its receipt and anchor stay what they are). */
@@ -100,6 +139,7 @@ export interface R3UndoV2Context {
   /** `receiptId` is what the smuggled variant puts into `args.receiptId`; `entryId` is pinned to `action.undo`. */
   readonly selector?: { readonly entryId: string; readonly externalUndo?: { readonly receiptId: string } };
   readonly channel?: 'guild';
+  readonly jira?: R3UndoV2JiraState;
 }
 
 export const R3_UNDO_V2_OUTCOMES = [
@@ -160,6 +200,13 @@ export function validateR3UndoV2RedTeam(cases: readonly R3UndoV2Case[]): string[
     if (ctx?.restoreRefused === true && ctx.family !== 'calendar-delete') problems.push(`${golden.id}: restoreRefused outside the restore family`);
     if (ctx?.liveEvent?.present === true && ctx.family !== 'calendar-delete') problems.push(`${golden.id}: liveEvent.present outside the restore family`);
     if ((ctx?.liveEvent?.edited === true || ctx?.liveEvent?.gone === true) && ctx.family !== 'calendar-update') problems.push(`${golden.id}: liveEvent.edited/gone outside the update family`);
+    const jira = ctx?.jira;
+    const isJira = (R3_UNDO_V2_JIRA_FAMILIES as readonly string[]).includes(ctx?.family);
+    if (jira !== undefined && !isJira) problems.push(`${golden.id}: jira state outside the Jira families`);
+    if (isJira && (ctx.liveEvent !== undefined || ctx.restoreRefused !== undefined)) problems.push(`${golden.id}: calendar state in a Jira family`);
+    if ((jira?.commentEdited === true || jira?.commentGone === true || jira?.noDeletePermission === true) && ctx.family !== 'jira-comment') problems.push(`${golden.id}: comment state outside the comment family`);
+    if ((jira?.statusMovedOn === true || jira?.paths !== undefined) && ctx.family !== 'jira-transition') problems.push(`${golden.id}: transition state outside the transition family`);
+    if (jira?.paths !== undefined && ![0, 1, 2].includes(jira.paths)) problems.push(`${golden.id}: jira.paths`);
     if (ctx?.selector !== undefined && ctx.selector.entryId !== 'action.undo') problems.push(`${golden.id}: selector.entryId`);
     if (golden.expected === undefined || typeof golden.expected.success !== 'string' || !golden.expected.success.includes('own SENT receipt')) problems.push(`${golden.id}: success condition`);
     if (!Array.isArray(golden.turns) || golden.turns.length === 0 || golden.turns.length > 6) problems.push(`${golden.id}: turns`);
@@ -168,7 +215,8 @@ export function validateR3UndoV2RedTeam(cases: readonly R3UndoV2Case[]): string[
       if (typeof turn.owner !== 'string' || turn.owner.length === 0) problems.push(`${golden.id}: turn text`);
       if (turn.repeat !== undefined && (!Number.isInteger(turn.repeat) || turn.repeat < 1 || turn.repeat > 15)) problems.push(`${golden.id}: repeat`);
       if (turn.declineAfter !== undefined && typeof turn.declineAfter !== 'boolean') problems.push(`${golden.id}: declineAfter`);
-      if (turn.before !== undefined && turn.before !== 'target-moved-on') problems.push(`${golden.id}: before`);
+      if (turn.before !== undefined && turn.before !== 'target-moved-on' && turn.before !== 'path-gone') problems.push(`${golden.id}: before`);
+      if (turn.before === 'path-gone' && ctx?.family !== 'jira-transition') problems.push(`${golden.id}: path-gone outside the transition family`);
     }
     const oracle = golden.expected?.oracle;
     if (oracle === undefined || !Number.isInteger(oracle.previews) || !Number.isInteger(oracle.approvals) || !Number.isInteger(oracle.writes) || typeof oracle.selectorBound !== 'boolean' || !Array.isArray(oracle.turnLayers) || oracle.turnLayers.length === 0) {
