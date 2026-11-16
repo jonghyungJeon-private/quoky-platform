@@ -100,6 +100,15 @@ const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:(?:래|래요|래서|라�
 const CONTRACTED_QUOTATIVE_FINAL_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
+
+/**
+ * ADR-0121 S2 wiring (the summary grant, P3-3b owner answer 2): the prose with every quoted segment ('…', "…", “…”, ‘…’, 「…」,
+ * 『…』, the same pairs {@link nlRelaysRequest} reads) set aside, so a word inside quotes is never taken as the owner's own.
+ * Structural only; an unbalanced quote leaves the text as it is. Pure.
+ */
+export function nlWithoutQuotedSegments(prose: string): string {
+  return prose.replace(QUOTED_SEGMENT, ' ').replace(/\s+/gu, ' ').trim();
+}
 const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
 /**
  * A joke or a tease (CA round 3): never an instruction. The closed class of joke nouns (농담, 장난; English joke) frames
