@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { Capability } from '../../domain';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
@@ -212,5 +213,56 @@ describe('AgentPlanExecutor with the producer (no test seam)', () => {
       expect(mail.requests[0]?.withDocuments).toBeUndefined();
       expect(route.requests).toEqual([]);
     }
+  });
+});
+
+// ── S2 wiring review round 2 items 3 and 4: the shutdown signal at the executor ──────────────────────────────────────────
+
+describe('AgentPlanExecutor and the shutdown signal (S2 wiring review round 2)', () => {
+  it('leaves no listener on the service-lifetime signal: the count does not grow per port or M2 call', async () => {
+    const shutdown = new AbortController();
+    for (let run = 0; run < 3; run += 1) {
+      const p = MAIL_DRIVE();
+      await new AgentPlanExecutor({ readers: { 'mail.list': port(3), 'drive.files': port(3) }, summarizer: remoteRoute() }).execute(p, {
+        grants: summaryGrantBasis(p, grounding('메일이랑 드라이브 요약해줘')),
+        signal: shutdown.signal,
+      });
+    }
+    expect(getEventListeners(shutdown.signal, 'abort')).toHaveLength(0);
+  });
+
+  it('a shutdown that cuts the last step stops the run (stopped, the read not-run as stopped)', async () => {
+    const shutdown = new AbortController();
+    const hung: AgentReadPort = {
+      read: async () => {
+        shutdown.abort();
+        return new Promise<never>(() => undefined);
+      },
+    };
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': hung } }).execute(plan([read('mail.list')]), { signal: shutdown.signal });
+    expect(result).toMatchObject({ outcome: 'partial', stopped: true });
+    expect(result.steps[0]).toMatchObject({ kind: 'read', status: 'not-run', reason: 'stopped' });
+  });
+
+  it('a summarize step cut by shutdown is not-run with reason stopped, and the run is stopped', async () => {
+    const shutdown = new AbortController();
+    const provider: AiProvider = {
+      id: 'hung-summarizer',
+      capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
+      executionLocality: 'REMOTE',
+      isAvailable: async () => true,
+      execute: async () => {
+        shutdown.abort();
+        return new Promise<never>(() => undefined);
+      },
+    };
+    const policy: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
+    const p = MAIL();
+    const result = await new AgentPlanExecutor({
+      readers: { 'mail.list': port(3) },
+      summarizer: { selector: new CapabilityRouter(new AiProviderManager([provider]), policy) },
+    }).execute(p, { grants: summaryGrantBasis(p, grounding('메일 3개 요약해줘')), signal: shutdown.signal });
+    expect(result).toMatchObject({ outcome: 'partial', stopped: true });
+    expect(result.steps[1]).toMatchObject({ kind: 'summarize', status: 'not-run', reason: 'stopped' });
   });
 });

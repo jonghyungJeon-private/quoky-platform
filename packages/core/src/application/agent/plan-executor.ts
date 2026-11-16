@@ -156,7 +156,16 @@ export type AgentStepResult =
    * A bound stopped the step; `audits` lists every model call that had already been sent (the call was made, even if its answer
    * was cut off), in source order.
    */
-  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'not-run'; readonly from: readonly number[]; readonly schema: string; readonly audits?: readonly QuarantinedCallAudit[] }
+  | {
+      readonly step: number;
+      readonly kind: 'summarize';
+      readonly status: 'not-run';
+      readonly from: readonly number[];
+      readonly schema: string;
+      /** `stopped`: the kill switch or shutdown cut it (review round 2 item 4); absent: a bound. */
+      readonly reason?: 'stopped';
+      readonly audits?: readonly QuarantinedCallAudit[];
+    }
   | {
       readonly step: number;
       readonly kind: 'summarize';
@@ -309,6 +318,8 @@ export class AgentPlanExecutor {
         );
       }
     }
+    // Review round 2 item 4: a shutdown that cut the last step stops the run too (no later step was left to notice it).
+    if (!stopped && results.some((result) => result.status === 'not-run' && result.reason === 'stopped')) stopped = true;
     const usage = safely(() => budget.snapshot(), ZERO_USAGE);
     const breach = safely(() => budget.breach, undefined);
     // A summary that left items out is a partial answer, whatever the reason.
@@ -492,7 +503,7 @@ export class AgentPlanExecutor {
         });
         return audits.length > 0 ? { audits } : {};
       };
-      if (outcome === 'wall') return { ...base, status: 'not-run', ...callAudits() };
+      if (outcome === 'wall') return { ...base, status: 'not-run', ...(state.shutdown?.aborted === true ? { reason: 'stopped' as const } : {}), ...callAudits() };
       if (budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudits('audits' in outcome ? outcome.audits : undefined) };
       if (outcome.kind === 'summary') {
         return {
@@ -547,9 +558,12 @@ export class AgentPlanExecutor {
     });
     // Shutdown aborts the port call and is not waited for (`'wall'` without a wall breach: the caller reads the signal).
     const unlink = linkShutdown(shutdown, controller);
+    // Review round 2 item 3: the listener on the service-lifetime signal is removed when the call ends (no growth per call).
+    let stopCut: (() => void) | undefined;
     const cut = new Promise<'wall'>((resolve) => {
       if (shutdown?.aborted === true) resolve('wall');
-      shutdown?.addEventListener('abort', () => resolve('wall'), { once: true });
+      stopCut = () => resolve('wall');
+      shutdown?.addEventListener('abort', stopCut, { once: true });
     });
     try {
       const call = Promise.resolve()
@@ -561,6 +575,7 @@ export class AgentPlanExecutor {
       return await Promise.race([call, wall, cut]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      if (stopCut !== undefined) shutdown?.removeEventListener('abort', stopCut);
       unlink();
       controller.abort();
     }
@@ -601,7 +616,7 @@ function resolveReference(
 }
 
 function notRun(step: ValidatedAgentStep, number: number, reason: AgentStepNotRunReason): AgentStepResult {
-  if (step.kind === 'summarize') return { step: number, kind: 'summarize', status: 'not-run', from: step.from, schema: step.schema };
+  if (step.kind === 'summarize') return { step: number, kind: 'summarize', status: 'not-run', from: step.from, schema: step.schema, ...(reason === 'stopped' ? { reason } : {}) };
   return { step: number, kind: 'read', entryId: step.entry.id as NlWave1EntryId, status: 'not-run', reason };
 }
 

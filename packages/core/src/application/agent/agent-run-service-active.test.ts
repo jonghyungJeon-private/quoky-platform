@@ -431,6 +431,38 @@ describe('AgentRunService.runActive — kill switch and caps (D7, ADR-0120 A6-D3
     expect(allowed).toBe(50);
   });
 
+  // Review round 2 item 2: a hung pre-dispatch await is cut by the wall or shutdown; the slot and the hour's charge are released.
+  it.each([
+    ['admission switch read', 'admission'],
+    ['chat resolution', 'chat'],
+  ] as const)('a hung %s ends at the wall, frees the slot and trues the charge down', async (_label, hang) => {
+    let gets = 0;
+    const h = harness({
+      script: Array.from({ length: 21 }, () => MAIL_SUMMARY_PLAN),
+      caps: { perHour: 100, perDay: 100 },
+      bounds: { wallMs: 80 },
+      actorsGet: async () => {
+        gets += 1;
+        return hang === 'admission' && gets === 1 ? new Promise<never>(() => undefined) : (h.actors.get('owner') ?? null);
+      },
+    });
+    const never = async (): Promise<never> => new Promise<never>(() => undefined);
+    expect(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), hang === 'chat' ? never : async () => CHAT)).toEqual({ kind: 'declined', reason: 'bound' });
+    expect(activeLines(h).at(-1)).toMatchObject({ outcome: 'declined', reason: 'bound', breach: 'wall-time' });
+    // Nothing was charged for good: 20 runs of 3 calls still fit the hour, and the 21st is declined.
+    for (let run = 0; run < 20; run += 1) replyOf(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT));
+    expect(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'model-hourly-cap' });
+  }, 5_000);
+
+  it('a hung chat resolution ends at shutdown (the run returns, so its slot and charge are released)', async () => {
+    const h = harness({ script: [MAIL_AND_TODO_PLAN] });
+    const pending = h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => new Promise<never>(() => undefined));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    h.service.stopBackground();
+    expect(await pending).toEqual({ kind: 'declined', reason: 'shutdown' });
+    expect(h.plannerCalls).toEqual([]);
+  }, 2_000);
+
   it('only in the owner\'s DM', async () => {
     const h = harness({ script: [MAIL_AND_TODO_PLAN] });
     expect(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT, { direct: false }), async () => CHAT)).toEqual({ kind: 'declined', reason: 'not-dm' });

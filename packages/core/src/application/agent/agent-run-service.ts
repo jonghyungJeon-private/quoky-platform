@@ -376,21 +376,31 @@ export class AgentRunService {
     declined: (reason: string, fields?: LogFields) => AgentActiveOutcome,
     latency: () => number,
   ): Promise<AgentActiveOutcome> {
+    // Review round 2 item 2: every await before the planner dispatch is raced against the run's wall and shutdown, so a hung
+    // switch read, chat resolution or router never holds the actor's slot or the hour's charge.
+    const cut = (ended: 'wall' | 'shutdown' | 'failed'): AgentActiveOutcome =>
+      ended === 'wall' ? declined('bound', { breach: budget.breach ?? 'wall-time' }) : declined(ended);
     // The kill switch on the live actor (never the turn's snapshot); unreadable = declined (fail closed).
-    if (!(await this.liveSwitchRunning(turn.actor.id))) return declined('kill-switch');
+    const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
+    if (running.kind !== 'ok') return cut(running.kind);
+    if (!running.value) return declined('kill-switch');
 
     const prepared = prepareSelectionInput(turn.text, turn.attachmentCount, turn.quotedRanges ?? []);
     if ('skip' in prepared) return declined(prepared.skip);
     const previousStrings = turn.previous === undefined ? [] : Object.values(turn.previous.args).filter((value): value is string => typeof value === 'string');
     if ([prepared.text, ...previousStrings].some((value) => containsCredentialMaterial(value))) return declined('credential');
-    const chat = await resolveChat();
+    const resolved = await withinRun(resolveChat, budget, this.background.signal);
+    if (resolved.kind !== 'ok') return cut(resolved.kind);
+    const chat = resolved.value;
     if (chat === undefined) return declined('chat-provider-unknown');
-    let provider: AiProvider;
-    try {
-      provider = await this.deps.router.select(Capability.INTENT_SELECTION);
-    } catch {
-      return declined('no-provider');
-    }
+    const selected = await withinRun(
+      () => this.deps.router.select(Capability.INTENT_SELECTION).then((value): AiProvider | undefined => value, () => undefined),
+      budget,
+      this.background.signal,
+    );
+    if (selected.kind !== 'ok') return cut(selected.kind);
+    if (selected.value === undefined) return declined('no-provider');
+    const provider = selected.value;
     const egress = nlSameEgress(provider, chat.id, chat.locality);
     if (egress !== 'same') return declined(egress);
     const flow = checkPlannerInputs([
@@ -419,8 +429,12 @@ export class AgentRunService {
     latency: () => number,
   ): Promise<AgentActiveOutcome> {
     // Review round 1 item 4: the kill switch re-read right before the planner is dispatched. From its answer to the dispatch
-    // below nothing awaits, so a stop that the read sees is never followed by a planner call.
-    if (!(await this.liveSwitchRunning(turn.actor.id))) return declined('kill-switch');
+    // below nothing awaits, so a stop that the read sees is never followed by a planner call. The read is raced against the
+    // wall and shutdown (review round 2 item 2).
+    const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
+    if (running.kind === 'wall') return declined('bound', { breach: budget.breach ?? 'wall-time' });
+    if (running.kind !== 'ok') return declined(running.kind);
+    if (!running.value) return declined('kill-switch');
     if (this.background.signal.aborted) return declined('shutdown');
     // D3/D7 amendment (wiring requirement): the planner call and its input are charged on THIS run's budget before step 1.
     if (!budget.reserveModelCall('planner') || !budget.reserveInputTokens(utf8Bytes(prompt))) return declined('bound', { breach: budget.breach ?? 'unknown' });
@@ -795,6 +809,53 @@ function safeClock(clock: () => number): number {
   try {
     const now = clock();
     return Number.isFinite(now) ? now : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * One pre-dispatch await that cannot outlive the run's wall or the shutdown (review round 2 item 2; the executor's
+ * `stillRunningWithinWall` pattern): `wall` (with the wall breach marked) when the wall ends first, `shutdown` when the
+ * service stops first, `failed` on a throw or rejection. Never rejects; its timer and listener are always removed.
+ */
+async function withinRun<T>(
+  work: () => Promise<T>,
+  budget: AgentRunBudget,
+  shutdown: AbortSignal,
+): Promise<{ readonly kind: 'ok'; readonly value: T } | { readonly kind: 'wall' | 'shutdown' | 'failed' }> {
+  if (shutdown.aborted) return { kind: 'shutdown' };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stop: (() => void) | undefined;
+  const cut = new Promise<{ readonly kind: 'wall' | 'shutdown' }>((resolve) => {
+    timer = setTimeout(() => {
+      try {
+        budget.markBreach('wall-time');
+      } catch {
+        // A budget that throws is still a wall.
+      }
+      resolve({ kind: 'wall' });
+    }, Math.max(1, remainingOrZero(budget)));
+    stop = () => resolve({ kind: 'shutdown' });
+    shutdown.addEventListener('abort', stop, { once: true });
+  });
+  try {
+    const done = Promise.resolve()
+      .then(work)
+      .then(
+        (value) => ({ kind: 'ok' as const, value }),
+        () => ({ kind: 'failed' as const }),
+      );
+    return await Promise.race([done, cut]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (stop !== undefined) shutdown.removeEventListener('abort', stop);
+  }
+}
+
+function remainingOrZero(budget: AgentRunBudget): number {
+  try {
+    return budget.remainingMs();
   } catch {
     return 0;
   }
