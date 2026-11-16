@@ -79,6 +79,7 @@ describe('SlackMessageDeleteWriter (ADR-0112 amendment 1 S1/S6)', () => {
       [json(200, { ok: false, error: 'ratelimited' }), notSent('RATE_LIMITED')],
       [json(429, {}), notSent('RATE_LIMITED')],
       [json(403, {}), notSent('FORBIDDEN')],
+      [json(404, {}), notSent('REJECTED')],
       [json(200, { ok: false, error: 'internal_error' }), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [json(200, { ok: false, error: 'fatal_error' }), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
       [json(503, {}), { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],

@@ -32264,6 +32264,19 @@ Live UAT ran on the service temporarily deployed at 42d3d862, in a Discord DM th
   message-deletion setting or a retention policy answers `cant_delete_message` or `compliance_exports_prevent_deletion`
   (both mapped to FORBIDDEN from the API reference only); the thread-reply placeholder.
 
+### Implementation note (amendment 3, Slack post delete undo: review round 1, 2026-11-16)
+
+Round 1 results:
+- **Codex:** PASS.
+- **Chief Architect:** APPROVE, with one P3.
+- **Security review:** PASS, with three LOW notes and no CRITICAL, HIGH or MEDIUM findings.
+
+How each note was handled:
+- **CA P3 (fixed):** an HTTP-level 404 from the endpoint or a proxy is mapped to `REJECTED` (not sent). `NOT_FOUND` ("이미 지워진 메시지예요") now comes only from Slack's own error codes, because an HTTP 404 says nothing about the message itself.
+- **Security LOW 1 (fixed):** the CRITICAL delete card shows the receipt link only when it is a Slack permalink (`https://<workspace>.slack.com/...`, the same shape the post writer stores). Any other link is dropped, so a tampered receipt row cannot put a foreign link on the card.
+- **Security LOW 2 (accepted residual):** HTTP 400/404 answers without a Slack error body are NOT_SENT, and are never retried. The post writer maps them the same way. A forwarding proxy that answers 4xx after forwarding is outside this deployment, which calls `slack.com` directly with `redirect: 'error'`.
+- **Security LOW 3 (note only, existing code):** if saving `lastAction` fails after a SENT delete, a second request gets "already sent" from the SENT-receipt dedup. Nothing is deleted twice.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through

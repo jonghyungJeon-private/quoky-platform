@@ -128,7 +128,7 @@ export class SlackMessageDeleteWriter implements ChannelMessageDeleteWriter {
       if (response.status >= 500 || response.status < 400) return connectorWriteUncertain('SERVER_ERROR');
       if (response.status === 401) return connectorWriteNotSent('UNAUTHORIZED');
       if (response.status === 403) return connectorWriteNotSent('FORBIDDEN');
-      if (response.status === 404) return connectorWriteNotSent('NOT_FOUND');
+      // CA review (P3): an HTTP 404 (endpoint or proxy) says nothing about the message, so it is not "already deleted".
       return connectorWriteNotSent('REJECTED');
     }
 

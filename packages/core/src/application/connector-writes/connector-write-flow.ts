@@ -2430,7 +2430,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         ts: post.ts,
         text: post.text,
         postedAt: resolved.receipt.updatedAt,
-        ...(typeof url === 'string' && /^https:\/\/[\x21-\x7e]{1,1500}$/u.test(url) ? { url } : {}),
+        // Security review (LOW): only a Slack permalink reaches the CRITICAL card, the same shape the post writer stores.
+        ...(typeof url === 'string' && /^https:\/\/[A-Za-z0-9.-]+\.slack\.com\/[\x21-\x7e]{1,500}$/u.test(url) ? { url } : {}),
         timeZone: this.deps.timeZone,
         receiptSourced: true,
         ...ownerSentenceOf(input.ownerText),

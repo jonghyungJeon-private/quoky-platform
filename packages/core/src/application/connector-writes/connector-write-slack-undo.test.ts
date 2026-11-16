@@ -76,6 +76,7 @@ interface HarnessOptions {
   readonly noDeleteWriter?: boolean;
   /** What Slack answers to the delete (default: deletes it). */
   readonly deleteAnswer?: ConnectorWriteOutcome;
+  readonly postUrlHost?: string;
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -103,7 +104,7 @@ function harness(options: HarnessOptions = {}) {
       if (channelId === undefined) return connectorWriteNotSent('TARGET_NOT_ALLOWED');
       const ts = `1700000000.000${String((tsSeq += 1))}`;
       slack.messages.push({ channel: channelId, ts, text: request.text });
-      return connectorWriteSent(`${channelId}:${ts}`, `https://example.test/archives/${channelId}/p${ts.replace('.', '')}`);
+      return connectorWriteSent(`${channelId}:${ts}`, `https://${options.postUrlHost ?? 'example.slack.com'}/archives/${channelId}/p${ts.replace('.', '')}`);
     },
   };
   const deletes: ChannelMessageDeleteWriter = {
@@ -238,6 +239,7 @@ describe('ADR-0112 amendment 1 under amendment 3: the delete of the Slack messag
     expect(card).toContain('#dev-test');
     // S-4: the honest limit of the pre-delete check is on the card.
     expect(card).toContain('수정됐는지는 확인할 수 없어요');
+    expect(step.preview).toMatchObject({ url: expect.stringMatching(/^https:\/\/example\.slack\.com\/archives\//u) });
     const view = await h.flow.find(h.session());
     expect(view?.anchor).toMatchObject({
       target: `${CHANNEL}:${posted?.ts}`,
@@ -256,6 +258,16 @@ describe('ADR-0112 amendment 1 under amendment 3: the delete of the Slack messag
     const view2 = await h.flow.find(h.session());
     expect(await h.flow.execute({ session: h.session(), actor: OWNER, now: at(5), view: view2 as NonNullable<typeof view2> })).toMatchObject({ kind: 'repeat', status: 'SENT' });
     expect(h.writes.delete).toHaveLength(1);
+  });
+
+  it('security review (LOW): a receipt link that is not a Slack permalink never reaches the CRITICAL card', async () => {
+    const h = harness({ postUrlHost: 'slack.com.example.test' });
+    const { receiptId } = await h.post();
+    const step = await h.undo('slack-post-undo', receiptId, at(3), OWNER, 'sess-1', { ownerText: '방금 슬랙에 올린 거 지워줘' });
+    expect(step.kind).toBe('preview');
+    if (step.kind !== 'preview') return;
+    expect(step.preview).not.toHaveProperty('url');
+    expect(text(step)).not.toContain('slack.com.example.test');
   });
 
   it("only this actor's own fresh lastAction reaches it: another actor, another session, a stale record, another receipt or family is undo-nothing", async () => {
