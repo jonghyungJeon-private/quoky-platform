@@ -32,10 +32,17 @@ import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
  *   them as `allowedExecutionLocalities` on the selection context, so the candidates are capability ∩ owner policy ∩ locality ∩
  *   `workText`. `LOCAL_MODEL_ONLY` allows `LOCAL`; `HOST_ONLY` no model at all. `REMOTE_ON_SUMMARY_REQUEST` needs a grant (per
  *   summarize step and per source; only a module-private Core factory makes one, and this slice builds no producer, so in
- *   production it is always `listing-only` with no body fetched); with a grant `REMOTE` is allowed for exactly one asked-for
- *   item, a batch runs on `LOCAL` only. The selector's answer is re-read, not trusted, and policy and locality are re-checked
- *   synchronously immediately before the one dispatch ({@link quarantinedSummarize}). No provider, an unverifiable constraint or
- *   a failed re-check is a `listing-only`: no call. A sent request is never re-sent to another provider.
+ *   production it is always `listing-only` with no body fetched); with a grant `LOCAL` and `REMOTE` are allowed for one item
+ *   and for a batch alike (the owner's 2026-11-03 answer 3, built 2026-11-16; the grant still covers exactly the asked-for
+ *   items). The selector's answer is re-read, not trusted, and policy and locality are re-checked synchronously immediately
+ *   before every dispatch ({@link quarantinedSummarize}). No provider, an unverifiable constraint or a failed re-check is a
+ *   `listing-only`: no call. A sent request is never re-sent to another provider.
+ * - **Remote batch (owner 2026-11-03 answer 3; split calls count toward the run caps, owner 2026-11-16).** One sealed call per
+ *   source with at most {@link AGENT_M2_MAX_ITEMS} items; a source whose items do not fit one call is split into more calls, run
+ *   in parallel. The calls are planned up front within the run's remaining M2 calls, model calls and input bytes; items that
+ *   cannot be placed are omitted (a partial result, never a breach). The provider is selected once per step; every call has
+ *   its own reservation, its own final dispatch check, its own audit, and is never re-sent. The per-item outputs are merged in
+ *   source order with global item numbers, with no model call.
  * - **A schema-bound output (D3, A2).** One closed JSON object per {@link AGENT_PLAN_SUMMARY_SCHEMAS} id; any other shape,
  *   key, type, length or position is a closed `schema` failure. Links are neutralised and the credential guard runs on the
  *   result (a match fails the whole output, `credential`).
@@ -90,7 +97,7 @@ export const AGENT_SUMMARY_READOUT_SOURCE: Readonly<Partial<Record<NlWave1EntryI
  */
 export const AGENT_SUMMARY_WORK_TEXT_PENDING: readonly NlWave1EntryId[] = Object.freeze(['jira.issues', 'jira.release', 'slack.search'] as const);
 
-/** At most this many items go into one M2 call (a chunk would be a second call; the owner has not ratified chunking). */
+/** At most this many items go into one M2 call (P3-3b #6); more items of a source are split into more calls (owner 2026-11-03 answer 3). */
 export const AGENT_M2_MAX_ITEMS = 10;
 export const AGENT_M2_SUMMARY_MAX_CHARS = 280;
 export const AGENT_M2_TOPIC_MAX_CHARS = 60;
@@ -109,7 +116,10 @@ export function estimateInputTokens(prompt: string): number {
 export type ModelDerivedLabel = FlowLabel & { readonly trust: 'UNTRUSTED'; readonly derivation: 'MODEL_DERIVED' };
 
 export interface SummaryEntry {
-  /** The number the item had in the prompt (1-based, across the covered reads). */
+  /**
+   * The item's global number: 1-based, in source order across every call of the step (each call numbers its own items from 1 in
+   * its prompt; the merge maps them).
+   */
   readonly n: number;
   readonly entryId: NlWave1EntryId;
   /** The item's position in its own listing. */
@@ -272,8 +282,8 @@ export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-gra
  * - Any input labelled `REMOTE_ON_SUMMARY_REQUEST` without its grant: none (`no-summary-grant`), never a fallback to `LOCAL`
  *   (P3-3b #4; the body is not even fetched).
  * - `LOCAL_MODEL_ONLY`: `LOCAL`.
- * - `REMOTE_ON_SUMMARY_REQUEST` with the grant: `LOCAL` and `REMOTE` for exactly one asked-for item, `LOCAL` for a batch (the
- *   remote batch of the owner's 2026-11-03 answer 3 is a later slice).
+ * - `REMOTE_ON_SUMMARY_REQUEST` with the grant: `LOCAL` and `REMOTE`, for one asked-for item and for a batch alike (the owner's
+ *   2026-11-03 answer 3 supersedes the earlier single-item rule; the grant still covers exactly the asked-for items).
  * - `REMOTE_OK`: `LOCAL` and `REMOTE`.
  * - An unknown label or an asked-for count that is not a positive integer is unverifiable: none (`no-model`).
  */
@@ -294,7 +304,7 @@ export function deriveM2Localities(input: {
       return { ok: true, localities: Object.freeze(['LOCAL'] as const) };
     case 'REMOTE_ON_SUMMARY_REQUEST':
       if (!needsGrant || granted !== true) return { ok: false, reason: 'no-summary-grant' };
-      return { ok: true, localities: Object.freeze(askedItems === 1 ? (['LOCAL', 'REMOTE'] as const) : (['LOCAL'] as const)) };
+      return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
     case 'REMOTE_OK':
       return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
     default:
@@ -602,50 +612,147 @@ export interface QuarantinedSummaryRequest {
   /** The existing selector and the base selection context (D12): M2 adds no model port. */
   readonly route: QuarantinedSummarizerRoute;
   /**
-   * Called once, right before the model call, with the prompt's input tokens (an upper bound: its UTF-8 bytes): the caller
-   * charges the run's M2 / model-call / token bounds and returns `false` to refuse (no call is made; the run is partial).
+   * Called once per call, right before that call, with its prompt's input tokens (an upper bound: its UTF-8 bytes): the caller
+   * charges the run's M2 / model-call / token bounds and returns `false` to refuse (that call is not made).
    */
   readonly reserve: (inputTokens: number) => boolean;
   /**
-   * The input tokens the run still has (D7). Items are added to the prompt only while its rendered size (UTF-8 bytes, the
-   * estimator) fits; the rest are counted as omitted (a partial run), never a bound breach. Absent: no fit.
+   * The input tokens the run still has (D7). The calls are planned up front so that the sum of their rendered prompts (UTF-8
+   * bytes, the estimator) fits; the items that do not fit are counted as omitted (a partial run), never a bound breach. Absent:
+   * no fit.
    */
   readonly remainingInputTokens?: number;
+  /**
+   * The M2 calls the run may still start (the smaller of the M2 calls and the model calls left; owner decision 2026-11-16:
+   * split calls count). The calls are planned within it; items over it are omitted. Absent: no limit here (each `reserve` is
+   * the only gate).
+   */
+  readonly remainingCalls?: number;
   /** The grants of this request belong to this run (see {@link newSummaryRunToken}); a grant of another run never matches. */
   readonly run: SummaryRunToken;
   /**
-   * The items the run ASKED for across the covered reads (the count summary readiness used). The model is chosen with the larger
-   * of this and the covered items the sources hold: the count is what was asked for, not what fit.
+   * The items the run ASKED for across the covered reads (the count summary readiness used). The derivation needs it to be a
+   * positive integer (the larger of this and the covered items the sources hold): the count is what was asked for, not what fit.
    */
   readonly askedItems?: number;
   /**
-   * Called once, as soon as a model call starts (after the reservation), with a content-free audit reader: the caller reports the
-   * call (locality, audit id, tokens, latency so far) even if the wall or a bound ends the step before the answer comes back.
+   * Called once per call, as soon as it starts (after its reservation), with a content-free audit reader: the caller reports the
+   * call (locality, audit id, tokens, latency so far) even if the wall or a bound ends the step before the answer comes back. The
+   * reader answers `undefined` for a call the final dispatch check refused (nothing was sent).
    */
-  readonly onCallStart?: (audit: () => QuarantinedCallAudit) => void;
-  /** Aborted on the run's wall or a bound breach: the call is abandoned, and an already-aborted signal makes no call. */
+  readonly onCallStart?: (audit: () => QuarantinedCallAudit | undefined) => void;
+  /** Aborted on the run's wall or a bound breach: every call in flight is abandoned, and an already-aborted signal makes no call. */
   readonly signal?: AbortSignal;
   /** Tests only: monotonic milliseconds for the audit latency (default `Date.now`). */
   readonly now?: () => number;
 }
 
+/**
+ * The outcome of one summarize step. `audits` lists, in source order, every call that was dispatched (sent), whatever became of
+ * its answer; it is absent when no call was sent.
+ */
 export type QuarantinedSummaryOutcome =
   | {
       readonly kind: 'summary';
       readonly summary: QuarantinedSummary;
-      /** Items not in the summary: over {@link AGENT_M2_MAX_ITEMS} or the input-token budget, withheld, dropped on validation, left out by the model or by a claim guard. */
+      /**
+       * Items not in the summary: over the planned calls or the input-token budget, withheld, dropped on validation, in a call that
+       * failed or was refused, left out by the model or by a claim guard.
+       */
       readonly omitted: number;
-      readonly audit: QuarantinedCallAudit;
+      readonly audits: readonly QuarantinedCallAudit[];
     }
-  /** No model call was made: the reply is the listing only. */
-  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
+  /** No model call was sent: the reply is the listing only. */
+  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason; readonly audits?: readonly QuarantinedCallAudit[] }
   /** The bound refused the call (a partial result). */
+  | { readonly kind: 'bound'; readonly audits?: readonly QuarantinedCallAudit[] }
+  | { readonly kind: 'failed'; readonly reason: QuarantinedOutputFailure | 'model'; readonly audits?: readonly QuarantinedCallAudit[] };
+
+/** One prepared item: its source, its listing position and its rendered untrusted readout. */
+interface PreparedItem {
+  readonly entryId: NlWave1EntryId;
+  readonly position: number;
+  readonly rendered: string;
+}
+
+/** One planned M2 call: items of ONE source, at most {@link AGENT_M2_MAX_ITEMS}, `first` is the global number of its first item. */
+interface PlannedCall {
+  readonly items: readonly PreparedItem[];
+  readonly first: number;
+  readonly prompt: string;
+}
+
+/**
+ * Plans the step's M2 calls up front (the owner's 2026-11-03 answer 3, as amended 2026-11-16): one sealed call per source, at
+ * most {@link AGENT_M2_MAX_ITEMS} items each, more calls for a source whose items do not fit one; the calls stay within `maxCalls`
+ * and the sum of their prompts' UTF-8 bytes within `maxBytes`. Items are placed in source order while they fit; the first item
+ * that does not fit and every item after it are left out (a prefix, as the single call kept). Deterministic and pure.
+ * If not even the first item can be placed, that one-item call is planned anyway, so the caller's reservation refuses it and the
+ * bound says so (as a single call did before).
+ */
+function planQuarantinedCalls(
+  schema: AgentSummarySchemaId,
+  groups: readonly (readonly PreparedItem[])[],
+  maxCalls: number,
+  maxBytes: number,
+): { readonly calls: readonly PlannedCall[]; readonly left: number } {
+  const total = groups.reduce((sum, group) => sum + group.length, 0);
+  const calls: { items: PreparedItem[]; first: number; prompt: string; bytes: number }[] = [];
+  let bytes = 0;
+  let placed = 0;
+  let full = false;
+  for (const group of groups) {
+    let current: (typeof calls)[number] | undefined;
+    for (const item of group) {
+      if (full) break;
+      if (current !== undefined && current.items.length < AGENT_M2_MAX_ITEMS) {
+        const prompt = renderQuarantinedPrompt(schema, [...current.items, item].map((each) => each.rendered));
+        const size = estimateInputTokens(prompt);
+        if (bytes - current.bytes + size <= maxBytes) {
+          bytes += size - current.bytes;
+          current.items.push(item);
+          current.prompt = prompt;
+          current.bytes = size;
+          placed += 1;
+          continue;
+        }
+        full = true;
+        break;
+      }
+      const prompt = renderQuarantinedPrompt(schema, [item.rendered]);
+      const size = estimateInputTokens(prompt);
+      if (calls.length >= maxCalls || bytes + size > maxBytes) {
+        full = true;
+        break;
+      }
+      current = { items: [item], first: placed + 1, prompt, bytes: size };
+      calls.push(current);
+      bytes += size;
+      placed += 1;
+    }
+    if (full) break;
+  }
+  if (calls.length === 0) {
+    const first = groups.find((group) => group.length > 0)?.[0];
+    if (first === undefined) return { calls: [], left: total };
+    return { calls: [{ items: [first], first: 1, prompt: renderQuarantinedPrompt(schema, [first.rendered]) }], left: total - 1 };
+  }
+  return { calls: calls.map(({ items, first, prompt }) => ({ items, first, prompt })), left: total - placed };
+}
+
+/** What became of one planned call. */
+type CallOutcome =
+  | { readonly kind: 'summary'; readonly entries: readonly SummaryEntry[]; readonly left: number; readonly audit: QuarantinedCallAudit }
+  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
   | { readonly kind: 'bound' }
   | { readonly kind: 'failed'; readonly reason: QuarantinedOutputFailure | 'model'; readonly audit?: QuarantinedCallAudit };
 
-/** Run one M2 call (at most; never a retry). Total: never throws. */
+/**
+ * Run one summarize step: one provider selection, then at most the planned calls in parallel, each sent at most once (never a
+ * retry, never another provider), merged deterministically in source order with no model call. Total: never throws.
+ */
 export async function quarantinedSummarize(request: QuarantinedSummaryRequest): Promise<QuarantinedSummaryOutcome> {
-  const prepared: { readonly entryId: NlWave1EntryId; readonly position: number; readonly rendered: string }[] = [];
+  const groups: PreparedItem[][] = [];
   let omitted = 0;
   let asked = request.askedItems ?? 0;
   let held = 0;
@@ -655,11 +762,8 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId] as UntrustedDocumentSource;
     omitted += source.dropped ?? 0;
     held += source.documents.length + (source.dropped ?? 0);
+    const group: PreparedItem[] = [];
     for (const document of source.documents) {
-      if (prepared.length >= AGENT_M2_MAX_ITEMS) {
-        omitted += 1;
-        continue;
-      }
       const built = buildUntrustedDocumentReadout({
         source: readoutSource,
         title: document.title,
@@ -672,23 +776,16 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
         omitted += 1;
         continue;
       }
-      prepared.push({ entryId: source.entryId, position: document.position, rendered: renderUntrustedDocumentForPrompt(built.readout) });
+      group.push({ entryId: source.entryId, position: document.position, rendered: renderUntrustedDocumentForPrompt(built.readout) });
     }
+    groups.push(group);
   }
-  if (prepared.length === 0) return { kind: 'listing-only', reason: 'no-documents' };
+  if (groups.every((group) => group.length === 0)) return { kind: 'listing-only', reason: 'no-documents' };
   asked = Math.max(asked, held);
 
-  // Fit to the run's remaining input tokens (N2): keep the longest prefix whose rendered prompt fits (UTF-8 bytes, an upper
-  // bound); the rest is omitted, never a breach. If not even one fits, the one-item prompt is reserved and the bound says so.
-  let kept = prepared.length;
-  if (request.remainingInputTokens !== undefined) {
-    while (kept > 1 && estimateInputTokens(renderQuarantinedPrompt(request.schema, prepared.slice(0, kept).map((item) => item.rendered))) > request.remainingInputTokens) kept -= 1;
-  }
-  omitted += prepared.length - kept;
-  prepared.length = kept;
-
   // The strictest egress of every covered read (a withheld item still counts: the label is the source's). Every source whose
-  // label needs a summary grant must hold a valid one for THIS step and THIS source (D12: the derived localities).
+  // label needs a summary grant must hold a valid one for THIS step and THIS source (D12: the derived localities). One
+  // derivation, one context and one selection for the whole step; every call re-checks it right before its own dispatch.
   const joined = joinFlowLabels(...request.sources.map((source) => readOutputLabel(source.entryId)));
   const derived = deriveM2Localities({ egress: joined.egress, ...grantState(request.sources, request.summaryStep, request.run), askedItems: asked });
   if (!derived.ok) return { kind: 'listing-only', reason: derived.reason };
@@ -696,26 +793,75 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   const picked = await selectM2Provider(request.route, context);
   if (picked === undefined) return { kind: 'listing-only', reason: 'no-model' };
 
-  const schema = request.schema;
-  const prompt = renderQuarantinedPrompt(
-    schema,
-    prepared.map((item) => item.rendered),
-  );
-  // Both credential detectors on the FINAL prompt, instructions and span together (never redacted: no call).
-  if (containsCredentialMaterial(prompt) || containsCredentialFileContent(prompt)) return { kind: 'listing-only', reason: 'credential-in-prompt' };
-  if (request.signal?.aborted === true) return { kind: 'failed', reason: 'model' };
-  const estimatedTokens = estimateInputTokens(prompt);
-  // From here to `execute` nothing is awaited. The dispatch check runs first (so a refusal charges nothing), then the budget
-  // reservation and the audit start (caller callbacks), and then the check runs AGAIN inside the call, immediately before
-  // `provider.execute`, so nothing a callback does can change what is sent (Codex review round 1). The audited locality is the
-  // one that final check verified.
-  if (dispatchLocality(request.route, context, picked) === undefined) return { kind: 'listing-only', reason: 'dispatch-refused' };
-  if (!request.reserve(estimatedTokens)) return { kind: 'bound' };
+  // Plan the calls against what the run has left (N2 and the owner's 2026-11-16 caps): planned up front, so no call over-reserves.
+  const plan = planQuarantinedCalls(request.schema, groups, nonNegativeOr(request.remainingCalls), nonNegativeOr(request.remainingInputTokens));
+  omitted += plan.left;
 
   const now = request.now ?? Date.now;
+  // Every call is launched in this synchronous loop: from each call's first dispatch check to its `execute` nothing is awaited.
+  const runs = plan.calls.map((call) => launchCall(request, context, picked, call, now));
+  const outcomes = await Promise.all(runs);
+
+  const audits = outcomes.flatMap((outcome) => ('audit' in outcome && outcome.audit !== undefined ? [outcome.audit] : []));
+  const withAudits = audits.length > 0 ? { audits: Object.freeze(audits) } : {};
+  const entries: SummaryEntry[] = [];
+  let succeeded = false;
+  for (const [index, outcome] of outcomes.entries()) {
+    if (outcome.kind === 'summary') {
+      succeeded = true;
+      entries.push(...outcome.entries);
+      omitted += outcome.left;
+    } else {
+      omitted += (plan.calls[index] as PlannedCall).items.length;
+    }
+  }
+  if (!succeeded) {
+    // Every call failed or was refused: the step reports the first reason in source order, with every sent call's audit.
+    const first = outcomes[0];
+    if (first === undefined || first.kind === 'summary') return { kind: 'listing-only', reason: 'no-documents' };
+    if (first.kind === 'listing-only') return { kind: 'listing-only', reason: first.reason, ...withAudits };
+    if (first.kind === 'bound') return { kind: 'bound', ...withAudits };
+    return { kind: 'failed', reason: first.reason, ...withAudits };
+  }
+  // The deterministic merge: source order, global item numbers (no model call).
+  entries.sort((a, b) => a.n - b.n);
+  const label: ModelDerivedLabel = { ...joined, trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED' };
+  return { kind: 'summary', summary: sealSummary(request.schema, label, entries), omitted, audits: Object.freeze(audits) };
+}
+
+/**
+ * One planned call: the credential check on its final prompt, the abort check, the dispatch check (a refusal charges nothing),
+ * its own reservation, its audit start, and the final dispatch check immediately before `provider.execute`, all in one
+ * synchronous stretch. Never re-sent. Never rejects.
+ */
+function launchCall(
+  request: QuarantinedSummaryRequest,
+  context: ProviderSelectionContext,
+  picked: SelectedProvider,
+  call: PlannedCall,
+  now: () => number,
+): Promise<CallOutcome> {
+  const prompt = call.prompt;
+  // Both credential detectors on the FINAL prompt, instructions and span together (never redacted: no call).
+  if (containsCredentialMaterial(prompt) || containsCredentialFileContent(prompt)) return Promise.resolve({ kind: 'listing-only', reason: 'credential-in-prompt' });
+  if (request.signal?.aborted === true) return Promise.resolve({ kind: 'failed', reason: 'model' });
+  const estimatedTokens = estimateInputTokens(prompt);
+  // The dispatch check runs first (so a refusal charges nothing), then the budget reservation and the audit start (caller
+  // callbacks), and then the check runs AGAIN inside the call, immediately before `provider.execute`, so nothing a callback does
+  // can change what is sent (Codex review round 1). The audited locality is the one that final check verified.
+  if (dispatchLocality(request.route, context, picked) === undefined) return Promise.resolve({ kind: 'listing-only', reason: 'dispatch-refused' });
+  let reserved = false;
+  try {
+    reserved = request.reserve(estimatedTokens) === true;
+  } catch {
+    reserved = false;
+  }
+  if (!reserved) return Promise.resolve({ kind: 'bound' });
+
   const started = now();
   const aiRequest: AiRequest = { capability: Capability.SUMMARIZATION, prompt, ...(request.signal !== undefined ? { signal: request.signal } : {}) };
   let dispatched: AiExecutionLocality = picked.locality;
+  let refused = false;
   const audit = (): QuarantinedCallAudit => ({
     locality: dispatched,
     auditId: picked.auditId,
@@ -723,30 +869,41 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     latencyMs: Math.max(0, now() - started),
   });
   try {
-    request.onCallStart?.(audit);
+    request.onCallStart?.(() => (refused ? undefined : audit()));
   } catch {
     // A reporting callback never changes the call.
   }
-  let text: string;
-  try {
-    text = await callModel(picked.provider, aiRequest, request.signal, () => {
-      const verified = dispatchLocality(request.route, context, picked);
-      if (verified !== undefined) dispatched = verified;
-      return verified !== undefined;
-    });
-  } catch (error) {
-    // A final check that refused: nothing was sent (the model call was charged; the bound stays conservative).
-    if (error === DISPATCH_REFUSED) return { kind: 'listing-only', reason: 'dispatch-refused' };
-    // The adapter's message is never read, and the request is never re-sent to this or another provider (D12).
-    return { kind: 'failed', reason: 'model', audit: audit() };
-  }
-  const numbered = prepared.map((item, index) => ({ n: index + 1, entryId: item.entryId, position: item.position }));
-  const parsed = parseQuarantinedOutput(schema, text, numbered);
-  if (!parsed.ok) return { kind: 'failed', reason: parsed.reason, audit: audit() };
-  const label: ModelDerivedLabel = { ...joined, trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED' };
-  // Every prepared item the summary does not carry (the model skipped it, or a claim guard dropped it) is an omitted item.
-  const left = omitted + (prepared.length - parsed.entries.length);
-  return { kind: 'summary', summary: sealSummary(schema, label, parsed.entries), omitted: left, audit: audit() };
+  return callModel(picked.provider, aiRequest, request.signal, () => {
+    const verified = dispatchLocality(request.route, context, picked);
+    if (verified !== undefined) dispatched = verified;
+    else refused = true;
+    return verified !== undefined;
+  }).then(
+    (text): CallOutcome => {
+      const numbered = call.items.map((item, index) => ({ n: index + 1, entryId: item.entryId, position: item.position }));
+      const parsed = parseQuarantinedOutput(request.schema, text, numbered);
+      if (!parsed.ok) return { kind: 'failed', reason: parsed.reason, audit: audit() };
+      // Each call numbers its own items from 1; the merge uses the global number across the step's calls.
+      const entries = parsed.entries.map((entry) => ({ ...entry, n: call.first + entry.n - 1 }));
+      // Every item of this call the summary does not carry (the model skipped it, or a claim guard dropped it) is omitted.
+      return { kind: 'summary', entries, left: call.items.length - entries.length, audit: audit() };
+    },
+    (error: unknown): CallOutcome => {
+      // A final check that refused: nothing was sent (the model call was charged; the bound stays conservative).
+      if (error === DISPATCH_REFUSED) {
+        refused = true;
+        return { kind: 'listing-only', reason: 'dispatch-refused' };
+      }
+      // The adapter's message is never read, and the request is never re-sent to this or another provider (D12).
+      return { kind: 'failed', reason: 'model', audit: audit() };
+    },
+  );
+}
+
+/** A non-negative integer limit, or no limit (absent or unreadable). */
+function nonNegativeOr(value: number | undefined): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, Math.floor(value));
 }
 
 const DISPATCH_REFUSED: unique symbol = Symbol('dispatch-refused');

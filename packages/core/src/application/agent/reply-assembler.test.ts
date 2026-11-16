@@ -104,7 +104,7 @@ describe('reply assembler', () => {
     const sealed = async (text: string, topics: string[] = []): Promise<AssemblerCase> => {
       const base = await run([read('mail.list')], { 'mail.list': port(['m1'], []) });
       const entry: SummaryEntry = { n: 1, entryId: 'mail.list', position: 1, text, topics };
-      const step: AgentStepResult = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: sealQuarantinedSummaryForTest('digest.v1', label, [entry]), omitted: 0, audit: { locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } };
+      const step: AgentStepResult = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: sealQuarantinedSummaryForTest('digest.v1', label, [entry]), omitted: 0, audits: [{ locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 }] };
       return { plan: base.plan, result: { ...base.result, steps: [...base.result.steps, step] } };
     };
     type AssemblerCase = { plan: RunPlan; result: AgentRunResult };
@@ -139,7 +139,7 @@ describe('reply assembler', () => {
     it('an entry of a source with no readout shape cannot be judged and is dropped', async () => {
       const base = await run([read('mail.list')], { 'mail.list': port(['m1'], []) });
       const entry: SummaryEntry = { n: 1, entryId: 'calendar.events', position: 1, text: 'standup', topics: [] };
-      const step: AgentStepResult = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: sealQuarantinedSummaryForTest('digest.v1', label, [entry]), omitted: 0, audit: { locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } };
+      const step: AgentStepResult = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: sealQuarantinedSummaryForTest('digest.v1', label, [entry]), omitted: 0, audits: [{ locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 }] };
       const out = reply({ plan: base.plan, result: { ...base.result, steps: [...base.result.steps, step] } }, 'en');
       expect(out.droppedLines).toBe(1);
       expect(out.text).not.toContain('standup');
@@ -149,7 +149,7 @@ describe('reply assembler', () => {
   it('a forged summary instance holds no content: it renders nothing, not even its label', async () => {
     const r = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });
     const fake = { kind: 'quarantined-summary', schema: 'digest.v1', count: 1, label: flowLabel('UNTRUSTED', 'HOST_ONLY', 'OWNER_DM_ONLY', ['x']) } as never;
-    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audit: { locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } }] } }, 'en');
+    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audits: [{ locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 }] }] } }, 'en');
     expect(out.parts.every((part) => part.kind === 'fact')).toBe(true);
     expect(out.label.egress).toBe('REMOTE_OK');
   });
@@ -157,7 +157,7 @@ describe('reply assembler', () => {
   it('S6: a forged summary step with a REMOTE audit renders the facts and exactly the disclosure line, no summary text', async () => {
     const r = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });
     const fake = { kind: 'quarantined-summary', schema: 'digest.v1', count: 1, label: flowLabel('UNTRUSTED', 'HOST_ONLY', 'OWNER_DM_ONLY', ['x']) } as never;
-    const step = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audit: { locality: 'REMOTE', auditId: 'a', estimatedTokens: 1, latencyMs: 1 } } as AgentStepResult;
+    const step = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: fake, omitted: 0, audits: [{ locality: 'REMOTE', auditId: 'a', estimatedTokens: 1, latencyMs: 1 }] } as AgentStepResult;
     const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, step] } }, 'en');
     expect(out.parts.filter((part) => part.kind !== 'fact' && part.kind !== 'note')).toEqual([{ kind: 'status', text: 'Part of the original text was sent to an outside model to make this summary.' }]);
     expect(out.parts.some((part) => part.kind === 'summary')).toBe(false);
@@ -251,10 +251,22 @@ describe('reply assembler', () => {
 
   it('N1: a REMOTE call is disclosed even when it failed or was cut off', async () => {
     const failed = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json', {}, 'REMOTE');
-    expect(failed.result.steps[1]).toMatchObject({ status: 'failed', audit: { locality: 'REMOTE' } });
+    expect(failed.result.steps[1]).toMatchObject({ status: 'failed', audits: [{ locality: 'REMOTE' }] });
     expect(reply(failed, 'en').parts.map((part) => part.text)).toContain('Part of the original text was sent to an outside model to make this summary.');
     const local = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json', {}, 'LOCAL');
     expect(reply(local, 'en').parts.map((part) => part.text)).not.toContain('Part of the original text was sent to an outside model to make this summary.');
+  });
+
+  it('remote batch: a REMOTE audit anywhere in a step\'s list (a later split call, or a refused step whose other call was sent) is disclosed once', async () => {
+    const r = await run([read('jira.issues')], { 'jira.issues': port(['AB-1'], []) });
+    const local = { locality: 'LOCAL' as const, auditId: 'a', estimatedTokens: 1, latencyMs: 1 };
+    const remote = { ...local, locality: 'REMOTE' as const };
+    const disclosure = 'Part of the original text was sent to an outside model to make this summary.';
+    const refused: AgentStepResult = { step: 2, kind: 'summarize', status: 'listing-only', from: [1], schema: 'digest.v1', reason: 'dispatch-refused', audits: [local, remote] };
+    const out = reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, refused, { ...refused, step: 3 }] } }, 'en');
+    expect(out.parts.filter((part) => part.text === disclosure)).toHaveLength(1);
+    const onlyLocal: AgentStepResult = { ...refused, audits: [local, local] };
+    expect(reply({ plan: r.plan, result: { ...r.result, steps: [...r.result.steps, onlyLocal] } }, 'en').text).not.toContain('outside model');
   });
 
   it('C3/N5: a throwing logger never fails the assembler', async () => {

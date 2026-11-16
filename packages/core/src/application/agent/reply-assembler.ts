@@ -23,7 +23,8 @@ import type { StructureProjection } from './structure-projector';
  *   model: a line that would still hold a link is dropped.
  * - **Scope (D4/D5).** Agent runs happen in the owner's DM only: for any other destination the reply is one fixed refusal
  *   line and nothing of the content, whatever the label.
- * - **Disclosure.** When a summary was made by a `REMOTE` model, one fixed line says part of the text was sent to an outside model.
+ * - **Disclosure.** When any M2 call of the run was sent to a `REMOTE` model (each call of a split batch is audited on its own), one
+ *   fixed line says part of the text was sent to an outside model.
  * - **Rendering input.** `parts` is the only rendering input; `text` is those parts joined and is for logs and plain-text sinks.
  * - **Content-free log.** One `agent_run.assemble` line: counters only.
  */
@@ -185,8 +186,11 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
       if (step.omitted > 0) parts.push({ kind: 'status', text: t.omitted(step.omitted) });
     }
   }
-  // A remote call is disclosed whatever became of its answer (ok, failed, or cut off after it started).
-  for (const step of result.steps) if (step.kind === 'summarize' && 'audit' in step && step.audit?.locality === 'REMOTE') remote = true;
+  // A remote call is disclosed whatever became of its answer (ok, failed, refused after another call was sent, or cut off after it
+  // started): every sent call of every summary step is in that step's `audits`, so a split remote batch is disclosed whole.
+  for (const step of result.steps) {
+    if (step.kind === 'summarize' && 'audits' in step && (step.audits ?? []).some((audit) => audit.locality === 'REMOTE')) remote = true;
+  }
   if (remote) parts.push({ kind: 'status', text: t.remoteDisclosure });
 
   // 4. Fixed status lines: no model call was made, a call failed, a bound stopped the run.
