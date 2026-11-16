@@ -207,6 +207,11 @@ describe('field labels are structural, not words (v5 title-grammar residual)', (
     }
   });
 
+  it('a bare label value peels the request ending and the trailing time run alternately (review round 3)', () => {
+    expect(draftOf('제목 QA 일정으로 잡아줘 내일 오후 3시에')).toEqual({ title: 'QA 일정', time: HOUR });
+    expect(draftOf('제목 QA 일정으로 잡아줘 내일 오후 3시에 30분짜리')).toEqual({ title: 'QA 일정', time: HALF });
+  });
+
   it('a participle before the title is not the booking verb', () => {
     expect(draftOf('내일 오후 3시에 넣어둔 제목 정리 회의 잡아줘')).toEqual({ title: '넣어둔 제목 정리 회의', time: HOUR });
   });

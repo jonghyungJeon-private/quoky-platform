@@ -174,10 +174,16 @@ function fieldsOf(text: string): { head: string; timeText: string; title?: strin
     if (key === '제목' && match[2] === undefined && !/[:：]/u.test(match[0]) && !/^[\s]*["“'‘「『]/u.test(raw)) {
       // A BARE label's value: only a trailing run of whole time / duration tokens is cut (as the unlabelled title does),
       // and that run is still read as the event's time. A label with a particle or colon keeps its value verbatim.
-      const request = stripTrailingRequest(raw);
-      const cut = withoutTrailingTime(request);
-      timeText += ` ${request.slice(cut.length)}`;
-      value = stripQuotes(cut);
+      // The request ending and the trailing time run are peeled alternately ("… 잡아줘 내일 오후 3시에"), until stable.
+      let rest = raw;
+      for (;;) {
+        const request = stripTrailingRequest(rest);
+        const cut = withoutTrailingTime(request);
+        timeText += ` ${request.slice(cut.length)}`;
+        if (cut === rest) break;
+        rest = cut;
+      }
+      value = stripQuotes(rest);
     } else {
       value = stripQuotes(stripTrailingRequest(raw));
     }

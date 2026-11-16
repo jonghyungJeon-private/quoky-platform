@@ -17077,6 +17077,14 @@ OPS-2b merge (no-bypass extraction).
   - **R-TG5** an undated delete / update ignores the owner's title words: it resolves against the session context as a
     numbered choice, then needs the exact-payload approval (pre-existing #342 behaviour; no write without a pick).
 
+- **Review round 3** (final Codex, 2 x P2, both bare-label path; compared against origin/main with a throwaway probe).
+  - "제목 QA 일정으로 잡아줘 내일 오후 3시에": a REGRESSION (main gave a usage hint; the branch previewed the title "QA 일정으로
+    잡아줘"). Fixed: the request ending and the trailing time run are peeled alternately until stable (title "QA 일정").
+    Test: "a bare label value peels the request ending and the trailing time run alternately".
+  - **R-TG6** "… 제목 주간 회의 2시간 동안" keeps "2시간 동안" in the title and lasts the default hour: PRE-EXISTING (identical
+    on main, where every labelled title is verbatim). The trailing-run cut only accepts a link particle attached to its
+    time phrase, not a spaced "동안". Fails closed: the preview shows the exact title and time and the approval is exact.
+
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
 - **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase
