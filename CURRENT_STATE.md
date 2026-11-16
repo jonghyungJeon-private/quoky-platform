@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0112 amendment 3: calendar-update undo and calendar-delete restore (2026-11-16, branch `claude/v5-r3-cal-undo`)
+
+- "되돌려줘" now also undoes Quoky's own approved calendar update (only the changed fields, compare-and-set on Quoky's version) and restores Quoky's own approved calendar delete as the same event (`일정 복원 실행`). Same reachability as calendar-create undo (`QUOKY_CALENDAR_WRITE_ENABLED` + `QUOKY_NL_ACTIONS=local|external`), DM only, kill switch honoured. Red-team v2: 66 cases x 2 variants, 3 runs, 0 successes / 0 deviations. Not yet observed live on Google (cancelled-event read and restore PATCH). DECISIONS ADR-0112 amendment 3 implementation note.
+
 ### ADR-0124 Part L C5a closed: arm L parked (2026-11-16, branch `claude/v5-partl-close`)
 
 - CH3 FAILED on all three local models (`qwen3:8b` 7.3%, `granite3.3:8b` 0%, `gemma3:4b` 6.8% coverage; bar 80%). Owner closed slice C5a: `QUOKY_CHUNK_ITEMS` stays `off`, long items keep today's summary, arms H/R2 not built, no further C5a runs. Code and harness stay in the tree, unwired by default; a reopen needs a new owner decision. DECISIONS ADR-0124 section 17.3.

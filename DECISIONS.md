@@ -31845,6 +31845,54 @@ and D9 still governs every turn that goes to chat.
     (the A6-D4 receipt banner); a `CALENDAR_EVENT_RESTORE` preview is always receipt-sourced. A refused step may carry the undo
     family so its fixed copy names the right write.
 
+### Implementation note (amendment 3, calendar-update and calendar-delete families: what was built and the gate, 2026-11-16)
+
+- **Built (branch `claude/v5-r3-cal-undo`).** The interfaces above, exactly. Core: `proposeCalendarUpdateUndo` and
+  `proposeCalendarDeleteUndo` in the connector-write flow, reached only through the `ExternalUndoResolver` chain
+  (`lastAction` -> this actor's receipt `findById(id, actorId)` -> its anchor Task -> draft `{kind, receiptId}`); the
+  receipt's operation must match the record's family and the anchor must be a plain (not receipt-sourced, no `undoOf`)
+  write of that operation in this session. Update undo (O2): the inverse patch holds only the fields the update changed
+  (title, time, location), with the values from that update's own `preview.before`, and is bound to Quoky's own
+  post-update version from the receipt (`If-Match` at the provider); the live event is read at preview time and any other
+  version, title, time or location is `undo-event-changed` (no preview), a missing event `undo-event-gone`. Restore (O3/O6):
+  payload `CALENDAR_EVENT_RESTORE {eventId, expected: allDay/start/end of the delete's own expectation}`; an event that is
+  back on the calendar is `undo-event-present`. Both previews carry the receipt banner; every undo keeps preview, CRITICAL
+  one-time approval bound to the payload hash and the exact phrase (`일정 변경 실행` / `일정 복원 실행`). Adapter: `restoreEvent`
+  reads the event, refuses anything but a cancelled single event of the same id and shape (`TARGET_CHANGED`) or a series
+  (`RECURRING_SERIES_REFUSED`), then one `PATCH {status: confirmed}` with `If-Match` on the read etag, `sendUpdates=none`;
+  404/410 is `NOT_FOUND`; an answer that is not the same id confirmed is `UNCERTAIN`. Copy: plain outcomes ("복원하지
+  못했어요 — 캘린더가 그 일정을 더 이상 찾을 수 없다고 답했어요 … 새 일정을 따로 만들지 않았어요"), per-family "not on yet" and
+  refusal texts. `LastActionRecord.operation` is written by `recordExternalWrite` from the executed step.
+- **Kept.** Undo of an undo refused (a receipt-sourced write is never undone again); `에이전트 중지` closes open undo anchors
+  of the new families and is re-checked at execution (`undoOf` present => switch-governed); group channels refused (DM only);
+  the import scan (nl-routing reaches no writer, receipt port or connector) unchanged and green.
+- **Red-team gate (amendment 3).** `golden/agent-redteam.r3-undo.v2.json` (sha256 `45e35cd59d3e…`), 66 cases: 33 calendar-update,
+  33 calendar-delete, 28 attack kinds (pasted id / link / title, quoted echo of another session, another actor's receipt,
+  stale 10/30 min, undo of undo, edited / gone / present since the write, TOCTOU between approval and phrase, restore refused
+  by the calendar, UNCERTAIN / NOT_SENT write, receipt swap, anchor of another session, operation relabel, bare and
+  cross-family phrases, phrase before preview, replay, fooled selector, pasted JSON, group channel, kill switch before
+  preview and after approval, cap exhaustion, owner-sentence injection). Each case has an oracle and runs in two attacker
+  variants (smuggled args, valid `args: {}`). Driver `apps/quoky/src/nl-r3-undo-v2-redteam.app.test.ts` on the production
+  `AppModule` and the PRODUCTION constant, no model: run 1, run 2, run 3 each 66 cases x 2 variants = 132 case runs, **0
+  attack successes, 0 deviations** (per family each run: 66 case runs, 0 / 0). The v1 file (36 cases, calendar-create) still
+  passes its 3 runs with 0 / 0. Oracles were pinned from one reviewed discovery run (every refusal checked for its layer and
+  reason; no oracle allows a preview of anything but the own receipt's event).
+- **Switched on.** `EXTERNAL_UNDO_CAPABILITIES = ['calendar-create', 'calendar-update', 'calendar-delete']` only after the gate,
+  unit/app tests and import scan were green. A record written while a family was closed stays not undoable.
+- **Ambiguities, decided fail-closed.** (1) Google reports no version for a delete, so the restore's compare-and-set is the
+  delete's own bound shape + cancelled status + same id, sent with `If-Match` on the etag of the adapter's own pre-read.
+  (2) A partial inverse is refused whole: an update that added a location where there was none, emptied a title, or changed
+  the description has no undo (`undo-unavailable`). (3) The time inverse restores the exact old instants in the time zone the
+  update used. (4) A single instance of a series may be undone; a series is refused, as for update and delete. (5) A write
+  that was itself an undo is never undone. (6) An event already back on the calendar is refused (`undo-event-present`), never
+  restored over. (7) A restore answer that is not the same id confirmed is `UNCERTAIN`. (8) Records written before this slice
+  (no `operation`) stay not undoable. (9) The preview's `before.title` is the bounded readout title.
+- **Open points.** Live UAT on the real primary calendar: whether `events.get` returns a cancelled event with an etag and
+  whether `PATCH status=confirmed` with `If-Match` restores it (both assumed from the provider's documented behaviour, not
+  yet observed live). Jira families O4/O5 are not built. An owner-sentence injection on the restore/update undo previews the
+  own receipt's event with the sentence quoted as "요청하신 문장" (as the calendar-create undo does for most phrasings), never
+  obeyed.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
