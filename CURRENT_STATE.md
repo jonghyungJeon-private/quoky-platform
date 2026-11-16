@@ -5,13 +5,18 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### ADR-0121 D12 amendment ratified; P3-3b #4–#7 acknowledged (2026-11-16, branch `claude/v5-s2-d12`)
+### ADR-0121 D12 amendment ratified and built (unwired); P3-3b #4–#7 acknowledged (2026-11-16, branch `claude/v5-s2-d12`)
 
 - Owner, 2026-11-16: D12 amendment "승인 (권장)"; P3-3b #4–#7 "모두 권장대로 확정 (권장)"; order "D12부터 바로 착수 (권장)". M2 will route
   through `ProviderSelector` / `AiProvider` with `allowedExecutionLocalities` (no new port or token); #4 no grant = listing-only, #5
   `HOST_ONLY` no model, #6 280 chars / 10 items, #7 mail and Drive only. Still open: the 62 + 34 pending golds, the ≥ 300 S2 read
   red-team batch review, every model-in-the-loop run, shadow/active switches, the egress enforce flip, the remote batch slice.
   DECISIONS "Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)".
+- **Built (Core, offline, unwired).** `allowedExecutionLocalities` on `ProviderSelectionContext` (router filter + dispatch check;
+  intersects `requiredLocality`); M2 selects through `ProviderSelector` under Core's derived set, re-reads the answer, re-checks
+  policy and locality right before the one call (`dispatch-refused`), never re-sends. `QuarantinedSummarizerModel` deleted.
+  Next: the remote batch slice (≤ 10 items per source, ≤ 3 parallel calls, deterministic merge), then adapter read ports and
+  wiring (a `LOCAL` summariser in the owner policy, ADR-0115 D8 usage for M2). DECISIONS "ADR-0121 S2 implementation note — D12".
 
 ### Chat guard keeps an offered command whose payload holds a stale-command word (2026-11-16, branch `claude/v5-chat-command-strip`)
 

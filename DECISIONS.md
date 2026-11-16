@@ -33748,6 +33748,69 @@ The Product Owner answered the open S2 M2 questions on 2026-11-16. Verbatim answ
 **Authorized by this record:** this docs change and the D12 code slice in Core (offline, unwired: no composition-root
 wiring, no flag change, no live behaviour change).
 
+### ADR-0121 S2 implementation note — D12: M2 through `ProviderSelector` / `AiProvider` (Core, offline, unwired; 2026-11-16, branch `claude/v5-s2-d12`)
+
+- **Status: implemented, not active.** Applies the ratified D12 amendment above. No composition-root wiring, no flag change,
+  no live behaviour change; `active` is still refused; `ConversationRuntimeDeps` stays 38; no new port, DI token or migration.
+- **The constraint (`ports/provider-selection-policy.port.ts`).** `ProviderSelectionContext` gains
+  `allowedExecutionLocalities?: readonly AiExecutionLocality[]` beside `workText`. One pure reader,
+  `application/execution-locality-constraint.ts` (`allowedExecutionLocalitiesOf`, `fitsExecutionLocality`): absent = no
+  constraint; `requiredLocality: 'LOCAL'` (ADR-0124 Part L C5a) keeps its meaning and intersects with it; an empty list, an
+  unknown value, a non-array or an unreadable field is the empty set (unverifiable = nothing fits); a provider whose declared
+  locality cannot be read never fits (absent = `REMOTE`, ADR-0107 D6). `CapabilityRouter` probes, ranks and returns only fitting
+  providers among the policy's eligible ones (capability ∩ owner policy ∩ locality; `workText` stays the policy's own rule on
+  the same context), and `isStillEligible` answers `false` for a provider outside the set. With neither field set, selection
+  is byte-identical. The composition-root policy is not changed (it receives the new field as data and ignores it).
+- **Derivation (`agent/quarantined-summary.ts`, `deriveM2Localities`, pure).** From the joined egress label of the summary's
+  inputs, whether every `REMOTE_ON_SUMMARY_REQUEST` input holds a grant matching THIS step, source and run, and the asked-for
+  count (the larger of the run's requested counts and the items the sources hold, before fit): `HOST_ONLY` → none
+  (`host-only`, P3-3b #5); a grant-needing input without its grant → none (`no-summary-grant`, also when another input makes the
+  joined label stricter; P3-3b #4); `LOCAL_MODEL_ONLY` → `LOCAL`; `REMOTE_ON_SUMMARY_REQUEST` with the grant → `LOCAL`+`REMOTE`
+  for exactly one asked-for item, `LOCAL` for a batch; `REMOTE_OK` → both; an unknown label or a count that is not a positive
+  integer → none (`no-model`). `m2SelectionContext` adds the set to the caller's base context (conversation, actor): a base
+  locality constraint can only narrow it, and `workText` is kept (and set when an input is work text, today unreachable since
+  Jira and Slack stop first).
+- **Selection and dispatch.** The narrow `QuarantinedSummarizerModel` list is deleted. `AgentSummarizerDeps` is
+  `QuarantinedSummarizerRoute = { selector: ProviderSelector; selectionContext?: ProviderSelectionContext }` (pinned at compile
+  time in `agent-contract-check.ts` as exactly the existing port types; the agent imports both ports as types only, pinned
+  in `agent-boundary.test.ts`). M2 asks `selector.select(SUMMARIZATION, context)` and re-reads the answer (never trusted): it
+  must advertise `SUMMARIZATION` and declare a locality in the set; its locality and id are snapshotted once before egress
+  (the audit id is now the provider id, D9 "provider id (audit only)"). A selector without `isStillEligible` cannot perform the
+  mandatory re-check, so it is unverifiable (`no-model`, not even asked). Immediately before the one `execute`, with nothing
+  awaited in between: the provider must still declare the snapshot locality, it must still be in the set, and
+  `isStillEligible(SUMMARIZATION, sameContext, provider)` must answer exactly `true` (throw or any other value = refusal); then
+  the budget reservation, the audit start and `execute` run in the same synchronous stretch. A failed re-check is the new
+  closed `listing-only` reason `dispatch-refused` (no call, nothing reserved; assembler copy added in Korean and English).
+  A provider failure, an abort or a bad output after send is the closed `failed` status: no retry, no re-selection, no other
+  provider (ADR-0115 D3 "no execution-time fallback").
+- **Readiness before a body fetch.** `summaryReadiness` is now async and takes the route: the source check, the derivation and a
+  `select` under the constraint (no provider call). A read is asked for `withDocuments` only when it passes; `select` happens
+  again for the summary itself, and the dispatch re-check runs on that second selection.
+- **Kept (tests unchanged in meaning).** No body fetch without a grant; no model for `HOST_ONLY`; the batch bound by the
+  asked-for count (a batch trimmed to one item by the fit never flips to `REMOTE`); the sealed request (`capability`,
+  `prompt`, and the abort `signal` only) and output; per-call audit; the REMOTE disclosure line; at most one M2 call per
+  summarize step and the D3/D7 caps. The existing P3-3b tests now run the fakes behind the real `CapabilityRouter` (priority =
+  list order), so the locality filter they exercise is the router's.
+- **Tests.** `capability-router-locality.test.ts` (the constraint as data, router filtering without probing, policy and
+  `workText` intersection, dispatch check, a source-literal scan of the new module); `quarantined-summary-d12.test.ts`
+  (derivation table; forged, absent, other-step, other-source and other-run grants never reach the selector; the selector is
+  asked under the derived set and a non-compliant answer is refused; a selector without the re-check; a policy flip between
+  selection and dispatch on the real router; a locality change at dispatch; a throwing or non-`true` check; a failure after
+  send is never re-sent or re-selected; `workText` with the policy's vendor exclusion); updated P3-3b, executor, assembler and
+  boundary tests.
+- **What remains for the remote batch slice (owner answer 3 of 2026-11-03, not built here).** The derivation keeps `REMOTE`
+  for one asked-for item only. The batch slice must: allow `REMOTE` for a granted batch of at most 10 items per source; one
+  sealed batch call per source fitted to the remaining input budget; a split into at most the D3 cap of 3 parallel M2 calls
+  when the items do not fit, with a deterministic merge in source order and no model call; a grant that still covers exactly
+  the asked-for items; per-call audit and the REMOTE disclosure for every call; and the dispatch re-check per call (a call
+  never re-sent). It also has to settle whether ADR-0118 D7 ("a summary of a specific item") needs its own amendment note for
+  a multi-item remote summary, and the open P3-3a decision 6 (do split calls count toward the 3 M2 / 5 model-call limits).
+- **Other carried requirements (wiring slice).** The composition-root policy must list a `LOCAL` summariser for the owner's
+  M2 route (today `requiredLocality` has its own local preference; `allowedExecutionLocalities: ['LOCAL']` alone uses the
+  ordinary session preference, so with no local provider listed a batch is listing-only); the reported usage of an HTTP API
+  provider (`AiExecutionResult.usage`) must reach the ADR-0115 D8 ledger when M2 is wired (M2 ignores it today); the
+  `quoky.agentRun` audit records the provider id and locality per call.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112
