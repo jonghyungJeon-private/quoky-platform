@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import { AiProviderManager } from '../ai-provider-manager';
 import { CapabilityRouter } from '../capability-router';
+import type { ProviderSelectionPolicy } from '../../ports/provider-selection-policy.port';
 import { Capability } from '../../domain';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf } from './flow-policy';
@@ -70,7 +71,9 @@ function asProvider(m: TestModel, priority: number): AiProvider {
   };
 }
 function via(...models: TestModel[]): QuarantinedSummarizerRoute {
-  return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index)))) };
+  // The owner's policy answers explicitly at dispatch (ADR-0121 D12: no verdict is no dispatch); it prefers nothing.
+  const policy: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
+  return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index))), policy) };
 }
 
 interface FakeModel extends TestModel {
@@ -520,12 +523,12 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
   it('a locality that changes after selection is caught by the dispatch re-check: nothing is sent, nothing reserved (D12)', async () => {
     let reads = 0;
     const calls: AiRequest[] = [];
-    // Declares LOCAL when M2 snapshots it at selection, REMOTE from the next read on (the dispatch re-check).
+    // Declares LOCAL for the selection snapshot and the selection-time verdict, REMOTE from the dispatch re-check on.
     const provider: AiProvider = {
       id: 'flip',
       get executionLocality(): 'LOCAL' | 'REMOTE' {
         reads += 1;
-        return reads > 1 ? 'REMOTE' : 'LOCAL';
+        return reads > 2 ? 'REMOTE' : 'LOCAL';
       },
       capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
       isAvailable: async () => true,

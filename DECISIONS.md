@@ -33810,6 +33810,36 @@ wiring, no flag change, no live behaviour change).
   ordinary session preference, so with no local provider listed a batch is listing-only); the reported usage of an HTTP API
   provider (`AiExecutionResult.usage`) must reach the ADR-0115 D8 ledger when M2 is wired (M2 ignores it today); the
   `quoky.agentRun` audit records the provider id and locality per call.
+- **Review round 1 (Chief Architect CHANGES REQUIRED 1×P2 + 3×P3; Codex 3×P2; all reproduced offline and fixed).**
+  1. *CA P2:* M2 re-read the selector's answer only against `context.allowedExecutionLocalities` and ignored a base
+     `requiredLocality: 'LOCAL'`. Selection, the selection-time verdict and every dispatch check now use the one shared reader
+     `allowedExecutionLocalitiesOf(context)` (which intersects `requiredLocality`); an absent set counts as empty for M2.
+  2. *CA P3:* a set `requiredLocality` other than `'LOCAL'` is now the empty set (fail closed), not "no constraint".
+  3. *CA P3:* M2's private locality reader is gone; it imports `declaredExecutionLocality` (the agent import allowlist gains
+     `../execution-locality-constraint`, a pure module of port types).
+  4. *CA P3:* the readiness `select` (which awaits the router's readiness probe) is raced against the run's wall, and the wall
+     is checked before and after it: a spent wall ends the read `not-run` (bound) before the port is called.
+  5. *Codex P2:* a malformed caller list (`['REMOTE', 'CLOUD']`) was sanitised to `['REMOTE']` by `m2SelectionContext`. The
+     base constraint is now read by the shared reader and a malformed list is rejected whole (the empty set, listing-only).
+  6. *Codex P2:* `CapabilityRouter.isStillEligible` answered `true` without a policy or without `isEligible`, so the mandatory
+     re-check could pass silently. Under `allowedExecutionLocalities` it now needs an explicit policy verdict (none = `false`);
+     a request without that field (the legacy paths, ADR-0124 C5a `requiredLocality` alone) keeps the old answer, so the S3
+     path is not loosened or tightened. M2 also asks the verdict once right after selection, so a route that can never pass is
+     `no-model` before any body is fetched.
+  7. *Codex P2:* the final check ran before the caller callbacks (`reserve`, `onCallStart`). The check now runs first (a
+     refusal charges nothing), and again inside the call immediately before `provider.execute`, after both callbacks, with
+     nothing in between; a refusal there is `dispatch-refused` (the reserved model call stays charged, conservatively). The
+     audited locality is the one that final check verified.
+  - *Recorded as deliberate (CA agreed):* ungranted mail mixed with a stricter source is `no-summary-grant` (#4 read
+    strictly), and a selector without `isStillEligible` is `no-model`. S3 `local-provider-dispatch.ts`
+    (`isRequiredLocalDispatchAllowed`) is looser on purpose (a selector without `isStillEligible` passes there) because that
+    path is `LOCAL`-only and never leaves the host.
+  - *Tests added:* `quarantined-summary-d12.test.ts` "D12 review round 1" (base `requiredLocality` with a REMOTE answer →
+    `no-model`; a malformed caller list → empty, no call; a router without a policy or without `isEligible` → `no-model`,
+    legacy answers unchanged; a locality switched by `reserve` or by `onCallStart` → `dispatch-refused`, no call, and the
+    audited locality equals the dispatched one); `capability-router-locality.test.ts` (junk `requiredLocality`, no-verdict
+    dispatch check); `plan-executor-summary.test.ts` (a readiness `select` that never answers ends the read at the wall,
+    no port call).
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 

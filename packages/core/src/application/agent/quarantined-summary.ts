@@ -6,6 +6,7 @@ import type { ProviderSelector } from '../../ports/provider-selector.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
 import { containsDocumentActionClaim } from '../document-summary-claim-guard';
+import { allowedExecutionLocalitiesOf, declaredExecutionLocality } from '../execution-locality-constraint';
 import { containsLink, neutralizeLinks } from '../link-neutralizer';
 import {
   buildUntrustedDocumentReadout,
@@ -313,8 +314,10 @@ export function m2SelectionContext(
 ): ProviderSelectionContext {
   try {
     const context: ProviderSelectionContext = base ?? {};
-    const narrowed = context.allowedExecutionLocalities;
-    const allowed = narrowed === undefined ? [...localities] : localities.filter((locality) => Array.isArray(narrowed) && narrowed.includes(locality));
+    // The base constraint is read by the shared reader (it intersects `requiredLocality`); a malformed list is rejected as a
+    // whole (the empty set), never sanitised member by member (Codex review round 1).
+    const narrowed = allowedExecutionLocalitiesOf(context);
+    const allowed = narrowed === undefined ? [...localities] : localities.filter((locality) => narrowed.has(locality));
     const workText = context.workText === true || entryIds.some((entryId) => AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId));
     return Object.freeze({ ...context, allowedExecutionLocalities: Object.freeze(allowed), ...(workText ? { workText: true as const } : {}) });
   } catch {
@@ -330,13 +333,9 @@ interface SelectedProvider {
   readonly auditId: string;
 }
 
-/** The provider's declared locality (absent = `REMOTE`), or `undefined` when it cannot be read. */
-function localityOf(provider: AiProvider): AiExecutionLocality | undefined {
-  try {
-    return provider.executionLocality === 'LOCAL' ? 'LOCAL' : 'REMOTE';
-  } catch {
-    return undefined;
-  }
+/** The set the context allows, by the shared reader (an absent constraint is no locality at all for M2: fail closed). */
+function allowedBy(context: ProviderSelectionContext): ReadonlySet<AiExecutionLocality> {
+  return allowedExecutionLocalitiesOf(context) ?? new Set();
 }
 
 /**
@@ -345,21 +344,20 @@ function localityOf(provider: AiProvider): AiExecutionLocality | undefined {
  * throws, or answers a provider whose locality, id or capability cannot be read, that does not advertise `SUMMARIZATION`, or
  * whose declared locality is outside the derived set (the port's answer is re-read, never trusted). Never calls the provider.
  */
-async function selectM2Provider(
-  route: QuarantinedSummarizerRoute,
-  context: ProviderSelectionContext,
-  allowed: readonly AiExecutionLocality[],
-): Promise<SelectedProvider | undefined> {
+async function selectM2Provider(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext): Promise<SelectedProvider | undefined> {
   try {
     const selector = route.selector;
     if (typeof selector?.select !== 'function' || typeof selector.isStillEligible !== 'function') return undefined;
     const provider = await selector.select(Capability.SUMMARIZATION, context);
     if (typeof provider !== 'object' || provider === null) return undefined;
-    const locality = localityOf(provider);
-    if (locality === undefined || !allowed.includes(locality)) return undefined;
+    const locality = declaredExecutionLocality(provider);
+    if (locality === undefined || !allowedBy(context).has(locality)) return undefined;
     if (!provider.capabilities.some((descriptor) => descriptor.capability === Capability.SUMMARIZATION)) return undefined;
     const id = provider.id;
-    return { provider, locality, auditId: typeof id === 'string' ? id : '' };
+    const selected: SelectedProvider = { provider, locality, auditId: typeof id === 'string' ? id : '' };
+    // The policy verdict is asked once already here, so a route that can never pass the dispatch check (no explicit policy
+    // verdict, CapabilityRouter under `allowedExecutionLocalities`) is refused before any body is fetched.
+    return dispatchLocality(route, context, selected) === undefined ? undefined : selected;
   } catch {
     return undefined;
   }
@@ -368,22 +366,18 @@ async function selectM2Provider(
 /**
  * The mandatory dispatch-time re-check (D12), SYNCHRONOUS: run immediately before `execute`, with nothing awaited in between.
  * The provider must still declare the locality it was selected with, that locality must still be allowed, and the selector
- * must still find it eligible under the same constrained context (the owner's live policy). Any doubt is `false`: no call.
+ * must still find it eligible under the same constrained context (the owner's live policy). Answers the locality that is
+ * dispatched (the audit records exactly it), or `undefined` on any doubt: no call.
  */
-function dispatchStillAllowed(
-  route: QuarantinedSummarizerRoute,
-  context: ProviderSelectionContext,
-  allowed: readonly AiExecutionLocality[],
-  selected: SelectedProvider,
-): boolean {
+function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext, selected: SelectedProvider): AiExecutionLocality | undefined {
   try {
-    const now = localityOf(selected.provider);
-    if (now === undefined || now !== selected.locality || !allowed.includes(now)) return false;
+    const now = declaredExecutionLocality(selected.provider);
+    if (now === undefined || now !== selected.locality || !allowedBy(context).has(now)) return undefined;
     const check = route.selector.isStillEligible;
-    if (typeof check !== 'function') return false;
-    return check.call(route.selector, Capability.SUMMARIZATION, context, selected.provider) === true;
+    if (typeof check !== 'function') return undefined;
+    return check.call(route.selector, Capability.SUMMARIZATION, context, selected.provider) === true ? now : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -452,7 +446,7 @@ export async function summaryReadiness(input: SummaryReadinessInput): Promise<Qu
   });
   if (!derived.ok) return derived.reason;
   const context = m2SelectionContext(input.route.selectionContext, derived.localities, [input.entryId]);
-  const selected = await selectM2Provider(input.route, context, context.allowedExecutionLocalities ?? []);
+  const selected = await selectM2Provider(input.route, context);
   return selected === undefined ? 'no-model' : undefined;
 }
 
@@ -695,8 +689,7 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   const derived = deriveM2Localities({ egress: joined.egress, ...grantState(request.sources, request.summaryStep, request.run), askedItems: asked });
   if (!derived.ok) return { kind: 'listing-only', reason: derived.reason };
   const context = m2SelectionContext(request.route.selectionContext, derived.localities, request.sources.map((source) => source.entryId));
-  const allowed = context.allowedExecutionLocalities ?? [];
-  const picked = await selectM2Provider(request.route, context, allowed);
+  const picked = await selectM2Provider(request.route, context);
   if (picked === undefined) return { kind: 'listing-only', reason: 'no-model' };
 
   const schema = request.schema;
@@ -708,16 +701,19 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   if (containsCredentialMaterial(prompt) || containsCredentialFileContent(prompt)) return { kind: 'listing-only', reason: 'credential-in-prompt' };
   if (request.signal?.aborted === true) return { kind: 'failed', reason: 'model' };
   const estimatedTokens = estimateInputTokens(prompt);
-  // From here to `execute` nothing is awaited: the mandatory dispatch re-check (D12), the budget reservation, the audit start
-  // and the one call run in one synchronous stretch, so a policy or locality change can land only before the check.
-  if (!dispatchStillAllowed(request.route, context, allowed, picked)) return { kind: 'listing-only', reason: 'dispatch-refused' };
+  // From here to `execute` nothing is awaited. The dispatch check runs first (so a refusal charges nothing), then the budget
+  // reservation and the audit start (caller callbacks), and then the check runs AGAIN inside the call, immediately before
+  // `provider.execute`, so nothing a callback does can change what is sent (Codex review round 1). The audited locality is the
+  // one that final check verified.
+  if (dispatchLocality(request.route, context, picked) === undefined) return { kind: 'listing-only', reason: 'dispatch-refused' };
   if (!request.reserve(estimatedTokens)) return { kind: 'bound' };
 
   const now = request.now ?? Date.now;
   const started = now();
   const aiRequest: AiRequest = { capability: Capability.SUMMARIZATION, prompt, ...(request.signal !== undefined ? { signal: request.signal } : {}) };
+  let dispatched: AiExecutionLocality = picked.locality;
   const audit = (): QuarantinedCallAudit => ({
-    locality: picked.locality,
+    locality: dispatched,
     auditId: picked.auditId,
     estimatedTokens,
     latencyMs: Math.max(0, now() - started),
@@ -729,8 +725,14 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   }
   let text: string;
   try {
-    text = await callModel(picked.provider, aiRequest, request.signal);
-  } catch {
+    text = await callModel(picked.provider, aiRequest, request.signal, () => {
+      const verified = dispatchLocality(request.route, context, picked);
+      if (verified !== undefined) dispatched = verified;
+      return verified !== undefined;
+    });
+  } catch (error) {
+    // A final check that refused: nothing was sent (the model call was charged; the bound stays conservative).
+    if (error === DISPATCH_REFUSED) return { kind: 'listing-only', reason: 'dispatch-refused' };
     // The adapter's message is never read, and the request is never re-sent to this or another provider (D12).
     return { kind: 'failed', reason: 'model', audit: audit() };
   }
@@ -743,14 +745,27 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   return { kind: 'summary', summary: sealSummary(schema, label, parsed.entries), omitted: left, audit: audit() };
 }
 
+const DISPATCH_REFUSED: unique symbol = Symbol('dispatch-refused');
+
 /**
  * One model call that an abort abandons. The model is never invoked on an already-aborted signal, and a handler is attached to
  * the call at once, so a later rejection of an abandoned call is never an unhandled rejection.
  */
-function callModel(provider: AiProvider, request: AiRequest, signal: AbortSignal | undefined): Promise<string> {
+function callModel(provider: AiProvider, request: AiRequest, signal: AbortSignal | undefined, mayDispatch: () => boolean): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     if (signal?.aborted === true) {
       reject(new Error('aborted'));
+      return;
+    }
+    // The final D12 dispatch check, synchronous and immediately before `execute` (nothing runs in between).
+    let allowed = false;
+    try {
+      allowed = mayDispatch() === true;
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      reject(DISPATCH_REFUSED);
       return;
     }
     const abort = (): void => reject(new Error('aborted'));

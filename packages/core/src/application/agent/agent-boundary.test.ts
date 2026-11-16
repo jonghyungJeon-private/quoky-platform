@@ -33,6 +33,8 @@ function allowedSpecifier(specifier: string): boolean {
   // ADR-0121 D12 (amended 2026-11-16): M2 routes through the EXISTING selection contract; both ports are types only.
   if (specifier === '../../ports/provider-selector.port' || specifier === '../../ports/provider-selection-policy.port') return true;
   if (specifier === '../credential-guard') return true;
+  // ADR-0121 D12: the one shared locality-constraint reader (pure; it imports port types only).
+  if (specifier === '../execution-locality-constraint') return true;
   if (specifier === '../call-usage-log-fields') return true;
   // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
   if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;

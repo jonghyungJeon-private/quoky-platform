@@ -16,6 +16,7 @@ import {
   type QuarantinedCallAudit,
   type QuarantinedListingOnlyReason,
   type QuarantinedSummarizerRoute,
+  type SummaryReadinessInput,
   type QuarantinedSummary,
   type SummaryRunToken,
 } from './quarantined-summary';
@@ -300,15 +301,22 @@ export class AgentPlanExecutor {
     let withDocuments = false;
     if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
-        const refusal = await summaryReadiness({
-          entryId,
-          schema: cover.schema,
-          summaryStep: cover.step,
-          grant: summaryGrantFor(cover.step, entryId, state.run),
-          run: state.run,
-          askedItems: askedAcross(state, cover.from),
-          route,
-        }).catch((): 'no-model' => 'no-model');
+        // The readiness `select` awaits the router's readiness probe: it is bounded by the run's wall like a port call, and a
+        // spent wall (or any breach) after it ends the step `not-run` (bound) before the port is called (CA review round 1).
+        if (!budget.checkWall()) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+        const refusal = await readinessWithinWall(
+          {
+            entryId,
+            schema: cover.schema,
+            summaryStep: cover.step,
+            grant: summaryGrantFor(cover.step, entryId, state.run),
+            run: state.run,
+            askedItems: askedAcross(state, cover.from),
+            route,
+          },
+          budget,
+        );
+        if (refusal === 'wall' || !budget.checkWall()) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
         if (refusal === undefined) withDocuments = true;
         else state.denials.set(`${cover.step}:${number}`, refusal);
       }
@@ -493,6 +501,22 @@ function notRun(step: ValidatedAgentStep, number: number, reason: AgentStepNotRu
 
 function closedCode(code: string): AgentReadErrorCode {
   return (AGENT_READ_ERROR_CODES as readonly string[]).includes(code) ? (code as AgentReadErrorCode) : 'UNKNOWN';
+}
+
+/** Summary readiness that cannot outlive the run's wall: `'wall'` (and a wall breach) when the wall ends first. Never rejects. */
+async function readinessWithinWall(input: SummaryReadinessInput, budget: AgentRunBudget): Promise<QuarantinedListingOnlyReason | undefined | 'wall'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const wall = new Promise<'wall'>((resolve) => {
+    timer = setTimeout(() => {
+      safely(() => budget.markBreach('wall-time'), undefined);
+      resolve('wall');
+    }, Math.max(1, safely(() => budget.remainingMs(), 0)));
+  });
+  try {
+    return await Promise.race([summaryReadiness(input).catch((): 'no-model' => 'no-model'), wall]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** The items a summary asks for over its covered reads: the sum of their requested counts (the count readiness and the model choice share). */

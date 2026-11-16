@@ -6,7 +6,7 @@ import type { ProviderSelectionContext } from '../ports/provider-selection-polic
  * context, read as data. Pure and total.
  *
  * - `undefined`: no constraint (neither `requiredLocality` nor `allowedExecutionLocalities` is set); selection is unchanged.
- * - Otherwise the allowed set: `requiredLocality: 'LOCAL'` keeps `LOCAL` only, `allowedExecutionLocalities` keeps its listed
+ * - Otherwise the allowed set: `requiredLocality: 'LOCAL'` keeps `LOCAL` only (any other set value allows nothing), `allowedExecutionLocalities` keeps its listed
  *   localities, and when both are set the set is their intersection. An `allowedExecutionLocalities` that is not an array of
  *   known localities (or that cannot be read) is unverifiable: the empty set, so no provider fits (fail closed).
  */
@@ -21,8 +21,9 @@ export function allowedExecutionLocalitiesOf(context: ProviderSelectionContext):
   }
   if (required === undefined && listed === undefined) return undefined;
   let allowed = new Set<AiExecutionLocality>(['LOCAL', 'REMOTE']);
-  // `requiredLocality` keeps its own meaning (ADR-0124 Part L C5a): only `'LOCAL'` constrains.
-  if (required === 'LOCAL') allowed = new Set(['LOCAL']);
+  // `requiredLocality` (ADR-0124 Part L C5a): `'LOCAL'` keeps `LOCAL` only; any other set value is unverifiable, so nothing
+  // fits (fail closed; CA review round 1).
+  if (required !== undefined) allowed = required === 'LOCAL' ? new Set(['LOCAL']) : new Set();
   if (listed !== undefined) {
     const known = knownLocalities(listed);
     allowed = known === undefined ? new Set() : new Set([...allowed].filter((locality) => known.has(locality)));

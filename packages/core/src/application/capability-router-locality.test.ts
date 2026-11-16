@@ -48,6 +48,9 @@ describe('allowedExecutionLocalitiesOf (the constraint as data)', () => {
     for (const bad of [[], ['local'], ['LOCAL', 'CLOUD'], 'LOCAL', { 0: 'LOCAL' }, null]) {
       expect([...(allowedExecutionLocalitiesOf({ allowedExecutionLocalities: bad as never }) ?? ['undefined'])], JSON.stringify(bad)).toEqual([]);
     }
+    // A set `requiredLocality` other than 'LOCAL' is unverifiable too (CA review round 1).
+    expect([...(allowedExecutionLocalitiesOf({ requiredLocality: 'REMOTE' as never }) ?? ['undefined'])]).toEqual([]);
+    expect([...(allowedExecutionLocalitiesOf({ requiredLocality: 'REMOTE' as never, allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }) ?? ['undefined'])]).toEqual([]);
     const throwing = { get allowedExecutionLocalities(): never { throw new Error('x'); } } as ProviderSelectionContext;
     expect([...(allowedExecutionLocalitiesOf(throwing) ?? ['undefined'])]).toEqual([]);
   });
@@ -120,8 +123,15 @@ describe('CapabilityRouter under allowedExecutionLocalities', () => {
     expect(router.isStillEligible(Capability.SUMMARIZATION, { workText: true, allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }, local)).toBe(true);
   });
 
+  it('under the D12 field the dispatch-time check needs an explicit policy verdict (none = false); without it, unchanged', () => {
+    const { router, local } = fixture();
+    expect(router.isStillEligible(Capability.SUMMARIZATION, { allowedExecutionLocalities: ['LOCAL'] }, local)).toBe(false);
+    expect(router.isStillEligible(Capability.SUMMARIZATION, { requiredLocality: 'LOCAL' }, local)).toBe(true);
+    expect(router.isStillEligible(Capability.SUMMARIZATION, {}, local)).toBe(true);
+  });
+
   it('the dispatch-time check refuses a provider outside the set, and a provider whose locality changed', () => {
-    const { router, local, remote } = fixture();
+    const { router, local, remote } = fixture({ preferenceFor: async () => null, isEligible: () => true });
     expect(router.isStillEligible(Capability.SUMMARIZATION, { allowedExecutionLocalities: ['LOCAL'] }, remote)).toBe(false);
     expect(router.isStillEligible(Capability.SUMMARIZATION, { allowedExecutionLocalities: ['LOCAL'] }, local)).toBe(true);
     expect(router.isStillEligible(Capability.SUMMARIZATION, { allowedExecutionLocalities: [] }, local)).toBe(false);

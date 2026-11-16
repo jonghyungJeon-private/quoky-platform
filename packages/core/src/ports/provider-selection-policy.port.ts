@@ -35,7 +35,8 @@ export interface ProviderSelectionContext {
    * constraint: the router probes, ranks and returns only a provider whose declared locality (`executionLocalityOf`) is in
    * the set, and its dispatch-time check answers `false` for any other. An empty set, or a value that is not a list of known
    * localities, admits no provider (unverifiable = none). It narrows, never widens: candidates are capability ∩ owner policy ∩
-   * locality ∩ `workText`. Absent means no constraint.
+   * locality ∩ `workText`. Absent means no constraint. Under it the dispatch-time check needs an explicit
+   * {@link ProviderSelectionPolicy.isEligible} verdict: a router without a policy or without `isEligible` answers `false`.
    */
   readonly allowedExecutionLocalities?: readonly AiExecutionLocality[];
 }

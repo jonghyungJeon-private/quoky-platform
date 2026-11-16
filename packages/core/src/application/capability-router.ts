@@ -70,14 +70,18 @@ export class CapabilityRouter implements ProviderSelector {
   /**
    * Dispatch-time check (synchronous): the policy's `isEligible` for this provider's key under the live selection. A
    * provider that no longer advertises the capability is not eligible; without a policy (or without `isEligible`) the
-   * legacy path has nothing to re-check.
+   * legacy path has nothing to re-check, except under `allowedExecutionLocalities` (ADR-0121 D12), where no explicit policy
+   * verdict is `false`.
    */
   isStillEligible(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean {
     if (!provider.capabilities.some((c) => c.capability === capability)) return false;
     const allowed = allowedExecutionLocalitiesOf(context);
     if (allowed !== undefined && !fitsExecutionLocality(allowed, provider)) return false;
     const check = this.policy?.isEligible;
-    if (check === undefined) return true;
+    // ADR-0121 D12: a request under `allowedExecutionLocalities` needs an explicit verdict of the owner's live policy at
+    // dispatch; without a policy or its `isEligible` the re-check is unverifiable, so it fails closed (review round 1).
+    // A request without that field (the legacy paths, ADR-0124 C5a `requiredLocality` alone) keeps the old answer.
+    if (check === undefined) return context.allowedExecutionLocalities === undefined;
     try {
       return check.call(this.policy, capability, context, selectionKeyOf(provider));
     } catch {

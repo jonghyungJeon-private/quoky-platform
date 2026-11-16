@@ -27,6 +27,8 @@ const doc = (position: number): AgentSourceDocument => ({ id: `m${position}`, po
 const mail = (grant: SummaryEgressGrant | undefined, ...documents: AgentSourceDocument[]): AgentSummarySource => ({ entryId: 'mail.list', documents, ...(grant !== undefined ? { grant } : {}) });
 const GRANT = (): SummaryEgressGrant => mintSummaryEgressGrantForTest(1, 'mail.list', RUN);
 const ANSWER = '{"items":[{"n":1,"summary":"A short summary."}]}';
+/** An owner policy that prefers nothing and answers explicitly at dispatch (D12 needs an explicit verdict). */
+const PERMISSIVE: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
 
 interface Spy extends AiProvider {
   readonly requests: AiRequest[];
@@ -129,8 +131,10 @@ describe('D12: the selector is asked under the derived constraint, and its answe
     const batch = recording(local);
     await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: batch.selector } });
     expect(batch.selects).toEqual([{ allowedExecutionLocalities: ['LOCAL'] }]);
-    // The dispatch re-check runs on the SAME constrained context.
-    expect(batch.checks).toEqual(batch.selects);
+    // The selection-time verdict and both dispatch re-checks (before the reservation, and right before execute) run on the
+    // SAME constrained context.
+    expect(batch.checks).toHaveLength(3);
+    for (const check of batch.checks) expect(check).toEqual(batch.selects[0]);
   });
 
   it('a selector that ignores the constraint (answers REMOTE for a batch) is not trusted: listing-only, no call', async () => {
@@ -174,10 +178,14 @@ describe('D12: the mandatory dispatch-time re-check', () => {
     let eligible = ['p-local'];
     const policy: ProviderSelectionPolicy = {
       preferenceFor: async (): Promise<ProviderPreference> => ({ eligible: [...eligible], order: 'listed' }),
-      isEligible: (_capability, _context, key) => eligible.includes(key),
+      // The owner switches the summary model off right after the selection-time verdict.
+      isEligible: (_capability, _context, key) => {
+        const verdict = eligible.includes(key);
+        eligible = [];
+        return verdict;
+      },
     };
-    // The owner switches the summary model off while the selector awaits readiness (after the policy answered).
-    const local: Spy = { ...spy('p-local', 'LOCAL', 1), isAvailable: async () => ((eligible = []), true) };
+    const local = spy('p-local', 'LOCAL', 1);
     const router = new CapabilityRouter(new AiProviderManager([local]), policy);
     const reserved: number[] = [];
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router }, reserve: (tokens) => (reserved.push(tokens), true) });
@@ -188,8 +196,11 @@ describe('D12: the mandatory dispatch-time re-check', () => {
 
   it('a check that throws or answers anything but true is a refusal', async () => {
     for (const answer of [() => false, () => 'yes' as unknown as boolean, (): boolean => { throw new Error('x'); }]) {
+      // At selection the verdict refuses: no-model (no body would be fetched). After a passing selection verdict: dispatch-refused.
       const local = spy('p-local', 'LOCAL', 1);
-      const { selector } = recording(local, answer);
+      expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: recording(local, answer).selector } })).toEqual({ kind: 'listing-only', reason: 'no-model' });
+      let calls = 0;
+      const { selector } = recording(local, () => ((calls += 1) === 1 ? true : answer()));
       expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector } })).toEqual({ kind: 'listing-only', reason: 'dispatch-refused' });
       expect(local.requests).toHaveLength(0);
     }
@@ -211,7 +222,7 @@ describe('D12: the mandatory dispatch-time re-check', () => {
       },
       execute: async (request) => (requests.push(request), { text: ANSWER }),
     };
-    const router = new CapabilityRouter(new AiProviderManager([flipping]));
+    const router = new CapabilityRouter(new AiProviderManager([flipping]), PERMISSIVE);
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: router } });
     expect(outcome.kind).toBe('listing-only');
     expect(['dispatch-refused', 'no-model']).toContain((outcome as { reason: string }).reason);
@@ -224,7 +235,7 @@ describe('D12: a sent request is never re-sent', () => {
     for (const failure of [new Error('boom'), new AiProviderError(AiFailureKind.UNAVAILABLE, 'down')]) {
       const first = spy('p-first', 'LOCAL', 90, () => Promise.reject(failure));
       const second = spy('p-second', 'LOCAL', 10);
-      const router = new CapabilityRouter(new AiProviderManager([first, second]));
+      const router = new CapabilityRouter(new AiProviderManager([first, second]), PERMISSIVE);
       let selects = 0;
       const counting: ProviderSelector = {
         select: (capability, context) => ((selects += 1), router.select(capability, context)),
@@ -239,7 +250,7 @@ describe('D12: a sent request is never re-sent', () => {
   it('a schema failure after send is not retried either', async () => {
     const first = spy('p-first', 'REMOTE', 90, async () => ({ text: 'not json' }));
     const second = spy('p-second', 'LOCAL', 10);
-    const router = new CapabilityRouter(new AiProviderManager([first, second]));
+    const router = new CapabilityRouter(new AiProviderManager([first, second]), PERMISSIVE);
     expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ kind: 'failed', reason: 'schema' });
     expect([first.requests.length, second.requests.length]).toEqual([1, 0]);
   });
@@ -279,5 +290,74 @@ describe('D12: workText interplay', () => {
     const outcome = await quarantinedSummarize({ ...base, sources: [{ entryId: 'jira.issues', documents: [doc(1)] }], route: { selector } });
     expect(outcome).toEqual({ kind: 'listing-only', reason: 'work-text-controls-not-built' });
     expect([selects.length, local.requests.length]).toEqual([0, 0]);
+  });
+});
+
+describe('D12 review round 1 (Chief Architect and Codex)', () => {
+  it('CA-1: a base requiredLocality LOCAL is honoured when the answer is re-read: a selector answering REMOTE is no-model', async () => {
+    const remote = spy('p-remote', 'REMOTE', 1);
+    const { selector, selects } = recording(remote);
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector, selectionContext: { requiredLocality: 'LOCAL' } } });
+    expect(outcome).toEqual({ kind: 'listing-only', reason: 'no-model' });
+    expect(selects[0]).toMatchObject({ requiredLocality: 'LOCAL', allowedExecutionLocalities: ['LOCAL'] });
+    expect(remote.requests).toHaveLength(0);
+  });
+
+  it('Codex-5: a malformed caller list is rejected whole, never sanitised to its known members', async () => {
+    expect(m2SelectionContext({ allowedExecutionLocalities: ['REMOTE', 'CLOUD'] as never }, ['LOCAL', 'REMOTE'], ['mail.list']).allowedExecutionLocalities).toEqual([]);
+    const remote = spy('p-remote', 'REMOTE', 1);
+    const { selector } = recording(remote);
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector, selectionContext: { allowedExecutionLocalities: ['REMOTE', 'CLOUD'] as never } } });
+    expect(outcome).toEqual({ kind: 'listing-only', reason: 'no-model' });
+    expect(remote.requests).toHaveLength(0);
+  });
+
+  it('Codex-6: a router with no explicit policy verdict cannot pass the mandatory re-check: no-model, no body, no call', async () => {
+    const noVerdict: ProviderSelectionPolicy = { preferenceFor: async () => null };
+    for (const policy of [undefined, noVerdict]) {
+      const local = spy('p-local', 'LOCAL', 1);
+      const router = new CapabilityRouter(new AiProviderManager([local]), policy);
+      expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toEqual({ kind: 'listing-only', reason: 'no-model' });
+      expect(local.requests).toHaveLength(0);
+      // The legacy answer is unchanged for a request without the D12 field.
+      expect(router.isStillEligible(Capability.SUMMARIZATION, {}, local)).toBe(true);
+      expect(router.isStillEligible(Capability.SUMMARIZATION, { requiredLocality: 'LOCAL' }, local)).toBe(true);
+      expect(router.isStillEligible(Capability.SUMMARIZATION, { allowedExecutionLocalities: ['LOCAL'] }, local)).toBe(false);
+    }
+  });
+
+  it('Codex-7: a callback that switches the locality before the call is caught by the final check right before execute', async () => {
+    let remoteNow = false;
+    const requests: AiRequest[] = [];
+    const flipping: AiProvider = {
+      id: 'p-flip',
+      get executionLocality(): AiExecutionLocality {
+        return remoteNow ? 'REMOTE' : 'LOCAL';
+      },
+      capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async (request) => (requests.push(request), { text: ANSWER }),
+    };
+    const { selector } = recording(flipping);
+    // A two-item batch is LOCAL-only; the callback switches the adapter to REMOTE after the first check.
+    for (const hook of ['reserve', 'onCallStart'] as const) {
+      remoteNow = false;
+      const flip = (): void => void (remoteNow = true);
+      const outcome = await quarantinedSummarize({
+        ...base,
+        sources: [mail(GRANT(), doc(1), doc(2))],
+        route: { selector },
+        ...(hook === 'reserve' ? { reserve: () => (flip(), true) } : { onCallStart: flip }),
+      });
+      expect(outcome, hook).toEqual({ kind: 'listing-only', reason: 'dispatch-refused' });
+    }
+    expect(requests).toHaveLength(0);
+    // Unchanged, the call goes out and the audit carries the locality the final check verified.
+    remoteNow = false;
+    const audits: string[] = [];
+    const ok = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector }, onCallStart: (audit) => void audits.push(audit().locality) });
+    expect(ok).toMatchObject({ kind: 'summary', audit: { locality: 'LOCAL', auditId: 'p-flip' } });
+    expect(requests).toHaveLength(1);
+    expect(audits).toEqual(['LOCAL']);
   });
 });

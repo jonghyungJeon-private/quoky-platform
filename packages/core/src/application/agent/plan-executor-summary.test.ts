@@ -4,6 +4,7 @@ import { Capability } from '../../domain';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import { AiProviderManager } from '../ai-provider-manager';
 import { CapabilityRouter } from '../capability-router';
+import type { ProviderSelectionPolicy } from '../../ports/provider-selection-policy.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest, type AgentReadResponse } from './plan-executor';
@@ -62,7 +63,9 @@ function asProvider(m: TestModel, priority: number): AiProvider {
   };
 }
 function via(...models: TestModel[]): QuarantinedSummarizerRoute {
-  return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index)))) };
+  // The owner's policy answers explicitly at dispatch (ADR-0121 D12: no verdict is no dispatch); it prefers nothing.
+  const policy: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
+  return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index))), policy) };
 }
 
 function model(locality: 'LOCAL' | 'REMOTE', answer = '{"items":[{"n":1,"summary":"CANARY-SUMMARY-91 text"}]}'): TestModel & { requests: AiRequest[] } {
@@ -80,6 +83,18 @@ const MAIL_PLAN = (): RunPlan => plan([read('mail.list'), summarize([1])]);
 const grantAll = (): void => setSummaryGrantsForTest(() => true);
 
 afterEach(() => setSummaryGrantsForTest());
+
+describe('AgentPlanExecutor: readiness is bounded by the wall (D12 review round 1, CA-4)', () => {
+  it('a selector that never answers during readiness ends the read not-run (bound) at the wall; the port is never called', async () => {
+    grantAll();
+    const mail = port(['m1'], docs('a'));
+    const hung: QuarantinedSummarizerRoute = { selector: { select: () => new Promise(() => undefined), isStillEligible: () => true } };
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: hung, bounds: { wallMs: 30 } }).execute(MAIL_PLAN());
+    expect(result.steps[0]).toMatchObject({ kind: 'read', status: 'not-run', reason: 'bound' });
+    expect(result.outcome).toBe('partial');
+    expect(mail.requests).toHaveLength(0);
+  });
+});
 
 describe('AgentPlanExecutor: summaries (P3-3b)', () => {
   it('without a summarizer the step stays deferred and no body is asked for', async () => {
