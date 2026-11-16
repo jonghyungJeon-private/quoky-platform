@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Chat guard keeps an offered command whose payload holds a stale-command word (2026-11-16, branch `claude/v5-chat-command-strip`)
+
+- The A6-D6 stale-command check exempts a phrase only inside the payload of a span the grammar answers unchanged with the phrase blanked (`nlGrammarClaim`); a removed display line makes the whole reply the restate. Fixes the live 11:34 DM (comment command stripped, dangling "아래 문구"). `…라고 댓글 달아줘` still routes to chat at `local` by design (no NL Jira comment in A6). Residuals: step phrases ("댓글 실행", "Jira 상태 되돌리기 실행") are not B1-runnable; the bare `/되돌리기/` pattern still removes a sentence naming "Jira 상태 되돌리기 실행".
+
 ### ADR-0112 amendment 1 under amendment 3: undo of Quoky's own Slack post (2026-11-16, branch `claude/v5-r3-slack-undo`)
 
 - "되돌려줘" now also deletes the Slack message Quoky just posted (own SENT post receipt in this session only; channel still allowlisted; CRITICAL approval, `Slack 삭제 실행`). `EXTERNAL_UNDO_CAPABILITIES` holds six families. Reachable with Slack connector writes on + `QUOKY_NL_ACTIONS=local|external`, DM only. Red-team v2 174 cases x 2 x 3 runs, 0 / 0; v1 still 0 / 0. No history scope: an edit made in Slack after the post is not detected (stated on the card). Not yet observed live (Live UAT U21b: `chat.delete` answers, workspace deletion policy).
