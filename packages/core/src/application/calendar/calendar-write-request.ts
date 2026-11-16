@@ -58,7 +58,12 @@ const CLOCK_RE = new RegExp(CLOCK, 'u');
 const RANGE_RE = new RegExp(String.raw`${CLOCK}\s*(?:부터|~|〜|-|–|에서)\s*${CLOCK}(?:\s*까지)?`, 'u');
 const DURATION_RE = /(\d{1,2})\s*시간(?:\s*(반))?(?:\s*(\d{1,2})\s*분)?|(?<![시\d])(\d{1,3})\s*분\s*(?:동안|짜리|간)/u;
 const ALL_DAY = /종일|하루\s*종일|하루\s*일정|all[\s-]?day/iu;
-const FIELD_KEYWORD = /(제목|장소|위치|설명|메모)\s*(?:은|는|:|：)?\s*/gu;
+/**
+ * A field label is a whole token: it starts at a token boundary (never inside a word: "존재하지않는제목") and is followed by
+ * a particle / colon, or by whitespace / the end (never inside a compound: "제목시험"). Group 2 is the particle or colon;
+ * absent means a BARE label, which only counts in a structural position (see `fieldsOf`).
+ */
+const FIELD_KEYWORD = /(?<![\p{L}\p{N}])(제목|장소|위치|설명|메모)(?:\s*(은|는|을|를)(?![\p{L}\p{N}])|\s*[:：]|(?=\s|$))\s*/gu;
 const QUOTED = /"([^"]{1,200})"|“([^”]{1,200})”|'([^']{1,200})'|‘([^’]{1,200})’|「([^」]{1,200})」|『([^』]{1,200})』/u;
 const MEETING_NOUN = /(회의|미팅|약속|면담|통화|콜|점심|저녁\s*약속|일정)/u;
 const DAY_WORD = String.raw`(?:오늘|내일|낼|모레|글피|(?:이번|다음)\s*주\s*[월화수목금토일]요일|[월화수목금토일]요일|\d{1,2}\s*월\s*\d{1,2}\s*일|\d{1,2}\s*/\s*\d{1,2})`;
@@ -137,23 +142,61 @@ function zonedInstant(date: LocalDate, time: ConnectorWriteClockTime, timeZone: 
   return new Date(resolved.epochMs).toISOString();
 }
 
-/** Text after each field keyword, up to the next keyword (verbatim, outer whitespace and trailing punctuation removed). */
-function fieldsOf(text: string): { head: string; title?: string; location?: string; description?: string } {
-  const matches = [...text.matchAll(FIELD_KEYWORD)];
-  if (matches.length === 0) return { head: text };
+/**
+ * Text after each field label, up to the next label (verbatim, outer whitespace and trailing punctuation removed). A label
+ * with a particle or colon counts at any token boundary. A BARE label ("제목 주간 회의") counts only in a structural
+ * position: the start of the message, after the booking verb (a trailing field list), or after a label that already
+ * counted (a field list). Anywhere else it is an ordinary word of the owner's title ("Quoky E2E 제목 시험 일정").
+ * The title value gets the same time / duration / range stripping as the unlabelled title; the stripped text is also
+ * returned (`timeText`) so a day, clock or duration written inside the title value is still read.
+ */
+function fieldsOf(text: string): { head: string; timeText: string; title?: string; location?: string; description?: string } {
+  const verbAt = BOOKING_VERB.exec(text)?.index ?? Number.POSITIVE_INFINITY;
+  const matches: RegExpMatchArray[] = [];
+  for (const match of text.matchAll(FIELD_KEYWORD)) {
+    const index = match.index ?? 0;
+    const structural = match[2] !== undefined || /[:：]/u.test(match[0]) || index === 0 || index >= verbAt || matches.length > 0;
+    if (structural) matches.push(match);
+  }
+  if (matches.length === 0) return { head: text, timeText: text };
   const head = text.slice(0, matches[0]?.index ?? text.length);
   const fields: { title?: string; location?: string; description?: string } = {};
+  let timeText = head;
   matches.forEach((match, i) => {
     const start = (match.index ?? 0) + match[0].length;
     const end = i + 1 < matches.length ? (matches[i + 1]?.index ?? text.length) : text.length;
-    const value = stripQuotes(stripTrailingRequest(text.slice(start, end)));
-    if (value.length === 0) return;
     const key = match[1];
+    const raw = text.slice(start, end);
+    let value: string;
+    if (key === '제목') {
+      const wholeQuoted = /^[\s]*["“'‘「『]/u.test(raw) && QUOTED.test(raw);
+      if (!wholeQuoted) timeText += ` ${raw}`;
+      value = stripQuotes(stripTrailingRequest(wholeQuoted ? raw : withoutTimePhrases(raw)));
+    } else {
+      value = stripQuotes(stripTrailingRequest(raw));
+    }
+    if (value.length === 0) return;
     if (key === '제목') fields.title ??= value;
     else if (key === '장소' || key === '위치') fields.location ??= value;
     else fields.description ??= value;
   });
-  return { head, ...fields };
+  return { head, timeText, ...fields };
+}
+
+/** Connecting particles stranded once a time phrase is cut out of a title value ("3시에" → "에"). */
+const LINK_TOKEN = /^(?:에서|에는|에|부터|까지|동안|짜리|간)$/u;
+
+/** The title value with its day / clock / range / duration / all-day phrases cut out (as the unlabelled title does). */
+function withoutTimePhrases(value: string): string {
+  let rest = value;
+  for (const pattern of [RANGE_ALL, CLOCK_ALL, DURATION_ALL, ALL_DAY_ALL, DAY_WORD_ALL]) {
+    pattern.lastIndex = 0;
+    rest = rest.replace(pattern, ' ');
+  }
+  return rest
+    .split(/\s+/u)
+    .filter((token) => token.length > 0 && !LINK_TOKEN.test(token))
+    .join(' ');
 }
 
 /** A booking / change verb the owner wrote after a field ("제목 주간 회의로 잡아줘") is not part of the field. */
@@ -185,10 +228,10 @@ function durationOf(text: string): number | undefined {
 
 function parseCreate(text: string, options: CalendarWriteGrammarOptions): ConnectorWriteDraft {
   const usage: ConnectorWriteDraft = { kind: 'usage', topic: 'calendar-create' };
-  const { head, title: fieldTitle, location, description } = fieldsOf(text);
+  const { head: titleHead, timeText: head, title: fieldTitle, location, description } = fieldsOf(text);
   const date = dayOf(head, options);
   if (date === undefined) return { kind: 'usage', topic: 'calendar-span' };
-  const title = fieldTitle ?? quotedOf(head) ?? titlePhraseOf(head) ?? MEETING_NOUN.exec(head)?.[1]?.replace(/\s+/gu, ' ');
+  const title = fieldTitle ?? quotedOf(titleHead) ?? titlePhraseOf(titleHead) ?? MEETING_NOUN.exec(titleHead)?.[1]?.replace(/\s+/gu, ' ');
   if (title === undefined) return usage;
   if (
     !bounded(title, CALENDAR_EVENT_TITLE_MAX_LENGTH) ||

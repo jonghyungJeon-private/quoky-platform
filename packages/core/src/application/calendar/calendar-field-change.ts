@@ -6,6 +6,6 @@
  */
 
 /** "제목을 주간 회의로 바꿔줘": the new title before 으로/로 and a change verb. */
-export const CALENDAR_RENAME = /제목\s*(?:을|를)?\s*([\s\S]{1,200}?)\s*(?:으로|로)\s*(?:바꿔|변경\s*해|수정\s*해)/u;
+export const CALENDAR_RENAME = /(?<![\p{L}\p{N}])제목\s*(?:을|를)?\s*([\s\S]{1,200}?)\s*(?:으로|로)\s*(?:바꿔|변경\s*해|수정\s*해)/u;
 /** "장소를 3층으로 바꿔줘": the new location before 으로/로 and a change verb. */
-export const CALENDAR_RELOCATE = /(?:장소|위치)\s*(?:을|를)?\s*([\s\S]{1,200}?)\s*(?:으로|로)\s*(?:바꿔|변경\s*해|수정\s*해|옮겨)/u;
+export const CALENDAR_RELOCATE = /(?<![\p{L}\p{N}])(?:장소|위치)\s*(?:을|를)?\s*([\s\S]{1,200}?)\s*(?:으로|로)\s*(?:바꿔|변경\s*해|수정\s*해|옮겨)/u;

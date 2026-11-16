@@ -17023,6 +17023,33 @@ OPS-2b merge (no-bypass extraction).
   miss is a safe `event-not-found`. A filter can only narrow the previous candidate set, never broaden it or pick another
   event; zero matches writes nothing.
 
+### ADR-0110 amendment implementation note — structural field labels in calendar write grammar (2026-11-16)
+
+- Live findings after the "own title words" note: (1) "Quoky E2E 제목 시험 일정 30분짜리 추가해줘" previewed 제목
+  "시험 일정 30분짜리"; (2) "존재하지않는제목 일정 삭제해줘" was answered as ordinary chat. Both stopped before any write.
+- Causes. (1) `FIELD_KEYWORD` matched 제목/장소/위치/설명/메모 anywhere, with no token boundary and no position check, so an
+  ordinary title word became the label, the words before it became the "head" and the duration leaked into the title.
+  (2) Not the label at all: `isCalendarWriteRequest` skipped the clause as a negation because `NOT_A_REQUEST` matched
+  "하지 않" inside the word "존재하지않는제목".
+- Structural rules, no phrase list: a label is a whole token (starts after a non-letter/digit, and is followed by a
+  particle 은/는/을/를, a colon, whitespace or the end, never inside a compound such as "제목시험"); a label with a particle or
+  colon counts at any token boundary; a BARE label counts only at the message start, after the booking verb, or after a
+  label that already counted; elsewhere it is a title word. A labelled title gets the same day / clock / range / duration /
+  all-day cut-out as the unlabelled title (stranded link particles dropped), and a time written inside it is still read.
+  `CALENDAR_RENAME` / `CALENDAR_RELOCATE` get the same token-start boundary. The attributive "않는" fused to a following
+  noun (2+ syllables) is not a negation; a negated request is unchanged.
+- Fail-closed residuals (all end at a preview, a usage hint or chat; none writes or targets anything wrongly):
+  - **R-TG1** "내일 오후 3시에 회의 제목 주간 회의 30분짜리 추가해줘": a bare label between the time and the booking verb is
+    indistinguishable by structure from the owner's title word, so it stays a title word ("회의 제목 주간 회의"); the preview
+    shows it and the owner can restate with a colon ("제목: …"). Risk: a wrong preview title the owner must reject.
+  - **R-TG2** "존재하지 않는 제목 일정 삭제해줘" (spaced) and one-syllable fused nouns stay a negation, so they go to chat.
+    Risk: a missed calendar delete answered as chat; nothing changes.
+  - **R-TG3** the literal sentence "Quoky E2E 제목 시험 일정 30분짜리 추가해줘" names no time, so it is a usage hint, as any
+    create without a clock. A fused "않는데요" style ending is read as an attributive: it can reach the write path, which
+    still needs an exact-payload approval (R6).
+- Tests: `calendar-write-request.test.ts` (both sentences, labelled-form regressions, a label inside a compound word in
+  every field, a duration after a labelled title, the negation routing).
+
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
 - **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase
