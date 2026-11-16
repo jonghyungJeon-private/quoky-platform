@@ -71,12 +71,12 @@ const URL_SHAPES: readonly RegExp[] = [
   new RegExp(`[\\p{L}\\p{N}-]${DOT}\\p{L}{2,}`, 'u'),
 ];
 /**
- * Header shapes: at a line start, a label of up to three tokens whose last token holds a letter and is IMMEDIATELY followed by
+ * Header shapes: at a line start, a label (an optional leading `@`: a mention-prefixed speaker, review round 4) of up to three tokens whose last token holds a letter and is IMMEDIATELY followed by
  * a colon-like character (`Subject:`, `Original-Message:`, `보낸 사람:`; a time `3:30` holds no letter); anywhere, a token of
  * one to three Latin, Cyrillic or Greek letters immediately followed by one (`Fwd:`, `RE:`; `ok :)` has a space first).
  */
 const HEADER_SHAPES: readonly RegExp[] = [
-  new RegExp(`^[ \\t]*(?:[\\p{L}\\p{N}_-]+[ \\t]){0,2}(?=[\\p{L}\\p{N}_-]*\\p{L})[\\p{L}\\p{N}_-]{1,30}${COLON}`, 'mu'),
+  new RegExp(`^[ \\t]*@?(?:[\\p{L}\\p{N}_-]+[ \\t]){0,2}(?=[\\p{L}\\p{N}_-]*\\p{L})[\\p{L}\\p{N}_-]{1,30}${COLON}`, 'mu'),
   new RegExp(`(?<![\\p{L}\\p{N}])[\\p{sc=Latin}\\p{sc=Cyrillic}\\p{sc=Greek}]{1,3}${COLON}`, 'u'),
 ];
 /**
@@ -125,6 +125,17 @@ export function hasUntrustedSpanMarker(text: string): boolean {
   return [own, own.normalize('NFKC'), bare, bare.normalize('NFKC')].some((form) => hasMarkerIn(form));
 }
 
+/** Any line break the preparation may leave: LF, CR, the Unicode line and paragraph separators, NEL, VT and FF. */
+const LINE_BREAK = /[\n\r\u2028\u2029\u0085\v\f]/u;
+
+/**
+ * Review round 4: whether the owner's prepared text, without the appended `[files: N]` line and trimmed, holds exactly one
+ * non-empty line. A multi-line message never mints a summary grant (fail closed). Pure.
+ */
+export function isSingleLineOwnerText(text: string): boolean {
+  return nlPreparedWithoutFilesLine(text).trim().split(LINE_BREAK).filter((line) => line.trim().length > 0).length === 1;
+}
+
 function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
@@ -156,8 +167,9 @@ export function ownerSummaryRequests(plan: ValidatedAgentPlan, prepared: OwnerTe
   if (plan.kind !== 'run') return [];
   let owner: string;
   try {
-    // Review round 2: any untrusted-span marker anywhere in the owner's text, and the message grants nothing (fail closed).
-    if (hasUntrustedSpanMarker(prepared.text)) return [];
+    // Review round 4: a multi-line message never grants (the whole multi-line paste family, structurally); review round 2:
+    // any untrusted-span marker anywhere in a single-line message, and it grants nothing either (fail closed).
+    if (!isSingleLineOwnerText(prepared.text) || hasUntrustedSpanMarker(prepared.text)) return [];
     const groundingText = prepared.groundingText;
     // A relayed request is never the owner's own (the existing A6 R2 veto of a reported summary request).
     if (nlItemReadVeto(groundingText) !== undefined) return [];

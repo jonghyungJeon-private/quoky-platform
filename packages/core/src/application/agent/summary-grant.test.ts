@@ -11,7 +11,7 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest } from './plan-executor';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import type { AgentSourceDocument, QuarantinedSummarizerRoute } from './quarantined-summary';
-import { hasUntrustedSpanMarker, ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type OwnerText, type SummaryGrantBasis } from './summary-grant';
+import { hasUntrustedSpanMarker, isSingleLineOwnerText, ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type OwnerText, type SummaryGrantBasis } from './summary-grant';
 
 // ADR-0121 S2 wiring slice: the summary grant producer (P3-3b owner answer 2). Core derives the grant per summarize step and per
 // source from the owner's own words (quoted and pasted text excluded) with the approved summary vocabulary; never a caller flag
@@ -131,6 +131,27 @@ describe('ownerSummaryRequests: the owner\'s own words, per step and per source'
   ])('a plain owner request still grants: %s', (input) => {
     expect(hasUntrustedSpanMarker(grounding(input).text)).toBe(false);
     expect(granted(MAIL(), input)).toEqual(['2:mail.list']);
+  });
+
+  // Review round 4: a multi-line message never grants (the multi-line paste family, structurally).
+  it.each([
+    ['emoji-with-variation-selector divider line', '❤️❤️❤️\n메일 요약해줘'],
+    ['IPv6 address line', '2001:db8::1\n메일 요약해줘'],
+    ['a multi-line owner request (fail-closed residual)', '메일 3개\n요약해줘'],
+    ['a line separator', '메일 보여줘\u2028메일 요약해줘'],
+  ])('multi-line, no grant: %s', (_label, input) => {
+    expect(isSingleLineOwnerText(grounding(input).text)).toBe(false);
+    expect(granted(MAIL(), input)).toEqual([]);
+  });
+
+  it('a mention-prefixed speaker at the line start is a label (the @ widening of the line-start rule)', () => {
+    expect(hasUntrustedSpanMarker(grounding('@alice: 메일 요약해줘').text)).toBe(true);
+    expect(granted(MAIL(), '@alice: 메일 요약해줘')).toEqual([]);
+  });
+
+  it('a single-line plain request is single-line and still grants (surrounding blank space is trimmed)', () => {
+    expect(isSingleLineOwnerText(grounding('  최근 메일 3개 요약해줘  ').text)).toBe(true);
+    expect(granted(MAIL(), '\n최근 메일 3개 요약해줘\n')).toEqual(['2:mail.list']);
   });
 
   it('the [files: N] line the preparation appends is not a marker', () => {
