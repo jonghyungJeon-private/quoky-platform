@@ -64,6 +64,11 @@ describe('calendar write grammar (ADR-0110 amendment D3, CWR-2)', () => {
     // Quoted words are unchanged; a bare generic noun and a stranded deictic add no word; an undated reference adds none.
     expect(parse('내일 "Quoky 시험" 일정 삭제해줘')).toMatchObject({ ref: { titleWords: ['quoky', '시험'] } });
     expect(parse('내일 그 일정 삭제해줘')).toMatchObject({ ref: { titleWords: [] } });
+    // Every day expression the read grammar knows (relative, past, week-qualified) is never a title word.
+    for (const text of ['금일 일정 삭제해줘', '어제 일정 삭제해줘', '모레 회의 취소해줘', '다음 주 월요일 일정 삭제해줘']) {
+      expect(parse(text), text).toMatchObject({ kind: 'calendar-delete', ref: { titleWords: [] } });
+    }
+    expect(parse('어제 Quoky 시험 일정 삭제해줘')).toMatchObject({ ref: { titleWords: ['quoky', '시험'] } });
     expect(parse('방금 그 Quoky E2E 시험 일정 취소해줘')).toMatchObject({ ref: { inferredDay: true, titleWords: [] } });
   });
 

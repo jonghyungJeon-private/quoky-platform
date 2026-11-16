@@ -17016,6 +17016,9 @@ OPS-2b merge (no-bypass extraction).
   the existing every-word `includes` rule) only when the reference names a day. An undated reference still resolves
   against the session's recent event ("방금 그 … 취소해줘"). A create title is the last duration-delimited segment of
   the phrase after the day/clock that holds a meeting noun; the bare noun stays the fallback.
+- Codex P2 follow-up: a token the grammar itself recognizes as a day (the read grammar's `extractSpan` through
+  `namesDay`: 금일, 어제, 모레, 다음 주, weekdays, dates, English forms; checked per token, then in two- and
+  three-token windows of still-unrecognized tokens) or as a clock / duration / all-day expression is never a title word.
 - Particles: no new list. Only the existing trailing 을/를 of the last token is dropped; other postpositions stay and a
   miss is a safe `event-not-found`. A filter can only narrow the previous candidate set, never broaden it or pick another
   event; zero matches writes nothing.

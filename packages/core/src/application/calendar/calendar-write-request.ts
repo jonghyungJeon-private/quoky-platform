@@ -300,9 +300,20 @@ function residualTitleWords(part: string): string[] {
   let rest = part;
   for (const pattern of [RANGE_ALL, CLOCK_ALL, DURATION_ALL, ALL_DAY_ALL, DAY_WORD_ALL]) rest = rest.replace(pattern, ' ');
   const tokens = rest.split(/[\s,，]+/u).filter((token) => token.length > 0);
+  // Whatever the read grammar's own `extractSpan` (via `namesDay`) or this grammar's clock / duration matchers recognize
+  // is a time expression, never a title word: a single token first, then two- and three-token windows made only of
+  // still-unrecognized tokens ("다음 주"), so a title word next to a day word is never swallowed.
+  const timeLike = tokens.map((token) => namesDay(token) || CLOCK_RE.test(token) || DURATION_RE.test(token) || ALL_DAY.test(token));
+  for (const size of [2, 3]) {
+    for (let i = 0; i + size <= tokens.length; i += 1) {
+      if (timeLike.slice(i, i + size).some(Boolean)) continue;
+      if (namesDay(tokens.slice(i, i + size).join(' '))) for (let j = i; j < i + size; j += 1) timeLike[j] = true;
+    }
+  }
   const last = tokens.length - 1;
   const words: string[] = [];
   tokens.forEach((token, index) => {
+    if (timeLike[index]) return;
     const word = index === last ? token.replace(/(?:을|를)$/u, '') : token;
     if (Array.from(word).length < 2 || FILLER.test(word) || GENERIC_NOUN_TOKEN.test(word)) return;
     words.push(word.toLowerCase());
