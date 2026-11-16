@@ -5,6 +5,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 S2 wiring slice: summary grant producer, run budget, the `active` run (release-gated)
+
+- **Added (Core).** A summary grant producer (`agent/summary-grant.ts`).
+  - Core derives the grant per summarize step and per mail or Drive source from the owner's own words.
+  - Quoted, fenced, pasted and relayed text is excluded.
+  - The vocabulary is the approved `NL_MODE_SUMMARY_WORDS`; clauses are read fail-closed.
+  - The grant is minted through `summaryGrantFor`, keyed to the run token. It is never a caller flag and never the planner's step.
+  - No grant still means listing-only.
+- **Added (Core).** `AgentRunService.runActive`, one bounded `active` run.
+  - The planner call and its prompt bytes are charged on the run budget before the call. The re-plan slot is reserved
+    explicitly before step 1.
+  - The run uses the ratified caps (8 model calls, 6 M2 calls, 120,000 bytes, 60 s), plus the S2 plan Q7 cap of 60 model calls
+    an hour and the 30 / 150 per-actor run caps.
+  - Only a validated multi-step plan runs: executor, then the deterministic assembler.
+  - The kill switch is re-read on the live actor before the planner and before every step. A step in flight finishes, and a
+    stopped run ends in a partial reply with a fixed line.
+  - A failure or a bound breach is a partial reply, never a retry. The logs are content-free.
+  - Nothing calls it yet: runtime dispatch is P5.
+- **Changed (Core).**
+  - `AgentPlanExecutor.execute(plan, { budget, grants, stillRunning })`.
+  - A new `not-run` reason `stopped` and `AgentRunResult.stopped`.
+  - The `AgentRunService` constructor now refuses `active` without its read ports and M2 selector (`AGENT_MODE_ACTIVE_UNWIRED`).
+- **Added (app).**
+  - In `active` only, the composition root wires the M2 route (the existing `CapabilityRouter`) and the agent read ports. The
+    ports are empty until the adapter slice.
+  - The startup preflight refuses `QUOKY_AGENT_MODE=active` without `QUOKY_EGRESS_GUARD=enforce`
+    (`AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE`).
+  - `active` is still refused by the release gate. No flag or live behaviour changes; `off` and `shadow` are byte-identical.
+- **Docs.** DECISIONS "ADR-0121 S2 wiring slice".
+
 ## Unreleased — ADR-0121 remote batch M2 summaries and raised run caps (offline, unwired)
 
 - **Changed (Core, unwired).** Run caps raised by the owner's ADR-0121 D3/D7 amendment (2026-11-16): M2 calls 3 → 6, model calls

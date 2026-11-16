@@ -34074,6 +34074,158 @@ wiring, no flag change, no live behaviour change).
      input tokens equal to the mail prompt), and the assembler renders the fixed line. It fails when either the flag
      computation or the executor's pass-through is removed.
 
+## ADR-0121 S2 wiring slice — the summary grant producer, the run budget, the `active` run and its composition (Core and composition root, release-gated; 2026-11-16, branch `claude/v5-s2-wiring`)
+
+- **Status: implemented, not live.**
+  - The slice applies ratified text only. No ADR text changes.
+  - The service flag is unchanged. `QUOKY_AGENT_MODE=active` is still refused at startup (`AGENT_MODE_ACTIVE_NOT_RELEASED`).
+  - No runtime dispatch calls the new path, so `off` and `shadow` are byte-identical: `conversation-runtime` is untouched, and
+    the existing `agent-shadow.app.test.ts` still passes (`off` over the 873-case corpus).
+  - No new port, DI token or migration. `ConversationRuntimeDeps` stays 38.
+- **1. The summary grant producer (P3-3b owner answer 2, 2026-11-03).**
+  - It lives in `agent/summary-grant.ts`. `ownerSummaryRequests(plan, groundingText)` returns the (summarize step, source) pairs
+    that the owner's own words ask a summary of. It covers only the sources that need a grant (`REMOTE_ON_SUMMARY_REQUEST`:
+    mail and Drive).
+  - `summaryGrantBasis` wraps that list in an opaque value. The value is held in a module-private store and bound to the very
+    validated plan object it was made for.
+  - The executor passes the basis to `summaryGrantFor`. That function mints the existing `SummaryEgressGrant` through the
+    module-private `mintGrant`, keyed to the run token of that one `execute` call.
+  - A forged basis, a basis made for another plan, or no basis grants nothing. The result is listing-only
+    (`no-summary-grant`), with no body fetched and no model call.
+  - There is no caller flag. The planner's `summarize` step only says which summary exists.
+  - **Owner's words only.**
+    - The input is the prepared grounding text: quoted lines, fenced blocks, platform quote ranges and attachments are already
+      removed.
+    - Inline quoted segments are also removed. The new helper `nlWithoutQuotedSegments` uses the quote pairs that
+      `nlRelaysRequest` already reads.
+    - Pasted structures are removed (`withoutStructures`).
+    - A relayed request ("팀장이 … 요약해달래") grants nothing (`nlItemReadVeto`, the existing A6 R2 veto).
+  - **Vocabulary.** The words come from `NL_MODE_SUMMARY_WORDS` (A6 R2 ratification record C, the `summary` mode words). There is
+    no new word list. Content words ("내용") do not grant: ADR-0118 D7 requires an explicit summary request.
+  - **Per source, by clause, fail closed.**
+    - The prose is split into the S2 conjuncts, with the verb connective as a boundary (`nlClauses`).
+    - A conjunct ending in "-랑" joins the next conjunct. One ending in "-하고" joins it only when the rest of the word is exactly
+      one of the plan's source names ("메일하고"), because "확인하고" is a verb.
+    - A group grants a source when it holds an unnegated summary word and names that source (`nlClauseNamesEntry`).
+    - A group with an exclusion or negation marker grants nothing.
+    - A summary group that names no source ("메일 보여주고 요약해줘") points back. It grants only when every source the owner named
+      anywhere is covered by that summary.
+    - Anything else gives no grant: a comma or "and" between a noun and an English verb, or another source's clause. A missed
+      grant gives a listing; it is never a wrong egress.
+- **2. The run budget (D3/D7 amendment of 2026-11-16, and the remote batch note, CA (f)).**
+  - `AgentRunService` builds the run's `AgentRunBudget` before the planner call. It reserves `reserveModelCall('planner')` and
+    the planner prompt's UTF-8 bytes (`reserveInputTokens`) before the prompt is sent. A refused reservation means the prompt
+    is never sent.
+  - The planner call runs inside the selection bound and the run's 60 s wall.
+  - Before step 1 the re-plan is reserved explicitly with `reserveModelCall('replan')`. M1' is built-but-off (S2 plan Q12) and
+    not implemented. The one M1' slot is therefore charged up front and never taken from M2's share later:
+    8 model calls = M1 + M1' + 6 M2.
+  - The executor's new `execute(plan, { budget, grants, stillRunning })` uses that same budget. As a result,
+    `remainingM2Calls()` and `remainingInputTokens()` see the planner's share.
+  - The caps are the ratified `AGENT_RUN_BOUNDS`: 8 model calls, 6 M2 calls, 120,000 input bytes and 60 s, unchanged.
+  - **S2 plan Q7** (owner-approved default of 2026-10-20) is built for `active`: at most 60 agent model calls per rolling hour per
+    actor. A run's model-call bound is what the hour has left, and with nothing left the run is declined before the planner.
+- **3. The `active` run (`AgentRunService.runActive`, Core).** One bounded run per owner DM turn. It is total: it never throws.
+  1. **Admission.**
+     - The mode is `active` and the turn is the owner's DM, with no shutdown.
+     - The D7 per-actor caps apply: 30 runs an hour and 150 a day, in the same rolling windows as shadow.
+     - The Q7 cap applies.
+  2. **Kill switch.** The persisted switch is read on the live actor, never the turn's snapshot. An unreadable switch declines
+     the run (fail closed).
+  3. **The planner**, with the shadow job's controls:
+     - the D3 input preparation;
+     - the pre-egress credential guard;
+     - the ADR-0120 D6/D8 provider family and locality rule (`nlSameEgress`);
+     - the D4 label rule and the canary check.
+  4. **The plan.** Only a validated multi-step `run` plan executes. A one-step plan returns `one-step` for the existing selection
+     path (S2 plan Q2, wired in P5). Every other case returns `declined` with a closed reason, and nothing is read:
+     - `none`, `clarify` and `ask`;
+     - a refusal;
+     - a help split;
+     - a clause the read plan leaves (`write-clause`);
+     - a planner failure, timeout or malformed output.
+  5. **Execution.** The executor runs over the injected read ports with the M2 route
+     `{ selector, selectionContext: { sessionId, actorId } }`. The deterministic assembler then builds the reply.
+  6. **Failures.** A failed read, a refused or failed summary, a bound breach or a stop gives the assembler's partial reply, with
+     no retry.
+  - **Logs.** One content-free `agent_run.active` line, with closed values and counts only. `off` and `shadow` are never run and
+    log nothing.
+- **4. The kill switch at execution (D7; ADR-0120 A6-D3 amendment of 2026-11-03).**
+  - The executor re-reads the persisted switch (`stillRunning`) before every step. A stop, a throw or a non-`true` answer marks
+    that step and every later one `not-run` with the new closed reason `stopped`, and sets `AgentRunResult.stopped`.
+  - A step already in flight, an M2 batch included, finishes. This is the owner's rule that started work finishes.
+  - The assembler adds one fixed line ("에이전트 중지로 남은 단계는 실행하지 않았어요." / "The agent was stopped, so the remaining
+    steps were not run.").
+- **5. Composition (`features/agent.providers.ts`).**
+  - In `active` only, the service gets `summarizer`: the same `CapabilityRouter` as the existing `ProviderSelector` (ADR-0121 D12).
+  - It also gets `readers` from `createAgentReadPorts()`.
+  - `off` and `shadow` are built exactly as before, with no read port and no M2 route.
+  - The constructor refuses `active` without both collaborators (`AGENT_MODE_ACTIVE_UNWIRED`). This replaces its
+    `AGENT_MODE_ACTIVE_NOT_RELEASED` throw; the release gate stays at startup in `agent-config.ts`.
+  - The pinned deps contract (`agent-contract-check.ts`) gains `readers`, `summarizer` and a test-only `bounds`.
+  - **The read ports are empty on purpose.** The adapter slice (P3-3a note) must first give every port a budgeted HTTP client
+    that calls `reserveHttp()` before each request, pinned by a test that a port cannot send the 51st request. It must also add
+    the body-fetch cost accounting (P3-3b #8). Until then a planned read is `not-run` (`no-reader`).
+- **6. Preflight (owner decision 5 of 2026-11-02: the egress guard switches `observe` → `enforce` before `active`).**
+  - `QUOKY_AGENT_MODE=active` without exactly `QUOKY_EGRESS_GUARD=enforce` is refused at startup with
+    `AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE`. The startup report gives a hint that contains no value.
+  - The check runs before the release gate, so it remains when P5 removes the release gate.
+- **Tests (targeted; no model call).**
+  - `agent/summary-grant.test.ts` (13):
+    - the owner's words against quoted lines, inline quotes, pasted structures, fences and relayed requests;
+    - negation;
+    - per-source clauses, "-랑" / "-하고", the back-reference rule and two summary steps;
+    - a forged or foreign basis;
+    - through the executor: no basis gives listing-only with no body and no M2; the owner's words give the remote call.
+  - `agent/agent-run-service-active.test.ts` (22):
+    - the end-to-end run with fake ports and a real `CapabilityRouter`;
+    - the planner's summary step alone grants nothing; a quoted request is not the owner's;
+    - one-step hand-back;
+    - a failed read gives a partial reply with no retry; a planner failure or a malformed plan is declined;
+    - content-free logs;
+    - the planner charged before the call (an oversized prompt is never sent);
+    - the re-plan reservation (2 model calls leave no M2; 3 leave one);
+    - the planner's bytes count toward the input bound;
+    - the ratified caps;
+    - the kill switch on the live actor, unreadable, mid-run and after planning;
+    - the per-actor caps and the Q7 hourly cap; DM only;
+    - `off` and `shadow` never run.
+  - Calibration: removing the planner charge fails 6 tests, and removing the re-plan reservation fails 4.
+  - App tests:
+    - `agent-config.test.ts`: the egress refusal for unset, `observe`, `off` and case variants; its order before the release gate;
+      the startup hint;
+    - `features/agent.providers.test.ts`: `off` and `shadow` are built as before; `active` is wired; the empty read ports.
+  - Updated tests: `agent-run-service.test.ts` (the constructor code) and `agent-boundary.test.ts` (the new file).
+- **Choices made in this slice (for review).**
+  1. The re-plan slot is reserved up front, before step 1, rather than when an M1' happens, because M1' does not exist. The M1'
+     slice must use this slot and not reserve again: `maxReplans` is 1.
+  2. The grant's clause rules (item 1) are the strict reading: an ambiguous clause gives no grant.
+  3. The constructor gate changed from "never `active`" to "`active` only when wired". The startup release gate is unchanged.
+  4. Every outcome before a validated multi-step run is `declined` with no reply text. The copy (a numbered clarification for a
+     refusal, the bounded ask, the help section) is P5's.
+  5. A run counts toward the per-actor caps when it is admitted, before the planner, in the same windows as shadow.
+  6. Q7 counts every model call a run reserved. That includes the reserved M1' slot and the planner call of a declined run.
+- **Not built; owner decisions or later slices (nothing here may make `active` live).**
+  1. **Runtime dispatch under `active` (S2 plan Q2 / P5).** The planner must be the single M1 call: a one-step plan takes the
+     existing selection path without a second selector call (ADR-0120 D3 as amended: one M1 per message). A hook that runs the
+     planner and then the selector would make two M1 calls per message, so no hook is built. P5 needs:
+     - the unification in `NlSelectionService`;
+     - the help, ask and clarify copy;
+     - the read + write path;
+     - the re-run of the read, A6 and R2 gates on the unified prompt.
+  2. The adapter slice: the read ports, the budgeted HTTP client and the body-fetch accounting.
+  3. The `quoky.agentRun` TaskRun audit (D9).
+  4. A `LOCAL` summariser in the owner's policy for the M2 route, and the ADR-0115 D8 usage capture for M2.
+  5. Residual: the Q7 counter is in memory per process, like the shadow caps. A restart resets it, and two concurrent `active` runs
+     can both see the same remaining allowance.
+- **Owner Strict steps still required before `active`:**
+  1. the review of the 62 pending `agent-plan` golds and the 34 pending read + write golds;
+  2. the batch review of the ≥ 300-case S2 read red-team corpus (`agent-redteam.s2-read.v1.json`) and its 0-success runs;
+  3. the D11 gate campaign (each model-in-the-loop run Strict, with its own yes);
+  4. the 7-day shadow clock on the final planner (owner decision 4 of 2026-11-02);
+  5. the `QUOKY_EGRESS_GUARD` `observe` → `enforce` flip;
+  6. P5, which removes the release gate, then the `QUOKY_AGENT_MODE=active` flip and the restart.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112
