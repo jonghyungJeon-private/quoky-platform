@@ -426,3 +426,93 @@ describe('GoogleCalendarWriter — update and delete (ADR-0110 amendment D3)', (
     expect(google.tokenCalls).toHaveLength(0);
   });
 });
+
+describe('GoogleCalendarWriter — ADR-0112 amendment 3: post-update version and restore (O2, O3, O6)', () => {
+  const ETAG = '"3181161784712000"';
+  const AFTER_DELETE = '"3181161784799000"';
+  const EXPECTED: CalendarEventExpectation = { allDay: false, start: '2026-10-07T06:00:00.000Z', end: '2026-10-07T07:00:00.000Z', version: ETAG };
+  const SHAPE = { allDay: false, start: '2026-10-07T06:00:00.000Z', end: '2026-10-07T07:00:00.000Z' };
+  const event = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'evt123',
+    etag: AFTER_DELETE,
+    status: 'cancelled',
+    start: { dateTime: '2026-10-07T15:00:00+09:00' },
+    end: { dateTime: '2026-10-07T16:00:00+09:00' },
+    ...overrides,
+  });
+
+  it('an update reports the event\'s post-update entity tag on SENT (the inverse compares-and-sets on it)', async () => {
+    const google = fakeGoogle([json(200, event({ etag: ETAG, status: 'confirmed' })), json(200, { id: 'evt123', etag: '"after-update"', htmlLink: EVENT_LINK })]);
+    const outcome = await writer(google.fetchImpl).updateEvent({ eventId: 'evt123', expected: EXPECTED, changes: { title: '회의 (변경)' } });
+    expect(outcome).toEqual({ status: 'SENT', externalRef: 'evt123', url: EVENT_LINK, version: '"after-update"' });
+  });
+
+  it('restores the SAME event id: one read, then one PATCH {status: confirmed} with If-Match on the version read and sendUpdates=none', async () => {
+    const google = fakeGoogle([json(200, event()), json(200, { id: 'evt123', etag: '"restored"', status: 'confirmed', htmlLink: EVENT_LINK })]);
+    const outcome = await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: SHAPE });
+    expect(outcome).toEqual({ status: 'SENT', externalRef: 'evt123', url: EVENT_LINK, version: '"restored"' });
+    expect(google.calendarCalls).toHaveLength(2);
+    const [read, patch] = google.calendarCalls;
+    expect(read!.init?.method).toBe('GET');
+    expect(read!.url.pathname).toBe('/calendar/v3/calendars/primary/events/evt123');
+    expect(patch!.init?.method).toBe('PATCH');
+    expect(patch!.url.pathname).toBe('/calendar/v3/calendars/primary/events/evt123');
+    expect(patch!.url.searchParams.get('sendUpdates')).toBe('none');
+    expect((patch!.init?.headers as Record<string, string>)['If-Match']).toBe(AFTER_DELETE);
+    // Never a create (no POST, no new id, no attendees): only the status of that same event changes.
+    expect(bodyOf(patch!)).toEqual({ status: 'confirmed' });
+    assertNoSecrets(google.calendarCalls.map((call) => call.init?.body ?? null));
+  });
+
+  it('a gone / not-found event is NOT_SENT NOT_FOUND and nothing is written (said plainly by the flow)', async () => {
+    for (const status of [404, 410]) {
+      const google = fakeGoogle([new Response(null, { status })]);
+      expect(await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: SHAPE })).toEqual({ status: 'NOT_SENT', reason: 'NOT_FOUND', retryable: false });
+      expect(google.calendarCalls).toHaveLength(1);
+    }
+  });
+
+  it('refuses (no write) a live event, another shape, another id, a recurring series or a missing version', async () => {
+    for (const [reply, reason] of [
+      [event({ status: 'confirmed' }), 'TARGET_CHANGED'],
+      [event({ start: { dateTime: '2026-10-07T17:00:00+09:00' } }), 'TARGET_CHANGED'],
+      [event({ id: 'evt999' }), 'TARGET_CHANGED'],
+      [event({ etag: undefined }), 'TARGET_CHANGED'],
+      [event({ recurrence: ['RRULE:FREQ=WEEKLY'] }), 'RECURRING_SERIES_REFUSED'],
+    ] as const) {
+      const google = fakeGoogle([json(200, reply)]);
+      expect(await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: SHAPE })).toEqual({ status: 'NOT_SENT', reason, retryable: false });
+      expect(google.calendarCalls).toHaveLength(1);
+    }
+  });
+
+  it('a refused restore is reported as Google answered it: 403 FORBIDDEN, 412 TARGET_CHANGED, other 4xx REJECTED, 5xx UNCERTAIN', async () => {
+    for (const [status, outcome] of [
+      [403, { status: 'NOT_SENT', reason: 'FORBIDDEN', retryable: false }],
+      [412, { status: 'NOT_SENT', reason: 'TARGET_CHANGED', retryable: false }],
+      [400, { status: 'NOT_SENT', reason: 'REJECTED', retryable: false }],
+      [404, { status: 'NOT_SENT', reason: 'NOT_FOUND', retryable: false }],
+      [503, { status: 'UNCERTAIN', reason: 'SERVER_ERROR' }],
+    ] as const) {
+      const google = fakeGoogle([json(200, event()), new Response(null, { status })]);
+      expect(await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: SHAPE })).toEqual(outcome);
+      expect(google.calendarCalls).toHaveLength(2);
+    }
+  });
+
+  it('a success answer that is not the same event, live again, is UNCERTAIN (never reported as restored)', async () => {
+    for (const body of [{ id: 'evt123', status: 'cancelled' }, { id: 'evt999', status: 'confirmed' }]) {
+      const google = fakeGoogle([json(200, event()), json(200, body)]);
+      expect(await writer(google.fetchImpl).restoreEvent({ eventId: 'evt123', expected: SHAPE })).toEqual({ status: 'UNCERTAIN', reason: 'INVALID_RESPONSE' });
+    }
+  });
+
+  it('refuses an invalid id or expectation before any network call', async () => {
+    const google = fakeGoogle([]);
+    const calendar = writer(google.fetchImpl);
+    expect(await calendar.restoreEvent({ eventId: 'bad id', expected: SHAPE })).toEqual({ status: 'NOT_SENT', reason: 'INVALID_REQUEST', retryable: false });
+    expect(await calendar.restoreEvent({ eventId: 'evt123', expected: { allDay: true, start: 'x', end: 'y' } })).toEqual({ status: 'NOT_SENT', reason: 'INVALID_REQUEST', retryable: false });
+    expect(google.calendarCalls).toHaveLength(0);
+    expect(google.tokenCalls).toHaveLength(0);
+  });
+});

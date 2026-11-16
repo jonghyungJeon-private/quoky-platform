@@ -81,7 +81,9 @@ export type ExecutionGate =
   | 'channelPost'
   | 'calendarCreate'
   | 'calendarUpdate'
-  | 'calendarDelete';
+  | 'calendarDelete'
+  // ADR-0112 amendment 3 (O7): the restore of an approved calendar delete (only ever an undo).
+  | 'calendarRestore';
 
 /**
  * The closed set of accepted execution phrases per gate. The FIRST entry is the documented phrase the composer / help
@@ -147,6 +149,8 @@ export const EXECUTION_PHRASES: Readonly<Record<ExecutionGate, readonly string[]
   calendarCreate: ['일정 추가 실행', '일정 추가 실행해줘', '캘린더 일정 추가 실행', 'execute event create'],
   calendarUpdate: ['일정 변경 실행', '일정 변경 실행해줘', '캘린더 일정 변경 실행', 'execute event update'],
   calendarDelete: ['일정 삭제 실행', '일정 삭제 실행해줘', '캘린더 일정 삭제 실행', 'execute event delete'],
+  // ADR-0112 amendment 3 (O7): the exact phrase of a restore. No bare "복원 실행" (or "삭제 실행") on any gate.
+  calendarRestore: ['일정 복원 실행', '일정 복원 실행해줘', '캘린더 일정 복원 실행', 'execute event restore'],
 };
 
 /**

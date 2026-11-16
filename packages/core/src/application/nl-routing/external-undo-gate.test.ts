@@ -124,6 +124,58 @@ describe('the external undo capability gate (amendment 3), family switched on by
   });
 });
 
+describe('amendment 3 calendar-update and calendar-delete families: the family comes from the recorded operation', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(['calendar-create', 'calendar-update', 'calendar-delete']));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  it('maps external.write by its closed operation name; anything else has no family', () => {
+    expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_UPDATE')).toBe('calendar-update');
+    expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_DELETE')).toBe('calendar-delete');
+    expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_RESTORE')).toBeUndefined();
+    expect(externalUndoFamilyOf('external.write', 'ISSUE_COMMENT')).toBeUndefined();
+    expect(externalUndoFamilyOf('external.write', 'ISSUE_TRANSITION')).toBeUndefined();
+    expect(externalUndoFamilyOf('external.write')).toBeUndefined();
+    expect(externalUndoFamilyOf('calendar.create', 'CALENDAR_EVENT_CREATE')).toBe('calendar-create');
+    expect(externalUndoFamilyOf('calendar.create', 'CALENDAR_EVENT_DELETE')).toBeUndefined();
+    expect(externalUndoFamilyOf('slack.post', 'CALENDAR_EVENT_UPDATE')).toBeUndefined();
+  });
+
+  it('keeps only a closed operation name on an external record, round-trips it, and opens only SENT records of an open family', () => {
+    const update = lastActionOf(external({ entryId: 'external.write', operation: 'CALENDAR_EVENT_UPDATE' }));
+    expect(update).toMatchObject({ operation: 'CALENDAR_EVENT_UPDATE', undoable: true });
+    expect(lastActionOf(external({ entryId: 'external.write', operation: 'CALENDAR_EVENT_DELETE' }))?.undoable).toBe(true);
+    expect(lastActionOf(external({ entryId: 'external.write', operation: 'CALENDAR_EVENT_DELETE', outcome: 'UNCERTAIN' }))?.undoable).toBe(false);
+    expect(lastActionOf(external({ entryId: 'external.write', operation: 'DROP TABLE' }))).toMatchObject({ undoable: false });
+    expect(lastActionOf(external({ entryId: 'external.write', operation: 'DROP TABLE' }))?.operation).toBeUndefined();
+    expect(lastActionOf(external({ entryId: 'external.write', operation: 'ISSUE_COMMENT', source: 'jira' }))?.undoable).toBe(false);
+    expect(lastActionOf({ entryId: 'todo.add', source: 'todo', itemId: 'todo-1', at: NOW, undoable: true, undone: false, operation: 'CALENDAR_EVENT_UPDATE', echoReplyIds: [] })?.operation).toBeUndefined();
+    const view = readLastAction(withLastAction(undefined, ACTOR, update as LastActionRecord, NOW), ACTOR, NOW);
+    expect(view?.record.operation).toBe('CALENDAR_EVENT_UPDATE');
+    expect(resolveUndo({ lastAction: view })).toEqual({
+      kind: 'unresolved',
+      outcome: 'external',
+      external: { source: 'calendar', outcome: 'SENT', open: { family: 'calendar-update', receiptId: 'receipt-1' } },
+    });
+  });
+
+  it('with only calendar-create open, an update or delete record stays the "not on yet" copy', () => {
+    setExternalUndoCapabilitiesForTest(['calendar-create']);
+    for (const operation of ['CALENDAR_EVENT_UPDATE', 'CALENDAR_EVENT_DELETE']) {
+      const record = lastActionOf(external({ entryId: 'external.write', operation }));
+      expect(record?.undoable).toBe(false);
+      const view = readLastAction(withLastAction(undefined, ACTOR, record as LastActionRecord, NOW), ACTOR, NOW);
+      expect(resolveUndo({ lastAction: view })).toEqual({ kind: 'unresolved', outcome: 'external', external: { source: 'calendar', outcome: 'SENT' } });
+    }
+  });
+
+  it('an undo of an update or a restore is an action.undo record: never undoable, an undo of an undo', () => {
+    const record = lastActionOf(external({ entryId: 'action.undo', operation: 'CALENDAR_EVENT_RESTORE' }));
+    expect(record?.undoable).toBe(false);
+    const view = readLastAction(withLastAction(undefined, ACTOR, record as LastActionRecord, NOW), ACTOR, NOW);
+    expect(resolveUndo({ lastAction: view })).toEqual({ kind: 'unresolved', outcome: 'undo-of-undo' });
+  });
+});
+
 describe('nl-routing reaches no connector writer (amendment 3 import scan)', () => {
   const dir = dirname(fileURLToPath(import.meta.url));
   const files = readdirSync(dir).filter((name) => /\.ts$/.test(name) && !/\.test\.ts$/.test(name) && statSync(join(dir, name)).isFile());

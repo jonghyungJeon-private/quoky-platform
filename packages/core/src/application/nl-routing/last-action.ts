@@ -43,6 +43,24 @@ export const LAST_ACTION_EXTERNAL_ENTRY = 'external.write';
 export type LastActionEntryId = NlActionEntryId | typeof LAST_ACTION_EXTERNAL_ENTRY;
 /** What became of an external write (its receipt status at record time). */
 export type LastActionExternalOutcome = 'SENT' | 'UNCERTAIN' | 'NOT_SENT';
+/**
+ * ADR-0112 amendment 3: the neutral operation name of an external write (a closed list, the same names as the connector-write
+ * receipts). It tells the families that share the `external.write` entry apart; nl-routing never imports a writer for it.
+ */
+export const LAST_ACTION_EXTERNAL_OPERATIONS = [
+  'ISSUE_COMMENT',
+  'ISSUE_TRANSITION',
+  'CHANNEL_POST',
+  'CALENDAR_EVENT_CREATE',
+  'CALENDAR_EVENT_UPDATE',
+  'CALENDAR_EVENT_DELETE',
+  'CALENDAR_EVENT_RESTORE',
+] as const;
+export type LastActionExternalOperation = (typeof LAST_ACTION_EXTERNAL_OPERATIONS)[number];
+
+export function isLastActionExternalOperation(value: unknown): value is LastActionExternalOperation {
+  return typeof value === 'string' && (LAST_ACTION_EXTERNAL_OPERATIONS as readonly string[]).includes(value);
+}
 
 export function isLastActionExternalSource(value: unknown): value is LastActionExternalSource {
   return typeof value === 'string' && (LAST_ACTION_EXTERNAL_SOURCES as readonly string[]).includes(value);
@@ -67,7 +85,7 @@ export function externalLastActionOf(
  * keeps the S3 "not on yet" state, whatever a stored flag says. The set is a constant, never read from a store, a flag or
  * text: a family opens only when its slice adds it here.
  */
-export type ExternalUndoFamily = 'calendar-create';
+export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calendar-delete';
 /**
  * ADR-0112 amendment 3 red-team part passed 2026-11-03 for `calendar-create` (#306): 36 cases x 2 selector variants x
  * 3 runs, 0 attack successes and 0 deviations, deterministic worst-case driver
@@ -89,9 +107,17 @@ export function setExternalUndoCapabilitiesForTest(capabilities?: readonly Exter
   activeCapabilities = capabilities === undefined ? EXTERNAL_UNDO_CAPABILITIES : Object.freeze([...capabilities]);
 }
 
-/** The undo family of an external record's entry, or `undefined` when its entry has none. Closed mapping. */
-export function externalUndoFamilyOf(entryId: string): ExternalUndoFamily | undefined {
-  return entryId === 'calendar.create' ? 'calendar-create' : undefined;
+/**
+ * The undo family of an external record, by its entry and (for `external.write`) its recorded operation, or `undefined` when it
+ * has none. Closed mapping: a calendar update is `calendar-update`, a calendar delete `calendar-delete`; a record without an
+ * operation (written before amendment 3's update / delete families) has no family.
+ */
+export function externalUndoFamilyOf(entryId: string, operation?: string): ExternalUndoFamily | undefined {
+  if (entryId === 'calendar.create') return operation === undefined || operation === 'CALENDAR_EVENT_CREATE' ? 'calendar-create' : undefined;
+  if (entryId !== LAST_ACTION_EXTERNAL_ENTRY) return undefined;
+  if (operation === 'CALENDAR_EVENT_UPDATE') return 'calendar-update';
+  if (operation === 'CALENDAR_EVENT_DELETE') return 'calendar-delete';
+  return undefined;
 }
 
 /** Whether the undo of `family` is built (the family is in the capability set). */
@@ -117,6 +143,8 @@ export interface LastActionRecord {
   readonly undoable: boolean;
   /** External records only: the write's outcome (ADR-0112 amendment 1 S3: every outcome is recorded). */
   readonly outcome?: LastActionExternalOutcome;
+  /** External records only (ADR-0112 amendment 3): the write's neutral operation name (closed list), never content. */
+  readonly operation?: LastActionExternalOperation;
   /**
    * External records only (ADR-0112 amendment 3): the id of the connector-write anchor Task of the original approval, which
    * holds the payload and the preview. An id only, never content; it names nothing a receipt does not.
@@ -163,6 +191,7 @@ export function lastActionOf(raw: unknown): LastActionRecord | undefined {
   const version = boundedString(record.version, 64);
   const requestId = boundedString(record.requestId, MAX_REPLY_ID_CHARS);
   const anchorTaskId = external ? boundedString(record.anchorTaskId, MAX_ID_CHARS) : undefined;
+  const operation = external && isLastActionExternalOperation(record.operation) ? record.operation : undefined;
   const undoOf = isNlActionEntryId(record.undoOf) ? record.undoOf : undefined;
   const echo = Array.isArray(record.echoReplyIds)
     ? record.echoReplyIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= MAX_REPLY_ID_CHARS).slice(0, MAX_REPLY_IDS)
@@ -179,9 +208,10 @@ export function lastActionOf(raw: unknown): LastActionRecord | undefined {
     undoable:
       record.undoable === true &&
       record.entryId !== 'action.undo' &&
-      (!external || (outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(String(record.entryId))))),
+      (!external || (outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(String(record.entryId), operation)))),
     undone: record.undone === true,
     ...(external && outcome !== undefined ? { outcome } : {}),
+    ...(operation !== undefined ? { operation } : {}),
     ...(anchorTaskId !== undefined ? { anchorTaskId } : {}),
     ...(undoOf !== undefined ? { undoOf } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
@@ -214,6 +244,7 @@ function serialize(record: LastActionRecord): Record<string, unknown> {
     undoable: record.undoable,
     undone: record.undone,
     ...(record.outcome !== undefined ? { outcome: record.outcome } : {}),
+    ...(record.operation !== undefined ? { operation: record.operation } : {}),
     ...(record.anchorTaskId !== undefined ? { anchorTaskId: record.anchorTaskId } : {}),
     ...(record.undoOf !== undefined ? { undoOf: record.undoOf } : {}),
     ...(record.requestId !== undefined ? { requestId: record.requestId } : {}),

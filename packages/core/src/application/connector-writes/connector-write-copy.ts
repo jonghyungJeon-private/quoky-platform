@@ -12,6 +12,7 @@ import { conversationRefOf, joinBody, joinMessage, messageBody, messageLink, unt
 import type { MessagePart } from '../message-rendering';
 import { toZonedDateTime } from '../reminders/zoned-time';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
+import type { ExternalUndoFamily } from '../nl-routing/last-action';
 import type {
   ConnectorWriteApprovedElsewhere,
   ConnectorWriteChoiceBasis,
@@ -53,6 +54,8 @@ export function connectorWriteLabel(operation: ConnectorWriteOperation): string 
       return '캘린더 일정 변경';
     case 'CALENDAR_EVENT_DELETE':
       return '캘린더 일정 삭제';
+    case 'CALENDAR_EVENT_RESTORE':
+      return '캘린더 일정 복원';
   }
 }
 
@@ -163,6 +166,11 @@ function previewBody(preview: ConnectorWritePreview): MessageBody[] {
       return [PRIMARY, ...eventLines(preview.event, preview.timeZone), NO_INVITES];
     case 'CALENDAR_EVENT_UPDATE':
       return [
+        ...(preview.receiptSourced === true ? [
+            CONNECTOR_UNDO_RECEIPT_BANNER,
+            ...(preview.ownerSentence !== undefined ? [messageBody('요청하신 문장: ', inline(preview.ownerSentence))] : []),
+            '방금 Quoky가 바꾼 이 일정을 바꾸기 전 값으로 되돌려요. 그때 바뀐 항목만 되돌려요.',
+          ] : []),
         PRIMARY,
         messageBody('바꿀 일정: ', inline(preview.before.title || '(제목 없음)'), ` · ${summaryTime(preview.before, preview.timeZone)}`),
         '변경 후:',
@@ -183,6 +191,17 @@ function previewBody(preview: ConnectorWritePreview): MessageBody[] {
         messageBody('삭제할 일정: ', inline(preview.before.title || '(제목 없음)'), ` · ${summaryTime(preview.before, preview.timeZone)}`),
         ...(preview.before.location !== undefined ? [messageBody('장소: ', inline(preview.before.location))] : []),
         UNCHANGED_EVENT_ONLY,
+        NO_INVITES,
+      ];
+    case 'CALENDAR_EVENT_RESTORE':
+      return [
+        CONNECTOR_UNDO_RECEIPT_BANNER,
+        ...(preview.ownerSentence !== undefined ? [messageBody('요청하신 문장: ', inline(preview.ownerSentence))] : []),
+        '방금 Quoky가 삭제한 이 일정을 같은 일정으로 복원해요. 새 일정을 따로 만들지 않아요.',
+        PRIMARY,
+        messageBody('복원할 일정: ', inline(preview.before.title || '(제목 없음)'), ` · ${summaryTime(preview.before, preview.timeZone)}`),
+        ...(preview.before.location !== undefined ? [messageBody('장소: ', inline(preview.before.location))] : []),
+        '실행할 때 그 일정이 삭제된 그대로일 때만 복원해요. 캘린더가 복원을 받아 주지 않으면 그대로 알려 드려요.',
         NO_INVITES,
       ];
   }
@@ -462,6 +481,7 @@ function nothingHappened(operation: ConnectorWriteOperation): string {
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
+    case 'CALENDAR_EVENT_RESTORE':
       return '캘린더는 바뀌지 않았어요.';
   }
 }
@@ -493,6 +513,8 @@ function sentVerb(operation: ConnectorWriteOperation): string {
       return '일정을 바꿨어요. 변경 메일은 보내지 않았어요.';
     case 'CALENDAR_EVENT_DELETE':
       return '일정을 삭제했어요. 취소 메일은 보내지 않았어요.';
+    case 'CALENDAR_EVENT_RESTORE':
+      return '같은 일정을 복원했어요. 알림 메일은 보내지 않았어요.';
   }
 }
 
@@ -610,15 +632,36 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'undo-unavailable': '이 일정은 자동으로 되돌릴 수 없어요. 캘린더에서 직접 지워 주세요.',
   'undo-event-gone': '그 일정은 이미 캘린더에 없어요. 되돌릴 게 없어요.',
   'undo-event-changed': '그 일정이 만든 뒤에 바뀌어서 되돌리지 않았어요. 필요하면 캘린더에서 직접 지워 주세요.',
+  'undo-event-present': '그 일정은 이미 캘린더에 다시 있어요. 복원할 게 없어요.',
   'choice-expired': '일정 목록을 보여 드린 지 30분이 지나 선택이 만료됐어요 (그사이 일정이 바뀌었을 수 있어요).',
+};
+
+/**
+ * ADR-0112 amendment 3: an undo's refusal names the write being undone. The calendar-create copy is the table above; the
+ * update and delete families override the reasons whose wording names the write.
+ */
+const UNDO_REFUSAL_KO: Readonly<Record<Exclude<ExternalUndoFamily, 'calendar-create'>, Partial<Record<ConnectorWriteRefusal, string>>>> = {
+  'calendar-update': {
+    'undo-nothing': '되돌릴 수 있는 방금 한 일정 변경을 찾지 못했어요. (이 대화에서 방금 한 일정 변경만 되돌릴 수 있어요.)',
+    'undo-unavailable': '이 일정 변경은 자동으로 되돌릴 수 없어요. 캘린더에서 직접 고쳐 주세요.',
+    'undo-event-gone': '그 일정은 이미 캘린더에 없어요. 되돌릴 게 없어요.',
+    'undo-event-changed': '그 일정이 바꾼 뒤에 또 바뀌어서 되돌리지 않았어요. 필요하면 캘린더에서 직접 고쳐 주세요.',
+  },
+  'calendar-delete': {
+    'undo-nothing': '복원할 수 있는 방금 한 일정 삭제를 찾지 못했어요. (이 대화에서 방금 한 일정 삭제만 되돌릴 수 있어요.)',
+    'undo-unavailable': '이 일정 삭제는 자동으로 되돌릴 수 없어요. 캘린더에서 직접 복원해 주세요.',
+    'undo-event-present': '그 일정은 이미 캘린더에 다시 있어요. 복원하지 않았어요.',
+  },
 };
 
 export function renderConnectorWriteRefusal(
   reason: ConnectorWriteRefusal,
   calendar: boolean,
   availableStatuses: readonly string[] = [],
+  undo?: ExternalUndoFamily,
 ): MessageBody {
-  const lines: MessageBody[] = [`${REFUSAL_KO[reason]} ${notDoneByThisRequest(calendar)}`];
+  const text = (undo !== undefined && undo !== 'calendar-create' ? UNDO_REFUSAL_KO[undo][reason] : undefined) ?? REFUSAL_KO[reason];
+  const lines: MessageBody[] = [`${text} ${notDoneByThisRequest(calendar)}`];
   if (reason === 'transition-unavailable' && availableStatuses.length > 0) {
     lines.push(messageBody('지금 바꿀 수 있는 상태: ', joinMessage(availableStatuses.map(inline), ', ')));
   }
@@ -662,6 +705,7 @@ export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): Me
       return messageBody(`${label} — `, inline(preview.event.title || '(제목 없음)'));
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
+    case 'CALENDAR_EVENT_RESTORE':
       return messageBody(`${label} — `, inline(preview.before.title || '(제목 없음)'));
   }
 }
@@ -726,12 +770,47 @@ function renderCalendarUndoOutcome(outcome: ConnectorWriteOutcome): string {
   }
 }
 
+/** ADR-0112 amendment 3 (O2): the outcome of an update's undo. Only SENT counts as undone; NOT_SENT leaves the undo retryable. */
+function renderCalendarUpdateUndoOutcome(outcome: ConnectorWriteOutcome): string {
+  switch (outcome.status) {
+    case 'SENT':
+      return '방금 바꾼 일정을 바꾸기 전으로 되돌렸어요. 변경 메일은 보내지 않았어요.';
+    case 'NOT_SENT':
+      if (outcome.reason === 'NOT_FOUND') return '되돌리지 못했어요 — 그 일정은 이미 캘린더에 없어요. 이번 요청으로 바꾼 것은 없어요.';
+      if (outcome.reason === 'TARGET_CHANGED') return '되돌리지 못했어요 — 미리보기 이후 일정이 바뀌어서 고치지 않았어요. 캘린더에서 확인해 주세요.';
+      return `되돌리지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. 이번 요청으로는 일정을 바꾸지 않았어요. 다시 되돌리려면 "되돌려줘"라고 다시 말씀해 주세요.`;
+    case 'UNCERTAIN':
+      return '되돌렸는지 확인하지 못했어요. 캘린더에서 확인해 주세요. 중복을 막기 위해 자동으로 다시 시도하지 않아요.';
+  }
+}
+
+/**
+ * ADR-0112 amendment 3 (O3): the outcome of a restore. A refusal by the calendar is said plainly, with its reason; nothing is
+ * ever re-created as a copy.
+ */
+function renderCalendarRestoreOutcome(outcome: ConnectorWriteOutcome): string {
+  switch (outcome.status) {
+    case 'SENT':
+      return '방금 삭제한 일정을 같은 일정으로 복원했어요. 알림 메일은 보내지 않았어요.';
+    case 'NOT_SENT':
+      if (outcome.reason === 'NOT_FOUND') {
+        return '복원하지 못했어요 — 캘린더가 그 일정을 더 이상 찾을 수 없다고 답했어요 (완전히 지워졌을 수 있어요). 새 일정을 따로 만들지 않았어요. 이번 요청으로 캘린더를 바꾸지 않았어요.';
+      }
+      if (outcome.reason === 'TARGET_CHANGED') {
+        return '복원하지 못했어요 — 삭제한 뒤 그 일정이 바뀌었거나 이미 다시 있어요. 이번 요청으로 캘린더를 바꾸지 않았어요. 캘린더에서 확인해 주세요.';
+      }
+      return `복원하지 못했어요 — 캘린더가 복원을 받아 주지 않았어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. 새 일정을 따로 만들지 않았어요. 이번 요청으로 캘린더를 바꾸지 않았어요.`;
+    case 'UNCERTAIN':
+      return '복원했는지 확인하지 못했어요. 캘린더에서 확인해 주세요. 중복을 막기 위해 자동으로 다시 시도하지 않아요.';
+  }
+}
+
 export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): MessageBody {
   switch (step.kind) {
     case 'usage':
       return renderConnectorWriteUsage(step.topic);
     case 'refused':
-      return renderConnectorWriteRefusal(step.reason, step.family === 'calendar', step.availableStatuses);
+      return renderConnectorWriteRefusal(step.reason, step.family === 'calendar', step.availableStatuses, step.undo);
     case 'preview':
       return renderConnectorWritePreview(step.preview, step.remainingMs, step.executionPhrase, step.unconfirmedEarlier);
     case 'choice':
@@ -741,9 +820,10 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
     case 'approved':
       return renderConnectorWriteApproved(step.operation, step.executionPhrase);
     case 'outcome':
-      return step.preview.operation === 'CALENDAR_EVENT_DELETE' && step.preview.receiptSourced === true
-        ? renderCalendarUndoOutcome(step.outcome)
-        : renderConnectorWriteOutcome(step.operation, step.outcome);
+      if (step.preview.operation === 'CALENDAR_EVENT_DELETE' && step.preview.receiptSourced === true) return renderCalendarUndoOutcome(step.outcome);
+      if (step.preview.operation === 'CALENDAR_EVENT_UPDATE' && step.preview.receiptSourced === true) return renderCalendarUpdateUndoOutcome(step.outcome);
+      if (step.preview.operation === 'CALENDAR_EVENT_RESTORE') return renderCalendarRestoreOutcome(step.outcome);
+      return renderConnectorWriteOutcome(step.operation, step.outcome);
     case 'repeat':
       return renderConnectorWriteRepeat(step.operation, step.status, step.externalRef, step.url);
     case 'closed':

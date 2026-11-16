@@ -21,7 +21,7 @@ import type { ExternalUndoDraft, ExternalUndoDraftKind } from './connector-write
  *
  * Every other state is `nothing-to-undo` with a value-free reason (no id, text or reference in it). A `lastAction` whose
  * `itemId` is not a receipt (the anchor task id the runtime falls back to when a write left no receipt) finds no receipt
- * and so means nothing to undo. The capability set holds `calendar-create` (ADR-0112 amendment 3): only that family resolves; any other family stays closed until its slice opens it.
+ * and so means nothing to undo. Only a family in the capability set resolves (ADR-0112 amendment 3); any other family stays closed until its slice opens it.
  *
  * It never calls a writer and the nl-routing layer never imports it (an import scan pins that).
  */
@@ -60,12 +60,27 @@ interface FamilySpec {
 
 /** A Google Calendar event id: base32hex characters, 5 to 1024 long (what the writer derives and the receipt keeps). */
 const CALENDAR_EVENT_ID = /^[0-9a-v]{5,1024}$/;
+/**
+ * The id of an event Quoky changed or deleted (any event of the calendar, so not only the ids Quoky derives): the bounded
+ * id alphabet the writer itself accepts. The flow additionally requires it to equal the id the approved payload named.
+ */
+const CHANGED_EVENT_ID = /^[A-Za-z0-9_-]{1,1024}$/;
 
 const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
   'calendar-create': {
     draftKind: 'calendar-create-undo',
     operation: ConnectorWriteOperation.CALENDAR_EVENT_CREATE,
     refOk: (ref) => CALENDAR_EVENT_ID.test(ref),
+  },
+  'calendar-update': {
+    draftKind: 'calendar-update-undo',
+    operation: ConnectorWriteOperation.CALENDAR_EVENT_UPDATE,
+    refOk: (ref) => CHANGED_EVENT_ID.test(ref),
+  },
+  'calendar-delete': {
+    draftKind: 'calendar-delete-undo',
+    operation: ConnectorWriteOperation.CALENDAR_EVENT_DELETE,
+    refOk: (ref) => CHANGED_EVENT_ID.test(ref),
   },
 };
 
@@ -79,7 +94,7 @@ export interface ExternalUndoResolverDeps {
   readonly tasks: { get(id: Id): Promise<Task | null> };
   /** Reads the connector-write anchor off a Task (injected: this file never imports the flow's runtime values). */
   readonly readAnchor: (task: Task) => ConnectorWriteAnchor | undefined;
-  /** The families whose undo is built; defaults to the production constant (`calendar-create`). */
+  /** The families whose undo is built; defaults to the active capability set (the production constant). */
   readonly capabilities?: readonly ExternalUndoFamily[];
 }
 
@@ -108,7 +123,7 @@ export class ExternalUndoResolver {
     if (record.entryId === 'action.undo' || record.undone) return nothing('already-undone');
     if (!isLastActionExternalSource(record.source)) return nothing('not-external');
     if (record.outcome !== 'SENT') return nothing('not-sent');
-    const family = externalUndoFamilyOf(record.entryId);
+    const family = externalUndoFamilyOf(record.entryId, record.operation);
     const capabilities = this.deps.capabilities ?? activeExternalUndoCapabilities();
     if (family === undefined || !capabilities.includes(family) || !record.undoable) return nothing('not-open');
     const spec = FAMILIES[family];

@@ -3,6 +3,7 @@ import type { NlCatalogRisk, NlItemSource, NlItemTarget } from './catalog';
 import { nlNumeralsIn, nlOrdinalsIn, type NlRefKind } from './action-entries';
 import type { NlResolutionOutcome } from './item-reference';
 import { normalizeForMatch } from './selection-input';
+import type { ExternalUndoFamily } from './last-action';
 
 /**
  * The policy half of natural-language actions (ADR-0120 amendment A6-D3/D8): the flag levels, the per-actor caps, the
@@ -377,7 +378,17 @@ export function renderActionUnavailable(language: Lang): string {
  * ADR-0112 amendment 3 (O1): "되돌려줘" after an approved calendar create while the calendar writer is not bound (connector
  * writes are off). Nothing was changed, and the owner is told where to delete the event.
  */
-export function renderExternalUndoUnavailable(language: Lang): string {
+export function renderExternalUndoUnavailable(language: Lang, family: ExternalUndoFamily = 'calendar-create'): string {
+  if (family === 'calendar-update') {
+    return language === 'en'
+      ? 'Undoing that calendar change is not available right now (calendar writes are off). Please change it back in your calendar directly. Nothing was changed.'
+      : '방금 바꾼 일정 되돌리기는 지금 쓸 수 없어요 (캘린더 쓰기가 꺼져 있어요). 캘린더에서 직접 고쳐 주세요. 아무것도 바꾸지 않았어요.';
+  }
+  if (family === 'calendar-delete') {
+    return language === 'en'
+      ? 'Restoring that calendar event is not available right now (calendar writes are off). Please restore it in your calendar directly. Nothing was changed.'
+      : '방금 삭제한 일정 복원은 지금 쓸 수 없어요 (캘린더 쓰기가 꺼져 있어요). 캘린더에서 직접 복원해 주세요. 아무것도 바꾸지 않았어요.';
+  }
   return language === 'en'
     ? 'Undoing that calendar event is not available right now (calendar writes are off). Please delete it in your calendar directly. Nothing was changed.'
     : '방금 추가한 일정 되돌리기는 지금 쓸 수 없어요 (캘린더 쓰기가 꺼져 있어요). 캘린더에서 직접 지워 주세요. 아무것도 바꾸지 않았어요.';

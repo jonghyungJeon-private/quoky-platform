@@ -515,7 +515,7 @@ export abstract class ConversationRuntimeNlDispatchLayer extends ConversationRun
       const draft: TurnHandlerWriteDraft = {
         kind: 'write-draft',
         draft: { kind: externalUndoDraftKindOf(decision.command.externalUndo.family), receiptId: decision.command.externalUndo.receiptId },
-        fallbackText: renderExternalUndoUnavailable(decision.command.language),
+        fallbackText: renderExternalUndoUnavailable(decision.command.language, decision.command.externalUndo.family),
       };
       const undoResult = await this.respondTurnHandler(message, session, actor, userMemoryId, draft);
       if (decision.basis === undefined) return undoResult;

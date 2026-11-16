@@ -54,6 +54,7 @@ import {
   LAST_ACTION_METADATA_KEY,
   externalUndoFamilyOf,
   isExternalUndoOpen,
+  isLastActionExternalOperation,
   isLastActionExternalSource,
   readLastAction,
   withLastAction,
@@ -1002,8 +1003,10 @@ export class NlSelectionService implements TurnDeliveryObserver {
     readonly outcome: LastActionExternalOutcome;
     /** ADR-0112 amendment 3: the anchor Task of the approval (payload and preview live there), an id only. */
     readonly anchorTaskId?: string;
+    /** ADR-0112 amendment 3: the write's neutral operation name (tells the `external.write` families apart). */
+    readonly operation?: string;
     /** This write was itself an undo of the receipt's entry: the record becomes a non-undoable `action.undo`. */
-    readonly undoOf?: NlActionEntryId;
+    readonly undoOf?: LastActionEntryId;
   }): Promise<void> {
     if (this.mode !== 'active' || this.actionLevelValue === 'off') return;
     const isUndo = input.undoOf !== undefined;
@@ -1011,17 +1014,20 @@ export class NlSelectionService implements TurnDeliveryObserver {
     // fresh preview, CRITICAL approval and exact phrase). Only SENT counts as undone; UNCERTAIN is recorded so it is never
     // retried automatically and is answered as "could not confirm".
     if (isUndo && input.outcome === 'NOT_SENT') return;
+    const operation = isLastActionExternalOperation(input.operation) ? input.operation : undefined;
     const record: LastActionRecord = {
       entryId: isUndo ? 'action.undo' : input.entryId,
       source: input.source,
       itemId: input.receiptId,
       at: input.now,
       // Opens only for a SENT write of a family in the closed capability set (`calendar-create` today; a slice adds each further family).
-      undoable: !isUndo && input.outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(input.entryId)),
+      undoable: !isUndo && input.outcome === 'SENT' && isExternalUndoOpen(externalUndoFamilyOf(input.entryId, operation)),
       undone: false,
       outcome: input.outcome,
+      ...(operation !== undefined ? { operation } : {}),
       ...(input.anchorTaskId !== undefined ? { anchorTaskId: input.anchorTaskId } : {}),
-      ...(input.undoOf !== undefined ? { undoOf: input.undoOf } : {}),
+      // `external.write` is not a catalog entry: the record is `action.undo` either way, `undoOf` only names a catalog entry.
+      ...(input.undoOf !== undefined && isNlActionEntryId(input.undoOf) ? { undoOf: input.undoOf } : {}),
       requestId: input.message.id,
       echoReplyIds: [],
     };

@@ -285,7 +285,7 @@ export function resolveUndo(state: Pick<NlReferenceState, 'lastAction' | 'replyT
     return { kind: 'unresolved', outcome: record.outcome === 'UNCERTAIN' && isLastActionExternalSource(record.source) ? 'undo-uncertain' : 'undo-of-undo' };
   }
   if (record.source !== 'todo' && record.source !== 'reminder') {
-    const family = externalUndoFamilyOf(record.entryId);
+    const family = externalUndoFamilyOf(record.entryId, record.operation);
     const open = record.undoable && !record.undone && record.outcome === 'SENT' && family !== undefined && isExternalUndoOpen(family);
     return {
       kind: 'unresolved',

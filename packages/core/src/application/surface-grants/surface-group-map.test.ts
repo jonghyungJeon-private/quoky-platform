@@ -135,6 +135,7 @@ describe('writes, state-bound steps and approvals', () => {
       CALENDAR_EVENT_CREATE: 'calendar',
       CALENDAR_EVENT_UPDATE: 'calendar',
       CALENDAR_EVENT_DELETE: 'calendar',
+      CALENDAR_EVENT_RESTORE: 'calendar',
     };
     for (const operation of CONNECTOR_WRITE_OPERATIONS) expect(surfaceGroupsOfWriteOperation(operation)).toEqual(['writes', expected[operation]]);
   });
