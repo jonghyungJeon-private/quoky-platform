@@ -375,7 +375,11 @@ function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSe
     if (now === undefined || now !== selected.locality || !allowedBy(context).has(now)) return undefined;
     const check = route.selector.isStillEligible;
     if (typeof check !== 'function') return undefined;
-    return check.call(route.selector, Capability.SUMMARIZATION, context, selected.provider) === true ? now : undefined;
+    if (check.call(route.selector, Capability.SUMMARIZATION, context, selected.provider) !== true) return undefined;
+    // Review round 2 (Codex P2): the policy callback runs code; the locality is read again after it, so a callback that
+    // switches the provider's declared locality cannot carry a stale (cached) answer into the dispatch or the audit.
+    const after = declaredExecutionLocality(selected.provider);
+    return after === now && allowedBy(context).has(after) ? after : undefined;
   } catch {
     return undefined;
   }

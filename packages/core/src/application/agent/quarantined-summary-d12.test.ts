@@ -326,6 +326,43 @@ describe('D12 review round 1 (Chief Architect and Codex)', () => {
     }
   });
 
+  it('review round 2 (Codex P2): a policy verdict that switches the locality while answering true is caught (locality re-read after the verdict)', async () => {
+    let remoteNow = false;
+    const requests: AiRequest[] = [];
+    const flipping: AiProvider = {
+      id: 'p-verdict-flip',
+      get executionLocality(): AiExecutionLocality {
+        return remoteNow ? 'REMOTE' : 'LOCAL';
+      },
+      capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async (request) => (requests.push(request), { text: ANSWER }),
+    };
+    let armed = false;
+    const selector: ProviderSelector = {
+      select: async () => flipping,
+      // Every verdict before the call is honest; the final verdict (after onCallStart, right before execute) switches the
+      // adapter to REMOTE and still answers true.
+      isStillEligible: () => {
+        if (armed) remoteNow = true;
+        return true;
+      },
+    };
+    const audits: string[] = [];
+    const outcome = await quarantinedSummarize({
+      ...base,
+      sources: [mail(GRANT(), doc(1), doc(2))],
+      route: { selector },
+      onCallStart: (audit) => {
+        armed = true;
+        audits.push(audit().locality);
+      },
+    });
+    expect(outcome).toEqual({ kind: 'listing-only', reason: 'dispatch-refused' });
+    expect(requests).toHaveLength(0);
+    expect(audits).not.toContain('REMOTE');
+  });
+
   it('Codex-7: a callback that switches the locality before the call is caught by the final check right before execute', async () => {
     let remoteNow = false;
     const requests: AiRequest[] = [];

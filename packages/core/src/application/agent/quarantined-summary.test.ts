@@ -523,12 +523,13 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
   it('a locality that changes after selection is caught by the dispatch re-check: nothing is sent, nothing reserved (D12)', async () => {
     let reads = 0;
     const calls: AiRequest[] = [];
-    // Declares LOCAL for the selection snapshot and the selection-time verdict, REMOTE from the dispatch re-check on.
+    // Declares LOCAL for the selection snapshot and the selection-time verdict (read before and, since review round 2, again
+    // after the policy callback), REMOTE from the dispatch re-check on.
     const provider: AiProvider = {
       id: 'flip',
       get executionLocality(): 'LOCAL' | 'REMOTE' {
         reads += 1;
-        return reads > 2 ? 'REMOTE' : 'LOCAL';
+        return reads > 3 ? 'REMOTE' : 'LOCAL';
       },
       capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
       isAvailable: async () => true,

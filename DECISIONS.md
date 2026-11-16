@@ -33840,6 +33840,13 @@ wiring, no flag change, no live behaviour change).
     audited locality equals the dispatched one); `capability-router-locality.test.ts` (junk `requiredLocality`, no-verdict
     dispatch check); `plan-executor-summary.test.ts` (a readiness `select` that never answers ends the read at the wall,
     no port call).
+- **Review round 2 (Chief Architect APPROVE; Codex 1×P2, orchestrator fix).** The dispatch-time re-check read the
+  provider's declared locality before the policy verdict and returned that cached value; a policy callback that switched the
+  locality (LOCAL→REMOTE) while answering `true` sent a two-item batch remotely with a `LOCAL` audit. The locality is now
+  read again after the verdict and must equal the first read and still be allowed; otherwise `dispatch-refused`. Test: a
+  final verdict that flips the adapter after `onCallStart` → `dispatch-refused`, no request, no REMOTE audit (fails without
+  the fix); the P3-3b "locality that changes after selection" test counts the extra read. CA round-1 P3 (an audit recorded
+  when the wall ends in the same tick as a final-check refusal) is accepted: it over-reports, the conservative direction.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
