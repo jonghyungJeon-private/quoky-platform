@@ -9,9 +9,15 @@
  *   M2 call, and logs one content-free `agent_run.shadow` line. It needs Phase A selection live
  *   (`QUOKY_NL_INTENT_MODE=active`), else `AGENT_MODE_REQUIRES_NL_ACTIVE`.
  * - `active` is refused at startup with `AGENT_MODE_ACTIVE_NOT_RELEASED` (the code-level release gate) until the ADR-0121
- *   D11 gates pass and stage S2 P5 removes the gate.
+ *   D11 gates pass and stage S2 P5 removes the gate. Before that gate, `active` without the process egress guard in
+ *   `enforce` (`QUOKY_EGRESS_GUARD=enforce`) is refused with `AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE`: the owner decided on
+ *   2026-11-02 (S2-to-active plan, decision 5) that the guard switches `observe` → `enforce` before `active`, so this refusal
+ *   stays when P5 removes the release gate.
+ *
+ * `active` is part of the type because the composition root can build the wired `active` service (S2 wiring slice); the parser
+ * never returns it while the release gate stands.
  */
-export type AgentModeConfig = 'off' | 'shadow';
+export type AgentModeConfig = 'off' | 'shadow' | 'active';
 
 export interface AgentConfig {
   readonly mode: AgentModeConfig;
@@ -20,6 +26,7 @@ export interface AgentConfig {
 export const AgentConfigErrorCode = {
   AGENT_MODE_INVALID: 'AGENT_MODE_INVALID',
   AGENT_MODE_ACTIVE_NOT_RELEASED: 'AGENT_MODE_ACTIVE_NOT_RELEASED',
+  AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE: 'AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE',
   AGENT_MODE_REQUIRES_NL_ACTIVE: 'AGENT_MODE_REQUIRES_NL_ACTIVE',
 } as const;
 export type AgentConfigErrorCode = (typeof AgentConfigErrorCode)[keyof typeof AgentConfigErrorCode];
@@ -34,7 +41,11 @@ export class AgentConfigError extends Error {
 export function parseAgentConfig(env: NodeJS.ProcessEnv): AgentConfig {
   const raw = env.QUOKY_AGENT_MODE;
   if (raw === undefined || raw === 'off') return { mode: 'off' };
-  if (raw === 'active') throw new AgentConfigError(AgentConfigErrorCode.AGENT_MODE_ACTIVE_NOT_RELEASED);
+  if (raw === 'active') {
+    // Decision 5 of 2026-11-02: the egress guard is in `enforce` before `active` (checked first, so it outlives the release gate).
+    if (env.QUOKY_EGRESS_GUARD !== 'enforce') throw new AgentConfigError(AgentConfigErrorCode.AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE);
+    throw new AgentConfigError(AgentConfigErrorCode.AGENT_MODE_ACTIVE_NOT_RELEASED);
+  }
   if (raw !== 'shadow') throw new AgentConfigError(AgentConfigErrorCode.AGENT_MODE_INVALID);
   if (env.QUOKY_NL_INTENT_MODE !== 'active') throw new AgentConfigError(AgentConfigErrorCode.AGENT_MODE_REQUIRES_NL_ACTIVE);
   return { mode: 'shadow' };

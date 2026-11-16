@@ -22,11 +22,12 @@ import {
   type SummaryRunToken,
 } from './quarantined-summary';
 import { projectStructure, type AgentRawItem, type StructureProjection } from './structure-projector';
+import type { SummaryGrantBasis } from './summary-grant';
 
 /**
- * ADR-0121 D1/D2/D5/D7 (stage S2 P3-3a): the deterministic executor of a VALIDATED read plan. Core, offline, and not wired:
- * no composition root builds it and no runtime dispatches to it while `QUOKY_AGENT_MODE` is `off` or `shadow` (`active` is
- * still refused in `agent-config.ts` and the `AgentRunService` constructor).
+ * ADR-0121 D1/D2/D5/D7 (stage S2 P3-3a): the deterministic executor of a VALIDATED read plan. Only `AgentRunService` in
+ * `active` builds it (the S2 wiring slice); nothing runs it while `QUOKY_AGENT_MODE` is `off` or `shadow`, and `active` is
+ * still refused at startup in `agent-config.ts` (the release gate).
  *
  * - **Narrow injected read ports only.** The executor's dependency type is {@link AgentPlanExecutorDeps}: a map of
  *   {@link AgentReadPort}s (one `read` function each), a logger and run-bound overrides. It names no writer, repository,
@@ -47,7 +48,8 @@ import { projectStructure, type AgentRawItem, type StructureProjection } from '.
  *   They read the raw documents the covered read ports handed over. A read is asked for documents
  *   (`withDocuments`) only when a summarize step covers it AND a provider can already be selected under the locality its label,
  *   grant and asked-for count allow (a `REMOTE_ON_SUMMARY_REQUEST`
- *   read needs a summary grant, which nothing produces in this slice: mail and Drive stay listing-only, body never fetched).
+ *   read needs a summary grant: Core derives it from the owner's own words (`summary-grant.ts`, passed as
+ *   {@link AgentExecuteOptions.grants}); without it mail and Drive stay listing-only and no body is fetched).
  *   Every document is validated against the projection (shape, an integer unique in-range position, the projector's id at
  *   that position); a bad one is dropped and counted as omitted. Those documents live only inside one `execute` call:
  *   they are not in the result, the projection or the log, and the M2 output is a labelled {@link QuarantinedSummary} that only
@@ -132,7 +134,7 @@ export interface AgentPlanExecutorDeps {
  */
 export type AgentSummarizerDeps = QuarantinedSummarizerRoute;
 
-export type AgentStepNotRunReason = 'bound' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-unusable' | 'ref-too-many';
+export type AgentStepNotRunReason = 'bound' | 'stopped' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-unusable' | 'ref-too-many';
 
 export type AgentStepResult =
   | {
@@ -154,7 +156,16 @@ export type AgentStepResult =
    * A bound stopped the step; `audits` lists every model call that had already been sent (the call was made, even if its answer
    * was cut off), in source order.
    */
-  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'not-run'; readonly from: readonly number[]; readonly schema: string; readonly audits?: readonly QuarantinedCallAudit[] }
+  | {
+      readonly step: number;
+      readonly kind: 'summarize';
+      readonly status: 'not-run';
+      readonly from: readonly number[];
+      readonly schema: string;
+      /** `stopped`: the kill switch or shutdown cut it (review round 2 item 4); absent: a bound. */
+      readonly reason?: 'stopped';
+      readonly audits?: readonly QuarantinedCallAudit[];
+    }
   | {
       readonly step: number;
       readonly kind: 'summarize';
@@ -178,8 +189,38 @@ export interface AgentRunResult {
   readonly outcome: 'complete' | 'partial';
   /** The first breached bound, if any (a deterministic partial result, never an error). */
   readonly breach?: AgentBoundKind;
+  /** The owner's kill switch stopped the run before a step (ADR-0121 D7; the A6-D3 amendment: started work finishes). */
+  readonly stopped?: true;
   readonly steps: readonly AgentStepResult[];
   readonly usage: AgentRunUsage;
+}
+
+/**
+ * ADR-0121 S2 wiring slice: what the bounded runtime hands one `execute` call. All optional; `execute(plan)` alone is the
+ * offline behaviour (a fresh budget, no grant, no switch).
+ */
+export interface AgentExecuteOptions {
+  /**
+   * The run's budget, already charged by the caller with the planner call (M1) and its input, and the explicit re-plan
+   * reservation (M1'), so the summaries plan within what the run has left (the D3/D7 amendment's wiring requirement). Absent:
+   * a fresh budget from the deps' clock and bounds.
+   */
+  readonly budget?: AgentRunBudget;
+  /**
+   * The owner's summary requests for THIS plan (`summary-grant.ts`). Grants are minted from it per summarize step and source,
+   * keyed to this call's run token; a basis of another plan grants nothing. Absent: no grant (listing-only for mail and Drive).
+   */
+  readonly grants?: SummaryGrantBasis;
+  /**
+   * The persisted kill switch, re-read before every step (never a snapshot). `false`, a throw or a rejection stops the run: that
+   * step and every later one are `not-run` (`stopped`). Work already started finishes (the A6-D3 amendment of 2026-11-03).
+   */
+  readonly stillRunning?: () => Promise<boolean>;
+  /**
+   * The service's shutdown signal (review round 1 item 5). Aborted: no later step starts (`not-run`, `stopped`) and the port or
+   * M2 call in flight is aborted and not waited for.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** What one `execute` call keeps in memory: never in the result. */
@@ -196,6 +237,10 @@ interface RunState {
   readonly listed: Map<number, number>;
   /** This run's token: a summary grant of another run never matches. */
   readonly run: SummaryRunToken;
+  /** The owner's summary requests and the plan they were derived for (absent: no grant). */
+  readonly owner?: { readonly basis: SummaryGrantBasis; readonly plan: object };
+  /** The shutdown signal (absent: none). */
+  readonly shutdown?: AbortSignal;
 }
 
 type ReadStep = Extract<ValidatedAgentStep, { kind: 'read' }>;
@@ -205,10 +250,10 @@ export class AgentPlanExecutor {
   constructor(private readonly deps: AgentPlanExecutorDeps) {}
 
   /** Execute a validated `run` plan. Total: never throws or rejects; a bound or a port failure ends in a partial result. */
-  async execute(plan: RunPlan): Promise<AgentRunResult> {
+  async execute(plan: RunPlan, options: AgentExecuteOptions = {}): Promise<AgentRunResult> {
     let budget: AgentRunBudget;
     try {
-      budget = new AgentRunBudget(this.deps.elapsed ?? Date.now, this.deps.bounds);
+      budget = options.budget ?? new AgentRunBudget(this.deps.elapsed ?? Date.now, this.deps.bounds);
     } catch {
       // A clock or bounds that throws while the budget is built: the closed result, nothing ran (total: never rejects).
       return { outcome: 'partial', steps: plan.steps.map((step, index) => notRun(step, index + 1, 'bound')), usage: ZERO_USAGE };
@@ -216,7 +261,16 @@ export class AgentPlanExecutor {
     const results: AgentStepResult[] = [];
     const projections = new Map<number, StructureProjection>();
     // Raw content of the reads a summary covers: per run, in memory only, never in the result.
-    const state: RunState = { documents: new Map(), denials: new Map(), coverage: new Map(), listed: new Map(), requested: new Map(), run: newSummaryRunToken() };
+    const state: RunState = {
+      documents: new Map(),
+      denials: new Map(),
+      coverage: new Map(),
+      listed: new Map(),
+      requested: new Map(),
+      run: newSummaryRunToken(),
+      ...(options.grants !== undefined ? { owner: { basis: options.grants, plan } } : {}),
+      ...(options.signal !== undefined ? { shutdown: options.signal } : {}),
+    };
     // Which later summarize steps cover which read.
     for (const [index, step] of plan.steps.entries()) {
       if (step.kind === 'read') state.requested.set(index + 1, Math.min(AGENT_M2_MAX_ITEMS, Math.max(1, nlLimitArg(step.args) ?? AGENT_M2_MAX_ITEMS)));
@@ -230,8 +284,21 @@ export class AgentPlanExecutor {
     if (staticOver) budget.markBreach('connector-queries');
     // Only a `run` plan executes: a `clarify` plan is the owner's question, never a read.
     const blocked = staticOver || plan.kind !== 'run';
+    let stopped = false;
     for (const [index, step] of plan.steps.entries()) {
       const number = index + 1;
+      // Shutdown, then the kill switch re-read before each step: a stop blocks the next step at once (D7; A6-D3 amendment). The
+      // switch read cannot outlive the wall (review round 1 item 4): a read the wall wins is a wall breach, and the step and
+      // every later one are `not-run` (`bound`).
+      if (!blocked && !stopped && state.shutdown?.aborted === true) stopped = true;
+      if (!blocked && !stopped && options.stillRunning !== undefined && !safely(() => budget.breach !== undefined, true)) {
+        const probe = await stillRunningWithinWall(options.stillRunning, budget);
+        if (probe === 'stopped' || state.shutdown?.aborted === true) stopped = true;
+      }
+      if (stopped) {
+        results.push(notRun(step, number, 'stopped'));
+        continue;
+      }
       if (blocked || !safely(() => budget.reserveStep(), false)) {
         results.push(notRun(step, number, 'bound'));
         continue;
@@ -251,18 +318,21 @@ export class AgentPlanExecutor {
         );
       }
     }
+    // Review round 2 item 4: a shutdown that cut the last step stops the run too (no later step was left to notice it).
+    if (!stopped && results.some((result) => result.status === 'not-run' && result.reason === 'stopped')) stopped = true;
     const usage = safely(() => budget.snapshot(), ZERO_USAGE);
     const breach = safely(() => budget.breach, undefined);
     // A summary that left items out is a partial answer, whatever the reason.
     const allOk = results.every((result) => (result.status === 'ok' && !(result.kind === 'summarize' && result.omitted > 0)) || result.status === 'deferred');
     const summaries = results.filter((result) => result.kind === 'summarize');
-    const outcome = breach === undefined && allOk ? 'complete' : 'partial';
+    const outcome = breach === undefined && !stopped && allOk ? 'complete' : 'partial';
     // A logger that throws never rejects `execute` (total).
     safely(
       () =>
         this.deps.logger?.info(AGENT_EXEC_LOG_EVENT, {
           outcome,
           ...(breach !== undefined ? { breach } : {}),
+          ...(stopped ? { stopped: true } : {}),
           steps: results.length,
           ok: results.filter((result) => result.status === 'ok').length,
           summaries: summaries.filter((result) => result.status === 'ok').length,
@@ -275,7 +345,7 @@ export class AgentPlanExecutor {
         }),
       undefined,
     );
-    return { outcome, ...(breach !== undefined ? { breach } : {}), steps: results, usage };
+    return { outcome, ...(breach !== undefined ? { breach } : {}), ...(stopped ? { stopped: true as const } : {}), steps: results, usage };
   }
 
   private async runRead(
@@ -319,7 +389,7 @@ export class AgentPlanExecutor {
             entryId,
             schema: cover.schema,
             summaryStep: cover.step,
-            grant: summaryGrantFor(cover.step, entryId, state.run),
+            grant: summaryGrantFor(cover.step, entryId, state.run, state.owner),
             run: state.run,
             askedItems: askedAcross(state, cover.from),
             route,
@@ -331,8 +401,8 @@ export class AgentPlanExecutor {
         else state.denials.set(`${cover.step}:${number}`, refusal);
       }
     }
-    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}) }, budget);
-    if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}) }, budget, state.shutdown);
+    if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: state.shutdown?.aborted === true ? 'stopped' : 'bound' };
     budget.checkWall();
     // Any breach or refusal during the call (a spent wall, a refused reservation) ends the step `not-run` (bound) and the run
     // partial, whatever the port returned: a port that exhausted its reservations and then reports success is still cut off.
@@ -370,7 +440,7 @@ export class AgentPlanExecutor {
     for (const from of step.from) {
       const covered = state.documents.get(from);
       if (covered === undefined) continue;
-      const grant = summaryGrantFor(number, covered.entryId, state.run);
+      const grant = summaryGrantFor(number, covered.entryId, state.run, state.owner);
       // The source's asked-for count bounds what reaches a model, whatever the port returned (CA review round 1, P1).
       const asked = state.requested.get(from) ?? AGENT_M2_MAX_ITEMS;
       sources.push({ ...covered, asked, ...(grant !== undefined ? { grant } : {}) });
@@ -389,12 +459,15 @@ export class AgentPlanExecutor {
     // One reader per call that started, in start order (= source order: the calls start in one synchronous loop).
     const started: (() => QuarantinedCallAudit | undefined)[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const unlink = linkShutdown(state.shutdown, controller);
     const wall = new Promise<'wall'>((resolve) => {
       timer = setTimeout(() => {
         budget.markBreach('wall-time');
         controller.abort();
         resolve('wall');
       }, Math.max(1, budget.remainingMs()));
+      // Shutdown aborts the call and is not waited for (no wall breach: the run is `stopped`).
+      controller.signal.addEventListener('abort', () => resolve('wall'), { once: true });
     });
     try {
       // A throw or a rejection is the closed `model` failure; a call the wall wins is still handled (never unhandled).
@@ -430,7 +503,7 @@ export class AgentPlanExecutor {
         });
         return audits.length > 0 ? { audits } : {};
       };
-      if (outcome === 'wall') return { ...base, status: 'not-run', ...callAudits() };
+      if (outcome === 'wall') return { ...base, status: 'not-run', ...(state.shutdown?.aborted === true ? { reason: 'stopped' as const } : {}), ...callAudits() };
       if (budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudits('audits' in outcome ? outcome.audits : undefined) };
       if (outcome.kind === 'summary') {
         return {
@@ -451,6 +524,7 @@ export class AgentPlanExecutor {
       return { ...base, status: 'not-run', ...callAudits() };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      unlink();
       controller.abort();
     }
   }
@@ -460,7 +534,12 @@ export class AgentPlanExecutor {
    * request the port makes is reserved on the run's budget first, so usage is counted up to the abort and nothing is made
    * after it. A throw is an `UNKNOWN` failure whose message is never read.
    */
-  private async callPort(reader: AgentReadPort, request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments'>, budget: AgentRunBudget): Promise<AgentReadResponse | 'wall'> {
+  private async callPort(
+    reader: AgentReadPort,
+    request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments'>,
+    budget: AgentRunBudget,
+    shutdown?: AbortSignal,
+  ): Promise<AgentReadResponse | 'wall'> {
     const controller = new AbortController();
     const reserve = (take: () => boolean): boolean => {
       if (controller.signal.aborted) return false;
@@ -477,6 +556,15 @@ export class AgentPlanExecutor {
         resolve('wall');
       }, Math.max(1, budget.remainingMs()));
     });
+    // Shutdown aborts the port call and is not waited for (`'wall'` without a wall breach: the caller reads the signal).
+    const unlink = linkShutdown(shutdown, controller);
+    // Review round 2 item 3: the listener on the service-lifetime signal is removed when the call ends (no growth per call).
+    let stopCut: (() => void) | undefined;
+    const cut = new Promise<'wall'>((resolve) => {
+      if (shutdown?.aborted === true) resolve('wall');
+      stopCut = () => resolve('wall');
+      shutdown?.addEventListener('abort', stopCut, { once: true });
+    });
     try {
       const call = Promise.resolve()
         .then(() => reader.read({ ...request, remainingMs: budget.remainingMs(), signal: controller.signal, budget: handle }))
@@ -484,9 +572,11 @@ export class AgentPlanExecutor {
           (value) => value,
           (): AgentReadResponse => ({ ok: false, code: 'UNKNOWN' }),
         );
-      return await Promise.race([call, wall]);
+      return await Promise.race([call, wall, cut]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      if (stopCut !== undefined) shutdown?.removeEventListener('abort', stopCut);
+      unlink();
       controller.abort();
     }
   }
@@ -526,7 +616,7 @@ function resolveReference(
 }
 
 function notRun(step: ValidatedAgentStep, number: number, reason: AgentStepNotRunReason): AgentStepResult {
-  if (step.kind === 'summarize') return { step: number, kind: 'summarize', status: 'not-run', from: step.from, schema: step.schema };
+  if (step.kind === 'summarize') return { step: number, kind: 'summarize', status: 'not-run', from: step.from, schema: step.schema, ...(reason === 'stopped' ? { reason } : {}) };
   return { step: number, kind: 'read', entryId: step.entry.id as NlWave1EntryId, status: 'not-run', reason };
 }
 
@@ -548,6 +638,44 @@ async function readinessWithinWall(input: SummaryReadinessInput, budget: AgentRu
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/**
+ * The kill-switch probe raced against the run's wall (review round 1 item 4): `running` only for an exact `true`; anything
+ * else (a throw, a rejection, another value) is `stopped` (fail closed); a probe still pending when the wall ends is `wall`,
+ * with the wall breach marked. Never rejects.
+ */
+async function stillRunningWithinWall(probe: () => Promise<boolean>, budget: AgentRunBudget): Promise<'running' | 'stopped' | 'wall'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const wall = new Promise<'wall'>((resolve) => {
+    timer = setTimeout(() => {
+      safely(() => budget.markBreach('wall-time'), undefined);
+      resolve('wall');
+    }, Math.max(1, safely(() => budget.remainingMs(), 0)));
+  });
+  try {
+    const read = Promise.resolve()
+      .then(probe)
+      .then(
+        (value): 'running' | 'stopped' => (value === true ? 'running' : 'stopped'),
+        (): 'stopped' => 'stopped',
+      );
+    return await Promise.race([read, wall]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** Abort `controller` when `shutdown` aborts (at once when it already has); returns the unlink. */
+function linkShutdown(shutdown: AbortSignal | undefined, controller: AbortController): () => void {
+  if (shutdown === undefined) return () => undefined;
+  const stop = (): void => controller.abort();
+  if (shutdown.aborted) {
+    stop();
+    return () => undefined;
+  }
+  shutdown.addEventListener('abort', stop, { once: true });
+  return () => shutdown.removeEventListener('abort', stop);
 }
 
 /** The items a summary asks for over its covered reads: the sum of their requested counts (the count readiness and the model choice share). */

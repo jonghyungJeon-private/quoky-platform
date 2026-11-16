@@ -36,5 +36,14 @@ export type AgentReadResponseVariantsPinned = Assert<TypesEqual<AgentReadRespons
 /** A read request holds closed fields only; `withDocuments` is the one flag, set by the executor, never by a caller. */
 export type AgentReadRequestPinned = Assert<KeysEqual<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments' | 'remainingMs' | 'signal' | 'budget'>>;
 export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQuery' | 'reserveHttp'>>;
-/** The service: the router, the actor repository (kill switch), the logger and configuration values. */
-export type AgentServiceDepsPinned = Assert<KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps'>>;
+/**
+ * The service: the router, the actor repository (kill switch), the logger and configuration values; for `active` only (the S2
+ * wiring slice), the narrow read ports and M2's route selector (the existing `ProviderSelector`), the explicit P5 `released`
+ * flag (a boolean, false by default) and a test-only bounds override that can only lower a bound.
+ */
+export type AgentServiceDepsPinned = Assert<
+  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'bounds' | 'released'>
+>;
+export type AgentServiceReleasedPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['released']>, boolean>>;
+export type AgentServiceReadersPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['readers']>, AgentPlanExecutorDeps['readers']>>;
+export type AgentServiceSummarizerPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['summarizer']>, ProviderSelector>>;

@@ -5,6 +5,38 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 S2 wiring slice built (release-gated) (2026-11-16, branch `claude/v5-s2-wiring`)
+
+- **Built (Core).**
+  - The summary grant producer: the owner's own words, per step and per mail or Drive source, quoted and pasted text excluded,
+    `NL_MODE_SUMMARY_WORDS` only, minted through `summaryGrantFor` and keyed to the run.
+  - `AgentRunService.runActive`, with these controls:
+    - the planner charged on the run budget before the call;
+    - the re-plan slot reserved before step 1;
+    - the ratified caps, the Q7 cap of 60 model calls an hour and the 30 / 150 run caps;
+    - the kill switch re-read before the planner and before every step;
+    - the executor, then the deterministic assembler, with a partial reply on any failure or breach;
+    - content-free logs.
+- **Built (app).**
+  - The `active`-only composition: the M2 route is the `CapabilityRouter`, and the read ports are empty.
+  - The preflight refusal `AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE`.
+- **Unchanged.** The release gate stays, the flag is unchanged, and `off` / `shadow` are byte-identical (the runtime is
+  untouched).
+- **Open (blocking `active`).**
+  - P5 runtime dispatch, with the planner as the single M1 (S2 plan Q2; no hook built, to avoid two M1 calls per message).
+  - The adapter slice: budgeted HTTP read ports and body-fetch accounting.
+  - The `quoky.agentRun` audit.
+  - A `LOCAL` summariser in the owner policy, and D8 usage for M2.
+- **Owner Strict steps.**
+  1. The 62 + 34 gold reviews.
+  2. The ≥ 300-case red-team review.
+  3. The gate campaign.
+  4. The 7-day shadow clock on the final planner.
+  5. The egress `enforce` flip.
+  6. The `QUOKY_AGENT_MODE` flip.
+
+  DECISIONS "ADR-0121 S2 wiring slice".
+
 ### ADR-0121 remote batch M2 summaries and raised run caps built (unwired) (2026-11-16, branch `claude/v5-s2-m2-batch`)
 
 - Owner, 2026-11-16: split M2 calls count toward the run caps, and the caps are raised ("중간 상향 (권장)"): M2 6, model calls 8,

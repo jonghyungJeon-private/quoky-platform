@@ -140,6 +140,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.AGENT_MODE_INVALID]: 'QUOKY_AGENT_MODE must be unset (off), "off", or "shadow" (exactly, lowercase).',
   [QuokyConfigErrorCode.AGENT_MODE_ACTIVE_NOT_RELEASED]:
     'QUOKY_AGENT_MODE=active is not released yet (ADR-0121 D11 gates); use "shadow" or "off".',
+  [QuokyConfigErrorCode.AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE]:
+    'QUOKY_AGENT_MODE=active needs QUOKY_EGRESS_GUARD=enforce (ADR-0121 S2, owner decision of 2026-11-02); use "shadow" or "off".',
   [QuokyConfigErrorCode.AGENT_MODE_REQUIRES_NL_ACTIVE]: 'QUOKY_AGENT_MODE=shadow needs QUOKY_NL_INTENT_MODE=active.',
   // ADR-0124 Part L C5a. Names and shapes only, never a value.
   [QuokyConfigErrorCode.CHUNK_ITEMS_INVALID]: 'QUOKY_CHUNK_ITEMS must be unset, "off", "shadow", or "on".',

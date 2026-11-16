@@ -10,7 +10,7 @@ import { NL_SELECTION_TIMEOUT_MS } from '../nl-routing/nl-selection-service';
 
 // ADR-0121 D1 / D7 (stage S2 P1): AgentRunService in `off` and `shadow` with a scripted planner (no model): one
 // INTENT_SELECTION call and nothing else (0 connector reads, 0 M2 calls), the caps, the in-flight drop, the abort, the
-// kill switch without a restart, the release gate on `active`, and a no-content scan of every log line.
+// kill switch without a restart, `active` refused without its wiring, and a no-content scan of every log line.
 
 const T0 = '2026-10-20T03:00:00.000Z';
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -102,12 +102,12 @@ function turn(h: Harness, overrides: Partial<AgentShadowTurn> = {}, live: AgentS
 const shadowLines = (h: Harness) => h.logs.filter((log) => log.event === AGENT_SHADOW_LOG_EVENT).map((log) => log.fields ?? {});
 
 describe('AgentRunService — modes and the release gate', () => {
-  it('active is refused at construction (AGENT_MODE_ACTIVE_NOT_RELEASED)', () => {
+  it('active without its read ports and M2 selector is refused at construction (AGENT_MODE_ACTIVE_UNWIRED; the release gate is at startup)', () => {
     expect(() => harness({ mode: 'active' })).toThrow(AgentModeError);
     try {
       harness({ mode: 'active' });
     } catch (error) {
-      expect((error as AgentModeError).code).toBe('AGENT_MODE_ACTIVE_NOT_RELEASED');
+      expect((error as AgentModeError).code).toBe('AGENT_MODE_ACTIVE_UNWIRED');
     }
   });
 

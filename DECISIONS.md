@@ -34074,6 +34074,354 @@ wiring, no flag change, no live behaviour change).
      input tokens equal to the mail prompt), and the assembler renders the fixed line. It fails when either the flag
      computation or the executor's pass-through is removed.
 
+## ADR-0121 S2 wiring slice — the summary grant producer, the run budget, the `active` run and its composition (Core and composition root, release-gated; 2026-11-16, branch `claude/v5-s2-wiring`)
+
+- **Status: implemented, not live.**
+  - The slice applies ratified text only. No ADR text changes.
+  - The service flag is unchanged. `QUOKY_AGENT_MODE=active` is still refused at startup (`AGENT_MODE_ACTIVE_NOT_RELEASED`).
+  - No runtime dispatch calls the new path, so `off` and `shadow` are byte-identical: `conversation-runtime` is untouched, and
+    the existing `agent-shadow.app.test.ts` still passes (`off` over the 873-case corpus).
+  - No new port, DI token or migration. `ConversationRuntimeDeps` stays 38.
+- **1. The summary grant producer (P3-3b owner answer 2, 2026-11-03).**
+  - It lives in `agent/summary-grant.ts`. `ownerSummaryRequests(plan, groundingText)` returns the (summarize step, source) pairs
+    that the owner's own words ask a summary of. It covers only the sources that need a grant (`REMOTE_ON_SUMMARY_REQUEST`:
+    mail and Drive).
+  - `summaryGrantBasis` wraps that list in an opaque value. The value is held in a module-private store and bound to the very
+    validated plan object it was made for.
+  - The executor passes the basis to `summaryGrantFor`. That function mints the existing `SummaryEgressGrant` through the
+    module-private `mintGrant`, keyed to the run token of that one `execute` call.
+  - A forged basis, a basis made for another plan, or no basis grants nothing. The result is listing-only
+    (`no-summary-grant`), with no body fetched and no model call.
+  - There is no caller flag. The planner's `summarize` step only says which summary exists.
+  - **Owner's words only.**
+    - The input is the prepared grounding text: quoted lines, fenced blocks, platform quote ranges and attachments are already
+      removed.
+    - Any untrusted-span marker anywhere in the owner's text means no grant for the message (review round 2; this replaced
+      the inline quote stripping of the first draft and the strip rules of review round 1).
+    - Pasted structures are removed (`withoutStructures`).
+    - A relayed request ("팀장이 … 요약해달래") grants nothing (`nlItemReadVeto`, the existing A6 R2 veto).
+  - **Vocabulary.** The words come from `NL_MODE_SUMMARY_WORDS` (A6 R2 ratification record C, the `summary` mode words). There is
+    no new word list. Content words ("내용") do not grant: ADR-0118 D7 requires an explicit summary request.
+  - **Per source, by clause, fail closed.**
+    - The prose is split into the S2 conjuncts, with the verb connective as a boundary (`nlClauses`).
+    - A conjunct ending in "-랑" joins the next conjunct. One ending in "-하고" joins it only when the rest of the word is exactly
+      one of the plan's source names ("메일하고"), because "확인하고" is a verb.
+    - A group grants a source when it holds an unnegated summary word and names that source (`nlClauseNamesEntry`).
+    - A group with an exclusion or negation marker grants nothing.
+    - A summary group that names no source ("메일 보여주고 요약해줘") points back. It grants only when every source the owner named
+      anywhere is covered by that summary.
+    - Anything else gives no grant: a comma or "and" between a noun and an English verb, or another source's clause. A missed
+      grant gives a listing; it is never a wrong egress.
+- **2. The run budget (D3/D7 amendment of 2026-11-16, and the remote batch note, CA (f)).**
+  - `AgentRunService` builds the run's `AgentRunBudget` before the planner call. It reserves `reserveModelCall('planner')` and
+    the planner prompt's UTF-8 bytes (`reserveInputTokens`) before the prompt is sent. A refused reservation means the prompt
+    is never sent.
+  - The planner call runs inside the selection bound and the run's 60 s wall.
+  - Before step 1 the re-plan is reserved explicitly with `reserveModelCall('replan')`. M1' is built-but-off (S2 plan Q12) and
+    not implemented. The one M1' slot is therefore charged up front and never taken from M2's share later:
+    8 model calls = M1 + M1' + 6 M2.
+  - The executor's new `execute(plan, { budget, grants, stillRunning })` uses that same budget. As a result,
+    `remainingM2Calls()` and `remainingInputTokens()` see the planner's share.
+  - The caps are the ratified `AGENT_RUN_BOUNDS`: 8 model calls, 6 M2 calls, 120,000 input bytes and 60 s, unchanged.
+  - **S2 plan Q7** (owner-approved default of 2026-10-20) is built for `active`: at most 60 agent model calls per rolling hour per
+    actor. A run's model-call bound is what the hour has left, and with nothing left the run is declined before the planner.
+- **3. The `active` run (`AgentRunService.runActive`, Core).** One bounded run per owner DM turn. It is total: it never throws.
+  1. **Admission.**
+     - The mode is `active` and the turn is the owner's DM, with no shutdown.
+     - The D7 per-actor caps apply: 30 runs an hour and 150 a day, in the same rolling windows as shadow.
+     - The Q7 cap applies.
+  2. **Kill switch.** The persisted switch is read on the live actor, never the turn's snapshot. An unreadable switch declines
+     the run (fail closed).
+  3. **The planner**, with the shadow job's controls:
+     - the D3 input preparation;
+     - the pre-egress credential guard;
+     - the ADR-0120 D6/D8 provider family and locality rule (`nlSameEgress`);
+     - the D4 label rule and the canary check.
+  4. **The plan.** Only a validated multi-step `run` plan executes. A one-step plan returns `one-step` for the existing selection
+     path (S2 plan Q2, wired in P5). Every other case returns `declined` with a closed reason, and nothing is read:
+     - `none`, `clarify` and `ask`;
+     - a refusal;
+     - a help split;
+     - a clause the read plan leaves (`write-clause`);
+     - a planner failure, timeout or malformed output.
+  5. **Execution.** The executor runs over the injected read ports with the M2 route
+     `{ selector, selectionContext: { sessionId, actorId } }`. The deterministic assembler then builds the reply.
+  6. **Failures.** A failed read, a refused or failed summary, a bound breach or a stop gives the assembler's partial reply, with
+     no retry.
+  - **Logs.** One content-free `agent_run.active` line, with closed values and counts only. `off` and `shadow` are never run and
+    log nothing.
+- **4. The kill switch at execution (D7; ADR-0120 A6-D3 amendment of 2026-11-03).**
+  - The executor re-reads the persisted switch (`stillRunning`) before every step. A stop, a throw or a non-`true` answer marks
+    that step and every later one `not-run` with the new closed reason `stopped`, and sets `AgentRunResult.stopped`.
+  - A step already in flight, an M2 batch included, finishes. This is the owner's rule that started work finishes.
+  - The assembler adds one fixed line ("에이전트 중지로 남은 단계는 실행하지 않았어요." / "The agent was stopped, so the remaining
+    steps were not run.").
+- **5. Composition (`features/agent.providers.ts`).**
+  - In `active` only, the service gets `summarizer`: the same `CapabilityRouter` as the existing `ProviderSelector` (ADR-0121 D12).
+  - It also gets `readers` from `createAgentReadPorts()`.
+  - `off` and `shadow` are built exactly as before, with no read port and no M2 route.
+  - The constructor refuses `active` without both collaborators (`AGENT_MODE_ACTIVE_UNWIRED`). This replaces its
+    `AGENT_MODE_ACTIVE_NOT_RELEASED` throw; the release gate stays at startup in `agent-config.ts`.
+  - The pinned deps contract (`agent-contract-check.ts`) gains `readers`, `summarizer` and a test-only `bounds`.
+  - **The read ports are empty on purpose.** The adapter slice (P3-3a note) must first give every port a budgeted HTTP client
+    that calls `reserveHttp()` before each request, pinned by a test that a port cannot send the 51st request. It must also add
+    the body-fetch cost accounting (P3-3b #8). Until then a planned read is `not-run` (`no-reader`).
+- **6. Preflight (owner decision 5 of 2026-11-02: the egress guard switches `observe` → `enforce` before `active`).**
+  - `QUOKY_AGENT_MODE=active` without exactly `QUOKY_EGRESS_GUARD=enforce` is refused at startup with
+    `AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE`. The startup report gives a hint that contains no value.
+  - The check runs before the release gate, so it remains when P5 removes the release gate.
+- **Tests (targeted; no model call).**
+  - `agent/summary-grant.test.ts` (13):
+    - the owner's words against quoted lines, inline quotes, pasted structures, fences and relayed requests;
+    - negation;
+    - per-source clauses, "-랑" / "-하고", the back-reference rule and two summary steps;
+    - a forged or foreign basis;
+    - through the executor: no basis gives listing-only with no body and no M2; the owner's words give the remote call.
+  - `agent/agent-run-service-active.test.ts` (22):
+    - the end-to-end run with fake ports and a real `CapabilityRouter`;
+    - the planner's summary step alone grants nothing; a quoted request is not the owner's;
+    - one-step hand-back;
+    - a failed read gives a partial reply with no retry; a planner failure or a malformed plan is declined;
+    - content-free logs;
+    - the planner charged before the call (an oversized prompt is never sent);
+    - the re-plan reservation (2 model calls leave no M2; 3 leave one);
+    - the planner's bytes count toward the input bound;
+    - the ratified caps;
+    - the kill switch on the live actor, unreadable, mid-run and after planning;
+    - the per-actor caps and the Q7 hourly cap; DM only;
+    - `off` and `shadow` never run.
+  - Calibration: removing the planner charge fails 6 tests, and removing the re-plan reservation fails 4.
+  - App tests:
+    - `agent-config.test.ts`: the egress refusal for unset, `observe`, `off` and case variants; its order before the release gate;
+      the startup hint;
+    - `features/agent.providers.test.ts`: `off` and `shadow` are built as before; `active` is wired; the empty read ports.
+  - Updated tests: `agent-run-service.test.ts` (the constructor code) and `agent-boundary.test.ts` (the new file).
+- **Choices made in this slice (for review).**
+  1. The re-plan slot is reserved up front, before step 1, rather than when an M1' happens, because M1' does not exist. The M1'
+     slice must use this slot and not reserve again: `maxReplans` is 1.
+  2. The grant's clause rules (item 1) are the strict reading: an ambiguous clause gives no grant.
+  3. The constructor gate changed from "never `active`" to "`active` only when wired". The startup release gate is unchanged.
+  4. Every outcome before a validated multi-step run is `declined` with no reply text. The copy (a numbered clarification for a
+     refusal, the bounded ask, the help section) is P5's.
+  5. A run counts toward the per-actor caps when it is admitted, before the planner, in the same windows as shadow.
+  6. Q7 counts every model call a run reserved. That includes the reserved M1' slot and the planner call of a declined run.
+- **Not built; owner decisions or later slices (nothing here may make `active` live).**
+  1. **Runtime dispatch under `active` (S2 plan Q2 / P5).** The planner must be the single M1 call: a one-step plan takes the
+     existing selection path without a second selector call (ADR-0120 D3 as amended: one M1 per message). A hook that runs the
+     planner and then the selector would make two M1 calls per message, so no hook is built. P5 needs:
+     - the unification in `NlSelectionService`;
+     - the help, ask and clarify copy;
+     - the read + write path;
+     - the re-run of the read, A6 and R2 gates on the unified prompt.
+  2. The adapter slice: the read ports, the budgeted HTTP client and the body-fetch accounting.
+  3. The `quoky.agentRun` TaskRun audit (D9).
+  4. A `LOCAL` summariser in the owner's policy for the M2 route, and the ADR-0115 D8 usage capture for M2.
+  5. Residual: the Q7 counter is in memory per process, like the shadow caps, so a restart resets it. (Concurrent runs no longer
+     share one allowance: review round 1 item 3.)
+- **Owner Strict steps still required before `active`:**
+  1. the review of the 62 pending `agent-plan` golds and the 34 pending read + write golds;
+  2. the batch review of the ≥ 300-case S2 read red-team corpus (`agent-redteam.s2-read.v1.json`) and its 0-success runs;
+  3. the D11 gate campaign (each model-in-the-loop run Strict, with its own yes);
+  4. the 7-day shadow clock on the final planner (owner decision 4 of 2026-11-02);
+  5. the `QUOKY_EGRESS_GUARD` `observe` → `enforce` flip;
+  6. P5, which removes the release gate and sets the composition's `released` flag, then the `QUOKY_AGENT_MODE=active` flip and
+     the restart.
+- **Review round 1 (CA CHANGES REQUIRED, Codex agreed; 2026-11-16).** Each finding, its fix and its test. Every fix test failed
+  on the code before the fix and passes after (the two marked pins pass on both); only targeted tests ran.
+  1. **P1: the grant was minted from spans the owner did not write as a request** (the fix below is superseded by review round 2). These inputs minted a mail grant: an inline
+     backtick span, a URL path or query (`…/summary`, `?q=summary`), a URL feeding the back-reference rule (`…보여주고
+     https://…/요약`), an unclosed opening quote, a `Fwd:` header, and a `----- Forwarded message -----` divider.
+     - **Fix (structural, no vocabulary).** `nlWithoutQuotedSegments` (request-shape) now also removes fenced and inline backtick
+       spans (an unclosed one runs to the end), everything from a forward/reply header (`Fwd:`, `Fw:`, `RE:` at a word start) or a
+       `---… Forwarded` divider on, and URL tokens (`http(s)://…`, `www.…`); an opening quote left unclosed after the balanced
+       pairs are removed quotes to the end (an apostrophe after a letter or digit is not an opening quote). Core had no
+       forwarded-content detector to reuse, so the header rule is new and only removes text. The grounding text has its line
+       breaks collapsed, so the header is matched at a word start rather than a line start. Every rule only removes text, so it
+       can only take a grant away.
+     - **Tests** (`summary-grant.test.ts`): one per input (6 tests, 7 inputs), plus a **pin** that the owner's own words before a
+       removed URL, and an English apostrophe, still grant.
+  2. **P2: one model call left in the hour.** The planner took it, the re-plan reservation then breached and the result was
+     ignored. **Fix:** admission declines with fewer than 2 calls left (`AGENT_ACTIVE_MIN_MODEL_CALLS`, M1 + M1'), through the
+     existing `model-hourly-cap` decline; a refused `reserveModelCall('replan')` now declines the run (`bound`, with the breach)
+     before any step. **Tests:** 59 used → declined before the planner; `maxReplans: 0` → declined `bound` (`replans`), no read.
+  3. **P2: concurrency bypassed the hourly cap** (Codex reproduced 66 of 60). **Fix:** admission charges the run's whole
+     model-call bound (`min(8, hour left)`) synchronously with the checks, and `finally` trues it down to the calls the budget
+     reserved; `active` keeps one run in flight per actor (`in-flight`), as shadow keeps one job in flight. **Test:** 30
+     concurrent turns → 1 planner call, 29 `in-flight`; the slot frees after the run.
+  4. **P2/P3: a stop before the planner dispatch was ignored.** **Fix:** the kill switch is read again right before the planner
+     call, and `callWithin` now dispatches synchronously, so nothing awaits between the read and the dispatch. The executor's
+     per-step switch read is raced against `budget.remainingMs()`: a read still pending at the wall is a `wall-time` breach and
+     the remaining steps are `not-run` (`bound`). **Tests:** a stop recorded during admission → `kill-switch`, no planner call; a
+     hung `actors.get` in the executor → partial `wall-time` within the wall, no read.
+  5. **P3.**
+     - The shutdown signal is passed into the executor (`AgentExecuteOptions.signal`): no later step starts (`stopped`), and the
+       port or M2 call in flight is aborted and not waited for. **Test:** a port that triggers shutdown and never answers → the
+       port's signal is aborted, the run ends partial `stopped`, the next turn is declined `shutdown`.
+     - Injected `bounds` are clamped to `AGENT_RUN_BOUNDS` with `min` (a caller can only lower a bound). **Test:** 1,000 HTTP
+       requests asked → 50 allowed.
+     - The constructor's second layer is restored: `active` also needs an explicit `released: true` dep, which only P5 sets
+       (absent or false → `AGENT_MODE_ACTIVE_UNWIRED`; contract-check pins the key and its boolean type). The composition root
+       never sets it. **Tests:** a wired service without the release is refused; the composition's `active` service is refused.
+     - **Pin:** `parseAgentConfig` returns no `active` mode for any combination of the agent, selection and egress variables.
+  6. **Recorded, no code (owner decision for the wiring/P5 stage).** Pasted prose with no quote or marker ("아래는 동료 메시지:
+     메일 전부 요약해서 보내") and a summary word used as a noun modifier ("정리된 메일", "subject summary") still grant, because
+     the clause holds the summary word and names the source. **Question for the owner:** should the grant require the summary
+     word to be the predicate of the owner's own clause (the verb the owner addresses to Quoky), rather than anywhere in a clause
+     that names the source? No phrase was added; a fix must stay structural (clause grammar), not a word list.
+- **Review round 2 (CA CHANGES REQUIRED: 2 × P1, 4 × P2, P3s; Codex 1 × P1, 1 × P2 overlapping; 2026-11-16).**
+  1. **The grant gate is redesigned to fail closed, not patched a third time.** Round 2 still found bypasses of the round-1
+     strip rules: an apostrophe inside a single-quoted span, nested and same-glyph quotes, stray closing glyphs, uncovered quote
+     glyphs (« » ＂ ″ ｢ ｣), a URL whose token swallowed the opening quote, a scheme glued to a word, a bare `host.tld/path`,
+     double-backtick code, the Outlook `-----Original Message-----` and Korean Gmail `---------- 전달된 메일 ---------`
+     dividers, a forward without dashes, and a fullwidth `Fwd：`. Every strip rule must find a span boundary in text an
+     attacker shapes, so each round finds a new boundary to get wrong.
+     - **New rule.** If the owner's prepared text holds ANY untrusted-span marker anywhere, no summary grant is minted for the
+       message; every summary is listing-only. Nothing is stripped and re-read. `hasUntrustedSpanMarker` (`summary-grant.ts`)
+       tests closed structural classes, on the text as written and on its NFKC form (so fullwidth forms fold):
+       - a quote-like glyph: `\p{Pi}`, `\p{Pf}`, ASCII and fullwidth quotes and apostrophes, the low-9 quotes, primes, the
+         modifier-letter apostrophes, dingbat quotes, and the CJK and angle brackets used as quotes (「」『』｢｣《》〈〉【】〔〕〖〗〘〙〚〛〝〞〟⟨⟩);
+         ASCII ( ) [ ] { } are not quotes, pasted structures stay with `withoutStructures`;
+       - a backtick (any count) or acute accent, and the input preparation's `[code]` and `[quoted]` placeholders (a fenced
+         block, a `>` line or a platform quote range was in the message);
+       - a URL-like token: `://` anywhere, `www.`, a dotted host with a letter TLD (with or without a path, since a label can
+         carry a word), or `host:port/`;
+       - a divider run: three or more of `- _ = ~ *` or a Unicode dash, optionally one space apart;
+       - a header shape: a Latin token of 1–3 letters and a colon anywhere (`Fwd:`, `RE:`, `AW:`), or a short label holding a
+         letter and a colon at the start of the text or of a line (`Subject:`, `보낸 사람:`). A time (`3:30`) is no label.
+     - **Judgement on the header shape.** "Any word token and a colon" anywhere would also catch the owner's own labels in mid
+       sentence, so the general shape is limited to line starts, where forwarded headers sit; mid-text it is the short Latin
+       token only. A forward with no dashes is still caught by its header lines or the sender's address.
+     - The round-1 helper `nlWithoutQuotedSegments` had no other user and is removed (`request-shape.ts` is back to main).
+     - **Tests** (`summary-grant.test.ts`): each of the 7 round-1 and 15 round-2 inputs gives no grant and is a marker (14 of
+       the round-2 inputs granted on the round-1 code); plain requests (`최근 메일 3개 요약해줘`, `summarize my last 3
+       emails`, a `3:30` time, a `3~5개` range) still grant.
+     - **Residual (accepted, fail closed):** an English contraction ("it's"), any URL, a quoted word, or a line-start label in
+       the owner's own request loses the summary grant for that message: the summary is listing-only. Pasted prose with no
+       marker and noun uses of the summary word remain the open owner question of round 1 item 6, unchanged.
+  2. **P2: pre-dispatch awaits could hang and hold the slot** (Codex reproduced it with a `resolveChat` that never resolves:
+     the 8-call charge and the actor's slot stayed held after the wall and shutdown, so later turns were declined
+     `in-flight`). **Fix:** both kill-switch reads, `resolveChat()` and `router.select()` go through `withinRun`, which races
+     the await against `budget.remainingMs()` (a wall breach) and the shutdown signal, and always removes its timer and
+     listener; `finally` therefore always frees the slot and trues the charge down. **Tests:** a hung admission switch read and
+     a hung `resolveChat` each end `bound` (`wall-time`) at the wall, after which 20 runs of 3 calls still fit the hour; a hung
+     `resolveChat` ends `shutdown` when the service stops.
+  3. **P2: shutdown listener leak.** Each port call added a listener to the service-lifetime signal and never removed it; it
+     is now removed in `finally`. **Test:** after three runs of two reads and a summary on one signal, it has no listener.
+  4. **P3: shutdown on the last step.** A shutdown that cuts the last step now sets `stopped: true` (no later step was left to
+     notice it), and a summarize step cut by shutdown is `not-run` with `reason: 'stopped'`. **Tests:** a hung last read and a
+     hung M2 call, each with the shutdown fired during the call.
+  5. The open rule question (the summary word as the predicate of the owner's clause) stays as recorded in round 1 item 6.
+  - Every round-2 fix test failed on the code before it and passes after, except the quote-swallowing URL input (already no
+    grant in its tested form) and the plain-request pins; only targeted tests ran.
+- **Review round 3 (CA APPROVE with P2/P3 hardening notes; Codex 3 × P1, all marker-class gaps; final hardening round;
+  2026-11-16).** The closed classes are generalised, not extended case by case (`summary-grant.ts`).
+  - **Findings.**
+    - Codex P1s (each reproduced to a mock remote dispatch): a numeric host (`127.0.0.1:8080/요약`), a `+++` divider, and a
+      hyphenated header label (`Original-Message:`).
+    - CA P3s: zero-width characters inside `Fwd:`, a host and a divider; colon lookalikes (U+2236, U+A789, U+02F8, U+05C3);
+      dividers `═══`, `#####`, a whole-line `.....` and `〜〜〜`; quote glyphs (U+02DD, U+2E42, U+1F676–8, U+05F4,
+      U+02CA–B); a Cyrillic TLD and IP shapes.
+    - CA P2: chat-app copy framing (`[김팀장] [오후 3:30] …`, Slack/Discord `name — time` lines).
+  - **The generalised rules.** Each is checked on four forms of the text: as written, NFKC, with every `\p{Cf}` (zero-width
+    and direction marks) removed, and both.
+    - **Where the rules read.** The gate reads the prepared text with its line breaks kept, minus the `[files: N]` line the
+      preparation appends (`nlPreparedWithoutFilesLine`). Line-start rules therefore read real lines; no sentence-boundary
+      approximation is needed.
+    - **Quote glyphs.** Every `\p{Pi}`, `\p{Pf}`, `\p{Ps}`, `\p{Pe}`, ASCII quotes and apostrophe, backtick, acute accent,
+      primes, the modifier-letter quotes and accents, Hebrew geresh and gershayim, and dingbat and ornamental quotes.
+      - **Judgement:** ASCII `( ) [ ] { }` are not markers. Owners use them in ordinary prose ("(오늘 것)"). A bracketed chat
+        speaker or time is the chat-frame rule's job, and a pasted structure is `withoutStructures`'.
+      - Fullwidth `（ ）` and every CJK bracket are markers.
+    - **URL and host shapes.**
+      - `://` (with any colon-like and slash form) or `www.`.
+      - A whitespace-free token with a dot or a colon before a slash.
+      - A dotted IPv4.
+      - A dotted host whose TLD is any two or more letters in any script.
+    - **Divider.** A run of 3 or more of the same `\p{P}` or `\p{S}` character, at most one space apart.
+      - Emphasis runs of `. ~ 〜 … ! ?` and emoji count only on a line holding nothing else, so `요약해줘~~~`, `요약해줘...`,
+        `!!!` and `🙏🙏🙏` grant.
+    - **Header.**
+      - At a line start: a label of up to three tokens (`[\p{L}\p{N}_-]`) whose last token holds a letter and is
+        immediately followed by a colon-like character. A time (`3:30`) holds no letter.
+      - Anywhere: a 1–3 letter Latin, Cyrillic or Greek token immediately followed by one. `ok :)` and `pls :)` have a space
+        first.
+      - Colon-like characters: `:` `：` `∶` `꞉` `˸` `׃` `﹕` `︓` `︰` `⁚` `܃` `܄` `᠄` `⦂` `ː`.
+    - **Chat-copy framing at a line start.**
+      - `[x] [`, or a bracketed clock.
+      - `name — … clock`: an em dash, en dash or horizontal bar, with a clock in the next words.
+      - `name, [ … clock … ]`.
+  - **Tests** (`summary-grant.test.ts`).
+    - Each round-3 input gives no grant and is a marker. All 26 failed on the round-2 gate.
+    - These still grant: `최근 메일 3개 요약해줘`, `메일 요약해줘~~~`, `메일 요약해줘...`, `!!! ???`, `🙏🙏🙏`, `ok :)`, `pls :)`, `3:30`,
+      `오후 3:30`, `3~5개`, `(오늘 것)`, and a message with attachments. The round-2 gate wrongly blocked 4 of these:
+      `~~~`, `ok :)`, `pls :)` and `오후 3:30`.
+  - **CA test gaps closed** (`agent-run-service-active.test.ts`). These cover round-2 behaviour, so they pass on it.
+    - A hung `router.select` and a hung second switch read in `runPlanned` each end `bound` at the wall, and a follow-up run is
+      then admitted and completes.
+    - The service's shutdown signal has no listener after a full run and a run cut at the wall.
+  - **Residuals (fail-closed false positives, accepted).** The summary is listing-only for that message when the owner's own
+    request contains any of these:
+    - a contraction ("it's", "don't");
+    - a quoted word, or any CJK or fullwidth bracket;
+    - any URL, host or IP;
+    - a glued sentence such as `emails.Thanks` or `확인했어.요약해줘` (read as a dotted host);
+    - `***중요***`, `^^^`, `---` or any 3-run of a non-emphasis symbol;
+    - a line-start label (`조건: …`), or `요약해줘:)` (colon glued to the label);
+    - a short Latin token glued to a colon (`PS:`);
+    - an em-dash line with a clock (`메일 — 3:30 이후`);
+    - a `[x] [y]` line opening.
+  - **Residuals (not caught).**
+    - Pasted prose with no marker at all, and noun uses of the summary word. This is the open owner question of round 1
+      item 6: whether the summary word must be the predicate of the owner's own clause.
+    - `Fwd :` with a space before the colon, mid-line.
+    - A Hangul-jamo run used as a divider (`ㅡㅡㅡ`). Jamo runs are not marked because `ㅋㅋㅋ`/`ㅎㅎㅎ` are ordinary laughter.
+- **Review round 4 (final; Codex 3 × P1 class gaps; the review-loop cap on heuristic rounds is reached; 2026-11-16).**
+  - **Codex P1s.**
+    - `❤️❤️❤️` followed by a request line: an emoji with variation selectors used as a divider.
+    - An IPv6 address line (`2001:db8::1`).
+    - A mention-prefixed speaker (`@alice: 메일 요약해줘`).
+  - **Conclusion.** Each new class would be one more case-by-case entry, so no class is enumerated. One structural rule
+    replaces the enumeration.
+  - **The single-line rule.** The owner's prepared text is read with the appended `[files: N]` line removed and the text
+    trimmed. If it then holds more than one non-empty line, the message never mints a summary grant, and every summary is
+    listing-only (`isSingleLineOwnerText`).
+    - Line breaks: LF, CR, U+2028, U+2029, NEL, VT and FF.
+    - This closes the whole multi-line paste family structurally: dividers, header blocks, chat-copy lines and pasted
+      messages, including the first two inputs.
+    - Single-line text keeps every marker check of rounds 2 and 3.
+  - **The `@` widening.** The line-start label rule now allows one leading `@`. It is a one-character widening of an
+    existing rule, not a new class, so `@alice: …` at the line start is a label: no grant. A mention without a colon is not
+    caught.
+  - **Tests** (`summary-grant.test.ts`).
+    - The emoji-divider and IPv6 inputs give no grant through the single-line rule.
+    - `@alice:` gives no grant through the widened label rule.
+    - A multi-line owner request (`메일 3개` / `요약해줘`) gives no grant. This is the fail-closed residual.
+    - A U+2028 separator counts as a line break.
+    - A single-line plain request, with surrounding blank lines trimmed, still grants.
+  - **Status.**
+    - S2 stays unwired. `QUOKY_AGENT_MODE=active` is refused at startup, and the service needs the P5 `released` flag.
+    - The ≥ 300-case S2 read red-team corpus and its gate run before `active` (Owner Strict steps above). That gate, not
+      further rounds here, decides whether this gate holds.
+  - **Residuals.**
+    - Fail-closed false positives: listing-only for that message.
+      - Any multi-line request.
+      - The round-3 list: contractions, quoted words, CJK or fullwidth brackets, URLs, hosts and IPs, glued sentences
+        (`emails.Thanks`), `***중요***`, `^^^`, line-start labels, `요약해줘:)`, `PS:`, `— 3:30`, `[x] [y]` openings.
+    - Not caught, on one line:
+      - pasted prose with no marker;
+      - noun uses of the summary word;
+      - a mention or speaker name without a colon;
+      - `Fwd :` with a space before the colon, mid-line;
+      - a jamo divider (`ㅡㅡㅡ`) within one line.
+  - **Owner questions before `active`.** The residuals move here.
+    1. **Predicate requirement.** Must the summary word be the predicate of the owner's own clause (the verb the owner
+       addresses to Quoky)? That would close the noun uses and part of the unmarked pasted prose. It would be structural
+       (clause grammar), never a word list.
+    2. **A stricter rule before `active`.** Is the structural gate enough once the red-team gate passes, or does the owner
+       want something stricter? For example, an explicit one-time owner confirmation before any remote summary egress (a
+       mail or Drive body to a REMOTE model). That would close the remaining single-line pasted-prose cases at the cost of
+       one confirmation.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112

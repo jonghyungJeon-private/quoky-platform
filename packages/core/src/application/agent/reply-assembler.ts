@@ -101,6 +101,7 @@ const T = {
     remoteDisclosure: '이 요약을 만들려고 원문 일부를 외부 모델로 보냈어요.',
     summaryFailed: '요약을 만들지 못해서 목록만 보여드려요.',
     boundStopped: '한도에 도달해서 여기까지만 보여드려요.',
+    agentStopped: '에이전트 중지로 남은 단계는 실행하지 않았어요.',
     dmOnly: '이 답은 소유자 DM에서만 보여드릴 수 있어요.',
   },
   en: {
@@ -127,6 +128,7 @@ const T = {
     remoteDisclosure: 'Part of the original text was sent to an outside model to make this summary.',
     summaryFailed: 'A summary could not be made, so this is the listing only.',
     boundStopped: 'A limit was reached, so this is as far as it goes.',
+    agentStopped: 'The agent was stopped, so the remaining steps were not run.',
     dmOnly: 'This answer can only be shown in the owner\'s DM.',
   },
 } as const;
@@ -208,6 +210,8 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   if (unavailable || sum.some((step) => step.status === 'deferred')) parts.push({ kind: 'status', text: t.summaryUnavailable });
   if (sum.some((step) => step.status === 'failed')) parts.push({ kind: 'status', text: t.summaryFailed });
   if (result.breach !== undefined) parts.push({ kind: 'status', text: t.boundStopped });
+  // The owner's kill switch stopped the run before a step (S2 wiring slice): one fixed line, after any bound line.
+  if (result.stopped === true) parts.push({ kind: 'status', text: t.agentStopped });
   return finish(input, parts, label, summaryLines, droppedLines);
 }
 
@@ -220,6 +224,7 @@ function finish(input: AssembleAgentReplyInput, parts: readonly AgentReplyPart[]
       summaryLines,
       droppedLines,
       ...(input.result.breach !== undefined ? { breach: input.result.breach } : {}),
+      ...(input.result.stopped === true ? { stopped: true } : {}),
     });
   } catch {
     // The log is best-effort.

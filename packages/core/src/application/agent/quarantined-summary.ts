@@ -16,6 +16,7 @@ import {
 } from '../untrusted-document-readout';
 import { readOutputLabel } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
+import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
 
 /**
@@ -32,8 +33,8 @@ import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
  *   label of the inputs, a valid {@link SummaryEgressGrant} and the asked-for item count ({@link deriveM2Localities}) and passes
  *   them as `allowedExecutionLocalities` on the selection context, so the candidates are capability ∩ owner policy ∩ locality ∩
  *   `workText`. `LOCAL_MODEL_ONLY` allows `LOCAL`; `HOST_ONLY` no model at all. `REMOTE_ON_SUMMARY_REQUEST` needs a grant (per
- *   summarize step and per source; only a module-private Core factory makes one, and this slice builds no producer, so in
- *   production it is always `listing-only` with no body fetched); with a grant `LOCAL` and `REMOTE` are allowed for one item
+ *   summarize step and per source; only a module-private Core factory makes one, from the owner's own words through
+ *   `summary-grant.ts`; without it the summary is `listing-only` with no body fetched); with a grant `LOCAL` and `REMOTE` are allowed for one item
  *   and for a batch alike (the owner's 2026-11-03 answer 3, built 2026-11-16; the grant still covers exactly the asked-for
  *   items). The selector's answer is re-read, not trusted, and policy and locality are re-checked synchronously immediately
  *   before every dispatch ({@link quarantinedSummarize}). No provider, an unverifiable constraint or a failed re-check is a
@@ -216,9 +217,10 @@ export function sealQuarantinedSummaryForTest(schema: AgentSummarySchemaId, labe
 declare const GRANT_BRAND: unique symbol;
 /**
  * Permission for ONE summarize step to send ONE source's `REMOTE_ON_SUMMARY_REQUEST` content to a model. An opaque branded value:
- * only the module-private {@link mintGrant} makes one. THIS SLICE BUILDS NO PRODUCER: how Core derives it (the owner's
- * non-quoted words, never a caller flag and never the planner's step) is an owner decision (DECISIONS P3-3b), so in production
- * {@link summaryGrantFor} is always `undefined`.
+ * only the module-private {@link mintGrant} makes one, and only {@link summaryGrantFor} calls it in production: when the
+ * owner's own words asked a summary of that source for that step (`summary-grant.ts`, the producer of the S2 wiring slice;
+ * P3-3b owner answer 2: never a caller flag and never the planner's step). The grant is keyed to the run token of one
+ * `execute` call.
  */
 export interface SummaryEgressGrant {
   readonly [GRANT_BRAND]: true;
@@ -245,9 +247,19 @@ function mintGrant(step: number, entryId: NlWave1EntryId, run: SummaryRunToken):
 
 let grantSource: ((step: number, entryId: NlWave1EntryId) => boolean) | undefined;
 
-/** The grant of one summarize step over one source, or `undefined` (always, in production: there is no producer). */
-export function summaryGrantFor(step: number, entryId: NlWave1EntryId, run: SummaryRunToken): SummaryEgressGrant | undefined {
-  return grantSource !== undefined && grantSource(step, entryId) ? mintGrant(step, entryId, run) : undefined;
+/**
+ * The grant of one summarize step over one source for this run, or `undefined`. In production it exists only when `owner` (the
+ * opaque basis `summary-grant.ts` derived from the owner's own words for exactly this validated plan) holds that step and
+ * source; a forged basis, a basis of another plan or none grants nothing.
+ */
+export function summaryGrantFor(
+  step: number,
+  entryId: NlWave1EntryId,
+  run: SummaryRunToken,
+  owner?: { readonly basis: SummaryGrantBasis | undefined; readonly plan: object },
+): SummaryEgressGrant | undefined {
+  const testAllows = grantSource !== undefined && grantSource(step, entryId);
+  return testAllows || ownerAskedSummary(owner?.basis, owner?.plan, step, entryId) ? mintGrant(step, entryId, run) : undefined;
 }
 
 /** TEST SEAM ONLY (throws outside the test runner): makes {@link summaryGrantFor} grant where `allow` says so (no argument restores production). */

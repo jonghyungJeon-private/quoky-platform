@@ -2,6 +2,7 @@ import { Capability, type Actor, type Id, type InboundQuotedRange, type IsoTimes
 import { CATALOG_FLOW_LABEL, OWNER_TEXT_FLOW_LABEL, PREVIOUS_SELECTION_FLOW_LABEL } from '../../domain/flow-label';
 import type { AiExecutionLocality, AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import type { ProviderSelector } from '../../ports/provider-selector.port';
 import { callUsageLogFields, type CallUsageLogFields } from '../call-usage-log-fields';
 import { containsCredentialMaterial } from '../credential-guard';
 import { NlActionSwitch, parseActionSwitchPhrase, readActionSwitch, type NlActionSwitchState } from '../nl-routing/action-switch';
@@ -12,10 +13,14 @@ import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf } from './flow-policy';
 import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
+import { AgentPlanExecutor, type AgentReadPorts } from './plan-executor';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan } from './plan-schema';
 import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext } from './plan-validator';
 import { agentReadWriteProbeClauses } from './read-write-probe';
-import { a6InPlanGuidance } from './reply-notes';
+import { assembleAgentReply, type AssembledAgentReply } from './reply-assembler';
+import { a6InPlanGuidance, type AgentStepsPlan } from './reply-notes';
+import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues } from './run-bounds';
+import { summaryGrantBasis } from './summary-grant';
 
 /**
  * ADR-0121 D1 / D7 (stage S2 P1): `AgentRunService`, the bounded read agent behind the `AgentProfile` id
@@ -29,8 +34,13 @@ import { a6InPlanGuidance } from './reply-notes';
  *   content-free `agent_run.shadow` line is logged. **Zero connector reads and zero M2 calls**: this service has no
  *   connector, reader, writer, command runner, tool provider, memory or fetch dependency at all (its deps type below; an
  *   import-scan test pins it). It writes nothing but the owner's kill switch.
- * - `active` is refused at construction (`AGENT_MODE_ACTIVE_NOT_RELEASED`, the code-level release gate) until the
- *   ADR-0121 D11 gates pass (stage S2 P5).
+ * - `active` (the S2 wiring slice, {@link AgentRunService.runActive}): one bounded run of a validated multi-step read plan —
+ *   the planner (M1) charged on the run budget before step 1, the re-plan (M1') reserved explicitly, the executor over the
+ *   injected read ports, the summary grants derived from the owner's own words (`summary-grant.ts`), and the deterministic
+ *   reply assembler. A failure or a bound breach after planning ends in the assembler's deterministic partial reply, never a
+ *   retry. The release gate stays at startup (`agent-config.ts`, `AGENT_MODE_ACTIVE_NOT_RELEASED`) until the ADR-0121 D11
+ *   gates pass (stage S2 P5); the constructor refuses `active` without its read ports and M2 selector
+ *   (`AGENT_MODE_ACTIVE_UNWIRED`). No runtime dispatch calls it yet (P5: the single-M1 unification of S2 plan Q2).
  *
  * Shadow bounds: at most one job in flight (others are dropped), at most 30 started per rolling hour and 150 per rolling
  * day per actor (ADR-0121 D7), the whole job (provider resolution included) inside the selection bound, an AbortSignal
@@ -52,6 +62,13 @@ export const AGENT_PROFILE_ID = 'quoky.read-agent';
 export const AGENT_SHADOW_MAX_PER_HOUR = 30;
 export const AGENT_SHADOW_MAX_PER_DAY = 150;
 /**
+ * S2 plan Q7 (owner-approved defaults of 2026-10-20, recorded in the P1 note): at most 60 agent model calls per rolling hour per
+ * actor in `active` (M1, M1' and every M2 call; a run's budget gets only what the hour has left).
+ */
+export const AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR = 60;
+/** Review round 1 item 2: the fewest model calls an admitted run needs, the planner (M1) and the re-plan slot (M1'). */
+export const AGENT_ACTIVE_MIN_MODEL_CALLS = 2;
+/**
  * The bound of a shadow job when none is configured: the ADR-0120 A3 selection bound, 10 s since the owner decision of
  * 2026-10-28 (the planner shares the selector's capability at high effort). The app passes the configured selection bound.
  */
@@ -61,8 +78,10 @@ export const AGENT_SHADOW_LOG_EVENT = 'agent_run.shadow';
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
+export const AGENT_ACTIVE_LOG_EVENT = 'agent_run.active';
+
 export class AgentModeError extends Error {
-  constructor(readonly code: 'AGENT_MODE_ACTIVE_NOT_RELEASED') {
+  constructor(readonly code: 'AGENT_MODE_ACTIVE_NOT_RELEASED' | 'AGENT_MODE_ACTIVE_UNWIRED') {
     super(code);
     this.name = 'AgentModeError';
   }
@@ -100,6 +119,35 @@ export interface AgentShadowTurn {
   readonly live: AgentShadowLive;
 }
 
+/** One owner turn for an `active` run (the same snapshot a shadow job takes, plus the session for M2's owner policy). */
+export interface AgentActiveTurn {
+  readonly text: string;
+  readonly attachmentCount: number;
+  readonly quotedRanges?: readonly InboundQuotedRange[];
+  readonly actor: Actor;
+  readonly now: IsoTimestamp;
+  /** The entries offered this turn; the planner sees the READ ones only. */
+  readonly entries: readonly NlCatalogEntry[];
+  /** The previous selection as structure only (the turn's snapshot). */
+  readonly previous?: { readonly entryId: NlWave1EntryId; readonly args: NlArgs };
+  readonly direct: boolean;
+  /** The conversation session: M2's base selection context (the owner's session-scoped policy), data only. */
+  readonly sessionId?: Id;
+}
+
+/**
+ * What an `active` turn came to (closed values only):
+ * - `reply`: a validated multi-step `run` plan was executed; the reply is the assembler's (complete or partial);
+ * - `one-step`: a validated one-step read plan. S2 plan Q2 gives it to the existing selection path unchanged; that dispatch is
+ *   stage P5 and is not wired here;
+ * - `declined`: nothing ran (not admitted, the kill switch, a cap, the egress or canary rule, the planner failed or timed out,
+ *   or the plan is `none`, a question, a refusal, a help split or leaves a write clause). The reason is a closed value.
+ */
+export type AgentActiveOutcome =
+  | { readonly kind: 'reply'; readonly reply: AssembledAgentReply; readonly outcome: 'complete' | 'partial'; readonly breach?: AgentBoundKind; readonly stopped?: true }
+  | { readonly kind: 'one-step'; readonly plan: AgentStepsPlan }
+  | { readonly kind: 'declined'; readonly reason: string };
+
 export interface AgentRunServiceDeps {
   readonly mode: AgentMode;
   /** The capability router; the service asks it for `INTENT_SELECTION` only. */
@@ -115,6 +163,24 @@ export interface AgentRunServiceDeps {
   readonly elapsed?: () => number;
   /** Tests only: other per-actor caps. */
   readonly caps?: { readonly perHour?: number; readonly perDay?: number };
+  /**
+   * `active` only (S2 wiring slice): the narrow read ports by catalog read entry, built by the composition root. An entry with
+   * no port is `not-run` (`no-reader`) for the run.
+   */
+  readonly readers?: AgentReadPorts;
+  /** `active` only: M2's route, the existing provider selector (ADR-0121 D12; no model list, no new port). */
+  readonly summarizer?: ProviderSelector;
+  /**
+   * Tests only: tighter run-bound values. Each is clamped to the ratified {@link AGENT_RUN_BOUNDS} value (`min`), so a
+   * caller can only lower a bound, never raise one (review round 1 item 5).
+   */
+  readonly bounds?: Partial<AgentRunBoundValues>;
+  /**
+   * `active` only: the stage S2 P5 release, set by the composition root only once the D11 gates passed. Absent or `false`, the
+   * constructor refuses `active` (`AGENT_MODE_ACTIVE_UNWIRED`): the second layer behind the startup release gate
+   * (`agent-config.ts`), so a config change alone can never build an `active` service (review round 1 item 5).
+   */
+  readonly released?: boolean;
 }
 
 type ShadowOutcome = 'planned' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
@@ -136,10 +202,18 @@ export class AgentRunService {
   /** CA P3 6: drop times per live origin (grammar vs selection), for the content-free `originDropsLastHour` count. */
   private readonly drops: Record<'grammar' | 'selection', number[]> = { grammar: [], selection: [] };
   private readonly killSwitch: NlActionSwitch;
+  /** `active`: model calls charged per actor, as (time, count), for the rolling-hour cap of S2 plan Q7. */
+  private readonly modelCalls = new Map<Id, Array<{ readonly at: number; count: number }>>();
+  /** `active`: the actors with a run in flight (one at a time per actor, as shadow keeps one job in flight). */
+  private readonly activeInFlight = new Set<Id>();
 
   constructor(private readonly deps: AgentRunServiceDeps) {
-    // The code-level release gate (ADR-0121 S2 note): `active` exists only after the D11 gates (stage S2 P5).
-    if (deps.mode === 'active') throw new AgentModeError('AGENT_MODE_ACTIVE_NOT_RELEASED');
+    // The release gate is at startup (`agent-config.ts`, until the D11 gates and stage S2 P5). Here, the second layer: `active`
+    // needs the explicit P5 release and its wiring, the read ports and M2's selector (fail closed: never an `active` service
+    // that is not released or cannot read or route M2).
+    if (deps.mode === 'active' && (deps.released !== true || deps.readers === undefined || deps.summarizer === undefined)) {
+      throw new AgentModeError('AGENT_MODE_ACTIVE_UNWIRED');
+    }
     this.mode = deps.mode;
     this.killSwitch = new NlActionSwitch({ actors: deps.actors, logger: deps.logger });
   }
@@ -215,6 +289,233 @@ export class AgentRunService {
         this.background.signal.removeEventListener('abort', stop);
       });
     return this.lastShadowRun;
+  }
+
+  /**
+   * ADR-0121 S2 wiring slice: one bounded `active` run for an owner DM turn. Total: never throws or rejects.
+   *
+   * 1. Admission: mode `active`, the owner's DM, no shutdown, one run in flight per actor, the per-actor caps (D7: 30 an hour,
+   *    150 a day; shared with shadow) and S2 plan Q7 (60 agent model calls per rolling hour: at least 2 left, M1 and M1'; the
+   *    run's model-call bound is what the hour has left, charged in full at admission and trued down when the run ends).
+   * 2. The kill switch on the LIVE actor (fail closed: an unreadable switch declines).
+   * 3. The planner exactly as the shadow job prepares it: the D3 input preparation, the pre-egress credential guard, the
+   *    ADR-0120 D6/D8 provider family and locality rule, the D4 label rule and the canary check. The kill switch is read again
+   *    right before the planner is dispatched (nothing awaits in between). Its call and its prompt bytes
+   *    are charged on the run's budget BEFORE it is sent (D3/D7 amendment wiring requirement), inside the selection bound and
+   *    the run's wall.
+   * 4. A validated multi-step `run` plan only. The re-plan (M1', built but off, S2 plan Q12) is reserved explicitly before step
+   *    1, so the summaries plan within what the run has left (8 model calls = M1 + M1' + 6 M2).
+   * 5. The executor (the kill switch re-read before every step within the wall; shutdown cuts the run; the summary grants from
+   *    the owner's own words), then the
+   *    deterministic assembler. Any failure or bound breach is the assembler's partial reply; nothing is retried.
+   *
+   * One content-free {@link AGENT_ACTIVE_LOG_EVENT} line per call.
+   */
+  async runActive(
+    turn: AgentActiveTurn,
+    resolveChat: () => Promise<{ readonly id: string; readonly locality: AiExecutionLocality } | undefined>,
+  ): Promise<AgentActiveOutcome> {
+    const clock = this.deps.elapsed ?? Date.now;
+    const startedMs = safeClock(clock);
+    const latency = (): number => Math.max(0, safeClock(clock) - startedMs);
+    const declined = (reason: string, fields: LogFields = {}): AgentActiveOutcome => {
+      this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'declined', reason, ...fields, latencyMs: latency() });
+      return { kind: 'declined', reason };
+    };
+    try {
+      if (this.mode !== 'active') return { kind: 'declined', reason: 'not-active' };
+      if (!turn.direct) return declined('not-dm');
+      if (this.background.signal.aborted) return declined('shutdown');
+      const readers = this.deps.readers;
+      const selector = this.deps.summarizer;
+      if (readers === undefined || selector === undefined) return declined('unwired');
+      // One run in flight per actor (review round 1 item 3): a concurrent turn never adds a second run's model calls.
+      if (this.activeInFlight.has(turn.actor.id)) return declined('in-flight');
+      // D7 per-actor caps (a run counts when it is admitted; the same rolling windows as shadow).
+      const starts = (this.starts.get(turn.actor.id) ?? []).filter((at) => startedMs - at < DAY_MS);
+      this.starts.set(turn.actor.id, starts);
+      const perHour = this.deps.caps?.perHour ?? AGENT_SHADOW_MAX_PER_HOUR;
+      const perDay = this.deps.caps?.perDay ?? AGENT_SHADOW_MAX_PER_DAY;
+      if (starts.filter((at) => startedMs - at < HOUR_MS).length >= perHour) return declined('hourly-cap');
+      if (starts.length >= perDay) return declined('daily-cap');
+      // S2 plan Q7: what the rolling hour has left of 60 agent model calls. A run needs its planner call AND the re-plan slot
+      // reserved before step 1 (review round 1 item 2): with fewer than 2 left it is declined here, never started.
+      const calls = (this.modelCalls.get(turn.actor.id) ?? []).filter((entry) => startedMs - entry.at < HOUR_MS);
+      this.modelCalls.set(turn.actor.id, calls);
+      const hourLeft = AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR - calls.reduce((sum, entry) => sum + entry.count, 0);
+      if (hourLeft < AGENT_ACTIVE_MIN_MODEL_CALLS) return declined('model-hourly-cap');
+      const bounds = clampedBounds(this.deps.bounds);
+      const maxModelCalls = Math.min(bounds.maxModelCalls, hourLeft);
+      // Admission charges the run's whole model-call bound at once, synchronously with the checks above (review round 1 item
+      // 3); `finally` trues it down to the calls the run actually reserved.
+      starts.push(startedMs);
+      const charged = { at: startedMs, count: maxModelCalls };
+      calls.push(charged);
+      this.activeInFlight.add(turn.actor.id);
+      let budget: AgentRunBudget | undefined;
+      try {
+        budget = new AgentRunBudget(clock, { ...bounds, maxModelCalls });
+        return await this.admitted(turn, resolveChat, budget, readers, selector, declined, latency);
+      } finally {
+        this.activeInFlight.delete(turn.actor.id);
+        charged.count = budget === undefined ? 0 : safeModelCalls(budget);
+      }
+    } catch (error) {
+      this.log('warn', 'agent_run.active_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return { kind: 'declined', reason: 'failed' };
+    }
+  }
+
+  /** {@link runActive} once admitted (the run is charged and in flight; the caller trues the charge down). */
+  private async admitted(
+    turn: AgentActiveTurn,
+    resolveChat: () => Promise<{ readonly id: string; readonly locality: AiExecutionLocality } | undefined>,
+    budget: AgentRunBudget,
+    readers: AgentReadPorts,
+    selector: ProviderSelector,
+    declined: (reason: string, fields?: LogFields) => AgentActiveOutcome,
+    latency: () => number,
+  ): Promise<AgentActiveOutcome> {
+    // Review round 2 item 2: every await before the planner dispatch is raced against the run's wall and shutdown, so a hung
+    // switch read, chat resolution or router never holds the actor's slot or the hour's charge.
+    const cut = (ended: 'wall' | 'shutdown' | 'failed'): AgentActiveOutcome =>
+      ended === 'wall' ? declined('bound', { breach: budget.breach ?? 'wall-time' }) : declined(ended);
+    // The kill switch on the live actor (never the turn's snapshot); unreadable = declined (fail closed).
+    const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
+    if (running.kind !== 'ok') return cut(running.kind);
+    if (!running.value) return declined('kill-switch');
+
+    const prepared = prepareSelectionInput(turn.text, turn.attachmentCount, turn.quotedRanges ?? []);
+    if ('skip' in prepared) return declined(prepared.skip);
+    const previousStrings = turn.previous === undefined ? [] : Object.values(turn.previous.args).filter((value): value is string => typeof value === 'string');
+    if ([prepared.text, ...previousStrings].some((value) => containsCredentialMaterial(value))) return declined('credential');
+    const resolved = await withinRun(resolveChat, budget, this.background.signal);
+    if (resolved.kind !== 'ok') return cut(resolved.kind);
+    const chat = resolved.value;
+    if (chat === undefined) return declined('chat-provider-unknown');
+    const selected = await withinRun(
+      () => this.deps.router.select(Capability.INTENT_SELECTION).then((value): AiProvider | undefined => value, () => undefined),
+      budget,
+      this.background.signal,
+    );
+    if (selected.kind !== 'ok') return cut(selected.kind);
+    if (selected.value === undefined) return declined('no-provider');
+    const provider = selected.value;
+    const egress = nlSameEgress(provider, chat.id, chat.locality);
+    if (egress !== 'same') return declined(egress);
+    const flow = checkPlannerInputs([
+      { label: OWNER_TEXT_FLOW_LABEL },
+      { label: CATALOG_FLOW_LABEL },
+      ...(turn.previous !== undefined ? [{ label: PREVIOUS_SELECTION_FLOW_LABEL }] : []),
+    ]);
+    // A1-E1: a help clause asked with other reads is answered as its own section; that composition is stage P5.
+    const split = splitHelpClause(prepared, turn.entries);
+    if (split !== undefined) return declined('help-split');
+    const prompt = buildAgentPlanPrompt({ entries: turn.entries, text: prepared.text, ...(turn.previous !== undefined ? { previous: turn.previous } : {}) });
+    if (flow !== undefined || plannerPromptCanaryHit(prompt, untrustedCanariesOf(turn.text, turn.quotedRanges ?? []), prepared.groundingText)) return declined(flow ?? 'canary');
+    return await this.runPlanned(turn, prompt, provider, budget, readers, selector, prepared, declined, latency);
+  }
+
+  /** {@link runActive} from the planner charge on (the budget is this run's; the caller records its model calls). */
+  private async runPlanned(
+    turn: AgentActiveTurn,
+    prompt: string,
+    provider: AiProvider,
+    budget: AgentRunBudget,
+    readers: AgentReadPorts,
+    selector: ProviderSelector,
+    prepared: { readonly text: string; readonly groundingText: string },
+    declined: (reason: string, fields?: LogFields) => AgentActiveOutcome,
+    latency: () => number,
+  ): Promise<AgentActiveOutcome> {
+    // Review round 1 item 4: the kill switch re-read right before the planner is dispatched. From its answer to the dispatch
+    // below nothing awaits, so a stop that the read sees is never followed by a planner call. The read is raced against the
+    // wall and shutdown (review round 2 item 2).
+    const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
+    if (running.kind === 'wall') return declined('bound', { breach: budget.breach ?? 'wall-time' });
+    if (running.kind !== 'ok') return declined(running.kind);
+    if (!running.value) return declined('kill-switch');
+    if (this.background.signal.aborted) return declined('shutdown');
+    // D3/D7 amendment (wiring requirement): the planner call and its input are charged on THIS run's budget before step 1.
+    if (!budget.reserveModelCall('planner') || !budget.reserveInputTokens(utf8Bytes(prompt))) return declined('bound', { breach: budget.breach ?? 'unknown' });
+    const timeoutMs = Math.max(1, Math.min(this.deps.timeoutMs ?? AGENT_SHADOW_DEFAULT_TIMEOUT_MS, budget.remainingMs()));
+    const planned = await callWithin(provider, prompt, timeoutMs, this.background.signal);
+    const callFields: LogFields = { ...callUsageLogFields(prompt, planned.kind === 'ok' ? planned.usage : undefined) };
+    if (planned.kind === 'timeout') return declined('timeout', callFields);
+    if (planned.kind === 'failed') return declined('failed', callFields);
+    if (!budget.checkWall()) return declined('bound', { breach: budget.breach ?? 'wall-time', ...callFields });
+    const plan = parseAgentPlanOutput(planned.text);
+    if (plan === null) return declined('malformed', { parse: agentPlanParseFailure(planned.text) ?? 'unknown', ...callFields });
+    const offered = new Map(turn.entries.filter((entry) => entry.risk === 'READ').map((entry) => [entry.id, entry] as const));
+    const validation = validateAgentPlan(plan, {
+      offered,
+      groundingText: prepared.groundingText,
+      ...(turn.previous !== undefined ? { previousArgs: turn.previous.args, previousEntryId: turn.previous.entryId } : {}),
+      now: turn.now,
+      timeZone: this.deps.timeZone,
+      direct: turn.direct,
+    });
+    if (!validation.ok) return declined('refused', { validator: validation.reason, ...callFields });
+    const validated = validation.plan;
+    if (validated.kind === 'none') return declined(validated.reason ?? 'none', callFields);
+    if (validated.kind === 'ask' || validated.kind === 'clarify') return declined(validated.kind, callFields);
+    // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the
+    // read + write composition is stage P5, so the run never drops it silently.
+    if (agentReadWriteProbeClauses(validated, prepared.groundingText).length > 0) return declined('write-clause', callFields);
+    if (validated.steps.length === 1) {
+      this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'one-step', entries: activeEntries(validated), ...callFields, latencyMs: latency() });
+      return { kind: 'one-step', plan: validated };
+    }
+
+    // M1' (built but off, S2 plan Q12): its one slot is reserved explicitly before step 1, never taken from M2's share later.
+    // Admission keeps at least 2 calls for the run, so a refusal here is a breach (the wall): declined, no step runs.
+    if (!budget.reserveModelCall('replan')) return declined('bound', { breach: budget.breach ?? 'unknown', ...callFields });
+    const executor = new AgentPlanExecutor({
+      readers,
+      logger: this.deps.logger,
+      summarizer: { selector, selectionContext: { ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}), actorId: turn.actor.id } },
+    });
+    const result = await executor.execute(validated, {
+      budget,
+      // Core's producer: the owner's own words (quoted and pasted text excluded) decide each summary step's grant per source.
+      grants: summaryGrantBasis(validated, prepared),
+      stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+      // Shutdown cuts the run: no later step starts and the calls in flight are aborted (review round 1 item 5).
+      signal: this.background.signal,
+    });
+    const reply = assembleAgentReply({ plan: validated, result, language: languageOf(turn.text), destinationIsOwnerDm: turn.direct, logger: this.deps.logger });
+    this.log('info', AGENT_ACTIVE_LOG_EVENT, {
+      mode: 'active',
+      outcome: 'reply',
+      run: result.outcome,
+      ...(result.breach !== undefined ? { breach: result.breach } : {}),
+      ...(result.stopped === true ? { stopped: true } : {}),
+      steps: result.steps.length,
+      entries: activeEntries(validated),
+      modelCalls: result.usage.modelCalls,
+      m2Calls: result.usage.m2Calls,
+      connectorQueries: result.usage.connectorQueries,
+      inputTokens: result.usage.inputTokens,
+      ...callFields,
+      latencyMs: latency(),
+    });
+    return {
+      kind: 'reply',
+      reply,
+      outcome: result.outcome,
+      ...(result.breach !== undefined ? { breach: result.breach } : {}),
+      ...(result.stopped === true ? { stopped: true as const } : {}),
+    };
+  }
+
+  /** The persisted kill switch on the live actor: `true` only when it reads `running` (a throw or no actor is a stop). */
+  private async liveSwitchRunning(actorId: Id): Promise<boolean> {
+    try {
+      const live = await this.deps.actors.get(actorId);
+      return live !== null && this.switchState(live) === 'running';
+    } catch {
+      return false;
+    }
   }
 
   /** Shutdown: abort a shadow job in flight (its provider call gets the signal) and refuse later ones. Idempotent. */
@@ -491,6 +792,133 @@ async function withTimeout<T>(task: Promise<T>, timeoutMs: number, signal: Abort
     return await Promise.race([task, timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** The closed entry ids of a validated plan (`summarize:<schema>` for a summary): never an argument. */
+function activeEntries(plan: AgentStepsPlan): string {
+  return plan.steps.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');
+}
+
+/** The prompt's UTF-8 byte length: the run's input bound unit (D7 as amended 2026-11-16; a true upper bound of tokens). */
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+function safeClock(clock: () => number): number {
+  try {
+    const now = clock();
+    return Number.isFinite(now) ? now : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * One pre-dispatch await that cannot outlive the run's wall or the shutdown (review round 2 item 2; the executor's
+ * `stillRunningWithinWall` pattern): `wall` (with the wall breach marked) when the wall ends first, `shutdown` when the
+ * service stops first, `failed` on a throw or rejection. Never rejects; its timer and listener are always removed.
+ */
+async function withinRun<T>(
+  work: () => Promise<T>,
+  budget: AgentRunBudget,
+  shutdown: AbortSignal,
+): Promise<{ readonly kind: 'ok'; readonly value: T } | { readonly kind: 'wall' | 'shutdown' | 'failed' }> {
+  if (shutdown.aborted) return { kind: 'shutdown' };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stop: (() => void) | undefined;
+  const cut = new Promise<{ readonly kind: 'wall' | 'shutdown' }>((resolve) => {
+    timer = setTimeout(() => {
+      try {
+        budget.markBreach('wall-time');
+      } catch {
+        // A budget that throws is still a wall.
+      }
+      resolve({ kind: 'wall' });
+    }, Math.max(1, remainingOrZero(budget)));
+    stop = () => resolve({ kind: 'shutdown' });
+    shutdown.addEventListener('abort', stop, { once: true });
+  });
+  try {
+    const done = Promise.resolve()
+      .then(work)
+      .then(
+        (value) => ({ kind: 'ok' as const, value }),
+        () => ({ kind: 'failed' as const }),
+      );
+    return await Promise.race([done, cut]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (stop !== undefined) shutdown.removeEventListener('abort', stop);
+  }
+}
+
+function remainingOrZero(budget: AgentRunBudget): number {
+  try {
+    return budget.remainingMs();
+  } catch {
+    return 0;
+  }
+}
+
+/** One planner call that cannot outlive `timeoutMs` or the shutdown signal; never rejects. */
+async function callWithin(
+  provider: AiProvider,
+  prompt: string,
+  timeoutMs: number,
+  shutdown: AbortSignal,
+): Promise<{ readonly kind: 'ok'; readonly text: string; readonly usage: Parameters<typeof callUsageLogFields>[1] } | { readonly kind: 'timeout' } | { readonly kind: 'failed' }> {
+  const controller = new AbortController();
+  const stop = (): void => controller.abort();
+  shutdown.addEventListener('abort', stop, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ readonly kind: 'timeout' }>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ kind: 'timeout' });
+    }, timeoutMs);
+    controller.signal.addEventListener('abort', () => resolve({ kind: 'timeout' }), { once: true });
+  });
+  try {
+    // Dispatched synchronously (a sync throw is a failure), so no await sits between the caller's switch read and the call.
+    let started: Promise<Awaited<ReturnType<AiProvider['execute']>>>;
+    try {
+      started = Promise.resolve(provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal: controller.signal }));
+    } catch (error) {
+      started = Promise.reject(error);
+    }
+    const call = started
+      .then(
+        (result) => ({ kind: 'ok' as const, text: result.text, usage: result.usage }),
+        () => ({ kind: 'failed' as const }),
+      );
+    return await Promise.race([call, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    shutdown.removeEventListener('abort', stop);
+    controller.abort();
+  }
+}
+
+/**
+ * The run bounds for `active`: each injected value lowered to at most the ratified one (`min`); a missing or non-finite
+ * value is the ratified one. Never raises a bound.
+ */
+function clampedBounds(bounds: Partial<AgentRunBoundValues> | undefined): AgentRunBoundValues {
+  const out: Record<string, number> = { ...AGENT_RUN_BOUNDS };
+  for (const key of Object.keys(AGENT_RUN_BOUNDS) as (keyof AgentRunBoundValues)[]) {
+    const value = bounds?.[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = Math.min(value, AGENT_RUN_BOUNDS[key]);
+  }
+  return out as unknown as AgentRunBoundValues;
+}
+
+/** The model calls a budget reserved (0 when its snapshot throws). */
+function safeModelCalls(budget: AgentRunBudget): number {
+  try {
+    return budget.snapshot().modelCalls;
+  } catch {
+    return 0;
   }
 }
 
