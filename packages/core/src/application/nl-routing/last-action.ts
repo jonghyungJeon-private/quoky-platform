@@ -95,11 +95,12 @@ export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calend
  * (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`). `calendar-update` (O2) and `calendar-delete` (O3/O6/O7) passed their
  * own gate 2026-11-16 (`agent-redteam.r3-undo.v2.json`, `apps/quoky/src/nl-r3-undo-v2-redteam.app.test.ts`, counts in
  * DECISIONS); `jira-comment` (O4) and `jira-transition` (O5) passed theirs 2026-11-16 (same v2 file and driver: 32 + 36
- * cases x 2 variants x 3 runs, 0 / 0); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
+ * cases x 2 variants x 3 runs, 0 / 0); `slack-post` (ADR-0112 amendment 1 S-1..S-6 under amendment 3) passed its gate
+ * 2026-11-16 (same v2 file and driver: 36 cases x 2 variants x 3 runs, 0 / 0); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
  * when its own slice passes its own gate and adds it here. Reachable only while connector writes are enabled and the
  * family's writer is bound; with the writer off the undo answers its fixed unavailable text.
  */
-export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition'] as ExternalUndoFamily[]);
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition', 'slack-post'] as ExternalUndoFamily[]);
 
 let activeCapabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES;
 

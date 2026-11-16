@@ -173,8 +173,8 @@ describe('R3 calendar-update / calendar-delete / Jira comment / Jira transition 
   let eventSeq = 0;
   let seq = 0;
   let setSeam: (families?: readonly ('calendar-create' | 'calendar-update' | 'calendar-delete' | 'jira-comment' | 'jira-transition' | 'slack-post')[]) => void;
-  /** The gate state: the production constant with `slack-post` opened through the seam until its own switch-on commit. */
-  let gateState: () => void = () => undefined;
+  /** The gate state: the production constant, no seam override. */
+  const gateState = (): void => setSeam();
   /** The Jira test issue of the current case and its state outside Quoky. */
   const jira = {
     issue: `${JIRA_PROJECT}-1`,
@@ -473,14 +473,10 @@ describe('R3 calendar-update / calendar-delete / Jira comment / Jira transition 
     const actor = await storage.actors.findByExternalIdentity('discord', OWNER);
     if (actor === null) throw new Error('owner actor missing');
     owner = actor;
-    setSeam(); // production state: the shipped constant, no seam override
-    if (JSON.stringify(core.activeExternalUndoCapabilities()) !== JSON.stringify(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition'])) {
-      throw new Error('the production constant must open calendar-update, calendar-delete, jira-comment and jira-transition for this gate');
+    gateState(); // production state: the shipped constant, no seam override
+    if (JSON.stringify(core.activeExternalUndoCapabilities()) !== JSON.stringify(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition', 'slack-post'])) {
+      throw new Error('the production constant must open calendar-update, calendar-delete, jira-comment, jira-transition and slack-post for this gate');
     }
-    // ADR-0112 amendment 1 under amendment 3: until its switch-on commit, slack-post is opened for the gate through the seam on
-    // top of the production constant (and only that).
-    gateState = () => setSeam([...core.EXTERNAL_UNDO_CAPABILITIES, 'slack-post']);
-    gateState();
   }, 120_000);
 
   afterAll(async () => {
