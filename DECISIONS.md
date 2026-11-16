@@ -31996,6 +31996,26 @@ and D9 still governs every turn that goes to chat.
 - **Result.** PASS. Chief Architect (code APPROVE after round 2), Codex PASS (round 3 delta), security review APPROVE,
   full suite 19,009 passed.
 
+### Implementation note (amendment 3, restore-duplicate fix, 2026-11-16)
+
+- **Live finding (2026-11-16, after the calendar Live UAT).** Event deleted -> restored (`일정 복원 실행`) -> deleted again (the
+  cleanup delete) -> "되돌려줘" answered "같은 대상에 같은 내용의 캘린더 일정 복원을 이미 실행했어요 … 다시 실행하지 않았어요". The
+  restore payload (`eventId` + the delete's own shape) carried no identity of the delete it undid, so its hash equalled the
+  first restore's and `findLatestSent` (connector, operation, target, payload hash) treated the second, legitimate restore as a
+  replay. Fail-safe (nothing written) but wrong.
+- **Fix (structural).** Every undo payload carries `undoes`: the id of the ONE source receipt it inverts (restore, the
+  create-undo delete and the update-undo patch alike; the Jira undo payloads of this branch too). It is part of the hashed
+  payload and never sent to a writer. A new delete therefore yields a new restore identity; a replay of the same undo (same
+  approval: `repeat`; the same source receipt proposed again: its own SENT receipt matches, `already-sent`) is still refused.
+  Execution additionally requires `payload.undoes === anchor.undoOf.receiptId` (an undo anchor without it, or a plain write
+  carrying one, is `binding-mismatch`, nothing sent). The create-undo and update-undo payloads were not observed to collide
+  (both already bind Quoky's own post-write version, unique per write); they gain `undoes` for one uniform rule. An undo card
+  approved before this change (open at deploy, at most 30 minutes) fails closed.
+- **Tests.** `connector-write-calendar-change-undo.test.ts`: delete -> restore -> delete -> undo previews a new restore bound to
+  the new delete receipt and restores again; the same approval replayed is `repeat`; the same source receipt re-proposed is
+  `already-sent`; a payload naming another receipt than its undo link never executes. Red-team v1 (36) and v2 (68) still 0 / 0
+  over 3 runs each.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through

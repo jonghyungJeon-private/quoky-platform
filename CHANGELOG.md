@@ -8,6 +8,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — calendar write grammar keeps the owner's own title words
 
 - **Fixed.** A calendar create whose title came before the duration ("… 시험 일정 30분짜리 추가해줘") no longer previews 제목 "일정"; an unquoted title in an update / delete ("내일 … 시험 일정 삭제해줘") now narrows the candidates (every-word, lower-cased) instead of listing the whole day. Core-only, no prompt change. DECISIONS ADR-0110 amendment implementation note (2026-11-16).
+## Unreleased — ADR-0112 amendment 3: undo payloads bound to their source receipt (restore-duplicate fix)
+
+- **Fixed.** Delete -> restore -> delete again -> "되돌려줘" was refused as "이미 실행했어요": the restore payload had no identity of the delete it undid. Every undo payload now carries `undoes` (the source receipt id, hashed, never sent), so a new delete gets a new restore while a replay of the same undo is still refused; execution checks it against `undoOf.receiptId`. DECISIONS ADR-0112 amendment 3 implementation note (restore-duplicate fix).
 
 ## Unreleased — ADR-0112 amendment 3: calendar-update undo and calendar-delete restore
 

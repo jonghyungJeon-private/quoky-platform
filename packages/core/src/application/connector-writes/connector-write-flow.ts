@@ -150,10 +150,21 @@ export type ConnectorWritePayload =
       readonly eventId: string;
       readonly expected: CalendarEventExpectation;
       readonly changes: CalendarEventChanges;
+      /** An undo only: the id of the source receipt it undoes (see {@link ConnectorWriteUndoBinding}). */
+      readonly undoes?: Id;
     }
-  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly eventId: string; readonly expected: CalendarEventExpectation }
+  | { readonly operation: 'CALENDAR_EVENT_DELETE'; readonly eventId: string; readonly expected: CalendarEventExpectation; readonly undoes?: Id }
   /** ADR-0112 amendment 3 (O3): restore the same event an approved delete removed (only ever an undo; never owner-worded). */
-  | { readonly operation: 'CALENDAR_EVENT_RESTORE'; readonly eventId: string; readonly expected: CalendarEventRestoreExpectation };
+  | { readonly operation: 'CALENDAR_EVENT_RESTORE'; readonly eventId: string; readonly expected: CalendarEventRestoreExpectation; readonly undoes: Id };
+
+/**
+ * ADR-0112 amendment 3 (restore-duplicate fix, 2026-11-16): every undo payload carries `undoes`, the id of the ONE source
+ * receipt it is the inverse of. It is part of the hashed payload (never sent to a writer), so the at-most-once identity of an
+ * undo (`findLatestSent` over connector, operation, target and payload hash) is per source write: a NEW delete of the same event
+ * yields a NEW restore, while a replay of the same undo (same source receipt) still matches its own SENT receipt and is refused.
+ * Execution requires `undoes` to equal the anchor's `undoOf.receiptId`.
+ */
+export type ConnectorWriteUndoBinding = { readonly undoes: Id };
 
 /** What the deterministic preview shows (the payload plus display-only facts). */
 export type ConnectorWritePreview =
@@ -1513,7 +1524,10 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       connectorWritePayloadSha256(operation, target, sendableOf(payload)) !== payloadSha256 ||
       !this.stillAllowed(payload) ||
       // A restore is only ever the undo of this actor's own approved delete: without that link it never runs.
-      (payload.operation === 'CALENDAR_EVENT_RESTORE' && anchor.undoOf?.family !== 'calendar-delete')
+      (payload.operation === 'CALENDAR_EVENT_RESTORE' && anchor.undoOf?.family !== 'calendar-delete') ||
+      // An undo is bound to the ONE source receipt it undoes (restore-duplicate fix): the payload's `undoes` and the anchor's
+      // link must name the same receipt; an undo anchor without it (or a plain write carrying one) never runs.
+      !undoBindingHolds(anchor, payload)
     ) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
@@ -1776,7 +1790,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       'calendar',
       writer.source,
       `${writer.target}/${eventId}`,
-      { operation: 'CALENDAR_EVENT_DELETE', eventId, expected },
+      { operation: 'CALENDAR_EVENT_DELETE', eventId, expected, undoes: resolved.receipt.id },
       {
         operation: 'CALENDAR_EVENT_DELETE',
         before: summary,
@@ -1832,7 +1846,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       'calendar',
       writer.source,
       `${writer.target}/${eventId}`,
-      { operation: 'CALENDAR_EVENT_UPDATE', eventId, expected, changes: inverse },
+      { operation: 'CALENDAR_EVENT_UPDATE', eventId, expected, changes: inverse, undoes: resolved.receipt.id },
       {
         operation: 'CALENDAR_EVENT_UPDATE',
         before: now,
@@ -1894,7 +1908,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       'calendar',
       writer.source,
       `${writer.target}/${eventId}`,
-      { operation: 'CALENDAR_EVENT_RESTORE', eventId, expected },
+      { operation: 'CALENDAR_EVENT_RESTORE', eventId, expected, undoes: resolved.receipt.id },
       {
         operation: 'CALENDAR_EVENT_RESTORE',
         before: shown.before,
@@ -2248,7 +2262,14 @@ function taskStatusOf(status: ConnectorWriteAnchorStatus): TaskStatus {
   }
 }
 
-/** The part of a payload the writer receives (the hash covers exactly this). */
+/** Whether an anchor's payload and its undo link name the same source receipt (or neither is an undo). */
+function undoBindingHolds(anchor: ConnectorWriteAnchor, payload: ConnectorWritePayload): boolean {
+  const undoes = 'undoes' in payload ? payload.undoes : undefined;
+  if (anchor.undoOf === undefined) return undoes === undefined;
+  return typeof undoes === 'string' && undoes.length > 0 && undoes === anchor.undoOf.receiptId;
+}
+
+/** The hashed part of a payload: everything but the operation (an undo's `undoes` is hashed, never sent to a writer). */
 function sendableOf(payload: ConnectorWritePayload): unknown {
   const { operation: _operation, ...rest } = payload;
   return rest;

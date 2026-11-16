@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0112 amendment 3: restore-duplicate fix (2026-11-16, branch `claude/v5-r3-jira-undo`)
+
+- A second delete of an event Quoky had restored can be restored again: undo payloads are bound to their source receipt (`undoes`), so the at-most-once identity is per undone write; a replay of the same undo is still refused.
+
 ### Calendar write grammar: owner's own title words (2026-11-16, branch `claude/v5-cal-title`)
 
 - Create titles written before a duration/range and unquoted update/delete title words are now taken from the owner's residual span (`calendar-write-request.ts`); zero matches stay `event-not-found`. Core-only, selector prompt unchanged (no D12 gate). Particles beyond trailing 을/를 are not stripped.
