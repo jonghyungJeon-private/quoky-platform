@@ -43,6 +43,32 @@ describe('parseAgentConfig', () => {
     expect(parseAgentConfig({ QUOKY_EGRESS_GUARD: 'off' })).toEqual({ mode: 'off' });
   });
 
+  it('review round 1 item 5: the parser never returns active today, for any combination of the three variables', () => {
+    const values = [undefined, '', 'off', 'shadow', 'active', 'enforce', 'observe', 'ACTIVE', ' active'];
+    let returned = 0;
+    for (const agent of values) {
+      for (const nl of values) {
+        for (const guard of values) {
+          const env = {
+            ...(agent !== undefined ? { QUOKY_AGENT_MODE: agent } : {}),
+            ...(nl !== undefined ? { QUOKY_NL_INTENT_MODE: nl } : {}),
+            ...(guard !== undefined ? { QUOKY_EGRESS_GUARD: guard } : {}),
+          };
+          let mode: string | undefined;
+          try {
+            mode = parseAgentConfig(env).mode;
+          } catch (error) {
+            expect(error).toBeInstanceOf(AgentConfigError);
+            continue;
+          }
+          returned += 1;
+          expect(mode, JSON.stringify(env)).not.toBe('active');
+        }
+      }
+    }
+    expect(returned).toBeGreaterThan(0);
+  });
+
   it('the egress refusal reaches the startup report as a value-free hint', () => {
     let caught: unknown;
     try {

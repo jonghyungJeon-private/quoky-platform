@@ -4,7 +4,8 @@ import { AGENT_RUNS, createAgentProviders, createAgentReadPorts, type AgentFeatu
 
 // ADR-0121 S2 wiring slice: the composition root builds the agent from the real collaborators. `off` and `shadow` are built as
 // before (no read port, no M2 route); `active` (never reached from the environment while the release gate stands) gets the
-// read ports and the existing router as M2's selector. The read ports are empty until the adapter slice.
+// read ports and the existing router as M2's selector, but no `released` flag until P5, so the constructor refuses it. The read
+// ports are empty until the adapter slice.
 
 const silent = { info: () => undefined, warn: () => undefined, error: () => undefined };
 const storage = { actors: { get: async () => null, save: async (actor: unknown) => actor } } as unknown as StorageProvider;
@@ -35,9 +36,10 @@ describe('createAgentProviders (S2 wiring slice)', () => {
     expect(selects).toEqual([]);
   });
 
-  it('active is built with the read ports and the router as M2 selector (the constructor refuses it otherwise)', () => {
-    const service = build('active', router);
-    expect(service.mode).toBe('active');
+  it('active is composed with the read ports and the router as M2 selector but never released before P5: the constructor refuses it', () => {
+    // Review round 1 item 5: the second layer behind the startup release gate. The composition never sets `released`, so even
+    // an `active` config that got past `agent-config.ts` builds no service (AGENT_MODE_ACTIVE_UNWIRED).
+    expect(() => build('active', router)).toThrow(expect.objectContaining({ code: 'AGENT_MODE_ACTIVE_UNWIRED' }));
     expect(() => new AgentRunService({ mode: 'active', router, actors: storage.actors, logger: silent, timeZone: 'Asia/Seoul' })).toThrow(AgentModeError);
   });
 

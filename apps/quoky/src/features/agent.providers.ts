@@ -58,6 +58,7 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
           timeZone: config.timeZone,
           timeoutMs: config.timeoutMs,
           logger,
+          // `released` is never set here before stage S2 P5: an `active` service is refused at construction (second layer).
           ...(config.agent.mode === 'active' ? { readers: createAgentReadPorts(), summarizer: router } : {}),
         });
       },
