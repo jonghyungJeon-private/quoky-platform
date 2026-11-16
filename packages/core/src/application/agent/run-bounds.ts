@@ -2,8 +2,10 @@
  * ADR-0121 D7 (stage S2 P3-3a): the run bounds of one bounded agent run, as one pure, deterministic budget.
  *
  * The numbers are ratified, not chosen here:
- * - D7 (DECISIONS.md, "7. D7 — Bounds and the kill switch"): per run, at most 6 steps, 1 re-plan, 10 connector calls, 5 model
- *   calls, 45 s of wall time and 40k input tokens; D3: at most 3 M2 (quarantined summariser) calls;
+ * - D7 (DECISIONS.md, "7. D7 — Bounds and the kill switch"), as amended by the owner on 2026-11-16 ("ADR-0121 D3/D7 amendment —
+ *   split M2 calls count, raised run caps"): per run, at most 6 steps, 1 re-plan, 10 connector calls, 8 model calls, 60 s of
+ *   wall time and 120k input tokens (a UTF-8 byte bound, which overcounts Korean 2–3×); D3 as amended: at most 6 M2
+ *   (quarantined summariser) calls, and every split M2 call of a remote batch counts toward them and toward the model calls;
  * - the D7 interpretation note of 2026-10-23: a "connector call" is one named port query, and the runtime ceiling is 50 HTTP
  *   requests per run (counted through the egress ledger).
  *
@@ -30,10 +32,10 @@ export const AGENT_RUN_BOUNDS: AgentRunBoundValues = Object.freeze({
   maxReplans: 1,
   maxConnectorQueries: 10,
   maxHttpRequests: 50,
-  maxModelCalls: 5,
-  maxM2Calls: 3,
-  wallMs: 45_000,
-  maxInputTokens: 40_000,
+  maxModelCalls: 8,
+  maxM2Calls: 6,
+  wallMs: 60_000,
+  maxInputTokens: 120_000,
   maxRefValues: 10,
 });
 
@@ -102,6 +104,15 @@ export class AgentRunBudget {
   /** Input tokens the run may still reserve (0 when spent). */
   remainingInputTokens(): number {
     return Math.max(0, this.bounds.maxInputTokens - this.inputTokens);
+  }
+
+  /**
+   * M2 calls the run may still start: the smaller of the M2 calls and the model calls left (0 once a bound is breached). A
+   * summary step plans its split calls against this up front, so an ordinary run never over-reserves into a breach.
+   */
+  remainingM2Calls(): number {
+    if (this.firstBreach !== undefined) return 0;
+    return Math.max(0, Math.min(this.bounds.maxM2Calls - this.m2Calls, this.bounds.maxModelCalls - this.modelCalls));
   }
 
   /** A step may start: a free step number within `maxSteps` and the wall and every earlier bound intact. */
