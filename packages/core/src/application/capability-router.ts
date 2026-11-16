@@ -1,6 +1,6 @@
 import { AiProviderError, NoProviderAvailableError } from '../errors';
 import { AiFailureKind, type Capability } from '../domain';
-import { declaresLocalExecution } from '../ports';
+import { allowedExecutionLocalitiesOf, fitsExecutionLocality } from './execution-locality-constraint';
 import type {
   AiProvider,
   ProviderPreference,
@@ -42,11 +42,13 @@ export class CapabilityRouter implements ProviderSelector {
    */
   async resolve(capability: Capability, context: ProviderSelectionContext = {}): Promise<ResolvedProviderSelection> {
     const preference = this.policy ? await this.policy.preferenceFor(capability, context) : null;
-    // ADR-0124 Part L C5a: under `requiredLocality` only providers that declare `LOCAL` are probed and ranked.
-    const local = context.requiredLocality === 'LOCAL';
-    const candidates = local
+    // ADR-0124 Part L C5a and ADR-0121 D12 (amended 2026-11-16): under a locality constraint (`requiredLocality`,
+    // `allowedExecutionLocalities`, or their intersection) only providers whose declared locality is allowed are probed and
+    // ranked; an empty or unverifiable set probes nothing.
+    const allowed = allowedExecutionLocalitiesOf(context);
+    const candidates = allowed !== undefined
       ? await this.manager.readyAmong(
-          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter(declaresLocalExecution),
+          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter((p) => fitsExecutionLocality(allowed, p)),
         )
       : preference === null
         ? await this.manager.availableFor(capability)
@@ -72,7 +74,8 @@ export class CapabilityRouter implements ProviderSelector {
    */
   isStillEligible(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean {
     if (!provider.capabilities.some((c) => c.capability === capability)) return false;
-    if (context.requiredLocality === 'LOCAL' && !declaresLocalExecution(provider)) return false;
+    const allowed = allowedExecutionLocalitiesOf(context);
+    if (allowed !== undefined && !fitsExecutionLocality(allowed, provider)) return false;
     const check = this.policy?.isEligible;
     if (check === undefined) return true;
     try {
