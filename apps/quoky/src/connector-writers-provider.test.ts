@@ -8,7 +8,7 @@ import {
   writeGoogleCalendarTokenFile,
 } from '@quoky/connector-calendar-google';
 import { JiraIssueCommentWriter, JiraIssueTransitionWriter } from '@quoky/connector-jira';
-import { SlackChannelWriter } from '@quoky/connector-slack';
+import { SlackChannelWriter, SlackMessageDeleteWriter } from '@quoky/connector-slack';
 import type { Logger } from '@quoky/core';
 
 import { loadConfig } from './config';
@@ -157,6 +157,10 @@ describe('createConnectorWriters (ADR-0112 D2/D4, ADR-0110 amendment; registrati
     expect(writers.issueComments).toBeInstanceOf(JiraIssueCommentWriter);
     expect(writers.issueTransitions).toBeInstanceOf(JiraIssueTransitionWriter);
     expect(writers.channelMessages).toBeInstanceOf(SlackChannelWriter);
+    // ADR-0112 amendment 1 (S8): the narrow delete writer is built with the post writer, from the same allowlist.
+    expect(writers.channelMessageDeletes).toBeInstanceOf(SlackMessageDeleteWriter);
+    expect(writers.channelMessageDeletes?.allowsChannelId('C0123ABCD9')).toBe(true);
+    expect(writers.channelMessageDeletes?.allowsChannelId('C9999ZZZZ9')).toBe(false);
     expect(writers.calendarEvents).toBeUndefined();
     expect(writers.issueComments?.allowsIssue('PROJ-1')).toBe(true);
     expect(writers.issueComments?.allowsIssue('OTHER-1')).toBe(false);
@@ -201,6 +205,9 @@ describe('createConnectorWriters (ADR-0112 D2/D4, ADR-0110 amendment; registrati
       status: 'NOT_SENT', reason: 'TARGET_NOT_ALLOWED',
     });
     expect(await writers.channelMessages?.post({ channel: '#general', text: 'hi' })).toMatchObject({
+      status: 'NOT_SENT', reason: 'TARGET_NOT_ALLOWED',
+    });
+    expect(await writers.channelMessageDeletes?.deleteMessage({ channelId: 'C9999ZZZZ9', ts: '1700000000.000100' })).toMatchObject({
       status: 'NOT_SENT', reason: 'TARGET_NOT_ALLOWED',
     });
     expect(noNetwork).not.toHaveBeenCalled();

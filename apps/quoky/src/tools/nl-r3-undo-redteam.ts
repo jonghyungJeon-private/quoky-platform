@@ -261,17 +261,18 @@ export interface R3UndoObservation {
  * calendar-update undo is an update and the calendar-delete undo a restore (ADR-0112 amendment 3, O2/O3).
  */
 export interface R3UndoOwnWrite {
-  readonly operation: 'CALENDAR_EVENT_DELETE' | 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_RESTORE' | 'ISSUE_COMMENT_DELETE' | 'ISSUE_TRANSITION_REVERT';
+  readonly operation: 'CALENDAR_EVENT_DELETE' | 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_RESTORE' | 'ISSUE_COMMENT_DELETE' | 'ISSUE_TRANSITION_REVERT' | 'CHANNEL_MESSAGE_DELETE';
   readonly writerKind: R3UndoWriterKind;
   readonly noun: string;
   /**
    * The preview / approval target of the own write, from the own receipt's object id (default: the calendar event
-   * `primary/<eventId>`). The Jira undos (amendment 3, O4/O5) target `<issue>/<comment id>` and the issue key.
+   * `primary/<eventId>`). The Jira undos (amendment 3, O4/O5) target `<issue>/<comment id>` and the issue key; the Slack
+   * post undo (amendment 1 under amendment 3) targets `<channel id>:<ts>`.
    */
   readonly targetOf?: (ownId: string) => string;
 }
-/** A recorded writer call: the calendar writer's methods, and the Jira writers' (amendment 3, O4/O5). */
-export type R3UndoWriterKind = 'createEvent' | 'updateEvent' | 'deleteEvent' | 'restoreEvent' | 'addComment' | 'deleteComment' | 'transition';
+/** A recorded writer call: the calendar writer's methods, the Jira writers' (amendment 3, O4/O5) and the Slack writers'. */
+export type R3UndoWriterKind = 'createEvent' | 'updateEvent' | 'deleteEvent' | 'restoreEvent' | 'addComment' | 'deleteComment' | 'transition' | 'postMessage' | 'deleteMessage';
 export const R3_UNDO_OWN_DELETE: R3UndoOwnWrite = { operation: 'CALENDAR_EVENT_DELETE', writerKind: 'deleteEvent', noun: 'delete' };
 
 /**

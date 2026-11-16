@@ -96,7 +96,9 @@ export type ExternalUndoDraftKind =
   /** ADR-0112 amendment 3 (O4): delete the comment Quoky added. */
   | 'jira-comment-undo'
   /** ADR-0112 amendment 3 (O5): revert Quoky's own transition. */
-  | 'jira-transition-undo';
+  | 'jira-transition-undo'
+  /** ADR-0112 amendment 1 (S1/S2) under amendment 3: delete the Slack message Quoky posted. */
+  | 'slack-post-undo';
 export interface ExternalUndoDraft {
   readonly kind: ExternalUndoDraftKind;
   readonly receiptId: Id;
@@ -116,6 +118,7 @@ export function connectorWriteFamilyOf(draft: ConnectorWriteDraft): ConnectorWri
     case 'jira-transition-undo':
       return 'issue-transition';
     case 'channel-post':
+    case 'slack-post-undo':
       return 'channel-post';
     case 'usage':
       return draft.topic === 'issue-comment' || draft.topic === 'issue-transition' || draft.topic === 'channel-post'

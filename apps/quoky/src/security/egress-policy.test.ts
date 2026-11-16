@@ -157,7 +157,7 @@ describe('ledger path template (design §5.4): an allow-list of fixed prefixes, 
 
   it('Slack keeps only the methods Quoky calls; any other dotted method is {method}', () => {
     expect([...SLACK_METHODS].sort()).toEqual([
-      'chat.getPermalink', 'chat.postMessage', 'conversations.history', 'conversations.info', 'conversations.list',
+      'chat.delete', 'chat.getPermalink', 'chat.postMessage', 'conversations.history', 'conversations.info', 'conversations.list',
       'conversations.replies', 'search.messages',
     ]);
     for (const method of SLACK_METHODS) expect(pathTemplate('slack', `/api/${method}?cursor=abc`)).toBe(`/api/${method}`);

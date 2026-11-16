@@ -106,6 +106,7 @@ export function surfaceWriteFamilyOfOperation(operation: ConnectorWriteOperation
     case 'ISSUE_TRANSITION_REVERT':
       return 'issue-transition';
     case 'CHANNEL_POST':
+    case 'CHANNEL_MESSAGE_DELETE':
       return 'channel-post';
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':

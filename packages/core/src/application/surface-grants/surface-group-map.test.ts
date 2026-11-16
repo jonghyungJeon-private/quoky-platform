@@ -138,6 +138,7 @@ describe('writes, state-bound steps and approvals', () => {
       CALENDAR_EVENT_RESTORE: 'calendar',
       ISSUE_COMMENT_DELETE: 'jira-mine',
       ISSUE_TRANSITION_REVERT: 'jira-mine',
+      CHANNEL_MESSAGE_DELETE: 'slack-search',
     };
     for (const operation of CONNECTOR_WRITE_OPERATIONS) expect(surfaceGroupsOfWriteOperation(operation)).toEqual(['writes', expected[operation]]);
   });

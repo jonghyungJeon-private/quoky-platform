@@ -99,6 +99,7 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
       ['calendarRestore', '일정 복원 실행'],
       ['issueCommentDelete', 'Jira 댓글 삭제 실행'],
       ['issueTransitionRevert', 'Jira 상태 되돌리기 실행'],
+      ['channelMessageDelete', 'Slack 삭제 실행'],
     ]);
   });
 
@@ -203,6 +204,19 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
     ['issueTransitionRevert', 'Jira 상태 되돌리기 실행하지 마'],
     ['issueComment', 'Jira 댓글 삭제 실행'],
     ['calendarDelete', 'Jira 댓글 삭제 실행'],
+    // ADR-0112 amendment 1 (S5/S-6): only the exact Slack delete phrases; no bare "삭제 실행", no phrase without the service, no
+    // question or negation, and no other write's phrase (nor theirs on any other gate).
+    ['channelMessageDelete', '삭제 실행'],
+    ['channelMessageDelete', '메시지 삭제 실행'],
+    ['channelMessageDelete', 'Slack 삭제 실행할까?'],
+    ['channelMessageDelete', '슬랙 삭제 실행하지 마'],
+    ['channelMessageDelete', 'Slack 게시 실행'],
+    ['channelMessageDelete', '일정 삭제 실행'],
+    ['channelMessageDelete', 'Jira 댓글 삭제 실행'],
+    ['channelMessageDelete', 'Slack 메시지 지워줘'],
+    ['channelPost', 'Slack 삭제 실행'],
+    ['calendarDelete', 'Slack 삭제 실행'],
+    ['issueCommentDelete', '슬랙 삭제 실행'],
     ['issueTransition', 'Jira 상태 되돌리기 실행'],
   ] as const)('%s rejects "%s"', (gate, text) => {
     expect(isAcceptedExecutionPhrase(gate, text)).toBe(false);

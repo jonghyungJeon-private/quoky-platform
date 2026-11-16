@@ -14,6 +14,7 @@ import {
   type CalendarEventRestoreExpectation,
   type CalendarEventTime,
   type CalendarEventWriter,
+  type ChannelMessageDeleteWriter,
   type ChannelMessageWriter,
   type ConnectorWriteOperation,
   type ConnectorWriteOutcome,
@@ -46,7 +47,7 @@ import {
   type ConnectorWriteUsageTopic,
 } from './connector-write-draft';
 import { ConnectorWriteExecutor, ConnectorWriteRequestError } from './connector-write-executor';
-import { ExternalUndoResolver, type ExternalUndoResolution } from './external-undo-resolver';
+import { CHANNEL_POST_REF, ExternalUndoResolver, type ExternalUndoResolution } from './external-undo-resolver';
 import { LAST_ACTION_EXTERNAL_ENTRY, type ExternalUndoFamily } from '../nl-routing/last-action';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
 import { SESSION_WRITE_LOCK, type SessionLockHold, type SessionWriteLock } from '../session-write-lock';
@@ -179,6 +180,11 @@ export type ConnectorWritePayload =
       readonly undoes: Id;
     }
   | { readonly operation: 'CHANNEL_POST'; readonly channel: string; readonly text: string }
+  /**
+   * ADR-0112 amendment 1 (S1/S2) under amendment 3: delete the message Quoky posted (only ever an undo). The channel id and the
+   * message ts come from this actor's own SENT post receipt (`<channelId>:<ts>`); `undoes` is that receipt's id (hashed, never sent).
+   */
+  | { readonly operation: 'CHANNEL_MESSAGE_DELETE'; readonly channel: string; readonly ts: string; readonly undoes: Id }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly draft: CalendarEventDraft }
   | {
       readonly operation: 'CALENDAR_EVENT_UPDATE';
@@ -243,6 +249,24 @@ export type ConnectorWritePreview =
       readonly ownerSentence?: string;
     }
   | { readonly operation: 'CHANNEL_POST'; readonly channelLabel: string; readonly channelId: string; readonly text: string }
+  /**
+   * ADR-0112 amendment 1 (S4) under amendment 3: always the undo of this actor's own SENT post. The channel and ts come from the
+   * post receipt; the text is the post's own approved payload, whose hash the receipt binds (Slack is never read for it).
+   */
+  | {
+      readonly operation: 'CHANNEL_MESSAGE_DELETE';
+      readonly channelLabel: string;
+      readonly channelId: string;
+      readonly ts: string;
+      readonly text: string;
+      /** When the post was recorded SENT (the receipt's completion time). */
+      readonly postedAt?: IsoTimestamp;
+      /** The post's permalink from its receipt, when the post writer got one. */
+      readonly url?: string;
+      readonly timeZone: string;
+      readonly receiptSourced: true;
+      readonly ownerSentence?: string;
+    }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly event: CalendarEventDraft; readonly timeZone: string }
   | {
       readonly operation: 'CALENDAR_EVENT_UPDATE';
@@ -335,8 +359,11 @@ export interface ConnectorWriteAnchor {
    * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
    */
   readonly undoOf?: {
-    /** The undone record's entry: `calendar.create`, or `external.write` for a calendar update / delete and the Jira writes. */
-    readonly entryId: 'calendar.create' | typeof LAST_ACTION_EXTERNAL_ENTRY;
+    /**
+     * The undone record's entry: `calendar.create`, `slack.post` for a Slack post, or `external.write` for a calendar update /
+     * delete and the Jira writes.
+     */
+    readonly entryId: 'calendar.create' | 'slack.post' | typeof LAST_ACTION_EXTERNAL_ENTRY;
     readonly receiptId: Id;
     /** The undone write's family (absent on anchors written before the update / delete families existed: `calendar-create`). */
     readonly family?: ExternalUndoFamily;
@@ -541,6 +568,8 @@ export interface ConnectorWriteWriters {
   readonly issueComments?: IssueCommentWriter;
   readonly issueTransitions?: IssueTransitionWriter;
   readonly channelMessages?: ChannelMessageWriter;
+  /** ADR-0112 amendment 1 (S1/S8): the narrow delete of a message Quoky posted; bound exactly when `channelMessages` is. */
+  readonly channelMessageDeletes?: ChannelMessageDeleteWriter;
   readonly calendarEvents?: CalendarEventWriter;
 }
 
@@ -732,6 +761,7 @@ export function connectorWriteTargetOf(preview: ConnectorWritePreview): Connecto
     case 'ISSUE_TRANSITION_REVERT':
       return { kind: 'issue', issueKey: preview.issueKey };
     case 'CHANNEL_POST':
+    case 'CHANNEL_MESSAGE_DELETE':
       return { kind: 'channel', channelLabel: preview.channelLabel, channelId: preview.channelId };
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':
@@ -791,6 +821,8 @@ export function connectorWriteExecutionGate(operation: ConnectorWriteOperation):
       return 'issueCommentDelete';
     case 'ISSUE_TRANSITION_REVERT':
       return 'issueTransitionRevert';
+    case 'CHANNEL_MESSAGE_DELETE':
+      return 'channelMessageDelete';
   }
 }
 
@@ -816,6 +848,7 @@ const EXECUTION_STEP_MENTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>>
   CALENDAR_EVENT_RESTORE: /일정복원실행|executeeventrestore/u,
   ISSUE_COMMENT_DELETE: /댓글삭제실행|executejiracommentdelete/u,
   ISSUE_TRANSITION_REVERT: /상태되돌리기실행|executejiratransitionrevert/u,
+  CHANNEL_MESSAGE_DELETE: /(?:slack|슬랙)(?:메시지)?삭제실행|executeslackdelete/u,
 };
 
 /** Explanation / how-to requests about a step are ordinary chat, not a question about the pending write. */
@@ -861,6 +894,7 @@ const STEP_WORDS: Readonly<Record<ConnectorWriteOperation, string>> = {
   CALENDAR_EVENT_RESTORE: String.raw`(?:캘린더\s*)?일정\s*복원`,
   ISSUE_COMMENT_DELETE: String.raw`(?:jira|지라)\s*(?:댓글|코멘트)\s*삭제`,
   ISSUE_TRANSITION_REVERT: String.raw`(?:jira|지라)\s*상태\s*되돌리기`,
+  CHANNEL_MESSAGE_DELETE: String.raw`(?:slack|슬랙)\s*(?:메시지\s*)?삭제`,
 };
 
 /** Imperative endings of "<step> 실행…" that the allow-list does not accept ("댓글 실행해", "게시 실행하자"). */
@@ -888,6 +922,8 @@ const DONE_QUESTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
   // The Jira undos likewise: only the structural "<step words> 됐어?" form of their own step words.
   ISSUE_COMMENT_DELETE: /^(?:jira|지라)\s*(?:댓글|코멘트)\s*삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
   ISSUE_TRANSITION_REVERT: /^(?:jira|지라)\s*상태\s*되돌리기\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  // The Slack message delete likewise (only ever an undo): only the structural "<step words> 됐어?" form.
+  CHANNEL_MESSAGE_DELETE: /^(?:slack|슬랙)\s*(?:메시지\s*)?삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
 };
 /** A "did it happen?" ending that is a question by itself (no `?` needed). */
 const SELF_QUESTION_ENDING = /(?:나|나요|니|냐|지|죠)$/u;
@@ -1397,6 +1433,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         return this.proposeJiraCommentUndo(input, draft.receiptId);
       case 'jira-transition-undo':
         return this.proposeJiraTransitionUndo(input, draft.receiptId);
+      case 'slack-post-undo':
+        return this.proposeSlackPostUndo(input, draft.receiptId);
       case 'calendar-update':
       case 'calendar-delete': {
         const changes = draft.kind === 'calendar-update' ? draft.changes : undefined;
@@ -1684,6 +1722,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: payload.operation === 'ISSUE_COMMENT_DELETE' ? 'jira-comment' : 'jira-transition' } };
     }
+    // ADR-0112 amendment 1 (S2) under amendment 3: the Slack message delete likewise. The channel and ts are re-derived from the
+    // post's own anchor and SENT receipt (`undoOf.sourceTaskId`, `undoOf.receiptId`) and must match exactly, or nothing is sent.
+    if (payload.operation === 'CHANNEL_MESSAGE_DELETE' && !(await this.isExactSlackInverse(anchor, payload))) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'slack-post' } };
+    }
     const send = this.sendFor(payload, `cwr:${approvalId}`);
     if (!send) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
@@ -1756,6 +1800,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           this.deps.writers.channelMessages?.resolveChannel(payload.channel) === payload.channel &&
           checkOwnerText(payload.text, CONNECTOR_WRITE_PREVIEW_TEXT_MAX_LENGTH) === null
         );
+      case 'CHANNEL_MESSAGE_DELETE':
+        // The channel must still be allowlisted at execution (S2), and the ref must have the exact shape a post receipt has.
+        return (
+          this.deps.writers.channelMessageDeletes?.allowsChannelId(payload.channel) === true &&
+          CHANNEL_POST_REF.test(`${payload.channel}:${payload.ts}`)
+        );
       case 'CALENDAR_EVENT_CREATE':
         return this.deps.writers.calendarEvents !== undefined && checkEventDraft(payload.draft) === null;
       case 'CALENDAR_EVENT_UPDATE':
@@ -1769,7 +1819,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
 
   /** The single writer call for the exact payload. */
   private sendFor(payload: ConnectorWritePayload, idempotencyKey: string): (() => Promise<ConnectorWriteOutcome>) | null {
-    const { issueComments, issueTransitions, channelMessages, calendarEvents } = this.deps.writers;
+    const { issueComments, issueTransitions, channelMessages, channelMessageDeletes, calendarEvents } = this.deps.writers;
     switch (payload.operation) {
       case 'ISSUE_COMMENT':
         return issueComments ? () => issueComments.addComment({ issueKey: payload.issueKey, text: payload.text }) : null;
@@ -1800,6 +1850,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           : null;
       case 'CHANNEL_POST':
         return channelMessages ? () => channelMessages.post({ channel: payload.channel, text: payload.text }) : null;
+      case 'CHANNEL_MESSAGE_DELETE':
+        return channelMessageDeletes ? () => channelMessageDeletes.deleteMessage({ channelId: payload.channel, ts: payload.ts }) : null;
       case 'CALENDAR_EVENT_CREATE':
         return calendarEvents ? () => calendarEvents.createEvent({ draft: payload.draft, idempotencyKey }) : null;
       // An approved update / delete without a usable bound version (an anchor from before versions were required) is
@@ -2346,6 +2398,67 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     );
   }
 
+  /**
+   * ADR-0112 amendment 1 (S1/S2/S4/S7) under amendment 3: the delete of the Slack message Quoky posted. The draft carries a
+   * receipt id only; the resolver proves it is this session's own last write (same actor, SENT, this session's anchor whose
+   * approval produced the receipt). The channel id and the ts come from that receipt (`<channelId>:<ts>`), never from text, a
+   * link or a listing. The write token holds `chat:write` only (S-4: no history scope), so nothing is read from Slack first:
+   * the pre-delete checks are the receipt binding, the post anchor's own payload re-hashed against the receipt (the exact text
+   * the card shows), and the channel allowlist (again at execution). Slack itself lets a bot token delete only its own
+   * messages. An edit made in Slack after the post cannot be seen without a history read (residual, recorded in DECISIONS).
+   */
+  private async proposeSlackPostUndo(input: FlowInput, receiptId: Id): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.channelMessageDeletes;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'channel-post', undo: 'slack-post' });
+    const resolved = await this.resolveOwnUndo(input, 'slack-post', receiptId);
+    if (resolved.kind === 'refused') return refused(resolved.reason);
+    const post = ownSlackPostOf(resolved.anchor, resolved.receipt);
+    if (post === undefined) return refused('undo-nothing');
+    if (!writer.allowsChannelId(post.channel)) return refused('target-not-allowed');
+    const url = resolved.receipt.data.url;
+    return this.propose(
+      input,
+      'channel-post',
+      writer.source,
+      `${post.channel}:${post.ts}`,
+      { operation: 'CHANNEL_MESSAGE_DELETE', channel: post.channel, ts: post.ts, undoes: resolved.receipt.id },
+      {
+        operation: 'CHANNEL_MESSAGE_DELETE',
+        channelLabel: post.channelLabel,
+        channelId: post.channel,
+        ts: post.ts,
+        text: post.text,
+        postedAt: resolved.receipt.updatedAt,
+        // Security review (LOW): only a Slack permalink reaches the CRITICAL card, the same shape the post writer stores.
+        ...(typeof url === 'string' && /^https:\/\/[A-Za-z0-9.-]+\.slack\.com\/[\x21-\x7e]{1,500}$/u.test(url) ? { url } : {}),
+        timeZone: this.deps.timeZone,
+        receiptSourced: true,
+        ...ownerSentenceOf(input.ownerText),
+      },
+      undefined,
+      { entryId: 'slack.post', receiptId: resolved.receipt.id, family: 'slack-post', sourceTaskId: resolved.anchorTaskId },
+    );
+  }
+
+  /**
+   * S2 execution-time proof: the delete anchor must name the post's anchor Task and SENT receipt; that anchor must be this actor's
+   * plain approved post whose approval produced the receipt; and the channel and ts re-derived from them now must equal the
+   * approved payload (and the anchor's target).
+   */
+  private async isExactSlackInverse(anchor: ConnectorWriteAnchor, payload: Extract<ConnectorWritePayload, { operation: 'CHANNEL_MESSAGE_DELETE' }>): Promise<boolean> {
+    const link = anchor.undoOf;
+    if (link?.family !== 'slack-post' || link.entryId !== 'slack.post' || link.sourceTaskId === undefined) return false;
+    const receipt = await this.deps.receipts.findById(link.receiptId, anchor.actorId);
+    if (receipt === null || receipt.actorId !== anchor.actorId) return false;
+    const task = await this.deps.store.tasks.get(link.sourceTaskId);
+    const source = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (source?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || source.actorId !== anchor.actorId || source.sessionId !== anchor.sessionId) return false;
+    if (source.approvalId === undefined || receipt.idempotencyKey !== `cwr:${source.approvalId}` || receipt.connector !== anchor.connector) return false;
+    const post = ownSlackPostOf(source, receipt);
+    return post !== undefined && post.channel === payload.channel && post.ts === payload.ts && anchor.target === `${post.channel}:${post.ts}`;
+  }
+
   /** The resolver over the LIVE session row (the lastAction the owner's last turn left), narrowed to one family and receipt. */
   private async resolveOwnUndo(
     input: FlowInput,
@@ -2714,6 +2827,29 @@ function taskStatusOf(status: ConnectorWriteAnchorStatus): TaskStatus {
     default:
       return TaskStatus.PENDING;
   }
+}
+
+/**
+ * ADR-0112 amendment 1 (S2): the Slack post an undo may delete, proven from the post's own anchor and its SENT receipt, or
+ * `undefined`. The anchor must be a plain (not receipt-sourced, no `undoOf`) SENT post of this receipt's connector and channel;
+ * its approved payload must hash to the receipt's payload hash (so the text shown is exactly what was posted); and the receipt's
+ * reference must be `<that channel id>:<ts>`. Pure.
+ */
+function ownSlackPostOf(
+  anchor: ConnectorWriteAnchor,
+  receipt: ConnectorWriteReceipt,
+): { readonly channel: string; readonly ts: string; readonly text: string; readonly channelLabel: string } | undefined {
+  const payload = anchor.payload;
+  const preview = anchor.preview;
+  if (anchor.undoOf !== undefined || anchor.status !== 'SENT' || anchor.operation !== 'CHANNEL_POST') return undefined;
+  if (payload?.operation !== 'CHANNEL_POST' || preview?.operation !== 'CHANNEL_POST') return undefined;
+  if (preview.channelId !== payload.channel || preview.text !== payload.text) return undefined;
+  if (receipt.operation !== 'CHANNEL_POST' || receipt.status !== 'SENT' || receipt.target !== payload.channel || anchor.target !== payload.channel) return undefined;
+  if (receipt.connector !== anchor.connector || receipt.payloadSha256 !== anchor.payloadSha256) return undefined;
+  if (connectorWritePayloadSha256('CHANNEL_POST', payload.channel, sendableOf(payload)) !== receipt.payloadSha256) return undefined;
+  const ref = CHANNEL_POST_REF.exec(typeof receipt.data.externalRef === 'string' ? receipt.data.externalRef : '');
+  if (ref === null || ref[1] !== payload.channel || ref[2] === undefined) return undefined;
+  return { channel: payload.channel, ts: ref[2], text: payload.text, channelLabel: preview.channelLabel };
 }
 
 /** Whether an anchor's payload and its undo link name the same source receipt (or neither is an undo). */

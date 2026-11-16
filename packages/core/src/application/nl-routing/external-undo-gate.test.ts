@@ -40,8 +40,8 @@ describe('the external undo capability gate, off path through the test seam', ()
   beforeEach(() => setExternalUndoCapabilitiesForTest([]));
   afterEach(() => setExternalUndoCapabilitiesForTest());
 
-  it('the shipped constant is frozen and holds exactly the families whose red-team gates passed (create 2026-11-03; update, delete, Jira comment and Jira transition 2026-11-16)', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition']);
+  it('the shipped constant is frozen and holds exactly the families whose red-team gates passed (create 2026-11-03; update, delete, Jira comment, Jira transition and Slack post 2026-11-16)', () => {
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition', 'slack-post']);
     expect(Object.isFrozen(EXTERNAL_UNDO_CAPABILITIES)).toBe(true);
   });
 
@@ -59,7 +59,7 @@ describe('the external undo capability gate (amendment 3), family switched on by
   afterEach(() => setExternalUndoCapabilitiesForTest());
 
   it('is a closed, frozen set that the family-on seam does not mutate', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition']);
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition', 'slack-post']);
     expect(isExternalUndoOpen('calendar-create')).toBe(true);
     expect(isExternalUndoOpen(undefined, ['calendar-create'])).toBe(false);
     expect(isExternalUndoOpen('calendar-create', [])).toBe(false);
@@ -142,6 +142,22 @@ describe('amendment 3 calendar-update and calendar-delete families: the family c
     expect(externalUndoFamilyOf('calendar.create', 'CALENDAR_EVENT_CREATE')).toBe('calendar-create');
     expect(externalUndoFamilyOf('calendar.create', 'CALENDAR_EVENT_DELETE')).toBeUndefined();
     expect(externalUndoFamilyOf('slack.post', 'CALENDAR_EVENT_UPDATE')).toBeUndefined();
+    // ADR-0112 amendment 1 (S-1..S-6) under amendment 3: only a Slack post record has the slack-post family; its delete has none.
+    expect(externalUndoFamilyOf('slack.post', 'CHANNEL_POST')).toBe('slack-post');
+    expect(externalUndoFamilyOf('slack.post', 'CHANNEL_MESSAGE_DELETE')).toBeUndefined();
+    expect(externalUndoFamilyOf('external.write', 'CHANNEL_MESSAGE_DELETE')).toBeUndefined();
+    expect(externalUndoFamilyOf('slack.post')).toBeUndefined();
+  });
+
+  it('a SENT Slack post record opens exactly when slack-post is in the set', () => {
+    const post = (extra: Record<string, unknown> = {}) => lastActionOf(external({ entryId: 'slack.post', source: 'slack', operation: 'CHANNEL_POST', ...extra }));
+    expect(post()?.undoable).toBe(false);
+    setExternalUndoCapabilitiesForTest(['calendar-create', 'slack-post']);
+    expect(post()).toMatchObject({ operation: 'CHANNEL_POST', undoable: true });
+    expect(post({ outcome: 'UNCERTAIN' })?.undoable).toBe(false);
+    expect(post({ outcome: 'NOT_SENT' })?.undoable).toBe(false);
+    expect(post({ operation: 'CHANNEL_MESSAGE_DELETE' })?.undoable).toBe(false);
+    expect(lastActionOf(external({ entryId: 'action.undo', source: 'slack', operation: 'CHANNEL_MESSAGE_DELETE' }))?.undoable).toBe(false);
   });
 
   it('keeps only a closed operation name on an external record, round-trips it, and opens only SENT records of an open family', () => {

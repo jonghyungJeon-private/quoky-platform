@@ -22,12 +22,15 @@ import {
  * token, the payload or a response body.
  */
 
-const SLACK_API_ORIGIN = 'https://slack.com';
+/** The one Slack Web API origin both write adapters call (same egress host and label as the read connector). */
+export const SLACK_API_ORIGIN = 'https://slack.com';
 /** Built by concatenation so no token-shaped literal appears in the source. */
 const SLACK_BOT_TOKEN_PREFIX = 'xox' + 'b-';
-const CHANNEL_ID = /^[CG][A-Z0-9]{8,20}$/;
+/** A Slack channel id (public `C…` or private `G…`). */
+export const SLACK_CHANNEL_ID = /^[CG][A-Z0-9]{8,20}$/;
 const CHANNEL_NAME = /^[a-z0-9][a-z0-9._-]{0,79}$/;
-const MESSAGE_TS = /^[0-9]{1,12}\.[0-9]{1,8}$/;
+/** A Slack message timestamp id (`<seconds>.<sequence>`). */
+export const SLACK_MESSAGE_TS = /^[0-9]{1,12}\.[0-9]{1,8}$/;
 const PERMALINK = /^https:\/\/[A-Za-z0-9.-]+\.slack\.com\/[\x21-\x7e]{1,500}$/;
 
 /** One allowlisted channel: its id, and optionally the name the owner types (`#name`). */
@@ -86,6 +89,53 @@ const NOT_SENT_ERRORS: Readonly<Record<string, ConnectorWriteNotSentReason>> = {
   json_not_object: 'REJECTED',
 };
 
+/** The validated settings both Slack write adapters share (the post and, ADR-0112 amendment 1 S1, the message delete). */
+export interface SlackWriteSettings {
+  readonly token: string;
+  readonly fetchImpl: typeof fetch;
+  readonly timeoutMs: number;
+  readonly transportGuard: ConnectorWriteTransportGuard;
+  /** The allowlisted channel ids. */
+  readonly ids: ReadonlySet<string>;
+  /** Allowlisted channel name -> id. */
+  readonly byName: ReadonlyMap<string, string>;
+}
+
+/**
+ * Validates a Slack write configuration: a bot token, and a non-empty allowlist of valid channel ids with optional unique names.
+ * Throws a value-free error otherwise. One function, so the post and the delete adapters can never disagree on the allowlist.
+ */
+export function slackWriteSettings(config: SlackChannelWriterConfig): SlackWriteSettings {
+  const token = typeof config?.token === 'string' ? config.token.trim() : '';
+  if (!token.startsWith(SLACK_BOT_TOKEN_PREFIX) || token.length <= SLACK_BOT_TOKEN_PREFIX.length) {
+    throw new Error('slack writer: a bot token is required');
+  }
+  const transportGuard = config.transportGuard ?? failSafeConnectorWriteTransportGuard;
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'slack writer');
+  const channels = Array.isArray(config.channels) ? config.channels : [];
+  if (channels.length === 0) throw new Error('slack writer: a non-empty channel allowlist is required');
+  const ids = new Set<string>();
+  const byName = new Map<string, string>();
+  for (const channel of channels) {
+    if (typeof channel?.id !== 'string' || !SLACK_CHANNEL_ID.test(channel.id)) {
+      throw new Error('slack writer: every allowlisted channel needs a valid channel id');
+    }
+    ids.add(channel.id);
+    if (channel.name !== undefined) {
+      if (typeof channel.name !== 'string' || !CHANNEL_NAME.test(channel.name)) {
+        throw new Error('slack writer: an allowlisted channel name is invalid');
+      }
+      const known = byName.get(channel.name);
+      if (known !== undefined && known !== channel.id) {
+        throw new Error('slack writer: an allowlisted channel name maps to two ids');
+      }
+      byName.set(channel.name, channel.id);
+    }
+  }
+  return { token, fetchImpl, timeoutMs, transportGuard, ids, byName };
+}
+
 export class SlackChannelWriter implements ChannelMessageWriter {
   readonly source = 'slack';
 
@@ -97,36 +147,13 @@ export class SlackChannelWriter implements ChannelMessageWriter {
   private readonly byName: ReadonlyMap<string, string>;
 
   constructor(config: SlackChannelWriterConfig) {
-    const token = typeof config?.token === 'string' ? config.token.trim() : '';
-    if (!token.startsWith(SLACK_BOT_TOKEN_PREFIX) || token.length <= SLACK_BOT_TOKEN_PREFIX.length) {
-      throw new Error('slack writer: a bot token is required');
-    }
-    this.token = token;
-    this.transportGuard = config.transportGuard ?? failSafeConnectorWriteTransportGuard;
-    this.fetchImpl = config.fetchImpl ?? fetch;
-    this.timeoutMs = resolveConnectorQueryTimeoutMs(config.timeoutMs, 'slack writer');
-    const channels = Array.isArray(config.channels) ? config.channels : [];
-    if (channels.length === 0) throw new Error('slack writer: a non-empty channel allowlist is required');
-    const ids = new Set<string>();
-    const byName = new Map<string, string>();
-    for (const channel of channels) {
-      if (typeof channel?.id !== 'string' || !CHANNEL_ID.test(channel.id)) {
-        throw new Error('slack writer: every allowlisted channel needs a valid channel id');
-      }
-      ids.add(channel.id);
-      if (channel.name !== undefined) {
-        if (typeof channel.name !== 'string' || !CHANNEL_NAME.test(channel.name)) {
-          throw new Error('slack writer: an allowlisted channel name is invalid');
-        }
-        const known = byName.get(channel.name);
-        if (known !== undefined && known !== channel.id) {
-          throw new Error('slack writer: an allowlisted channel name maps to two ids');
-        }
-        byName.set(channel.name, channel.id);
-      }
-    }
-    this.ids = ids;
-    this.byName = byName;
+    const settings = slackWriteSettings(config);
+    this.token = settings.token;
+    this.transportGuard = settings.transportGuard;
+    this.fetchImpl = settings.fetchImpl;
+    this.timeoutMs = settings.timeoutMs;
+    this.ids = settings.ids;
+    this.byName = settings.byName;
   }
 
   resolveChannel(channel: string): string | undefined {
@@ -194,7 +221,7 @@ export class SlackChannelWriter implements ChannelMessageWriter {
     if (!isRecord(payload) || typeof payload.ok !== 'boolean') return connectorWriteUncertain('INVALID_RESPONSE');
     if (!payload.ok) return failedPost(payload.error);
     const ts = payload.ts;
-    if (typeof ts !== 'string' || !MESSAGE_TS.test(ts)) return connectorWriteUncertain('INVALID_RESPONSE');
+    if (typeof ts !== 'string' || !SLACK_MESSAGE_TS.test(ts)) return connectorWriteUncertain('INVALID_RESPONSE');
     return connectorWriteSent(`${channelId}:${ts}`, await this.permalink(channelId, ts));
   }
 
@@ -239,7 +266,7 @@ function failedPost(error: unknown): ConnectorWriteOutcome {
   return connectorWriteUncertain('UNKNOWN');
 }
 
-async function discardBody(response: Response): Promise<void> {
+export async function discardBody(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
   } catch {
@@ -247,6 +274,6 @@ async function discardBody(response: Response): Promise<void> {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

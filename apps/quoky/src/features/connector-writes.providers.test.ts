@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CALENDAR_EVENT_WRITER,
+  CHANNEL_MESSAGE_DELETE_WRITER,
   CHANNEL_MESSAGE_WRITER,
   CONNECTOR_WRITE_RECEIPT_REPOSITORY,
   ISSUE_COMMENT_WRITER,
@@ -8,6 +9,8 @@ import {
   StatelessConnectorWriteFlow,
   connectorWriteSent,
   type CalendarEventWriter,
+  type ChannelMessageDeleteWriter,
+  type ChannelMessageWriter,
   type IssueCommentWriter,
   type Logger,
 } from '@quoky/core';
@@ -85,6 +88,21 @@ describe('connector-write composition (ADR-0112 D4/D5, CWR-2)', () => {
     expect(flow.deps.calendarReader?.calendarIds).toEqual(['primary']);
     expect(config.calendar?.google.calendarIds).toEqual(['primary', 'team@group.calendar.google.com']);
   });
+  it('ADR-0112 amendment 1 (S1/S8): the Slack delete writer is bound to its own token with the post writer and reaches the flow', () => {
+    const post: ChannelMessageWriter = { source: 'slack', resolveChannel: () => 'C0123ABCD9', post: async () => connectorWriteSent('C0123ABCD9:1.1') };
+    const remove: ChannelMessageDeleteWriter = { source: 'slack', allowsChannelId: () => true, deleteMessage: async () => connectorWriteSent('C0123ABCD9:1.1') };
+    const composition = createConnectorWriteComposition({
+      config: loadConfig(env()),
+      timeZone: 'Asia/Seoul',
+      logger: logger(),
+      writers: { channelMessages: post, channelMessageDeletes: remove },
+    });
+    expect(tokens(composition.providers)).toEqual([CONNECTOR_WRITE_RECEIPT_REPOSITORY, CHANNEL_MESSAGE_WRITER, CHANNEL_MESSAGE_DELETE_WRITER, CONNECTOR_WRITE_FLOW]);
+    const flow = flowOf(composition.providers) as { deps: { writers: { channelMessages?: unknown; channelMessageDeletes?: unknown } } };
+    expect(flow.deps.writers.channelMessages).toBe(post);
+    expect(flow.deps.writers.channelMessageDeletes).toBe(remove);
+  });
+
   it('review round 2 (P2): the live receipt adapter forwards findSentUndoOf to the storage receipts store', async () => {
     const composition = createConnectorWriteComposition({ config: loadConfig(env()), timeZone: 'Asia/Seoul', logger: logger() });
     const repo = composition.providers.find(

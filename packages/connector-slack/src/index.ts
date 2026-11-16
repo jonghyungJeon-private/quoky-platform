@@ -772,3 +772,5 @@ export {
   type SlackChannelWriterConfig,
   type SlackWriteChannel,
 } from './slack-channel-writer';
+// ADR-0112 amendment 1 (S1): the separate narrow delete of a message Quoky posted (same token, allowlist and host).
+export { SlackMessageDeleteWriter } from './slack-message-delete-writer';

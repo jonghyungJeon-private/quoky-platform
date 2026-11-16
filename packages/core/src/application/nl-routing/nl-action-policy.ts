@@ -379,6 +379,11 @@ export function renderActionUnavailable(language: Lang): string {
  * writes are off). Nothing was changed, and the owner is told where to delete the event.
  */
 export function renderExternalUndoUnavailable(language: Lang, family: ExternalUndoFamily = 'calendar-create'): string {
+  if (family === 'slack-post') {
+    return language === 'en'
+      ? 'Undoing that Slack post is not available right now (Slack writes are off). Please delete it in Slack directly. Nothing was changed.'
+      : '방금 게시한 Slack 메시지 되돌리기는 지금 쓸 수 없어요 (Slack 쓰기가 꺼져 있어요). Slack에서 직접 지워 주세요. 아무것도 바꾸지 않았어요.';
+  }
   if (family === 'jira-comment' || family === 'jira-transition') {
     const comment = family === 'jira-comment';
     return language === 'en'

@@ -69,6 +69,8 @@ const CHANGED_EVENT_ID = /^[A-Za-z0-9_-]{1,1024}$/;
 const COMMENT_ID = /^[0-9]{1,20}$/;
 /** A Jira transition receipt reference: `<issue key>:<transition id>`, as the transition writer returns it. */
 const TRANSITION_REF = /^[A-Z][A-Z0-9_]{0,63}-[1-9][0-9]{0,9}:[0-9]{1,20}$/;
+/** A Slack post receipt reference: `<channel id>:<message ts>`, exactly as the post writer returns it. */
+export const CHANNEL_POST_REF = /^([CG][A-Z0-9]{8,20}):([0-9]{1,12}\.[0-9]{1,8})$/;
 
 const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
   'calendar-create': {
@@ -95,6 +97,11 @@ const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
     draftKind: 'jira-transition-undo',
     operation: ConnectorWriteOperation.ISSUE_TRANSITION,
     refOk: (ref) => TRANSITION_REF.test(ref),
+  },
+  'slack-post': {
+    draftKind: 'slack-post-undo',
+    operation: ConnectorWriteOperation.CHANNEL_POST,
+    refOk: (ref) => CHANNEL_POST_REF.test(ref),
   },
 };
 

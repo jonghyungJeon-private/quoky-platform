@@ -201,7 +201,8 @@ const PATH_PREFIXES: Readonly<Record<string, readonly string[]>> = {
 const TELEGRAM_LABELS: ReadonlySet<string> = new Set(['telegram', 'telegram-poll', 'telegram-typing']);
 const TELEGRAM_METHOD_NAMES: ReadonlySet<string> = new Set<string>(TELEGRAM_METHODS);
 /**
- * The Slack Web API methods Quoky calls (`connector-slack/src/index.ts`, `slack-channel-writer.ts`) — a closed list.
+ * The Slack Web API methods Quoky calls (`connector-slack/src/index.ts`, `slack-channel-writer.ts`,
+ * `slack-message-delete-writer.ts`) — a closed list.
  * Any other method after `/api` is written as `{method}`, so a dotted segment that is not one of these can never carry
  * data into the ledger.
  */
@@ -213,6 +214,9 @@ export const SLACK_METHODS: ReadonlySet<string> = new Set([
   'conversations.replies',
   'chat.postMessage',
   'chat.getPermalink',
+  // ADR-0112 amendment 1 (S1/S8): the delete of a message Quoky posted. Same host and label (`slack`) as the post, so no
+  // allowlist, label or budget change; listed here only so the traffic ledger names the method instead of `{method}`.
+  'chat.delete',
 ]);
 /**
  * The Sheets API custom methods Quoky calls on a spreadsheet (`connector-gdrive/src/sheets-reader.ts`) — a closed list.

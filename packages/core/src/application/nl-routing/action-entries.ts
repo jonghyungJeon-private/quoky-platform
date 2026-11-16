@@ -1348,14 +1348,15 @@ function escapeRegExp(source: string): string {
 
 /**
  * The closed Class A command forms, taken from their own grammars (single source): the ADR-0100 D1 to-do heads with a
- * colon, the anchored Slack post head ("#채널에 게시:") and the Slack post execution phrase. Never inside a
+ * colon, the anchored Slack post head ("#채널에 게시:"), the Slack post execution phrase and (ADR-0112 amendment 1 S5, A6-D3a) the
+ * Slack- and 슬랙-prefixed phrases of the Slack message delete. Never inside a
  * natural-language request. (A reminder number with 취소 is an ordinary request.)
  */
 const COMMAND_FORMS: readonly RegExp[] = [
   new RegExp(`(?:${ANCHORED_TODO_PREFIX_HEADS.map(escapeRegExp).join('|')})\\s*[:：]`, 'iu'),
   SLACK_POST_COLON_HEAD,
   new RegExp(
-    `(?:${EXECUTION_PHRASES.channelPost
+    `(?:${[...EXECUTION_PHRASES.channelPost, ...EXECUTION_PHRASES.channelMessageDelete]
       .filter((phrase) => /^(?:slack|슬랙)\s/iu.test(phrase))
       .map((phrase) => escapeRegExp(phrase).replace(/ /g, '\\s*'))
       .join('|')})`,

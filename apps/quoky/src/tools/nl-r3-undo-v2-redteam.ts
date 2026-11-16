@@ -1,7 +1,7 @@
 /**
  * ADR-0112 amendment 3 red team, second case file (`agent-redteam.r3-undo.v2.json`): the calendar-update undo (O2), the
  * calendar-delete restore (O3/O6/O7), the delete of the Jira comment Quoky added (O4) and the revert of Quoky's own Jira
- * transition (O5). The format of v1 (`nl-r3-undo-redteam.ts`) is kept — every case carries an `oracle`
+ * transition (O5), and the delete of the Slack message Quoky posted (ADR-0112 amendment 1 S-1..S-6 under amendment 3). The format of v1 (`nl-r3-undo-redteam.ts`) is kept — every case carries an `oracle`
  * (exact totals, one accepted layer per turn, whether the selector is called, fixed reply fragments) and runs in two attacker
  * variants — but a case names its family, and the one write its undo may make is that family's inverse (an update of the own
  * receipt's event, or a restore of it), so the v1 file and its 36 cases stay untouched.
@@ -16,20 +16,22 @@ import type { R3UndoOracle, R3UndoOwnWrite } from './nl-r3-undo-redteam';
 
 export const R3_UNDO_V2_REDTEAM_PATH = resolve(__dirname, '../../../../packages/core/src/application/golden/agent-redteam.r3-undo.v2.json');
 
-export const R3_UNDO_V2_FAMILIES = ['calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition'] as const;
+export const R3_UNDO_V2_FAMILIES = ['calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition', 'slack-post'] as const;
 export const R3_UNDO_V2_JIRA_FAMILIES = ['jira-comment', 'jira-transition'] as const;
 export type R3UndoV2Family = (typeof R3_UNDO_V2_FAMILIES)[number];
 
 /**
  * The one write the undo of each family may make (ADR-0112 amendment 3: O2 patch back, O3 restore the same id, O4 delete the
  * own comment `<issue>/<comment id>`, O5 one transition of the own issue back to its status before Quoky's transition). For
- * the Jira families the own object id already IS the target (`<issue>/<comment id>`, the issue key).
+ * the Jira families the own object id already IS the target (`<issue>/<comment id>`, the issue key). The Slack post undo
+ * (amendment 1 S1/S2) deletes the own message `<channel id>:<ts>` from the post receipt, which is also its target.
  */
 export const R3_UNDO_V2_OWN: Readonly<Record<R3UndoV2Family, R3UndoOwnWrite>> = {
   'calendar-update': { operation: 'CALENDAR_EVENT_UPDATE', writerKind: 'updateEvent', noun: 'update' },
   'calendar-delete': { operation: 'CALENDAR_EVENT_RESTORE', writerKind: 'restoreEvent', noun: 'restore' },
   'jira-comment': { operation: 'ISSUE_COMMENT_DELETE', writerKind: 'deleteComment', noun: 'comment delete', targetOf: (issueAndCommentId) => issueAndCommentId },
   'jira-transition': { operation: 'ISSUE_TRANSITION_REVERT', writerKind: 'transition', noun: 'transition revert', targetOf: (issueKey) => issueKey },
+  'slack-post': { operation: 'CHANNEL_MESSAGE_DELETE', writerKind: 'deleteMessage', noun: 'message delete', targetOf: (channelAndTs) => channelAndTs },
 };
 
 /** The documented execution phrase of each family's undo. */
@@ -38,6 +40,7 @@ export const R3_UNDO_V2_PHRASE: Readonly<Record<R3UndoV2Family, string>> = {
   'calendar-delete': '일정 복원 실행',
   'jira-comment': 'Jira 댓글 삭제 실행',
   'jira-transition': 'Jira 상태 되돌리기 실행',
+  'slack-post': 'Slack 삭제 실행',
 };
 
 /** The closed attack kinds of the v2 file. */
@@ -82,6 +85,14 @@ export const R3_UNDO_V2_ATTACKS = [
   'no-path-back',
   'pick-outside-listed-set',
   'pick-no-longer-listed',
+  // ADR-0112 amendment 1 (S-1..S-6) under amendment 3: the Slack post undo.
+  'pasted-channel-ts',
+  'pasted-slack-link',
+  'not-quoky-message',
+  'post-anchor-tampered',
+  'channel-de-allowlisted',
+  'message-gone',
+  'delete-refused-by-slack',
 ] as const;
 export type R3UndoV2Attack = (typeof R3_UNDO_V2_ATTACKS)[number];
 
@@ -95,9 +106,23 @@ export interface R3UndoV2Turn {
   readonly declineAfter?: boolean;
   /**
    * A change outside Quoky right before this turn (TOCTOU between the preview and the phrase): the own event is edited (an
-   * update undo) or is back on the calendar (a restore).
+   * update undo) or is back on the calendar (a restore). For the Slack post undo: the own message is deleted in Slack
+   * (`target-moved-on`) or its channel leaves the write allowlist (`allowlist-removed`).
    */
-  readonly before?: 'target-moved-on' | 'path-gone';
+  readonly before?: 'target-moved-on' | 'path-gone' | 'allowlist-removed';
+}
+
+/**
+ * The Slack state outside Quoky after the own post (ADR-0112 amendment 1 S-4/S6 under amendment 3): the channel is no longer
+ * on the write allowlist, the message was already deleted in Slack, Slack refuses the delete (`cant_delete_message`), rate
+ * limits it, or answers so that the result is uncertain; the stored post anchor's text was changed after the post (it no
+ * longer hashes to the receipt).
+ */
+export interface R3UndoV2SlackState {
+  readonly deAllowlisted?: true;
+  readonly messageGone?: true;
+  readonly deleteAnswer?: 'cant_delete_message' | 'ratelimited' | 'uncertain';
+  readonly anchorTampered?: true;
 }
 
 /**
@@ -119,12 +144,15 @@ export interface R3UndoV2JiraState {
 
 export interface R3UndoV2Context {
   readonly family: R3UndoV2Family;
-  readonly lastAction: { readonly entryId: 'external.write' | 'action.undo'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT'; readonly ageMin: number };
+  readonly lastAction: { readonly entryId: 'external.write' | 'slack.post' | 'action.undo'; readonly outcome: 'SENT' | 'UNCERTAIN' | 'NOT_SENT'; readonly ageMin: number };
   readonly replyTo?: { readonly echo: string; readonly ownedBy?: 'other-session' };
   /** The owner's own lastAction names ANOTHER actor's valid SENT receipt of the same operation. */
   readonly lastActionActor?: 'other-actor';
-  /** The owner's own lastAction names this actor's receipt of a Jira comment, or of a calendar update. */
-  readonly lastActionItem?: 'receipt-of-jira-comment' | 'receipt-of-calendar-update';
+  /**
+   * The owner's own lastAction names this actor's receipt of a Jira comment, or of a calendar update, or a Slack post receipt
+   * of this actor naming a message Quoky did not post (no approved post anchor produced it).
+   */
+  readonly lastActionItem?: 'receipt-of-jira-comment' | 'receipt-of-calendar-update' | 'receipt-of-unposted-message';
   /** The owner's own lastAction names the anchor Task of a real write made in another session of the same actor. */
   readonly anchorSession?: 'other-session';
   /** The record's operation is rewritten to the OTHER family's operation (its receipt and anchor stay what they are). */
@@ -140,6 +168,7 @@ export interface R3UndoV2Context {
   readonly selector?: { readonly entryId: string; readonly externalUndo?: { readonly receiptId: string } };
   readonly channel?: 'guild';
   readonly jira?: R3UndoV2JiraState;
+  readonly slack?: R3UndoV2SlackState;
 }
 
 export const R3_UNDO_V2_OUTCOMES = [
@@ -196,7 +225,14 @@ export function validateR3UndoV2RedTeam(cases: readonly R3UndoV2Case[]): string[
     const ctx = golden.context;
     if (!(R3_UNDO_V2_FAMILIES as readonly string[]).includes(ctx?.family)) problems.push(`${golden.id}: context family`);
     const last = ctx?.lastAction;
-    if (last === undefined || !['external.write', 'action.undo'].includes(last.entryId) || !['SENT', 'UNCERTAIN', 'NOT_SENT'].includes(last.outcome) || !Number.isFinite(last.ageMin) || last.ageMin < 0) problems.push(`${golden.id}: lastAction`);
+    if (last === undefined || !['external.write', 'slack.post', 'action.undo'].includes(last.entryId) || !['SENT', 'UNCERTAIN', 'NOT_SENT'].includes(last.outcome) || !Number.isFinite(last.ageMin) || last.ageMin < 0) problems.push(`${golden.id}: lastAction`);
+    // The runtime records a Slack post as `slack.post` (never `external.write`), and nothing else as `slack.post`.
+    if (last !== undefined && last.entryId !== 'action.undo' && (last.entryId === 'slack.post') !== (ctx?.family === 'slack-post')) problems.push(`${golden.id}: lastAction entry for the family`);
+    const slack = ctx?.slack;
+    if (slack !== undefined && ctx.family !== 'slack-post') problems.push(`${golden.id}: slack state outside the Slack family`);
+    if (ctx?.family === 'slack-post' && (ctx.jira !== undefined || ctx.liveEvent !== undefined || ctx.restoreRefused !== undefined)) problems.push(`${golden.id}: calendar or Jira state in the Slack family`);
+    if (slack?.deleteAnswer !== undefined && !['cant_delete_message', 'ratelimited', 'uncertain'].includes(slack.deleteAnswer)) problems.push(`${golden.id}: slack.deleteAnswer`);
+    if (ctx?.lastActionItem === 'receipt-of-unposted-message' && ctx.family !== 'slack-post') problems.push(`${golden.id}: unposted-message receipt outside the Slack family`);
     if (ctx?.restoreRefused === true && ctx.family !== 'calendar-delete') problems.push(`${golden.id}: restoreRefused outside the restore family`);
     if (ctx?.liveEvent?.present === true && ctx.family !== 'calendar-delete') problems.push(`${golden.id}: liveEvent.present outside the restore family`);
     if ((ctx?.liveEvent?.edited === true || ctx?.liveEvent?.gone === true) && ctx.family !== 'calendar-update') problems.push(`${golden.id}: liveEvent.edited/gone outside the update family`);
@@ -215,7 +251,8 @@ export function validateR3UndoV2RedTeam(cases: readonly R3UndoV2Case[]): string[
       if (typeof turn.owner !== 'string' || turn.owner.length === 0) problems.push(`${golden.id}: turn text`);
       if (turn.repeat !== undefined && (!Number.isInteger(turn.repeat) || turn.repeat < 1 || turn.repeat > 15)) problems.push(`${golden.id}: repeat`);
       if (turn.declineAfter !== undefined && typeof turn.declineAfter !== 'boolean') problems.push(`${golden.id}: declineAfter`);
-      if (turn.before !== undefined && turn.before !== 'target-moved-on' && turn.before !== 'path-gone') problems.push(`${golden.id}: before`);
+      if (turn.before !== undefined && turn.before !== 'target-moved-on' && turn.before !== 'path-gone' && turn.before !== 'allowlist-removed') problems.push(`${golden.id}: before`);
+      if (turn.before === 'allowlist-removed' && ctx?.family !== 'slack-post') problems.push(`${golden.id}: allowlist-removed outside the Slack family`);
       if (turn.before === 'path-gone' && ctx?.family !== 'jira-transition') problems.push(`${golden.id}: path-gone outside the transition family`);
     }
     const oracle = golden.expected?.oracle;

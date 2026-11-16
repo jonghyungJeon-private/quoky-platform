@@ -57,6 +57,7 @@ export const LAST_ACTION_EXTERNAL_OPERATIONS = [
   'CALENDAR_EVENT_RESTORE',
   'ISSUE_COMMENT_DELETE',
   'ISSUE_TRANSITION_REVERT',
+  'CHANNEL_MESSAGE_DELETE',
 ] as const;
 export type LastActionExternalOperation = (typeof LAST_ACTION_EXTERNAL_OPERATIONS)[number];
 
@@ -87,18 +88,19 @@ export function externalLastActionOf(
  * keeps the S3 "not on yet" state, whatever a stored flag says. The set is a constant, never read from a store, a flag or
  * text: a family opens only when its slice adds it here.
  */
-export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calendar-delete' | 'jira-comment' | 'jira-transition';
+export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calendar-delete' | 'jira-comment' | 'jira-transition' | 'slack-post';
 /**
  * ADR-0112 amendment 3 red-team part passed 2026-11-03 for `calendar-create` (#306): 36 cases x 2 selector variants x
  * 3 runs, 0 attack successes and 0 deviations, deterministic worst-case driver
  * (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`). `calendar-update` (O2) and `calendar-delete` (O3/O6/O7) passed their
  * own gate 2026-11-16 (`agent-redteam.r3-undo.v2.json`, `apps/quoky/src/nl-r3-undo-v2-redteam.app.test.ts`, counts in
  * DECISIONS); `jira-comment` (O4) and `jira-transition` (O5) passed theirs 2026-11-16 (same v2 file and driver: 32 + 36
- * cases x 2 variants x 3 runs, 0 / 0); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
+ * cases x 2 variants x 3 runs, 0 / 0); `slack-post` (ADR-0112 amendment 1 S-1..S-6 under amendment 3) passed its gate
+ * 2026-11-16 (same v2 file and driver: 36 cases x 2 variants x 3 runs, 0 / 0); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
  * when its own slice passes its own gate and adds it here. Reachable only while connector writes are enabled and the
  * family's writer is bound; with the writer off the undo answers its fixed unavailable text.
  */
-export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition'] as ExternalUndoFamily[]);
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition', 'slack-post'] as ExternalUndoFamily[]);
 
 let activeCapabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES;
 
@@ -115,11 +117,15 @@ export function setExternalUndoCapabilitiesForTest(capabilities?: readonly Exter
 /**
  * The undo family of an external record, by its entry and (for `external.write`) its recorded operation, or `undefined` when it
  * has none. Closed mapping: a calendar update is `calendar-update`, a calendar delete `calendar-delete`, a Jira comment
- * `jira-comment`, a Jira transition `jira-transition`; a record without an
+ * `jira-comment`, a Jira transition `jira-transition`, a Slack post (`slack.post` with its operation) `slack-post`; a record without an
  * operation (written before amendment 3's update / delete families) has no family.
  */
 export function externalUndoFamilyOf(entryId: string, operation?: string): ExternalUndoFamily | undefined {
   if (entryId === 'calendar.create') return operation === undefined || operation === 'CALENDAR_EVENT_CREATE' ? 'calendar-create' : undefined;
+  // ADR-0112 amendment 1 (S2/S3) under amendment 3: a Slack post Quoky made (the A6 `slack.post` selection and the anchored
+  // `Slack #채널에 게시:` command alike). Only a record that names the post operation has the family; its undo (the message
+  // delete) has none, so an undo is never undone again.
+  if (entryId === 'slack.post') return operation === 'CHANNEL_POST' ? 'slack-post' : undefined;
   if (entryId !== LAST_ACTION_EXTERNAL_ENTRY) return undefined;
   if (operation === 'CALENDAR_EVENT_UPDATE') return 'calendar-update';
   if (operation === 'CALENDAR_EVENT_DELETE') return 'calendar-delete';
