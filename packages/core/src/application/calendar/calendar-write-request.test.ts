@@ -46,6 +46,27 @@ describe('calendar write grammar (ADR-0110 amendment D3, CWR-2)', () => {
     expect(parse('내일 회의 삭제해줘')).toMatchObject({ kind: 'calendar-delete', ref: { titleWords: [] } });
   });
 
+  it('an unquoted title in an update / delete reference becomes lower-cased title words (live 2026-11-16)', () => {
+    expect(parse('내일 Quoky E2E 되돌리기 시험 일정 삭제해줘')).toMatchObject({
+      kind: 'calendar-delete',
+      ref: { titleWords: ['quoky', 'e2e', '되돌리기', '시험'] },
+    });
+    expect(parse('내일 Quoky E2E 되돌리기 시험 일정을 삭제해줘')).toMatchObject({ ref: { titleWords: ['quoky', 'e2e', '되돌리기', '시험'] } });
+    expect(parse('내일 오후 3시 Quoky E2E 시험 일정 취소해줘')).toMatchObject({
+      kind: 'calendar-delete',
+      ref: { startTime: { hour: 15, minute: 0 }, titleWords: ['quoky', 'e2e', '시험'] },
+    });
+    expect(parse('내일 3시 Quoky 시험 일정 4시로 옮겨줘')).toMatchObject({
+      kind: 'calendar-update',
+      ref: { startTime: { hour: 15, minute: 0 }, titleWords: ['quoky', '시험'] },
+      changes: { moveTo: { time: { hour: 16, minute: 0 } } },
+    });
+    // Quoted words are unchanged; a bare generic noun and a stranded deictic add no word; an undated reference adds none.
+    expect(parse('내일 "Quoky 시험" 일정 삭제해줘')).toMatchObject({ ref: { titleWords: ['quoky', '시험'] } });
+    expect(parse('내일 그 일정 삭제해줘')).toMatchObject({ ref: { titleWords: [] } });
+    expect(parse('방금 그 Quoky E2E 시험 일정 취소해줘')).toMatchObject({ ref: { inferredDay: true, titleWords: [] } });
+  });
+
   it.each([
     ['이번 주 회의 취소해줘', 'calendar-span'],
     ['다음 회의 취소해줘', 'calendar-span'],
@@ -80,6 +101,11 @@ describe('calendar write grammar (ADR-0110 amendment D3, CWR-2)', () => {
     // Live UAT 2026-11-03: when the trailing generic "일정" is the only meeting noun, the title keeps the owner's words.
     ['내일 오후 3시에 30분짜리 Quoky E2E 되돌리기 테스트 일정 추가해줘', 'Quoky E2E 되돌리기 테스트 일정'],
     ['내일 오후 3시에 중요한 일정 잡아줘', '중요한 일정'],
+    // Live 2026-11-16: the title written BEFORE the duration / range is still the owner's residual span.
+    ['내일 오후 3시에 Quoky E2E 되돌리기 시험 일정 30분짜리 추가해줘', 'Quoky E2E 되돌리기 시험 일정'],
+    ['내일 오후 3시에 Quoky E2E 되돌리기 시험 일정 1시간 동안 추가해줘', 'Quoky E2E 되돌리기 시험 일정'],
+    ['내일 오후 3시부터 4시까지 Quoky E2E 시험 일정 추가해줘', 'Quoky E2E 시험 일정'],
+    ['내일 오후 3시에 30분 동안 Quoky E2E 시험 일정 추가해줘', 'Quoky E2E 시험 일정'],
     // Pins from the review rounds: these keep origin/main's titles.
     ['내일 3시에 3분기 실적 회의 잡아줘', '3분기 실적 회의'],
     ['내일 오후 3시에 30분 거리 카페 미팅 추가해줘', '30분 거리 카페 미팅'],

@@ -17004,6 +17004,22 @@ OPS-2b merge (no-bypass extraction).
 - **Consequences:** + the calendar becomes a real assistant surface; + no third party is e-mailed. − a mistaken approved
   write changes the owner's company calendar (mitigated by exact preview + one-time approval + receipts).
 
+### ADR-0110 amendment implementation note — owner's own title words in calendar write grammar (2026-11-16)
+
+- Live finding (Discord): "내일 오후 3시에 Quoky E2E 되돌리기 시험 일정 30분짜리 추가해줘" previewed 제목 "일정", and
+  "내일 Quoky E2E 되돌리기 시험 일정 삭제해줘" listed every event of the day. Cause: the deterministic grammar only took
+  a title phrase that came AFTER the last time/duration match, and took update/delete `titleWords` only from a quoted
+  string. No model, A6 entry or prompt is involved (`calendar.create` has no A6 entry); Core-only fix, no D12 gate.
+- Within decision item 3 above ("events Quoky can identify unambiguously"): `CalendarEventReference.titleWords` already
+  is the ratified title hint; the grammar now fills it from the owner's residual words (day, clock, range, duration,
+  all-day matches cut out; single-character leftovers, fillers and a bare generic meeting noun dropped; lower-cased;
+  the existing every-word `includes` rule) only when the reference names a day. An undated reference still resolves
+  against the session's recent event ("방금 그 … 취소해줘"). A create title is the last duration-delimited segment of
+  the phrase after the day/clock that holds a meeting noun; the bare noun stays the fallback.
+- Particles: no new list. Only the existing trailing 을/를 of the last token is dropped; other postpositions stay and a
+  miss is a safe `event-not-found`. A filter can only narrow the previous candidate set, never broaden it or pick another
+  event; zero matches writes nothing.
+
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
 - **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase

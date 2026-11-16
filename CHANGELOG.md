@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — calendar write grammar keeps the owner's own title words
+
+- **Fixed.** A calendar create whose title came before the duration ("… 시험 일정 30분짜리 추가해줘") no longer previews 제목 "일정"; an unquoted title in an update / delete ("내일 … 시험 일정 삭제해줘") now narrows the candidates (every-word, lower-cased) instead of listing the whole day. Core-only, no prompt change. DECISIONS ADR-0110 amendment implementation note (2026-11-16).
+
 ## Unreleased — ADR-0112 amendment 3: calendar-update undo and calendar-delete restore
 
 - **Added.** "되돌려줘" after Quoky's own approved calendar update patches back only the fields it changed, compare-and-set on Quoky's own post-update version (`TARGET_CHANGED` if the event moved on); after Quoky's own approved calendar delete it restores the SAME event (`CalendarEventWriter.restoreEvent`, no new port), phrase `일정 복원 실행`, and says so plainly when the calendar refuses. Preview + CRITICAL one-time approval + exact phrase on every undo; the target comes only from this actor's own SENT receipt through the session's `lastAction`. No new scope, token, flag, host or migration.
