@@ -44,7 +44,8 @@ const doc = (position: number, body = `body ${position}`, extra: Partial<AgentSo
 
 /** A source with the grant of summarize step 1. */
 const RUN = newSummaryRunToken();
-const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, grant: mintSummaryEgressGrantForTest(1, entryId, RUN) });
+/** The caller asked for every document it passes (the asked-for count bounds what reaches a model: review round 1, CA P1). */
+const granted = (entryId: NlWave1EntryId, documents: readonly AgentSourceDocument[]): AgentSummarySource => ({ entryId, documents, asked: documents.length, grant: mintSummaryEgressGrantForTest(1, entryId, RUN) });
 const mail = (...documents: AgentSourceDocument[]): AgentSummarySource => granted('mail.list', documents);
 
 /**
@@ -94,6 +95,13 @@ function model(locality: 'LOCAL' | 'REMOTE' | undefined, answer: string | ((requ
 
 const allow = (): boolean => true;
 const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: allow, run: RUN };
+/** The items in a prompt (`ITEM n` lines). */
+const itemCount = (prompt: string): number => (prompt.match(/^ITEM \d+$/gm) ?? []).length;
+/** A model answer with one entry per item of the prompt it got, each naming its body. */
+const answerAll = (request: AiRequest): string => {
+  const bodies = [...request.prompt.matchAll(/"body":"([^"]*)"/g)].map((match) => match[1]);
+  return JSON.stringify({ items: bodies.map((body, index) => ({ n: index + 1, summary: `about ${body}` })) });
+};
 
 describe('quarantined summariser: the sealed request (D3)', () => {
   it('is a SUMMARIZATION request with nothing but the self-contained prompt', async () => {
@@ -146,13 +154,15 @@ describe('quarantined summariser: the sealed request (D3)', () => {
     expect(fake.requests).toHaveLength(0);
   });
 
-  it('puts at most the item cap into the one call and counts the rest as omitted (no chunk, no second call)', async () => {
-    const fake = model('LOCAL', JSON.stringify({ items: Array.from({ length: AGENT_M2_MAX_ITEMS }, (_, n) => ({ n: n + 1, summary: `s${n + 1}` })) }));
+  it('puts at most the item cap into one call and splits the rest of the source into another call (owner 2026-11-03 answer 3)', async () => {
+    const fake = model('LOCAL', answerAll);
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(...Array.from({ length: 13 }, (_, i) => doc(i + 1)))], route: via(fake) });
-    expect(fake.requests).toHaveLength(1);
-    expect(outcome.kind === 'summary' && outcome.omitted).toBe(13 - AGENT_M2_MAX_ITEMS);
-    expect((fake.requests[0] as AiRequest).prompt).toContain('ITEM 10\n');
-    expect((fake.requests[0] as AiRequest).prompt).not.toContain('ITEM 11\n');
+    expect(fake.requests).toHaveLength(2);
+    const counts = fake.requests.map((request) => itemCount(request.prompt)).sort((a, b) => b - a);
+    expect(counts).toEqual([AGENT_M2_MAX_ITEMS, 13 - AGENT_M2_MAX_ITEMS]);
+    for (const request of fake.requests) expect(request.prompt).not.toContain('ITEM 11\n');
+    expect(outcome.kind === 'summary' && outcome.omitted).toBe(0);
+    if (outcome.kind === 'summary') expect(summaryEntriesForAssembler(outcome.summary)?.map((entry) => entry.n)).toEqual(Array.from({ length: 13 }, (_, i) => i + 1));
   });
 
   it('items the model leaves out are omitted: 3 documents, 1 summary is omitted 2 (never silently complete)', async () => {
@@ -204,7 +214,7 @@ describe('quarantined summariser: the sealed request (D3)', () => {
   it('a model error is the closed `model` failure, its message is not read, and the audit is content-free', async () => {
     const throwing: TestModel = { executionLocality: 'LOCAL', auditId: 'audit-local', run: () => Promise.reject(new Error('SECRET-DETAIL')) };
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(throwing) });
-    expect(outcome).toMatchObject({ kind: 'failed', reason: 'model', audit: { locality: 'LOCAL', auditId: 'audit-local' } });
+    expect(outcome).toMatchObject({ kind: 'failed', reason: 'model', audits: [{ locality: 'LOCAL', auditId: 'audit-local' }] });
     expect(JSON.stringify(outcome)).not.toContain('SECRET-DETAIL');
   });
 
@@ -224,10 +234,12 @@ describe('quarantined summariser: the sealed request (D3)', () => {
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1, 'RAW-BODY-CANARY-1'))], route: via(model('REMOTE')), now: () => (tick += 7) });
     expect(outcome.kind).toBe('summary');
     if (outcome.kind !== 'summary') return;
-    expect(Object.keys(outcome.audit).sort()).toEqual(['auditId', 'estimatedTokens', 'latencyMs', 'locality']);
-    expect(outcome.audit).toMatchObject({ locality: 'REMOTE', auditId: 'audit-REMOTE', latencyMs: 7 });
-    expect(outcome.audit.estimatedTokens).toBeGreaterThan(0);
-    expect(JSON.stringify(outcome.audit)).not.toContain('CANARY');
+    expect(outcome.audits).toHaveLength(1);
+    const audit = outcome.audits[0];
+    expect(Object.keys(audit ?? {}).sort()).toEqual(['auditId', 'estimatedTokens', 'latencyMs', 'locality']);
+    expect(audit).toMatchObject({ locality: 'REMOTE', auditId: 'audit-REMOTE', latencyMs: 7 });
+    expect(audit?.estimatedTokens).toBeGreaterThan(0);
+    expect(JSON.stringify(outcome.audits)).not.toContain('CANARY');
   });
 
   it('an aborted signal abandons a hung call', async () => {
@@ -449,14 +461,16 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
     expect(await ready(mintSummaryEgressGrantForTest(1, 'mail.list', newSummaryRunToken()), 1, [local])).toBe('no-summary-grant');
   });
 
-  it('with a grant a remote model is allowed for exactly one item; a batch runs on a LOCAL model only', async () => {
+  it('with a grant a remote model is allowed for one item and for a batch alike (owner 2026-11-03 answer 3)', async () => {
     expect(await ready(grant, 1, [remote, local])).toBe('ok');
     expect(await ready(grant, 1, [unknown])).toBe('ok');
     expect(await ready(grant, 1, [])).toBe('no-model');
-    for (const count of [2, 3, AGENT_M2_MAX_ITEMS]) {
-      expect(await ready(grant, count, [remote])).toBe('no-model');
-      expect(await ready(grant, count, [unknown])).toBe('no-model');
+    for (const count of [2, 3, AGENT_M2_MAX_ITEMS, 2 * AGENT_M2_MAX_ITEMS]) {
+      expect(await ready(grant, count, [remote])).toBe('ok');
+      expect(await ready(grant, count, [unknown])).toBe('ok');
       expect(await ready(grant, count, [remote, local])).toBe('ok');
+      // Still never without the grant, and never a LOCAL fallback for it.
+      expect(await ready(undefined, count, [local, remote])).toBe('no-summary-grant');
     }
     // An asked-for count that is not a positive integer is unverifiable: listing only.
     for (const count of [0, -1, 1.5, Number.NaN]) expect(await ready(grant, count, [local, remote]), String(count)).toBe('no-model');
@@ -471,10 +485,10 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
     const batchFirst = model('REMOTE');
     const batchSecond = model('LOCAL');
     await quarantinedSummarize({ ...base, sources: [mail(doc(1), doc(2))], route: via(batchFirst, batchSecond) });
-    expect([batchFirst.requests.length, batchSecond.requests.length]).toEqual([0, 1]);
+    expect([batchFirst.requests.length, batchSecond.requests.length]).toEqual([1, 0]);
   });
 
-  it('W1: the model is chosen with the count that was asked for, not the count that fit', async () => {
+  it('W1: the asked-for count must be a positive integer; a granted batch the fit trims still goes to the top-ranked model', async () => {
     const remoteFirst = model('REMOTE');
     const localSecond = model('LOCAL');
     const body = '가나다라마바사아자차'.repeat(200);
@@ -482,16 +496,16 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
     const probe = model('LOCAL');
     await quarantinedSummarize({ ...base, sources: [mail(five[0] as AgentSourceDocument)], route: via(probe) });
     const one = estimateInputTokens((probe.requests[0] as AiRequest).prompt);
-    // The fit trims 5 items to 1; the batch the policy sent to LOCAL must not flip to the REMOTE model.
+    // The fit trims 5 items to 1 call of 1 item; the granted batch may use the REMOTE model (the selector's ranking decides).
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(...five)], route: via(remoteFirst, localSecond), remainingInputTokens: one });
-    expect(outcome.kind).toBe('summary');
-    expect(remoteFirst.requests).toHaveLength(0);
-    expect(localSecond.requests).toHaveLength(1);
-    expect(((localSecond.requests[0] as AiRequest).prompt.match(/^ITEM \d+$/gm) ?? []).length).toBe(1);
-    // The count the run asked for (more than the documents that came back) counts too.
+    expect(outcome).toMatchObject({ kind: 'summary', omitted: 4 });
+    expect(remoteFirst.requests).toHaveLength(1);
+    expect(localSecond.requests).toHaveLength(0);
+    expect(itemCount((remoteFirst.requests[0] as AiRequest).prompt)).toBe(1);
+    // The count the run asked for (more than the documents that came back) admits a REMOTE model as well.
     const remoteOnly = model('REMOTE');
-    expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(remoteOnly), askedItems: 3 })).toEqual({ kind: 'listing-only', reason: 'no-model' });
-    expect(remoteOnly.requests).toHaveLength(0);
+    expect((await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(remoteOnly), askedItems: 3 })).kind).toBe('summary');
+    expect(remoteOnly.requests).toHaveLength(1);
   });
 
   it('only mail and Drive can reach a model: every other entry stops before selection', async () => {
@@ -514,7 +528,7 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
       expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: { selector } })).toEqual({ kind: 'listing-only', reason: 'no-model' });
       // Behind the real router an unreadable locality is unverifiable, so it is never a candidate: the readable one is chosen.
       if (bad === badLocality) {
-        expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(bad, good) })).toMatchObject({ kind: 'summary', audit: { locality: 'REMOTE', auditId: 'audit-REMOTE' } });
+        expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(bad, good) })).toMatchObject({ kind: 'summary', audits: [{ locality: 'REMOTE', auditId: 'audit-REMOTE' }] });
       }
     }
     expect(calls).toEqual([]);
@@ -561,16 +575,19 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
     expect(fake.requests).toHaveLength(0);
   });
 
-  it('mail with a grant: one item may use the remote model, a batch of two never does', async () => {
+  it('mail with a grant: one item and a batch may both use the remote model, one sealed call for the batch', async () => {
     const one = model('REMOTE');
     expect((await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(one) })).kind).toBe('summary');
     expect(one.requests).toHaveLength(1);
-    const batch = model('REMOTE');
-    expect(await quarantinedSummarize({ ...base, sources: [mail(doc(1), doc(2))], route: via(batch) })).toEqual({ kind: 'listing-only', reason: 'no-model' });
-    expect(batch.requests).toHaveLength(0);
-    const both = model('LOCAL');
-    expect((await quarantinedSummarize({ ...base, sources: [mail(doc(1), doc(2))], route: via(batch, both) })).kind).toBe('summary');
-    expect(both.requests).toHaveLength(1);
+    const batch = model('REMOTE', answerAll);
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1), doc(2), doc(3))], route: via(batch) });
+    expect(outcome).toMatchObject({ kind: 'summary', omitted: 0, audits: [{ locality: 'REMOTE' }] });
+    expect(batch.requests).toHaveLength(1);
+    expect(itemCount((batch.requests[0] as AiRequest).prompt)).toBe(3);
+    // Without the grant the same batch is listing-only: no model, and no LOCAL fallback.
+    const local = model('LOCAL');
+    expect(await quarantinedSummarize({ ...base, sources: [{ entryId: 'mail.list', documents: [doc(1), doc(2)] }], route: via(batch, local) })).toEqual({ kind: 'listing-only', reason: 'no-summary-grant' });
+    expect([batch.requests.length, local.requests.length]).toEqual([1, 0]);
   });
 
   it('mixed sources: every source that needs a grant must hold its own', async () => {
@@ -672,7 +689,7 @@ describe('quarantined summariser: review round 2', () => {
 
   it('N1: a REMOTE model whose answer fails the schema still reports its audit', async () => {
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(doc(1))], route: via(model('REMOTE', 'nope')) });
-    expect(outcome).toMatchObject({ kind: 'failed', reason: 'schema', audit: { locality: 'REMOTE' } });
+    expect(outcome).toMatchObject({ kind: 'failed', reason: 'schema', audits: [{ locality: 'REMOTE' }] });
   });
 
   it('N1: onCallStart reports the audit as soon as the call starts, even for a call that never answers', async () => {
@@ -683,7 +700,7 @@ describe('quarantined summariser: review round 2', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(report?.()).toMatchObject({ locality: 'REMOTE', auditId: 'audit-hung' });
     controller.abort();
-    expect(await pending).toMatchObject({ kind: 'failed', reason: 'model', audit: { locality: 'REMOTE' } });
+    expect(await pending).toMatchObject({ kind: 'failed', reason: 'model', audits: [{ locality: 'REMOTE' }] });
   });
 
   it('N6: a `text` getter that throws settles the call as the closed model failure', async () => {

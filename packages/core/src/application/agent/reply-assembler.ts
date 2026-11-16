@@ -23,7 +23,8 @@ import type { StructureProjection } from './structure-projector';
  *   model: a line that would still hold a link is dropped.
  * - **Scope (D4/D5).** Agent runs happen in the owner's DM only: for any other destination the reply is one fixed refusal
  *   line and nothing of the content, whatever the label.
- * - **Disclosure.** When a summary was made by a `REMOTE` model, one fixed line says part of the text was sent to an outside model.
+ * - **Disclosure.** When any M2 call of the run was sent to a `REMOTE` model (each call of a split batch is audited on its own), one
+ *   fixed line says part of the text was sent to an outside model.
  * - **Rendering input.** `parts` is the only rendering input; `text` is those parts joined and is for logs and plain-text sinks.
  * - **Content-free log.** One `agent_run.assemble` line: counters only.
  */
@@ -93,8 +94,10 @@ const T = {
       'no-documents': '요약할 내용을 가져오지 못해서 목록만 보여드려요.',
       'credential-in-prompt': '요약할 자료에 민감한 정보가 있는 것 같아서 목록만 보여드려요.',
       'dispatch-refused': '요약하기 직전에 모델 설정이 바뀌어서 요약하지 않고 목록만 보여드려요.',
+      budget: '이번 요청의 처리 한도가 남지 않아서 요약하지 않고 목록만 보여드려요.',
     } satisfies Record<QuarantinedListingOnlyReason, string>,
     summaryUnavailable: '요약을 보여드릴 수 없었어요.',
+    credentialWithheld: '민감한 정보가 있는 것 같은 항목은 요약에서 뺐어요.',
     remoteDisclosure: '이 요약을 만들려고 원문 일부를 외부 모델로 보냈어요.',
     summaryFailed: '요약을 만들지 못해서 목록만 보여드려요.',
     boundStopped: '한도에 도달해서 여기까지만 보여드려요.',
@@ -117,8 +120,10 @@ const T = {
       'no-documents': 'The content to summarize could not be fetched; this is the listing only.',
       'credential-in-prompt': 'The material to summarize looked sensitive, so this is the listing only.',
       'dispatch-refused': 'The model setting changed right before the summary, so nothing was sent; this is the listing only.',
+      budget: 'This request had no limit left for a summary, so nothing was sent; this is the listing only.',
     } satisfies Record<QuarantinedListingOnlyReason, string>,
     summaryUnavailable: 'A summary could not be shown.',
+    credentialWithheld: 'Items that looked sensitive were left out of the summary.',
     remoteDisclosure: 'Part of the original text was sent to an outside model to make this summary.',
     summaryFailed: 'A summary could not be made, so this is the listing only.',
     boundStopped: 'A limit was reached, so this is as far as it goes.',
@@ -183,10 +188,15 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
       for (const line of lines) parts.push({ kind: 'summary', text: line });
       summaryLines += lines.length;
       if (step.omitted > 0) parts.push({ kind: 'status', text: t.omitted(step.omitted) });
+      // A call refused for credential-shaped text is reported by its closed code only (CA review round 1, P3).
+      if (step.credentialWithheld === true) parts.push({ kind: 'status', text: t.credentialWithheld });
     }
   }
-  // A remote call is disclosed whatever became of its answer (ok, failed, or cut off after it started).
-  for (const step of result.steps) if (step.kind === 'summarize' && 'audit' in step && step.audit?.locality === 'REMOTE') remote = true;
+  // A remote call is disclosed whatever became of its answer (ok, failed, refused after another call was sent, or cut off after it
+  // started): every sent call of every summary step is in that step's `audits`, so a split remote batch is disclosed whole.
+  for (const step of result.steps) {
+    if (step.kind === 'summarize' && 'audits' in step && (step.audits ?? []).some((audit) => audit.locality === 'REMOTE')) remote = true;
+  }
   if (remote) parts.push({ kind: 'status', text: t.remoteDisclosure });
 
   // 4. Fixed status lines: no model call was made, a call failed, a bound stopped the run.

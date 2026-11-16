@@ -301,10 +301,10 @@ describe('AgentPlanExecutor', () => {
       expect(result.steps[0]).toEqual({ step: 1, kind: 'read', entryId: 'jira.issues', status: 'not-run', reason: 'bound' });
     });
 
-    it('wall time: a spent 45 s wall starts no further step', async () => {
+    it('wall time: a spent 60 s wall starts no further step', async () => {
       let now = 0;
       const jira = fake(() => {
-        now += 46_000;
+        now += 61_000;
         return ok(['AB-1']);
       });
       const result = await new AgentPlanExecutor({ readers: { 'jira.issues': jira.port }, elapsed: () => now }).execute(plan([read('jira.issues'), read('jira.issues')]));
@@ -361,8 +361,8 @@ describe('AgentPlanExecutor', () => {
     it('the port is told the wall time left', async () => {
       const jira = fake(() => ok(['AB-1']));
       await new AgentPlanExecutor({ readers: { 'jira.issues': jira.port } }).execute(plan([read('jira.issues')]));
-      expect(jira.calls[0]?.remainingMs).toBeLessThanOrEqual(45_000);
-      expect(jira.calls[0]?.remainingMs).toBeGreaterThan(40_000);
+      expect(jira.calls[0]?.remainingMs).toBeLessThanOrEqual(60_000);
+      expect(jira.calls[0]?.remainingMs).toBeGreaterThan(55_000);
     });
   });
 

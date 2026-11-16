@@ -33848,6 +33848,165 @@ wiring, no flag change, no live behaviour change).
   the fix); the P3-3b "locality that changes after selection" test counts the extra read. CA round-1 P3 (an audit recorded
   when the wall ends in the same tick as a final-check refusal) is accepted: it over-reports, the conservative direction.
 
+## ADR-0121 D3/D7 amendment — split M2 calls count, raised run caps (owner 2026-11-16)
+
+- **Status:** Decided by the Product Owner on 2026-11-16. It amends the M2 count of ADR-0121 D3 ("A run makes at most 3 M2
+  calls") and the per-run model-call, wall-time and input bounds of D7. The ratified text above is kept as history; these numbers
+  supersede it. It also settles open P3-3a decision 6 (do split M2 calls count toward the M2 and model-call limits), which the
+  D12 implementation note above carried to the remote batch slice.
+- **Owner's words (verbatim):** "응 권장대로 상한에 넣고 진행해 상한은 좀 높아야 할거 같네? 현재는 로컬 LLM 을 거의 사용하진 않으니까
+  말야". Offered levels, the owner chose "중간 상향 (권장)".
+- **Decision.**
+  1. Every split M2 call of a remote batch (owner answer 3 of 2026-11-03) is an M2 call and a model call, charged on the
+     run's bounds like any other.
+  2. The caps are raised:
+
+     | Bound (per run) | Was | Now |
+     |---|---|---|
+     | M2 calls (D3) | 3 | **6** |
+     | Model calls (D7; planner, re-plan and M2) | 5 | **8** |
+     | Input (D7) | 40k | **120,000 UTF-8 bytes** |
+     | Wall time (D7) | 45 s | **60 s** |
+
+  3. The split in answer 3 ("at most the D3 cap of 3 M2 calls") is bound by what the run has left of these caps, shared with the
+     run's other summary steps: the remaining M2 calls, the remaining model calls and the remaining input bytes.
+- **Unchanged:** at most 6 steps, 1 re-plan, 10 connector queries (the 2026-10-23 interpretation note) and 50 HTTP requests
+  per run; 10 referenced values per run; per actor 30 runs an hour and 150 a day; at most 10 items and one 280-character sentence
+  per item per M2 call (P3-3b #6); a breach ends the run with a deterministic partial reply and no retry.
+- **Reason.** A remote batch needs room: a summary over mail and Drive is at least two calls, and a source over the item cap
+  is more. Split calls count, so the old caps would cut ordinary batches. The owner rarely uses a local LLM today, so remote
+  calls are the common case. The input bound is still the UTF-8 byte bound (2026-11-03 answer 9, step 1). It overcounts Korean
+  2–3×, so 120,000 bytes is roughly 40,000–60,000 tokens of Korean text. It stays until the calibrated estimator of step 2
+  replaces it.
+- **Not decided here:** the grant producer (none exists, so mail and Drive stay listing-only in production), wiring, every
+  `QUOKY_AGENT_MODE` switch and every model-in-the-loop run.
+
+### ADR-0121 S2 implementation note — remote batch M2 summaries and the raised caps (Core, offline, unwired; 2026-11-16, branch `claude/v5-s2-m2-batch`)
+
+- **Status: implemented, not active.** Applies owner answer 3 of 2026-11-03 and the D3/D7 amendment above. There is no
+  composition-root wiring, no flag change and no live behaviour change. No grant producer exists, so in production mail and
+  Drive are still listing-only with no body fetched. No new port, DI token or migration.
+- **Caps (`run-bounds.ts`).** `AGENT_RUN_BOUNDS` is M2 6, model calls 8, input 120,000, wall 60,000 ms; the rest is unchanged.
+  `AgentRunBudget.remainingM2Calls()` answers the smaller of the M2 calls and the model calls left (0 after any breach).
+- **Locality (`deriveM2Localities`).** `REMOTE_ON_SUMMARY_REQUEST` with a valid grant now allows `LOCAL` and `REMOTE` for a batch
+  too. This supersedes the single-item rule. Unchanged:
+  - `HOST_ONLY`: no model;
+  - a grant-needing input without its grant: no model and no `LOCAL` fallback;
+  - an unverifiable label or count: no model;
+  - `LOCAL_MODEL_ONLY`: `LOCAL`;
+  - the grant is still per step, per source and per run, and covers exactly the asked-for items.
+
+  The asked-for count must still be a positive integer.
+- **Planning (`quarantined-summary.ts`, module-private `planQuarantinedCalls`).** The calls are planned up front, before any
+  reservation:
+  - one sealed call per source (each covered read), with at most `AGENT_M2_MAX_ITEMS` items;
+  - a source with more items is split into more calls;
+  - the number of calls stays within `remainingCalls` (the executor passes `remainingM2Calls()`);
+  - the sum of the prompts' UTF-8 bytes stays within `remainingInputTokens`.
+
+  Items are placed in source order while they fit. The first item that does not fit, and every item after it, are omitted. They
+  count in `omitted`, the run is partial, and nothing is a breach: every planned reservation fits, so an ordinary run never
+  trips a sticky breach. If not even one item can be placed (no calls or bytes left), the plan is empty: nothing is reserved,
+  the step is `listing-only` with the new closed reason `budget`, and the run goes on (review round 1, Codex P2).
+- **Dispatch.** The provider is selected once per summarize step, under one derived context. The planned calls are launched in
+  one synchronous loop and run in parallel. Each call does its own work in order, with nothing awaited in between:
+  1. the credential check on its final prompt;
+  2. the abort check;
+  3. the dispatch check (a refusal charges nothing);
+  4. its own `reserve` (one M2 or model call plus its bytes);
+  5. its own `onCallStart`;
+  6. the final dispatch check immediately before `provider.execute`, including the round-2 locality re-read after the policy
+     verdict.
+
+  A refused call sends nothing. Its `onCallStart` reader then answers `undefined`, so no audit (and no `REMOTE` audit) is
+  written for it. No call is re-sent, retried or moved to another provider.
+- **Merge.** Each call numbers its own items from 1. The merge maps them to global numbers (1-based, in source order across the
+  step's calls) and sorts by that number, so the result does not depend on the model's entry order or on which call settled
+  first. The merge makes no model call. The label is the join of every covered read, as before.
+- **Partial failure.**
+  - A call that fails (model error, abort, schema, credential) or is refused (`dispatch-refused`, `credential-in-prompt`,
+    `bound`) omits its items.
+  - The step is `summary` if at least one call succeeded.
+  - If every call failed and at least one was sent, the step is `failed` with the first SENT call's reason (source order) and
+    every sent call's audit (review round 1, CA P2-a). Only when nothing was sent does it take the first call's outcome:
+    `listing-only` with its reason, `bound`, or `failed` (an abort before send).
+- **Shape change.**
+  - `QuarantinedSummaryOutcome` and the executor's summarize `AgentStepResult` carry `audits: readonly QuarantinedCallAudit[]`
+    (one per sent call, in source order) instead of one `audit`. It is required on `ok` and optional on `not-run` and `failed`,
+    and present only when a call was sent. `listing-only` and `bound` carry none: nothing was sent (review round 1).
+  - On the wall path the executor reads every started call's reader, so a parallel call the wall cuts is still audited.
+  - The assembler shows the one fixed disclosure line when any audit of any summarize step is `REMOTE`. That covers every call
+    of a split batch, including a refused step whose other call was sent.
+  - The executor's log line is unchanged: counts only, with `m2Calls` from the budget.
+- **Tests.**
+  - `quarantined-summary-batch.test.ts` (14, new): parallel dispatch of a 12 + 3 split; sealed per-source prompts; a
+    deterministic merge under reverse settling; one selection and two checks per call; planning by remaining calls and by
+    remaining bytes; executor runs under a lower M2 cap, model cap and input bound with no breach; default caps complete with
+    3 calls; partial and total failure; a locality flip at one call's final check; a policy refusal at one call's first check;
+    a wall that cuts a parallel call; no retry.
+  - `run-bounds.test.ts`: the new values, the model cap binding M2, and `remainingM2Calls`.
+  - The updated P3-3b, D12, executor and assembler tests now expect a granted batch on `REMOTE`, with `audits` lists.
+  - Every new test fails on the code before this slice.
+- **Choices made in this slice (for review).**
+  1. When the caller passes no `remainingCalls` / `remainingInputTokens`, planning uses the run's full caps
+     (`AGENT_RUN_BOUNDS`); NaN, negative or non-finite is 0 (review round 1, CA P2-b; it was "no limit" before the review).
+  2. A `credential-in-prompt` final-prompt hit now refuses that call only, not the whole step; an `ok` step reports it with the
+     closed flag `credentialWithheld` and one fixed status line (review round 1, CA P3).
+  3. The disclosure stays one fixed line per reply rather than one line per call.
+  4. Items are placed as a prefix (the first item that does not fit stops placement), not first-fit, to keep the old fit's
+     shape.
+- **ADR-0118 D7 cross-reference (review round 1, CA (e)).** ADR-0118 D7 lets mail and Drive text leave the host only on an
+  explicit summary request, and its GML-1 text reads one message body per explicit request. ADR-0121 owner answer 3
+  (2026-11-03) explicitly widens the AGENT path to a remote batch: under a per-step, per-source, per-run
+  `SummaryEgressGrant`, a granted summary may send the asked-for items of each source to a `REMOTE` model. The batch is
+  bounded by the asked-for count per source: only documents at listing positions 1..asked (the read's limit, 1..10 by
+  ADR-0120 D4) reach a model, whatever the port returned, and the excess is omitted. The chat (GML-1) path of ADR-0118 D7 is
+  unchanged. No grant producer exists, so nothing leaves the host today.
+- **Carried to the wiring slice (review round 1, CA (f); blocks that slice).** The wiring slice must charge the planner (M1) on
+  the run budget before step 1 and reserve the re-plan (M1') explicitly (`reserveModelCall('planner' | 'replan')`). Today only
+  M2 is charged on the executor's budget, so `remainingM2Calls()` sees the planner's share only once that is done. No code
+  change in this slice.
+- **Review round 1 (Chief Architect CHANGES REQUIRED; Codex 1×P2; all fixed).**
+  1. *CA P1, remote items not bounded by the asked count.* A port that ignored its limit (25 documents for "메일 3개 요약") sent
+     every document. Fix: `AgentSummarySource.asked` (the executor passes each read's requested count). Only documents at
+     positions 1..asked are prepared; the excess is omitted. An absent count is `AGENT_M2_MAX_ITEMS` and a value that is not
+     a positive integer admits nothing. The executor's clamp of `requested` to 10 stays: a read limit is 1..10 (ADR-0120
+     D4), so a valid plan never asks more than 10 of one source, and the per-call cap of 10 stays. Within the executor a
+     split by count therefore needs more than one source; a direct caller that asks for more is split as designed. Tests:
+     batch "CA P1" (12 returned for limit 3 sends exactly 3; direct callers; invalid counts), and the existing batch
+     executor tests now ask for what they send.
+  2. *CA P2-a, contradictory reply when every call fails.* A refused first call made the step `listing-only` ("nothing was
+     sent") although a later call was sent. Fix: a sent call makes the step `failed` with the first sent call's reason and its
+     audits. `listing-only` and `bound` outcomes no longer carry audits. Tests: batch "CA P2-a" and assembler "review round 1
+     (CA P2-a)" (failed, audit present, REMOTE disclosed, no "nothing was sent").
+  3. *CA P2-b, direct callers fail open.* An absent or NaN `remainingCalls` / `remainingInputTokens` became unlimited. Fix:
+     absent is the `AGENT_RUN_BOUNDS` cap; NaN, negative or non-finite is 0. Test: batch "CA P2-b" (70 asked documents, an
+     always-yes `reserve`: exactly 6 calls; each unreadable value is `budget` with no call).
+  4. *Codex P2, a forced one-item call made a sticky breach.* When nothing fit, the plan forced a one-item call, and its refused
+     reservation set a sticky breach that skipped later steps (reproduced for all three limits; a later connector read was
+     skipped). Fix: an empty plan, nothing reserved, the step `listing-only` with the new closed reason `budget` (assembler copy
+     in Korean and English), all its items omitted, and the run goes on. Dispute recorded: Claude (CA) accepted the forced call
+     as (d) / Codex P2 / conclusion: Codex, because of the ratified "leftovers omitted, never a breach" and because no egress is
+     affected either way. Tests: batch "Codex P2" (one per limit; the later read runs, no breach, nothing reserved); the
+     executor's M2-cap, model-call and input-token tests and the assembler's capped case now expect `budget` with no breach.
+  5. *CA P3.* The stale executor comment ("REMOTE … one item only") is rewritten. A call refused for `credential-in-prompt` in
+     an `ok` step sets `credentialWithheld`, and the assembler renders one fixed content-free line. Test: assembler "review
+     round 1 (CA P3)". The readout guard already withholds credential-shaped items before the prompt, so the flag is defence
+     in depth.
+  6. *CA (e) and (f):* the two notes above.
+- **Review round 2 (Chief Architect APPROVE with 2×P3; Codex 1×P2 duplicating one; both fixed).**
+  1. *Codex P2 / CA P3, duplicate positions bypassed the asked count.* The cut checked positions only, so a direct caller with
+     `asked: 1` and three documents at position 1 sent all three. Fix (inside `quarantinedSummarize`, independent of the
+     executor's validation): an integer position in 1..asked, each position admitted at most once per source (a repeat is
+     omitted and counted), and never more than `asked` admitted items per source. Unique integer positions inside 1..asked
+     cannot exceed `asked`; non-integer positions could, so they are refused and the count cap is the backstop. Test: batch
+     "review round 2" (duplicates with asked 1 send exactly 1; asked 2 with positions 1, 1.5, 2 sends exactly 2).
+  2. *CA P3, `credentialWithheld` was untested.* New `quarantined-summary-credential-withheld.test.ts` mocks the credential
+     detector to fire only on an assembled M2 prompt holding a Drive item. Over mail plus Drive: the step is `ok` with
+     `credentialWithheld: true`, the two Drive items are omitted, the Drive call is neither reserved nor sent (one M2 call,
+     input tokens equal to the mail prompt), and the assembler renders the fixed line. It fails when either the flag
+     computation or the executor's pass-through is removed.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112

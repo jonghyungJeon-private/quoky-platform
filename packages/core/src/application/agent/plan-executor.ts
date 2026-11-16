@@ -16,6 +16,7 @@ import {
   type QuarantinedCallAudit,
   type QuarantinedListingOnlyReason,
   type QuarantinedSummarizerRoute,
+  type QuarantinedSummaryOutcome,
   type SummaryReadinessInput,
   type QuarantinedSummary,
   type SummaryRunToken,
@@ -39,9 +40,11 @@ import { projectStructure, type AgentRawItem, type StructureProjection } from '.
  *   second, run-time check). Same-source Jira to Jira is the allowed case (`items-by-key` behind the port).
  * - **Bounds (D7)** via {@link AgentRunBudget}: a breach never throws; the run stops starting work and returns a
  *   deterministic `partial` result, with no retry.
- * - **Summaries (D3/D4, P3-3b; D12).** With a {@link AgentSummarizerDeps} (the existing provider selector) a `summarize` step
- *   makes at most one M2 call through `quarantined-summary.ts` (charged on the run's M2 / model-call / token bounds; a breach is
- *   `not-run` and a partial result), over the raw documents the covered read ports handed over. A read is asked for documents
+ * - **Summaries (D3/D4, P3-3b; D12; the remote batch).** With a {@link AgentSummarizerDeps} (the existing provider selector) a
+ *   `summarize` step makes its M2 calls through `quarantined-summary.ts`: one per source, split when a source's items do not fit
+ *   one, planned up front within the run's remaining M2 calls, model calls and input tokens and run in parallel; each is charged
+ *   on those bounds right before it is made (owner 2026-11-16: split calls count; a breach is `not-run` and a partial result).
+ *   They read the raw documents the covered read ports handed over. A read is asked for documents
  *   (`withDocuments`) only when a summarize step covers it AND a provider can already be selected under the locality its label,
  *   grant and asked-for count allow (a `REMOTE_ON_SUMMARY_REQUEST`
  *   read needs a summary grant, which nothing produces in this slice: mail and Drive stay listing-only, body never fetched).
@@ -147,8 +150,11 @@ export type AgentStepResult =
   | { readonly step: number; readonly kind: 'read'; readonly entryId: NlWave1EntryId; readonly status: 'not-run'; readonly reason: AgentStepNotRunReason }
   /** No summariser was injected (`deferred`). */
   | { readonly step: number; readonly kind: 'summarize'; readonly status: 'deferred'; readonly from: readonly number[]; readonly schema: string }
-  /** A bound stopped the step; `audit` is set when a model call had already started (the call was made, even if its answer was cut off). */
-  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'not-run'; readonly from: readonly number[]; readonly schema: string; readonly audit?: QuarantinedCallAudit }
+  /**
+   * A bound stopped the step; `audits` lists every model call that had already been sent (the call was made, even if its answer
+   * was cut off), in source order.
+   */
+  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'not-run'; readonly from: readonly number[]; readonly schema: string; readonly audits?: readonly QuarantinedCallAudit[] }
   | {
       readonly step: number;
       readonly kind: 'summarize';
@@ -156,13 +162,16 @@ export type AgentStepResult =
       readonly from: readonly number[];
       readonly schema: string;
       readonly summary: QuarantinedSummary;
-      /** Items not in the summary (over the item cap, withheld, dropped on validation, or left out by the model or a guard). */
+      /** Items not in the summary (over the planned calls or the fit, withheld, dropped on validation, in a failed call, or left out by the model or a guard). */
       readonly omitted: number;
-      readonly audit: QuarantinedCallAudit;
+      /** One audit per sent call, in source order (at least one: the call that answered). */
+      readonly audits: readonly QuarantinedCallAudit[];
+      /** A call of this step was refused because its prompt held credential-shaped text; its items are omitted (CA P3). */
+      readonly credentialWithheld?: true;
     }
-  /** D4: no model satisfied the inputs' egress label (or the content has no readout shape): no call was made. */
+  /** D4: no model satisfied the inputs' egress label (or the content has no readout shape, or no budget was left): no call was sent. */
   | { readonly step: number; readonly kind: 'summarize'; readonly status: 'listing-only'; readonly from: readonly number[]; readonly schema: string; readonly reason: QuarantinedListingOnlyReason }
-  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'failed'; readonly from: readonly number[]; readonly schema: string; readonly errorCode: 'SCHEMA' | 'CREDENTIAL' | 'MODEL'; readonly audit?: QuarantinedCallAudit };
+  | { readonly step: number; readonly kind: 'summarize'; readonly status: 'failed'; readonly from: readonly number[]; readonly schema: string; readonly errorCode: 'SCHEMA' | 'CREDENTIAL' | 'MODEL'; readonly audits?: readonly QuarantinedCallAudit[] };
 
 export interface AgentRunResult {
   /** `complete`: every read answered and no bound breached. Anything else is `partial`: the reply shows what exists. */
@@ -295,8 +304,9 @@ export class AgentPlanExecutor {
 
     // Documents are asked for only when a covering summarize step could run: its source has a readout shape and work-text
     // controls, its label, grant and asked-for count admit a locality, and the selector names an allowed provider (D12).
-    // A read of several items counts its requested limit (an unstated limit counts as the item cap): `REMOTE` is allowed for
-    // one item only, so a multi-item read with no ready `LOCAL` provider never fetches bodies (N3).
+    // A read counts its requested limit (an unstated limit counts as the item cap). With a grant `LOCAL` and `REMOTE` are
+    // allowed for one item and for a batch alike (owner 2026-11-03 answer 3); the summary sends at most the asked-for items of
+    // each source (CA review round 1, P1).
     const route = this.deps.summarizer;
     let withDocuments = false;
     if (route !== undefined) {
@@ -342,8 +352,9 @@ export class AgentPlanExecutor {
   }
 
   /**
-   * One `summarize` step (D3/D4): at most one M2 call, reserved on the run's budget right before it is made. Total: a refusal,
-   * a model error or a bad output is a closed status, never a throw and never a retry.
+   * One `summarize` step (D3/D4): its M2 calls (planned within what the run has left, run in parallel), each reserved on the run's
+   * budget right before it is made. Total: a refusal, a model error or a bad output is a closed status, never a throw and never a
+   * retry; every call that was sent is in the step's `audits`.
    */
   private async runSummary(
     step: Extract<ValidatedAgentStep, { kind: 'summarize' }>,
@@ -360,7 +371,9 @@ export class AgentPlanExecutor {
       const covered = state.documents.get(from);
       if (covered === undefined) continue;
       const grant = summaryGrantFor(number, covered.entryId, state.run);
-      sources.push(grant !== undefined ? { ...covered, grant } : covered);
+      // The source's asked-for count bounds what reaches a model, whatever the port returned (CA review round 1, P1).
+      const asked = state.requested.get(from) ?? AGENT_M2_MAX_ITEMS;
+      sources.push({ ...covered, asked, ...(grant !== undefined ? { grant } : {}) });
     }
     if (sources.length === 0) {
       // Why no body was fetched, if the read decided so (no readout shape, no grant, no model); else nothing came back.
@@ -373,7 +386,8 @@ export class AgentPlanExecutor {
     const listedItems = step.from.reduce((sum, from) => sum + (state.listed.get(from) ?? 0), 0);
 
     const controller = new AbortController();
-    let started: (() => QuarantinedCallAudit) | undefined;
+    // One reader per call that started, in start order (= source order: the calls start in one synchronous loop).
+    const started: (() => QuarantinedCallAudit | undefined)[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
     const wall = new Promise<'wall'>((resolve) => {
       timer = setTimeout(() => {
@@ -393,11 +407,12 @@ export class AgentPlanExecutor {
         run: state.run,
         askedItems: askedAcross(state, step.from),
         remainingInputTokens: budget.remainingInputTokens(),
+        remainingCalls: budget.remainingM2Calls(),
         reserve: (tokens) => budget.reserveModelCall('m2') && budget.reserveInputTokens(tokens),
         onCallStart: (audit) => {
-          started = audit;
+          started.push(audit);
         },
-      }).catch((): { readonly kind: 'failed'; readonly reason: 'model' } => ({ kind: 'failed', reason: 'model' }));
+      }).catch((): QuarantinedSummaryOutcome => ({ kind: 'failed', reason: 'model' }));
       const outcome = await Promise.race([call, wall]);
       // A clock that throws after the call started is a wall breach, never an escape that would drop the call's audit (Codex).
       try {
@@ -405,19 +420,35 @@ export class AgentPlanExecutor {
       } catch {
         safely(() => budget.markBreach('wall-time'), undefined);
       }
-      // Every status reached after a model call started carries its audit (the call was made, whatever became of the answer).
-      const callAudit = (known?: QuarantinedCallAudit): { readonly audit?: QuarantinedCallAudit } => {
-        const audit = known ?? (started !== undefined ? safely(started, undefined) : undefined);
-        return audit !== undefined ? { audit } : {};
+      // Every status reached after a model call was sent carries that call's audit (the call was made, whatever became of the
+      // answer): the outcome's own list when the step answered, else every started call's reader (a call the final dispatch
+      // check refused reads `undefined`: nothing was sent).
+      const callAudits = (known?: readonly QuarantinedCallAudit[]): { readonly audits?: readonly QuarantinedCallAudit[] } => {
+        const audits = known ?? started.flatMap((read) => {
+          const audit = safely(read, undefined);
+          return audit !== undefined ? [audit] : [];
+        });
+        return audits.length > 0 ? { audits } : {};
       };
-      if (outcome === 'wall' || budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudit(outcome !== 'wall' && 'audit' in outcome ? outcome.audit : undefined) };
-      if (outcome.kind === 'summary') return { ...base, status: 'ok', summary: outcome.summary, omitted: Math.max(0, listedItems - outcome.summary.count), audit: outcome.audit };
+      if (outcome === 'wall') return { ...base, status: 'not-run', ...callAudits() };
+      if (budget.breach !== undefined) return { ...base, status: 'not-run', ...callAudits('audits' in outcome ? outcome.audits : undefined) };
+      if (outcome.kind === 'summary') {
+        return {
+          ...base,
+          status: 'ok',
+          summary: outcome.summary,
+          omitted: Math.max(0, listedItems - outcome.summary.count),
+          audits: outcome.audits,
+          ...(outcome.credentialWithheld === true ? { credentialWithheld: true as const } : {}),
+        };
+      }
+      // `listing-only` means nothing was sent (a sent call that failed makes the step `failed`, CA P2-a).
       if (outcome.kind === 'listing-only') return { ...base, status: 'listing-only', reason: outcome.reason };
       if (outcome.kind === 'failed') {
         const errorCode = outcome.reason === 'schema' ? 'SCHEMA' : outcome.reason === 'credential' ? 'CREDENTIAL' : 'MODEL';
-        return { ...base, status: 'failed', errorCode, ...callAudit('audit' in outcome ? outcome.audit : undefined) };
+        return { ...base, status: 'failed', errorCode, ...callAudits(outcome.audits) };
       }
-      return { ...base, status: 'not-run', ...callAudit() };
+      return { ...base, status: 'not-run', ...callAudits() };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       controller.abort();

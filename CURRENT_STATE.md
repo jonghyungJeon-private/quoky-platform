@@ -5,6 +5,23 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 remote batch M2 summaries and raised run caps built (unwired) (2026-11-16, branch `claude/v5-s2-m2-batch`)
+
+- Owner, 2026-11-16: split M2 calls count toward the run caps, and the caps are raised ("중간 상향 (권장)"): M2 6, model calls 8,
+  input 120k UTF-8 bytes, wall 60 s. Everything else in D7 is unchanged. DECISIONS "ADR-0121 D3/D7 amendment — split M2 calls
+  count, raised run caps (owner 2026-11-16)".
+- **Built (Core, offline, unwired).** A granted batch may go `REMOTE`.
+  - The summariser makes one sealed call per source (at most 10 items each) and splits larger sources into parallel calls,
+    planned up front within the remaining M2 calls, model calls and bytes; leftovers are omitted, never a breach.
+  - Each call has its own reserve, final dispatch check and audit, and is never retried.
+  - The merge is deterministic, in source order with global numbering.
+  - Step results carry `audits`.
+  - Review round 1 fixed: the asked-for count per source bounds what is sent; no budget left is `listing-only` (`budget`),
+    never a breach; a sent-then-failed batch is `failed`.
+- **Open.** The wiring slice must charge the planner before step 1 and reserve the re-plan (this blocks it). Also open: the
+  grant producer, the rest of the wiring (a `LOCAL` summariser in the owner policy, ADR-0115 D8 usage for M2), the pending golds
+  and red-team batch review, and every model-in-the-loop run or mode switch.
+
 ### ADR-0121 D12 amendment ratified and built (unwired); P3-3b #4–#7 acknowledged (2026-11-16, branch `claude/v5-s2-d12`)
 
 - Owner, 2026-11-16: D12 amendment "승인 (권장)"; P3-3b #4–#7 "모두 권장대로 확정 (권장)"; order "D12부터 바로 착수 (권장)". M2 will route

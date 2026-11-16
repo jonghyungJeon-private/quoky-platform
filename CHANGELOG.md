@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 remote batch M2 summaries and raised run caps (offline, unwired)
+
+- **Changed (Core, unwired).** Run caps raised by the owner's ADR-0121 D3/D7 amendment (2026-11-16): M2 calls 3 → 6, model calls
+  5 → 8, input 40k → 120k UTF-8 bytes, wall 45 s → 60 s. Split M2 calls count toward them. Steps, re-plans, connector queries,
+  HTTP requests, ref values and the per-actor limits are unchanged.
+- **Added (Core, unwired).** A granted `REMOTE_ON_SUMMARY_REQUEST` batch may use a `REMOTE` model, not only one item.
+  - The summariser makes one sealed call per source with at most 10 items, and splits a larger source into more calls run in
+    parallel.
+  - The calls are planned up front within the run's remaining M2 calls, model calls and input bytes. Items that do not fit are
+    omitted and never cause a breach.
+  - Each call has its own reservation, final dispatch check, audit and REMOTE disclosure, and is never retried.
+  - The outputs are merged in source order with global numbering and no model call.
+  - Summary outcomes and step results now carry an `audits` list.
+  - Only the asked-for items of each source reach a model, whatever the port returned.
+  - A step with no M2 call, model call or input bytes left is `listing-only` with the closed reason `budget`, with no breach.
+  - If every call fails after one was sent, the step is `failed` with that call's audit.
+  - `HOST_ONLY`, no grant and `LOCAL_MODEL_ONLY` are unchanged. No grant producer exists, so live behaviour is unchanged.
+- **Docs.** DECISIONS "ADR-0121 D3/D7 amendment — split M2 calls count, raised run caps (owner 2026-11-16)" and its
+  implementation note.
+
 ## Unreleased — ADR-0121 D12: the quarantined summariser routes through the provider selector (offline, unwired)
 
 - **Changed (Core, unwired).** The S2 quarantined summariser (M2) no longer takes a model list: it asks the existing `ProviderSelector` for `SUMMARIZATION` under a new data constraint, `ProviderSelectionContext.allowedExecutionLocalities`, that Core derives from the inputs' egress label, a valid summary grant and the asked-for item count. `CapabilityRouter` probes, ranks and returns only providers whose declared locality is allowed (an empty or malformed set allows none) and its dispatch check refuses any other; `requiredLocality` intersects with it. M2 re-reads the selector's answer, re-checks policy and locality synchronously right before the one call (`dispatch-refused` otherwise) and never re-sends a request. No new port, token, flag, migration or wiring; no live behaviour change. DECISIONS "ADR-0121 S2 implementation note — D12".

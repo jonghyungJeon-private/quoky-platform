@@ -69,7 +69,13 @@ describe('D12: the derived localities (pure)', () => {
     expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 5 })).toEqual({ ok: true, localities: ['LOCAL'] });
     expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems: 1 })).toEqual({ ok: false, reason: 'no-summary-grant' });
     expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems: 1 })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems: 2 })).toEqual({ ok: true, localities: ['LOCAL'] });
+    // A granted batch may go REMOTE too (owner 2026-11-03 answer 3, built 2026-11-16; supersedes the single-item rule).
+    for (const askedItems of [2, 10, 20]) {
+      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems })).toEqual({ ok: false, reason: 'no-summary-grant' });
+      expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems })).toEqual({ ok: false, reason: 'host-only' });
+      expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems })).toEqual({ ok: true, localities: ['LOCAL'] });
+    }
     expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 3 })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
   });
 
@@ -123,26 +129,27 @@ describe('D12: forged and absent grants never reach the selector', () => {
 });
 
 describe('D12: the selector is asked under the derived constraint, and its answer is re-read', () => {
-  it('one granted item: the selector gets SUMMARIZATION with LOCAL and REMOTE; a batch gets LOCAL only', async () => {
+  it('one granted item and a granted batch: the selector gets SUMMARIZATION with LOCAL and REMOTE', async () => {
     const local = spy('p-local', 'LOCAL', 1);
     const one = recording(local);
     await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: one.selector, selectionContext: { sessionId: 's', actorId: 'a' } } });
     expect(one.selects).toEqual([{ sessionId: 's', actorId: 'a', allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }]);
     const batch = recording(local);
     await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: batch.selector } });
-    expect(batch.selects).toEqual([{ allowedExecutionLocalities: ['LOCAL'] }]);
+    expect(batch.selects).toEqual([{ allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }]);
     // The selection-time verdict and both dispatch re-checks (before the reservation, and right before execute) run on the
     // SAME constrained context.
     expect(batch.checks).toHaveLength(3);
     for (const check of batch.checks) expect(check).toEqual(batch.selects[0]);
   });
 
-  it('a selector that ignores the constraint (answers REMOTE for a batch) is not trusted: listing-only, no call', async () => {
+  it('a selector that ignores the constraint (answers REMOTE under a caller\'s LOCAL-only set) is not trusted: listing-only, no call', async () => {
     const remote = spy('p-remote', 'REMOTE', 1);
     const undeclared = spy('p-undeclared', undefined, 1);
     for (const answer of [remote, undeclared]) {
       const { selector } = recording(answer);
-      expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector } })).toEqual({ kind: 'listing-only', reason: 'no-model' });
+      const route = { selector, selectionContext: { allowedExecutionLocalities: ['LOCAL' as const] } };
+      expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route })).toEqual({ kind: 'listing-only', reason: 'no-model' });
       expect(answer.requests).toHaveLength(0);
     }
   });
@@ -167,7 +174,7 @@ describe('D12: the selector is asked under the derived constraint, and its answe
   it('the request is sealed and the audit names the provider id with its snapshot locality', async () => {
     const remote = spy('p-remote', 'REMOTE', 1);
     const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: recording(remote) });
-    expect(outcome).toMatchObject({ kind: 'summary', audit: { locality: 'REMOTE', auditId: 'p-remote' } });
+    expect(outcome).toMatchObject({ kind: 'summary', audits: [{ locality: 'REMOTE', auditId: 'p-remote' }] });
     expect(Object.keys(remote.requests[0] as AiRequest).sort()).toEqual(['capability', 'prompt']);
     expect((remote.requests[0] as AiRequest).capability).toBe(Capability.SUMMARIZATION);
   });
@@ -206,7 +213,7 @@ describe('D12: the mandatory dispatch-time re-check', () => {
     }
   });
 
-  it('a locality that leaves the allowed set at dispatch (real router, batch on LOCAL): no call', async () => {
+  it('a locality that leaves the allowed set at dispatch (real router, a caller\'s LOCAL-only set): no call', async () => {
     let flipped = false;
     const requests: AiRequest[] = [];
     const flipping: AiProvider = {
@@ -223,7 +230,7 @@ describe('D12: the mandatory dispatch-time re-check', () => {
       execute: async (request) => (requests.push(request), { text: ANSWER }),
     };
     const router = new CapabilityRouter(new AiProviderManager([flipping]), PERMISSIVE);
-    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: router } });
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: router, selectionContext: { allowedExecutionLocalities: ['LOCAL'] } } });
     expect(outcome.kind).toBe('listing-only');
     expect(['dispatch-refused', 'no-model']).toContain((outcome as { reason: string }).reason);
     expect(requests).toHaveLength(0);
@@ -242,7 +249,7 @@ describe('D12: a sent request is never re-sent', () => {
         isStillEligible: (capability, context, provider) => router.isStillEligible(capability, context as ProviderSelectionContext, provider),
       };
       const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: counting } });
-      expect(outcome).toMatchObject({ kind: 'failed', reason: 'model', audit: { auditId: 'p-first', locality: 'LOCAL' } });
+      expect(outcome).toMatchObject({ kind: 'failed', reason: 'model', audits: [{ auditId: 'p-first', locality: 'LOCAL' }] });
       expect([first.requests.length, second.requests.length, selects]).toEqual([1, 0, 1]);
     }
   });
@@ -272,9 +279,9 @@ describe('D12: workText interplay', () => {
     const router = new CapabilityRouter(new AiProviderManager([vendor, local]), policy);
 
     // Without workText, one granted item may go to the remote vendor (the owner's listed first choice).
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ audit: { auditId: 'p-vendor' } });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ audits: [{ auditId: 'p-vendor' }] });
     // With workText the vendor is out by policy even though REMOTE is allowed: the local one serves.
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router, selectionContext: { workText: true } } })).toMatchObject({ audit: { auditId: 'p-local' } });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router, selectionContext: { workText: true } } })).toMatchObject({ audits: [{ auditId: 'p-local' }] });
     expect(seen.at(-1)).toEqual({ workText: true, allowedExecutionLocalities: ['LOCAL', 'REMOTE'] });
 
     // workText and a LOCAL-only constraint with no local provider registered: nothing is eligible, listing-only, no call.
@@ -355,7 +362,7 @@ describe('D12 review round 1 (Chief Architect and Codex)', () => {
       route: { selector },
       onCallStart: (audit) => {
         armed = true;
-        audits.push(audit().locality);
+        audits.push(audit()?.locality ?? 'none');
       },
     });
     expect(outcome).toEqual({ kind: 'listing-only', reason: 'dispatch-refused' });
@@ -376,7 +383,8 @@ describe('D12 review round 1 (Chief Architect and Codex)', () => {
       execute: async (request) => (requests.push(request), { text: ANSWER }),
     };
     const { selector } = recording(flipping);
-    // A two-item batch is LOCAL-only; the callback switches the adapter to REMOTE after the first check.
+    // The provider was selected LOCAL; the callback switches the adapter to REMOTE after the first check (a changed locality is
+    // refused even though a granted batch may go REMOTE: the dispatch must be the selected one).
     for (const hook of ['reserve', 'onCallStart'] as const) {
       remoteNow = false;
       const flip = (): void => void (remoteNow = true);
@@ -392,8 +400,8 @@ describe('D12 review round 1 (Chief Architect and Codex)', () => {
     // Unchanged, the call goes out and the audit carries the locality the final check verified.
     remoteNow = false;
     const audits: string[] = [];
-    const ok = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector }, onCallStart: (audit) => void audits.push(audit().locality) });
-    expect(ok).toMatchObject({ kind: 'summary', audit: { locality: 'LOCAL', auditId: 'p-flip' } });
+    const ok = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector }, onCallStart: (audit) => void audits.push(audit()?.locality ?? 'none') });
+    expect(ok).toMatchObject({ kind: 'summary', audits: [{ locality: 'LOCAL', auditId: 'p-flip' }] });
     expect(requests).toHaveLength(1);
     expect(audits).toEqual(['LOCAL']);
   });
