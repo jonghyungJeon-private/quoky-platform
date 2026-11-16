@@ -32166,6 +32166,28 @@ Chief Architect delta re-review of `3314c930..e31fff66`: CHANGES REQUIRED, one P
 - **P3:** a credential-shaped Jira status name is refused as `transition-lookup-failed`. Jira wrote that text, so it is no longer refused as `credential`, a reason that tells the owner their own text held a secret.
 - **P3:** the A6-D3 doc comment in `connector-write-copy.ts` is back above `renderConnectorWriteStopLine`.
 
+### Live UAT (amendment 3, O4 Jira comment delete, O5 Jira transition revert, restore-duplicate fix, 2026-11-16)
+
+Live UAT ran on the service temporarily deployed at 42d3d862, in a Discord DM through abx. The test issue was BE-882, created for this run at the owner's request ("새로 하나 만들어줘"). Every write was checked outside Quoky with Atlassian MCP reads (Jira) and the calendar probe. Nothing was written through MCP. Table: `e2e-2026-11-16-r3-jira-undo.tsv`. Result: **PASS**.
+
+- **Baseline:** BE-882 had no comments and status `예정 업무` (10255). The primary calendar had no `Quoky E2E` events.
+- **O4, Jira comment delete:**
+  - Added comment 51157 (preview → `승인` → `댓글 실행`).
+  - `Jira 댓글 삭제 실행` sent with no undo preview did nothing ("지금 실행할 승인된 외부 쓰기 요청이 없어요").
+  - `되돌려줘` gave a preview whose target came from the receipt (comment id 51157, the exact body, the condition "still unedited"). After `승인` → `Jira 댓글 삭제 실행`, the comment was gone and the read showed 0 comments.
+  - A second `되돌려줘` was refused ("되돌린 작업은 다시 되돌릴 수 없어요").
+  - Asking for the same comment again gave a new preview, not `already-sent`. This exercises the round-1 P2-C path through the production adapter fixed in round 2. The preview was rejected.
+- **O5, Jira transition revert:**
+  - `BE-882 작업중으로 바꿔줘` gave a preview showing the current status `예정 업무` (10255) as the compare-and-set baseline and the target `작업중` (10247, transition 21). After execution, the read showed 10247.
+  - `되돌려줘` gave a single-path revert preview to `예정 업무` (10255, transition 8). After `Jira 상태 되돌리기 실행`, the read showed 10255.
+  - A further `되돌려줘` was refused as an undo of an undo. The same reply also showed a new forward preview for the original transition, which confirms re-request after an undo is allowed. That preview was rejected.
+- **Restore-duplicate fix (calendar):**
+  - Created `Quoky E2E 복원 반복 시험` (id `6qudt3g9…`), deleted it, then restored it with `되돌려줘` → `일정 복원 실행`. The same id came back.
+  - Deleted it again; `되돌려줘` then gave a new restore preview for the same id, not a refusal. The preview was rejected, which left the event deleted. The final probe found 0 matches.
+- **End state:** identical to the baseline for BE-882 (0 comments, 10255) and for the calendar (0 events).
+- **Finding, not part of this change:** the natural phrasing `BE-882에 "…" 이라고 댓글 달아줘` was routed to chat (`nl_selection outcome=none`). The chat answer's quoted command was then stripped by the chat-quote filter, so the reply says "아래 문구" with nothing below it. Nothing was executed (fail closed). It is a routing and copy residual for a follow-up; no phrase list is to be added (owner rule against hard-coding).
+- **Not run live:** "a comment edited in Jira → `undo-target-changed`". It would need an edit made outside Quoky, and MCP writes are not allowed in UAT. It is covered by `connector-write-jira-undo.test.ts` and the red-team cases.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
