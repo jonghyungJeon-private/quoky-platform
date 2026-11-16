@@ -33906,8 +33906,8 @@ wiring, no flag change, no live behaviour change).
 
   Items are placed in source order while they fit. The first item that does not fit, and every item after it, are omitted. They
   count in `omitted`, the run is partial, and nothing is a breach: every planned reservation fits, so an ordinary run never
-  trips a sticky breach. If not even one item can be placed (no calls or bytes left), the one-item call is planned and its
-  reservation refuses it, so the bound reports it, as the single call did.
+  trips a sticky breach. If not even one item can be placed (no calls or bytes left), the plan is empty: nothing is reserved,
+  the step is `listing-only` with the new closed reason `budget`, and the run goes on (review round 1, Codex P2).
 - **Dispatch.** The provider is selected once per summarize step, under one derived context. The planned calls are launched in
   one synchronous loop and run in parallel. Each call does its own work in order, with nothing awaited in between:
   1. the credential check on its final prompt;
@@ -33927,12 +33927,13 @@ wiring, no flag change, no live behaviour change).
   - A call that fails (model error, abort, schema, credential) or is refused (`dispatch-refused`, `credential-in-prompt`,
     `bound`) omits its items.
   - The step is `summary` if at least one call succeeded.
-  - If every call failed, the step takes the first call's outcome in source order: `failed` with its reason, `listing-only`
-    with its reason, or `bound`.
+  - If every call failed and at least one was sent, the step is `failed` with the first SENT call's reason (source order) and
+    every sent call's audit (review round 1, CA P2-a). Only when nothing was sent does it take the first call's outcome:
+    `listing-only` with its reason, `bound`, or `failed` (an abort before send).
 - **Shape change.**
   - `QuarantinedSummaryOutcome` and the executor's summarize `AgentStepResult` carry `audits: readonly QuarantinedCallAudit[]`
-    (one per sent call, in source order) instead of one `audit`. It is required on `ok` and optional on `not-run`, `failed` and
-    `listing-only`, and present only when a call was sent.
+    (one per sent call, in source order) instead of one `audit`. It is required on `ok` and optional on `not-run` and `failed`,
+    and present only when a call was sent. `listing-only` and `bound` carry none: nothing was sent (review round 1).
   - On the wall path the executor reads every started call's reader, so a parallel call the wall cuts is still audited.
   - The assembler shows the one fixed disclosure line when any audit of any summarize step is `REMOTE`. That covers every call
     of a split batch, including a refused step whose other call was sent.
@@ -33947,21 +33948,52 @@ wiring, no flag change, no live behaviour change).
   - The updated P3-3b, D12, executor and assembler tests now expect a granted batch on `REMOTE`, with `audits` lists.
   - Every new test fails on the code before this slice.
 - **Choices made in this slice (for review).**
-  1. When the caller passes no `remainingCalls` / `remainingInputTokens` (a direct caller, tests), planning has no limit there
-     and each `reserve` is the only gate.
-  2. A `credential-in-prompt` final-prompt hit now refuses that call only, not the whole step.
+  1. When the caller passes no `remainingCalls` / `remainingInputTokens`, planning uses the run's full caps
+     (`AGENT_RUN_BOUNDS`); NaN, negative or non-finite is 0 (review round 1, CA P2-b; it was "no limit" before the review).
+  2. A `credential-in-prompt` final-prompt hit now refuses that call only, not the whole step; an `ok` step reports it with the
+     closed flag `credentialWithheld` and one fixed status line (review round 1, CA P3).
   3. The disclosure stays one fixed line per reply rather than one line per call.
   4. Items are placed as a prefix (the first item that does not fit stops placement), not first-fit, to keep the old fit's
      shape.
-- **Open (for the owner or the Chief Architect).**
-  - **ADR-0118 D7.** Its text speaks of one explicit item ("`N번 메일 요약해줘`… reads one message body"). The D12 note asked
-    whether a multi-item remote summary needs its own ADR-0118 D7 amendment note. This slice reads owner answer 3 as that
-    explicit widening for the agent path, under a per-step, per-source grant derived from the owner's own words. No grant
-    producer exists, so nothing leaves the host today. The Chief Architect should confirm this reading, or ask for an
-    amendment note, before the grant producer slice.
-  - **Planner charging.** The planner and re-plan calls are not yet charged on the executor's budget (the wiring slice). With M2
-    at most 6 and the planner plus one re-plan at most 2, the 8 model calls cannot be exceeded. `remainingM2Calls()` already
-    accounts for them once they are charged.
+- **ADR-0118 D7 cross-reference (review round 1, CA (e)).** ADR-0118 D7 lets mail and Drive text leave the host only on an
+  explicit summary request, and its GML-1 text reads one message body per explicit request. ADR-0121 owner answer 3
+  (2026-11-03) explicitly widens the AGENT path to a remote batch: under a per-step, per-source, per-run
+  `SummaryEgressGrant`, a granted summary may send the asked-for items of each source to a `REMOTE` model. The batch is
+  bounded by the asked-for count per source: only documents at listing positions 1..asked (the read's limit, 1..10 by
+  ADR-0120 D4) reach a model, whatever the port returned, and the excess is omitted. The chat (GML-1) path of ADR-0118 D7 is
+  unchanged. No grant producer exists, so nothing leaves the host today.
+- **Carried to the wiring slice (review round 1, CA (f); blocks that slice).** The wiring slice must charge the planner (M1) on
+  the run budget before step 1 and reserve the re-plan (M1') explicitly (`reserveModelCall('planner' | 'replan')`). Today only
+  M2 is charged on the executor's budget, so `remainingM2Calls()` sees the planner's share only once that is done. No code
+  change in this slice.
+- **Review round 1 (Chief Architect CHANGES REQUIRED; Codex 1×P2; all fixed).**
+  1. *CA P1, remote items not bounded by the asked count.* A port that ignored its limit (25 documents for "메일 3개 요약") sent
+     every document. Fix: `AgentSummarySource.asked` (the executor passes each read's requested count). Only documents at
+     positions 1..asked are prepared; the excess is omitted. An absent count is `AGENT_M2_MAX_ITEMS` and a value that is not
+     a positive integer admits nothing. The executor's clamp of `requested` to 10 stays: a read limit is 1..10 (ADR-0120
+     D4), so a valid plan never asks more than 10 of one source, and the per-call cap of 10 stays. Within the executor a
+     split by count therefore needs more than one source; a direct caller that asks for more is split as designed. Tests:
+     batch "CA P1" (12 returned for limit 3 sends exactly 3; direct callers; invalid counts), and the existing batch
+     executor tests now ask for what they send.
+  2. *CA P2-a, contradictory reply when every call fails.* A refused first call made the step `listing-only` ("nothing was
+     sent") although a later call was sent. Fix: a sent call makes the step `failed` with the first sent call's reason and its
+     audits. `listing-only` and `bound` outcomes no longer carry audits. Tests: batch "CA P2-a" and assembler "review round 1
+     (CA P2-a)" (failed, audit present, REMOTE disclosed, no "nothing was sent").
+  3. *CA P2-b, direct callers fail open.* An absent or NaN `remainingCalls` / `remainingInputTokens` became unlimited. Fix:
+     absent is the `AGENT_RUN_BOUNDS` cap; NaN, negative or non-finite is 0. Test: batch "CA P2-b" (70 asked documents, an
+     always-yes `reserve`: exactly 6 calls; each unreadable value is `budget` with no call).
+  4. *Codex P2, a forced one-item call made a sticky breach.* When nothing fit, the plan forced a one-item call, and its refused
+     reservation set a sticky breach that skipped later steps (reproduced for all three limits; a later connector read was
+     skipped). Fix: an empty plan, nothing reserved, the step `listing-only` with the new closed reason `budget` (assembler copy
+     in Korean and English), all its items omitted, and the run goes on. Dispute recorded: Claude (CA) accepted the forced call
+     as (d) / Codex P2 / conclusion: Codex, because of the ratified "leftovers omitted, never a breach" and because no egress is
+     affected either way. Tests: batch "Codex P2" (one per limit; the later read runs, no breach, nothing reserved); the
+     executor's M2-cap, model-call and input-token tests and the assembler's capped case now expect `budget` with no breach.
+  5. *CA P3.* The stale executor comment ("REMOTE … one item only") is rewritten. A call refused for `credential-in-prompt` in
+     an `ok` step sets `credentialWithheld`, and the assembler renders one fixed content-free line. Test: assembler "review
+     round 1 (CA P3)". The readout guard already withholds credential-shaped items before the prompt, so the flag is defence
+     in depth.
+  6. *CA (e) and (f):* the two notes above.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 

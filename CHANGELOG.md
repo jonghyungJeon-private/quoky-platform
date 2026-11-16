@@ -18,6 +18,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - Each call has its own reservation, final dispatch check, audit and REMOTE disclosure, and is never retried.
   - The outputs are merged in source order with global numbering and no model call.
   - Summary outcomes and step results now carry an `audits` list.
+  - Only the asked-for items of each source reach a model, whatever the port returned.
+  - A step with no M2 call, model call or input bytes left is `listing-only` with the closed reason `budget`, with no breach.
+  - If every call fails after one was sent, the step is `failed` with that call's audit.
   - `HOST_ONLY`, no grant and `LOCAL_MODEL_ONLY` are unchanged. No grant producer exists, so live behaviour is unchanged.
 - **Docs.** DECISIONS "ADR-0121 D3/D7 amendment — split M2 calls count, raised run caps (owner 2026-11-16)" and its
   implementation note.

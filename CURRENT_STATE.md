@@ -16,10 +16,11 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   - Each call has its own reserve, final dispatch check and audit, and is never retried.
   - The merge is deterministic, in source order with global numbering.
   - Step results carry `audits`.
-- **Open.** The Chief Architect should confirm that owner answer 3 is the ADR-0118 D7 widening for the agent path, or ask for an
-  amendment note. Also open: the grant producer, wiring (a `LOCAL` summariser in the owner policy, ADR-0115 D8 usage for M2,
-  planner charging on the run budget), the pending golds and red-team batch review, and every model-in-the-loop run or mode
-  switch.
+  - Review round 1 fixed: the asked-for count per source bounds what is sent; no budget left is `listing-only` (`budget`),
+    never a breach; a sent-then-failed batch is `failed`.
+- **Open.** The wiring slice must charge the planner before step 1 and reserve the re-plan (this blocks it). Also open: the
+  grant producer, the rest of the wiring (a `LOCAL` summariser in the owner policy, ADR-0115 D8 usage for M2), the pending golds
+  and red-team batch review, and every model-in-the-loop run or mode switch.
 
 ### ADR-0121 D12 amendment ratified and built (unwired); P3-3b #4–#7 acknowledged (2026-11-16, branch `claude/v5-s2-d12`)
 
