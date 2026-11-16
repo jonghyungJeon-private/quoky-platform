@@ -2759,6 +2759,23 @@ describe('live DM 2026-11-16: a command the chat reply offers is never stripped 
     expect(text).toBe(expected);
   });
 
+  it.each([
+    ['a ~~~ fence keeps the payload command', `${LEAD}\n~~~\n${COMMAND}\n~~~`, `${LEAD}\n~~~\n${COMMAND}\n~~~`],
+    ['a ~~~ fence around a stale command takes the reply', `${LEAD}\n~~~\n완료 처리: 2\n~~~`, RESTATE],
+    ['an unclosed fence around a stale command takes the reply', `${LEAD}\n\`\`\`\n완료 처리: 2`, RESTATE],
+    ['a shown span followed by ","', `${LEAD}\n\n\`완료 처리: 2\`,`, RESTATE],
+    ['a shown span followed by ";"', `${LEAD}\n\n\`완료 처리: 2\`;`, RESTATE],
+    ['a comment whose payload is only the stale word', '되돌리려면 `BE-882에 댓글: 되돌리기`를 보내세요.', RESTATE],
+  ])('review round 2, %s', async (_label, reply, expected) => {
+    const { text } = await chatTurn(reply);
+    expect(text).toBe(expected);
+  });
+
+  it('review round 2: inline triple backticks in prose open no fence, so the unmarked command line after them is removed', async () => {
+    const { text } = await chatTurn(`코드는 \`\`\`로 감싸요.\n${COMMAND}`, '고마워');
+    expect(text).toBe('코드는 ```로 감싸요.');
+  });
+
   it('review round 1: a shown command line ending in a period is still a shown line (main left "아래 문구" dangling)', async () => {
     const { text } = await chatTurn('아래 문구를 그대로 보내 주세요.\n\n`완료 처리: 2`.');
     expect(text).toBe(RESTATE);

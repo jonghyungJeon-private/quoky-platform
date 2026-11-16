@@ -817,6 +817,22 @@ describe('honest chat (A6-D6): no command phrases for offered action families, a
       expect(guardFalseIncapabilityClaims("요즘 정말 바쁘셨겠어요.\n할 일 목록에 '업무 정리'를 추가할까요", ALL, 'ko', [], { ownerMessage: '요즘 일이 너무 많아서 답답해', payloadOf })).toEqual({ text: '요즘 정말 바쁘셨겠어요.', guarded: true });
     });
 
+    it('review round 2: CommonMark fences, punctuation after a shown span, and a payload that is only the stale phrase', () => {
+      // Triple backticks inside a sentence open no fence: the unmarked line after them is prose and its stale word goes.
+      expect(guard('코드는 ```로 감싸요.\nBE-882에 댓글: Quoky 되돌리기 시험')).toEqual({ text: '코드는 ```로 감싸요.', guarded: true });
+      // A ~~~ fence is a fence: its payload command stays, its stale command takes the reply (no empty block left).
+      expect(guard(`${LEAD}\n~~~\n${COMMAND}\n~~~`)).toEqual({ text: `${LEAD}\n~~~\n${COMMAND}\n~~~`, guarded: false });
+      expect(guard(`${LEAD}\n~~~\n완료 처리: 2\n~~~`)).toEqual({ text: RESTATE, guarded: true });
+      // An unclosed fence runs to the end; a shorter or different closer does not close it.
+      expect(guard(`${LEAD}\n\`\`\`\n완료 처리: 2`)).toEqual({ text: RESTATE, guarded: true });
+      expect(guard(`${LEAD}\n\`\`\`\`\n\`\`\`\n~~~\n${COMMAND}\n\`\`\`\``)).toEqual({ text: `${LEAD}\n\`\`\`\`\n\`\`\`\n~~~\n${COMMAND}\n\`\`\`\``, guarded: false });
+      // "," or ";" after the one span is still a shown line.
+      for (const end of [',', ';', ' ;', '…!']) expect(guard(`${LEAD}\n\n\`완료 처리: 2\`${end}`)).toEqual({ text: RESTATE, guarded: true });
+      // A payload that is only the stale phrase is not exempt.
+      expect(guard('되돌리려면 "BE-1에 댓글: 되돌리기"를 보내세요.').text).toBe(RESTATE);
+      expect(guard(`${LEAD}\n\n\`BE-1에 댓글: 되돌리기\``)).toEqual({ text: RESTATE, guarded: true });
+    });
+
     it('a throwing or over-long probe exempts nothing (fail closed)', () => {
       const throwing = (): NlCommandPayload => {
         throw new Error('probe');

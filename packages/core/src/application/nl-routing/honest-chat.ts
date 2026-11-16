@@ -424,8 +424,11 @@ const SENTENCE_SPLIT = /((?<=[.!?。？])\s+|\n+)/u;
 
 /** A neutral one-letter stand-in for a stale-phrase match when probing a command span (a payload never becomes empty). */
 const PAYLOAD_PROBE = 'x';
-/** A code-fence marker line. */
-const FENCE_LINE = /^\s*```/u;
+/**
+ * Review round 2: a CommonMark fence marker line: at most three spaces of indent, then a run of at least three backticks or
+ * three tildes; a backtick opener's info string holds no backtick. Triple backticks inside a sentence are never a fence.
+ */
+const FENCE_MARKER = /^ {0,3}(`{3,}|~{3,})(.*)$/u;
 
 /** Live DM 2026-11-16 (review round 1): one line of a reply with its place in the text and whether a fence holds it. */
 interface ReplyLine {
@@ -434,24 +437,39 @@ interface ReplyLine {
   readonly fenced: boolean;
 }
 
-/** The line of `text` that holds offset `at`; `fenced` when it sits between fence markers (a marker line is not). */
+/** The open fence after `line`, given the fence open before it (CommonMark: same character, a run at least as long, closes). */
+function nextFence(open: { readonly char: string; readonly length: number } | undefined, line: string): { readonly char: string; readonly length: number } | undefined {
+  const marker = FENCE_MARKER.exec(line);
+  if (marker === null) return open;
+  const run = marker[1] as string;
+  const rest = marker[2] as string;
+  if (open === undefined) return run.startsWith('`') && rest.includes('`') ? undefined : { char: run.charAt(0), length: run.length };
+  return run.charAt(0) === open.char && run.length >= open.length && rest.trim() === '' ? undefined : open;
+}
+
+/**
+ * The line of `text` that holds offset `at`; `fenced` when a fence opened above it is still open (an unclosed fence runs to
+ * the end). The opening and closing marker lines themselves are not fenced content.
+ */
 function lineAt(text: string, at: number): ReplyLine {
   const start = text.lastIndexOf('\n', at - 1) + 1;
   const end = text.indexOf('\n', at);
   const line = text.slice(start, end === -1 ? text.length : end);
-  const markers = text.slice(0, start).split('\n').filter((before) => FENCE_LINE.test(before)).length;
-  return { start, text: line, fenced: markers % 2 === 1 && !FENCE_LINE.test(line) };
+  let open: { readonly char: string; readonly length: number } | undefined;
+  for (const before of start === 0 ? [] : text.slice(0, start - 1).split('\n')) open = nextFence(open, before);
+  return { start, text: line, fenced: open !== undefined && nextFence(open, line) === open };
 }
 
 /**
- * Live DM 2026-11-16 (review round 1): a line that shows a command: a line inside a code fence, or a line that is exactly one
- * quote / inline-code span with at most trailing punctuation. Layout only; prose around a span makes it a sentence.
+ * Live DM 2026-11-16 (review rounds 1–2): a line that shows a command: a line inside a code fence, or a line that is
+ * exactly one quote / inline-code span followed by nothing but punctuation and spaces. Layout only; prose around a span makes it a sentence.
  */
 function isShownCommandLine(line: ReplyLine): boolean {
   if (line.fenced) return line.text.trim().length > 0;
-  const trimmed = line.text.trim().replace(/[.!?。？…~:：]+$/u, '');
-  const spans = [...trimmed.matchAll(QUOTE_SPAN)];
-  return spans.length === 1 && spans[0]?.index === 0 && (spans[0]?.[0].length ?? 0) === trimmed.length;
+  const trimmed = line.text.trim();
+  const first = [...trimmed.matchAll(QUOTE_SPAN)][0];
+  // Review round 2: after the one span, only Unicode punctuation and spaces (",", ";", "." …); any other text is prose.
+  return first !== undefined && first.index === 0 && /^[\p{P}\s]*$/u.test(trimmed.slice(first[0].length));
 }
 
 /**
@@ -489,6 +507,8 @@ function inPayloadOfCommand(line: ReplyLine, start: number, end: number, payload
       const relStart = start - from - at;
       const relEnd = end - from - at;
       if (relStart < 0 || relEnd > read1.payload.length) continue;
+      // Review round 2 (CA): a payload that is only the stale phrase is that phrase sent on, not owner content around it.
+      if (!/[\p{L}\p{N}]/u.test(`${read1.payload.slice(0, relStart)}${read1.payload.slice(relEnd)}`)) return false;
       const read2 = read(`${span.slice(0, start - from)}${PAYLOAD_PROBE}${span.slice(end - from)}`);
       const expected = `${read1.payload.slice(0, relStart)}${PAYLOAD_PROBE}${read1.payload.slice(relEnd)}`;
       if (read2 !== undefined && read2.command === read1.command && read2.payload === expected) return true;

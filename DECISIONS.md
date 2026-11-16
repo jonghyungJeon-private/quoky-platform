@@ -34102,6 +34102,19 @@ clause changes; no prompt, selector or routing change.
   - Tests: the eight repros run on the real runtime (real `IntentClassifier`, real catalog) and give main's exact
     output; the period-ended shown line now gets the restate. Run against an `origin/main` scratch worktree: the 8
     repros pass there, the 10 cases this change alters (5 kept commands, 5 shown-line restates) fail there.
+- **Review round 2 (Chief Architect APPROVE; Codex P2×2 on shown-line recognition, last fix loop; CA optional tightening).**
+  1. **CommonMark fences.** A fence opens only on a line with at most three spaces of indent and then a run of at least
+     three backticks or tildes (a backtick opener's info string holds no backtick); it closes only on a line of the same
+     character with a run at least as long and nothing after it; an unclosed fence runs to the end. Triple backticks
+     inside a sentence are never a fence (they had exempted the unmarked prose after them), and `~~~` fences are now seen
+     (their removed stale command takes the reply instead of leaving an empty block under "아래 문구").
+  2. **Shown span endings.** After the one quote / inline-code span, the line may hold any run of Unicode punctuation and
+     spaces (`\p{P}`, `\s`: `,`, `;`, `.` …) and nothing else; any other text keeps the line a prose sentence.
+  3. **Payload-only stale phrase (CA).** A payload with no letter or digit besides the stale match (`BE-1에 댓글: 되돌리기`)
+     is not exempted and is removed as before.
+  - Tests: inline triple backticks in prose, a `~~~` fence (payload kept / stale restate), an unclosed fence, a longer
+    opener not closed by a shorter or different closer, `,` / `;` / other punctuation endings, and the payload-only stale
+    word (guard unit and real runtime); the 8 round-1 repros and the live-bug cases pass unchanged.
 
 ## ADR-0124 phase 1 stage C: a 413 from the daemon is a refusal, not a run failure (2026-11-05, branch `claude/v5-chunk-embed-413`)
 
