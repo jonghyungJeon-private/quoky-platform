@@ -541,18 +541,30 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
    * handler's pure claim (`surfaceClaim`, the same parser `handle` uses) claims it. Synchronous, pure, never throws.
    */
   protected nlGrammarRuns(span: string): boolean {
-    if (parseActionSwitchPhrase(span) !== undefined || detectConversationControl(span) !== null) return true;
-    if (IntentClassifier.textIntent(span).type !== IntentType.CHAT) return true;
+    return this.nlGrammarClaim(span) !== undefined;
+  }
+
+  /**
+   * Live DM 2026-11-16: the B1 probes of {@link nlGrammarRuns} as a claim signature: a control phrase, the intent the
+   * classifier gives, or the first turn handler that claims the span with its surface groups; `undefined` when no grammar
+   * answers it. The D9 stale-command guard compares two readings of one span (`NlGrammarClaimOf`). Pure, never throws.
+   */
+  protected nlGrammarClaim(span: string): string | undefined {
+    if (parseActionSwitchPhrase(span) !== undefined || detectConversationControl(span) !== null) return 'control';
+    const intent = IntentClassifier.textIntent(span).type;
+    if (intent !== IntentType.CHAT) return `intent:${intent}`;
     const now = this.clock();
     const message: InboundMessage = { id: 'quote-check', text: span, context: { platform: 'quote-check', channelId: 'quote-check', userId: 'quote-check', direct: true }, receivedAt: now };
-    return this.turnHandlerRegistry.some((handler) => {
-      if (typeof handler.surfaceClaim !== 'function') return false;
+    for (const handler of this.turnHandlerRegistry) {
+      if (typeof handler.surfaceClaim !== 'function') continue;
       try {
-        return handler.surfaceClaim({ message, now }) !== null;
+        const claim = handler.surfaceClaim({ message, now });
+        if (claim !== null) return `handler:${handler.id}:${claim.groups.join('+')}`;
       } catch {
-        return false;
+        // A throwing probe claims nothing (as in `nlGrammarRuns`).
       }
-    });
+    }
+    return undefined;
   }
 
   protected guardChatReplyClaims(
@@ -591,6 +603,7 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
         ...(controls !== undefined ? { controls } : {}),
         ...(nlFacts.listing !== undefined ? { held: nlFacts.listing.shown } : {}),
         ownerMessage: currentUserMessage,
+        claimOf: (span) => this.nlGrammarClaim(span),
       });
       if (!incapable.guarded) return listing;
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
