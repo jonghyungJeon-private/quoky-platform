@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { Capability, type Actor } from '../../domain';
 import type { AiExecutionLocality, AiProvider, AiRequest } from '../../ports/ai-provider.port';
@@ -45,6 +46,8 @@ interface Options {
   /** A port behaviour per entry (default: an ok listing of 3 items with documents when asked). */
   readonly ports?: Partial<Record<string, (request: AgentReadRequest, h: Harness) => Promise<AgentReadResponse>>>;
   readonly actorsGet?: (id: string) => Promise<Actor | null>;
+  /** The planner's router (default: answers the scripted planner at once). */
+  readonly select?: (planner: AiProvider) => Promise<AiProvider>;
   /** The P5 release flag (default `true` here; production composes `active` without it until P5). */
   readonly released?: boolean;
 }
@@ -103,7 +106,7 @@ function harness(options: Options = {}): Harness {
   const mode = options.mode ?? 'active';
   (state as { service: AgentRunService }).service = new AgentRunService({
     mode,
-    router: { select: async () => planner },
+    router: { select: options.select !== undefined ? () => (options.select as (p: AiProvider) => Promise<AiProvider>)(planner) : async () => planner },
     actors: {
       get: options.actorsGet ?? (async (id) => actors.get(id) ?? null),
       save: async (actor) => {
@@ -452,6 +455,50 @@ describe('AgentRunService.runActive — kill switch and caps (D7, ADR-0120 A6-D3
     // Nothing was charged for good: 20 runs of 3 calls still fit the hour, and the 21st is declined.
     for (let run = 0; run < 20; run += 1) replyOf(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT));
     expect(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'model-hourly-cap' });
+  }, 5_000);
+
+  // Review round 3 (CA test gaps): the router and the second switch read (in runPlanned) are raced too; the slot is released
+  // and a follow-up run is admitted; the service's shutdown signal keeps no listener after a run.
+  it.each([
+    ['router selection', 'router'],
+    ['pre-dispatch switch read', 'second-read'],
+  ] as const)('a hung %s ends at the wall, and a follow-up run is admitted and answers', async (_label, hang) => {
+    let gets = 0;
+    let selects = 0;
+    const h = harness({
+      script: [MAIL_AND_TODO_PLAN],
+      bounds: { wallMs: 80 },
+      actorsGet: async () => {
+        gets += 1;
+        return hang === 'second-read' && gets === 2 ? new Promise<never>(() => undefined) : (h.actors.get('owner') ?? null);
+      },
+      select: async (planner) => {
+        selects += 1;
+        return hang === 'router' && selects === 1 ? new Promise<never>(() => undefined) : planner;
+      },
+    });
+    expect(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'bound' });
+    expect(h.plannerCalls).toEqual([]);
+    const followUp = replyOf(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT));
+    expect(followUp.outcome).toBe('complete');
+    expect(h.plannerCalls).toHaveLength(1);
+  }, 5_000);
+
+  it('the service\'s shutdown signal keeps no listener after runs (a full run and a run cut at the wall)', async () => {
+    let gets = 0;
+    const h = harness({
+      script: [MAIL_SUMMARY_PLAN, MAIL_SUMMARY_PLAN],
+      bounds: { wallMs: 80 },
+      actorsGet: async () => {
+        gets += 1;
+        return gets === 1 ? new Promise<never>(() => undefined) : (h.actors.get('owner') ?? null);
+      },
+    });
+    const signal = (h.service as unknown as { readonly background: AbortController }).background.signal;
+    expect(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'bound' });
+    replyOf(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT));
+    expect(h.m2Calls).toHaveLength(1);
+    expect(getEventListeners(signal, 'abort')).toHaveLength(0);
   }, 5_000);
 
   it('a hung chat resolution ends at shutdown (the run returns, so its slot and charge are released)', async () => {
