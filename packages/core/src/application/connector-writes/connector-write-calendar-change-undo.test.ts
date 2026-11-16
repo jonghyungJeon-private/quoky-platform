@@ -420,6 +420,39 @@ describe('ADR-0112 amendment 3 (O2): the undo of an approved calendar update', (
     expect(exact.live.events[0]).toMatchObject({ title: exactTitle, location: '3층 대회의실' });
   });
 
+  it('review round 2: execution re-derives the inverse from the undone update\'s anchor; a persisted pre-fix card (no source link, no lossless marker) writes nothing', async () => {
+    const raw = '가'.repeat(300);
+    const rawLocation = '층'.repeat(300);
+    type AnchorRecord = Record<string, unknown> & { preview: { before: Record<string, unknown> }; undoOf?: Record<string, unknown> };
+    const anchorOf = (h: ReturnType<typeof harness>, taskId: string): AnchorRecord => h.tasks.get(taskId)?.metadata?.connectorWriteAnchor as AnchorRecord;
+    const setAnchor = (h: ReturnType<typeof harness>, taskId: string, next: AnchorRecord): void => {
+      const task = h.tasks.get(taskId) as Task;
+      h.tasks.set(taskId, { ...task, metadata: { ...task.metadata, connectorWriteAnchor: next } });
+    };
+    for (const shape of ['pre-fix card (no source link, no marker)', 'source link kept, marker missing', 'source link kept, marker false'] as const) {
+      const h = harness({ rawTitle: raw, rawLocation });
+      const { receiptId, anchorTaskId } = await h.updateEvent({ title: '짧은 제목', location: '5층' });
+      // Build the card the pre-fix proposal would have persisted: its inverse writes the BOUNDED 200-character values back.
+      const source = anchorOf(h, anchorTaskId);
+      const legacyBefore = { ...source.preview.before };
+      setAnchor(h, anchorTaskId, { ...source, preview: { ...source.preview, before: { ...legacyBefore, lossless: { title: true, location: true } } } });
+      expect((await h.undo('calendar-update-undo', receiptId, at(3))).kind).toBe('preview');
+      const pending = await h.flow.find(h.session());
+      const card = anchorOf(h, pending?.taskId as string);
+      expect((card.payload as { changes: { title: string } }).changes.title).toHaveLength(200);
+      const { lossless: _marker, ...unmarked } = legacyBefore;
+      setAnchor(h, anchorTaskId, { ...source, preview: { ...source.preview, before: shape === 'source link kept, marker false' ? { ...legacyBefore, lossless: { title: false, location: false } } : unmarked } });
+      if (shape === 'pre-fix card (no source link, no marker)') {
+        const { sourceTaskId: _link, ...legacyLink } = card.undoOf as Record<string, unknown>;
+        setAnchor(h, pending?.taskId as string, { ...card, undoOf: legacyLink });
+      }
+      const step = await h.approveAndExecute(at(4));
+      expect(reason(step), shape).toBe('undo-unavailable');
+      expect(h.writes.update, shape).toHaveLength(1);
+      expect(h.live.events[0]?.title, shape).toBe('짧은 제목');
+    }
+  });
+
   it('review round 1 (P3-4): a time undo needs the event\'s recorded start time zone to be the zone the update wrote; otherwise it is refused, never restamped', async () => {
     for (const eventTimeZone of [null, 'America/New_York'] as const) {
       const h = harness({ eventTimeZone });
@@ -466,10 +499,10 @@ describe('ADR-0112 amendment 3 (O2): the undo of an approved calendar update', (
 
   it('the undo anchor is marked as an undo (the runtime records action.undo, so an undo of the undo is refused)', async () => {
     const h = harness();
-    const { receiptId } = await h.updateEvent();
+    const { receiptId, anchorTaskId } = await h.updateEvent();
     await h.undo('calendar-update-undo', receiptId, at(3));
     const view = await h.flow.find(h.session());
-    expect(view?.anchor.undoOf).toEqual({ entryId: 'external.write', receiptId, family: 'calendar-update' });
+    expect(view?.anchor.undoOf).toEqual({ entryId: 'external.write', receiptId, family: 'calendar-update', sourceTaskId: anchorTaskId });
     const done = await h.approveAndExecute(at(4));
     if (done.kind !== 'outcome' || done.receiptId === undefined) throw new Error('undo did not run');
     h.recordLastAction({ receiptId: done.receiptId, anchorTaskId: view?.taskId, entryId: 'action.undo', operation: 'CALENDAR_EVENT_UPDATE', at: at(4) });

@@ -250,6 +250,11 @@ export interface ConnectorWriteAnchor {
     readonly receiptId: Id;
     /** The undone write's family (absent on anchors written before the update / delete families existed: `calendar-create`). */
     readonly family?: ExternalUndoFamily;
+    /**
+     * Review round 2: the anchor Task of the undone write (set for a calendar-update undo). At execution the inverse is
+     * re-derived from that anchor and must equal the payload exactly; an undo card without it never runs.
+     */
+    readonly sourceTaskId?: Id;
   };
 }
 
@@ -1513,6 +1518,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'binding-mismatch', family } };
     }
+    // Review round 2: an update undo never trusts the inverse its proposal persisted. It is re-derived here from the undone
+    // update's own anchor (lossless markers included) and must equal the payload exactly; otherwise nothing is sent.
+    if (payload.operation === 'CALENDAR_EVENT_UPDATE' && anchor.undoOf !== undefined && !(await this.isExactUpdateInverse(anchor, payload))) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'calendar-update' } };
+    }
     const send = this.sendFor(payload, `cwr:${approvalId}`);
     if (!send) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
@@ -1835,7 +1846,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         ...ownerSentenceOf(input.ownerText),
       },
       undefined,
-      { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'calendar-update' },
+      { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'calendar-update', sourceTaskId: resolved.anchorTaskId },
     );
   }
 
@@ -1938,6 +1949,30 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     } catch {
       return { kind: 'refused', reason: 'calendar-read-failed' };
     }
+  }
+
+  /**
+   * Review round 2: the execution-time proof for an update undo. The undo anchor must name the undone update's anchor Task
+   * (`undoOf.sourceTaskId`); that anchor must be this actor's plain approved update whose approval produced the receipt in
+   * `undoOf.receiptId` (SENT, same event); and the inverse re-derived from it NOW (`inverseChanges`, which requires every
+   * changed text field to be marked lossless and the time zone to be the recorded one) must equal the payload's changes
+   * key for key. A legacy anchor (no marker, no source link) fails, so a pre-fix card never writes a lossy value.
+   */
+  private async isExactUpdateInverse(anchor: ConnectorWriteAnchor, payload: Extract<ConnectorWritePayload, { operation: 'CALENDAR_EVENT_UPDATE' }>): Promise<boolean> {
+    const link = anchor.undoOf;
+    if (link?.family !== 'calendar-update' || link.sourceTaskId === undefined) return false;
+    const receipt = await this.deps.receipts.findById(link.receiptId, anchor.actorId);
+    if (receipt === null || receipt.status !== 'SENT' || receipt.operation !== 'CALENDAR_EVENT_UPDATE' || receipt.data.externalRef !== payload.eventId) return false;
+    const task = await this.deps.store.tasks.get(link.sourceTaskId);
+    const source = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (source?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || source.actorId !== anchor.actorId || source.undoOf !== undefined) return false;
+    if (source.approvalId === undefined || receipt.idempotencyKey !== `cwr:${source.approvalId}`) return false;
+    const updated = source.payload;
+    const shown = source.preview;
+    if (updated?.operation !== 'CALENDAR_EVENT_UPDATE' || shown?.operation !== 'CALENDAR_EVENT_UPDATE' || shown.receiptSourced === true) return false;
+    if (updated.eventId !== payload.eventId || shown.before.id !== payload.eventId) return false;
+    const inverse = inverseChanges(updated.changes, shown.before);
+    return inverse !== undefined && stableJson(inverse) === stableJson(payload.changes);
   }
 
   /** The same single read, with the deletion state (a restore needs a positive "deleted"). */
@@ -2381,6 +2416,15 @@ function inverseChanges(changes: CalendarEventChanges, before: ConnectorWriteEve
   }
   if (out.title === undefined && out.location === undefined && out.time === undefined) return undefined;
   return checkChanges(out) === null ? out : undefined;
+}
+
+/** JSON with object keys sorted (a key-for-key equality of two plain values). */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : inner,
+  );
 }
 
 /** The live event is still exactly what the approved update left: each changed field equals the update's value. */
