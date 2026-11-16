@@ -31954,6 +31954,29 @@ and D9 still governs every turn that goes to chat.
   0 attack successes, 0 deviations (the driver's real update undos pass the new execution proof); v1 36 cases 0 / 0 over
   3 runs.
 
+### Live UAT (amendment 3, calendar-update and calendar-delete families, 2026-11-16)
+
+- **Approval and setup.** Owner yes on 2026-11-16 ("진행해") for one Strict run. Temporary deploy of `eede2e6e` on the
+  service (one restart), Discord DM through abx, primary calendar only, test title marked `Quoky E2E`. Pre-state: 0 events
+  matching the marker in the next 7 days (read outside Quoky with the calendar probe).
+- **Steps and reads outside Quoky.** Create (preview → 승인 → `일정 추가 실행`): 1 event `15:00-15:30`. Update to 16:00 (one-option
+  pick → preview → 승인 → `일정 변경 실행`): same id at `16:00-16:30`. "되돌려줘": receipt-sourced update-undo preview → 승인 →
+  `일정 변경 실행`: same id back at `15:00-15:30`. Delete (pick → preview → 승인 → `일정 삭제 실행`): 0 matching events. "되돌려줘":
+  restore preview with the receipt banner first and "요청하신 문장: 되돌려줘" → 승인 → bare `복원 실행` executed nothing and named
+  `일정 복원 실행` (event still deleted) → `일정 복원 실행`: the **same event id** back, `confirmed`, `15:00-15:30`. "되돌려줘" again:
+  refused ("되돌린 작업은 다시 되돌릴 수 없어요"). Cleanup through Quoky's normal delete path: 0 matching events; two unrelated
+  events on the same day read unchanged.
+- **Open points closed by this run.** Google `events.get` on the deleted single event returned it as cancelled with its times
+  and title (the restore preview and the writer's shape/title check passed), and `PATCH status=confirmed` with `If-Match` was
+  accepted and kept the id. The event was created by Quoky, so `start.timeZone` was present; an event made in Google's own UI
+  without a recorded zone still refuses the time undo (fail closed, not exercised live).
+- **Not product findings.** The first create phrasing ("… Quoky E2E 되돌리기 시험 일정 30분짜리 추가해줘") previewed the title
+  "일정" and was rejected (pre-existing create title extraction, not this slice). During cleanup the operator picked "1번"
+  from a truncated view of a three-item list; the preview named a different event and was rejected before any approval
+  (operator error; nothing executed, that event read unchanged).
+- **Result.** PASS. Chief Architect (code APPROVE after round 2), Codex PASS (round 3 delta), security review APPROVE,
+  full suite 19,009 passed.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
