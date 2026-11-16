@@ -32157,6 +32157,15 @@ Security review APPROVE. Codex and Chief Architect findings fixed in new commits
   preview, refuses on a failed read, and compare-and-sets at execution. Fail closed; same host and authentication as the
   existing transition listing, one extra GET per transition. The alternative (only undo checks the status) was declined.
 
+### Implementation note (amendment 3, O4/O5: review round 2, 2026-11-16)
+
+Chief Architect delta re-review of `3314c930..e31fff66`: CHANGES REQUIRED, one P2 and two P3s, all fixed.
+
+- **P2:** the round-1 P2-C fix (`findSentUndoOf`) never reached the running service. The live receipt adapter in `apps/quoky/src/features/connector-writes.providers.ts` forwards each method by name and did not forward the new one. The port marked it optional, so the compiler accepted the gap. In production, a redo after an undo still answered `already-sent`, and the "pinned receipt undone in the meantime" check in `revalidateOwnUndo` was skipped. Both fail closed: no extra write happened, and the status compare-and-set still blocked a double revert.
+  - **Fix:** the adapter forwards `findSentUndoOf`. The port method is now required, so leaving it out of an adapter is a compile error. The in-memory test fakes implement it, and a new composition test calls it through the production adapter.
+- **P3:** a credential-shaped Jira status name is refused as `transition-lookup-failed`. Jira wrote that text, so it is no longer refused as `credential`, a reason that tells the owner their own text held a secret.
+- **P3:** the A6-D3 doc comment in `connector-write-copy.ts` is back above `renderConnectorWriteStopLine`.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through

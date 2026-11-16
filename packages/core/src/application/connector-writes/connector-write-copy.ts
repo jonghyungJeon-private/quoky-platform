@@ -754,15 +754,15 @@ export function renderConnectorWriteClosed(reason: ConnectorWriteCloseReason, ca
   }
 }
 
-/**
- * ADR-0120 A6-D3 amendment (2026-11-03): one line of the stop reply for an approval the kill switch closed — the action kind
- * and the target label the preview already showed (an event title is an untrusted span, never markup).
- */
 /** Review round 1 (P3): the stop reply's line for a closed revert choice (it has no preview). */
 export function renderConnectorWriteChoiceStopLine(choice: ConnectorWriteRevertChoice): MessageBody {
   return messageBody(`${connectorWriteLabel('ISSUE_TRANSITION_REVERT')} 선택 — `, inline(choice.issueKey));
 }
 
+/**
+ * ADR-0120 A6-D3 amendment (2026-11-03): one line of the stop reply for an approval the kill switch closed — the action kind
+ * and the target label the preview already showed (an event title is an untrusted span, never markup).
+ */
 export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): MessageBody {
   const label = connectorWriteLabel(preview.operation);
   switch (preview.operation) {

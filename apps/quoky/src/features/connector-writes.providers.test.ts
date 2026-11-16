@@ -85,4 +85,17 @@ describe('connector-write composition (ADR-0112 D4/D5, CWR-2)', () => {
     expect(flow.deps.calendarReader?.calendarIds).toEqual(['primary']);
     expect(config.calendar?.google.calendarIds).toEqual(['primary', 'team@group.calendar.google.com']);
   });
+  it('review round 2 (P2): the live receipt adapter forwards findSentUndoOf to the storage receipts store', async () => {
+    const composition = createConnectorWriteComposition({ config: loadConfig(env()), timeZone: 'Asia/Seoul', logger: logger() });
+    const repo = composition.providers.find(
+      (provider) => (provider as { provide: unknown }).provide === CONNECTOR_WRITE_RECEIPT_REPOSITORY,
+    ) as FactoryProvider;
+    const undo = { id: 'undo-1', status: 'SENT' };
+    const findSentUndoOf = vi.fn(async () => undo);
+    const adapter = repo.useFactory({ connectorWriteReceipts: { findSentUndoOf } }) as {
+      findSentUndoOf(actorId: string, undoneReceiptId: string): Promise<unknown>;
+    };
+    await expect(adapter.findSentUndoOf('actor-1', 'r1')).resolves.toBe(undo);
+    expect(findSentUndoOf).toHaveBeenCalledWith('actor-1', 'r1');
+  });
 });

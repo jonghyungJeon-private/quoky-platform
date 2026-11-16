@@ -101,6 +101,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
   async findLatestForOperation(): Promise<ConnectorWriteReceipt | null> {
     return null;
   }
+  async findSentUndoOf(): Promise<ConnectorWriteReceipt | null> {
+    return null;
+  }
   async markInterruptedPreparedUncertain(): Promise<number> {
     return 0;
   }

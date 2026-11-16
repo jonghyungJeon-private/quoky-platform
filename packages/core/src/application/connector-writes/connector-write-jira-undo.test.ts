@@ -641,7 +641,7 @@ describe('ADR-0112 amendment 3 review round 1: undone writes asked again, the fo
     expect(text(step)).toContain('지금 상태: 할 일 (상태 ID 1)');
   });
 
-  it('P3: a moved key on the forward path is target-changed; a status name that looks like a credential is refused', async () => {
+  it('P3: a moved key on the forward path is target-changed; a status name that looks like a credential is refused as unreadable, not as a secret the owner wrote', async () => {
     const moved = harness();
     moved.jira.moved = true;
     const step = await moved.flow.prepare({ session: moved.session(), actor: OWNER, now: at(0), draft: { kind: 'issue-transition', issueKey: KEY, toStatus: '진행 중' } });
@@ -652,7 +652,7 @@ describe('ADR-0112 amendment 3 review round 1: undone writes asked again, the fo
     (STATUS as Record<string, string>)['1'] = secretName;
     try {
       const refusedStep = await leaky.flow.prepare({ session: leaky.session(), actor: OWNER, now: at(0), draft: { kind: 'issue-transition', issueKey: KEY, toStatus: '진행 중' } });
-      expect(reason(refusedStep)).toBe('credential');
+      expect(reason(refusedStep)).toBe('transition-lookup-failed');
       expect(text(refusedStep)).not.toContain(secretName);
     } finally {
       (STATUS as Record<string, string>)['1'] = '할 일';

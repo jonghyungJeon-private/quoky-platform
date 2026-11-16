@@ -86,6 +86,7 @@ export function createConnectorWriteComposition(options: ConnectorWriteCompositi
         findLatestSent: (match) => storage.connectorWriteReceipts.findLatestSent(match),
         findLatestUnresolved: (match) => storage.connectorWriteReceipts.findLatestUnresolved(match),
         findLatestForOperation: (actorId, operation) => storage.connectorWriteReceipts.findLatestForOperation(actorId, operation),
+        findSentUndoOf: (actorId, undoneReceiptId) => storage.connectorWriteReceipts.findSentUndoOf(actorId, undoneReceiptId),
         markInterruptedPreparedUncertain: (now) => storage.connectorWriteReceipts.markInterruptedPreparedUncertain(now),
       }),
       inject: [STORAGE_PROVIDER],

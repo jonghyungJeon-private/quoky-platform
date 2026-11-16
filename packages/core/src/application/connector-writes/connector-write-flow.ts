@@ -1327,8 +1327,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           // Review round 1 (P3): an issue that answers under another key was moved: said as such, not as a lookup failure.
           if (from.issueKey !== key) return refused('target-changed');
           if (!isNumericId(from.statusId)) return refused('transition-lookup-failed');
-          // Review round 1 (P3): the status name is stored and shown, so it gets the same credential check as `toStatus`.
-          if (containsCredentialMaterial(from.statusName)) return refused('credential');
+          // Review round 1 (P3): the status name is stored and shown, so it gets a credential check. Review round 2 (P3): it is
+          // Jira's text, not the owner's, so it is refused as an unreadable status rather than as a secret the owner wrote.
+          if (containsCredentialMaterial(from.statusName)) return refused('transition-lookup-failed');
         }
         let options: readonly IssueTransitionOption[];
         try {
@@ -2396,7 +2397,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     });
     const resolved = await resolver.revalidate({ session: input.session, actor: input.actor, family, receiptId, anchorTaskId });
     if (resolved.kind !== 'resolved' || resolved.family !== family || resolved.draft.receiptId !== receiptId) return { kind: 'refused', reason: 'undo-nothing' };
-    if ((await this.deps.receipts.findSentUndoOf?.(input.actor.id, receiptId)) != null) return { kind: 'refused', reason: 'undo-nothing' };
+    if ((await this.deps.receipts.findSentUndoOf(input.actor.id, receiptId)) != null) return { kind: 'refused', reason: 'undo-nothing' };
     return resolved;
   }
 
@@ -2533,7 +2534,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     // Review round 1 (P2-C): a SENT forward write that this actor has since undone (a SENT undo receipt names it) is not a
     // replay: asking for the same write again is a new write and gets a new approval. An undo payload (`undoes`) never takes
     // this path, and a replay of the same approval stays refused by its idempotency key.
-    const undone = sent !== null && !('undoes' in payload && payload.undoes !== undefined) ? await this.deps.receipts.findSentUndoOf?.(input.actor.id, sent.id) : null;
+    const undone = sent !== null && !('undoes' in payload && payload.undoes !== undefined) ? await this.deps.receipts.findSentUndoOf(input.actor.id, sent.id) : null;
     if (sent && !undone) {
       return {
         kind: 'already-sent',

@@ -97,9 +97,9 @@ export interface ConnectorWriteReceiptRepository {
   /**
    * ADR-0112 amendment 3, review round 1 (P2-C): the newest `SENT` undo receipt of this actor whose `data.undoes` names
    * `undoneReceiptId`, or null. A SENT forward write that has one was undone, so asking for the same write again is a new
-   * write, not a replay. Optional: a repository without it keeps every SENT match a replay (fail closed).
+   * write, not a replay. Required (review round 2, P2): an optional method let a composition adapter drop it silently.
    */
-  findSentUndoOf?(actorId: Id, undoneReceiptId: Id): Promise<ConnectorWriteReceipt | null>;
+  findSentUndoOf(actorId: Id, undoneReceiptId: Id): Promise<ConnectorWriteReceipt | null>;
   /** The newest receipt of any status for this actor and operation (any target), or null. */
   findLatestForOperation(actorId: Id, operation: ConnectorWriteOperation): Promise<ConnectorWriteReceipt | null>;
   /**
