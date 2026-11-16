@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalStatus, Capability, IntentType, RiskLevel, SessionStatus, TaskStatus } from '../domain';
+import { ApprovalStatus, Capability, IntentType, ProviderDispatchState, RiskLevel, SessionStatus, TaskRunStatus, TaskStatus } from '../domain';
 import type {
   Actor,
   ApprovalRequest,
+  ContextBundle,
   ConversationContext,
   InboundMessage,
   Intent,
+  PromptSpec,
   Session,
   Task,
   TaskRun,
@@ -33,6 +35,7 @@ import {
   type IssueTransitionOption,
   type IssueTransitionRequest,
   type IssueTransitionWriter,
+  type AiRequest,
   type Logger,
   type StorageProvider,
 } from '../ports';
@@ -66,6 +69,8 @@ import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { WorkManager } from './work-manager';
 import { WorkChatService } from './work-chat/work-chat-service';
 import { createWorkChatTurnHandlers } from './work-chat/work-chat-turn-handler';
+import { ReminderTurnHandler } from './reminders/reminder-turn-handler';
+import { TaskManager } from './task-manager';
 import { setExternalUndoCapabilitiesForTest } from './nl-routing/last-action';
 import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } from './message-rendering';
 
@@ -195,6 +200,11 @@ interface HarnessOptions {
   createdEvent?: boolean;
   /** A fake NL selection service (ADR-0112 amendment 3: records external writes, decides the undo). */
   nlSelection?: ConversationRuntimeDeps['nlSelection'];
+  /**
+   * Live DM 2026-11-16 (chat command strip): every turn is a GENERAL_CHAT work turn whose chat provider answers this
+   * text, through the real task manager and the real chat-reply guards (the prompt itself is a stub).
+   */
+  chatReply?: string;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -445,7 +455,35 @@ function harness(opts: HarnessOptions = {}) {
   const turnHandlers = [
     ...createWorkChatTurnHandlers({ desk, summaryEnabled: false, logger }),
     createCalendarTurnHandler({ reader: calendarReader, timeZone: SEOUL, writesEnabled: enabled.has('calendar') && !opts.noFlow }),
+    ...(opts.chatReply !== undefined
+      ? [new ReminderTurnHandler({ conversation: { handleTurn: async () => null }, composer: { storageFailure: bad('reminders.storageFailure') }, enabled: true, logger })]
+      : []),
   ];
+  const taskRuns = new Map<string, TaskRun>();
+  const chatStorage = {
+    ...storage,
+    taskRuns: {
+      async start(task: Task, capability: Capability) {
+        const run = { id: `run-${taskRuns.size + 1}`, taskId: task.id, attempt: 1, status: TaskRunStatus.STARTED, dispatchState: ProviderDispatchState.PRE_DISPATCH, capability, artifactIds: [], startedAt: T0 } as TaskRun;
+        taskRuns.set(run.id, run);
+        return run;
+      },
+      async save(run: TaskRun) {
+        taskRuns.set(run.id, run);
+        return run;
+      },
+    },
+  };
+  const chat =
+    opts.chatReply === undefined
+      ? undefined
+      : {
+          tasks: new TaskManager(chatStorage as unknown as StorageProvider),
+          contextBuilder: { async build() { return {} as unknown as ContextBundle; } },
+          promptComposer: { compose() { return {} as unknown as PromptSpec; } },
+          promptRenderer: { render() { return {} as unknown as AiRequest; } },
+          router: { async select() { return { id: 'chat-provider', capabilities: [], isAvailable: async () => true, execute: async () => ({ text: opts.chatReply as string, artifacts: [] }) }; } },
+        };
 
   const deps: ConversationRuntimeDeps = {
     dispatchCommit: { async commit() { return {} as TaskRun; } } as unknown as ConversationRuntimeDeps['dispatchCommit'],
@@ -468,7 +506,7 @@ function harness(opts: HarnessOptions = {}) {
     classifier: {
       async classify(): Promise<Intent> {
         classify.count++;
-        return { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: false, summary: 'chat' };
+        return { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: opts.chatReply !== undefined, summary: 'chat' };
       },
     },
     projects: { register: bad('projects.register'), get: async () => null } as unknown as ConversationRuntimeDeps['projects'],
@@ -523,6 +561,7 @@ function harness(opts: HarnessOptions = {}) {
     credentialOverrideFlow: undefined,
     connectorWriteFlow: flow,
     ...(opts.nlSelection !== undefined ? { nlSelection: opts.nlSelection } : {}),
+    ...(chat ?? {}),
     logger,
   };
   const runtime = new ConversationRuntime(deps, { clock: () => new Date().toISOString() });
@@ -2647,5 +2686,146 @@ describe('surface grants: an approved write in a channel re-checks the live gran
     await h.send('승인');
     await h.send('댓글 실행');
     expect(h.writes.addComment).toHaveLength(1);
+  });
+});
+
+describe('live DM 2026-11-16: a command the chat reply offers is never stripped by a stale-command word in its payload', () => {
+  const OWNER_ASK = 'BE-882에 "Quoky E2E 되돌리기 시험 댓글" 이라고 댓글 달아줘';
+  const COMMAND = 'BE-882에 댓글: Quoky E2E 되돌리기 시험 댓글';
+  const LEAD = '채팅 답변으로는 댓글을 달 수 없어요. 아래 문구를 그대로 하나의 메시지로 보내주세요.';
+  const AFTER = '보내시면 승인 단계가 나오고, 이후 "댓글 실행"으로 최종 등록돼요.';
+  const RESTATE = '무엇을/어느 항목을 다시 말씀해 주세요.';
+  /** QUOKY_NL_ACTIONS=local with selection `none`: the A6 entries (action.undo among them) act; the chat turn carries D9. */
+  const localNone = () =>
+    ({
+      mode: 'active',
+      decide: async () => ({ kind: 'none' }),
+      actionsOffered: () => true,
+      actionsActing: () => true,
+    }) as unknown as ConversationRuntimeDeps['nlSelection'];
+  const chatTurn = async (reply: string, ask = OWNER_ASK, writers?: HarnessOptions['writers']) => {
+    const h = harness({ chatReply: reply, nlSelection: localNone(), ...(writers !== undefined ? { writers } : {}) });
+    const result = await h.send(ask);
+    const logged = (message: string) => h.logLines.some((line) => line.message === message);
+    return { h, text: result.reply.text, logged };
+  };
+
+  it.each([
+    ['inline code on its own line (the live reply)', `${LEAD}\n\n\`${COMMAND}\`\n\n${AFTER}`, `\`${COMMAND}\``],
+    ['a fenced block', `${LEAD}\n\n\`\`\`\n${COMMAND}\n\`\`\`\n\n${AFTER}`, `\`\`\`\n${COMMAND}\n\`\`\``],
+    ['quotes inside a sentence', `"${COMMAND}"라고 보내 주세요. ${AFTER}`, `"${COMMAND}"`],
+  ])('%s: the command stays as offered, no restate is appended, nothing is written', async (_label, reply, shown) => {
+    const { h, text, logged } = await chatTurn(reply);
+    expect(text).toContain(shown);
+    expect(text).not.toContain(RESTATE);
+    expect(logged('false incapability claim replaced')).toBe(false);
+    expect(h.totalWrites()).toBe(0);
+    expect(h.approvals.size).toBe(0);
+  });
+
+  // Other offered commands whose payload may carry a stale family's phrase (되돌리기, "완료 처리:", "할 일 추가:").
+  it.each([
+    ['Slack post', '#dev에 게시: 되돌리기 점검은 완료 처리: 2 이후에 해요'],
+    ['Jira comment with a to-do phrase', 'BE-882에 댓글: 할 일 추가: 회고 정리'],
+  ])('%s: a stale phrase inside its payload does not remove the command line', async (_label, command) => {
+    const { text, h } = await chatTurn(`아래처럼 보내 주세요.\n\n\`${command}\``, '그거 어떻게 보내?');
+    expect(text).toContain(`\`${command}\``);
+    expect(text).not.toContain(RESTATE);
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  // Review round 1: only the connector-write payload parser exempts. A reminder or calendar command has no payload probe
+  // and fails closed: the stale line goes and, being a shown line, takes the reply with it (no dangling "아래처럼").
+  it.each([
+    ['reminder', '내일 오전 9시에 되돌리기 점검 알려줘'],
+    ['calendar add', '내일 오후 3시에 되돌리기 점검 회의 잡아줘'],
+  ])('%s: no payload probe, so the stale word removes it (fail closed) and the reply is the restate', async (_label, command) => {
+    const { text } = await chatTurn(`아래처럼 보내 주세요.\n\n\`${command}\``, '그거 어떻게 보내?');
+    expect(text).toBe(RESTATE);
+  });
+
+  // Review round 1 (CA P1×2, P3; Codex P2×3): every repro removes the stale command exactly as main does.
+  it.each([
+    ['a keyword intent elsewhere in the reply', '"되돌리기"라고 보내 주세요. 코드 수정해 줄까요?', OWNER_ASK, `코드 수정해 줄까요? ${RESTATE}`],
+    ['an analysis offer after it', '"완료 처리: 2"라고 보내 주세요. 프로젝트 분석해 드릴까요?', OWNER_ASK, `프로젝트 분석해 드릴까요? ${RESTATE}`],
+    ['inline code inside an unpunctuated prose line', '`완료 처리: 2` 보내시고 테스트 돌려 주세요', OWNER_ASK, RESTATE],
+    ['a listing request after it', '"완료 처리: 2"라고 보내 주세요. 내 할 일 보여줘', OWNER_ASK, `내 할 일 보여줘 ${RESTATE}`],
+    ['a keyword before it on the line', '리팩터링 전에 "완료 처리: 2"라고 보내 주세요.', OWNER_ASK, RESTATE],
+    ['a keyword intent inside the quoted span', '"되돌리기 하고 코드 수정해줘"라고 보내 주세요.', OWNER_ASK, RESTATE],
+    ['a to-do add whose payload changes its reading', '"할 일 추가: 할 일 추가됐어?"라고 보내 주세요.', OWNER_ASK, RESTATE],
+    ['a listing whose last prose line has no period (the listing stays)', '할 일 2개예요.\n1. 회고\n2. 정리\n끝내려면 "완료 처리: 2"라고 보내 주세요', '고마워', '할 일 2개예요.\n1. 회고\n2. 정리'],
+  ])('review round 1, %s: the stale command is removed as on main', async (_label, reply, ask, expected) => {
+    const { text } = await chatTurn(reply, ask);
+    expect(text).toBe(expected);
+  });
+
+  it.each([
+    ['a ~~~ fence keeps the payload command', `${LEAD}\n~~~\n${COMMAND}\n~~~`, `${LEAD}\n~~~\n${COMMAND}\n~~~`],
+    ['a ~~~ fence around a stale command takes the reply', `${LEAD}\n~~~\n완료 처리: 2\n~~~`, RESTATE],
+    ['an unclosed fence around a stale command takes the reply', `${LEAD}\n\`\`\`\n완료 처리: 2`, RESTATE],
+    ['a shown span followed by ","', `${LEAD}\n\n\`완료 처리: 2\`,`, RESTATE],
+    ['a shown span followed by ";"', `${LEAD}\n\n\`완료 처리: 2\`;`, RESTATE],
+    ['a comment whose payload is only the stale word', '되돌리려면 `BE-882에 댓글: 되돌리기`를 보내세요.', RESTATE],
+    // Review round 3 (Codex P2): CRLF line endings are line endings, not content, for fence recognition.
+    ['a CRLF backtick fence keeps the payload command', `${LEAD}\r\n\`\`\`\r\n${COMMAND}\r\n\`\`\``, `${LEAD}\r\n\`\`\`\r\n${COMMAND}\r\n\`\`\``],
+    ['a CRLF backtick fence around a stale command takes the reply', `${LEAD}\r\n\`\`\`\r\n완료 처리: 2\r\n\`\`\``, RESTATE],
+  ])('review round 2, %s', async (_label, reply, expected) => {
+    const { text } = await chatTurn(reply);
+    expect(text).toBe(expected);
+  });
+
+  it('review round 2: inline triple backticks in prose open no fence, so the unmarked command line after them is removed', async () => {
+    const { text } = await chatTurn(`코드는 \`\`\`로 감싸요.\n${COMMAND}`, '고마워');
+    expect(text).toBe('코드는 ```로 감싸요.');
+  });
+
+  it('review round 1: a shown command line ending in a period is still a shown line (main left "아래 문구" dangling)', async () => {
+    const { text } = await chatTurn('아래 문구를 그대로 보내 주세요.\n\n`완료 처리: 2`.');
+    expect(text).toBe(RESTATE);
+  });
+
+  it('a Jira transition command (no payload) is untouched', async () => {
+    const { text } = await chatTurn('아래처럼 보내 주세요.\n\n`BE-882 진행 중으로 바꿔줘`', 'BE-882 진행 중으로 바꾸고 싶어');
+    expect(text).toBe('아래처럼 보내 주세요.\n\n`BE-882 진행 중으로 바꿔줘`');
+  });
+
+  it.each([
+    ['the bare undo command', '"되돌리기"라고 보내 주세요.'],
+    ['a to-do completion command', '"완료 처리: 2"라고 보내 주세요.'],
+    ['a to-do add command whose payload mentions undo (the command itself is the stale family)', '"할 일 추가: 되돌리기 연습"이라고 보내 주세요.'],
+  ])('A6-D6 unchanged: %s is still a stale quote while the family is offered', async (_label, reply) => {
+    const { text } = await chatTurn(reply, '고마워');
+    expect(text).toBe(RESTATE);
+  });
+
+  it('a stale command shown as its own line takes the reply with it: no "아래 문구" left pointing at nothing', async () => {
+    const { text } = await chatTurn('아래 문구를 그대로 보내 주세요.\n\n`완료 처리: 2`\n\n보내시면 바로 완료돼요.', '고마워');
+    expect(text).toBe(RESTATE);
+    const fenced = await chatTurn('아래 문구를 그대로 보내 주세요.\n```\n되돌리기\n```', '고마워');
+    expect(fenced.text).toBe(RESTATE);
+  });
+
+  it('B1 unchanged: a quoted span that is not a command still loses its marks', async () => {
+    const { text, logged } = await chatTurn('댓글 내용은 "Quoky E2E 시험 댓글" 그대로 둘게요.', '댓글 내용 확인해 줘');
+    expect(text).toBe('댓글 내용은 Quoky E2E 시험 댓글 그대로 둘게요.');
+    expect(logged('chat quote marks removed')).toBe(true);
+  });
+
+  it('DET-1 unchanged: a reply claiming the comment was posted is replaced by the not-done notice', async () => {
+    const { text, h, logged } = await chatTurn(`Jira BE-882 이슈에 댓글을 등록했습니다. \`${COMMAND}\``);
+    expect(text).not.toContain('등록했습니다');
+    expect(text).not.toContain(COMMAND);
+    expect(logged('internal action claim replaced')).toBe(true);
+    expect(h.totalWrites()).toBe(0);
+  });
+
+  it('with the comment writer off, nothing is exempted: the stale command line goes as on main (nothing newly offered)', async () => {
+    const withWord = await chatTurn(`${LEAD}\n\n\`${COMMAND}\``, OWNER_ASK, ['post']);
+    expect(withWord.text).toBe(RESTATE);
+    // Sent alone, the grammar answers it with the fixed writes-off refusal; nothing is prepared or written.
+    const h = harness({ writers: ['post'] });
+    const refused = await h.send(COMMAND);
+    expect(refused.reply.text).toContain(WRITES_OFF);
+    expect(h.approvals.size).toBe(0);
   });
 });

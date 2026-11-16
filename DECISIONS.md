@@ -34029,6 +34029,99 @@ deployed only after the D12 gates action, read-regression and r2 PASS on its fin
 - **Unchanged.** Which sentences count as dead-end offers, denials or stale quotes; families that are not offered; the source-incapability rewrite (it now also runs on what a stale removal leaves); every caller that passes no `ownerMessage` (eval harnesses, tests) sees the old restate placement.
 - **Risk.** Fail-safe: every offending sentence is still removed, so no dead-end yes/no or false denial reaches the owner. The only change is that a correction nudge is omitted after a message that names no offered action; a request that the selector missed but whose words name an action still gets it.
 
+## Stale-command guard: a phrase in another command's payload is not that family's command (2026-11-16, branch `claude/v5-chat-command-strip`)
+
+ADR-0120 implementation note on A6-D6 (the D9 stale-command check) and the owner decision of 2026-10-28 (B1). No ADR
+clause changes; no prompt, selector or routing change.
+
+- **Trigger.** Live DM 2026-11-16 11:34 (service at 42d3d862, `QUOKY_NL_ACTIONS=local`, Jira comment writer bound):
+  `BE-882에 "Quoky E2E 되돌리기 시험 댓글" 이라고 댓글 달아줘` → selector `none` → chat. The model offered the working
+  command `BE-882에 댓글: Quoky E2E 되돌리기 시험 댓글`, but the owner got "아래 문구를 그대로 … 보내주세요." with nothing
+  below it, followed by "무엇을/어느 항목을 다시 말씀해 주세요." Nothing was executed.
+- **Root cause.** `action.undo` is offered at `local` and its `staleCommands` pattern is the bare word `/되돌리기/u`
+  (`action-entries.ts`). `removeActionReplySentences` (`honest-chat.ts`) tested that pattern against whole sentences, so
+  the comment command line (its own "sentence" after the newline split) matched on its payload word and was removed. The
+  restate was then appended because the owner's message names the undo vocabulary (`closeGuardedReply`). B1 was not the
+  cause: `nlGrammarRuns` does claim the comment command (work-chat `surfaceClaim`, `connector-write`), so the span kept
+  its marks; the one span B1 unquoted was "댓글 실행". The same removal hit any offered command whose payload holds a stale
+  phrase of an offered family (`되돌리기`, `할 일 추가:`, `완료 처리:` …): Slack post, Jira comment, reminder and
+  calendar add were reproduced offline; a Jira transition (no payload) was not affected.
+- **Fix (structural; no phrase list).**
+  1. The runtime passes the B1 probes to the D9 guard as a claim signature (`nlGrammarClaim`: control phrase, classifier
+     intent, or the first handler `surfaceClaim` with its groups; `nlGrammarRuns` is now `nlGrammarClaim !== undefined`).
+  2. A stale match is exempt only when it lies inside a command span of its line (a quote / inline-code span or the
+     whole line, ≤ the B1 200-character bound) that the grammar answers, and the grammar answers that span the SAME way
+     with the match replaced by a neutral letter: the phrase is payload. A phrase the command needs (`"완료 처리: 2"`, the
+     bare `"되돌리기"`, `"할 일 추가: …"` even with `되돌리기` in its title), a match outside every answered span, a match
+     across a line break and a throwing probe stay stale, as before. Without the probe (eval harnesses, older callers) the
+     match test is unchanged.
+  3. When a sentence removed as a stale quote is a display line (alone between line breaks, no sentence-final
+     punctuation: a command on its own line, inline code or inside a fence), the whole reply is the restate, like a quote
+     the split cannot place. No "아래 문구" pointing at a removed line and no empty fence remain. Dead-end offers and
+     denials are prose and keep the DM8 rule (the rest of the reply stays).
+- **Unchanged guarantees.** DET-1 runs first and is untouched (a reply claiming the comment was posted is still
+  replaced). B1 is untouched (a non-command span still loses its marks; the same probes decide). A6-D6 still removes the
+  offered families' own command phrases. Nothing becomes newly offered: the exemption only keeps a span the grammar
+  already claims, and with the comment writer unbound the reply reads exactly as the same command without the stale word
+  (sent alone it gets the fixed writes-off refusal).
+- **Routing at `local` (question 4, no change).** `…라고 댓글 달아줘` reaching chat is by design: the A6 ratification
+  record (2026-10-14) decision 6 says "A6 has no NL Jira comment or transition"; `slack.post` / `calendar.create` are
+  reserved R3 ids never offered (`catalog.ts`), and `QUOKY_NL_ACTIONS=external` is refused at startup
+  (`NL_ACTIONS_EXTERNAL_NOT_AVAILABLE`, see "Config" in the A6 R0 note). The exact grammar `KEY-1에 댓글: 내용` stays the
+  only comment path.
+- **Residuals.** (a) Connector-write step phrases ("댓글 실행", "Jira 상태 되돌리기 실행") are not B1-runnable sent alone,
+  so they lose their marks, and the bare `/되돌리기/` pattern still removes a sentence naming "Jira 상태 되돌리기 실행".
+  (b) B1 keeps the marks of a connector-write command whose writer is unbound (pre-existing; the grammar answers it with
+  the refusal). (c) DET-1 lexical coverage does not catch "BE-882에 댓글을 달았어요." (accepted ADR-0104 residual).
+- **Tests.** `conversation-runtime-connector-writes.test.ts` (real runtime, work-chat / calendar / reminder handlers,
+  `local` + `none`): the live reply verbatim (inline code, fenced, quoted), Slack post / Jira comment / reminder / calendar
+  payloads, transition, A6-D6, display-line restate, B1, DET-1 and writer-off parity; 9 of them failed before the fix.
+  `nl-action-service.test.ts`: the guard with a stand-in probe (payload kept, needed phrase stale, display line, throwing
+  and over-long probes fail closed).
+- **Review round 1 (Codex P2×3, Chief Architect P1×2 / P2 / P3; supersedes points 1–3 of the fix above).** The first
+  exemption was too loose: the whole line was a candidate span, so a keyword intent anywhere on it (`코드 수정해 줄까요?`,
+  `프로젝트 분석해 드릴까요?`, `테스트 돌려 주세요`, `내 할 일 보여줘`, `리팩터링 전에 …`) kept a real stale command; an
+  `intent:` claim never changes under the substitution (`"되돌리기 하고 코드 수정해줘"`); and an equal handler/groups claim is
+  not the same command (`할 일 추가: 할 일 추가됐어?`, todo.add → todo.status). Fixed:
+  1. **Candidate spans.** Only the line's quote / inline-code spans, plus the whole line only inside a code fence.
+  2. **Only a payload grammar exempts.** `nlGrammarClaim` is gone (`nlGrammarRuns` is as on main). The runtime instead
+     passes `nlCommandPayload`: the work-chat parser's own connector-write draft (`detectWorkChatCommand`) for a Jira
+     comment or Slack post, claimed by a registered handler under `writes`, with a writer bound
+     (`connectorWriteFlow.supports`). Its exact identity (`issue-comment:<key>` / `channel-post:<channel>`) and the
+     payload it extracted are returned; keyword intents, control phrases, the A6 families and every other grammar have
+     none.
+  3. **Same command, match in the payload.** The match must lie inside the extracted payload (never the head), and the span
+     with the match replaced by a neutral letter must parse to the same identity with exactly that payload change; else
+     fail closed.
+  4. **Shown command line** (P2 / P3, one rule): a fenced line, or a line that is exactly one quote / inline-code span
+     with at most trailing punctuation (`` `완료 처리: 2`. `` counts). A prose line without a final period is a sentence,
+     so a listing above it stays (DM8 rule), as on main.
+  - Consequences: a reminder or calendar command whose text holds a stale phrase has no payload probe and is removed
+    as on main (fail closed; as a shown line the reply is the restate, with no dangling lead-in). With the comment writer
+    unbound nothing is exempted (residual (b) above no longer applies to this guard).
+  - Tests: the eight repros run on the real runtime (real `IntentClassifier`, real catalog) and give main's exact
+    output; the period-ended shown line now gets the restate. Run against an `origin/main` scratch worktree: the 8
+    repros pass there, the 10 cases this change alters (5 kept commands, 5 shown-line restates) fail there.
+- **Review round 2 (Chief Architect APPROVE; Codex P2×2 on shown-line recognition, last fix loop; CA optional tightening).**
+  1. **CommonMark fences.** A fence opens only on a line with at most three spaces of indent and then a run of at least
+     three backticks or tildes (a backtick opener's info string holds no backtick); it closes only on a line of the same
+     character with a run at least as long and nothing after it; an unclosed fence runs to the end. Triple backticks
+     inside a sentence are never a fence (they had exempted the unmarked prose after them), and `~~~` fences are now seen
+     (their removed stale command takes the reply instead of leaving an empty block under "아래 문구").
+  2. **Shown span endings.** After the one quote / inline-code span, the line may hold any run of Unicode punctuation and
+     spaces (`\p{P}`, `\s`: `,`, `;`, `.` …) and nothing else; any other text keeps the line a prose sentence.
+  3. **Payload-only stale phrase (CA).** A payload with no letter or digit besides the stale match (`BE-1에 댓글: 되돌리기`)
+     is not exempted and is removed as before.
+  - Tests: inline triple backticks in prose, a `~~~` fence (payload kept / stale restate), an unclosed fence, a longer
+    opener not closed by a shorter or different closer, `,` / `;` / other punctuation endings, and the payload-only stale
+    word (guard unit and real runtime); the 8 round-1 repros and the live-bug cases pass unchanged.
+- **Review round 3 (Codex P2: CRLF; orchestrator fix, fix-loop cap reached for the shown-line finding).** A CRLF reply
+  kept a trailing `\r` on every split line, so `FENCE_MARKER` never matched a fence line and a fenced payload command was
+  removed (an empty block under "아래 문구" again). A trailing `\r` is now dropped before fence recognition and from the
+  line under test (line ending, not content). Tests: a CRLF backtick fence keeps the comment command, and a CRLF fence
+  around a stale command restates; both fail without the fix. Any further shown-line edge case is recorded as a residual
+  (fail closed: a removed command gives the restate) rather than chased.
+
 ## ADR-0124 phase 1 stage C: a 413 from the daemon is a refusal, not a run failure (2026-11-05, branch `claude/v5-chunk-embed-413`)
 
 - **Trigger.** The first stage C memory-set run (plan `ac687ad6…`) stopped INVALID after 42 s: `/api/embed` answered HTTP 413 to a batch of 16 whole memories (single-vector path, up to 8,000 UTF-16 units each). No measurement was recorded.

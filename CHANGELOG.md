@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — chat replies keep an offered command whose payload holds a stale-command word
+
+- **Fixed.** A chat reply that offered a working command such as `BE-882에 댓글: Quoky E2E 되돌리기 시험 댓글` lost the command line (the undo family's stale pattern `되돌리기` matched its payload) and got "무엇을/어느 항목을 다시 말씀해 주세요." appended under a dangling "아래 문구를 … 보내주세요". The D9 stale-command check now exempts a match only inside the payload the connector-write parser extracts from a quoted / inline-code (or fenced) Jira comment or Slack post command with a bound writer, when blanking it leaves the same command; the families' own command phrases, keyword intents and every other grammar (reminder, calendar add: fail closed) are removed as before. A removed stale command shown as its own line (fenced, or one span with optional trailing punctuation) now replaces the whole reply with the restate instead of leaving a reference to nothing. DET-1, B1 and routing unchanged; no prompt change.
+
 ## Unreleased — calendar write grammar keeps the owner's own title words
 
 - **Fixed.** A calendar create whose title came before the duration ("… 시험 일정 30분짜리 추가해줘") no longer previews 제목 "일정"; an unquoted title in an update / delete ("내일 … 시험 일정 삭제해줘") now narrows the candidates (every-word, lower-cased) instead of listing the whole day. Core-only, no prompt change. DECISIONS ADR-0110 amendment implementation note (2026-11-16).

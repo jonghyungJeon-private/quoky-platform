@@ -18,6 +18,7 @@ import {
   CLOSED_QUESTION_FACT,
   renderConfiguredSourcesFact,
   renderControlCommandsFact,
+  type NlCommandPayload,
   type NlControlScope,
 } from '../nl-routing/honest-chat';
 import { languageOf } from '../nl-routing/nl-selection-service';
@@ -28,12 +29,12 @@ import { type PendingQuestion } from '../nl-routing/selection-state';
 import { parseActionSwitchPhrase } from '../nl-routing/action-switch';
 import { Capability, IntentType, TaskStatus } from '../../domain';
 import type { Actor, Artifact, ContextBundle, Id, InboundMessage, Intent, OutboundMessage, Session, Task, TurnWorkFacts } from '../../domain';
-import { executionLocalityOf, type AiExecutionResult, type ProjectReadout } from '../../ports';
+import { executionLocalityOf, type AiExecutionResult, type ProjectReadout, type SurfaceClaim } from '../../ports';
 import { ProviderGatewayTerminalStatus } from '../provider-routing-gateway';
 import { RoutingFailureCode } from '../runtime-response-validation-contracts';
 import type { RuntimeProviderRoutingAudit } from '../runtime-provider-routing-service';
 import type { ExternalWorkReadout } from '../work-chat/external-work-readout';
-import { todoListLeavesUnexpressedContent } from '../work-chat/work-chat-command';
+import { detectWorkChatCommand, todoListLeavesUnexpressedContent } from '../work-chat/work-chat-command';
 import { curatedExamplesForPrompt, isExternalWorkReadout } from '../prompt-composer';
 import {
   isR2DocumentSource,
@@ -543,16 +544,43 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
   protected nlGrammarRuns(span: string): boolean {
     if (parseActionSwitchPhrase(span) !== undefined || detectConversationControl(span) !== null) return true;
     if (IntentClassifier.textIntent(span).type !== IntentType.CHAT) return true;
+    return this.nlHandlerClaims(span, () => true);
+  }
+
+  /** Whether a registered turn handler's pure `surfaceClaim` claims `span` sent alone in a DM (and `accept` takes it). */
+  private nlHandlerClaims(span: string, accept: (claim: SurfaceClaim) => boolean): boolean {
     const now = this.clock();
     const message: InboundMessage = { id: 'quote-check', text: span, context: { platform: 'quote-check', channelId: 'quote-check', userId: 'quote-check', direct: true }, receivedAt: now };
     return this.turnHandlerRegistry.some((handler) => {
       if (typeof handler.surfaceClaim !== 'function') return false;
       try {
-        return handler.surfaceClaim({ message, now }) !== null;
+        const claim = handler.surfaceClaim({ message, now });
+        return claim !== null && accept(claim);
       } catch {
         return false;
       }
     });
+  }
+
+  /**
+   * Live DM 2026-11-16 (review round 1): the exact command and free-text payload of a span that Core's grammar runs as a
+   * connector write carrying owner text (a Jira comment, a Slack post), sent alone in a DM: the work-chat parser's own draft
+   * (`detectWorkChatCommand`), claimed by a registered handler under `writes`, with a writer bound for it (writes off → no
+   * payload). Every other span, including keyword intents and control phrases, has none. Pure, never throws.
+   */
+  protected nlCommandPayload(span: string): NlCommandPayload | undefined {
+    let command: ReturnType<typeof detectWorkChatCommand>;
+    try {
+      command = detectWorkChatCommand(span);
+    } catch {
+      return undefined;
+    }
+    if (command === null || command.kind !== 'connector-write') return undefined;
+    const draft = command.draft;
+    if (draft.kind !== 'issue-comment' && draft.kind !== 'channel-post') return undefined;
+    if (this.deps.connectorWriteFlow?.supports(draft) !== true) return undefined;
+    if (!this.nlHandlerClaims(span, (claim) => claim.groups.includes('writes'))) return undefined;
+    return { command: draft.kind === 'issue-comment' ? `issue-comment:${draft.issueKey}` : `channel-post:${draft.channel}`, payload: draft.text };
   }
 
   protected guardChatReplyClaims(
@@ -591,6 +619,7 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
         ...(controls !== undefined ? { controls } : {}),
         ...(nlFacts.listing !== undefined ? { held: nlFacts.listing.shown } : {}),
         ownerMessage: currentUserMessage,
+        payloadOf: (span) => this.nlCommandPayload(span),
       });
       if (!incapable.guarded) return listing;
       this.deps.logger.info('false incapability claim replaced', { capability, ...(taskId ? { taskId } : {}) });
