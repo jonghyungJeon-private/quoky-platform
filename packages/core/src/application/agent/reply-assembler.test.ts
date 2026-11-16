@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Capability } from '../../domain';
 import { flowLabel } from '../../domain/flow-label';
+import type { AiProvider } from '../../ports/ai-provider.port';
 import type { Logger } from '../../ports/logger.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
@@ -11,7 +13,7 @@ import {
   setSummaryGrantsForTest,
   type AgentSourceDocument,
   type ModelDerivedLabel,
-  type QuarantinedSummarizerModel,
+  type QuarantinedSummarizerRoute,
   type SummaryEntry,
 } from './quarantined-summary';
 import { assembleAgentReply } from './reply-assembler';
@@ -28,7 +30,17 @@ const doc = (position: number, body = 'body'): AgentSourceDocument => ({ id: `m$
 const port = (ids: readonly string[], documents: readonly AgentSourceDocument[], more = false): AgentReadPort => ({
   read: async (request) => (request.budget.reserveQuery() && request.budget.reserveHttp() ? { ok: true, items: ids.map((id) => ({ id })), documents, ...(more ? { hasMore: true } : {}) } : { ok: false, code: 'BOUND' }),
 });
-const model = (locality: 'LOCAL' | 'REMOTE', answer: string): QuarantinedSummarizerModel => ({ executionLocality: locality, auditId: `audit-${locality}`, run: async () => ({ text: answer }) });
+// ADR-0121 D12: M2 routes through the existing selector; this one answers one provider and finds it eligible at dispatch.
+const model = (locality: 'LOCAL' | 'REMOTE', answer: string): QuarantinedSummarizerRoute => {
+  const provider: AiProvider = {
+    id: `audit-${locality}`,
+    executionLocality: locality,
+    capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
+    isAvailable: async () => true,
+    execute: async () => ({ text: answer }),
+  };
+  return { selector: { select: async () => provider, isStillEligible: () => true } };
+};
 const log = (): Logger & { lines: unknown[] } => {
   const lines: unknown[] = [];
   const push = (message: string, fields?: unknown): void => void lines.push({ message, fields });
@@ -37,7 +49,7 @@ const log = (): Logger & { lines: unknown[] } => {
 
 async function run(steps: ValidatedAgentStep[], readers: Partial<Record<NlWave1EntryId, AgentReadPort>>, answer?: string, bounds = {}, locality: 'LOCAL' | 'REMOTE' = 'LOCAL'): Promise<{ plan: RunPlan; result: AgentRunResult }> {
   const p = plan(steps);
-  const result = await new AgentPlanExecutor({ readers, ...(answer !== undefined ? { summarizer: { models: [model(locality, answer)] } } : {}), bounds }).execute(p);
+  const result = await new AgentPlanExecutor({ readers, ...(answer !== undefined ? { summarizer: model(locality, answer) } : {}), bounds }).execute(p);
   return { plan: p, result };
 }
 

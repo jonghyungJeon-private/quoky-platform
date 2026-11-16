@@ -15,7 +15,7 @@ import {
   type AgentSummarySource,
   type QuarantinedCallAudit,
   type QuarantinedListingOnlyReason,
-  type QuarantinedSummarizerModel,
+  type QuarantinedSummarizerRoute,
   type QuarantinedSummary,
   type SummaryRunToken,
 } from './quarantined-summary';
@@ -38,10 +38,11 @@ import { projectStructure, type AgentRawItem, type StructureProjection } from '.
  *   second, run-time check). Same-source Jira to Jira is the allowed case (`items-by-key` behind the port).
  * - **Bounds (D7)** via {@link AgentRunBudget}: a breach never throws; the run stops starting work and returns a
  *   deterministic `partial` result, with no retry.
- * - **Summaries (D3/D4, P3-3b).** With a {@link AgentSummarizerDeps} a `summarize` step makes at most one M2 call through
- *   `quarantined-summary.ts` (charged on the run's M2 / model-call / token bounds; a breach is `not-run` and a partial
- *   result), over the raw documents the covered read ports handed over. A read is asked for documents (`withDocuments`) only
- *   when a summarize step covers it AND a model can already be selected for that read's label (a `REMOTE_ON_SUMMARY_REQUEST`
+ * - **Summaries (D3/D4, P3-3b; D12).** With a {@link AgentSummarizerDeps} (the existing provider selector) a `summarize` step
+ *   makes at most one M2 call through `quarantined-summary.ts` (charged on the run's M2 / model-call / token bounds; a breach is
+ *   `not-run` and a partial result), over the raw documents the covered read ports handed over. A read is asked for documents
+ *   (`withDocuments`) only when a summarize step covers it AND a provider can already be selected under the locality its label,
+ *   grant and asked-for count allow (a `REMOTE_ON_SUMMARY_REQUEST`
  *   read needs a summary grant, which nothing produces in this slice: mail and Drive stay listing-only, body never fetched).
  *   Every document is validated against the projection (shape, an integer unique in-range position, the projector's id at
  *   that position); a bad one is dropped and counted as omitted. Those documents live only inside one `execute` call:
@@ -64,7 +65,7 @@ export interface AgentReadRequest {
   /** A reference step only: closed-format ids of the SAME source and origin, in the order projected (1..10). */
   readonly keys?: readonly string[];
   /**
-   * The read is covered by a summarize step and a model can be selected for its label: the port may hand over the items'
+   * The read is covered by a summarize step and a provider can be selected under its derived locality: the port may hand over the items'
    * content as `documents`. Absent: it must not fetch any body (a port that returns documents anyway has them ignored).
    */
   readonly withDocuments?: true;
@@ -121,10 +122,11 @@ export interface AgentPlanExecutorDeps {
   readonly bounds?: Partial<AgentRunBoundValues>;
 }
 
-export interface AgentSummarizerDeps {
-  /** The models M2 may use, in priority order. Each declares its locality; an absent one counts as `REMOTE`. */
-  readonly models: readonly QuarantinedSummarizerModel[];
-}
+/**
+ * M2's route (ADR-0121 D12, amended 2026-11-16): the existing {@link QuarantinedSummarizerRoute} — the provider selector and the
+ * base selection context. No model list and no new port: Core derives the locality constraint and the selector picks under it.
+ */
+export type AgentSummarizerDeps = QuarantinedSummarizerRoute;
 
 export type AgentStepNotRunReason = 'bound' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-unusable' | 'ref-too-many';
 
@@ -291,14 +293,22 @@ export class AgentPlanExecutor {
     if (keys !== undefined && !budget.reserveRefValues(refValues)) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
 
     // Documents are asked for only when a covering summarize step could run: its source has a readout shape and work-text
-    // controls, and a model can be selected for this read's label (optimistically for one item: the count is not known yet).
-    // A read of several items counts its requested limit (an unstated limit counts as the item cap): a remote model qualifies
-    // for one item only, so a multi-item read with remote models alone never fetches bodies (N3).
-    const models = this.deps.summarizer?.models;
+    // controls, its label, grant and asked-for count admit a locality, and the selector names an allowed provider (D12).
+    // A read of several items counts its requested limit (an unstated limit counts as the item cap): `REMOTE` is allowed for
+    // one item only, so a multi-item read with no ready `LOCAL` provider never fetches bodies (N3).
+    const route = this.deps.summarizer;
     let withDocuments = false;
-    if (models !== undefined) {
+    if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
-        const refusal = summaryReadiness(entryId, cover.schema, summaryGrantFor(cover.step, entryId, state.run), askedAcross(state, cover.from), models);
+        const refusal = await summaryReadiness({
+          entryId,
+          schema: cover.schema,
+          summaryStep: cover.step,
+          grant: summaryGrantFor(cover.step, entryId, state.run),
+          run: state.run,
+          askedItems: askedAcross(state, cover.from),
+          route,
+        }).catch((): 'no-model' => 'no-model');
         if (refusal === undefined) withDocuments = true;
         else state.denials.set(`${cover.step}:${number}`, refusal);
       }
@@ -370,7 +380,7 @@ export class AgentPlanExecutor {
         schema: step.schema,
         summaryStep: number,
         sources,
-        models: summarizer.models,
+        route: summarizer,
         signal: controller.signal,
         run: state.run,
         askedItems: askedAcross(state, step.from),
