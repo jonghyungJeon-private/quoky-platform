@@ -17050,6 +17050,27 @@ OPS-2b merge (no-bypass extraction).
 - Tests: `calendar-write-request.test.ts` (both sentences, labelled-form regressions, a label inside a compound word in
   every field, a duration after a labelled title, the negation routing).
 
+- **Review round 1** (J2 reviewer + Codex), all in `calendar-write-request.test.ts` unless noted:
+  - P1 labelled titles were no longer verbatim: a colon / particle label now keeps its value verbatim (as on main); a BARE
+    label cuts only a trailing run of WHOLE time / duration / day tokens (token-start boundary, never inside a token) and
+    still reads that run as the event time. Decision: the earlier colon-form range test was dropped; "제목: 주간 회의
+    30분짜리" keeps "30분짜리" in the title, as on main. Tests: "colon / particle labelled title stays verbatim" (오늘의 회고,
+    2시간 집중 세션, 종일 워크숍 준비, 3/4분기 리뷰) and "a labelled title still gets time and duration stripping".
+  - P2 negation exemption too wide (also Codex): spaced `하지 않` is always a negation; only the fused `하지않는X` followed
+    by a further word is exempt (`하지않(?!는[가-힣]{2,}\s+\S)`), so the endings 않는데요 / 않는건가요 / 않는다면 stay chat.
+    Test: the four reviewer sentences are `false`, "존재하지않는제목 일정 삭제해줘" is `true`.
+  - P2 undated delete dropped title words (also Codex): an undated reference now takes residual title words unless a
+    token is a determiner (이 / 그 / 저, the existing closed set `nlNamesDeterminer`); the flow's existing
+    `matchesTimeAndTitle` then filters the contextual and nearby candidates, zero matches is `event-not-found`. It does not
+    break the #342 rule: a determiner reference ("방금 그 … 취소해줘") and a reference with no words ("일정 취소해줘") still
+    resolve against the session context unfiltered. Tests: `connector-write-calendar-context.test.ts` (miss after a
+    listing is `event-not-found` with no draft, a listed / nearby title is offered).
+  - P3 `BOOKING_VERB` had no boundary: the stem must now be followed by a request ending, so "넣어둔 제목 정리 회의" keeps
+    its title words. P3 `LINK_TOKEN` duplicated `LEADING_LINK`: both are built from `LINK_PARTICLES`.
+  - New residual **R-TG4**: an undated reference with a recency or ordinal word but no determiner ("방금 만든 일정 취소해줘",
+    "마지막 일정 삭제해줘") now narrows by those words and misses ("찾지 못했어요", nothing changes). Risk: a lost
+    shortcut; fix is to say "그 일정" or name the day. R-TG1 also covers a bare label right after a participle.
+
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
 - **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase

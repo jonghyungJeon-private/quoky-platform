@@ -15,6 +15,7 @@ import type {
 } from '../connector-writes/connector-write-draft';
 import { addLocalDays, isValidLocalDate, zonedToUtc, type LocalDate } from '../reminders/zoned-time';
 import { extractSpan, placeCalendarSpan } from './calendar-question';
+import { nlNamesDeterminer } from '../nl-routing/action-entries';
 import { CALENDAR_RELOCATE, CALENDAR_RENAME } from './calendar-field-change';
 
 /**
@@ -45,6 +46,9 @@ export interface CalendarWriteGrammarOptions {
   /** `QUOKY_TIMEZONE`: every date and time is read and written in this zone. */
   readonly timeZone: string;
 }
+
+/** Connecting particles between a time phrase and its neighbours ("3시에", "2시간짜리"): the one shared source. */
+const LINK_PARTICLES = '에서|에는|에|부터|까지|동안|짜리|간';
 
 const DEFAULT_DURATION_MINUTES = 60;
 const MAX_DURATION_MINUTES = 24 * 60;
@@ -168,10 +172,13 @@ function fieldsOf(text: string): { head: string; timeText: string; title?: strin
     const key = match[1];
     const raw = text.slice(start, end);
     let value: string;
-    if (key === '제목') {
-      const wholeQuoted = /^[\s]*["“'‘「『]/u.test(raw) && QUOTED.test(raw);
-      if (!wholeQuoted) timeText += ` ${raw}`;
-      value = stripQuotes(stripTrailingRequest(wholeQuoted ? raw : withoutTimePhrases(raw)));
+    if (key === '제목' && match[2] === undefined && !/[:：]/u.test(match[0]) && !/^[\s]*["“'‘「『]/u.test(raw)) {
+      // A BARE label's value: only a trailing run of whole time / duration tokens is cut (as the unlabelled title does),
+      // and that run is still read as the event's time. A label with a particle or colon keeps its value verbatim.
+      const request = stripTrailingRequest(raw);
+      const cut = withoutTrailingTime(request);
+      timeText += ` ${request.slice(cut.length)}`;
+      value = stripQuotes(cut);
     } else {
       value = stripQuotes(stripTrailingRequest(raw));
     }
@@ -183,20 +190,18 @@ function fieldsOf(text: string): { head: string; timeText: string; title?: strin
   return { head, timeText, ...fields };
 }
 
-/** Connecting particles stranded once a time phrase is cut out of a title value ("3시에" → "에"). */
-const LINK_TOKEN = /^(?:에서|에는|에|부터|까지|동안|짜리|간)$/u;
 
-/** The title value with its day / clock / range / duration / all-day phrases cut out (as the unlabelled title does). */
-function withoutTimePhrases(value: string): string {
-  let rest = value;
-  for (const pattern of [RANGE_ALL, CLOCK_ALL, DURATION_ALL, ALL_DAY_ALL, DAY_WORD_ALL]) {
-    pattern.lastIndex = 0;
-    rest = rest.replace(pattern, ' ');
+const TIME_PHRASE = `(?:${RANGE_RE.source}|${CLOCK}|${DURATION_RE.source}|${ALL_DAY.source}|${DAY_WORD})`;
+const TRAILING_TIME = new RegExp(`(?<![\\p{L}\\p{N}])${TIME_PHRASE}(?:${LINK_PARTICLES})?[\\s,，]*$`, 'iu');
+
+/** The value without a trailing run of WHOLE time / duration / day tokens ("주간 회의 30분짜리" → "주간 회의"); never inside a token. */
+function withoutTrailingTime(value: string): string {
+  let rest = value.trimEnd();
+  for (;;) {
+    const match = TRAILING_TIME.exec(rest);
+    if (match === null || match.index === 0) return rest.replace(/[\s,，]+$/u, '');
+    rest = rest.slice(0, match.index).trimEnd();
   }
-  return rest
-    .split(/\s+/u)
-    .filter((token) => token.length > 0 && !LINK_TOKEN.test(token))
-    .join(' ');
 }
 
 /** A booking / change verb the owner wrote after a field ("제목 주간 회의로 잡아줘") is not part of the field. */
@@ -283,14 +288,18 @@ function parseCreate(text: string, options: CalendarWriteGrammarOptions): Connec
   return { kind: 'calendar-create', event };
 }
 
-const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)/u;
+/**
+ * The booking verb as the owner's request ("잡아줘", "추가해 줘"): the stem must be followed by a request ending, so a
+ * participle inside the title ("넣어둔 제목 정리 회의") is not the verb.
+ */
+const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)(?=\s*(?:줘|주세요|줄래|주실래요|줄\s*수)|\s*[.!~?]*$)/u;
 const DAY_WORD_ALL = new RegExp(DAY_WORD, 'gu');
 const CLOCK_ALL = new RegExp(CLOCK, 'gu');
 const RANGE_ALL = new RegExp(RANGE_RE.source, 'gu');
 const DURATION_ALL = new RegExp(DURATION_RE.source, 'gu');
 const ALL_DAY_ALL = new RegExp(ALL_DAY.source, 'giu');
 /** Connecting particles left between the time phrase and the title ("3시에 …", "2시간짜리 …"). */
-const LEADING_LINK = /^[\s,，]*(?:에서|에는|에|부터|까지|동안|짜리|간)?[\s,，]*/u;
+const LEADING_LINK = new RegExp(`^[\\s,，]*(?:${LINK_PARTICLES})?[\\s,，]*`, 'u');
 const FILLER = /^(?:좀|하나|한\s*개|새|새로)$/u;
 
 /**
@@ -336,8 +345,9 @@ const GENERIC_NOUN_TOKEN = new RegExp(`^${MEETING_NOUN.source}$`, 'u');
  * day / clock / range / duration / all-day matches are cut out. A single-character leftover (a stranded particle such
  * as "에", a deictic "그"), a filler and a bare generic meeting noun are not title words; one trailing object particle
  * ("을" / "를") of the last token is dropped as `titlePhraseOf` does. Other postpositions are NOT stripped (no new list):
- * a word that then misses the event title gives a safe `event-not-found`, never a broader set. Only for a reference that
- * names a day: an undated one keeps resolving against the session's recent context ("방금 그 … 취소해줘").
+ * a word that then misses the event title gives a safe `event-not-found`, never a broader set. Taken for a reference that
+ * names a day, and for an undated one that holds no determiner token (이 / 그 / 저): an undated deictic reference keeps
+ * resolving against the session's recent context ("방금 그 … 취소해줘"), an undated named one narrows that context.
  */
 function residualTitleWords(part: string): string[] {
   let rest = part;
@@ -386,7 +396,7 @@ function referenceOf(part: string, options: CalendarWriteGrammarOptions): Calend
     titleWords:
       quoted !== undefined
         ? quoted.toLowerCase().split(/\s+/u).filter((w) => w.length > 0)
-        : namesDay(part)
+        : namesDay(part) || !nlNamesDeterminer(part)
           ? residualTitleWords(part)
           : [],
     ...(namesDay(part) ? {} : { inferredDay: true as const }),

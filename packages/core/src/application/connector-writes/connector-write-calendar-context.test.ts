@@ -315,6 +315,27 @@ describe('undated calendar change / delete uses the session\'s recent calendar c
     expect(ids(cancel.step)).toEqual([TODAY_WEEKLY.id]);
   });
 
+  it('an undated delete naming a title that no listed or nearby event has is event-not-found, never an unrelated event (v5 title grammar)', async () => {
+    const h = harness([TODAY_WEEKLY, TOMORROW_STANDUP]);
+    await h.turn('내일 일정 뭐야?', at(0));
+    const miss = await h.turn('존재하지않는제목 일정 삭제해줘', at(1));
+    expect(miss.draft).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: ['존재하지않는제목'] } });
+    expect(miss.step).toMatchObject({ kind: 'refused', reason: 'event-not-found' });
+    expect(h.writes.delete).toHaveLength(0);
+  });
+
+  it('an undated delete naming a title that a listed event has offers exactly that event', async () => {
+    const h = harness([TODAY_WEEKLY, TOMORROW_STANDUP]);
+    await h.turn('내일 일정 뭐야?', at(0));
+    const hit = await h.turn('스탠드업 일정 삭제해줘', at(1));
+    expect(hit.step).toMatchObject({ kind: 'choice', mode: 'delete', basis: 'listed' });
+    expect(ids(hit.step)).toEqual([TOMORROW_STANDUP.id]);
+    const nearby = harness([TODAY_WEEKLY, TOMORROW_STANDUP]);
+    const found = await nearby.turn('스탠드업 일정 삭제해줘', at(0));
+    expect(found.step).toMatchObject({ kind: 'choice', basis: 'nearby' });
+    expect(ids(found.step)).toEqual([TOMORROW_STANDUP.id]);
+  });
+
   it('no context and nothing today or tomorrow is a truthful refusal (no approval)', async () => {
     const h = harness([FRIDAY_REVIEW]);
     const cancel = await h.turn('일정 취소해줘', at(0));
