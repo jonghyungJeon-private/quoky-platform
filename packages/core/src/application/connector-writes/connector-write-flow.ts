@@ -17,6 +17,7 @@ import {
   type ChannelMessageWriter,
   type ConnectorWriteOperation,
   type ConnectorWriteOutcome,
+  type IssueCommentState,
   type IssueCommentWriter,
   type IssueTransitionOption,
   type IssueTransitionWriter,
@@ -143,6 +144,17 @@ export type ConnectorWritePayload =
       readonly toStatusId: string;
       readonly toStatus: string;
     }
+  /**
+   * ADR-0112 amendment 3 (O4): delete the comment Quoky added (only ever an undo). The issue and comment come from this actor's
+   * own SENT comment receipt; `expected.version` is the comment's version Quoky's own add returned.
+   */
+  | {
+      readonly operation: 'ISSUE_COMMENT_DELETE';
+      readonly issueKey: string;
+      readonly commentId: string;
+      readonly expected: { readonly version: string };
+      readonly undoes: Id;
+    }
   | { readonly operation: 'CHANNEL_POST'; readonly channel: string; readonly text: string }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly draft: CalendarEventDraft }
   | {
@@ -176,6 +188,15 @@ export type ConnectorWritePreview =
       readonly toStatusId: string;
       readonly transitionName: string;
       readonly transitionId: string;
+    }
+  /** ADR-0112 amendment 3 (O4): always the undo of this actor's own SENT comment; the text is the owner's own comment as approved. */
+  | {
+      readonly operation: 'ISSUE_COMMENT_DELETE';
+      readonly issueKey: string;
+      readonly commentId: string;
+      readonly text: string;
+      readonly receiptSourced: true;
+      readonly ownerSentence?: string;
     }
   | { readonly operation: 'CHANNEL_POST'; readonly channelLabel: string; readonly channelId: string; readonly text: string }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly event: CalendarEventDraft; readonly timeZone: string }
@@ -256,14 +277,14 @@ export interface ConnectorWriteAnchor {
    * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
    */
   readonly undoOf?: {
-    /** The undone record's entry: `calendar.create`, or `external.write` for a calendar update / delete. */
+    /** The undone record's entry: `calendar.create`, or `external.write` for a calendar update / delete and the Jira writes. */
     readonly entryId: 'calendar.create' | typeof LAST_ACTION_EXTERNAL_ENTRY;
     readonly receiptId: Id;
     /** The undone write's family (absent on anchors written before the update / delete families existed: `calendar-create`). */
     readonly family?: ExternalUndoFamily;
     /**
-     * Review round 2: the anchor Task of the undone write (set for a calendar-update undo). At execution the inverse is
-     * re-derived from that anchor and must equal the payload exactly; an undo card without it never runs.
+     * Review round 2: the anchor Task of the undone write (set for a calendar-update undo and both Jira undos). At execution
+     * the inverse is re-derived from that anchor and must equal the payload exactly; an undo card without it never runs.
      */
     readonly sourceTaskId?: Id;
   };
@@ -349,7 +370,15 @@ export type ConnectorWriteRefusal =
   /** A restore: the event the delete removed is on the calendar again (restored or re-created meanwhile); nothing to restore. */
   | 'undo-event-present'
   /** The event changed after it was created (version, time or title differ from what Quoky wrote). */
-  | 'undo-event-changed';
+  | 'undo-event-changed'
+  /** ADR-0112 amendment 3 (O4/O5): the provider could not be read to prove the undo is safe (nothing proposed). */
+  | 'undo-read-failed'
+  /** O4: the comment Quoky added is no longer there. */
+  | 'undo-target-gone'
+  /** O4: the comment was edited (or its issue moved). */
+  | 'undo-target-changed'
+  /** O4: these credentials may not delete the comment (checked read-only; no permission is requested). */
+  | 'undo-not-permitted';
 
 /** What one flow step produced; the runtime renders it through `ResponseComposer` (reply text lives there). */
 export type ConnectorWriteStep =
@@ -625,6 +654,7 @@ export function connectorWriteTargetOf(preview: ConnectorWritePreview): Connecto
   switch (preview.operation) {
     case 'ISSUE_COMMENT':
     case 'ISSUE_TRANSITION':
+    case 'ISSUE_COMMENT_DELETE':
       return { kind: 'issue', issueKey: preview.issueKey };
     case 'CHANNEL_POST':
       return { kind: 'channel', channelLabel: preview.channelLabel, channelId: preview.channelId };
@@ -682,6 +712,8 @@ export function connectorWriteExecutionGate(operation: ConnectorWriteOperation):
       return 'calendarDelete';
     case 'CALENDAR_EVENT_RESTORE':
       return 'calendarRestore';
+    case 'ISSUE_COMMENT_DELETE':
+      return 'issueCommentDelete';
   }
 }
 
@@ -705,6 +737,7 @@ const EXECUTION_STEP_MENTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>>
   CALENDAR_EVENT_UPDATE: /일정변경실행|executeeventupdate/u,
   CALENDAR_EVENT_DELETE: /일정삭제실행|executeeventdelete/u,
   CALENDAR_EVENT_RESTORE: /일정복원실행|executeeventrestore/u,
+  ISSUE_COMMENT_DELETE: /댓글삭제실행|executejiracommentdelete/u,
 };
 
 /** Explanation / how-to requests about a step are ordinary chat, not a question about the pending write. */
@@ -748,6 +781,7 @@ const STEP_WORDS: Readonly<Record<ConnectorWriteOperation, string>> = {
   CALENDAR_EVENT_UPDATE: String.raw`(?:캘린더\s*)?일정\s*변경`,
   CALENDAR_EVENT_DELETE: String.raw`(?:캘린더\s*)?일정\s*삭제`,
   CALENDAR_EVENT_RESTORE: String.raw`(?:캘린더\s*)?일정\s*복원`,
+  ISSUE_COMMENT_DELETE: String.raw`(?:jira|지라)\s*(?:댓글|코멘트)\s*삭제`,
 };
 
 /** Imperative endings of "<step> 실행…" that the allow-list does not accept ("댓글 실행해", "게시 실행하자"). */
@@ -772,6 +806,8 @@ const DONE_QUESTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
     /^(?:캘린더\s*)?일정\s*(?:은|는|이|가)?\s*(?:잘\s*)?(?:삭제됐|삭제했|삭제되었|지워졌|지웠|취소됐|취소했|빠졌)(?:어|어요|나|나요|니|냐|지|죠)$|^(?:캘린더\s*)?일정\s*삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
   // A restore is only ever an undo: only the structural "<step words> 됐어?" form, no verb list (owner rule: no phrase lists).
   CALENDAR_EVENT_RESTORE: /^(?:캘린더\s*)?일정\s*복원\s*(?:은|이)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  // The Jira undos likewise: only the structural "<step words> 됐어?" form of their own step words.
+  ISSUE_COMMENT_DELETE: /^(?:jira|지라)\s*(?:댓글|코멘트)\s*삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
 };
 /** A "did it happen?" ending that is a question by itself (no `?` needed). */
 const SELF_QUESTION_ENDING = /(?:나|나요|니|냐|지|죠)$/u;
@@ -1260,6 +1296,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         return this.proposeCalendarUpdateUndo(input, draft.receiptId);
       case 'calendar-delete-undo':
         return this.proposeCalendarDeleteUndo(input, draft.receiptId);
+      case 'jira-comment-undo':
+        return this.proposeJiraCommentUndo(input, draft.receiptId);
       case 'calendar-update':
       case 'calendar-delete': {
         const changes = draft.kind === 'calendar-update' ? draft.changes : undefined;
@@ -1538,6 +1576,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'calendar-update' } };
     }
+    // ADR-0112 amendment 3 (O4): the Jira comment undo likewise never trusts its persisted payload: it is re-derived from the undone
+    // write's own anchor and receipt (`undoOf.sourceTaskId`, `undoOf.receiptId`) and must match exactly, or nothing is sent.
+    if (payload.operation === 'ISSUE_COMMENT_DELETE' && !(await this.isExactJiraInverse(anchor, payload))) {
+      await this.close(input.session, view, 'inconsistent', input.now, held);
+      return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'jira-comment' } };
+    }
     const send = this.sendFor(payload, `cwr:${approvalId}`);
     if (!send) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
@@ -1587,6 +1631,13 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           isNumericId(payload.toStatusId) &&
           !containsCredentialMaterial(payload.toStatus)
         );
+      case 'ISSUE_COMMENT_DELETE':
+        return (
+          this.deps.writers.issueComments?.deleteComment !== undefined &&
+          this.deps.writers.issueComments.allowsIssue(payload.issueKey) &&
+          isNumericId(payload.commentId) &&
+          isEventVersion(payload.expected?.version)
+        );
       case 'CHANNEL_POST':
         return (
           this.deps.writers.channelMessages?.resolveChannel(payload.channel) === payload.channel &&
@@ -1618,6 +1669,10 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
                 toStatusId: payload.toStatusId,
               })
           : null;
+      case 'ISSUE_COMMENT_DELETE': {
+        const remove = issueComments?.deleteComment?.bind(issueComments);
+        return remove ? () => remove({ issueKey: payload.issueKey, commentId: payload.commentId, expected: { version: payload.expected.version } }) : null;
+      }
       case 'CHANNEL_POST':
         return channelMessages ? () => channelMessages.post({ channel: payload.channel, text: payload.text }) : null;
       case 'CALENDAR_EVENT_CREATE':
@@ -1918,6 +1973,87 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       },
       undefined,
       { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'calendar-delete' },
+    );
+  }
+
+  /**
+   * ADR-0112 amendment 3 (O4): the delete of the comment Quoky added. The draft carries a receipt id only; the resolver proves it is
+   * this session's own last write. The issue and the comment come from that receipt (never from text, a link or a listing). The
+   * comment must still be exactly what Quoky wrote: present, the version Quoky's own add returned, positively unedited; the delete
+   * permission is read, never requested. Anything else proposes nothing.
+   */
+  private async proposeJiraCommentUndo(input: FlowInput, receiptId: Id): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.issueComments;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'issue-comment', undo: 'jira-comment' });
+    const resolved = await this.resolveOwnUndo(input, 'jira-comment', receiptId);
+    if (resolved.kind === 'refused') return refused(resolved.reason);
+    const added = resolved.anchor.payload;
+    if (added?.operation !== 'ISSUE_COMMENT' || resolved.anchor.preview?.operation !== 'ISSUE_COMMENT') return refused('undo-nothing');
+    // A comment Quoky added as an undo does not exist (an undo is never a comment), but the rule is kept structural.
+    if (resolved.anchor.undoOf !== undefined) return refused('undo-nothing');
+    const issueKey = added.issueKey;
+    const commentId = resolved.receipt.data.externalRef as string;
+    if (resolved.receipt.target !== issueKey || !CONNECTOR_WRITE_ISSUE_KEY.test(issueKey) || !isNumericId(commentId)) return refused('undo-nothing');
+    if (!writer.allowsIssue(issueKey)) return refused('target-not-allowed');
+    const version = resolved.receipt.data.version;
+    // No version recorded at write time (a legacy receipt, or the provider gave none): unedited cannot be proven.
+    if (!isEventVersion(version) || writer.inspectComment === undefined || writer.deleteComment === undefined) return refused('undo-unavailable');
+    let state: IssueCommentState;
+    try {
+      state = await this.withReadTimeout(writer.inspectComment(issueKey, commentId));
+    } catch {
+      return refused('undo-read-failed');
+    }
+    if (state.kind === 'absent') return refused('undo-target-gone');
+    if (state.kind === 'moved' || state.commentId !== commentId || state.unedited !== true || state.version !== version) return refused('undo-target-changed');
+    if (state.deletable !== true) return refused('undo-not-permitted');
+    return this.propose(
+      input,
+      'issue-comment',
+      writer.source,
+      `${issueKey}/${commentId}`,
+      { operation: 'ISSUE_COMMENT_DELETE', issueKey, commentId, expected: { version }, undoes: resolved.receipt.id },
+      { operation: 'ISSUE_COMMENT_DELETE', issueKey, commentId, text: added.text, receiptSourced: true, ...ownerSentenceOf(input.ownerText) },
+      undefined,
+      { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'jira-comment', sourceTaskId: resolved.anchorTaskId },
+    );
+  }
+
+  /**
+   * O4 execution-time proof: the Jira undo anchor must name the undone write's anchor Task and receipt; that anchor must be this
+   * actor's plain approved write whose approval produced the receipt (SENT, same connector, target and payload hash); and the
+   * payload re-derived from them now must equal the approved one (issue, comment id and version).
+   */
+  private async isExactJiraInverse(
+    anchor: ConnectorWriteAnchor,
+    payload: Extract<ConnectorWritePayload, { operation: 'ISSUE_COMMENT_DELETE' }>,
+  ): Promise<boolean> {
+    const link = anchor.undoOf;
+    if (link?.family !== 'jira-comment' || link.entryId !== LAST_ACTION_EXTERNAL_ENTRY || link.sourceTaskId === undefined) return false;
+    const receipt = await this.deps.receipts.findById(link.receiptId, anchor.actorId);
+    if (receipt === null || receipt.status !== 'SENT' || receipt.operation !== 'ISSUE_COMMENT') return false;
+    const task = await this.deps.store.tasks.get(link.sourceTaskId);
+    const source = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
+    if (source?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || source.actorId !== anchor.actorId || source.undoOf !== undefined || source.status !== 'SENT') return false;
+    if (
+      source.approvalId === undefined ||
+      receipt.idempotencyKey !== `cwr:${source.approvalId}` ||
+      receipt.payloadSha256 !== source.payloadSha256 ||
+      receipt.target !== source.target ||
+      receipt.connector !== source.connector ||
+      receipt.connector !== anchor.connector
+    ) {
+      return false;
+    }
+    const written = source.payload;
+    return (
+      written?.operation === 'ISSUE_COMMENT' &&
+      written.issueKey === payload.issueKey &&
+      receipt.target === payload.issueKey &&
+      receipt.data.externalRef === payload.commentId &&
+      receipt.data.version === payload.expected.version &&
+      anchor.target === `${payload.issueKey}/${payload.commentId}`
     );
   }
 

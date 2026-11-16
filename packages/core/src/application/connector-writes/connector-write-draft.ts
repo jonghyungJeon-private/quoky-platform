@@ -89,7 +89,12 @@ export type ConnectorWriteDraft =
  * carries the receipt id only, never an event id, text or link: the target comes from the receipt the session's own
  * `lastAction` names. One closed kind per family whose undo is built.
  */
-export type ExternalUndoDraftKind = 'calendar-create-undo' | 'calendar-update-undo' | 'calendar-delete-undo';
+export type ExternalUndoDraftKind =
+  | 'calendar-create-undo'
+  | 'calendar-update-undo'
+  | 'calendar-delete-undo'
+  /** ADR-0112 amendment 3 (O4): delete the comment Quoky added. */
+  | 'jira-comment-undo';
 export interface ExternalUndoDraft {
   readonly kind: ExternalUndoDraftKind;
   readonly receiptId: Id;
@@ -103,6 +108,7 @@ export type ConnectorWriteFamily = 'issue-comment' | 'issue-transition' | 'chann
 export function connectorWriteFamilyOf(draft: ConnectorWriteDraft): ConnectorWriteFamily {
   switch (draft.kind) {
     case 'issue-comment':
+    case 'jira-comment-undo':
       return 'issue-comment';
     case 'issue-transition':
       return 'issue-transition';

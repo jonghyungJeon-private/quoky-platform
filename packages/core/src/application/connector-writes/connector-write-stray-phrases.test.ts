@@ -186,6 +186,7 @@ describe('namesApprovedWriteStepVerb (the approved write\u2019s own verb, derive
       ['CALENDAR_EVENT_UPDATE', '변경'],
       ['CALENDAR_EVENT_DELETE', '삭제'],
       ['CALENDAR_EVENT_RESTORE', '복원'],
+      ['ISSUE_COMMENT_DELETE', '삭제'],
     ]);
   });
 

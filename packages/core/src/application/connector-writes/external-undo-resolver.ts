@@ -65,6 +65,8 @@ const CALENDAR_EVENT_ID = /^[0-9a-v]{5,1024}$/;
  * id alphabet the writer itself accepts. The flow additionally requires it to equal the id the approved payload named.
  */
 const CHANGED_EVENT_ID = /^[A-Za-z0-9_-]{1,1024}$/;
+/** A Jira comment id (digits), as the comment writer returns it. */
+const COMMENT_ID = /^[0-9]{1,20}$/;
 
 const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
   'calendar-create': {
@@ -81,6 +83,11 @@ const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
     draftKind: 'calendar-delete-undo',
     operation: ConnectorWriteOperation.CALENDAR_EVENT_DELETE,
     refOk: (ref) => CHANGED_EVENT_ID.test(ref),
+  },
+  'jira-comment': {
+    draftKind: 'jira-comment-undo',
+    operation: ConnectorWriteOperation.ISSUE_COMMENT,
+    refOk: (ref) => COMMENT_ID.test(ref),
   },
 };
 

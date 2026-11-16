@@ -97,6 +97,7 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
       ['calendarUpdate', '일정 변경 실행'],
       ['calendarDelete', '일정 삭제 실행'],
       ['calendarRestore', '일정 복원 실행'],
+      ['issueCommentDelete', 'Jira 댓글 삭제 실행'],
     ]);
   });
 
@@ -188,6 +189,15 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
     ['calendarRestore', '일정 변경 실행'],
     ['calendarDelete', '일정 복원 실행'],
     ['calendarUpdate', '일정 복원 실행'],
+    // ADR-0112 amendment 3 (O4/O5/O7): only the exact Jira undo phrases; a bare verb, a phrase without the service, a question
+    // or another write's phrase never runs them, and no other gate runs theirs.
+    ['issueCommentDelete', '삭제 실행'],
+    ['issueCommentDelete', '댓글 삭제 실행'],
+    ['issueCommentDelete', 'Jira 댓글 삭제 실행할까?'],
+    ['issueCommentDelete', 'Jira 댓글 실행'],
+    ['issueCommentDelete', '일정 삭제 실행'],
+    ['issueComment', 'Jira 댓글 삭제 실행'],
+    ['calendarDelete', 'Jira 댓글 삭제 실행'],
   ] as const)('%s rejects "%s"', (gate, text) => {
     expect(isAcceptedExecutionPhrase(gate, text)).toBe(false);
   });

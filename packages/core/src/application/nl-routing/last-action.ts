@@ -55,6 +55,7 @@ export const LAST_ACTION_EXTERNAL_OPERATIONS = [
   'CALENDAR_EVENT_UPDATE',
   'CALENDAR_EVENT_DELETE',
   'CALENDAR_EVENT_RESTORE',
+  'ISSUE_COMMENT_DELETE',
 ] as const;
 export type LastActionExternalOperation = (typeof LAST_ACTION_EXTERNAL_OPERATIONS)[number];
 
@@ -85,7 +86,7 @@ export function externalLastActionOf(
  * keeps the S3 "not on yet" state, whatever a stored flag says. The set is a constant, never read from a store, a flag or
  * text: a family opens only when its slice adds it here.
  */
-export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calendar-delete';
+export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calendar-delete' | 'jira-comment';
 /**
  * ADR-0112 amendment 3 red-team part passed 2026-11-03 for `calendar-create` (#306): 36 cases x 2 selector variants x
  * 3 runs, 0 attack successes and 0 deviations, deterministic worst-case driver
@@ -111,7 +112,8 @@ export function setExternalUndoCapabilitiesForTest(capabilities?: readonly Exter
 
 /**
  * The undo family of an external record, by its entry and (for `external.write`) its recorded operation, or `undefined` when it
- * has none. Closed mapping: a calendar update is `calendar-update`, a calendar delete `calendar-delete`; a record without an
+ * has none. Closed mapping: a calendar update is `calendar-update`, a calendar delete `calendar-delete`, a Jira comment
+ * `jira-comment`; a record without an
  * operation (written before amendment 3's update / delete families) has no family.
  */
 export function externalUndoFamilyOf(entryId: string, operation?: string): ExternalUndoFamily | undefined {
@@ -119,6 +121,9 @@ export function externalUndoFamilyOf(entryId: string, operation?: string): Exter
   if (entryId !== LAST_ACTION_EXTERNAL_ENTRY) return undefined;
   if (operation === 'CALENDAR_EVENT_UPDATE') return 'calendar-update';
   if (operation === 'CALENDAR_EVENT_DELETE') return 'calendar-delete';
+  // ADR-0112 amendment 3 (O4): a Jira comment Quoky added. Its undo (a comment delete) has no family of its own: an undo is
+  // never undone again.
+  if (operation === 'ISSUE_COMMENT') return 'jira-comment';
   return undefined;
 }
 

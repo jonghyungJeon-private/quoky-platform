@@ -56,6 +56,8 @@ export function connectorWriteLabel(operation: ConnectorWriteOperation): string 
       return '캘린더 일정 삭제';
     case 'CALENDAR_EVENT_RESTORE':
       return '캘린더 일정 복원';
+    case 'ISSUE_COMMENT_DELETE':
+      return 'Jira 댓글 삭제';
   }
 }
 
@@ -159,6 +161,16 @@ function previewBody(preview: ConnectorWritePreview): MessageBody[] {
         messageBody('바꿀 상태: ', inline(preview.toStatus), ` (상태 ID ${preview.toStatusId})`),
         messageBody('전환: ', inline(preview.transitionName), ` (전환 ID ${preview.transitionId})`),
         '실행할 때 이 전환이 그대로 이 상태로 이어질 때만 실행해요. 조건이 바뀌면 실행하지 않아요.',
+      ];
+    case 'ISSUE_COMMENT_DELETE':
+      return [
+        CONNECTOR_UNDO_RECEIPT_BANNER,
+        ...(preview.ownerSentence !== undefined ? [messageBody('요청하신 문장: ', inline(preview.ownerSentence))] : []),
+        '방금 Quoky가 단 이 댓글을 지워서 되돌려요. 다른 댓글은 건드리지 않아요.',
+        `대상: Jira ${preview.issueKey} · 댓글 ID ${preview.commentId}`,
+        '지울 댓글 (Quoky가 보낸 그대로):',
+        fenced(preview.text),
+        '실행할 때 이 댓글이 그대로(수정되지 않은 채)일 때만 지워요. 그사이 수정되거나 지워졌으면 실행하지 않아요.',
       ];
     case 'CHANNEL_POST':
       return [messageBody('대상: Slack #', inline(preview.channelLabel), ` (${preview.channelId})`), '메시지 (이대로 한 번만 보내요):', fenced(preview.text)];
@@ -478,6 +490,8 @@ function nothingHappened(operation: ConnectorWriteOperation): string {
       return '댓글은 달리지 않았어요.';
     case 'ISSUE_TRANSITION':
       return '이슈 상태는 바뀌지 않았어요.';
+    case 'ISSUE_COMMENT_DELETE':
+      return '댓글은 지워지지 않았어요.';
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
@@ -493,6 +507,8 @@ function targetChangedCopy(operation: ConnectorWriteOperation): string {
       ? 'Jira 상태 전환 조건이 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.'
       : operation === 'ISSUE_COMMENT'
         ? 'Jira 이슈가 미리보기 이후 다른 키로 옮겨져서 실행하지 않았어요. 다시 요청해 주세요.'
+        : operation === 'ISSUE_COMMENT_DELETE'
+          ? '그 댓글이 미리보기 이후 바뀌어서 실행하지 않았어요.'
         : isCalendar(operation)
           ? '일정이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.'
           : '대상이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.';
@@ -515,6 +531,8 @@ function sentVerb(operation: ConnectorWriteOperation): string {
       return '일정을 삭제했어요. 취소 메일은 보내지 않았어요.';
     case 'CALENDAR_EVENT_RESTORE':
       return '같은 일정을 복원했어요. 알림 메일은 보내지 않았어요.';
+    case 'ISSUE_COMMENT_DELETE':
+      return '방금 단 댓글을 지웠어요.';
   }
 }
 
@@ -634,6 +652,10 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
   'undo-event-changed': '그 일정이 만든 뒤에 바뀌어서 되돌리지 않았어요. 필요하면 캘린더에서 직접 지워 주세요.',
   'undo-event-present': '그 일정은 이미 캘린더에 다시 있어요. 복원할 게 없어요.',
   'choice-expired': '일정 목록을 보여 드린 지 30분이 지나 선택이 만료됐어요 (그사이 일정이 바뀌었을 수 있어요).',
+  'undo-read-failed': '되돌려도 안전한지 확인하려고 읽었는데 읽지 못했어요. 되돌리지 않았어요.',
+  'undo-target-gone': '되돌릴 대상이 이미 없어요. 되돌릴 게 없어요.',
+  'undo-target-changed': '그 대상이 Quoky가 쓴 뒤에 바뀌어서 되돌리지 않았어요.',
+  'undo-not-permitted': '지금 연결된 권한으로는 되돌릴 수 없어요. 새 권한은 요청하지 않았어요.',
 };
 
 /**
@@ -641,6 +663,15 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
  * update and delete families override the reasons whose wording names the write.
  */
 const UNDO_REFUSAL_KO: Readonly<Record<Exclude<ExternalUndoFamily, 'calendar-create'>, Partial<Record<ConnectorWriteRefusal, string>>>> = {
+  'jira-comment': {
+    'undo-nothing': '지울 수 있는 방금 단 Jira 댓글을 찾지 못했어요. (이 대화에서 방금 Quoky가 단 댓글만 되돌릴 수 있어요.)',
+    'undo-unavailable': '이 Jira 댓글은 자동으로 되돌릴 수 없어요 (그대로인지 확인할 기록이 없어요). Jira에서 직접 지워 주세요.',
+    'undo-read-failed': 'Jira에서 그 댓글을 읽지 못해서 그대로인지 확인할 수 없었어요. 지우지 않았어요.',
+    'undo-target-gone': '그 댓글은 이미 Jira에 없어요. 지울 게 없어요.',
+    'undo-target-changed': '그 댓글이 단 뒤에 수정됐거나 이슈가 옮겨져서 지우지 않았어요. 필요하면 Jira에서 직접 확인해 주세요.',
+    'undo-not-permitted': '지금 연결된 Jira 권한으로는 그 댓글을 지울 수 없어요. 새 권한은 요청하지 않았어요. Jira에서 직접 지워 주세요.',
+    'target-not-allowed': '그 댓글의 이슈는 지금 쓰기 허용 목록에 없어서 지우지 않았어요.',
+  },
   'calendar-update': {
     'undo-nothing': '되돌릴 수 있는 방금 한 일정 변경을 찾지 못했어요. (이 대화에서 방금 한 일정 변경만 되돌릴 수 있어요.)',
     'undo-unavailable': '이 일정 변경은 자동으로 되돌릴 수 없어요. 캘린더에서 직접 고쳐 주세요.',
@@ -700,6 +731,7 @@ export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): Me
   switch (preview.operation) {
     case 'ISSUE_COMMENT':
     case 'ISSUE_TRANSITION':
+    case 'ISSUE_COMMENT_DELETE':
       return messageBody(`${label} — `, inline(preview.issueKey));
     case 'CHANNEL_POST':
       return messageBody(`${label} — #`, inline(preview.channelLabel));
@@ -807,6 +839,20 @@ function renderCalendarRestoreOutcome(outcome: ConnectorWriteOutcome): string {
   }
 }
 
+/** ADR-0112 amendment 3 (O4): the outcome of the comment delete. Only SENT counts as undone; a refusal is said plainly. */
+function renderJiraCommentUndoOutcome(outcome: ConnectorWriteOutcome): string {
+  switch (outcome.status) {
+    case 'SENT':
+      return '방금 단 Jira 댓글을 지워서 되돌렸어요.';
+    case 'NOT_SENT':
+      if (outcome.reason === 'NOT_FOUND') return '지우지 못했어요 — 그 댓글은 이미 Jira에 없어요. 이번 요청으로 지운 것은 없어요.';
+      if (outcome.reason === 'TARGET_CHANGED') return '지우지 못했어요 — 미리보기 이후 그 댓글이 수정됐거나 이슈가 옮겨졌어요. 이번 요청으로 지운 것은 없어요.';
+      return `지우지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. 이번 요청으로 지운 것은 없어요. 새 권한은 요청하지 않았어요.`;
+    case 'UNCERTAIN':
+      return '댓글을 지웠는지 확인하지 못했어요. Jira에서 확인해 주세요. 중복을 막기 위해 자동으로 다시 시도하지 않아요.';
+  }
+}
+
 export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'writes-off' }>): MessageBody {
   switch (step.kind) {
     case 'usage':
@@ -825,6 +871,7 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
       if (step.preview.operation === 'CALENDAR_EVENT_DELETE' && step.preview.receiptSourced === true) return renderCalendarUndoOutcome(step.outcome);
       if (step.preview.operation === 'CALENDAR_EVENT_UPDATE' && step.preview.receiptSourced === true) return renderCalendarUpdateUndoOutcome(step.outcome);
       if (step.preview.operation === 'CALENDAR_EVENT_RESTORE') return renderCalendarRestoreOutcome(step.outcome);
+      if (step.preview.operation === 'ISSUE_COMMENT_DELETE') return renderJiraCommentUndoOutcome(step.outcome);
       return renderConnectorWriteOutcome(step.operation, step.outcome);
     case 'repeat':
       return renderConnectorWriteRepeat(step.operation, step.status, step.externalRef, step.url);

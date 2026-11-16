@@ -132,8 +132,11 @@ describe('amendment 3 calendar-update and calendar-delete families: the family c
     expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_UPDATE')).toBe('calendar-update');
     expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_DELETE')).toBe('calendar-delete');
     expect(externalUndoFamilyOf('external.write', 'CALENDAR_EVENT_RESTORE')).toBeUndefined();
-    expect(externalUndoFamilyOf('external.write', 'ISSUE_COMMENT')).toBeUndefined();
+    // ADR-0112 amendment 3 (O4/O5): a Jira comment and a Jira transition have their families; their undos have none.
+    expect(externalUndoFamilyOf('external.write', 'ISSUE_COMMENT')).toBe('jira-comment');
     expect(externalUndoFamilyOf('external.write', 'ISSUE_TRANSITION')).toBeUndefined();
+    expect(externalUndoFamilyOf('external.write', 'ISSUE_COMMENT_DELETE')).toBeUndefined();
+    expect(externalUndoFamilyOf('external.write', 'CHANNEL_POST')).toBeUndefined();
     expect(externalUndoFamilyOf('external.write')).toBeUndefined();
     expect(externalUndoFamilyOf('calendar.create', 'CALENDAR_EVENT_CREATE')).toBe('calendar-create');
     expect(externalUndoFamilyOf('calendar.create', 'CALENDAR_EVENT_DELETE')).toBeUndefined();

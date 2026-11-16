@@ -228,6 +228,8 @@ const PREVIEWS: readonly ConnectorWritePreview[] = [
     timeZone: 'Asia/Seoul',
     before: { id: 'e2', title: '', start: '2026-10-08', end: '2026-10-10', allDay: true, location: '_x_' },
   },
+  // ADR-0112 amendment 3 (O4): the receipt-sourced Jira comment undo preview (an owner sentence echoed as quoted, untrusted text).
+  { operation: 'ISSUE_COMMENT_DELETE', issueKey: 'PROJ-12', commentId: '10001', text: NASTY, receiptSourced: true, ownerSentence: '방금 댓글 지워줘 @here' },
 ];
 
 const CANDIDATES: readonly ConnectorWriteEventSummary[] = TITLES.map((title, i) => ({
@@ -245,7 +247,7 @@ const TARGETS: readonly ConnectorWriteTargetSummary[] = [
   { kind: 'calendar' },
 ];
 
-const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found'];
+const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found', 'undo-read-failed', 'undo-target-gone', 'undo-target-changed', 'undo-not-permitted'];
 
 // --- review P3-5: mention case variants, astral clip boundaries, escape-limit crossings, purge copy, learning lists --
 const MENTION_CASES = ['@EVERYONE 공지', '@Here 확인', '@eVeRyOnE <@!1> @HERE', 'mail@Everyone.test <@&9>'];

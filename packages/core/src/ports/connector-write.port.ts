@@ -141,6 +141,11 @@ export const ConnectorWriteOperation = {
    * this actor's own SENT delete receipt; there is no owner-worded restore.
    */
   CALENDAR_EVENT_RESTORE: 'CALENDAR_EVENT_RESTORE',
+  /**
+   * ADR-0112 amendment 3 (O4): delete the ONE comment Quoky added (from this actor's own SENT comment receipt), only while it is
+   * unedited. Only ever an undo; there is no owner-worded comment delete.
+   */
+  ISSUE_COMMENT_DELETE: 'ISSUE_COMMENT_DELETE',
 } as const;
 export type ConnectorWriteOperation = (typeof ConnectorWriteOperation)[keyof typeof ConnectorWriteOperation];
 export const CONNECTOR_WRITE_OPERATIONS: readonly ConnectorWriteOperation[] = Object.values(ConnectorWriteOperation);
@@ -159,12 +164,53 @@ export interface IssueCommentRequest {
   readonly text: string;
 }
 
+/**
+ * ADR-0112 amendment 3 (O4): what the provider reports, read-only, about ONE comment Quoky added. `version` is the provider's
+ * opaque last-modified stamp of the comment (the same value `addComment` returned as `SENT.version`). `unedited` is `true` only
+ * when the provider positively shows the comment was never changed after it was created (fail closed: anything the adapter
+ * cannot prove is `false`). `deletable` is the provider's read-only answer whether these credentials may delete it (no new
+ * permission is ever requested). `moved`: the issue key now names another issue (the key was moved).
+ */
+export type IssueCommentState =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'moved' }
+  | {
+      readonly kind: 'present';
+      readonly commentId: string;
+      readonly version: string;
+      readonly unedited: boolean;
+      readonly deletable: boolean;
+    };
+
+/** ADR-0112 amendment 3 (O4): delete exactly this comment, only while it is still exactly what Quoky wrote. */
+export interface IssueCommentDeleteRequest {
+  /** The issue key from the comment's receipt (never from text). */
+  readonly issueKey: string;
+  /** The comment id from the comment's receipt (digits). */
+  readonly commentId: string;
+  /** The comment's version as Quoky's own add returned it; the delete refuses (`TARGET_CHANGED`) any other. */
+  readonly expected: { readonly version: string };
+}
+
 export interface IssueCommentWriter {
   /** A neutral source label for audit and receipts (for example `jira`); never branched on by Core. */
   readonly source: string;
   /** True when the issue key is well formed and its project is allowlisted. Pure; makes no network call. */
   allowsIssue(issueKey: string): boolean;
+  /** `SENT` carries the comment id and, when the provider reports it, the comment's version (ADR-0112 amendment 3, O4). */
   addComment(request: IssueCommentRequest): Promise<ConnectorWriteOutcome>;
+  /**
+   * ADR-0112 amendment 3 (O4), read-only: the state of one comment on an allowlisted issue, including whether these credentials
+   * may delete it (checked read-only). Throws `ConnectorQueryError` for every failure other than "not found". Optional: a writer
+   * without it cannot back a comment delete.
+   */
+  inspectComment?(issueKey: string, commentId: string): Promise<IssueCommentState>;
+  /**
+   * ADR-0112 amendment 3 (O4): re-reads the comment (and the read-only delete permission) and deletes it only while it is the
+   * same unedited comment at `expected.version`; otherwise `NOT_SENT('TARGET_CHANGED')` (edited, moved issue), `NOT_SENT('NOT_FOUND')`
+   * (gone) or `NOT_SENT('FORBIDDEN')` (no permission) and nothing is sent. Optional, like `inspectComment`.
+   */
+  deleteComment?(request: IssueCommentDeleteRequest): Promise<ConnectorWriteOutcome>;
 }
 
 /** One transition available on an issue (for the CWR-2 preview check). Names are untrusted readout. */
