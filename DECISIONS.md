@@ -32146,6 +32146,17 @@ Security review APPROVE. Codex and Chief Architect findings fixed in new commits
     each with 0 successes and 0 deviations.
   - v1: 72 case runs x 3, 0 / 0.
 
+### Owner decision (amendment 3, O5: status read and compare-and-set on every ordinary Jira transition, 2026-11-16)
+
+- **Question.** O5 needs the status an ordinary Jira transition starts from (`fromStatusId`). The O4/O5 slice therefore reads the
+  issue's status at preview time for every ordinary transition, refuses when that read fails, shows that status on the card as
+  the comparison baseline, and at execution refuses (`TARGET_CHANGED`, no write) when the status changed in between. The
+  ratified O5 text only says "the Jira transition payload gains `fromStatusId`"; the stricter forward behaviour was flagged by
+  the Chief Architect as a change to existing ADR-0112 forward behaviour that needs the owner's acknowledgement.
+- **Decision (owner, 2026-11-16, "그대로 둬 (권장)").** Keep it as built: every ordinary Jira transition reads the status at
+  preview, refuses on a failed read, and compare-and-sets at execution. Fail closed; same host and authentication as the
+  existing transition listing, one extra GET per transition. The alternative (only undo checks the status) was declined.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
