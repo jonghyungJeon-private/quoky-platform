@@ -315,13 +315,37 @@ describe('undated calendar change / delete uses the session\'s recent calendar c
     expect(ids(cancel.step)).toEqual([TODAY_WEEKLY.id]);
   });
 
-  it('an undated delete naming a title that no listed or nearby event has is event-not-found, never an unrelated event (v5 title grammar)', async () => {
+  it('an undated delete whose title words match nothing says so, then offers the context events as a numbered choice (v5 title grammar)', async () => {
     const h = harness([TODAY_WEEKLY, TOMORROW_STANDUP]);
     await h.turn('내일 일정 뭐야?', at(0));
     const miss = await h.turn('존재하지않는제목 일정 삭제해줘', at(1));
     expect(miss.draft).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: ['존재하지않는제목'] } });
-    expect(miss.step).toMatchObject({ kind: 'refused', reason: 'event-not-found' });
+    expect(miss.step).toMatchObject({ kind: 'choice', mode: 'delete', basis: 'listed', unmatchedWords: ['존재하지않는제목'] });
+    expect(ids(miss.step)).toEqual([TOMORROW_STANDUP.id]);
+    expect(miss.text).toContain("'존재하지않는제목'에 맞는 일정은 찾지 못했어요.");
     expect(h.writes.delete).toHaveLength(0);
+    // Picking a number leads to the normal approval preview; nothing is deleted before 승인 + the phrase.
+    const picked = await h.choose(1, at(2));
+    expect(picked).toMatchObject({ kind: 'preview', preview: { operation: 'CALENDAR_EVENT_DELETE', before: { id: TOMORROW_STANDUP.id } } });
+    expect(h.writes.delete).toHaveLength(0);
+  });
+
+  it('"방금 추가한 일정 취소해줘" after a create reaches the created event through the numbered choice', async () => {
+    const h = harness([TODAY_WEEKLY]);
+    await h.turn('내일 오후 5시에 "QA 세션3" 일정 잡아줘', at(0));
+    await h.approveAndExecute(at(1));
+    const cancel = await h.turn('방금 추가한 일정 취소해줘', at(2));
+    expect(cancel.step).toMatchObject({ kind: 'choice', mode: 'delete', basis: 'written' });
+    expect(ids(cancel.step)).toEqual(['evt-created']);
+    expect(cancel.text).toContain('찾지 못했어요');
+    expect(await h.choose(1, at(3))).toMatchObject({ kind: 'preview', preview: { operation: 'CALENDAR_EVENT_DELETE', before: { id: 'evt-created' } } });
+    expect(h.writes.delete).toHaveLength(0);
+  });
+
+  it('title words that match nothing with an empty context and nothing nearby is event-not-found', async () => {
+    const h = harness([FRIDAY_REVIEW]);
+    const miss = await h.turn('존재하지않는제목 일정 삭제해줘', at(0));
+    expect(miss.step).toMatchObject({ kind: 'refused', reason: 'event-not-found' });
   });
 
   it('an undated delete naming a title that a listed event has offers exactly that event', async () => {

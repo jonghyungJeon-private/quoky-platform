@@ -507,6 +507,11 @@ export type ConnectorWriteStep =
        * tomorrow's events. Absent = the events of the day the owner named.
        */
       readonly basis?: ConnectorWriteChoiceBasis;
+      /**
+       * The owner's own title words that matched no event: the candidates are then the unfiltered context / nearby set,
+       * offered as a plain numbered choice after saying nothing matched those words.
+       */
+      readonly unmatchedWords?: readonly string[];
     }
   /**
    * ADR-0112 amendment 3 (O5): several transitions lead back; the owner picks one by number. Names are untrusted readout; the
@@ -1467,6 +1472,28 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
             nearby = await this.nearbyCandidates(input.now, draft.ref);
           } catch {
             return refused('calendar-read-failed');
+          }
+          if (nearby.length === 0 && draft.ref.titleWords.length > 0) {
+            // The owner's own words matched nothing: say so, then offer the unfiltered context / nearby set as a plain
+            // numbered choice (nothing is drafted before a number and the exact-payload approval). Empty set: not found.
+            const open = { ...draft.ref, titleWords: [] as string[] };
+            let fallback: { basis: ConnectorWriteChoiceBasis; candidates: ConnectorWriteEventSummary[] } | null;
+            try {
+              fallback = await this.contextualCandidates(input, open);
+              if (fallback === null) {
+                const any = await this.nearbyCandidates(input.now, open);
+                fallback = any.length > 0 ? { basis: 'nearby', candidates: any } : null;
+              }
+            } catch {
+              return refused('calendar-read-failed');
+            }
+            if (fallback === null) return refused('event-not-found');
+            return this.offerChoice(
+              input,
+              { mode, reference: draft.ref, candidates: fallback.candidates, ...(changes ? { changes } : {}) },
+              fallback.basis,
+              draft.ref.titleWords,
+            );
           }
           if (nearby.length === 0) return refused(vagueRef ? 'no-nearby-events' : 'event-not-found');
           return this.offerChoice(input, { mode, reference: draft.ref, candidates: nearby, ...(changes ? { changes } : {}) }, 'nearby');
@@ -2604,7 +2631,12 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     );
   }
 
-  private async offerChoice(input: FlowInput, choice: ConnectorWriteEventChoice, basis?: ConnectorWriteChoiceBasis): Promise<ConnectorWriteStep> {
+  private async offerChoice(
+    input: FlowInput,
+    choice: ConnectorWriteEventChoice,
+    basis?: ConnectorWriteChoiceBasis,
+    unmatchedWords?: readonly string[],
+  ): Promise<ConnectorWriteStep> {
     const previous = await this.displacedPointer(input.session);
     const anchor: ConnectorWriteAnchor = {
       kind: CONNECTOR_WRITE_ANCHOR_KIND,
@@ -2618,7 +2650,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       ...(previous ? { previousActiveTaskId: previous } : {}),
     };
     await this.createAnchor(input.session, anchor, input.now, input.held);
-    return { kind: 'choice', mode: choice.mode, candidates: choice.candidates, timeZone: this.deps.timeZone, ...(basis ? { basis } : {}) };
+    return { kind: 'choice', mode: choice.mode, candidates: choice.candidates, timeZone: this.deps.timeZone, ...(basis ? { basis } : {}), ...(unmatchedWords ? { unmatchedWords } : {}) };
   }
 
   /**

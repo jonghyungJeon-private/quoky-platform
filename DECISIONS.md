@@ -17067,9 +17067,14 @@ OPS-2b merge (no-bypass extraction).
     listing is `event-not-found` with no draft, a listed / nearby title is offered).
   - P3 `BOOKING_VERB` had no boundary: the stem must now be followed by a request ending, so "넣어둔 제목 정리 회의" keeps
     its title words. P3 `LINK_TOKEN` duplicated `LEADING_LINK`: both are built from `LINK_PARTICLES`.
-  - New residual **R-TG4**: an undated reference with a recency or ordinal word but no determiner ("방금 만든 일정 취소해줘",
-    "마지막 일정 삭제해줘") now narrows by those words and misses ("찾지 못했어요", nothing changes). Risk: a lost
-    shortcut; fix is to say "그 일정" or name the day. R-TG1 also covers a bare label right after a participle.
+  - **R-TG4 resolved (owner: "방금 추가한 일정 취소해줘" must stay a numbered-choice path).** An undated reference whose
+    title words match no context / nearby event no longer ends in a bare "찾지 못했어요" and no longer offers silently:
+    the flow says "'<words>'에 맞는 일정은 찾지 못했어요." and then offers the UNFILTERED context (listed / written) or
+    nearby set as the existing numbered choice (`choice.unmatchedWords`). Nothing is drafted before a number and the
+    exact-payload approval follows; an empty set is `event-not-found`; a dated reference is unchanged (not-found only).
+    No recency vocabulary exists in the tree (`RECENCY_KO` is absent), so none was reused or added. Tests:
+    `connector-write-calendar-context.test.ts` (miss after a listing, "방금 추가한 일정 취소해줘" after a create, empty
+    context). R-TG1 also covers a bare label right after a participle.
 
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
