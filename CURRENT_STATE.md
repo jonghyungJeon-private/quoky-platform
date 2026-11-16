@@ -57,7 +57,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### Calendar write grammar: structural field labels (2026-11-16, branch `claude/v5-title-grammar`)
 
-- Field labels are whole tokens and a bare label counts only in a structural position (`calendar-write-request.ts` `fieldsOf`); a labelled title is time-stripped; attributive "않는" fused to a noun is not a negation (`calendar-question.ts`). Core-only, no prompt change. Residuals R-TG1..R-TG3 in DECISIONS.
+- Field labels are whole tokens and a bare label counts only in a structural position (`calendar-write-request.ts` `fieldsOf`); colon / particle labelled titles stay verbatim and a bare label cuts only a trailing time run. Negation routing and the undated reference are unchanged from main. Core-only, no prompt change. Residuals R-TG1, R-TG2, R-TG3, R-TG5 in DECISIONS.
 
 ### ADR-0112 amendment 3: calendar-update undo and calendar-delete restore (2026-11-16, branch `claude/v5-r3-cal-undo`)
 

@@ -189,22 +189,19 @@ describe('field labels are structural, not words (v5 title-grammar residual)', (
     expect(draftOf(`내일 오후 3시에 ${word}시험 일정 추가해줘`)).toEqual({ title: `${word}시험 일정`, time: HOUR });
   });
 
-  it('a compound-word title word routes a delete to the calendar path, not chat', () => {
-    expect(isCalendarWriteRequest('존재하지않는제목 일정 삭제해줘')).toBe(true);
-    expect(isCalendarWriteRequest('내일 존재하지않는제목 일정 삭제해줘')).toBe(true);
-    expect(parse('내일 존재하지않는제목 일정 삭제해줘')).toMatchObject({
-      kind: 'calendar-delete',
-      ref: { titleWords: ['존재하지않는제목'] },
-    });
-    // A real negated request stays chat.
-    expect(isCalendarWriteRequest('일정 삭제하지 않았어')).toBe(false);
-    expect(isCalendarWriteRequest('내일 회의 취소하지 않는다고 했어')).toBe(false);
-    expect(isCalendarWriteRequest('내일 회의 취소 안 해')).toBe(false);
+  it('negated and fused attributive forms stay chat (R-TG2: fail closed)', () => {
     for (const text of [
+      '존재하지않는제목 일정 삭제해줘',
+      '내일 존재하지않는제목 일정 삭제해줘',
+      '일정 삭제하지 않았어',
+      '내일 회의 취소하지 않는다고 했어',
+      '내일 회의 취소 안 해',
       '내일 3시 회의 취소해줘가 작동하지 않는데요',
       '일정 삭제해줘 기능이 동작하지 않는건가요',
       '내일 회의 취소하지 않는다면 일정 삭제해줘',
       '내일 일정 삭제해줘 같은 요청은 하지않는데요',
+      '내일 일정 삭제해줘 하지않는데요 확인해줘',
+      '취소하지않는다면 일정 삭제해줘',
     ]) {
       expect(isCalendarWriteRequest(text), text).toBe(false);
     }
@@ -214,9 +211,8 @@ describe('field labels are structural, not words (v5 title-grammar residual)', (
     expect(draftOf('내일 오후 3시에 넣어둔 제목 정리 회의 잡아줘')).toEqual({ title: '넣어둔 제목 정리 회의', time: HOUR });
   });
 
-  it('an undated reference with named title words keeps them, a deictic one keeps resolving against the context', () => {
-    expect(parse('존재하지않는제목 일정 삭제해줘')).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: ['존재하지않는제목'] } });
-    expect(parse('방금 그 Quoky E2E 시험 일정 취소해줘')).toMatchObject({ ref: { inferredDay: true, titleWords: [] } });
+  it('an undated reference keeps empty title words (#342 rule: it resolves against the session context)', () => {
+    expect(parse('방금 추가한 일정 취소해줘')).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: [] } });
     expect(parse('일정 취소해줘')).toMatchObject({ ref: { inferredDay: true, titleWords: [] } });
   });
 });

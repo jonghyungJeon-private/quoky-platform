@@ -15,7 +15,6 @@ import type {
 } from '../connector-writes/connector-write-draft';
 import { addLocalDays, isValidLocalDate, zonedToUtc, type LocalDate } from '../reminders/zoned-time';
 import { extractSpan, placeCalendarSpan } from './calendar-question';
-import { nlNamesDeterminer } from '../nl-routing/action-entries';
 import { CALENDAR_RELOCATE, CALENDAR_RENAME } from './calendar-field-change';
 
 /**
@@ -345,9 +344,8 @@ const GENERIC_NOUN_TOKEN = new RegExp(`^${MEETING_NOUN.source}$`, 'u');
  * day / clock / range / duration / all-day matches are cut out. A single-character leftover (a stranded particle such
  * as "에", a deictic "그"), a filler and a bare generic meeting noun are not title words; one trailing object particle
  * ("을" / "를") of the last token is dropped as `titlePhraseOf` does. Other postpositions are NOT stripped (no new list):
- * a word that then misses the event title gives a safe `event-not-found`, never a broader set. Taken for a reference that
- * names a day, and for an undated one that holds no determiner token (이 / 그 / 저): an undated deictic reference keeps
- * resolving against the session's recent context ("방금 그 … 취소해줘"), an undated named one narrows that context.
+ * a word that then misses the event title gives a safe `event-not-found`, never a broader set. Only for a reference that
+ * names a day: an undated one keeps resolving against the session's recent context ("방금 그 … 취소해줘").
  */
 function residualTitleWords(part: string): string[] {
   let rest = part;
@@ -396,7 +394,7 @@ function referenceOf(part: string, options: CalendarWriteGrammarOptions): Calend
     titleWords:
       quoted !== undefined
         ? quoted.toLowerCase().split(/\s+/u).filter((w) => w.length > 0)
-        : namesDay(part) || !nlNamesDeterminer(part)
+        : namesDay(part)
           ? residualTitleWords(part)
           : [],
     ...(namesDay(part) ? {} : { inferredDay: true as const }),

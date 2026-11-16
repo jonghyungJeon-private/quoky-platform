@@ -201,14 +201,9 @@ function languageOf(text: string): CalendarLanguage {
 const QUOTED_SEGMENT = /"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』/gu;
 /** Requests ABOUT a phrase (translate it, explain it) are ordinary chat, never a calendar write. */
 const ABOUT_A_PHRASE = /번역|translate|뜻이|무슨 뜻|의미|meaning|예문|example sentence/iu;
-/**
- * A negated, reported or past-tense clause is not a request ("…라고 요청하지 않았어", "I didn't ask to cancel"). A
- * spaced "하지 않" is always a negation. Only the FUSED attributive "하지않는X" followed by a further word of the clause
- * ("존재하지않는제목 일정 삭제해줘") modifies a title word and is not a negation; an ending ("하지않는데요", "…않는건가요")
- * has no word after it and stays one (fail closed to chat).
- */
+/** A negated, reported or past-tense clause is not a request ("…라고 요청하지 않았어", "I didn't ask to cancel"). */
 const NOT_A_REQUEST =
-  /라고|라는|다고|하지\s+않|하지않(?!는[가-힣]{2,}\s+\S)|않았|않을|말고|하지\s*마|안\s*해|안\s*했|취소했|삭제했|옮겼|추가했|\b(?:don'?t|didn'?t|do not|did not|never|wasn'?t|weren'?t|haven'?t)\b/iu;
+  /라고|라는|다고|하지\s*않|않았|않을|말고|하지\s*마|안\s*해|안\s*했|취소했|삭제했|옮겼|추가했|\b(?:don'?t|didn'?t|do not|did not|never|wasn'?t|weren'?t|haven'?t)\b/iu;
 /** Clause boundaries: sentence ends, commas, and coordinating connectives (exclusions are clause-scoped, Codex P2). */
 const CLAUSE_SPLIT = /[.!?。！？]\s+|[,;]\s*|\s+(?:and|but|then)\s+|\s*(?:그리고|하지만|근데|그런데)\s+/iu;
 

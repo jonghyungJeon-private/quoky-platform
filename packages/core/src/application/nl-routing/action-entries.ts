@@ -112,12 +112,6 @@ export function nlSpanStartsWithDeterminer(span: string): boolean {
   const [first] = normalizeForMatch(span).split(/\s+/u);
   return first !== undefined && (DETERMINERS_KO as readonly string[]).includes(first) && !READ_ONLY_DETERMINERS.has(first as NlDeterminer);
 }
-/** Whether any whitespace-separated token of the span is one of the closed determiner set (이 / 그 / 저): a deictic reference. */
-export function nlNamesDeterminer(span: string): boolean {
-  return normalizeForMatch(span)
-    .split(/\s+/u)
-    .some((token) => (DETERMINERS_KO as readonly string[]).includes(token));
-}
 /**
  * The list entry of each item source, whose catalog words are that source's nouns. A6 R2 adds `jira.issues` (지라, 이슈,
  * 티켓, jira) and `slack.search` (슬랙, slack): derived from the catalog, never listed by hand.

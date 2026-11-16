@@ -647,10 +647,8 @@ export function renderConnectorWriteChoice(
   candidates: readonly ConnectorWriteEventSummary[],
   timeZone: string,
   basis?: ConnectorWriteChoiceBasis,
-  unmatchedWords?: readonly string[],
 ): MessageBody {
   return joinBody([
-    ...(unmatchedWords && unmatchedWords.length > 0 ? [messageBody("'", inline(unmatchedWords.join(' ')), "'에 맞는 일정은 찾지 못했어요.")] : []),
     choiceHeader(mode, candidates.length, basis),
     ...candidates.map((event, i) =>
       messageBody(
@@ -988,7 +986,7 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
     case 'preview':
       return renderConnectorWritePreview(step.preview, step.remainingMs, step.executionPhrase, step.unconfirmedEarlier);
     case 'choice':
-      return renderConnectorWriteChoice(step.mode, step.candidates, step.timeZone, step.basis, step.unmatchedWords);
+      return renderConnectorWriteChoice(step.mode, step.candidates, step.timeZone, step.basis);
     case 'revert-choice':
       return renderJiraRevertChoice(step);
     case 'already-sent':
