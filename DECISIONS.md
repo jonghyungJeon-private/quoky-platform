@@ -34096,8 +34096,8 @@ wiring, no flag change, no live behaviour change).
   - **Owner's words only.**
     - The input is the prepared grounding text: quoted lines, fenced blocks, platform quote ranges and attachments are already
       removed.
-    - Inline quoted segments are also removed. The new helper `nlWithoutQuotedSegments` uses the quote pairs that
-      `nlRelaysRequest` already reads.
+    - Any untrusted-span marker anywhere in the owner's text means no grant for the message (review round 2; this replaced
+      the inline quote stripping of the first draft and the strip rules of review round 1).
     - Pasted structures are removed (`withoutStructures`).
     - A relayed request ("팀장이 … 요약해달래") grants nothing (`nlItemReadVeto`, the existing A6 R2 veto).
   - **Vocabulary.** The words come from `NL_MODE_SUMMARY_WORDS` (A6 R2 ratification record C, the `summary` mode words). There is
@@ -34228,7 +34228,7 @@ wiring, no flag change, no live behaviour change).
      the restart.
 - **Review round 1 (CA CHANGES REQUIRED, Codex agreed; 2026-11-16).** Each finding, its fix and its test. Every fix test failed
   on the code before the fix and passes after (the two marked pins pass on both); only targeted tests ran.
-  1. **P1: the grant was minted from spans the owner did not write as a request.** These inputs minted a mail grant: an inline
+  1. **P1: the grant was minted from spans the owner did not write as a request** (the fix below is superseded by review round 2). These inputs minted a mail grant: an inline
      backtick span, a URL path or query (`…/summary`, `?q=summary`), a URL feeding the back-reference rule (`…보여주고
      https://…/요약`), an unclosed opening quote, a `Fwd:` header, and a `----- Forwarded message -----` divider.
      - **Fix (structural, no vocabulary).** `nlWithoutQuotedSegments` (request-shape) now also removes fenced and inline backtick
@@ -34268,6 +34268,51 @@ wiring, no flag change, no live behaviour change).
      the clause holds the summary word and names the source. **Question for the owner:** should the grant require the summary
      word to be the predicate of the owner's own clause (the verb the owner addresses to Quoky), rather than anywhere in a clause
      that names the source? No phrase was added; a fix must stay structural (clause grammar), not a word list.
+- **Review round 2 (CA CHANGES REQUIRED: 2 × P1, 4 × P2, P3s; Codex 1 × P1, 1 × P2 overlapping; 2026-11-16).**
+  1. **The grant gate is redesigned to fail closed, not patched a third time.** Round 2 still found bypasses of the round-1
+     strip rules: an apostrophe inside a single-quoted span, nested and same-glyph quotes, stray closing glyphs, uncovered quote
+     glyphs (« » ＂ ″ ｢ ｣), a URL whose token swallowed the opening quote, a scheme glued to a word, a bare `host.tld/path`,
+     double-backtick code, the Outlook `-----Original Message-----` and Korean Gmail `---------- 전달된 메일 ---------`
+     dividers, a forward without dashes, and a fullwidth `Fwd：`. Every strip rule must find a span boundary in text an
+     attacker shapes, so each round finds a new boundary to get wrong.
+     - **New rule.** If the owner's prepared text holds ANY untrusted-span marker anywhere, no summary grant is minted for the
+       message; every summary is listing-only. Nothing is stripped and re-read. `hasUntrustedSpanMarker` (`summary-grant.ts`)
+       tests closed structural classes, on the text as written and on its NFKC form (so fullwidth forms fold):
+       - a quote-like glyph: `\p{Pi}`, `\p{Pf}`, ASCII and fullwidth quotes and apostrophes, the low-9 quotes, primes, the
+         modifier-letter apostrophes, dingbat quotes, and the CJK and angle brackets used as quotes (「」『』｢｣《》〈〉【】〔〕〖〗〘〙〚〛〝〞〟⟨⟩);
+         ASCII ( ) [ ] { } are not quotes, pasted structures stay with `withoutStructures`;
+       - a backtick (any count) or acute accent, and the input preparation's `[code]` and `[quoted]` placeholders (a fenced
+         block, a `>` line or a platform quote range was in the message);
+       - a URL-like token: `://` anywhere, `www.`, a dotted host with a letter TLD (with or without a path, since a label can
+         carry a word), or `host:port/`;
+       - a divider run: three or more of `- _ = ~ *` or a Unicode dash, optionally one space apart;
+       - a header shape: a Latin token of 1–3 letters and a colon anywhere (`Fwd:`, `RE:`, `AW:`), or a short label holding a
+         letter and a colon at the start of the text or of a line (`Subject:`, `보낸 사람:`). A time (`3:30`) is no label.
+     - **Judgement on the header shape.** "Any word token and a colon" anywhere would also catch the owner's own labels in mid
+       sentence, so the general shape is limited to line starts, where forwarded headers sit; mid-text it is the short Latin
+       token only. A forward with no dashes is still caught by its header lines or the sender's address.
+     - The round-1 helper `nlWithoutQuotedSegments` had no other user and is removed (`request-shape.ts` is back to main).
+     - **Tests** (`summary-grant.test.ts`): each of the 7 round-1 and 15 round-2 inputs gives no grant and is a marker (14 of
+       the round-2 inputs granted on the round-1 code); plain requests (`최근 메일 3개 요약해줘`, `summarize my last 3
+       emails`, a `3:30` time, a `3~5개` range) still grant.
+     - **Residual (accepted, fail closed):** an English contraction ("it's"), any URL, a quoted word, or a line-start label in
+       the owner's own request loses the summary grant for that message: the summary is listing-only. Pasted prose with no
+       marker and noun uses of the summary word remain the open owner question of round 1 item 6, unchanged.
+  2. **P2: pre-dispatch awaits could hang and hold the slot** (Codex reproduced it with a `resolveChat` that never resolves:
+     the 8-call charge and the actor's slot stayed held after the wall and shutdown, so later turns were declined
+     `in-flight`). **Fix:** both kill-switch reads, `resolveChat()` and `router.select()` go through `withinRun`, which races
+     the await against `budget.remainingMs()` (a wall breach) and the shutdown signal, and always removes its timer and
+     listener; `finally` therefore always frees the slot and trues the charge down. **Tests:** a hung admission switch read and
+     a hung `resolveChat` each end `bound` (`wall-time`) at the wall, after which 20 runs of 3 calls still fit the hour; a hung
+     `resolveChat` ends `shutdown` when the service stops.
+  3. **P2: shutdown listener leak.** Each port call added a listener to the service-lifetime signal and never removed it; it
+     is now removed in `finally`. **Test:** after three runs of two reads and a summary on one signal, it has no listener.
+  4. **P3: shutdown on the last step.** A shutdown that cuts the last step now sets `stopped: true` (no later step was left to
+     notice it), and a summarize step cut by shutdown is `not-run` with `reason: 'stopped'`. **Tests:** a hung last read and a
+     hung M2 call, each with the shutdown fired during the call.
+  5. The open rule question (the summary word as the predicate of the owner's clause) stays as recorded in round 1 item 6.
+  - Every round-2 fix test failed on the code before it and passes after, except the quote-swallowing URL input (already no
+    grant in its tested form) and the plain-request pins; only targeted tests ran.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
