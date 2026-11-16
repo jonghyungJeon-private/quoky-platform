@@ -34115,6 +34115,12 @@ clause changes; no prompt, selector or routing change.
   - Tests: inline triple backticks in prose, a `~~~` fence (payload kept / stale restate), an unclosed fence, a longer
     opener not closed by a shorter or different closer, `,` / `;` / other punctuation endings, and the payload-only stale
     word (guard unit and real runtime); the 8 round-1 repros and the live-bug cases pass unchanged.
+- **Review round 3 (Codex P2: CRLF; orchestrator fix, fix-loop cap reached for the shown-line finding).** A CRLF reply
+  kept a trailing `\r` on every split line, so `FENCE_MARKER` never matched a fence line and a fenced payload command was
+  removed (an empty block under "아래 문구" again). A trailing `\r` is now dropped before fence recognition and from the
+  line under test (line ending, not content). Tests: a CRLF backtick fence keeps the comment command, and a CRLF fence
+  around a stale command restates; both fail without the fix. Any further shown-line edge case is recorded as a residual
+  (fail closed: a removed command gives the restate) rather than chased.
 
 ## ADR-0124 phase 1 stage C: a 413 from the daemon is a refusal, not a run failure (2026-11-05, branch `claude/v5-chunk-embed-413`)
 

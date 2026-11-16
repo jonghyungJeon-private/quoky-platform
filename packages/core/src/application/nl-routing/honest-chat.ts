@@ -439,7 +439,8 @@ interface ReplyLine {
 
 /** The open fence after `line`, given the fence open before it (CommonMark: same character, a run at least as long, closes). */
 function nextFence(open: { readonly char: string; readonly length: number } | undefined, line: string): { readonly char: string; readonly length: number } | undefined {
-  const marker = FENCE_MARKER.exec(line);
+  // Review round 3 (Codex P2): a CRLF reply keeps a trailing `\r` on each split line; it is a line ending, not content.
+  const marker = FENCE_MARKER.exec(line.replace(/\r$/u, ''));
   if (marker === null) return open;
   const run = marker[1] as string;
   const rest = marker[2] as string;
@@ -454,7 +455,7 @@ function nextFence(open: { readonly char: string; readonly length: number } | un
 function lineAt(text: string, at: number): ReplyLine {
   const start = text.lastIndexOf('\n', at - 1) + 1;
   const end = text.indexOf('\n', at);
-  const line = text.slice(start, end === -1 ? text.length : end);
+  const line = text.slice(start, end === -1 ? text.length : end).replace(/\r$/u, '');
   let open: { readonly char: string; readonly length: number } | undefined;
   for (const before of start === 0 ? [] : text.slice(0, start - 1).split('\n')) open = nextFence(open, before);
   return { start, text: line, fenced: open !== undefined && nextFence(open, line) === open };

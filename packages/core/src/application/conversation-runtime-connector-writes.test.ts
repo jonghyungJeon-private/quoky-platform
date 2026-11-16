@@ -2766,6 +2766,9 @@ describe('live DM 2026-11-16: a command the chat reply offers is never stripped 
     ['a shown span followed by ","', `${LEAD}\n\n\`완료 처리: 2\`,`, RESTATE],
     ['a shown span followed by ";"', `${LEAD}\n\n\`완료 처리: 2\`;`, RESTATE],
     ['a comment whose payload is only the stale word', '되돌리려면 `BE-882에 댓글: 되돌리기`를 보내세요.', RESTATE],
+    // Review round 3 (Codex P2): CRLF line endings are line endings, not content, for fence recognition.
+    ['a CRLF backtick fence keeps the payload command', `${LEAD}\r\n\`\`\`\r\n${COMMAND}\r\n\`\`\``, `${LEAD}\r\n\`\`\`\r\n${COMMAND}\r\n\`\`\``],
+    ['a CRLF backtick fence around a stale command takes the reply', `${LEAD}\r\n\`\`\`\r\n완료 처리: 2\r\n\`\`\``, RESTATE],
   ])('review round 2, %s', async (_label, reply, expected) => {
     const { text } = await chatTurn(reply);
     expect(text).toBe(expected);
