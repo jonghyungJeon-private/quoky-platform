@@ -19,6 +19,7 @@ import {
   type ConnectorWriteOutcome,
   type IssueCommentState,
   type IssueCommentWriter,
+  type IssueStatusReadout,
   type IssueTransitionOption,
   type IssueTransitionWriter,
 } from '../../ports/connector-write.port';
@@ -143,6 +144,13 @@ export type ConnectorWritePayload =
       /** The destination status, by id (and the name the preview showed). */
       readonly toStatusId: string;
       readonly toStatus: string;
+      /**
+       * ADR-0112 amendment 3 (O5): the status the issue was in at preview time (id and name), recorded when the writer can read
+       * it. The writer sends the transition only while the issue is still in it (compare-and-set), so a SENT transition proves
+       * the move `fromStatusId -> toStatusId`. A transition without it (legacy, or a writer without the read) has no undo.
+       */
+      readonly fromStatusId?: string;
+      readonly fromStatus?: string;
     }
   /**
    * ADR-0112 amendment 3 (O4): delete the comment Quoky added (only ever an undo). The issue and comment come from this actor's
@@ -153,6 +161,21 @@ export type ConnectorWritePayload =
       readonly issueKey: string;
       readonly commentId: string;
       readonly expected: { readonly version: string };
+      readonly undoes: Id;
+    }
+  /**
+   * ADR-0112 amendment 3 (O5): move the issue back to the status it had before Quoky's own transition (only ever an undo), through
+   * one transition the provider lists now. `fromStatusId` is the status Quoky moved it to (compare-and-set at the writer);
+   * `toStatusId` the status it had before.
+   */
+  | {
+      readonly operation: 'ISSUE_TRANSITION_REVERT';
+      readonly issueKey: string;
+      readonly transitionId: string;
+      readonly transitionName: string;
+      readonly toStatusId: string;
+      readonly toStatus: string;
+      readonly fromStatusId: string;
       readonly undoes: Id;
     }
   | { readonly operation: 'CHANNEL_POST'; readonly channel: string; readonly text: string }
@@ -198,6 +221,21 @@ export type ConnectorWritePreview =
       readonly receiptSourced: true;
       readonly ownerSentence?: string;
     }
+  /** ADR-0112 amendment 3 (O5): always the undo of this actor's own SENT transition. Names are untrusted readout. */
+  | {
+      readonly operation: 'ISSUE_TRANSITION_REVERT';
+      readonly issueKey: string;
+      /** The status Quoky moved the issue to (where it is now). */
+      readonly currentStatus: string;
+      readonly currentStatusId: string;
+      /** The status it had before (where the revert takes it back). */
+      readonly toStatus: string;
+      readonly toStatusId: string;
+      readonly transitionName: string;
+      readonly transitionId: string;
+      readonly receiptSourced: true;
+      readonly ownerSentence?: string;
+    }
   | { readonly operation: 'CHANNEL_POST'; readonly channelLabel: string; readonly channelId: string; readonly text: string }
   | { readonly operation: 'CALENDAR_EVENT_CREATE'; readonly event: CalendarEventDraft; readonly timeZone: string }
   | {
@@ -235,12 +273,26 @@ export type ConnectorWriteChoiceBasis = 'listed' | 'written' | 'nearby';
 export const CONNECTOR_WRITE_NEARBY_DAYS = 2;
 
 /** The pending numbered choice of an update or delete (next turn only). */
-export interface ConnectorWriteChoice {
+export interface ConnectorWriteEventChoice {
   readonly mode: 'update' | 'delete';
   readonly changes?: CalendarDraftChanges;
   readonly reference: CalendarEventReference;
   readonly candidates: readonly ConnectorWriteEventSummary[];
 }
+
+/**
+ * ADR-0112 amendment 3 (O5): several transitions lead back to the status before Quoky's own transition; the owner picks one by
+ * number (next turn only). The list is exactly what Core read from the provider at listing time; a pick only indexes it, and
+ * the picked id must still be listed, leading to the same status, when the preview is built.
+ */
+export interface ConnectorWriteRevertChoice {
+  readonly mode: 'transition-revert';
+  readonly issueKey: string;
+  readonly transitions: readonly IssueTransitionOption[];
+  readonly ownerSentence?: string;
+}
+
+export type ConnectorWriteChoice = ConnectorWriteEventChoice | ConnectorWriteRevertChoice;
 
 export interface ConnectorWriteAnchor {
   readonly kind: typeof CONNECTOR_WRITE_ANCHOR_KIND;
@@ -375,10 +427,12 @@ export type ConnectorWriteRefusal =
   | 'undo-read-failed'
   /** O4: the comment Quoky added is no longer there. */
   | 'undo-target-gone'
-  /** O4: the comment was edited (or its issue moved). */
+  /** O4: the comment was edited (or its issue moved); O5: the issue is no longer in the status Quoky moved it to. */
   | 'undo-target-changed'
   /** O4: these credentials may not delete the comment (checked read-only; no permission is requested). */
-  | 'undo-not-permitted';
+  | 'undo-not-permitted'
+  /** O5: no transition available now leads back to the status the issue had before Quoky's transition. */
+  | 'undo-no-path';
 
 /** What one flow step produced; the runtime renders it through `ResponseComposer` (reply text lives there). */
 export type ConnectorWriteStep =
@@ -418,6 +472,18 @@ export type ConnectorWriteStep =
        * tomorrow's events. Absent = the events of the day the owner named.
        */
       readonly basis?: ConnectorWriteChoiceBasis;
+    }
+  /**
+   * ADR-0112 amendment 3 (O5): several transitions lead back; the owner picks one by number. Names are untrusted readout; the
+   * list is exactly the Core-listed transitions that lead back to `toStatus`.
+   */
+  | {
+      readonly kind: 'revert-choice';
+      readonly issueKey: string;
+      readonly currentStatus: string;
+      readonly toStatus: string;
+      readonly transitions: readonly IssueTransitionOption[];
+      readonly ownerSentence?: string;
     }
   | {
       readonly kind: 'already-sent';
@@ -655,6 +721,7 @@ export function connectorWriteTargetOf(preview: ConnectorWritePreview): Connecto
     case 'ISSUE_COMMENT':
     case 'ISSUE_TRANSITION':
     case 'ISSUE_COMMENT_DELETE':
+    case 'ISSUE_TRANSITION_REVERT':
       return { kind: 'issue', issueKey: preview.issueKey };
     case 'CHANNEL_POST':
       return { kind: 'channel', channelLabel: preview.channelLabel, channelId: preview.channelId };
@@ -714,6 +781,8 @@ export function connectorWriteExecutionGate(operation: ConnectorWriteOperation):
       return 'calendarRestore';
     case 'ISSUE_COMMENT_DELETE':
       return 'issueCommentDelete';
+    case 'ISSUE_TRANSITION_REVERT':
+      return 'issueTransitionRevert';
   }
 }
 
@@ -738,6 +807,7 @@ const EXECUTION_STEP_MENTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>>
   CALENDAR_EVENT_DELETE: /일정삭제실행|executeeventdelete/u,
   CALENDAR_EVENT_RESTORE: /일정복원실행|executeeventrestore/u,
   ISSUE_COMMENT_DELETE: /댓글삭제실행|executejiracommentdelete/u,
+  ISSUE_TRANSITION_REVERT: /상태되돌리기실행|executejiratransitionrevert/u,
 };
 
 /** Explanation / how-to requests about a step are ordinary chat, not a question about the pending write. */
@@ -782,6 +852,7 @@ const STEP_WORDS: Readonly<Record<ConnectorWriteOperation, string>> = {
   CALENDAR_EVENT_DELETE: String.raw`(?:캘린더\s*)?일정\s*삭제`,
   CALENDAR_EVENT_RESTORE: String.raw`(?:캘린더\s*)?일정\s*복원`,
   ISSUE_COMMENT_DELETE: String.raw`(?:jira|지라)\s*(?:댓글|코멘트)\s*삭제`,
+  ISSUE_TRANSITION_REVERT: String.raw`(?:jira|지라)\s*상태\s*되돌리기`,
 };
 
 /** Imperative endings of "<step> 실행…" that the allow-list does not accept ("댓글 실행해", "게시 실행하자"). */
@@ -808,6 +879,7 @@ const DONE_QUESTIONS: Readonly<Record<ConnectorWriteOperation, RegExp>> = {
   CALENDAR_EVENT_RESTORE: /^(?:캘린더\s*)?일정\s*복원\s*(?:은|이)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
   // The Jira undos likewise: only the structural "<step words> 됐어?" form of their own step words.
   ISSUE_COMMENT_DELETE: /^(?:jira|지라)\s*(?:댓글|코멘트)\s*삭제\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
+  ISSUE_TRANSITION_REVERT: /^(?:jira|지라)\s*상태\s*되돌리기\s*(?:는|가)?\s*(?:잘\s*)?(?:됐|했|실행했|실행됐)(?:어|어요|나|나요|니|냐|지|죠)$/u,
 };
 /** A "did it happen?" ending that is a question by itself (no `?` needed). */
 const SELF_QUESTION_ENDING = /(?:나|나요|니|냐|지|죠)$/u;
@@ -1235,6 +1307,17 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         const wanted = draft.toStatus.trim();
         if (!isValidConnectorWriteText(wanted, ISSUE_TRANSITION_STATUS_MAX_LENGTH)) return refused('invalid-text');
         if (containsCredentialMaterial(wanted)) return refused('credential');
+        // ADR-0112 amendment 3 (O5): the status the issue is in now, recorded so the transition can later be reverted (and sent
+        // only while the issue is still in it). A writer without the read records nothing (that transition has no undo).
+        let from: IssueStatusReadout | undefined;
+        if (writer.readIssueStatus !== undefined) {
+          try {
+            from = await writer.readIssueStatus(key);
+          } catch {
+            return refused('transition-lookup-failed');
+          }
+          if (from.issueKey !== key || !isNumericId(from.statusId)) return refused('transition-lookup-failed');
+        }
         let options: readonly IssueTransitionOption[];
         try {
           options = await writer.listTransitions(key);
@@ -1252,12 +1335,13 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           toStatusId: match.toStatusId,
           toStatus: match.toStatus,
         };
+        const recorded = from !== undefined ? { fromStatusId: from.statusId, fromStatus: boundStatusName(from.statusName) } : {};
         return this.propose(
           input,
           family,
           writer.source,
           key,
-          { operation: 'ISSUE_TRANSITION', ...bound },
+          { operation: 'ISSUE_TRANSITION', ...bound, ...recorded },
           { operation: 'ISSUE_TRANSITION', ...bound },
         );
       }
@@ -1298,6 +1382,8 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
         return this.proposeCalendarDeleteUndo(input, draft.receiptId);
       case 'jira-comment-undo':
         return this.proposeJiraCommentUndo(input, draft.receiptId);
+      case 'jira-transition-undo':
+        return this.proposeJiraTransitionUndo(input, draft.receiptId);
       case 'calendar-update':
       case 'calendar-delete': {
         const changes = draft.kind === 'calendar-update' ? draft.changes : undefined;
@@ -1370,6 +1456,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       await this.close(input.session, input.view, 'expired', input.now);
       return { kind: 'refused', reason: 'choice-expired', family: anchor.family };
     }
+    if (choice.mode === 'transition-revert') return this.chooseRevert(input, choice);
     const picked = choice.candidates[input.index - 1];
     if (!Number.isInteger(input.index) || picked === undefined) {
       return { kind: 'refused', reason: 'invalid-choice', family: anchor.family };
@@ -1576,11 +1663,11 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       await this.close(input.session, view, 'inconsistent', input.now, held);
       return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'calendar-update' } };
     }
-    // ADR-0112 amendment 3 (O4): the Jira comment undo likewise never trusts its persisted payload: it is re-derived from the undone
+    // ADR-0112 amendment 3 (O4/O5): the Jira undos likewise never trust their persisted payload: it is re-derived from the undone
     // write's own anchor and receipt (`undoOf.sourceTaskId`, `undoOf.receiptId`) and must match exactly, or nothing is sent.
-    if (payload.operation === 'ISSUE_COMMENT_DELETE' && !(await this.isExactJiraInverse(anchor, payload))) {
+    if ((payload.operation === 'ISSUE_COMMENT_DELETE' || payload.operation === 'ISSUE_TRANSITION_REVERT') && !(await this.isExactJiraInverse(anchor, payload))) {
       await this.close(input.session, view, 'inconsistent', input.now, held);
-      return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: 'jira-comment' } };
+      return { step: { kind: 'refused', reason: 'undo-unavailable', family, undo: payload.operation === 'ISSUE_COMMENT_DELETE' ? 'jira-comment' : 'jira-transition' } };
     }
     const send = this.sendFor(payload, `cwr:${approvalId}`);
     if (!send) {
@@ -1629,6 +1716,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           this.deps.writers.issueTransitions?.allowsIssue(payload.issueKey) === true &&
           isNumericId(payload.transitionId) &&
           isNumericId(payload.toStatusId) &&
+          (payload.fromStatusId === undefined || isNumericId(payload.fromStatusId)) &&
           !containsCredentialMaterial(payload.toStatus)
         );
       case 'ISSUE_COMMENT_DELETE':
@@ -1637,6 +1725,14 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
           this.deps.writers.issueComments.allowsIssue(payload.issueKey) &&
           isNumericId(payload.commentId) &&
           isEventVersion(payload.expected?.version)
+        );
+      case 'ISSUE_TRANSITION_REVERT':
+        return (
+          this.deps.writers.issueTransitions?.allowsIssue(payload.issueKey) === true &&
+          isNumericId(payload.transitionId) &&
+          isNumericId(payload.toStatusId) &&
+          isNumericId(payload.fromStatusId) &&
+          !containsCredentialMaterial(payload.toStatus)
         );
       case 'CHANNEL_POST':
         return (
@@ -1667,12 +1763,24 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
                 issueKey: payload.issueKey,
                 transitionId: payload.transitionId,
                 toStatusId: payload.toStatusId,
+                ...(payload.fromStatusId !== undefined ? { fromStatusId: payload.fromStatusId } : {}),
               })
           : null;
       case 'ISSUE_COMMENT_DELETE': {
         const remove = issueComments?.deleteComment?.bind(issueComments);
         return remove ? () => remove({ issueKey: payload.issueKey, commentId: payload.commentId, expected: { version: payload.expected.version } }) : null;
       }
+      case 'ISSUE_TRANSITION_REVERT':
+        // Compare-and-set: the writer sends it only while the issue is still in the status Quoky moved it to.
+        return issueTransitions
+          ? () =>
+              issueTransitions.transition({
+                issueKey: payload.issueKey,
+                transitionId: payload.transitionId,
+                toStatusId: payload.toStatusId,
+                fromStatusId: payload.fromStatusId,
+              })
+          : null;
       case 'CHANNEL_POST':
         return channelMessages ? () => channelMessages.post({ channel: payload.channel, text: payload.text }) : null;
       case 'CALENDAR_EVENT_CREATE':
@@ -2021,18 +2129,163 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
   }
 
   /**
-   * O4 execution-time proof: the Jira undo anchor must name the undone write's anchor Task and receipt; that anchor must be this
+   * ADR-0112 amendment 3 (O5): the revert of Quoky's own transition, bound to the `fromStatusId` recorded with it. The issue must
+   * still be in the status Quoky moved it to; the transitions the provider lists NOW that lead back to `fromStatusId` decide:
+   * exactly one is previewed, several are a numbered choice (the owner's number only indexes this Core-listed set), none is said
+   * plainly. `pick` is the owner's choice from such a list; it must still be listed, leading back, when the preview is built.
+   */
+  private async proposeJiraTransitionUndo(
+    input: FlowInput,
+    receiptId: Id,
+    chosen: { readonly pick: IssueTransitionOption; readonly ownerSentence?: string } | undefined = undefined,
+  ): Promise<ConnectorWriteStep> {
+    const writer = this.deps.writers.issueTransitions;
+    if (!writer) return { kind: 'writes-off' };
+    const refused = (reason: ConnectorWriteRefusal): ConnectorWriteStep => ({ kind: 'refused', reason, family: 'issue-transition', undo: 'jira-transition' });
+    const resolved = await this.resolveOwnUndo(input, 'jira-transition', receiptId);
+    if (resolved.kind === 'refused') return refused(resolved.reason);
+    const moved = resolved.anchor.payload;
+    if (moved?.operation !== 'ISSUE_TRANSITION' || resolved.anchor.preview?.operation !== 'ISSUE_TRANSITION' || resolved.anchor.undoOf !== undefined) {
+      return refused('undo-nothing');
+    }
+    const issueKey = moved.issueKey;
+    if (
+      resolved.receipt.target !== issueKey ||
+      resolved.receipt.data.externalRef !== `${issueKey}:${moved.transitionId}` ||
+      !CONNECTOR_WRITE_ISSUE_KEY.test(issueKey) ||
+      !isNumericId(moved.toStatusId)
+    ) {
+      return refused('undo-nothing');
+    }
+    if (!writer.allowsIssue(issueKey)) return refused('target-not-allowed');
+    // A transition recorded without the status it left (legacy) has nothing to go back to.
+    if (!isNumericId(moved.fromStatusId) || moved.fromStatusId === moved.toStatusId || writer.readIssueStatus === undefined) return refused('undo-unavailable');
+    let now: IssueStatusReadout;
+    let options: readonly IssueTransitionOption[];
+    try {
+      now = await this.withReadTimeout(writer.readIssueStatus(issueKey));
+      if (now.issueKey !== issueKey || now.statusId !== moved.toStatusId) return refused('undo-target-changed');
+      options = await this.withReadTimeout(writer.listTransitions(issueKey));
+    } catch {
+      return refused('undo-read-failed');
+    }
+    const back = transitionsLeadingTo(options, moved.fromStatusId);
+    if (back.length === 0) return refused('undo-no-path');
+    const ownerSentence = chosen !== undefined ? chosen.ownerSentence : boundedOwnerSentence(input.ownerText);
+    const link = { entryId: LAST_ACTION_EXTERNAL_ENTRY, receiptId: resolved.receipt.id, family: 'jira-transition', sourceTaskId: resolved.anchorTaskId } as const;
+    let pick: IssueTransitionOption | undefined;
+    if (chosen !== undefined) {
+      // The picked transition must still be listed now, with the same id and leading back to the same status.
+      pick = back.find((option) => option.id === chosen.pick.id && option.toStatusId === chosen.pick.toStatusId);
+      if (pick === undefined) return refused('undo-target-changed');
+    } else if (back.length === 1) {
+      pick = back[0];
+    } else {
+      return this.offerRevertChoice(input, issueKey, back, ownerSentence, link, { current: boundStatusName(now.statusName), to: moved.fromStatus ?? '' });
+    }
+    const target = pick as IssueTransitionOption;
+    return this.propose(
+      input,
+      'issue-transition',
+      writer.source,
+      issueKey,
+      {
+        operation: 'ISSUE_TRANSITION_REVERT',
+        issueKey,
+        transitionId: target.id,
+        transitionName: target.name,
+        toStatusId: moved.fromStatusId,
+        toStatus: target.toStatus,
+        fromStatusId: moved.toStatusId,
+        undoes: resolved.receipt.id,
+      },
+      {
+        operation: 'ISSUE_TRANSITION_REVERT',
+        issueKey,
+        currentStatus: boundStatusName(now.statusName),
+        currentStatusId: now.statusId,
+        toStatus: target.toStatus,
+        toStatusId: moved.fromStatusId,
+        transitionName: target.name,
+        transitionId: target.id,
+        receiptSourced: true,
+        ...(ownerSentence !== undefined ? { ownerSentence } : {}),
+      },
+      undefined,
+      link,
+    );
+  }
+
+  /** O5: the owner's number on a revert choice. It only indexes the Core-listed transitions; the proposal re-reads everything. */
+  private async chooseRevert(
+    input: FlowInput & { readonly view: ConnectorWriteAnchorView; readonly index: number },
+    choice: ConnectorWriteRevertChoice,
+  ): Promise<ConnectorWriteStep> {
+    const { anchor } = input.view;
+    const picked = choice.transitions[input.index - 1];
+    if (!Number.isInteger(input.index) || picked === undefined) {
+      return { kind: 'refused', reason: 'invalid-choice', family: anchor.family, undo: 'jira-transition' };
+    }
+    const link = anchor.undoOf;
+    if (link?.family !== 'jira-transition' || anchor.family !== 'issue-transition') {
+      await this.close(input.session, input.view, 'inconsistent', input.now);
+      return { kind: 'refused', reason: 'binding-mismatch', family: anchor.family };
+    }
+    const step = await this.proposeJiraTransitionUndo(input, link.receiptId, {
+      pick: picked,
+      ...(choice.ownerSentence !== undefined ? { ownerSentence: choice.ownerSentence } : {}),
+    });
+    if (step.kind !== 'preview') await this.close(input.session, input.view, 'abandoned', input.now);
+    return step;
+  }
+
+  /** O5: several transitions lead back: a numbered choice anchor (next turn only), governed by the kill switch like any undo. */
+  private async offerRevertChoice(
+    input: FlowInput,
+    issueKey: string,
+    transitions: readonly IssueTransitionOption[],
+    ownerSentence: string | undefined,
+    undoOf: NonNullable<ConnectorWriteAnchor['undoOf']>,
+    names: { readonly current: string; readonly to: string },
+  ): Promise<ConnectorWriteStep> {
+    const previous = await this.displacedPointer(input.session);
+    const anchor: ConnectorWriteAnchor = {
+      kind: CONNECTOR_WRITE_ANCHOR_KIND,
+      status: 'AWAITING_CHOICE',
+      actorId: input.actor.id,
+      sessionId: input.session.id,
+      family: 'issue-transition',
+      choice: { mode: 'transition-revert', issueKey, transitions, ...(ownerSentence !== undefined ? { ownerSentence } : {}) },
+      createdAt: input.now,
+      updatedAt: input.now,
+      undoOf,
+      ...(previous ? { previousActiveTaskId: previous } : {}),
+    };
+    await this.createAnchor(input.session, anchor, input.now, input.held);
+    return {
+      kind: 'revert-choice',
+      issueKey,
+      currentStatus: names.current,
+      toStatus: names.to,
+      transitions,
+      ...(ownerSentence !== undefined ? { ownerSentence } : {}),
+    };
+  }
+
+  /**
+   * O4/O5 execution-time proof: the Jira undo anchor must name the undone write's anchor Task and receipt; that anchor must be this
    * actor's plain approved write whose approval produced the receipt (SENT, same connector, target and payload hash); and the
-   * payload re-derived from them now must equal the approved one (issue, comment id and version).
+   * payload re-derived from them now must equal the approved one (issue, comment id and version / statuses).
    */
   private async isExactJiraInverse(
     anchor: ConnectorWriteAnchor,
-    payload: Extract<ConnectorWritePayload, { operation: 'ISSUE_COMMENT_DELETE' }>,
+    payload: Extract<ConnectorWritePayload, { operation: 'ISSUE_COMMENT_DELETE' | 'ISSUE_TRANSITION_REVERT' }>,
   ): Promise<boolean> {
+    const comment = payload.operation === 'ISSUE_COMMENT_DELETE';
     const link = anchor.undoOf;
-    if (link?.family !== 'jira-comment' || link.entryId !== LAST_ACTION_EXTERNAL_ENTRY || link.sourceTaskId === undefined) return false;
+    if (link?.family !== (comment ? 'jira-comment' : 'jira-transition') || link.entryId !== LAST_ACTION_EXTERNAL_ENTRY || link.sourceTaskId === undefined) return false;
     const receipt = await this.deps.receipts.findById(link.receiptId, anchor.actorId);
-    if (receipt === null || receipt.status !== 'SENT' || receipt.operation !== 'ISSUE_COMMENT') return false;
+    if (receipt === null || receipt.status !== 'SENT' || receipt.operation !== (comment ? 'ISSUE_COMMENT' : 'ISSUE_TRANSITION')) return false;
     const task = await this.deps.store.tasks.get(link.sourceTaskId);
     const source = task?.metadata?.[ANCHOR_KEY] as ConnectorWriteAnchor | undefined;
     if (source?.kind !== CONNECTOR_WRITE_ANCHOR_KIND || source.actorId !== anchor.actorId || source.undoOf !== undefined || source.status !== 'SENT') return false;
@@ -2047,13 +2300,24 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       return false;
     }
     const written = source.payload;
+    if (payload.operation === 'ISSUE_COMMENT_DELETE') {
+      return (
+        written?.operation === 'ISSUE_COMMENT' &&
+        written.issueKey === payload.issueKey &&
+        receipt.target === payload.issueKey &&
+        receipt.data.externalRef === payload.commentId &&
+        receipt.data.version === payload.expected.version &&
+        anchor.target === `${payload.issueKey}/${payload.commentId}`
+      );
+    }
     return (
-      written?.operation === 'ISSUE_COMMENT' &&
+      written?.operation === 'ISSUE_TRANSITION' &&
       written.issueKey === payload.issueKey &&
-      receipt.target === payload.issueKey &&
-      receipt.data.externalRef === payload.commentId &&
-      receipt.data.version === payload.expected.version &&
-      anchor.target === `${payload.issueKey}/${payload.commentId}`
+      receipt.data.externalRef === `${written.issueKey}:${written.transitionId}` &&
+      isNumericId(written.fromStatusId) &&
+      payload.toStatusId === written.fromStatusId &&
+      payload.fromStatusId === written.toStatusId &&
+      anchor.target === payload.issueKey
     );
   }
 
@@ -2177,7 +2441,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
     );
   }
 
-  private async offerChoice(input: FlowInput, choice: ConnectorWriteChoice, basis?: ConnectorWriteChoiceBasis): Promise<ConnectorWriteStep> {
+  private async offerChoice(input: FlowInput, choice: ConnectorWriteEventChoice, basis?: ConnectorWriteChoiceBasis): Promise<ConnectorWriteStep> {
     const previous = await this.displacedPointer(input.session);
     const anchor: ConnectorWriteAnchor = {
       kind: CONNECTOR_WRITE_ANCHOR_KIND,
@@ -2503,6 +2767,28 @@ function summaryOf(event: CalendarEvent): ConnectorWriteEventSummary {
 
 function isNumericId(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9]{1,20}$/.test(value);
+}
+
+/** A status name read from the provider, for display only: single line, control characters removed, bounded. */
+function boundStatusName(name: string): string {
+  return boundCalendarText(name, ISSUE_TRANSITION_STATUS_MAX_LENGTH);
+}
+
+/**
+ * O5: the transitions of `options` that lead to `statusId`, each once by id, bound by ids only (a transition without a numeric id
+ * or destination is never offered), at most {@link CONNECTOR_WRITE_MAX_CHOICES}.
+ */
+function transitionsLeadingTo(options: readonly IssueTransitionOption[], statusId: string): IssueTransitionOption[] {
+  const seen = new Set<string>();
+  const out: IssueTransitionOption[] = [];
+  for (const option of options) {
+    if (!isNumericId(option.id) || option.toStatusId !== statusId || seen.has(option.id)) continue;
+    if (containsCredentialMaterial(option.name) || containsCredentialMaterial(option.toStatus)) continue;
+    seen.add(option.id);
+    out.push({ id: option.id, name: boundStatusName(option.name), toStatus: boundStatusName(option.toStatus), toStatusId: option.toStatusId });
+    if (out.length >= CONNECTOR_WRITE_MAX_CHOICES) break;
+  }
+  return out;
 }
 
 /** The shape of a bound event expectation (its version is checked when sending: missing = NOT_SENT TARGET_CHANGED). */

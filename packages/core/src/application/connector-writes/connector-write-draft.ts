@@ -94,7 +94,9 @@ export type ExternalUndoDraftKind =
   | 'calendar-update-undo'
   | 'calendar-delete-undo'
   /** ADR-0112 amendment 3 (O4): delete the comment Quoky added. */
-  | 'jira-comment-undo';
+  | 'jira-comment-undo'
+  /** ADR-0112 amendment 3 (O5): revert Quoky's own transition. */
+  | 'jira-transition-undo';
 export interface ExternalUndoDraft {
   readonly kind: ExternalUndoDraftKind;
   readonly receiptId: Id;
@@ -111,6 +113,7 @@ export function connectorWriteFamilyOf(draft: ConnectorWriteDraft): ConnectorWri
     case 'jira-comment-undo':
       return 'issue-comment';
     case 'issue-transition':
+    case 'jira-transition-undo':
       return 'issue-transition';
     case 'channel-post':
       return 'channel-post';

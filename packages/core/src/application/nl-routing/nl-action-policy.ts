@@ -379,10 +379,11 @@ export function renderActionUnavailable(language: Lang): string {
  * writes are off). Nothing was changed, and the owner is told where to delete the event.
  */
 export function renderExternalUndoUnavailable(language: Lang, family: ExternalUndoFamily = 'calendar-create'): string {
-  if (family === 'jira-comment') {
+  if (family === 'jira-comment' || family === 'jira-transition') {
+    const comment = family === 'jira-comment';
     return language === 'en'
-      ? 'Undoing that Jira comment is not available right now (Jira writes are off). Please delete it in Jira directly. Nothing was changed.'
-      : '방금 단 Jira 댓글 되돌리기는 지금 쓸 수 없어요 (Jira 쓰기가 꺼져 있어요). Jira에서 직접 지워 주세요. 아무것도 바꾸지 않았어요.';
+      ? `Undoing that Jira ${comment ? 'comment' : 'status change'} is not available right now (Jira writes are off). Please ${comment ? 'delete it' : 'change it back'} in Jira directly. Nothing was changed.`
+      : `방금 ${comment ? '단 Jira 댓글' : '바꾼 Jira 상태'} 되돌리기는 지금 쓸 수 없어요 (Jira 쓰기가 꺼져 있어요). Jira에서 직접 ${comment ? '지워' : '바꿔'} 주세요. 아무것도 바꾸지 않았어요.`;
   }
   if (family === 'calendar-update') {
     return language === 'en'

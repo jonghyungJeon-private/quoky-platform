@@ -146,6 +146,11 @@ export const ConnectorWriteOperation = {
    * unedited. Only ever an undo; there is no owner-worded comment delete.
    */
   ISSUE_COMMENT_DELETE: 'ISSUE_COMMENT_DELETE',
+  /**
+   * ADR-0112 amendment 3 (O5): move an issue back to the status it had before Quoky's own SENT transition, through a transition
+   * the provider lists now. Only ever an undo; there is no owner-worded revert.
+   */
+  ISSUE_TRANSITION_REVERT: 'ISSUE_TRANSITION_REVERT',
 } as const;
 export type ConnectorWriteOperation = (typeof ConnectorWriteOperation)[keyof typeof ConnectorWriteOperation];
 export const CONNECTOR_WRITE_OPERATIONS: readonly ConnectorWriteOperation[] = Object.values(ConnectorWriteOperation);
@@ -235,6 +240,19 @@ export interface IssueTransitionRequest {
   readonly transitionId: string;
   /** The destination status id the preview showed (digits). */
   readonly toStatusId: string;
+  /**
+   * ADR-0112 amendment 3 (O5), compare-and-set: the status id the issue must be in right before the transition (digits). When
+   * given, the writer re-reads the issue's status and refuses (`NOT_SENT('TARGET_CHANGED')`) any other; nothing is sent.
+   */
+  readonly fromStatusId?: string;
+}
+
+/** ADR-0112 amendment 3 (O5): an issue's current status, read-only (ids digits; the name is untrusted readout). */
+export interface IssueStatusReadout {
+  /** The key the provider answers with (a moved issue answers its old key with its new one). */
+  readonly issueKey: string;
+  readonly statusId: string;
+  readonly statusName: string;
 }
 
 export interface IssueTransitionWriter {
@@ -243,8 +261,15 @@ export interface IssueTransitionWriter {
   /** Read-only: the transitions currently available on an allowlisted issue. Throws `ConnectorQueryError`. */
   listTransitions(issueKey: string): Promise<readonly IssueTransitionOption[]>;
   /**
+   * ADR-0112 amendment 3 (O5), read-only: the issue's current status (recorded as `fromStatusId` when a transition is previewed,
+   * and compared before a revert). Throws `ConnectorQueryError`. Optional: without it a transition records no `fromStatusId`
+   * and is not undoable.
+   */
+  readIssueStatus?(issueKey: string): Promise<IssueStatusReadout>;
+  /**
    * Re-reads the available transitions and performs `transitionId` only when a transition with that id still exists
-   * AND leads to `toStatusId`; otherwise `NOT_SENT('TARGET_CHANGED')` and nothing is sent. Never falls back to a name.
+   * AND leads to `toStatusId` (and, when `fromStatusId` is given, the issue is still in that status); otherwise
+   * `NOT_SENT('TARGET_CHANGED')` and nothing is sent. Never falls back to a name.
    */
   transition(request: IssueTransitionRequest): Promise<ConnectorWriteOutcome>;
 }

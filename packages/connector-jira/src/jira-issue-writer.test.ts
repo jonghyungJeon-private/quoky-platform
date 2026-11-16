@@ -550,3 +550,66 @@ describe('JiraIssueCommentWriter O4: version, inspectComment, deleteComment', ()
     expect(rec.ended).toBe(1);
   });
 });
+
+describe('JiraIssueTransitionWriter O5: readIssueStatus and fromStatusId', () => {
+  const REVERT = { issueKey: 'PROJ-7', transitionId: '21', toStatusId: '10002', fromStatusId: '3' } as const;
+  const withStatus = (key: string, statusId: string): Response =>
+    json(200, { key, fields: { project: { key: 'PROJ' }, status: { id: statusId, name: 'In Progress' } } });
+
+  it('readIssueStatus returns the key, status id and a bounded name from one GET', async () => {
+    const fake = fakeFetch(json(200, { key: 'PROJ-7', fields: { status: { id: '3', name: 'In\u0000 Progress' } } }));
+    const readout = await new JiraIssueTransitionWriter(config(fake.fetchImpl)).readIssueStatus('PROJ-7');
+    expect(readout).toEqual({ issueKey: 'PROJ-7', statusId: '3', statusName: 'In Progress' });
+    expect(fake.calls.map((call) => [call.init?.method, call.url])).toEqual([
+      ['GET', 'https://example.atlassian.net/rest/api/3/issue/PROJ-7?fields=status'],
+    ]);
+  });
+
+  it('readIssueStatus: not allowlisted, a failed read or a malformed answer throws a ConnectorQueryError', async () => {
+    const none = fakeFetch();
+    const writer = new JiraIssueTransitionWriter(config(none.fetchImpl));
+    expect(await writer.readIssueStatus('OTHER-1').catch((c: unknown) => c)).toBeInstanceOf(ConnectorQueryError);
+    expect(none.calls).toHaveLength(0);
+    const failed = fakeFetch(json(404, {}));
+    const notFound = await new JiraIssueTransitionWriter(config(failed.fetchImpl)).readIssueStatus('PROJ-7').catch((c: unknown) => c);
+    expect((notFound as ConnectorQueryError).reason).toBe('NOT_FOUND');
+    for (const bad of [
+      json(200, {}),
+      json(200, { key: 'PROJ-7', fields: {} }),
+      json(200, { key: 'PROJ-7', fields: { status: { id: 'x', name: 'A' } } }),
+      json(200, { fields: { status: { id: '3' } } }),
+    ]) {
+      const fake = fakeFetch(bad);
+      const error = await new JiraIssueTransitionWriter(config(fake.fetchImpl)).readIssueStatus('PROJ-7').catch((c: unknown) => c);
+      expect((error as ConnectorQueryError).reason).toBe('INVALID_RESPONSE');
+    }
+  });
+
+  it('a matching fromStatusId sends the transition (identity read asks for project and status)', async () => {
+    const fake = fakeFetch(withStatus('PROJ-7', '3'), json(200, TRANSITIONS), new Response(null, { status: 204 }));
+    const outcome = await new JiraIssueTransitionWriter(config(fake.fetchImpl)).transition(REVERT);
+    expect(outcome).toMatchObject({ status: 'SENT', externalRef: 'PROJ-7:21' });
+    expect(fake.calls[0]!.url).toBe('https://example.atlassian.net/rest/api/3/issue/PROJ-7?fields=project%2Cstatus');
+    expect(fake.calls.map((call) => call.init?.method)).toEqual(['GET', 'GET', 'POST']);
+  });
+
+  it('a mismatching or unreadable status is refused before any transitions read or POST', async () => {
+    const mismatch = fakeFetch(withStatus('PROJ-7', '10002'));
+    expect(await new JiraIssueTransitionWriter(config(mismatch.fetchImpl)).transition(REVERT)).toEqual(NOT_SENT('TARGET_CHANGED'));
+    expect(mismatch.calls).toHaveLength(1);
+    const moved = fakeFetch(withStatus('OTHER-3', '3'));
+    expect(await new JiraIssueTransitionWriter(config(moved.fetchImpl)).transition(REVERT)).toEqual(NOT_SENT('TARGET_CHANGED'));
+    const unreadable = fakeFetch(issue('PROJ-7'));
+    expect(await new JiraIssueTransitionWriter(config(unreadable.fetchImpl)).transition(REVERT)).toEqual(NOT_SENT('UNAVAILABLE'));
+    expect(unreadable.calls).toHaveLength(1);
+  });
+
+  it('a non-digit fromStatusId is INVALID_REQUEST with no network call', async () => {
+    const fake = fakeFetch();
+    const writer = new JiraIssueTransitionWriter(config(fake.fetchImpl));
+    for (const fromStatusId of ['', 'Done', '3 ']) {
+      expect(await writer.transition({ ...REVERT, fromStatusId })).toEqual(NOT_SENT('INVALID_REQUEST'));
+    }
+    expect(fake.calls).toHaveLength(0);
+  });
+});

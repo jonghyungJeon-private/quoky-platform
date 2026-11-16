@@ -85,7 +85,9 @@ export type ExecutionGate =
   // ADR-0112 amendment 3 (O7): the restore of an approved calendar delete (only ever an undo).
   | 'calendarRestore'
   // ADR-0112 amendment 3 (O4/O7): the delete of the comment Quoky added (only ever an undo).
-  | 'issueCommentDelete';
+  | 'issueCommentDelete'
+  // ADR-0112 amendment 3 (O5/O7): the revert of Quoky's own transition (only ever an undo).
+  | 'issueTransitionRevert';
 
 /**
  * The closed set of accepted execution phrases per gate. The FIRST entry is the documented phrase the composer / help
@@ -153,9 +155,10 @@ export const EXECUTION_PHRASES: Readonly<Record<ExecutionGate, readonly string[]
   calendarDelete: ['일정 삭제 실행', '일정 삭제 실행해줘', '캘린더 일정 삭제 실행', 'execute event delete'],
   // ADR-0112 amendment 3 (O7): the exact phrase of a restore. No bare "복원 실행" (or "삭제 실행") on any gate.
   calendarRestore: ['일정 복원 실행', '일정 복원 실행해줘', '캘린더 일정 복원 실행', 'execute event restore'],
-  // ADR-0112 amendment 3 (O7): the exact phrases of the Jira comment undo. No bare "삭제 실행" (or "댓글 삭제 실행" without the
-  // service) on any gate, so it names its own write.
+  // ADR-0112 amendment 3 (O7): the exact phrases of the Jira undos. No bare "삭제 실행" / "되돌리기 실행" (or "댓글 삭제 실행" without
+  // the service) on any gate, so each names its own write.
   issueCommentDelete: ['Jira 댓글 삭제 실행', 'Jira 댓글 삭제 실행해줘', '지라 댓글 삭제 실행', 'execute jira comment delete'],
+  issueTransitionRevert: ['Jira 상태 되돌리기 실행', 'Jira 상태 되돌리기 실행해줘', '지라 상태 되돌리기 실행', 'execute jira transition revert'],
 };
 
 /**

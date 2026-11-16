@@ -67,6 +67,8 @@ const CALENDAR_EVENT_ID = /^[0-9a-v]{5,1024}$/;
 const CHANGED_EVENT_ID = /^[A-Za-z0-9_-]{1,1024}$/;
 /** A Jira comment id (digits), as the comment writer returns it. */
 const COMMENT_ID = /^[0-9]{1,20}$/;
+/** A Jira transition receipt reference: `<issue key>:<transition id>`, as the transition writer returns it. */
+const TRANSITION_REF = /^[A-Z][A-Z0-9_]{0,63}-[1-9][0-9]{0,9}:[0-9]{1,20}$/;
 
 const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
   'calendar-create': {
@@ -88,6 +90,11 @@ const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
     draftKind: 'jira-comment-undo',
     operation: ConnectorWriteOperation.ISSUE_COMMENT,
     refOk: (ref) => COMMENT_ID.test(ref),
+  },
+  'jira-transition': {
+    draftKind: 'jira-transition-undo',
+    operation: ConnectorWriteOperation.ISSUE_TRANSITION,
+    refOk: (ref) => TRANSITION_REF.test(ref),
   },
 };
 

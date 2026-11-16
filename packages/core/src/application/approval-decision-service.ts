@@ -251,6 +251,8 @@ export function isCalendarWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'w
       return step.family === 'calendar';
     case 'choice':
       return true;
+    case 'revert-choice':
+      return false;
     case 'preview':
       return step.preview.operation.startsWith('CALENDAR_');
     default:

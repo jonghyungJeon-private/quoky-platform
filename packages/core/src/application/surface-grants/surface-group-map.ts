@@ -103,6 +103,7 @@ export function surfaceWriteFamilyOfOperation(operation: ConnectorWriteOperation
     case 'ISSUE_COMMENT_DELETE':
       return 'issue-comment';
     case 'ISSUE_TRANSITION':
+    case 'ISSUE_TRANSITION_REVERT':
       return 'issue-transition';
     case 'CHANNEL_POST':
       return 'channel-post';

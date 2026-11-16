@@ -98,6 +98,7 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
       ['calendarDelete', '일정 삭제 실행'],
       ['calendarRestore', '일정 복원 실행'],
       ['issueCommentDelete', 'Jira 댓글 삭제 실행'],
+      ['issueTransitionRevert', 'Jira 상태 되돌리기 실행'],
     ]);
   });
 
@@ -196,8 +197,13 @@ describe('execution allow-list (orchestrator decision after the Codex wave-8 rev
     ['issueCommentDelete', 'Jira 댓글 삭제 실행할까?'],
     ['issueCommentDelete', 'Jira 댓글 실행'],
     ['issueCommentDelete', '일정 삭제 실행'],
+    ['issueTransitionRevert', '되돌리기 실행'],
+    ['issueTransitionRevert', '상태 되돌리기 실행'],
+    ['issueTransitionRevert', 'Jira 상태 변경 실행'],
+    ['issueTransitionRevert', 'Jira 상태 되돌리기 실행하지 마'],
     ['issueComment', 'Jira 댓글 삭제 실행'],
     ['calendarDelete', 'Jira 댓글 삭제 실행'],
+    ['issueTransition', 'Jira 상태 되돌리기 실행'],
   ] as const)('%s rejects "%s"', (gate, text) => {
     expect(isAcceptedExecutionPhrase(gate, text)).toBe(false);
   });

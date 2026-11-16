@@ -84,6 +84,8 @@ interface HarnessOptions {
   readonly noDeletePermission?: boolean;
   /** The comment writer has no inspect / delete (an older adapter). */
   readonly noCommentDelete?: boolean;
+  /** The transition writer cannot read the status (a transition then records no `fromStatusId`). */
+  readonly noStatusRead?: boolean;
   /** The transitions available per status (the workflow). */
   readonly workflow?: Readonly<Record<string, readonly IssueTransitionOption[]>>;
 }
@@ -148,8 +150,18 @@ function harness(options: HarnessOptions = {}) {
       if (jira.failReads) throw new ConnectorQueryError('UNAVAILABLE', 'test read failure');
       return jira.workflow[jira.status] ?? [];
     },
+    ...(options.noStatusRead === true
+      ? {}
+      : {
+          async readIssueStatus(issueKey: string) {
+            reads.status += 1;
+            if (jira.failReads) throw new ConnectorQueryError('UNAVAILABLE', 'test read failure');
+            return { issueKey: jira.moved ? 'RT-99' : issueKey, statusId: jira.status, statusName: STATUS[jira.status] as string };
+          },
+        }),
     async transition(request) {
       writes.transition.push(structuredClone(request));
+      if (request.fromStatusId !== undefined && request.fromStatusId !== jira.status) return connectorWriteNotSent('TARGET_CHANGED');
       const chosen = (jira.workflow[jira.status] ?? []).find((candidate) => candidate.id === request.transitionId);
       if (chosen === undefined || chosen.toStatusId !== request.toStatusId) return connectorWriteNotSent('TARGET_CHANGED');
       jira.status = chosen.toStatusId;
@@ -247,7 +259,7 @@ function harness(options: HarnessOptions = {}) {
 
 const reason = (step: ConnectorWriteStep): string | undefined => (step.kind === 'refused' ? step.reason : undefined);
 const text = (step: ConnectorWriteStep): string => (step.kind === 'writes-off' ? '' : plainTextOf(renderConnectorWriteStep(step)));
-const OPEN = ['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment'] as const;
+const OPEN = ['calendar-create', 'calendar-update', 'calendar-delete', 'jira-comment', 'jira-transition'] as const;
 
 describe('ADR-0112 amendment 3 (O4): the delete of the Jira comment Quoky added', () => {
   beforeEach(() => setExternalUndoCapabilitiesForTest(OPEN));
@@ -356,6 +368,7 @@ describe('ADR-0112 amendment 3 (O4): the delete of the Jira comment Quoky added'
     expect(reason(await h.undo('jira-comment-undo', receiptId, at(3), OTHER))).toBe('undo-nothing');
     expect(reason(await h.undo('jira-comment-undo', receiptId, at(3), OWNER, 'sess-2'))).toBe('undo-nothing');
     expect(reason(await h.undo('jira-comment-undo', receiptId, at(12)))).toBe('undo-nothing');
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(3)))).toBe('undo-nothing');
     expect(reason(await h.undo('jira-comment-undo', 'another-receipt', at(3)))).toBe('undo-nothing');
     expect(h.reads.inspect).toEqual([]);
   });
@@ -395,5 +408,139 @@ describe('ADR-0112 amendment 3 (O4): the delete of the Jira comment Quoky added'
     expect(externalUndoFamilyOf('external.write', 'ISSUE_COMMENT_DELETE')).toBeUndefined();
     expect(isAcceptedExecutionPhrase('issueCommentDelete', 'Jira 댓글 삭제 실행')).toBe(true);
     for (const phrase of ['삭제 실행', '댓글 삭제 실행', '댓글 실행', '일정 삭제 실행']) expect(isAcceptedExecutionPhrase('issueCommentDelete', phrase), phrase).toBe(false);
+  });
+});
+
+describe('ADR-0112 amendment 3 (O5): the revert of Quoky\'s own Jira transition', () => {
+  beforeEach(() => setExternalUndoCapabilitiesForTest(OPEN));
+  afterEach(() => setExternalUndoCapabilitiesForTest());
+
+  it('the forward transition records fromStatusId at preview and is sent compare-and-set on it', async () => {
+    const h = harness();
+    await h.transition();
+    const anchor = [...h.tasks.values()].map((task) => task.metadata?.connectorWriteAnchor as { payload?: Record<string, unknown> }).find((candidate) => candidate.payload?.operation === 'ISSUE_TRANSITION');
+    expect(anchor?.payload).toMatchObject({ transitionId: '11', toStatusId: '3', fromStatusId: '1', fromStatus: '할 일' });
+    expect(h.writes.transition).toEqual([{ issueKey: KEY, transitionId: '11', toStatusId: '3', fromStatusId: '1' }]);
+    expect(h.jira.status).toBe('3');
+  });
+
+  it('exactly one transition leads back: a receipt-sourced preview with its own exact phrase, then that transition, compare-and-set on Quoky\'s status', async () => {
+    const h = harness();
+    const { receiptId } = await h.transition();
+    const step = await h.undo('jira-transition-undo', receiptId, at(3), OWNER, 'sess-1', { ownerText: '되돌려줘' });
+    expect(step.kind).toBe('preview');
+    if (step.kind !== 'preview') return;
+    expect(step.executionPhrase).toBe('Jira 상태 되돌리기 실행');
+    expect(step.preview).toMatchObject({ operation: 'ISSUE_TRANSITION_REVERT', issueKey: KEY, currentStatusId: '3', toStatusId: '1', transitionId: '21', receiptSourced: true });
+    const card = text(step);
+    expect(card.startsWith('Jira 상태 되돌리기 미리보기예요.')).toBe(true);
+    expect(card.indexOf(CONNECTOR_UNDO_RECEIPT_BANNER)).toBeLessThan(card.indexOf('요청하신 문장: '));
+    expect(card).toContain('"Jira 상태 되돌리기 실행"');
+    const done = await h.approveAndExecute(at(4));
+    expect(done).toMatchObject({ kind: 'outcome', operation: 'ISSUE_TRANSITION_REVERT', outcome: { status: 'SENT' } });
+    expect(h.writes.transition.at(-1)).toEqual({ issueKey: KEY, transitionId: '21', toStatusId: '1', fromStatusId: '3' });
+    expect(h.jira.status).toBe('1');
+    expect(text(done)).toBe('방금 바꾼 Jira 이슈 상태를 바꾸기 전 상태로 되돌렸어요.');
+  });
+
+  it('several lead back: a numbered choice of exactly the Core-listed transitions; the number picks one; a number outside the list previews nothing', async () => {
+    const workflow = { ...DEFAULT_WORKFLOW, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '1'), option('31', '끝내기', '5')] };
+    const h = harness({ workflow });
+    const { receiptId } = await h.transition();
+    const step = await h.undo('jira-transition-undo', receiptId, at(3), OWNER, 'sess-1', { ownerText: '되돌려줘' });
+    expect(step.kind).toBe('revert-choice');
+    if (step.kind !== 'revert-choice') return;
+    expect(step.transitions.map((candidate) => candidate.id)).toEqual(['21', '22']);
+    const card = text(step);
+    expect(card.startsWith(CONNECTOR_UNDO_RECEIPT_BANNER)).toBe(true);
+    expect(card).toContain('1. 멈춤 → 할 일');
+    expect(card).not.toContain('끝내기');
+    const choice = await h.flow.find(h.session());
+    expect(choice?.anchor).toMatchObject({ status: 'AWAITING_CHOICE', family: 'issue-transition', undoOf: { family: 'jira-transition', receiptId } });
+    expect(isActionSwitchGoverned(choice?.anchor as NonNullable<typeof choice>['anchor'])).toBe(true);
+    const outside = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 3 });
+    expect(reason(outside)).toBe('invalid-choice');
+    expect(text(outside)).toContain('목록에 없는 전환은 쓰지 않아요');
+    const picked = await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 2 });
+    expect(picked.kind).toBe('preview');
+    expect(picked.kind === 'preview' && picked.preview).toMatchObject({ operation: 'ISSUE_TRANSITION_REVERT', transitionId: '22', toStatusId: '1', ownerSentence: '되돌려줘' });
+    await h.approveAndExecute(at(5));
+    expect(h.writes.transition.at(-1)).toEqual({ issueKey: KEY, transitionId: '22', toStatusId: '1', fromStatusId: '3' });
+  });
+
+  it('a pick no longer listed (or now leading elsewhere) when the preview is built proposes nothing', async () => {
+    const workflow = { ...DEFAULT_WORKFLOW, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '1')] };
+    const h = harness({ workflow });
+    const { receiptId } = await h.transition();
+    await h.undo('jira-transition-undo', receiptId, at(3));
+    const choice = await h.flow.find(h.session());
+    h.jira.workflow = { ...workflow, '3': [option('21', '멈춤', '1'), option('22', '처음으로', '7')] };
+    expect(reason(await h.flow.choose({ session: h.session(), actor: OWNER, now: at(4), view: choice as NonNullable<typeof choice>, index: 2 }))).toBe('undo-target-changed');
+    expect(h.writes.transition).toHaveLength(1);
+  });
+
+  it('none leads back: said plainly, nothing proposed', async () => {
+    const workflow = { ...DEFAULT_WORKFLOW, '3': [option('31', '끝내기', '5')] };
+    const h = harness({ workflow });
+    const { receiptId } = await h.transition();
+    const step = await h.undo('jira-transition-undo', receiptId, at(3));
+    expect(reason(step)).toBe('undo-no-path');
+    expect(text(step)).toContain('바꾸기 전 상태로 돌리는 전환이 지금 Jira에 없어요');
+    expect(h.writes.transition).toHaveLength(1);
+  });
+
+  it('the issue moved on (another status, or a moved key) is undo-target-changed; a move between preview and phrase is TARGET_CHANGED at the writer', async () => {
+    const h = harness();
+    const { receiptId } = await h.transition();
+    h.jira.status = '5';
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(3)))).toBe('undo-target-changed');
+    h.jira.status = '3';
+    h.jira.moved = true;
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(3)))).toBe('undo-target-changed');
+    h.jira.moved = false;
+    expect((await h.undo('jira-transition-undo', receiptId, at(3))).kind).toBe('preview');
+    h.jira.status = '5';
+    const done = await h.approveAndExecute(at(4));
+    expect(done).toMatchObject({ kind: 'outcome', outcome: { status: 'NOT_SENT', reason: 'TARGET_CHANGED' } });
+    expect(h.jira.status).toBe('5');
+    expect(text(done)).toContain('되돌리지 못했어요');
+  });
+
+  it('a legacy transition (no fromStatusId recorded) is not undoable; a failed read proposes nothing', async () => {
+    const legacy = harness({ noStatusRead: true });
+    const l = await legacy.transition();
+    const step = await legacy.undo('jira-transition-undo', l.receiptId, at(3));
+    expect(reason(step)).toBe('undo-unavailable');
+    expect(text(step)).toContain('바꾸기 전 상태가 기록되지 않았어요');
+    const failing = harness();
+    const f = await failing.transition();
+    failing.jira.failReads = true;
+    expect(reason(await failing.undo('jira-transition-undo', f.receiptId, at(3)))).toBe('undo-read-failed');
+    expect(failing.writes.transition).toHaveLength(1);
+  });
+
+  it("only this actor's own fresh lastAction reaches it", async () => {
+    const h = harness();
+    const { receiptId } = await h.transition();
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(3), OTHER))).toBe('undo-nothing');
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(3), OWNER, 'sess-2'))).toBe('undo-nothing');
+    expect(reason(await h.undo('jira-transition-undo', receiptId, at(12)))).toBe('undo-nothing');
+    expect(reason(await h.undo('jira-comment-undo', receiptId, at(3)))).toBe('undo-nothing');
+    expect(h.reads.status).toBe(1);
+  });
+
+  it('execution re-derives the revert from the transition\'s own anchor: a card whose source anchor is gone deletes nothing; the revert is never undone again', async () => {
+    const h = harness();
+    const { receiptId, anchorTaskId } = await h.transition();
+    expect((await h.undo('jira-transition-undo', receiptId, at(3))).kind).toBe('preview');
+    const source = h.tasks.get(anchorTaskId) as Task;
+    const sourceAnchor = source.metadata?.connectorWriteAnchor as { payload: Record<string, unknown> } & Record<string, unknown>;
+    // The undone transition's recorded fromStatusId is rewritten: the persisted card no longer equals the re-derived inverse.
+    h.tasks.set(anchorTaskId, { ...source, metadata: { ...source.metadata, connectorWriteAnchor: { ...sourceAnchor, payload: { ...sourceAnchor.payload, fromStatusId: '7' } } } });
+    const step = await h.approveAndExecute(at(4));
+    expect(reason(step)).toBe('undo-unavailable');
+    expect(h.writes.transition).toHaveLength(1);
+    expect(externalUndoFamilyOf('external.write', 'ISSUE_TRANSITION_REVERT')).toBeUndefined();
+    for (const phrase of ['되돌리기 실행', '상태 되돌리기 실행', 'Jira 상태 변경 실행']) expect(isAcceptedExecutionPhrase('issueTransitionRevert', phrase), phrase).toBe(false);
   });
 });

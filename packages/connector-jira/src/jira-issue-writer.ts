@@ -14,6 +14,7 @@ import {
   type IssueCommentRequest,
   type IssueCommentState,
   type IssueCommentWriter,
+  type IssueStatusReadout,
   type IssueTransitionOption,
   type IssueTransitionRequest,
   type IssueTransitionWriter,
@@ -172,9 +173,9 @@ class JiraWriteClient {
    * The pre-write identity check: the issue still answers to exactly the approved key. A moved issue answers its old
    * key with its new one; that (and any read failure) is NOT_SENT, since nothing has been written yet. Undefined = go.
    */
-  async confirmIssueKey(issueKey: string): Promise<ConnectorWriteOutcome | undefined> {
+  async confirmIssueKey(issueKey: string, requireStatusId?: string): Promise<ConnectorWriteOutcome | undefined> {
     const url = this.issueUrl(issueKey);
-    url.searchParams.set('fields', 'project');
+    url.searchParams.set('fields', requireStatusId === undefined ? 'project' : 'project,status');
     let response: Response;
     try {
       response = await this.request(url, 'GET');
@@ -192,7 +193,12 @@ class JiraWriteClient {
       return connectorWriteNotSent('UNAVAILABLE');
     }
     if (!isRecord(payload) || typeof payload.key !== 'string') return connectorWriteNotSent('UNAVAILABLE');
-    return payload.key === issueKey ? undefined : connectorWriteNotSent('TARGET_CHANGED');
+    if (payload.key !== issueKey) return connectorWriteNotSent('TARGET_CHANGED');
+    if (requireStatusId === undefined) return undefined;
+    // Compare-and-set (O5): the issue must still be in exactly the status the transition is being reverted from.
+    const statusId = isRecord(payload.fields) && isRecord(payload.fields.status) ? payload.fields.status.id : undefined;
+    if (typeof statusId !== 'string' || !NUMERIC_ID.test(statusId)) return connectorWriteNotSent('UNAVAILABLE');
+    return statusId === requireStatusId ? undefined : connectorWriteNotSent('TARGET_CHANGED');
   }
 
   /** A GET that must answer 2xx JSON. 404 is reported as `undefined` only when `notFoundIsAbsent`. Value-free errors. */
@@ -389,10 +395,25 @@ export class JiraIssueTransitionWriter implements IssueTransitionWriter {
     return this.client.listTransitions(issueKey);
   }
 
+  async readIssueStatus(issueKey: string): Promise<IssueStatusReadout> {
+    if (!this.client.allowsIssue(issueKey)) {
+      throw new ConnectorQueryError('UNSUPPORTED_QUERY', 'jira writer: the issue is not in an allowlisted project');
+    }
+    const url = this.client.issueUrl(issueKey);
+    url.searchParams.set('fields', 'status');
+    const payload = await this.client.getJson(url);
+    const status = isRecord(payload) && isRecord(payload.fields) ? payload.fields.status : undefined;
+    if (!isRecord(payload) || typeof payload.key !== 'string' || !isRecord(status) || !isNumericId(status.id)) {
+      throw invalidResponse();
+    }
+    return { issueKey: payload.key, statusId: status.id, statusName: boundName(status.name) };
+  }
+
   async transition(request: IssueTransitionRequest): Promise<ConnectorWriteOutcome> {
     if (!this.client.allowsIssue(request?.issueKey)) return connectorWriteNotSent('TARGET_NOT_ALLOWED');
     if (!isNumericId(request.transitionId) || !isNumericId(request.toStatusId)) return connectorWriteNotSent('INVALID_REQUEST');
-    const drifted = await this.client.confirmIssueKey(request.issueKey);
+    if (request.fromStatusId !== undefined && !isNumericId(request.fromStatusId)) return connectorWriteNotSent('INVALID_REQUEST');
+    const drifted = await this.client.confirmIssueKey(request.issueKey, request.fromStatusId);
     if (drifted !== undefined) return drifted;
 
     let options: IssueTransitionOption[];
