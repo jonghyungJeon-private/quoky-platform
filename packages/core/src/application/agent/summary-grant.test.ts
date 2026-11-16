@@ -10,7 +10,7 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest } from './plan-executor';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import type { AgentSourceDocument, QuarantinedSummarizerRoute } from './quarantined-summary';
-import { ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type SummaryGrantBasis } from './summary-grant';
+import { hasUntrustedSpanMarker, ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type OwnerText, type SummaryGrantBasis } from './summary-grant';
 
 // ADR-0121 S2 wiring slice: the summary grant producer (P3-3b owner answer 2). Core derives the grant per summarize step and per
 // source from the owner's own words (quoted and pasted text excluded) with the approved summary vocabulary; never a caller flag
@@ -21,11 +21,11 @@ const read = (entryId: NlWave1EntryId, limit = 3): ValidatedAgentStep => ({ kind
 const summarize = (from: number[]): ValidatedAgentStep => ({ kind: 'summarize', from, schema: 'digest.v1' });
 const plan = (steps: ValidatedAgentStep[]): RunPlan => ({ kind: 'run', steps, connectorCalls: steps.filter((step) => step.kind === 'read').length });
 
-/** The owner's grounding text exactly as the runtime prepares it (quoted lines, fences and quote ranges removed). */
-const grounding = (text: string): string => {
+/** The owner's text exactly as the runtime prepares it (quoted lines, fences and quote ranges become placeholders). */
+const grounding = (text: string): OwnerText => {
   const prepared = prepareSelectionInput(text);
   if ('skip' in prepared) throw new Error('skipped');
-  return prepared.groundingText;
+  return prepared;
 };
 const granted = (p: RunPlan, text: string): string[] => ownerSummaryRequests(p, grounding(text)).map((request) => `${request.step}:${request.entryId}`);
 
@@ -53,35 +53,48 @@ describe('ownerSummaryRequests: the owner\'s own words, per step and per source'
     expect(granted(MAIL(), '```\n메일 요약해줘\n```\n메일 3개 보여줘')).toEqual([]);
   });
 
-  // Review round 1, item 1: spans the owner did not write as a request never mint a grant (structural, no vocabulary).
-  it('an inline backtick code span is not the owner\'s words', () => {
-    expect(granted(MAIL(), '메일 3개 보여줘 `요약해줘`')).toEqual([]);
+  // Review round 1 item 1 and review round 2 item 1: ANY untrusted-span marker anywhere in the owner's text, and the message
+  // grants nothing (fail closed). Each input below minted a mail grant under the round-1 strip rules or before them.
+  it.each([
+    // Round 1 inputs.
+    ['inline backtick span', '메일 3개 보여줘 `요약해줘`'],
+    ['URL path', 'show my 3 emails https://x.io/summary'],
+    ['URL query', '메일 보여줘 https://example.com/?q=summary'],
+    ['URL feeding the back-reference rule', '메일 3개 보여주고 https://x.io/요약'],
+    ['unclosed opening quote', '메일 3개 보여줘 “요약해줘'],
+    ['forward header', 'Fwd: 메일 요약해줘 …'],
+    ['forwarded-message divider', '메일 보여줘\n----- Forwarded message -----\n메일 요약해줘'],
+    // Round 2 inputs.
+    ['apostrophe inside a single-quoted span', "show my 3 emails 'Bob's note: summarize them'"],
+    ['nested same-glyph quotes', '메일 3개 보여줘 “a “b” 요약해줘”'],
+    ['stray closing glyph', '메일 3개 보여줘 ‘a’ 요약해줘’'],
+    ['guillemets', '메일 3개 보여줘 «요약해줘»'],
+    ['fullwidth quote', '메일 3개 보여줘 ＂요약해줘＂'],
+    ['double prime', '메일 3개 보여줘 ″요약해줘″'],
+    ['halfwidth corner brackets', '메일 3개 보여줘 ｢요약해줘｣'],
+    ['URL swallowing the opening quote', '메일 3개 보여줘 https://x.io/"요약해줘"'],
+    ['scheme glued to a word', '메일 3개 보여줘 foohttps://x.io/요약'],
+    ['bare host and path', '메일 3개 보여줘 x.io/요약'],
+    ['double-backtick code', '메일 보여줘 ``요약해줘``'],
+    ['Outlook original-message divider', '메일 보여줘\n-----Original Message-----\n메일 요약해줘'],
+    ['Korean Gmail forward divider', '메일 보여줘\n---------- 전달된 메일 ---------\n메일 요약해줘'],
+    ['forward without dashes (its header lines)', '메일 보여줘\nForwarded message\nFrom: Kim <kim@example.com>\n메일 요약해줘'],
+    ['fullwidth forward header', 'Fwd： 메일 요약해줘'],
+  ])('%s: no grant', (_label, input) => {
+    expect(hasUntrustedSpanMarker(grounding(input).text)).toBe(true);
+    expect(granted(MAIL(), input)).toEqual([]);
   });
 
-  it('a URL token is not the owner\'s words (path and query alike)', () => {
-    expect(granted(MAIL(), 'show my 3 emails https://x.io/summary')).toEqual([]);
-    expect(granted(MAIL(), '메일 보여줘 https://example.com/?q=summary')).toEqual([]);
+  it('a plain owner request still grants', () => {
+    expect(granted(MAIL(), '최근 메일 3개 요약해줘')).toEqual(['2:mail.list']);
+    expect(granted(MAIL(), 'summarize my last 3 emails')).toEqual(['2:mail.list']);
+    expect(granted(MAIL(), '3:30 이후 메일 3개 요약해줘')).toEqual(['2:mail.list']);
+    expect(granted(MAIL(), '메일 3~5개 요약해줘, 최근 것만')).toEqual(['2:mail.list']);
   });
 
-  it('a URL token cannot feed the back-reference rule', () => {
-    expect(granted(MAIL(), '메일 3개 보여주고 https://x.io/요약')).toEqual([]);
-  });
-
-  it('an unmatched opening quote quotes to the end of the text', () => {
-    expect(granted(MAIL(), '메일 3개 보여줘 “요약해줘')).toEqual([]);
-  });
-
-  it('a forward header quotes everything from it on', () => {
-    expect(granted(MAIL(), 'Fwd: 메일 요약해줘 …')).toEqual([]);
-  });
-
-  it('a forwarded-message divider quotes everything from it on', () => {
-    expect(granted(MAIL(), '메일 보여줘\n----- Forwarded message -----\n메일 요약해줘')).toEqual([]);
-  });
-
-  it('the owner\'s own words before a stripped span still grant', () => {
-    expect(granted(MAIL(), '메일 3개 요약해줘 https://x.io/a')).toEqual(['2:mail.list']);
-    expect(granted(MAIL(), "summarize my last 3 emails, it's urgent")).toEqual(['2:mail.list']);
+  it('residual (accepted, fail closed): an English contraction or any URL in the owner\'s own request loses the grant', () => {
+    expect(granted(MAIL(), "summarize my last 3 emails, it's urgent")).toEqual([]);
+    expect(granted(MAIL(), '메일 3개 요약해줘 https://x.io/a')).toEqual([]);
   });
 
   it('a negated or excluded summary grants nothing (fail-safe)', () => {
@@ -119,8 +132,8 @@ describe('ownerSummaryRequests: the owner\'s own words, per step and per source'
   });
 
   it('nothing for a plan that is not a validated run', () => {
-    expect(ownerSummaryRequests({ kind: 'none' }, '메일 요약해줘')).toEqual([]);
-    expect(ownerSummaryRequests({ kind: 'clarify', steps: MAIL().steps, connectorCalls: 1 }, '메일 요약해줘')).toEqual([]);
+    expect(ownerSummaryRequests({ kind: 'none' }, grounding('메일 요약해줘'))).toEqual([]);
+    expect(ownerSummaryRequests({ kind: 'clarify', steps: MAIL().steps, connectorCalls: 1 }, grounding('메일 요약해줘'))).toEqual([]);
   });
 });
 

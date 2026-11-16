@@ -464,7 +464,7 @@ export class AgentRunService {
     const result = await executor.execute(validated, {
       budget,
       // Core's producer: the owner's own words (quoted and pasted text excluded) decide each summary step's grant per source.
-      grants: summaryGrantBasis(validated, prepared.groundingText),
+      grants: summaryGrantBasis(validated, prepared),
       stillRunning: () => this.liveSwitchRunning(turn.actor.id),
       // Shutdown cuts the run: no later step starts and the calls in flight are aborted (review round 1 item 5).
       signal: this.background.signal,

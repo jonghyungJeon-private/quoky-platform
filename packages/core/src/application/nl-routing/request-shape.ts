@@ -100,44 +100,6 @@ const CONTRACTED_QUOTATIVE_KO = /(?:하|으|달|주)(?:(?:래|래요|래서|라�
 const CONTRACTED_QUOTATIVE_FINAL_KO = /(?:하|으|달|주)(?:래|래요|래서|랬|라셔|라시|란다|재|재요)(?=$|[\s.!?~,]|[\u3131-\u318e])/u;
 /** A quoted segment of the frame (content spans already removed): '…', "…", “…”, ‘…’, 「…」, 『…』. */
 const QUOTED_SEGMENT = /'([^']+)'|"([^"]+)"|“([^”]+)”|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
-
-/** A fenced code block (to the end of the text when it is never closed). */
-const FENCED_CODE = /```[\s\S]*?(?:```|$)/gu;
-/** An inline code span (to the end of the text when the backtick is never closed). */
-const INLINE_CODE = /`[^`]*(?:`|$)/gu;
-/** A URL token: everything up to the next whitespace from `http(s)://` or `www.`. */
-const URL_TOKEN = /\b(?:https?:\/\/|www\.)\S+/giu;
-/**
- * A forward or reply header (`Fwd:`, `Fw:`, `RE:` starting the text or a word) or a forwarded-message divider
- * (`----- Forwarded`): what follows is someone else's message. Line starts are not required because the grounding text
- * has its line breaks collapsed.
- */
-const FORWARD_HEADER = /(?<![\p{L}\p{N}])(?:Fwd?|RE)\s*:|-{3,}\s*Forwarded\b/iu;
-/**
- * An opening quote left after the balanced pairs are removed: “, ‘, 「, 『, " anywhere, and ' unless it sits after a letter or
- * digit (an apostrophe: "don't", "it's").
- */
-const UNMATCHED_OPENING_QUOTE = /[“‘「『"]|(?<![\p{L}\p{N}])'/u;
-
-/**
- * ADR-0121 S2 wiring (the summary grant, P3-3b owner answer 2; review round 1 item 1): the owner's own prose, with every
- * span the owner did not write as a request set aside, structurally and without vocabulary:
- *  - fenced and inline backtick code spans (an unclosed one runs to the end);
- *  - everything from a forward/reply header or a forwarded-message divider on;
- *  - URL tokens (`http(s)://…`, `www.…`), path and query included;
- *  - every quoted segment ('…', "…", “…”, ‘…’, 「…」, 『…』, the same pairs {@link nlRelaysRequest} reads), and an opening
- *    quote that is never closed quotes to the end of the text.
- * Every rule only removes text, so it can only take a grant away (fail-safe). Pure.
- */
-export function nlWithoutQuotedSegments(prose: string): string {
-  let text = prose.replace(FENCED_CODE, ' ').replace(INLINE_CODE, ' ');
-  const header = FORWARD_HEADER.exec(text);
-  if (header !== null) text = text.slice(0, header.index);
-  text = text.replace(URL_TOKEN, ' ').replace(QUOTED_SEGMENT, ' ');
-  const opening = UNMATCHED_OPENING_QUOTE.exec(text);
-  if (opening !== null) text = text.slice(0, opening.index);
-  return text.replace(/\s+/gu, ' ').trim();
-}
 const REPORTED_EN = /\b(?:told|asked|wants?|wanted|said|says)\s+(?:(?:me|us|him|her|them)\s+)?to\b|\b(?:you|someone|somebody|they|he|she)\s+(?:should|must|might|could|said|says|told|wants?|wanted)\b/u;
 /**
  * A joke or a tease (CA round 3): never an instruction. The closed class of joke nouns (농담, 장난; English joke) frames

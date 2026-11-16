@@ -1,8 +1,8 @@
 import type { NlCatalogEntry, NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_MODE_SUMMARY_WORDS, withoutStructures } from '../nl-routing/action-entries';
 import { nlClauseNamesEntry, nlClauses, type NlClause } from '../nl-routing/clause-flags';
-import { nlHasExclusionOrNegation, nlWithoutQuotedSegments } from '../nl-routing/request-shape';
-import { normalizeForMatch } from '../nl-routing/selection-input';
+import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
+import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, normalizeForMatch, type PreparedSelectionInput } from '../nl-routing/selection-input';
 import { groundingWordIn, nlItemReadVeto } from '../nl-routing/selection-validator';
 import { readOutputLabel } from './flow-policy';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
@@ -15,14 +15,15 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
  * {@link SummaryGrantBasis} bound to one validated plan; the executor hands it to `summaryGrantFor`, which mints the actual
  * `SummaryEgressGrant` through the module-private `mintGrant`, keyed to the run token of that one `execute` call.
  *
- * - **Never a caller flag, never the planner's step.** There is no boolean to pass: the only input is the owner's grounding
- *   text (the prepared text with quoted lines, fenced blocks, platform quote ranges and attachments already removed by
- *   `prepareSelectionInput`) and the validated plan, whose `summarize` step only says WHICH summary exists, never that it was
- *   asked for. A forged or foreign basis is not in the module-private store and grants nothing.
- * - **The owner's own words only.** Quoted segments (an unclosed quote runs to the end), backtick code spans, URL tokens and
- *   everything from a forward/reply header on ({@link nlWithoutQuotedSegments}), and pasted structures
- *   ({@link withoutStructures}) are set aside first, and a relayed request ("팀장이 3번 요약해달래", {@link nlItemReadVeto}) grants
- *   nothing.
+ * - **Never a caller flag, never the planner's step.** There is no boolean to pass: the only input is the owner's prepared
+ *   text (`prepareSelectionInput`: quoted lines, fenced blocks and platform quote ranges are placeholders, attachments a
+ *   count line) and the validated plan, whose `summarize` step only says WHICH summary exists, never that it was asked for. A
+ *   forged or foreign basis is not in the module-private store and grants nothing.
+ * - **No untrusted span at all (review round 2, fail closed).** When the owner's text holds ANY untrusted-span marker
+ *   ({@link hasUntrustedSpanMarker}: a quote-like glyph or apostrophe, a backtick, a quoted or fenced placeholder, a URL-like
+ *   token, a divider run, a header shape), no grant is minted for the message: every summary is listing-only. Nothing is
+ *   stripped and re-read: there is no span boundary to get wrong. Pasted structures ({@link withoutStructures}) are still set
+ *   aside, and a relayed request ("팀장이 3번 요약해달래", {@link nlItemReadVeto}) grants nothing.
  * - **The existing approved vocabulary.** The summary words are {@link NL_MODE_SUMMARY_WORDS} (A6 R2 ratification record C,
  *   the words that state `item.summarize`'s `summary` mode); no word list of its own.
  * - **Per source, by clause (fail closed).** The prose is cut into the S2 conjuncts with the verb connective
@@ -34,6 +35,43 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
  *   "and" between a noun and the summary verb in English word order) grants nothing: the summary is listing-only, never a
  *   wrong egress.
  */
+
+/** The owner's text as `prepareSelectionInput` prepared it: `text` (line breaks and placeholders kept) and `groundingText`. */
+export type OwnerText = Pick<PreparedSelectionInput, 'text' | 'groundingText'>;
+
+/**
+ * Review round 2 (fail closed): the closed structural classes that mark a span the owner may not have written as a request.
+ * No vocabulary: glyph classes and shapes only. Each is tested on the text as written and on its NFKC form (fullwidth and
+ * compatibility forms fold onto the ASCII ones).
+ */
+const UNTRUSTED_SPAN_MARKERS: readonly RegExp[] = [
+  // Any quote-like glyph: initial/final quote punctuation (“ ” ‘ ’ « » ‹ ›), the low-9 quotes, ASCII and fullwidth quotes and
+  // apostrophes, backticks and the acute accent, primes, the modifier-letter apostrophes, dingbat quotes, and the CJK and
+  // angle brackets used as quotes. ASCII ( ) [ ] { } are not quotes (pasted structures are set aside separately).
+  /[\p{Pi}\p{Pf}"'`´＂＇｀‚„′″‴‵‶‷ʹʺʻʼʽˮ❛❜❝❞「」『』｢｣《》〈〉【】〔〕〖〗〘〙〚〛〝〞〟⟨⟩]/u,
+  // The input preparation's own placeholders: a fenced block or a quoted line / platform quote range was in the message.
+  new RegExp(`${escapeRegExp(NL_FENCED_PLACEHOLDER)}|${escapeRegExp(NL_QUOTED_PLACEHOLDER)}`, 'u'),
+  // A URL-like token: any scheme separator, `www.`, a dotted host with a letter TLD (path or not: a label can carry a word),
+  // or a host with a port and a path.
+  /:\/\/|www\.|[\p{L}\p{N}-][.。｡][A-Za-z]{2,}(?![A-Za-z])|[A-Za-z]:\d{1,5}\//iu,
+  // A divider run: three or more of - _ = ~ * or a Unicode dash, optionally one space apart ("-----", "- - -").
+  /(?:[-_=~*\u2010-\u2015\u2212\u2500\u2501][ \t]?){2,}[-_=~*\u2010-\u2015\u2212\u2500\u2501]/u,
+  // A header shape: a Latin token of at most 3 letters and a colon anywhere (Fwd:, Fw:, RE:, AW:, WG:) ...
+  /(?<![\p{L}\p{N}])[A-Za-z]{1,3}[ \t]*:/u,
+  // ... or, at the start of the text or of a line, a short label holding a letter and a colon ("Subject:", "보낸 사람:"); a time
+  // ("3:30") is no label.
+  /(?:^|\n)[ \t]*(?=[\p{N}_ \t]*\p{L})[\p{L}\p{N}_][\p{L}\p{N}_ \t]{0,30}:/u,
+];
+
+/** Whether the owner's prepared text holds any untrusted-span marker (as written or in its NFKC form). Pure. */
+export function hasUntrustedSpanMarker(text: string): boolean {
+  const folded = text.normalize('NFKC');
+  return UNTRUSTED_SPAN_MARKERS.some((marker) => marker.test(text) || marker.test(folded));
+}
+
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
 
 declare const BASIS_BRAND: unique symbol;
 /** The owner's summary requests for ONE validated plan. Opaque: only {@link summaryGrantBasis} makes one. */
@@ -58,13 +96,16 @@ const keyOf = (step: number, entryId: string): string => `${step}:${entryId}`;
  * The (summarize step, source) pairs the owner's own words ask a summary of, for the sources that need a grant
  * (`REMOTE_ON_SUMMARY_REQUEST`). Pure and total; `[]` for anything but a validated `run` plan.
  */
-export function ownerSummaryRequests(plan: ValidatedAgentPlan, groundingText: string): readonly OwnerSummaryRequest[] {
+export function ownerSummaryRequests(plan: ValidatedAgentPlan, prepared: OwnerText): readonly OwnerSummaryRequest[] {
   if (plan.kind !== 'run') return [];
   let owner: string;
   try {
+    // Review round 2: any untrusted-span marker anywhere in the owner's text, and the message grants nothing (fail closed).
+    if (hasUntrustedSpanMarker(prepared.text)) return [];
+    const groundingText = prepared.groundingText;
     // A relayed request is never the owner's own (the existing A6 R2 veto of a reported summary request).
     if (nlItemReadVeto(groundingText) !== undefined) return [];
-    owner = withoutStructures(nlWithoutQuotedSegments(groundingText));
+    owner = withoutStructures(groundingText);
   } catch {
     return [];
   }
@@ -103,9 +144,9 @@ export function ownerSummaryRequests(plan: ValidatedAgentPlan, groundingText: st
 }
 
 /** The opaque basis for one validated plan (see {@link ownerSummaryRequests}); it grants only for that very plan object. */
-export function summaryGrantBasis(plan: ValidatedAgentPlan, groundingText: string): SummaryGrantBasis {
+export function summaryGrantBasis(plan: ValidatedAgentPlan, prepared: OwnerText): SummaryGrantBasis {
   const basis = Object.freeze({}) as SummaryGrantBasis;
-  const asked = new Set(ownerSummaryRequests(plan, groundingText).map((request) => keyOf(request.step, request.entryId)));
+  const asked = new Set(ownerSummaryRequests(plan, prepared).map((request) => keyOf(request.step, request.entryId)));
   BASES.set(basis, { plan, asked });
   return basis;
 }
