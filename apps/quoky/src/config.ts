@@ -133,7 +133,8 @@ export interface QuokyConfig {
   channelGrants: ChannelGrantsConfig;
   /**
    * ADR-0121 stage S2 bounded read agent: `QUOKY_AGENT_MODE` (`off` | `shadow`, default `off`; `active` is refused at
-   * startup until the D11 gates pass; `shadow` needs `QUOKY_NL_INTENT_MODE=active`). See `agent/agent-config.ts`.
+   * startup until the D11 gates pass, and before that without `QUOKY_EGRESS_GUARD=enforce`; `shadow` needs
+   * `QUOKY_NL_INTENT_MODE=active`). See `agent/agent-config.ts`.
    */
   agent: AgentConfig;
   /**

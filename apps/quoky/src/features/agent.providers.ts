@@ -1,5 +1,5 @@
 import type { Provider } from '@nestjs/common';
-import { AgentRunService, CapabilityRouter, STORAGE_PROVIDER, type Logger, type StorageProvider } from '@quoky/core';
+import { AgentRunService, CapabilityRouter, STORAGE_PROVIDER, type AgentReadPorts, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import type { AgentConfig } from '../agent/agent-config';
 
@@ -11,9 +11,25 @@ import type { AgentConfig } from '../agent/agent-config';
  * `storage.init()`). Nothing else: no connector, reader, writer, command runner, tool provider, memory or fetch.
  *
  * Always composed (the runtime's optional `agentRuns` dep, ADR-0032 baseline 37 → 38); `QUOKY_AGENT_MODE=off` (the default)
- * builds it in `off` and the runtime then reads only its mode. `active` never reaches here: `config.ts` refuses it at
- * startup (`AGENT_MODE_ACTIVE_NOT_RELEASED`) and the service constructor refuses it again.
+ * builds it in `off` and the runtime then reads only its mode.
+ *
+ * ADR-0121 S2 wiring slice: in `active` (and only there) the service also gets the real collaborators of a run — M2's route is
+ * the same `CapabilityRouter` as the existing `ProviderSelector` (ADR-0121 D12: no model list, no new port; the owner's policy
+ * and the derived locality constraint decide), and the narrow agent read ports ({@link createAgentReadPorts}). `off` and
+ * `shadow` are built exactly as before (no read port, no M2 route). `active` still never reaches here from the environment:
+ * `config.ts` refuses it at startup (`AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE`, then `AGENT_MODE_ACTIVE_NOT_RELEASED`) until
+ * stage S2 P5.
  */
+
+/**
+ * The agent read ports by catalog read entry. EMPTY on purpose: the adapter slice (ADR-0121 S2 P3-3a note, a ratified
+ * requirement) must first give every port a budgeted HTTP client that calls `reserveHttp()` before each request (and the
+ * body-fetch cost accounting of P3-3b #8), pinned by a test that a port cannot send the 51st request. Until then a planned
+ * read is `not-run` (`no-reader`) and the reply says it was skipped.
+ */
+export function createAgentReadPorts(): AgentReadPorts {
+  return Object.freeze({});
+}
 
 export const AGENT_RUNS = Symbol('AgentRuns');
 
@@ -42,6 +58,7 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
           timeZone: config.timeZone,
           timeoutMs: config.timeoutMs,
           logger,
+          ...(config.agent.mode === 'active' ? { readers: createAgentReadPorts(), summarizer: router } : {}),
         });
       },
       inject: [CapabilityRouter, STORAGE_PROVIDER],
