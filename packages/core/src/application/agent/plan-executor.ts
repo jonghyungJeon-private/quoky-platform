@@ -207,6 +207,11 @@ export interface AgentExecuteOptions {
    * step and every later one are `not-run` (`stopped`). Work already started finishes (the A6-D3 amendment of 2026-11-03).
    */
   readonly stillRunning?: () => Promise<boolean>;
+  /**
+   * The service's shutdown signal (review round 1 item 5). Aborted: no later step starts (`not-run`, `stopped`) and the port or
+   * M2 call in flight is aborted and not waited for.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** What one `execute` call keeps in memory: never in the result. */
@@ -225,6 +230,8 @@ interface RunState {
   readonly run: SummaryRunToken;
   /** The owner's summary requests and the plan they were derived for (absent: no grant). */
   readonly owner?: { readonly basis: SummaryGrantBasis; readonly plan: object };
+  /** The shutdown signal (absent: none). */
+  readonly shutdown?: AbortSignal;
 }
 
 type ReadStep = Extract<ValidatedAgentStep, { kind: 'read' }>;
@@ -253,6 +260,7 @@ export class AgentPlanExecutor {
       requested: new Map(),
       run: newSummaryRunToken(),
       ...(options.grants !== undefined ? { owner: { basis: options.grants, plan } } : {}),
+      ...(options.signal !== undefined ? { shutdown: options.signal } : {}),
     };
     // Which later summarize steps cover which read.
     for (const [index, step] of plan.steps.entries()) {
@@ -270,8 +278,14 @@ export class AgentPlanExecutor {
     let stopped = false;
     for (const [index, step] of plan.steps.entries()) {
       const number = index + 1;
-      // The kill switch, re-read before each step: a stop blocks the next step at once (D7; A6-D3 amendment).
-      if (!blocked && !stopped && options.stillRunning !== undefined && !(await stillRunning(options.stillRunning))) stopped = true;
+      // Shutdown, then the kill switch re-read before each step: a stop blocks the next step at once (D7; A6-D3 amendment). The
+      // switch read cannot outlive the wall (review round 1 item 4): a read the wall wins is a wall breach, and the step and
+      // every later one are `not-run` (`bound`).
+      if (!blocked && !stopped && state.shutdown?.aborted === true) stopped = true;
+      if (!blocked && !stopped && options.stillRunning !== undefined && !safely(() => budget.breach !== undefined, true)) {
+        const probe = await stillRunningWithinWall(options.stillRunning, budget);
+        if (probe === 'stopped' || state.shutdown?.aborted === true) stopped = true;
+      }
       if (stopped) {
         results.push(notRun(step, number, 'stopped'));
         continue;
@@ -376,8 +390,8 @@ export class AgentPlanExecutor {
         else state.denials.set(`${cover.step}:${number}`, refusal);
       }
     }
-    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}) }, budget);
-    if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}) }, budget, state.shutdown);
+    if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: state.shutdown?.aborted === true ? 'stopped' : 'bound' };
     budget.checkWall();
     // Any breach or refusal during the call (a spent wall, a refused reservation) ends the step `not-run` (bound) and the run
     // partial, whatever the port returned: a port that exhausted its reservations and then reports success is still cut off.
@@ -434,12 +448,15 @@ export class AgentPlanExecutor {
     // One reader per call that started, in start order (= source order: the calls start in one synchronous loop).
     const started: (() => QuarantinedCallAudit | undefined)[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const unlink = linkShutdown(state.shutdown, controller);
     const wall = new Promise<'wall'>((resolve) => {
       timer = setTimeout(() => {
         budget.markBreach('wall-time');
         controller.abort();
         resolve('wall');
       }, Math.max(1, budget.remainingMs()));
+      // Shutdown aborts the call and is not waited for (no wall breach: the run is `stopped`).
+      controller.signal.addEventListener('abort', () => resolve('wall'), { once: true });
     });
     try {
       // A throw or a rejection is the closed `model` failure; a call the wall wins is still handled (never unhandled).
@@ -496,6 +513,7 @@ export class AgentPlanExecutor {
       return { ...base, status: 'not-run', ...callAudits() };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      unlink();
       controller.abort();
     }
   }
@@ -505,7 +523,12 @@ export class AgentPlanExecutor {
    * request the port makes is reserved on the run's budget first, so usage is counted up to the abort and nothing is made
    * after it. A throw is an `UNKNOWN` failure whose message is never read.
    */
-  private async callPort(reader: AgentReadPort, request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments'>, budget: AgentRunBudget): Promise<AgentReadResponse | 'wall'> {
+  private async callPort(
+    reader: AgentReadPort,
+    request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments'>,
+    budget: AgentRunBudget,
+    shutdown?: AbortSignal,
+  ): Promise<AgentReadResponse | 'wall'> {
     const controller = new AbortController();
     const reserve = (take: () => boolean): boolean => {
       if (controller.signal.aborted) return false;
@@ -522,6 +545,12 @@ export class AgentPlanExecutor {
         resolve('wall');
       }, Math.max(1, budget.remainingMs()));
     });
+    // Shutdown aborts the port call and is not waited for (`'wall'` without a wall breach: the caller reads the signal).
+    const unlink = linkShutdown(shutdown, controller);
+    const cut = new Promise<'wall'>((resolve) => {
+      if (shutdown?.aborted === true) resolve('wall');
+      shutdown?.addEventListener('abort', () => resolve('wall'), { once: true });
+    });
     try {
       const call = Promise.resolve()
         .then(() => reader.read({ ...request, remainingMs: budget.remainingMs(), signal: controller.signal, budget: handle }))
@@ -529,9 +558,10 @@ export class AgentPlanExecutor {
           (value) => value,
           (): AgentReadResponse => ({ ok: false, code: 'UNKNOWN' }),
         );
-      return await Promise.race([call, wall]);
+      return await Promise.race([call, wall, cut]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      unlink();
       controller.abort();
     }
   }
@@ -595,13 +625,42 @@ async function readinessWithinWall(input: SummaryReadinessInput, budget: AgentRu
   }
 }
 
-/** The kill-switch probe: anything but an exact `true` (a throw, a rejection, another value) stops the run (fail closed). */
-async function stillRunning(probe: () => Promise<boolean>): Promise<boolean> {
+/**
+ * The kill-switch probe raced against the run's wall (review round 1 item 4): `running` only for an exact `true`; anything
+ * else (a throw, a rejection, another value) is `stopped` (fail closed); a probe still pending when the wall ends is `wall`,
+ * with the wall breach marked. Never rejects.
+ */
+async function stillRunningWithinWall(probe: () => Promise<boolean>, budget: AgentRunBudget): Promise<'running' | 'stopped' | 'wall'> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const wall = new Promise<'wall'>((resolve) => {
+    timer = setTimeout(() => {
+      safely(() => budget.markBreach('wall-time'), undefined);
+      resolve('wall');
+    }, Math.max(1, safely(() => budget.remainingMs(), 0)));
+  });
   try {
-    return (await probe()) === true;
-  } catch {
-    return false;
+    const read = Promise.resolve()
+      .then(probe)
+      .then(
+        (value): 'running' | 'stopped' => (value === true ? 'running' : 'stopped'),
+        (): 'stopped' => 'stopped',
+      );
+    return await Promise.race([read, wall]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/** Abort `controller` when `shutdown` aborts (at once when it already has); returns the unlink. */
+function linkShutdown(shutdown: AbortSignal | undefined, controller: AbortController): () => void {
+  if (shutdown === undefined) return () => undefined;
+  const stop = (): void => controller.abort();
+  if (shutdown.aborted) {
+    stop();
+    return () => undefined;
+  }
+  shutdown.addEventListener('abort', stop, { once: true });
+  return () => shutdown.removeEventListener('abort', stop);
 }
 
 /** The items a summary asks for over its covered reads: the sum of their requested counts (the count readiness and the model choice share). */

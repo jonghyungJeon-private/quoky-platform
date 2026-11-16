@@ -45,6 +45,8 @@ interface Options {
   /** A port behaviour per entry (default: an ok listing of 3 items with documents when asked). */
   readonly ports?: Partial<Record<string, (request: AgentReadRequest, h: Harness) => Promise<AgentReadResponse>>>;
   readonly actorsGet?: (id: string) => Promise<Actor | null>;
+  /** The P5 release flag (default `true` here; production composes `active` without it until P5). */
+  readonly released?: boolean;
 }
 
 const documents = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i + 1}`, position: i + 1, title: `t${i + 1}`, author: 'a', date: '2026-11-01T09:00:00.000Z', body: `${BODY_CANARY} ${i + 1}` }));
@@ -114,7 +116,7 @@ function harness(options: Options = {}): Harness {
     timeoutMs: 6_000,
     ...(options.caps !== undefined ? { caps: options.caps } : {}),
     ...(options.bounds !== undefined ? { bounds: options.bounds } : {}),
-    ...(mode === 'active' ? { readers, summarizer: new CapabilityRouter(new AiProviderManager([summarizer]), policy) } : {}),
+    ...(mode === 'active' ? { readers, summarizer: new CapabilityRouter(new AiProviderManager([summarizer]), policy), ...(options.released !== false ? { released: true } : {}) } : {}),
   });
   return state;
 }
@@ -317,6 +319,116 @@ describe('AgentRunService.runActive — kill switch and caps (D7, ADR-0120 A6-D3
     const outcome = replyOf(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT));
     expect(h.m2Calls).toHaveLength(19);
     expect(outcome.reply.text).toContain('처리 한도가 남지 않아서');
+  });
+
+  // Review round 1 item 2: a run needs M1 and the M1' slot; with one call left it is declined at admission, never started.
+  it('with one model call left in the hour the run is declined before the planner (model-hourly-cap)', async () => {
+    const script = [...Array.from({ length: 19 }, () => MAIL_SUMMARY_PLAN), 'not json', 'not json', MAIL_SUMMARY_PLAN];
+    const h = harness({ script, caps: { perHour: 100, perDay: 100 } });
+    // 19 runs × 3 calls = 57, then two malformed plans (their planner calls count) = 59: one call is left.
+    for (let run = 0; run < 19; run += 1) replyOf(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT));
+    for (let run = 0; run < 2; run += 1) expect(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'malformed' });
+    expect(await h.service.runActive(turn(h, MAIL_SUMMARY_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'model-hourly-cap' });
+    expect(h.plannerCalls).toHaveLength(21);
+    expect(h.reads).toHaveLength(19);
+  });
+
+  it('a refused re-plan reservation is checked: the run is declined (bound), no step runs', async () => {
+    const h = harness({ script: [MAIL_AND_TODO_PLAN], bounds: { maxReplans: 0 } });
+    expect(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'bound' });
+    expect(h.reads).toEqual([]);
+    expect(activeLines(h).at(-1)).toMatchObject({ outcome: 'declined', reason: 'bound', breach: 'replans' });
+  });
+
+  // Review round 1 item 3: concurrent turns never add up past the hour; one active run in flight per actor.
+  it('one run in flight per actor: concurrent turns are declined (in-flight) and make no planner call', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = harness({ script: Array.from({ length: 30 }, () => MAIL_AND_TODO_PLAN), caps: { perHour: 100, perDay: 100 } });
+    const runs = Array.from({ length: 30 }, () =>
+      h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => {
+        await gate;
+        return CHAT;
+      }),
+    );
+    release();
+    const outcomes = await Promise.all(runs);
+    expect(outcomes.filter((outcome) => outcome.kind === 'reply')).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.kind === 'declined' && outcome.reason === 'in-flight')).toHaveLength(29);
+    expect(h.plannerCalls).toHaveLength(1);
+    // The run that finished frees the slot.
+    replyOf(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT));
+  });
+
+  // Review round 1 item 4: a stop recorded before the planner is dispatched is never followed by the planner call.
+  it('a stop recorded after admission but before the planner dispatch declines (kill-switch), no planner call', async () => {
+    const h = harness({ script: [MAIL_AND_TODO_PLAN] });
+    const outcome = await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => {
+      stop(h);
+      return CHAT;
+    });
+    expect(outcome).toEqual({ kind: 'declined', reason: 'kill-switch' });
+    expect(h.plannerCalls).toEqual([]);
+  });
+
+  it('a hung kill-switch read cannot outlive the run\'s wall: the run ends partial (wall-time) with no read', async () => {
+    let gets = 0;
+    const h = harness({
+      script: [MAIL_AND_TODO_PLAN],
+      bounds: { wallMs: 80 },
+      // Admission and the pre-dispatch read answer; the executor's per-step read never does.
+      actorsGet: async () => {
+        gets += 1;
+        return gets <= 2 ? (h.actors.get('owner') ?? null) : new Promise<never>(() => undefined);
+      },
+    });
+    const outcome = replyOf(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT));
+    expect(outcome).toMatchObject({ outcome: 'partial', breach: 'wall-time' });
+    expect(h.reads).toEqual([]);
+  }, 2_000);
+
+  // Review round 1 item 5: shutdown cuts the run (the port's signal is aborted, it is not waited for, no later step starts).
+  it('shutdown cuts a run in flight: the port call is aborted and not waited for, no later step starts', async () => {
+    let portSignal: AbortSignal | undefined;
+    const h = harness({
+      script: [MAIL_AND_TODO_PLAN],
+      ports: {
+        'mail.list': async (request, state) => {
+          portSignal = request.signal;
+          state.service.stopBackground();
+          return new Promise<never>(() => undefined);
+        },
+      },
+    });
+    const outcome = replyOf(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT));
+    expect(portSignal?.aborted).toBe(true);
+    expect(h.reads.map((request) => request.entryId)).toEqual(['mail.list']);
+    expect(outcome).toMatchObject({ outcome: 'partial', stopped: true });
+    expect(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT)).toEqual({ kind: 'declined', reason: 'shutdown' });
+  }, 2_000);
+
+  it('a wired active service without the explicit P5 release is refused at construction (AGENT_MODE_ACTIVE_UNWIRED)', () => {
+    expect(() => harness({ released: false })).toThrow(expect.objectContaining({ code: 'AGENT_MODE_ACTIVE_UNWIRED' }));
+    expect(() => harness({ released: true })).not.toThrow();
+  });
+
+  it('injected bounds can only lower a ratified bound (min): 1000 HTTP requests asked, 50 allowed', async () => {
+    let allowed = 0;
+    const h = harness({
+      script: [MAIL_AND_TODO_PLAN],
+      bounds: { maxHttpRequests: 1_000 },
+      ports: {
+        'mail.list': async (request) => {
+          request.budget.reserveQuery();
+          while (request.budget.reserveHttp()) allowed += 1;
+          return { ok: false, code: 'BOUND' };
+        },
+      },
+    });
+    replyOf(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT));
+    expect(allowed).toBe(50);
   });
 
   it('only in the owner\'s DM', async () => {
