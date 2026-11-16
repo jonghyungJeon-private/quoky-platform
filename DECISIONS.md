@@ -17023,6 +17023,73 @@ OPS-2b merge (no-bypass extraction).
   miss is a safe `event-not-found`. A filter can only narrow the previous candidate set, never broaden it or pick another
   event; zero matches writes nothing.
 
+### ADR-0110 amendment implementation note — structural field labels in calendar write grammar (2026-11-16)
+
+- Live findings after the "own title words" note: (1) "Quoky E2E 제목 시험 일정 30분짜리 추가해줘" previewed 제목
+  "시험 일정 30분짜리"; (2) "존재하지않는제목 일정 삭제해줘" was answered as ordinary chat. Both stopped before any write.
+- Causes. (1) `FIELD_KEYWORD` matched 제목/장소/위치/설명/메모 anywhere, with no token boundary and no position check, so an
+  ordinary title word became the label, the words before it became the "head" and the duration leaked into the title.
+  (2) Not the label at all: `isCalendarWriteRequest` skipped the clause as a negation because `NOT_A_REQUEST` matched
+  "하지 않" inside the word "존재하지않는제목". Left as on main (chat, fail closed; see R-TG2).
+- Structural rules, no phrase list: a label is a whole token (starts after a non-letter/digit, and is followed by a
+  particle 은/는/을/를, a colon, whitespace or the end, never inside a compound such as "제목시험"); a label with a particle or
+  colon counts at any token boundary; a BARE label counts only at the message start, after the booking verb, or after a
+  label that already counted; elsewhere it is a title word. A colon / particle labelled title stays verbatim; a bare
+  label's trailing run of whole time / duration tokens is cut and still read as the time (review round 1).
+  `CALENDAR_RENAME` / `CALENDAR_RELOCATE` get the same token-start boundary. The negation rule is unchanged from main
+  (an attempted exemption was reverted in review round 2).
+- Fail-closed residuals: see R-TG1, R-TG2, R-TG3 and R-TG5 under Review round 2 below (the original R-TG2 / R-TG3 text
+  here was superseded when the negation exemption was reverted).
+- Tests: `calendar-write-request.test.ts` (both sentences, labelled-form regressions, a label inside a compound word in
+  every field, a duration after a labelled title, the negation sentences stay chat).
+
+- **Review round 1** (J2 reviewer + Codex), all in `calendar-write-request.test.ts` unless noted:
+  - P1 labelled titles were no longer verbatim: a colon / particle label now keeps its value verbatim (as on main); a BARE
+    label cuts only a trailing run of WHOLE time / duration / day tokens (token-start boundary, never inside a token) and
+    still reads that run as the event time. Decision: the earlier colon-form range test was dropped; "제목: 주간 회의
+    30분짜리" keeps "30분짜리" in the title, as on main. Tests: "colon / particle labelled title stays verbatim" (오늘의 회고,
+    2시간 집중 세션, 종일 워크숍 준비, 3/4분기 리뷰) and "a labelled title still gets time and duration stripping".
+  - P2 negation exemption and P2 undated title filter: superseded by Review round 2 below (both reverted).
+  - P3 `BOOKING_VERB` had no boundary: the stem must now be followed by a request ending, so "넣어둔 제목 정리 회의" keeps
+    its title words. P3 `LINK_TOKEN` duplicated `LEADING_LINK`: both are built from `LINK_PARTICLES`.
+- **Review round 2** (J2 + Codex; the fix-loop cap of 2 rounds is reached for both round-1 items, so scope is narrowed
+  instead of adding heuristics).
+  - Reverted completely: the undated residual-title-word filter, the numbered-choice-on-miss fallback (`unmatchedWords`
+    copy, `nlNamesDeterminer`) and the fused `하지않는X` negation exemption. `NOT_A_REQUEST`, the flow and the copy are
+    byte-identical to main. Why: Codex's counterexample (an existing event titled "방금 추가한 일정 검토", the owner then
+    creates "QA 세션3" and says "방금 추가한 일정 취소해줘") offered the unrelated event with no mismatch notice; the miss
+    fallback bypassed `CONNECTOR_WRITE_MAX_CHOICES` (an 11-event listing offered all 11); and `…하지않는데요 확인해줘` /
+    `취소하지않는다면 일정 삭제해줘` still became deletes.
+  - Dispute record: J2/Codex round 1 wanted undated references filtered by the owner's title words; the orchestrator
+    concluded to revert to the #342 rule, because the documented cleanup path ("방금 추가한 일정 취소해줘" → numbered choice)
+    must not regress and no recency word list may be added.
+  - Kept: token-boundary labels, verbatim colon / particle labels, the bare label's trailing-time cut, the `BOOKING_VERB`
+    request ending, shared `LINK_PARTICLES`. Case 1 stays fixed.
+  - Tests: negation sentences (all round-1 and round-2 forms) are `false` in `calendar-write-request.test.ts`; the
+    undated reference keeps empty title words; `connector-write-calendar-context.test.ts` pins that the just-created event
+    is offered first, never the lookalike.
+- **Residuals (all fail closed).**
+  - **R-TG1** a bare label between the time and the booking verb, or right after a participle, stays a title word
+    (preview shows it; "제목: …" restates it).
+  - **R-TG2** negated and fused forms go to chat as on main: "존재하지않는제목 일정 삭제해줘", the spaced "존재하지 않는 제목 …",
+    the fused conditional "취소하지않는다면 …" and the endings "…하지않는데요". Nothing changes; the owner rephrases.
+  - **R-TG3** the literal case-1 sentence names no time, so it is a usage hint like any create without a clock.
+  - **R-TG5** an undated delete / update ignores the owner's title words: it resolves against the session context as a
+    numbered choice, then needs the exact-payload approval (pre-existing #342 behaviour; no write without a pick).
+
+- **Review round 3** (final Codex, 2 x P2, both bare-label path; compared against origin/main with a throwaway probe).
+  - "제목 QA 일정으로 잡아줘 내일 오후 3시에": a REGRESSION (main gave a usage hint; the branch previewed the title "QA 일정으로
+    잡아줘"). Fixed: the request ending and the trailing time run are peeled alternately until stable (title "QA 일정").
+    Test: "a bare label value peels the request ending and the trailing time run alternately".
+  - **R-TG6** "… 제목 주간 회의 2시간 동안" keeps "2시간 동안" in the title and lasts the default hour: PRE-EXISTING (identical
+    on main, where every labelled title is verbatim). The trailing-run cut only accepts a link particle attached to its
+    time phrase, not a spaced "동안". Fails closed: the preview shows the exact title and time and the approval is exact.
+
+- **Review round 4** (Codex P2 on the round-3 fix): the alternating peel truncated title content ("제목 구해줘 30분짜리" gave
+  "구"). Now bounded: request ending, trailing time run, then at most ONE more request ending recognised by the existing
+  `BOOKING_VERB` (with the shared link particles), only when a time run was cut; no fixpoint loop, no generic -해줘 peel.
+  Tests: "구해줘" keeps its title with 30 minutes; "제목 QA 일정으로 잡아줘 내일 오후 3시에" still gives "QA 일정".
+
 ### ADR-0110 implementation note — accepted residual R6 (2026-10-06)
 
 - **Calendar write-intent detection is best-effort lexical** (CAL-2): quoted content is blanked, requests about a phrase

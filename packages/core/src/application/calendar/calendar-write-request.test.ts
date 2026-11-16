@@ -135,3 +135,91 @@ describe('calendar write grammar (ADR-0110 amendment D3, CWR-2)', () => {
     for (const text of ['', '   ', '내일', '\u0000', '가'.repeat(5000)]) expect(() => parse(text)).not.toThrow();
   });
 });
+
+describe('field labels are structural, not words (v5 title-grammar residual)', () => {
+  const HOUR = timed('2026-10-07T06:00:00.000Z', '2026-10-07T07:00:00.000Z');
+  const HALF = timed('2026-10-07T06:00:00.000Z', '2026-10-07T06:30:00.000Z');
+  const draftOf = (text: string) => {
+    const draft = parse(text);
+    return draft.kind === 'calendar-create' ? draft.event : draft;
+  };
+
+  it('a bare 제목 inside the owner title is a title word, and the duration is read', () => {
+    expect(draftOf('내일 오후 3시에 Quoky E2E 제목 시험 일정 30분짜리 추가해줘')).toEqual({ title: 'Quoky E2E 제목 시험 일정', time: HALF });
+    expect(draftOf('내일 오후 3시에 Quoky E2E 제목 시험 일정 추가해줘')).toEqual({ title: 'Quoky E2E 제목 시험 일정', time: HOUR });
+    // The literal live sentence names no time: nothing is invented, the title is never cut.
+    const literal = draftOf('Quoky E2E 제목 시험 일정 30분짜리 추가해줘');
+    expect(literal).not.toMatchObject({ title: '시험 일정 30분짜리' });
+    expect(literal).not.toMatchObject({ title: '시험 일정' });
+  });
+
+  it.each([
+    ['내일 오후 3시에 회의 잡아줘 제목 주간 회의 장소 3층', { title: '주간 회의', location: '3층', time: HOUR }],
+    ['제목 주간 회의 내일 오후 3시에 잡아줘', { title: '주간 회의', time: HOUR }],
+    ['내일 오후 3시에 회의 잡아줘 제목은 주간 회의', { title: '주간 회의', time: HOUR }],
+    ['내일 오후 3시에 회의 잡아줘 제목: 주간 회의', { title: '주간 회의', time: HOUR }],
+    ['내일 오후 3시에 회의 잡아줘 제목을 주간 회의로 잡아줘', { title: '주간 회의', time: HOUR }],
+    ['내일 오후 3시에 회의 잡아줘 위치 3층', { title: '회의', location: '3층', time: HOUR }],
+    ['내일 오후 3시에 회의 잡아줘 장소: 3층 설명 분기 계획 메모 자료 지참', { title: '회의', location: '3층', description: '분기 계획', time: HOUR }],
+    ['내일 오후 3시에 회의 잡아줘 메모 자료 지참', { title: '회의', description: '자료 지참', time: HOUR }],
+  ])('labelled form keeps working: "%s"', (text, event) => {
+    expect(draftOf(text)).toEqual(event);
+  });
+
+  it('a labelled title still gets time and duration stripping', () => {
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목 주간 회의 30분짜리')).toEqual({ title: '주간 회의', time: HALF });
+    // Recorded residual R-TG1: a bare label between the time and the booking verb is a title word (fails closed: the preview shows it).
+    expect(draftOf('내일 오후 3시에 회의 제목 주간 회의 30분짜리 추가해줘')).toEqual({ title: '회의 제목 주간 회의', time: HALF });
+    expect(draftOf('내일 회의 잡아줘 제목 주간 회의 오후 3시부터 4시까지')).toEqual({ title: '주간 회의', time: HOUR });
+    // Decision: a colon / particle label keeps its value verbatim (as on main); only a bare label's trailing time run is cut.
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목: 주간 회의 30분짜리')).toEqual({ title: '주간 회의 30분짜리', time: HOUR });
+  });
+
+  it('a colon / particle labelled title stays verbatim, and a bare one never loses a day or time word inside a token', () => {
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목: 오늘의 회고')).toEqual({ title: '오늘의 회고', time: HOUR });
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목: 2시간 집중 세션')).toEqual({ title: '2시간 집중 세션', time: HOUR });
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목 종일 워크숍 준비')).toEqual({ title: '종일 워크숍 준비', time: HOUR });
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목: 3/4분기 리뷰')).toEqual({ title: '3/4분기 리뷰', time: HOUR });
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목 오늘의 회고')).toEqual({ title: '오늘의 회고', time: HOUR });
+    expect(draftOf('내일 오후 3시에 회의 잡아줘 제목 3/4분기 리뷰')).toEqual({ title: '3/4분기 리뷰', time: HOUR });
+  });
+
+  it.each(['제목', '장소', '위치', '설명', '메모'])('a %s inside a compound word is never a label', (word) => {
+    expect(draftOf(`내일 오후 3시에 새${word}시험 회의 잡아줘`)).toEqual({ title: `새${word}시험 회의`, time: HOUR });
+    expect(draftOf(`내일 오후 3시에 ${word}시험 일정 추가해줘`)).toEqual({ title: `${word}시험 일정`, time: HOUR });
+  });
+
+  it('negated and fused attributive forms stay chat (R-TG2: fail closed)', () => {
+    for (const text of [
+      '존재하지않는제목 일정 삭제해줘',
+      '내일 존재하지않는제목 일정 삭제해줘',
+      '일정 삭제하지 않았어',
+      '내일 회의 취소하지 않는다고 했어',
+      '내일 회의 취소 안 해',
+      '내일 3시 회의 취소해줘가 작동하지 않는데요',
+      '일정 삭제해줘 기능이 동작하지 않는건가요',
+      '내일 회의 취소하지 않는다면 일정 삭제해줘',
+      '내일 일정 삭제해줘 같은 요청은 하지않는데요',
+      '내일 일정 삭제해줘 하지않는데요 확인해줘',
+      '취소하지않는다면 일정 삭제해줘',
+    ]) {
+      expect(isCalendarWriteRequest(text), text).toBe(false);
+    }
+  });
+
+  it('a bare label value peels the trailing time run, then at most one booking request (review rounds 3-4)', () => {
+    expect(draftOf('제목 QA 일정으로 잡아줘 내일 오후 3시에')).toEqual({ title: 'QA 일정', time: HOUR });
+    expect(draftOf('제목 QA 일정으로 잡아줘 내일 오후 3시에 30분짜리')).toEqual({ title: 'QA 일정', time: HALF });
+    // A generic -해줘 ending inside the title is title content, never peeled.
+    expect(draftOf('내일 오후 3시에 일정 잡아줘 제목 구해줘 30분짜리')).toEqual({ title: '구해줘', time: HALF });
+  });
+
+  it('a participle before the title is not the booking verb', () => {
+    expect(draftOf('내일 오후 3시에 넣어둔 제목 정리 회의 잡아줘')).toEqual({ title: '넣어둔 제목 정리 회의', time: HOUR });
+  });
+
+  it('an undated reference keeps empty title words (#342 rule: it resolves against the session context)', () => {
+    expect(parse('방금 추가한 일정 취소해줘')).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: [] } });
+    expect(parse('일정 취소해줘')).toMatchObject({ ref: { inferredDay: true, titleWords: [] } });
+  });
+});

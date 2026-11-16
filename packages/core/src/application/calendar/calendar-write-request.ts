@@ -46,6 +46,9 @@ export interface CalendarWriteGrammarOptions {
   readonly timeZone: string;
 }
 
+/** Connecting particles between a time phrase and its neighbours ("3시에", "2시간짜리"): the one shared source. */
+const LINK_PARTICLES = '에서|에는|에|부터|까지|동안|짜리|간';
+
 const DEFAULT_DURATION_MINUTES = 60;
 const MAX_DURATION_MINUTES = 24 * 60;
 
@@ -58,7 +61,12 @@ const CLOCK_RE = new RegExp(CLOCK, 'u');
 const RANGE_RE = new RegExp(String.raw`${CLOCK}\s*(?:부터|~|〜|-|–|에서)\s*${CLOCK}(?:\s*까지)?`, 'u');
 const DURATION_RE = /(\d{1,2})\s*시간(?:\s*(반))?(?:\s*(\d{1,2})\s*분)?|(?<![시\d])(\d{1,3})\s*분\s*(?:동안|짜리|간)/u;
 const ALL_DAY = /종일|하루\s*종일|하루\s*일정|all[\s-]?day/iu;
-const FIELD_KEYWORD = /(제목|장소|위치|설명|메모)\s*(?:은|는|:|：)?\s*/gu;
+/**
+ * A field label is a whole token: it starts at a token boundary (never inside a word: "존재하지않는제목") and is followed by
+ * a particle / colon, or by whitespace / the end (never inside a compound: "제목시험"). Group 2 is the particle or colon;
+ * absent means a BARE label, which only counts in a structural position (see `fieldsOf`).
+ */
+const FIELD_KEYWORD = /(?<![\p{L}\p{N}])(제목|장소|위치|설명|메모)(?:\s*(은|는|을|를)(?![\p{L}\p{N}])|\s*[:：]|(?=\s|$))\s*/gu;
 const QUOTED = /"([^"]{1,200})"|“([^”]{1,200})”|'([^']{1,200})'|‘([^’]{1,200})’|「([^」]{1,200})」|『([^』]{1,200})』/u;
 const MEETING_NOUN = /(회의|미팅|약속|면담|통화|콜|점심|저녁\s*약속|일정)/u;
 const DAY_WORD = String.raw`(?:오늘|내일|낼|모레|글피|(?:이번|다음)\s*주\s*[월화수목금토일]요일|[월화수목금토일]요일|\d{1,2}\s*월\s*\d{1,2}\s*일|\d{1,2}\s*/\s*\d{1,2})`;
@@ -137,23 +145,67 @@ function zonedInstant(date: LocalDate, time: ConnectorWriteClockTime, timeZone: 
   return new Date(resolved.epochMs).toISOString();
 }
 
-/** Text after each field keyword, up to the next keyword (verbatim, outer whitespace and trailing punctuation removed). */
-function fieldsOf(text: string): { head: string; title?: string; location?: string; description?: string } {
-  const matches = [...text.matchAll(FIELD_KEYWORD)];
-  if (matches.length === 0) return { head: text };
+/**
+ * Text after each field label, up to the next label (verbatim, outer whitespace and trailing punctuation removed). A label
+ * with a particle or colon counts at any token boundary. A BARE label ("제목 주간 회의") counts only in a structural
+ * position: the start of the message, after the booking verb (a trailing field list), or after a label that already
+ * counted (a field list). Anywhere else it is an ordinary word of the owner's title ("Quoky E2E 제목 시험 일정").
+ * The title value gets the same time / duration / range stripping as the unlabelled title; the stripped text is also
+ * returned (`timeText`) so a day, clock or duration written inside the title value is still read.
+ */
+function fieldsOf(text: string): { head: string; timeText: string; title?: string; location?: string; description?: string } {
+  const verbAt = BOOKING_VERB.exec(text)?.index ?? Number.POSITIVE_INFINITY;
+  const matches: RegExpMatchArray[] = [];
+  for (const match of text.matchAll(FIELD_KEYWORD)) {
+    const index = match.index ?? 0;
+    const structural = match[2] !== undefined || /[:：]/u.test(match[0]) || index === 0 || index >= verbAt || matches.length > 0;
+    if (structural) matches.push(match);
+  }
+  if (matches.length === 0) return { head: text, timeText: text };
   const head = text.slice(0, matches[0]?.index ?? text.length);
   const fields: { title?: string; location?: string; description?: string } = {};
+  let timeText = head;
   matches.forEach((match, i) => {
     const start = (match.index ?? 0) + match[0].length;
     const end = i + 1 < matches.length ? (matches[i + 1]?.index ?? text.length) : text.length;
-    const value = stripQuotes(stripTrailingRequest(text.slice(start, end)));
-    if (value.length === 0) return;
     const key = match[1];
+    const raw = text.slice(start, end);
+    let value: string;
+    if (key === '제목' && match[2] === undefined && !/[:：]/u.test(match[0]) && !/^[\s]*["“'‘「『]/u.test(raw)) {
+      // A BARE label's value: only a trailing run of whole time / duration tokens is cut (as the unlabelled title does),
+      // and that run is still read as the event's time. A label with a particle or colon keeps its value verbatim.
+      // The request ending, then the trailing time run; and, only when a time run was cut, at most ONE more booking
+      // request ("… 잡아줘 내일 오후 3시에"). Never a generic "-해줘" ending, never repeated.
+      const request = stripTrailingRequest(raw);
+      let rest = withoutTrailingTime(request);
+      if (rest.length < request.length) {
+        timeText += ` ${request.slice(rest.length)}`;
+        rest = rest.replace(BOOKING_REQUEST_END, '').replace(/[\s,，]+$/u, '');
+      }
+      value = stripQuotes(rest);
+    } else {
+      value = stripQuotes(stripTrailingRequest(raw));
+    }
+    if (value.length === 0) return;
     if (key === '제목') fields.title ??= value;
     else if (key === '장소' || key === '위치') fields.location ??= value;
     else fields.description ??= value;
   });
-  return { head, ...fields };
+  return { head, timeText, ...fields };
+}
+
+
+const TIME_PHRASE = `(?:${RANGE_RE.source}|${CLOCK}|${DURATION_RE.source}|${ALL_DAY.source}|${DAY_WORD})`;
+const TRAILING_TIME = new RegExp(`(?<![\\p{L}\\p{N}])${TIME_PHRASE}(?:${LINK_PARTICLES})?[\\s,，]*$`, 'iu');
+
+/** The value without a trailing run of WHOLE time / duration / day tokens ("주간 회의 30분짜리" → "주간 회의"); never inside a token. */
+function withoutTrailingTime(value: string): string {
+  let rest = value.trimEnd();
+  for (;;) {
+    const match = TRAILING_TIME.exec(rest);
+    if (match === null || match.index === 0) return rest.replace(/[\s,，]+$/u, '');
+    rest = rest.slice(0, match.index).trimEnd();
+  }
 }
 
 /** A booking / change verb the owner wrote after a field ("제목 주간 회의로 잡아줘") is not part of the field. */
@@ -185,10 +237,10 @@ function durationOf(text: string): number | undefined {
 
 function parseCreate(text: string, options: CalendarWriteGrammarOptions): ConnectorWriteDraft {
   const usage: ConnectorWriteDraft = { kind: 'usage', topic: 'calendar-create' };
-  const { head, title: fieldTitle, location, description } = fieldsOf(text);
+  const { head: titleHead, timeText: head, title: fieldTitle, location, description } = fieldsOf(text);
   const date = dayOf(head, options);
   if (date === undefined) return { kind: 'usage', topic: 'calendar-span' };
-  const title = fieldTitle ?? quotedOf(head) ?? titlePhraseOf(head) ?? MEETING_NOUN.exec(head)?.[1]?.replace(/\s+/gu, ' ');
+  const title = fieldTitle ?? quotedOf(titleHead) ?? titlePhraseOf(titleHead) ?? MEETING_NOUN.exec(titleHead)?.[1]?.replace(/\s+/gu, ' ');
   if (title === undefined) return usage;
   if (
     !bounded(title, CALENDAR_EVENT_TITLE_MAX_LENGTH) ||
@@ -240,14 +292,23 @@ function parseCreate(text: string, options: CalendarWriteGrammarOptions): Connec
   return { kind: 'calendar-create', event };
 }
 
-const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)/u;
+/**
+ * The booking verb as the owner's request ("잡아줘", "추가해 줘"): the stem must be followed by a request ending, so a
+ * participle inside the title ("넣어둔 제목 정리 회의") is not the verb.
+ */
+const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)(?=\s*(?:줘|주세요|줄래|주실래요|줄\s*수)|\s*[.!~?]*$)/u;
+/** One booking request ending as the existing `BOOKING_VERB` knows it ("으로 잡아줘", "추가해 줘"). */
+const BOOKING_REQUEST_END = new RegExp(
+  String.raw`\s*(?:(?:으로|로)\s*)?${BOOKING_VERB.source}\s*(?:줘|주세요|줄래|주실래요)?\s*[.!~]*$`,
+  'u',
+);
 const DAY_WORD_ALL = new RegExp(DAY_WORD, 'gu');
 const CLOCK_ALL = new RegExp(CLOCK, 'gu');
 const RANGE_ALL = new RegExp(RANGE_RE.source, 'gu');
 const DURATION_ALL = new RegExp(DURATION_RE.source, 'gu');
 const ALL_DAY_ALL = new RegExp(ALL_DAY.source, 'giu');
 /** Connecting particles left between the time phrase and the title ("3시에 …", "2시간짜리 …"). */
-const LEADING_LINK = /^[\s,，]*(?:에서|에는|에|부터|까지|동안|짜리|간)?[\s,，]*/u;
+const LEADING_LINK = new RegExp(`^[\\s,，]*(?:${LINK_PARTICLES})?[\\s,，]*`, 'u');
 const FILLER = /^(?:좀|하나|한\s*개|새|새로)$/u;
 
 /**

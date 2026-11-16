@@ -315,6 +315,19 @@ describe('undated calendar change / delete uses the session\'s recent calendar c
     expect(ids(cancel.step)).toEqual([TODAY_WEEKLY.id]);
   });
 
+  it('"방금 추가한 일정 취소해줘" offers the just-created event first, never an unrelated event whose title holds those words (v5 title grammar)', async () => {
+    const lookalike: CalendarEvent = { ...TOMORROW_STANDUP, id: 'evt-lookalike', title: '방금 추가한 일정 검토' };
+    const h = harness([TODAY_WEEKLY, lookalike]);
+    await h.turn('내일 오후 5시에 "QA 세션3" 일정 잡아줘', at(0));
+    await h.approveAndExecute(at(1));
+    const cancel = await h.turn('방금 추가한 일정 취소해줘', at(2));
+    expect(cancel.draft).toMatchObject({ kind: 'calendar-delete', ref: { inferredDay: true, titleWords: [] } });
+    expect(cancel.step).toMatchObject({ kind: 'choice', mode: 'delete', basis: 'written' });
+    expect(ids(cancel.step)).toEqual(['evt-created']);
+    expect(await h.choose(1, at(3))).toMatchObject({ kind: 'preview', preview: { operation: 'CALENDAR_EVENT_DELETE', before: { id: 'evt-created' } } });
+    expect(h.writes.delete).toHaveLength(0);
+  });
+
   it('no context and nothing today or tomorrow is a truthful refusal (no approval)', async () => {
     const h = harness([FRIDAY_REVIEW]);
     const cancel = await h.turn('일정 취소해줘', at(0));
