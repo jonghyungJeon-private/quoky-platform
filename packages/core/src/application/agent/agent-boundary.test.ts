@@ -30,7 +30,11 @@ const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 's
 function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;
   if (specifier === '../../ports/ai-provider.port' || specifier === '../../ports/logger.port') return true;
+  // ADR-0121 D12 (amended 2026-11-16): M2 routes through the EXISTING selection contract; both ports are types only.
+  if (specifier === '../../ports/provider-selector.port' || specifier === '../../ports/provider-selection-policy.port') return true;
   if (specifier === '../credential-guard') return true;
+  // ADR-0121 D12: the one shared locality-constraint reader (pure; it imports port types only).
+  if (specifier === '../execution-locality-constraint') return true;
   if (specifier === '../call-usage-log-fields') return true;
   // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
   if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;
@@ -75,6 +79,10 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
       '../../ports/command-runner.port',
       '../../ports/tool-provider.port',
       '../memory-manager',
+      // D12: the selector is reached through its port type only, never the concrete router or the provider manager.
+      '../capability-router',
+      '../ai-provider-manager',
+      '../local-provider-dispatch',
       'http',
       'https',
       'child_process',
@@ -91,6 +99,17 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
     for (const code of ['await fetch(url)', 'globalThis.fetch(url)', "await import('node:http')", "require('child_process')", 'spawn("claude")']) expect(code).toMatch(FORBIDDEN_CALLS);
     for (const code of ['deps: { writer: MemoryWriter }', 'runner: CommandRunner', 'repo: ReminderRepository']) expect(code).toMatch(FORBIDDEN_NAMES);
     expect('FENCED.exec(text)').not.toMatch(FORBIDDEN_CALLS);
+  });
+
+  it('names the selection ports by type only (ADR-0121 D12: M2 holds no concrete router, provider or new port)', () => {
+    let seen = 0;
+    for (const source of SOURCES) {
+      for (const line of source.text.split('\n').filter((text) => /from '\.\.\/\.\.\/ports\/provider-select(?:or|ion-policy)\.port'/.test(text))) {
+        seen += 1;
+        expect(line, source.name).toMatch(/^import type \{/);
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
   });
 
   it('imports only from the allowlist', () => {
@@ -156,9 +175,11 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
     const check = SOURCES.find((source) => source.name === 'agent-contract-check.ts');
     expect(check).toBeDefined();
     const text = (check as { text: string }).text;
-    for (const name of ['AgentPlanExecutorDeps', 'AgentSummarizerDeps', 'AgentReadPort', 'AgentReadRequest', 'QuarantinedSummarizerModel', 'AgentRunServiceDeps']) expect(text).toContain(name);
+    for (const name of ['AgentPlanExecutorDeps', 'AgentSummarizerDeps', 'AgentReadPort', 'AgentReadRequest', 'ProviderSelector', 'ProviderSelectionContext', 'AgentRunServiceDeps']) expect(text).toContain(name);
     expect(text).toContain("'summarizer'");
-    expect(text).toContain("'auditId'");
+    expect(text).toContain("'selector' | 'selectionContext'");
+    // ADR-0121 D12 (amended 2026-11-16): no model port of the agent's own exists any more.
+    for (const source of SOURCES) expect(codeOf(source.text), source.name).not.toMatch(/\bQuarantinedSummarizerModel\b/);
     expect(text).not.toMatch(/^export (?:const|function|class|let)\b/m);
     for (const source of SOURCES) expect(source.text, source.name).not.toContain('agent-contract-check');
   });

@@ -21463,6 +21463,9 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   end of this file.
   **Amended by A3a** (Accepted 2026-10-26): through A2 (A2-D1, A2-D3, A2-D6, A2-D7, A2-D19), D2, D11 and D12; no egress
   and no constitutional change; see "ADR-0121 amendment A3a" and its ratification record at the end of this file.
+  **D12 amended** (ratified 2026-11-16): M2 routes through `ProviderSelector` / `AiProvider` with an
+  `allowedExecutionLocalities` constraint; see D12 below and "Ratification record (ADR-0121 D12 amendment and P3-3b
+  #4–#7, 2026-11-16)".
 - **Date:** 2026-10-13
 - **Inputs:**
   - `docs/plans/agent-security-design-2026-10-13.md`: the design, the threat model, the MSIT compliance mapping and
@@ -21658,6 +21661,18 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
     - The `FlowLabel` domain type is new.
     - The plan schema v2 is an extension of the ADR-0120 selection output.
     - Absent or `off`, behaviour is byte-identical. No new port or token, and no migration.
+    - *Amended 2026-11-16 (ratified; "Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)"):*
+      - M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no model-execution port or DI token.
+        This replaces the narrow `QuarantinedSummarizerModel` list.
+      - Core derives the allowed execution localities from the input labels, a valid summary grant and the asked-for
+        item count. It passes them as a data constraint on the existing `ProviderSelectionContext`
+        (`allowedExecutionLocalities`, beside `workText`).
+      - Candidates are the intersection of capability, owner policy, locality and `workText`. An unmet or unverifiable
+        constraint means listing-only.
+      - Policy and locality are re-checked immediately before dispatch.
+      - A request that was sent is never re-sent to another provider.
+      - Kept: no body fetch without a grant, no model for `HOST_ONLY`, the batch bound by the asked-for count, and the
+        sealed request and output.
 
 ### Staged rollout
 
@@ -31636,7 +31651,9 @@ and D9 still governs every turn that goes to chat.
   action-claim guard run on every entry (and again in the assembler; the action-claim guard does not run on the prompt), the assembler answers only the owner's DM, and a REMOTE summary carries a
   fixed disclosure line. `GitHub` labels in `flow-policy.ts` are NOT changed in this slice (GitHub has no readout, so it cannot
   reach M2); that is an open precondition (decision 7).
-- **Owner decisions needed (recommendations are not ratified text).**
+- **Owner decisions needed (recommendations are not ratified text).** *Answered:* #1–#3, #8 and #9 on 2026-11-03 (see
+  "ADR-0121 S2 P3-3b owner decisions and ADR-0121 D12 amendment proposal"); #4–#7 acknowledged as recommended and the D12
+  question below settled on 2026-11-16 ("Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)").
   1. Jira and Slack M2 labels and controls. Recommend: item content labelled C5, listing-only until pseudonyms, a work-summary
      flag and a `workText` provider constraint exist.
   2. How the summary grant is derived. Recommend: Core, per step and source, from the owner's non-quoted clause using existing
@@ -33059,6 +33076,8 @@ handler: no reply, prompt, provider choice or log line of the running service ch
   `allowedExecutionLocalities` is a set of allowed localities derived from labels and grants; `requiredLocality: 'LOCAL'`
   is the one-element case of it (`['LOCAL']`). If the proposal is ratified, `requiredLocality` maps onto it without a
   behaviour change. C5a ratifies nothing of D12 and adds no `allowedExecutionLocalities` field.
+  *Update 2026-11-16:* the D12 amendment is now ratified ("Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7,
+  2026-11-16)"); `requiredLocality` keeps its meaning and, when both are set, the allowed set is their intersection.
 - **The map prompt.** `document-map.v1` (`DOCUMENT_MAP_PROMPT_VERSION`), a Core prompt built in code and pinned by the
   sha256 of its rendering for a fixed input (as `agent-plan.*` is). One window readout under the existing untrusted
   framing (`renderUntrustedDocumentForPrompt`), no tools, no context files, no transcript; output at most 8 lines of at
@@ -33661,7 +33680,8 @@ fake fetch. Stage B (the probe) and the real runs are separate, **Strict** actio
        ratio, with a safety margin. That bound then replaces the UTF-8 byte bound and `util/token-estimator.ts` (`length / 4`, which undercounts
        Korean).
      - Until step 2, the UTF-8 byte bound stays.
-- **ADR-0121 D12 amendment proposal (consulted with Codex, 2026-11-03; the owner allowed amending the ADR).**
+- **ADR-0121 D12 amendment proposal (consulted with Codex, 2026-11-03; the owner allowed amending the ADR).** **Ratified
+  2026-11-16** (record below).
   - M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no model-execution port or DI token. This
     replaces the narrow `QuarantinedSummarizerModel` list.
   - Core derives the allowed execution localities from the input labels, a valid grant and the asked-for item count. It
@@ -33685,6 +33705,149 @@ fake fetch. Stage B (the probe) and the real runs are separate, **Strict** actio
     - The stop blocks new work at once.
     - An external call already sent runs to completion and is reported.
     - Open approvals waiting for an exact phrase (undo anchors included) are listed in the stop reply and closed.
+
+### Ratification record (ADR-0121 D12 amendment and P3-3b #4–#7, 2026-11-16)
+
+The Product Owner answered the open S2 M2 questions on 2026-11-16. Verbatim answers:
+
+| Item | Owner answer (verbatim) | Result |
+|---|---|---|
+| The "ADR-0121 D12 amendment proposal" bullet of the 2026-11-03 section above | "승인 (권장)" | **Ratified** as written there |
+| P3-3b open items #4–#7 ("ADR-0121 S2 implementation note — P3-3b", "Owner decisions needed") | "모두 권장대로 확정 (권장)" | **Acknowledged as recommended** |
+| Order of work | "D12부터 바로 착수 (권장)" | D12 is built next, in the ratified order |
+
+**Decisions.**
+
+1. **ADR-0121 D12 amendment: ratified.** M2 routes through the existing `ProviderSelector` / `AiProvider` and adds no
+   model-execution port or DI token; the narrow `QuarantinedSummarizerModel` list is replaced. Core derives the allowed
+   execution localities from the input labels, a valid `SummaryEgressGrant` and the asked-for item count, and passes them
+   as `allowedExecutionLocalities` on the existing `ProviderSelectionContext` beside `workText`. Candidates are capability ∩
+   owner policy ∩ locality ∩ `workText`; an unmet or unverifiable constraint is listing-only. Policy and locality are
+   re-checked immediately before dispatch. A sent request is never re-sent to another provider. Kept: no body fetch without
+   a grant, no model for `HOST_ONLY`, the batch bound by the asked-for count, the sealed request and output. The D12 text
+   of ADR-0121 now carries this amendment.
+2. **P3-3b #4–#7: acknowledged as recommended.**
+   - #4: `REMOTE_ON_SUMMARY_REQUEST` content without a grant is listing-only (no body fetch, no local fallback).
+   - #5: `HOST_ONLY` content gets no model, not even a local one.
+   - #6: the M2 schema bounds are one sentence of at most 280 characters and at most 10 items per call.
+   - #7: the M2 readout sources are mail and Drive only. GitHub joins only after the RQ-1 `readOutputLabel` fix; calendar,
+     Confluence, Jira and Slack stay listing-only.
+3. **Order:** this record → the D12 text → the context constraint with a mandatory dispatch check → the model list
+   replaced → tests and an independent review (J1).
+
+**Still open (NOT decided by this record).**
+
+- The owner's review of the 62 pending `agent-plan` golds and the 34 pending read + write golds.
+- The owner's batch review of the ≥ 300-case S2 read red-team corpus (`agent-redteam.s2-read.v1.json`).
+- Every model-in-the-loop run (each is Strict and needs its own owner yes).
+- Every `QUOKY_AGENT_MODE` switch (`shadow`, `active`), and S2 wiring.
+- The `QUOKY_EGRESS_GUARD` `observe` → `enforce` flip.
+- The remote batch design of 2026-11-03 answer 3 (one sealed batch call per source, ≤ 3 parallel M2 calls, a
+  deterministic merge): decided by the owner, built in its own later slice.
+
+**Authorized by this record:** this docs change and the D12 code slice in Core (offline, unwired: no composition-root
+wiring, no flag change, no live behaviour change).
+
+### ADR-0121 S2 implementation note — D12: M2 through `ProviderSelector` / `AiProvider` (Core, offline, unwired; 2026-11-16, branch `claude/v5-s2-d12`)
+
+- **Status: implemented, not active.** Applies the ratified D12 amendment above. No composition-root wiring, no flag change,
+  no live behaviour change; `active` is still refused; `ConversationRuntimeDeps` stays 38; no new port, DI token or migration.
+- **The constraint (`ports/provider-selection-policy.port.ts`).** `ProviderSelectionContext` gains
+  `allowedExecutionLocalities?: readonly AiExecutionLocality[]` beside `workText`. One pure reader,
+  `application/execution-locality-constraint.ts` (`allowedExecutionLocalitiesOf`, `fitsExecutionLocality`): absent = no
+  constraint; `requiredLocality: 'LOCAL'` (ADR-0124 Part L C5a) keeps its meaning and intersects with it; an empty list, an
+  unknown value, a non-array or an unreadable field is the empty set (unverifiable = nothing fits); a provider whose declared
+  locality cannot be read never fits (absent = `REMOTE`, ADR-0107 D6). `CapabilityRouter` probes, ranks and returns only fitting
+  providers among the policy's eligible ones (capability ∩ owner policy ∩ locality; `workText` stays the policy's own rule on
+  the same context), and `isStillEligible` answers `false` for a provider outside the set. With neither field set, selection
+  is byte-identical. The composition-root policy is not changed (it receives the new field as data and ignores it).
+- **Derivation (`agent/quarantined-summary.ts`, `deriveM2Localities`, pure).** From the joined egress label of the summary's
+  inputs, whether every `REMOTE_ON_SUMMARY_REQUEST` input holds a grant matching THIS step, source and run, and the asked-for
+  count (the larger of the run's requested counts and the items the sources hold, before fit): `HOST_ONLY` → none
+  (`host-only`, P3-3b #5); a grant-needing input without its grant → none (`no-summary-grant`, also when another input makes the
+  joined label stricter; P3-3b #4); `LOCAL_MODEL_ONLY` → `LOCAL`; `REMOTE_ON_SUMMARY_REQUEST` with the grant → `LOCAL`+`REMOTE`
+  for exactly one asked-for item, `LOCAL` for a batch; `REMOTE_OK` → both; an unknown label or a count that is not a positive
+  integer → none (`no-model`). `m2SelectionContext` adds the set to the caller's base context (conversation, actor): a base
+  locality constraint can only narrow it, and `workText` is kept (and set when an input is work text, today unreachable since
+  Jira and Slack stop first).
+- **Selection and dispatch.** The narrow `QuarantinedSummarizerModel` list is deleted. `AgentSummarizerDeps` is
+  `QuarantinedSummarizerRoute = { selector: ProviderSelector; selectionContext?: ProviderSelectionContext }` (pinned at compile
+  time in `agent-contract-check.ts` as exactly the existing port types; the agent imports both ports as types only, pinned
+  in `agent-boundary.test.ts`). M2 asks `selector.select(SUMMARIZATION, context)` and re-reads the answer (never trusted): it
+  must advertise `SUMMARIZATION` and declare a locality in the set; its locality and id are snapshotted once before egress
+  (the audit id is now the provider id, D9 "provider id (audit only)"). A selector without `isStillEligible` cannot perform the
+  mandatory re-check, so it is unverifiable (`no-model`, not even asked). Immediately before the one `execute`, with nothing
+  awaited in between: the provider must still declare the snapshot locality, it must still be in the set, and
+  `isStillEligible(SUMMARIZATION, sameContext, provider)` must answer exactly `true` (throw or any other value = refusal); then
+  the budget reservation, the audit start and `execute` run in the same synchronous stretch. A failed re-check is the new
+  closed `listing-only` reason `dispatch-refused` (no call, nothing reserved; assembler copy added in Korean and English).
+  A provider failure, an abort or a bad output after send is the closed `failed` status: no retry, no re-selection, no other
+  provider (ADR-0115 D3 "no execution-time fallback").
+- **Readiness before a body fetch.** `summaryReadiness` is now async and takes the route: the source check, the derivation and a
+  `select` under the constraint (no provider call). A read is asked for `withDocuments` only when it passes; `select` happens
+  again for the summary itself, and the dispatch re-check runs on that second selection.
+- **Kept (tests unchanged in meaning).** No body fetch without a grant; no model for `HOST_ONLY`; the batch bound by the
+  asked-for count (a batch trimmed to one item by the fit never flips to `REMOTE`); the sealed request (`capability`,
+  `prompt`, and the abort `signal` only) and output; per-call audit; the REMOTE disclosure line; at most one M2 call per
+  summarize step and the D3/D7 caps. The existing P3-3b tests now run the fakes behind the real `CapabilityRouter` (priority =
+  list order), so the locality filter they exercise is the router's.
+- **Tests.** `capability-router-locality.test.ts` (the constraint as data, router filtering without probing, policy and
+  `workText` intersection, dispatch check, a source-literal scan of the new module); `quarantined-summary-d12.test.ts`
+  (derivation table; forged, absent, other-step, other-source and other-run grants never reach the selector; the selector is
+  asked under the derived set and a non-compliant answer is refused; a selector without the re-check; a policy flip between
+  selection and dispatch on the real router; a locality change at dispatch; a throwing or non-`true` check; a failure after
+  send is never re-sent or re-selected; `workText` with the policy's vendor exclusion); updated P3-3b, executor, assembler and
+  boundary tests.
+- **What remains for the remote batch slice (owner answer 3 of 2026-11-03, not built here).** The derivation keeps `REMOTE`
+  for one asked-for item only. The batch slice must: allow `REMOTE` for a granted batch of at most 10 items per source; one
+  sealed batch call per source fitted to the remaining input budget; a split into at most the D3 cap of 3 parallel M2 calls
+  when the items do not fit, with a deterministic merge in source order and no model call; a grant that still covers exactly
+  the asked-for items; per-call audit and the REMOTE disclosure for every call; and the dispatch re-check per call (a call
+  never re-sent). It also has to settle whether ADR-0118 D7 ("a summary of a specific item") needs its own amendment note for
+  a multi-item remote summary, and the open P3-3a decision 6 (do split calls count toward the 3 M2 / 5 model-call limits).
+- **Other carried requirements (wiring slice).** The composition-root policy must list a `LOCAL` summariser for the owner's
+  M2 route (today `requiredLocality` has its own local preference; `allowedExecutionLocalities: ['LOCAL']` alone uses the
+  ordinary session preference, so with no local provider listed a batch is listing-only); the reported usage of an HTTP API
+  provider (`AiExecutionResult.usage`) must reach the ADR-0115 D8 ledger when M2 is wired (M2 ignores it today); the
+  `quoky.agentRun` audit records the provider id and locality per call.
+- **Review round 1 (Chief Architect CHANGES REQUIRED 1×P2 + 3×P3; Codex 3×P2; all reproduced offline and fixed).**
+  1. *CA P2:* M2 re-read the selector's answer only against `context.allowedExecutionLocalities` and ignored a base
+     `requiredLocality: 'LOCAL'`. Selection, the selection-time verdict and every dispatch check now use the one shared reader
+     `allowedExecutionLocalitiesOf(context)` (which intersects `requiredLocality`); an absent set counts as empty for M2.
+  2. *CA P3:* a set `requiredLocality` other than `'LOCAL'` is now the empty set (fail closed), not "no constraint".
+  3. *CA P3:* M2's private locality reader is gone; it imports `declaredExecutionLocality` (the agent import allowlist gains
+     `../execution-locality-constraint`, a pure module of port types).
+  4. *CA P3:* the readiness `select` (which awaits the router's readiness probe) is raced against the run's wall, and the wall
+     is checked before and after it: a spent wall ends the read `not-run` (bound) before the port is called.
+  5. *Codex P2:* a malformed caller list (`['REMOTE', 'CLOUD']`) was sanitised to `['REMOTE']` by `m2SelectionContext`. The
+     base constraint is now read by the shared reader and a malformed list is rejected whole (the empty set, listing-only).
+  6. *Codex P2:* `CapabilityRouter.isStillEligible` answered `true` without a policy or without `isEligible`, so the mandatory
+     re-check could pass silently. Under `allowedExecutionLocalities` it now needs an explicit policy verdict (none = `false`);
+     a request without that field (the legacy paths, ADR-0124 C5a `requiredLocality` alone) keeps the old answer, so the S3
+     path is not loosened or tightened. M2 also asks the verdict once right after selection, so a route that can never pass is
+     `no-model` before any body is fetched.
+  7. *Codex P2:* the final check ran before the caller callbacks (`reserve`, `onCallStart`). The check now runs first (a
+     refusal charges nothing), and again inside the call immediately before `provider.execute`, after both callbacks, with
+     nothing in between; a refusal there is `dispatch-refused` (the reserved model call stays charged, conservatively). The
+     audited locality is the one that final check verified.
+  - *Recorded as deliberate (CA agreed):* ungranted mail mixed with a stricter source is `no-summary-grant` (#4 read
+    strictly), and a selector without `isStillEligible` is `no-model`. S3 `local-provider-dispatch.ts`
+    (`isRequiredLocalDispatchAllowed`) is looser on purpose (a selector without `isStillEligible` passes there) because that
+    path is `LOCAL`-only and never leaves the host.
+  - *Tests added:* `quarantined-summary-d12.test.ts` "D12 review round 1" (base `requiredLocality` with a REMOTE answer →
+    `no-model`; a malformed caller list → empty, no call; a router without a policy or without `isEligible` → `no-model`,
+    legacy answers unchanged; a locality switched by `reserve` or by `onCallStart` → `dispatch-refused`, no call, and the
+    audited locality equals the dispatched one); `capability-router-locality.test.ts` (junk `requiredLocality`, no-verdict
+    dispatch check); `plan-executor-summary.test.ts` (a readiness `select` that never answers ends the read at the wall,
+    no port call).
+- **Review round 2 (Chief Architect APPROVE; Codex 1×P2, orchestrator fix).** The dispatch-time re-check read the
+  provider's declared locality before the policy verdict and returned that cached value; a policy callback that switched the
+  locality (LOCAL→REMOTE) while answering `true` sent a two-item batch remotely with a `LOCAL` audit. The locality is now
+  read again after the verdict and must equal the first read and still be allowed; otherwise `dispatch-refused`. Test: a
+  final verdict that flips the adapter after `onCallStart` → `dispatch-refused`, no request, no REMOTE audit (fails without
+  the fix); the P3-3b "locality that changes after selection" test counts the extra read. CA round-1 P3 (an audit recorded
+  when the wall ends in the same tick as a final-check refusal) is accepted: it over-reports, the conservative direction.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112

@@ -23,7 +23,9 @@ export {
   AGENT_SUMMARY_READOUT_SOURCE,
   AGENT_SUMMARY_WORK_TEXT_PENDING,
   QUARANTINED_LISTING_ONLY_REASONS,
+  deriveM2Localities,
   estimateInputTokens,
+  m2SelectionContext,
   parseQuarantinedOutput,
   renderQuarantinedPrompt,
   summaryReadiness,
@@ -39,8 +41,9 @@ export type {
   QuarantinedModelRefusal,
   QuarantinedOutputFailure,
   QuarantinedSummary,
-  QuarantinedSummarizerModel,
+  QuarantinedSummarizerRoute,
   SummaryEgressGrant,
   SummaryEntry,
+  SummaryReadinessInput,
 } from './quarantined-summary';
 export * from './reply-assembler';

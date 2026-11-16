@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AiRequest } from '../../ports/ai-provider.port';
+import { Capability } from '../../domain';
+import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
 
 // ADR-0121 D3 (P3-3b): both credential detectors run on the FINAL rendered prompt, before the bound is charged. The readout
 // already withholds a credential-shaped item, so the prompt-level check is defence in depth; here the detectors are made to
@@ -12,12 +13,20 @@ vi.mock('../credential-guard', async (importActual) => {
   };
 });
 
-import { mintSummaryEgressGrantForTest, newSummaryRunToken, quarantinedSummarize, type QuarantinedSummarizerModel } from './quarantined-summary';
+import { mintSummaryEgressGrantForTest, newSummaryRunToken, quarantinedSummarize } from './quarantined-summary';
 
 describe('quarantined summariser: the final prompt credential check', () => {
   it('a hit on the rendered prompt is listing-only, with no reservation and no call', async () => {
     const requests: AiRequest[] = [];
-    const fake: QuarantinedSummarizerModel = { executionLocality: 'LOCAL', auditId: 'a', run: async (request) => (requests.push(request), { text: '{"items":[{"n":1,"summary":"s"}]}' }) };
+    const fake: AiProvider = {
+      id: 'a',
+      executionLocality: 'LOCAL',
+      capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
+      isAvailable: async () => true,
+      execute: async (request) => (requests.push(request), { text: '{"items":[{"n":1,"summary":"s"}]}' }),
+    };
+    // M2 routes through the existing selector (ADR-0121 D12); this one always answers the local fake and finds it eligible.
+    const selector = { select: async () => fake, isStillEligible: () => true };
     const reserved: number[] = [];
     const run = newSummaryRunToken();
     const outcome = await quarantinedSummarize({
@@ -25,7 +34,7 @@ describe('quarantined summariser: the final prompt credential check', () => {
       summaryStep: 1,
       sources: [{ entryId: 'mail.list', documents: [{ id: 'm1', position: 1, title: 't', author: 'a', date: '', body: 'hello' }], grant: mintSummaryEgressGrantForTest(1, 'mail.list', run) }],
       run,
-      models: [fake],
+      route: { selector },
       reserve: (tokens) => (reserved.push(tokens), true),
     });
     expect(outcome).toEqual({ kind: 'listing-only', reason: 'credential-in-prompt' });

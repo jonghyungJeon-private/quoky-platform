@@ -1,4 +1,5 @@
 import type { Capability, Id } from '../domain';
+import type { AiExecutionLocality } from './ai-provider.port';
 
 /**
  * What the router knows about the request it selects a provider for (ADR-0092 amendment of 2026-10-07, runtime
@@ -24,9 +25,20 @@ export interface ProviderSelectionContext {
    * ADR-0124 Part L, slice C5a (DECISIONS ADR-0124 section 17): the request may run ONLY on a provider whose declared
    * execution locality (`executionLocalityOf`) is `LOCAL`. A data-only constraint: the router never probes, ranks or returns
    * any other provider, and its dispatch-time check answers `false` for one. Absent means no constraint (selection is
-   * exactly as before). It is the one-element case of the unratified ADR-0121 D12 `allowedExecutionLocalities` proposal.
+   * exactly as before). It is the one-element case of `allowedExecutionLocalities` (ADR-0121 D12, ratified 2026-11-16); when
+   * both are set, the allowed set is their intersection.
    */
   readonly requiredLocality?: RequiredExecutionLocality;
+  /**
+   * ADR-0121 D12 (amended, ratified 2026-11-16): the execution localities the request may run on, derived by Core from the
+   * request's input labels, a valid summary grant and the asked-for item count (the quarantined summariser M2). A data-only
+   * constraint: the router probes, ranks and returns only a provider whose declared locality (`executionLocalityOf`) is in
+   * the set, and its dispatch-time check answers `false` for any other. An empty set, or a value that is not a list of known
+   * localities, admits no provider (unverifiable = none). It narrows, never widens: candidates are capability ∩ owner policy ∩
+   * locality ∩ `workText`. Absent means no constraint. Under it the dispatch-time check needs an explicit
+   * {@link ProviderSelectionPolicy.isEligible} verdict: a router without a policy or without `isEligible` answers `false`.
+   */
+  readonly allowedExecutionLocalities?: readonly AiExecutionLocality[];
 }
 
 /** The only locality a request can require (ADR-0124 Part L C5a): `LOCAL`, the request never leaves this host. */

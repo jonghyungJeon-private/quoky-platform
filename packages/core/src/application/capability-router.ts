@@ -1,6 +1,6 @@
 import { AiProviderError, NoProviderAvailableError } from '../errors';
 import { AiFailureKind, type Capability } from '../domain';
-import { declaresLocalExecution } from '../ports';
+import { allowedExecutionLocalitiesOf, fitsExecutionLocality } from './execution-locality-constraint';
 import type {
   AiProvider,
   ProviderPreference,
@@ -42,11 +42,13 @@ export class CapabilityRouter implements ProviderSelector {
    */
   async resolve(capability: Capability, context: ProviderSelectionContext = {}): Promise<ResolvedProviderSelection> {
     const preference = this.policy ? await this.policy.preferenceFor(capability, context) : null;
-    // ADR-0124 Part L C5a: under `requiredLocality` only providers that declare `LOCAL` are probed and ranked.
-    const local = context.requiredLocality === 'LOCAL';
-    const candidates = local
+    // ADR-0124 Part L C5a and ADR-0121 D12 (amended 2026-11-16): under a locality constraint (`requiredLocality`,
+    // `allowedExecutionLocalities`, or their intersection) only providers whose declared locality is allowed are probed and
+    // ranked; an empty or unverifiable set probes nothing.
+    const allowed = allowedExecutionLocalitiesOf(context);
+    const candidates = allowed !== undefined
       ? await this.manager.readyAmong(
-          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter(declaresLocalExecution),
+          (preference === null ? this.advertising(capability) : this.eligible(capability, preference)).filter((p) => fitsExecutionLocality(allowed, p)),
         )
       : preference === null
         ? await this.manager.availableFor(capability)
@@ -68,13 +70,18 @@ export class CapabilityRouter implements ProviderSelector {
   /**
    * Dispatch-time check (synchronous): the policy's `isEligible` for this provider's key under the live selection. A
    * provider that no longer advertises the capability is not eligible; without a policy (or without `isEligible`) the
-   * legacy path has nothing to re-check.
+   * legacy path has nothing to re-check, except under `allowedExecutionLocalities` (ADR-0121 D12), where no explicit policy
+   * verdict is `false`.
    */
   isStillEligible(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean {
     if (!provider.capabilities.some((c) => c.capability === capability)) return false;
-    if (context.requiredLocality === 'LOCAL' && !declaresLocalExecution(provider)) return false;
+    const allowed = allowedExecutionLocalitiesOf(context);
+    if (allowed !== undefined && !fitsExecutionLocality(allowed, provider)) return false;
     const check = this.policy?.isEligible;
-    if (check === undefined) return true;
+    // ADR-0121 D12: a request under `allowedExecutionLocalities` needs an explicit verdict of the owner's live policy at
+    // dispatch; without a policy or its `isEligible` the re-check is unverifiable, so it fails closed (review round 1).
+    // A request without that field (the legacy paths, ADR-0124 C5a `requiredLocality` alone) keeps the old answer.
+    if (check === undefined) return context.allowedExecutionLocalities === undefined;
     try {
       return check.call(this.policy, capability, context, selectionKeyOf(provider));
     } catch {

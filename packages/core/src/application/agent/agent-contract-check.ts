@@ -1,6 +1,7 @@
 import type { AgentRunServiceDeps } from './agent-run-service';
 import type { AgentPlanExecutorDeps, AgentReadBudget, AgentReadPort, AgentReadRequest, AgentReadResponse, AgentSummarizerDeps } from './plan-executor';
-import type { QuarantinedSummarizerModel } from './quarantined-summary';
+import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
+import type { ProviderSelector } from '../../ports/provider-selector.port';
 
 /**
  * ADR-0121 D5 / D12: the agent's dependency contracts, pinned at COMPILE time. Test files are not type-checked
@@ -12,9 +13,15 @@ import type { QuarantinedSummarizerModel } from './quarantined-summary';
 type KeysEqual<T, K extends string> = [keyof T] extends [K] ? ([K] extends [keyof T] ? true : false) : false;
 type Assert<T extends true> = T;
 
-/** Executor: narrow read ports, the logger, the summariser's model list and two test overrides. No writer, runner, fetch or repository. */
+/** Executor: narrow read ports, the logger, the summariser's route (the existing selector) and two test overrides. No writer, runner, fetch or repository. */
 export type AgentExecutorDepsPinned = Assert<KeysEqual<AgentPlanExecutorDeps, 'readers' | 'logger' | 'summarizer' | 'elapsed' | 'bounds'>>;
-export type AgentSummarizerDepsPinned = Assert<KeysEqual<AgentSummarizerDeps, 'models'>>;
+/**
+ * ADR-0121 D12 (amended 2026-11-16): M2's route is the EXISTING selection contract — the `ProviderSelector` port and its
+ * `ProviderSelectionContext` — and nothing else: no model list, no new model-execution port or token.
+ */
+export type AgentSummarizerDepsPinned = Assert<KeysEqual<AgentSummarizerDeps, 'selector' | 'selectionContext'>>;
+export type AgentSummarizerSelectorPinned = Assert<TypesEqual<AgentSummarizerDeps['selector'], ProviderSelector>>;
+export type AgentSummarizerContextPinned = Assert<TypesEqual<NonNullable<AgentSummarizerDeps['selectionContext']>, ProviderSelectionContext>>;
 /** A port is one `read` function. */
 export type AgentReadPortPinned = Assert<KeysEqual<AgentReadPort, 'read'>>;
 /** The port's one function: exactly one request in, exactly one response out (no extra parameter, no other return type). */
@@ -29,7 +36,5 @@ export type AgentReadResponseVariantsPinned = Assert<TypesEqual<AgentReadRespons
 /** A read request holds closed fields only; `withDocuments` is the one flag, set by the executor, never by a caller. */
 export type AgentReadRequestPinned = Assert<KeysEqual<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments' | 'remainingMs' | 'signal' | 'budget'>>;
 export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQuery' | 'reserveHttp'>>;
-/** The summariser's model port: a locality, an audit id and one `run`. */
-export type QuarantinedModelPinned = Assert<KeysEqual<QuarantinedSummarizerModel, 'executionLocality' | 'auditId' | 'run'>>;
 /** The service: the router, the actor repository (kill switch), the logger and configuration values. */
 export type AgentServiceDepsPinned = Assert<KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps'>>;

@@ -1,9 +1,12 @@
 import { Capability } from '../../domain';
 import { joinFlowLabels, type FlowEgress, type FlowLabel } from '../../domain/flow-label';
-import { executionLocalityOf, type AiExecutionLocality, type AiRequest } from '../../ports/ai-provider.port';
+import type { AiExecutionLocality, AiProvider, AiRequest } from '../../ports/ai-provider.port';
+import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
+import type { ProviderSelector } from '../../ports/provider-selector.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
 import { containsDocumentActionClaim } from '../document-summary-claim-guard';
+import { allowedExecutionLocalitiesOf, declaredExecutionLocality } from '../execution-locality-constraint';
 import { containsLink, neutralizeLinks } from '../link-neutralizer';
 import {
   buildUntrustedDocumentReadout,
@@ -16,18 +19,23 @@ import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
 
 /**
  * ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2). Core, offline, unwired: no composition root builds it and
- * no runtime dispatches to it (`active` is still refused). It names no provider; the model is a narrow injected port.
+ * no runtime dispatches to it (`active` is still refused). It names no provider and adds no port: the model is chosen by the
+ * existing {@link ProviderSelector} (ADR-0121 D12, amended and ratified 2026-11-16) and called through `AiProvider.execute`.
  *
  * - **A sealed request (D3).** `SUMMARIZATION`, a self-contained prompt, and nothing else: no context files, no workspace,
  *   no images, no metadata, no catalog, no memory, no history, no tool definitions. The untrusted items are rendered by
  *   `renderUntrustedDocumentForPrompt` (JSON-quoted fields under a fixed untrusted header, so no field can close the
  *   envelope), after `buildUntrustedDocumentReadout` normalised them, neutralised their links and withheld any item that is
  *   credential-shaped (never redacted, never sent).
- * - **Egress (D4).** The provider must satisfy the strictest egress label of the inputs ({@link selectQuarantinedModel}).
- *   `LOCAL_MODEL_ONLY` needs a `LOCAL` model, `HOST_ONLY` no model at all. `REMOTE_ON_SUMMARY_REQUEST` needs a
- *   {@link SummaryEgressGrant} (per summarize step and per source; only a module-private Core factory makes one, and this slice
- *   builds no producer, so in production it is always `listing-only` with no body fetched); with a grant a remote model is
- *   allowed for exactly one item, a batch runs on a `LOCAL` model only. No model satisfying it is a `listing-only`: no call.
+ * - **Egress (D4) as a selection constraint (D12).** Core derives the allowed execution localities from the strictest egress
+ *   label of the inputs, a valid {@link SummaryEgressGrant} and the asked-for item count ({@link deriveM2Localities}) and passes
+ *   them as `allowedExecutionLocalities` on the selection context, so the candidates are capability ∩ owner policy ∩ locality ∩
+ *   `workText`. `LOCAL_MODEL_ONLY` allows `LOCAL`; `HOST_ONLY` no model at all. `REMOTE_ON_SUMMARY_REQUEST` needs a grant (per
+ *   summarize step and per source; only a module-private Core factory makes one, and this slice builds no producer, so in
+ *   production it is always `listing-only` with no body fetched); with a grant `REMOTE` is allowed for exactly one asked-for
+ *   item, a batch runs on `LOCAL` only. The selector's answer is re-read, not trusted, and policy and locality are re-checked
+ *   synchronously immediately before the one dispatch ({@link quarantinedSummarize}). No provider, an unverifiable constraint or
+ *   a failed re-check is a `listing-only`: no call. A sent request is never re-sent to another provider.
  * - **A schema-bound output (D3, A2).** One closed JSON object per {@link AGENT_PLAN_SUMMARY_SCHEMAS} id; any other shape,
  *   key, type, length or position is a closed `schema` failure. Links are neutralised and the credential guard runs on the
  *   result (a match fails the whole output, `credential`).
@@ -243,64 +251,157 @@ function grantMatches(grant: SummaryEgressGrant | undefined, step: number, entry
   return known !== undefined && known.step === step && known.entryId === entryId && known.run === run;
 }
 
-// ── provider selection (D4) ────────────────────────────────────────────────────────────────────────────────────────────
+// ── provider selection (D4 through D12) ────────────────────────────────────────────────────────────────────────────────
 
-/** The narrow model port: one request in, text out. An adapter backs it with a provider; Core names none. */
-export interface QuarantinedSummarizerModel {
-  /** Absent counts as `REMOTE` (fail closed), exactly as `executionLocalityOf`. */
-  readonly executionLocality?: AiExecutionLocality;
-  /** A static, content-free id of this model/route for the audit trail. */
-  readonly auditId: string;
-  run(request: AiRequest): Promise<{ readonly text: string }>;
+/**
+ * M2's route (ADR-0121 D12, amended 2026-11-16): the existing provider selector and the request's base selection context
+ * (the conversation and the actor, for the owner's session-scoped policy). Core adds the derived locality constraint; the base
+ * context can only narrow it. No new port: {@link ProviderSelector} is the existing selection contract.
+ */
+export interface QuarantinedSummarizerRoute {
+  readonly selector: ProviderSelector;
+  readonly selectionContext?: ProviderSelectionContext;
 }
 
 export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-grant';
 
-/** A model with its metadata read ONCE, at selection and before any egress: the call, the audit and the disclosure use only this. */
-interface SelectedModel {
-  readonly model: QuarantinedSummarizerModel;
+/**
+ * D12: the execution localities M2 may run on, derived from the joined egress label of its inputs, whether every input that
+ * needs a summary grant holds a valid one, and the item count that was ASKED for (not what fit). Pure and total.
+ * - `HOST_ONLY`: none, ever (`host-only`), not even `LOCAL` (P3-3b #5).
+ * - Any input labelled `REMOTE_ON_SUMMARY_REQUEST` without its grant: none (`no-summary-grant`), never a fallback to `LOCAL`
+ *   (P3-3b #4; the body is not even fetched).
+ * - `LOCAL_MODEL_ONLY`: `LOCAL`.
+ * - `REMOTE_ON_SUMMARY_REQUEST` with the grant: `LOCAL` and `REMOTE` for exactly one asked-for item, `LOCAL` for a batch (the
+ *   remote batch of the owner's 2026-11-03 answer 3 is a later slice).
+ * - `REMOTE_OK`: `LOCAL` and `REMOTE`.
+ * - An unknown label or an asked-for count that is not a positive integer is unverifiable: none (`no-model`).
+ */
+export function deriveM2Localities(input: {
+  readonly egress: FlowEgress;
+  readonly needsGrant: boolean;
+  readonly granted: boolean;
+  readonly askedItems: number;
+}):
+  | { readonly ok: true; readonly localities: readonly AiExecutionLocality[] }
+  | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
+  const { egress, needsGrant, granted, askedItems } = input;
+  if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
+  if (needsGrant && granted !== true) return { ok: false, reason: 'no-summary-grant' };
+  if (typeof askedItems !== 'number' || !Number.isInteger(askedItems) || askedItems < 1) return { ok: false, reason: 'no-model' };
+  switch (egress) {
+    case 'LOCAL_MODEL_ONLY':
+      return { ok: true, localities: Object.freeze(['LOCAL'] as const) };
+    case 'REMOTE_ON_SUMMARY_REQUEST':
+      if (!needsGrant || granted !== true) return { ok: false, reason: 'no-summary-grant' };
+      return { ok: true, localities: Object.freeze(askedItems === 1 ? (['LOCAL', 'REMOTE'] as const) : (['LOCAL'] as const)) };
+    case 'REMOTE_OK':
+      return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
+    default:
+      return { ok: false, reason: 'no-model' };
+  }
+}
+
+/**
+ * The selection context of one M2 request: the base context (conversation, actor, a caller's `workText`), with Core's derived
+ * localities. A locality constraint the base already carries can only narrow it (intersection); `workText` is kept, and set
+ * when any input is work text, so the policy's work-text rule always applies. Pure.
+ */
+export function m2SelectionContext(
+  base: ProviderSelectionContext | undefined,
+  localities: readonly AiExecutionLocality[],
+  entryIds: readonly NlWave1EntryId[],
+): ProviderSelectionContext {
+  try {
+    const context: ProviderSelectionContext = base ?? {};
+    // The base constraint is read by the shared reader (it intersects `requiredLocality`); a malformed list is rejected as a
+    // whole (the empty set), never sanitised member by member (Codex review round 1).
+    const narrowed = allowedExecutionLocalitiesOf(context);
+    const allowed = narrowed === undefined ? [...localities] : localities.filter((locality) => narrowed.has(locality));
+    const workText = context.workText === true || entryIds.some((entryId) => AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId));
+    return Object.freeze({ ...context, allowedExecutionLocalities: Object.freeze(allowed), ...(workText ? { workText: true as const } : {}) });
+  } catch {
+    // A base context that cannot be read is unverifiable: an empty set, so no provider fits (fail closed).
+    return Object.freeze({ allowedExecutionLocalities: Object.freeze([] as AiExecutionLocality[]) });
+  }
+}
+
+/** A provider with its metadata read ONCE, at selection and before any egress: the dispatch check, the call, the audit and the disclosure use this. */
+interface SelectedProvider {
+  readonly provider: AiProvider;
   readonly locality: AiExecutionLocality;
   readonly auditId: string;
 }
 
-/** Reads a model's locality and audit id once; a model whose metadata throws is unusable (never called). */
-function snapshotModel(model: QuarantinedSummarizerModel): SelectedModel | undefined {
+/** The set the context allows, by the shared reader (an absent constraint is no locality at all for M2: fail closed). */
+function allowedBy(context: ProviderSelectionContext): ReadonlySet<AiExecutionLocality> {
+  return allowedExecutionLocalitiesOf(context) ?? new Set();
+}
+
+/**
+ * Selects M2's provider through the existing selector under `context`. Total: `undefined` (listing-only, no call) when the
+ * selector cannot re-check at dispatch (no `isStillEligible`: the mandatory re-check would be unverifiable), selects nothing,
+ * throws, or answers a provider whose locality, id or capability cannot be read, that does not advertise `SUMMARIZATION`, or
+ * whose declared locality is outside the derived set (the port's answer is re-read, never trusted). Never calls the provider.
+ */
+async function selectM2Provider(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext): Promise<SelectedProvider | undefined> {
   try {
-    const locality = executionLocalityOf(model);
-    const id = model.auditId;
-    return { model, locality, auditId: typeof id === 'string' ? id : '' };
+    const selector = route.selector;
+    if (typeof selector?.select !== 'function' || typeof selector.isStillEligible !== 'function') return undefined;
+    const provider = await selector.select(Capability.SUMMARIZATION, context);
+    if (typeof provider !== 'object' || provider === null) return undefined;
+    const locality = declaredExecutionLocality(provider);
+    if (locality === undefined || !allowedBy(context).has(locality)) return undefined;
+    if (!provider.capabilities.some((descriptor) => descriptor.capability === Capability.SUMMARIZATION)) return undefined;
+    const id = provider.id;
+    const selected: SelectedProvider = { provider, locality, auditId: typeof id === 'string' ? id : '' };
+    // The policy verdict is asked once already here, so a route that can never pass the dispatch check (no explicit policy
+    // verdict, CapabilityRouter under `allowedExecutionLocalities`) is refused before any body is fetched.
+    return dispatchLocality(route, context, selected) === undefined ? undefined : selected;
   } catch {
     return undefined;
   }
 }
 
 /**
- * D4: the first model (the caller's order is the priority) that satisfies the strictest egress label of the inputs. Pure.
- * Module-internal: a grant is only valid as matched against a step, a source and a run, so callers go through
- * {@link quarantinedSummarize} / {@link summaryReadiness}. `itemCount` is what was ASKED for, not what fit.
- * - `HOST_ONLY`: none, ever.
- * - `LOCAL_MODEL_ONLY`: a `LOCAL` model.
- * - `REMOTE_ON_SUMMARY_REQUEST`: no grant, no model (never a fallback to a local one: the body is not even fetched). With a
- *   grant: any model for exactly ONE item; a batch (more items) runs on a `LOCAL` model only.
- * - `REMOTE_OK`: any model.
+ * The mandatory dispatch-time re-check (D12), SYNCHRONOUS: run immediately before `execute`, with nothing awaited in between.
+ * The provider must still declare the locality it was selected with, that locality must still be allowed, and the selector
+ * must still find it eligible under the same constrained context (the owner's live policy). Answers the locality that is
+ * dispatched (the audit records exactly it), or `undefined` on any doubt: no call.
  */
-function selectQuarantinedModel(
-  egress: FlowEgress,
-  grant: SummaryEgressGrant | undefined,
-  itemCount: number,
-  models: readonly QuarantinedSummarizerModel[],
-): { readonly ok: true; readonly selected: SelectedModel } | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
-  if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
-  if (egress === 'REMOTE_ON_SUMMARY_REQUEST' && (grant === undefined || typeof grant !== 'object' || grant === null || !GRANTS.has(grant))) {
-    return { ok: false, reason: 'no-summary-grant' };
+function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext, selected: SelectedProvider): AiExecutionLocality | undefined {
+  try {
+    const now = declaredExecutionLocality(selected.provider);
+    if (now === undefined || now !== selected.locality || !allowedBy(context).has(now)) return undefined;
+    const check = route.selector.isStillEligible;
+    if (typeof check !== 'function') return undefined;
+    if (check.call(route.selector, Capability.SUMMARIZATION, context, selected.provider) !== true) return undefined;
+    // Review round 2 (Codex P2): the policy callback runs code; the locality is read again after it, so a callback that
+    // switches the provider's declared locality cannot carry a stale (cached) answer into the dispatch or the audit.
+    const after = declaredExecutionLocality(selected.provider);
+    return after === now && allowedBy(context).has(after) ? after : undefined;
+  } catch {
+    return undefined;
   }
-  const usable = models.map(snapshotModel).filter((entry): entry is SelectedModel => entry !== undefined);
-  const candidates = egress === 'REMOTE_OK' || (egress === 'REMOTE_ON_SUMMARY_REQUEST' && itemCount === 1) ? usable : usable.filter((entry) => entry.locality === 'LOCAL');
-  const picked = candidates[0];
-  return picked === undefined ? { ok: false, reason: 'no-model' } : { ok: true, selected: picked };
 }
 
-export type QuarantinedListingOnlyReason = QuarantinedModelRefusal | 'no-readout-source' | 'work-text-controls-not-built' | 'no-documents' | 'credential-in-prompt';
+/** Whether every input labelled `REMOTE_ON_SUMMARY_REQUEST` holds a grant for THIS step, THIS source and THIS run. */
+function grantState(
+  sources: readonly { readonly entryId: NlWave1EntryId; readonly grant?: SummaryEgressGrant | undefined }[],
+  step: number,
+  run: SummaryRunToken,
+): { readonly needsGrant: boolean; readonly granted: boolean } {
+  const needing = sources.filter((source) => readOutputLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
+  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)) };
+}
+
+export type QuarantinedListingOnlyReason =
+  | QuarantinedModelRefusal
+  | 'no-readout-source'
+  | 'work-text-controls-not-built'
+  | 'no-documents'
+  | 'credential-in-prompt'
+  | 'dispatch-refused';
 
 /** The closed reasons, for exhaustive renderers. */
 export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyReason[] = Object.freeze([
@@ -311,6 +412,7 @@ export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyRe
   'work-text-controls-not-built',
   'no-documents',
   'credential-in-prompt',
+  'dispatch-refused',
 ]);
 
 function sourceRefusal(entryId: NlWave1EntryId, schema: AgentSummarySchemaId): QuarantinedListingOnlyReason | undefined {
@@ -320,22 +422,36 @@ function sourceRefusal(entryId: NlWave1EntryId, schema: AgentSummarySchemaId): Q
   return undefined;
 }
 
+/** What {@link summaryReadiness} needs: one read a summarize step covers, before its body is fetched. */
+export interface SummaryReadinessInput {
+  readonly entryId: NlWave1EntryId;
+  readonly schema: AgentSummarySchemaId;
+  /** The summarize step's number (a grant is bound to it). */
+  readonly summaryStep: number;
+  readonly grant: SummaryEgressGrant | undefined;
+  readonly run: SummaryRunToken;
+  /** The items the run asked for over the summary's reads. */
+  readonly askedItems: number;
+  readonly route: QuarantinedSummarizerRoute;
+}
+
 /**
  * Whether a summary over one read could run at all, BEFORE its body is fetched: the source has a readout shape and work-text
- * controls, and a model can be selected for its label (with `itemCount` items). `undefined` means it can; a reason means
- * the read must not fetch documents. Pure.
+ * controls, its label, grant and asked-for count admit a locality, and the selector can name an allowed provider under that
+ * constraint. `undefined` means it can; a reason means the read must not fetch documents. Never calls a provider.
  */
-export function summaryReadiness(
-  entryId: NlWave1EntryId,
-  schema: AgentSummarySchemaId,
-  grant: SummaryEgressGrant | undefined,
-  itemCount: number,
-  models: readonly QuarantinedSummarizerModel[],
-): QuarantinedListingOnlyReason | undefined {
-  const refusal = sourceRefusal(entryId, schema);
+export async function summaryReadiness(input: SummaryReadinessInput): Promise<QuarantinedListingOnlyReason | undefined> {
+  const refusal = sourceRefusal(input.entryId, input.schema);
   if (refusal !== undefined) return refusal;
-  const chosen = selectQuarantinedModel(readOutputLabel(entryId).egress, grant, itemCount, models);
-  return chosen.ok ? undefined : chosen.reason;
+  const derived = deriveM2Localities({
+    egress: readOutputLabel(input.entryId).egress,
+    ...grantState([{ entryId: input.entryId, grant: input.grant }], input.summaryStep, input.run),
+    askedItems: input.askedItems,
+  });
+  if (!derived.ok) return derived.reason;
+  const context = m2SelectionContext(input.route.selectionContext, derived.localities, [input.entryId]);
+  const selected = await selectM2Provider(input.route, context);
+  return selected === undefined ? 'no-model' : undefined;
 }
 
 /**
@@ -483,7 +599,8 @@ export interface QuarantinedSummaryRequest {
   /** The summarize step's number in the plan (a grant is bound to it). */
   readonly summaryStep: number;
   readonly sources: readonly AgentSummarySource[];
-  readonly models: readonly QuarantinedSummarizerModel[];
+  /** The existing selector and the base selection context (D12): M2 adds no model port. */
+  readonly route: QuarantinedSummarizerRoute;
   /**
    * Called once, right before the model call, with the prompt's input tokens (an upper bound: its UTF-8 bytes): the caller
    * charges the run's M2 / model-call / token bounds and returns `false` to refuse (no call is made; the run is partial).
@@ -571,13 +688,13 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   prepared.length = kept;
 
   // The strictest egress of every covered read (a withheld item still counts: the label is the source's). Every source whose
-  // label needs a summary grant must hold a valid one for THIS step and THIS source.
+  // label needs a summary grant must hold a valid one for THIS step and THIS source (D12: the derived localities).
   const joined = joinFlowLabels(...request.sources.map((source) => readOutputLabel(source.entryId)));
-  const needing = request.sources.filter((source) => readOutputLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
-  const allGranted = needing.length > 0 && needing.every((source) => grantMatches(source.grant, request.summaryStep, source.entryId, request.run));
-  const chosen = selectQuarantinedModel(joined.egress, allGranted ? needing[0]?.grant : undefined, asked, request.models);
-  if (!chosen.ok) return { kind: 'listing-only', reason: chosen.reason };
-  const picked = chosen.selected;
+  const derived = deriveM2Localities({ egress: joined.egress, ...grantState(request.sources, request.summaryStep, request.run), askedItems: asked });
+  if (!derived.ok) return { kind: 'listing-only', reason: derived.reason };
+  const context = m2SelectionContext(request.route.selectionContext, derived.localities, request.sources.map((source) => source.entryId));
+  const picked = await selectM2Provider(request.route, context);
+  if (picked === undefined) return { kind: 'listing-only', reason: 'no-model' };
 
   const schema = request.schema;
   const prompt = renderQuarantinedPrompt(
@@ -588,13 +705,19 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   if (containsCredentialMaterial(prompt) || containsCredentialFileContent(prompt)) return { kind: 'listing-only', reason: 'credential-in-prompt' };
   if (request.signal?.aborted === true) return { kind: 'failed', reason: 'model' };
   const estimatedTokens = estimateInputTokens(prompt);
+  // From here to `execute` nothing is awaited. The dispatch check runs first (so a refusal charges nothing), then the budget
+  // reservation and the audit start (caller callbacks), and then the check runs AGAIN inside the call, immediately before
+  // `provider.execute`, so nothing a callback does can change what is sent (Codex review round 1). The audited locality is the
+  // one that final check verified.
+  if (dispatchLocality(request.route, context, picked) === undefined) return { kind: 'listing-only', reason: 'dispatch-refused' };
   if (!request.reserve(estimatedTokens)) return { kind: 'bound' };
 
   const now = request.now ?? Date.now;
   const started = now();
   const aiRequest: AiRequest = { capability: Capability.SUMMARIZATION, prompt, ...(request.signal !== undefined ? { signal: request.signal } : {}) };
+  let dispatched: AiExecutionLocality = picked.locality;
   const audit = (): QuarantinedCallAudit => ({
-    locality: picked.locality,
+    locality: dispatched,
     auditId: picked.auditId,
     estimatedTokens,
     latencyMs: Math.max(0, now() - started),
@@ -606,9 +729,15 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   }
   let text: string;
   try {
-    text = await callModel(picked.model, aiRequest, request.signal);
-  } catch {
-    // The adapter's message is never read.
+    text = await callModel(picked.provider, aiRequest, request.signal, () => {
+      const verified = dispatchLocality(request.route, context, picked);
+      if (verified !== undefined) dispatched = verified;
+      return verified !== undefined;
+    });
+  } catch (error) {
+    // A final check that refused: nothing was sent (the model call was charged; the bound stays conservative).
+    if (error === DISPATCH_REFUSED) return { kind: 'listing-only', reason: 'dispatch-refused' };
+    // The adapter's message is never read, and the request is never re-sent to this or another provider (D12).
     return { kind: 'failed', reason: 'model', audit: audit() };
   }
   const numbered = prepared.map((item, index) => ({ n: index + 1, entryId: item.entryId, position: item.position }));
@@ -620,14 +749,27 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   return { kind: 'summary', summary: sealSummary(schema, label, parsed.entries), omitted: left, audit: audit() };
 }
 
+const DISPATCH_REFUSED: unique symbol = Symbol('dispatch-refused');
+
 /**
  * One model call that an abort abandons. The model is never invoked on an already-aborted signal, and a handler is attached to
  * the call at once, so a later rejection of an abandoned call is never an unhandled rejection.
  */
-function callModel(model: QuarantinedSummarizerModel, request: AiRequest, signal: AbortSignal | undefined): Promise<string> {
+function callModel(provider: AiProvider, request: AiRequest, signal: AbortSignal | undefined, mayDispatch: () => boolean): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     if (signal?.aborted === true) {
       reject(new Error('aborted'));
+      return;
+    }
+    // The final D12 dispatch check, synchronous and immediately before `execute` (nothing runs in between).
+    let allowed = false;
+    try {
+      allowed = mayDispatch() === true;
+    } catch {
+      allowed = false;
+    }
+    if (!allowed) {
+      reject(DISPATCH_REFUSED);
       return;
     }
     const abort = (): void => reject(new Error('aborted'));
@@ -635,7 +777,7 @@ function callModel(model: QuarantinedSummarizerModel, request: AiRequest, signal
     const done = (): void => signal?.removeEventListener('abort', abort);
     let call: Promise<{ readonly text: string }>;
     try {
-      call = Promise.resolve(model.run(request));
+      call = Promise.resolve(provider.execute(request));
     } catch {
       done();
       reject(new Error('model'));
