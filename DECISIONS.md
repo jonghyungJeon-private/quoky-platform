@@ -32277,6 +32277,26 @@ How each note was handled:
 - **Security LOW 2 (accepted residual):** HTTP 400/404 answers without a Slack error body are NOT_SENT, and are never retried. The post writer maps them the same way. A forwarding proxy that answers 4xx after forwarding is outside this deployment, which calls `slack.com` directly with `redirect: 'error'`.
 - **Security LOW 3 (note only, existing code):** if saving `lastAction` fails after a SENT delete, a second request gets "already sent" from the SENT-receipt dedup. Nothing is deleted twice.
 
+### Live UAT (amendment 3, Slack post delete undo, U21b, 2026-11-16)
+
+The owner approved the run plan ("진행 (권장)"). The service was temporarily deployed at 74ff72bb, and the run went through a Discord DM with abx. Target: Slack `#quoky-test` (C0C83C52PFS), the only allowlisted channel. Every write was checked outside Quoky with a Slack MCP read, and nothing was written through MCP. Table: `e2e-2026-11-16-r3-slack-undo.tsv`. Result: **PASS**.
+
+- **Baseline:** the newest message in `#quoky-test` was from 2026-10-08.
+- **Post:** `Slack #quoky-test에 게시: Quoky E2E 삭제 되돌리기 시험` → preview → `승인` → `Slack 게시 실행`. The message was posted (ts `1794802609.202869`), and the MCP read showed it.
+- **Bare phrase:** `Slack 삭제 실행` sent without a delete preview did nothing ("지금 실행할 승인된 외부 쓰기 요청이 없어요").
+- **Undo preview:** `되돌려줘` gave a CRITICAL delete preview that:
+  - took its target from the receipt (channel `C0C83C52PFS`, ts `1794802609.202869`), with the exact posted text;
+  - showed a Slack-host permalink;
+  - said that thread replies stay under a "deleted message" placeholder;
+  - said that edits made in Slack cannot be checked (S-4).
+- **Delete:** `승인` → `Slack 삭제 실행` deleted the message. The MCP read showed the 2026-10-08 message as newest again, the same as the baseline.
+- **Undo of the undo:** a further `되돌려줘` was refused ("되돌린 작업은 다시 되돌릴 수 없어요").
+- **Re-request:** asking for the same post again gave a new post preview, not `already-sent`. It was rejected, and nothing was posted.
+- **End state:** `#quoky-test` matches the baseline.
+- **Not run live:** two cases, both covered by `slack-message-delete-writer.test.ts` and the red-team cases.
+  - A delete after the message was removed by hand in Slack. This needs the owner to act in Slack. It is fail closed: `message_not_found` is mapped to NOT_SENT.
+  - The thread-reply placeholder.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
