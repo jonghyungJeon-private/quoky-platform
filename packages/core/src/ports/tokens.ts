@@ -54,5 +54,7 @@ export const DRIVE_READER = Symbol('DriveReader');
 export const ISSUE_COMMENT_WRITER = Symbol('IssueCommentWriter');
 export const ISSUE_TRANSITION_WRITER = Symbol('IssueTransitionWriter');
 export const CHANNEL_MESSAGE_WRITER = Symbol('ChannelMessageWriter');
+/** ADR-0112 amendment 1 (S1): the narrow delete port of a message Quoky posted (bound exactly when the post writer is). */
+export const CHANNEL_MESSAGE_DELETE_WRITER = Symbol('ChannelMessageDeleteWriter');
 export const CALENDAR_EVENT_WRITER = Symbol('CalendarEventWriter');
 export const CONNECTOR_WRITE_RECEIPT_REPOSITORY = Symbol('ConnectorWriteReceiptRepository');

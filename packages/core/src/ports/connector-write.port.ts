@@ -151,6 +151,11 @@ export const ConnectorWriteOperation = {
    * the provider lists now. Only ever an undo; there is no owner-worded revert.
    */
   ISSUE_TRANSITION_REVERT: 'ISSUE_TRANSITION_REVERT',
+  /**
+   * ADR-0112 amendment 1 (S1/S2) under amendment 3: delete the ONE channel message Quoky posted (from this actor's own SENT
+   * post receipt: its channel id and message ts, never from text). Only ever an undo; there is no owner-worded delete.
+   */
+  CHANNEL_MESSAGE_DELETE: 'CHANNEL_MESSAGE_DELETE',
 } as const;
 export type ConnectorWriteOperation = (typeof ConnectorWriteOperation)[keyof typeof ConnectorWriteOperation];
 export const CONNECTOR_WRITE_OPERATIONS: readonly ConnectorWriteOperation[] = Object.values(ConnectorWriteOperation);
@@ -288,6 +293,32 @@ export interface ChannelMessageWriter {
   /** The allowlisted channel id `channel` resolves to, or undefined when it is not allowlisted. Pure. */
   resolveChannel(channel: string): string | undefined;
   post(request: ChannelMessageRequest): Promise<ConnectorWriteOutcome>;
+}
+
+/**
+ * ADR-0112 amendment 1 (S1): delete exactly the message a post receipt names. Both values come from this actor's own SENT
+ * post receipt (`<channelId>:<ts>`), never from text, a link or a listing.
+ */
+export interface ChannelMessageDeleteRequest {
+  /** The allowlisted channel id the post went to. */
+  readonly channelId: string;
+  /** The posted message's timestamp id, as the post returned it. */
+  readonly ts: string;
+}
+
+/**
+ * ADR-0112 amendment 1 (S1): a separate narrow port for the delete of a message Quoky posted (the post port is NOT widened).
+ * Same credentials and the same channel allowlist as the post writer. One request, no retry, value-free outcomes only.
+ */
+export interface ChannelMessageDeleteWriter {
+  readonly source: string;
+  /** True when `channelId` is a well-formed channel id on the configured allowlist. Pure; makes no network call. */
+  allowsChannelId(channelId: string): boolean;
+  /**
+   * Deletes the message. Refused before any network call when the channel is not allowlisted (`NOT_SENT('TARGET_NOT_ALLOWED')`)
+   * or the request is malformed (`NOT_SENT('INVALID_REQUEST')`). A message that is already gone is `NOT_SENT('NOT_FOUND')`.
+   */
+  deleteMessage(request: ChannelMessageDeleteRequest): Promise<ConnectorWriteOutcome>;
 }
 
 // ── Calendar event writes (owner's primary calendar only; ADR-0110 amendment) ────────────────────────────────────

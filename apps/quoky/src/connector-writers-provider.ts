@@ -5,9 +5,10 @@ import {
   type GoogleCalendarTokenGrant,
 } from '@quoky/connector-calendar-google';
 import { JiraIssueCommentWriter, JiraIssueTransitionWriter } from '@quoky/connector-jira';
-import { SlackChannelWriter } from '@quoky/connector-slack';
+import { SlackChannelWriter, SlackMessageDeleteWriter } from '@quoky/connector-slack';
 import type {
   CalendarEventWriter,
+  ChannelMessageDeleteWriter,
   ChannelMessageWriter,
   IssueCommentWriter,
   IssueTransitionWriter,
@@ -35,6 +36,11 @@ export interface ConnectorWriters {
   readonly issueComments?: IssueCommentWriter;
   readonly issueTransitions?: IssueTransitionWriter;
   readonly channelMessages?: ChannelMessageWriter;
+  /**
+   * ADR-0112 amendment 1 (S1/S8): the narrow delete of a message Quoky posted. Built exactly when `channelMessages` is (same
+   * token, allowlist and host), never alone.
+   */
+  readonly channelMessageDeletes?: ChannelMessageDeleteWriter;
   readonly calendarEvents?: CalendarEventWriter;
 }
 
@@ -50,7 +56,8 @@ export interface ConnectorWritersFactoryOptions {
  *
  * - Jira comment + transition: `QUOKY_CONNECTOR_WRITES_ENABLED=true`, a non-empty Jira project allowlist and the read
  *   connector's Jira credentials.
- * - Slack post: `QUOKY_CONNECTOR_WRITES_ENABLED=true`, the separate bot token and a non-empty channel allowlist.
+ * - Slack post (and, ADR-0112 amendment 1 S8, the delete of a message Quoky posted, built with it): `QUOKY_CONNECTOR_WRITES_ENABLED=true`,
+ *   the separate bot token and a non-empty channel allowlist.
  * - Calendar create/update/delete: `QUOKY_CALENDAR_WRITE_ENABLED=true` and a configured calendar whose token file records
  *   a `calendar.events` grant (an inline refresh token is checked on the first write instead).
  *
@@ -74,6 +81,7 @@ export function createConnectorWriters(
     issueComments?: IssueCommentWriter;
     issueTransitions?: IssueTransitionWriter;
     channelMessages?: ChannelMessageWriter;
+    channelMessageDeletes?: ChannelMessageDeleteWriter;
     calendarEvents?: CalendarEventWriter;
   } = {};
 
@@ -98,8 +106,16 @@ export function createConnectorWriters(
 
   if (writes.enabled && writes.slack !== undefined) {
     const slack = writes.slack;
-    const built = construct(() => new SlackChannelWriter({ token: slack.token, channels: slack.channels, ...fetchOption }), logger);
-    if (built !== undefined) writers.channelMessages = built;
+    // ADR-0112 amendment 1 (S8): the delete writer is built from the same configuration in the same step, so both exist or
+    // neither does (no separate flag, scope or token).
+    const built = construct(() => {
+      const slackConfig = { token: slack.token, channels: slack.channels, ...fetchOption };
+      return { post: new SlackChannelWriter(slackConfig), remove: new SlackMessageDeleteWriter(slackConfig) };
+    }, logger);
+    if (built !== undefined) {
+      writers.channelMessages = built.post;
+      writers.channelMessageDeletes = built.remove;
+    }
   }
 
   if (writes.calendarEnabled) {

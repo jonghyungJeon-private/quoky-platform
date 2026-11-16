@@ -2,6 +2,7 @@ import type { Provider } from '@nestjs/common';
 import {
   ApprovalManager,
   CALENDAR_EVENT_WRITER,
+  CHANNEL_MESSAGE_DELETE_WRITER,
   CHANNEL_MESSAGE_WRITER,
   CONNECTOR_WRITE_RECEIPT_REPOSITORY,
   ISSUE_COMMENT_WRITER,
@@ -25,8 +26,8 @@ import { createConnectorWriters, type ConnectorWriters } from '../connector-writ
  * here:
  *
  * - the CWR-1 writers (`createConnectorWriters`: only those whose flags, allowlists and credentials are complete; all
- *   default off) bound to `ISSUE_COMMENT_WRITER`, `ISSUE_TRANSITION_WRITER`, `CHANNEL_MESSAGE_WRITER` and
- *   `CALENDAR_EVENT_WRITER` when built;
+ *   default off) bound to `ISSUE_COMMENT_WRITER`, `ISSUE_TRANSITION_WRITER`, `CHANNEL_MESSAGE_WRITER`,
+ *   `CHANNEL_MESSAGE_DELETE_WRITER` (ADR-0112 amendment 1, with the post writer) and `CALENDAR_EVENT_WRITER` when built;
  * - `CONNECTOR_WRITE_RECEIPT_REPOSITORY` — a lazy view over the SQLite provider's v15 receipts (repositories exist only
  *   after `storage.init()`, ADR-0062);
  * - `CONNECTOR_WRITE_FLOW` — the runtime's optional `connectorWriteFlow` dep (ADR-0112 D5: deps baseline 34 → 35), or
@@ -72,6 +73,7 @@ export function createConnectorWriteComposition(options: ConnectorWriteCompositi
     ...(writers.issueComments ? [{ provide: ISSUE_COMMENT_WRITER, useValue: writers.issueComments }] : []),
     ...(writers.issueTransitions ? [{ provide: ISSUE_TRANSITION_WRITER, useValue: writers.issueTransitions }] : []),
     ...(writers.channelMessages ? [{ provide: CHANNEL_MESSAGE_WRITER, useValue: writers.channelMessages }] : []),
+    ...(writers.channelMessageDeletes ? [{ provide: CHANNEL_MESSAGE_DELETE_WRITER, useValue: writers.channelMessageDeletes }] : []),
     ...(writers.calendarEvents ? [{ provide: CALENDAR_EVENT_WRITER, useValue: writers.calendarEvents }] : []),
   ];
 

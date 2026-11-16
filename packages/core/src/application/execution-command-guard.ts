@@ -87,7 +87,9 @@ export type ExecutionGate =
   // ADR-0112 amendment 3 (O4/O7): the delete of the comment Quoky added (only ever an undo).
   | 'issueCommentDelete'
   // ADR-0112 amendment 3 (O5/O7): the revert of Quoky's own transition (only ever an undo).
-  | 'issueTransitionRevert';
+  | 'issueTransitionRevert'
+  // ADR-0112 amendment 1 (S5/S-6) under amendment 3 (O7): the delete of the Slack message Quoky posted (only ever an undo).
+  | 'channelMessageDelete';
 
 /**
  * The closed set of accepted execution phrases per gate. The FIRST entry is the documented phrase the composer / help
@@ -159,6 +161,9 @@ export const EXECUTION_PHRASES: Readonly<Record<ExecutionGate, readonly string[]
   // the service) on any gate, so each names its own write.
   issueCommentDelete: ['Jira 댓글 삭제 실행', 'Jira 댓글 삭제 실행해줘', '지라 댓글 삭제 실행', 'execute jira comment delete'],
   issueTransitionRevert: ['Jira 상태 되돌리기 실행', 'Jira 상태 되돌리기 실행해줘', '지라 상태 되돌리기 실행', 'execute jira transition revert'],
+  // ADR-0112 amendment 1 (S5, ratified S-6): exactly the ratified list of the Slack message delete. No bare "삭제 실행" on any gate:
+  // every delete phrase names its system.
+  channelMessageDelete: ['Slack 삭제 실행', 'Slack 삭제 실행해줘', '슬랙 삭제 실행', '슬랙 삭제 실행해줘', 'Slack 메시지 삭제 실행', 'execute slack delete'],
 };
 
 /**

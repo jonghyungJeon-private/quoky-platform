@@ -61,6 +61,8 @@ export function connectorWriteLabel(operation: ConnectorWriteOperation): string 
       return 'Jira 댓글 삭제';
     case 'ISSUE_TRANSITION_REVERT':
       return 'Jira 상태 되돌리기';
+    case 'CHANNEL_MESSAGE_DELETE':
+      return 'Slack 메시지 삭제';
   }
 }
 
@@ -154,6 +156,14 @@ const UNCHANGED_EVENT_ONLY = '실행할 때 이 일정이 미리보기 그대로
 export const CONNECTOR_UNDO_RECEIPT_BANNER =
   '되돌리기 요청 — 대상은 Quoky가 보낸 기록(영수증)에서 가져왔어요. 문장에서 가져온 대상은 없어요';
 
+/** ADR-0112 amendment 1 S4: the fixed consequence sentence of every Slack message delete card (verbatim). */
+const SLACK_DELETE_CONSEQUENCE = "이 메시지를 지워요. 지우면 되살릴 수 없어요. 스레드 답글이 있으면 답글은 남고, 원글 자리에는 '삭제된 메시지'가 보여요.";
+/**
+ * ADR-0112 amendment 1 S7 / S-4: the write token has no history scope, so Quoky never reads the message before the delete. The
+ * card says so: an edit made in Slack since the post cannot be seen.
+ */
+const SLACK_DELETE_UNREAD = 'Quoky는 메시지를 읽는 권한이 없어서, 게시한 뒤 Slack에서 수정됐는지는 확인할 수 없어요. 지우면 지금 Slack에 있는 그대로 지워져요.';
+
 function previewBody(preview: ConnectorWritePreview): MessageBody[] {
   switch (preview.operation) {
     case 'ISSUE_COMMENT':
@@ -192,6 +202,21 @@ function previewBody(preview: ConnectorWritePreview): MessageBody[] {
       ];
     case 'CHANNEL_POST':
       return [messageBody('대상: Slack #', inline(preview.channelLabel), ` (${preview.channelId})`), '메시지 (이대로 한 번만 보내요):', fenced(preview.text)];
+    case 'CHANNEL_MESSAGE_DELETE': {
+      const posted = preview.postedAt === undefined ? undefined : dateClockLabel(preview.postedAt, preview.timeZone);
+      return [
+        CONNECTOR_UNDO_RECEIPT_BANNER,
+        ...(preview.ownerSentence !== undefined ? [messageBody('요청하신 문장: ', inline(preview.ownerSentence))] : []),
+        '방금 Quoky가 게시한 이 Slack 메시지를 지워서 되돌려요. 다른 메시지는 건드리지 않아요.',
+        messageBody('대상: Slack #', inline(preview.channelLabel), ` (${preview.channelId}) · 메시지 ts ${preview.ts}`),
+        ...(posted !== undefined ? [`게시한 때: ${posted}`] : []),
+        ...linkLine(preview.url, undefined),
+        '지울 메시지 (Quoky가 보낸 그대로):',
+        fenced(preview.text),
+        SLACK_DELETE_CONSEQUENCE,
+        SLACK_DELETE_UNREAD,
+      ];
+    }
     case 'CALENDAR_EVENT_CREATE':
       return [PRIMARY, ...eventLines(preview.event, preview.timeZone), NO_INVITES];
     case 'CALENDAR_EVENT_UPDATE':
@@ -511,6 +536,8 @@ function nothingHappened(operation: ConnectorWriteOperation): string {
       return '이슈 상태는 바뀌지 않았어요.';
     case 'ISSUE_COMMENT_DELETE':
       return '댓글은 지워지지 않았어요.';
+    case 'CHANNEL_MESSAGE_DELETE':
+      return '메시지는 지워지지 않았어요.';
     case 'CALENDAR_EVENT_CREATE':
     case 'CALENDAR_EVENT_UPDATE':
     case 'CALENDAR_EVENT_DELETE':
@@ -528,6 +555,8 @@ function targetChangedCopy(operation: ConnectorWriteOperation): string {
         ? 'Jira 이슈가 미리보기 이후 다른 키로 옮겨져서 실행하지 않았어요. 다시 요청해 주세요.'
         : operation === 'ISSUE_COMMENT_DELETE'
           ? '그 댓글이 미리보기 이후 바뀌어서 실행하지 않았어요.'
+        : operation === 'CHANNEL_MESSAGE_DELETE'
+          ? '그 메시지의 대상이 미리보기 이후 바뀌어서 실행하지 않았어요.'
         : isCalendar(operation)
           ? '일정이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.'
           : '대상이 미리보기 이후에 바뀌어서 실행하지 않았어요. 다시 요청해 주세요.';
@@ -554,6 +583,8 @@ function sentVerb(operation: ConnectorWriteOperation): string {
       return '방금 단 댓글을 지웠어요.';
     case 'ISSUE_TRANSITION_REVERT':
       return '이슈 상태를 바꾸기 전 상태로 되돌렸어요.';
+    case 'CHANNEL_MESSAGE_DELETE':
+      return '방금 게시한 메시지를 지웠어요.';
   }
 }
 
@@ -686,6 +717,11 @@ const REFUSAL_KO: Readonly<Record<ConnectorWriteRefusal, string>> = {
  * update and delete families override the reasons whose wording names the write.
  */
 const UNDO_REFUSAL_KO: Readonly<Record<Exclude<ExternalUndoFamily, 'calendar-create'>, Partial<Record<ConnectorWriteRefusal, string>>>> = {
+  'slack-post': {
+    'undo-nothing': '지울 수 있는 방금 게시한 Slack 메시지를 찾지 못했어요. (이 대화에서 방금 Quoky가 게시한 메시지만 되돌릴 수 있어요.)',
+    'undo-unavailable': '이 Slack 메시지는 자동으로 되돌릴 수 없어요 (게시 기록과 맞는지 확인할 수 없어요). Slack에서 직접 지워 주세요.',
+    'target-not-allowed': '그 메시지의 채널은 지금 쓰기 허용 목록에 없어서 지우지 않았어요. Slack에서 직접 지워 주세요.',
+  },
   'jira-comment': {
     'undo-nothing': '지울 수 있는 방금 단 Jira 댓글을 찾지 못했어요. (이 대화에서 방금 Quoky가 단 댓글만 되돌릴 수 있어요.)',
     'undo-unavailable': '이 Jira 댓글은 자동으로 되돌릴 수 없어요 (그대로인지 확인할 기록이 없어요). Jira에서 직접 지워 주세요.',
@@ -772,6 +808,7 @@ export function renderConnectorWriteStopLine(preview: ConnectorWritePreview): Me
     case 'ISSUE_TRANSITION_REVERT':
       return messageBody(`${label} — `, inline(preview.issueKey));
     case 'CHANNEL_POST':
+    case 'CHANNEL_MESSAGE_DELETE':
       return messageBody(`${label} — #`, inline(preview.channelLabel));
     case 'CALENDAR_EVENT_CREATE':
       return messageBody(`${label} — `, inline(preview.event.title || '(제목 없음)'));
@@ -891,6 +928,25 @@ function renderJiraCommentUndoOutcome(outcome: ConnectorWriteOutcome): string {
   }
 }
 
+/**
+ * ADR-0112 amendment 1 (S6) under amendment 3: the outcome of the Slack message delete. Only SENT counts as undone; every
+ * refusal is said plainly and nothing is retried.
+ */
+function renderSlackPostUndoOutcome(outcome: ConnectorWriteOutcome): string {
+  const none = '이번 요청으로 지운 것은 없어요. 자동으로 다시 시도하지 않아요.';
+  switch (outcome.status) {
+    case 'SENT':
+      return '방금 게시한 Slack 메시지를 지워서 되돌렸어요.';
+    case 'NOT_SENT':
+      if (outcome.reason === 'NOT_FOUND') return `이미 지워진 메시지예요 — Slack이 그 메시지(또는 채널)를 찾지 못했어요. 되돌릴 게 없어요. ${none}`;
+      if (outcome.reason === 'FORBIDDEN') return `이 메시지는 Quoky가 지울 수 없어요 (Slack이 거부했어요: 워크스페이스 정책이거나, 지금 토큰이 게시한 앱의 것이 아닐 수 있어요). ${none} 새 권한은 요청하지 않았어요.`;
+      if (outcome.reason === 'RATE_LIMITED') return `지우지 못했어요: Slack 요청 한도를 넘었어요. ${none} 필요하면 잠시 뒤 새로 요청해 주세요.`;
+      return `지우지 못했어요: ${NOT_SENT_REASON_KO[outcome.reason] ?? '요청이 거부됐어요'}. ${none}`;
+    case 'UNCERTAIN':
+      return '지워졌는지 확실하지 않아요. 채널에서 확인해 주세요. 중복을 막기 위해 자동으로 다시 시도하지 않아요.';
+  }
+}
+
 /** ADR-0112 amendment 3 (O5): the outcome of the transition revert. */
 function renderJiraTransitionUndoOutcome(outcome: ConnectorWriteOutcome): string {
   switch (outcome.status) {
@@ -943,6 +999,7 @@ export function renderConnectorWriteStep(step: Exclude<ConnectorWriteStep, { kin
       if (step.preview.operation === 'CALENDAR_EVENT_RESTORE') return renderCalendarRestoreOutcome(step.outcome);
       if (step.preview.operation === 'ISSUE_COMMENT_DELETE') return renderJiraCommentUndoOutcome(step.outcome);
       if (step.preview.operation === 'ISSUE_TRANSITION_REVERT') return renderJiraTransitionUndoOutcome(step.outcome);
+      if (step.preview.operation === 'CHANNEL_MESSAGE_DELETE') return renderSlackPostUndoOutcome(step.outcome);
       return renderConnectorWriteOutcome(step.operation, step.outcome);
     case 'repeat':
       return renderConnectorWriteRepeat(step.operation, step.status, step.externalRef, step.url);

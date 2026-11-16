@@ -76,7 +76,7 @@ describe('connector-write copy (CWR-2)', () => {
         const text = renderConnectorWriteOutcome(operation, connectorWriteNotSent(reason));
         // UNC-1: says plainly that nothing was sent / nothing changed (TARGET_CHANGED keeps its own wording).
         expect(text).toMatch(
-          /이 요청으로는 (?:아무것도 보내지|캘린더를 바꾸지) 않았어요|아무것도 게시되지 않았어요|댓글은 달리지 않았어요|댓글은 지워지지 않았어요|이슈 상태는 바뀌지 않았어요|캘린더는 바뀌지 않았어요/,
+          /이 요청으로는 (?:아무것도 보내지|캘린더를 바꾸지) 않았어요|아무것도 게시되지 않았어요|댓글은 달리지 않았어요|댓글은 지워지지 않았어요|메시지는 지워지지 않았어요|이슈 상태는 바뀌지 않았어요|캘린더는 바뀌지 않았어요/,
         );
         expect(text).not.toMatch(/완료:|달았어요|게시했어요|추가했어요|바꿨어요|삭제했어요/);
         expect(text).not.toContain('undefined');

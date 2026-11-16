@@ -243,6 +243,19 @@ const PREVIEWS: readonly ConnectorWritePreview[] = [
   },
   // Review round 1: the forward transition preview shows the status read now (the compare-and-set baseline).
   { operation: 'ISSUE_TRANSITION', issueKey: 'PROJ-12', fromStatus: '<#1> To_Do @here', fromStatusId: '1', toStatus: 'In *Review*', toStatusId: '31', transitionName: 'Send_to <review>', transitionId: '41' },
+  // ADR-0112 amendment 1 (S5/S-6) under amendment 3: the receipt-sourced Slack delete preview (label, exact posted text, owner sentence).
+  {
+    operation: 'CHANNEL_MESSAGE_DELETE',
+    channelLabel: 'dev_ops*',
+    channelId: 'C0123ABCD9',
+    ts: '1700000000.000100',
+    text: NASTY_WS,
+    postedAt: '2026-10-06T08:01:00.000Z',
+    url: 'https://example.test/archives/C0123ABCD9/p1700000000000100',
+    timeZone: 'Asia/Seoul',
+    receiptSourced: true,
+    ownerSentence: '방금 슬랙 글 지워줘 @here',
+  },
 ];
 
 const CANDIDATES: readonly ConnectorWriteEventSummary[] = TITLES.map((title, i) => ({
