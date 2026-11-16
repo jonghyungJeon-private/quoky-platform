@@ -31816,6 +31816,35 @@ and D9 still governs every turn that goes to chat.
   narrowing the ratified Slack aliases would be an ADR change for the owner, not part of this slice. Case 016 now also pins the
   turn-3 reply (`replyIncludes` 3 = `일정 삭제 실행`, Codex r1 P2).
 
+### Implementation note (amendment 3, calendar-update and calendar-delete families: interfaces recorded before code, 2026-11-16)
+
+- **Scope.** The next two families of amendment 3, in one branch (`claude/v5-r3-cal-undo`): the undo of an approved calendar
+  update (O2) and the restore of an approved calendar delete (O3 + O6, phrase O7 `일정 복원 실행`). Jira comment delete (O4) and
+  Jira transition revert (O5) are not part of this slice. No new OAuth scope, token, flag, host or migration.
+- **Additive interfaces (ARCHITECTURE.md §11.7), recorded before code.**
+  - `ConnectorWriteOperation.CALENDAR_EVENT_RESTORE` (a neutral operation name; the receipts table stores `operation` as plain
+    text, so no migration). Its execution gate is `calendarRestore`, documented phrase `일정 복원 실행` (ADR-0112 D5 exact-command
+    gate, the same allow-list shape as the other calendar gates: `일정 복원 실행`, `일정 복원 실행해줘`, `캘린더 일정 복원 실행`,
+    `execute event restore`). No bare `복원 실행` or `삭제 실행` is accepted by any gate.
+  - `CalendarEventWriter.restoreEvent(request: CalendarEventRestoreRequest)` (O6, no new port), with
+    `CalendarEventRestoreRequest = { eventId, expected: { allDay, start, end } }`: the shape of the event the approved delete
+    removed, taken from that delete's own bound expectation. The adapter reads the event first and restores only a cancelled
+    event with the same id, all-day shape, start and end that is not a recurring series, then sends exactly one conditional
+    restore request (`If-Match` on the version that read returned, `sendUpdates=none`). A not-found / gone event is
+    `NOT_SENT('NOT_FOUND')`, any other refusal `NOT_SENT(<reason>)`; it never creates a new event.
+  - `CalendarEventWriter.updateEvent` returns the post-write version on `SENT` (as create already does), so the update's
+    inverse can compare-and-set on Quoky's own post-update version.
+  - `LastActionRecord.operation` (external records only): the neutral operation name of the write, from a closed list. The
+    undo family of an `external.write` record is derived from it (`CALENDAR_EVENT_UPDATE` -> `calendar-update`,
+    `CALENDAR_EVENT_DELETE` -> `calendar-delete`); a record without it (written before this slice) has no family and stays
+    `undoable: false`.
+  - `ExternalUndoFamily` gains `calendar-update` and `calendar-delete`; `ExternalUndoDraftKind` gains `calendar-update-undo`
+    and `calendar-delete-undo`; `ConnectorWriteAnchor.undoOf.entryId` may be `external.write`. The families are added to
+    `EXTERNAL_UNDO_CAPABILITIES` only after their red-team gate, unit tests and import scan are green.
+  - The `CALENDAR_EVENT_UPDATE` preview gains the optional `receiptSourced` / `ownerSentence` fields the delete preview has
+    (the A6-D4 receipt banner); a `CALENDAR_EVENT_RESTORE` preview is always receipt-sourced. A refused step may carry the undo
+    family so its fixed copy names the right write.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
