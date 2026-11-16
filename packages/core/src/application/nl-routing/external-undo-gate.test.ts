@@ -40,8 +40,8 @@ describe('the external undo capability gate, off path through the test seam', ()
   beforeEach(() => setExternalUndoCapabilitiesForTest([]));
   afterEach(() => setExternalUndoCapabilitiesForTest());
 
-  it('the shipped constant is frozen and holds exactly the family whose red-team gate passed (2026-11-03)', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create']);
+  it('the shipped constant is frozen and holds exactly the families whose red-team gates passed (create 2026-11-03, update and delete 2026-11-16)', () => {
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create', 'calendar-update', 'calendar-delete']);
     expect(Object.isFrozen(EXTERNAL_UNDO_CAPABILITIES)).toBe(true);
   });
 
@@ -59,7 +59,7 @@ describe('the external undo capability gate (amendment 3), family switched on by
   afterEach(() => setExternalUndoCapabilitiesForTest());
 
   it('is a closed, frozen set that the family-on seam does not mutate', () => {
-    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create']);
+    expect(EXTERNAL_UNDO_CAPABILITIES).toEqual(['calendar-create', 'calendar-update', 'calendar-delete']);
     expect(isExternalUndoOpen('calendar-create')).toBe(true);
     expect(isExternalUndoOpen(undefined, ['calendar-create'])).toBe(false);
     expect(isExternalUndoOpen('calendar-create', [])).toBe(false);

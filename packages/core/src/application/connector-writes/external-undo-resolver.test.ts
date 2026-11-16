@@ -170,7 +170,7 @@ describe('ExternalUndoResolver defence in depth (P3-4): the receipt must be the 
 
   it('refuses a record that is not undoable (a stored flag cannot open it, and the normaliser drops it with the family off)', async () => {
     expect(await resolver({ open: false }).resolve(input(record()))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
-    setExternalUndoCapabilitiesForTest([]); // the off path, through the seam (the shipped set is ['calendar-create'])
+    setExternalUndoCapabilitiesForTest([]); // the off path, through the seam (the shipped set is the three calendar families)
     expect(await resolver().resolve(input(record({ undoable: true })))).toEqual({ kind: 'nothing-to-undo', reason: 'not-open' });
   });
 });

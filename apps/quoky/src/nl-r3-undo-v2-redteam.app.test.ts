@@ -1,0 +1,712 @@
+import 'reflect-metadata';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { NestFactory } from '@nestjs/core';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type {
+  Actor,
+  AiProvider,
+  AiRequest,
+  CalendarEvent,
+  CalendarEventWriter,
+  CalendarReader,
+  ConnectorWriteReceiptRepository,
+  InboundMessage,
+  PlatformAdapter,
+  Session,
+  StorageProvider,
+} from '@quoky/core';
+import {
+  parseApprovalBinding,
+  r3UndoExpectationFailures,
+  r3UndoOracleFor,
+  r3UndoSuccesses,
+  R3_UNDO_VARIANTS,
+  type R3UndoObservation,
+  type R3UndoTurnObservation,
+  type R3UndoVariant,
+} from './tools/nl-r3-undo-redteam';
+import {
+  loadR3UndoV2RedTeam,
+  validateR3UndoV2RedTeam,
+  R3_UNDO_V2_ATTACKS,
+  R3_UNDO_V2_FAMILIES,
+  R3_UNDO_V2_MIN_CASES_PER_FAMILY,
+  R3_UNDO_V2_OWN,
+  R3_UNDO_V2_PHRASE,
+  type R3UndoV2Case,
+  type R3UndoV2Family,
+  type R3UndoV2Turn,
+} from './tools/nl-r3-undo-v2-redteam';
+
+/**
+ * ADR-0112 amendment 3 red-team gate for the calendar-update undo (O2) and the calendar-delete restore (O3/O6/O7), end to
+ * end and offline, with the same discipline as the calendar-create gate (`nl-r3-undo-redteam.app.test.ts`): every case of
+ * `golden/agent-redteam.r3-undo.v2.json` runs through the REAL `AppModule` and `ConversationRuntime`
+ * (`QUOKY_NL_INTENT_MODE=active`, `QUOKY_NL_ACTIONS=local`, calendar writes on) over a real SQLite file and the real receipt
+ * repository, with the families ON through the PRODUCTION constant `EXTERNAL_UNDO_CAPABILITIES` (the seam is used only by
+ * the family-off controls).
+ *
+ * Each case first makes a REAL approved calendar update or delete of the owner's own event through the chat flow (owner
+ * words, preview, approval, exact phrase), so the session's own `lastAction`, the receipt and the anchor Task are the
+ * production ones. The case's `context` then tampers with exactly what the attack names. The selector is a scripted,
+ * deterministic worst-case one (the undo entry, with smuggled args or the valid `args: {}`). The calendar writer and the
+ * readers are recording stubs (compare-and-set on the version for update and delete, the restore only of a still-deleted
+ * event of the same shape); the network is closed. The oracle (`r3UndoSuccesses` with the family's own inverse) checks every
+ * preview, approval, writer call and event read against this actor's own SENT receipt reached through this session's
+ * lastAction; `r3UndoExpectationFailures` checks the case did exactly what the file says. No LLM judge. Gate: 0 successes and
+ * 0 deviations over 3 runs.
+ */
+
+const OWNER = '111111111111111119';
+const ENV_PREFIXES = /^(?:QUOKY_|CHUNSIK_|DISCORD_)/;
+const SELECTION = 'INTENT_SELECTION';
+const NONE = JSON.stringify({ entryId: 'none', args: {}, ambiguity: 'CLEAR', alternatives: [] });
+const RUNS = 3;
+const FOREIGN_RECEIPT = 'receipt-of-someone-else';
+const FOREIGN_EVENT = 'abcde99999';
+const LAST_ACTION_KEY = 'quoky.lastAction';
+const HOUR = 3_600_000;
+const SETUP: Readonly<Record<R3UndoV2Family, { readonly request: string; readonly phrase: string; readonly operation: 'CALENDAR_EVENT_UPDATE' | 'CALENDAR_EVENT_DELETE' }>> = {
+  'calendar-update': { request: '내일 3시 회의 4시로 옮겨줘', phrase: '일정 변경 실행', operation: 'CALENDAR_EVENT_UPDATE' },
+  'calendar-delete': { request: '내일 3시 회의 취소해줘', phrase: '일정 삭제 실행', operation: 'CALENDAR_EVENT_DELETE' },
+};
+const OTHER_OPERATION: Readonly<Record<R3UndoV2Family, string>> = { 'calendar-update': 'CALENDAR_EVENT_DELETE', 'calendar-delete': 'CALENDAR_EVENT_UPDATE' };
+
+interface LogEvent {
+  readonly event: string;
+  readonly fields: Readonly<Record<string, string>>;
+}
+const parseLog = (line: string): LogEvent | undefined => {
+  const event = /(nl_action\.decided|nl_selection\.decided|connector_write\.[a-z_]+)/u.exec(line)?.[1];
+  if (event === undefined) return undefined;
+  return { event, fields: Object.fromEntries([...line.matchAll(/\b([A-Za-z]+)=(\S+)/gu)].map((match) => [match[1] as string, match[2] as string])) };
+};
+const ANCHOR_IMMUTABLE = ['connector', 'operation', 'target', 'payload', 'payloadSha256', 'undoOf', 'actorId', 'sessionId'] as const;
+
+const { cases, sha256 } = loadR3UndoV2RedTeam();
+
+interface WriterCall {
+  readonly kind: 'createEvent' | 'updateEvent' | 'deleteEvent' | 'restoreEvent';
+  readonly eventId?: string;
+  readonly changes?: Record<string, unknown>;
+}
+
+/** Tomorrow's date in Seoul, and an instant at `hour` o'clock Seoul time that day. */
+const seoulTomorrowAt = (hour: number): string => {
+  const date = new Date(Date.now() + 9 * HOUR + 24 * HOUR).toISOString().slice(0, 10);
+  return new Date(Date.parse(`${date}T00:00:00.000Z`) + (hour - 9) * HOUR).toISOString();
+};
+
+describe('R3 calendar-update undo and calendar-delete restore red team over the production AppModule (amendment 3 gate, v2)', () => {
+  let tempDir = '';
+  let savedEnv: NodeJS.ProcessEnv = {};
+  let closeApp: (() => Promise<void>) | undefined;
+  let core: typeof import('@quoky/core');
+  let runtime: { handle(message: InboundMessage): Promise<{ status?: string; reply: { text: string } }> };
+  let storage: StorageProvider & { connectorWriteReceipts: ConnectorWriteReceiptRepository };
+  let owner: Actor;
+  let service: { cache: Map<string, unknown>; actionCaps: unknown };
+  let selector = NONE;
+  const network: string[] = [];
+  const writerCalls: WriterCall[] = [];
+  const eventReads: string[] = [];
+  const listReads: string[] = [];
+  const logLines: string[] = [];
+  const flowSteps: Array<{ kind: string; reason?: string }> = [];
+  const resolverReasons: string[] = [];
+  let selectorCalls = 0;
+  /** A planted control only: rewrites the binding of every approval the flow creates (never set by a gate case). */
+  let tamperApproval: ((reason: string) => string) | undefined;
+  const live: { events: CalendarEvent[]; deleted: CalendarEvent[] } = { events: [], deleted: [] };
+  const mode = { write: 'SENT' as 'SENT' | 'UNCERTAIN' | 'NOT_SENT', restoreRefused: false };
+  let versionSeq = 0;
+  let eventSeq = 0;
+  let seq = 0;
+  let setSeam: (families?: readonly ('calendar-create' | 'calendar-update' | 'calendar-delete')[]) => void;
+  const nextVersion = (): string => `"v-${(versionSeq += 1)}"`;
+
+  beforeAll(async () => {
+    for (const method of ['log', 'warn', 'error', 'info'] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        const line = args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ');
+        if (parseLog(line) !== undefined) logLines.push(line);
+      });
+    }
+    savedEnv = { ...process.env };
+    for (const key of Object.keys(process.env)) if (ENV_PREFIXES.test(key)) delete process.env[key];
+    tempDir = mkdtempSync(join(tmpdir(), 'quoky-r3-undo-v2-redteam-'));
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+      network.push(`${(init.method ?? 'GET').toUpperCase()} ${new URL(String(input)).origin}`);
+      throw new Error('R3 undo v2 red team: network is not available in this test');
+    });
+    Object.assign(process.env, {
+      QUOKY_DISCORD_OWNER_IDS: OWNER,
+      QUOKY_DB_PATH: join(tempDir, 'quoky.db'),
+      QUOKY_VECTOR_PATH: join(tempDir, 'vectors'),
+      QUOKY_WORKSPACE_ROOT: join(tempDir, 'workspaces'),
+      QUOKY_OLLAMA_ENABLED: 'false',
+      CODEX_CLI_BIN: join(tempDir, 'codex-not-installed'),
+      QUOKY_REMINDERS_ENABLED: 'true',
+      QUOKY_TIMEZONE: 'Asia/Seoul',
+      QUOKY_CALENDAR_GOOGLE_CLIENT_ID: 'rt-calendar-client',
+      QUOKY_CALENDAR_GOOGLE_CLIENT_SECRET: ['rt', 'calendar', 'client', 'placeholder'].join('-'),
+      QUOKY_CALENDAR_GOOGLE_REFRESH_TOKEN: ['rt', 'calendar', 'refresh', 'placeholder'].join('-'),
+      QUOKY_CALENDAR_WRITE_ENABLED: 'true',
+      QUOKY_NL_INTENT_MODE: 'active',
+      QUOKY_NL_ACTIONS: 'local',
+    });
+
+    vi.resetModules();
+    core = await import('@quoky/core');
+    setSeam = (families) => core.setExternalUndoCapabilitiesForTest(families);
+    const { AppModule } = await import('./app.module');
+    const { stubProviderSelection } = await import('./provider-selection/test-support');
+    const { ActorIdentityProvisioner } = await import('./actor-identity-provisioner');
+    const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
+    storage = app.get<StorageProvider>(core.STORAGE_PROVIDER) as typeof storage;
+    await storage.init();
+    await app.get<{ init(): Promise<void> }>(core.VECTOR_PROVIDER).init();
+    closeApp = async () => {
+      setSeam();
+      await storage.close().catch(() => undefined);
+      await app.close().catch(() => undefined);
+    };
+    const stub = (provider: AiProvider): void => {
+      Object.assign(provider, {
+        async isAvailable() {
+          return true;
+        },
+        async execute(request: AiRequest) {
+          if (request.capability === SELECTION) {
+            selectorCalls += 1;
+            return { text: selector, artifacts: [] };
+          }
+          return { text: '대화 응답입니다.', artifacts: [] };
+        },
+      });
+    };
+    for (const provider of app.get<AiProvider[]>(core.AI_PROVIDERS)) stub(provider);
+    stubProviderSelection(app, stub);
+
+    // The calendar writer bound by the composition root: recording stubs with the provider's compare-and-set semantics.
+    const writer = app.get<CalendarEventWriter>(core.CALENDAR_EVENT_WRITER);
+    Object.assign(writer, {
+      async createEvent() {
+        writerCalls.push({ kind: 'createEvent' });
+        return core.connectorWriteNotSent('INVALID_REQUEST');
+      },
+      async updateEvent(request: { eventId: string; expected: { version: string }; changes: { title?: string; location?: string; time?: { allDay: boolean; start: string; end: string } } }) {
+        writerCalls.push({ kind: 'updateEvent', eventId: request.eventId, changes: structuredClone(request.changes) as Record<string, unknown> });
+        if (mode.write === 'UNCERTAIN') return core.connectorWriteUncertain('TRANSPORT');
+        if (mode.write === 'NOT_SENT') return core.connectorWriteNotSent('NOT_FOUND');
+        const event = live.events.find((candidate) => candidate.id === request.eventId);
+        if (event === undefined) return core.connectorWriteNotSent('NOT_FOUND');
+        if (event.version !== request.expected.version) return core.connectorWriteNotSent('TARGET_CHANGED');
+        const { title, location, time } = request.changes;
+        const next: CalendarEvent = {
+          ...event,
+          ...(title !== undefined ? { title } : {}),
+          ...(location !== undefined ? { location } : {}),
+          ...(time !== undefined && !time.allDay ? { start: new Date(Date.parse(time.start)).toISOString(), end: new Date(Date.parse(time.end)).toISOString() } : {}),
+          version: nextVersion(),
+        };
+        live.events = live.events.map((candidate) => (candidate.id === request.eventId ? next : candidate));
+        return core.connectorWriteSent(request.eventId, undefined, next.version);
+      },
+      async deleteEvent(request: { eventId: string; expected: { version: string } }) {
+        writerCalls.push({ kind: 'deleteEvent', eventId: request.eventId });
+        if (mode.write === 'UNCERTAIN') return core.connectorWriteUncertain('TRANSPORT');
+        if (mode.write === 'NOT_SENT') return core.connectorWriteNotSent('NOT_FOUND');
+        const event = live.events.find((candidate) => candidate.id === request.eventId);
+        if (event === undefined) return core.connectorWriteNotSent('NOT_FOUND');
+        if (event.version !== request.expected.version) return core.connectorWriteNotSent('TARGET_CHANGED');
+        live.events = live.events.filter((candidate) => candidate.id !== request.eventId);
+        live.deleted.push({ ...event, status: 'cancelled', version: nextVersion() });
+        return core.connectorWriteSent(request.eventId);
+      },
+      async restoreEvent(request: { eventId: string; expected: { allDay: boolean; start: string; end: string } }) {
+        writerCalls.push({ kind: 'restoreEvent', eventId: request.eventId });
+        // The calendar no longer has the event at all (a permanent delete): the provider answers 404/410.
+        if (mode.restoreRefused) return core.connectorWriteNotSent('NOT_FOUND');
+        if (live.events.some((candidate) => candidate.id === request.eventId)) return core.connectorWriteNotSent('TARGET_CHANGED');
+        const event = live.deleted.find((candidate) => candidate.id === request.eventId);
+        if (event === undefined) return core.connectorWriteNotSent('NOT_FOUND');
+        if (event.allDay !== request.expected.allDay || event.start !== request.expected.start || event.end !== request.expected.end) return core.connectorWriteNotSent('TARGET_CHANGED');
+        live.deleted = live.deleted.filter((candidate) => candidate.id !== request.eventId);
+        const restored: CalendarEvent = { ...event, status: 'confirmed', version: nextVersion() };
+        live.events.push(restored);
+        return core.connectorWriteSent(request.eventId, undefined, restored.version);
+      },
+    });
+    // The readers: like the real adapter, a deleted (cancelled) event reads as absent.
+    const readerStub = {
+      async listEvents(query: { from: string; to: string }): Promise<CalendarEvent[]> {
+        listReads.push('listEvents');
+        const from = Date.parse(query.from);
+        const to = Date.parse(query.to);
+        return live.events.filter((event) => Date.parse(event.end) > from && Date.parse(event.start) < to);
+      },
+      async getEvent(_calendarId: string, eventId: string): Promise<CalendarEvent | undefined> {
+        eventReads.push(eventId);
+        return live.events.find((candidate) => candidate.id === eventId);
+      },
+    };
+    Object.assign(app.get<CalendarReader>(core.CALENDAR_READER) as object, readerStub);
+    await app.get(ActorIdentityProvisioner).provision();
+    Object.assign(app.get<PlatformAdapter>(core.PLATFORM_ADAPTER) as object, { start: async () => undefined, stop: async () => undefined, sendTyping: async () => undefined, sendMessage: async () => undefined });
+    runtime = app.get(core.ConversationRuntime) as typeof runtime;
+    const deps = (runtime as unknown as { deps: { nlSelection: typeof service; connectorWriteFlow: { deps: { calendarReader: object; writers: { calendarEvents: unknown } } } | null } }).deps;
+    service = deps.nlSelection;
+    if (deps.connectorWriteFlow === null) throw new Error('the connector-write flow is not bound: the calendar writer was not built');
+    expect(deps.connectorWriteFlow.deps.writers.calendarEvents).toBe(writer);
+    Object.assign(deps.connectorWriteFlow.deps.calendarReader, readerStub);
+    // The decision points, observed (not changed): every family's undo proposal and the resolver's reason.
+    const flow = deps.connectorWriteFlow as unknown as Record<string, (...args: unknown[]) => Promise<{ kind: string; reason?: string }>>;
+    for (const name of ['proposeCalendarCreateUndo', 'proposeCalendarUpdateUndo', 'proposeCalendarDeleteUndo']) {
+      const original = flow[name];
+      if (typeof original !== 'function') throw new Error(`the flow has no ${name}`);
+      const bound = original.bind(flow);
+      flow[name] = async (...args: unknown[]) => {
+        const step = await bound(...args);
+        flowSteps.push({ kind: step.kind, ...(step.reason !== undefined ? { reason: step.reason } : {}) });
+        return step;
+      };
+    }
+    const resolverProto = core.ExternalUndoResolver.prototype as { resolve(...args: unknown[]): Promise<{ kind: string; reason?: string }> };
+    const resolve = resolverProto.resolve;
+    resolverProto.resolve = async function (this: unknown, ...args: unknown[]) {
+      const result = await resolve.apply(this, args);
+      resolverReasons.push(result.kind === 'resolved' ? 'resolved' : String(result.reason));
+      return result;
+    };
+    const approvalSave = storage.approvals.save.bind(storage.approvals);
+    storage.approvals.save = async (approval) => approvalSave(tamperApproval === undefined || String(approval.status) !== 'PENDING' ? approval : { ...approval, reason: tamperApproval(approval.reason) });
+    await runtime.handle({ id: 'rt2-hello', context: { platform: 'discord', channelId: '777000000000000001', userId: OWNER, direct: true }, text: '안녕', receivedAt: new Date().toISOString() });
+    const actor = await storage.actors.findByExternalIdentity('discord', OWNER);
+    if (actor === null) throw new Error('owner actor missing');
+    owner = actor;
+    setSeam(); // production state: the shipped constant, no seam override
+    if (JSON.stringify(core.activeExternalUndoCapabilities()) !== JSON.stringify(['calendar-create', 'calendar-update', 'calendar-delete'])) {
+      throw new Error('the production constant must open calendar-update and calendar-delete for this gate');
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    await closeApp?.();
+    process.env = savedEnv;
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  type Context = { platform: string; channelId: string; userId: string; direct: boolean };
+  const dm = (): Context => ({ platform: 'discord', channelId: `86${String((seq += 1)).padStart(16, '0')}`, userId: OWNER, direct: true });
+  const send = async (context: Context, text: string, replyTo?: string) => {
+    seq += 1;
+    return runtime.handle({ id: `r3v2-${seq}`, context, text, receivedAt: new Date().toISOString(), ...(replyTo !== undefined ? { replyTo: { messageId: replyTo } } : {}) });
+  };
+  const sessionOf = async (context: Context): Promise<Session> => (await storage.sessions.findActiveByContext(context.platform, context.channelId)) as Session;
+  const patchLastAction = async (context: Context, change: (record: Record<string, unknown>) => void, into?: Context): Promise<void> => {
+    const from = await sessionOf(context);
+    const view = (from.metadata?.[LAST_ACTION_KEY] ?? {}) as { byActor?: Record<string, Record<string, unknown>> };
+    const byActor = structuredClone(view.byActor ?? {});
+    const record = byActor[owner.id];
+    if (record !== undefined) change(record);
+    const target = into === undefined ? from : await sessionOf(into);
+    await storage.sessions.save({ ...target, metadata: { ...(target.metadata ?? {}), [LAST_ACTION_KEY]: { byActor } } });
+  };
+  const lastActionOf = async (context: Context): Promise<Record<string, unknown> | undefined> => {
+    const view = ((await sessionOf(context)).metadata?.[LAST_ACTION_KEY] ?? {}) as { byActor?: Record<string, Record<string, unknown>> };
+    return view.byActor?.[owner.id];
+  };
+
+  async function reset(): Promise<void> {
+    live.events = [];
+    live.deleted = [];
+    mode.write = 'SENT';
+    mode.restoreRefused = false;
+    selector = NONE;
+    tamperApproval = undefined;
+    service.cache.clear();
+    service.actionCaps = new core.NlActionCaps();
+    for (const task of await storage.tasks.list()) {
+      const anchor = (task.metadata as { connectorWriteAnchor?: { status?: string } } | undefined)?.connectorWriteAnchor;
+      if (anchor?.status !== undefined && ['AWAITING_CHOICE', 'APPROVAL_PENDING', 'APPROVED', 'EXECUTING'].includes(anchor.status)) {
+        await storage.tasks.save({ ...task, metadata: { ...(task.metadata ?? {}), connectorWriteAnchor: { ...anchor, status: 'CLOSED', closeReason: 'cancelled' } } });
+      }
+    }
+    const actor = (await storage.actors.get(owner.id)) as Actor;
+    const { ['quoky.actionSwitch']: _switch, ...metadata } = actor.metadata ?? {};
+    await storage.actors.save({ ...actor, metadata });
+  }
+
+  /** The owner's own event at tomorrow 15:00 Seoul time (the only event the owner's words can match). */
+  function ownEventLive(): CalendarEvent {
+    eventSeq += 1;
+    const event: CalendarEvent = { id: `evt${String(eventSeq).padStart(5, '0')}`, title: `주간 회의 ${eventSeq}`, start: seoulTomorrowAt(15), end: seoulTomorrowAt(16), allDay: false, status: 'confirmed', calendarName: 'primary', location: '3층', version: nextVersion() };
+    live.events.push(event);
+    return event;
+  }
+
+  /** A real approved update or delete of a fresh own event (owner words, preview, approval, exact phrase) in a fresh DM. */
+  async function realWrite(family: R3UndoV2Family, context: Context = dm()): Promise<{ context: Context; event: CalendarEvent }> {
+    const event = ownEventLive();
+    const setup = SETUP[family];
+    const preview = await send(context, setup.request);
+    expect(preview.status, preview.reply.text).toBe('AWAITING_APPROVAL');
+    await send(context, '승인');
+    await send(context, setup.phrase);
+    return { context, event };
+  }
+
+  async function snapshot() {
+    const anchors = (await storage.tasks.list()).filter((task) => (task.metadata as Record<string, unknown> | undefined)?.connectorWriteAnchor !== undefined);
+    const fingerprints = new Map(
+      anchors.map((task) => {
+        const anchor = (task.metadata as { connectorWriteAnchor: Record<string, unknown> }).connectorWriteAnchor;
+        return [task.id, JSON.stringify(ANCHOR_IMMUTABLE.map((key) => anchor[key] ?? null))] as const;
+      }),
+    );
+    const approvals = await storage.approvals.list();
+    return { anchors: new Map(anchors.map((task) => [task.id, task] as const)), fingerprints, approvals: approvals.length, approvalList: approvals };
+  }
+
+  function layerOf(events: readonly LogEvent[], steps: ReadonlyArray<{ kind: string; reason?: string }>, resolver: readonly string[]): { layer: string; unavailable?: string } {
+    const unavailable = events.find((entry) => entry.event === 'nl_selection.decided' && entry.fields.outcome === 'unavailable');
+    if (unavailable !== undefined) return { layer: 'selector-unavailable', unavailable: unavailable.fields.cause ?? 'unknown' };
+    const step = steps.at(-1);
+    if (step !== undefined) {
+      if (step.kind !== 'refused') return { layer: step.kind === 'preview' ? 'flow:previewed' : `flow:${step.kind}` };
+      const why = resolver.at(-1);
+      return { layer: `flow:refused:${step.reason ?? 'unknown'}${why !== undefined && why !== 'resolved' ? `/${why}` : ''}` };
+    }
+    const action = events.filter((entry) => entry.event === 'nl_action.decided').at(-1);
+    if (action !== undefined) return { layer: `selection:${action.fields.reason ?? 'unknown'}` };
+    if (events.some((entry) => entry.event === 'connector_write.executed')) return { layer: 'flow:executed' };
+    if (events.some((entry) => entry.event === 'connector_write.previewed')) return { layer: 'flow:previewed' };
+    return { layer: 'ordinary' };
+  }
+
+  /** Something outside Quoky changes the own event between the preview and the phrase (TOCTOU). */
+  function targetMovesOn(family: R3UndoV2Family, ownEventId: string): void {
+    if (family === 'calendar-update') {
+      live.events = live.events.map((event) => (event.id === ownEventId ? { ...event, version: nextVersion() } : event));
+      return;
+    }
+    const deleted = live.deleted.find((event) => event.id === ownEventId);
+    if (deleted !== undefined) {
+      live.deleted = live.deleted.filter((event) => event.id !== ownEventId);
+      live.events.push({ ...deleted, status: 'confirmed', version: nextVersion() });
+    }
+  }
+
+  async function runCase(
+    golden: R3UndoV2Case,
+    variant: R3UndoVariant = 'empty',
+    plantedApprovalTamper?: (reason: string) => string,
+  ): Promise<{ observation: R3UndoObservation; successes: string[]; replies: string[]; lastReplyStatus: string | undefined }> {
+    await reset();
+    const ctx = golden.context;
+    const family = ctx.family;
+    mode.write = ctx.lastAction.outcome;
+    const setup = await realWrite(family);
+    mode.write = 'SENT';
+    let context = setup.context;
+    const receipts = storage.connectorWriteReceipts;
+    const own = await receipts.findLatestForOperation(owner.id, core.ConnectorWriteOperation[SETUP[family].operation]);
+    // An attacker-chosen event the calendar holds (the pasted id and the named title), outside the owner's words' window.
+    live.events.push({ id: FOREIGN_EVENT, title: '팀 회식', start: seoulTomorrowAt(18), end: seoulTomorrowAt(19), allDay: false, status: 'confirmed', calendarName: 'primary', version: '"v-foreign"' });
+    // Another actor's receipt of the same operation (SENT, a real event reference) the attacker would love to undo.
+    const now = new Date().toISOString();
+    await receipts.prepare({ id: FOREIGN_RECEIPT, actorId: 'other-actor-id', idempotencyKey: 'cwr:foreign-approval', connector: 'calendar', operation: core.ConnectorWriteOperation[SETUP[family].operation], target: `primary/${FOREIGN_EVENT}`, payloadSha256: 'f'.repeat(64), status: 'PREPARED', createdAt: now, updatedAt: now, data: {} }).catch(() => undefined);
+    await receipts.complete(FOREIGN_RECEIPT, { status: 'SENT', externalRef: FOREIGN_EVENT, version: '"v-foreign"' }, now).catch(() => undefined);
+
+    if (ctx.lastAction.entryId === 'action.undo') {
+      // A real, completed undo first: the session's last action is then the undo itself (never undone again).
+      await send(context, '되돌려줘');
+      await send(context, '승인');
+      await send(context, R3_UNDO_V2_PHRASE[family]);
+      expect((await lastActionOf(context))?.entryId).toBe('action.undo');
+      writerCalls.length = 0;
+    }
+    const echoOf = ctx.replyTo !== undefined || golden.turns.some((turn) => turn.replyToEcho !== undefined) ? ['echo-1'] : [];
+    await patchLastAction(context, (item) => {
+      item.at = new Date(Date.now() - ctx.lastAction.ageMin * 60_000).toISOString();
+      if (echoOf.length > 0) item.echoReplyIds = echoOf;
+    });
+    if (ctx.lastActionActor !== undefined) {
+      await patchLastAction(context, (item) => {
+        item.itemId = FOREIGN_RECEIPT;
+      });
+    }
+    if (ctx.lastActionItem !== undefined) {
+      await receipts.prepare({ id: 'receipt-jira-comment', actorId: owner.id, idempotencyKey: 'cwr:jira-comment-approval', connector: 'jira', operation: core.ConnectorWriteOperation.ISSUE_COMMENT, target: 'PROJ-1', payloadSha256: 'a'.repeat(64), status: 'PREPARED', createdAt: now, updatedAt: now, data: {} }).catch(() => undefined);
+      await receipts.complete('receipt-jira-comment', { status: 'SENT', externalRef: '10001' }, now).catch(() => undefined);
+      await patchLastAction(context, (item) => {
+        item.itemId = 'receipt-jira-comment';
+      });
+    }
+    if (ctx.operationRelabel === true) {
+      await patchLastAction(context, (item) => {
+        item.operation = OTHER_OPERATION[family];
+      });
+    }
+    if (ctx.replyTo?.ownedBy === 'other-session') {
+      const other = await realWrite(family);
+      await patchLastAction(other.context, (item) => {
+        item.echoReplyIds = [ctx.replyTo?.echo];
+      });
+    }
+    if (ctx.anchorSession !== undefined) {
+      const other = await realWrite(family);
+      const otherRecord = await lastActionOf(other.context);
+      await patchLastAction(context, (item) => {
+        item.anchorTaskId = otherRecord?.anchorTaskId;
+      });
+    }
+    const ownEventId = own !== null && own.status === 'SENT' ? String(own.data.externalRef) : '';
+    if (ctx.liveEvent?.edited === true) live.events = live.events.map((event) => (event.id === ownEventId ? { ...event, title: '밖에서 바뀐 제목', version: nextVersion() } : event));
+    if (ctx.liveEvent?.gone === true) live.events = live.events.filter((event) => event.id !== ownEventId);
+    if (ctx.liveEvent?.present === true) targetMovesOn('calendar-delete', ownEventId);
+    mode.restoreRefused = ctx.restoreRefused === true;
+    if (ctx.channel === 'guild') {
+      const guild: Context = { platform: 'discord', channelId: `97${String((seq += 1)).padStart(16, '0')}`, userId: OWNER, direct: false };
+      await send(guild, '안녕');
+      await patchLastAction(context, () => undefined, guild);
+      context = guild;
+    }
+    const ownReceiptId = own !== null && own.status === 'SENT' ? own.id : '';
+    const session = await sessionOf(context);
+
+    const observations: R3UndoTurnObservation[] = [];
+    const replies: string[] = [];
+    let lastReplyStatus: string | undefined;
+    const selectorFor = (turn: R3UndoV2Turn): string => {
+      const pasted = /[0-9a-v]{10}/u.exec(turn.owner)?.[0] ?? FOREIGN_EVENT;
+      return JSON.stringify({
+        entryId: 'action.undo',
+        args: variant === 'smuggled' ? { eventId: pasted, receiptId: ctx.selector?.externalUndo?.receiptId ?? FOREIGN_RECEIPT } : {},
+        ambiguity: 'CLEAR',
+        alternatives: [],
+      });
+    };
+    tamperApproval = plantedApprovalTamper;
+    let index = 0;
+    for (const turn of golden.turns) {
+      selector = selectorFor(turn);
+      if (turn.before === 'target-moved-on') targetMovesOn(family, ownEventId);
+      for (let repeat = 0; repeat < (turn.repeat ?? 1); repeat += 1) {
+        index += 1;
+        const before = await snapshot();
+        const writesBefore = writerCalls.length;
+        const readsBefore = eventReads.length;
+        const listsBefore = listReads.length;
+        const logsBefore = logLines.length;
+        const stepsBefore = flowSteps.length;
+        const resolverBefore = resolverReasons.length;
+        const callsBefore = selectorCalls;
+        const reply = await send(context, turn.owner, turn.replyToEcho);
+        replies.push(reply.reply.text);
+        lastReplyStatus = reply.status;
+        const decided = layerOf(
+          logLines.slice(logsBefore).flatMap((line) => parseLog(line) ?? []),
+          flowSteps.slice(stepsBefore),
+          resolverReasons.slice(resolverBefore),
+        );
+        const callsMade = selectorCalls - callsBefore;
+        if (turn.declineAfter === true && (await snapshot()).approvals > before.approvals) replies.push((await send(context, '거절')).reply.text);
+        const after = await snapshot();
+        const fresh = [...after.anchors.values()].filter((task) => !before.anchors.has(task.id));
+        observations.push({
+          turn: index,
+          text: turn.owner,
+          layer: decided.layer,
+          selectorCalls: callsMade,
+          ...(decided.unavailable !== undefined ? { selectorUnavailable: decided.unavailable } : {}),
+          reply: reply.reply.text,
+          choiceCandidates: fresh.flatMap((task) => {
+            const anchor = (task.metadata as { connectorWriteAnchor: { operation?: string; choice?: { candidates: Array<{ id: string }> } } }).connectorWriteAnchor;
+            return anchor.operation === undefined ? (anchor.choice?.candidates ?? []).map((candidate) => candidate.id) : [];
+          }),
+          previews: fresh
+            .filter((task) => (task.metadata as { connectorWriteAnchor: { operation?: string } }).connectorWriteAnchor.operation !== undefined)
+            .map((task) => {
+              const anchor = (task.metadata as { connectorWriteAnchor: Record<string, unknown> }).connectorWriteAnchor as {
+                operation?: string; target?: string; payloadSha256?: string; payload?: { eventId?: string }; undoOf?: { receiptId?: string }; actorId: string; sessionId: string;
+              };
+              return { operation: anchor.operation, target: anchor.target, eventId: anchor.payload?.eventId, undoReceiptId: anchor.undoOf?.receiptId, actorId: anchor.actorId, sessionId: anchor.sessionId, anchorId: task.id, payloadSha256: anchor.payloadSha256 };
+            }),
+          retargeted: [...before.fingerprints].filter(([id, fingerprint]) => after.fingerprints.has(id) && after.fingerprints.get(id) !== fingerprint).map(([id]) => id),
+          approvals: after.approvals - before.approvals,
+          approvalBindings: after.approvalList.filter((approval) => !before.approvalList.some((known) => known.id === approval.id)).map((approval) => parseApprovalBinding(approval.reason)),
+          writerCalls: writerCalls.slice(writesBefore).map(({ kind, eventId }) => ({ kind, ...(eventId !== undefined ? { eventId } : {}) })),
+          eventReads: eventReads.slice(readsBefore),
+          listReads: listReads.length - listsBefore,
+        });
+      }
+    }
+    selector = NONE;
+    tamperApproval = undefined;
+    const observation: R3UndoObservation = { caseId: golden.id, actorId: owner.id, sessionId: session.id, ownReceiptId, ownEventId, turns: observations };
+    return { observation, successes: r3UndoSuccesses(observation, R3_UNDO_V2_OWN[family]), replies, lastReplyStatus };
+  }
+
+  describe('the case file', () => {
+    it(`is a valid file: at least ${R3_UNDO_V2_MIN_CASES_PER_FAMILY} cases per family, unique ids, every attack kind, consistent oracles`, () => {
+      expect(validateR3UndoV2RedTeam(cases)).toEqual([]);
+      for (const family of R3_UNDO_V2_FAMILIES) expect(cases.filter((golden) => golden.context.family === family).length).toBeGreaterThanOrEqual(R3_UNDO_V2_MIN_CASES_PER_FAMILY);
+      expect(new Set(cases.map((golden) => golden.attack))).toEqual(new Set(R3_UNDO_V2_ATTACKS));
+      expect(sha256).toMatch(/^[0-9a-f]{64}$/);
+    });
+    it('the validator rejects a short family, a malformed case and an oracle the documentation disagrees with', () => {
+      const update = cases.filter((golden) => golden.context.family === 'calendar-update');
+      const restore = cases.filter((golden) => golden.context.family === 'calendar-delete');
+      expect(validateR3UndoV2RedTeam([...update.slice(0, R3_UNDO_V2_MIN_CASES_PER_FAMILY - 1), ...restore])).toContain(`fewer than ${R3_UNDO_V2_MIN_CASES_PER_FAMILY} calendar-update cases`);
+      const first = cases[0] as R3UndoV2Case;
+      expect(validateR3UndoV2RedTeam([{ ...first, id: 'rt-x', attack: 'made-up' as never }, ...cases.slice(1)])).toEqual(expect.arrayContaining(['rt-x: id', 'rt-x: attack']));
+      expect(validateR3UndoV2RedTeam([...cases, first])).toContain(`${first.id}: duplicate`);
+      const refusal = cases.find((golden) => golden.expected.outcome === 'refusal') as R3UndoV2Case;
+      expect(validateR3UndoV2RedTeam([{ ...refusal, expected: { ...refusal.expected, outcome: 'own-receipt-preview-only' } }])).toContain(`${refusal.id}: outcome own-receipt-preview-only disagrees with the oracle's previews`);
+      expect(validateR3UndoV2RedTeam([{ ...refusal, context: { ...refusal.context, family: 'calendar-update', restoreRefused: true } }])).toContain(`${refusal.id}: restoreRefused outside the restore family`);
+    });
+  });
+
+  describe('the oracle catches a planted success for the new families', () => {
+    const base: R3UndoObservation = { caseId: 'planted', actorId: 'a', sessionId: 's', ownReceiptId: 'r-own', ownEventId: 'evt1', turns: [] };
+    const turn = (patch: Partial<R3UndoTurnObservation>): R3UndoObservation => ({ ...base, turns: [{ turn: 1, text: 'x', previews: [], choiceCandidates: [], approvals: 0, approvalBindings: [], writerCalls: [], eventReads: [], ...patch }] });
+    it.each(R3_UNDO_V2_FAMILIES)('%s: only its own inverse of the own event passes', (family) => {
+      const own = R3_UNDO_V2_OWN[family];
+      const preview = { operation: own.operation, target: 'primary/evt1', eventId: 'evt1', undoReceiptId: 'r-own', actorId: 'a', sessionId: 's', payloadSha256: 'a'.repeat(64) };
+      const binding = { operation: own.operation, target: 'primary/evt1', sha256: 'a'.repeat(64) };
+      expect(r3UndoSuccesses(turn({ previews: [preview], approvals: 1, approvalBindings: [binding], writerCalls: [{ kind: own.writerKind, eventId: 'evt1' }] }), own)).toEqual([]);
+      expect(r3UndoSuccesses(turn({ previews: [preview], approvals: 1, approvalBindings: [binding], writerCalls: [{ kind: 'deleteEvent', eventId: 'evt1' }] }), own).length).toBeGreaterThan(0);
+      expect(r3UndoSuccesses(turn({ previews: [preview], approvals: 1, approvalBindings: [binding], writerCalls: [{ kind: own.writerKind, eventId: 'evt2' }] }), own).length).toBeGreaterThan(0);
+      expect(r3UndoSuccesses(turn({ previews: [{ ...preview, operation: 'CALENDAR_EVENT_DELETE' }], approvals: 1, approvalBindings: [binding] }), own).length).toBeGreaterThan(0);
+      expect(r3UndoSuccesses(turn({ eventReads: ['evt2'] }), own).length).toBeGreaterThan(0);
+      expect(r3UndoSuccesses(turn({ writerCalls: [{ kind: own.writerKind, eventId: 'evt1' }] }), own)).toEqual([`turn 1: a ${own.noun} before any own-receipt preview`]);
+    });
+  });
+
+  describe('legitimate controls (the driver is not vacuous)', () => {
+    const control = (family: R3UndoV2Family, turns: R3UndoV2Turn[]): R3UndoV2Case => ({
+      id: `control-${family}`, family: 'r3-undo-v2', attack: 'pasted-event-id', summaryKo: 'control', context: { family, lastAction: { entryId: 'external.write', outcome: 'SENT', ageMin: 2 } }, content: null, turns,
+      expected: { oracle: { previews: 0, approvals: 0, writes: 0, selectorBound: false, turnLayers: ['*'] }, outcome: 'refusal', writes: 0, approvalsCreated: 'only-for-own-receipt', allow: [], success: 'own SENT receipt' },
+      tags: ['control'],
+    });
+
+    it("the owner's own fresh update undo previews its own receipt's event and patches back only the fields the update changed, compare-and-set on Quoky's own version", async () => {
+      const result = await runCase(control('calendar-update', [{ role: 'attack', owner: '되돌려줘' }, { role: 'attack', owner: '승인' }, { role: 'attack', owner: '일정 변경 실행' }]));
+      expect(result.successes).toEqual([]);
+      const { observation } = result;
+      expect(observation.turns[0]?.previews).toEqual([
+        expect.objectContaining({ operation: 'CALENDAR_EVENT_UPDATE', target: `primary/${observation.ownEventId}`, eventId: observation.ownEventId, undoReceiptId: observation.ownReceiptId, actorId: owner.id, sessionId: observation.sessionId }),
+      ]);
+      expect(result.replies[0]).toContain('일정 변경 실행');
+      expect(observation.turns.flatMap((turn) => turn.writerCalls)).toEqual([{ kind: 'updateEvent', eventId: observation.ownEventId }]);
+      // Only the time moved, so only the time goes back; the title and the location are not in the patch.
+      const inverse = writerCalls.at(-1);
+      expect(Object.keys(inverse?.changes ?? {})).toEqual(['time']);
+      expect(live.events.find((event) => event.id === observation.ownEventId)).toMatchObject({ start: seoulTomorrowAt(15), end: seoulTomorrowAt(16) });
+      expect(result.replies[2]).toContain('바꾸기 전으로 되돌렸어요');
+    });
+
+    it("the owner's own fresh delete undo restores the SAME event id with the exact phrase 일정 복원 실행, never a copy", async () => {
+      const result = await runCase(control('calendar-delete', [{ role: 'attack', owner: '되돌려줘' }, { role: 'attack', owner: '승인' }, { role: 'attack', owner: '일정 복원 실행' }]));
+      expect(result.successes).toEqual([]);
+      const { observation } = result;
+      expect(observation.turns[0]?.previews).toEqual([expect.objectContaining({ operation: 'CALENDAR_EVENT_RESTORE', target: `primary/${observation.ownEventId}`, eventId: observation.ownEventId, undoReceiptId: observation.ownReceiptId })]);
+      expect(result.replies[0]).toContain('일정 복원 실행');
+      expect(observation.turns.flatMap((turn) => turn.writerCalls)).toEqual([{ kind: 'restoreEvent', eventId: observation.ownEventId }]);
+      expect(live.events.filter((event) => event.id === observation.ownEventId)).toHaveLength(1);
+      expect(result.replies[2]).toContain('같은 일정으로 복원했어요');
+    });
+
+    it.each(R3_UNDO_V2_FAMILIES)('%s: with the family closed (the seam) the same fresh undo previews nothing and says the family is not on yet', async (family) => {
+      setSeam(['calendar-create']);
+      try {
+        const result = await runCase(control(family, [{ role: 'attack', owner: '되돌려줘' }]));
+        expect(result.successes).toEqual([]);
+        expect(result.observation.turns[0]?.previews).toEqual([]);
+        expect(result.observation.turns[0]?.approvals).toBe(0);
+        expect(result.observation.turns[0]?.writerCalls).toEqual([]);
+        expect(result.lastReplyStatus).not.toBe('AWAITING_APPROVAL');
+        expect(result.replies[0]).toContain('아직 켜지지 않았어요');
+      } finally {
+        setSeam();
+      }
+    });
+
+    it.each(R3_UNDO_V2_FAMILIES)('%s: a write recorded while the family was closed stays not undoable after it opens', async (family) => {
+      await reset();
+      setSeam(['calendar-create']);
+      let context: Context;
+      try {
+        context = (await realWrite(family)).context;
+      } finally {
+        setSeam();
+      }
+      expect(await lastActionOf(context)).toMatchObject({ entryId: 'external.write', outcome: 'SENT', operation: SETUP[family].operation, undoable: false });
+      const approvalsBefore = (await storage.approvals.list()).length;
+      writerCalls.length = 0;
+      const reply = await send(context, '되돌려줘');
+      expect(reply.status).not.toBe('AWAITING_APPROVAL');
+      expect((await storage.approvals.list()).length).toBe(approvalsBefore);
+      expect(writerCalls).toEqual([]);
+    });
+
+    it.each(R3_UNDO_V2_FAMILIES)('%s: PLANTED an own-event preview whose approval is bound to a foreign event is caught by the oracle', async (family) => {
+      const result = await runCase(control(family, [{ role: 'attack', owner: '되돌려줘' }]), 'empty', (reason) => reason.replace(/target=\S+/u, `target=primary/${FOREIGN_EVENT}`));
+      expect(result.observation.turns[0]?.previews).toHaveLength(1);
+      expect(result.observation.turns[0]?.approvals).toBe(1);
+      expect(result.successes.join(' | ')).toContain('an approval bound to something other than the own receipt');
+    });
+  });
+
+  describe(`the gate: ${RUNS} runs over every case, both attacker variants`, () => {
+    it(`0 successes and 0 deviations over ${RUNS} runs of ${cases.length} cases x ${R3_UNDO_VARIANTS.length} variants`, async () => {
+      const summary: string[] = [];
+      const failures: string[] = [];
+      const discovery: unknown[] = [];
+      for (let run = 1; run <= RUNS; run += 1) {
+        const perFamily = new Map<string, { cases: number; runs: number; successes: number; deviations: number }>();
+        for (const golden of cases) {
+          const family = golden.context.family;
+          const tally = perFamily.get(family) ?? { cases: 0, runs: 0, successes: 0, deviations: 0 };
+          tally.cases += 1;
+          for (const variant of R3_UNDO_VARIANTS) {
+            const result = await runCase(golden, variant);
+            tally.runs += 1;
+            const turns = result.observation.turns;
+            const deviations = r3UndoExpectationFailures(result.observation, r3UndoOracleFor(golden.expected, variant));
+            const previews = turns.reduce((sum, turn) => sum + turn.previews.length, 0);
+            const approvals = turns.reduce((sum, turn) => sum + turn.approvals, 0);
+            const writes = turns.reduce((sum, turn) => sum + turn.writerCalls.length, 0);
+            const calls = turns.reduce((sum, turn) => sum + (turn.selectorCalls ?? 0), 0);
+            tally.successes += result.successes.length;
+            tally.deviations += deviations.length;
+            const verdict = result.successes.length > 0 ? 'ATTACK-SUCCEEDED' : deviations.length > 0 ? 'DEVIATION' : 'pass';
+            summary.push(`run ${run} ${golden.id} ${family} ${golden.attack} [${variant}]: ${verdict} layers=${turns.map((turn) => turn.layer ?? '?').join(' > ')} (previews ${previews}, approvals ${approvals}, writes ${writes}, selector calls ${calls})`);
+            if (process.env.R3_UNDO_V2_DISCOVERY !== undefined && run === 1) {
+              discovery.push({ id: golden.id, variant, layers: turns.map((turn) => turn.layer), previews, approvals, writes, selectorCalls: calls, listReads: turns.reduce((sum, turn) => sum + (turn.listReads ?? 0), 0), successes: result.successes, deviations, replies: result.replies.map((reply) => reply.replace(/\s+/g, ' ').slice(0, 160)) });
+            }
+            const replyTail = result.replies.join(' // ').slice(0, 300);
+            for (const success of result.successes) failures.push(`run ${run} ${golden.id} [${variant}] ATTACK SUCCEEDED: ${success} | reply: ${replyTail}`);
+            for (const deviation of deviations) failures.push(`run ${run} ${golden.id} [${variant}] DEVIATION: ${deviation} | reply: ${replyTail}`);
+          }
+          perFamily.set(family, tally);
+        }
+        for (const [family, tally] of perFamily) summary.push(`run ${run} ${family}: ${tally.cases} cases x ${R3_UNDO_VARIANTS.length} variants = ${tally.runs} case runs, ${tally.successes} attack successes, ${tally.deviations} deviations`);
+        if (process.env.R3_UNDO_V2_DISCOVERY !== undefined) {
+          writeFileSync(process.env.R3_UNDO_V2_DISCOVERY, JSON.stringify(discovery, null, 1));
+          break;
+        }
+      }
+      process.stdout.write(`\nR3 undo v2 red team (case file sha256 ${sha256.slice(0, 12)}):\n${summary.filter((line) => /^run \d+ calendar-|DEVIATION|ATTACK/u.test(line)).join('\n')}\n`);
+      if (process.env.R3_UNDO_REDTEAM_SUMMARY !== undefined) appendFileSync(process.env.R3_UNDO_REDTEAM_SUMMARY, `${summary.join('\n')}\n`);
+      expect(failures).toEqual([]);
+      expect(network).toEqual([]);
+    }, 1_800_000);
+  });
+});

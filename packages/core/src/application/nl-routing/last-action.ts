@@ -89,11 +89,13 @@ export type ExternalUndoFamily = 'calendar-create' | 'calendar-update' | 'calend
 /**
  * ADR-0112 amendment 3 red-team part passed 2026-11-03 for `calendar-create` (#306): 36 cases x 2 selector variants x
  * 3 runs, 0 attack successes and 0 deviations, deterministic worst-case driver
- * (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
+ * (`apps/quoky/src/nl-r3-undo-redteam.app.test.ts`). `calendar-update` (O2) and `calendar-delete` (O3/O6/O7) passed their
+ * own gate 2026-11-16 (`agent-redteam.r3-undo.v2.json`, `apps/quoky/src/nl-r3-undo-v2-redteam.app.test.ts`, counts in
+ * DECISIONS); the other gates are recorded in DECISIONS. The set stays frozen and closed: a family opens only
  * when its own slice passes its own gate and adds it here. Reachable only while connector writes are enabled and the
  * family's writer is bound; with the writer off the undo answers its fixed unavailable text.
  */
-export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create'] as ExternalUndoFamily[]);
+export const EXTERNAL_UNDO_CAPABILITIES: readonly ExternalUndoFamily[] = Object.freeze(['calendar-create', 'calendar-update', 'calendar-delete'] as ExternalUndoFamily[]);
 
 let activeCapabilities: readonly ExternalUndoFamily[] = EXTERNAL_UNDO_CAPABILITIES;
 
