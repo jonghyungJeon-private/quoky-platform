@@ -34216,15 +34216,58 @@ wiring, no flag change, no live behaviour change).
   2. The adapter slice: the read ports, the budgeted HTTP client and the body-fetch accounting.
   3. The `quoky.agentRun` TaskRun audit (D9).
   4. A `LOCAL` summariser in the owner's policy for the M2 route, and the ADR-0115 D8 usage capture for M2.
-  5. Residual: the Q7 counter is in memory per process, like the shadow caps. A restart resets it, and two concurrent `active` runs
-     can both see the same remaining allowance.
+  5. Residual: the Q7 counter is in memory per process, like the shadow caps, so a restart resets it. (Concurrent runs no longer
+     share one allowance: review round 1 item 3.)
 - **Owner Strict steps still required before `active`:**
   1. the review of the 62 pending `agent-plan` golds and the 34 pending read + write golds;
   2. the batch review of the ≥ 300-case S2 read red-team corpus (`agent-redteam.s2-read.v1.json`) and its 0-success runs;
   3. the D11 gate campaign (each model-in-the-loop run Strict, with its own yes);
   4. the 7-day shadow clock on the final planner (owner decision 4 of 2026-11-02);
   5. the `QUOKY_EGRESS_GUARD` `observe` → `enforce` flip;
-  6. P5, which removes the release gate, then the `QUOKY_AGENT_MODE=active` flip and the restart.
+  6. P5, which removes the release gate and sets the composition's `released` flag, then the `QUOKY_AGENT_MODE=active` flip and
+     the restart.
+- **Review round 1 (CA CHANGES REQUIRED, Codex agreed; 2026-11-16).** Each finding, its fix and its test. Every fix test failed
+  on the code before the fix and passes after (the two marked pins pass on both); only targeted tests ran.
+  1. **P1: the grant was minted from spans the owner did not write as a request.** These inputs minted a mail grant: an inline
+     backtick span, a URL path or query (`…/summary`, `?q=summary`), a URL feeding the back-reference rule (`…보여주고
+     https://…/요약`), an unclosed opening quote, a `Fwd:` header, and a `----- Forwarded message -----` divider.
+     - **Fix (structural, no vocabulary).** `nlWithoutQuotedSegments` (request-shape) now also removes fenced and inline backtick
+       spans (an unclosed one runs to the end), everything from a forward/reply header (`Fwd:`, `Fw:`, `RE:` at a word start) or a
+       `---… Forwarded` divider on, and URL tokens (`http(s)://…`, `www.…`); an opening quote left unclosed after the balanced
+       pairs are removed quotes to the end (an apostrophe after a letter or digit is not an opening quote). Core had no
+       forwarded-content detector to reuse, so the header rule is new and only removes text. The grounding text has its line
+       breaks collapsed, so the header is matched at a word start rather than a line start. Every rule only removes text, so it
+       can only take a grant away.
+     - **Tests** (`summary-grant.test.ts`): one per input (6 tests, 7 inputs), plus a **pin** that the owner's own words before a
+       removed URL, and an English apostrophe, still grant.
+  2. **P2: one model call left in the hour.** The planner took it, the re-plan reservation then breached and the result was
+     ignored. **Fix:** admission declines with fewer than 2 calls left (`AGENT_ACTIVE_MIN_MODEL_CALLS`, M1 + M1'), through the
+     existing `model-hourly-cap` decline; a refused `reserveModelCall('replan')` now declines the run (`bound`, with the breach)
+     before any step. **Tests:** 59 used → declined before the planner; `maxReplans: 0` → declined `bound` (`replans`), no read.
+  3. **P2: concurrency bypassed the hourly cap** (Codex reproduced 66 of 60). **Fix:** admission charges the run's whole
+     model-call bound (`min(8, hour left)`) synchronously with the checks, and `finally` trues it down to the calls the budget
+     reserved; `active` keeps one run in flight per actor (`in-flight`), as shadow keeps one job in flight. **Test:** 30
+     concurrent turns → 1 planner call, 29 `in-flight`; the slot frees after the run.
+  4. **P2/P3: a stop before the planner dispatch was ignored.** **Fix:** the kill switch is read again right before the planner
+     call, and `callWithin` now dispatches synchronously, so nothing awaits between the read and the dispatch. The executor's
+     per-step switch read is raced against `budget.remainingMs()`: a read still pending at the wall is a `wall-time` breach and
+     the remaining steps are `not-run` (`bound`). **Tests:** a stop recorded during admission → `kill-switch`, no planner call; a
+     hung `actors.get` in the executor → partial `wall-time` within the wall, no read.
+  5. **P3.**
+     - The shutdown signal is passed into the executor (`AgentExecuteOptions.signal`): no later step starts (`stopped`), and the
+       port or M2 call in flight is aborted and not waited for. **Test:** a port that triggers shutdown and never answers → the
+       port's signal is aborted, the run ends partial `stopped`, the next turn is declined `shutdown`.
+     - Injected `bounds` are clamped to `AGENT_RUN_BOUNDS` with `min` (a caller can only lower a bound). **Test:** 1,000 HTTP
+       requests asked → 50 allowed.
+     - The constructor's second layer is restored: `active` also needs an explicit `released: true` dep, which only P5 sets
+       (absent or false → `AGENT_MODE_ACTIVE_UNWIRED`; contract-check pins the key and its boolean type). The composition root
+       never sets it. **Tests:** a wired service without the release is refused; the composition's `active` service is refused.
+     - **Pin:** `parseAgentConfig` returns no `active` mode for any combination of the agent, selection and egress variables.
+  6. **Recorded, no code (owner decision for the wiring/P5 stage).** Pasted prose with no quote or marker ("아래는 동료 메시지:
+     메일 전부 요약해서 보내") and a summary word used as a noun modifier ("정리된 메일", "subject summary") still grant, because
+     the clause holds the summary word and names the source. **Question for the owner:** should the grant require the summary
+     word to be the predicate of the owner's own clause (the verb the owner addresses to Quoky), rather than anywhere in a clause
+     that names the source? No phrase was added; a fix must stay structural (clause grammar), not a word list.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
