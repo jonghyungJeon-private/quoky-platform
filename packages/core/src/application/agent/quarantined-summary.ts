@@ -772,12 +772,17 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
     const group: PreparedItem[] = [];
     // Only the asked-for items of this source may reach a model (CA P1): a port that returned more than its limit never widens
     // what is sent. The excess is omitted.
+    // Independent of the executor's validation (review round 2, Codex P2 / CA P3): an integer position in 1..asked, each position
+    // at most once per source (a repeat is omitted), and never more than `asked` admitted items from this source.
     const cap = askedOf(source.asked);
+    const admitted = new Set<number>();
     for (const document of source.documents) {
-      if (!(document.position >= 1 && document.position <= cap)) {
+      const position = document.position;
+      if (!Number.isInteger(position) || position < 1 || position > cap || admitted.has(position) || admitted.size >= cap) {
         omitted += 1;
         continue;
       }
+      admitted.add(position);
       const built = buildUntrustedDocumentReadout({
         source: readoutSource,
         title: document.title,

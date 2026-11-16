@@ -396,6 +396,22 @@ describe('review round 1 (Chief Architect and Codex)', () => {
     }
   });
 
+  it('review round 2 (Codex P2 / CA P3): a repeated position is admitted once and a source never sends more than asked', async () => {
+    // Duplicate positions with asked 1: exactly one item is sent, the repeats are omitted.
+    const dup = answering('dup', 'REMOTE');
+    const same = [mailDoc(1), { ...mailDoc(1), body: 'mail body again' }, { ...mailDoc(1), body: 'mail body third' }];
+    const outcome = await quarantinedSummarize({ ...base, sources: [granted('mail.list', same, 1)], route: routeOf(dup) });
+    expect(dup.requests.flatMap((request) => bodiesOf(request.prompt))).toEqual(['mail body 1']);
+    expect(outcome).toMatchObject({ kind: 'summary', omitted: 2 });
+    // Unique integer positions inside 1..asked cannot exceed asked; non-integer positions could, so they are refused and the
+    // count cap holds: asked 2 with positions 1, 1.5 and 2 sends exactly 2.
+    const frac = answering('frac', 'REMOTE');
+    const odd = [mailDoc(1), { ...mailDoc(1), id: 'm1b', position: 1.5, body: 'mail body half' }, mailDoc(2)];
+    const capped = await quarantinedSummarize({ ...base, sources: [granted('mail.list', odd, 2)], route: routeOf(frac) });
+    expect(frac.requests.flatMap((request) => bodiesOf(request.prompt))).toEqual(['mail body 1', 'mail body 2']);
+    expect(capped).toMatchObject({ kind: 'summary', omitted: 1 });
+  });
+
   it('CA P2-a: call 1 refused at dispatch and call 2 sent and failed is `failed` with call 2\'s audit', async () => {
     const provider = answering('p-remote', 'REMOTE', () => 'not json');
     let checks = 0;
