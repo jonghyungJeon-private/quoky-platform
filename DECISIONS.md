@@ -34375,6 +34375,52 @@ wiring, no flag change, no live behaviour change).
       item 6: whether the summary word must be the predicate of the owner's own clause.
     - `Fwd :` with a space before the colon, mid-line.
     - A Hangul-jamo run used as a divider (`ㅡㅡㅡ`). Jamo runs are not marked because `ㅋㅋㅋ`/`ㅎㅎㅎ` are ordinary laughter.
+- **Review round 4 (final; Codex 3 × P1 class gaps; the review-loop cap on heuristic rounds is reached; 2026-11-16).**
+  - **Codex P1s.**
+    - `❤️❤️❤️` followed by a request line: an emoji with variation selectors used as a divider.
+    - An IPv6 address line (`2001:db8::1`).
+    - A mention-prefixed speaker (`@alice: 메일 요약해줘`).
+  - **Conclusion.** Each new class would be one more case-by-case entry, so no class is enumerated. One structural rule
+    replaces the enumeration.
+  - **The single-line rule.** The owner's prepared text is read with the appended `[files: N]` line removed and the text
+    trimmed. If it then holds more than one non-empty line, the message never mints a summary grant, and every summary is
+    listing-only (`isSingleLineOwnerText`).
+    - Line breaks: LF, CR, U+2028, U+2029, NEL, VT and FF.
+    - This closes the whole multi-line paste family structurally: dividers, header blocks, chat-copy lines and pasted
+      messages, including the first two inputs.
+    - Single-line text keeps every marker check of rounds 2 and 3.
+  - **The `@` widening.** The line-start label rule now allows one leading `@`. It is a one-character widening of an
+    existing rule, not a new class, so `@alice: …` at the line start is a label: no grant. A mention without a colon is not
+    caught.
+  - **Tests** (`summary-grant.test.ts`).
+    - The emoji-divider and IPv6 inputs give no grant through the single-line rule.
+    - `@alice:` gives no grant through the widened label rule.
+    - A multi-line owner request (`메일 3개` / `요약해줘`) gives no grant. This is the fail-closed residual.
+    - A U+2028 separator counts as a line break.
+    - A single-line plain request, with surrounding blank lines trimmed, still grants.
+  - **Status.**
+    - S2 stays unwired. `QUOKY_AGENT_MODE=active` is refused at startup, and the service needs the P5 `released` flag.
+    - The ≥ 300-case S2 read red-team corpus and its gate run before `active` (Owner Strict steps above). That gate, not
+      further rounds here, decides whether this gate holds.
+  - **Residuals.**
+    - Fail-closed false positives: listing-only for that message.
+      - Any multi-line request.
+      - The round-3 list: contractions, quoted words, CJK or fullwidth brackets, URLs, hosts and IPs, glued sentences
+        (`emails.Thanks`), `***중요***`, `^^^`, line-start labels, `요약해줘:)`, `PS:`, `— 3:30`, `[x] [y]` openings.
+    - Not caught, on one line:
+      - pasted prose with no marker;
+      - noun uses of the summary word;
+      - a mention or speaker name without a colon;
+      - `Fwd :` with a space before the colon, mid-line;
+      - a jamo divider (`ㅡㅡㅡ`) within one line.
+  - **Owner questions before `active`.** The residuals move here.
+    1. **Predicate requirement.** Must the summary word be the predicate of the owner's own clause (the verb the owner
+       addresses to Quoky)? That would close the noun uses and part of the unmarked pasted prose. It would be structural
+       (clause grammar), never a word list.
+    2. **A stricter rule before `active`.** Is the structural gate enough once the red-team gate passes, or does the owner
+       want something stricter? For example, an explicit one-time owner confirmation before any remote summary egress (a
+       mail or Drive body to a REMOTE model). That would close the remaining single-line pasted-prose cases at the cost of
+       one confirmation.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
