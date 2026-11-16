@@ -63,6 +63,9 @@ class FakeReceipts implements ConnectorWriteReceiptRepository {
     return null;
   }
 
+  async findSentUndoOf(): Promise<ConnectorWriteReceipt | null> {
+    return null;
+  }
   async markInterruptedPreparedUncertain(): Promise<number> {
     return 0;
   }

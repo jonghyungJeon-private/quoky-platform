@@ -32,6 +32,8 @@ const REF_MAX_LENGTH = 300;
 const URL_MAX_LENGTH = 2000;
 /** An opaque provider version (an entity tag): printable ASCII without spaces, bounded. */
 const VERSION_PATTERN = /^[\x21-\x7e]{1,200}$/;
+/** A receipt id (`data.undoes`): an opaque bounded id, never payload. */
+const RECEIPT_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 const REASONS: readonly string[] = [...CONNECTOR_WRITE_NOT_SENT_REASONS, ...CONNECTOR_WRITE_UNCERTAIN_REASONS, 'INTERRUPTED'];
 
 /**
@@ -48,6 +50,7 @@ function receiptData(data: ConnectorWriteReceiptData): ConnectorWriteReceiptData
   }
   if (typeof data.version === 'string' && VERSION_PATTERN.test(data.version)) out.version = data.version;
   if (typeof data.reason === 'string' && REASONS.includes(data.reason)) out.reason = data.reason;
+  if (typeof data.undoes === 'string' && RECEIPT_ID_PATTERN.test(data.undoes)) out.undoes = data.undoes;
   return out;
 }
 
@@ -116,10 +119,14 @@ export class SqliteConnectorWriteReceiptRepository implements ConnectorWriteRece
     const status = outcome.status;
     if (status !== 'SENT' && status !== 'NOT_SENT' && status !== 'UNCERTAIN') throw new Error('CONNECTOR_WRITE_OUTCOME_INVALID');
     return this.db.transaction((): ConnectorWriteReceipt | null => {
+      // Review round 1 (P2-C): the undo link written at prepare survives the outcome.
+      const prepared = this.db.prepare(`SELECT * FROM connector_write_receipts WHERE id = ? AND status = 'PREPARED'`).get(id) as ReceiptRow | undefined;
+      if (prepared === undefined) return null;
+      const undoes = receiptOf(prepared).data.undoes;
       const result = this.db.prepare(
         `UPDATE connector_write_receipts SET status = ?, updated_at = ?, data = ?
          WHERE id = ? AND status = 'PREPARED'`,
-      ).run(status, now, JSON.stringify(dataOfOutcome(outcome)), id);
+      ).run(status, now, JSON.stringify({ ...dataOfOutcome(outcome), ...(undoes !== undefined ? { undoes } : {}) }), id);
       if (result.changes === 0) return null;
       const row = this.db.prepare('SELECT * FROM connector_write_receipts WHERE id = ?').get(id) as ReceiptRow;
       return receiptOf(row);
@@ -157,6 +164,16 @@ export class SqliteConnectorWriteReceiptRepository implements ConnectorWriteRece
          AND status IN ('UNCERTAIN', 'PREPARED')
        ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
     ).get(match.actorId, match.connector, match.operation, match.target, match.payloadSha256) as ReceiptRow | undefined;
+    return row ? receiptOf(row) : null;
+  }
+
+  async findSentUndoOf(actorId: Id, undoneReceiptId: Id): Promise<ConnectorWriteReceipt | null> {
+    if (typeof actorId !== 'string' || actorId.length === 0 || typeof undoneReceiptId !== 'string' || !RECEIPT_ID_PATTERN.test(undoneReceiptId)) return null;
+    const row = this.db.prepare(
+      `SELECT * FROM connector_write_receipts
+       WHERE actor_id = ? AND status = 'SENT' AND json_extract(data, '$.undoes') = ?
+       ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+    ).get(actorId, undoneReceiptId) as ReceiptRow | undefined;
     return row ? receiptOf(row) : null;
   }
 

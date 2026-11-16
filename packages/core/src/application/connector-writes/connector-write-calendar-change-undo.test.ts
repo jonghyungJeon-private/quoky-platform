@@ -85,6 +85,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
   async findLatestForOperation(): Promise<ConnectorWriteReceipt | null> {
     return null;
   }
+  async findSentUndoOf(): Promise<ConnectorWriteReceipt | null> {
+    return null;
+  }
   async markInterruptedPreparedUncertain(): Promise<number> {
     return 0;
   }
@@ -633,9 +636,64 @@ describe('ADR-0112 amendment 3 (O3, O6, O7): the restore of an approved calendar
     const step = await h.undo('calendar-delete-undo', receiptId, at(3));
     expect(step.kind).toBe('preview');
     const view = await h.flow.find(h.session());
-    expect(view?.anchor.payload).toEqual({ operation: 'CALENDAR_EVENT_RESTORE', eventId: EVENT_ID, expected: { allDay: false, start: START, end: END, title: '주간 회의' } });
+    expect(view?.anchor.payload).toEqual({ operation: 'CALENDAR_EVENT_RESTORE', eventId: EVENT_ID, expected: { allDay: false, start: START, end: END, title: '주간 회의' }, undoes: receiptId });
     expect(view?.anchor.target).toBe(`primary/${EVENT_ID}`);
     expect(h.reads.list).toBe(listsBefore);
     expect(h.reads.get.at(-1)).toEqual({ calendarId: 'primary', eventId: EVENT_ID });
+  });
+
+  it('restore-duplicate fix (live 2026-11-16): delete -> restore -> delete again -> undo previews a NEW restore bound to the new delete receipt', async () => {
+    const h = harness();
+    const first = await h.deleteEvent();
+    expect((await h.undo('calendar-delete-undo', first.receiptId, at(3))).kind).toBe('preview');
+    const restored = await h.approveAndExecute(at(4));
+    expect(restored).toMatchObject({ kind: 'outcome', outcome: { status: 'SENT', externalRef: EVENT_ID } });
+    expect(h.live.events.map((event) => event.id)).toEqual([EVENT_ID]);
+    // The owner deletes the same event again (an ordinary approved delete): a new delete receipt.
+    const second = await h.deleteEvent();
+    expect(second.receiptId).not.toBe(first.receiptId);
+    expect(h.live.events).toEqual([]);
+    const step = await h.undo('calendar-delete-undo', second.receiptId, at(6));
+    expect(step.kind).toBe('preview');
+    if (step.kind !== 'preview') return;
+    expect(plainTextOf(renderConnectorWriteStep(step))).not.toContain('이미 실행했어요');
+    const view = await h.flow.find(h.session());
+    expect(view?.anchor.payload).toMatchObject({ operation: 'CALENDAR_EVENT_RESTORE', eventId: EVENT_ID, undoes: second.receiptId });
+    expect(view?.anchor.undoOf).toMatchObject({ receiptId: second.receiptId, family: 'calendar-delete' });
+    const again = await h.approveAndExecute(at(7));
+    expect(again).toMatchObject({ kind: 'outcome', outcome: { status: 'SENT', externalRef: EVENT_ID } });
+    expect(h.writes.restore).toHaveLength(2);
+    expect(h.live.events.map((event) => event.id)).toEqual([EVENT_ID]);
+  });
+
+  it('restore-duplicate fix: the at-most-once guard still refuses a real replay of the SAME restore (same approval, or the same source receipt again)', async () => {
+    const h = harness();
+    const { receiptId } = await h.deleteEvent();
+    expect((await h.undo('calendar-delete-undo', receiptId, at(3))).kind).toBe('preview');
+    const done = await h.approveAndExecute(at(4));
+    expect(done).toMatchObject({ kind: 'outcome', outcome: { status: 'SENT' } });
+    // The same approval replayed: a repeat, never a second restore.
+    const view = await h.flow.anchorOfTask(h.session(), ((await h.flow.find(h.session())) ?? { taskId: '' }).taskId);
+    const replay = await h.flow.execute({ session: h.session(), actor: OWNER, now: at(5), view: view as NonNullable<typeof view> });
+    expect(replay).toMatchObject({ kind: 'repeat', operation: 'CALENDAR_EVENT_RESTORE', status: 'SENT' });
+    // The same source receipt undone again (the event deleted again outside Quoky, the lastAction still the old delete): the
+    // identity is the same source receipt, so its own SENT restore matches and nothing is restored twice.
+    const back = h.live.events.splice(0);
+    h.live.deleted.push(...back);
+    const repeated = await h.undo('calendar-delete-undo', receiptId, at(6));
+    expect(repeated.kind).toBe('already-sent');
+    expect(h.writes.restore).toHaveLength(1);
+  });
+
+  it('restore-duplicate fix: an approved undo whose payload names another source receipt than its undo link never executes', async () => {
+    const h = harness();
+    const { receiptId } = await h.deleteEvent();
+    expect((await h.undo('calendar-delete-undo', receiptId, at(3))).kind).toBe('preview');
+    const view = await h.flow.find(h.session());
+    const task = h.tasks.get(view?.taskId as string) as Task;
+    const anchor = task.metadata?.connectorWriteAnchor as { undoOf: Record<string, unknown> } & Record<string, unknown>;
+    h.tasks.set(task.id, { ...task, metadata: { ...task.metadata, connectorWriteAnchor: { ...anchor, undoOf: { ...anchor.undoOf, receiptId: 'another-receipt' } } } });
+    expect(reason(await h.approveAndExecute(at(4)))).toBe('binding-mismatch');
+    expect(h.writes.restore).toHaveLength(0);
   });
 });

@@ -65,6 +65,10 @@ const CALENDAR_EVENT_ID = /^[0-9a-v]{5,1024}$/;
  * id alphabet the writer itself accepts. The flow additionally requires it to equal the id the approved payload named.
  */
 const CHANGED_EVENT_ID = /^[A-Za-z0-9_-]{1,1024}$/;
+/** A Jira comment id (digits), as the comment writer returns it. */
+const COMMENT_ID = /^[0-9]{1,20}$/;
+/** A Jira transition receipt reference: `<issue key>:<transition id>`, as the transition writer returns it. */
+const TRANSITION_REF = /^[A-Z][A-Z0-9_]{0,63}-[1-9][0-9]{0,9}:[0-9]{1,20}$/;
 
 const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
   'calendar-create': {
@@ -81,6 +85,16 @@ const FAMILIES: Readonly<Record<ExternalUndoFamily, FamilySpec>> = {
     draftKind: 'calendar-delete-undo',
     operation: ConnectorWriteOperation.CALENDAR_EVENT_DELETE,
     refOk: (ref) => CHANGED_EVENT_ID.test(ref),
+  },
+  'jira-comment': {
+    draftKind: 'jira-comment-undo',
+    operation: ConnectorWriteOperation.ISSUE_COMMENT,
+    refOk: (ref) => COMMENT_ID.test(ref),
+  },
+  'jira-transition': {
+    draftKind: 'jira-transition-undo',
+    operation: ConnectorWriteOperation.ISSUE_TRANSITION,
+    refOk: (ref) => TRANSITION_REF.test(ref),
   },
 };
 
@@ -126,16 +140,39 @@ export class ExternalUndoResolver {
     const family = externalUndoFamilyOf(record.entryId, record.operation);
     const capabilities = this.deps.capabilities ?? activeExternalUndoCapabilities();
     if (family === undefined || !capabilities.includes(family) || !record.undoable) return nothing('not-open');
-    const spec = FAMILIES[family];
+    return this.bindOrigin(family, input, record.itemId, record.anchorTaskId);
+  }
 
-    const receipt = await this.deps.receipts.findById(record.itemId, input.actor.id);
+  /**
+   * Review round 1 (P2-A): re-validates an origin this resolver already resolved (a numbered continuation of an undo, the
+   * revert choice), WITHOUT re-reading `lastAction` recency: the window was checked when the origin was resolved, and the
+   * choice anchor itself is next-turn only and expires with the anchor lifetime. The same receipt and anchor must still be
+   * this actor's own SENT write in this session, the anchor's approval must still be the one that produced the receipt, and
+   * the family must still be open. Never called with ids from text: only with the ids pinned on the choice anchor.
+   */
+  async revalidate(input: Pick<ExternalUndoInput, 'session' | 'actor'> & { readonly family: ExternalUndoFamily; readonly receiptId: Id; readonly anchorTaskId: Id }): Promise<ExternalUndoResolution> {
+    const capabilities = this.deps.capabilities ?? activeExternalUndoCapabilities();
+    if (!capabilities.includes(input.family)) return { kind: 'nothing-to-undo', reason: 'not-open' };
+    return this.bindOrigin(input.family, input, input.receiptId, input.anchorTaskId);
+  }
+
+  /** The receipt and anchor checks shared by {@link resolve} and {@link revalidate}. */
+  private async bindOrigin(
+    family: ExternalUndoFamily,
+    input: Pick<ExternalUndoInput, 'session' | 'actor'>,
+    receiptId: Id,
+    anchorTaskId: Id | undefined,
+  ): Promise<ExternalUndoResolution> {
+    const nothing = (reason: ExternalUndoRefusal): ExternalUndoResolution => ({ kind: 'nothing-to-undo', reason });
+    const spec = FAMILIES[family];
+    const receipt = await this.deps.receipts.findById(receiptId, input.actor.id);
     if (receipt === null || receipt.actorId !== input.actor.id) return nothing('receipt-missing');
     if (receipt.operation !== spec.operation || receipt.status !== 'SENT') return nothing('receipt-mismatch');
     const ref = receipt.data.externalRef;
     if (typeof ref !== 'string' || !spec.refOk(ref)) return nothing('malformed-ref');
 
-    if (record.anchorTaskId === undefined) return nothing('anchor-missing');
-    const task = await this.deps.tasks.get(record.anchorTaskId);
+    if (anchorTaskId === undefined) return nothing('anchor-missing');
+    const task = await this.deps.tasks.get(anchorTaskId);
     const anchor = task === null ? undefined : this.deps.readAnchor(task);
     if (task === null || anchor === undefined) return nothing('anchor-missing');
     if (

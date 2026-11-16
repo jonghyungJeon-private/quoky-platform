@@ -228,6 +228,21 @@ const PREVIEWS: readonly ConnectorWritePreview[] = [
     timeZone: 'Asia/Seoul',
     before: { id: 'e2', title: '', start: '2026-10-08', end: '2026-10-10', allDay: true, location: '_x_' },
   },
+  // ADR-0112 amendment 3 (O4, O5): the receipt-sourced Jira undo previews (an owner sentence echoed as quoted, untrusted text).
+  { operation: 'ISSUE_COMMENT_DELETE', issueKey: 'PROJ-12', commentId: '10001', text: NASTY, receiptSourced: true, ownerSentence: '방금 댓글 지워줘 @here' },
+  {
+    operation: 'ISSUE_TRANSITION_REVERT',
+    issueKey: 'PROJ-12',
+    currentStatus: 'In *Review* @here',
+    currentStatusId: '31',
+    toStatus: '<#1> To_Do',
+    toStatusId: '1',
+    transitionName: 'Back_to <todo>',
+    transitionId: '51',
+    receiptSourced: true,
+  },
+  // Review round 1: the forward transition preview shows the status read now (the compare-and-set baseline).
+  { operation: 'ISSUE_TRANSITION', issueKey: 'PROJ-12', fromStatus: '<#1> To_Do @here', fromStatusId: '1', toStatus: 'In *Review*', toStatusId: '31', transitionName: 'Send_to <review>', transitionId: '41' },
 ];
 
 const CANDIDATES: readonly ConnectorWriteEventSummary[] = TITLES.map((title, i) => ({
@@ -245,7 +260,7 @@ const TARGETS: readonly ConnectorWriteTargetSummary[] = [
   { kind: 'calendar' },
 ];
 
-const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found'];
+const REFUSALS: readonly ConnectorWriteRefusal[] = ['transition-unavailable', 'binding-mismatch', 'credential', 'event-not-found', 'undo-read-failed', 'undo-target-gone', 'undo-target-changed', 'undo-not-permitted', 'undo-no-path', 'target-changed'];
 
 // --- review P3-5: mention case variants, astral clip boundaries, escape-limit crossings, purge copy, learning lists --
 const MENTION_CASES = ['@EVERYONE 공지', '@Here 확인', '@eVeRyOnE <@!1> @HERE', 'mail@Everyone.test <@&9>'];
@@ -518,6 +533,21 @@ async function corpus(): Promise<Record<string, string>> {
       add(`cw.choice.${mode}.${basis ?? 'dated'}`, composer.composeConnectorWriteStep(DM, { kind: 'choice', mode, candidates: CANDIDATES, timeZone: 'America/New_York', ...(basis ? { basis } : {}) }));
     }
   }
+  // ADR-0112 amendment 3 (O5): several Core-listed transitions lead back; the owner picks by number.
+  add(
+    'cw.revert-choice.0',
+    composer.composeConnectorWriteStep(DM, {
+      kind: 'revert-choice',
+      issueKey: 'PROJ-12',
+      currentStatus: 'In *Review* @here',
+      toStatus: '<#1> To_Do',
+      transitions: [
+        { id: '51', name: 'Back_to <todo>', toStatus: '<#1> To_Do', toStatusId: '1' },
+        { id: '52', name: NASTY, toStatus: '<#1> To_Do', toStatusId: '1' },
+      ],
+      ownerSentence: '되돌려줘 `x`',
+    }),
+  );
   for (const reason of REFUSALS) {
     add(`cw.refused.${reason}`, composer.composeConnectorWriteStep(DM, { kind: 'refused', reason, family: 'issue', availableStatuses: ['Done_*', NASTY, '<#9>'] }));
   }

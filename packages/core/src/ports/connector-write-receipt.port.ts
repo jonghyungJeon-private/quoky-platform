@@ -34,6 +34,11 @@ export interface ConnectorWriteReceiptData {
   /** The provider's opaque version right after the write (a calendar create), for the undo's compare-and-set. */
   version?: string;
   reason?: ConnectorWriteNotSentReason | ConnectorWriteUncertainReason | 'INTERRUPTED';
+  /**
+   * ADR-0112 amendment 3, review round 1 (P2-C): on an undo write's receipt, the id of the receipt it inverts (an id, never
+   * payload). Written at prepare and kept by `complete`, so a forward write that was undone is not mistaken for a replay.
+   */
+  undoes?: Id;
 }
 
 export interface ConnectorWriteReceipt {
@@ -89,6 +94,12 @@ export interface ConnectorWriteReceiptRepository {
    * happened is previewed with a duplicate warning).
    */
   findLatestUnresolved(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null>;
+  /**
+   * ADR-0112 amendment 3, review round 1 (P2-C): the newest `SENT` undo receipt of this actor whose `data.undoes` names
+   * `undoneReceiptId`, or null. A SENT forward write that has one was undone, so asking for the same write again is a new
+   * write, not a replay. Required (review round 2, P2): an optional method let a composition adapter drop it silently.
+   */
+  findSentUndoOf(actorId: Id, undoneReceiptId: Id): Promise<ConnectorWriteReceipt | null>;
   /** The newest receipt of any status for this actor and operation (any target), or null. */
   findLatestForOperation(actorId: Id, operation: ConnectorWriteOperation): Promise<ConnectorWriteReceipt | null>;
   /**

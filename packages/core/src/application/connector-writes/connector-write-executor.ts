@@ -20,6 +20,8 @@ export interface ConnectorWriteExecutionRequest {
   readonly operation: ConnectorWriteOperation;
   readonly target: string;
   readonly payloadSha256: string;
+  /** Review round 1 (P2-C): on an undo write, the receipt it inverts (recorded on the PREPARED receipt). */
+  readonly undoes?: Id;
 }
 
 export type ConnectorWriteExecution =
@@ -73,7 +75,7 @@ export class ConnectorWriteExecutor {
       status: 'PREPARED',
       createdAt,
       updatedAt: createdAt,
-      data: {},
+      data: request.undoes !== undefined ? { undoes: request.undoes } : {},
     });
     if (!prepared.created) return { executed: false, receipt: prepared.receipt };
 

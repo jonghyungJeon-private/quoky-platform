@@ -316,6 +316,9 @@ async function boot(): Promise<Harness> {
       writes.listTransitions.push(key);
       return TRANSITIONS;
     },
+    async readIssueStatus(key: string) {
+      return { issueKey: key, statusId: '1', statusName: '할 일' };
+    },
     async transition(request: IssueTransitionRequest) {
       writes.transition.push(request);
       return connectorWriteSent(`${request.issueKey}:${request.transitionId}`);
@@ -704,7 +707,7 @@ describe('Personal v3 acceptance — connector-write approvals end to end, provi
     await det(owner, '승인');
     await det(owner, '상태 변경 실행');
     expect(harness.writes.transition).toEqual([
-      expect.objectContaining({ issueKey: 'PROJ-12', transitionId: '21', toStatusId: '3' }),
+      expect.objectContaining({ issueKey: 'PROJ-12', transitionId: '21', toStatusId: '3', fromStatusId: '1' }),
     ]);
   });
 

@@ -136,6 +136,8 @@ describe('writes, state-bound steps and approvals', () => {
       CALENDAR_EVENT_UPDATE: 'calendar',
       CALENDAR_EVENT_DELETE: 'calendar',
       CALENDAR_EVENT_RESTORE: 'calendar',
+      ISSUE_COMMENT_DELETE: 'jira-mine',
+      ISSUE_TRANSITION_REVERT: 'jira-mine',
     };
     for (const operation of CONNECTOR_WRITE_OPERATIONS) expect(surfaceGroupsOfWriteOperation(operation)).toEqual(['writes', expected[operation]]);
   });

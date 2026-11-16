@@ -23,7 +23,7 @@ import {
   mentionsConnectorWriteExecutionStep,
   namesApprovedWriteStepVerb,
 } from '../connector-writes/connector-write-flow';
-import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
+import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteChoiceStopLine, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
 import { isDirectConversation, joinBody, outboundMessage, withOutboundBody } from '../message-rendering';
 import { runS3ItemSummary, type S3ItemSummaryOutcome } from '../item-summary/s3-item-summary';
 import {
@@ -951,8 +951,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
    */
   protected async stopOpenGovernedApprovals(actor: Actor, text: string): Promise<MessageBody | undefined> {
     if (this.deps.connectorWriteFlow === undefined) return undefined;
-    const { closed, running, failed, scanFailed } = await this.approvalDecisions.withdrawGovernedConnectorWrites(actor, isActionSwitchGoverned);
-    return renderActionSwitchStopNotice(closed.map(renderConnectorWriteStopLine), running, noticeLanguage(undefined, text), { failed, scanFailed });
+    const { closed, closedChoices, running, failed, scanFailed } = await this.approvalDecisions.withdrawGovernedConnectorWrites(actor, isActionSwitchGoverned);
+    return renderActionSwitchStopNotice([...closed.map(renderConnectorWriteStopLine), ...closedChoices.map(renderConnectorWriteChoiceStopLine)], running, noticeLanguage(undefined, text), { failed, scanFailed });
   }
 
   /**

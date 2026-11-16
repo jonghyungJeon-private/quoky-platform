@@ -48,7 +48,7 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
       outcome.status === 'SENT'
         ? { externalRef: outcome.externalRef, ...(outcome.version !== undefined ? { version: outcome.version } : {}) }
         : { reason: outcome.reason };
-    const next = { ...row, status: outcome.status, updatedAt: now, data };
+    const next = { ...row, status: outcome.status, updatedAt: now, data: { ...data, ...(row.data.undoes !== undefined ? { undoes: row.data.undoes } : {}) } };
     this.rows.set(id, next);
     return next;
   }
@@ -61,6 +61,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
   }
   async findLatestSent(match: ConnectorWriteMatch): Promise<ConnectorWriteReceipt | null> {
     return [...this.rows.values()].filter((row) => row.status === 'SENT' && row.actorId === match.actorId && row.operation === match.operation && row.target === match.target && row.payloadSha256 === match.payloadSha256).pop() ?? null;
+  }
+  async findSentUndoOf(actorId: string, undoneReceiptId: string): Promise<ConnectorWriteReceipt | null> {
+    return [...this.rows.values()].filter((row) => row.status === 'SENT' && row.actorId === actorId && row.data.undoes === undoneReceiptId).pop() ?? null;
   }
   async findLatestUnresolved(): Promise<ConnectorWriteReceipt | null> {
     return null;
@@ -256,6 +259,25 @@ describe('undo of an NL-created calendar event (amendment 1 S9, slice 3)', () =>
       { eventId: EVENT_ID, expected: { allDay: false, start: '2026-11-03T17:00:00+09:00', end: '2026-11-03T18:00:00+09:00', version: VERSION } },
     ]);
     expect(h.live.events).toHaveLength(0);
+  });
+
+  it('review round 1 (P2-C): the same create asked again after its undo is a new create, not a replay; without the undo it stays already-sent', async () => {
+    const h = harness();
+    const first = await h.createEvent();
+    expect((await h.undo(first.receiptId, at(3))).kind).toBe('preview');
+    const undone = await h.approveAndExecute(at(4));
+    if (undone.kind !== 'outcome' || undone.receiptId === undefined) throw new Error('undo did not run');
+    expect(h.receipts.rows.get(undone.receiptId)?.data.undoes).toBe(first.receiptId);
+    const again = await h.createEvent();
+    expect(again.receiptId).not.toBe(first.receiptId);
+    // The second create was not undone: asking for it once more is a replay.
+    const replay = await h.flow.prepare({
+      session: h.session(),
+      actor: OWNER,
+      now: at(6),
+      draft: { kind: 'calendar-create', event: { title: 'QA 세션', time: { allDay: false, start: '2026-11-03T17:00:00+09:00', end: '2026-11-03T18:00:00+09:00', timeZone: SEOUL } } },
+    });
+    expect(replay.kind).toBe('already-sent');
   });
 
   it('marks the undo anchor so the runtime records an action.undo (undo of an undo is refused)', async () => {

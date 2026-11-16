@@ -25,6 +25,7 @@ import {
   type ConnectorWriteAnchorView,
   type ConnectorWriteFlow,
   type ConnectorWritePreview,
+  type ConnectorWriteRevertChoice,
   type ConnectorWriteStep,
   type ConnectorWriteTargetSummary,
 } from './connector-writes/connector-write-flow';
@@ -251,6 +252,8 @@ export function isCalendarWriteStep(step: Exclude<ConnectorWriteStep, { kind: 'w
       return step.family === 'calendar';
     case 'choice':
       return true;
+    case 'revert-choice':
+      return false;
     case 'preview':
       return step.preview.operation.startsWith('CALENDAR_');
     default:
@@ -1084,31 +1087,40 @@ export class ApprovalDecisionService {
   async withdrawGovernedConnectorWrites(
     actor: Actor,
     governs: (anchor: ConnectorWriteAnchor) => boolean,
-  ): Promise<{ readonly closed: readonly ConnectorWritePreview[]; readonly running: number; readonly failed: number; readonly scanFailed: boolean }> {
+  ): Promise<{
+    readonly closed: readonly ConnectorWritePreview[];
+    /** Review round 1 (P3): closed revert choices (they hold no preview), listed in the stop reply too. */
+    readonly closedChoices: readonly ConnectorWriteRevertChoice[];
+    readonly running: number;
+    readonly failed: number;
+    readonly scanFailed: boolean;
+  }> {
     const flow = this.deps.connectorWriteFlow;
     const closed: ConnectorWritePreview[] = [];
+    const closedChoices: ConnectorWriteRevertChoice[] = [];
     let running = 0;
     let failed = 0;
-    if (flow?.openAnchorsOf === undefined) return { closed, running, failed, scanFailed: false };
+    if (flow?.openAnchorsOf === undefined) return { closed, closedChoices, running, failed, scanFailed: false };
     let open: Awaited<ReturnType<NonNullable<ConnectorWriteFlow['openAnchorsOf']>>> = [];
     try {
       open = await flow.openAnchorsOf(actor.id);
     } catch (error) {
       this.deps.logger.warn('approval.stop_scan_failed', { errorName: error instanceof Error ? error.name : typeof error });
-      return { closed, running, failed, scanFailed: true };
+      return { closed, closedChoices, running, failed, scanFailed: true };
     }
     for (const { session, view } of open) {
       if (!governs(view.anchor)) continue;
       try {
         const result = await this.withdrawConnectorWriteForStop({ context: session.context, session, actor, surface: 'chat' }, view);
         if (result.kind === 'closed' && view.anchor.preview !== undefined) closed.push(view.anchor.preview);
+        else if (result.kind === 'closed' && view.anchor.choice?.mode === 'transition-revert') closedChoices.push(view.anchor.choice);
         else if (result.kind === 'in-flight') running += 1;
       } catch (error) {
         failed += 1;
         this.deps.logger.warn('approval.stop_withdraw_failed', { errorName: error instanceof Error ? error.name : typeof error });
       }
     }
-    return { closed, running, failed, scanFailed: false };
+    return { closed, closedChoices, running, failed, scanFailed: false };
   }
 
   /** Compose a connector-write step reply and record it (a calendar step keeps the fixed note in history). */

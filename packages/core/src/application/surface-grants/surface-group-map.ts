@@ -100,8 +100,10 @@ export function surfaceGroupsOfWriteDraft(draft: ConnectorWriteDraft): readonly 
 export function surfaceWriteFamilyOfOperation(operation: ConnectorWriteOperation): ConnectorWriteFamily {
   switch (operation) {
     case 'ISSUE_COMMENT':
+    case 'ISSUE_COMMENT_DELETE':
       return 'issue-comment';
     case 'ISSUE_TRANSITION':
+    case 'ISSUE_TRANSITION_REVERT':
       return 'issue-transition';
     case 'CHANNEL_POST':
       return 'channel-post';

@@ -167,6 +167,9 @@ class MemoryReceipts implements ConnectorWriteReceiptRepository {
   async findLatestForOperation(actorId: string, operation: string): Promise<ConnectorWriteReceipt | null> {
     return [...this.rows.values()].filter((row) => row.actorId === actorId && row.operation === operation).pop() ?? null;
   }
+  async findSentUndoOf(): Promise<ConnectorWriteReceipt | null> {
+    return null;
+  }
   async markInterruptedPreparedUncertain(): Promise<number> {
     this.reconciled++;
     return 0;
