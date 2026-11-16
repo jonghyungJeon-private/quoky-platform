@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0112 amendment 1 under amendment 3: undo of Quoky's own Slack post (2026-11-16, branch `claude/v5-r3-slack-undo`)
+
+- "되돌려줘" now also deletes the Slack message Quoky just posted (own SENT post receipt in this session only; channel still allowlisted; CRITICAL approval, `Slack 삭제 실행`). `EXTERNAL_UNDO_CAPABILITIES` holds six families. Reachable with Slack connector writes on + `QUOKY_NL_ACTIONS=local|external`, DM only. Red-team v2 174 cases x 2 x 3 runs, 0 / 0; v1 still 0 / 0. No history scope: an edit made in Slack after the post is not detected (stated on the card). Not yet observed live (Live UAT U21b: `chat.delete` answers, workspace deletion policy).
+
 ### ADR-0112 amendment 3: Jira comment delete undo and Jira transition revert (2026-11-16, branch `claude/v5-r3-jira-undo`)
 
 - "되돌려줘" now also deletes the Jira comment Quoky just added (only unedited; `Jira 댓글 삭제 실행`) and reverts Quoky's own Jira transition to the recorded previous status (`Jira 상태 되돌리기 실행`; several paths back = numbered choice, none = said plainly). `EXTERNAL_UNDO_CAPABILITIES` holds all five families. Reachable with `QUOKY_CONNECTOR_WRITES_ENABLED` + `QUOKY_NL_ACTIONS=local|external`, DM only. Red-team v2 138 cases x 2 x 3 runs, 0 / 0; v1 still 0 / 0. A write Quoky undid may be asked again (new approval); the forward transition preview shows the current status (compare-and-set baseline). Not yet observed live on Jira (comment `updated`/`updateAuthor`, `mypermissions`, DELETE 204, status ids, test-issue workflow paths back).

@@ -32188,6 +32188,82 @@ Live UAT ran on the service temporarily deployed at 42d3d862, in a Discord DM th
 - **Finding, not part of this change:** the natural phrasing `BE-882에 "…" 이라고 댓글 달아줘` was routed to chat (`nl_selection outcome=none`). The chat answer's quoted command was then stripped by the chat-quote filter, so the reply says "아래 문구" with nothing below it. Nothing was executed (fail closed). It is a routing and copy residual for a follow-up; no phrase list is to be added (owner rule against hard-coding).
 - **Not run live:** "a comment edited in Jira → `undo-target-changed`". It would need an edit made outside Quoky, and MCP writes are not allowed in UAT. It is covered by `connector-write-jira-undo.test.ts` and the red-team cases.
 
+### Implementation note (amendment 1 S-1..S-6 under amendment 3: the delete of the Slack message Quoky posted, 2026-11-16)
+
+- **What it is.** "되돌려줘" right after Quoky's own approved Slack post deletes exactly that message. This is ADR-0112
+  amendment 1 (S1-S8, owner decisions S-1..S-6 ratified 2026-10-15), built under the amendment 3 undo rules (O1, the
+  `undoes` identity, re-derivation at execution, the receipt banner, the kill switch).
+- **Interfaces (written before the code).**
+  - Operation `CHANNEL_MESSAGE_DELETE`, undo-only and never owner-worded. Payload `{channel, ts, undoes}`; preview
+    `{channelLabel, channelId, ts, text, postedAt?, url?, timeZone, receiptSourced, ownerSentence?}`.
+  - Port `ChannelMessageDeleteWriter` (DI `CHANNEL_MESSAGE_DELETE_WRITER`): pure `allowsChannelId(channelId)` and
+    `deleteMessage({channelId, ts})`. `ChannelMessageWriter` is not widened. `ConnectorWriteWriters.channelMessageDeletes`.
+  - Draft kind `slack-post-undo` (connector family `channel-post`); undo family `slack-post`. `externalUndoFamilyOf` maps
+    `slack.post` with operation `CHANNEL_POST` to it; the delete itself has no family, so it is never undone again.
+  - Gate `channelMessageDelete`: `Slack 삭제 실행`, `Slack 삭제 실행해줘`, `슬랙 삭제 실행`, `슬랙 삭제 실행해줘`,
+    `Slack 메시지 삭제 실행`, `execute slack delete` (S5). No bare `삭제 실행` on any gate. A6-D3a's exact-command forms
+    gain its Slack- / 슬랙-prefixed phrases, so an action request containing one is refused.
+- **Built: core.**
+  - Resolution is the amendment 3 path: this session's own fresh `lastAction` (`slack.post`, SENT, `anchorTaskId`) ->
+    `findById(receiptId, actorId)` -> the post's anchor Task (`cwr:<approvalId>`, hash, target, connector) -> draft.
+  - The channel and ts come only from the receipt ref `<channelId>:<ts>`; the shown text and channel label come only from
+    the post's own anchor, and only when that anchor's payload re-hashes to the receipt's hash (so the card shows exactly
+    what was posted). Anything else proposes nothing (`undo-nothing`). No text, link, id or listing is ever a target.
+  - The channel must be on the write allowlist at preview and again at execution, before any network call
+    (`target-not-allowed`).
+  - CRITICAL one-time approval; the card leads with the receipt banner; the owner sentence only under "요청하신 문장:".
+  - Execution re-derives the delete from `undoOf.sourceTaskId` (the post anchor and receipt, same actor and session) and
+    must match the approved channel, ts and target exactly; otherwise the card is closed as inconsistent and nothing is
+    sent (`undo-unavailable`).
+  - S6 outcomes: `message_not_found` / `channel_not_found` / `invalid_channel_id` -> NOT_FOUND ("이미 지워진
+    메시지예요"); `cant_delete_message` / `compliance_exports_prevent_deletion` / `not_in_channel` -> FORBIDDEN;
+    `is_archived` -> REJECTED; auth -> UNAUTHORIZED; `missing_scope` -> INSUFFICIENT_SCOPE; `ratelimited` / 429 ->
+    RATE_LIMITED; 5xx, `internal_error`, `fatal_error`, unknown codes, an unreadable success or a success naming another
+    message -> UNCERTAIN ("지워졌는지 확실하지 않아요. 채널에서 확인해 주세요"). Never retried; a replay of the same
+    approval is `repeat`.
+- **Built: adapter and app.** `SlackMessageDeleteWriter` (`connector-slack`) shares one validation with the post writer
+  (`slackWriteSettings`: bot token, allowlist, timeout, transport guard): one `POST https://slack.com/api/chat.delete` with
+  `{channel, ts}`, never `as_user`, `redirect: 'error'`, the UNC-1 guard, value-free outcomes. The composition root builds
+  both Slack writers together from `QUOKY_CONNECTOR_WRITE_SLACK_*` and binds the delete writer exactly when the post writer
+  is bound. Egress: `slack.com` already carries label `slack` for every non-search `/api/...` path, so `chat.delete` has
+  the post's host, label and budget; `chat.delete` was added only to `SLACK_METHODS`, the traffic-ledger path-template list
+  (not an allowlist, label or budget change). No new scope, token, flag, migration or receipt-repository method.
+- **Where amendment 1 and amendment 3 differ (amendment 3 followed; no true conflict).**
+  1. Reachability: amendment 1 S3 (the `shadow`/`local` "not undoable yet" state; `external` reaches the delete) and S-5
+     (`QUOKY_NL_ACTIONS=external`) are amended by amendment 3 O1: the delete is reachable at `local` (and `external`)
+     whenever connector writes are enabled and the Slack writers are bound. No new flag. The "아직 켜지지 않았어요" reply
+     now remains only while a family is outside `EXTERNAL_UNDO_CAPABILITIES`.
+  2. Identity: S1's hash input `{operation, channelId, ts, postReceiptId}` is realised as amendment 3's
+     `{channel, ts, undoes}` (`undoes` = the post receipt id, hashed, never sent); S2's "no SENT delete for the same match"
+     is `findSentUndoOf`. A post asked again after its undo is a new write, not "already sent".
+  3. Draft: S2's `{kind: 'channel-message-delete', postReceiptId}` is the amendment 3 per-family draft
+     `{kind: 'slack-post-undo', receiptId}`, built only by the resolver from `lastAction` (never by the selector or text).
+  4. Text on the card: S4 shows the posted text "while the original approval's anchor Task still holds it". Under
+     amendment 3's re-derivation the anchor is required: no anchor, or one that no longer hashes to the receipt, proposes
+     nothing (stricter, fail-closed).
+- **Pre-delete check, stated honestly (S-4 / S7).** The token stays `chat:write` with no history scope, so Quoky never
+  reads the message. What is checked: the receipt binding (actor, session through `lastAction`, approval idempotency key,
+  connector, hash), the re-hash of the post anchor, the allowlist at preview and execution, and Slack's own rule that a bot
+  token deletes only that bot's messages. **Residual:** an edit made in Slack after the post cannot be detected; the delete
+  then removes the message as it now stands. The card says so ("게시한 뒤 Slack에서 수정됐는지는 확인할 수 없어요"), with
+  the S4 consequence sentence about thread replies.
+- **Counts.**
+  - Unit: `connector-write-slack-undo.test.ts` (11), `slack-message-delete-writer.test.ts` (5); updated guard (+ reject
+    cases), copy, stray-phrase, surface-map, gate, writer-provider and egress tests.
+  - Rendering golden: 71 new keys only (none removed or changed).
+  - Red-team v2: 36 slack-post cases appended (`rt-r3undo2-139..174`; existing ids unchanged), 7 new attack kinds (pasted
+    channel:ts, pasted Slack link, a receipt naming a message Quoky did not post, a tampered post anchor, channel
+    de-allowlisted, message already gone, delete refused by Slack). Inverse oracle: the only allowed write is one
+    `chat.delete` of exactly the own `<channel>:<ts>`; any post during the attack is a success.
+  - Gate: before the switch-on through the seam on top of the production constant, then on the production constant: 3 runs
+    each, slack-post 36 x 2 = 72 case runs per run, 0 attack successes, 0 deviations; calendar-update 68, calendar-delete
+    68, jira-comment 64, jira-transition 76 unchanged 0 / 0; no network. v1: 72 case runs x 3, 0 / 0.
+  - `EXTERNAL_UNDO_CAPABILITIES` gains `slack-post` in its own commit after the gate.
+- **Open points (live Slack only; Live UAT U21b).** Not yet observed live: `chat.delete` with the write bot token on the
+  test channel (`ok`, echoed `channel`/`ts`); `message_not_found` after a manual delete; whether the workspace's
+  message-deletion setting or a retention policy answers `cant_delete_message` or `compliance_exports_prevent_deletion`
+  (both mapped to FORBIDDEN from the API reference only); the thread-reply placeholder.
+
 ### Ratification record (amendment 3, 2026-11-02)
 
 - **Decision.** The owner ratified "ADR-0112 amendment 3" on 2026-11-02 with the recommended options **O1-O7** (O1 through
