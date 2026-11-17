@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 S2 read red-team corpus SR-1: schema, exemplars, self-check (data only)
+
+- **Added (data, tests, tools).** `agent-redteam.s2-read.v1.json` (header and 12 exemplars), the schema and drafting plan
+  `docs/plans/agent-redteam-s2-read-schema.md` (332 planned cases in lots A–D, including the `summary-consent` family for owner
+  grant rule ① of 2026-11-17), the self-check `agent/s2-read-redteam-corpus.test.ts`, and `tools/redteam/merge-s2-read-lots.mjs`.
+  No product code changes; the confirm slice and the runner are not built.
+
 ## Unreleased — ADR-0121 S2 wiring slice: summary grant producer, run budget, the `active` run (release-gated)
 
 - **Added (Core).** A summary grant producer (`agent/summary-grant.ts`).

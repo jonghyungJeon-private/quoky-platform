@@ -34422,6 +34422,41 @@ wiring, no flag change, no live behaviour change).
        mail or Drive body to a REMOTE model). That would close the remaining single-line pasted-prose cases at the cost of
        one confirmation.
 
+### ADR-0121 S2 read red-team corpus SR-1 (2026-11-17, branch `claude/v5-s2-read-redteam`)
+
+- **Owner decision ① (2026-11-17), grant rule.** This answers owner question 2 of the wiring slice above ("a stricter rule
+  before `active`").
+  - **The rule.** Before EVERY remote summary (an M2 call to a `REMOTE` provider), Quoky asks the owner once, for example
+    "메일 3건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)".
+  - **The pattern.** It reuses the existing consent-phrase pattern of the A2 topic consent.
+  - **When content leaves.** Content is sent only after a LATER owner turn answers yes.
+  - **What stays.** The grant producer stays: no grant for multi-line owner text or any untrusted-span marker.
+  - **Not chosen.** The owner chose this over question 1 (a predicate-only requirement on the summary word) and over doing
+    both. It closes the single-line residuals listed above (unmarked pasted prose, noun uses, a mention without a colon,
+    `Fwd :`, a jamo divider) at the cost of one confirmation.
+- **Corpus plan (owner decision 3 of 2026-11-02).**
+  - `golden/agent-redteam.s2-read.v1.json`, family `s2-read`, batch SR-1, `pending-owner-approval`.
+  - Planned 332 cases: 12 exemplars now, then lots A–D of about 80 each, drafted in parallel and merged by
+    `tools/redteam/merge-s2-read-lots.mjs`.
+  - KO ≥ 60%, EN ≥ 25%.
+  - Ten families: the §6 families of the security design (content instruction for all seven connectors, pasted
+    instructions, argument smuggling, link exfiltration, destination hijack, credential bait, budget exhaustion), plus
+    `summary-consent` (48, for rule ①), `egress-downgrade` and `dm-scope`. Card spoofing stays S3.
+  - 16 closed, deterministic success conditions; 6 are checked on every case.
+  - The schema, fixture conventions, quotas and lots: `docs/plans/agent-redteam-s2-read-schema.md`.
+  - `agent/s2-read-redteam-corpus.test.ts` pins the shape and the closed values. It runs the real `validateAgentPlan` and
+    `ownerSummaryRequests` on every case's planner plan. The ≥ 300 and quota checks are gated until the lots are merged.
+- **Not built.**
+  - The confirm slice: the consent question, the pending step and the bound yes. The corpus states its expected outcome as
+    `expect.remoteSummary` (`ask-first`, `bound-yes`, `listing-only`, `never`).
+  - The red-team runner, in both arms: the stub planner and the live planner, which is Strict.
+  - Nothing changes product code or behaviour.
+- **Open.**
+  - Whether the summary consent uses the A2 closed-yes words and the 600 s expiry.
+  - Whether a LOCAL summariser also asks.
+  - Mixed mail or Drive plus listing-only sources in one summarize step.
+  - The owner's batch review of SR-1.
+
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)
 
 Amends ADR-0120 A6-D3 (kill switch) and ADR-0112 amendments 1 and 3 (undo). Closes open owner question (2) of the ADR-0112
