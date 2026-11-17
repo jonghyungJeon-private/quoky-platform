@@ -31,6 +31,14 @@ interface RwCase {
   };
   readonly note: string;
 }
+/** A4 content arg (the shape of agent-plan.v1.json): one closed field of one item, numbered by the owner or picked. */
+interface ContentArg {
+  readonly from: number;
+  readonly at?: number;
+  readonly pick?: string;
+  readonly field: string;
+  readonly extract?: string;
+}
 
 /** The owner's 2026-11-17 verdicts (decision (d), ADR-0121 A4): the fixed cases; every other case is approved as is. */
 const FIXED = ['rt-s2rw-001', 'rt-s2rw-002', 'rt-s2rw-003', 'rt-s2rw-004', 'rt-s2rw-005', 'rt-s2rw-006', 'rt-s2rw-022', 'rt-s2rw-023', 'rt-s2rw-029', 'rt-s2rw-031'];
@@ -39,10 +47,12 @@ const A4_SLICES = ['A4-S6', 'A4-S8'];
 const LOCAL_CONTENT_WRITES = ['todo.add', 'reminder.create'];
 
 const CORPUS = JSON.parse(readFileSync(new URL('../golden/agent-redteam.s2-read-write.v1.json', import.meta.url), 'utf8')) as {
+  readonly description: string;
   readonly family: string;
   readonly attacks: readonly string[];
   readonly outcomes: readonly string[];
   readonly successConditions: Readonly<Record<string, string>>;
+  readonly contentFields: Readonly<Record<string, readonly string[]>>;
   readonly cases: readonly RwCase[];
 };
 
@@ -92,6 +102,8 @@ describe('agent-redteam.s2-read-write.v1.json (data, RW-1)', () => {
   });
 
   it('ADR-0121 A4: an awaiting target is closed; read content fills only ONE LOCAL write card that names its source', () => {
+    // The security floor: until the slices land, the runner asserts 0 successes on the built expect and success.
+    expect(CORPUS.description).toMatch(/Security floor[^.]*0 successes on its built `expect` and\s+`success`/u);
     for (const c of CORPUS.cases.filter((x) => x.awaiting !== undefined)) {
       const a = c.awaiting!;
       expect(a.decided, c.id).toBe('2026-11-17');
@@ -108,18 +120,30 @@ describe('agent-redteam.s2-read-write.v1.json (data, RW-1)', () => {
       expect(c.attack, c.id).toBe('read-result-pointer');
       expect(a.success, c.id).toContain('content-card-breach');
       expect(a.success, `${c.id}: the card replaces the reference and canary conditions`).not.toContain('write-arg-holds-canary');
-      const write = a.expect.write as { entryId: string; contentArgs: Record<string, { source: string; item: number; field: string }>; ask?: string[] };
+      const write = a.expect.write as { entryId: string; contentArgs: Record<string, ContentArg>; ask?: string[] };
       expect(LOCAL_CONTENT_WRITES, c.id).toContain(write.entryId);
       const entry = NL_ACTION_ENTRIES[write.entryId as keyof typeof NL_ACTION_ENTRIES];
       const args = new Set((entry?.args ?? []).map((arg) => arg.name));
       const filled = Object.entries(write.contentArgs);
       expect(filled, c.id).toHaveLength(1);
-      for (const [name, from] of filled) {
+      for (const [name, arg] of filled) {
         expect(args, `${c.id}:${name}`).toContain(name);
-        expect(from.source, c.id).toBe(c.readContent?.source);
-        const value = c.readContent?.items[from.item - 1]?.[from.field];
-        expect(value, `${c.id}: the card value is the source field, canary included`).toContain(c.canary as string);
+        expect(arg.from, `${c.id}: the turn's one read part`).toBe(1);
+        expect(arg.at === undefined, `${c.id}: exactly one of at and pick`).toBe(arg.pick !== undefined);
+        if (arg.pick !== undefined) expect(arg.pick, c.id).toBe('ask-if-several');
+        expect(CORPUS.contentFields[c.readContent?.source ?? ''], `${c.id}: a closed item field`).toContain(arg.field);
+        // With pick, the fixture lists one item, so the owner's pick is that item; a deictic never defaults to item 1 of several.
+        if (arg.pick !== undefined) expect(c.readContent?.items, c.id).toHaveLength(1);
+        const field = c.readContent?.items[(arg.at ?? 1) - 1]?.[arg.field];
+        expect(field, `${c.id}: the source field holds the canary`).toContain(c.canary as string);
+        if (arg.extract === undefined) continue;
+        expect(arg.extract, c.id).toBe('datetime');
+        const matches = [...(field ?? '').matchAll(/\b\d{1,2}:\d{2}\b/gu)].map((match) => match[0]);
+        expect(matches, `${c.id}: one time in the field, and the canary is not part of it`).toHaveLength(1);
+        expect(matches[0], c.id).not.toContain(c.canary as string);
       }
+      // "그 내용" is the item's body, never its title (review round 1).
+      if (/내용/u.test(c.text)) expect(filled.map(([, arg]) => arg.field), c.id).not.toContain('title');
       for (const name of write.ask ?? []) expect(args, `${c.id}:ask ${name}`).toContain(name);
     }
   });
