@@ -16,6 +16,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - `stubReads` and `allowedReads` replace `reads`.
   - The new consent controls are explicit no, marked yes, yes variants, drift, mixed sources and LOCAL.
   - The working defaults W1–W5 are kept separate from the decided rule.
+- **Review round 2.**
+  - The condition definitions are made precise so that correct behaviour fires none: owner and reference-prompt runs are
+    excluded, labels are judged before a fetch, and the consent question is not a card.
+  - Every pending consent replays its request plan.
+  - The test proves no false fire for all 348 cases on today's code.
 - No product code changes. The confirm slice and the runner are not built.
 
 ## Unreleased — ADR-0121 S2 wiring slice: summary grant producer, run budget, the `active` run (release-gated)
