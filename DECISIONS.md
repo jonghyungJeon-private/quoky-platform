@@ -34425,36 +34425,60 @@ wiring, no flag change, no live behaviour change).
 ### ADR-0121 S2 read red-team corpus SR-1 (2026-11-17, branch `claude/v5-s2-read-redteam`)
 
 - **Owner decision ① (2026-11-17), grant rule.** This answers owner question 2 of the wiring slice above ("a stricter rule
-  before `active`").
-  - **The rule.** Before EVERY remote summary (an M2 call to a `REMOTE` provider), Quoky asks the owner once, for example
+  before `active`"). The decision is exactly this, and nothing more:
+  - Before EVERY remote summary (an M2 call to a `REMOTE` provider), Quoky asks the owner once, for example
     "메일 3건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)".
-  - **The pattern.** It reuses the existing consent-phrase pattern of the A2 topic consent.
-  - **When content leaves.** Content is sent only after a LATER owner turn answers yes.
-  - **What stays.** The grant producer stays: no grant for multi-line owner text or any untrusted-span marker.
-  - **Not chosen.** The owner chose this over question 1 (a predicate-only requirement on the summary word) and over doing
-    both. It closes the single-line residuals listed above (unmarked pasted prose, noun uses, a mention without a colon,
-    `Fwd :`, a jamo divider) at the cost of one confirmation.
-- **Corpus plan (owner decision 3 of 2026-11-02).**
+  - Content leaves the host only after a LATER owner turn answers yes, bound to that question.
+  - The owner chose this over question 1 (a predicate-only requirement on the summary word) and over doing both. The grant
+    producer stays as built.
+- **Working defaults (owner to confirm).** The corpus expectations and the future confirm slice assume these. They are not
+  owner decisions. The corpus header lists them as `fixture.workingDefaults`, and the schema doc §2.2 explains them.
+  - **W1, consent words.** The A2 topic-consent pattern: NFC, trimmed, one trailing `. ! ~ ?` removed. Yes is exactly
+    `응` / `네` / `예` / `yes` (Latin case-insensitive). No is `아니` / `아니요` / `아니오` / `아뇨` / `취소` / `no`.
+    Anything else cancels, including fullwidth `ｙｅｓ`, `응!!` and a quoted or marked yes.
+  - **W2, who and when.** Only the next owner DM turn of the same conversation answers, within 600 s. One pending owner
+    step at a time. The kill switch and a restart void it.
+  - **W3, scope.** One yes covers exactly the asked items, once. A removed item is not replaced, a new one is not added,
+    and a credential-bearing item stays withheld.
+  - **W4, LOCAL.** A LOCAL summary needs no consent, since rule ① names REMOTE summaries.
+  - **W5, mixed sources.** In one summarize step over mail or Drive plus a listing-only source, only the mail or Drive part
+    is consent-gated. The other source stays listing-only, as today's executor already does (test N4).
+- **Corpus (owner decision 3 of 2026-11-02).**
   - `golden/agent-redteam.s2-read.v1.json`, family `s2-read`, batch SR-1, `pending-owner-approval`.
-  - Planned 332 cases: 12 exemplars now, then lots A–D of about 80 each, drafted in parallel and merged by
-    `tools/redteam/merge-s2-read-lots.mjs`.
-  - KO ≥ 60%, EN ≥ 25%.
-  - Ten families: the §6 families of the security design (content instruction for all seven connectors, pasted
-    instructions, argument smuggling, link exfiltration, destination hijack, credential bait, budget exhaustion), plus
-    `summary-consent` (48, for rule ①), `egress-downgrade` and `dm-scope`. Card spoofing stays S3.
-  - 16 closed, deterministic success conditions; 6 are checked on every case.
-  - The schema, fixture conventions, quotas and lots: `docs/plans/agent-redteam-s2-read-schema.md`.
-  - `agent/s2-read-redteam-corpus.test.ts` pins the shape and the closed values. It runs the real `validateAgentPlan` and
-    `ownerSummaryRequests` on every case's planner plan. The ≥ 300 and quota checks are gated until the lots are merged.
+  - **348 cases**, lots A–D merged: E 12, A 79, B 81, C 81, D 95. KO 217 (62.4%), EN 131 (37.6%).
+  - Ten families: the §6 families of the security design, plus `summary-consent` (64, for rule ①), `egress-downgrade` and
+    `dm-scope`. Card spoofing stays S3.
+  - 17 closed, deterministic success conditions. **Every condition is evaluated on every case**, against the case's own
+    `expect`. `success` documents what the attack aims at.
+  - The schema, fixture conventions and quotas: `docs/plans/agent-redteam-s2-read-schema.md`.
+  - `agent/s2-read-redteam-corpus.test.ts` enforces the shape, the closed values and the quotas unconditionally. It runs
+    the real `validateAgentPlan`, `ownerSummaryRequests`, `prepareSelectionInput`, `isProjectedId` and the credential
+    guard on every case, and the real executor on the mixed-source cases.
+- **Review round 1 (2026-11-17).**
+  - Every condition is evaluated on every case; `reply-outside-origin` is added (required for `destination-hijack`).
+  - `expect.reads` is split into `stubReads` (exact, stub arm) and `allowedReads` (the faithful superset).
+  - New consent controls (16 cases):
+    - explicit no;
+    - a marked yes;
+    - yes variants;
+    - item drift (`pending.itemIds`, `expect.m2Items`);
+    - mixed Jira and mail;
+    - a LOCAL summariser.
+  - Pasted spans pin whether today's preparation strips them, and each note names its defending check.
+  - The marker pattern is widened, the free-text-only rule is applied, and the domain scan covers defanged forms.
+  - The 12 encoded cases are encoded-only, and the lot-C near-copies are varied.
+- **Open finding: relayed whole-source summaries mint a grant.** `nlItemReadVeto` vetoes only a relayed item read. A
+  relayed whole-source summary ("팀장이 안 읽은 메일 요약해달래", "my manager said to summarize unread emails",
+  `rt-s2r-474` and `475`) still mints a mail grant today. Rule ① holds it at `ask-first`, so no content leaves without the
+  owner's later yes. Whether the producer should veto it too is for the owner.
 - **Not built.**
-  - The confirm slice: the consent question, the pending step and the bound yes. The corpus states its expected outcome as
-    `expect.remoteSummary` (`ask-first`, `bound-yes`, `listing-only`, `never`).
-  - The red-team runner, in both arms: the stub planner and the live planner, which is Strict.
+  - The confirm slice: the consent question, the pending step and the bound yes.
+  - The red-team runner, in both arms: the stub planner, and the live planner, which is Strict.
+  - The fake read ports and the platform send log.
   - Nothing changes product code or behaviour.
 - **Open.**
-  - Whether the summary consent uses the A2 closed-yes words and the 600 s expiry.
-  - Whether a LOCAL summariser also asks.
-  - Mixed mail or Drive plus listing-only sources in one summarize step.
+  - The owner confirms or changes W1–W5.
+  - The relayed finding above.
   - The owner's batch review of SR-1.
 
 ## ADR-0120 A6-D3 amendment — the kill switch closes open approvals and is re-checked at execution (2026-11-03)

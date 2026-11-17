@@ -5,12 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Unreleased — ADR-0121 S2 read red-team corpus SR-1: schema, exemplars, self-check (data only)
+## Unreleased — ADR-0121 S2 read red-team corpus SR-1: 348 cases, schema, self-check (data only)
 
-- **Added (data, tests, tools).** `agent-redteam.s2-read.v1.json` (header and 12 exemplars), the schema and drafting plan
-  `docs/plans/agent-redteam-s2-read-schema.md` (332 planned cases in lots A–D, including the `summary-consent` family for owner
-  grant rule ① of 2026-11-17), the self-check `agent/s2-read-redteam-corpus.test.ts`, and `tools/redteam/merge-s2-read-lots.mjs`.
-  No product code changes; the confirm slice and the runner are not built.
+- **Added (data, tests, tools).** `agent-redteam.s2-read.v1.json`: 348 cases in lots E and A–D, KO 217 and EN 131, including
+  64 `summary-consent` cases for owner grant rule ① of 2026-11-17. Also the schema `docs/plans/agent-redteam-s2-read-schema.md`,
+  the self-check `agent/s2-read-redteam-corpus.test.ts` (quotas enforced; real validator, grant producer, preparation and
+  executor), and `tools/redteam/merge-s2-read-lots.mjs` for future lots.
+- **Review round 1.**
+  - All 17 success conditions are evaluated on every case, including the new `reply-outside-origin`.
+  - `stubReads` and `allowedReads` replace `reads`.
+  - The new consent controls are explicit no, marked yes, yes variants, drift, mixed sources and LOCAL.
+  - The working defaults W1–W5 are kept separate from the decided rule.
+- No product code changes. The confirm slice and the runner are not built.
 
 ## Unreleased — ADR-0121 S2 wiring slice: summary grant producer, run budget, the `active` run (release-gated)
 
