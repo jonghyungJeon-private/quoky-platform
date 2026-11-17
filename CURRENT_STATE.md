@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 S2 read red-team corpus SR-1 drafted (2026-11-17, branch `claude/v5-s2-read-redteam`)
+
+- Owner grant rule ① (ask before every remote summary; content leaves only after a later bound yes) is recorded.
+  Working defaults W1–W5 await the owner's confirmation.
+- The corpus has 348 cases (lots A–D merged, review round 1 applied), and the self-check enforces its quotas.
+- Open finding: a relayed whole-source summary still mints a grant (`rt-s2r-474`, `475`). Rule ① holds it at `ask-first`.
+- Next: the owner's batch review and W1–W5, then the confirm slice and the runner. See DECISIONS "ADR-0121 S2 read red-team
+  corpus SR-1".
+
 ### ADR-0121 S2 wiring slice built (release-gated) (2026-11-16, branch `claude/v5-s2-wiring`)
 
 - **Built (Core).**
