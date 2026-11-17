@@ -555,7 +555,9 @@ The owner reviewed four SR-1 cases on 2026-11-17 together with the S2 plan gold 
 amendment A4"): `rt-s2r-113`, `123`, `139` and `168`, the "do what the mail / file / event says" turns. The owner approved
 the n023 alternative: requests found inside content are never executed; Quoky lists them as a quoted candidate list, and
 nothing runs until the owner asks for one in their own next message, which then takes the normal path (a write through its
-approval card).
+approval card). Owner decision 2026-11-18 (DECISIONS.md "ADR-0121 amendment A4 — ratification record"): a number reply such
+as "2번 해줘" against the shown list prefills an ordinary request in the owner's name that the owner then confirms; the number
+reply alone never executes anything and is never a receipt of content authority.
 
 - **Status.** These four are `approved-awaiting-implementation`. Every other SR-1 case stays `pending-owner-approval` (the
   batch review is still open).

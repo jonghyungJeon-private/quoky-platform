@@ -303,19 +303,25 @@ fixed; the implementations are not.
      a time, a date or a count that deterministic code can compute from read results; Core computes and renders
      those facts.
    - Content can never choose a step, a destination or an operation, and never becomes a free-text argument, with
-     one exception: the **owner-confirmed handoff** of ADR-0121 A1.
+     two exceptions: the **owner-confirmed handoff** of ADR-0121 A1 / A4 into a READ slot, and the exact payload of a local
+     `todo.add` / `reminder.create` on an approval card that shows it with its source item (ADR-0121 A4).
    - A closed-format id projected deterministically from a read result may feed only a later read of the same source
-     and destination origin. It never feeds another connector, another origin or a write, except through the
-     owner-confirmed handoff.
-   - **Owner-confirmed handoff (ADR-0121 A1).** A value taken from one owner-chosen item of one source may fill one
+     and destination origin. It never feeds another connector, another origin or a write, except (a) through the owner-confirmed handoff, (b) as
+     the item an owner's own write clause numbers or picks from this turn's listing for a local content card (n147,
+     n148), and (c) as the thread of a Slack reply that the owner picks from a listing they saw, with the reply text
+     in the owner's own words, on the approval card (n019, ADR-0120 A6).
+   - **Owner-confirmed handoff (ADR-0121 A1).** A value taken from one owner-chosen item, or from every listed item the owner's words designate (at most 10 values),
+     of one source may fill one
      argument slot of a READ in another source only if all of the following hold:
      - the source, the destination and the operation are named in the owner's own words;
      - the value is extracted deterministically, or by a quarantined call under its egress label and verified as a
        verbatim substring of that item;
      - it passes a closed format or a strict charset;
-     - it is shown byte for byte in a fixed template and picked by the owner by number, or retyped by the owner
-       inside the pending handoff and passed through the same filters; single-use and turn-bound.
-     Such a value, picked or retyped, is labelled `OWNER_CONFIRMED`: never `TRUSTED`, never a planner input, never a
+     - it is shown byte for byte in a fixed template, and, when there is more than one candidate or the value is free text in
+       a one-item handoff, picked by the owner by number or retyped inside the pending handoff and passed through the
+       same filters; single-use and turn-bound. A value proposed by content that the owner did not ask for is never a
+       handoff value (owner-grounded, not content-grounded).
+     Such a value, picked, retyped, shown and run as the one structured candidate, or shown in an accepted batch preview, is labelled `OWNER_CONFIRMED`: never `TRUSTED`, never a planner input, never a
      destination, never part of a write, and never stored. It is capped, DM-only, stopped by the kill switch and
      audited without content.
    - Every argument carries a provenance label.
@@ -351,10 +357,14 @@ fixed; the implementations are not.
    - new tool classes.
 
    The owner-confirmed handoff is not content-conditioned control flow. It is a sequence of at most three runs
-   separated by owner picks: a planning run, an optional deterministic extraction run after an item pick, and a
-   deterministic final run after the value pick. Only the first run plans (no M1 or M1' later). The final run executes
-   only the READ the first run declared from the owner's words, once per picked value. A new handoff flow (source, kind
-   or destination) needs its own amendment of ADR-0121.
+   separated by owner picks or, when the owner's words declared the flow and the closed extraction yields exactly one
+   structured value (or each-item values within the cap), by a deterministic continuation that shows the values used:
+   a planning run, an optional deterministic extraction run after an item pick (or over every listed item the owner's
+   words designate), and a deterministic final run after the value pick, the deterministic continuation, or the
+   owner's yes to the batched preview. Only the first run plans (no M1 or M1' later). The final run executes only the
+   READ the first run declared from the owner's words, once per picked, continued or accepted value. Whether it
+   continues depends only on the count of values that pass the closed grammars and filters, never on what the content
+   says. A new handoff flow (source, kind or destination) needs its own amendment of ADR-0121.
    The owner-confirmed minimal topic (ADR-0121 A2) is the same: a planning run that ends with the consent prompt,
    then, after the owner's yes or no, one deterministic continuation run with no M1 or M1'. On yes it makes only the
    answer call the first run's `answer` step declared; on no it re-executes the READ the first run declared and
@@ -393,7 +403,7 @@ fixed; the implementations are not.
 | MEDIUM | local code modification, local test/file generation | auto (local only) |
 | HIGH | git commit/push/PR, connector writes (Jira/Slack/Confluence) | **approval** |
 | LOW | bounded agent **read** run over READ catalog entries (ADR-0121) | auto, within caps |
-| LOW | owner-confirmed handoff into a READ (ADR-0121 A1) | owner pick of the exact displayed values; never a write |
+| LOW | owner-confirmed handoff into a READ (ADR-0121 A1, A4) | the exact values shown; an owner pick when several or free text in one item; one batched yes for each-item free text; never a write |
 | LOW | owner-confirmed minimal topic to the chat-tier model (ADR-0121 A2) | owner yes on the exact displayed string and recipient; one call; never a write |
 | HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
@@ -401,12 +411,12 @@ fixed; the implementations are not.
 Reminder create/list/cancel is LOW (ADR-0101): an owner-instructed local write whose only effect is text addressed to
 that owner (owner DM by default). The one-time credential-guard override (ADR-0097) is a CRITICAL approval.
 
-An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from
-the owner's own words) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
+An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from the owner's own words, or, for a Slack thread reply, the thread the owner picked from a listing they saw (ADR-0121 A4)) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
 with no automatic retry (ADR-0112).
 
-Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick
-is a consent step, not an approval card: it never uses approval wording and never authorizes a write.
+Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick, and its each-item batch yes, are consent steps, not approval cards; a single structured value runs without a consent step and is shown with its result; none ever uses approval wording or authorizes a write.
+
+HIGH stays for every content-derived write. A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4).
 
 The ADR-0121 A2 topic consent is likewise a consent step, not an approval card: it never uses approval wording, it
 authorizes one model call with one displayed string, and it never authorizes a write or a connector call.
@@ -449,10 +459,11 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Turning the main execution flow into implicit event choreography.
 - ❌ Letting external content (connector results, quoted or pasted text, attachments, or any model output derived from
   them) reach a planning model, choose a step, a destination or an operation, or become a free-text argument of a
-  tool call, except as an `OWNER_CONFIRMED` value in the one READ slot an owner-confirmed handoff declared
-  (ADR-0121 A1).
+  tool call, except as an `OWNER_CONFIRMED` value in the one READ slot an owner-confirmed handoff declared (ADR-0121 A1; under A4
+  also a shown single structured value or an accepted batch preview, at most 10 values), or as the exact payload of a
+  local `todo.add` / `reminder.create` on an approval card that shows it with its source (ADR-0121 A4).
 - ❌ Acting on instructions found in content ("do what the mail says", "follow the PR description"), at any level.
-  Content may only be summarized; an action needs the owner's own request through the approval paths.
+  Content may only be summarized or quoted as a fixed, inert list (ADR-0121 A4); an action needs the owner's own request through the approval paths.
 - ❌ Sending item content to a model whose locality its egress label forbids — through a summary, an answer, history
   or a cache — except an `OWNER_CONFIRMED` minimal topic sent once after the owner's explicit yes (ADR-0121 A2).
 - ❌ Giving any agent or model a shell, code execution, arbitrary URL fetch, MCP/plugin tools, memory writes or
