@@ -184,16 +184,22 @@ without a re-review. The slice that builds the behaviour moves the target into t
 **Planner targets** (`awaiting.expect.outcome`):
 
 - `handoff` (pattern A, owner-grounded linkage): `steps` read the source; `handoff` is
-  `{from, kind, scope, item?, to: {entryId, slot, args?}, fallback?: {kind, to}}` (the A1-D9 form plus `scope`):
+  `{from, kind, scope, item?, to: {entryId, slot, args?}, fallback?: {kind, to}, consent?}` (the A1-D9 form plus `scope`):
   - `kind`: `date`, `jiraKey`, `email`, `attendee`, `prRef`, `driveRef`, `titleKeyword` or `keyword`;
   - `scope`: `one-item` (the item the owner's words designate, `item: "first"` for "the last mail", else
-    `item: "owner-pick"`: the listing and an item pick, A1-D3) or `each-item` (every listed item, at most 10 values, else the
-    decision (h) bounded ask);
+    `item: "owner-pick"`: the listing and an item pick, A1-D3; "the last / latest / 지난번 mail" is the most recent mail,
+    `item: "first"` in recency order) or `each-item` (every listed item, at most 10 values, else the decision (h) bounded
+    ask). Review round 1: `each-item` only where the owner said "for each meeting" (ap-n066, n071) and for ap-p001..p008;
+    a source of several items whose words name none (n062, n067, n070, n072, n073) is `one-item` with the owner's pick;
   - `to`: a declared slot of the closed A4 table `AGENT_PLAN_HANDOFF_SLOTS` that accepts `kind`. A `planned` slot (not in
     the catalog yet: `jira.issue.key`, `github.pr.ref`, `drive.file.ref`, `calendar.events.attendee`,
     `jira.issues.person`, `mail.list.keyword`) needs slice `A4-S3`; an existing one must exist as an arg today;
-  - `fallback` (the owner examples ap-p001..p008 only): the kind used for an item that yields no value of `kind` (the
-    meeting's title words when it holds no Jira key).
+  - `to.args`: fixed args of the destination entry; each must be an arg the catalog entry has, never the slot itself;
+  - `fallback` (the owner examples ap-p001..p008 only, `AGENT_PLAN_FALLBACK_CASES`, each-item): the kind used for an item
+    that yields no value of `kind` (the meeting's title words when it holds no Jira key);
+  - `consent: "batch-preview"`: required exactly on an each-item handoff whose kind or fallback kind is free text
+    (`titleKeyword`, `keyword`): every exact value is shown once and nothing is sent before the owner's yes (A4.4).
+    Closed-format values alone (keys, dates, refs, addresses) run without it, shown next to their results.
 - `request-list` (pattern B): `steps` read the source; `requests: {from, item}`: the requests inside that one item are
   shown as a quoted candidate list (mail and Drive bodies only after the rule-① consent); nothing runs.
 - `link-list` (pattern B, ap-n027): `links: {from}`: the links in the read items are shown neutralised; none is opened (no
@@ -201,8 +207,11 @@ without a re-review. The slice that builds the behaviour moves the target into t
 
 **Read + write targets** (`awaiting.readWrite.outcome`):
 
-- `read-and-content-card` (content to a LOCAL write): `write.contentArgs` maps an arg to `{from, at?, field}`, one field of
-  one listed item. Only `todo.add` and `reminder.create` may take content (`AGENT_PLAN_CONTENT_WRITE_ENTRIES`, the security
+- `read-and-content-card` (content to a LOCAL write): `write.contentArgs` maps an arg to `{from, at | pick, field,
+  extract?}` (the same shape in `agent-redteam.s2-read-write.v1.json`): one closed field (`AGENT_PLAN_CONTENT_FIELDS`
+  per source) of one listed item, the item the owner's words number (`at`, 1-based) or, when they name none, the owner's
+  pick when several are listed (`pick: "ask-if-several"`); `extract: "datetime"` takes only the date / time grammar
+  match inside the field. Only `todo.add` and `reminder.create` may take content (`AGENT_PLAN_CONTENT_WRITE_ENTRIES`, the security
   boundary the self-check enforces); the card shows the exact value and its source. `write.ask` lists args the owner must
   still give first. `validatedBy` names the slice whose validator change the read plan needs (ap-n147 / n148: the item
   summary over the position the write clause names, today `ref-position`); until then the plan is parsed, not validated.

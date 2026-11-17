@@ -4,6 +4,7 @@ import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
 import {
   AGENT_PLAN_AWAITING_STATUS,
+  AGENT_PLAN_CONTENT_FIELDS,
   AGENT_PLAN_CONTENT_WRITE_ENTRIES,
   AGENT_PLAN_HANDOFF_SLOTS,
   AGENT_PLAN_NEGATIVE_FAMILIES,
@@ -208,9 +209,29 @@ describe('ADR-0121 A4: the owner\'s 2026-11-17 verdicts (decision (d)) as approv
       const handoff = target(id).awaiting?.expect;
       expect(handoff?.outcome, id).toBe('handoff');
       if (handoff?.outcome !== 'handoff') continue;
-      expect(handoff.handoff, id).toMatchObject({ from: 1, kind: 'jiraKey', scope: 'each-item', to: { entryId: 'jira.issue', slot: 'key' }, fallback: { kind: 'titleKeyword', to: { entryId: 'jira.issues', slot: 'keyword' } } });
+      expect(handoff.handoff, id).toMatchObject({ from: 1, kind: 'jiraKey', scope: 'each-item', consent: 'batch-preview', to: { entryId: 'jira.issue', slot: 'key' }, fallback: { kind: 'titleKeyword', to: { entryId: 'jira.issues', slot: 'keyword' } } });
       expect(handoff.steps.some((step) => 'entryId' in step && step.entryId === 'jira.issues'), `${id}: no independent Jira listing`).toBe(false);
     }
+    // Review round 1: each-item only where the owner said "for each meeting" and for p001..p008; free text previews once.
+    const scopes = new Map<string, string[]>();
+    for (const golden of awaitingCases) {
+      const handoff = golden.awaiting?.expect;
+      if (handoff?.outcome !== 'handoff') continue;
+      const key = `${handoff.handoff.scope}${handoff.handoff.consent !== undefined ? `/${handoff.handoff.consent}` : ''}`;
+      scopes.set(key, [...(scopes.get(key) ?? []), golden.id]);
+    }
+    expect(scopes.get('each-item/batch-preview')).toEqual(['ap-p001', 'ap-p002', 'ap-p003', 'ap-p004', 'ap-p005', 'ap-p006', 'ap-p007', 'ap-p008', 'ap-n066', 'ap-n071']);
+    expect(scopes.get('each-item')).toBeUndefined();
+    // "지난번 메일" and "the last mail" both designate the most recent mail.
+    for (const id of ['ap-n025', 'ap-n031']) {
+      const handoff = target(id).awaiting?.expect;
+      expect(handoff?.outcome === 'handoff' && handoff.handoff.item, id).toBe('first');
+    }
+  });
+
+  it('the s2-read-write red-team corpus declares the same content field table', () => {
+    const rw = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-read-write.v1.json', import.meta.url), 'utf8')) as { contentFields: unknown };
+    expect(rw.contentFields).toEqual(AGENT_PLAN_CONTENT_FIELDS);
   });
 
   it('is never scored: not approved-only, not with --include-pending, and an explicit --cases request is refused', () => {
@@ -228,6 +249,20 @@ describe('ADR-0121 A4: the owner\'s 2026-11-17 verdicts (decision (d)) as approv
     ['target steps the validator refuses', (golden) => ({ ...golden, awaiting: { ...golden.awaiting!, expect: { ...(golden.awaiting!.expect as never), steps: [{ entryId: 'mail.list', args: { from: 'someone@example.test' } }] } } }), /does not validate/],
   ])('the self-check catches %s', (_label, mutate, problem) => {
     expect(check([mutate(target('ap-n021'))]).join('\n')).toMatch(problem);
+  });
+
+  const withHandoff = (golden: AgentPlanCase, handoff: Record<string, unknown>): AgentPlanCase => ({ ...golden, awaiting: { ...golden.awaiting!, expect: { ...(golden.awaiting!.expect as never), handoff: { ...((golden.awaiting!.expect as { handoff: object }).handoff), ...handoff } } } });
+  const withContentArg = (golden: AgentPlanCase, arg: Record<string, unknown>): AgentPlanCase => ({ ...golden, awaiting: { ...golden.awaiting!, readWrite: { ...golden.awaiting!.readWrite!, write: { ...golden.awaiting!.readWrite!.write, contentArgs: { title: { from: 1, at: 3, field: 'subject', ...arg } as never } } } } });
+  it.each<[string, () => AgentPlanCase, RegExp]>([
+    ['a fallback outside p001..p008', () => withHandoff(target('ap-n066'), { fallback: { kind: 'titleKeyword', to: { entryId: 'jira.issues', slot: 'keyword' } } }), /fallback kind belongs to the owner examples/],
+    ['an each-item free-text run without the batch preview', () => withHandoff(target('ap-n066'), { consent: undefined }), /consent batch-preview is required/],
+    ['a batch preview on a one-item handoff', () => withHandoff(target('ap-n021'), { consent: 'batch-preview' }), /consent batch-preview is required/],
+    ['a destination arg the catalog entry lacks', () => withHandoff(target('ap-n021'), { to: { entryId: 'calendar.events', slot: 'range', args: { colour: 'red' } } }), /has no arg colour/],
+    ['a content field outside the closed list', () => withContentArg(target('ap-n147'), { field: 'rawHeaders' }), /not a closed item field/],
+    ['a content arg with both at and pick', () => withContentArg(target('ap-n147'), { pick: 'ask-if-several' }), /exactly one of at or pick/],
+    ['a content arg with an unknown extract', () => withContentArg(target('ap-n147'), { extract: 'anything' }), /extract is datetime/],
+  ])('the self-check catches %s (review round 1)', (_label, mutate, problem) => {
+    expect(check([mutate()]).join('\n')).toMatch(problem);
   });
 
   it('the security boundary: read content never fills an external write, only a LOCAL one through a card', () => {

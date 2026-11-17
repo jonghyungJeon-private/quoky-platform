@@ -199,6 +199,21 @@ export const AGENT_PLAN_HANDOFF_SLOTS: Readonly<Record<string, { readonly kinds:
 };
 /** A4: the only writes whose payload may come from read content (through a card naming the text and its source). */
 export const AGENT_PLAN_CONTENT_WRITE_ENTRIES = ['todo.add', 'reminder.create'] as const;
+/**
+ * A4: the closed item fields a content arg may name, per source (the read step entry's source: `mail.list` → `mail`). The
+ * red-team corpus `agent-redteam.s2-read-write.v1.json` declares the same table (`contentFields`).
+ */
+export const AGENT_PLAN_CONTENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  mail: ['subject', 'snippet'],
+  calendar: ['title', 'description'],
+  jira: ['title', 'description'],
+  slack: ['text'],
+  drive: ['name'],
+};
+/** A4.4: the free-text kinds; an each-item run of any of them needs one batched preview first (`consent: "batch-preview"`). */
+export const AGENT_PLAN_FREE_TEXT_KINDS = ['titleKeyword', 'keyword'] as const;
+/** A4.4: the only cases whose handoff may carry a `fallback` kind (the owner examples "회의 정리하고 관련 jira 이슈도"). */
+export const AGENT_PLAN_FALLBACK_CASES = ['ap-p001', 'ap-p002', 'ap-p003', 'ap-p004', 'ap-p005', 'ap-p006', 'ap-p007', 'ap-p008'] as const;
 
 /** A4 pattern A: one declared handoff (A1-D9 form, plus `scope` and an optional fallback kind). */
 export interface AgentPlanHandoffTarget {
@@ -211,6 +226,21 @@ export interface AgentPlanHandoffTarget {
   readonly to: { readonly entryId: string; readonly slot: string; readonly args?: NlArgs };
   /** p001: the kind used for an item that yields no value of `kind`. */
   readonly fallback?: { readonly kind: (typeof AGENT_PLAN_HANDOFF_KINDS)[number]; readonly to: { readonly entryId: string; readonly slot: string } };
+  /** A4.4: an each-item run that may send free text shows every exact value once and waits for one owner yes. */
+  readonly consent?: 'batch-preview';
+}
+
+/**
+ * A4: one content arg of a LOCAL write card: one closed field of one listed item of read step `from`. The item is the one
+ * the owner's words number (`at`, 1-based) or, when they name none ("그 회의"), the owner's pick when there are several
+ * (`pick`). `extract: "datetime"` takes only the date / time grammar match inside the field (several matches: ask).
+ */
+export interface AgentPlanContentArg {
+  readonly from: number;
+  readonly at?: number;
+  readonly pick?: 'ask-if-several';
+  readonly field: string;
+  readonly extract?: 'datetime';
 }
 
 /** An owner-approved A4 target in the planner gold form (never scored before its slices land). */
@@ -229,7 +259,7 @@ export interface AgentPlanReadWriteTarget {
     readonly entryId: string;
     readonly args?: NlArgs;
     /** Args filled from read content (one item field of a read step); only for `AGENT_PLAN_CONTENT_WRITE_ENTRIES`. */
-    readonly contentArgs?: Readonly<Record<string, { readonly from: number; readonly at?: number; readonly field: string }>>;
+    readonly contentArgs?: Readonly<Record<string, AgentPlanContentArg>>;
     /** Slack thread reply: the thread is a listed result of the read step, picked by the owner when there are several. */
     readonly target?: { readonly from: number; readonly kind: 'thread'; readonly pick: 'ask-if-several' };
     /** Args the owner must still give (the existing A6 clarification) before the card. */
@@ -795,7 +825,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
     if (positive !== (AGENT_PLAN_POSITIVE_FAMILIES as readonly string[]).includes(golden.family)) problems.push(`${at}: family does not match the expectation`);
     const prepared = caseContext(evalCaseOf(golden), corpus.fixture);
     if ((golden.status === AGENT_PLAN_AWAITING_STATUS) !== (golden.awaiting !== undefined)) problems.push(`${at}: awaiting is present exactly on ${AGENT_PLAN_AWAITING_STATUS} cases`);
-    if (golden.awaiting !== undefined) problems.push(...awaitingProblems(at, golden.awaiting, prepared));
+    if (golden.awaiting !== undefined) problems.push(...awaitingProblems(at, golden.id, golden.awaiting, prepared));
     if (isAgentPlanAskExpect(golden.expect)) {
       problems.push(...askCaseProblems(at, golden.expect, golden, prepared));
       continue;
@@ -917,7 +947,7 @@ function readWriteProblems(at: string, golden: AgentPlanCase, fixture: AgentPlan
  * handoff names a closed kind and a declared slot of the A4 table that accepts it (a planned slot waits for A4-S3); a
  * content-filled write is a LOCAL write only (the security boundary: no external write ever takes read content).
  */
-function awaitingProblems(at: string, awaiting: AgentPlanAwaiting, prepared: ReturnType<typeof caseContext>): string[] {
+function awaitingProblems(at: string, id: string, awaiting: AgentPlanAwaiting, prepared: ReturnType<typeof caseContext>): string[] {
   const problems: string[] = [];
   if (!Array.isArray(awaiting.slices) || awaiting.slices.length === 0 || !awaiting.slices.every((slice) => (AGENT_PLAN_A4_SLICES as readonly string[]).includes(slice))) {
     problems.push(`${at}: awaiting.slices lists closed A4 slices`);
@@ -936,10 +966,16 @@ function awaitingProblems(at: string, awaiting: AgentPlanAwaiting, prepared: Ret
     else if (graphDiff(validatedGraph(validation.plan.steps), goldGraph(gold)) !== undefined) problems.push(`${at}: the ${what} is not canonical`);
     return gold.steps.length;
   };
-  const readStep = (gold: AgentPlanGoldPlan, from: unknown, what: string): void => {
+  /** The read step `from` names (1-based), or undefined after recording the problem. */
+  const readStep = (gold: AgentPlanGoldPlan, from: unknown, what: string): string | undefined => {
     const step = typeof from === 'number' && Number.isInteger(from) ? gold.steps[from - 1] : undefined;
-    if (step === undefined || !('entryId' in step)) problems.push(`${at}: ${what} must name a read step of the target`);
+    if (step === undefined || !('entryId' in step) || step.entryId === undefined) {
+      problems.push(`${at}: ${what} must name a read step of the target`);
+      return undefined;
+    }
+    return step.entryId;
   };
+  const freeText = (kind: unknown): boolean => (AGENT_PLAN_FREE_TEXT_KINDS as readonly unknown[]).includes(kind);
   const target = awaiting.expect;
   if (target !== undefined) {
     if (target.outcome !== 'handoff' && target.outcome !== 'request-list' && target.outcome !== 'link-list') return [...problems, `${at}: unknown awaiting outcome`];
@@ -949,6 +985,11 @@ function awaitingProblems(at: string, awaiting: AgentPlanAwaiting, prepared: Ret
       readStep(target, h.from, 'handoff.from');
       if (h.scope !== 'one-item' && h.scope !== 'each-item') problems.push(`${at}: handoff.scope is one-item or each-item`);
       if ((h.scope === 'one-item') !== (h.item === 'owner-pick' || h.item === 'first')) problems.push(`${at}: a one-item handoff names its item (owner-pick or first), an each-item one none`);
+      if (h.fallback !== undefined && !(AGENT_PLAN_FALLBACK_CASES as readonly string[]).includes(id)) problems.push(`${at}: a fallback kind belongs to the owner examples ap-p001..p008 only (A4.4)`);
+      if (h.fallback !== undefined && h.scope !== 'each-item') problems.push(`${at}: a fallback kind needs scope each-item`);
+      const batchPreview = h.scope === 'each-item' && (freeText(h.kind) || freeText(h.fallback?.kind));
+      if ((h.consent === 'batch-preview') !== batchPreview) problems.push(`${at}: consent batch-preview is required exactly on an each-item handoff that may send free text (A4.4)`);
+      if (h.consent !== undefined && h.consent !== 'batch-preview') problems.push(`${at}: handoff.consent is batch-preview`);
       for (const [what, kind, dest] of [['handoff', h.kind, h.to], ...(h.fallback !== undefined ? [['fallback', h.fallback.kind, h.fallback.to] as const] : [])] as const) {
         const slot = AGENT_PLAN_HANDOFF_SLOTS[`${dest?.entryId}.${dest?.slot}`];
         if (!(AGENT_PLAN_HANDOFF_KINDS as readonly string[]).includes(kind)) problems.push(`${at}: ${what} kind is not closed`);
@@ -960,6 +1001,12 @@ function awaitingProblems(at: string, awaiting: AgentPlanAwaiting, prepared: Ret
         const exists = isNlWave1EntryId(dest.entryId) && OFFERED.get(dest.entryId)?.args.some((arg) => arg.name === dest.slot) === true;
         if (exists === slot.planned) problems.push(`${at}: ${what} slot ${dest.entryId}.${dest.slot} is ${slot.planned ? 'planned but exists' : 'not in the catalog'}`);
         if (slot.planned && !awaiting.slices.includes('A4-S3')) problems.push(`${at}: a planned destination waits for A4-S3`);
+        const args = Object.keys((dest as { args?: NlArgs }).args ?? {});
+        const entryArgs = isNlWave1EntryId(dest.entryId) ? OFFERED.get(dest.entryId)?.args.map((arg) => arg.name) : undefined;
+        for (const name of args) {
+          if (entryArgs === undefined || !entryArgs.includes(name)) problems.push(`${at}: ${what} destination ${dest.entryId} has no arg ${name}`);
+          else if (name === dest.slot) problems.push(`${at}: ${what} destination args must not preset the slot ${name}`);
+        }
       }
     } else if (target.outcome === 'request-list') {
       readStep(target, target.requests.from, 'requests.from');
@@ -980,7 +1027,16 @@ function awaitingProblems(at: string, awaiting: AgentPlanAwaiting, prepared: Ret
     const contentArgs = Object.entries(write.contentArgs ?? {});
     if (contentArgs.length > 0 && !local) problems.push(`${at}: read content may fill only a LOCAL write (${AGENT_PLAN_CONTENT_WRITE_ENTRIES.join(', ')})`);
     if ((rw.outcome === 'read-and-content-card') !== contentArgs.length > 0) problems.push(`${at}: read-and-content-card and contentArgs go together`);
-    for (const [, source] of contentArgs) readStep(rw.readPlan, source.from, 'contentArgs.from');
+    for (const [name, arg] of contentArgs) {
+      const entryId = readStep(rw.readPlan, arg.from, `contentArgs.${name}.from`);
+      const fields = entryId === undefined ? undefined : AGENT_PLAN_CONTENT_FIELDS[entryId.split('.')[0] ?? ''];
+      if (entryId !== undefined && (fields === undefined || !fields.includes(arg.field))) problems.push(`${at}: contentArgs.${name}.field ${arg.field} is not a closed item field of ${entryId}`);
+      const numbered = arg.at !== undefined;
+      if (numbered === (arg.pick !== undefined)) problems.push(`${at}: contentArgs.${name} names its item by exactly one of at or pick`);
+      if (numbered && !(Number.isInteger(arg.at) && (arg.at as number) >= 1)) problems.push(`${at}: contentArgs.${name}.at is a 1-based item number`);
+      if (arg.pick !== undefined && arg.pick !== 'ask-if-several') problems.push(`${at}: contentArgs.${name}.pick is ask-if-several`);
+      if (arg.extract !== undefined && arg.extract !== 'datetime') problems.push(`${at}: contentArgs.${name}.extract is datetime`);
+    }
     if ((write.target !== undefined) !== (write.entryId === 'slack.post')) problems.push(`${at}: a thread target belongs to slack.post only`);
     if (write.target !== undefined) readStep(rw.readPlan, write.target.from, 'write.target.from');
     if (rw.outcome === 'read-and-clarify' && (write.ask ?? []).length === 0) problems.push(`${at}: read-and-clarify names the args it asks`);
