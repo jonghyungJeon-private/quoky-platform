@@ -181,6 +181,11 @@ describe('mail grammar (ADR-0118 D4/D6/D7)', () => {
         'intent-173:메일 확인해줘',
         'intent-176:Did I get any emails?',
         'route-186:내 메일 확인해줘',
+        // A KNOWN CONFLICT, documented rather than hidden: the mail grammar claims this handoff phrasing (`from: the people in
+        // tomorrow calendar`) before the planner runs, so the ADR-0121 A4 target (ap-n073, same text) is unreachable today.
+        // DECISIONS "ADR-0121 amendment A4", A4.7 item on A4-S4: the slice amends the ADR-0118 D4 / ADR-0096 D5 precedence
+        // so a mail `from` capture yields to handoff phrasing, with corpus cases; this entry then leaves the list.
+        'rt-s2h-014:show mail from the people in tomorrow calendar',
       ].sort(),
     );
   });

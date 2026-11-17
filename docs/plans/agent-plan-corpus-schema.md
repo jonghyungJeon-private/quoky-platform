@@ -35,7 +35,8 @@ what an answer means.
 |---|---|---|
 | `id` | yes | `ap-pNNN` (positive) or `ap-nNNN` (negative). Unique across both corpora. |
 | `batch` | yes | `AP-<n>`, about 60 cases each, the unit of the owner's approval. |
-| `status` | yes | `pending-owner-approval` until the owner approves the case, then `approved`. Only approved cases are scored unless `--include-pending` is given. The owner's review of 2026-10-21 approved the cases marked ok; fixed cases wait for a re-review, and held cases (decisions (d) and (e), marked `HOLD` in their `note`) stay pending even when marked ok. |
+| `status` | yes | `pending-owner-approval` until the owner approves the case, then `approved`. Only approved cases are scored unless `--include-pending` is given. The owner's review of 2026-10-21 approved the cases marked ok; fixed cases wait for a re-review, and held cases (decisions (d) and (e), marked `HOLD` in their `note`) stay pending even when marked ok. The owner's review of 2026-11-17 (decision (d), ADR-0121 A4) settled every pending case: the ok ones are `approved`; a fixed one whose new behaviour is not built yet is `approved-awaiting-implementation` (§8), never scored, `--include-pending` included. |
+| `awaiting` | iff `approved-awaiting-implementation` | The owner-approved target and the slices it waits for (§8). `expect`, `trap` and `readWrite` stay the behaviour of the code as built. |
 | `family` | yes | A closed family (§4). |
 | `lang` | yes | `ko`, `en` or `mixed`. |
 | `text` | yes | The owner's raw message (quoted lines, fences and `>>>` included as typed). |
@@ -152,3 +153,68 @@ The Strict digest is the sha256 of the plan object: the corpus sha256, the one-s
 and the sha256 of its instruction text, git HEAD, model, runs, concurrency, the per-call timeout, `includePending`, the
 fixture, the case ids and the call bound (cases × runs). `run` exits 3 before any provider is built unless
 `--approved-plan-digest` equals it, and enforces the call bound as a hard cap.
+
+## 8. Approved targets awaiting implementation (ADR-0121 A4, owner review of 2026-11-17)
+
+The owner's review of 2026-11-17 decided decision (d) (cross-source / content-borne requests, held since 2026-10-21) and
+the remaining pending cases (DECISIONS.md "ADR-0121 amendment A4"). 21 cases were ok and are `approved`. 41 were fixed
+with a new expected behaviour that no code builds yet. Those carry:
+
+- `status: "approved-awaiting-implementation"`;
+- `expect` (and `trap`, `readWrite`) unchanged: the behaviour of the code as built. The self-check still proves it (a
+  positive still validates to its canonical graph, a trap is still refused: the planner's raw cross-source `ref` stays
+  `ref-cross-source` under A4, as A1-D15 requires);
+- `awaiting: { slices, decided, expect | readWrite }`: the target.
+
+**Mechanism (non-gating).** `buildAgentPlanEvalPlan` never selects such a case, with or without `--include-pending`, and
+refuses an explicit `--cases` request for one; the CLI reports their count as "approved, awaiting implementation (never
+scored)". The self-check (`validateAgentPlanCorpus`) proves each target well-formed (below) so a slice can adopt it
+without a re-review. The slice that builds the behaviour moves the target into the gold (renumbering the id with
+`formerId` when it crosses the positive / negative prefix), drops `awaiting` and sets `approved`; the gate then scores it.
+
+**`awaiting`.**
+
+| Key | Meaning |
+|---|---|
+| `slices` | The A4 slices the target waits for (`A4-S1`..`A4-S9`, `confirm-slice` = the SR-1 rule-① confirm slice). |
+| `decided` | `2026-11-17`. |
+| `expect` | A planner target: `{outcome, steps, ambiguity, …}` (below). Its `steps` validate today to a canonical `run` plan under the owner's words. |
+| `readWrite` | A read + write target: `{outcome, readPlan, validatedBy?, write}` (below). |
+
+**Planner targets** (`awaiting.expect.outcome`):
+
+- `handoff` (pattern A, owner-grounded linkage): `steps` read the source; `handoff` is
+  `{from, kind, scope, item?, to: {entryId, slot, args?}, fallback?: {kind, to}, consent?}` (the A1-D9 form plus `scope`):
+  - `kind`: `date`, `jiraKey`, `email`, `attendee`, `prRef`, `driveRef`, `titleKeyword` or `keyword`;
+  - `scope`: `one-item` (the item the owner's words designate, `item: "first"` for "the last mail", else
+    `item: "owner-pick"`: the listing and an item pick, A1-D3; "the last / latest / 지난번 mail" is the most recent mail,
+    `item: "first"` in recency order) or `each-item` (every listed item, at most 10 values, else the decision (h) bounded
+    ask). Review round 1: `each-item` only where the owner said "for each meeting" (ap-n066, n071) and for ap-p001..p008;
+    a source of several items whose words name none (n062, n067, n070, n072, n073) is `one-item` with the owner's pick;
+  - `to`: a declared slot of the closed A4 table `AGENT_PLAN_HANDOFF_SLOTS` that accepts `kind`. A `planned` slot (not in
+    the catalog yet: `jira.issue.key`, `github.pr.ref`, `drive.file.ref`, `calendar.events.attendee`,
+    `jira.issues.person`, `mail.list.keyword`) needs slice `A4-S3`; an existing one must exist as an arg today;
+  - `to.args`: fixed args of the destination entry; each must be an arg the catalog entry has, never the slot itself;
+  - `fallback` (the owner examples ap-p001..p008 only, `AGENT_PLAN_FALLBACK_CASES`, each-item): the kind used for an item
+    that yields no value of `kind` (the meeting's title words when it holds no Jira key);
+  - `consent: "batch-preview"`: required exactly on an each-item handoff whose kind or fallback kind is free text
+    (`titleKeyword`, `keyword`): every exact value is shown once and nothing is sent before the owner's yes (A4.4).
+    Closed-format values alone (keys, dates, refs, addresses) run without it, shown next to their results.
+- `request-list` (pattern B): `steps` read the source; `requests: {from, item}`: the requests inside that one item are
+  shown as a quoted candidate list (mail and Drive bodies only after the rule-① consent); nothing runs.
+- `link-list` (pattern B, ap-n027): `links: {from}`: the links in the read items are shown neutralised; none is opened (no
+  web fetch exists).
+
+**Read + write targets** (`awaiting.readWrite.outcome`):
+
+- `read-and-content-card` (content to a LOCAL write): `write.contentArgs` maps an arg to `{from, at | pick, field,
+  extract?}` (the same shape in `agent-redteam.s2-read-write.v1.json`): one closed field (`AGENT_PLAN_CONTENT_FIELDS`
+  per source, in the SR-1 item-field vocabulary: a Jira item has `summary`) of one listed item, the item the owner's words number (`at`, 1-based) or, when they name none, the owner's
+  pick when several are listed (`pick: "ask-if-several"`); `extract: "datetime"` takes only the date / time grammar
+  match inside the field. Only `todo.add` and `reminder.create` may take content (`AGENT_PLAN_CONTENT_WRITE_ENTRIES`, the security
+  boundary the self-check enforces); the card shows the exact value and its source. `write.ask` lists args the owner must
+  still give first. `validatedBy` names the slice whose validator change the read plan needs (ap-n147 / n148: the item
+  summary over the position the write clause names, today `ref-position`); until then the plan is parsed, not validated.
+- `read-and-clarify` (ap-n019, Slack thread reply): `write: {entryId: "slack.post", target: {from, kind: "thread", pick:
+  "ask-if-several"}, ask: ["text"]}`: find the thread, ask which when several, ask for the owner's own text, then the
+  approval card (allowlisted channels only). A `target` belongs to `slack.post` only; no external write takes content.

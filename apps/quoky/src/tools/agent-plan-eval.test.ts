@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
 import {
+  AGENT_PLAN_AWAITING_STATUS,
+  AGENT_PLAN_CONTENT_FIELDS,
+  AGENT_PLAN_CONTENT_WRITE_ENTRIES,
+  AGENT_PLAN_HANDOFF_SLOTS,
   AGENT_PLAN_NEGATIVE_FAMILIES,
   AGENT_PLAN_POSITIVE_FAMILIES,
   agentPlanEvalCases,
@@ -38,6 +43,8 @@ const { corpus: CORPUS, oneStep: ONE_STEP } = LOADED;
 const FIXTURE = CORPUS.fixture;
 const CASES = agentPlanEvalCases(CORPUS, ONE_STEP);
 const NEW = CORPUS.cases;
+/** ADR-0121 A4: the cases that can be scored (an approved target awaiting its implementation never is). */
+const SCOREABLE = NEW.filter((golden) => golden.status !== AGENT_PLAN_AWAITING_STATUS);
 const READS = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
 
 const OPTIONS: AgentPlanEvalOptions = { model: 'haiku', effort: 'high', runs: 3, concurrency: 4, includePending: false, gitHead: 'a'.repeat(40) };
@@ -112,11 +119,15 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
       expect(negatives.some((golden) => golden.lang === lang)).toBe(true);
     }
     // The owner's review of 2026-10-21: 258 approved; 15 fixed or unreviewed and 45 held (decisions (d) and (e)) pending.
-    // + ap-p180 (was ap-n121) and ap-p177 (was ap-n120), approved by the owner's decisions of 2026-10-23.
-    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(260);
-    // + ap-n145..ap-n148 (position-write, reviews of 0bde31cc and f3e59814, agent-drafted): pending the owner.
-    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(62);
-    expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true).every((golden) => golden.status === 'pending-owner-approval')).toBe(true);
+    // + ap-p180 (was ap-n121) and ap-p177 (was ap-n120), approved by the owner's decisions of 2026-10-23: 260.
+    // The owner's review of 2026-11-17 (decision (d), ADR-0121 A4) settles all 62 pending cases: 21 ok are approved, 41
+    // fixed ones are approved targets awaiting their implementation (never scored until their slices land).
+    expect(NEW.filter((golden) => golden.status === 'approved')).toHaveLength(281);
+    expect(NEW.filter((golden) => golden.status === 'pending-owner-approval')).toHaveLength(0);
+    const awaiting = NEW.filter((golden) => golden.status === AGENT_PLAN_AWAITING_STATUS);
+    expect(awaiting).toHaveLength(41);
+    expect(awaiting.every((golden) => golden.awaiting !== undefined && golden.awaiting.decided === '2026-11-17')).toBe(true);
+    expect(NEW.filter((golden) => golden.note?.startsWith('HOLD') === true || golden.note?.includes(' HOLD ') === true)).toEqual([]);
     // ap-n085's suggestion is shrunk to fit the 10-query charge (CA re-check W2): still 12 asks.
     expect(NEW.filter((golden) => isAgentPlanAskExpect(golden.expect)).map((golden) => golden.family)).toEqual(Array.from({ length: 12 }, () => 'unbounded'));
     const batches = new Map<string, number>();
@@ -150,8 +161,9 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     const notExact = records.filter((record) => record.expected === 'plan' && record.outcome !== 'exact');
     expect(notExact.map((record) => `${record.id}:${record.outcome}:${record.reason ?? ''}`)).toEqual([]);
     // 174 + the six help-brief-split positives (ap-p175..ap-p180, formerly ap-n118..ap-n123) + the five item-summary-ref
-    // positives (ap-p185..ap-p189; owner decision of 2026-10-26, the one-shot list + item summary).
-    expect(summary.groups.multiStep).toEqual({ total: 185, exact: 185, rate: 1 });
+    // positives (ap-p185..ap-p189; owner decision of 2026-10-26, the one-shot list + item summary) = 185, minus the owner
+    // examples ap-p001..ap-p008, approved targets awaiting implementation (ADR-0121 A4) and never scored.
+    expect(summary.groups.multiStep).toEqual({ total: 177, exact: 177, rate: 1 });
     // + the four capability-help one-step plan golds of the owner's decisions of 2026-10-26 (ap-p181..ap-p184).
     expect(summary.groups.oneStep).toEqual({ total: 684, exact: 684, rate: 1 });
     expect(summary.groups.ask).toEqual({ total: 12, exact: 12, rate: 1 });
@@ -162,6 +174,109 @@ describe('agent-plan.v1 corpus (S2 P2)', () => {
     );
     expect(records.filter((record) => record.outcome === 'skipped' && !record.id.startsWith('neg-'))).toEqual([]);
     expect(summary.gatePassed).toBe(true);
+  });
+});
+
+describe('ADR-0121 A4: the owner\'s 2026-11-17 verdicts (decision (d)) as approved targets awaiting implementation', () => {
+  const awaitingCases = NEW.filter((golden) => golden.status === AGENT_PLAN_AWAITING_STATUS);
+  const check = (cases: AgentPlanCase[]): string[] => validateAgentPlanCorpus({ ...CORPUS, cases }, ONE_STEP);
+  const target = (id: string): AgentPlanCase => NEW.find((golden) => golden.id === id) as AgentPlanCase;
+
+  it('keeps the built behaviour as the gold: every awaiting case still passes the self-check on its expect and trap', () => {
+    expect(check(awaitingCases)).toEqual([]);
+    // The planner path is unchanged: a raw cross-source reference stays refused even for a pattern-A request (A1-D15).
+    for (const id of ['ap-n022', 'ap-n028', 'ap-n060', 'ap-n066']) expect(target(id).trapRefusal, id).toBe('ref-cross-source');
+  });
+
+  it('the s2-handoff red-team corpus (HO-1) declares the same handoff slot table', () => {
+    const handoff = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-handoff.v1.json', import.meta.url), 'utf8')) as { handoffSlots: unknown };
+    expect(handoff.handoffSlots).toEqual(AGENT_PLAN_HANDOFF_SLOTS);
+  });
+
+  it('pattern A targets are handoffs into the closed slot table; pattern B targets list requests or links and run nothing', () => {
+    const outcomes = new Map<string, string[]>();
+    for (const golden of awaitingCases) {
+      const outcome = golden.awaiting?.expect?.outcome ?? golden.awaiting?.readWrite?.outcome ?? '';
+      outcomes.set(outcome, [...(outcomes.get(outcome) ?? []), golden.id]);
+    }
+    expect(outcomes.get('handoff')).toHaveLength(31);
+    expect(outcomes.get('request-list')).toEqual(['ap-n023', 'ap-n024', 'ap-n026', 'ap-n029', 'ap-n030', 'ap-n032']);
+    expect(outcomes.get('link-list')).toEqual(['ap-n027']);
+    expect(outcomes.get('read-and-clarify')).toEqual(['ap-n019']);
+    expect(outcomes.get('read-and-content-card')).toEqual(['ap-n147', 'ap-n148']);
+    // p001..p008: the Jira lookup is grounded on the meetings (keys first, else the title words), every meeting.
+    for (const id of ['ap-p001', 'ap-p002', 'ap-p003', 'ap-p004', 'ap-p005', 'ap-p006', 'ap-p007', 'ap-p008']) {
+      const handoff = target(id).awaiting?.expect;
+      expect(handoff?.outcome, id).toBe('handoff');
+      if (handoff?.outcome !== 'handoff') continue;
+      expect(handoff.handoff, id).toMatchObject({ from: 1, kind: 'jiraKey', scope: 'each-item', consent: 'batch-preview', to: { entryId: 'jira.issue', slot: 'key' }, fallback: { kind: 'titleKeyword', to: { entryId: 'jira.issues', slot: 'keyword' } } });
+      expect(handoff.steps.some((step) => 'entryId' in step && step.entryId === 'jira.issues'), `${id}: no independent Jira listing`).toBe(false);
+    }
+    // Review round 1: each-item only where the owner said "for each meeting" and for p001..p008; free text previews once.
+    const scopes = new Map<string, string[]>();
+    for (const golden of awaitingCases) {
+      const handoff = golden.awaiting?.expect;
+      if (handoff?.outcome !== 'handoff') continue;
+      const key = `${handoff.handoff.scope}${handoff.handoff.consent !== undefined ? `/${handoff.handoff.consent}` : ''}`;
+      scopes.set(key, [...(scopes.get(key) ?? []), golden.id]);
+    }
+    expect(scopes.get('each-item/batch-preview')).toEqual(['ap-p001', 'ap-p002', 'ap-p003', 'ap-p004', 'ap-p005', 'ap-p006', 'ap-p007', 'ap-p008', 'ap-n066', 'ap-n071']);
+    expect(scopes.get('each-item')).toBeUndefined();
+    // "지난번 메일" and "the last mail" both designate the most recent mail.
+    for (const id of ['ap-n025', 'ap-n031']) {
+      const handoff = target(id).awaiting?.expect;
+      expect(handoff?.outcome === 'handoff' && handoff.handoff.item, id).toBe('first');
+    }
+  });
+
+  it('the s2-read-write red-team corpus declares the same content field table', () => {
+    const rw = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-read-write.v1.json', import.meta.url), 'utf8')) as { contentFields: unknown };
+    expect(rw.contentFields).toEqual(AGENT_PLAN_CONTENT_FIELDS);
+    // One vocabulary with SR-1 (review round 2): every content field is a free-text field of that source's SR-1 item shape.
+    const sr1 = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-read.v1.json', import.meta.url), 'utf8')) as { itemFields: Record<string, { freeText: string[] }> };
+    for (const [source, fields] of Object.entries(AGENT_PLAN_CONTENT_FIELDS)) for (const field of fields) expect(sr1.itemFields[source]?.freeText, `${source}.${field}`).toContain(field);
+  });
+
+  it('is never scored: not approved-only, not with --include-pending, and an explicit --cases request is refused', () => {
+    const withPending = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
+    for (const golden of awaitingCases) expect(withPending.caseIds, golden.id).not.toContain(golden.id);
+    expect(() => buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, cases: ['ap-n021'], includePending: true })).toThrow(/await the implementation/);
+  });
+
+  it.each<[string, (golden: AgentPlanCase) => AgentPlanCase, RegExp]>([
+    ['awaiting without the status', (golden) => ({ ...golden, status: 'approved' }), /awaiting is present exactly/],
+    ['the status without awaiting', (golden) => ({ ...golden, awaiting: undefined }), /awaiting is present exactly/],
+    ['an unknown slice', (golden) => ({ ...golden, awaiting: { ...golden.awaiting!, slices: ['A9-S1' as never] } }), /closed A4 slices/],
+    ['a slot outside the A4 table', (golden) => ({ ...golden, awaiting: { ...golden.awaiting!, expect: { ...(golden.awaiting!.expect as never), handoff: { from: 1, kind: 'date', scope: 'one-item', item: 'owner-pick', to: { entryId: 'slack.search', slot: 'keyword' } } } } }), /does not take date/],
+    ['a planned slot without A4-S3', (golden) => ({ ...golden, awaiting: { ...golden.awaiting!, slices: ['A4-S1', 'A4-S2'], expect: { ...(golden.awaiting!.expect as never), handoff: { from: 1, kind: 'jiraKey', scope: 'one-item', item: 'owner-pick', to: { entryId: 'jira.issue', slot: 'key' } } } } }), /waits for A4-S3/],
+    ['target steps the validator refuses', (golden) => ({ ...golden, awaiting: { ...golden.awaiting!, expect: { ...(golden.awaiting!.expect as never), steps: [{ entryId: 'mail.list', args: { from: 'someone@example.test' } }] } } }), /does not validate/],
+  ])('the self-check catches %s', (_label, mutate, problem) => {
+    expect(check([mutate(target('ap-n021'))]).join('\n')).toMatch(problem);
+  });
+
+  const withHandoff = (golden: AgentPlanCase, handoff: Record<string, unknown>): AgentPlanCase => ({ ...golden, awaiting: { ...golden.awaiting!, expect: { ...(golden.awaiting!.expect as never), handoff: { ...((golden.awaiting!.expect as { handoff: object }).handoff), ...handoff } } } });
+  const withContentArg = (golden: AgentPlanCase, arg: Record<string, unknown>): AgentPlanCase => ({ ...golden, awaiting: { ...golden.awaiting!, readWrite: { ...golden.awaiting!.readWrite!, write: { ...golden.awaiting!.readWrite!.write, contentArgs: { title: { from: 1, at: 3, field: 'subject', ...arg } as never } } } } });
+  it.each<[string, () => AgentPlanCase, RegExp]>([
+    ['a fallback outside p001..p008', () => withHandoff(target('ap-n066'), { fallback: { kind: 'titleKeyword', to: { entryId: 'jira.issues', slot: 'keyword' } } }), /fallback kind belongs to the owner examples/],
+    ['an each-item free-text run without the batch preview', () => withHandoff(target('ap-n066'), { consent: undefined }), /consent batch-preview is required/],
+    ['a batch preview on a one-item handoff', () => withHandoff(target('ap-n021'), { consent: 'batch-preview' }), /consent batch-preview is required/],
+    ['a destination arg the catalog entry lacks', () => withHandoff(target('ap-n021'), { to: { entryId: 'calendar.events', slot: 'range', args: { colour: 'red' } } }), /has no arg colour/],
+    ['a content field outside the closed list', () => withContentArg(target('ap-n147'), { field: 'rawHeaders' }), /not a closed item field/],
+    ['a content arg with both at and pick', () => withContentArg(target('ap-n147'), { pick: 'ask-if-several' }), /exactly one of at or pick/],
+    ['a content arg with an unknown extract', () => withContentArg(target('ap-n147'), { extract: 'anything' }), /extract is datetime/],
+  ])('the self-check catches %s (review round 1)', (_label, mutate, problem) => {
+    expect(check([mutate()]).join('\n')).toMatch(problem);
+  });
+
+  it('the security boundary: read content never fills an external write, only a LOCAL one through a card', () => {
+    expect([...AGENT_PLAN_CONTENT_WRITE_ENTRIES]).toEqual(['todo.add', 'reminder.create']);
+    const card = target('ap-n147');
+    expect(check([card])).toEqual([]);
+    const external = { ...card, awaiting: { ...card.awaiting!, readWrite: { ...card.awaiting!.readWrite!, write: { entryId: 'slack.post', contentArgs: { text: { from: 1, at: 3, field: 'subject' } }, target: { from: 1, kind: 'thread' as const, pick: 'ask-if-several' as const } } } } };
+    expect(check([external]).join('\n')).toMatch(/read content may fill only a LOCAL write/);
+    const slack = target('ap-n019');
+    expect(slack.awaiting?.readWrite?.write).toMatchObject({ entryId: 'slack.post', ask: ['text'] });
+    expect(slack.awaiting?.readWrite?.write.contentArgs).toBeUndefined();
   });
 });
 
@@ -426,15 +541,17 @@ describe('plan digest', () => {
     const approved = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, OPTIONS);
     const pending = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
     const approvedCount = 889 + NEW.filter((golden) => golden.status === 'approved').length;
-    expect(approvedCount).toBe(889 + 260);
+    expect(approvedCount).toBe(889 + 281);
     expect(approved.caseIds).toHaveLength(approvedCount);
-    expect(pending.caseIds).toHaveLength(889 + NEW.length);
+    expect(pending.caseIds).toHaveLength(889 + SCOREABLE.length);
+    // ADR-0121 A4: --include-pending never adds a case awaiting the implementation of its approved target.
+    expect(pending.caseIds.filter((id) => NEW.find((golden) => golden.id === id)?.status === AGENT_PLAN_AWAITING_STATUS)).toEqual([]);
     // The read + write probe bound (owner-ratified 2026-10-26): one more call for each case of two or more conjuncts.
     expect(approved.readWriteProbe).toMatchObject({ promptVersion: 'nl-select.v79', maxCallsPerRun: expect.any(Number) });
     expect(approved.readWriteProbe.maxCallsPerRun).toBeGreaterThan(0);
     expect(approved.readWriteProbe.maxCallsPerRun).toBeLessThan(approvedCount);
     expect(approved.maxCalls).toBe((approvedCount + approved.readWriteProbe.maxCallsPerRun) * 3);
-    expect(pending.maxCalls).toBe((889 + NEW.length + pending.readWriteProbe.maxCallsPerRun) * 3);
+    expect(pending.maxCalls).toBe((889 + SCOREABLE.length + pending.readWriteProbe.maxCallsPerRun) * 3);
     // The probe prompt is bound into the digest.
     expect(computeAgentPlanEvalDigest({ ...approved, readWriteProbe: { ...approved.readWriteProbe, promptSha256: '0'.repeat(64) } })).not.toBe(computeAgentPlanEvalDigest(approved));
     expect(approved).toMatchObject({ kind: 'agent-plan-eval', promptVersion: 'agent-plan.v11', callTimeoutMs: 10000, fixture: FIXTURE });
@@ -462,7 +579,7 @@ describe('hard call cap', () => {
   });
 
   it('a run never makes more calls than the plan bound, and a capped call fails the gate', async () => {
-    const cases = CASES.filter((golden) => golden.family !== 'one-step').slice(0, 12);
+    const cases = CASES.filter((golden) => golden.family !== 'one-step' && golden.status !== AGENT_PLAN_AWAITING_STATUS).slice(0, 12);
     const plan = buildAgentPlanEvalPlan(cases, HASHES, FIXTURE, { ...OPTIONS, runs: 1, concurrency: 1, includePending: true });
     const provider = goldProvider(cases);
     const tight = { ...plan, maxCalls: 5 };
@@ -528,7 +645,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(await runCli(['--mode', 'plan', '--runs', '3', '--include-pending'], withPending)).toBe(EXIT_OK);
     expect(digestOf(withPending.out)).not.toBe(digestOf(planned.out));
     const pendingPlan = buildAgentPlanEvalPlan(CASES, HASHES, FIXTURE, { ...OPTIONS, includePending: true });
-    expect(withPending.out.join('\n')).toContain(`at most ${(889 + NEW.length + pendingPlan.readWriteProbe.maxCallsPerRun) * 3}`);
+    expect(withPending.out.join('\n')).toContain(`at most ${(889 + SCOREABLE.length + pendingPlan.readWriteProbe.maxCallsPerRun) * 3}`);
   });
 
   it('run exits 3 before any provider is constructed without the digest, with a wrong one, or with another plan\'s', async () => {
@@ -580,7 +697,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(created).toEqual(['haiku']);
     const skipped = CASES.filter((golden) => 'skip' in prepareSelectionInput(golden.text, golden.attachments)).length;
     expect(skipped).toBeLessThanOrEqual(2);
-    expect(calls).toBe(889 + NEW.length - skipped);
+    expect(calls).toBe(889 + SCOREABLE.length - skipped);
     const everything = [...ran.reports, ...ran.out, ...ran.err].join('\n');
     expect(everything).not.toContain(canary);
     const texts = CASES.map((golden) => golden.text).filter((text) => Array.from(text).length >= 12);
@@ -588,12 +705,12 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     for (const value of ['인사발령', '마이그레이션 가이드', '김부장님', 'security policy']) expect(everything).not.toContain(value);
     const report = JSON.parse(ran.reports[0] as string) as { plan: { digest: string }; records: AgentPlanEvalRecord[] };
     expect(report.plan.digest).toBe(digest);
-    expect(report.records).toHaveLength(889 + NEW.length);
+    expect(report.records).toHaveLength(889 + SCOREABLE.length);
     expect(Object.keys(report.records[0] as object).sort()).toEqual(expect.arrayContaining(['id', 'family', 'outcome', 'latencyMs', 'run']));
   });
 
   it('a perfect planner passes the gate end to end once the batches are approved; approved-only without them cannot pass', async () => {
-    const approved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'approved' as const })) } };
+    const approved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'approved' as const, awaiting: undefined })) } };
     const created: string[] = [];
     const planned = { ...deps(created), load: () => approved };
     await runCli(['--mode', 'plan', '--runs', '3'], planned);
@@ -602,7 +719,7 @@ describe('agent-plan CLI (Strict digest gate, content-free report)', () => {
     expect(ran.out.join('\n')).toContain('multi-step exact: 185/185 (100.0%)  one-step exact: 684/684 (100.0%)  ask: 12/12');
     expect(ran.out.join('\n')).toContain('agent-plan gate (agent-plan.v11): PASSED (multi-step pooled 555/555 (100.0%) >= 95%; run checks passed in 3 of 3 run(s))');
     // With every new case pending, an approved-only run has no multi-step group, so it cannot pass.
-    const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const })) } };
+    const unapproved = { ...LOADED, corpus: { ...CORPUS, cases: NEW.map((golden) => ({ ...golden, status: 'pending-owner-approval' as const, awaiting: undefined })) } };
     const today = { ...deps(created), load: () => unapproved };
     await runCli(['--mode', 'plan', '--runs', '3'], today);
     const ranToday = { ...deps(created), load: () => unapproved };

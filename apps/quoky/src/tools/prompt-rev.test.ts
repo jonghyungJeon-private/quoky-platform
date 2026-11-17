@@ -280,10 +280,15 @@ describe('eval:agent-plan revision, fixture and subset', () => {
     expect([...plan.caseIds].sort()).toEqual([...SCREEN].sort());
     expect(plan.selectedCases).toEqual(SCREEN);
     expect(() => buildAgentPlanEvalPlan(pool, hashes, loaded.corpus.fixture, { ...options, cases: ['hm-zz'] })).toThrow(/unknown case hm-zz/);
-    // A requested pending case is refused, never silently skipped.
-    const pendingId = pool.find((golden) => golden.status !== 'approved')?.id;
-    if (pendingId !== undefined) {
-      expect(() => buildAgentPlanEvalPlan(pool, hashes, loaded.corpus.fixture, { ...options, includePending: false, cases: ['hm-n01', pendingId] })).toThrow(/pending/);
+    // A requested pending case is refused, never silently skipped. Since the owner's review of 2026-11-17 no corpus case is
+    // pending, so one is made pending here.
+    const pending = { ...(pool.find((golden) => golden.id === 'hm-n01') as (typeof pool)[number]), id: 'hm-pending', status: 'pending-owner-approval' as const };
+    expect(() => buildAgentPlanEvalPlan([...pool, pending], hashes, loaded.corpus.fixture, { ...options, includePending: false, cases: ['hm-n01', 'hm-pending'] })).toThrow(/pending/);
+    // ADR-0121 A4: a case awaiting the implementation of its approved target is refused, --include-pending or not.
+    const awaitingId = pool.find((golden) => golden.status === 'approved-awaiting-implementation')?.id as string;
+    expect(awaitingId).toBeDefined();
+    for (const includePending of [false, true]) {
+      expect(() => buildAgentPlanEvalPlan(pool, hashes, loaded.corpus.fixture, { ...options, includePending, cases: ['hm-n01', awaitingId] })).toThrow(/await the implementation/);
     }
   });
 
