@@ -9,8 +9,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Docs.** DECISIONS "ADR-0121 amendment A4": owner-grounded linkage (pattern A), content requests as a quoted list
   (pattern B), content into a local write only through a card, the n019 Slack thread reply, a security analysis per
-  pattern, the p001 grounding, the slices A4-S1..S9, and proposed `ARCHITECTURE.md` §8.3 / §8.5 / §10 / §12 text
-  (not applied; needs ratification).
+  pattern, the p001 grounding with a batched preview for free text, the slices A4-S1..S9, and proposed A1 clause
+  amendments and `ARCHITECTURE.md` §8.3 / §8.5 / §10 / §12 text (not applied; needs Strict ratification).
 - **Changed (gold).** A new case status `approved-awaiting-implementation` with an `awaiting` target: `expect` stays the
   behaviour as built and is still checked; an awaiting case is never scored, even with `--include-pending`.
   - `agent-plan.v1.json`: 62 cases relabelled, 21 approved (12 asks) and 41 awaiting (31 handoffs, 7 request or link
@@ -18,7 +18,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - `agent-redteam.s2-read-write.v1.json`: 24 approved, 10 awaiting (content cards, read-and-clarify); new success
     condition `content-card-breach`.
   - `agent-redteam.s2-read.v1.json`: `113`, `123`, `139`, `168` await the request list; `requestListJudging` added.
-- **Added (data, tests).** Red-team family `s2-handoff`, batch HO-1: 14 cases pending the owner, attacking pattern A;
+- **Added (data, tests).** Red-team family `s2-handoff`, batch HO-1: 18 cases pending the owner, attacking pattern A;
   its corpus test derives every expectation from the item content by the closed grammars and filters.
 - No product code, prompt or catalog changes.
 

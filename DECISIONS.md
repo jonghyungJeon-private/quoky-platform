@@ -21530,9 +21530,10 @@ Two defects found by the live re-test, fixed structurally (no phrase added; Phas
   end of this file.
   **Amended by A3a** (Accepted 2026-10-26): through A2 (A2-D1, A2-D3, A2-D6, A2-D7, A2-D19), D2, D11 and D12; no egress
   and no constitutional change; see "ADR-0121 amendment A3a" and its ratification record at the end of this file.
-  **Amended by A4** (decided 2026-11-17; constitution text proposed, not ratified): A1-D2, A1-D3, A1-D6, A1-D7, A1-D9,
-  A1-D10 and A1-D16 for owner-grounded linkage, the quoted request list and the local content-write card; see "ADR-0121
-  amendment A4" at the end of this file.
+  **Amendment proposed by A4** (the owner's behaviour decisions of 2026-11-17; the clause and constitution text is
+  proposed, NOT ratified): A1-D2, A1-D3, A1-D6, A1-D7, A1-D9, A1-D10, A1-D16 and ratification item 7, for owner-grounded
+  linkage, the quoted request list and the local content-write card; see "ADR-0121 amendment A4" at the end of this
+  file. Until its Strict ratification, A1 stays as ratified.
   **D12 amended** (ratified 2026-11-16): M2 routes through `ProviderSelector` / `AiProvider` with an
   `allowedExecutionLocalities` constraint; see D12 below and "Ratification record (ADR-0121 D12 amendment and P3-3b
   #4–#7, 2026-11-16)".
@@ -35213,13 +35214,14 @@ Owner decision 2026-11-09 ("A + B"). Candidate, D12 gates pending: `NL_ACTIVE_PR
 
 **Gates and goldens (2026-11-09).** Owner-approved goldens: 10 own-memory recall `none` cases and 6 source-naming lookups in `nl-action.v1` / `nl-intent.v1` (`own-recall-*`), referenced by `agent-plan.v1` one-step gold (873 → 889); `own-recall-none-002` moved off the live utterance's topic after review. The selector-RAG audit was regenerated with local Ollama on loopback (owner-approved): lint 0, flagged pairs 0, tau 0.7941 unchanged, space id @ollama0.40.11 → @ollama0.40.15 (same model digest). D12 gates, haiku × 3 runs: action PASSED (nl-select.v83, 97.7–98.1%, wrong targets 0, negative captures 0; archive `gates-ownrecall-69fbe879-20261109`), read-regression PASSED (97.4–97.8%, wrong/action/help captures 0; same archive), r2 PASSED (nl-select.v84, 100% each run; archive `gates-ownrecall-r2-d635217b-20261109`, re-run because the first r2 plan digest went stale when the audit commit landed mid-run, BLOCKED before any call). All 16 new cases were correct in every run of action and read-regression.
 
-## ADR-0121 amendment A4 — decision (d): owner-grounded linkage (pattern A), content requests as a quoted list (pattern B), content into a local write only through a card, and the gold of the owner's 2026-11-17 review. Amends ADR-0121 A1-D2, A1-D3, A1-D6, A1-D7, A1-D9, A1-D10 and A1-D16, D7 (by interpretation) and the ratification record item 7 (narrowly); proposes `ARCHITECTURE.md` §8 items 3 and 5, §10 and §12 text (NOT applied).
+## ADR-0121 amendment A4 — decision (d): owner-grounded linkage (pattern A), content requests as a quoted list (pattern B), content into a local write only through a card, and the gold of the owner's 2026-11-17 review. PROPOSES amendments of ADR-0121 A1-D2, A1-D3, A1-D6, A1-D7, A1-D9, A1-D10 and A1-D16, D7 (by interpretation) and the ratification record item 7 (narrowly), and `ARCHITECTURE.md` §8 items 3 and 5, §10 and §12 text (NOT applied; Strict ratification pending).
 
-- **Status:** Decided by the Product Owner on 2026-11-17 (the review of the S2 golds held for decision (d):
-  `owner-verdicts-2026-11-17.json`, 100 cases; a memo marked "[Claude 추정]" is an extrapolation the owner accepted).
-  The gold and docs change (branch `claude/v5-decision-d`) is data, docs and tests only: no runtime, prompt or catalog
-  change. **The constitution text below is proposed, not applied**; it needs the owner's ratification (Strict) before
-  any of slices A4-S2, A4-S5, A4-S6 or A4-S7 changes runtime behaviour. A1's rollout order still holds: handoff code
+- **Status:** The behaviour (A4.1) was decided by the Product Owner on 2026-11-17 (the review of the S2 golds held for
+  decision (d): `owner-verdicts-2026-11-17.json`, 100 cases; a memo marked "[Claude 추정]" is an extrapolation the owner
+  accepted). **The clause amendments (A4.3) and the constitution text (A4.5) are PROPOSED, not ratified**: A1 and
+  `ARCHITECTURE.md` stay as ratified until the owner's Strict ratification (A4.8 item 7), which is needed before any of
+  slices A4-S1, A4-S2, A4-S5, A4-S6 or A4-S7 changes runtime behaviour. The gold and docs change (branch
+  `claude/v5-decision-d`, review round 1 included) is data, docs and tests only: no runtime, prompt or catalog change. A1's rollout order still holds: handoff code
   (A4-S2, A4-S3) only after S2 is `active`, behind `QUOKY_AGENT_HANDOFF=off`.
 - **Context.** A1 (ratified 2026-10-21) built the owner-confirmed handoff around one owner-chosen item and a strict pick
   of every value. The S2 plan gold held 62 planner cases for decision (d) as refusals (`ref-cross-source`), and the S2
@@ -35231,8 +35233,10 @@ Owner decision 2026-11-09 ("A + B"). Candidate, D12 gates pending: `NL_ACTIVE_PR
 1. **Pattern A, owner-grounded linkage.** When the owner's own words ask to use a value from source 1 for a lookup in
    source 2, Quoky reads source 1, extracts the candidate values, and shows the value it used. One candidate: it runs
    the lookup. Several: the owner picks. Read-only. A date in both the subject and the body: both are candidates, and
-   if they differ the owner picks. "For each meeting" (n066, n071): every listed item, at most 10 values, else the
-   decision (h) bounded ask. n035: only the owner's own calendar (attendee filter on the owner's events, never another
+   if they differ the owner picks. "For each meeting" (n066, n071, and p001–p008, A4.4): every listed item, at most 10
+   values, else the decision (h) bounded ask; free text first gets one batched preview and the owner's yes (A4.4). Any
+   other source of several items whose words name none (n062, n067, n070, n072, n073) is one item the owner picks, then
+   several values ask (review round 1). "The last / latest / 지난번 mail" is the most recent mail (n025, n031). n035: only the owner's own calendar (attendee filter on the owner's events, never another
    person's calendar).
 2. **The boundary.** Pattern A is **owner-grounded**: the owner's words name the source, the kind of value and the
    destination. A **content-initiated** reference (content proposing a value, a destination or an operation the owner
@@ -35254,13 +35258,13 @@ Owner decision 2026-11-09 ("A + B"). Candidate, D12 gates pending: `NL_ACTIVE_PR
 | Pattern | Threat | Why it is acceptable | Constraints (all required) |
 |---|---|---|---|
 | A, structured value (date, Jira key, PR ref, attendee address, Drive ref) | Planted, spoofed or foreign values steer a lookup; a hidden or near-duplicate value slips a filter; flooding exhausts caps | The owner's words fix the source, the kind and the destination; content can only supply a value of a closed grammar that the owner asked for; the destination is a READ whose result comes back to the owner's DM only | A1-D4 closed grammars; A1-D5 filters (window, visible projects, allowlisted repos, bare-ref rule, invisible and bidi characters rejected, never stripped); the value shown byte for byte next to the result; several candidates → the A1-D7 pick; at most 5 shown, 3 picked, 10 values per run; read-only; `OWNER_CONFIRMED` (A1-D8) unchanged; DM only, kill switch, content-free audit |
-| A, free-text keyword (title words, M2-extracted keyword) | A keyword crosses vendors (RA-2) and can carry an injected query or a secret fragment | The owner sees the exact keyword before it leaves; free text never auto-continues in a one-item handoff | Always the A1-D7 pick for one item, even with one candidate; keyword charset and operator bans (A1-D5); M2 extraction only under the egress labels with the substring check; each-item (p001, n066) runs the filtered title tokens of each listed meeting, shown next to each result, at most 10 |
-| A, each-item ("for each meeting") | Many items multiply the reach of one planted value | The owner designated every listed item; the bound is the existing 10-value cap | At most 10 values in total (one connector query each), else the decision (h) bounded ask with nothing run; each value shown next to its item |
+| A, free-text keyword (title words, M2-extracted keyword) | A keyword crosses vendors (RA-2) and can carry an injected query or a secret fragment; calendar titles are written by outsiders and labelled `LOCAL_MODEL_ONLY` | The owner sees every exact keyword before it leaves, in every scope | One item: always the A1-D7 pick, even with one candidate. Each item (p001 fallback, n066, n071): one batched preview of every exact value, then the owner's closed yes, before any request (A4.4). Keyword charset and the closed operator list (A1-D5); M2 extraction only under the egress labels with the substring check |
+| A, each-item ("for each meeting") | Many items multiply the reach of one planted value | The owner designated every listed item; the bound is the existing 10-value cap; free text is previewed first | Only where the owner's words say "for each" (n066, n071) and p001–p008; at most 10 values in total (one connector query each), else the decision (h) bounded ask with nothing run; closed-format values run shown next to their item; any free-text value makes the whole batch wait for the preview and yes |
 | B, request list | The reply obeys or amplifies an instruction; a link in a request becomes a fetch | Nothing in the list is a step, an argument, a request, a write or a receipt; the owner must restate the request in their own words | Verbatim substrings of one item after NFKC, at most 5, at most 200 characters, escaped code spans with links neutralised, under a fixed header naming the source; rule ① yes first for mail and Drive; LOCAL model for calendar; links listed, never fetched; `reply-obeys-payload` still fires inside the block |
 | Content into a local write | A planted to-do or reminder text reaches the owner's own store | The store is local and addressed to the owner; the owner approves the exact text with its source shown; undo exists | `todo.add` and `reminder.create` only; the exact payload and the source item on the ADR-0112 card (one-time, hash-bound); the payload comes from one named field of one item; no external write ever takes a content payload |
 | n019 Slack thread reply | Content picks the thread or writes the text | The thread is a listed result the owner sees; the text is the owner's own words | The ADR-0120 A6 action path with the approval card; several threads → ask; the reply text is asked from the owner, never drafted from content |
 
-### A4.3 Amended clauses
+### A4.3 Amended clauses (PROPOSED; not ratified, A4.8 item 7)
 
 - **A1-D2 (table).** The closed table becomes the A4 slot table, `AGENT_PLAN_HANDOFF_SLOTS` in
   `apps/quoky/src/tools/agent-plan-eval.ts` (copied in the `s2-handoff` corpus header and pinned equal). Rows marked
@@ -35270,7 +35274,10 @@ Owner decision 2026-11-09 ("A + B"). Candidate, D12 gates pending: `NL_ACTIVE_PR
   searched are fixed per source (subject and body for mail: both, A4.1 item 1; the API attendee field for attendees).
 - **A1-D6 / A1-D7 (template and pick).** A one-item handoff with exactly one structured candidate does not open a pick:
   the final run follows at once and the reply shows the value used in the fixed template line next to the result.
-  Several candidates, or any free-text keyword in a one-item handoff, keep the A1-D7 pick unchanged.
+  Several candidates, or any free-text keyword in a one-item handoff, keep the A1-D7 pick unchanged. An each-item
+  handoff that may send free text shows every exact value once in the fixed template (no per-value pick) and waits
+  for a closed yes on the next DM turn within 10 minutes (the A2 consent rules: single use, no default, any other turn
+  cancels); a no or no answer runs nothing.
 - **A1-D9 (runs).** The final run may follow the extraction run without an owner turn when the A4 outcome rule says
   `auto-run`. The continuation is still deterministic, makes no M1 or M1' call, and runs only the READ run 1 declared.
 - **A1-D10 / D7 (caps).** Unchanged numbers. Each-item values count against the 10 referenced values and the 10
@@ -35284,9 +35291,12 @@ Owner decision 2026-11-09 ("A + B"). Candidate, D12 gates pending: `NL_ACTIVE_PR
 
 For every meeting listed by steps 1–2 (scope `each-item`): the Jira keys found in that meeting (A1-D4 key grammar,
 visible projects) are looked up by key; a meeting with no key falls back to its title tokens (deterministic, the keyword
-filter) as one Jira keyword search. At most 10 values in total, else the decision (h) bounded ask. The values used
-are shown next to each meeting. No per-value pick, because every value comes from an item the owner designated, the
-destination is fixed, and each is shown.
+filter) as one Jira keyword search. At most 10 values in total, else the decision (h) bounded ask. No per-value pick:
+every value comes from an item the owner designated and the destination is fixed. **Batched preview (review round 1):**
+when any value is free text (a fallback title, or n066 / n071 titles), the reply first shows every exact value next to
+its meeting under the fixed template and nothing leaves until the owner's one closed yes; when every value is a
+closed-format key, the lookups run at once and the values are shown next to each meeting. The gold encodes this as
+`handoff.consent: "batch-preview"` (required exactly on an each-item handoff whose kind or fallback kind is free text).
 
 ### A4.5 Proposed `ARCHITECTURE.md` text (diff-style; NOT applied)
 
@@ -35297,15 +35307,35 @@ destination is fixed, and each is shown.
   in a one-item handoff, picked by the owner by number or retyped inside the pending handoff and passed through the
   same filters; single-use and turn-bound". Add: "A value proposed by content that the owner did not ask for is never a
   handoff value (owner-grounded, not content-grounded)."
+- **§8 item 3, "Content can never choose a step … never becomes a free-text argument, with one exception".** Replace
+  "one exception: the owner-confirmed handoff of ADR-0121 A1" with "two exceptions: the owner-confirmed handoff of
+  ADR-0121 A1 / A4 into a READ slot, and the exact payload of a local `todo.add` / `reminder.create` on an approval card
+  that shows it with its source item (ADR-0121 A4)".
+- **§8 item 3, "A closed-format id projected deterministically from a read result … never feeds … a write".** Add: "except
+  (a) through the owner-confirmed handoff, (b) as the item an owner's own write clause numbers or picks from this turn's
+  listing for a local content card (n147, n148), and (c) as the thread of a Slack reply that the owner picks from a
+  listing they saw, with the reply text in the owner's own words, on the approval card (n019, ADR-0120 A6)".
+- **§8 item 3, "Such a value, picked or retyped, is labelled `OWNER_CONFIRMED`".** Replace with "Such a value, picked,
+  retyped, shown and run as the one structured candidate, or shown in an accepted batch preview, is labelled
+  `OWNER_CONFIRMED`" (the label's limits are unchanged: never `TRUSTED`, never a planner input, never a destination,
+  never part of an external write, never stored).
 - **§8 item 5.** Add after "separated by owner picks": "or, when the owner's words declared the flow and the closed
   extraction yields exactly one structured value (or each-item values within the cap), by a deterministic continuation
   that shows the values used. Whether it continues depends only on the count of values that pass the closed grammars
   and filters, never on what the content says."
 - **§10.** LOW row: "owner-confirmed handoff into a READ (ADR-0121 A1, A4) | the exact values shown; an owner pick when
-  several or free text; never a write". HIGH stays for every content-derived write; add: "A content-derived payload is
-  allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4)".
-- **§12.** In "Letting external content … become a free-text argument of a tool call", add "or as the exact payload of
-  a local `todo.add` / `reminder.create` on an approval card that shows it with its source (ADR-0121 A4)". In "Acting
+  several or free text in one item; one batched yes for each-item free text; never a write". HIGH stays for every
+  content-derived write; add: "A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the
+  approval card with the source shown (ADR-0121 A4)". In "The approval card shows the exact payload, the destination
+  (taken only from the owner's own words)", add "or, for a Slack thread reply, the thread the owner picked from a
+  listing they saw (ADR-0121 A4)". In "That handoff's pick is a consent step", replace with "That handoff's pick, and its
+  each-item batch yes, are consent steps, not approval cards; a single structured value runs without a consent step and
+  is shown with its result; none ever uses approval wording or authorizes a write".
+- **§12.** In "Letting external content … become a free-text argument of a tool call, except as an `OWNER_CONFIRMED`
+  value in the one READ slot an owner-confirmed handoff declared (ADR-0121 A1)", replace the parenthesis with "(ADR-0121
+  A1; under A4 also a shown single structured value or an accepted batch preview, at most 10 values)", and add "or as the
+  exact payload of a local `todo.add` / `reminder.create` on an approval card that shows it with its source (ADR-0121
+  A4)". In "Acting
   on instructions found in content", replace "Content may only be summarized" with "Content may only be summarized or
   quoted as a fixed, inert list (ADR-0121 A4)".
 
@@ -35317,13 +35347,16 @@ destination is fixed, and each is shown.
   holds the owner-approved target. An awaiting case is **never scored**, even with `--include-pending`, and an
   explicit `--cases` request for one throws. When a slice lands, its PR moves the target into `expect`, sets the
   status to `approved`, and re-runs the gates (D12 for prompt changes). No check of an unchanged case was relaxed.
+- **Security floor (review round 1).** Until an awaiting case's slices land, the red-team runners assert 0 successes on
+  its built `expect` and `success` (S2 read + write and SR-1 alike, SR-1 schema §11): the awaited target never lowers
+  what is checked today. The target and its `success` replace them only in the PR that builds the slice.
 - **Counts.** Plan gold (`agent-plan.v1.json`): 62 relabelled, 21 to `approved` (12 of them asks) and 41 awaiting
   (31 handoffs, 6 request lists, 1 link list, 1 read-and-clarify, 2 read-and-content-card); the gate composition is now
   281 approved, 0 pending, 41 awaiting. S2 read + write (`agent-redteam.s2-read-write.v1.json`): 24 approved, 10
   awaiting (7 content cards, 3 read-and-clarify); success condition `content-card-breach` added. SR-1
   (`agent-redteam.s2-read.v1.json`): `113`, `123`, `168` await the request list after the bound rule-① yes, `139`
   (calendar) the request list unavailable; `requestListJudging` defines the judging. The SR-1 judge is unchanged.
-- **Red team.** New family `s2-handoff`, batch HO-1, 14 agent-drafted cases pending the owner
+- **Red team.** New family `s2-handoff`, batch HO-1, 18 agent-drafted cases pending the owner
   (`agent-redteam.s2-handoff.v1.json`, schema: `docs/plans/agent-redteam-s2-read-schema.md` §12). A1-D15 still needs
   at least 80 owner-approved cases before H1.
 
@@ -35339,7 +35372,7 @@ destination is fixed, and each is shown.
 | A4-S6 content-local-write card | the card with the content payload and its source | 9 |
 | A4-S7 slack-thread-reply | the thread reply action with the ask-if-several thread pick | 1 |
 | A4-S8 read-write-clarify | read, then the A6 clarification | 3 |
-| A4-S9 handoff-redteam | the `s2-handoff` runner and the corpus to ≥ 80 owner-approved cases | HO-1 |
+| A4-S9 handoff-redteam | the `s2-handoff` runner and the corpus to ≥ 80 owner-approved cases; follow-up cases: an M2 keyword from a mail body, `driveRef` | HO-1 |
 | confirm-slice | the SR-1 rule ① confirmation slice (already planned) | 7 |
 
 ### A4.8 Open questions for the owner
@@ -35354,4 +35387,5 @@ destination is fixed, and each is shown.
 5. Rule ① working defaults W1–W5 are still unconfirmed; pattern B on mail and Drive depends on them.
 6. The plan gate composition changed (21 newly approved cases, 12 of them asks); the next D12 / agent-plan run will
    measure against the new set. Approve the HO-1 batch, or send corrections.
-7. Ratify A4.5 (Strict) before A4-S2, A4-S5, A4-S6 or A4-S7 changes runtime behaviour.
+7. Ratify A4.3 (the A1 clause amendments and ratification item 7) and A4.5 (the constitution text), Strict, before
+   A4-S1, A4-S2, A4-S5, A4-S6 or A4-S7 changes runtime behaviour.
