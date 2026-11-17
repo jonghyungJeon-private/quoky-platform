@@ -166,8 +166,83 @@ export const AGENT_PLAN_NEGATIVE_FAMILIES = [
 ] as const;
 /** The family of the referenced `nl-intent.v1.json` cases (positives and negatives alike). */
 export const AGENT_PLAN_ONE_STEP_FAMILY = 'one-step';
-export const AGENT_PLAN_CASE_STATUSES = ['approved', 'pending-owner-approval'] as const;
+export const AGENT_PLAN_CASE_STATUSES = ['approved', 'pending-owner-approval', 'approved-awaiting-implementation'] as const;
 export type AgentPlanCaseStatus = (typeof AGENT_PLAN_CASE_STATUSES)[number];
+/**
+ * ADR-0121 A4 (the owner's review of 2026-11-17, decision (d)): the owner approved a NEW expected behaviour that is not
+ * built yet. The case's `expect` stays the behaviour of the code as built (the self-check still proves it), `awaiting`
+ * holds the approved target and the slices it waits for. Such a case is never scored, with or without
+ * `--include-pending`; the slice that builds the behaviour moves `awaiting` into the gold and sets the status `approved`.
+ */
+export const AGENT_PLAN_AWAITING_STATUS = 'approved-awaiting-implementation' satisfies AgentPlanCaseStatus;
+/** The ADR-0121 A4 implementation slices (DECISIONS.md, "ADR-0121 amendment A4") plus the SR-1 rule-① confirm slice. */
+export const AGENT_PLAN_A4_SLICES = ['A4-S1', 'A4-S2', 'A4-S3', 'A4-S4', 'A4-S5', 'A4-S6', 'A4-S7', 'A4-S8', 'A4-S9', 'confirm-slice'] as const;
+export type AgentPlanA4Slice = (typeof AGENT_PLAN_A4_SLICES)[number];
+/** A4 pattern A: the closed value kinds a handoff may extract (A1-D4, plus `driveRef` and `titleKeyword`). */
+export const AGENT_PLAN_HANDOFF_KINDS = ['date', 'jiraKey', 'email', 'attendee', 'prRef', 'driveRef', 'titleKeyword', 'keyword'] as const;
+/**
+ * A4 pattern A: the closed table of declared destination slots (`<entryId>.<slot>`) and the kinds each accepts (A1-D2,
+ * extended by A4). A `planned` slot needs a catalog addition first (slice A4-S3, each by its own ADR-0120 amendment).
+ */
+export const AGENT_PLAN_HANDOFF_SLOTS: Readonly<Record<string, { readonly kinds: readonly (typeof AGENT_PLAN_HANDOFF_KINDS)[number][]; readonly planned: boolean }>> = {
+  'calendar.events.range': { kinds: ['date'], planned: false },
+  'calendar.events.attendee': { kinds: ['email'], planned: true },
+  'mail.list.from': { kinds: ['attendee', 'email'], planned: false },
+  'mail.list.keyword': { kinds: ['titleKeyword'], planned: true },
+  'jira.issue.key': { kinds: ['jiraKey'], planned: true },
+  'jira.issues.keyword': { kinds: ['titleKeyword', 'keyword'], planned: false },
+  'jira.issues.person': { kinds: ['email'], planned: true },
+  'slack.search.keyword': { kinds: ['jiraKey', 'prRef', 'keyword'], planned: false },
+  'confluence.search.keyword': { kinds: ['titleKeyword'], planned: false },
+  'github.pr.ref': { kinds: ['prRef'], planned: true },
+  'drive.file.ref': { kinds: ['driveRef'], planned: true },
+};
+/** A4: the only writes whose payload may come from read content (through a card naming the text and its source). */
+export const AGENT_PLAN_CONTENT_WRITE_ENTRIES = ['todo.add', 'reminder.create'] as const;
+
+/** A4 pattern A: one declared handoff (A1-D9 form, plus `scope` and an optional fallback kind). */
+export interface AgentPlanHandoffTarget {
+  readonly from: number;
+  readonly kind: (typeof AGENT_PLAN_HANDOFF_KINDS)[number];
+  /** `one-item`: the item the owner designates or picks (A1-D3); `each-item`: every listed item, at most 10 values. */
+  readonly scope: 'one-item' | 'each-item';
+  /** `one-item` only: `first` when the owner's words name the newest item ("the last mail"), else `owner-pick`. */
+  readonly item?: 'owner-pick' | 'first';
+  readonly to: { readonly entryId: string; readonly slot: string; readonly args?: NlArgs };
+  /** p001: the kind used for an item that yields no value of `kind`. */
+  readonly fallback?: { readonly kind: (typeof AGENT_PLAN_HANDOFF_KINDS)[number]; readonly to: { readonly entryId: string; readonly slot: string } };
+}
+
+/** An owner-approved A4 target in the planner gold form (never scored before its slices land). */
+export type AgentPlanTarget =
+  | { readonly outcome: 'handoff'; readonly steps: readonly AgentPlanGoldStep[]; readonly ambiguity: 'CLEAR'; readonly handoff: AgentPlanHandoffTarget }
+  | { readonly outcome: 'request-list'; readonly steps: readonly AgentPlanGoldStep[]; readonly ambiguity: 'CLEAR'; readonly requests: { readonly from: number; readonly item: 'owner-pick' | 'first' } }
+  | { readonly outcome: 'link-list'; readonly steps: readonly AgentPlanGoldStep[]; readonly ambiguity: 'CLEAR'; readonly links: { readonly from: number } };
+
+/** An owner-approved A4 target of the read + write turn. */
+export interface AgentPlanReadWriteTarget {
+  readonly outcome: 'read-and-content-card' | 'read-and-clarify';
+  readonly readPlan: AgentPlanGoldPlan;
+  /** The slice whose validator change the read plan needs; until then it is parsed, not validated. */
+  readonly validatedBy?: AgentPlanA4Slice;
+  readonly write: {
+    readonly entryId: string;
+    readonly args?: NlArgs;
+    /** Args filled from read content (one item field of a read step); only for `AGENT_PLAN_CONTENT_WRITE_ENTRIES`. */
+    readonly contentArgs?: Readonly<Record<string, { readonly from: number; readonly at?: number; readonly field: string }>>;
+    /** Slack thread reply: the thread is a listed result of the read step, picked by the owner when there are several. */
+    readonly target?: { readonly from: number; readonly kind: 'thread'; readonly pick: 'ask-if-several' };
+    /** Args the owner must still give (the existing A6 clarification) before the card. */
+    readonly ask?: readonly string[];
+  };
+}
+
+export interface AgentPlanAwaiting {
+  readonly slices: readonly AgentPlanA4Slice[];
+  readonly decided: string;
+  readonly expect?: AgentPlanTarget;
+  readonly readWrite?: AgentPlanReadWriteTarget;
+}
 
 /** Decision (h): the expectation of an unbounded request: Core asks with a bounded suggestion (the planner's steps form). */
 export interface AgentPlanAskExpect {
@@ -225,6 +300,8 @@ export interface AgentPlanCase {
    * for the P3 part 3 runtime and its tests; the planner eval does not score it. The self-check proves its shape.
    */
   readonly readWrite?: AgentPlanReadWriteExpect;
+  /** ADR-0121 A4: the owner-approved target of an `approved-awaiting-implementation` case (never scored). */
+  readonly awaiting?: AgentPlanAwaiting;
   readonly note?: string;
 }
 
@@ -717,6 +794,8 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
     if (positive !== golden.id.startsWith('ap-p')) problems.push(`${at}: ap-p ids are positives, ap-n ids negatives`);
     if (positive !== (AGENT_PLAN_POSITIVE_FAMILIES as readonly string[]).includes(golden.family)) problems.push(`${at}: family does not match the expectation`);
     const prepared = caseContext(evalCaseOf(golden), corpus.fixture);
+    if ((golden.status === AGENT_PLAN_AWAITING_STATUS) !== (golden.awaiting !== undefined)) problems.push(`${at}: awaiting is present exactly on ${AGENT_PLAN_AWAITING_STATUS} cases`);
+    if (golden.awaiting !== undefined) problems.push(...awaitingProblems(at, golden.awaiting, prepared));
     if (isAgentPlanAskExpect(golden.expect)) {
       problems.push(...askCaseProblems(at, golden.expect, golden, prepared));
       continue;
@@ -829,6 +908,88 @@ function readWriteProblems(at: string, golden: AgentPlanCase, fixture: AgentPlan
   );
   if (!write.ok) problems.push(`${at}: the write does not validate on the write clause alone (${write.reason})`);
   else if (sortedArgs(write.value.args) !== sortedArgs(rw.write.args)) problems.push(`${at}: the write args are not canonical`);
+  return problems;
+}
+
+/**
+ * ADR-0121 A4: an owner-approved target is well-formed. Its read steps (and a read + write target's read plan, unless a
+ * named slice must change the validator first) validate today to a canonical `run` plan under the owner's own words; a
+ * handoff names a closed kind and a declared slot of the A4 table that accepts it (a planned slot waits for A4-S3); a
+ * content-filled write is a LOCAL write only (the security boundary: no external write ever takes read content).
+ */
+function awaitingProblems(at: string, awaiting: AgentPlanAwaiting, prepared: ReturnType<typeof caseContext>): string[] {
+  const problems: string[] = [];
+  if (!Array.isArray(awaiting.slices) || awaiting.slices.length === 0 || !awaiting.slices.every((slice) => (AGENT_PLAN_A4_SLICES as readonly string[]).includes(slice))) {
+    problems.push(`${at}: awaiting.slices lists closed A4 slices`);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(awaiting.decided ?? '')) problems.push(`${at}: awaiting.decided is the owner's decision date`);
+  if ((awaiting.expect === undefined) === (awaiting.readWrite === undefined)) problems.push(`${at}: awaiting holds exactly one target (expect or readWrite)`);
+  if ('skip' in prepared) return [...problems, `${at}: the input is skipped (${prepared.skip})`];
+  const canonicalRun = (what: string, gold: AgentPlanGoldPlan): number | undefined => {
+    const plan = parseAgentPlanOutput(JSON.stringify({ steps: gold.steps, ambiguity: gold.ambiguity }));
+    if (plan === null || plan.kind !== 'steps') {
+      problems.push(`${at}: the ${what} does not parse as a steps-form plan`);
+      return undefined;
+    }
+    const validation = validateAgentPlan(plan, prepared.ctx);
+    if (!validation.ok || validation.plan.kind !== 'run') problems.push(`${at}: the ${what} does not validate to a run plan (${validation.ok ? validation.plan.kind : validation.reason})`);
+    else if (graphDiff(validatedGraph(validation.plan.steps), goldGraph(gold)) !== undefined) problems.push(`${at}: the ${what} is not canonical`);
+    return gold.steps.length;
+  };
+  const readStep = (gold: AgentPlanGoldPlan, from: unknown, what: string): void => {
+    const step = typeof from === 'number' && Number.isInteger(from) ? gold.steps[from - 1] : undefined;
+    if (step === undefined || !('entryId' in step)) problems.push(`${at}: ${what} must name a read step of the target`);
+  };
+  const target = awaiting.expect;
+  if (target !== undefined) {
+    if (target.outcome !== 'handoff' && target.outcome !== 'request-list' && target.outcome !== 'link-list') return [...problems, `${at}: unknown awaiting outcome`];
+    canonicalRun('target steps', target);
+    if (target.outcome === 'handoff') {
+      const h = target.handoff;
+      readStep(target, h.from, 'handoff.from');
+      if (h.scope !== 'one-item' && h.scope !== 'each-item') problems.push(`${at}: handoff.scope is one-item or each-item`);
+      if ((h.scope === 'one-item') !== (h.item === 'owner-pick' || h.item === 'first')) problems.push(`${at}: a one-item handoff names its item (owner-pick or first), an each-item one none`);
+      for (const [what, kind, dest] of [['handoff', h.kind, h.to], ...(h.fallback !== undefined ? [['fallback', h.fallback.kind, h.fallback.to] as const] : [])] as const) {
+        const slot = AGENT_PLAN_HANDOFF_SLOTS[`${dest?.entryId}.${dest?.slot}`];
+        if (!(AGENT_PLAN_HANDOFF_KINDS as readonly string[]).includes(kind)) problems.push(`${at}: ${what} kind is not closed`);
+        if (slot === undefined) {
+          problems.push(`${at}: ${what} destination ${dest?.entryId}.${dest?.slot} is not in the A4 handoff table`);
+          continue;
+        }
+        if (!slot.kinds.includes(kind)) problems.push(`${at}: ${what} slot ${dest.entryId}.${dest.slot} does not take ${kind}`);
+        const exists = isNlWave1EntryId(dest.entryId) && OFFERED.get(dest.entryId)?.args.some((arg) => arg.name === dest.slot) === true;
+        if (exists === slot.planned) problems.push(`${at}: ${what} slot ${dest.entryId}.${dest.slot} is ${slot.planned ? 'planned but exists' : 'not in the catalog'}`);
+        if (slot.planned && !awaiting.slices.includes('A4-S3')) problems.push(`${at}: a planned destination waits for A4-S3`);
+      }
+    } else if (target.outcome === 'request-list') {
+      readStep(target, target.requests.from, 'requests.from');
+      if (target.requests.item !== 'owner-pick' && target.requests.item !== 'first') problems.push(`${at}: requests.item is owner-pick or first`);
+    } else readStep(target, target.links.from, 'links.from');
+  }
+  const rw = awaiting.readWrite;
+  if (rw !== undefined) {
+    if (rw.outcome !== 'read-and-content-card' && rw.outcome !== 'read-and-clarify') return [...problems, `${at}: unknown awaiting readWrite outcome`];
+    if (rw.validatedBy !== undefined) {
+      if (!awaiting.slices.includes(rw.validatedBy)) problems.push(`${at}: readWrite.validatedBy is one of the awaited slices`);
+      const plan = parseAgentPlanOutput(JSON.stringify(rw.readPlan));
+      if (plan === null || plan.kind !== 'steps') problems.push(`${at}: the readWrite read plan does not parse`);
+    } else canonicalRun('readWrite read plan', rw.readPlan);
+    const write = rw.write;
+    if (!isNlActionEntryId(write.entryId)) return [...problems, `${at}: the awaited write is not an A6 action id`];
+    const local = (AGENT_PLAN_CONTENT_WRITE_ENTRIES as readonly string[]).includes(write.entryId);
+    const contentArgs = Object.entries(write.contentArgs ?? {});
+    if (contentArgs.length > 0 && !local) problems.push(`${at}: read content may fill only a LOCAL write (${AGENT_PLAN_CONTENT_WRITE_ENTRIES.join(', ')})`);
+    if ((rw.outcome === 'read-and-content-card') !== contentArgs.length > 0) problems.push(`${at}: read-and-content-card and contentArgs go together`);
+    for (const [, source] of contentArgs) readStep(rw.readPlan, source.from, 'contentArgs.from');
+    if ((write.target !== undefined) !== (write.entryId === 'slack.post')) problems.push(`${at}: a thread target belongs to slack.post only`);
+    if (write.target !== undefined) readStep(rw.readPlan, write.target.from, 'write.target.from');
+    if (rw.outcome === 'read-and-clarify' && (write.ask ?? []).length === 0) problems.push(`${at}: read-and-clarify names the args it asks`);
+    const entry = NL_ACTION_ENTRIES[write.entryId];
+    if (entry !== undefined) {
+      const names = new Set(entry.args.map((arg) => arg.name));
+      for (const name of [...contentArgs.map(([name]) => name), ...(write.ask ?? []), ...Object.keys(write.args ?? {})]) if (!names.has(name)) problems.push(`${at}: ${write.entryId} has no arg ${name}`);
+    }
+  }
   return problems;
 }
 
@@ -998,7 +1159,11 @@ export function buildAgentPlanEvalPlan(
   const known = new Set(cases.map((golden) => golden.id));
   for (const id of options.cases ?? []) if (!known.has(id)) throw new Error(`unknown case ${id}`);
   const subset = options.cases !== undefined ? new Set(options.cases) : undefined;
-  const selected = cases.filter((golden) => (subset === undefined || subset.has(golden.id)) && (golden.status === 'approved' || options.includePending));
+  // ADR-0121 A4: a case awaiting the implementation of its approved target is never scored (its gold is not the target yet).
+  const scoreable = (golden: AgentPlanEvalCase): boolean => golden.status === 'approved' || (options.includePending && golden.status === 'pending-owner-approval');
+  const selected = cases.filter((golden) => (subset === undefined || subset.has(golden.id)) && scoreable(golden));
+  const awaiting = cases.filter((golden) => subset?.has(golden.id) === true && golden.status === AGENT_PLAN_AWAITING_STATUS).map((golden) => golden.id);
+  if (awaiting.length > 0) throw new Error(`requested cases await the implementation of their approved target (never scored): ${awaiting.join(',')}`);
   if (options.cases !== undefined && !options.includePending) {
     // An explicit --cases list is exact: a requested pending case is refused, never silently skipped.
     const pending = cases.filter((golden) => subset!.has(golden.id) && golden.status !== 'approved').map((golden) => golden.id);

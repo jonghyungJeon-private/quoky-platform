@@ -23,6 +23,7 @@ import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_
 import { Capability, type AiProvider } from '@quoky/core';
 import { parseNlIntentTimeoutMs } from '../nl-selection/nl-selection-config';
 import {
+  AGENT_PLAN_AWAITING_STATUS,
   AGENT_PLAN_EVAL_DEFAULT_TIMEOUT_MS,
   AGENT_PLAN_EVAL_GATE,
   agentPlanEvalCases,
@@ -222,8 +223,9 @@ export async function runCli(argv: readonly string[], deps: AgentPlanCliDeps = d
       cases = [...cases, ...fixture.cases];
       heldout = { name: fixtureName, sha256: fixture.sha256 };
     }
-    const pending = cases.filter((golden) => golden.status !== 'approved').length;
-    deps.stdout(`agent-plan corpus: ${cases.length} cases (${loaded.corpus.oneStep.count} one-step from ${loaded.corpus.oneStep.corpus}, ${loaded.corpus.cases.length} new; ${pending} pending the owner's approval); schema problems: ${problems.length}`);
+    const pending = cases.filter((golden) => golden.status === 'pending-owner-approval').length;
+    const awaiting = cases.filter((golden) => golden.status === AGENT_PLAN_AWAITING_STATUS).length;
+    deps.stdout(`agent-plan corpus: ${cases.length} cases (${loaded.corpus.oneStep.count} one-step from ${loaded.corpus.oneStep.corpus}, ${loaded.corpus.cases.length} new; ${pending} pending the owner's approval; ${awaiting} approved, awaiting implementation (never scored)); schema problems: ${problems.length}`);
     for (const problem of problems.slice(0, 50)) deps.stdout(`  ${problem}`);
     if (problems.length > 0) return EXIT_GATE_FAILED;
     plan = buildAgentPlanEvalPlan(cases, { corpusSha256: loaded.sha256, oneStepCorpusSha256: loaded.oneStepSha256 }, loaded.corpus.fixture, {
