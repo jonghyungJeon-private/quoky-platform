@@ -218,4 +218,3 @@ without a re-review. The slice that builds the behaviour moves the target into t
 - `read-and-clarify` (ap-n019, Slack thread reply): `write: {entryId: "slack.post", target: {from, kind: "thread", pick:
   "ask-if-several"}, ask: ["text"]}`: find the thread, ask which when several, ask for the owner's own text, then the
   approval card (allowlisted channels only). A `target` belongs to `slack.post` only; no external write takes content.
-
