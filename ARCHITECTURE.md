@@ -357,9 +357,14 @@ fixed; the implementations are not.
    - new tool classes.
 
    The owner-confirmed handoff is not content-conditioned control flow. It is a sequence of at most three runs
-   separated by owner picks or, when the owner's words declared the flow and the closed extraction yields exactly one structured value (or each-item values within the cap), by a deterministic continuation that shows the values used: a planning run, an optional deterministic extraction run after an item pick, and a
-   deterministic final run after the value pick. Only the first run plans (no M1 or M1' later). The final run executes
-   only the READ the first run declared from the owner's words, once per picked value. Whether it continues depends only on the count of values that pass the closed grammars and filters, never on what the content says. A new handoff flow (source, kind or destination) needs its own amendment of ADR-0121.
+   separated by owner picks or, when the owner's words declared the flow and the closed extraction yields exactly one
+   structured value (or each-item values within the cap), by a deterministic continuation that shows the values used:
+   a planning run, an optional deterministic extraction run after an item pick (or over every listed item the owner's
+   words designate), and a deterministic final run after the value pick, the deterministic continuation, or the
+   owner's yes to the batched preview. Only the first run plans (no M1 or M1' later). The final run executes only the
+   READ the first run declared from the owner's words, once per picked, continued or accepted value. Whether it
+   continues depends only on the count of values that pass the closed grammars and filters, never on what the content
+   says. A new handoff flow (source, kind or destination) needs its own amendment of ADR-0121.
    The owner-confirmed minimal topic (ADR-0121 A2) is the same: a planning run that ends with the consent prompt,
    then, after the owner's yes or no, one deterministic continuation run with no M1 or M1'. On yes it makes only the
    answer call the first run's `answer` step declared; on no it re-executes the READ the first run declared and
