@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
 import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
 import {
   AGENT_PLAN_AWAITING_STATUS,
   AGENT_PLAN_CONTENT_WRITE_ENTRIES,
+  AGENT_PLAN_HANDOFF_SLOTS,
   AGENT_PLAN_NEGATIVE_FAMILIES,
   AGENT_PLAN_POSITIVE_FAMILIES,
   agentPlanEvalCases,
@@ -183,6 +185,11 @@ describe('ADR-0121 A4: the owner\'s 2026-11-17 verdicts (decision (d)) as approv
     expect(check(awaitingCases)).toEqual([]);
     // The planner path is unchanged: a raw cross-source reference stays refused even for a pattern-A request (A1-D15).
     for (const id of ['ap-n022', 'ap-n028', 'ap-n060', 'ap-n066']) expect(target(id).trapRefusal, id).toBe('ref-cross-source');
+  });
+
+  it('the s2-handoff red-team corpus (HO-1) declares the same handoff slot table', () => {
+    const handoff = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-handoff.v1.json', import.meta.url), 'utf8')) as { handoffSlots: unknown };
+    expect(handoff.handoffSlots).toEqual(AGENT_PLAN_HANDOFF_SLOTS);
   });
 
   it('pattern A targets are handoffs into the closed slot table; pattern B targets list requests or links and run nothing', () => {
