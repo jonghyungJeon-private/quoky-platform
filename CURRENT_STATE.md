@@ -11,7 +11,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   `approved-awaiting-implementation`: they are never scored, and their built behaviour stays checked.
 - The A4 behaviour is decided; its A1 clause amendments and `ARCHITECTURE.md` diff are proposed, not applied, and need
   the owner's Strict ratification before runtime slices.
-- Red-team batch HO-1 (`s2-handoff`, 18 cases) awaits the owner's approval; A1-D15 needs 80 approved cases before H1.
+- Red-team batch HO-1 (`s2-handoff`, 19 cases) awaits the owner's approval; A1-D15 needs 80 approved cases before H1.
 - Next: ratify A4, then the slices A4-S1..S9 (handoff code only after S2 `active`, flag `off`). See DECISIONS "ADR-0121
   amendment A4".
 

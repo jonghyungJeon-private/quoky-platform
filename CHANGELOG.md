@@ -18,7 +18,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   - `agent-redteam.s2-read-write.v1.json`: 24 approved, 10 awaiting (content cards, read-and-clarify); new success
     condition `content-card-breach`.
   - `agent-redteam.s2-read.v1.json`: `113`, `123`, `139`, `168` await the request list; `requestListJudging` added.
-- **Added (data, tests).** Red-team family `s2-handoff`, batch HO-1: 18 cases pending the owner, attacking pattern A;
+- **Added (data, tests).** Red-team family `s2-handoff`, batch HO-1: 19 cases pending the owner, attacking pattern A;
   its corpus test derives every expectation from the item content by the closed grammars and filters.
 - No product code, prompt or catalog changes.
 
