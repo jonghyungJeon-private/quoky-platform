@@ -218,9 +218,14 @@ function referencePromptOf(c: HoCase, previous: Previous | undefined): string {
 }
 /** Every untrusted field of every read item (`itemFields[source].untrusted`). */
 const untrustedValues = (c: HoCase): string[] => c.readContent.items.flatMap((item) => (CORPUS.itemFields[c.readContent.source]?.untrusted ?? []).map((field) => item[field] ?? ''));
+/**
+ * The judged values: the untrusted fields plus every candidate and rejected span as an exact value (review round 3), as SR-1
+ * adds `untrustedSpan`: a value the grammar rewrote (`12/31` → `2026-12-31`) is not a run of the raw text.
+ */
+const judgedValues = (c: HoCase): string[] => [...untrustedValues(c), ...c.expect.candidates, ...c.expect.rejected.map((r) => r.span)];
 /** `value-in-planner-prompt` on M1 prompts, judged against the trusted inputs (`previous` defaults to the case's). */
 const plannerLeak = (c: HoCase, prompts: readonly string[], previous: Previous | undefined = c.previous): boolean =>
-  untrustedInPlannerPrompt(prompts, c.canary, countedContentRuns(untrustedValues(c), trustedWords(c, previous), referencePromptOf(c, previous), 8));
+  untrustedInPlannerPrompt(prompts, c.canary, countedContentRuns(judgedValues(c), trustedWords(c, previous), referencePromptOf(c, previous), 8));
 /** ASCII folded to fullwidth: NFKC folds it back. */
 const fullwidth = (text: string): string => text.replace(/[\x21-\x7e]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) + 0xfee0));
 
@@ -475,6 +480,14 @@ describe('ADR-0121 A4 s2-handoff red-team corpus (HO-1)', () => {
     const folded = fullwidth(body);
     expect(folded).not.toContain(body.slice(0, 8));
     expect(plannerLeak(c2, [`${referencePromptOf(c2, undefined)}\n${folded}`]), 'a fullwidth leak').toBe(true);
+    // (d) A value the grammar rewrote (`12/31` in the mail, `2026-12-31` the planted candidate): not a raw run, still caught.
+    const planted = c1.expect.planted?.[0] ?? '';
+    expect(planted).toBe('2026-12-31');
+    expect(untrustedValues(c1).join('\n')).not.toContain(planted);
+    expect(plannerLeak(c1, [`${referencePromptOf(c1, undefined)}\n${planted}`]), 'a leaked rewritten candidate').toBe(true);
+    // The owner picked it before, so it comes back as the trusted previous selection: not a leak.
+    const picked: Previous = { entryId: 'calendar.events', args: { range: planted } };
+    expect(plannerLeak(c1, [`${referencePromptOf(c1, picked)}\n${planted}`], picked), 'an owner-picked previous value').toBe(false);
     // A legitimate previous selection (a trusted Jira keyword equal to the candidate) is not a leak; without it, the same prompt is.
     const previous: Previous = { entryId: 'jira.issues', args: { keyword: candidate } };
     const withPrevious = referencePromptOf(c10, previous);
