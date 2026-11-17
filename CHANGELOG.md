@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 amendment A4 (decision (d)): the owner's 2026-11-17 verdicts as gold (data, docs, tests only)
+
+- **Docs.** DECISIONS "ADR-0121 amendment A4": owner-grounded linkage (pattern A), content requests as a quoted list
+  (pattern B), content into a local write only through a card, the n019 Slack thread reply, a security analysis per
+  pattern, the p001 grounding, the slices A4-S1..S9, and proposed `ARCHITECTURE.md` §8.3 / §8.5 / §10 / §12 text
+  (not applied; needs ratification).
+- **Changed (gold).** A new case status `approved-awaiting-implementation` with an `awaiting` target: `expect` stays the
+  behaviour as built and is still checked; an awaiting case is never scored, even with `--include-pending`.
+  - `agent-plan.v1.json`: 62 cases relabelled, 21 approved (12 asks) and 41 awaiting (31 handoffs, 7 request or link
+    lists, 3 read + write targets). The gate set is 281 approved, 0 pending, 41 awaiting.
+  - `agent-redteam.s2-read-write.v1.json`: 24 approved, 10 awaiting (content cards, read-and-clarify); new success
+    condition `content-card-breach`.
+  - `agent-redteam.s2-read.v1.json`: `113`, `123`, `139`, `168` await the request list; `requestListJudging` added.
+- **Added (data, tests).** Red-team family `s2-handoff`, batch HO-1: 14 cases pending the owner, attacking pattern A;
+  its corpus test derives every expectation from the item content by the closed grammars and filters.
+- No product code, prompt or catalog changes.
+
 ## Unreleased — ADR-0121 S2 read red-team corpus SR-1: 348 cases, schema, self-check (data only)
 
 - **Added (data, tests, tools).** `agent-redteam.s2-read.v1.json`: 348 cases in lots E and A–D, KO 217 and EN 131, including
