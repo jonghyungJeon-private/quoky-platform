@@ -35406,3 +35406,36 @@ closed-format key, the lookups run at once and the values are shown next to each
    measure against the new set. Approve the HO-1 batch, or send corrections.
 7. Ratify A4.3 (the A1 clause amendments and ratification item 7) and A4.5 (the constitution text), Strict, before
    A4-S1, A4-S2, A4-S5, A4-S6 or A4-S7 changes runtime behaviour.
+
+
+## ADR-0121 amendment A4 — ratification record (owner, 2026-11-18)
+
+Status: Accepted (Strict). This section is an append-only record; the A4 section above is unchanged.
+
+- **Ratified.** On 2026-11-18 the Product Owner answered "권장안대로, 비준". A4.3 (the amended A1 clauses and the narrow
+  amendment of ratification item 7) and A4.5 (the `ARCHITECTURE.md` text for §8 items 3 and 5, §10 and §12) are ratified,
+  Strict. The A4.5 text is applied to `ARCHITECTURE.md` in the same change. A4.8 item 7 is closed.
+- **Slices unblocked.** A4-S1, A4-S2, A4-S5, A4-S6 and A4-S7 may now change runtime behaviour. The A1 rollout order still
+  holds: handoff code only after S2 is `active`, behind `QUOKY_AGENT_HANDOFF=off`. Each prompt change still needs the D12
+  gates, and each model evaluation still needs the owner's notice and a yes before it starts.
+- **A4.8 answers (recommended answers accepted).**
+  1. n036: allowed as a separate small task, the new slice **A4-S10** (below). Not implemented in this change.
+  2. n147 / n148 "요약해줘" is the summary of item 3 only (the item added). Confirmed as encoded.
+  3. A free-text keyword with one candidate still asks (RA-2). Confirmed as encoded.
+  4. Pattern B number reply: allowed. "2번 해줘" against a shown request list prefills an ordinary request in the owner's
+     name that the owner then confirms. Any write still goes through the normal approval card. The number reply alone never
+     executes anything and is never a receipt of content authority. This replaces the conservative default of A4.2 and
+     A4.8 item 4 ("the owner restates the request").
+  7. A4.3 and A4.5 ratified (above).
+- **Still open.** Item 5 (rule ① working defaults W1–W5) and item 6 (the HO-1 lot approval and the plan gate
+  composition).
+- **New slice A4-S10, n036 quoted-text Slack search.** When the owner's own message quotes text and asks who said it or
+  where it came from, Quoky may search Slack for that quoted text as the keyword. Constraints: the quote must be in the
+  owner's own turn (never proposed by content); read-only search; one query; bounded keyword length; the results are shown
+  as a listing; no write. It needs its own design, gold and red-team cases before any runtime change. Until then n036
+  stays as built (a quoted request plus "who sent this?" plans nothing).
+- **Gold and docs for item 4.** The number-reply wording was recorded in the `ap-n023`, `ap-n024`, `ap-n026`, `ap-n029`,
+  `ap-n030` and `ap-n032` notes (`agent-plan.v1.json`), in `docs/plans/agent-redteam-s2-read-schema.md` (SR-1 request-list
+  section) and in `docs/plans/agent-plan-review.md`. No `expect` and no red-team floor changed; the `requestListJudging`
+  header is unchanged (it does not encode the restate rule). The A4 section's own A4.2 table row still reads "the owner
+  must restate"; this record supersedes it.

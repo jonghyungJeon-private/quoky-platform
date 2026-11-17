@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A4 ratified (2026-11-18, branch `claude/v5-a4-ratify`)
+
+- The owner ratified A4.3 and A4.5 (Strict) and accepted the recommended A4.8 answers 1–4; `ARCHITECTURE.md` carries the A4.5
+  text. Slices A4-S1, S2, S5, S6 and S7 may now change runtime behaviour (handoff code only after S2 `active`, flag `off`).
+- New slice A4-S10 (n036 quoted-text Slack search): its own design, gold and red-team cases first. A number reply
+  ("2번 해줘") prefills an ordinary request the owner confirms; it never executes by itself.
+- Open: rule ① working defaults W1–W5, and the HO-1 lot approval with the plan gate composition. See DECISIONS "ADR-0121
+  amendment A4 — ratification record".
+
 ### ADR-0121 amendment A4 (decision (d)) recorded as gold (2026-11-17, branch `claude/v5-decision-d`)
 
 - The owner's verdicts on the 100 held S2 cases are applied. Owner-approved targets that are not built carry the status

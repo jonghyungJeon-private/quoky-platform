@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 amendment A4 ratified (2026-11-18)
+
+- **Docs.** The owner ratified A4.3 and A4.5 (Strict); the A4.5 text is applied to `ARCHITECTURE.md` §8 items 3 and 5,
+  §10 and §12. DECISIONS gets the append-only "ADR-0121 amendment A4 — ratification record". Slices A4-S1, S2, S5, S6 and
+  S7 may now change runtime behaviour (handoff code only after S2 `active`, flag `off`).
+- **A4.8 answers.** Items 1–4 and 7 accepted: new slice A4-S10 (n036 quoted-text Slack search, own design and gold first);
+  n147 / n148 summarise item 3 only; a free-text keyword with one candidate still asks; a number reply ("2번 해줘") prefills
+  an ordinary request the owner confirms and never executes by itself. Items 5 (W1–W5) and 6 (HO-1, plan gate) stay open.
+- **Changed (gold notes, docs).** Item 4 wording in six `agent-plan.v1.json` notes, the SR-1 schema and the plan review.
+  No `expect` or red-team floor changed. No product code, prompt or catalog changes.
+
 ## Unreleased — ADR-0121 amendment A4 (decision (d)): the owner's 2026-11-17 verdicts as gold (data, docs, tests only)
 
 - **Docs.** DECISIONS "ADR-0121 amendment A4": owner-grounded linkage (pattern A), content requests as a quoted list
