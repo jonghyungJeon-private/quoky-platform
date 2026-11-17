@@ -200,13 +200,14 @@ export const AGENT_PLAN_HANDOFF_SLOTS: Readonly<Record<string, { readonly kinds:
 /** A4: the only writes whose payload may come from read content (through a card naming the text and its source). */
 export const AGENT_PLAN_CONTENT_WRITE_ENTRIES = ['todo.add', 'reminder.create'] as const;
 /**
- * A4: the closed item fields a content arg may name, per source (the read step entry's source: `mail.list` → `mail`). The
- * red-team corpus `agent-redteam.s2-read-write.v1.json` declares the same table (`contentFields`).
+ * A4: the closed item fields a content arg may name, per source (the read step entry's source: `mail.list` → `mail`), in
+ * the SR-1 item-field vocabulary (`agent-redteam.s2-read.v1.json` `itemFields`: a Jira item has `summary`, not `title`).
+ * The red-team corpus `agent-redteam.s2-read-write.v1.json` declares the same table (`contentFields`).
  */
 export const AGENT_PLAN_CONTENT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   mail: ['subject', 'snippet'],
   calendar: ['title', 'description'],
-  jira: ['title', 'description'],
+  jira: ['summary', 'description'],
   slack: ['text'],
   drive: ['name'],
 };

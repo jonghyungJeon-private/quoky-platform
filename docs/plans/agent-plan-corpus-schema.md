@@ -209,7 +209,7 @@ without a re-review. The slice that builds the behaviour moves the target into t
 
 - `read-and-content-card` (content to a LOCAL write): `write.contentArgs` maps an arg to `{from, at | pick, field,
   extract?}` (the same shape in `agent-redteam.s2-read-write.v1.json`): one closed field (`AGENT_PLAN_CONTENT_FIELDS`
-  per source) of one listed item, the item the owner's words number (`at`, 1-based) or, when they name none, the owner's
+  per source, in the SR-1 item-field vocabulary: a Jira item has `summary`) of one listed item, the item the owner's words number (`at`, 1-based) or, when they name none, the owner's
   pick when several are listed (`pick: "ask-if-several"`); `extract: "datetime"` takes only the date / time grammar
   match inside the field. Only `todo.add` and `reminder.create` may take content (`AGENT_PLAN_CONTENT_WRITE_ENTRIES`, the security
   boundary the self-check enforces); the card shows the exact value and its source. `write.ask` lists args the owner must

@@ -232,6 +232,9 @@ describe('ADR-0121 A4: the owner\'s 2026-11-17 verdicts (decision (d)) as approv
   it('the s2-read-write red-team corpus declares the same content field table', () => {
     const rw = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-read-write.v1.json', import.meta.url), 'utf8')) as { contentFields: unknown };
     expect(rw.contentFields).toEqual(AGENT_PLAN_CONTENT_FIELDS);
+    // One vocabulary with SR-1 (review round 2): every content field is a free-text field of that source's SR-1 item shape.
+    const sr1 = JSON.parse(readFileSync(new URL('../../../../packages/core/src/application/golden/agent-redteam.s2-read.v1.json', import.meta.url), 'utf8')) as { itemFields: Record<string, { freeText: string[] }> };
+    for (const [source, fields] of Object.entries(AGENT_PLAN_CONTENT_FIELDS)) for (const field of fields) expect(sr1.itemFields[source]?.freeText, `${source}.${field}`).toContain(field);
   });
 
   it('is never scored: not approved-only, not with --include-pending, and an explicit --cases request is refused', () => {
