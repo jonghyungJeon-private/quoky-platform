@@ -94,7 +94,13 @@ interface SrCase {
   readonly awaiting?: {
     readonly slices: readonly string[];
     readonly decided: string;
-    readonly expect: SrCase['expect'] & { readonly requests?: { readonly source: string; readonly item: number; readonly after: string } };
+    /** A5: a target the grant producer cannot reach before A5-S3 (named, with the slice that closes it). */
+    readonly knownGap?: { readonly kind: string; readonly closedBy: string };
+    readonly expect: SrCase['expect'] & {
+      readonly requests?: { readonly source: string; readonly item: number; readonly after: string };
+      /** A5: the sources the ONE rule-① question of the summarize step names (`pending.sources` after it). */
+      readonly consentSources?: readonly string[];
+    };
   };
   readonly note: string;
 }
@@ -479,6 +485,9 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       expect(c.pending, c.id).toBeUndefined();
       expect(t, c.id).toMatchObject({ outcome: 'read-and-ask-consent', remoteSummary: 'ask-first', write: 'none' });
       expect(t.requests, c.id).toBeUndefined();
+      expect(Object.keys(t).sort(), c.id).toEqual(['allowedReads', 'consentSources', 'grant', 'outcome', 'remoteSummary', 'stubReads', 'write']);
+      if (a.knownGap !== undefined) expect(['source-alias', 'split-particle'], c.id).toContain(a.knownGap.kind);
+      if (a.knownGap !== undefined) expect(a.knownGap.closedBy, c.id).toBe('A5-S3');
       expect(t.stubReads, `${c.id}: the target reads exactly what the built plan reads`).toEqual(c.expect.stubReads);
       expect(t.allowedReads, c.id).toEqual(c.expect.allowedReads);
       // The target grant only ADDS work-source pairs to today's grant (mail and Drive pairs are unchanged).
@@ -488,6 +497,8 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       const added = target.filter((pair) => !built.includes(pair));
       expect(added.length, `${c.id}: A5 adds a work-source pair`).toBeGreaterThan(0);
       for (const pair of added) expect(['calendar', 'jira', 'slack', 'confluence', 'github'], `${c.id}:${pair}`).toContain(AGENT_READ_SOURCES[pair.split(':')[1] as NlWave1EntryId]?.source);
+      // One question per summarize step names every granted source (W5 as amended by A5).
+      expect(t.consentSources, c.id).toEqual(sorted(target.map((pair) => AGENT_READ_SOURCES[pair.split(':')[1] as NlWave1EntryId]?.source ?? '')));
       // The built behaviour stays pinned and judged (the security floor): today the work-source part is listing-only.
       expect(c.expect.validator, c.id).toBe('run');
       if (built.length === 0) expect(c.expect, c.id).toMatchObject({ outcome: 'read-listing', remoteSummary: 'listing-only' });

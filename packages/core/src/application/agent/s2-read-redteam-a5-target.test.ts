@@ -12,6 +12,9 @@ import { flowLabel, type FlowLabel } from '../../domain/flow-label';
  */
 const A5_SOURCES = ['calendar', 'jira', 'slack', 'confluence', 'github'];
 
+// The mock replaces `readOutputLabel` for EVERY importer of `flow-policy` in this file's module graph, not only the grant
+// producer. That is safe here because the only other code this test runs is `validateAgentPlan`, which does not read the label
+// (asserted below from its source), and `structure-projector` / `quarantined-summary` (the other readers) are never called.
 vi.mock('./flow-policy', async (importOriginal) => {
   const real = await importOriginal<typeof import('./flow-policy')>();
   return {
@@ -46,7 +49,7 @@ interface Case {
   readonly channel?: string;
   readonly planner?: readonly PlannerStep[];
   readonly expect: { readonly grant?: readonly string[] };
-  readonly awaiting?: { readonly decided: string; readonly expect: { readonly grant?: readonly string[] } };
+  readonly awaiting?: { readonly decided: string; readonly knownGap?: { readonly kind: string; readonly closedBy: string }; readonly expect: { readonly grant?: readonly string[] } };
 }
 
 const CORPUS = JSON.parse(readFileSync(new URL('../golden/agent-redteam.s2-read.v1.json', import.meta.url), 'utf8')) as {
@@ -55,6 +58,24 @@ const CORPUS = JSON.parse(readFileSync(new URL('../golden/agent-redteam.s2-read.
 };
 
 /** The 112 SR-1 cases the owner's 2026-11-18 decision changes (DECISIONS.md "ADR-0121 amendment A5", A5.6). */
+/**
+ * A5 known gaps (review round 1): owner-intent summaries the producer cannot ground even under the proposed label. Their
+ * target is set by hand to the summarize step's covered work-source reads and waits for A5-S3, which closes the gap
+ * structurally (catalog source names; the separable particle of the existing word "sum up"), never with a phrase list.
+ */
+const KNOWN_GAPS: Readonly<Record<string, 'source-alias' | 'split-particle'>> = {
+  'rt-s2r-002': 'source-alias',
+  'rt-s2r-204': 'split-particle',
+  'rt-s2r-232': 'split-particle',
+  'rt-s2r-244': 'source-alias',
+  'rt-s2r-246': 'split-particle',
+  'rt-s2r-248': 'source-alias',
+  'rt-s2r-250': 'source-alias',
+  'rt-s2r-255': 'source-alias',
+  'rt-s2r-257': 'source-alias',
+  'rt-s2r-414': 'source-alias',
+};
+
 const A5_CASES = [
   6, 11, 128, 129, 130, 131, 134, 136, 137, 141, 201, 202, 203, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222,
   223, 224, 225, 226, 227, 228, 229, 230, 231, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 245, 247, 249, 251, 252, 253, 254, 256, 258, 259,
@@ -92,12 +113,33 @@ describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision
   it('are exactly the cases whose grant gains a work-source pair under the proposed label, and they carry that grant as the target', () => {
     const changed = CORPUS.cases.filter((c) => a5Grant(c).some(isWork)).map((c) => c.id);
     expect(changed).toEqual(A5_CASES);
-    const marked = CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18').map((c) => c.id);
+    const marked = CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18' && c.awaiting.knownGap === undefined).map((c) => c.id);
     expect(marked).toEqual(A5_CASES);
     for (const c of CORPUS.cases.filter((x) => A5_CASES.includes(x.id))) {
       expect(c.status, c.id).toBe('approved-awaiting-implementation');
       expect(c.awaiting?.expect.grant, c.id).toEqual(a5Grant(c));
     }
+  });
+
+  it('pins the known gaps: the producer still mints no work-source pair, and the target is the step\'s covered work-source reads', () => {
+    const gaps = CORPUS.cases.filter((c) => c.awaiting?.knownGap !== undefined);
+    expect(gaps.map((c) => c.id)).toEqual(Object.keys(KNOWN_GAPS));
+    for (const c of gaps) {
+      expect(c.awaiting?.decided, c.id).toBe('2026-11-18');
+      expect(c.awaiting?.knownGap, c.id).toEqual({ kind: KNOWN_GAPS[c.id], closedBy: 'A5-S3' });
+      // Still a gap: when A5-S3 lands this flips, and its PR moves the case to A5_CASES.
+      expect(a5Grant(c).some(isWork), c.id).toBe(false);
+      const planner = c.planner ?? [];
+      const step = planner.findIndex((s) => s.summarize !== undefined) + 1;
+      const covered = (planner[step - 1]?.summarize ?? []).map((from) => `${step}:${planner[from - 1]?.entryId ?? ''}`).filter(isWork);
+      expect(covered.length, c.id).toBeGreaterThan(0);
+      expect(c.awaiting?.expect.grant, c.id).toEqual([...new Set(covered)].sort());
+    }
+  });
+
+  it('the label mock reaches only the grant producer: the plan validator does not read the label', () => {
+    const validator = readFileSync(new URL('./plan-validator.ts', import.meta.url), 'utf8');
+    expect(validator).not.toMatch(/readOutputLabel|from '\.\/(?:structure-projector|quarantined-summary|summary-grant)'/u);
   });
 
   it('models the label only: without the work-source pairs the producer mints exactly today\'s pinned grant', () => {

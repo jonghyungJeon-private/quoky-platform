@@ -7,12 +7,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### ADR-0121 amendment A5 recorded: work-source summaries under rule ① (2026-11-18, branch `claude/v5-work-summary`)
 
-- The owner decided that calendar, Jira, Slack, Confluence and GitHub items may be model-summarised like mail and Drive:
-  rule ① before every remote summary, the listed fields only, schema-bound and URL-free output, HOST_ONLY items withheld.
-- The clause and `ARCHITECTURE.md` amendments are proposed, not applied; Strict ratification is needed before slices
-  A5-S1..S3 change runtime. 112 SR-1 cases await implementation (`expect` unchanged, still judged).
-- Red-team lot WS-1 (≥ 50 per source) is defined; drafting it is A5-S4, and agent mode for these summaries needs 0
-  successes on it. Open: field table, work-text controls, W5 wording, W1–W5. See DECISIONS "ADR-0121 amendment A5".
+- The owner decided that, in the bounded agent, calendar, Jira, Slack, Confluence and GitHub items may be model-summarised
+  like mail and Drive: rule ① before every remote summary, the listed fields only, schema-bound and URL-free output,
+  HOST_ONLY items withheld. Recommended: no-training, non-vendor providers and a per-source switch (default off).
+- The clause, design and `ARCHITECTURE.md` amendments are proposed, not applied; Strict ratification is needed before
+  slices A5-S1..S3 change runtime. 122 SR-1 cases await implementation (10 of them known gaps closed by A5-S3; `expect`
+  unchanged, still judged).
+- Red-team lot WS-1 (50 per source) is defined; drafting it is A5-S4, and a source's switch needs 0 successes on it.
+  Open: 9 owner questions, including rule ① for the ADR-0100 D8 lookup. See DECISIONS "ADR-0121 amendment A5".
 
 ### ADR-0121 amendment A4 ratified (2026-11-18, branch `claude/v5-a4-ratify`)
 
