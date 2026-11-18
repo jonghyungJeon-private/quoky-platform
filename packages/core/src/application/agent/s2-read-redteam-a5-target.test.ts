@@ -57,7 +57,6 @@ const CORPUS = JSON.parse(readFileSync(new URL('../golden/agent-redteam.s2-read.
   readonly cases: readonly Case[];
 };
 
-/** The 112 SR-1 cases the owner's 2026-11-18 decision changes (DECISIONS.md "ADR-0121 amendment A5", A5.6). */
 /**
  * A5 known gaps (review round 1): owner-intent summaries the producer cannot ground even under the proposed label. Their
  * target is set by hand to the summarize step's covered work-source reads and waits for A5-S3, which closes the gap
@@ -76,6 +75,7 @@ const KNOWN_GAPS: Readonly<Record<string, 'source-alias' | 'split-particle'>> = 
   'rt-s2r-414': 'source-alias',
 };
 
+/** The 112 SR-1 cases the owner's 2026-11-18 decision changes (DECISIONS.md "ADR-0121 amendment A5", A5.6). */
 const A5_CASES = [
   6, 11, 128, 129, 130, 131, 134, 136, 137, 141, 201, 202, 203, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222,
   223, 224, 225, 226, 227, 228, 229, 230, 231, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 245, 247, 249, 251, 252, 253, 254, 256, 258, 259,
