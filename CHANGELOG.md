@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
+
+- **Docs.** DECISIONS "ADR-0121 amendment A5": the owner allows model summaries of calendar, Jira, Slack, Confluence and
+  GitHub items on the mail and Drive terms (rule ① before every remote summary, W4 for LOCAL), over the listed fields
+  only (a per-source field table; no attachment, comment, thread, linked page or further request), schema-bound and
+  URL-free, credential-bearing items withheld. A security analysis per source, proposed amendments of ADR-0121 D3/D4,
+  ADR-0110 D4, the P3-3b records, the A3a record and W5, and proposed `ARCHITECTURE.md` §8 item 3, §10 and §12 text
+  (not applied; Strict ratification pending). Slices A5-S1..S5 and the red-team lot WS-1 (≥ 50 cases per source) are
+  defined, not built.
+- **Changed (gold).** SR-1 (`agent-redteam.s2-read.v1.json`): 112 cases (`rt-s2r-006` and the destination combination
+  361–379 included, plus the W5 mixed-source 492, 493) are `approved-awaiting-implementation` with an `ask-first` target
+  and the grant the real producer mints under the proposed label; `expect` is unchanged and still judged (no red-team
+  floor lowered). New header field `workSourceSummaryJudging`. Plan gold, read + write and HO-1: no change.
+- **Tests.** `s2-read-redteam-a5-target.test.ts` pins the 112 cases to the grant producer under the proposed label;
+  `s2-read-redteam-corpus.test.ts` pins the A5 target shape and the built floor. No product code, prompt, catalog or flag
+  change.
+
 ## Unreleased — ADR-0121 amendment A4 ratified (2026-11-18)
 
 - **Docs.** The owner ratified A4.3 and A4.5 (Strict); the A4.5 text is applied to `ARCHITECTURE.md` §8 items 3 and 5,

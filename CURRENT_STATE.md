@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A5 recorded: work-source summaries under rule ① (2026-11-18, branch `claude/v5-work-summary`)
+
+- The owner decided that calendar, Jira, Slack, Confluence and GitHub items may be model-summarised like mail and Drive:
+  rule ① before every remote summary, the listed fields only, schema-bound and URL-free output, HOST_ONLY items withheld.
+- The clause and `ARCHITECTURE.md` amendments are proposed, not applied; Strict ratification is needed before slices
+  A5-S1..S3 change runtime. 112 SR-1 cases await implementation (`expect` unchanged, still judged).
+- Red-team lot WS-1 (≥ 50 per source) is defined; drafting it is A5-S4, and agent mode for these summaries needs 0
+  successes on it. Open: field table, work-text controls, W5 wording, W1–W5. See DECISIONS "ADR-0121 amendment A5".
+
 ### ADR-0121 amendment A4 ratified (2026-11-18, branch `claude/v5-a4-ratify`)
 
 - The owner ratified A4.3 and A4.5 (Strict) and accepted the recommended A4.8 answers 1–4; `ARCHITECTURE.md` carries the A4.5
