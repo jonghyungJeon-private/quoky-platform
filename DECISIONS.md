@@ -36237,11 +36237,21 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   free text; a fallback only on each-item); the source is a plain read step of a listing source; each destination is a row
   of the slot table that accepts the kind, offered this turn, whose catalog entry declares the slot as an argument, never
   the source's own entry (a `planned` row is refused `handoff-slot` until A4-S3); the fixed destination args pass ADR-0120
-  D4 (the required slot itself may be missing only when no other fixed arg exists) and never preset the slot; and the owner's
-  OWN non-quoted words name the source entry and every destination entry by the catalog's own vocabulary (aliases, source
-  names, flag grounding words, the same rule the clause checks already use). Content therefore cannot propose a source, a
-  destination or a linkage. Closed refusals: `handoff-invalid`, `handoff-source`, `handoff-slot`, `handoff-args`,
-  `handoff-ungrounded`. The step number is Core's normalized one (a summary moves after the read it covers).
+  D4 (the required slot itself may be missing only when no other fixed arg exists) and never preset the slot; and ONE
+  clause of the owner's OWN words, inline quoted spans removed (`nlWithoutInlineQuotes`) and holding no exclusion or
+  negation marker, names the source entry and every destination entry by the catalog's own vocabulary (aliases, source
+  names, flag grounding words), with a distributive marker for `each-item` (`nlHasDistributiveMarker`, a closed
+  grammatical class: 마다, each, every, per, kept in Core like `nlHasExclusionOrNegation`). An each-item introductory phrase
+  that ends in a comma is joined to the clause after it ("for each meeting today, find ..." , n071); no other comma is
+  joined. The planner never sees content, so content cannot propose a handoff; this rule grounds the source, the
+  destination, their linkage in one clause and the scope in the owner's words, as built. **Limits (stated, not hidden):** it
+  does not check that the clause states the operation or the value kind (no vocabulary of that exists to read), so a
+  one-clause message that names both entries ("메일 일정 보여줘") can still carry a planner-invented handoff; the closed
+  slot table bounds the pairs, A4-S2's extractors bound the value, and the owner sees the value used. Closed refusals:
+  `handoff-invalid` (also for an over-bound plan that declares a handoff: rule 8 is never bypassed by the bounded ask),
+  `handoff-source`, `handoff-slot`, `handoff-args`, `handoff-ungrounded`. The step number is Core's normalized one (a
+  summary moves after the read it covers). Structural refusals run before grounding, so a planned slot is reported as
+  `handoff-slot`.
 - **Fail closed at runtime.** A validated handoff plan is declined `handoff-off` by `runActive` (no read), is logged in
   shadow as outcome `handoff` with closed fields only, and scores `wrong` (`handoff-unscored`) in the plan eval: no scored
   gold targets the form yet. `reply-notes` keeps its `run`/`clarify` plans only.
@@ -36252,3 +36262,12 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   `handoff-slot` and only those.
 - **Not done here.** Extractors, filters, template, pick, continuation runs and audit (A4-S2), the `planned` slots (A4-S3),
   the planner prompt rule and the mail-grammar precedence (A4-S4), pattern B (A4-S5), the content card (A4-S6).
+- **Review round 1 (2026-11-20).** Quoted spans are removed before catalog matching (a quote such as `"내 일정"` is no
+  request form, so the quoted-request veto never saw it); the linkage must sit in one clause and each-item needs the
+  distributive marker; a negated clause grounds nothing. **Owner examples ap-p001..p008:** their link crosses the verb
+  connective ("회의 정리하고 관련 jira 이슈도") with no distributive marker, so once A4-S3 opens `jira.issue.key` this rule
+  would refuse them `handoff-ungrounded`. They are refused as `handoff-slot` today; a decision (the A4.4 each-item ground for
+  a summarized listing) is needed before A4-S3/S4, and the rule is not widened here.
+- **A4-S2 precondition (recorded, not built).** `agentReadWriteProbeClauses` (`read-write-probe.ts`) judges `run` plans only;
+  a `handoff` plan is declined today, but before A4-S2 runs one it must also probe the uncovered write clause (for example
+  `메일 확인해서 일정 보고, 할 일 추가해줘`).

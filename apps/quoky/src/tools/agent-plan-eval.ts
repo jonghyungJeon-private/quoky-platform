@@ -876,7 +876,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       continue;
     }
     const refused = validateAgentPlan(trap, prepared.ctx);
-    if (refused.ok && refused.plan.kind === 'run') problems.push(`${at}: the trap validates to an executable plan`);
+    if (refused.ok && (refused.plan.kind === 'run' || refused.plan.kind === 'handoff')) problems.push(`${at}: the trap validates to an executable plan`);
     else if (!refused.ok && golden.trapRefusal !== undefined && refused.reason !== golden.trapRefusal) problems.push(`${at}: the trap is refused as ${refused.reason}, not ${golden.trapRefusal}`);
   }
   return problems;

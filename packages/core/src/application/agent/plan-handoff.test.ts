@@ -137,11 +137,41 @@ describe('handoff plan (validator rule 8)', () => {
   });
 
   it('grounding: the owner\'s own words must name the source entry and the destination entry', () => {
-    // The destination is named only inside a quoted span (not the owner's words): ungrounded.
+    // The destination is named only inside a quoted span (not the owner's words): ungrounded, in every quote form.
     expect(check(MAIL_TO_CALENDAR, '메일에 나온 날짜 봐줘')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(MAIL_TO_CALENDAR, '메일에 나온 날짜 봐줘. 제목은 "내 일정"이야')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(MAIL_TO_CALENDAR, "메일에 나온 날짜 봐줘. 제목은 '내 일정'이야")).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(MAIL_TO_CALENDAR, '메일에 나온 날짜 봐줘 “일정 확인해줘”')).toMatchObject({ ok: false });
     // The source is not named.
     expect(check(MAIL_TO_CALENDAR, '내 일정 비어 있는지 봐줘')).toMatchObject({ ok: false, reason: 'handoff-ungrounded', step: 1 });
     expect(check(MAIL_TO_CALENDAR, '')).toMatchObject({ ok: false });
+  });
+
+  it('linkage and scope: one clause of the owner\'s words names source and destination; each-item needs a distributive marker; a negated clause grounds nothing', () => {
+    // Two separate requests (two clauses) with an invented handoff between them.
+    expect(check(MAIL_TO_CALENDAR, '메일 보여주고 일정도 보여줘')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(MAIL_TO_CALENDAR, '메일 보고 일정 확인해줘')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(MAIL_TO_CALENDAR, '메일 보여줘, 일정도 보여줘')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    // each-item without a distributive marker.
+    const each = { ...MAIL_TO_CALENDAR, handoff: { from: 1, kind: 'date', scope: 'each-item', to: { entryId: 'calendar.events', slot: 'range' } } };
+    expect(check(each, '메일에 나온 날짜로 일정 확인해줘')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(each, '메일마다 나온 날짜로 일정 확인해줘').ok).toBe(true);
+    expect(check(each, 'for every mail check the calendar on its date').ok).toBe(true);
+    // The introductory distributive phrase joins the clause after its comma (an each-item form only).
+    const keyword = { steps: [{ entryId: 'calendar.events', args: { range: 'today', timedOnly: true } }], ambiguity: 'CLEAR', handoff: { from: 1, kind: 'titleKeyword', scope: 'each-item', to: { entryId: 'confluence.search', slot: 'keyword' }, consent: 'batch-preview' } };
+    expect(check(keyword, 'for each meeting today, find the confluence page about it').ok).toBe(true);
+    expect(check(keyword, 'meetings today, find the confluence page about it')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    // A negated clause grounds nothing.
+    expect(check(MAIL_TO_CALENDAR, '메일 보여줘, 일정은 보지마')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    expect(check(MAIL_TO_CALENDAR, '메일에 나온 날짜로 일정 확인하지 마')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+  });
+
+  it('an over-bound plan never bypasses rule 8: no bounded suggestion for an invalid or valid handoff', () => {
+    const five = Array.from({ length: 5 }, () => ({ entryId: 'mail.list', args: {} }));
+    expect(check(withHandoff({ kind: 'secret' }, five), '메일 보여줘')).toMatchObject({ ok: false, reason: 'handoff-invalid' });
+    expect(check(withHandoff({}, five), TEXT)).toMatchObject({ ok: false, reason: 'handoff-invalid' });
+    // Without a handoff the same plan is still the bounded ask.
+    expect(check({ steps: five, ambiguity: 'CLEAR' }, '메일 보여줘')).toMatchObject({ ok: true, plan: { kind: 'ask' } });
   });
 
   it('a handoff never rides on a reference, a non-listing source, the destination as its own source, or a non-DM turn', () => {

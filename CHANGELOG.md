@@ -39,7 +39,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — ADR-0121 amendment A4-S1: the handoff form in the plan schema and validator (2026-11-20)
 
 - **Added.** An optional `handoff` in the agent plan schema and rule 8 of the plan validator (closed kinds, scopes and
-  slot table in Core `handoff-slots.ts`; the owner's own words must name the source and destination entries; a planned
+  slot table in Core `handoff-slots.ts`; one clause of the owner's own words (quotes removed, no negation) must name the source and destination entries, and each-item needs a distributive marker; a planned
   slot, a content-proposed linkage, a non-CLEAR plan or a reference beside a handoff is refused). A validated handoff is a
   new plan kind that nothing runs yet: `runActive` declines it `handoff-off`, shadow logs it content-free.
 - **Tests.** `plan-handoff.test.ts`, the corpus self-check now runs the validator on all 31 A4-S1 targets (15 accepted, 16

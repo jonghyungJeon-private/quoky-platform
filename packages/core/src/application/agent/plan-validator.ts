@@ -2,8 +2,8 @@ import type { IsoTimestamp } from '../../domain';
 import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
-import { nlReadNotRequest } from '../nl-routing/read-statement';
-import { nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
+import { nlReadNotRequest, nlWithoutInlineQuotes } from '../nl-routing/read-statement';
+import { nlHasDistributiveMarker, nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
 import { NL_EN_MODAL_LEAD, NL_EN_REQUEST_LEADS, NL_GLUED_REQUEST_TAIL } from '../nl-routing/garbled-action';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
@@ -60,9 +60,14 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanHandoff, type Agent
  *    vocabulary of its own: the plan is `CLEAR` and holds no reference step; the kind, scope, item and consent are closed
  *    sets; the destination is a row of the closed slot table (`AGENT_HANDOFF_SLOTS`) that accepts the kind, offered this
  *    turn, whose catalog entry declares that slot as an argument (a `planned` row waits for A4-S3); the destination's fixed
- *    args pass ADR-0120 D4 and never preset the slot; and the owner's OWN non-quoted words name the source entry and the
- *    destination entry (their catalog aliases, as every clause rule here), so content can never propose a source, a
- *    destination or a linkage. The value itself is never in the plan: it is extracted later (A4-S2) under the closed
+ *    args pass ADR-0120 D4 and never preset the slot; and ONE clause of the owner's OWN words (inline quoted spans removed,
+ *    no exclusion or negation marker) names the source entry and every destination entry by the catalog's own vocabulary,
+ *    with a distributive marker (`nlHasDistributiveMarker`, a closed grammatical class) for `each-item`; an each-item
+ *    introductory phrase ending in a comma is joined to the clause after it. The planner never sees content, so content
+ *    cannot propose a handoff; this rule grounds the source, the destination, their linkage in one clause and the scope in
+ *    the owner's words as built. It does NOT check that the clause states the operation or the value kind (no vocabulary
+ *    exists for that; the closed slot table bounds the pairs, A4-S2's extractors bound the value, and the owner sees the
+ *    value used). The value itself is never in the plan: it is extracted later (A4-S2) under the closed
  *    grammars. The validated plan is `handoff`; no code runs it yet (agent mode is shadow, flag `QUOKY_AGENT_HANDOFF=off`).
  *
  * `NEEDS_CLARIFICATION` with every rule met is `clarify` (one numbered question), not a refusal.
@@ -301,6 +306,9 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     }
   }
   const unbounded = unboundedOf(steps, ctx);
+  // Rule 8 is never bypassed: an over-bound plan that declares a handoff is refused, not answered with a bounded suggestion
+  // that would silently drop the declaration (a handoff plan stays inside the read and call bounds by construction).
+  if (unbounded !== undefined && plan.form === 'steps' && plan.handoff !== undefined) return refuse('handoff-invalid');
   if (unbounded !== undefined) return askUnbounded(steps, unbounded, ctx);
   const temporal = steps.length > 1 ? stepTemporalTexts(steps, ctx) : undefined;
   const validated: ValidatedAgentStep[] = [];
@@ -800,17 +808,13 @@ function checkHandoff(
   }
   const source = validated[handoff.from - 1];
   if (source === undefined || source.kind !== 'read' || source.ref !== undefined || AGENT_READ_SOURCES[source.entry.id as NlWave1EntryId]?.refField === undefined) return refuse('handoff-source', handoff.from);
-  const clauses = planClauses(ctx.groundingText);
+  // The owner's own words, outside every inline quotation (a quoted word grounds nothing).
+  const own = planClauses(nlWithoutInlineQuotes(ctx.groundingText));
   // The entry's own catalog vocabulary: its aliases and source names, and the grounding words of its flag args ("meeting" of
   // the calendar's `timedOnly`), the same words every other clause rule here reads. No list of this rule's own.
-  const named = (entry: NlCatalogEntry): boolean =>
-    clauses.some(
-      (clause) =>
-        clauseNamesEntry(clause, entry) ||
-        entry.args.some((spec) => spec.kind === 'flag' && (spec.flagGrounding ?? []).some((word) => groundingWordIn(clause.normalized, normalizeForMatch(word)))),
-    );
-  // The owner's own words name the source entry (a handoff's source is never proposed by the plan alone or by content).
-  if (!named(source.entry)) return refuse('handoff-ungrounded', handoff.from);
+  const named = (unit: PlanClause, entry: NlCatalogEntry): boolean =>
+    clauseNamesEntry(unit, entry) ||
+    entry.args.some((spec) => spec.kind === 'flag' && (spec.flagGrounding ?? []).some((word) => groundingWordIn(unit.normalized, normalizeForMatch(word))));
   const destination = (kind: AgentHandoffKind, to: AgentPlanHandoffDestination): DestinationCheck => {
     const row = AGENT_HANDOFF_SLOTS[`${to.entryId}.${to.slot}`];
     const entry = isNlWave1EntryId(to.entryId) ? ctx.offered.get(to.entryId) : undefined;
@@ -825,7 +829,6 @@ function checkHandoff(
     // other fixed arg is declared (nothing else would have been checked before the missing-arg gate).
     const slotOnlyMissing = !result.ok && result.reason === 'missing-arg' && result.arg === to.slot && Object.keys(to.args).length === 0;
     if (!result.ok && !slotOnlyMissing) return refuse('handoff-args');
-    if (!named(entry)) return refuse('handoff-ungrounded');
     return { ok: true, to: { entry, slot: to.slot, args: result.ok ? result.value.args : {} } };
   };
   const main = destination(handoff.kind, handoff.to);
@@ -836,6 +839,27 @@ function checkHandoff(
     if (!checked.ok) return checked;
     fallback = { kind: handoff.fallback.kind as AgentHandoffKind, to: checked.to };
   }
+  // Grounding, last (the structural refusals above stay the more specific ones): ONE unit of the owner's words names the
+  // source and every destination, holds no exclusion or negation marker, and, for each-item, a distributive marker.
+  const units: PlanClause[] = [];
+  for (let index = 0; index < own.length; index += 1) {
+    let unit = own[index] as PlanClause;
+    const next = own[index + 1];
+    if (handoff.scope === 'each-item' && next !== undefined && nlHasDistributiveMarker(unit.text) && unit.words.at(-1)?.ends === 'comma') {
+      unit = { text: `${unit.text} ${next.text}`, normalized: `${unit.normalized} ${next.normalized}`, words: [...unit.words, ...next.words] };
+      index += 1;
+    }
+    units.push(unit);
+  }
+  const destinations = [main.to.entry, ...(fallback !== undefined ? [fallback.to.entry] : [])];
+  const grounded = units.some(
+    (unit) =>
+      !nlHasExclusionOrNegation(unit.text) &&
+      named(unit, source.entry) &&
+      destinations.every((entry) => named(unit, entry)) &&
+      (handoff.scope !== 'each-item' || nlHasDistributiveMarker(unit.text)),
+  );
+  if (!grounded) return refuse('handoff-ungrounded', handoff.from);
   return {
     ok: true,
     handoff: {

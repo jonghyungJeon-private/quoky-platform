@@ -56,6 +56,16 @@ export function nlHasExclusionOrNegation(prose: string): boolean {
 }
 
 /**
+ * ADR-0121 A4 (A4-S1): whether the prose holds a distributive marker, a closed grammatical class: the Korean distributive
+ * particle 마다 ("회의마다") and the English distributive determiners each / every / per. It is the only thing that grounds an
+ * each-item scope in the owner's own words; no topic word, no verb, no source name. Pure.
+ */
+export function nlHasDistributiveMarker(prose: string): boolean {
+  const text = normalizeForMatch(prose);
+  return /마다/u.test(text) || /(?:^|[^a-z])(?:each|every|per)(?![a-z])/u.test(text);
+}
+
+/**
  * Codex review of 68acf4f6 P2: whether the prose holds ANY grammatical negation, read without scope and without the light-verb
  * condition, for fail-closed callers that settle a request with no model call (the shown-release pick). On top of
  * {@link nlHasExclusionOrNegation}: the Korean short-form negation adverbs 안 / 못 (a closed grammatical class) standing

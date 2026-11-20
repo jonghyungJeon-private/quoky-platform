@@ -83,6 +83,14 @@ function hasUnconsumedQuotedRequest(text: string, args: NlArgs): boolean {
   return false;
 }
 
+/**
+ * The owner's prose with every inline quoted span removed (the same quote marks the quoted-request veto reads). What a caller
+ * matches in the result is the owner's own voice outside any quotation; a quoted word grounds nothing. Pure.
+ */
+export function nlWithoutInlineQuotes(prose: string): string {
+  return prose.replace(QUOTED, ' ');
+}
+
 /** The class of a READ capture that is not a request, or `undefined`. `groundingText` is the owner's non-platform-quoted words. */
 export function nlReadNotRequest(groundingText: string, args: NlArgs): NlReadNotRequest | undefined {
   const text = groundingText.normalize('NFC').replace(/\p{Cf}/gu, '');
