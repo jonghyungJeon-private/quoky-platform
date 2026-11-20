@@ -199,6 +199,8 @@ describe('s2-answer red-team data', () => {
     turnsBetween?: unknown[]; turns?: unknown[]; conversation?: string; replyPlatform?: string;
     fixture?: { nameFields?: string[]; pendingConsent?: { ageSeconds: number }; conversation?: string; replyPlatform?: string; turnsBetween?: unknown[]; serviceRestarted?: boolean };
     expected: Record<string, unknown> & { outcome?: string; topic?: string | null; consentOutcome?: string; classifierAssumption?: string };
+    /** ADR-0121 amendment A6 (owner verdicts of 2026-11-19): the target; `expected` stays the closed token set as built. */
+    awaiting?: { slices: string[]; decided: string; reason: string; expected: Record<string, unknown> };
   }
   const corpus = json<{ cases: Rt[] }>('s2-answer.redteam.v1.json');
   const cases = corpus.cases;
@@ -259,6 +261,35 @@ describe('s2-answer red-team data', () => {
       checked += 1;
     }
     expect(checked).toBeGreaterThanOrEqual(40);
+  });
+
+  it('ADR-0121 amendment A6: the owner-fixed consent replies await the answer by context; the built closed set stays the floor', () => {
+    // The owner's verdicts of 2026-11-19 on the same replies in SR-1 (ㅇㅇ, ok, 좋아, 보내, 응!! shape, fullwidth yes). Only the
+    // fullwidth yes is a closed token after the NFKC fold (the fast path, slice A6-S1); the rest need the classifier.
+    const A6: Record<string, string[]> = {
+      'rt-s2a-120': ['A6-S1', 'A6-S2', 'A6-S4'],
+      'rt-s2a-123': ['A6-S1', 'A6-S2', 'A6-S4'],
+      'rt-s2a-124': ['A6-S1', 'A6-S2', 'A6-S4'],
+      'rt-s2a-125': ['A6-S1', 'A6-S2', 'A6-S4'],
+      'rt-s2a-133': ['A6-S1', 'A6-S2', 'A6-S4'],
+      'rt-s2a-136': ['A6-S1'],
+    };
+    const marked = cases.filter((c) => c.awaiting !== undefined);
+    expect(marked.map((c) => c.id)).toEqual(Object.keys(A6));
+    const yes = cases.find((c) => c.id === 'rt-s2a-098')!.expected;
+    expect(yes.consentOutcome).toBe('yes');
+    for (const c of marked) {
+      const a = c.awaiting!;
+      expect(c.subFamily, c.id).toBe('consent');
+      expect([a.decided, a.slices], c.id).toEqual(['2026-11-19', A6[c.id]]);
+      expect(a.reason, c.id).toContain('ADR-0121 amendment A6 (owner verdict 2026-11-19)');
+      expect(a.expected, c.id).toEqual(yes);
+      // The floor: the built closed token set still cancels it, and a fresh question in the same DM is what it answers.
+      expect([c.expected.consentOutcome, consentClass(c.ownerReply!)], c.id).toEqual(['cancelled', 'cancelled']);
+      expect(c.fixture?.pendingConsent?.ageSeconds, c.id).toBeLessThan(600);
+      expect(c.conversation ?? c.replyPlatform ?? c.turnsBetween ?? c.turns, c.id).toBeUndefined();
+      expect(consentClass(c.ownerReply!.normalize('NFKC')) === 'yes', `${c.id}: NFKC fast path iff A6-S1 only`).toBe(A6[c.id]!.length === 1);
+    }
   });
 
   it('the topic oracle drops every Latin token over 20 characters and keeps one of exactly 20 (A2-D12, no alphabetic exception)', () => {

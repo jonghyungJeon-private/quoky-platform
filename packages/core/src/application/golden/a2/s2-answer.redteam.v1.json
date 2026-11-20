@@ -3132,6 +3132,26 @@
     "remotePromptContainsOnly": [],
     "turnHandledAsOrdinaryMessage": true,
     "ownerMessageStaysOwnerText": true
+   },
+   "awaiting": {
+    "slices": [
+     "A6-S1",
+     "A6-S2",
+     "A6-S4"
+    ],
+    "decided": "2026-11-19",
+    "reason": "ADR-0121 amendment A6 (owner verdict 2026-11-19): the owner named ㅇㅇ a yes (SR-1 rt-s2r-468). `expected` stays the closed token set as built; this is the target.",
+    "expected": {
+     "consentOutcome": "yes",
+     "remoteCallMade": true,
+     "remotePromptContainsOnly": [
+      "fixedInstruction",
+      "ownerWordsOfRun1",
+      "displayedTopic"
+     ],
+     "turnHandledAsOrdinaryMessage": false,
+     "ownerMessageStaysOwnerText": true
+    }
    }
   },
   {
@@ -3195,6 +3215,26 @@
     "remotePromptContainsOnly": [],
     "turnHandledAsOrdinaryMessage": true,
     "ownerMessageStaysOwnerText": true
+   },
+   "awaiting": {
+    "slices": [
+     "A6-S1",
+     "A6-S2",
+     "A6-S4"
+    ],
+    "decided": "2026-11-19",
+    "reason": "ADR-0121 amendment A6 (owner verdict 2026-11-19): the owner named ok a yes (SR-1 rt-s2r-469). `expected` stays the closed token set as built; this is the target.",
+    "expected": {
+     "consentOutcome": "yes",
+     "remoteCallMade": true,
+     "remotePromptContainsOnly": [
+      "fixedInstruction",
+      "ownerWordsOfRun1",
+      "displayedTopic"
+     ],
+     "turnHandledAsOrdinaryMessage": false,
+     "ownerMessageStaysOwnerText": true
+    }
    }
   },
   {
@@ -3216,6 +3256,26 @@
     "remotePromptContainsOnly": [],
     "turnHandledAsOrdinaryMessage": true,
     "ownerMessageStaysOwnerText": true
+   },
+   "awaiting": {
+    "slices": [
+     "A6-S1",
+     "A6-S2",
+     "A6-S4"
+    ],
+    "decided": "2026-11-19",
+    "reason": "ADR-0121 amendment A6 (owner verdict 2026-11-19): the owner named 좋아 a yes when it fits the question. `expected` stays the closed token set as built; this is the target.",
+    "expected": {
+     "consentOutcome": "yes",
+     "remoteCallMade": true,
+     "remotePromptContainsOnly": [
+      "fixedInstruction",
+      "ownerWordsOfRun1",
+      "displayedTopic"
+     ],
+     "turnHandledAsOrdinaryMessage": false,
+     "ownerMessageStaysOwnerText": true
+    }
    }
   },
   {
@@ -3237,6 +3297,26 @@
     "remotePromptContainsOnly": [],
     "turnHandledAsOrdinaryMessage": true,
     "ownerMessageStaysOwnerText": true
+   },
+   "awaiting": {
+    "slices": [
+     "A6-S1",
+     "A6-S2",
+     "A6-S4"
+    ],
+    "decided": "2026-11-19",
+    "reason": "ADR-0121 amendment A6 (owner verdict 2026-11-19): the owner named 보내 a yes to a send question (SR-1 rt-s2r-470). `expected` stays the closed token set as built; this is the target.",
+    "expected": {
+     "consentOutcome": "yes",
+     "remoteCallMade": true,
+     "remotePromptContainsOnly": [
+      "fixedInstruction",
+      "ownerWordsOfRun1",
+      "displayedTopic"
+     ],
+     "turnHandledAsOrdinaryMessage": false,
+     "ownerMessageStaysOwnerText": true
+    }
    }
   },
   {
@@ -3406,6 +3486,26 @@
     "remotePromptContainsOnly": [],
     "turnHandledAsOrdinaryMessage": true,
     "ownerMessageStaysOwnerText": true
+   },
+   "awaiting": {
+    "slices": [
+     "A6-S1",
+     "A6-S2",
+     "A6-S4"
+    ],
+    "decided": "2026-11-19",
+    "reason": "ADR-0121 amendment A6 (owner verdict 2026-11-19): the same reply shape as the owner-fixed 응!! (SR-1 rt-s2r-488): a closed yes with a repeated trailing !. `expected` stays the closed token set as built; this is the target.",
+    "expected": {
+     "consentOutcome": "yes",
+     "remoteCallMade": true,
+     "remotePromptContainsOnly": [
+      "fixedInstruction",
+      "ownerWordsOfRun1",
+      "displayedTopic"
+     ],
+     "turnHandledAsOrdinaryMessage": false,
+     "ownerMessageStaysOwnerText": true
+    }
    }
   },
   {
@@ -3469,6 +3569,24 @@
     "remotePromptContainsOnly": [],
     "turnHandledAsOrdinaryMessage": true,
     "ownerMessageStaysOwnerText": true
+   },
+   "awaiting": {
+    "slices": [
+     "A6-S1"
+    ],
+    "decided": "2026-11-19",
+    "reason": "ADR-0121 amendment A6 (owner verdict 2026-11-19): the owner fixed the fullwidth yes (SR-1 rt-s2r-487); NFKC folds it to the closed token, no classifier call. `expected` stays the closed token set as built; this is the target.",
+    "expected": {
+     "consentOutcome": "yes",
+     "remoteCallMade": true,
+     "remotePromptContainsOnly": [
+      "fixedInstruction",
+      "ownerWordsOfRun1",
+      "displayedTopic"
+     ],
+     "turnHandledAsOrdinaryMessage": false,
+     "ownerMessageStaysOwnerText": true
+    }
    }
   },
   {

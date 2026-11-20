@@ -29,6 +29,9 @@ duplicates, hashes, reference checks, contamination lint against every `../*.jso
 - `specGap` and `decisionNeeded` mark places where the written rule and its apparent intent differ. Read these first.
   The topic expectations follow a strict literal reading of A2-D12; the test holds a reference implementation of it.
 - Does not cover names absent from every name field (G5 does).
+- ADR-0121 amendment A6 (owner verdicts of 2026-11-19, proposed): six consent cases (`rt-s2a-120`, `123`, `124`, `125`,
+  `133`, `136`) carry `awaiting`, the yes target of the consent answer by context; `expected` stays the closed token set
+  as built and is still checked. The file was never frozen; DECISIONS "ADR-0121 amendment A6", A6.8 records its new sha256.
 
 ## `g4-generation-cases.v1.json`, `g4-rubric.v1.json`, `g4-manifest.v1.json` (gate G4)
 
