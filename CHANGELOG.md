@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 amendment A6: the consent answer by context and the multi-line summary request (owner verdicts 2026-11-19; data, docs, tests only)
+
+- **Docs.** DECISIONS "ADR-0121 amendment A6": the owner's W1–W5 answers (W1 changed to the answer in context, W2–W4
+  kept, W5 confirmed in its A5 form) and the SR-1 case verdicts. For the rule-① summary consent and the A2 topic consent
+  only: deterministic structural checks first (the next owner DM turn within 600 s, a fresh unused question, no quoted or
+  marked text, at most 3 lines and 60 characters), then the closed tokens with an NFKC fold, then a consent-answer
+  classifier that sees only the fixed question (item content as a placeholder) and the reply and labels it yes / no /
+  other / unclear (`yes` binds exactly the asked items once, `no` and `other` cancel, `unclear` re-asks once; never an
+  approval, write, undo or control command). The owner's multi-line request of at most 3 lines with no marker may grant a
+  summary, always behind rule ①. Proposed: a scoped exception to ADR-0090 amendment N-3, amendments of A2 answer 2, W1 and
+  the S2 wiring single-line rule, and `ARCHITECTURE.md` §8 item 3, §10 and §12 text (not applied; Strict ratification
+  pending). Slices A6-S1..S4, the classifier eval corpus shape and its gate (0 wrong captures, ≥ 95 % recall on yes and
+  no, 3 runs, both arms) are defined; no eval or model call was run.
+- **Changed (gold).** SR-1: `rt-s2r-460`, `461`, `463`, `468`, `469`, `470`, `487`, `488` are
+  `approved-awaiting-implementation` with `awaiting.decided: "2026-11-19"`; new header field `consentAnswerJudging`;
+  `fixture.workingDefaults` records the answers. A2 `s2-answer.redteam.v1.json`: `rt-s2a-120`, `123`, `124`, `125`, `133`,
+  `136` gain an `awaiting` yes target. No `expect` or `expected` changed; no red-team floor lowered.
+- **Tests.** New `s2-read-redteam-a6-target.test.ts` (the modelled rules change exactly the owner-fixed cases; quoted,
+  stale and non-consent pendings never reach the classifier); `s2-read-redteam-corpus.test.ts` accepts the A6 decision;
+  `a2-data.test.ts` pins the A2 targets and floor. No product code, prompt, catalog or flag change.
+
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 
 - **Docs.** DECISIONS "ADR-0121 amendment A5": in the bounded agent, the owner allows model summaries of calendar, Jira,
