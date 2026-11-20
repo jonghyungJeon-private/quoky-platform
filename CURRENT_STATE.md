@@ -10,11 +10,12 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - The owner answered W1–W5 on 2026-11-19: W1 becomes "the answer in context" (ㅇㅇ, ok, 응, 확인, 보내, 좋아 can be yes;
   아니, ㄴㄴ, 취소, no are no), W2–W4 kept, W5 confirmed (one question per summarize step). The A2 topic consent aligns.
 - Proposed design: structural checks first, closed tokens (with NFKC), then a consent-answer classifier over the fixed
-  question and the reply only, default off behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`; a multi-line owner request (≤ 3 lines,
-  no marker) may grant a summary, always behind rule ①. Scoped N-3 exception, Strict ratification pending.
-- Gold: 8 SR-1 cases and 6 A2 consent cases await slices A6-S1..S4 (`expect` unchanged). Eval gate defined, not run.
-  Open: 9 owner questions (ratification, classifier locality, re-ask rule, A2 replies without a verdict). See DECISIONS
-  "ADR-0121 amendment A6".
+  question and the reply only, default off behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`; a two-line owner request (each line
+  marker-free and consumed by the producer) may grant a summary, always behind rule ① and a closed yes. Scoped N-3
+  exception, Strict ratification pending; A6-S3 cannot merge before the confirm slice.
+- Gold: 8 SR-1 cases and 5 A2 consent cases await slices A6-S1..S4 (`expect` unchanged). Eval gates defined, not run.
+  Open: 12 owner questions (ratification, classifier locality, the two-turn follow-up, A2 replies without a verdict).
+  See DECISIONS "ADR-0121 amendment A6".
 
 ### ADR-0121 amendment A5 recorded: work-source summaries under rule ① (2026-11-18, branch `claude/v5-work-summary`)
 
