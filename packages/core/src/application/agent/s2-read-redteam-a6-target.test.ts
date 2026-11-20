@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
+import { NL_ACTION_ENTRIES, NL_MODE_SUMMARY_WORDS } from '../nl-routing/action-entries';
 import { NL_CATALOG_ENTRY_IDS } from '../nl-routing/catalog';
-import { prepareSelectionInput } from '../nl-routing/selection-input';
+import { nlClauseNamesEntry, nlClauses, type NlClause } from '../nl-routing/clause-flags';
+import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
+import { nlPreparedWithoutFilesLine, normalizeForMatch, prepareSelectionInput } from '../nl-routing/selection-input';
+import { groundingWordIn } from '../nl-routing/selection-validator';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { validateAgentPlan } from './plan-validator';
@@ -100,14 +103,12 @@ const OFFERED = new Map(
   ),
 );
 const LINE_BREAKS = /[\n\r\u2028\u2029\u0085\v\f]+/u;
+/** A6.5: only LF (or CRLF) separates the two lines of an owner request; any other line-break character fails closed. */
+const OTHER_BREAKS = /[\r\u2028\u2029\u0085\v\f]/u;
 
-/** The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 multi-line rule. */
-function grantOf(c: Case, asOneLine: boolean): string[] {
-  const prepared = prepareSelectionInput(c.text);
-  if ('skip' in prepared) return [];
-  // A6.5 keeps fail-closed for every marker (the check runs on the owner's real lines, before any join) and for any message
-  // over 3 non-empty lines (a pasted block, not a typed request).
-  if (asOneLine && (hasUntrustedSpanMarker(prepared.text) || prepared.text.trim().split(LINE_BREAKS).filter((line) => line.trim().length > 0).length > 3)) return [];
+type ValidatedPlan = Extract<ReturnType<typeof validateAgentPlan>, { ok: true }>['plan'];
+
+function validatedPlan(c: Pick<Case, 'planner' | 'channel'>, groundingText: string): ValidatedPlan | undefined {
   const steps = (c.planner ?? []).map((step) =>
     step.summarize !== undefined
       ? { kind: 'summarize' as const, from: step.summarize, schema: step.schema ?? '' }
@@ -115,14 +116,50 @@ function grantOf(c: Case, asOneLine: boolean): string[] {
   );
   const result = validateAgentPlan({ kind: 'steps', form: 'steps', steps, ambiguity: 'CLEAR', alternatives: [] } as never, {
     offered: OFFERED,
-    groundingText: prepared.groundingText,
+    groundingText,
     now: CORPUS.fixture.now as never,
     timeZone: CORPUS.fixture.timeZone,
     direct: (c.channel ?? 'owner-dm') === 'owner-dm',
   });
-  if (!result.ok || result.plan.kind !== 'run') return [];
-  const text = asOneLine ? prepared.text.split(LINE_BREAKS).join(' ') : prepared.text;
-  return ownerSummaryRequests(result.plan, { text, groundingText: prepared.groundingText }).map((request) => `${request.step}:${request.entryId}`);
+  return result.ok && result.plan.kind === 'run' ? result.plan : undefined;
+}
+
+/** The producer's own summary-group test (the approved summary words, no exclusion or negation in the group). */
+function asksSummary(clause: NlClause): boolean {
+  return !nlHasExclusionOrNegation(clause.text) && NL_MODE_SUMMARY_WORDS.some((word) => groundingWordIn(clause.normalized, normalizeForMatch(word)));
+}
+
+/**
+ * A6.5 (review round 1, CA P1), modelled: exactly 2 non-empty lines split by LF; EACH line passes every single-line marker
+ * check on its own and is consumed by a producer clause (a clause of the line names a read source of the plan, or the line
+ * is a summary or back-reference group). A leftover line fails the whole message closed. No vocabulary of its own.
+ */
+function multiLineEligible(ownerText: string, plan: ValidatedPlan): boolean {
+  const own = nlPreparedWithoutFilesLine(ownerText).replace(/\r\n/gu, '\n').trim();
+  if (OTHER_BREAKS.test(own)) return false;
+  const lines = own.split('\n').filter((line) => line.trim().length > 0);
+  if (lines.length !== 2) return false;
+  const reads = 'steps' in plan ? plan.steps.flatMap((step) => (step.kind === 'read' ? [step.entry] : [])) : [];
+  return lines.every((line) => {
+    if (hasUntrustedSpanMarker(line)) return false;
+    const prepared = prepareSelectionInput(line);
+    if ('skip' in prepared) return false;
+    const clauses = nlClauses(prepared.groundingText);
+    return clauses.length > 0 && clauses.every((clause) => asksSummary(clause) || reads.some((entry) => nlClauseNamesEntry(clause, entry)));
+  });
+}
+
+/** The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 multi-line rule. */
+function grantOf(c: Pick<Case, 'text' | 'planner' | 'channel'>, asOneLine: boolean): string[] {
+  const prepared = prepareSelectionInput(c.text);
+  if ('skip' in prepared) return [];
+  const plan = validatedPlan(c, prepared.groundingText);
+  if (plan === undefined) return [];
+  if (!asOneLine) return ownerSummaryRequests(plan, prepared).map((request) => `${request.step}:${request.entryId}`);
+  // The whole message keeps every marker check too; the per-line check runs on the owner's real lines, before any join.
+  if (isSingleLineOwnerText(prepared.text) || hasUntrustedSpanMarker(prepared.text) || !multiLineEligible(prepared.text, plan)) return [];
+  const text = prepared.text.split(LINE_BREAKS).join(' ');
+  return ownerSummaryRequests(plan, { text, groundingText: prepared.groundingText }).map((request) => `${request.step}:${request.entryId}`);
 }
 
 /** The ratified closed tokens (A2 ratification answer 2, SR-1 W1 as built); A6 adds only the NFKC fold in front of them. */
@@ -169,6 +206,23 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
     });
     expect(marked.length).toBeGreaterThan(10);
     for (const c of marked) expect(grantOf(c, true), c.id).toEqual([]);
+  });
+
+  it('keeps the review-round-4 paste family closed (summary-grant.test.ts inputs) and grants only a 2-line typed request', () => {
+    const MAIL: readonly PlannerStep[] = [{ entryId: 'mail.list', args: {} }, { summarize: [1], schema: 'digest.v1' }];
+    const grant = (text: string): string[] => grantOf({ text, planner: MAIL }, true);
+    // Round 4: each line must be consumed by a producer clause, so a divider or address line fails the whole message.
+    expect(grant('❤️❤️❤️\n메일 요약해줘')).toEqual([]);
+    expect(grant('2001:db8::1\n메일 요약해줘')).toEqual([]);
+    // Only LF splits the two lines: a Unicode line separator is not typed in a chat message.
+    expect(grant('메일 보여줘\u2028메일 요약해줘')).toEqual([]);
+    // A leftover line (a pasted name, a mention without a colon, prose) and a third line fail closed.
+    expect(grant('김팀장 전달\n메일 요약해줘')).toEqual([]);
+    expect(grant('메일 보여줘\n팀장님이 보낸 거 위주로\n요약해줘')).toEqual([]);
+    expect(grant('메일 보여줘\n\n\n요약해줘')).toEqual(['2:mail.list']);
+    // The owner's own two-line request: the round-4 "fail-closed residual" is the 460 shape, and A6-S3 flips it on purpose.
+    expect(grant('메일 3개\n요약해줘')).toEqual(['2:mail.list']);
+    expect(grant('메일 3개 보여줘\n요약하지 말고')).toEqual([]);
   });
 
   it('targets the listing plus the rule-① question over exactly the listed items, and keeps the built floor', () => {
@@ -228,7 +282,15 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
       const p = c.pending!;
       const reads = sorted([...new Set((p.planner ?? []).flatMap((s) => (s.entryId !== undefined && AGENT_READ_SOURCES[s.entryId as keyof typeof AGENT_READ_SOURCES]?.source === p.source ? [s.entryId] : [])))]);
       expect(c.awaiting?.slices, caseId).toEqual(NFKC_ONLY.includes(caseId) ? SLICES.nfkc : SLICES.classifier);
-      expect(c.awaiting?.expect, caseId).toEqual({ outcome: 'summary-after-yes', stubReads: reads, allowedReads: reads, remoteSummary: 'bound-yes', write: 'none', m2Items: p.count });
+      expect(c.awaiting?.expect, caseId).toEqual({
+        outcome: 'summary-after-yes',
+        stubReads: reads,
+        allowedReads: reads,
+        remoteSummary: 'bound-yes',
+        write: 'none',
+        m2Items: p.count,
+        consentAnswer: NFKC_ONLY.includes(caseId) ? 'closed-yes' : 'classifier-yes',
+      });
       expect(c.expect, `${caseId}: as built, W1 cancels`).toMatchObject({ outcome: 'declined', remoteSummary: 'never', stubReads: [] });
     }
     for (const [caseId, label] of Object.entries(CLASSIFIER_ROUTE)) {
@@ -236,6 +298,23 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
       expect(byId.get(caseId)?.awaiting, caseId).toBeUndefined();
       expect(byId.get(caseId)?.status, caseId).toBe('pending-owner-approval');
     }
+  });
+
+  it('a multi-line reply consumed as no or other is not re-planned; a single-line `other` takes the normal path (review round 1)', () => {
+    for (const [caseId, label] of Object.entries(CLASSIFIER_ROUTE)) {
+      if (label !== 'other') continue;
+      const c = byId.get(caseId)!;
+      if (isSingleLineOwnerText(c.text)) {
+        // 472, 473: the reply's own new request runs as an ordinary turn (its own plan and its own rule-① question).
+        expect(c.planner, caseId).toBeDefined();
+        expect(c.expect, caseId).toMatchObject({ outcome: 'read-and-ask-consent', remoteSummary: 'ask-first' });
+      } else {
+        // 462: the whole multi-line reply is consumed by the cancelled consent: no plan of its own, nothing read.
+        expect(c.planner, caseId).toBeUndefined();
+        expect(c.expect, caseId).toMatchObject({ outcome: 'declined', stubReads: [], remoteSummary: 'never' });
+      }
+    }
+    expect(Object.entries(CLASSIFIER_ROUTE).filter(([caseId, label]) => label === 'other' && !isSingleLineOwnerText(byId.get(caseId)!.text)).map(([caseId]) => caseId)).toEqual([id(462)]);
   });
 });
 

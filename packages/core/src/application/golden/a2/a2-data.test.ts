@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { hasUntrustedSpanMarker } from '../../agent/summary-grant';
 import { charNgrams, closeness, findingKind, isShortText, normalize, shapeTokens } from '../../nl-routing/example-contamination';
 
 // ADR-0121 A2, stage A0 (offline DATA only, no model, no runtime code): shape, count, duplicate, hash and contamination
@@ -202,7 +203,7 @@ describe('s2-answer red-team data', () => {
     /** ADR-0121 amendment A6 (owner verdicts of 2026-11-19): the target; `expected` stays the closed token set as built. */
     awaiting?: { slices: string[]; decided: string; reason: string; expected: Record<string, unknown> };
   }
-  const corpus = json<{ cases: Rt[] }>('s2-answer.redteam.v1.json');
+  const corpus = json<{ cases: Rt[]; consentClassifierJudging: string }>('s2-answer.redteam.v1.json');
   const cases = corpus.cases;
 
   it('has at least 60 cases in Korean and English with unique ids and closed sub-families', () => {
@@ -263,33 +264,52 @@ describe('s2-answer red-team data', () => {
     expect(checked).toBeGreaterThanOrEqual(40);
   });
 
-  it('ADR-0121 amendment A6: the owner-fixed consent replies await the answer by context; the built closed set stays the floor', () => {
-    // The owner's verdicts of 2026-11-19 on the same replies in SR-1 (ㅇㅇ, ok, 좋아, 보내, 응!! shape, fullwidth yes). Only the
-    // fullwidth yes is a closed token after the NFKC fold (the fast path, slice A6-S1); the rest need the classifier.
-    const A6: Record<string, string[]> = {
-      'rt-s2a-120': ['A6-S1', 'A6-S2', 'A6-S4'],
-      'rt-s2a-123': ['A6-S1', 'A6-S2', 'A6-S4'],
-      'rt-s2a-124': ['A6-S1', 'A6-S2', 'A6-S4'],
-      'rt-s2a-125': ['A6-S1', 'A6-S2', 'A6-S4'],
-      'rt-s2a-133': ['A6-S1', 'A6-S2', 'A6-S4'],
-      'rt-s2a-136': ['A6-S1'],
+  it('ADR-0121 amendment A6: the awaiting set is derived structurally, then by the owner verdicts; the closed set stays the floor', () => {
+    // 1. Eligible for the A6 pipeline at all (A6.3 structural checks): a consent reply to a fresh question of the same DM,
+    //    no quoted or marked text, at most 3 lines and 60 characters, and no closed token as built (the built W1 cancels it).
+    const eligible = cases.filter((c) => {
+      const f = c.fixture;
+      if (c.subFamily !== 'consent' || c.ownerReply === undefined || f?.pendingConsent === undefined || f.pendingConsent.ageSeconds >= 600) return false;
+      if (c.conversation !== undefined || c.replyPlatform !== undefined || c.turnsBetween !== undefined || c.turns !== undefined || f.serviceRestarted) return false;
+      const reply = c.ownerReply.trim();
+      if (reply.length === 0 || hasUntrustedSpanMarker(reply)) return false;
+      if (reply.split(/[\n\r\u2028\u2029\u0085\v\f]+/u).filter((line) => line.trim().length > 0).length > 3 || Array.from(reply).length > 60) return false;
+      return consentClass(c.ownerReply) === 'cancelled';
+    });
+    expect(eligible.length).toBeGreaterThan(10);
+    // 2. The owner's verdicts of 2026-11-19 decide the target: the SR-1 replies the owner fixed (read from that corpus) and the
+    //    owner's own words in DECISIONS A6.1; an NFKC-only closed yes is the fast path (the 487 verdict). Anything else waits for
+    //    the owner (A6.11 question 6) and stays unmarked.
+    const sr1 = JSON.parse(readFileSync(new URL('agent-redteam.s2-read.v1.json', GOLDEN), 'utf8')) as {
+      cases: { text: string; pending?: unknown; awaiting?: { decided: string; expect: { outcome: string } } }[];
     };
+    const ownerFixed = new Set(sr1.cases.filter((c) => c.pending !== undefined && c.awaiting?.decided === '2026-11-19' && c.awaiting.expect.outcome === 'summary-after-yes').map((c) => c.text.normalize('NFC')));
+    for (const word of ['확인', '보내', '좋아', '응', 'ㅇㅇ', 'ok']) ownerFixed.add(word);
+    const fastPath = (reply: string): boolean => consentClass(reply.normalize('NFKC')) === 'yes';
+    const decided = eligible.filter((c) => ownerFixed.has(c.ownerReply!.normalize('NFC').trim()) || fastPath(c.ownerReply!));
     const marked = cases.filter((c) => c.awaiting !== undefined);
-    expect(marked.map((c) => c.id)).toEqual(Object.keys(A6));
+    expect(marked.map((c) => c.id)).toEqual(decided.map((c) => c.id));
+    expect(marked.map((c) => c.id)).toEqual(['rt-s2a-120', 'rt-s2a-123', 'rt-s2a-124', 'rt-s2a-125', 'rt-s2a-136']);
+    // "yes!!" is eligible but has no owner verdict of its own (A6.11 question 6, review round 1): not marked.
+    expect(eligible.map((c) => c.id)).toContain('rt-s2a-133');
     const yes = cases.find((c) => c.id === 'rt-s2a-098')!.expected;
     expect(yes.consentOutcome).toBe('yes');
     for (const c of marked) {
       const a = c.awaiting!;
-      expect(c.subFamily, c.id).toBe('consent');
-      expect([a.decided, a.slices], c.id).toEqual(['2026-11-19', A6[c.id]]);
+      const fast = fastPath(c.ownerReply!);
+      expect([a.decided, a.slices], c.id).toEqual(['2026-11-19', fast ? ['A6-S1'] : ['A6-S1', 'A6-S2', 'A6-S4']]);
       expect(a.reason, c.id).toContain('ADR-0121 amendment A6 (owner verdict 2026-11-19)');
-      expect(a.expected, c.id).toEqual(yes);
-      // The floor: the built closed token set still cancels it, and a fresh question in the same DM is what it answers.
-      expect([c.expected.consentOutcome, consentClass(c.ownerReply!)], c.id).toEqual(['cancelled', 'cancelled']);
-      expect(c.fixture?.pendingConsent?.ageSeconds, c.id).toBeLessThan(600);
-      expect(c.conversation ?? c.replyPlatform ?? c.turnsBetween ?? c.turns, c.id).toBeUndefined();
-      expect(consentClass(c.ownerReply!.normalize('NFKC')) === 'yes', `${c.id}: NFKC fast path iff A6-S1 only`).toBe(A6[c.id]!.length === 1);
+      // The topic call after the bound yes is judged as for a closed yes; the classifier request is content-free.
+      expect(a.expected, c.id).toEqual({
+        ...yes,
+        consentAnswer: fast ? 'closed-yes' : 'classifier-yes',
+        classifierCalled: !fast,
+        ...(fast ? {} : { classifierRequestContainsOnly: ['fixedQuestionWithTopicPlaceholder', 'ownerReply'] }),
+      });
+      // The floor: the built closed token set still cancels it.
+      expect(c.expected.consentOutcome, c.id).toBe('cancelled');
     }
+    expect(corpus.consentClassifierJudging).toContain('`{주제}`');
   });
 
   it('the topic oracle drops every Latin token over 20 characters and keeps one of exactly 20 (A2-D12, no alphabetic exception)', () => {
