@@ -1,4 +1,5 @@
 // ADR-0121 stage S2 (P1): the bounded read agent's foundation (off / shadow only; `active` is release-gated).
+export * from './handoff-slots';
 export * from './plan-schema';
 export * from './plan-validator';
 export * from './plan-prompt';

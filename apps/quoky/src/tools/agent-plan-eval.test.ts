@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY } from '@quoky/ai-cli';
-import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, type AiProvider } from '@quoky/core';
+import { Capability, NL_CATALOG_ENTRY_IDS, NL_WAVE1_ENTRIES, buildAgentPlanPrompt, isNlWave1EntryId, parseAgentPlanOutput, prepareSelectionInput, validateAgentPlan, type AiProvider } from '@quoky/core';
 import {
   AGENT_PLAN_AWAITING_STATUS,
   AGENT_PLAN_CONTENT_FIELDS,
@@ -227,6 +227,36 @@ describe('ADR-0121 A4: the owner\'s 2026-11-17 verdicts (decision (d)) as approv
       const handoff = target(id).awaiting?.expect;
       expect(handoff?.outcome === 'handoff' && handoff.handoff.item, id).toBe('first');
     }
+  });
+
+  it('A4-S1: the plan validator accepts every handoff target into a catalog slot and refuses the others only as a planned slot', () => {
+    const accepted: string[] = [];
+    const planned: string[] = [];
+    for (const golden of awaitingCases) {
+      const awaitingExpect = golden.awaiting?.expect;
+      if (awaitingExpect?.outcome !== 'handoff') continue;
+      const prepared = caseContext(golden, FIXTURE);
+      if ('skip' in prepared) throw new Error(`${golden.id} is skipped`);
+      const parsed = parseAgentPlanOutput(JSON.stringify({ steps: awaitingExpect.steps, ambiguity: awaitingExpect.ambiguity, handoff: awaitingExpect.handoff }));
+      if (parsed === null) throw new Error(`${golden.id} does not parse`);
+      const verdict = validateAgentPlan(parsed, prepared.ctx);
+      if (verdict.ok && verdict.plan.kind === 'handoff') accepted.push(golden.id);
+      else {
+        expect(verdict, golden.id).toMatchObject({ ok: false, reason: 'handoff-slot' });
+        planned.push(golden.id);
+        expect(golden.awaiting?.slices, golden.id).toContain('A4-S3');
+      }
+      // Still awaiting: the slices after A4-S1 (the extractors, the prompt) are not built, so nothing here is scored.
+      expect(golden.status, golden.id).toBe(AGENT_PLAN_AWAITING_STATUS);
+      expect(golden.awaiting?.slices, golden.id).toEqual(expect.arrayContaining(['A4-S1', 'A4-S2', 'A4-S4']));
+    }
+    expect(accepted).toHaveLength(15);
+    expect(planned).toHaveLength(16);
+    expect(accepted).toContain('ap-n021');
+    // The owner's own words must carry the link: the same plan under words that name neither source nor destination is refused.
+    const target21 = target('ap-n021');
+    const mute = { ...target21, text: '아무 말이나' };
+    expect(check([mute]).join('\n')).toMatch(/does not accept the handoff target \(handoff-ungrounded\)/);
   });
 
   it('the s2-read-write red-team corpus declares the same content field table', () => {

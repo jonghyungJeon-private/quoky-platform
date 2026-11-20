@@ -183,7 +183,7 @@ export interface AgentRunServiceDeps {
   readonly released?: boolean;
 }
 
-type ShadowOutcome = 'planned' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
+type ShadowOutcome = 'planned' | 'handoff' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
 
 class ShadowTimeout extends Error {
   constructor() {
@@ -459,6 +459,8 @@ export class AgentRunService {
     const validated = validation.plan;
     if (validated.kind === 'none') return declined(validated.reason ?? 'none', callFields);
     if (validated.kind === 'ask' || validated.kind === 'clarify') return declined(validated.kind, callFields);
+    // ADR-0121 A4 (A4-S1): a validated handoff is not runnable until A4-S2 and its flag `QUOKY_AGENT_HANDOFF` (off): fail closed.
+    if (validated.kind === 'handoff') return declined('handoff-off', callFields);
     // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the
     // read + write composition is stage P5, so the run never drops it silently.
     if (agentReadWriteProbeClauses(validated, prepared.groundingText).length > 0) return declined('write-clause', callFields);
@@ -671,7 +673,7 @@ export class AgentRunService {
       const agree = turn.live.kind === 'none';
       return { agree, agreeEntry: agree };
     }
-    if (plan.steps.length !== 1) return {};
+    if (plan.steps.length !== 1 || plan.form === 'steps' && plan.handoff !== undefined) return {};
     // A `veto-*` refusal (ADR-0120 A7, not a request) is answered as chat, exactly as the live path's vetoed `none`
     // (CA P2 on S2 P2): it agrees with a live none.
     if (!validation.ok && validation.reason.startsWith('veto-')) {
@@ -732,6 +734,10 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
   if (validation.plan.kind === 'ask') {
     const suggestion = validation.plan.suggestion.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');
     return { outcome: 'ask', ...fields, bound: validation.plan.bound, suggestion };
+  }
+  if (validation.plan.kind === 'handoff') {
+    const { handoff } = validation.plan;
+    return { outcome: 'handoff', ...fields, connectorCalls: validation.plan.connectorCalls, handoffKind: handoff.kind, handoffScope: handoff.scope, handoffSlot: `${handoff.to.entry.id}.${handoff.to.slot}` };
   }
   const extra: LogFields = { connectorCalls: validation.plan.connectorCalls, ...(validation.plan.related !== undefined ? { related: validation.plan.related } : {}) };
   const argKinds = validation.plan.steps

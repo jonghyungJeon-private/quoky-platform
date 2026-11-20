@@ -36215,3 +36215,40 @@ classifier-no | classifier-other | classifier-unclear | structural-fail | claim-
     single-line one runs its own new request (`472`, `473`). Recommended: keep this split.
 12. A change of the classifier model, effort, tier or prompt hash turns the switch off until a new gate run passes.
     Recommended: yes (each run with its own notice and yes).
+
+## ADR-0121 amendment A4 — slice A4-S1 (handoff-plan) implementation note (2026-11-20)
+
+Status: implemented; append-only. No amendment text, A4 section or ratification record is changed. Agent mode stays
+shadow and unreleased, and the handoff stays behind the A1 rollout order (A4-S2 after S2 `active`, flag
+`QUOKY_AGENT_HANDOFF=off`), so nothing reaches a user. No prompt text and no catalog change (a prompt rule is A4-S4 and
+needs the D12 gates and the owner's notice and yes for any model eval).
+
+- **Built.** The plan schema (`plan-schema.ts`) accepts one optional top-level `handoff` in the steps form:
+  `{from, kind, scope, item?, to: {entryId, slot, args?}, fallback?: {kind, to}, consent?}`; the parser checks shape only
+  (closed keys, types, bounded words; a malformed one is the closed parse failure `bad-handoff`; the selection form carries
+  none). The plan validator (`plan-validator.ts`, new rule 8) validates it to a new plan kind `handoff` (the source steps,
+  the declared handoff, the static charge of the source steps only; the final run's queries are A4-S2's). The closed
+  kinds, scopes, items, consent and the slot table `AGENT_HANDOFF_*` moved to `handoff-slots.ts` in Core, because the
+  validator needs them; `AGENT_PLAN_HANDOFF_SLOTS` in `apps/quoky/src/tools/agent-plan-eval.ts` (A4.3) is the same object
+  re-exported, so the `s2-handoff` header pin is unchanged.
+- **Against the owner's words, structurally (no word list, no phrase pattern, no gold string).** The plan is `CLEAR` and
+  holds no reference step; kind, scope, item, consent and fallback are closed sets with the A4.4 pairing (one-item names
+  `first` or `owner-pick`, each-item none; `batch-preview` exactly on an each-item handoff whose kind or fallback kind is
+  free text; a fallback only on each-item); the source is a plain read step of a listing source; each destination is a row
+  of the slot table that accepts the kind, offered this turn, whose catalog entry declares the slot as an argument, never
+  the source's own entry (a `planned` row is refused `handoff-slot` until A4-S3); the fixed destination args pass ADR-0120
+  D4 (the required slot itself may be missing only when no other fixed arg exists) and never preset the slot; and the owner's
+  OWN non-quoted words name the source entry and every destination entry by the catalog's own vocabulary (aliases, source
+  names, flag grounding words, the same rule the clause checks already use). Content therefore cannot propose a source, a
+  destination or a linkage. Closed refusals: `handoff-invalid`, `handoff-source`, `handoff-slot`, `handoff-args`,
+  `handoff-ungrounded`. The step number is Core's normalized one (a summary moves after the read it covers).
+- **Fail closed at runtime.** A validated handoff plan is declined `handoff-off` by `runActive` (no read), is logged in
+  shadow as outcome `handoff` with closed fields only, and scores `wrong` (`handoff-unscored`) in the plan eval: no scored
+  gold targets the form yet. `reply-notes` keeps its `run`/`clarify` plans only.
+- **Gold.** No `expect`, `trap` or red-team floor changed and no case flipped to `approved`: all 31 A4-S1 cases also wait
+  for A4-S2 and A4-S4 (16 of them for A4-S3). The self-check (`awaitingProblems`) now runs the real validator on each
+  handoff target: 15 targets (ap-n021, n022, n025, n028, n031, n033, n034, n061, n063, n064, n066, n071, n072, n073,
+  n074) validate to a `handoff` plan; the 16 that carry A4-S3 (ap-p001..p008 and the planned-slot cases) are refused
+  `handoff-slot` and only those.
+- **Not done here.** Extractors, filters, template, pick, continuation runs and audit (A4-S2), the `planned` slots (A4-S3),
+  the planner prompt rule and the mail-grammar precedence (A4-S4), pattern B (A4-S5), the content card (A4-S6).

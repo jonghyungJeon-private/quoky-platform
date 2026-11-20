@@ -36,6 +36,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   stale and non-consent pendings never reach the classifier; the round-2 pasted lines and non-LF separators grant nothing;
   a two-line-grant step never reaches the classifier; round 3: format characters, whole-phrase labels, paste lot (a) and pinned residual lot (b)); `s2-read-redteam-corpus.test.ts` accepts the A6 decision;
   `a2-data.test.ts` pins the A2 targets, the floor and the 18 eligible-but-unmarked replies. No product code, prompt, catalog or flag change.
+## Unreleased — ADR-0121 amendment A4-S1: the handoff form in the plan schema and validator (2026-11-20)
+
+- **Added.** An optional `handoff` in the agent plan schema and rule 8 of the plan validator (closed kinds, scopes and
+  slot table in Core `handoff-slots.ts`; the owner's own words must name the source and destination entries; a planned
+  slot, a content-proposed linkage, a non-CLEAR plan or a reference beside a handoff is refused). A validated handoff is a
+  new plan kind that nothing runs yet: `runActive` declines it `handoff-off`, shadow logs it content-free.
+- **Tests.** `plan-handoff.test.ts`, the corpus self-check now runs the validator on all 31 A4-S1 targets (15 accepted, 16
+  refused only as a planned slot), and an active-run decline test. No prompt, catalog, flag or gold change; no case moved
+  to `approved` (all still wait for A4-S2 and A4-S4).
 
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 

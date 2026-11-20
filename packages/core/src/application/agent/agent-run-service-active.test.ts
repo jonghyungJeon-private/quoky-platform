@@ -186,6 +186,18 @@ describe('AgentRunService.runActive — end to end with fake ports', () => {
     expect(h.reads).toEqual([]);
   });
 
+  it('ADR-0121 A4-S1: a validated handoff plan is declined (handoff-off) with no read: nothing runs it before A4-S2 and its flag', async () => {
+    const handoffPlan = JSON.stringify({
+      steps: [{ entryId: 'mail.list', args: {} }],
+      ambiguity: 'CLEAR',
+      handoff: { from: 1, kind: 'date', scope: 'one-item', item: 'first', to: { entryId: 'calendar.events', slot: 'range' } },
+    });
+    const h = harness({ script: [handoffPlan] });
+    expect(await h.service.runActive(turn(h, '지난번 메일에 적힌 마감일로 일정 확인해줘'), async () => CHAT)).toEqual({ kind: 'declined', reason: 'handoff-off' });
+    expect(h.reads).toEqual([]);
+    expect(h.plannerCalls).toHaveLength(1);
+  });
+
   it('a failed read ends in the partial reply, never a retry', async () => {
     const h = harness({ script: [MAIL_AND_TODO_PLAN], ports: { 'mail.list': async () => ({ ok: false, code: 'UNAVAILABLE' }) } });
     const outcome = replyOf(await h.service.runActive(turn(h, MAIL_AND_TODO_TEXT), async () => CHAT));
