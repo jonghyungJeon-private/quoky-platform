@@ -76,12 +76,12 @@ const grantAll = (): void => setSummaryGrantsForTest(() => true);
 afterEach(() => setSummaryGrantsForTest());
 
 const RAW: Readonly<Record<(typeof WORK_ENTRIES)[number], Record<string, unknown>>> = {
-  'calendar.events': { id: 'ev1', title: 'Planning sync', location: 'Room 4', description: 'Agree the launch plan', organizer: 'Alex Rivers', attendees: ['Sam Poe'], conference: 'CANARY-CONF', start: 'CANARY-START' },
-  'jira.issues': { id: 'AB-1', summary: 'Checkout fails', description: 'Steps to reproduce', comment: 'CANARY-COMMENT', assignee: 'Alex Rivers', reporter: 'Sam Poe' },
-  'jira.release': { id: 'AB-2', summary: 'Release item', description: 'CANARY-NO-DESCRIPTION-HERE' },
+  'calendar.events': { id: 'ev1', title: 'Planning sync', location: 'Room 4', description: 'Agree the launch plan', people: ['Alex Rivers', 'Sam Poe'], conference: 'CANARY-CONF', start: 'CANARY-START' },
+  'jira.issues': { id: 'AB-1', title: 'Checkout fails', excerpt: 'Steps to reproduce', comment: 'CANARY-COMMENT', summary: 'CANARY-WRONG-MEMBER', people: ['Alex Rivers', 'Sam Poe'] },
+  'jira.release': { id: 'AB-2', title: 'Release item', excerpt: 'CANARY-NO-DESCRIPTION-HERE' },
   'slack.search': { id: 'C1-1700000000.0001', text: 'Ship it on Friday', author: 'Alex Rivers', thread: 'CANARY-THREAD', permalink: 'CANARY-LINK' },
-  'confluence.search': { id: '1001', title: 'Runbook', body: 'Restart the worker', author: 'Sam Poe', children: 'CANARY-CHILD' },
-  'github.items': { id: 'o/r#1', title: 'Fix the parser', body: 'Handles empty input', author: 'alexrivers', comments: 'CANARY-DIFF' },
+  'confluence.search': { id: '1001', title: 'Runbook', excerpt: 'Restart the worker', people: ['Sam Poe'], children: 'CANARY-CHILD' },
+  'github.items': { id: 'o/r#1', title: 'Fix the parser', excerpt: 'Handles empty input', people: ['alexrivers'], comments: 'CANARY-DIFF' },
 };
 const FIX_IDS: Record<(typeof WORK_ENTRIES)[number], string> = Object.fromEntries(WORK_ENTRIES.map((entry) => [entry, String(RAW[entry].id)])) as never;
 
@@ -121,7 +121,7 @@ describe('A5-S1 labels and shapes', () => {
 describe('A5.2 field projection from the listing response', () => {
   it('sends exactly the table fields and never any other member (a canary in an excluded field never appears)', () => {
     for (const entryId of WORK_ENTRIES) {
-      const documents = projectWorkSummaryDocuments(entryId, [RAW[entryId]]);
+      const documents = projectWorkSummaryDocuments(entryId, [RAW[entryId]]).documents;
       expect(documents, entryId).toHaveLength(1);
       const dumped = JSON.stringify(documents);
       expect(dumped, entryId).not.toContain('CANARY');
@@ -130,19 +130,19 @@ describe('A5.2 field projection from the listing response', () => {
       expect(documents[0]?.position).toBe(1);
       expect(documents[0]?.date).toBe('');
     }
-    expect(projectWorkSummaryDocuments('calendar.events', [RAW['calendar.events']])[0]).toMatchObject({ title: 'Planning sync', body: 'Location: Room 4\nDescription: Agree the launch plan' });
-    expect(projectWorkSummaryDocuments('jira.issues', [RAW['jira.issues']])[0]).toMatchObject({ title: 'Checkout fails', body: 'Steps to reproduce' });
-    expect(projectWorkSummaryDocuments('confluence.search', [RAW['confluence.search']])[0]).toMatchObject({ title: 'Runbook', body: 'Restart the worker' });
-    expect(projectWorkSummaryDocuments('github.items', [RAW['github.items']])[0]).toMatchObject({ title: 'Fix the parser', body: 'Handles empty input' });
+    expect(projectWorkSummaryDocuments('calendar.events', [RAW['calendar.events']]).documents[0]).toMatchObject({ title: 'Planning sync', body: 'Location: Room 4\nDescription: Agree the launch plan' });
+    expect(projectWorkSummaryDocuments('jira.issues', [RAW['jira.issues']]).documents[0]).toMatchObject({ title: 'Checkout fails', body: 'Steps to reproduce' });
+    expect(projectWorkSummaryDocuments('confluence.search', [RAW['confluence.search']]).documents[0]).toMatchObject({ title: 'Runbook', body: 'Restart the worker' });
+    expect(projectWorkSummaryDocuments('github.items', [RAW['github.items']]).documents[0]).toMatchObject({ title: 'Fix the parser', body: 'Handles empty input' });
   });
 
   it('jira.release sends the summary only, even when the item carries a description', () => {
     expect(WORK_SUMMARY_FIELDS['jira.release']?.text).toEqual([]);
-    expect(projectWorkSummaryDocuments('jira.release', [RAW['jira.release']])[0]).toMatchObject({ title: 'Release item', body: 'Release item' });
+    expect(projectWorkSummaryDocuments('jira.release', [RAW['jira.release']]).documents[0]).toMatchObject({ title: 'Release item', body: 'Release item' });
   });
 
   it('Slack text is sent with its author only as a pseudonym, in order of first appearance, and a handle inside a text is pseudonymised', () => {
-    const documents = projectWorkSummaryDocuments('slack.search', [
+    const { documents } = projectWorkSummaryDocuments('slack.search', [
       { id: 'a', text: 'Ship it', author: 'Alex Rivers' },
       { id: 'b', text: 'Thanks Alex Rivers, ok', author: 'Sam Poe' },
       { id: 'c', text: 'again', author: 'Alex Rivers' },
@@ -153,13 +153,13 @@ describe('A5.2 field projection from the listing response', () => {
   });
 
   it('a person handle inside a GitHub body is pseudonymised and the author is not sent', () => {
-    const [document] = projectWorkSummaryDocuments('github.items', [{ id: 'o/r#2', title: 'Review', body: 'cc zephyrquinn please look', author: 'zephyrquinn' }]);
+    const [document] = projectWorkSummaryDocuments('github.items', [{ id: 'o/r#2', title: 'Review', excerpt: 'cc zephyrquinn please look', people: ['zephyrquinn'] }]).documents;
     expect(document?.body).toBe('cc 참여자 A please look');
     expect(document?.author).toBe('');
   });
 
   it('bounds a title at 200 and every other field at 300 code points, one line, links neutralised', () => {
-    const [document] = projectWorkSummaryDocuments('confluence.search', [{ id: 'p', title: `t${'x'.repeat(400)}`, body: `see https://example.test/page?token=1\n\n${'y'.repeat(500)}` }]);
+    const [document] = projectWorkSummaryDocuments('confluence.search', [{ id: 'p', title: `t${'x'.repeat(400)}`, excerpt: `see https://example.test/page?ref=1\n\n${'y'.repeat(500)}` }]).documents;
     expect(Array.from(document?.title ?? '').length).toBeLessThanOrEqual(200);
     expect(Array.from(document?.body ?? '').length).toBeLessThanOrEqual(300);
     expect(document?.body).not.toContain('\n');
@@ -167,10 +167,58 @@ describe('A5.2 field projection from the listing response', () => {
   });
 
   it('a field the listing does not carry is omitted (never fetched); a row with no string id is skipped but keeps its position slot', () => {
-    const documents = projectWorkSummaryDocuments('github.items', [{ title: 'no id' }, 'junk', { id: 'o/r#3', title: 'only a title' }]);
+    const { documents } = projectWorkSummaryDocuments('github.items', [{ title: 'no id' }, 'junk', { id: 'o/r#3', title: 'only a title' }]);
     expect(documents).toEqual([{ id: 'o/r#3', position: 3, title: 'only a title', author: '', date: '', body: 'only a title' }]);
-    expect(projectWorkSummaryDocuments('mail.list', [{ id: 'm1' }])).toEqual([]);
-    expect(projectWorkSummaryDocuments('jira.issues', 'not a list')).toEqual([]);
+    expect(projectWorkSummaryDocuments('mail.list', [{ id: 'm1' }]).documents).toEqual([]);
+    expect(projectWorkSummaryDocuments('jira.issues', 'not a list').documents).toEqual([]);
+  });
+});
+
+describe('review round 1: credentials and handles in the projection', () => {
+  // A fake token built from fragments: a key prefix and a long secret, never a literal.
+  const fakeToken = (): string => ['gh', 'p_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');
+
+  it('a credential that straddles the 300-character boundary withholds the whole item (no prefix survives the clip)', () => {
+    const token = fakeToken();
+    // The token starts a few characters before the clip, so a clip-then-check would keep only an innocuous-looking prefix.
+    const excerpt = `${'x '.repeat(145)}token ${token}`;
+    expect(excerpt.indexOf(token)).toBeLessThan(300);
+    expect(excerpt.indexOf(token) + token.length).toBeGreaterThan(300);
+    const result = projectWorkSummaryDocuments('github.items', [{ id: 'o/r#1', title: 'ok', excerpt }, { id: 'o/r#2', title: 'fine', excerpt: 'plain' }]);
+    expect(result.withheld).toBe(1);
+    expect(result.documents.map((document) => document.id)).toEqual(['o/r#2']);
+    expect(JSON.stringify(result)).not.toContain('ghp_');
+    expect(JSON.stringify(result)).not.toContain(token.slice(0, 8));
+  });
+
+  it('a credential split across two fields is still withheld (the joined text is guarded too)', () => {
+    const token = fakeToken();
+    const result = projectWorkSummaryDocuments('calendar.events', [{ id: 'e1', title: `key ${token.slice(0, 6)}`, location: token.slice(6), description: 'd' }]);
+    expect(result.documents.length + result.withheld).toBe(1);
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it('the executor counts a withheld item as omitted and makes no model call when every item is withheld', async () => {
+    grantAll();
+    const spy = port([{ id: 'o/r#1', title: 'ok', excerpt: `${'x '.repeat(145)}token ${fakeToken()}` }]);
+    const fake = model('LOCAL');
+    const result = await new AgentPlanExecutor({ readers: { 'github.items': spy }, summarizer: route([fake], ['github']) }).execute(plan([read('github.items'), summarize([1])]));
+    expect(fake.requests).toHaveLength(0);
+    expect(result.steps[1]).toMatchObject({ kind: 'summarize', status: 'listing-only' });
+  });
+
+  it('a fullwidth handle is normalised like the text and is pseudonymised', () => {
+    const fullwidth = '\uFF21\uFF4C\uFF45\uFF58 \uFF32\uFF49\uFF56\uFF45\uFF52\uFF53';
+    const { documents } = projectWorkSummaryDocuments('slack.search', [
+      { id: 'a', text: 'hello', author: fullwidth },
+      { id: 'b', text: 'thanks Alex Rivers for this', author: 'Sam Poe' },
+    ]);
+    expect(documents[0]?.author).toBe('참여자 A');
+    expect(documents[1]?.body).toBe('thanks 참여자 A for this');
+    // The handle written fullwidth inside a text is normalised first and then replaced.
+    const inText = projectWorkSummaryDocuments('github.items', [{ id: 'o/r#5', title: 't', excerpt: `cc ${fullwidth} now`, people: ['Alex Rivers'] }]).documents[0];
+    expect(inText?.body).toBe('cc 참여자 A now');
+    expect(JSON.stringify(documents)).not.toMatch(/Alex|Rivers|\uFF21/u);
   });
 });
 
@@ -208,8 +256,9 @@ describe('switch off: the pre-A5 behaviour, byte for byte', () => {
       const fake = model('LOCAL');
       const without = await new AgentPlanExecutor({ readers: { [entryId]: plain } }).execute(plan([read(entryId), summarize([1])]));
       const withOff = await new AgentPlanExecutor({ readers: { [entryId]: off }, summarizer: route([fake], []) }).execute(plan([read(entryId), summarize([1])]));
-      expect(off.requests.map(({ entryId: e, args, keys, withDocuments }) => ({ e, args, keys, withDocuments })), entryId).toEqual(plain.requests.map(({ entryId: e, args, keys, withDocuments }) => ({ e, args, keys, withDocuments })));
+      expect(off.requests.map(({ entryId: e, args, keys, withDocuments, agentSummaryFieldMask }) => ({ e, args, keys, withDocuments, agentSummaryFieldMask })), entryId).toEqual(plain.requests.map(({ entryId: e, args, keys, withDocuments, agentSummaryFieldMask }) => ({ e, args, keys, withDocuments, agentSummaryFieldMask })));
       expect(off.requests[0]?.withDocuments, entryId).toBeUndefined();
+      expect(off.requests[0]?.agentSummaryFieldMask, entryId).toBeUndefined();
       expect(withOff.steps[0], entryId).toEqual(without.steps[0]);
       expect(withOff.steps[1], entryId).toMatchObject({ kind: 'summarize', status: 'listing-only' });
       expect(fake.requests, entryId).toHaveLength(0);
@@ -264,10 +313,15 @@ describe('switch on', () => {
     grantAll();
     const spy = port([RAW[entryId]]);
     const fake = model('LOCAL');
-    const result = await new AgentPlanExecutor({ readers: { [entryId]: spy }, summarizer: route([fake], AGENT_WORK_SUMMARY_SOURCES) }).execute(plan([read(entryId), summarize([1])]));
+    const logLines: unknown[] = [];
+    const log = (message: string, fields?: unknown): void => void logLines.push({ message, fields });
+    const result = await new AgentPlanExecutor({ readers: { [entryId]: spy }, summarizer: route([fake], AGENT_WORK_SUMMARY_SOURCES), logger: { info: log, warn: log, error: log } }).execute(plan([read(entryId), summarize([1])]));
     expect(spy.requests).toHaveLength(1);
-    // A5.2: the request is the listing read's, no `withDocuments` body fetch; only the calendar's one `events.list` asks for the agent-summary mask.
-    expect(spy.requests[0]?.withDocuments, entryId).toBe(entryId === 'calendar.events' ? true : undefined);
+    expect(logLines.length).toBeGreaterThan(0);
+    // A5.2: the request is the listing read's, no `withDocuments` body fetch; only the calendar's one `events.list` carries `agentSummaryFieldMask`.
+    // Never `withDocuments` for any of the five; only the calendar carries the field-mask flag (the same single request).
+    expect(spy.requests[0]?.withDocuments, entryId).toBeUndefined();
+    expect(spy.requests[0]?.agentSummaryFieldMask, entryId).toBe(entryId === 'calendar.events' ? true : undefined);
     expect(fake.requests, entryId).toHaveLength(1);
     const prompt = String(fake.requests[0]?.prompt ?? '');
     expect(prompt, entryId).not.toContain('CANARY');
@@ -278,14 +332,15 @@ describe('switch on', () => {
     expect(summaryEntriesForAssembler(step.summary)?.[0]?.entryId).toBe(entryId);
     expect(step.summary.label).toMatchObject({ trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED' });
     // Content-free: the result carries no item text, summary or pseudonym.
-    const dumped = JSON.stringify(result);
+    const dumped = JSON.stringify(result) + JSON.stringify(logLines);
+    expect(dumped).not.toContain('참여자');
     for (const text of ['Planning sync', 'Checkout fails', 'Ship it', 'Runbook', 'Fix the parser', 'SUMMARY-OK']) expect(dumped).not.toContain(text);
   });
 
   it('a credential-bearing item is withheld whole (never redacted and sent): no model call', async () => {
     grantAll();
     const secret = ['gh', 'p_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');
-    const spy = port([{ id: 'o/r#9', title: 'Rotate keys', body: `token ${secret}` }]);
+    const spy = port([{ id: 'o/r#9', title: 'Rotate keys', excerpt: `token ${secret}` }]);
     const fake = model('LOCAL');
     const result = await new AgentPlanExecutor({ readers: { 'github.items': spy }, summarizer: route([fake], ['github']) }).execute(plan([read('github.items'), summarize([1])]));
     expect(fake.requests).toHaveLength(0);

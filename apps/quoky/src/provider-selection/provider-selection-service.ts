@@ -268,7 +268,6 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   // ── Core policy ────────────────────────────────────────────────────────────────────────────────────────────────
 
   async preferenceFor(capability: Capability, context: ProviderSelectionContext): Promise<ProviderPreference | null> {
-    const claudeKey = this.deps.catalog.claude.id;
     // ADR-0124 Part L C5a-2: a request that must stay on this host is answered from configuration only (no session read).
     if (context.requiredLocality !== undefined) return this.requiredLocalPreference(capability);
     try {
@@ -277,7 +276,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
       // Fail safe: the chat tier and pinned work go to Claude, images go nowhere.
       this.deps.logger.warn('provider selection unavailable; using the safe default', { capability });
       if (capability === Capability.IMAGE_UNDERSTANDING) return { eligible: [], order: 'listed' };
-      if (CHAT_TIER.has(capability) || PINNED.has(capability)) return { eligible: [claudeKey], order: 'listed' };
+      if (CHAT_TIER.has(capability) || PINNED.has(capability)) return { eligible: this.withDataUse([this.deps.catalog.claude], context.requiredDataUse), order: 'listed' };
       return null;
     }
   }

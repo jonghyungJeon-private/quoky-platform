@@ -155,7 +155,7 @@ const utf8 = (text: string): number => new TextEncoder().encode(text).length;
 const JIRA_SUMMARY_PLAN = JSON.stringify({ steps: [{ entryId: 'jira.issues', args: {} }, { summarize: [1], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
 
 describe('AgentRunService.runActive — ADR-0121 A5-S1 per-source switch', () => {
-  const jiraItems = (request: AgentReadRequest): AgentReadResponse => (request.budget.reserveQuery() && request.budget.reserveHttp() ? { ok: true, items: [{ id: 'AB-1', summary: 'Checkout fails', description: 'Steps', comment: 'CANARY-COMMENT' }] } : { ok: false, code: 'BOUND' });
+  const jiraItems = (request: AgentReadRequest): AgentReadResponse => (request.budget.reserveQuery() && request.budget.reserveHttp() ? { ok: true, items: [{ id: 'AB-1', title: 'Checkout fails', excerpt: 'Steps', comment: 'CANARY-COMMENT' }] } : { ok: false, code: 'BOUND' });
   afterEach(() => setSummaryGrantsForTest());
 
   it('with every switch off a Jira summarize step is listing-only: the request carries no flag, no M2 call is made', async () => {
@@ -176,6 +176,9 @@ describe('AgentRunService.runActive — ADR-0121 A5-S1 per-source switch', () =>
     expect(h.m2Calls).toHaveLength(1);
     expect(h.m2Calls[0]?.prompt).toContain('Checkout fails');
     expect(h.m2Calls[0]?.prompt).not.toContain('CANARY-COMMENT');
+    // Logs and audit are content-free: no item text, no summary, no pseudonym label.
+    const logged = JSON.stringify(h.logs);
+    for (const text of ['Checkout fails', 'Steps', 'CANARY-COMMENT', SUMMARY_CANARY, '참여자']) expect(logged).not.toContain(text);
   });
 
   it('a REMOTE provider that does not declare dataUse no-training gets nothing, even with the switch on', async () => {

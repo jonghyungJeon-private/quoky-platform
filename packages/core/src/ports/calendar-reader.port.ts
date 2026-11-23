@@ -99,7 +99,7 @@ export interface CalendarReader {
   /**
    * ADR-0121 A5.2 (ADR-0110 D1 amendment, slice A5-S1): the SAME single `events.list` request as {@link listEvents} with a
    * separate agent-summary field mask that adds `description`, returning only {@link CalendarEventSummaryFields} (same events,
-   * same order, same window and limit rules). Called only by the agent's summarize step, never by the schedule handler, the
+   * same order, same window and limit rules). Called only by the agent's summarize step (the read request carries `agentSummaryFieldMask`, never `withDocuments`), never by the schedule handler, the
    * brief, the handoff or a write; every other read keeps the D1 mask without a description. The description is never logged,
    * stored or shown in a listing. Optional: a reader without it cannot back a calendar summary. Throws `ConnectorQueryError`.
    */

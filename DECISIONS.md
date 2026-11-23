@@ -37500,8 +37500,8 @@ are not started; the grant producer `summary-grant.ts` is unchanged).
   `work-item-summary.ts`) so the agent boundary does not import the work-chat module.
 - **No extra request.** `plan-executor.ts` uses `summaryReadModeOf`: Jira, Slack, Confluence and GitHub reads are issued
   exactly as without a summary (no `withDocuments`), and their documents are projected from `response.items`; documents a
-  port returns for them are ignored. Calendar sets `withDocuments` (the one `events.list`) and projects from the response
-  items the same way. Mail and Drive keep the `documents` path.
+  port returns for them are ignored. Calendar sets the separate `agentSummaryFieldMask` (see Review round 1) and projects from the
+  response items the same way. Mail and Drive keep the `documents` path.
 - **Calendar agent-summary mask (ADR-0110 D1 amendment).** `CalendarReader.listEventsForAgentSummary?` (optional) and
   `GoogleCalendarReader.listEventsForAgentSummary`: the same single `events.list` per page with
   `GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS` (the D1 mask plus `description`, minus the etag), answering only
@@ -37535,3 +37535,30 @@ are not started; the grant producer `summary-grant.ts` is unchanged).
   gaps; A5-S2 the digest schemas and the disclosure line; both are needed before a switch can do anything end to end.
   (4) The new per-source header and rule strings are new model-facing text for new shapes; any model evaluation of them is
   A5-S5 (owner notice and yes first).
+- **Review round 1.** (Codex, Chief Architect.)
+  - *Credentials before clipping (P1).* `work-summary-projection.ts` runs the strict credential guard
+    (`isUntrustedTextCredentialShaped`) on every complete, untransformed field and on their join before any normalising,
+    pseudonymising or clipping. A match withholds the whole item (never a clipped prefix); the projection returns
+    `{ documents, withheld }` and the executor counts a withheld item as omitted. Test: a fake token built from fragments that
+    straddles the 300-character boundary, and one split across two fields.
+  - *Handles (P2).* Participant handles are normalised like the text (NFKC, invisible characters removed) before the
+    pseudonym patterns are built, so a fullwidth handle is pseudonymised (author and in text). Case is not folded (the text is
+    not, and the shared A6 R2 matcher is unchanged).
+  - *Calendar request (CA P1).* `withDocuments` is never set for any of the five work sources. The calendar read carries a
+    separate `agentSummaryFieldMask?: true` on `AgentReadRequest`: the same single request, mask only, never documents. It is
+    pinned in `agent-contract-check.ts`; the switch-off test asserts neither key is set. The calendar port doc and the
+    executor doc say so.
+  - *Typed raw items (CA P2).* `AgentCalendarSummaryItem`, `AgentExcerptSummaryItem` (Jira, Confluence, GitHub) and
+    `AgentSlackSummaryItem` are the typed answer of each entry's listing read, pinned at compile time. The port maps
+    `ConnectorItem` explicitly: `title` is the title and `summary` (the listing's excerpt) is `excerpt`; every person is a
+    handle in `people` (Slack `author`), read only to pseudonymise. The stale `AgentRawItem` doc is fixed.
+  - *Content-free (CA P2).* The executor test and the `agent-run-service-active` A5 block assert that logs contain no item
+    text, summary or `참여자` label (there is no separate audit sink beyond the run result, which the executor test also dumps).
+  - *Safe default (CA P3).* The `ProviderSelectionService` safe-default catch now goes through `withDataUse`, so
+    `requiredDataUse` fails closed there too.
+  - *Startup (CA P3).* `.env.example` notes that a typo in a switch stops startup even with agent mode off.
+  - *Dismissed.* Codex's calendar-REMOTE P2: A5 ratifies it after the owner's yes on a no-training, non-vendor provider.
+  - *Open (not decided here).* The rule "GitHub REMOTE_OK only when work summaries are on" (A3a answer 5) must be settled
+    before the GitHub switch is turned on.
+  - *Prompt strings.* The new per-source header, rule and notice strings are unreachable while the switches are off; all of
+    them go into the A5-S5 D12 gate before any switch is turned on.

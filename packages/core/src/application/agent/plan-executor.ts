@@ -76,6 +76,13 @@ export interface AgentReadRequest {
    * content as `documents`. Absent: it must not fetch any body (a port that returns documents anyway has them ignored).
    */
   readonly withDocuments?: true;
+  /**
+   * ADR-0121 A5.2 (ADR-0110 D1 amendment): set ONLY on a `calendar.events` read a summarize step covers. The same single
+   * `events.list` request with the separate agent-summary field mask (adds `description`), nothing else: never a body fetch,
+   * never documents, no further request. The items answer is typed {@link AgentCalendarSummaryItem}. A port for any other
+   * entry must ignore it (the executor never sets it for another entry).
+   */
+  readonly agentSummaryFieldMask?: true;
   /** Wall time left for the run, in ms; a port should give up by then. */
   readonly remainingMs: number;
   /**
@@ -381,6 +388,7 @@ export class AgentPlanExecutor {
     const route = this.deps.summarizer;
     let withDocuments = false;
     let readyToSummarize = false;
+    let fieldMask = false;
     if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
         // The readiness `select` awaits the router's readiness probe: it is bounded by the run's wall like a port call, and a
@@ -401,14 +409,16 @@ export class AgentPlanExecutor {
         if (refusal === 'wall' || !budget.checkWall()) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
         if (refusal === undefined) {
           readyToSummarize = true;
-          // A5.2: Jira, Slack, Confluence and GitHub are summarised from the listing response itself, with the request exactly
-          // as without a summary (no `withDocuments`, so no body fetch and no further request); only mail, Drive and the
-          // calendar's agent-summary field mask (one `events.list`) set the flag.
-          if (summaryReadModeOf(entryId) !== 'listing') withDocuments = true;
+          // A5.2: the five work sources are summarised from the listing response itself and NEVER get `withDocuments` (no body
+          // fetch, no further request). Jira, Slack, Confluence and GitHub send the request exactly as without a summary; the
+          // calendar alone sets `agentSummaryFieldMask` (the same single `events.list`, mask only). Mail and Drive keep documents.
+          const mode = summaryReadModeOf(entryId);
+          if (mode === 'documents') withDocuments = true;
+          else if (mode === 'listing-mask') fieldMask = true;
         } else state.denials.set(`${cover.step}:${number}`, refusal);
       }
     }
-    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}) }, budget, state.shutdown);
+    const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}), ...(fieldMask ? { agentSummaryFieldMask: true as const } : {}) }, budget, state.shutdown);
     if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: state.shutdown?.aborted === true ? 'stopped' : 'bound' };
     budget.checkWall();
     // Any breach or refusal during the call (a spent wall, a refused reservation) ends the step `not-run` (bound) and the run
@@ -423,8 +433,9 @@ export class AgentPlanExecutor {
     state.listed.set(number, projection.itemCount);
     if (readyToSummarize && summaryReadModeOf(entryId) !== 'documents') {
       // The listing's own items, through the closed A5.2 field table; whatever `documents` a port returned is ignored.
-      const checked = validateSourceDocuments(projectWorkSummaryDocuments(entryId, response.items), projection.slots);
-      state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped });
+      const projected = projectWorkSummaryDocuments(entryId, response.items);
+      const checked = validateSourceDocuments(projected.documents, projection.slots);
+      state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped + projected.withheld });
     } else if (withDocuments && response.documents !== undefined) {
       const checked = validateSourceDocuments(response.documents, projection.slots);
       state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped });
@@ -547,7 +558,7 @@ export class AgentPlanExecutor {
    */
   private async callPort(
     reader: AgentReadPort,
-    request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments'>,
+    request: Pick<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments' | 'agentSummaryFieldMask'>,
     budget: AgentRunBudget,
     shutdown?: AbortSignal,
   ): Promise<AgentReadResponse | 'wall'> {

@@ -1,6 +1,7 @@
 import type { AgentRunServiceDeps } from './agent-run-service';
 import type { AgentPlanExecutorDeps, AgentReadBudget, AgentReadPort, AgentReadRequest, AgentReadResponse, AgentSummarizerDeps } from './plan-executor';
 import type { AgentWorkSummarySource } from './flow-policy';
+import type { AgentCalendarSummaryItem, AgentExcerptSummaryItem, AgentSlackSummaryItem } from './work-summary-projection';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import type { ProviderSelector } from '../../ports/provider-selector.port';
 
@@ -36,8 +37,15 @@ export type AgentReadPortReturnPinned = Assert<TypesEqual<ReturnType<AgentReadPo
 export type AgentReadResponseOkPinned = Assert<KeysEqual<Extract<AgentReadResponse, { ok: true }>, 'ok' | 'items' | 'hasMore' | 'truncated' | 'documents'>>;
 export type AgentReadResponseFailPinned = Assert<KeysEqual<Extract<AgentReadResponse, { ok: false }>, 'ok' | 'code'>>;
 export type AgentReadResponseVariantsPinned = Assert<TypesEqual<AgentReadResponse['ok'], boolean>>;
-/** A read request holds closed fields only; `withDocuments` is the one flag, set by the executor, never by a caller. */
-export type AgentReadRequestPinned = Assert<KeysEqual<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments' | 'remainingMs' | 'signal' | 'budget'>>;
+/**
+ * A read request holds closed fields only; `withDocuments` (mail and Drive) and `agentSummaryFieldMask` (calendar only: the same
+ * single request, mask only, never documents; ADR-0121 A5.2) are flags set by the executor, never by a caller.
+ */
+export type AgentReadRequestPinned = Assert<KeysEqual<AgentReadRequest, 'entryId' | 'args' | 'keys' | 'withDocuments' | 'agentSummaryFieldMask' | 'remainingMs' | 'signal' | 'budget'>>;
+/** ADR-0121 A5.2: the typed raw item of each work entry's listing answer (the only members the projection reads). */
+export type AgentCalendarSummaryItemPinned = Assert<KeysEqual<AgentCalendarSummaryItem, 'id' | 'title' | 'location' | 'description' | 'people'>>;
+export type AgentExcerptSummaryItemPinned = Assert<KeysEqual<AgentExcerptSummaryItem, 'id' | 'title' | 'excerpt' | 'people'>>;
+export type AgentSlackSummaryItemPinned = Assert<KeysEqual<AgentSlackSummaryItem, 'id' | 'text' | 'author' | 'people'>>;
 export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQuery' | 'reserveHttp'>>;
 /**
  * The service: the router, the actor repository (kill switch), the logger and configuration values; for `active` only (the S2

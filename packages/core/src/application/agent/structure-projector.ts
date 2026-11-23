@@ -34,7 +34,11 @@ export function isProjectedId(field: string, value: unknown): value is string {
   return pattern !== undefined && typeof value === 'string' && pattern.test(value);
 }
 
-/** What a read port hands over per listed item: its id (any other member is ignored, never read). */
+/**
+ * What a read port hands over per listed item. The structure projector reads only `id`. For the five work-summary entries
+ * (ADR-0121 A5.2) the summary projection additionally reads the members of the typed items in `work-summary-projection.ts`
+ * (`AgentCalendarSummaryItem`, `AgentExcerptSummaryItem`, `AgentSlackSummaryItem`) and nothing else; any other member is never read.
+ */
 export interface AgentRawItem {
   readonly id?: unknown;
 }
