@@ -55,9 +55,9 @@ export function aliasStarts(word: string, name: string): boolean {
 
 /**
  * ADR-0121 A4 (A4-S1): a Korean word in a clause-linking ending that joins two predicates (-면서, -으며/-며, -고서, and a
- * following 후), with a stem of two or more syllables (so the noun 보고서 is not one). A closed grammatical class like the
+ * following 후), (-고서 with a stem of two or more syllables, so the noun 보고서 is not one). A closed grammatical class like the
  * -고 connective above, never a topic word; the handoff grounding refuses a message that holds one. Pure.
  */
 export function isClauseLinkingWord(word: string): boolean {
-  return /^[가-힣]{2,}(?:면서|며|고서)$/u.test(word) || /^(?:[가-힣]{2,}후|후)$/u.test(word);
+  return /^[가-힣]+(?:면서|며)$/u.test(word) || /^[가-힣]{2,}고서$/u.test(word) || /^(?:[가-힣]{2,}후|후)$/u.test(word);
 }

@@ -166,6 +166,29 @@ describe('handoff plan (validator rule 8)', () => {
     expect(check(MAIL_TO_CALENDAR, '메일에 나온 날짜로 일정 확인하지 마')).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
   });
 
+  it('round 3: every reviewer probe is refused (one strict request-form unit, fail closed)', () => {
+    const refused = [
+      // -하고: noun particle and verb connective are indistinguishable, so both refuse (accepted fail-closed cost: "메일하고 일정 보여줘").
+      '메일 확인하고 일정 보여줘', '메일 정리하고 일정 체크해줘', '메일하고 일정 보여줘',
+      // Request shape: a question, a past statement, a reported or a deferred request.
+      '메일에 나온 날짜로 일정 확인했어?', '메일에 나온 날짜로 일정 확인했어', '어제 메일에 나온 날짜로 일정 확인해달래',
+      '메일에 나온 날짜로 일정 확인은 나중에', '메일에 나온 날짜로 일정 확인해줄 필요는 없어',
+      // Punctuation whitelist.
+      'show my mail & check my calendar', 'show my mail - check my calendar', '메일 확인 / 일정 확인해줘',
+      // Sentence splits, linking endings, retractions, quote forms.
+      '메일 보여줘. 일정도 보여줘', '메일 보여줘\n일정도 보여줘', '메일 보면서 일정 확인해줘', '메일 보며 일정 확인해줘', '메일 확인하고서 일정 봐줘',
+      '메일 확인 후 일정 봐줘', '메일 보여줘, 아니다', '메일 보여줘, 취소', "actually don't show my mail check my calendar", "don't show my mail check my calendar",
+      "won't show my mail check my calendar", '`메일 보여줘` 일정 확인해줘', '«메일 보여줘» 일정 확인해줘',
+    ];
+    for (const text of refused) expect(check(MAIL_TO_CALENDAR, text), text).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    const each = { ...MAIL_TO_CALENDAR, handoff: { from: 1, kind: 'date', scope: 'each-item', to: { entryId: 'calendar.events', slot: 'range' } } };
+    for (const text of ['메일마다 나온 날짜로 일정 확인하고 할 일 추가해줘', '메일 요약하고 이번 주 일정에 나온 사람들 메일 보여줘']) expect(check(each, text), text).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    // 마다가스카르 is not distributive.
+    expect(check(each, '마다가스카르 메일에 나온 날짜로 일정 확인해줘'), 'madagascar').toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
+    // A quoted request outside the strippable quotes cannot ground either; the comitative -랑 still can.
+    expect(check(MAIL_TO_CALENDAR, '메일에 나온 날짜랑 일정 비교해줘').ok).toBe(true);
+  });
+
   it('an over-bound plan never bypasses rule 8: no bounded suggestion for an invalid or valid handoff', () => {
     const five = Array.from({ length: 5 }, () => ({ entryId: 'mail.list', args: {} }));
     expect(check(withHandoff({ kind: 'secret' }, five), '메일 보여줘')).toMatchObject({ ok: false, reason: 'handoff-invalid' });

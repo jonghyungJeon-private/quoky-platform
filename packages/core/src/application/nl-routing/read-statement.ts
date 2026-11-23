@@ -26,9 +26,10 @@ const REASON_CONNECTIVE = /(?:[아어여라]서|니까|느라)$/u;
 const TRAILING_NOISE = /[ㄱ-ㆎ\p{Extended_Pictographic}️‍]+$/u;
 /** The quotative particle directly after a quote (이)라고 / (이)라는 / (이)란. */
 const QUOTATIVE_AFTER = /^\s*(?:이?라고|이?라는|이?란)(?:만|도|는|은|까지|조차|마저|요)?(?=\s|$|[.,!?~])/u;
-// An ASCII apostrophe between two letters is a contraction ("won't", "owner's"), never a quote delimiter: a single-quote span
-// opens only where no ASCII letter precedes it and may hold such a letter-flanked apostrophe.
-const QUOTED = /"([^"]+)"|“([^”]+)”|(?<![A-Za-z])'((?:[^']|(?<=[A-Za-z])'(?=[A-Za-z]))+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
+const QUOTED = /"([^"]+)"|“([^”]+)”|'([^']+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
+// Handoff grounding only (A4-S1): an ASCII apostrophe between two letters is a contraction ("won't"), never a quote delimiter, so a
+// single-quote span opens only where no ASCII letter precedes it. The live READ veto above keeps its original quote behaviour.
+const QUOTED_CONTRACTION_AWARE = /"([^"]+)"|“([^”]+)”|(?<![A-Za-z])'((?:[^']|(?<=[A-Za-z])'(?=[A-Za-z]))+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 
 function tokensOf(text: string): string[] {
   return text
@@ -87,10 +88,11 @@ function hasUnconsumedQuotedRequest(text: string, args: NlArgs): boolean {
 
 /**
  * The owner's prose with every inline quoted span removed (the same quote marks the quoted-request veto reads). What a caller
- * matches in the result is the owner's own voice outside any quotation; a quoted word grounds nothing. Pure.
+ * matches in the result is the owner's own voice outside any quotation; a quoted word grounds nothing. `contractions` (handoff
+ * grounding only) keeps a letter-flanked apostrophe as a contraction; the default is the live READ veto's behaviour. Pure.
  */
-export function nlWithoutInlineQuotes(prose: string): string {
-  return prose.replace(QUOTED, ' ');
+export function nlWithoutInlineQuotes(prose: string, options: { readonly contractions?: boolean } = {}): string {
+  return prose.replace(options.contractions === true ? QUOTED_CONTRACTION_AWARE : QUOTED, ' ');
 }
 
 /** The class of a READ capture that is not a request, or `undefined`. `groundingText` is the owner's non-platform-quoted words. */

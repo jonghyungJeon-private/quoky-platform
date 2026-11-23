@@ -48,4 +48,12 @@ describe('nlReadNotRequest (READ message-level structural guard)', () => {
     expect(nlReadNotRequest('몰라서 답답한데 이슈 뭐야?', {})).toBeUndefined();
     expect(nlReadNotRequest('이슈 몰라서 어떻게 해야 돼?', {})).toBeUndefined();
   });
+
+  it('the live READ veto keeps its original quote behaviour: an apostrophe-quoted request is still a quoted-request', () => {
+    expect(nlReadNotRequest("PR'메일 보여줘'라고 하면 어떻게 돼?", {})).toBe('quoted-request');
+    // Only the handoff path (contractions: true) treats a letter-flanked apostrophe as a contraction.
+    expect(nlWithoutInlineQuotes("PR'메일 보여줘'라고")).toBe('PR 라고');
+    expect(nlWithoutInlineQuotes("won't show mail", { contractions: true })).toBe("won't show mail");
+    expect(nlWithoutInlineQuotes("PR'메일 보여줘'라고", { contractions: true })).toContain("PR'메일");
+  });
 });

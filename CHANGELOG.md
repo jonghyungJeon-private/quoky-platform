@@ -50,6 +50,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   clause connective, at most one request form and it is last); `nlWithoutInlineQuotes` keeps contraction apostrophes;
   마다 is anchored as a particle; backtick and guillemet text is refused. Residuals and the A4-S2 operation/kind
   precondition are recorded in DECISIONS.
+- **Review round 3 (final; fix-loop cap reached).** The handoff grounding also refuses any -하고 word (only -랑 stays; "메일하고
+  일정 보여줘" now refuses, an accepted fail-closed cost), any request-shape veto, and any punctuation outside a whitelist; the
+  shared READ quote regex is restored (contraction handling is handoff-only); every reviewer probe is a negative test. Fail-open
+  residuals (harmless while `handoff-off`) and the A4-S2 activation gate are recorded in DECISIONS.
 
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 

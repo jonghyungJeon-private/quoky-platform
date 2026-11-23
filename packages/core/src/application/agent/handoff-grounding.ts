@@ -1,7 +1,7 @@
 import { conjunctTokens, isClauseLinkingWord } from '../nl-routing/conjuncts';
 import type { NlClause } from '../nl-routing/clause-flags';
 import { nlWithoutInlineQuotes } from '../nl-routing/read-statement';
-import { nlHasDistributiveMarker, nlHasGrammaticalNegation, nlHasRetraction, nlIsRequestForm } from '../nl-routing/request-shape';
+import { nlHasDistributiveMarker, nlHasGrammaticalNegation, nlHasRetraction, nlIsRequestForm, nlRequestVeto } from '../nl-routing/request-shape';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 
 /**
@@ -11,22 +11,29 @@ import { normalizeForMatch } from '../nl-routing/selection-input';
  *  - no quote delimiter this module does not strip (backticks, guillemets), no line or paragraph break anywhere, and no
  *    sentence terminator or semicolon/colon except a trailing run of terminators;
  *  - no negation, exclusion or retraction anywhere (the all-clauses-plain precedent of `nlClauseGroundedFlagNames`);
- *  - no clause boundary: no "and"/"그리고", no -고 connective (the noun particles -랑/-하고 are not one: "일정이랑 비교해줘"), no linking ending (-면서, -며, -고서, 후), and a
+ *  - only letters, digits, plain spaces, a letter-flanked apostrophe and the one comma (no `&`, `-`, `/` or other symbol), and no
+ *    request-shape veto (`nlRequestVeto`: question, past statement, reported or deferred request);
+ *  - no clause boundary: no "and"/"그리고", no -고 connective, no -하고 token (a noun particle and a verb connective look alike; the
+ *    comitative -랑 is kept: "일정이랑 비교해줘"), no linking ending (-면서, -며, -고서, 후), and a
  *    comma only as the one boundary of an each-item introductory phrase that already holds the distributive marker;
  *  - at most one request-form word (`nlIsRequestForm`), and when there is one it is the LAST word (Korean is head-final).
- * Known residual (recorded in DECISIONS.md): English has no closed request-form class, so two English commands without
- * punctuation or a connective ("show mail show calendar") are one unit here; one request naming two sources
- * ("메일 일정 보여줘") is one unit too. A4-S2 must check the operation/kind against the handoff slots before it activates.
+ * Known residuals (fail open, harmless while handoff is `handoff-off`; DECISIONS.md A4-S1 note): linking endings outside the
+ * closed class, bare English commands joined by words, one request naming two sources. The A4-S2 activation gate closes them.
  */
 export function handoffOwnerUnit(groundingText: string, scope: 'one-item' | 'each-item'): NlClause | undefined {
   if (/[\n\r\v\f\u0085\u2028\u2029]/u.test(groundingText)) return undefined;
-  const stripped = nlWithoutInlineQuotes(groundingText.normalize('NFC').replace(/\p{Cf}/gu, '')).trim();
+  const stripped = nlWithoutInlineQuotes(groundingText.normalize('NFC').replace(/\p{Cf}/gu, ''), { contractions: true }).trim();
   if (/[`«»‹›]/u.test(stripped)) return undefined;
   const text = stripped.replace(/[.!?。！？．｡…]+$/u, '').trim();
-  if (text.length === 0 || /[.!?。！？．｡…;；:：]/u.test(text)) return undefined;
+  if (text.length === 0) return undefined;
+  // Punctuation whitelist: letters, digits, plain spaces, a letter-flanked ASCII apostrophe and a comma (checked below); anything else refuses.
+  if (/[^\p{L}\p{N} ,']|(?<![\p{L}])'|'(?![\p{L}])/u.test(text)) return undefined;
+  // Any request-shape veto (question, statement, reported, deferred) refuses.
+  if (nlRequestVeto(text, [], []) !== undefined) return undefined;
   if (nlHasGrammaticalNegation(text) || nlHasRetraction(text)) return undefined;
   const tokens = conjunctTokens(text, { verbConnective: true });
-  if (tokens.some((token) => token.boundary || token.ends === 'connective' || isClauseLinkingWord(token.word.replace(/[,،]$/u, '')))) return undefined;
+  // The comitative -랑 is allowed ("일정이랑 비교해줘"); a token in -하고 is a noun particle or a verb connective (메일하고 / 확인하고), indistinguishable: refuse.
+  if (tokens.some((token) => token.boundary || token.ends === 'connective' || (token.ends === 'particle' && /하고$/u.test(token.word)) || isClauseLinkingWord(token.word.replace(/[,،]$/u, '')))) return undefined;
   const commas = tokens.filter((token) => token.ends === 'comma');
   if (commas.length > 1) return undefined;
   if (commas.length === 1) {

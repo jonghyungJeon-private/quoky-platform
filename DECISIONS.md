@@ -36282,7 +36282,7 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   Also: an ASCII apostrophe between two letters is not a quote (`nlWithoutInlineQuotes`: "won't" is kept); 마다 is anchored
   as a particle after a noun-ish character (not 마다가스카르). Former positive changed: "메일 요약하고 ... 보여줘" (two
   predicates joined by -고) is now refused; the source-number test uses one request form.
-  **Accepted residuals (recorded, not chased):** one request naming two sources ("메일 일정 보여줘", "메일하고 일정 보여줘")
+  **Accepted residuals (recorded, not chased):** one request naming two sources ("메일 일정 보여줘")
   is one unit and grounds whatever handoff names both entries; English has no closed request-form class, so two bare
   English commands with no punctuation or connective count as one unit; a linking ending outside the closed class is not
   seen. Each fails into the closed slot table and A4-S2's bounds, never into a grant beyond them.
@@ -36290,3 +36290,23 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   handoff slots and the owner request (the unit names entries, not the operation or the value kind).
   **Fix-loop cap:** this is round 2 of the same finding and the rule was changed to structural; further edge cases that
   fail closed (refuse) are recorded here, not chased.
+- **Review round 3 (2026-11-23, FINAL: the fix-loop cap was reached at round 3; further edge cases are recorded, not chased).**
+  Fixed, all fail closed, in `handoff-grounding.ts` unless noted: (1) a token ending in -하고 refuses (the lexer tags it a
+  particle before the verb-connective check, and the noun 메일하고 and the verb 확인하고 look alike); only the comitative -랑
+  stays ("일정이랑 비교해줘", gold ap-n034); `conjuncts.ts` behaviour for other callers is unchanged. "메일하고 일정 보여줘" now
+  refuses: an ACCEPTED fail-closed cost. The linking-ending class now also catches a one-syllable stem (보면서, 보며).
+  So "메일 확인하고 일정 보여줘", "메일 정리하고 일정 체크해줘", "메일마다 나온 날짜로 일정 확인하고 할 일 추가해줘" and "메일
+  요약하고 이번 주 일정에 나온 사람들 메일 보여줘" refuse (the round-2 claim that the -고 connective was refused was untrue for
+  -하고 words). (2) Request shape: any `nlRequestVeto(unit, [], [])` result (question, past statement, reported, deferred)
+  refuses. (3) Punctuation whitelist after the trailing terminators: letters, digits, plain spaces, a letter-flanked ASCII
+  apostrophe and the one each-item comma; anything else (`&`, `-`, `/`, ...) refuses. (4) The shared READ quote regex is back to
+  its pre-A4-S1 behaviour (the live `hasUnconsumedQuotedRequest` path is unchanged); the contraction-aware apostrophe is a
+  handoff-only option (`nlWithoutInlineQuotes(prose, { contractions: true })`). (5) Every probe is pinned as a negative test.
+  **Residuals, fail OPEN but harmless while handoff is `handoff-off` (recorded, not chased):** linking endings outside the closed
+  class ("메일 보여주고나서 일정 확인해줘", "메일 봤는데/보다가/보거나/보자마자 일정 확인해줘", "메일 본 다음에/뒤에 ...", "메일
+  확인했으면 일정 봐줘"); English commands joined by words, not only bare ones ("... in my mail then text bob", "... actually
+  forget it", "scratch that"), because English has no closed request-form class and the unit rule sees one unit; one request
+  naming two sources.
+  **A4-S2 ACTIVATION GATE (all required before handoff can be enabled):** (i) every non-final Hangul token in the unit is a noun
+  or a noun plus case particle, else refuse; (ii) an English unit holds exactly one imperative verb by a closed grammatical
+  check, else refuse; (iii) the operation/kind consistency check between the handoff slots and the owner request (noted above).
