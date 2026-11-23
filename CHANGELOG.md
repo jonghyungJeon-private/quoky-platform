@@ -54,6 +54,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   일정 보여줘" now refuses, an accepted fail-closed cost), any request-shape veto, and any punctuation outside a whitelist; the
   shared READ quote regex is restored (contraction handling is handoff-only); every reviewer probe is a negative test. Fail-open
   residuals (harmless while `handoff-off`) and the A4-S2 activation gate are recorded in DECISIONS.
+- **Final review.** A comma can no longer hide a -고/-하고 connective (the boundary checks run on the text without its
+  commas), a comma not followed by a space refuses, and any question mark refuses (the veto sees the terminators).
 
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 

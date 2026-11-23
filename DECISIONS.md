@@ -36303,10 +36303,18 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   its pre-A4-S1 behaviour (the live `hasUnconsumedQuotedRequest` path is unchanged); the contraction-aware apostrophe is a
   handoff-only option (`nlWithoutInlineQuotes(prose, { contractions: true })`). (5) Every probe is pinned as a negative test.
   **Residuals, fail OPEN but harmless while handoff is `handoff-off` (recorded, not chased):** linking endings outside the closed
-  class ("메일 보여주고나서 일정 확인해줘", "메일 봤는데/보다가/보거나/보자마자 일정 확인해줘", "메일 본 다음에/뒤에 ...", "메일
-  확인했으면 일정 봐줘"); English commands joined by words, not only bare ones ("... in my mail then text bob", "... actually
-  forget it", "scratch that"), because English has no closed request-form class and the unit rule sees one unit; one request
-  naming two sources.
+  class ("메일 봤는데/보다가/보거나/보자마자 일정 확인해줘", "메일 확인하고는/확인하고요 일정 봐줘", colloquial "메일 확인하구/보구
+  일정 봐줘", "메일 보여주곤 일정 봐줘", and "...일정 확인한 거 맞아" with no question mark and no request form); English commands
+  joined by words, not only bare ones ("... in my mail then text bob", "... actually forget it", "scratch that"), because
+  English has no closed request-form class and the unit rule sees one unit; one request naming two sources. ("메일
+  보여주고나서 일정 확인해줘", "메일 본 다음에/뒤에 ..." and "메일 확인했으면 일정 봐줘" were listed here in round 3 but already
+  refuse; they are pinned as negatives.)
+  **Final review (Chief Architect + Codex, after the cap; two fail-open bypasses of fixes (1) and (2), fixed by the
+  orchestrator):** a word ending in a comma was tagged `comma` and skipped the -고/-하고 and linking checks ("메일마다 정리하고,
+  일정 확인해줘" grounded); the clause-boundary checks now run on the text without its commas, and a comma not followed by a
+  space ("메일 확인해줘,내 일정은 ...", "메일 일정 확인,취소") refuses. The trailing terminators were stripped before the veto, so
+  "...일정 확인?" grounded; any question mark now refuses and the veto sees the text with its terminators. Accepted fail-closed
+  cost: a polite request ending in a question mark ("확인해줄래?", "can you ...?") refuses; no gold positive ends in one.
   **A4-S2 ACTIVATION GATE (all required before handoff can be enabled):** (i) every non-final Hangul token in the unit is a noun
   or a noun plus case particle, else refuse; (ii) an English unit holds exactly one imperative verb by a closed grammatical
   check, else refuse; (iii) the operation/kind consistency check between the handoff slots and the owner request (noted above).
