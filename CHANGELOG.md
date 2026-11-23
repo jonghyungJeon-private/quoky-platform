@@ -16,7 +16,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   exception, A2 answer 2, W1, W4 and the S2 single-line rule, the a6-05 cap clarification (a longer message is a new
   request), the updated gates (lot (b) now expects the ordinary single-line behaviour), the residual risks and the
   unblocked slices are recorded. a6-03's cross-source wish points to the separate S3 draft. A4: p001–p008 run directly as
-  an each-item handoff (keys at once, title values behind the batch preview), and the A4-S2 activation gate must
+  an each-item handoff (all keys: at once; any title fallback: the whole batch, keys included, waits for the batch-preview yes), and the A4-S2 activation gate must
   recognise that shape structurally. Recorded fact: `mail.list` has no numeric count arg, so AM-3 reaches mail only after a
   catalog change (not made).
 - **Changed (constitution).** `ARCHITECTURE.md` §8 item 3, §10 and §12 carry the A5.5 text and the A6.7 text as amended.

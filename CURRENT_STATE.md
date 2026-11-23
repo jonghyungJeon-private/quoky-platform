@@ -13,7 +13,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   another request" binds the asked items and reruns the message as a new turn (AM-2, `yes-and-more`). A count the plan
   carries is a recognised unit (AM-3; mail needs a catalog count arg first, not made). Slices A6-S1..S5 are unblocked. The
   classifier switch stays off; every eval run needs the owner's notice and yes.
-- A4 p001–p008 run directly as an each-item handoff (keys at once, titles behind one batch-preview yes). The A4-S2
+- A4 p001–p008 run directly as an each-item handoff (all keys: at once; any title fallback: the whole batch, keys included, waits for one batch-preview yes). The A4-S2
   activation gate must recognise that shape structurally. A4 itself was already ratified on 2026-11-18.
 - Open (owner): `rt-s2r-473`'s label, the `462` rerun outcome (a Drive listing at most), the A6.9 gates and minimums with
   a yes-and-more recall bar, the A4-S2 shape and its linking word; the S3 draft (separate branch); the red-team page (19 cases).
