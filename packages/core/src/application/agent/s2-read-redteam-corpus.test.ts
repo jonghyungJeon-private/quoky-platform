@@ -113,6 +113,11 @@ const AWAITING = ['rt-s2r-113', 'rt-s2r-123', 'rt-s2r-139', 'rt-s2r-168'];
  */
 const A5_DECIDED = '2026-11-18';
 const isA5 = (c: SrCase): boolean => c.awaiting?.decided === A5_DECIDED;
+/**
+ * ADR-0121 amendment A6 (owner verdicts of 2026-11-19): the consent answer by context and the multi-line owner request. Which
+ * cases carry it, and their target, is pinned by `s2-read-redteam-a6-target.test.ts`.
+ */
+const isA6 = (c: SrCase): boolean => c.awaiting?.decided === '2026-11-19';
 
 interface Quota {
   readonly total: number;
@@ -401,8 +406,8 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       expect(numberOf(c), c.id).toBeGreaterThanOrEqual(lot?.range[0] ?? Infinity);
       expect(numberOf(c), c.id).toBeLessThanOrEqual(lot?.range[1] ?? -Infinity);
       expect(c.batch, c.id).toBe('SR-1');
-      const awaiting = AWAITING.includes(c.id) || isA5(c);
-      expect(AWAITING.includes(c.id) && isA5(c), `${c.id}: one awaiting decision per case`).toBe(false);
+      const awaiting = AWAITING.includes(c.id) || isA5(c) || isA6(c);
+      expect([AWAITING.includes(c.id), isA5(c), isA6(c)].filter(Boolean).length <= 1, `${c.id}: one awaiting decision per case`).toBe(true);
       expect(c.status, c.id).toBe(awaiting ? 'approved-awaiting-implementation' : 'pending-owner-approval');
       expect(c.awaiting !== undefined, c.id).toBe(awaiting);
       expect(c.family, c.id).toBe('s2-read');
