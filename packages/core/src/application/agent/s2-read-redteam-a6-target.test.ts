@@ -108,14 +108,16 @@ const OFFERED = new Map(
 const LINE_BREAKS = /[\n\r\u2028\u2029\u0085\v\f]+/u;
 /**
  * A6.5 (review round 2, P2-2): only a bare LF separates the two lines of an owner request. Any other line or paragraph
- * separator ANYWHERE in the RAW text (CR, so CRLF too; U+2028; U+2029; NEL U+0085; VT; FF) means it is not the two-line
- * form, checked before `prepareSelectionInput`, whose whitespace collapse around an LF would absorb it.
+ * separator ANYWHERE in the RAW text (CR, so CRLF too; U+2028; U+2029; NEL U+0085; VT; FF), and (review round 3, P2-2) any
+ * format character (`\p{Cf}`: zero-width, bidi override, soft hyphen, BOM), means it is not the two-line form, checked before `prepareSelectionInput`, whose whitespace collapse around an LF would absorb it.
  */
-const NON_LF_SEPARATOR = /[\r\u2028\u2029\u0085\v\f]/u;
+const NON_LF_SEPARATOR = /[\r\u2028\u2029\u0085\v\f\p{Cf}]/u;
 /**
- * A6.5 (review round 2, P2-1): the closed-class completion A6-S3 makes in `grammar-residual.ts`. Its English function class
- * holds the singular deictic pronouns (`it`, `that`, `this`) but not their plural forms; the producer's back-reference
- * ("please summarize them") needs exactly these. A closed grammatical class, no request word, no source, no topic.
+ * A6.5 (review round 3, P3 c): the A6.5-LOCAL closed-class completion. The shared residue guard (`grammar-residual.ts`, also
+ * used by calendar-question.ts and work-chat-command.ts) is NOT changed. Its English function class holds the singular
+ * deictic pronouns (`it`, `that`, `this`) but not their plural forms; the producer's back-reference ("please summarize
+ * them") needs exactly these, so the two-line rule treats them as recognised closed-class units of its own. No request word,
+ * no source, no topic.
  */
 const PLURAL_DEICTIC_COMPLETION: readonly string[] = ['them', 'these', 'those'];
 
@@ -164,14 +166,33 @@ const unitPattern = (unit: string): RegExp =>
 function recognisedUnits(plan: ValidatedPlan): RegExp[] {
   const reads = 'steps' in plan ? plan.steps.flatMap((step) => (step.kind === 'read' ? [step] : [])) : [];
   const units = new Set<string>(NL_MODE_SUMMARY_WORDS.map((word) => normalizeForMatch(word)));
+  const names = new Set<string>();
+  const labels = new Set<string>();
   for (const step of reads) {
-    for (const name of [...step.entry.aliases, ...(step.entry.sourceNames ?? [])]) units.add(normalizeForMatch(name));
-    for (const language of ['ko', 'en'] as const) {
-      for (const word of (step.entry.describe?.(step.args, step.range, language) ?? '').split(/[^\p{L}\p{N}]+/u)) units.add(normalizeForMatch(word));
+    for (const name of [...step.entry.aliases, ...(step.entry.sourceNames ?? [])]) {
+      units.add(normalizeForMatch(name));
+      names.add(normalizeForMatch(name));
     }
+    for (const language of ['ko', 'en'] as const) labels.add(normalizeForMatch(step.entry.describe?.(step.args, step.range, language) ?? '').trim());
     for (const value of nlClauseStringValues(step.args)) units.add(value);
   }
-  return [...units].filter((unit) => unit.length > 0).sort((a, b) => b.length - a.length).map(unitPattern);
+  // Review round 3 (P3 a): a `describe` label is matched as a WHOLE PHRASE: its words in order, nothing else of the clause between
+  // them except a recognised source name ("recent files" in "recent drive files"). It is never split word by word: "안 읽은 메일"
+  // must not make "안" and "읽은" units (only the head noun joins them), or "요약 안 해" would read as recognised.
+  const gap = names.size === 0 ? '' : `(?:\\s+(?:${[...names].filter((n) => n.length > 0).sort((x, y) => y.length - x.length).map(escapeRegExp).join('|')}))*`;
+  const phrase = (label: string): RegExp => {
+    const words = label.split(/\s+/u).filter((w) => w.length > 0).map(escapeRegExp);
+    const latin = /^[a-z0-9 ;.-]+$/u.test(label);
+    return new RegExp(latin ? `(?<![a-z0-9])${words.join(`${gap}\\s+`)}(?:s|['’]s)?(?![a-z0-9])` : words.join(`${gap}\\s+`), 'u');
+  };
+  // The label's HEAD NOUN (its last word: the thing the listing names, "files", "메일") is a unit of its own; its modifiers are not.
+  for (const label of labels) {
+    const head = label.split(/\s+/u).filter((w) => w.length > 0).at(-1);
+    if (head !== undefined && label.includes(' ')) units.add(head);
+  }
+  const all = [...units].filter((unit) => unit.length > 0).map((unit) => [unit, unitPattern(unit)] as const);
+  for (const label of labels) if (label.length > 0) all.push([label, phrase(label)] as const);
+  return all.sort((a, b) => b[0].length - a[0].length).map(([, pattern]) => pattern);
 }
 
 /**
@@ -326,6 +347,74 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
     // CRLF is decided explicitly: NOT the two-line form (fail closed). A typed chat line break is an LF.
     expect(rawTwoLines('메일 보여줘\r\n요약해줘')).toBeUndefined();
     expect(rawTwoLines('메일 보여줘\n요약해줘')).toEqual(['메일 보여줘', '요약해줘']);
+  });
+
+  const UNREAD: readonly PlannerStep[] = [{ entryId: 'mail.list', args: { unread: true } }, { summarize: [1], schema: 'digest.v1' }];
+  const DRIVE: readonly PlannerStep[] = [{ entryId: 'drive.files', args: {} }, { summarize: [1], schema: 'digest.v1' }];
+
+  it('review round 3 (P2-2): a format character (`\\p{Cf}`) anywhere in the raw text is not the two-line form', () => {
+    for (const text of ['메일 보여줘\u200B\n요약해줘', '메일 보여줘\n\u202E요약해줘', '메일\u00AD 보여줘\n요약해줘', '\uFEFF메일 보여줘\n요약해줘', '메일 보여줘\n요약\u200D해줘']) {
+      expect(rawTwoLines(text), JSON.stringify(text)).toBeUndefined();
+      expect(grant(text), JSON.stringify(text)).toEqual([]);
+    }
+    // The same text without the format character is the positive control.
+    expect(grant('메일 보여줘\n요약해줘')).toEqual(['2:mail.list']);
+  });
+
+  it('review round 3 (P3 a): a `describe` label is one whole-phrase unit, never split word by word ("안", "읽은")', () => {
+    const plan = validatedPlan({ planner: UNREAD }, '안 읽은 메일 보여줘')!;
+    const units = recognisedUnits(plan);
+    // The words of the label are no units of their own: the negation "안" and the participle "읽은" stay residue.
+    expect(units.some((unit) => unit.test('안')), '안').toBe(false);
+    expect(units.some((unit) => unit.test('읽은')), '읽은').toBe(false);
+    expect(units.some((unit) => unit.test('안 읽은 메일')), 'the whole label').toBe(true);
+    expect(units.some((unit) => unit.test('안 읽은 거')), 'a clause that interrupts the label with a non-source word').toBe(false);
+    // Two reasons the negated summary never grants: (1) its line is not consumed ("안" is unexplained residue); (2) the whole
+    // message is not (the producer also reads the negation, so no grant would be minted from the joined text).
+    expect(lineConsumed('요약 안 해', plan)).toBe(false);
+    expect(unexpressedContentWords(normalizeForMatch('요약 안 해'), units)).toContain('안');
+    expect(grant('안 읽은 메일\n요약 안 해', UNREAD)).toEqual([]);
+    // The positive control: the whole label as typed is consumed.
+    expect(grant('안 읽은 메일 보여줘\n요약해줘', UNREAD)).toEqual(['2:mail.list']);
+  });
+
+  it('review round 3 (P2-1, P3 b): PASTE LOT (a) lines with unexplained residue: 0 grants, ask-first is a failure', () => {
+    const LOT_A: readonly (readonly [readonly PlannerStep[], string])[] = [
+      [MAIL, '메일 보여줘\n회의록 정리 공유드립니다'],
+      [MAIL, '메일 보여줘\n김 대리가 메일 요약해달라고 했어요'],
+      [MAIL, '메일 보여줘\n팀장님이 메일 정리해서 내일 보내주신대요'],
+      // English, residue at the edge of the line
+      [DRIVE, 'show my recent drive files\nforwarded: please summarize the q3 notes for the team'],
+      [MAIL, 'show my recent mail\nKim asked me to summarize my mail'],
+    ];
+    for (const [planner, text] of LOT_A) expect(grant(text, planner), JSON.stringify(text)).toEqual([]);
+  });
+
+  it('review round 3 (P2-1): PINNED RESIDUAL LOT (b) lines of recognised units and closed-class words only still grant ask-first', () => {
+    // By A6.5 item 3 these lines are consumed (no unexplained residue), so the producer reads them and the grant is minted;
+    // the rule-① question comes first, only a closed yes answers it ("ㅇㅇ" cancels), and the classifier is never called.
+    const LOT_B: readonly (readonly [readonly PlannerStep[], string, string])[] = [
+      [MAIL, '메일 보여줘\n메일 요약해 주세요', '2:mail.list'],
+      [MAIL, '메일 보여줘\n메일 요약 좀 해주세요', '2:mail.list'],
+      [MAIL, '메일 보여줘\n메일 정리 확인해 주세요', '2:mail.list'],
+      [DRIVE, 'show my recent drive files\nI will summarize the files', '2:drive.files'],
+      [DRIVE, 'show my recent drive files\nwe have a summary of the files', '2:drive.files'],
+      [DRIVE, 'show my recent drive files\ncan you summarize the drive files?', '2:drive.files'],
+      [DRIVE, 'show my recent drive files\nsummary of my files from you', '2:drive.files'],
+      // owner questions and statements about summaries (non-requests the residual still reads as a request)
+      [DRIVE, 'show my recent drive files\ndid you summarize them?', '2:drive.files'],
+      [DRIVE, 'show my recent drive files\nwhat do you summarize?', '2:drive.files'],
+    ];
+    for (const [planner, text, pair] of LOT_B) {
+      expect(grant(text, planner), JSON.stringify(text)).toEqual([pair]);
+      // The pending step it raises: ask first (also on a LOCAL route), `origin: 'two-line-grant'`, closed yes only.
+      const pending = { kind: 'summary-consent', state: 'fresh', requestText: text } as const;
+      expect(originOf(pending), JSON.stringify(text)).toBe('two-line-grant');
+      const reply = (replyText: string): Route => answerRoute({ ...byId.get(id(463))!, text: replyText, pending: { ...byId.get(id(463))!.pending!, requestText: text } });
+      expect(reply('ㅇㅇ'), 'ㅇㅇ cancels').toBe('closed-only-cancel');
+      expect(reply('좋아 요약해줘'), 'free text cancels').toBe('closed-only-cancel');
+      expect(reply('응'), 'only the closed yes proceeds').toBe('closed-yes');
+    }
   });
 
   it('grants the owner-typed two-line controls: exactly the named sources (P3 d: "드라이브 / 메일 요약해줘")', () => {
