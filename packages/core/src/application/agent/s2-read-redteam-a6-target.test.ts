@@ -2,10 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_MODE_SUMMARY_WORDS } from '../nl-routing/action-entries';
 import { NL_CATALOG_ENTRY_IDS } from '../nl-routing/catalog';
-import { nlClauseNamesEntry, nlClauses, type NlClause } from '../nl-routing/clause-flags';
-import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
-import { nlPreparedWithoutFilesLine, normalizeForMatch, prepareSelectionInput } from '../nl-routing/selection-input';
-import { groundingWordIn } from '../nl-routing/selection-validator';
+import { nlClauseStringValues } from '../nl-routing/clause-flags';
+import { unexpressedContentWords } from '../nl-routing/grammar-residual';
+import { normalizeForMatch, prepareSelectionInput } from '../nl-routing/selection-input';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { validateAgentPlan } from './plan-validator';
@@ -18,6 +17,9 @@ import { hasUntrustedSpanMarker, isSingleLineOwnerText, ownerSummaryRequests } f
  * test MODELS the two proposed rules (no product code has them; slices A6-S1..S4) and pins which SR-1 cases the owner's
  * verdicts change, their targets, and that every other case keeps its built expectation. The classifier's label is not
  * modelled: for the replies that reach it, the label is the owner's verdict (`CLASSIFIER_ROUTE`), the gold its eval inherits.
+ * Review round 2: the two-line check runs on the RAW text (P2-2), a line is consumed only when its residue after the
+ * producer's recognised units is closed-class only (P2-1), and a step raised by a two-line grant never reaches the
+ * classifier (P3 a).
  */
 
 interface PlannerStep {
@@ -50,6 +52,7 @@ interface Case {
     readonly kind: string;
     readonly state: string;
     readonly source?: string;
+    readonly requestText?: string;
     readonly count?: number;
     readonly ageSeconds?: number;
     readonly planner?: readonly PlannerStep[];
@@ -103,8 +106,18 @@ const OFFERED = new Map(
   ),
 );
 const LINE_BREAKS = /[\n\r\u2028\u2029\u0085\v\f]+/u;
-/** A6.5: only LF (or CRLF) separates the two lines of an owner request; any other line-break character fails closed. */
-const OTHER_BREAKS = /[\r\u2028\u2029\u0085\v\f]/u;
+/**
+ * A6.5 (review round 2, P2-2): only a bare LF separates the two lines of an owner request. Any other line or paragraph
+ * separator ANYWHERE in the RAW text (CR, so CRLF too; U+2028; U+2029; NEL U+0085; VT; FF) means it is not the two-line
+ * form, checked before `prepareSelectionInput`, whose whitespace collapse around an LF would absorb it.
+ */
+const NON_LF_SEPARATOR = /[\r\u2028\u2029\u0085\v\f]/u;
+/**
+ * A6.5 (review round 2, P2-1): the closed-class completion A6-S3 makes in `grammar-residual.ts`. Its English function class
+ * holds the singular deictic pronouns (`it`, `that`, `this`) but not their plural forms; the producer's back-reference
+ * ("please summarize them") needs exactly these. A closed grammatical class, no request word, no source, no topic.
+ */
+const PLURAL_DEICTIC_COMPLETION: readonly string[] = ['them', 'these', 'those'];
 
 type ValidatedPlan = Extract<ReturnType<typeof validateAgentPlan>, { ok: true }>['plan'];
 
@@ -124,41 +137,72 @@ function validatedPlan(c: Pick<Case, 'planner' | 'channel'>, groundingText: stri
   return result.ok && result.plan.kind === 'run' ? result.plan : undefined;
 }
 
-/** The producer's own summary-group test (the approved summary words, no exclusion or negation in the group). */
-function asksSummary(clause: NlClause): boolean {
-  return !nlHasExclusionOrNegation(clause.text) && NL_MODE_SUMMARY_WORDS.some((word) => groundingWordIn(clause.normalized, normalizeForMatch(word)));
+/**
+ * A6.5 (review round 2, P2-2), modelled: the two lines of the RAW owner text, or `undefined` when it is not the two-line
+ * form (a non-LF separator anywhere, or not exactly 2 non-empty LF lines). Runs before any normalisation.
+ */
+function rawTwoLines(raw: string): readonly string[] | undefined {
+  if (NON_LF_SEPARATOR.test(raw)) return undefined;
+  const lines = raw.split('\n').filter((line) => line.trim().length > 0);
+  return lines.length === 2 ? lines : undefined;
+}
+
+const escapeRegExp = (literal: string): string => literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+/** A unit as the residue guard removes it: a Latin unit as a whole word (plural or possessive allowed), a Korean one inside a token. */
+const unitPattern = (unit: string): RegExp =>
+  /^[a-z0-9 ;.-]+$/u.test(unit) ? new RegExp(`(?<![a-z0-9])${escapeRegExp(unit)}(?:s|['’]s)?(?![a-z0-9])`, 'u') : new RegExp(escapeRegExp(unit), 'u');
+
+/**
+ * A6.5 (review round 2, P2-1): the spans the producer RECOGNISES as the request, for one validated plan, and nothing else:
+ * - source units: every name of a read source of the plan (`aliases`, `sourceNames`; what `nlClauseNamesEntry` reads);
+ * - scope units: the words of Core's own label of each validated read step (`entry.describe` of its validated args, both
+ *   languages: the listing's own heading) and the step's validated string values (`nlClauseStringValues`);
+ * - verb units: the approved summary words (`NL_MODE_SUMMARY_WORDS`).
+ * Listing verbs, particles, politeness endings and function words are NOT units: they are the closed classes of the residue
+ * guard (`unexpressedContentWords`, `grammar-residual.ts`).
+ */
+function recognisedUnits(plan: ValidatedPlan): RegExp[] {
+  const reads = 'steps' in plan ? plan.steps.flatMap((step) => (step.kind === 'read' ? [step] : [])) : [];
+  const units = new Set<string>(NL_MODE_SUMMARY_WORDS.map((word) => normalizeForMatch(word)));
+  for (const step of reads) {
+    for (const name of [...step.entry.aliases, ...(step.entry.sourceNames ?? [])]) units.add(normalizeForMatch(name));
+    for (const language of ['ko', 'en'] as const) {
+      for (const word of (step.entry.describe?.(step.args, step.range, language) ?? '').split(/[^\p{L}\p{N}]+/u)) units.add(normalizeForMatch(word));
+    }
+    for (const value of nlClauseStringValues(step.args)) units.add(value);
+  }
+  return [...units].filter((unit) => unit.length > 0).sort((a, b) => b.length - a.length).map(unitPattern);
 }
 
 /**
- * A6.5 (review round 1, CA P1), modelled: exactly 2 non-empty lines split by LF; EACH line passes every single-line marker
- * check on its own and is consumed by a producer clause (a clause of the line names a read source of the plan, or the line
- * is a summary or back-reference group). A leftover line fails the whole message closed. No vocabulary of its own.
+ * A6.5 (review round 2, P2-1), modelled: a line is CONSUMED by the producer only when (1) it passes every single-line
+ * marker check on its own, (2) it holds at least one recognised unit, and (3) after every recognised unit is removed, the
+ * RESIDUE is empty or closed-class only (`unexpressedContentWords` returns nothing, with the A6-S3 plural-deictic
+ * completion). Any unexplained residue (a pasted name, "공유드립니다", "부탁드립니다", a reporting verb, a count the plan
+ * does not carry) leaves the line unconsumed, and the whole message fails closed. A summary word or a source name inside
+ * a line no longer consumes it by itself.
  */
-function multiLineEligible(ownerText: string, plan: ValidatedPlan): boolean {
-  const own = nlPreparedWithoutFilesLine(ownerText).replace(/\r\n/gu, '\n').trim();
-  if (OTHER_BREAKS.test(own)) return false;
-  const lines = own.split('\n').filter((line) => line.trim().length > 0);
-  if (lines.length !== 2) return false;
-  const reads = 'steps' in plan ? plan.steps.flatMap((step) => (step.kind === 'read' ? [step.entry] : [])) : [];
-  return lines.every((line) => {
-    if (hasUntrustedSpanMarker(line)) return false;
-    const prepared = prepareSelectionInput(line);
-    if ('skip' in prepared) return false;
-    const clauses = nlClauses(prepared.groundingText);
-    return clauses.length > 0 && clauses.every((clause) => asksSummary(clause) || reads.some((entry) => nlClauseNamesEntry(clause, entry)));
-  });
+function lineConsumed(line: string, plan: ValidatedPlan): boolean {
+  const prepared = prepareSelectionInput(line);
+  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text)) return false;
+  const units = recognisedUnits(plan);
+  const text = normalizeForMatch(prepared.groundingText);
+  if (!units.some((unit) => unit.test(text))) return false;
+  return unexpressedContentWords(text, units).every((word) => PLURAL_DEICTIC_COMPLETION.includes(word));
 }
 
-/** The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 multi-line rule. */
+/** The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 two-line rule. */
 function grantOf(c: Pick<Case, 'text' | 'planner' | 'channel'>, asOneLine: boolean): string[] {
   const prepared = prepareSelectionInput(c.text);
   if ('skip' in prepared) return [];
   const plan = validatedPlan(c, prepared.groundingText);
   if (plan === undefined) return [];
   if (!asOneLine) return ownerSummaryRequests(plan, prepared).map((request) => `${request.step}:${request.entryId}`);
-  // The whole message keeps every marker check too; the per-line check runs on the owner's real lines, before any join.
-  if (isSingleLineOwnerText(prepared.text) || hasUntrustedSpanMarker(prepared.text) || !multiLineEligible(prepared.text, plan)) return [];
-  const text = prepared.text.split(LINE_BREAKS).join(' ');
+  // The line check runs on the RAW text (P2-2); the whole message keeps every marker check; each raw line must be consumed.
+  const lines = rawTwoLines(c.text);
+  if (lines === undefined || isSingleLineOwnerText(prepared.text) || hasUntrustedSpanMarker(prepared.text)) return [];
+  if (!lines.every((line) => lineConsumed(line, plan))) return [];
+  const text = lines.map((line) => line.trim()).join(' ');
   return ownerSummaryRequests(plan, { text, groundingText: prepared.groundingText }).map((request) => `${request.step}:${request.entryId}`);
 }
 
@@ -172,20 +216,32 @@ function closedToken(reply: string, fold: 'NFC' | 'NFKC'): 'yes' | 'no' | undefi
   return undefined;
 }
 
-type Route = 'no-pending' | 'not-a-summary-consent' | 'structural-fail' | 'closed-yes' | 'closed-no' | 'classifier';
+type Route = 'no-pending' | 'not-a-summary-consent' | 'structural-fail' | 'closed-yes' | 'closed-no' | 'closed-only-cancel' | 'classifier';
+
+/**
+ * Review round 2 (P3 a): the field of the pending rule-① step (`SummaryConsentPending.origin`) that records how its grant was
+ * minted. Core sets it once, when the step is created from the grant basis (A6-S1 type, A6-S3 value), and never changes it.
+ * `two-line-grant`: the grant came from the A6.5 two-line form, so only a closed yes answers and the classifier is never called.
+ */
+type PendingOrigin = 'single-line-grant' | 'two-line-grant';
+/** The origin of a fixture's pending step, from the request that raised it (the SR-1 fixtures carry `requestText`). */
+const originOf = (p: NonNullable<Case['pending']>): PendingOrigin => (rawTwoLines(p.requestText ?? '') !== undefined ? 'two-line-grant' : 'single-line-grant');
 
 /** A6.3, modelled: the structural checks run first and decide whether the reply is an answer at all; no model call. */
-function answerRoute(c: Case): Route {
+function answerRoute(c: Case, origin?: PendingOrigin): Route {
   const p = c.pending;
   if (p === undefined) return 'no-pending';
   if (p.kind !== 'summary-consent') return 'not-a-summary-consent';
   if (p.state !== 'fresh' || (p.ageSeconds ?? Infinity) >= 600 || (c.channel ?? 'owner-dm') !== 'owner-dm') return 'structural-fail';
   const prepared = prepareSelectionInput(c.text);
-  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text)) return 'structural-fail';
+  // A format character (`\p{Cf}`: a zero-width or direction mark) is a structural failure too (review round 2; A6.9 gold).
+  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text) || /\p{Cf}/u.test(c.text)) return 'structural-fail';
   const lines = c.text.trim().split(LINE_BREAKS).filter((line) => line.trim().length > 0);
   if (lines.length > 3 || Array.from(c.text.trim()).length > 60) return 'structural-fail';
   const closed = closedToken(c.text, 'NFKC');
   if (closed !== undefined) return closed === 'yes' ? 'closed-yes' : 'closed-no';
+  // A6.3 step 3: a step raised by a two-line grant takes only a closed yes; any other reply cancels, no classifier call.
+  if ((origin ?? originOf(p)) === 'two-line-grant') return 'closed-only-cancel';
   return 'classifier';
 }
 
@@ -208,10 +264,11 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
     for (const c of marked) expect(grantOf(c, true), c.id).toEqual([]);
   });
 
-  it('keeps the review-round-4 paste family closed (summary-grant.test.ts inputs) and grants only a 2-line typed request', () => {
-    const MAIL: readonly PlannerStep[] = [{ entryId: 'mail.list', args: {} }, { summarize: [1], schema: 'digest.v1' }];
-    const grant = (text: string): string[] => grantOf({ text, planner: MAIL }, true);
-    // Round 4: each line must be consumed by a producer clause, so a divider or address line fails the whole message.
+  const MAIL: readonly PlannerStep[] = [{ entryId: 'mail.list', args: {} }, { summarize: [1], schema: 'digest.v1' }];
+  const grant = (text: string, planner: readonly PlannerStep[] = MAIL): string[] => grantOf({ text, planner }, true);
+
+  it('keeps the review-round-4 paste family closed (summary-grant.test.ts inputs), the "메일 3개 / 요약해줘" residual included', () => {
+    // Round 4: each line must be consumed, so a divider or address line fails the whole message.
     expect(grant('❤️❤️❤️\n메일 요약해줘')).toEqual([]);
     expect(grant('2001:db8::1\n메일 요약해줘')).toEqual([]);
     // Only LF splits the two lines: a Unicode line separator is not typed in a chat message.
@@ -220,9 +277,61 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
     expect(grant('김팀장 전달\n메일 요약해줘')).toEqual([]);
     expect(grant('메일 보여줘\n팀장님이 보낸 거 위주로\n요약해줘')).toEqual([]);
     expect(grant('메일 보여줘\n\n\n요약해줘')).toEqual(['2:mail.list']);
-    // The owner's own two-line request: the round-4 "fail-closed residual" is the 460 shape, and A6-S3 flips it on purpose.
-    expect(grant('메일 3개\n요약해줘')).toEqual(['2:mail.list']);
+    // Review round 2 (P2-1): "3개" is a count no validated arg carries (mail.list has no limit), so it is unexplained residue
+    // and the round-4 residual STAYS closed (listing-only). A recorded usability cost (DECISIONS A6.11), never an egress.
+    expect(grant('메일 3개\n요약해줘')).toEqual([]);
     expect(grant('메일 3개 보여줘\n요약하지 말고')).toEqual([]);
+  });
+
+  it('review round 2 (P2-1): a pasted line holding a summary word or a source name is not consumed when it leaves residue', () => {
+    const plan = validatedPlan({ planner: MAIL }, '메일 요약해줘')!;
+    const units = recognisedUnits(plan);
+    // Each pasted line holds a recognised unit (so a per-clause "names a source or asks a summary" test counted it as the
+    // owner's request) and leaves unexplained residue (so the residue rule does not).
+    const PASTED: readonly (readonly [string, string])[] = [
+      // a forwarded sentence containing a summary verb
+      ['회의록 정리 공유드립니다', '메일 보여줘'],
+      // a sentence containing a source name
+      ['메일 확인 부탁드립니다', '요약해줘'],
+      // a request quoted inside a report sentence
+      ['김 대리가 메일 요약해달라고 했어요', '메일 보여줘'],
+      // a request verb inside a longer third-party sentence
+      ['팀장님이 메일 정리해서 내일 보내주신대요', '메일 보여줘'],
+    ];
+    for (const [pasted, typed] of PASTED) {
+      const line = normalizeForMatch(pasted);
+      expect(units.some((unit) => unit.test(line)), pasted).toBe(true);
+      expect(unexpressedContentWords(line, units).length, pasted).toBeGreaterThan(0);
+      expect(lineConsumed(pasted, plan), pasted).toBe(false);
+      expect(lineConsumed(typed, plan), typed).toBe(true);
+      // NO GRANT, in either order.
+      expect(grant(`${pasted}\n${typed}`), pasted).toEqual([]);
+      expect(grant(`${typed}\n${pasted}`), pasted).toEqual([]);
+    }
+    // A line of closed-class words only holds no recognised unit and is not consumed either ("안녕" is a closed filler).
+    expect(grant('안녕\n메일 요약해줘')).toEqual([]);
+  });
+
+  it('review round 2 (P2-2): the line check runs on the RAW text; a non-LF separator next to an LF is not the two-line form', () => {
+    for (const separator of ['\u2028', '\u2029', '\u0085', '\v', '\f', '\r']) {
+      const text = `메일 보여줘${separator}\n요약해줘`;
+      // The preparation absorbs every one but NEL (its `\s*\n\s*` collapse; NEL is no JS whitespace and stays), so a check after it
+      // would see exactly 2 LF lines.
+      const prepared = prepareSelectionInput(text);
+      expect('skip' in prepared ? '' : prepared.text, JSON.stringify(separator)).toBe(separator === '\u0085' ? text : '메일 보여줘\n요약해줘');
+      expect(rawTwoLines(text), JSON.stringify(separator)).toBeUndefined();
+      expect(grant(text), JSON.stringify(separator)).toEqual([]);
+      expect(grant(`메일 보여줘\n${separator}요약해줘`), JSON.stringify(separator)).toEqual([]);
+    }
+    // CRLF is decided explicitly: NOT the two-line form (fail closed). A typed chat line break is an LF.
+    expect(rawTwoLines('메일 보여줘\r\n요약해줘')).toBeUndefined();
+    expect(rawTwoLines('메일 보여줘\n요약해줘')).toEqual(['메일 보여줘', '요약해줘']);
+  });
+
+  it('grants the owner-typed two-line controls: exactly the named sources (P3 d: "드라이브 / 메일 요약해줘")', () => {
+    const DRIVE_MAIL: readonly PlannerStep[] = [{ entryId: 'drive.files', args: {} }, { entryId: 'mail.list', args: {} }, { summarize: [1, 2], schema: 'digest.v1' }];
+    expect(grant('드라이브\n메일 요약해줘', DRIVE_MAIL)).toEqual(['3:drive.files', '3:mail.list']);
+    expect(grant('메일 보여줘\n요약해줘')).toEqual(['2:mail.list']);
   });
 
   it('targets the listing plus the rule-① question over exactly the listed items, and keeps the built floor', () => {
@@ -273,6 +382,23 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
     const other = CASES.filter((c) => c.pending !== undefined && c.pending.kind !== 'summary-consent');
     expect(other.length).toBeGreaterThan(0);
     for (const c of other) expect([answerRoute(c), c.awaiting], c.id).toEqual(['not-a-summary-consent', undefined]);
+  });
+
+  it('review round 2 (P3 a): a pending step whose `origin` is `two-line-grant` never reaches the classifier; a closed yes still answers', () => {
+    const summaryPendings = CASES.filter((c) => c.pending?.kind === 'summary-consent');
+    expect(summaryPendings.length).toBeGreaterThan(10);
+    // Every SR-1 fixture question was raised by a single-line request: the routes pinned above are the single-line routes.
+    for (const c of summaryPendings) expect(originOf(c.pending!), c.id).toBe('single-line-grant');
+    // The same replies to a question raised by a two-line grant: no reply reaches the classifier.
+    for (const c of summaryPendings) expect(answerRoute(c, 'two-line-grant'), c.id).not.toBe('classifier');
+    for (const caseId of Object.keys(CLASSIFIER_ROUTE)) expect(answerRoute(byId.get(caseId)!, 'two-line-grant'), caseId).toBe('closed-only-cancel');
+    // The fast path is unchanged for it: the closed yes tokens (NFKC included) and the closed no still answer.
+    for (const caseId of NFKC_ONLY) expect(answerRoute(byId.get(caseId)!, 'two-line-grant'), caseId).toBe('closed-yes');
+    const closedYes = summaryPendings.filter((c) => answerRoute(c) === 'closed-yes');
+    expect(closedYes.length).toBeGreaterThan(0);
+    for (const c of closedYes) expect(answerRoute(c, 'two-line-grant'), c.id).toBe('closed-yes');
+    // The origin is read from the request that raised the step: the owner's 460 request is a two-line grant.
+    expect(originOf({ kind: 'summary-consent', state: 'fresh', requestText: byId.get(id(460))!.text })).toBe('two-line-grant');
   });
 
   it('a classifier yes or an NFKC yes targets a bound yes over exactly the asked items, once; `other` keeps the built expectation', () => {
@@ -340,3 +466,4 @@ describe('ADR-0121 amendment A6: the awaiting set and the header', () => {
     for (const text of defaults.slice(1)) expect(text.toLowerCase()).toContain('owner-confirmed 2026-11-19');
   });
 });
+
