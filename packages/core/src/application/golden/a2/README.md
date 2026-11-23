@@ -34,6 +34,10 @@ duplicates, hashes, reference checks, contamination lint against every `../*.jso
   stays the closed token set as built and is still checked. The header `consentClassifierJudging` states the
   content-free classifier condition. The file was never frozen; DECISIONS "ADR-0121 amendment A6", A6.8 records its new
   sha256.
+- A6 ratified 2026-11-23 with the owner's amendments: `rt-s2a-130` ("응 그리고 메일도 보내줘") carries an `awaiting`
+  `yes-and-more` target (AM-2: the yes binds the topic once and the whole reply reruns as a new ordinary turn,
+  `rerunAsNewTurn`), and the header's closed label list gains `yes-and-more`. The new sha256 is recorded in DECISIONS
+  "ADR-0121 amendments A5 and A6 ratification record, and the A4 p001–p008 answer (2026-11-23)".
 
 ## `g4-generation-cases.v1.json`, `g4-rubric.v1.json`, `g4-manifest.v1.json` (gate G4)
 

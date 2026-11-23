@@ -114,10 +114,11 @@ const AWAITING = ['rt-s2r-113', 'rt-s2r-123', 'rt-s2r-139', 'rt-s2r-168'];
 const A5_DECIDED = '2026-11-18';
 const isA5 = (c: SrCase): boolean => c.awaiting?.decided === A5_DECIDED;
 /**
- * ADR-0121 amendment A6 (owner verdicts of 2026-11-19): the consent answer by context and the multi-line owner request. Which
- * cases carry it, and their target, is pinned by `s2-read-redteam-a6-target.test.ts`.
+ * ADR-0121 amendment A6 (owner verdicts of 2026-11-19; ratified 2026-11-23 with AM-1..AM-3, which decided `462` as
+ * yes-and-more): the consent answer by context and the multi-line owner request. Which cases carry it, and their target, is
+ * pinned by `s2-read-redteam-a6-target.test.ts`.
  */
-const isA6 = (c: SrCase): boolean => c.awaiting?.decided === '2026-11-19';
+const isA6 = (c: SrCase): boolean => c.awaiting?.decided === '2026-11-19' || c.awaiting?.decided === '2026-11-23';
 
 interface Quota {
   readonly total: number;

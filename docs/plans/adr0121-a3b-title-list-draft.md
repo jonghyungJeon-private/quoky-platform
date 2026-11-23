@@ -408,7 +408,7 @@ ADR-0121."
 | A2-D17 | Topic labels and history notes | List labels and the A3b-D10 notes |
 | A2-D18 | Topic caps | Shared budget; 7-day caps; per-event resend limit; staged release; consent-latency flag |
 | A2 note of 2026-10-23 "heavy multi-item judgment stays LOCAL" | Local first; list egress only if the bar fails | Calendar: superseded only through A3b's gates; Jira per A3a-D7 |
-| `s2-answer.redteam.v1.json` | sha256 `028d58c3…` (superseded: DECISIONS.md "ADR-0121 amendment A6", A6.8) | Expectations rechecked against A3b-D4 and re-hashed; new family `s2-answer-list` |
+| `s2-answer.redteam.v1.json` | sha256 `028d58c3…` (superseded: DECISIONS.md "ADR-0121 amendment A6", A6.8, then the A5 and A6 ratification record of 2026-11-23) | Expectations rechecked against A3b-D4 and re-hashed; new family `s2-answer-list` |
 | A3a-D6 | Local answer only if G6 passed | Unchanged; it is A3b's fallback |
 | ADR-0121 D3, D4, D7, D9, D10, D11, D12 | | MT-L; consent-bound declassification for one list call; budget and caps; audit fields; MT-L; G7–G9; `topicList.v1`, one prompt asset |
 | A1-D7 / MC-7; A1-D8 | Deviation for one string; `OWNER_CONFIRMED` uses | Extended to one list; plus the one list call |
