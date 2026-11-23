@@ -10,8 +10,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - The owner answered W1–W5 on 2026-11-19: W1 becomes "the answer in context" (ㅇㅇ, ok, 응, 확인, 보내, 좋아 can be yes;
   아니, ㄴㄴ, 취소, no are no), W2–W4 kept, W5 confirmed (one question per summarize step). The A2 topic consent aligns.
 - Proposed design: structural checks first, closed tokens (with NFKC), then a consent-answer classifier over the fixed
-  question and the reply only, default off behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`; a two-line owner request (each line
-  marker-free and consumed by the producer) may grant a summary, always behind rule ① and a closed yes. Scoped N-3
+  question and the reply only, default off behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`; a two-line owner request (raw LF
+  lines only, each line marker-free with only closed-class residue after the producer's units) may grant a summary,
+  always behind rule ① and a closed yes (review round 2; the pasted-line residual is recorded, gated by the paste lot). Scoped N-3
   exception, Strict ratification pending; A6-S3 cannot merge before the confirm slice.
 - Gold: 8 SR-1 cases and 5 A2 consent cases await slices A6-S1..S4 (`expect` unchanged). Eval gates defined, not run.
   Open: 12 owner questions (ratification, classifier locality, the two-turn follow-up, A2 replies without a verdict).

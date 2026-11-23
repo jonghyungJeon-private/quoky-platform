@@ -14,20 +14,26 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   classifier that sees only the fixed question (item content as a placeholder) and the reply and labels it yes / no /
   other / unclear (`yes` binds exactly the asked items once, `no` and `other` cancel, `unclear` re-asks once; never an
   approval, write, undo or control command; branded pending types; an atomic `answering` claim and a compare-and-set
-  bind). The owner's two-line request may grant a summary when each LF line is marker-free and fully consumed by the
-  producer; such a grant always asks rule ① and takes only a closed yes. Proposed: a scoped exception to ADR-0090
+  bind). The owner's two-line request may grant a summary when its raw text has exactly 2 LF lines and no other line or
+  paragraph separator (CRLF fails closed), each line is marker-free, and each line's residue after the producer's
+  recognised units (source names, the validated step's own label, the summary words) is closed-class only; such a grant
+  always asks rule ① (on a LOCAL route too, with a question that asks for the closed yes) and takes only a closed yes
+  (`origin: 'two-line-grant'`). Proposed: a scoped exception to ADR-0090
   amendment N-3, amendments of A2 answer 2, W1, W4 (multi-line only) and the S2 wiring single-line rule, and
   `ARCHITECTURE.md` §8 item 3, §10 and §12 text (not applied; Strict ratification pending). Slices A6-S1..S5, the
   classifier eval corpus and its gate (0 wrong captures, ≥ 95 % recall on yes and no, 3 runs, both arms) and a
-  deterministic paste-lot gate for A6-S3 are defined; no eval or model call was run. Review round 1 (CA, Codex) applied.
+  deterministic paste-lot gate for A6-S3 are defined; no eval or model call was run. Review rounds 1 (CA, Codex) and 2
+  (independent reviewer) applied; the two-line residual (a pasted line made only of recognised units) is recorded.
 - **Changed (gold).** SR-1: `rt-s2r-460`, `461`, `463`, `468`, `469`, `470`, `487`, `488` are
   `approved-awaiting-implementation` with `awaiting.decided: "2026-11-19"`; new header field `consentAnswerJudging`;
   `fixture.workingDefaults` records the answers. A2 `s2-answer.redteam.v1.json`: `rt-s2a-120`, `123`, `124`, `125`, `136`
-  gain an `awaiting` yes target (derived structurally), and a `consentClassifierJudging` header. No `expect` or
-  `expected` changed; no red-team floor lowered.
+  gain an `awaiting` yes target (derived structurally), and a `consentClassifierJudging` header (a format character in the
+  reply is a structural failure; sha256 now `c1349f75…a8ffa65`, recorded in A6.8). No `expect` or `expected` changed; no
+  red-team floor lowered.
 - **Tests.** New `s2-read-redteam-a6-target.test.ts` (the modelled rules change exactly the owner-fixed cases; quoted,
-  stale and non-consent pendings never reach the classifier); `s2-read-redteam-corpus.test.ts` accepts the A6 decision;
-  `a2-data.test.ts` pins the A2 targets and floor. No product code, prompt, catalog or flag change.
+  stale and non-consent pendings never reach the classifier; the round-2 pasted lines and non-LF separators grant nothing;
+  a two-line-grant step never reaches the classifier); `s2-read-redteam-corpus.test.ts` accepts the A6 decision;
+  `a2-data.test.ts` pins the A2 targets, the floor and the 18 eligible-but-unmarked replies. No product code, prompt, catalog or flag change.
 
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 
