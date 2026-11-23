@@ -85,15 +85,20 @@ interface FieldSpec {
   readonly author?: boolean;
 }
 
+/** A field spec whose member names are keys of the typed item `T`: renaming a member of the interface breaks the compile. */
+function specOf<T>(spec: { readonly title?: keyof T & string; readonly text: readonly { readonly field: keyof T & string; readonly label?: string }[]; readonly author?: boolean }): FieldSpec {
+  return Object.freeze({ ...spec, text: Object.freeze([...spec.text]) });
+}
+
 /** The A5.2 table: what is sent to M2 per source entry, by the typed member names above. */
 export const WORK_SUMMARY_FIELDS: Readonly<Partial<Record<NlWave1EntryId, FieldSpec>>> = Object.freeze({
-  'calendar.events': Object.freeze({ title: 'title', text: Object.freeze([{ field: 'location', label: 'Location' }, { field: 'description', label: 'Description' }]) }),
-  'jira.issues': Object.freeze({ title: 'title', text: Object.freeze([{ field: 'excerpt' }]) }),
+  'calendar.events': specOf<AgentCalendarSummaryItem>({ title: 'title', text: [{ field: 'location', label: 'Location' }, { field: 'description', label: 'Description' }] }),
+  'jira.issues': specOf<AgentExcerptSummaryItem>({ title: 'title', text: [{ field: 'excerpt' }] }),
   // A release-items listing carries no description: the summary (title) only.
-  'jira.release': Object.freeze({ title: 'title', text: Object.freeze([]) }),
-  'slack.search': Object.freeze({ text: Object.freeze([{ field: 'text' }]), author: true }),
-  'confluence.search': Object.freeze({ title: 'title', text: Object.freeze([{ field: 'excerpt' }]) }),
-  'github.items': Object.freeze({ title: 'title', text: Object.freeze([{ field: 'excerpt' }]) }),
+  'jira.release': specOf<AgentExcerptSummaryItem>({ title: 'title', text: [] }),
+  'slack.search': specOf<AgentSlackSummaryItem>({ text: [{ field: 'text' }], author: true }),
+  'confluence.search': specOf<AgentExcerptSummaryItem>({ title: 'title', text: [{ field: 'excerpt' }] }),
+  'github.items': specOf<AgentExcerptSummaryItem>({ title: 'title', text: [{ field: 'excerpt' }] }),
 });
 
 /** The members read host-side to name the participants. */
@@ -160,8 +165,8 @@ export function projectWorkSummaryDocuments(entryId: NlWave1EntryId, items: unkn
         const raw = (name: string | undefined): string => (name !== undefined && typeof item[name] === 'string' ? (item[name] as string) : '');
         const rawTitle = raw(spec.title);
         const rawParts = spec.text.map((entry) => raw(entry.field));
-        // The strict guard on every COMPLETE original field and on their join, before anything is normalised or clipped.
-        if ([rawTitle, ...rawParts, [rawTitle, ...rawParts].join('\n')].some((field) => isUntrustedTextCredentialShaped(field))) {
+        // The strict guard on every COMPLETE original field and on their joins (with a newline and with no separator, so a token split across two fields is still seen), before anything is normalised or clipped.
+        if ([rawTitle, ...rawParts, [rawTitle, ...rawParts].join('\n'), [rawTitle, ...rawParts].join('')].some((field) => isUntrustedTextCredentialShaped(field))) {
           withheld += 1;
           return;
         }

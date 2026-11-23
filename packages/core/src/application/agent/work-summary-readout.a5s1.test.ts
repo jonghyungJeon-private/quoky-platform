@@ -191,11 +191,12 @@ describe('review round 1: credentials and handles in the projection', () => {
     expect(JSON.stringify(result)).not.toContain(token.slice(0, 8));
   });
 
-  it('a credential split across two fields is still withheld (the joined text is guarded too)', () => {
+  it('a credential split across two fields (a prefix at the end of one, the rest at the start of the next) withholds the item', () => {
     const token = fakeToken();
     const result = projectWorkSummaryDocuments('calendar.events', [{ id: 'e1', title: `key ${token.slice(0, 6)}`, location: token.slice(6), description: 'd' }]);
-    expect(result.documents.length + result.withheld).toBe(1);
-    expect(JSON.stringify(result)).not.toContain(token);
+    expect(result.withheld).toBe(1);
+    expect(result.documents).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(token.slice(6));
   });
 
   it('the executor counts a withheld item as omitted and makes no model call when every item is withheld', async () => {

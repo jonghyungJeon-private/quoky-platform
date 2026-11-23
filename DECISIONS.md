@@ -37562,3 +37562,4 @@ are not started; the grant producer `summary-grant.ts` is unchanged).
     before the GitHub switch is turned on.
   - *Prompt strings.* The new per-source header, rule and notice strings are unreachable while the switches are off; all of
     them go into the A5-S5 D12 gate before any switch is turned on.
+- **Review round 2.** The projection also guards the no-separator join of the sent fields (a token split across two fields was missed by the newline join) and its test asserts `withheld === 1` with no document; `WORK_SUMMARY_FIELDS` names are tied to the typed item interfaces (`keyof`), so a rename breaks the compile; a test pins that the `ProviderSelectionService` safe-default path also honours `requiredDataUse`.

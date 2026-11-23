@@ -156,4 +156,18 @@ describe('A5.3 requiredDataUse: no-training', () => {
       expect(plain?.eligible, capability).toEqual([VENDORS[0].key, f.catalog.claude.id]);
     }
   });
+
+  it('the safe-default path (the selection read throws) also fails closed: no undeclared REMOTE provider', async () => {
+    const f = selectionFixture({ env: VENDORS[0].env });
+    (f.service as unknown as { sessionSelection: () => Promise<never> }).sessionSelection = async () => {
+      throw new Error('store unavailable');
+    };
+    for (const capability of CHAT_TIER_CAPABILITIES) {
+      expect((await f.service.preferenceFor(capability, NO_TRAINING))?.eligible, capability).toEqual([]);
+      // Without the constraint the safe default is still the Claude CLI.
+      expect((await f.service.preferenceFor(capability, {}))?.eligible, capability).toEqual([f.catalog.claude.id]);
+    }
+    (f.catalog.claude as { dataUse?: 'no-training' }).dataUse = 'no-training';
+    expect((await f.service.preferenceFor(Capability.SUMMARIZATION, NO_TRAINING))?.eligible).toEqual([f.catalog.claude.id]);
+  });
 });
