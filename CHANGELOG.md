@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A5-S1 summary-readout (2026-11-23; dormant, every switch off)
+
+- **Added.** The summary-readout label (`summaryReadoutLabel`), the readout shapes (`calendar-event`, `confluence-page`,
+  `github-item`; `AGENT_SUMMARY_READOUT_SOURCE` for the five sources), the A5.2 field projection from the listing
+  response (`work-summary-projection.ts`: closed field table, 200/300 bounds, one line, Slack author and handles as
+  pseudonyms), the calendar agent-summary field mask (`CalendarReader.listEventsForAgentSummary`,
+  `GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS`; every other calendar read keeps the D1 mask), the A5.3 provider constraints
+  (`ProviderSelectionContext.requiredDataUse`, `AiProvider.dataUse`, the `workText` exclusion for all five sources) and the
+  per-source switches `QUOKY_AGENT_SUMMARY_CALENDAR | _JIRA | _SLACK | _CONFLUENCE | _GITHUB` (default off, independent of
+  `QUOKY_WORK_SUMMARY_ENABLED`; invalid value `AGENT_SUMMARY_SWITCH_INVALID`).
+- **Fixed.** The GitHub `readOutputLabel` pin (every source explicit, unknown is `HOST_ONLY`; no value changed).
+- **Changed.** The executor reads Jira, Slack, Confluence and GitHub exactly as without a summary (no `withDocuments`, no
+  further request) and projects the text from the listing items. Pseudonym code moved to `participant-pseudonyms.ts`.
+- **Unchanged.** With every switch off behaviour is byte-identical (pinned by test); no prompt template, catalog, grant
+  producer, `.env.local` value, model call or eval. The agent read ports are still empty and `active` is still refused.
+
 ## Unreleased — ADR-0121 A5 and A6 ratified, and the A4 p001–p008 answer (owner decisions 2026-11-23; docs, gold, tests only)
 
 - **Docs.** DECISIONS "ADR-0121 amendments A5 and A6 ratification record, and the A4 p001–p008 answer (2026-11-23)".

@@ -22,6 +22,12 @@ export interface ProviderSelectionContext {
    */
   readonly workText?: true;
   /**
+   * ADR-0121 A5.3: a `REMOTE` provider for this request must declare `dataUse: 'no-training'` (`AiProvider.dataUse`, owner-set).
+   * A data-only constraint like `workText`; Core sets it for the A5 work-source summary readout and re-reads the selected
+   * provider's declaration at selection and again at dispatch. Absent means no constraint.
+   */
+  readonly requiredDataUse?: 'no-training';
+  /**
    * ADR-0124 Part L, slice C5a (DECISIONS ADR-0124 section 17): the request may run ONLY on a provider whose declared
    * execution locality (`executionLocalityOf`) is `LOCAL`. A data-only constraint: the router never probes, ranks or returns
    * any other provider, and its dispatch-time check answers `false` for one. Absent means no constraint (selection is

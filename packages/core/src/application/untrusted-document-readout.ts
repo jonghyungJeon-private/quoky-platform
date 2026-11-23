@@ -28,7 +28,19 @@ export const UNTRUSTED_DOCUMENT_READOUT_KIND = 'untrusted-document';
  * The sources a readout may come from: a mail message (GML-1), a Drive file's text export (DRV-1) or a mail thread
  * (GML-2, ADR-0118 amendment of 2026-10-12: its messages in order, each under a fixed `[i/n]` header line).
  */
-export const UNTRUSTED_DOCUMENT_SOURCES = ['mail', 'drive', 'mail-thread', 'jira-issue', 'slack-message', 'slack-thread'] as const;
+export const UNTRUSTED_DOCUMENT_SOURCES = [
+  'mail',
+  'drive',
+  'mail-thread',
+  'jira-issue',
+  'slack-message',
+  'slack-thread',
+  // ADR-0121 A5.2 (A5-S1): the agent's summary readout of the listed fields of a calendar event, a Confluence page and a
+  // GitHub item. Only the bounded M2 path builds them.
+  'calendar-event',
+  'confluence-page',
+  'github-item',
+] as const;
 /**
  * ADR-0120 amendment A6 R2 (ADR-0118 amendment C4): the Jira and Slack sources. Bounds, normalisation and the credential
  * guard are unchanged; their sections are titled by Quoky ("설명", "댓글 3", "참여자 B"), never by content.
@@ -347,6 +359,9 @@ const SOURCE_LABEL: Readonly<Record<UntrustedDocumentSource, string>> = {
   'jira-issue': 'JIRA ISSUE',
   'slack-message': 'SLACK MESSAGE',
   'slack-thread': 'SLACK THREAD',
+  'calendar-event': 'CALENDAR EVENT',
+  'confluence-page': 'CONFLUENCE PAGE',
+  'github-item': 'GITHUB ITEM',
 };
 
 /**
@@ -387,6 +402,9 @@ const SOURCE_NOUN: Readonly<Record<UntrustedDocumentSource, { readonly ko: strin
   'jira-issue': { ko: '지라 이슈', en: 'Jira issue' },
   'slack-message': { ko: '슬랙 메시지', en: 'Slack message' },
   'slack-thread': { ko: '슬랙 스레드', en: 'Slack thread' },
+  'calendar-event': { ko: '일정', en: 'calendar event' },
+  'confluence-page': { ko: '컨플루언스 페이지', en: 'Confluence page' },
+  'github-item': { ko: '깃허브 항목', en: 'GitHub item' },
 };
 
 export function renderUntrustedDocumentHistoryNote(source: UntrustedDocumentSource, language: 'ko' | 'en'): string {

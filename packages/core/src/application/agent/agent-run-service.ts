@@ -10,7 +10,7 @@ import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry,
 import { nlSameEgress } from '../nl-routing/selection-egress';
 import { nlSelectionMeaning } from '../nl-routing/selection-meaning';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
-import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf } from './flow-policy';
+import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf, type AgentWorkSummarySource } from './flow-policy';
 import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
 import { AgentPlanExecutor, type AgentReadPorts } from './plan-executor';
@@ -170,6 +170,12 @@ export interface AgentRunServiceDeps {
   readonly readers?: AgentReadPorts;
   /** `active` only: M2's route, the existing provider selector (ADR-0121 D12; no model list, no new port). */
   readonly summarizer?: ProviderSelector;
+  /**
+   * `active` only (ADR-0121 A5-S1): the work sources whose agent summary readout the owner switched on, one switch each
+   * (`QUOKY_AGENT_SUMMARY_*`, default off, independent of `QUOKY_WORK_SUMMARY_ENABLED`). Absent or empty: the summarize step
+   * is exactly as before A5 (every work source `listing-only`).
+   */
+  readonly workSummarySources?: readonly AgentWorkSummarySource[];
   /**
    * Tests only: tighter run-bound values. Each is clamped to the ratified {@link AGENT_RUN_BOUNDS} value (`min`), so a
    * caller can only lower a bound, never raise one (review round 1 item 5).
@@ -475,7 +481,11 @@ export class AgentRunService {
     const executor = new AgentPlanExecutor({
       readers,
       logger: this.deps.logger,
-      summarizer: { selector, selectionContext: { ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}), actorId: turn.actor.id } },
+      summarizer: {
+        selector,
+        selectionContext: { ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}), actorId: turn.actor.id },
+        ...(this.deps.workSummarySources !== undefined && this.deps.workSummarySources.length > 0 ? { workSummarySources: this.deps.workSummarySources } : {}),
+      },
     });
     const result = await executor.execute(validated, {
       budget,

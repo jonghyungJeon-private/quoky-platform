@@ -140,7 +140,7 @@ describe('reply assembler', () => {
 
     it('an entry of a source with no readout shape cannot be judged and is dropped', async () => {
       const base = await run([read('mail.list')], { 'mail.list': port(['m1'], []) });
-      const entry: SummaryEntry = { n: 1, entryId: 'calendar.events', position: 1, text: 'standup', topics: [] };
+      const entry: SummaryEntry = { n: 1, entryId: 'todo.list', position: 1, text: 'standup', topics: [] };
       const step: AgentStepResult = { step: 2, kind: 'summarize', status: 'ok', from: [1], schema: 'digest.v1', summary: sealQuarantinedSummaryForTest('digest.v1', label, [entry]), omitted: 0, audits: [{ locality: 'LOCAL', auditId: 'a', estimatedTokens: 1, latencyMs: 1 }] };
       const out = reply({ plan: base.plan, result: { ...base.result, steps: [...base.result.steps, step] } }, 'en');
       expect(out.droppedLines).toBe(1);

@@ -59,7 +59,14 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
           timeoutMs: config.timeoutMs,
           logger,
           // `released` is never set here before stage S2 P5: an `active` service is refused at construction (second layer).
-          ...(config.agent.mode === 'active' ? { readers: createAgentReadPorts(), summarizer: router } : {}),
+          ...(config.agent.mode === 'active'
+            ? {
+                readers: createAgentReadPorts(),
+                summarizer: router,
+                // ADR-0121 A5-S1: the per-source summary switches (default off); an empty list leaves the key out.
+                ...(config.agent.summarySources.length > 0 ? { workSummarySources: config.agent.summarySources } : {}),
+              }
+            : {}),
         });
       },
       inject: [CapabilityRouter, STORAGE_PROVIDER],

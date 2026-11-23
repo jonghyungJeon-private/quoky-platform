@@ -17,9 +17,13 @@ function build(source: UntrustedDocumentSource, extra: Partial<Parameters<typeof
 }
 
 describe('A6 R2 document sources', () => {
-  it('lists the three new sources', () => {
+  it('lists the three new sources; the ADR-0121 A5.2 summary-readout sources are known sources but not R2 sources (the R2 red-team digest binds this list)', () => {
     for (const source of R2) expect(UNTRUSTED_DOCUMENT_SOURCES).toContain(source);
     expect([...UNTRUSTED_DOCUMENT_R2_SOURCES]).toEqual(R2);
+    for (const source of ['calendar-event', 'confluence-page', 'github-item'] as const) {
+      expect(UNTRUSTED_DOCUMENT_SOURCES).toContain(source);
+      expect(isR2DocumentSource(source)).toBe(false);
+    }
   });
 
   it.each(R2)('%s passes isSummarizableDocumentReadout when built', (source) => {

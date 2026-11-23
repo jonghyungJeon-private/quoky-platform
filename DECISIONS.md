@@ -37464,3 +37464,102 @@ the content says (no content-conditioned control flow, §8 item 5).
     key instead.
 - **Planner errors.** A wrong destination from a misread owner sentence would still be shown on the card before any
   write. The 0-wrong-capture plan gate, the 50 owner-labelled `shadow` plans and the automatic trip target it.
+
+
+## ADR-0121 A5-S1 implementation note (2026-11-23)
+
+Status: implemented (branch `claude/v5-a5-s1-summary-readout`). Slice A5-S1 "summary-readout" of ADR-0121 amendment A5 (A5.9
+row), ratified 2026-11-23 (R1). Runtime, but dormant: every per-source switch defaults off, the agent read ports are still
+empty (`createAgentReadPorts()`), and `QUOKY_AGENT_MODE=active` is still refused at startup, so no live turn changes. No
+prompt template, catalog entry, `.env.local` value, model call or evaluation was touched or run (A5-S2, A5-S3 and A5-S6
+are not started; the grant producer `summary-grant.ts` is unchanged).
+
+- **Label (A5.4).** `flow-policy.ts`: `summaryReadoutLabel(entryId)` is `UNTRUSTED`, `REMOTE_ON_SUMMARY_REQUEST`,
+  `OWNER_DM_ONLY` for calendar, Jira, Slack, Confluence and GitHub; every other entry keeps `readOutputLabel`. It labels
+  the summarize step only (M2 localities, the grant state, the joined label); the planner, the structure projector, the
+  handoff and the listings keep the read label. The grant producer still reads `readOutputLabel` (the A5-S3 slice moves
+  it), so a work-source summary has no producer-made grant yet: with a switch on it ends `no-summary-grant`, listing-only.
+- **GitHub `readOutputLabel` fix (A3a record, answer 5).** Every source is now pinned in an explicit `case` (Jira, Slack,
+  Confluence, GitHub with their previous values `REMOTE_OK`, `WORK_CHANNEL_OK`); an unknown source is `HOST_ONLY`. No
+  label value changed, so the listing paths are byte-identical. Recorded reading: the label stays a pure function of the
+  entry. The "REMOTE_OK only when work summaries are on" half of answer 5 is the existing `QUOKY_WORK_SUMMARY_ENABLED`
+  runtime flag, which Core's pure label cannot read; it is not changed here (open point 1).
+- **Readout shapes.** `UntrustedDocumentSource` gains `calendar-event`, `confluence-page`, `github-item` (Jira and Slack
+  reuse `jira-issue`, `slack-message`); `AGENT_SUMMARY_READOUT_SOURCE` maps all five entries (`jira.release` to
+  `jira-issue`). They are NOT added to `UNTRUSTED_DOCUMENT_R2_SOURCES` (the A6 R2 red-team digest binds that list). Their
+  prompt-composer and claim-guard Records, the prompt header labels and the history nouns are fixed strings; the M2 prompt
+  template (`renderQuarantinedPrompt`) is unchanged.
+- **Projection (A5.2).** New `work-summary-projection.ts`: a closed field table per entry, read from the listing
+  response's own items (`calendar.events`: title, location, description; `jira.issues`: summary, description;
+  `jira.release`: summary only; `slack.search`: text and the author as a pseudonym; `confluence.search` and `github.items`:
+  title, body). Title at most 200 and every other field at most 300 code points, one line, link-neutralised; an item with
+  only a title is summarised from the title; the id is the document id (never in the prompt) and `date` is empty. A member
+  outside the table is never read. Person fields are read host-side only to name participants: the Slack author is
+  "참여자 A, B, ..." (order of first appearance) and a participant handle inside any sent text is replaced by its
+  pseudonym (GitHub included). The pseudonym code moved unchanged to `participant-pseudonyms.ts` (re-exported by
+  `work-item-summary.ts`) so the agent boundary does not import the work-chat module.
+- **No extra request.** `plan-executor.ts` uses `summaryReadModeOf`: Jira, Slack, Confluence and GitHub reads are issued
+  exactly as without a summary (no `withDocuments`), and their documents are projected from `response.items`; documents a
+  port returns for them are ignored. Calendar sets the separate `agentSummaryFieldMask` (see Review round 1) and projects from the
+  response items the same way. Mail and Drive keep the `documents` path.
+- **Calendar agent-summary mask (ADR-0110 D1 amendment).** `CalendarReader.listEventsForAgentSummary?` (optional) and
+  `GoogleCalendarReader.listEventsForAgentSummary`: the same single `events.list` per page with
+  `GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS` (the D1 mask plus `description`, minus the etag), answering only
+  `{ id, title, location?, description? }` with the description at most 300. `listEvents`, `getEvent` and the writer keep the
+  D1 mask; a test pins the two requests differ only in `fields`. No port is wired yet (the read ports are empty by design).
+- **Provider constraints (A5.3).** `ProviderSelectionContext.requiredDataUse?: 'no-training'` and `AiProvider.dataUse?:
+  'no-training'` (data only, ARCHITECTURE.md section 5 item 14). `m2SelectionContext` sets `workText` and `requiredDataUse`
+  for all five sources (calendar included); Core re-reads the selected provider's declaration at selection and at every
+  dispatch check (a `REMOTE` provider without the declaration is refused, `LOCAL` needs none, no fallback).
+  `ProviderSelectionService` filters the chat-tier eligible keys the same way (and keeps the existing `workText` vendor
+  exclusion on top). Nothing declares `dataUse` by default and no environment value sets it in this slice, so a REMOTE
+  route stays closed until the owner's declaration exists (the A2-D16 source; open point 2).
+- **Switch.** `QUOKY_AGENT_SUMMARY_CALENDAR | _JIRA | _SLACK | _CONFLUENCE | _GITHUB`, exact `true` / `false`, default
+  `false` for each, parsed in `agent/agent-config.ts` (`AgentConfig.summarySources`, invalid value:
+  `AGENT_SUMMARY_SWITCH_INVALID`), independent of `QUOKY_WORK_SUMMARY_ENABLED`. The composition root hands the list to the
+  service (`AgentRunServiceDeps.workSummarySources`), which puts it in M2's route (`QuarantinedSummarizerRoute.
+  workSummarySources`) only when non-empty. Core's `sourceRefusal` keeps the pre-A5 closed reasons for a switched-off source
+  (`work-text-controls-not-built` for Jira and Slack, `no-readout-source` for the others). `.env.example` documents the five
+  names as comments only. The compile-time dependency pins (`agent-contract-check.ts`) name the one added data key.
+- **Content-free.** The history note per new shape is fixed text; the audit, logs and results carry closed codes and
+  counts only (tests dump a whole run and find no item text, summary or pseudonym).
+- **Switch off is byte-identical.** `work-summary-readout.a5s1.test.ts` runs, for each of the six work entries, a plan with
+  no summarizer and a plan with a summarizer whose switch list is absent, empty or holds another source, and asserts the
+  port requests (entry, args, keys, `withDocuments`) and the read step result are equal, no model is called, and the
+  summarize step is listing-only with the old reason. `agent-run-service-active.test.ts` pins the same through the
+  service. All existing agent tests pass unchanged except the ones that pinned the old key sets and the old
+  `AGENT_SUMMARY_READOUT_SOURCE` content.
+- **Open points.** (1) The "REMOTE_OK only when work summaries are on" half of the A3a answer 5 for GitHub listings. (2) The
+  owner-set `dataUse` declaration source (A2-D16) does not exist yet; until it does no REMOTE provider can serve an A5
+  summary. (3) A5-S3 must move the grant producer to `summaryReadoutLabel`, add `pending.sources` and close the known
+  gaps; A5-S2 the digest schemas and the disclosure line; both are needed before a switch can do anything end to end.
+  (4) The new per-source header and rule strings are new model-facing text for new shapes; any model evaluation of them is
+  A5-S5 (owner notice and yes first).
+- **Review round 1.** (Codex, Chief Architect.)
+  - *Credentials before clipping (P1).* `work-summary-projection.ts` runs the strict credential guard
+    (`isUntrustedTextCredentialShaped`) on every complete, untransformed field and on their join before any normalising,
+    pseudonymising or clipping. A match withholds the whole item (never a clipped prefix); the projection returns
+    `{ documents, withheld }` and the executor counts a withheld item as omitted. Test: a fake token built from fragments that
+    straddles the 300-character boundary, and one split across two fields.
+  - *Handles (P2).* Participant handles are normalised like the text (NFKC, invisible characters removed) before the
+    pseudonym patterns are built, so a fullwidth handle is pseudonymised (author and in text). Case is not folded (the text is
+    not, and the shared A6 R2 matcher is unchanged).
+  - *Calendar request (CA P1).* `withDocuments` is never set for any of the five work sources. The calendar read carries a
+    separate `agentSummaryFieldMask?: true` on `AgentReadRequest`: the same single request, mask only, never documents. It is
+    pinned in `agent-contract-check.ts`; the switch-off test asserts neither key is set. The calendar port doc and the
+    executor doc say so.
+  - *Typed raw items (CA P2).* `AgentCalendarSummaryItem`, `AgentExcerptSummaryItem` (Jira, Confluence, GitHub) and
+    `AgentSlackSummaryItem` are the typed answer of each entry's listing read, pinned at compile time. The port maps
+    `ConnectorItem` explicitly: `title` is the title and `summary` (the listing's excerpt) is `excerpt`; every person is a
+    handle in `people` (Slack `author`), read only to pseudonymise. The stale `AgentRawItem` doc is fixed.
+  - *Content-free (CA P2).* The executor test and the `agent-run-service-active` A5 block assert that logs contain no item
+    text, summary or `참여자` label (there is no separate audit sink beyond the run result, which the executor test also dumps).
+  - *Safe default (CA P3).* The `ProviderSelectionService` safe-default catch now goes through `withDataUse`, so
+    `requiredDataUse` fails closed there too.
+  - *Startup (CA P3).* `.env.example` notes that a typo in a switch stops startup even with agent mode off.
+  - *Dismissed.* Codex's calendar-REMOTE P2: A5 ratifies it after the owner's yes on a no-training, non-vendor provider.
+  - *Open (not decided here).* The rule "GitHub REMOTE_OK only when work summaries are on" (A3a answer 5) must be settled
+    before the GitHub switch is turned on.
+  - *Prompt strings.* The new per-source header, rule and notice strings are unreachable while the switches are off; all of
+    them go into the A5-S5 D12 gate before any switch is turned on.
+- **Review round 2.** The projection also guards the no-separator join of the sent fields (a token split across two fields was missed by the newline join) and its test asserts `withheld === 1` with no document; `WORK_SUMMARY_FIELDS` names are tied to the typed item interfaces (`keyof`), so a rename breaks the compile; a test pins that the `ProviderSelectionService` safe-default path also honours `requiredDataUse`.

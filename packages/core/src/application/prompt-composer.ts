@@ -154,6 +154,16 @@ const DOCUMENT_ONLY_READ_RULE: Readonly<Record<UntrustedDocumentSource, string>>
   'slack-thread':
     'The item was only read: never say that anything was posted, sent, replied to, reacted to, edited, deleted, ' +
     'created, scheduled or changed, in Slack or anywhere else.',
+  // ADR-0121 A5: the agent's summary readout of a calendar event, a Confluence page and a GitHub item.
+  'calendar-event':
+    'The item was only read: never say that anything was accepted, declined, moved, invited, created, deleted, sent, ' +
+    'scheduled or changed, in the calendar or anywhere else.',
+  'confluence-page':
+    'The item was only read: never say that anything was edited, commented, created, shared, moved, deleted, sent or ' +
+    'changed, in Confluence or anywhere else.',
+  'github-item':
+    'The item was only read: never say that anything was commented, reviewed, approved, merged, closed, assigned, ' +
+    'created, sent or changed, in GitHub or anywhere else.',
 };
 
 /**
@@ -192,6 +202,19 @@ const DOCUMENT_SUMMARY_TASK_RULE: Readonly<Record<UntrustedDocumentSource, strin
     'said what in order (each message under a "[Part i/n]" line), where it stands now, and any decisions, open ' +
     'questions, dates or deadlines. People are named only by the labels the item carries (참여자 A, B, …). Use only ' +
     'what the messages say; never invent people, dates, amounts, links or attachments.',
+  // ADR-0121 A5: only the listed fields reach the model; no person names.
+  'calendar-event':
+    'Summarize the single calendar event in the background resource for the current User request: what it is about, ' +
+    'and where it is, from the listed fields only. Use only what the item says; never invent people, dates, amounts, ' +
+    'links or attachments.',
+  'confluence-page':
+    'Summarize the single Confluence page in the background resource for the current User request: what it is about, ' +
+    'from its title and excerpt only. Use only what the item says; never invent people, dates, amounts, links or ' +
+    'attachments.',
+  'github-item':
+    'Summarize the single GitHub item in the background resource for the current User request: what it is about, ' +
+    'from its title and excerpt only. Use only what the item says; never invent people, dates, amounts, links or ' +
+    'attachments.',
 };
 
 /**
