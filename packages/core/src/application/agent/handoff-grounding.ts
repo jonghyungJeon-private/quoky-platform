@@ -33,9 +33,10 @@ export function handoffOwnerUnit(groundingText: string, scope: 'one-item' | 'eac
   if (/[^\p{L}\p{N} ,']|(?<![\p{L}])'|'(?![\p{L}])/u.test(text)) return undefined;
   // A comma must close a word and be followed by a space ("메일마다, …"); an embedded comma ("확인,취소") refuses.
   if (/,(?! )|(?<![\p{L}\p{N}]),/u.test(text)) return undefined;
-  // Any request-shape veto (question, statement, reported, deferred) refuses.
-  if (nlRequestVeto(text, [], []) !== undefined) return undefined;
-  if (nlHasGrammaticalNegation(text) || nlHasRetraction(text)) return undefined;
+  // Any request-shape veto (question, statement, reported, deferred), negation or retraction refuses: on the whole text, on
+  // the text without its comma, and on each comma-separated part, so a comma cannot hide a question ending ("확인할까, …").
+  const views = [text, text.replace(/,/gu, ''), ...text.split(',').map((part) => part.trim()).filter((part) => part.length > 0)];
+  if (views.some((view) => nlRequestVeto(view, [], []) !== undefined || nlHasGrammaticalNegation(view) || nlHasRetraction(view))) return undefined;
   const tokens = conjunctTokens(text, { verbConnective: true });
   // The clause-boundary checks run on the text WITHOUT its commas, so a comma cannot hide a connective ("정리하고, 일정 확인해줘").
   // The comitative -랑 is allowed ("일정이랑 비교해줘"); a token in -하고 is a noun particle or a verb connective (메일하고 / 확인하고), indistinguishable: refuse.

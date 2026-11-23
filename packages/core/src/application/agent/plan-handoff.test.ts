@@ -186,6 +186,7 @@ describe('handoff plan (validator rule 8)', () => {
       '메일마다 나온 날짜로 일정 확인하고 할 일 추가해줘', '메일 요약하고 이번 주 일정에 나온 사람들 메일 보여줘',
       // Final review: a comma cannot hide a -고 / -하고 connective, an embedded comma refuses, and a question mark refuses.
       '메일마다 정리하고, 일정 확인해줘', '메일마다 보여주고, 일정 확인해줘', '메일마다 읽고, 일정 확인해줘',
+      '메일마다 일정 확인할까, 메일 날짜로 일정 확인해줘',
     ]) expect(check(each, text), text).toMatchObject({ ok: false, reason: 'handoff-ungrounded' });
     for (const text of [
       '메일 확인해줘,내 일정은 메일 날짜로 확인해줘', '메일 일정 확인,취소', '메일에 나온 날짜로 일정 확인?',

@@ -36315,6 +36315,8 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   space ("메일 확인해줘,내 일정은 ...", "메일 일정 확인,취소") refuses. The trailing terminators were stripped before the veto, so
   "...일정 확인?" grounded; any question mark now refuses and the veto sees the text with its terminators. Accepted fail-closed
   cost: a polite request ending in a question mark ("확인해줄래?", "can you ...?") refuses; no gold positive ends in one.
+  Codex delta: a comma still hid a question ending from the veto ("메일마다 일정 확인할까, 메일 날짜로 일정 확인해줘"); the veto,
+  negation and retraction checks now run on the whole text, on the text without its comma, and on each comma-separated part.
   **A4-S2 ACTIVATION GATE (all required before handoff can be enabled):** (i) every non-final Hangul token in the unit is a noun
   or a noun plus case particle, else refuse; (ii) an English unit holds exactly one imperative verb by a closed grammatical
   check, else refuse; (iii) the operation/kind consistency check between the handoff slots and the owner request (noted above).
