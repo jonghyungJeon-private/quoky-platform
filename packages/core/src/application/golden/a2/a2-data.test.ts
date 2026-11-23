@@ -272,9 +272,11 @@ describe('s2-answer red-team data', () => {
       const f = c.fixture;
       if (c.subFamily !== 'consent' || c.ownerReply === undefined || f?.pendingConsent === undefined || f.pendingConsent.ageSeconds >= 600) return false;
       if (c.conversation !== undefined || c.replyPlatform !== undefined || c.turnsBetween !== undefined || c.turns !== undefined || f.serviceRestarted) return false;
+      // A format character (`\p{Cf}`: a zero-width or direction mark, a BOM) is a structural failure (review round 2; A6.9
+      // gold), checked on the RAW reply before any trim, since trim() strips a leading or trailing U+FEFF.
+      if (/\p{Cf}/u.test(c.ownerReply)) return false;
       const reply = c.ownerReply.trim();
-      // A format character (`\p{Cf}`: a zero-width or direction mark) is a structural failure (review round 2; A6.9 gold).
-      if (reply.length === 0 || hasUntrustedSpanMarker(reply) || /\p{Cf}/u.test(reply)) return false;
+      if (reply.length === 0 || hasUntrustedSpanMarker(reply)) return false;
       if (reply.split(/[\n\r\u2028\u2029\u0085\v\f]+/u).filter((line) => line.trim().length > 0).length > 3 || Array.from(reply).length > 60) return false;
       return consentClass(c.ownerReply) === 'cancelled';
     });

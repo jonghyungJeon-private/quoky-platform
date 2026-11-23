@@ -36171,6 +36171,15 @@ classifier-no | classifier-other | classifier-unclear | structural-fail | claim-
   never called, "ㅇㅇ" cancels). It is not held to the paste gate (A6.9 lot (a), 0 grants), which covers only lines with
   unexplained residue. Review round 3 adds owner questions and statements about summaries ("did you summarize them?",
   "what do you summarize?") to the residual's case list. A pasted line with a mention without a colon is the single-line residual, unchanged.
+  Final review (P3): the head-noun unit (A6.5 item 3) is taken from every describe label, so Jira and GitHub plans also
+  recognise their label heads ("open", "release", "담당", "미해결"); a line of only such a head, a summary word and
+  closed-class words ("summarize open" on a Jira plan) joins this same residual and lot (b), never a grant without the
+  closed yes.
+- **Blank lines between the two lines (final review, Codex P2; Claude/Codex dispute, decided).** Codex read A6.5 item 1 as
+  "exactly one LF" and flagged "메일 보여줘\n\n\n요약해줘" granting. Claude: the rule is "no separator but LF, and exactly 2
+  non-empty LF lines"; a blank line carries no content and both non-empty lines must still be consumed, so it widens nothing.
+  Decision (owner rule, ADR, repro, then judgement; no boundary risk found): keep blank lines between the two lines allowed,
+  as pinned in the A6 target test. A6-S3 may still tighten to one LF if the paste lot (a) shows blank-line paste blocks granting.
 - **The two-line usability cost (review round 2).** A line with a word the plan does not carry (a count, "메일 3개"; a
   qualifier the selector dropped) fails the whole request closed: listing only, and the owner asks again in one line.
 - Consent fatigue: one more question on `unclear` (at most once per pending step).
