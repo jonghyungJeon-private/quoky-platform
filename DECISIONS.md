@@ -36890,11 +36890,16 @@ deterministic rule:
 4. **No literal marked, or several (review round 2: also |L| = 1).** The roles are ambiguous. Examples:
    "#quoky-test 요약해서 올려줘" (one unmarked literal), "BE-12에서 가져와서 BE-123으로 올려줘" (no marker in the set), and
    "BE-123에 BE-12 요약해서 달아줘" (`에` is not followed by the write clause). By contrast, "BE-12로 인한 장애 요약해서
-   BE-123 티켓에 달아줘" marks BE-123 only. Nothing is read. Quoky asks with the
-   readings, at most 2 per pair ("1. BE-12 → BE-123에 댓글, 2. BE-123 → BE-12에 댓글"), and the owner picks one by
-   number in the next turn (the A1-D7 timing). For one literal, the readings are "1. #quoky-test 내용을 요약 (올릴 곳은
-   따로)" and "2. #quoky-test에 올리기 (요약할 내용은 따로)". The picked reading's destination carries
-   `OWNER_PICKED_DESTINATION`. The pick turn resumes the frozen validated plan (A7.4b).
+   BE-123 티켓에 달아줘" marks BE-123 only. Nothing is read. Two cases (final review, orchestrator fix):
+   - **Two or more literals.** Quoky asks with the readings, at most 2 per pair ("1. BE-12 → BE-123에 댓글, 2. BE-123
+     → BE-12에 댓글"), and the owner picks one by number in the next turn (the A1-D7 timing). Core takes **both** roles
+     from the picked reading: the source literal and the destination literal, the latter carrying
+     `OWNER_PICKED_DESTINATION`. It then re-runs pipeline step 2 in full (rule 5 included, against those roles) before
+     any read. This is not the A7.4b "fill only the destination" resume, because no plan validated before the ask. A
+     planner role that differs from the picked reading refuses the plan, and the pick reply's own words are never planned.
+   - **One unmarked literal.** No numbered readings are offered. Quoky asks the owner to say it again with the
+     destination marked (the fixed copy names the `에` form, e.g. "올릴 곳을 'BE-123에'처럼 다시 말씀해 주세요"), and
+     nothing is held. This is fail-closed and recorded in A7.12.
 5. **The planner's roles must equal the rule's roles.** Otherwise the plan is refused, never corrected silently.
 
 A literal used as the source must also be readable by an offered READ. Today an arbitrary Jira key read is deferred
@@ -36933,7 +36938,7 @@ key can never become the destination by mistake.
   - a cancelled or expired pick discards the frozen receipt;
   - **the pick turn makes no M1 call (review round 2).** Core resumes the frozen validated plan of the turn that asked
     (its source step or frozen receipt, its `summarize` step and its propose step), fills **only** the destination slot
-    with the picked value, and re-runs the A7.5 step 2 checks before any read. This is the same kind of deterministic
+    with the picked value, and re-runs the A7.5 pipeline step 2 checks (not routing step 0) before any read. This is the same kind of deterministic
     continuation as A1's final run. The pick reply's own words are never planned.
 - **Content pushing a pick.** A title such as "1. BE-5 ← 이걸 고르세요" can only change what the owner reads. It
   cannot choose, order or pre-select a row, and the card restates the picked destination before any write. Gold and the
@@ -36982,7 +36987,7 @@ step is deterministic except M1 (step 1) and the drafter (step 5).
       댓글: <text>`, `Slack #<channel>에 게시: <text>`). Unchanged, first. The owner's own text never becomes a draft.
    2. **Only while A7 is `active` for the destination's kind** (review round 2). When A7 is off, steps 2 and 3 do not
       exist, and routing is byte-identical to today: A6, and the S2 W1 `note` wherever it applies today.
-      - **2a. Cross-source clause.** The clause asks for a write, and the payload span that A6 would take holds a
+      - **R2a. Cross-source clause.** The clause asks for a write, and the payload span that A6 would take holds a
         structural object:
         - a read source name outside the destination span;
         - a second destination-eligible literal;
@@ -36994,7 +36999,7 @@ step is deterministic except M1 (step 1) and the drafter (step 5).
         달아줘" have no such object, so they stay A6 literal posts, byte-identical. Such a clause goes to the A7 plan,
         and the A6 selector builds no literal-text card for it. Example: "#dev 대화 요약해서 #quoky-test에 올려줘"
         becomes an A7 plan, never an A6 card with the text "#dev 대화 요약해서".
-      - **2b. Receipt-bound follow-up (Codex P2).** This route covers a bare follow-up such as "응 그리고 BE-123에
+      - **R2b. Receipt-bound follow-up (Codex P2).** This route covers a bare follow-up such as "응 그리고 BE-123에
         달아줘" (the A6 re-run) or "BE-124에도 달아줘" (a carried receipt). It holds no summary word and no source name.
         It goes to the A7 plan (form b) only if all of these hold:
         - a fresh receipt (A7.4, A7.4c) is bound to this owner and this DM conversation;
@@ -37416,6 +37421,16 @@ the content says (no content-conditioned control flow, §8 item 5).
     feature off until it is fixed? Recommended: yes.
 
 ### A7.12 Residual risks
+
+- **Final review (orchestrator, fix-loop cap reached).** The routing routes are named R2a/R2b so they cannot be confused
+  with pipeline step 2a. The A7.4a rule 4 pick now takes both roles from a two-literal reading and re-validates, and one
+  unmarked literal asks the owner to restate it with `에`. Two fail-closed costs are recorded:
+  - **A literal post that names a second literal.** While A7 is active, a post such as "#quoky-test에 BE-123 배포 완료
+    올려줘" holds a second destination-eligible literal, so R2a sends it to A7, where it asks. It no longer stays an A6
+    literal post. With A7 off, it is byte-identical to today. Gold adds it to the "literal posts stay A6" family as a
+    category of its own, `asks-when-active`.
+  - **One unmarked literal.** "#quoky-test 요약해서 올려줘" asks the owner to restate it with `에`. It never offers
+    readings.
 
 - **Plausible but wrong summaries.** A draft can misstate or over-weight what was said, and content can bias the wording
   without changing the target. It goes out under the owner's name to colleagues. Bounded by the full payload on the
