@@ -24,7 +24,7 @@ import { AGENT_PLAN_MAX_REF_VALUES, validateAgentPlan, type AgentPlanValidation,
 export type AgentNoteLanguage = 'ko' | 'en';
 
 /** A validated plan with steps (`run`, or `clarify` before its answer); the notes are for an executed `run`. */
-export type AgentStepsPlan = Extract<ValidatedAgentPlan, { readonly connectorCalls: number }>;
+export type AgentStepsPlan = Extract<ValidatedAgentPlan, { readonly kind: 'run' | 'clarify' }>;
 
 // ── the detail cap note ────────────────────────────────────────────────────────────────────────────────────────────
 

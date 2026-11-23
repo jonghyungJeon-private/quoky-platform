@@ -197,6 +197,9 @@ without a re-review. The slice that builds the behaviour moves the target into t
   - `to.args`: fixed args of the destination entry; each must be an arg the catalog entry has, never the slot itself;
   - `fallback` (the owner examples ap-p001..p008 only, `AGENT_PLAN_FALLBACK_CASES`, each-item): the kind used for an item
     that yields no value of `kind` (the meeting's title words when it holds no Jira key);
+  - Since A4-S1 the plan validator itself accepts this form (`plan-validator.ts` rule 8; the same `handoff` key in the plan
+    schema): the self-check parses each target with its `handoff`, and a target into a catalog slot must validate to a
+    `handoff` plan under the case's own text, while one into a `planned` slot must be refused `handoff-slot` (A4-S3).
   - `consent: "batch-preview"`: required exactly on an each-item handoff whose kind or fallback kind is free text
     (`titleKeyword`, `keyword`): every exact value is shown once and nothing is sent before the owner's yes (A4.4).
     Closed-format values alone (keys, dates, refs, addresses) run without it, shown next to their results.

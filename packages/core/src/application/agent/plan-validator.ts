@@ -3,7 +3,7 @@ import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
 import { nlReadNotRequest } from '../nl-routing/read-statement';
-import { nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
+import { nlHasDistributiveMarker, nlIsRequestForm } from '../nl-routing/request-shape';
 import { NL_EN_MODAL_LEAD, NL_EN_REQUEST_LEADS, NL_GLUED_REQUEST_TAIL } from '../nl-routing/garbled-action';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
@@ -13,7 +13,9 @@ import { NL_ACTION_ENTRIES, nlIndexWording } from '../nl-routing/action-entries'
 import { aliasStarts, conjunctTokens } from './conjuncts';
 import { nlClauseGroundedFlagNames, nlClauseNamesEntry as clauseNamesEntry, nlClauses as planClauses, nlClauseStringValues as stringValues, type NlClause as PlanClause } from '../nl-routing/clause-flags';
 import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
-import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan-schema';
+import { handoffOwnerUnit } from './handoff-grounding';
+import { AGENT_HANDOFF_CONSENT, AGENT_HANDOFF_FREE_TEXT_KINDS, AGENT_HANDOFF_ITEMS, AGENT_HANDOFF_KINDS, AGENT_HANDOFF_SCOPES, AGENT_HANDOFF_SLOTS, type AgentHandoffKind } from './handoff-slots';
+import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanHandoff, type AgentPlanHandoffDestination, type AgentPlanStep } from './plan-schema';
 
 /**
  * ADR-0121 D2 / D5 / D7 (stage S2 P1): the deterministic `PlanValidator`. Every rule is static: it reads the plan, the
@@ -53,6 +55,21 @@ import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanStep } from './plan
  *    plan whose first read alone does not fit is refused `over-bound` (CA re-check W2). The HTTP requests behind the queries (pages, per-item metadata, token refreshes) are not this
  *    unit: the record (S2 P3 part 2 note) lists them, and choosing HTTP requests as the D7 unit is an open owner / CA
  *    decision (most single reads exceed 10 requests at their worst).
+ *
+ * 8. **Handoff** (ADR-0121 amendment A4, slice A4-S1; steps form only): a plan MAY carry ONE declared `handoff`, a value taken
+ *    from the listed item(s) of one of its own reads into one slot of a destination READ. Fail closed, structure only, no
+ *    vocabulary of its own: the plan is `CLEAR` and holds no reference step; the kind, scope, item and consent are closed
+ *    sets; the destination is a row of the closed slot table (`AGENT_HANDOFF_SLOTS`) that accepts the kind, offered this
+ *    turn, whose catalog entry declares that slot as an argument (a `planned` row waits for A4-S3); the destination's fixed
+ *    args pass ADR-0120 D4 and never preset the slot; and ONE clause of the owner's OWN words (inline quoted spans removed,
+ *    no exclusion or negation marker) names the source entry and every destination entry by the catalog's own vocabulary,
+ *    with a distributive marker (`nlHasDistributiveMarker`, a closed grammatical class) for `each-item`; an each-item
+ *    introductory phrase ending in a comma is joined to the clause after it. The planner never sees content, so content
+ *    cannot propose a handoff; this rule grounds the source, the destination, their linkage in one clause and the scope in
+ *    the owner's words as built. It does NOT check that the clause states the operation or the value kind (no vocabulary
+ *    exists for that; the closed slot table bounds the pairs, A4-S2's extractors bound the value, and the owner sees the
+ *    value used). The value itself is never in the plan: it is extracted later (A4-S2) under the closed
+ *    grammars. The validated plan is `handoff`; no code runs it yet (agent mode is shadow, flag `QUOKY_AGENT_HANDOFF=off`).
  *
  * `NEEDS_CLARIFICATION` with every rule met is `clarify` (one numbered question), not a refusal.
  */
@@ -111,6 +128,19 @@ export type AgentPlanRefusal =
   | 'ref-cross-source'
   | 'ref-field'
   | 'ref-too-many'
+  /**
+   * ADR-0121 A4 (A4-S1): the handoff is not a closed form (a kind, scope, item or consent outside its set, a mismatch between
+   * them, a fallback off an each-item scope, a plan that is not CLEAR or holds a reference step).
+   */
+  | 'handoff-invalid'
+  /** A4-S1: the handoff's source is not a plain read step of the plan (a brief, help or a reference step) or is its destination. */
+  | 'handoff-source'
+  /** A4-S1: the destination is not a declared, existing, offered slot of the closed A4 table that accepts the kind. */
+  | 'handoff-slot'
+  /** A4-S1: the destination's fixed args do not pass ADR-0120 D4, or preset the slot. */
+  | 'handoff-args'
+  /** A4-S1: the owner's own words do not name the source entry and the destination entry (fail closed). */
+  | 'handoff-ungrounded'
   /**
    * Owner decision of 2026-10-26: a position reference (`at`) that is not one item (`take` 1, args `{}`, at most 10) of an
    * item-summary source, not named by the owner's own digits or ordinal, not summarized by a later step of the plan, or in
@@ -171,6 +201,27 @@ export type ValidatedAgentStep =
     }
   | { readonly kind: 'summarize'; readonly from: readonly number[]; readonly schema: (typeof AGENT_PLAN_SUMMARY_SCHEMAS)[number] };
 
+/** A validated destination of a handoff: the offered READ entry, the declared slot and the canonical fixed args. */
+export interface ValidatedHandoffDestination {
+  readonly entry: NlCatalogEntry;
+  readonly slot: string;
+  readonly args: NlArgs;
+}
+
+/** ADR-0121 A4 (A4-S1): a validated handoff. Nothing here is a value: the value is extracted later, under closed grammars. */
+export interface ValidatedAgentHandoff {
+  /** 1-based number of the source read step in the validated (normalized) plan. */
+  readonly from: number;
+  readonly kind: AgentHandoffKind;
+  readonly scope: (typeof AGENT_HANDOFF_SCOPES)[number];
+  /** `one-item` only. */
+  readonly item?: (typeof AGENT_HANDOFF_ITEMS)[number];
+  readonly to: ValidatedHandoffDestination;
+  readonly fallback?: { readonly kind: AgentHandoffKind; readonly to: ValidatedHandoffDestination };
+  /** Exactly on an each-item handoff that may send free text (A4.4). */
+  readonly consent?: typeof AGENT_HANDOFF_CONSENT;
+}
+
 export type ValidatedAgentPlan =
   /**
    * `reason: write-clause` (owner-approved fix of 2026-10-26, ap-n131): the planner's read plan left a clause that an
@@ -193,6 +244,17 @@ export type ValidatedAgentPlan =
    * Decision (h): the planner's plan is over a bound. Nothing runs; the reply asks whether to read `suggestion` instead (a
    * validated, bounded plan Core derived; its narrowed period has no owner provenance, so it never runs from the ask).
    */
+  | {
+      /**
+       * ADR-0121 A4 (A4-S1): the source steps of an owner-grounded handoff (they run first, as a `run` would) plus the declared
+       * handoff. `connectorCalls` is the static charge of those source steps only; the final run's queries (at most 10 values,
+       * else the decision (h) bounded ask) are charged by A4-S2. Not runnable yet: callers treat it as not enabled.
+       */
+      readonly kind: 'handoff';
+      readonly steps: readonly ValidatedAgentStep[];
+      readonly connectorCalls: number;
+      readonly handoff: ValidatedAgentHandoff;
+    }
   | { readonly kind: 'ask'; readonly reason: 'unbounded'; readonly bound: AgentUnboundedKind; readonly suggestion: readonly ValidatedAgentStep[] };
 
 export type AgentPlanValidation =
@@ -245,6 +307,9 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     }
   }
   const unbounded = unboundedOf(steps, ctx);
+  // Rule 8 is never bypassed: an over-bound plan that declares a handoff is refused, not answered with a bounded suggestion
+  // that would silently drop the declaration (a handoff plan stays inside the read and call bounds by construction).
+  if (unbounded !== undefined && plan.form === 'steps' && plan.handoff !== undefined) return refuse('handoff-invalid');
   if (unbounded !== undefined) return askUnbounded(steps, unbounded, ctx);
   const temporal = steps.length > 1 ? stepTemporalTexts(steps, ctx) : undefined;
   const validated: ValidatedAgentStep[] = [];
@@ -273,12 +338,24 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
     return fitted === undefined ? refuse('over-bound') : { ok: true, plan: { kind: 'ask', reason: 'unbounded', bound: 'calls', suggestion: fitted } };
   }
   const relatedAsPlanned = plan.form === 'steps' && plan.related !== undefined ? relatedStep(validated, plan.related) : undefined;
+  // Rule 8 (ADR-0121 A4, A4-S1): the declared handoff, checked against the validated steps and the owner's own words.
+  let handoff: ValidatedAgentHandoff | undefined;
+  if (plan.form === 'steps' && plan.handoff !== undefined) {
+    const checked = checkHandoff(plan.handoff, plan.ambiguity, steps, validated, ctx);
+    if (!checked.ok) return checked;
+    handoff = checked.handoff;
+  }
   // Rule 7 (owner-approved fix of 2026-10-26, ap-n131): a read plan that leaves a write clause uncovered is `none`.
   if (leavesWriteClause(validated, ctx)) return { ok: true, plan: { kind: 'none', reason: 'write-clause' } };
   // Owner decisions of 2026-10-26 (the e3462f46 gate): Core's final plan. A grounded flag the owner's own clause states
   // (`withClauseGroundedFlags`), and each summary right after the last read it covers (`normalizeSummaryPlacement`;
   // the planner's step order is not owner-visible).
   const normalized = normalizeSummaryPlacement(withClauseGroundedFlags(validated, ctx));
+  if (handoff !== undefined) {
+    const from = normalized.renumber.get(handoff.from);
+    if (from === undefined) return refuse('handoff-source', handoff.from);
+    return { ok: true, plan: { kind: 'handoff', steps: normalized.steps, connectorCalls, handoff: { ...handoff, from } } };
+  }
   const related = relatedAsPlanned !== undefined ? normalized.renumber.get(relatedAsPlanned) : undefined;
   return {
     ok: true,
@@ -698,6 +775,89 @@ function clampRefs(steps: readonly AgentPlanStep[]): AgentPlanStep[] | undefined
     }
   }
   return out.some((step) => step.kind === 'read') ? out : undefined;
+}
+
+type HandoffCheck = { readonly ok: true; readonly handoff: ValidatedAgentHandoff } | Extract<AgentPlanValidation, { ok: false }>;
+type DestinationCheck = { readonly ok: true; readonly to: ValidatedHandoffDestination } | Extract<AgentPlanValidation, { ok: false }>;
+
+const closedMember = <T extends string>(set: readonly T[], value: unknown): value is T => typeof value === 'string' && (set as readonly string[]).includes(value);
+
+/**
+ * Rule 8 (ADR-0121 A4, A4-S1): the declared handoff. Every rule is structural and fail-closed: closed sets, the closed slot
+ * table, the catalog's own arg declarations, ADR-0120 D4 for the destination's fixed args, and the owner's own non-quoted
+ * words (via the catalog aliases, shared with every other clause rule) naming the source entry and each destination entry.
+ * `steps` are the planner's steps (the handoff's `from` numbers them); `validated` are the same steps, validated.
+ */
+function checkHandoff(
+  handoff: AgentPlanHandoff,
+  ambiguity: 'CLEAR' | 'NEEDS_CLARIFICATION',
+  steps: readonly AgentPlanStep[],
+  validated: readonly ValidatedAgentStep[],
+  ctx: AgentPlanValidationContext,
+): HandoffCheck {
+  // A handoff is a declared, settled plan: never a clarification, never beside a reference (one value path per plan).
+  if (ambiguity !== 'CLEAR' || steps.some((step) => step.kind === 'read' && step.ref !== undefined)) return refuse('handoff-invalid');
+  if (!closedMember(AGENT_HANDOFF_KINDS, handoff.kind) || !closedMember(AGENT_HANDOFF_SCOPES, handoff.scope)) return refuse('handoff-invalid');
+  const item = handoff.item;
+  if (handoff.scope === 'one-item' ? !closedMember(AGENT_HANDOFF_ITEMS, item) : item !== undefined) return refuse('handoff-invalid');
+  const freeText = (kind: string): boolean => (AGENT_HANDOFF_FREE_TEXT_KINDS as readonly string[]).includes(kind);
+  // A4.4: the batched preview is required exactly on an each-item handoff whose kind or fallback kind is free text.
+  const batchPreview = handoff.scope === 'each-item' && (freeText(handoff.kind) || (handoff.fallback !== undefined && freeText(handoff.fallback.kind)));
+  if ((handoff.consent === AGENT_HANDOFF_CONSENT) !== batchPreview || (handoff.consent !== undefined && handoff.consent !== AGENT_HANDOFF_CONSENT)) return refuse('handoff-invalid');
+  if (handoff.fallback !== undefined && (handoff.scope !== 'each-item' || !closedMember(AGENT_HANDOFF_KINDS, handoff.fallback.kind) || handoff.fallback.kind === handoff.kind)) {
+    return refuse('handoff-invalid');
+  }
+  const source = validated[handoff.from - 1];
+  if (source === undefined || source.kind !== 'read' || source.ref !== undefined || AGENT_READ_SOURCES[source.entry.id as NlWave1EntryId]?.refField === undefined) return refuse('handoff-source', handoff.from);
+  // The entry's own catalog vocabulary: its aliases and source names, and the grounding words of its flag args ("meeting" of
+  // the calendar's `timedOnly`), the same words every other clause rule here reads. No list of this rule's own.
+  const named = (unit: PlanClause, entry: NlCatalogEntry): boolean =>
+    clauseNamesEntry(unit, entry) ||
+    entry.args.some((spec) => spec.kind === 'flag' && (spec.flagGrounding ?? []).some((word) => groundingWordIn(unit.normalized, normalizeForMatch(word))));
+  const destination = (kind: AgentHandoffKind, to: AgentPlanHandoffDestination): DestinationCheck => {
+    const row = AGENT_HANDOFF_SLOTS[`${to.entryId}.${to.slot}`];
+    const entry = isNlWave1EntryId(to.entryId) ? ctx.offered.get(to.entryId) : undefined;
+    if (row === undefined || row.planned || !row.kinds.includes(kind) || entry === undefined || entry.risk !== 'READ') return refuse('handoff-slot');
+    if (!entry.args.some((spec) => spec.name === to.slot) || to.entryId === source.entry.id) return refuse('handoff-slot');
+    if (Object.prototype.hasOwnProperty.call(to.args, to.slot)) return refuse('handoff-args');
+    const result = validateSelection(
+      { entryId: to.entryId, args: to.args },
+      { offered: ctx.offered, groundingText: ctx.groundingText, ...(ctx.previousArgs !== undefined ? { previousArgs: ctx.previousArgs } : {}), now: ctx.now, timeZone: ctx.timeZone },
+    );
+    // The slot's own value arrives later (A4-S2): a required slot is the one argument allowed to be missing, and only when no
+    // other fixed arg is declared (nothing else would have been checked before the missing-arg gate).
+    const slotOnlyMissing = !result.ok && result.reason === 'missing-arg' && result.arg === to.slot && Object.keys(to.args).length === 0;
+    if (!result.ok && !slotOnlyMissing) return refuse('handoff-args');
+    return { ok: true, to: { entry, slot: to.slot, args: result.ok ? result.value.args : {} } };
+  };
+  const main = destination(handoff.kind, handoff.to);
+  if (!main.ok) return main;
+  let fallback: ValidatedAgentHandoff['fallback'];
+  if (handoff.fallback !== undefined) {
+    const checked = destination(handoff.fallback.kind as AgentHandoffKind, handoff.fallback.to);
+    if (!checked.ok) return checked;
+    fallback = { kind: handoff.fallback.kind as AgentHandoffKind, to: checked.to };
+  }
+  // Grounding, last (the structural refusals above stay the more specific ones): the owner's whole message is ONE plain
+  // request-form unit (`handoffOwnerUnit`, structural, fail closed) that names the source and every destination, and, for
+  // each-item, holds a distributive marker.
+  const unit = handoffOwnerUnit(ctx.groundingText, handoff.scope);
+  const destinations = [main.to.entry, ...(fallback !== undefined ? [fallback.to.entry] : [])];
+  const grounded =
+    unit !== undefined && named(unit, source.entry) && destinations.every((entry) => named(unit, entry)) && (handoff.scope !== 'each-item' || nlHasDistributiveMarker(unit.text));
+  if (!grounded) return refuse('handoff-ungrounded', handoff.from);
+  return {
+    ok: true,
+    handoff: {
+      from: handoff.from,
+      kind: handoff.kind,
+      scope: handoff.scope,
+      ...(item !== undefined ? { item: item as (typeof AGENT_HANDOFF_ITEMS)[number] } : {}),
+      to: main.to,
+      ...(fallback !== undefined ? { fallback } : {}),
+      ...(handoff.consent === AGENT_HANDOFF_CONSENT ? { consent: AGENT_HANDOFF_CONSENT } : {}),
+    },
+  };
 }
 
 function refuse(reason: AgentPlanRefusal, step?: number, stepReason?: NlValidationFailureReason): Extract<AgentPlanValidation, { ok: false }> {

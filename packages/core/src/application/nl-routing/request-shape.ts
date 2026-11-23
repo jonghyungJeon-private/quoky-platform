@@ -56,6 +56,29 @@ export function nlHasExclusionOrNegation(prose: string): boolean {
 }
 
 /**
+ * ADR-0121 A4 (A4-S1): whether the prose holds a distributive marker, a closed grammatical class: the Korean distributive
+ * particle 마다 ("회의마다") and the English distributive determiners each / every / per. It is the only thing that grounds an
+ * each-item scope in the owner's own words; no topic word, no verb, no source name. Pure.
+ */
+export function nlHasDistributiveMarker(prose: string): boolean {
+  const text = normalizeForMatch(prose);
+  return DISTRIBUTIVE_KO.test(text) || /(?:^|[^a-z])(?:each|every|per)(?![a-z])/u.test(text);
+}
+
+/** The distributive particle 마다 after a noun-ish character, ending its word or followed by a topic/genitive particle (not 마다가스카르). */
+const DISTRIBUTIVE_KO = /(?<=[\p{L}\p{N}])마다(?=$|[\s,.!?은는도의])/u;
+
+/**
+ * ADR-0121 A4 (A4-S1): whether the prose holds a retraction anywhere: a word of the closed retraction class the request veto
+ * already reads at the end of a message ("취소", "철회", "cancel", "undo" ...), or the retraction phrases. Read in ANY position,
+ * for fail-closed callers that must not ground a request the owner took back in another clause. Pure.
+ */
+export function nlHasRetraction(prose: string): boolean {
+  const text = normalizeForMatch(prose);
+  return RETRACTION_ANYWHERE.test(text) || text.split(/\s+/u).some((raw) => RETRACTION_FINAL.test(raw.replace(WORD_NOISE, '')));
+}
+
+/**
  * Codex review of 68acf4f6 P2: whether the prose holds ANY grammatical negation, read without scope and without the light-verb
  * condition, for fail-closed callers that settle a request with no model call (the shown-release pick). On top of
  * {@link nlHasExclusionOrNegation}: the Korean short-form negation adverbs 안 / 못 (a closed grammatical class) standing

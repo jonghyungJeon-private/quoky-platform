@@ -19,6 +19,12 @@ import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput, type NlAmbiguity, 
  *   <1..>` (owner decision of 2026-10-26, "지라 이슈 보여주고 첫 번째 거 요약해줘") picks the ONE id at that position of the
  *   earlier list, in the order Quoky shows it in this reply (`take` 1; the validator checks the rest).
  *
+ * - **the handoff** (ADR-0121 amendment A4, slice A4-S1): an optional top-level `"handoff"` of the steps form, ONE declared
+ *   linkage of a value from a listed item of an earlier read into a slot of a destination read:
+ *   `{"from": <read step no>, "kind", "scope", "item"?, "to": {"entryId", "slot", "args"?}, "fallback"?: {"kind", "to"}, "consent"?}`.
+ *   The parser checks the shape only (closed keys, types, bounded strings); the closed value sets, the slot table and the
+ *   grounding in the owner's own words are the validator's. No planner prompt names it yet (A4-S4), so no model emits it today.
+ *
  * Parsing is strict and total: unknown keys, wrong types, out-of-range numbers, more than 6 steps or more than 2 KB give
  * `null` (the caller treats the call as failed; no retry). The catalog, the step mix, the references and every argument
  * are checked later by the deterministic `plan-validator.ts`, never here.
@@ -51,6 +57,25 @@ export interface AgentPlanRef {
    * order Quoky renders that list in this reply. With `at`, `take` is 1.
    */
   readonly at?: number;
+}
+
+/** A declared destination of a handoff: a slot of a READ entry plus fixed args of that entry (shape only). */
+export interface AgentPlanHandoffDestination {
+  readonly entryId: string;
+  readonly slot: string;
+  readonly args: Readonly<Record<string, NlArgValue>>;
+}
+
+/** ADR-0121 A4 pattern A, as the planner wrote it (shape only; every value is a closed-set string the validator checks). */
+export interface AgentPlanHandoff {
+  /** 1-based number of the read step whose listed item(s) the value is taken from. */
+  readonly from: number;
+  readonly kind: string;
+  readonly scope: string;
+  readonly item?: string;
+  readonly to: AgentPlanHandoffDestination;
+  readonly fallback?: { readonly kind: string; readonly to: AgentPlanHandoffDestination };
+  readonly consent?: string;
 }
 
 export type AgentPlanStep =
@@ -86,9 +111,15 @@ export type AgentPlan =
        * checked. It never changes, adds or removes a step.
        */
       readonly related?: number;
+      /** Steps form only (ADR-0121 A4, slice A4-S1): one declared owner-grounded handoff into a READ slot. */
+      readonly handoff?: AgentPlanHandoff;
     };
 
-const STEPS_TOP_KEYS = new Set(['steps', 'ambiguity', 'confidence', 'related']);
+const STEPS_TOP_KEYS = new Set(['steps', 'ambiguity', 'confidence', 'related', 'handoff']);
+const HANDOFF_KEYS = new Set(['from', 'kind', 'scope', 'item', 'to', 'fallback', 'consent']);
+const HANDOFF_TO_KEYS = new Set(['entryId', 'slot', 'args']);
+const HANDOFF_FALLBACK_KEYS = new Set(['kind', 'to']);
+const MAX_HANDOFF_WORD_CHARS = 32;
 const READ_KEYS = new Set(['entryId', 'args', 'ref']);
 const SUMMARY_KEYS = new Set(['summarize', 'schema']);
 const REF_KEYS = new Set(['step', 'field', 'take', 'at']);
@@ -117,6 +148,8 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
   // A step number (structure, CA finding 5); any other value is malformed.
   const related = value.related;
   if (related !== undefined && !isStepNumber(related)) return null;
+  const handoff = value.handoff === undefined ? undefined : parseHandoff(value.handoff);
+  if (handoff === null) return null;
   const rawSteps = value.steps;
   if (!Array.isArray(rawSteps) || rawSteps.length === 0 || rawSteps.length > AGENT_PLAN_MAX_STEPS) return null;
   const steps: AgentPlanStep[] = [];
@@ -133,6 +166,7 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
     alternatives: [],
     ...(typeof confidence === 'number' ? { confidence } : {}),
     ...(typeof related === 'number' ? { related } : {}),
+    ...(handoff !== undefined ? { handoff } : {}),
   };
 }
 
@@ -150,6 +184,7 @@ export function agentPlanParseFailure(raw: string): string | undefined {
   if (!Object.keys(value).every((key) => STEPS_TOP_KEYS.has(key))) return 'unknown-key';
   if (value.ambiguity !== 'CLEAR' && value.ambiguity !== 'NEEDS_CLARIFICATION') return 'bad-enum:ambiguity';
   if (value.related !== undefined && !isStepNumber(value.related)) return 'bad-related';
+  if (value.handoff !== undefined && parseHandoff(value.handoff) === null) return 'bad-handoff';
   if (!Array.isArray(value.steps)) return 'bad-steps';
   if (value.steps.length === 0) return 'no-steps';
   if (value.steps.length > AGENT_PLAN_MAX_STEPS) return 'too-many-steps';
@@ -193,6 +228,51 @@ function parseStep(value: unknown): AgentPlanStep | null {
   const ref = parseRef(value.ref);
   if (ref === null) return null;
   return { kind: 'read', entryId, args, ref };
+}
+
+function handoffWord(value: unknown): string | null {
+  return typeof value === 'string' && value.length <= MAX_HANDOFF_WORD_CHARS && /^[a-zA-Z][a-zA-Z-]*$/.test(value) ? value : null;
+}
+
+function parseHandoffDestination(value: unknown): AgentPlanHandoffDestination | null {
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => HANDOFF_TO_KEYS.has(key))) return null;
+  const { entryId, slot } = value;
+  if (typeof entryId !== 'string' || entryId.length > MAX_ID_CHARS || !/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/.test(entryId)) return null;
+  if (typeof slot !== 'string' || slot.length > MAX_ARG_NAME_CHARS || !/^[a-zA-Z][a-zA-Z0-9]*$/.test(slot)) return null;
+  const args = parseArgs(value.args);
+  return args === null ? null : { entryId, slot, args };
+}
+
+/** The handoff's shape (closed keys, types, bounded strings). The closed value sets are the validator's. */
+function parseHandoff(value: unknown): AgentPlanHandoff | null {
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => HANDOFF_KEYS.has(key))) return null;
+  if (!isStepNumber(value.from)) return null;
+  const kind = handoffWord(value.kind);
+  const scope = handoffWord(value.scope);
+  if (kind === null || scope === null) return null;
+  const item = value.item === undefined ? undefined : handoffWord(value.item);
+  const consent = value.consent === undefined ? undefined : handoffWord(value.consent);
+  if (item === null || consent === null) return null;
+  const to = parseHandoffDestination(value.to);
+  if (to === null) return null;
+  let fallback: AgentPlanHandoff['fallback'];
+  if (value.fallback !== undefined) {
+    const raw = value.fallback;
+    if (!isPlainObject(raw) || !Object.keys(raw).every((key) => HANDOFF_FALLBACK_KEYS.has(key))) return null;
+    const fallbackKind = handoffWord(raw.kind);
+    const fallbackTo = parseHandoffDestination(raw.to);
+    if (fallbackKind === null || fallbackTo === null) return null;
+    fallback = { kind: fallbackKind, to: fallbackTo };
+  }
+  return {
+    from: value.from,
+    kind,
+    scope,
+    ...(item !== undefined ? { item } : {}),
+    to,
+    ...(fallback !== undefined ? { fallback } : {}),
+    ...(consent !== undefined ? { consent } : {}),
+  };
 }
 
 function parseRef(value: unknown): AgentPlanRef | null {

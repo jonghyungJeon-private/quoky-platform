@@ -36215,3 +36215,108 @@ classifier-no | classifier-other | classifier-unclear | structural-fail | claim-
     single-line one runs its own new request (`472`, `473`). Recommended: keep this split.
 12. A change of the classifier model, effort, tier or prompt hash turns the switch off until a new gate run passes.
     Recommended: yes (each run with its own notice and yes).
+
+## ADR-0121 amendment A4 — slice A4-S1 (handoff-plan) implementation note (2026-11-20)
+
+Status: implemented; append-only. No amendment text, A4 section or ratification record is changed. Agent mode stays
+shadow and unreleased, and the handoff stays behind the A1 rollout order (A4-S2 after S2 `active`, flag
+`QUOKY_AGENT_HANDOFF=off`), so nothing reaches a user. No prompt text and no catalog change (a prompt rule is A4-S4 and
+needs the D12 gates and the owner's notice and yes for any model eval).
+
+- **Built.** The plan schema (`plan-schema.ts`) accepts one optional top-level `handoff` in the steps form:
+  `{from, kind, scope, item?, to: {entryId, slot, args?}, fallback?: {kind, to}, consent?}`; the parser checks shape only
+  (closed keys, types, bounded words; a malformed one is the closed parse failure `bad-handoff`; the selection form carries
+  none). The plan validator (`plan-validator.ts`, new rule 8) validates it to a new plan kind `handoff` (the source steps,
+  the declared handoff, the static charge of the source steps only; the final run's queries are A4-S2's). The closed
+  kinds, scopes, items, consent and the slot table `AGENT_HANDOFF_*` moved to `handoff-slots.ts` in Core, because the
+  validator needs them; `AGENT_PLAN_HANDOFF_SLOTS` in `apps/quoky/src/tools/agent-plan-eval.ts` (A4.3) is the same object
+  re-exported, so the `s2-handoff` header pin is unchanged.
+- **Against the owner's words, structurally (no word list, no phrase pattern, no gold string).** The plan is `CLEAR` and
+  holds no reference step; kind, scope, item, consent and fallback are closed sets with the A4.4 pairing (one-item names
+  `first` or `owner-pick`, each-item none; `batch-preview` exactly on an each-item handoff whose kind or fallback kind is
+  free text; a fallback only on each-item); the source is a plain read step of a listing source; each destination is a row
+  of the slot table that accepts the kind, offered this turn, whose catalog entry declares the slot as an argument, never
+  the source's own entry (a `planned` row is refused `handoff-slot` until A4-S3); the fixed destination args pass ADR-0120
+  D4 (the required slot itself may be missing only when no other fixed arg exists) and never preset the slot; and ONE
+  clause of the owner's OWN words (superseded by review round 2 below: now the whole message as one unit), inline quoted spans removed (`nlWithoutInlineQuotes`) and holding no exclusion or
+  negation marker, names the source entry and every destination entry by the catalog's own vocabulary (aliases, source
+  names, flag grounding words), with a distributive marker for `each-item` (`nlHasDistributiveMarker`, a closed
+  grammatical class: 마다, each, every, per, kept in Core like `nlHasExclusionOrNegation`). An each-item introductory phrase
+  that ends in a comma is joined to the clause after it ("for each meeting today, find ..." , n071); no other comma is
+  joined. The planner never sees content, so content cannot propose a handoff; this rule grounds the source, the
+  destination, their linkage in one clause and the scope in the owner's words, as built. **Limits (stated, not hidden):** it
+  does not check that the clause states the operation or the value kind (no vocabulary of that exists to read), so a
+  one-clause message that names both entries ("메일 일정 보여줘") can still carry a planner-invented handoff; the closed
+  slot table bounds the pairs, A4-S2's extractors bound the value, and the owner sees the value used. Closed refusals:
+  `handoff-invalid` (also for an over-bound plan that declares a handoff: rule 8 is never bypassed by the bounded ask),
+  `handoff-source`, `handoff-slot`, `handoff-args`, `handoff-ungrounded`. The step number is Core's normalized one (a
+  summary moves after the read it covers). Structural refusals run before grounding, so a planned slot is reported as
+  `handoff-slot`.
+- **Fail closed at runtime.** A validated handoff plan is declined `handoff-off` by `runActive` (no read), is logged in
+  shadow as outcome `handoff` with closed fields only, and scores `wrong` (`handoff-unscored`) in the plan eval: no scored
+  gold targets the form yet. `reply-notes` keeps its `run`/`clarify` plans only.
+- **Gold.** No `expect`, `trap` or red-team floor changed and no case flipped to `approved`: all 31 A4-S1 cases also wait
+  for A4-S2 and A4-S4 (16 of them for A4-S3). The self-check (`awaitingProblems`) now runs the real validator on each
+  handoff target: 15 targets (ap-n021, n022, n025, n028, n031, n033, n034, n061, n063, n064, n066, n071, n072, n073,
+  n074) validate to a `handoff` plan; the 16 that carry A4-S3 (ap-p001..p008 and the planned-slot cases) are refused
+  `handoff-slot` and only those.
+- **Not done here.** Extractors, filters, template, pick, continuation runs and audit (A4-S2), the `planned` slots (A4-S3),
+  the planner prompt rule and the mail-grammar precedence (A4-S4), pattern B (A4-S5), the content card (A4-S6).
+- **Review round 1 (2026-11-20).** Quoted spans are removed before catalog matching (a quote such as `"내 일정"` is no
+  request form, so the quoted-request veto never saw it); the linkage must sit in one clause and each-item needs the
+  distributive marker; a negated clause grounds nothing. **Owner examples ap-p001..p008:** their link crosses the verb
+  connective ("회의 정리하고 관련 jira 이슈도") with no distributive marker, so once A4-S3 opens `jira.issue.key` this rule
+  would refuse them `handoff-ungrounded`. They are refused as `handoff-slot` today; a decision (the A4.4 each-item ground for
+  a summarized listing) is needed before A4-S3/S4, and the rule is not widened here.
+- **A4-S2 precondition (recorded, not built).** `agentReadWriteProbeClauses` (`read-write-probe.ts`) judges `run` plans only;
+  a `handoff` plan is declined today, but before A4-S2 runs one it must also probe the uncovered write clause (for example
+  `메일 확인해서 일정 보고, 할 일 추가해줘`).
+- **Review round 2 (2026-11-23): the grounding is now one strict structural rule (the clause heuristic is removed).** A handoff
+  is grounded only when the owner's own words (inline quotes removed) are exactly ONE plain request-form unit
+  (`handoff-grounding.ts`): no backtick or guillemet, no line or paragraph break anywhere, no sentence terminator or `;` `:`
+  except a trailing run; no negation, exclusion or retraction anywhere in the message (`nlHasGrammaticalNegation` and the
+  retraction class the request veto already reads, `nlHasRetraction`); no clause boundary (and/그리고, the -고 connective, a
+  linking ending -면서/-며/-고서/후 as a closed class in `conjuncts.ts`; one comma only as the introductory comma of an
+  each-item phrase that already holds the distributive marker); at most one request-form word, and it is the last word. The
+  unit must name the source and every destination, and each-item needs the marker. Anything else is `handoff-ungrounded`.
+  Also: an ASCII apostrophe between two letters is not a quote (`nlWithoutInlineQuotes`: "won't" is kept); 마다 is anchored
+  as a particle after a noun-ish character (not 마다가스카르). Former positive changed: "메일 요약하고 ... 보여줘" (two
+  predicates joined by -고) is now refused; the source-number test uses one request form.
+  **Accepted residuals (recorded, not chased):** one request naming two sources ("메일 일정 보여줘")
+  is one unit and grounds whatever handoff names both entries; English has no closed request-form class, so two bare
+  English commands with no punctuation or connective count as one unit; a linking ending outside the closed class is not
+  seen. Each fails into the closed slot table and A4-S2's bounds, never into a grant beyond them.
+  **A4-S2 precondition (added):** before S2 activates, the validator must also check operation/kind consistency between the
+  handoff slots and the owner request (the unit names entries, not the operation or the value kind).
+  **Fix-loop cap:** this is round 2 of the same finding and the rule was changed to structural; further edge cases that
+  fail closed (refuse) are recorded here, not chased.
+- **Review round 3 (2026-11-23, FINAL: the fix-loop cap was reached at round 3; further edge cases are recorded, not chased).**
+  Fixed, all fail closed, in `handoff-grounding.ts` unless noted: (1) a token ending in -하고 refuses (the lexer tags it a
+  particle before the verb-connective check, and the noun 메일하고 and the verb 확인하고 look alike); only the comitative -랑
+  stays ("일정이랑 비교해줘", gold ap-n034); `conjuncts.ts` behaviour for other callers is unchanged. "메일하고 일정 보여줘" now
+  refuses: an ACCEPTED fail-closed cost. The linking-ending class now also catches a one-syllable stem (보면서, 보며).
+  So "메일 확인하고 일정 보여줘", "메일 정리하고 일정 체크해줘", "메일마다 나온 날짜로 일정 확인하고 할 일 추가해줘" and "메일
+  요약하고 이번 주 일정에 나온 사람들 메일 보여줘" refuse (the round-2 claim that the -고 connective was refused was untrue for
+  -하고 words). (2) Request shape: any `nlRequestVeto(unit, [], [])` result (question, past statement, reported, deferred)
+  refuses. (3) Punctuation whitelist after the trailing terminators: letters, digits, plain spaces, a letter-flanked ASCII
+  apostrophe and the one each-item comma; anything else (`&`, `-`, `/`, ...) refuses. (4) The shared READ quote regex is back to
+  its pre-A4-S1 behaviour (the live `hasUnconsumedQuotedRequest` path is unchanged); the contraction-aware apostrophe is a
+  handoff-only option (`nlWithoutInlineQuotes(prose, { contractions: true })`). (5) Every probe is pinned as a negative test.
+  **Residuals, fail OPEN but harmless while handoff is `handoff-off` (recorded, not chased):** linking endings outside the closed
+  class ("메일 봤는데/보다가/보거나/보자마자 일정 확인해줘", "메일 확인하고는/확인하고요 일정 봐줘", colloquial "메일 확인하구/보구
+  일정 봐줘", "메일 보여주곤 일정 봐줘", and "...일정 확인한 거 맞아" with no question mark and no request form); English commands
+  joined by words, not only bare ones ("... in my mail then text bob", "... actually forget it", "scratch that"), because
+  English has no closed request-form class and the unit rule sees one unit; one request naming two sources. ("메일
+  보여주고나서 일정 확인해줘", "메일 본 다음에/뒤에 ..." and "메일 확인했으면 일정 봐줘" were listed here in round 3 but already
+  refuse; they are pinned as negatives.)
+  **Final review (Chief Architect + Codex, after the cap; two fail-open bypasses of fixes (1) and (2), fixed by the
+  orchestrator):** a word ending in a comma was tagged `comma` and skipped the -고/-하고 and linking checks ("메일마다 정리하고,
+  일정 확인해줘" grounded); the clause-boundary checks now run on the text without its commas, and a comma not followed by a
+  space ("메일 확인해줘,내 일정은 ...", "메일 일정 확인,취소") refuses. The trailing terminators were stripped before the veto, so
+  "...일정 확인?" grounded; any question mark now refuses and the veto sees the text with its terminators. Accepted fail-closed
+  cost: a polite request ending in a question mark ("확인해줄래?", "can you ...?") refuses; no gold positive ends in one.
+  Codex delta: a comma still hid a question ending from the veto ("메일마다 일정 확인할까, 메일 날짜로 일정 확인해줘"); the veto,
+  negation and retraction checks now run on the whole text, on the text without its comma, and on each comma-separated part.
+  **A4-S2 ACTIVATION GATE (all required before handoff can be enabled):** (i) every non-final Hangul token in the unit is a noun
+  or a noun plus case particle, else refuse; (ii) an English unit holds exactly one imperative verb by a closed grammatical
+  check, else refuse; (iii) the operation/kind consistency check between the handoff slots and the owner request (noted above).

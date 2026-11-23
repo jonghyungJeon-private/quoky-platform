@@ -70,6 +70,9 @@ import {
   isNlWave1EntryId,
   parseAgentPlanOutput,
   prepareSelectionInput,
+  AGENT_HANDOFF_FREE_TEXT_KINDS,
+  AGENT_HANDOFF_KINDS,
+  AGENT_HANDOFF_SLOTS,
   validateAgentPlan,
   type AgentHelpSplit,
   type AgentPlan,
@@ -178,25 +181,13 @@ export const AGENT_PLAN_AWAITING_STATUS = 'approved-awaiting-implementation' sat
 /** The ADR-0121 A4 implementation slices (DECISIONS.md, "ADR-0121 amendment A4") plus the SR-1 rule-① confirm slice. */
 export const AGENT_PLAN_A4_SLICES = ['A4-S1', 'A4-S2', 'A4-S3', 'A4-S4', 'A4-S5', 'A4-S6', 'A4-S7', 'A4-S8', 'A4-S9', 'confirm-slice'] as const;
 export type AgentPlanA4Slice = (typeof AGENT_PLAN_A4_SLICES)[number];
-/** A4 pattern A: the closed value kinds a handoff may extract (A1-D4, plus `driveRef` and `titleKeyword`). */
-export const AGENT_PLAN_HANDOFF_KINDS = ['date', 'jiraKey', 'email', 'attendee', 'prRef', 'driveRef', 'titleKeyword', 'keyword'] as const;
+/** A4 pattern A: the closed value kinds a handoff may extract (A1-D4, plus `driveRef` and `titleKeyword`); the table lives in Core. */
+export const AGENT_PLAN_HANDOFF_KINDS = AGENT_HANDOFF_KINDS;
 /**
  * A4 pattern A: the closed table of declared destination slots (`<entryId>.<slot>`) and the kinds each accepts (A1-D2,
- * extended by A4). A `planned` slot needs a catalog addition first (slice A4-S3, each by its own ADR-0120 amendment).
+ * extended by A4). The table lives in Core (`AGENT_HANDOFF_SLOTS`, read by the plan validator too); this is the same object.
  */
-export const AGENT_PLAN_HANDOFF_SLOTS: Readonly<Record<string, { readonly kinds: readonly (typeof AGENT_PLAN_HANDOFF_KINDS)[number][]; readonly planned: boolean }>> = {
-  'calendar.events.range': { kinds: ['date'], planned: false },
-  'calendar.events.attendee': { kinds: ['email'], planned: true },
-  'mail.list.from': { kinds: ['attendee', 'email'], planned: false },
-  'mail.list.keyword': { kinds: ['titleKeyword'], planned: true },
-  'jira.issue.key': { kinds: ['jiraKey'], planned: true },
-  'jira.issues.keyword': { kinds: ['titleKeyword', 'keyword'], planned: false },
-  'jira.issues.person': { kinds: ['email'], planned: true },
-  'slack.search.keyword': { kinds: ['jiraKey', 'prRef', 'keyword'], planned: false },
-  'confluence.search.keyword': { kinds: ['titleKeyword'], planned: false },
-  'github.pr.ref': { kinds: ['prRef'], planned: true },
-  'drive.file.ref': { kinds: ['driveRef'], planned: true },
-};
+export const AGENT_PLAN_HANDOFF_SLOTS = AGENT_HANDOFF_SLOTS;
 /** A4: the only writes whose payload may come from read content (through a card naming the text and its source). */
 export const AGENT_PLAN_CONTENT_WRITE_ENTRIES = ['todo.add', 'reminder.create'] as const;
 /**
@@ -212,7 +203,7 @@ export const AGENT_PLAN_CONTENT_FIELDS: Readonly<Record<string, readonly string[
   drive: ['name'],
 };
 /** A4.4: the free-text kinds; an each-item run of any of them needs one batched preview first (`consent: "batch-preview"`). */
-export const AGENT_PLAN_FREE_TEXT_KINDS = ['titleKeyword', 'keyword'] as const;
+export const AGENT_PLAN_FREE_TEXT_KINDS = AGENT_HANDOFF_FREE_TEXT_KINDS;
 /** A4.4: the only cases whose handoff may carry a `fallback` kind (the owner examples "회의 정리하고 관련 jira 이슈도"). */
 export const AGENT_PLAN_FALLBACK_CASES = ['ap-p001', 'ap-p002', 'ap-p003', 'ap-p004', 'ap-p005', 'ap-p006', 'ap-p007', 'ap-p008'] as const;
 
@@ -742,6 +733,9 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
   }
   if (validation.plan.kind === 'none') return asNone();
   if (validation.plan.kind === 'clarify') return { outcome: 'clarify', gotEntries };
+  // ADR-0121 A4 (A4-S1): no scored gold targets the handoff form yet (its prompt rule is A4-S4, behind the D12 gates), so a
+  // handoff plan is never an expected answer: it scores wrong (it would run nothing today).
+  if (validation.plan.kind === 'handoff') return { outcome: 'wrong', gotEntries, reason: 'handoff-unscored' };
   if (validation.plan.kind === 'ask') {
     const gold = golden.gold;
     const same = isAgentPlanAskExpect(gold) && gold.bound === validation.plan.bound && graphDiff(validatedGraph(validation.plan.suggestion), goldGraph(gold.suggestion)) === undefined;
@@ -882,7 +876,7 @@ export function validateAgentPlanCorpus(corpus: AgentPlanCorpus, oneStep: readon
       continue;
     }
     const refused = validateAgentPlan(trap, prepared.ctx);
-    if (refused.ok && refused.plan.kind === 'run') problems.push(`${at}: the trap validates to an executable plan`);
+    if (refused.ok && (refused.plan.kind === 'run' || refused.plan.kind === 'handoff')) problems.push(`${at}: the trap validates to an executable plan`);
     else if (!refused.ok && golden.trapRefusal !== undefined && refused.reason !== golden.trapRefusal) problems.push(`${at}: the trap is refused as ${refused.reason}, not ${golden.trapRefusal}`);
   }
   return problems;
@@ -1008,6 +1002,17 @@ function awaitingProblems(at: string, id: string, awaiting: AgentPlanAwaiting, p
           if (entryArgs === undefined || !entryArgs.includes(name)) problems.push(`${at}: ${what} destination ${dest.entryId} has no arg ${name}`);
           else if (name === dest.slot) problems.push(`${at}: ${what} destination args must not preset the slot ${name}`);
         }
+      }
+      // A4-S1: the plan validator itself judges the target. A handoff into a catalog slot validates to a `handoff` plan under
+      // the owner's own words; one into a planned slot (A4-S3) is refused as `handoff-slot`, and only those are.
+      const plan = parseAgentPlanOutput(JSON.stringify({ steps: target.steps, ambiguity: target.ambiguity, handoff: h }));
+      if (plan === null || plan.kind !== 'steps') problems.push(`${at}: the handoff target does not parse as a steps-form plan with a handoff`);
+      else {
+        const verdict = validateAgentPlan(plan, prepared.ctx);
+        const planned = [h.to, ...(h.fallback !== undefined ? [h.fallback.to] : [])].some((dest) => AGENT_PLAN_HANDOFF_SLOTS[`${dest.entryId}.${dest.slot}`]?.planned === true);
+        if (planned) {
+          if (!(!verdict.ok && verdict.reason === 'handoff-slot')) problems.push(`${at}: a handoff into a planned slot is refused handoff-slot until A4-S3 (${verdict.ok ? verdict.plan.kind : verdict.reason})`);
+        } else if (!verdict.ok || verdict.plan.kind !== 'handoff') problems.push(`${at}: the plan validator does not accept the handoff target (${verdict.ok ? verdict.plan.kind : verdict.reason})`);
       }
     } else if (target.outcome === 'request-list') {
       readStep(target, target.requests.from, 'requests.from');

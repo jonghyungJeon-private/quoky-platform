@@ -36,6 +36,26 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   stale and non-consent pendings never reach the classifier; the round-2 pasted lines and non-LF separators grant nothing;
   a two-line-grant step never reaches the classifier; round 3: format characters, whole-phrase labels, paste lot (a) and pinned residual lot (b)); `s2-read-redteam-corpus.test.ts` accepts the A6 decision;
   `a2-data.test.ts` pins the A2 targets, the floor and the 18 eligible-but-unmarked replies. No product code, prompt, catalog or flag change.
+## Unreleased — ADR-0121 amendment A4-S1: the handoff form in the plan schema and validator (2026-11-20)
+
+- **Added.** An optional `handoff` in the agent plan schema and rule 8 of the plan validator (closed kinds, scopes and
+  slot table in Core `handoff-slots.ts`; one clause of the owner's own words (quotes removed, no negation) must name the source and destination entries, and each-item needs a distributive marker; a planned
+  slot, a content-proposed linkage, a non-CLEAR plan or a reference beside a handoff is refused). A validated handoff is a
+  new plan kind that nothing runs yet: `runActive` declines it `handoff-off`, shadow logs it content-free.
+- **Tests.** `plan-handoff.test.ts`, the corpus self-check now runs the validator on all 31 A4-S1 targets (15 accepted, 16
+  refused only as a planned slot), and an active-run decline test. No prompt, catalog, flag or gold change; no case moved
+  to `approved` (all still wait for A4-S2 and A4-S4).
+- **Review round 2.** The handoff grounding is one strict structural rule: the whole owner message (quotes removed) must
+  be one plain request-form unit (no terminator but a trailing one, no line break, no negation or retraction anywhere, no
+  clause connective, at most one request form and it is last); `nlWithoutInlineQuotes` keeps contraction apostrophes;
+  마다 is anchored as a particle; backtick and guillemet text is refused. Residuals and the A4-S2 operation/kind
+  precondition are recorded in DECISIONS.
+- **Review round 3 (final; fix-loop cap reached).** The handoff grounding also refuses any -하고 word (only -랑 stays; "메일하고
+  일정 보여줘" now refuses, an accepted fail-closed cost), any request-shape veto, and any punctuation outside a whitelist; the
+  shared READ quote regex is restored (contraction handling is handoff-only); every reviewer probe is a negative test. Fail-open
+  residuals (harmless while `handoff-off`) and the A4-S2 activation gate are recorded in DECISIONS.
+- **Final review.** A comma can no longer hide a -고/-하고 connective (the boundary checks run on the text without its
+  commas), a comma not followed by a space refuses, and any question mark refuses (the veto sees the terminators).
 
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 

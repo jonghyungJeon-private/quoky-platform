@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlFrameIsCopularReference, nlFrameIsElliptical, nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
+import { nlFrameIsCopularReference, nlFrameIsElliptical, nlHasDistributiveMarker, nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
 import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
 import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';
@@ -899,5 +899,13 @@ describe('nlHasGrammaticalNegation (Codex review of 68acf4f6 P2): scope-free, in
     for (const text of ['20261029 거 이슈 보여줘', 'show the 20261029 issues', '안건 20261029 보여줘']) {
       expect(nlHasGrammaticalNegation(text), text).toBe(false);
     }
+  });
+});
+
+describe('handoff grounding helpers (closed grammatical classes)', () => {
+  it('nlHasDistributiveMarker: 마다 is a particle after a noun, not the start of 마다가스카르', () => {
+    expect(nlHasDistributiveMarker('메일마다 나온 날짜')).toBe(true);
+    expect(nlHasDistributiveMarker('마다가스카르 날짜')).toBe(false);
+    expect(nlHasDistributiveMarker('for every mail')).toBe(true);
   });
 });

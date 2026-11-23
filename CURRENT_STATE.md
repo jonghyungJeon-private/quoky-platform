@@ -5,6 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A4-S1 (handoff-plan) implemented (2026-11-20, branch `claude/v5-a4-s1-handoff-plan`)
+
+- The plan schema and validator accept one declared `handoff` (value kind, scope, destination slot) into a READ slot, against
+  the owner's own words (closed sets, the closed slot table, catalog vocabulary; fail closed). A validated handoff plan is
+  not runnable: `runActive` declines it, shadow logs it, nothing reaches a user. No prompt or catalog change.
+- All 31 A4-S1 gold cases stay awaiting (A4-S2 and A4-S4 still pending); 15 now validate, 16 are refused only as planned
+  slots (A4-S3). Next: A4-S2 (extractors, continuation, flag `off`) after S2 `active`.
+
 ### ADR-0121 amendment A6 recorded: the consent answer by context (2026-11-20, branch `claude/v5-a6-consent-classifier`)
 
 - The owner answered W1–W5 on 2026-11-19: W1 becomes "the answer in context" (ㅇㅇ, ok, 응, 확인, 보내, 좋아 can be yes;
