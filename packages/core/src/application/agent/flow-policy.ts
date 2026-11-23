@@ -62,7 +62,13 @@ export const AGENT_POSITION_REF_SOURCES: readonly string[] = Object.freeze([
   ...NL_R2_ITEM_SOURCES,
 ]);
 
-/** The label of what a READ entry returns (ADR-0121 D4; ADR-0110 D4, ADR-0118 D7/D8, ADR-0100). */
+/**
+ * The label of what a READ entry returns (ADR-0121 D4; ADR-0110 D4, ADR-0118 D7/D8, ADR-0100). Every source is pinned
+ * explicitly (the A3a RQ-1 `readOutputLabel` fix, build precondition of A5 for GitHub): a new source can no longer fall into
+ * a default branch, and an unknown one is `HOST_ONLY` (fail closed). The values of Jira, Slack, Confluence and GitHub are
+ * the ones the default branch gave them (`REMOTE_OK`, `WORK_CHANNEL_OK`): this is the LISTING label. The summary readout of
+ * the five work sources has its own label ({@link summaryReadoutLabel}, ADR-0121 A5.4).
+ */
 export function readOutputLabel(entryId: NlWave1EntryId): FlowLabel {
   const source = AGENT_READ_SOURCES[entryId].source;
   switch (source) {
@@ -77,9 +83,54 @@ export function readOutputLabel(entryId: NlWave1EntryId): FlowLabel {
       return flowLabel('UNTRUSTED', 'REMOTE_OK', 'OWNER_DM_ONLY', [source]);
     case 'help':
       return flowLabel('TRUSTED', 'REMOTE_OK', 'WORK_CHANNEL_OK', [source]);
-    default:
+    case 'jira':
+    case 'slack':
+    case 'confluence':
+    case 'github':
       return flowLabel('UNTRUSTED', 'REMOTE_OK', 'WORK_CHANNEL_OK', [source]);
+    default:
+      return flowLabel('UNTRUSTED', 'HOST_ONLY', 'OWNER_DM_ONLY', [source]);
   }
+}
+
+/**
+ * ADR-0121 A5.4: the sources whose listed items an owner-requested summary may send to a model (calendar, Jira, Slack,
+ * Confluence, GitHub). Each has its own per-source switch (`QUOKY_AGENT_SUMMARY_*`, default off).
+ */
+export const AGENT_WORK_SUMMARY_SOURCES = Object.freeze(['calendar', 'jira', 'slack', 'confluence', 'github'] as const);
+export type AgentWorkSummarySource = (typeof AGENT_WORK_SUMMARY_SOURCES)[number];
+
+/** The work-summary source of a read entry, or `undefined` (mail, Drive, the local stores). */
+export function workSummarySourceOf(entryId: NlWave1EntryId): AgentWorkSummarySource | undefined {
+  const source = AGENT_READ_SOURCES[entryId]?.source;
+  return (AGENT_WORK_SUMMARY_SOURCES as readonly string[]).includes(source as string) ? (source as AgentWorkSummarySource) : undefined;
+}
+
+/**
+ * ADR-0121 A5.4 (D4, design 2.4 rule 2): the label of the agent's summary READOUT. The five work sources are `UNTRUSTED`,
+ * `REMOTE_ON_SUMMARY_REQUEST`, `OWNER_DM_ONLY`, as mail and Drive are; every other entry keeps {@link readOutputLabel}. It
+ * labels the summarize step only: the planner, the structure projector, the handoff and the listings keep the read label.
+ * Pure data: whether a source is enabled is the switch's business ({@link AgentSummarizerDeps}), not the label's.
+ */
+export function summaryReadoutLabel(entryId: NlWave1EntryId): FlowLabel {
+  const work = workSummarySourceOf(entryId);
+  return work === undefined ? readOutputLabel(entryId) : flowLabel('UNTRUSTED', 'REMOTE_ON_SUMMARY_REQUEST', 'OWNER_DM_ONLY', [work]);
+}
+
+/**
+ * How a summarize step gets the items' text from a covered read (ADR-0121 A5.2):
+ * - `documents`: mail and Drive. The port is asked (`withDocuments`) and hands over bodies, as before.
+ * - `listing`: Jira, Slack, Confluence, GitHub. The request is exactly the listing read's (no `withDocuments`, no further
+ *   request); the text is projected from the listing response's own items.
+ * - `listing-mask`: calendar. One `events.list` with the separate agent-summary field mask (ADR-0110 D1 amendment), which the
+ *   port selects when asked `withDocuments`; the text is projected from the response's items like `listing`.
+ */
+export type AgentSummaryReadMode = 'documents' | 'listing' | 'listing-mask';
+
+export function summaryReadModeOf(entryId: NlWave1EntryId): AgentSummaryReadMode {
+  const work = workSummarySourceOf(entryId);
+  if (work === undefined) return 'documents';
+  return work === 'calendar' ? 'listing-mask' : 'listing';
 }
 
 /** One labelled part of a planner prompt. */

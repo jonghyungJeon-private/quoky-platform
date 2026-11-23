@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ConnectorQueryError } from '@quoky/core';
 import { GoogleCalendarHttpError, GoogleCalendarRequestError, GoogleCalendarScopeError } from './errors';
 import { GOOGLE_CALENDAR_READONLY_SCOPE, GOOGLE_OAUTH_TOKEN_URL } from './oauth';
-import { GOOGLE_CALENDAR_EVENT_FIELDS, GoogleCalendarReader, type GoogleCalendarReaderConfig } from './google-calendar-reader';
+import { GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS, GOOGLE_CALENDAR_EVENT_FIELDS, GoogleCalendarReader, type GoogleCalendarReaderConfig } from './google-calendar-reader';
 
 const CLIENT_SECRET = 'client-secret-value';
 const REFRESH_TOKEN = '1//refresh-token-value';
@@ -557,5 +557,45 @@ describe('GoogleCalendarReader.getEvent (ADR-0112 amendment 3: one event by id)'
     await errorOf(reader(none.fetchImpl).getEvent('primary', '../x'));
     await errorOf(reader(none.fetchImpl).getEvent('a/b', EVENT_ID));
     expect(none.allCalls).toHaveLength(0);
+  });
+});
+
+// ADR-0121 A5.2 / ADR-0110 D1 amendment (A5-S1): the agent-summary field mask is a separate method; every other read keeps the D1 mask.
+describe('GoogleCalendarReader.listEventsForAgentSummary (A5 agent-summary field mask)', () => {
+  it('is the same single events.list with ONLY the mask changed, and the D1 mask still has no description', async () => {
+    expect(GOOGLE_CALENDAR_EVENT_FIELDS).not.toContain('description');
+    expect(GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS).toContain('description');
+    for (const forbidden of ['attendees', 'organizer', 'creator', 'conferenceData', 'attachments', 'htmlLink', 'hangoutLink', 'etag']) {
+      expect(GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS, forbidden).not.toContain(forbidden);
+    }
+    const plain = fakeGoogle({ calendar: () => json(200, { summary: 'c', items: [] }) });
+    const summary = fakeGoogle({ calendar: () => json(200, { summary: 'c', items: [] }) });
+    await reader(plain.fetchImpl).listEvents(SEOUL_TODAY);
+    await reader(summary.fetchImpl).listEventsForAgentSummary(SEOUL_TODAY);
+    expect(summary.calendarCalls).toHaveLength(1);
+    const a = Object.fromEntries(plain.calendarCalls[0]!.url.searchParams);
+    const b = Object.fromEntries(summary.calendarCalls[0]!.url.searchParams);
+    expect(b).toEqual({ ...a, fields: GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS });
+    expect(summary.calendarCalls[0]!.url.pathname).toBe(plain.calendarCalls[0]!.url.pathname);
+  });
+
+  it('returns the A5.2 fields only, bounded and single-line, in the same order as listEvents', async () => {
+    const longText = `line one\nline two ${'z'.repeat(400)}`;
+    const items = [
+      timed('b1', 'Second', '2026-10-06T03:00:00+09:00', '2026-10-06T04:00:00+09:00', { description: 'later', location: 'Hall', attendees: [{ email: 'x@example.test' }], organizer: { email: 'o@example.test' } }),
+      timed('a1', 'First', '2026-10-06T01:00:00+09:00', '2026-10-06T02:00:00+09:00', { description: longText }),
+    ];
+    const google = fakeGoogle({ calendar: () => json(200, { summary: 'c', items }) });
+    const events = await reader(google.fetchImpl).listEventsForAgentSummary(SEOUL_TODAY);
+    expect(events.map((event) => event.id)).toEqual(['a1', 'b1']);
+    expect(events[1]).toEqual({ id: 'b1', title: 'Second', location: 'Hall', description: 'later' });
+    expect(Object.keys(events[0]!).sort()).toEqual(['description', 'id', 'title']);
+    expect(Array.from(events[0]!.description ?? '').length).toBeLessThanOrEqual(300);
+    expect(events[0]!.description).not.toContain('\n');
+    expect(JSON.stringify(events)).not.toContain('example.test');
+    // listEvents is unchanged: no description on the event.
+    const plain = await reader(fakeGoogle({ calendar: () => json(200, { summary: 'c', items }) }).fetchImpl).listEvents(SEOUL_TODAY);
+    expect(JSON.stringify(plain)).not.toContain('later');
+    expect(plain.map((event) => event.id)).toEqual(['a1', 'b1']);
   });
 });

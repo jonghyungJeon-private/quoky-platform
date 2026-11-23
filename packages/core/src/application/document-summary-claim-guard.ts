@@ -787,6 +787,31 @@ const WITHHELD_NOTICE: Readonly<Record<UntrustedDocumentSource, { readonly ko: s
       '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 슬랙 스레드를 읽기만 했고, 게시·답글·반응·수정·삭제를 ' +
       '하지 않았으며 할 일이나 알림도 만들지 않았어요.',
   },
+  // ADR-0121 A5: the agent's summary readout of a calendar event, a Confluence page and a GitHub item.
+  'calendar-event': {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the calendar event: ' +
+      'nothing was accepted, declined, moved, created or deleted, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 일정을 읽기만 했고, 수락·거절·이동·생성·삭제를 ' +
+      '하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
+  'confluence-page': {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the Confluence page: ' +
+      'nothing was edited, commented, created, shared or deleted, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 컨플루언스 페이지를 읽기만 했고, 수정·댓글·생성·' +
+      '공유·삭제를 하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
+  'github-item': {
+    en:
+      'The summary claimed an action that was never taken, so it was not shown. Quoky only read the GitHub item: ' +
+      'nothing was commented, reviewed, merged, closed or assigned, and no to-do or reminder was created.',
+    ko:
+      '요약이 하지 않은 일을 했다고 말해서 보여 드리지 않았어요. Quoky는 깃허브 항목을 읽기만 했고, 댓글·리뷰·병합·닫기·' +
+      '담당자 지정을 하지 않았으며 할 일이나 알림도 만들지 않았어요.',
+  },
 };
 
 /**

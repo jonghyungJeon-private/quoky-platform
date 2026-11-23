@@ -11,7 +11,7 @@ const silent = { info: () => undefined, warn: () => undefined, error: () => unde
 const storage = { actors: { get: async () => null, save: async (actor: unknown) => actor } } as unknown as StorageProvider;
 
 function build(mode: AgentFeatureConfig['agent']['mode'], router: CapabilityRouter): AgentRunService {
-  const provider = createAgentProviders(() => ({ agent: { mode }, timeoutMs: 6_000, timeZone: 'Asia/Seoul' }), { logger: silent })[0] as {
+  const provider = createAgentProviders(() => ({ agent: { mode, summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul' }), { logger: silent })[0] as {
     provide: symbol;
     useFactory: (router: CapabilityRouter, storage: StorageProvider) => AgentRunService;
   };

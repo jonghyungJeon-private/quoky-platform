@@ -1,5 +1,6 @@
 import type { AgentRunServiceDeps } from './agent-run-service';
 import type { AgentPlanExecutorDeps, AgentReadBudget, AgentReadPort, AgentReadRequest, AgentReadResponse, AgentSummarizerDeps } from './plan-executor';
+import type { AgentWorkSummarySource } from './flow-policy';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import type { ProviderSelector } from '../../ports/provider-selector.port';
 
@@ -19,7 +20,9 @@ export type AgentExecutorDepsPinned = Assert<KeysEqual<AgentPlanExecutorDeps, 'r
  * ADR-0121 D12 (amended 2026-11-16): M2's route is the EXISTING selection contract — the `ProviderSelector` port and its
  * `ProviderSelectionContext` — and nothing else: no model list, no new model-execution port or token.
  */
-export type AgentSummarizerDepsPinned = Assert<KeysEqual<AgentSummarizerDeps, 'selector' | 'selectionContext'>>;
+export type AgentSummarizerDepsPinned = Assert<KeysEqual<AgentSummarizerDeps, 'selector' | 'selectionContext' | 'workSummarySources'>>;
+/** ADR-0121 A5-S1: the one data field the route gains is the per-source switch (a list of source names), never a port or a model list. */
+export type AgentSummarizerSwitchPinned = Assert<TypesEqual<NonNullable<AgentSummarizerDeps['workSummarySources']>, readonly AgentWorkSummarySource[]>>;
 export type AgentSummarizerSelectorPinned = Assert<TypesEqual<AgentSummarizerDeps['selector'], ProviderSelector>>;
 export type AgentSummarizerContextPinned = Assert<TypesEqual<NonNullable<AgentSummarizerDeps['selectionContext']>, ProviderSelectionContext>>;
 /** A port is one `read` function. */
@@ -42,7 +45,7 @@ export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQu
  * flag (a boolean, false by default) and a test-only bounds override that can only lower a bound.
  */
 export type AgentServiceDepsPinned = Assert<
-  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'bounds' | 'released'>
+  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released'>
 >;
 export type AgentServiceReleasedPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['released']>, boolean>>;
 export type AgentServiceReadersPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['readers']>, AgentPlanExecutorDeps['readers']>>;

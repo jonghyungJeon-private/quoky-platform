@@ -17,13 +17,13 @@ function codeOf(run: () => unknown): string | undefined {
 
 describe('parseAgentConfig', () => {
   it('defaults to off; off is accepted with any selection mode', () => {
-    expect(parseAgentConfig({})).toEqual({ mode: 'off' });
-    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'off' })).toEqual({ mode: 'off' });
-    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'off', QUOKY_NL_INTENT_MODE: 'shadow' })).toEqual({ mode: 'off' });
+    expect(parseAgentConfig({})).toEqual({ mode: 'off', summarySources: [] });
+    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'off' })).toEqual({ mode: 'off', summarySources: [] });
+    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'off', QUOKY_NL_INTENT_MODE: 'shadow' })).toEqual({ mode: 'off', summarySources: [] });
   });
 
   it('shadow needs QUOKY_NL_INTENT_MODE=active', () => {
-    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'shadow', QUOKY_NL_INTENT_MODE: 'active' })).toEqual({ mode: 'shadow' });
+    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'shadow', QUOKY_NL_INTENT_MODE: 'active' })).toEqual({ mode: 'shadow', summarySources: [] });
     for (const nl of [undefined, 'off', 'shadow']) {
       expect(codeOf(() => parseAgentConfig({ QUOKY_AGENT_MODE: 'shadow', ...(nl !== undefined ? { QUOKY_NL_INTENT_MODE: nl } : {}) })), String(nl)).toBe('AGENT_MODE_REQUIRES_NL_ACTIVE');
     }
@@ -39,8 +39,8 @@ describe('parseAgentConfig', () => {
       expect(codeOf(() => parseAgentConfig(env)), String(guard)).toBe('AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE');
     }
     // off and shadow never look at the guard.
-    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'shadow', QUOKY_NL_INTENT_MODE: 'active', QUOKY_EGRESS_GUARD: 'observe' })).toEqual({ mode: 'shadow' });
-    expect(parseAgentConfig({ QUOKY_EGRESS_GUARD: 'off' })).toEqual({ mode: 'off' });
+    expect(parseAgentConfig({ QUOKY_AGENT_MODE: 'shadow', QUOKY_NL_INTENT_MODE: 'active', QUOKY_EGRESS_GUARD: 'observe' })).toEqual({ mode: 'shadow', summarySources: [] });
+    expect(parseAgentConfig({ QUOKY_EGRESS_GUARD: 'off' })).toEqual({ mode: 'off', summarySources: [] });
   });
 
   it('review round 1 item 5: the parser never returns active today, for any combination of the three variables', () => {
@@ -98,5 +98,46 @@ describe('parseAgentConfig', () => {
     expect(QuokyConfigErrorCode.AGENT_MODE_ACTIVE_NOT_RELEASED).toBe('AGENT_MODE_ACTIVE_NOT_RELEASED');
     expect(QuokyConfigErrorCode.AGENT_MODE_REQUIRES_NL_ACTIVE).toBe('AGENT_MODE_REQUIRES_NL_ACTIVE');
     expect(QuokyConfigErrorCode.AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE).toBe('AGENT_MODE_ACTIVE_REQUIRES_EGRESS_ENFORCE');
+  });
+
+  // ADR-0121 A5-S1: the per-source summary switches.
+  describe('A5-S1 per-source summary switches', () => {
+    const NAMES = {
+      calendar: 'QUOKY_AGENT_SUMMARY_CALENDAR',
+      jira: 'QUOKY_AGENT_SUMMARY_JIRA',
+      slack: 'QUOKY_AGENT_SUMMARY_SLACK',
+      confluence: 'QUOKY_AGENT_SUMMARY_CONFLUENCE',
+      github: 'QUOKY_AGENT_SUMMARY_GITHUB',
+    } as const;
+
+    it('every source defaults to off, calendar included, and QUOKY_WORK_SUMMARY_ENABLED does not turn any on', () => {
+      expect(parseAgentConfig({}).summarySources).toEqual([]);
+      expect(parseAgentConfig({ QUOKY_WORK_SUMMARY_ENABLED: 'true' }).summarySources).toEqual([]);
+      expect(parseAgentConfig({ QUOKY_WORK_SUMMARY_ENABLED: 'false' }).summarySources).toEqual([]);
+    });
+
+    it.each(Object.entries(NAMES))('%s is on only for the exact value true, and independent of the other sources', (source, name) => {
+      expect(parseAgentConfig({ [name]: 'true' }).summarySources).toEqual([source]);
+      expect(parseAgentConfig({ [name]: 'false' }).summarySources).toEqual([]);
+    });
+
+    it('lists the sources that are on in catalog order', () => {
+      expect(parseAgentConfig({ QUOKY_AGENT_SUMMARY_GITHUB: 'true', QUOKY_AGENT_SUMMARY_CALENDAR: 'true', QUOKY_AGENT_SUMMARY_SLACK: 'false' }).summarySources).toEqual(['calendar', 'github']);
+    });
+
+    it.each(['TRUE', '1', 'yes', ' true', ''])('refuses %j with a value-free code', (value) => {
+      let message = '';
+      try {
+        parseAgentConfig({ QUOKY_AGENT_SUMMARY_JIRA: value });
+      } catch (error) {
+        message = (error as Error).message;
+        expect((error as AgentConfigError).code).toBe('AGENT_SUMMARY_SWITCH_INVALID');
+      }
+      expect(message).toBe('AGENT_SUMMARY_SWITCH_INVALID');
+    });
+
+    it('its code is a QuokyConfig error code with a preflight hint', () => {
+      expect(QuokyConfigErrorCode.AGENT_SUMMARY_SWITCH_INVALID).toBe('AGENT_SUMMARY_SWITCH_INVALID');
+    });
   });
 });

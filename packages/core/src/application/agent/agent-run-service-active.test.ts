@@ -1,5 +1,5 @@
 import { getEventListeners } from 'node:events';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type Actor } from '../../domain';
 import type { AiExecutionLocality, AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
@@ -12,6 +12,8 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_ACTIVE_LOG_EVENT, AgentRunService, type AgentActiveOutcome, type AgentActiveTurn, type AgentMode } from './agent-run-service';
 import type { AgentReadPort, AgentReadPorts, AgentReadRequest, AgentReadResponse } from './plan-executor';
 import type { AgentRunBoundValues } from './run-bounds';
+import type { AgentWorkSummarySource } from './flow-policy';
+import { setSummaryGrantsForTest } from './quarantined-summary';
 
 // ADR-0121 S2 wiring slice: `active` end to end with fake ports and no model. The planner (M1) is charged on the run budget
 // before step 1, the re-plan (M1') is reserved explicitly, the executor reads through the injected ports, the summary grant
@@ -50,6 +52,10 @@ interface Options {
   readonly select?: (planner: AiProvider) => Promise<AiProvider>;
   /** The P5 release flag (default `true` here; production composes `active` without it until P5). */
   readonly released?: boolean;
+  /** ADR-0121 A5-S1: the per-source summary switches handed to the service (default: none, every work source off). */
+  readonly workSummarySources?: readonly AgentWorkSummarySource[];
+  /** The M2 provider's locality (default REMOTE). */
+  readonly summarizerLocality?: AiExecutionLocality;
 }
 
 const documents = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i + 1}`, position: i + 1, title: `t${i + 1}`, author: 'a', date: '2026-11-01T09:00:00.000Z', body: `${BODY_CANARY} ${i + 1}` }));
@@ -82,7 +88,7 @@ function harness(options: Options = {}): Harness {
   const summarizer: AiProvider = {
     id: 'fake-summarizer',
     capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
-    executionLocality: 'REMOTE',
+    executionLocality: options.summarizerLocality ?? 'REMOTE',
     isAvailable: async () => true,
     async execute(request) {
       m2Calls.push(request);
@@ -97,7 +103,7 @@ function harness(options: Options = {}): Harness {
       return custom !== undefined ? custom(request, state) : listing(request);
     },
   });
-  const readers: AgentReadPorts = { 'mail.list': port('mail.list'), 'drive.files': port('drive.files'), 'todo.list': port('todo.list'), 'calendar.events': port('calendar.events') };
+  const readers: AgentReadPorts = { 'mail.list': port('mail.list'), 'drive.files': port('drive.files'), 'todo.list': port('todo.list'), 'calendar.events': port('calendar.events'), 'jira.issues': port('jira.issues') };
   const logger: Logger = {
     info: (event, fields) => void logs.push({ event, ...(fields ? { fields } : {}) }),
     warn: (event, fields) => void logs.push({ event, ...(fields ? { fields } : {}) }),
@@ -119,7 +125,7 @@ function harness(options: Options = {}): Harness {
     timeoutMs: 6_000,
     ...(options.caps !== undefined ? { caps: options.caps } : {}),
     ...(options.bounds !== undefined ? { bounds: options.bounds } : {}),
-    ...(mode === 'active' ? { readers, summarizer: new CapabilityRouter(new AiProviderManager([summarizer]), policy), ...(options.released !== false ? { released: true } : {}) } : {}),
+    ...(mode === 'active' ? { readers, summarizer: new CapabilityRouter(new AiProviderManager([summarizer]), policy), ...(options.workSummarySources !== undefined ? { workSummarySources: options.workSummarySources } : {}), ...(options.released !== false ? { released: true } : {}) } : {}),
   });
   return state;
 }
@@ -145,6 +151,40 @@ const replyOf = (outcome: AgentActiveOutcome) => {
   return outcome;
 };
 const utf8 = (text: string): number => new TextEncoder().encode(text).length;
+
+const JIRA_SUMMARY_PLAN = JSON.stringify({ steps: [{ entryId: 'jira.issues', args: {} }, { summarize: [1], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
+
+describe('AgentRunService.runActive — ADR-0121 A5-S1 per-source switch', () => {
+  const jiraItems = (request: AgentReadRequest): AgentReadResponse => (request.budget.reserveQuery() && request.budget.reserveHttp() ? { ok: true, items: [{ id: 'AB-1', summary: 'Checkout fails', description: 'Steps', comment: 'CANARY-COMMENT' }] } : { ok: false, code: 'BOUND' });
+  afterEach(() => setSummaryGrantsForTest());
+
+  it('with every switch off a Jira summarize step is listing-only: the request carries no flag, no M2 call is made', async () => {
+    setSummaryGrantsForTest(() => true);
+    const h = harness({ script: [JIRA_SUMMARY_PLAN], summarizerLocality: 'LOCAL', ports: { 'jira.issues': async (request) => jiraItems(request) } });
+    replyOf(await h.service.runActive(turn(h, '지라 이슈 요약해줘'), async () => CHAT));
+    expect(h.reads).toHaveLength(1);
+    expect(h.reads[0]?.withDocuments).toBeUndefined();
+    expect(h.m2Calls).toEqual([]);
+  });
+
+  it('with the Jira switch on (and a grant) the same run summarises from the listing alone: one request, no withDocuments, no comment in the prompt', async () => {
+    setSummaryGrantsForTest(() => true);
+    const h = harness({ script: [JIRA_SUMMARY_PLAN], summarizerLocality: 'LOCAL', workSummarySources: ['jira'], ports: { 'jira.issues': async (request) => jiraItems(request) } });
+    replyOf(await h.service.runActive(turn(h, '지라 이슈 요약해줘'), async () => CHAT));
+    expect(h.reads).toHaveLength(1);
+    expect(h.reads[0]?.withDocuments).toBeUndefined();
+    expect(h.m2Calls).toHaveLength(1);
+    expect(h.m2Calls[0]?.prompt).toContain('Checkout fails');
+    expect(h.m2Calls[0]?.prompt).not.toContain('CANARY-COMMENT');
+  });
+
+  it('a REMOTE provider that does not declare dataUse no-training gets nothing, even with the switch on', async () => {
+    setSummaryGrantsForTest(() => true);
+    const h = harness({ script: [JIRA_SUMMARY_PLAN], workSummarySources: ['jira'], ports: { 'jira.issues': async (request) => jiraItems(request) } });
+    replyOf(await h.service.runActive(turn(h, '지라 이슈 요약해줘'), async () => CHAT));
+    expect(h.m2Calls).toEqual([]);
+  });
+});
 
 describe('AgentRunService.runActive — end to end with fake ports', () => {
   it('plans, reads, summarizes on the owner\'s request and assembles the deterministic reply', async () => {

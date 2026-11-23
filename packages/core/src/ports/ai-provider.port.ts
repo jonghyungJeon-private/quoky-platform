@@ -181,6 +181,13 @@ export interface AiProvider {
    * {@link executionLocalityOf}. `LOCAL_ONLY` data (curated learning examples) reaches only a `LOCAL` provider.
    */
   readonly executionLocality?: AiExecutionLocality;
+  /**
+   * ADR-0121 A5.3 / ARCHITECTURE.md section 5 item 14: declared data-use of the operator behind a `REMOTE` provider. Only
+   * `'no-training'` is a value, set by the composition root from owner configuration after the owner has checked the
+   * provider account. Absent means unknown: such a provider is not eligible for an A5 work-source summary. Core reads it,
+   * never branches on a provider id.
+   */
+  readonly dataUse?: 'no-training';
 
   /**
    * Health/auth probe. Ollama may be down; Claude/Codex may be unauthed. A probe that cannot reach a definitive answer

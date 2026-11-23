@@ -12,6 +12,7 @@ export * from './conjuncts';
 export * from './read-write-probe';
 export * from './run-bounds';
 export * from './structure-projector';
+export * from './work-summary-projection';
 export * from './plan-executor';
 // The summariser's value exports are pure functions and constants only: the sealed summary class, its accessor, the grant
 // seams and every `...ForTest` name stay module-private (pinned by quarantined-summary.test.ts).

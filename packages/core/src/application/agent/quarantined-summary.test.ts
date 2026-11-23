@@ -602,7 +602,8 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
       const fake = model('LOCAL');
       expect(await quarantinedSummarize({ ...base, sources: [granted(entryId, [doc(1)])], route: via(fake) }), entryId).toEqual({ kind: 'listing-only', reason: 'work-text-controls-not-built' });
       expect(fake.requests, entryId).toHaveLength(0);
-      expect(AGENT_SUMMARY_READOUT_SOURCE[entryId], entryId).toBeUndefined();
+      // A5-S1: the shape exists, but it is used only while the source's own switch is on (default off).
+      expect(AGENT_SUMMARY_READOUT_SOURCE[entryId], entryId).toBeDefined();
     }
   });
 

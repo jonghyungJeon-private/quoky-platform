@@ -86,6 +86,7 @@ export function chatTierView(inner: AiProvider, id: string): AiProvider {
     family: inner.family ?? id.split(':')[0] ?? id,
     capabilities: inner.capabilities.filter((descriptor) => CHAT_TIER.has(descriptor.capability)),
     ...(inner.executionLocality !== undefined ? { executionLocality: inner.executionLocality } : {}),
+    ...(inner.dataUse !== undefined ? { dataUse: inner.dataUse } : {}),
     isAvailable: () => inner.isAvailable(),
     execute: async (request) => {
       if (!CHAT_TIER.has(request.capability)) {

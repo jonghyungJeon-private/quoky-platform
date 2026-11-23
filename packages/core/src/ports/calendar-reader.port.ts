@@ -16,6 +16,8 @@ export const CALENDAR_WINDOW_MAX_DAYS = 31;
 export const CALENDAR_EVENT_TITLE_MAX_LENGTH = 200;
 export const CALENDAR_EVENT_LOCATION_MAX_LENGTH = 200;
 export const CALENDAR_NAME_MAX_LENGTH = 100;
+/** ADR-0121 A5.2: the description of an event, bounded for the agent summary readout only (every other field of it is 200). */
+export const CALENDAR_AGENT_SUMMARY_DESCRIPTION_MAX_LENGTH = 300;
 
 /** Cancelled events are never returned; an adapter drops them. */
 export type CalendarEventStatus = 'confirmed' | 'tentative';
@@ -67,6 +69,19 @@ export type CalendarEventPresence =
   | { readonly kind: 'deleted'; readonly event: CalendarEvent }
   | { readonly kind: 'absent' };
 
+/**
+ * ADR-0121 A5.2 / ADR-0110 D1 amendment (A5-S1): the fields of one event the agent's summary readout may send, and nothing
+ * else (no start or end, organizer, attendees, links, conference data or attachments). Never a wider {@link CalendarEvent}:
+ * it exists only as the answer of {@link CalendarReader.listEventsForAgentSummary}. `title`, `location` and `description`
+ * are untrusted readout, bounded and single-line; `id` is structural and is never in a prompt.
+ */
+export interface CalendarEventSummaryFields {
+  readonly id: string;
+  readonly title: string;
+  readonly location?: string;
+  readonly description?: string;
+}
+
 /** `[from, to)` as ISO-8601 instants. An event is listed when it overlaps the window. */
 export interface CalendarEventQuery {
   readonly from: IsoTimestamp;
@@ -81,6 +96,14 @@ export interface CalendarReader {
   readonly readOnly: true;
   /** Events overlapping `[from, to)`, ordered by start, at most `limit`. Throws `ConnectorQueryError`. */
   listEvents(query: CalendarEventQuery): Promise<readonly CalendarEvent[]>;
+  /**
+   * ADR-0121 A5.2 (ADR-0110 D1 amendment, slice A5-S1): the SAME single `events.list` request as {@link listEvents} with a
+   * separate agent-summary field mask that adds `description`, returning only {@link CalendarEventSummaryFields} (same events,
+   * same order, same window and limit rules). Called only by the agent's summarize step, never by the schedule handler, the
+   * brief, the handoff or a write; every other read keeps the D1 mask without a description. The description is never logged,
+   * stored or shown in a listing. Optional: a reader without it cannot back a calendar summary. Throws `ConnectorQueryError`.
+   */
+  listEventsForAgentSummary?(query: CalendarEventQuery): Promise<readonly CalendarEventSummaryFields[]>;
   /**
    * ADR-0112 amendment 3 (additive read, ARCHITECTURE section 11.7): ONE event by id on ONE calendar (the receipt-bound undo
    * check). Resolves `undefined` when the event does not exist (not found, gone or cancelled) and throws

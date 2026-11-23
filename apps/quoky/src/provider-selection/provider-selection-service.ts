@@ -1,4 +1,4 @@
-import { Capability, SessionStatus, now as sharedClock } from '@quoky/core';
+import { Capability, SessionStatus, executionLocalityOf, now as sharedClock } from '@quoky/core';
 import type {
   AiExecutionLocality,
   AiProvider,
@@ -272,7 +272,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     // ADR-0124 Part L C5a-2: a request that must stay on this host is answered from configuration only (no session read).
     if (context.requiredLocality !== undefined) return this.requiredLocalPreference(capability);
     try {
-      return this.preferenceFrom(capability, await this.sessionSelection(context), context.workText === true);
+      return this.preferenceFrom(capability, await this.sessionSelection(context), context.workText === true, context.requiredDataUse);
     } catch {
       // Fail safe: the chat tier and pinned work go to Claude, images go nowhere.
       this.deps.logger.warn('provider selection unavailable; using the safe default', { capability });
@@ -301,7 +301,7 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
         if (mirrored === undefined) return false;
         session = mirrored;
       }
-      const preference = this.preferenceFrom(capability, session, context.workText === true);
+      const preference = this.preferenceFrom(capability, session, context.workText === true, context.requiredDataUse);
       return preference === null || preference.eligible.includes(providerKey);
     } catch {
       return false;
@@ -318,20 +318,25 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   }
 
   /** The policy's answer for a known session selection (synchronous). */
-  private preferenceFrom(capability: Capability, session: SessionSelection, workText = false): ProviderPreference | null {
+  private preferenceFrom(
+    capability: Capability,
+    session: SessionSelection,
+    workText = false,
+    requiredDataUse?: 'no-training',
+  ): ProviderPreference | null {
     if (CHAT_TIER.has(capability)) {
       const chat = this.chatFromLayers(session);
       // A6 R2 (D6, amendment C9): Jira / Slack text never reaches an HTTP API vendor without the separate opt-in. The
       // vendor is skipped for this request only (the next eligible provider, the Claude CLI, serves it); the owner's
       // selection is unchanged and nothing names a provider to the owner.
       if (workText && this.deps.workTextVendorAllowed !== true && HTTP_API_CHAT_PROVIDERS.has(chat.choice.provider)) {
-        return { eligible: [this.deps.catalog.claude.id], order: 'listed' };
+        return { eligible: this.withDataUse([this.deps.catalog.claude], requiredDataUse), order: 'listed' };
       }
       // ADR-0116 D2/D3: only an allow-listed source (OWNER_SELECTION_SOURCES) names the owner-selected key. The Claude
       // fallback entry is never named here, so reaching it only as the selection-time fallback is not an owner
       // selection either.
       const owner = isOwnerSelectionSource(chat.source) ? { ownerSelectedKey: chat.provider.id } : {};
-      return { eligible: unique([chat.provider.id, this.deps.catalog.claude.id]), order: 'listed', ...owner };
+      return { eligible: this.withDataUse([chat.provider, this.deps.catalog.claude], requiredDataUse), order: 'listed', ...owner };
     }
     if (capability === Capability.IMAGE_UNDERSTANDING) {
       const image = this.imageFromLayers(session);
@@ -339,6 +344,16 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
     }
     if (PINNED.has(capability)) return this.pinnedPreference();
     return null;
+  }
+
+  /**
+   * ADR-0121 A5.3: the data-only `requiredDataUse: 'no-training'` constraint. Absent: the keys exactly as before. Present: a
+   * `LOCAL` provider (nothing leaves the host) or a provider that declares `dataUse: 'no-training'` (owner-set, composition
+   * root) stays; every other one is not eligible for this request. A provider that declares nothing is not eligible.
+   */
+  private withDataUse(providers: readonly AiProvider[], requiredDataUse: 'no-training' | undefined): string[] {
+    const kept = requiredDataUse === undefined ? providers : providers.filter((provider) => requiredDataUse === 'no-training' && (executionLocalityOf(provider) === 'LOCAL' || provider.dataUse === 'no-training'));
+    return unique(kept.map((provider) => provider.id));
   }
 
   /**

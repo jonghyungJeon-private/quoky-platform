@@ -5,6 +5,19 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 A5-S1 summary-readout implemented, dormant (2026-11-23, branch `claude/v5-a5-s1-summary-readout`)
+
+- Core: `summaryReadoutLabel` for calendar, Jira, Slack, Confluence, GitHub; readout shapes and
+  `AGENT_SUMMARY_READOUT_SOURCE`; the A5.2 projection from the listing response (no `withDocuments` body fetch and no
+  further request for Jira, Slack, Confluence, GitHub; one `events.list` with the separate agent-summary mask for
+  calendar); pseudonyms; the `workText` vendor exclusion and `dataUse: 'no-training'` (`requiredDataUse`) for all five;
+  the GitHub `readOutputLabel` pin.
+- Switches: `QUOKY_AGENT_SUMMARY_CALENDAR | _JIRA | _SLACK | _CONFLUENCE | _GITHUB`, each default off, independent of
+  `QUOKY_WORK_SUMMARY_ENABLED`. With all off behaviour is byte-identical (tests). Nothing is live: read ports empty,
+  `active` refused, no REMOTE provider declares `dataUse`.
+- Not done (next): A5-S2 digest schemas and disclosure line, A5-S3 grant producer on the new label and `pending.sources`,
+  the rule-① confirm slice, A5-S4 WS-1, A5-S6. See DECISIONS "ADR-0121 A5-S1 implementation note (2026-11-23)".
+
 ### ADR-0121 amendment A7 drafted: S3 cross-source summary writes (2026-11-23, branch `claude/v5-s3-cross-source-draft`)
 
 - PROPOSED, docs only. Owner intent: read in one source, act in another ("슬랙 내용 요약해서 지라 티켓에 답변 달아줘"),

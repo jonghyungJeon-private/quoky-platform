@@ -1,6 +1,7 @@
 import type { Logger } from '../../ports/logger.port';
 import { nlLimitArg, type NlArgs, type NlWave1EntryId } from '../nl-routing/catalog';
-import { AGENT_READ_SOURCES } from './flow-policy';
+import { AGENT_READ_SOURCES, summaryReadModeOf } from './flow-policy';
+import { projectWorkSummaryDocuments } from './work-summary-projection';
 import { AGENT_PLAN_MAX_REF_VALUES, type ValidatedAgentPlan, type ValidatedAgentStep } from './plan-validator';
 import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues, type AgentRunUsage } from './run-bounds';
 import {
@@ -379,6 +380,7 @@ export class AgentPlanExecutor {
     // each source (CA review round 1, P1).
     const route = this.deps.summarizer;
     let withDocuments = false;
+    let readyToSummarize = false;
     if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
         // The readiness `select` awaits the router's readiness probe: it is bounded by the run's wall like a port call, and a
@@ -397,8 +399,13 @@ export class AgentPlanExecutor {
           budget,
         );
         if (refusal === 'wall' || !budget.checkWall()) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
-        if (refusal === undefined) withDocuments = true;
-        else state.denials.set(`${cover.step}:${number}`, refusal);
+        if (refusal === undefined) {
+          readyToSummarize = true;
+          // A5.2: Jira, Slack, Confluence and GitHub are summarised from the listing response itself, with the request exactly
+          // as without a summary (no `withDocuments`, so no body fetch and no further request); only mail, Drive and the
+          // calendar's agent-summary field mask (one `events.list`) set the flag.
+          if (summaryReadModeOf(entryId) !== 'listing') withDocuments = true;
+        } else state.denials.set(`${cover.step}:${number}`, refusal);
       }
     }
     const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}) }, budget, state.shutdown);
@@ -414,7 +421,11 @@ export class AgentPlanExecutor {
     const projection = projectStructure(entryId, response.items);
     projections.set(number, projection);
     state.listed.set(number, projection.itemCount);
-    if (withDocuments && response.documents !== undefined) {
+    if (readyToSummarize && summaryReadModeOf(entryId) !== 'documents') {
+      // The listing's own items, through the closed A5.2 field table; whatever `documents` a port returned is ignored.
+      const checked = validateSourceDocuments(projectWorkSummaryDocuments(entryId, response.items), projection.slots);
+      state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped });
+    } else if (withDocuments && response.documents !== undefined) {
       const checked = validateSourceDocuments(response.documents, projection.slots);
       state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped });
     }

@@ -100,3 +100,60 @@ describe('D6 with a Claude or Ollama chat selection', () => {
     }
   });
 });
+
+/**
+ * ADR-0121 A5.3 (A5-S1): a request carrying `requiredDataUse: 'no-training'` (the agent's work-source summary readout) may reach a
+ * REMOTE provider only if that provider declares `dataUse: 'no-training'` (owner-set; nothing declares it by default, so none
+ * does: fail closed). A LOCAL provider needs no declaration. Without the constraint nothing changes.
+ */
+describe('A5.3 requiredDataUse: no-training', () => {
+  const NO_TRAINING = { workText: true as const, requiredDataUse: 'no-training' as const };
+
+  it.each(VENDORS)('with the chat selection on $name no REMOTE provider is eligible while none declares dataUse (and the opt-in does not change that)', async ({ env, key }) => {
+    const f = selectionFixture({ env });
+    const session = await f.openSession();
+    const ctx = { sessionId: session.id, actorId: ACTOR, ...NO_TRAINING };
+    for (const capability of CHAT_TIER_CAPABILITIES) {
+      expect((await f.service.preferenceFor(capability, ctx))?.eligible, capability).toEqual([]);
+      expect(f.service.isEligible(capability, ctx, key), capability).toBe(false);
+      expect(f.service.isEligible(capability, ctx, f.catalog.claude.id), capability).toBe(false);
+      expect((await withVendorAllowed(f).preferenceFor(capability, ctx))?.eligible, capability).toEqual([]);
+    }
+  });
+
+  it('a REMOTE provider that declares dataUse: no-training is eligible; the work-text vendor exclusion still applies on top', async () => {
+    const f = selectionFixture({ env: VENDORS[0].env });
+    (f.catalog.claude as { dataUse?: 'no-training' }).dataUse = 'no-training';
+    (f.catalog.openai as { dataUse?: 'no-training' } | undefined)!.dataUse = 'no-training';
+    const session = await f.openSession();
+    const ctx = { sessionId: session.id, actorId: ACTOR, ...NO_TRAINING };
+    for (const capability of CHAT_TIER_CAPABILITIES) {
+      // The vendor stays excluded (workText, no opt-in); the declaring Claude CLI serves.
+      expect((await f.service.preferenceFor(capability, ctx))?.eligible, capability).toEqual([f.catalog.claude.id]);
+      expect(f.service.isEligible(capability, ctx, f.catalog.claude.id), capability).toBe(true);
+      expect(f.service.isEligible(capability, ctx, VENDORS[0].key), capability).toBe(false);
+      // With the separate opt-in both declaring providers are eligible.
+      expect((await withVendorAllowed(f).preferenceFor(capability, ctx))?.eligible, capability).toEqual([VENDORS[0].key, f.catalog.claude.id]);
+    }
+  });
+
+  it('a LOCAL provider needs no declaration', async () => {
+    const f = selectionFixture({ env: { QUOKY_CHAT_PROVIDER: 'ollama' }, present: ['ollama'] });
+    const session = await f.openSession();
+    const ctx = { sessionId: session.id, actorId: ACTOR, ...NO_TRAINING };
+    for (const capability of CHAT_TIER_CAPABILITIES) {
+      const eligible = (await f.service.preferenceFor(capability, ctx))?.eligible ?? [];
+      expect(eligible.length, capability).toBe(1);
+      expect(eligible, capability).not.toContain(f.catalog.claude.id);
+    }
+  });
+
+  it('without the constraint the preference is exactly as before', async () => {
+    const f = selectionFixture({ env: VENDORS[0].env });
+    const session = await f.openSession();
+    for (const capability of CHAT_TIER_CAPABILITIES) {
+      const plain = await f.service.preferenceFor(capability, { sessionId: session.id, actorId: ACTOR });
+      expect(plain?.eligible, capability).toEqual([VENDORS[0].key, f.catalog.claude.id]);
+    }
+  });
+});

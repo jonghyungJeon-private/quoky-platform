@@ -14,7 +14,7 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { readOutputLabel } from './flow-policy';
+import { summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
@@ -90,18 +90,26 @@ export interface AgentSummarySource {
 }
 
 /**
- * The entries whose content has an untrusted-document readout shape (the D3 untrusted span) and whose egress controls exist.
- * Calendar, GitHub, Confluence and the local stores have none, and Jira and Slack work text is withheld until its controls
- * are built ({@link AGENT_SUMMARY_WORK_TEXT_PENDING}): a summary over them is `listing-only` (P3-3b note).
+ * The entries whose content has an untrusted-document readout shape (the D3 untrusted span): mail and Drive, and (ADR-0121
+ * A5.2, slice A5-S1) the five work sources' listed fields. A work source's shape is a SHAPE only: it is used only while that
+ * source's own switch is on ({@link QuarantinedSummarizerRoute.workSummarySources}, default off, `sourceRefusal`); with the
+ * switch off a summary over it is `listing-only` exactly as before (P3-3b note). The local stores have none.
  */
 export const AGENT_SUMMARY_READOUT_SOURCE: Readonly<Partial<Record<NlWave1EntryId, UntrustedDocumentSource>>> = Object.freeze({
   'mail.list': 'mail',
   'drive.files': 'drive',
+  'calendar.events': 'calendar-event',
+  'jira.issues': 'jira-issue',
+  'jira.release': 'jira-issue',
+  'slack.search': 'slack-message',
+  'confluence.search': 'confluence-page',
+  'github.items': 'github-item',
 });
 
 /**
- * Work text (Jira, Slack) is labelled `REMOTE_OK` today and has no work-text controls (pseudonyms, a work-summary flag, a
- * `workText` provider constraint), so it must not reach a model: `listing-only` with its own closed reason (owner decision pending).
+ * The entries whose summary is `listing-only` with the closed reason `work-text-controls-not-built` while their source's
+ * switch is off (Jira and Slack: the P3-3b answer 1 controls; they are now built, A5-S1, and the switch is the gate). The
+ * reason is kept byte for byte for the switch-off behaviour.
  */
 export const AGENT_SUMMARY_WORK_TEXT_PENDING: readonly NlWave1EntryId[] = Object.freeze(['jira.issues', 'jira.release', 'slack.search'] as const);
 
@@ -290,6 +298,12 @@ function grantMatches(grant: SummaryEgressGrant | undefined, step: number, entry
 export interface QuarantinedSummarizerRoute {
   readonly selector: ProviderSelector;
   readonly selectionContext?: ProviderSelectionContext;
+  /**
+   * ADR-0121 A5-S1: the work sources whose agent summary readout the owner has switched on (`QUOKY_AGENT_SUMMARY_*`, each
+   * default off, independent of `QUOKY_WORK_SUMMARY_ENABLED`). Absent or empty: every work source is `listing-only`, exactly
+   * as before A5. Data from the composition root; Core never reads an environment.
+   */
+  readonly workSummarySources?: readonly AgentWorkSummarySource[];
 }
 
 export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-grant';
@@ -347,8 +361,16 @@ export function m2SelectionContext(
     // whole (the empty set), never sanitised member by member (Codex review round 1).
     const narrowed = allowedExecutionLocalitiesOf(context);
     const allowed = narrowed === undefined ? [...localities] : localities.filter((locality) => narrowed.has(locality));
-    const workText = context.workText === true || entryIds.some((entryId) => AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId));
-    return Object.freeze({ ...context, allowedExecutionLocalities: Object.freeze(allowed), ...(workText ? { workText: true as const } : {}) });
+    // A5.3: the work-text vendor exclusion and the no-training data-use constraint apply to all five work sources (calendar
+    // included); mail and Drive carry neither.
+    const workSource = entryIds.some((entryId) => workSummarySourceOf(entryId) !== undefined);
+    const workText = context.workText === true || workSource || entryIds.some((entryId) => AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId));
+    return Object.freeze({
+      ...context,
+      allowedExecutionLocalities: Object.freeze(allowed),
+      ...(workText ? { workText: true as const } : {}),
+      ...(workSource ? { requiredDataUse: 'no-training' as const } : {}),
+    });
   } catch {
     // A base context that cannot be read is unverifiable: an empty set, so no provider fits (fail closed).
     return Object.freeze({ allowedExecutionLocalities: Object.freeze([] as AiExecutionLocality[]) });
@@ -393,6 +415,20 @@ async function selectM2Provider(route: QuarantinedSummarizerRoute, context: Prov
 }
 
 /**
+ * A5.3: under `requiredDataUse: 'no-training'` a `REMOTE` provider must declare it (read from the provider each time, never
+ * cached); a `LOCAL` provider sends nothing out and needs no declaration. Absent constraint: always true. Total.
+ */
+function dataUseAllows(context: ProviderSelectionContext, provider: AiProvider, locality: AiExecutionLocality): boolean {
+  try {
+    if (context.requiredDataUse === undefined) return true;
+    if (context.requiredDataUse !== 'no-training') return false;
+    return locality === 'LOCAL' || provider.dataUse === 'no-training';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The mandatory dispatch-time re-check (D12), SYNCHRONOUS: run immediately before `execute`, with nothing awaited in between.
  * The provider must still declare the locality it was selected with, that locality must still be allowed, and the selector
  * must still find it eligible under the same constrained context (the owner's live policy). Answers the locality that is
@@ -408,7 +444,8 @@ function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSe
     // Review round 2 (Codex P2): the policy callback runs code; the locality is read again after it, so a callback that
     // switches the provider's declared locality cannot carry a stale (cached) answer into the dispatch or the audit.
     const after = declaredExecutionLocality(selected.provider);
-    return after === now && allowedBy(context).has(after) ? after : undefined;
+    if (after !== now || !allowedBy(context).has(after)) return undefined;
+    return dataUseAllows(context, selected.provider, after) ? after : undefined;
   } catch {
     return undefined;
   }
@@ -420,7 +457,7 @@ function grantState(
   step: number,
   run: SummaryRunToken,
 ): { readonly needsGrant: boolean; readonly granted: boolean } {
-  const needing = sources.filter((source) => readOutputLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
+  const needing = sources.filter((source) => summaryReadoutLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
   return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)) };
 }
 
@@ -447,8 +484,15 @@ export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyRe
   'budget',
 ]);
 
-function sourceRefusal(entryId: NlWave1EntryId, schema: AgentSummarySchemaId): QuarantinedListingOnlyReason | undefined {
-  if (AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId)) return 'work-text-controls-not-built';
+function sourceRefusal(
+  entryId: NlWave1EntryId,
+  schema: AgentSummarySchemaId,
+  route: QuarantinedSummarizerRoute,
+): QuarantinedListingOnlyReason | undefined {
+  // A5-S1: a work source's readout is used only while ITS switch is on; off, the answer is the pre-A5 one, byte for byte.
+  const work = workSummarySourceOf(entryId);
+  const switchedOn = work !== undefined && Array.isArray(route?.workSummarySources) && route.workSummarySources.includes(work);
+  if (work !== undefined && !switchedOn) return AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId) ? 'work-text-controls-not-built' : 'no-readout-source';
   // `meeting-digest.v1` is a calendar digest, and calendar has no readout shape here: it is dead until calendar gets one.
   if (AGENT_SUMMARY_READOUT_SOURCE[entryId] === undefined || (schema === 'meeting-digest.v1' && entryId !== 'calendar.events')) return 'no-readout-source';
   return undefined;
@@ -473,10 +517,10 @@ export interface SummaryReadinessInput {
  * constraint. `undefined` means it can; a reason means the read must not fetch documents. Never calls a provider.
  */
 export async function summaryReadiness(input: SummaryReadinessInput): Promise<QuarantinedListingOnlyReason | undefined> {
-  const refusal = sourceRefusal(input.entryId, input.schema);
+  const refusal = sourceRefusal(input.entryId, input.schema, input.route);
   if (refusal !== undefined) return refusal;
   const derived = deriveM2Localities({
-    egress: readOutputLabel(input.entryId).egress,
+    egress: summaryReadoutLabel(input.entryId).egress,
     ...grantState([{ entryId: input.entryId, grant: input.grant }], input.summaryStep, input.run),
     askedItems: input.askedItems,
   });
@@ -776,7 +820,7 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   let asked = request.askedItems ?? 0;
   let held = 0;
   for (const source of request.sources) {
-    const refusal = sourceRefusal(source.entryId, request.schema);
+    const refusal = sourceRefusal(source.entryId, request.schema, request.route);
     if (refusal !== undefined) return { kind: 'listing-only', reason: refusal };
     const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId] as UntrustedDocumentSource;
     omitted += source.dropped ?? 0;
@@ -817,7 +861,7 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   // The strictest egress of every covered read (a withheld item still counts: the label is the source's). Every source whose
   // label needs a summary grant must hold a valid one for THIS step and THIS source (D12: the derived localities). One
   // derivation, one context and one selection for the whole step; every call re-checks it right before its own dispatch.
-  const joined = joinFlowLabels(...request.sources.map((source) => readOutputLabel(source.entryId)));
+  const joined = joinFlowLabels(...request.sources.map((source) => summaryReadoutLabel(source.entryId)));
   const derived = deriveM2Localities({ egress: joined.egress, ...grantState(request.sources, request.summaryStep, request.run), askedItems: asked });
   if (!derived.ok) return { kind: 'listing-only', reason: derived.reason };
   const context = m2SelectionContext(request.route.selectionContext, derived.localities, request.sources.map((source) => source.entryId));

@@ -1,4 +1,5 @@
 import {
+  CALENDAR_AGENT_SUMMARY_DESCRIPTION_MAX_LENGTH,
   CALENDAR_EVENT_LOCATION_MAX_LENGTH,
   CALENDAR_EVENT_TITLE_MAX_LENGTH,
   CALENDAR_NAME_MAX_LENGTH,
@@ -10,6 +11,7 @@ import {
   zonedToUtc,
   type CalendarEvent,
   type CalendarEventPresence,
+  type CalendarEventSummaryFields,
   type CalendarEventQuery,
   type CalendarReader,
   type ConnectorQueryErrorReason,
@@ -22,6 +24,12 @@ export const GOOGLE_CALENDAR_API_ORIGIN = 'https://www.googleapis.com';
 /** The minimised partial response (ADR-0110 D1): no description, attendees, organizer, links or conference data. */
 export const GOOGLE_CALENDAR_EVENT_FIELDS =
   'summary,nextPageToken,items(id,etag,status,summary,location,start(date,dateTime,timeZone),end(date,dateTime))';
+/**
+ * ADR-0121 A5.2 / ADR-0110 D1 amendment: the agent-summary mask. The same one `events.list` as the D1 mask with `description`
+ * added and the etag dropped; used only by {@link GoogleCalendarReader.listEventsForAgentSummary}, never a wider default.
+ */
+export const GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS =
+  'summary,nextPageToken,items(id,status,summary,location,description,start(date,dateTime,timeZone),end(date,dateTime))';
 /** The same minimised fields for one `events.get` (no list wrapper). */
 export const GOOGLE_CALENDAR_GET_FIELDS = 'id,etag,status,summary,location,start(date,dateTime,timeZone),end(date,dateTime)';
 export const GOOGLE_CALENDAR_MAX_CALENDARS = 10;
@@ -59,6 +67,8 @@ interface MappedEvent {
   readonly event: CalendarEvent;
   readonly startMs: number;
   readonly endMs: number;
+  /** Only when the agent-summary mask asked for it (A5.2). */
+  readonly description?: string;
 }
 
 /**
@@ -104,6 +114,26 @@ export class GoogleCalendarReader implements CalendarReader {
     }
     collected.sort(compareMappedEvents);
     return collected.slice(0, window.limit).map((entry) => entry.event);
+  }
+
+  /**
+   * ADR-0121 A5.2: the agent summary readout's calendar read. One `events.list` per calendar page, exactly like
+   * {@link listEvents} (same window, order, limit, calendars and pagination) with the agent-summary mask; the answer carries
+   * the A5.2 fields only (`id`, `title`, `location`, `description`, each bounded and single-line).
+   */
+  async listEventsForAgentSummary(query: CalendarEventQuery): Promise<readonly CalendarEventSummaryFields[]> {
+    const window = parseCalendarEventQuery(query, 'google calendar');
+    const collected: MappedEvent[] = [];
+    for (const calendarId of this.calendarIds) {
+      collected.push(...(await this.listCalendar(calendarId, window, true)));
+    }
+    collected.sort(compareMappedEvents);
+    return collected.slice(0, window.limit).map(({ event, description }) => ({
+      id: event.id,
+      title: event.title,
+      ...(event.location !== undefined ? { location: event.location } : {}),
+      ...(description !== undefined && description.length > 0 ? { description } : {}),
+    }));
   }
 
   /**
@@ -155,6 +185,7 @@ export class GoogleCalendarReader implements CalendarReader {
   private async listCalendar(
     calendarId: string,
     window: { from: string; to: string; fromMs: number; toMs: number; limit: number },
+    forAgentSummary = false,
   ): Promise<MappedEvent[]> {
     const events: MappedEvent[] = [];
     let pageToken: string | undefined;
@@ -167,7 +198,7 @@ export class GoogleCalendarReader implements CalendarReader {
       url.searchParams.set('showDeleted', 'false');
       url.searchParams.set('maxResults', String(window.limit));
       url.searchParams.set('timeZone', this.timeZone);
-      url.searchParams.set('fields', GOOGLE_CALENDAR_EVENT_FIELDS);
+      url.searchParams.set('fields', forAgentSummary ? GOOGLE_CALENDAR_AGENT_SUMMARY_FIELDS : GOOGLE_CALENDAR_EVENT_FIELDS);
       if (pageToken !== undefined) url.searchParams.set('pageToken', pageToken);
 
       const payload = await this.getJson(url);
@@ -176,7 +207,7 @@ export class GoogleCalendarReader implements CalendarReader {
       const items = payload.items === undefined ? [] : payload.items;
       if (!Array.isArray(items)) throw new GoogleCalendarResponseError('calendar');
       for (const item of items) {
-        const mapped = this.mapEvent(item, calendarName);
+        const mapped = this.mapEvent(item, calendarName, false, forAgentSummary);
         if (mapped !== undefined && mapped.endMs > window.fromMs && mapped.startMs < window.toMs) events.push(mapped);
       }
 
@@ -242,7 +273,7 @@ export class GoogleCalendarReader implements CalendarReader {
     return fresh.token;
   }
 
-  private mapEvent(value: unknown, calendarName: string, includeCancelled = false): MappedEvent | undefined {
+  private mapEvent(value: unknown, calendarName: string, includeCancelled = false, withDescription = false): MappedEvent | undefined {
     if (!isRecord(value)) throw new GoogleCalendarResponseError('calendar');
     if (value.status === 'cancelled' && !includeCancelled) return undefined;
     const id = value.id;
@@ -295,7 +326,12 @@ export class GoogleCalendarReader implements CalendarReader {
       lossless: { title: isExactText(value.summary, title), location: isExactText(value.location, location) },
     };
     // A zero-length timed event still occupies its start instant.
-    return { event, startMs, endMs: endMs === startMs ? endMs + 1 : endMs };
+    return {
+      event,
+      startMs,
+      endMs: endMs === startMs ? endMs + 1 : endMs,
+      ...(withDescription ? { description: boundCalendarText(value.description, CALENDAR_AGENT_SUMMARY_DESCRIPTION_MAX_LENGTH) } : {}),
+    };
   }
 
   private localMidnightMs(date: string): number {
