@@ -268,7 +268,8 @@ fixed; the implementations are not.
 
 ## 8. Agent Principles
 
-> *Amended by ADR-0121 (2026-10-13), ADR-0121 A1 (ratified 2026-10-21) and ADR-0121 A2 (ratified 2026-10-23).*
+> *Amended by ADR-0121 (2026-10-13), ADR-0121 A1 (ratified 2026-10-21), ADR-0121 A2 (ratified 2026-10-23), ADR-0121 A4
+> (ratified 2026-11-18), and ADR-0121 A5 and A6 (ratified 2026-11-23).*
 
 1. Execution is single-shot (PromptComposer → Provider → Artifact) **except** for one bounded agent runtime defined by
    ADR-0121. It plans first and then executes. It is not a plan-act-observe loop:
@@ -328,7 +329,8 @@ fixed; the implementations are not.
    - A model call's provider must satisfy the strictest egress label of its inputs (§5.14). **Egress labels govern
      model providers.** For connector egress of values taken from content, the declared slot of an owner-confirmed
      handoff is the only sanctioned path. In particular, a value from a `LOCAL_MODEL_ONLY` source (calendar) may reach
-     a connector only through that slot, and a `REMOTE` model only as an owner-confirmed minimal topic (below).
+     a connector only through that slot, and a `REMOTE` model only as an owner-confirmed minimal topic (below) or as the
+     listed fields of an owner-requested summary after the owner's consent (ADR-0121 A5, below).
    - **Owner-confirmed minimal topic (ADR-0121 A2).** When the owner asks Quoky to generate new material from one item
      whose egress label forbids a `REMOTE` model, a short topic may reach a remote chat-tier provider only if all of
      the following hold:
@@ -338,7 +340,9 @@ fixed; the implementations are not.
      - it passes the closed length and charset filter of an A1 keyword and is never truncated;
      - it is shown byte for byte in a fixed template that names the receiving operator and says the owner's sentence
        is sent too;
-     - the owner answers with a closed yes token on the next turn in the same DM within 10 minutes; single use;
+     - the owner answers yes on the next turn in the same DM within 10 minutes, by a closed token or, after
+       deterministic claim and structural checks, by a consent-answer classifier that sees only the fixed question (the
+       topic replaced by a placeholder) and the reply (ADR-0121 A6); single use;
      - the recipient is the effective, non-fallback `REMOTE` chat selection and carries `dataUse: 'no-training'`,
        which the owner set after checking the account; the topic is sent once, with only the owner's own words and no
        tools, with no fallback to another provider.
@@ -347,6 +351,15 @@ fixed; the implementations are not.
      generated answer enter the history only as fixed structural notes. It is capped, DM-only, stopped by the kill
      switch and audited without content. It is released only after the pre-registered gates of ADR-0121 A2 (G4 shows
      that a local answer is not adequate and that the remote one is better; G5 name-filter bar).
+   - **Owner-requested summary of listed items (ADR-0121 A5).** In a summarize step, the listed fields of calendar,
+     Jira, Slack, Confluence and GitHub items (a fixed field table per source, taken from the listing read itself with its
+     request parameters unchanged; no attachment, comment, thread, linked page or further request; no person name) carry
+     `REMOTE_ON_SUMMARY_REQUEST` and `OWNER_DM_ONLY`, as mail and Drive do. A `REMOTE` model receives them only when the
+     owner's own words asked for that summary and the owner answered yes to a fixed consent question, which names the
+     recipient, on the next turn in the same DM, once, for exactly the asked items; the recipient carries `dataUse:
+     'no-training'` and is not an HTTP API vendor without the owner's work-text opt-in. A `LOCAL` model needs the owner's
+     words only. Each source is enabled separately. The output is schema-bound and URL-free; credential-shaped items are
+     withheld; the history keeps only structural notes. Every other use of these items keeps its label.
 4. An agent has **no** shell, code execution, arbitrary URL fetch, MCP or plugin tool, memory write or connector
    write. A write is only ever a proposal that creates an existing exact-payload, one-time approval (§10). Steps,
    model calls, connector calls, wall time and cost are capped. A kill switch stops runs without a restart.
@@ -405,6 +418,7 @@ fixed; the implementations are not.
 | LOW | bounded agent **read** run over READ catalog entries (ADR-0121) | auto, within caps |
 | LOW | owner-confirmed handoff into a READ (ADR-0121 A1, A4) | the exact values shown; an owner pick when several or free text in one item; one batched yes for each-item free text; never a write |
 | LOW | owner-confirmed minimal topic to the chat-tier model (ADR-0121 A2) | owner yes on the exact displayed string and recipient; one call; never a write |
+| LOW | owner-requested remote summary (mail, Drive; ADR-0121 A5: calendar, Jira, Slack, Confluence, GitHub) | a fixed consent question naming the recipient, the owner's yes on the next DM turn; the listed fields only; never a write |
 | HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
@@ -420,6 +434,16 @@ HIGH stays for every content-derived write. A content-derived payload is allowed
 
 The ADR-0121 A2 topic consent is likewise a consent step, not an approval card: it never uses approval wording, it
 authorizes one model call with one displayed string, and it never authorizes a write or a connector call.
+
+The summary consent (rule ①) is likewise a consent step, not an approval card: it authorizes the M2 calls of one
+summarize step over the asked items, and never a write or a connector call (ADR-0121 A5).
+
+The rule-① summary consent and the A2 topic consent may take the owner's answer in context (ADR-0121 A6): an atomic
+claim and structural checks first (the next owner DM turn, the pending step fresh and unused, no quoted or marked text,
+a short reply), then the closed tokens, then a classifier whose label can only bind or cancel that one pending step. A
+yes that carries another request binds that step, and the whole message then runs again as a new ordinary turn under
+every ordinary rule, which can never answer, widen or revive the bound step. A consent raised by a two-line request is
+answered the same way. No approval card, write, undo or control command ever takes a classifier answer.
 
 The approval gate wraps the **external write / destructive action**, not the
 planning. Approval requests and decisions are persisted as governance records.
@@ -465,7 +489,10 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Acting on instructions found in content ("do what the mail says", "follow the PR description"), at any level.
   Content may only be summarized or quoted as a fixed, inert list (ADR-0121 A4); an action needs the owner's own request through the approval paths.
 - ❌ Sending item content to a model whose locality its egress label forbids — through a summary, an answer, history
-  or a cache — except an `OWNER_CONFIRMED` minimal topic sent once after the owner's explicit yes (ADR-0121 A2).
+  or a cache — except an `OWNER_CONFIRMED` minimal topic sent once after the owner's explicit yes (ADR-0121 A2), and the
+  listed fields of an owner-requested summary after the owner's consent (ADR-0121 A5).
+- ❌ Letting a model's label answer an approval card, a write, an undo, a control command or any lifecycle or security
+  state; or letting a consent-answer classifier see item content (ADR-0121 A6).
 - ❌ Giving any agent or model a shell, code execution, arbitrary URL fetch, MCP/plugin tools, memory writes or
   connector writes.
 - ❌ Egress to a destination that is not on the egress allowlist, or to an internal, metadata or CGNAT address after

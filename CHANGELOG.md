@@ -5,6 +5,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A5 and A6 ratified, and the A4 p001–p008 answer (owner decisions 2026-11-23; docs, gold, tests only)
+
+- **Docs.** DECISIONS "ADR-0121 amendments A5 and A6 ratification record, and the A4 p001–p008 answer (2026-11-23)".
+  A5 is ratified as proposed (all nine A5.10 recommendations; A5-S1 may start, every per-source switch default off; rule ①
+  for the ADR-0100 D8 lookup becomes its own slice A5-S6). A6 is ratified with the owner's amendments: AM-1 (a two-line
+  grant behaves like a single-line grant: no closed-yes-only `origin`, no forced LOCAL question), AM-2 (a new classifier
+  label `yes-and-more`: the yes binds the asked items once and the whole message reruns as a new ordinary turn; `462` is
+  reversed) and AM-3 (a validated numeric count with its count word is a recognised unit). The final text of the N-3
+  exception, A2 answer 2, W1, W4 and the S2 single-line rule, the a6-05 cap clarification (a longer message is a new
+  request), the updated gates (lot (b) now expects the ordinary single-line behaviour), the residual risks and the
+  unblocked slices are recorded. a6-03's cross-source wish points to the separate S3 draft. A4: p001–p008 run directly as
+  an each-item handoff (keys at once, title values behind the batch preview), and the A4-S2 activation gate must
+  recognise that shape structurally. Recorded fact: `mail.list` has no numeric count arg, so AM-3 reaches mail only after a
+  catalog change (not made).
+- **Changed (constitution).** `ARCHITECTURE.md` §8 item 3, §10 and §12 carry the A5.5 text and the A6.7 text as amended.
+- **Changed (gold).** SR-1: `rt-s2r-462` awaits a `yes-and-more` target (`decided: "2026-11-23"`); the
+  `consentAnswerJudging` header and W1/W4 record the ratified rule. A2: `rt-s2a-130` awaits a `yes-and-more` target; the
+  `consentClassifierJudging` header gains the closed labels; sha256 now `120ca943…b850a610` (was `c1349f75…a8ffa65`). Plan
+  gold: the p001–p008 notes record the answer. No `expect`, `expected` or red-team floor changed.
+- **Tests.** `s2-read-redteam-a6-target.test.ts` models AM-1, AM-2 (the `462` rerun mints no Drive grant) and AM-3 (count
+  3 grants only with a plan that carries 3); `s2-read-redteam-corpus.test.ts` and `a2-data.test.ts` follow. No product
+  code, prompt, catalog or flag change; no model call or eval.
 ## Unreleased — ADR-0121 amendment A6: the consent answer by context and the multi-line summary request (owner verdicts 2026-11-19; data, docs, tests only)
 
 - **Docs.** DECISIONS "ADR-0121 amendment A6": the owner's W1–W5 answers (W1 changed to the answer in context, W2–W4
