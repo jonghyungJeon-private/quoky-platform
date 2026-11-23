@@ -5,6 +5,19 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 amendment A7 drafted: S3 cross-source summary writes (2026-11-23, branch `claude/v5-s3-cross-source-draft`)
+
+- PROPOSED, docs only. Owner intent: read in one source, act in another ("슬랙 내용 요약해서 지라 티켓에 답변 달아줘"),
+  in one message or as a follow-up to the previous answer. Unrelated, inapplicable or unsuitable follow-ups are not linked.
+- Design: the destination comes from the owner's words or pick, checked before any read. The summary is the payload only.
+  It goes on the existing CRITICAL card, shown whole with a provenance banner; hash-bound, single use, never automatic.
+  Rule ① applies before a remote draft, and calendar content is drafted `LOCAL` only. The follow-up binds to a content-free
+  receipt of the previous turn. Targets are unchanged (Jira BE comment, Slack #quoky-test, primary calendar); mail send
+  stays out.
+- Blocked on: Strict ratification (A7.11 question 1), S2 `active`, the rule-① confirm slice and A5 (for remote Slack and
+  Jira drafts). Gates defined, not written. Today Slack reading in the agent is keyword search only, so "#채널 최근 대화"
+  needs its own read amendment. Open: 14 owner questions. See DECISIONS "ADR-0121 amendment A7".
+
 ### ADR-0121 A5 and A6 ratified; A4 p001–p008 answered (2026-11-23, branch `claude/v5-ratify-a4-a5-a6`)
 
 - A5 is ratified as proposed: work-source summaries (calendar, Jira, Slack, Confluence, GitHub) under rule ①. A5-S1 may
