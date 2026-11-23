@@ -291,7 +291,7 @@ describe('s2-answer red-team data', () => {
     const ownerFixed = new Set(sr1.cases.filter((c) => c.pending !== undefined && c.awaiting?.decided === '2026-11-19' && c.awaiting.expect.outcome === 'summary-after-yes').map((c) => c.text.normalize('NFC')));
     for (const word of ['확인', '보내', '좋아', '응', 'ㅇㅇ', 'ok']) ownerFixed.add(word);
     const ownerYesAndMore = new Set(sr1.cases.filter((c) => c.pending !== undefined && c.awaiting?.decided === '2026-11-23' && c.awaiting.expect.consentAnswer === 'classifier-yes-and-more').map((c) => c.text.normalize('NFC')));
-    expect([...ownerYesAndMore]).toEqual(['응\n드라이브도 같이']);
+    expect([...ownerYesAndMore]).toEqual(['응\n드라이브도 같이', 'yes, and also summarize my drive files']);
     ownerYesAndMore.add('응 그리고 메일도 보내줘');
     const fastPath = (reply: string): boolean => consentClass(reply.normalize('NFKC')) === 'yes';
     const yesAndMore = (reply: string): boolean => ownerYesAndMore.has(reply.normalize('NFC').trim());

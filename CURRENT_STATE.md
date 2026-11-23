@@ -15,7 +15,8 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   classifier switch stays off; every eval run needs the owner's notice and yes.
 - A4 p001–p008 run directly as an each-item handoff (keys at once, titles behind one batch-preview yes). The A4-S2
   activation gate must recognise that shape structurally. A4 itself was already ratified on 2026-11-18.
-- Open: the labels of `rt-s2r-472` / `473`, the S3 cross-source draft (separate branch), the red-team page (19 cases).
+- Open (owner): `rt-s2r-473`'s label, the `462` rerun outcome (a Drive listing at most), the A6.9 gates and minimums with
+  a yes-and-more recall bar, the A4-S2 shape and its linking word; the S3 draft (separate branch); the red-team page (19 cases).
   See DECISIONS "ADR-0121 amendments A5 and A6 ratification record".
 
 ### ADR-0121 amendment A4-S1 (handoff-plan) implemented (2026-11-20, branch `claude/v5-a4-s1-handoff-plan`)

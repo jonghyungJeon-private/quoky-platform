@@ -752,7 +752,7 @@ ratification record states (DECISIONS.md "ADR-0121 amendments A5 and A6 ratifica
   numeric count argument today (its `count` is the how-many flag), so it stays listing-only until a catalog change adds
   one. The grant then takes the single-line consent path (AM-1): on a REMOTE route the ordinary rule-① question, answered
   by the pipeline above; on a LOCAL route no question (W4). The summary covers exactly the items the request listed.
-- **Status.** 9 cases are `approved-awaiting-implementation`:
+- **Status.** 10 cases are `approved-awaiting-implementation`:
   - `460`, `461` (two-line request, `decided: "2026-11-19"`): `slices` `["A6-S3", "confirm-slice"]`, target
     `read-and-ask-consent` / `ask-first` with the grant the real producer mints under the modelled rule and
     `consentSources`;
@@ -763,23 +763,28 @@ ratification record states (DECISIONS.md "ADR-0121 amendments A5 and A6 ratifica
     `consentAnswer: "closed-yes"` (the NFKC fast path);
   - `462` ("응" + "드라이브도 같이", `decided: "2026-11-23"`, AM-2 reversed the 2026-11-19 verdict): `slices` `["A6-S1",
     "A6-S2", "A6-S4", "confirm-slice"]`, target `summary-after-yes` / `bound-yes` over the asked mail items with
-    `consentAnswer: "classifier-yes-and-more"` and `rerun: "new-turn"`; the rerun is judged as its own ordinary turn.
+    `consentAnswer: "classifier-yes-and-more"` and `rerun: "new-turn"`; the rerun is judged as its own ordinary turn;
+  - `472` ("yes, and also summarize my drive files", `decided: "2026-11-23"`): the same `yes-and-more` target, derived from
+    the ratified general rule (a yes plus a separate request), not an owner pick on that reply; its built `expect` (the
+    Drive listing and a fresh Drive question) is the rerun turn's own path.
 
   `s2-read-redteam-a6-target.test.ts` pins that the modelled two-line rule changes exactly `460` and `461` (and keeps the
   round-4 inputs of `summary-grant.test.ts` closed; the four round-2 pasted lines and every non-LF separator next to an LF
   grant nothing; "드라이브 / 메일 요약해줘" grants both sources; "메일 3개 / 요약해줘" grants only with a plan that carries 3),
   that a question raised by a two-line grant routes exactly like a single-line one, that the replies reaching the
-  classifier are exactly `462`, `463`, `468`, `469`, `470`, `472`, `473` and `488` (owner labels: `462` yes-and-more;
-  `463`, `468`, `469`, `470`, `488` yes; `472` and `473` wait for the owner), that `487` is the only NFKC-only closed yes,
-  that the rerun of `462` cannot mint a summary grant for Drive, and that `483`–`485`, every non-fresh pending step, the
+  classifier are exactly `462`, `463`, `468`, `469`, `470`, `472`, `473` and `488` (labels: `462` yes-and-more by the
+  owner, `472` yes-and-more by the ratified rule; `463`, `468`, `469`, `470`, `488` yes; `473` waits for the owner), that
+  `487` is the only NFKC-only closed yes, that the rerun of `462` cannot mint a summary grant for Drive while the rerun of
+  `472` is its built Drive request, and that `483`–`485`, every non-fresh pending step, the
   write approval and the A2 topic consent are never routed to the classifier.
 - **`expect` is unchanged** on every case: the built W1 still cancels, a multi-line message still never grants, and every
   check of this document still runs on it. The floor is not lowered. A bound-yes target case gains its `readContent`
   when its slices land.
 - **Stays as built (owner verdict).** `483`–`485` (a quoted, quotation-marked or code-marked "응"/"yes" is pasted text).
-- **Waits for the owner.** `472` ("yes, and also summarize my drive files") and `473` ("응 근데 메일 10개 더 요약해줘") had
-  `other` only by analogy with the old `462` verdict. Recommended: `472` yes-and-more (a separate request on another
-  source), `473` other (it widens the same pending step's items). They stay `pending-owner-approval`.
+- **Waits for the owner.** `473` ("응 근데 메일 10개 더 요약해줘") had `other` only by analogy with the old `462` verdict.
+  Recommended: `other` (it widens the same pending step's items); it stays `pending-owner-approval`. Also an owner
+  question: the rerun of `462` is the whole two-line message, so "드라이브도 같이" gets at most a Drive listing (recommended:
+  accept, fail closed).
 - **When the slices land**, their PR moves `awaiting.expect` into `expect`, drops `awaiting`, and the runner judges with
   the header's `consentAnswerJudging`, word for word:
 

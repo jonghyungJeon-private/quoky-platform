@@ -83,10 +83,10 @@ const MULTI_LINE = [460, 461].map(id);
 /**
  * A6.3: the replies that pass every structural check and are no closed token, so they reach the classifier; the label is the
  * owner's verdict: `yes` (2026-11-19, fix) or `yes-and-more` (2026-11-23, AM-2: `462` reversed, the yes binds the asked mail
- * and "드라이브도 같이" runs as a new turn). `472` and `473` had `other` only by analogy with the old `462` verdict; with that
- * verdict reversed and no owner verdict on these exact replies, their label waits for the owner (`owner-to-confirm`; the
- * recommendation is `472` yes-and-more, a separate request on another source like `462`, and `473` other, a widening of the
- * same pending step's items like the AM-2 scope-change example). Their built `expect` stays the floor either way.
+ * and "드라이브도 같이" runs as a new turn). `472` ("yes, and also summarize my drive files") is `yes-and-more` DERIVED from the
+ * ratified general rule (a yes plus a separate request), not an owner pick on that exact reply. `473` ("응 근데 메일 10개 더
+ * 요약해줘") waits for the owner (`owner-to-confirm`; recommended `other`, a widening of the same pending step's items like
+ * the AM-2 scope-change example). Its built `expect` stays the floor either way.
  */
 const CLASSIFIER_ROUTE: Readonly<Record<string, 'yes' | 'yes-and-more' | 'owner-to-confirm'>> = {
   [id(462)]: 'yes-and-more',
@@ -94,7 +94,7 @@ const CLASSIFIER_ROUTE: Readonly<Record<string, 'yes' | 'yes-and-more' | 'owner-
   [id(468)]: 'yes',
   [id(469)]: 'yes',
   [id(470)]: 'yes',
-  [id(472)]: 'owner-to-confirm',
+  [id(472)]: 'yes-and-more',
   [id(473)]: 'owner-to-confirm',
   [id(488)]: 'yes',
 };
@@ -578,12 +578,12 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
       expect(byId.get(caseId)?.awaiting, caseId).toBeUndefined();
       expect(byId.get(caseId)?.status, caseId).toBe('pending-owner-approval');
     }
-    expect(Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'owner-to-confirm').map(([caseId]) => caseId)).toEqual([id(472), id(473)]);
+    expect(Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'owner-to-confirm').map(([caseId]) => caseId)).toEqual([id(473)]);
   });
 
-  it('AM-2: a yes-and-more reply binds exactly the asked items, once, and the whole message reruns as a new ordinary turn (462 reversed)', () => {
+  it('AM-2: a yes-and-more reply binds exactly the asked items, once, and the whole message reruns as a new ordinary turn (462 reversed, 472 by the rule)', () => {
     const yesAndMore = Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'yes-and-more').map(([caseId]) => caseId);
-    expect(yesAndMore).toEqual([id(462)]);
+    expect(yesAndMore).toEqual([id(462), id(472)]);
     for (const caseId of yesAndMore) {
       const c = byId.get(caseId)!;
       const p = c.pending!;
@@ -601,15 +601,22 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
         consentAnswer: 'classifier-yes-and-more',
         rerun: 'new-turn',
       });
-      // The rerun cannot widen the bound consent into a summary of the extra source: the whole message is a two-line message
-      // whose line "응" holds no recognised unit, so even a Drive summary plan mints no grant from it (listing at most). A
-      // Drive summary needs the owner's own request and its own rule-① question.
-      expect(isSingleLineOwnerText(c.text), caseId).toBe(false);
-      expect(grantOf({ text: c.text, planner: DRIVE_SUMMARY }, true), caseId).toEqual([]);
-      expect(grantOf({ text: c.text, planner: DRIVE_SUMMARY }, false), caseId).toEqual([]);
-      // The floor: as built, W1 cancels and nothing is read.
-      expect(c.expect, `${caseId}: as built, W1 cancels`).toMatchObject({ outcome: 'declined', remoteSummary: 'never', stubReads: [] });
-      expect(c.note, caseId).toContain('ADR-0121 amendment A6 ratification (owner 2026-11-23, AM-2');
+      if (isSingleLineOwnerText(c.text)) {
+        // 472: the rerun is the case's own built new-request path: its Drive plan lists the files and asks its OWN rule-①
+        // question (a grant over Drive only, never the bound mail); no M2 call in the rerun turn.
+        expect(grantOf(c, false), caseId).toEqual(c.expect.grant);
+        expect(c.expect, caseId).toMatchObject({ outcome: 'read-and-ask-consent', remoteSummary: 'ask-first' });
+        expect(c.note, caseId).toContain('derived from the ratified general rule');
+      } else {
+        // 462: the rerun cannot widen the bound consent into a summary of the extra source: the whole message is a two-line
+        // message whose line "응" holds no recognised unit, so even a Drive summary plan mints no grant from it. The
+        // usability outcome (an owner question, DECISIONS R8): "드라이브도 같이" gets at most a Drive listing.
+        expect(grantOf({ text: c.text, planner: DRIVE_SUMMARY }, true), caseId).toEqual([]);
+        expect(grantOf({ text: c.text, planner: DRIVE_SUMMARY }, false), caseId).toEqual([]);
+        // The floor: as built, W1 cancels and nothing is read.
+        expect(c.expect, `${caseId}: as built, W1 cancels`).toMatchObject({ outcome: 'declined', remoteSummary: 'never', stubReads: [] });
+        expect(c.note, caseId).toContain('ADR-0121 amendment A6 ratification (owner 2026-11-23, AM-2');
+      }
     }
   });
 
@@ -648,8 +655,8 @@ describe('ADR-0121 amendment A6: the awaiting set and the header', () => {
       expect(c.note, c.id).toContain('`expect` stays the behaviour as built; `awaiting` is the target.');
       expect(c.awaiting?.expect.write, c.id).toBe('none');
     }
-    // The ratification (2026-11-23) decided one more SR-1 target: 462, yes-and-more (AM-2).
-    expect(CASES.filter((c) => c.awaiting?.decided === A6_RATIFIED).map((c) => c.id)).toEqual([id(462)]);
+    // The ratification (2026-11-23) decided two more SR-1 targets: 462 (the owner's AM-2) and 472 (the ratified rule).
+    expect(CASES.filter((c) => c.awaiting?.decided === A6_RATIFIED).map((c) => c.id)).toEqual([id(462), id(472)]);
   });
 
   it('states the judging rule word for word in the schema doc and records the W1–W5 answers as ratified', () => {

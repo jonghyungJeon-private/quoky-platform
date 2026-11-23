@@ -20,13 +20,19 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   recognise that shape structurally. Recorded fact: `mail.list` has no numeric count arg, so AM-3 reaches mail only after a
   catalog change (not made).
 - **Changed (constitution).** `ARCHITECTURE.md` §8 item 3, §10 and §12 carry the A5.5 text and the A6.7 text as amended.
-- **Changed (gold).** SR-1: `rt-s2r-462` awaits a `yes-and-more` target (`decided: "2026-11-23"`); the
+- **Changed (gold).** SR-1: `rt-s2r-462` (and, by the ratified rule, `472`) awaits a `yes-and-more` target (`decided: "2026-11-23"`); the
   `consentAnswerJudging` header and W1/W4 record the ratified rule. A2: `rt-s2a-130` awaits a `yes-and-more` target; the
-  `consentClassifierJudging` header gains the closed labels; sha256 now `120ca943…b850a610` (was `c1349f75…a8ffa65`). Plan
+  `consentClassifierJudging` header gains the closed labels; sha256 now `55d776ec…6b15049d` (was `c1349f75…a8ffa65`). Plan
   gold: the p001–p008 notes record the answer. No `expect`, `expected` or red-team floor changed.
 - **Tests.** `s2-read-redteam-a6-target.test.ts` models AM-1, AM-2 (the `462` rerun mints no Drive grant) and AM-3 (count
   3 grants only with a plan that carries 3); `s2-read-redteam-corpus.test.ts` and `a2-data.test.ts` follow. No product
   code, prompt, catalog or flag change; no model call or eval.
+- **Review round 1.** `rt-s2r-472` is `yes-and-more` by the ratified rule (`473` stays owner-to-confirm); the p001–p008
+  notes say a mixed key/title batch waits whole for the batch-preview yes; the A4-S2 gate shape and the linking word are
+  PROPOSED (recommended: required) with the negative control "회의 정리하고 지라 이슈도 보여줘"; the yes ↔ yes-and-more
+  confusion bar and the remaining A6.9 gates and minimums are recommended, owner to confirm; the A5.4 texts are applied
+  to the security design document; the A2 header defines what `turnHandledAsOrdinaryMessage` judges on a rerun.
+
 ## Unreleased — ADR-0121 amendment A6: the consent answer by context and the multi-line summary request (owner verdicts 2026-11-19; data, docs, tests only)
 
 - **Docs.** DECISIONS "ADR-0121 amendment A6": the owner's W1–W5 answers (W1 changed to the answer in context, W2–W4
