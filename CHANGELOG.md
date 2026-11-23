@@ -32,6 +32,52 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   PROPOSED (recommended: required) with the negative control "회의 정리하고 지라 이슈도 보여줘"; the yes ↔ yes-and-more
   confusion bar and the remaining A6.9 gates and minimums are recommended, owner to confirm; the A5.4 texts are applied
   to the security design document; the A2 header defines what `turnHandledAsOrdinaryMessage` judges on a rerun.
+## Unreleased — ADR-0121 amendment A7: S3 cross-source summary writes (owner intent 2026-11-23; PROPOSED, docs only)
+
+- **Docs.** DECISIONS "ADR-0121 amendment A7": a model-drafted summary of one source's items may become the exact
+  payload of an existing CRITICAL connector-write card (Jira comment on BE, Slack post to #quoky-test, a primary-calendar
+  event description). The destination comes only from the owner's own words or the owner's pick, and is checked before
+  any read. Content is payload only, never a target, a step, an argument or a recipient. The card shows the whole payload
+  with a "모델 작성 초안" marker, a provenance banner and the non-target tokens in the draft. Links and mentions are inert.
+  The approval is unchanged ("승인", then "<동작> 실행"; hash-bound, single use, no edit after approval, no auto-send).
+  Drafting follows rule ① and ADR-0110 D4 (calendar `LOCAL` only). The follow-up form ("해당 내용 요약해서 BE-123에
+  답변 달아줘") binds to a content-free receipt of the previous turn (next turn, 10 minutes, same items, digest-checked,
+  no new query). Unrelated, inapplicable or unsuitable turns are not linked. Mail send stays out.
+- **Proposed, not applied.** Amendments of ADR-0112 D5, the ADR-0110 amendment D4/D6, ADR-0121 D3–D6, ratification item 7,
+  A4.1 item 6 and `ARCHITECTURE.md` §8 items 3–4, §10, §12 and §13 text. Gates are defined but not written or run: plan gold
+  ≥ 170, red-team family `s3-cross-write` ≥ 210 with 17 deterministic success conditions, a drafter evaluation and a D12-style
+  plan gate. Flags `QUOKY_AGENT_WRITE_PROPOSALS` (default `off`) and `QUOKY_AGENT_PROPOSE_TARGETS` (default empty).
+  Promotion needs 0 wrong-target writes. Slices A7-S1..S8; 14 owner questions. No runtime, prompt, catalog, flag or gold
+  change, and no model call.
+- **Review round 1 (Codex 2 × P2; Chief Architect CHANGES REQUIRED, 1 × P1, 7 × P2, 7 × P3), applied.**
+  - A picked destination gets its own label, `OWNER_PICKED_DESTINATION`, and A1-D8 and §8 item 3 are amended for it.
+  - The source receipt is frozen inside a pending pick, and a destination listing never replaces it.
+  - Every link form a destination autolinks is defanged before the hash, or the draft is refused.
+  - The source-name check skips the destination span ("지라 BE-123에"). Two literals of one kind get a deterministic role
+    rule, decided by the closed case marker, and an ambiguous pair asks.
+  - The routing order is fixed: ADR-0112 grammar, then A7 for a write clause with a summary word or a source name, then
+    A6; S2 W1 is scoped to non-A7 plans.
+  - `yes-and-more`: the re-run counts as the next turn for its own receipt. A second request waits while a card is open,
+    and a closed card's items carry over.
+  - Calendar title and time come from the calendar write grammar's spans and are hashed. Re-drafting is defined as
+    slice A7-S9.
+  - Wrong-target is an owner-labelled role error, with at least 50 labelled `shadow` plans, an automatic trip and an
+    owner DM.
+  - Gold rises to ≥ 245 and the red team to ≥ 270, with 22 conditions and ≥ 40 planted source sets. Two new owner
+    questions (15, 16).
+- **Review round 2 (last fix round; Codex 2 × P2, Chief Architect 4 × P2, 4 × P3), applied.** No heuristic was grown.
+  Where a case is unclear, A7 asks the owner or keeps today's A6 behaviour.
+  - With A7 off, routing is byte-identical. The cross-source trigger needs a structural object (a source name, a second
+    literal, or a summary word acting on one), so literal posts containing 정리 / 짧게 stay A6.
+  - A receipt-bound route for bare follow-ups is added before A6.
+  - Marking is structural: the locative set `에` / `에다` / `에다가` only, never `로` / `으로` / `에서`; adjacency; the
+    write clause; the kind check. A single unmarked literal asks.
+  - The pick turn resumes the frozen plan with no M1 call, and Jira rows are ordered by key.
+  - Carry-over is limited (kill switch and trip excluded, the source `at` capped at 20 minutes, one carry-over only).
+  - A re-draft must ground its destination again; `OWNER_EDIT` gets its own D3 clause (A7-S9).
+  - The trip also fires on owner-labelled wrong-target cards.
+  - Gold rises to ≥ 275 and the red team to ≥ 280, with 23 conditions. The fail-closed edge cases are recorded as
+    residuals.
 
 ## Unreleased — ADR-0121 amendment A6: the consent answer by context and the multi-line summary request (owner verdicts 2026-11-19; data, docs, tests only)
 
