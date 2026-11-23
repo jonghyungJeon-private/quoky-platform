@@ -86,4 +86,3 @@ export function pseudonymiseParticipants(text: string, participants: readonly Wo
     return at < 0 ? String(args[0]) : (entries[at]?.[1].label ?? String(args[0]));
   });
 }
-
