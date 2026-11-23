@@ -555,4 +555,3 @@ describe('ADR-0121 amendment A6: the awaiting set and the header', () => {
     for (const text of defaults.slice(1)) expect(text.toLowerCase()).toContain('owner-confirmed 2026-11-19');
   });
 });
-
