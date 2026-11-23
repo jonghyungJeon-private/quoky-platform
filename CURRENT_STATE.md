@@ -26,6 +26,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   - the `yes-and-more` and open-card rules are defined;
   - wrong-target is owner-labelled, with ≥ 50 labelled `shadow` plans and an automatic trip.
 
+  Review round 2 (last) applied:
+  - with A7 off, routing is byte-identical to today;
+  - bare follow-ups get a receipt-bound route;
+  - literal roles are structural, and anything unclear asks;
+  - a re-draft re-grounds its destination;
+  - the trip also covers wrong-target cards;
+  - the fail-closed edge cases are recorded as residuals.
+
   Open: 16 owner questions.
 
 ### ADR-0121 A5 and A6 ratified; A4 p001–p008 answered (2026-11-23, branch `claude/v5-ratify-a4-a5-a6`)

@@ -65,6 +65,19 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
     owner DM.
   - Gold rises to ≥ 245 and the red team to ≥ 270, with 22 conditions and ≥ 40 planted source sets. Two new owner
     questions (15, 16).
+- **Review round 2 (last fix round; Codex 2 × P2, Chief Architect 4 × P2, 4 × P3), applied.** No heuristic was grown.
+  Where a case is unclear, A7 asks the owner or keeps today's A6 behaviour.
+  - With A7 off, routing is byte-identical. The cross-source trigger needs a structural object (a source name, a second
+    literal, or a summary word acting on one), so literal posts containing 정리 / 짧게 stay A6.
+  - A receipt-bound route for bare follow-ups is added before A6.
+  - Marking is structural: the locative set `에` / `에다` / `에다가` only, never `로` / `으로` / `에서`; adjacency; the
+    write clause; the kind check. A single unmarked literal asks.
+  - The pick turn resumes the frozen plan with no M1 call, and Jira rows are ordered by key.
+  - Carry-over is limited (kill switch and trip excluded, the source `at` capped at 20 minutes, one carry-over only).
+  - A re-draft must ground its destination again; `OWNER_EDIT` gets its own D3 clause (A7-S9).
+  - The trip also fires on owner-labelled wrong-target cards.
+  - Gold rises to ≥ 275 and the red team to ≥ 280, with 23 conditions. The fail-closed edge cases are recorded as
+    residuals.
 
 ## Unreleased — ADR-0121 amendment A6: the consent answer by context and the multi-line summary request (owner verdicts 2026-11-19; data, docs, tests only)
 
