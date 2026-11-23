@@ -37202,7 +37202,7 @@ the content says (no content-conditioned control flow, §8 item 5).
   writer, host or scope. Absent or `off`: byte-identical behaviour.
 - **Not amended.** ADR-0110 D4 (calendar text local-only), ADR-0090 N-3, ADR-0095, ADR-0093, ADR-0112 D3, D4 and D6, the
   ADR-0112 amendments 1–3, ADR-0120 A6-D4 (A6 stays not-S3; A7 reuses its resolver and banner), A1/A4 handoff rules, the
-  rule-① rules, A5 (proposed; A7 depends on it, A7.5 step 4), A6 `yes-and-more` (A7.4c only states how A7 meets it).
+  rule-① rules, A5 (ratified 2026-11-23, #356; A7 depends on it, A7.5 step 4), A6 `yes-and-more` (A7.4c only states how A7 meets it).
   **ADR-0120 A6 R5a decision 6** ("External-origin content and external targets stay refused") and decision 1b (text from
   a Quoky answer stays S3 territory, R5b deferred) are unchanged. Scope note: they govern the A6 deictic-write path
   (`QUOKY_NL_DEICTIC_WRITES`). A7 is a separate agent path that never uses a deictic referent, a Quoky answer text or an
