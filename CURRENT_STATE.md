@@ -12,7 +12,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - Proposed design: structural checks first, closed tokens (with NFKC), then a consent-answer classifier over the fixed
   question and the reply only, default off behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`; a two-line owner request (raw LF
   lines only, each line marker-free with only closed-class residue after the producer's units) may grant a summary,
-  always behind rule ① and a closed yes (review round 2; the pasted-line residual is recorded, gated by the paste lot). Scoped N-3
+  always behind rule ① and a closed yes (review rounds 2-3, fix-loop cap reached; the pasted-line residual is pinned as `ask-first` lot (b), apart from the 0-grant paste lot (a)). Scoped N-3
   exception, Strict ratification pending; A6-S3 cannot merge before the confirm slice.
 - Gold: 8 SR-1 cases and 5 A2 consent cases await slices A6-S1..S4 (`expect` unchanged). Eval gates defined, not run.
   Open: 12 owner questions (ratification, classifier locality, the two-turn follow-up, A2 replies without a verdict).
