@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES, NL_ACTION_WORDS, containsNlTimeExpression, nlActionInputRefusal, nlActionWordGrounded } from './action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from './catalog';
-import { nlFrameIsCopularReference, nlFrameIsElliptical, nlHasGrammaticalNegation, nlRequestVeto } from './request-shape';
+import { nlFrameIsCopularReference, nlFrameIsElliptical, nlHasDistributiveMarker, nlHasGrammaticalNegation, nlHasRetraction, nlRequestVeto } from './request-shape';
 import { NL_ACTION_ENTRIES as ENTRIES_FOR_UNDO } from './action-entries';
 import { interpretUndoConfirmReply, nlUndoIsDirect } from './undo-confirm';
 import { prepareSelectionInput } from './selection-input';

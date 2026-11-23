@@ -187,7 +187,9 @@ describe('handoff plan (validator rule 8)', () => {
     // Planner order: mail, calendar, summary of the mail. Core's order: mail, summary, calendar: the calendar is step 3.
     const got = check(
       { steps: [{ entryId: 'mail.list', args: {} }, { entryId: 'calendar.events', args: { range: 'this-week' } }, { summarize: [1], schema: 'digest.v1' }], ambiguity: 'CLEAR', handoff: { from: 2, kind: 'attendee', scope: 'one-item', item: 'owner-pick', to: { entryId: 'mail.list', slot: 'from' } } },
-      '메일 요약하고 이번 주 일정에 나온 사람들 메일 보여줘',
+      // Round 2: the former text ("메일 요약하고 ... 보여줘") is two predicates joined by the -고 connective, genuinely two requests:
+      // the strict one-unit rule refuses it. This one is one request form (보여줘) naming the three entries.
+      '이번 주 일정에 나온 사람들 메일 요약해서 보여줘',
     );
     expect(got.ok && got.plan.kind === 'handoff' ? got.plan.handoff.from : undefined).toBe(3);
     expect(got.ok && got.plan.kind === 'handoff' ? got.plan.steps[2]?.kind === 'read' && got.plan.steps[2].entry.id : undefined).toBe('calendar.events');

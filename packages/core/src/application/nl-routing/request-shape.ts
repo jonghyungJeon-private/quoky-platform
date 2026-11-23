@@ -62,7 +62,20 @@ export function nlHasExclusionOrNegation(prose: string): boolean {
  */
 export function nlHasDistributiveMarker(prose: string): boolean {
   const text = normalizeForMatch(prose);
-  return /마다/u.test(text) || /(?:^|[^a-z])(?:each|every|per)(?![a-z])/u.test(text);
+  return DISTRIBUTIVE_KO.test(text) || /(?:^|[^a-z])(?:each|every|per)(?![a-z])/u.test(text);
+}
+
+/** The distributive particle 마다 after a noun-ish character, ending its word or followed by a topic/genitive particle (not 마다가스카르). */
+const DISTRIBUTIVE_KO = /(?<=[\p{L}\p{N}])마다(?=$|[\s,.!?은는도의])/u;
+
+/**
+ * ADR-0121 A4 (A4-S1): whether the prose holds a retraction anywhere: a word of the closed retraction class the request veto
+ * already reads at the end of a message ("취소", "철회", "cancel", "undo" ...), or the retraction phrases. Read in ANY position,
+ * for fail-closed callers that must not ground a request the owner took back in another clause. Pure.
+ */
+export function nlHasRetraction(prose: string): boolean {
+  const text = normalizeForMatch(prose);
+  return RETRACTION_ANYWHERE.test(text) || text.split(/\s+/u).some((raw) => RETRACTION_FINAL.test(raw.replace(WORD_NOISE, '')));
 }
 
 /**

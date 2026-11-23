@@ -36238,7 +36238,7 @@ needs the D12 gates and the owner's notice and yes for any model eval).
   of the slot table that accepts the kind, offered this turn, whose catalog entry declares the slot as an argument, never
   the source's own entry (a `planned` row is refused `handoff-slot` until A4-S3); the fixed destination args pass ADR-0120
   D4 (the required slot itself may be missing only when no other fixed arg exists) and never preset the slot; and ONE
-  clause of the owner's OWN words, inline quoted spans removed (`nlWithoutInlineQuotes`) and holding no exclusion or
+  clause of the owner's OWN words (superseded by review round 2 below: now the whole message as one unit), inline quoted spans removed (`nlWithoutInlineQuotes`) and holding no exclusion or
   negation marker, names the source entry and every destination entry by the catalog's own vocabulary (aliases, source
   names, flag grounding words), with a distributive marker for `each-item` (`nlHasDistributiveMarker`, a closed
   grammatical class: 마다, each, every, per, kept in Core like `nlHasExclusionOrNegation`). An each-item introductory phrase
@@ -36271,3 +36271,22 @@ needs the D12 gates and the owner's notice and yes for any model eval).
 - **A4-S2 precondition (recorded, not built).** `agentReadWriteProbeClauses` (`read-write-probe.ts`) judges `run` plans only;
   a `handoff` plan is declined today, but before A4-S2 runs one it must also probe the uncovered write clause (for example
   `메일 확인해서 일정 보고, 할 일 추가해줘`).
+- **Review round 2 (2026-11-23): the grounding is now one strict structural rule (the clause heuristic is removed).** A handoff
+  is grounded only when the owner's own words (inline quotes removed) are exactly ONE plain request-form unit
+  (`handoff-grounding.ts`): no backtick or guillemet, no line or paragraph break anywhere, no sentence terminator or `;` `:`
+  except a trailing run; no negation, exclusion or retraction anywhere in the message (`nlHasGrammaticalNegation` and the
+  retraction class the request veto already reads, `nlHasRetraction`); no clause boundary (and/그리고, the -고 connective, a
+  linking ending -면서/-며/-고서/후 as a closed class in `conjuncts.ts`; one comma only as the introductory comma of an
+  each-item phrase that already holds the distributive marker); at most one request-form word, and it is the last word. The
+  unit must name the source and every destination, and each-item needs the marker. Anything else is `handoff-ungrounded`.
+  Also: an ASCII apostrophe between two letters is not a quote (`nlWithoutInlineQuotes`: "won't" is kept); 마다 is anchored
+  as a particle after a noun-ish character (not 마다가스카르). Former positive changed: "메일 요약하고 ... 보여줘" (two
+  predicates joined by -고) is now refused; the source-number test uses one request form.
+  **Accepted residuals (recorded, not chased):** one request naming two sources ("메일 일정 보여줘", "메일하고 일정 보여줘")
+  is one unit and grounds whatever handoff names both entries; English has no closed request-form class, so two bare
+  English commands with no punctuation or connective count as one unit; a linking ending outside the closed class is not
+  seen. Each fails into the closed slot table and A4-S2's bounds, never into a grant beyond them.
+  **A4-S2 precondition (added):** before S2 activates, the validator must also check operation/kind consistency between the
+  handoff slots and the owner request (the unit names entries, not the operation or the value kind).
+  **Fix-loop cap:** this is round 2 of the same finding and the rule was changed to structural; further edge cases that
+  fail closed (refuse) are recorded here, not chased.

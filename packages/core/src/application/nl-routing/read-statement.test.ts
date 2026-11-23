@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { NlArgs } from './catalog';
-import { nlReadNotRequest } from './read-statement';
+import { nlReadNotRequest, nlWithoutInlineQuotes } from './read-statement';
 
 interface Case {
   readonly id: string;

@@ -45,6 +45,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Tests.** `plan-handoff.test.ts`, the corpus self-check now runs the validator on all 31 A4-S1 targets (15 accepted, 16
   refused only as a planned slot), and an active-run decline test. No prompt, catalog, flag or gold change; no case moved
   to `approved` (all still wait for A4-S2 and A4-S4).
+- **Review round 2.** The handoff grounding is one strict structural rule: the whole owner message (quotes removed) must
+  be one plain request-form unit (no terminator but a trailing one, no line break, no negation or retraction anywhere, no
+  clause connective, at most one request form and it is last); `nlWithoutInlineQuotes` keeps contraction apostrophes;
+  마다 is anchored as a particle; backtick and guillemet text is refused. Residuals and the A4-S2 operation/kind
+  precondition are recorded in DECISIONS.
 
 ## Unreleased — ADR-0121 amendment A5: work-source summaries under rule ① (owner decision 2026-11-18; data, docs, tests only)
 

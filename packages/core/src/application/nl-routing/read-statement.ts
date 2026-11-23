@@ -26,7 +26,9 @@ const REASON_CONNECTIVE = /(?:[아어여라]서|니까|느라)$/u;
 const TRAILING_NOISE = /[ㄱ-ㆎ\p{Extended_Pictographic}️‍]+$/u;
 /** The quotative particle directly after a quote (이)라고 / (이)라는 / (이)란. */
 const QUOTATIVE_AFTER = /^\s*(?:이?라고|이?라는|이?란)(?:만|도|는|은|까지|조차|마저|요)?(?=\s|$|[.,!?~])/u;
-const QUOTED = /"([^"]+)"|“([^”]+)”|'([^']+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
+// An ASCII apostrophe between two letters is a contraction ("won't", "owner's"), never a quote delimiter: a single-quote span
+// opens only where no ASCII letter precedes it and may hold such a letter-flanked apostrophe.
+const QUOTED = /"([^"]+)"|“([^”]+)”|(?<![A-Za-z])'((?:[^']|(?<=[A-Za-z])'(?=[A-Za-z]))+)'|‘([^’]+)’|「([^」]+)」|『([^』]+)』/gu;
 
 function tokensOf(text: string): string[] {
   return text

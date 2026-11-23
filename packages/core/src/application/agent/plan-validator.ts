@@ -2,8 +2,8 @@ import type { IsoTimestamp } from '../../domain';
 import { OWNER_TEXT_FLOW_LABEL, type FlowLabel } from '../../domain/flow-label';
 import { isNlActionEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { isNlTimeWord, nlRangeSymbolWords, nlWeekdayMentionRanges, nlWeekdayMentions, normalizeNlRangeSymbol, resolveNlRange, type NlResolvedRange } from '../nl-routing/symbolic-time';
-import { nlReadNotRequest, nlWithoutInlineQuotes } from '../nl-routing/read-statement';
-import { nlHasDistributiveMarker, nlHasExclusionOrNegation, nlIsRequestForm } from '../nl-routing/request-shape';
+import { nlReadNotRequest } from '../nl-routing/read-statement';
+import { nlHasDistributiveMarker, nlIsRequestForm } from '../nl-routing/request-shape';
 import { NL_EN_MODAL_LEAD, NL_EN_REQUEST_LEADS, NL_GLUED_REQUEST_TAIL } from '../nl-routing/garbled-action';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn, validateSelection, type NlValidationFailureReason } from '../nl-routing/selection-validator';
@@ -13,6 +13,7 @@ import { NL_ACTION_ENTRIES, nlIndexWording } from '../nl-routing/action-entries'
 import { aliasStarts, conjunctTokens } from './conjuncts';
 import { nlClauseGroundedFlagNames, nlClauseNamesEntry as clauseNamesEntry, nlClauses as planClauses, nlClauseStringValues as stringValues, type NlClause as PlanClause } from '../nl-routing/clause-flags';
 import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
+import { handoffOwnerUnit } from './handoff-grounding';
 import { AGENT_HANDOFF_CONSENT, AGENT_HANDOFF_FREE_TEXT_KINDS, AGENT_HANDOFF_ITEMS, AGENT_HANDOFF_KINDS, AGENT_HANDOFF_SCOPES, AGENT_HANDOFF_SLOTS, type AgentHandoffKind } from './handoff-slots';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanHandoff, type AgentPlanHandoffDestination, type AgentPlanStep } from './plan-schema';
 
@@ -808,8 +809,6 @@ function checkHandoff(
   }
   const source = validated[handoff.from - 1];
   if (source === undefined || source.kind !== 'read' || source.ref !== undefined || AGENT_READ_SOURCES[source.entry.id as NlWave1EntryId]?.refField === undefined) return refuse('handoff-source', handoff.from);
-  // The owner's own words, outside every inline quotation (a quoted word grounds nothing).
-  const own = planClauses(nlWithoutInlineQuotes(ctx.groundingText));
   // The entry's own catalog vocabulary: its aliases and source names, and the grounding words of its flag args ("meeting" of
   // the calendar's `timedOnly`), the same words every other clause rule here reads. No list of this rule's own.
   const named = (unit: PlanClause, entry: NlCatalogEntry): boolean =>
@@ -839,26 +838,13 @@ function checkHandoff(
     if (!checked.ok) return checked;
     fallback = { kind: handoff.fallback.kind as AgentHandoffKind, to: checked.to };
   }
-  // Grounding, last (the structural refusals above stay the more specific ones): ONE unit of the owner's words names the
-  // source and every destination, holds no exclusion or negation marker, and, for each-item, a distributive marker.
-  const units: PlanClause[] = [];
-  for (let index = 0; index < own.length; index += 1) {
-    let unit = own[index] as PlanClause;
-    const next = own[index + 1];
-    if (handoff.scope === 'each-item' && next !== undefined && nlHasDistributiveMarker(unit.text) && unit.words.at(-1)?.ends === 'comma') {
-      unit = { text: `${unit.text} ${next.text}`, normalized: `${unit.normalized} ${next.normalized}`, words: [...unit.words, ...next.words] };
-      index += 1;
-    }
-    units.push(unit);
-  }
+  // Grounding, last (the structural refusals above stay the more specific ones): the owner's whole message is ONE plain
+  // request-form unit (`handoffOwnerUnit`, structural, fail closed) that names the source and every destination, and, for
+  // each-item, holds a distributive marker.
+  const unit = handoffOwnerUnit(ctx.groundingText, handoff.scope);
   const destinations = [main.to.entry, ...(fallback !== undefined ? [fallback.to.entry] : [])];
-  const grounded = units.some(
-    (unit) =>
-      !nlHasExclusionOrNegation(unit.text) &&
-      named(unit, source.entry) &&
-      destinations.every((entry) => named(unit, entry)) &&
-      (handoff.scope !== 'each-item' || nlHasDistributiveMarker(unit.text)),
-  );
+  const grounded =
+    unit !== undefined && named(unit, source.entry) && destinations.every((entry) => named(unit, entry)) && (handoff.scope !== 'each-item' || nlHasDistributiveMarker(unit.text));
   if (!grounded) return refuse('handoff-ungrounded', handoff.from);
   return {
     ok: true,
