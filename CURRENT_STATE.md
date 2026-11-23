@@ -16,7 +16,17 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   stays out.
 - Blocked on: Strict ratification (A7.11 question 1), S2 `active`, the rule-① confirm slice and A5 (for remote Slack and
   Jira drafts). Gates defined, not written. Today Slack reading in the agent is keyword search only, so "#채널 최근 대화"
-  needs its own read amendment. Open: 14 owner questions. See DECISIONS "ADR-0121 amendment A7".
+  needs its own read amendment. See DECISIONS "ADR-0121 amendment A7".
+- Review round 1 applied:
+  - a picked destination carries `OWNER_PICKED_DESTINATION`, never `OWNER_CONFIRMED`;
+  - a pending pick freezes the source receipt;
+  - links are defanged in every autolinkable form;
+  - two literals of one kind get a deterministic role rule;
+  - the routing order between A6, W1 and A7 is fixed;
+  - the `yes-and-more` and open-card rules are defined;
+  - wrong-target is owner-labelled, with ≥ 50 labelled `shadow` plans and an automatic trip.
+
+  Open: 16 owner questions.
 
 ### ADR-0121 A5 and A6 ratified; A4 p001–p008 answered (2026-11-23, branch `claude/v5-ratify-a4-a5-a6`)
 

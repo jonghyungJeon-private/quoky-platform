@@ -49,6 +49,22 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   plan gate. Flags `QUOKY_AGENT_WRITE_PROPOSALS` (default `off`) and `QUOKY_AGENT_PROPOSE_TARGETS` (default empty).
   Promotion needs 0 wrong-target writes. Slices A7-S1..S8; 14 owner questions. No runtime, prompt, catalog, flag or gold
   change, and no model call.
+- **Review round 1 (Codex 2 × P2; Chief Architect CHANGES REQUIRED, 1 × P1, 7 × P2, 7 × P3), applied.**
+  - A picked destination gets its own label, `OWNER_PICKED_DESTINATION`, and A1-D8 and §8 item 3 are amended for it.
+  - The source receipt is frozen inside a pending pick, and a destination listing never replaces it.
+  - Every link form a destination autolinks is defanged before the hash, or the draft is refused.
+  - The source-name check skips the destination span ("지라 BE-123에"). Two literals of one kind get a deterministic role
+    rule, decided by the closed case marker, and an ambiguous pair asks.
+  - The routing order is fixed: ADR-0112 grammar, then A7 for a write clause with a summary word or a source name, then
+    A6; S2 W1 is scoped to non-A7 plans.
+  - `yes-and-more`: the re-run counts as the next turn for its own receipt. A second request waits while a card is open,
+    and a closed card's items carry over.
+  - Calendar title and time come from the calendar write grammar's spans and are hashed. Re-drafting is defined as
+    slice A7-S9.
+  - Wrong-target is an owner-labelled role error, with at least 50 labelled `shadow` plans, an automatic trip and an
+    owner DM.
+  - Gold rises to ≥ 245 and the red team to ≥ 270, with 22 conditions and ≥ 40 planted source sets. Two new owner
+    questions (15, 16).
 
 ## Unreleased — ADR-0121 amendment A6: the consent answer by context and the multi-line summary request (owner verdicts 2026-11-19; data, docs, tests only)
 
