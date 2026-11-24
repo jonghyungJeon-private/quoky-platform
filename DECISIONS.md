@@ -38791,3 +38791,12 @@ stay as written; this record is the exact change and supersedes them for this on
   - *Accepted residual.* Further exotic evasions, such as other-script homoglyphs that NFKC does not fold (Cyrillic "а" in
     "thаt"), are not covered. Accepted: A7 is off, the text is the owner's own message, and every A7 write still needs the
     owner's approval card.
+- **Review 5 (Codex P2 after Review 4; closed by the fix-loop cap, orchestrator decision 2026-11-24).** The shared A6
+  selection-input normalization (`nl-routing/selection-input.ts:72`) turns a BOM (U+FEFF) inside a word into a space before A7
+  sees the text, so `th\uFEFFat` reaches point-back detection as `th at` and an injected form-a plan validates under a
+  missing, stale or different-source receipt. Not fixed in A7-S1: the fix would change the shared A6 normalizer (A6 must stay
+  byte-identical) or give A7 a second raw-text path; the point-back rule has had four hardening rounds (review-loop
+  discipline: stop adding rounds). Recorded as an accepted fail-open residual with these bounds: the input needs a format
+  character pasted inside a closed token, which owner typing does not produce; A7 is off; any A7 write still needs the
+  owner's approval card showing the real destination and payload. Revisit in the slice that activates A7 (A7-S2+), where
+  the router can run on the raw owner text before the A6 normalizer.
