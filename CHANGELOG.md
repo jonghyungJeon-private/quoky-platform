@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A6-S1 answer-checks (2026-11-24; dormant, switch default off)
+
+- **Added.** Core `consent-answer/`: the branded `SummaryConsentPending` (no `origin`) and `TopicConsentPending` with their
+  producers; a pending store with the atomic `answering` claim, the compare-and-set bind (W2 re-checked), cancel, the one
+  fixed re-ask and the kill switch's void; `answerConsentTurn`: caps, structural checks (quote, markers, `\p{Cf}`,
+  attachments), the NFKC closed-token fast path for both consents, the no-re-plan rule for a cancelled multi-line reply, the
+  `yes-and-more` bind with the rerun text (whole message, r-01; lines after a closed-yes first line, r-02), closed audit codes.
+  `QUOKY_CONSENT_ANSWER_CLASSIFIER` is read at startup (default `off`; `on` refused as not released; anything else invalid).
+- **Unchanged.** No live path opens a consent step (the rule-① confirm slice and the A2 answer slice are not built), so every
+  turn is byte-identical. No prompt, catalog, gold or flag default changed; no model call.
+- **Tests.** Pipeline unit tests, the real pipeline over SR-1 and the A2 consent corpus (switch off: the built floor plus the
+  NFKC targets `rt-s2r-487`, `rt-s2a-136`; switch on with the owner's labels: the awaiting targets), an import boundary and a
+  TypeScript-API type-level test, config tests. Existing A6 target, A2 data, SR-1 corpus, grant and approval tests pass.
+  Build and typecheck pass; targeted runs only.
+- **Docs.** DECISIONS "ADR-0121 A6-S1 implementation note (2026-11-24)"; `.env.example`.
+
 ## Unreleased — ADR-0125 LC-1b local-client adapter (2026-11-24; flag default off)
 
 - **Added.** `@quoky/adapter-local-client`: HTTP/1.1 and SSE over a Unix domain socket in the 0700 data directory (no TCP

@@ -38800,3 +38800,65 @@ stay as written; this record is the exact change and supersedes them for this on
   whitespace-class character (such as U+FEFF) pasted inside a closed token, which owner typing does not produce; A7 is off; any A7 write still needs the
   owner's approval card showing the real destination and payload. Revisit in the slice that activates A7 (A7-S2+), where
   the router can run on the raw owner text before the A6 normalizer.
+
+## ADR-0121 A6-S1 implementation note (2026-11-24)
+
+Status: implemented (branch `claude/v5-a6-s1-answer-checks`). Slice A6-S1 "answer-checks" of ADR-0121 amendment A6 (the R10
+row of the ratification record of 2026-11-23, with the follow-up answers r-01..r-04 of 2026-11-24). Dormant: no live path
+opens a consent step, and `QUOKY_CONSENT_ANSWER_CLASSIFIER` is `off` by default. No prompt, catalog, gold or flag default
+changed; no model call or evaluation was run, so no D12 gate is needed for this slice.
+
+- **Built (Core, `packages/core/src/application/consent-answer/`).** `consent-pending.ts`: the branded
+  `SummaryConsentPending` (no `origin`, R10 / AM-1) and `TopicConsentPending`, made only by their producers
+  (`summaryConsentPending`, `topicConsentPending`), which also record each step in a module-private registry, so a copied
+  object is refused at run time as well; the `ConsentPendingStore` (one step per actor and conversation): the atomic claim
+  `open` → `answering` on a version, the compare-and-set bind `answering` → `used` that re-checks W2 (600 s; exactly 600 s
+  is late, as SR-1 `rt-s2r-450`), cancel, the one fixed re-ask (same items or topic, same recipient, W2 restarted), and the
+  kill switch's `voidAll`. A turn while the step is `answering` cancels it, so the in-flight bind fails (A6.3 step 5).
+  `consent-answer.ts`: `answerConsentTurn`, the A6.3 pipeline as amended by R3: claim; the caps (3 non-empty lines, 60
+  characters: over them the consent is cancelled and the message takes the normal path, `over-caps`); the structural checks
+  (quote-only or empty, `hasUntrustedSpanMarker`, `\p{Cf}` on the RAW reply, an attachment); the NFKC fast path over the
+  ratified closed tokens for both consents; with the switch off, every other reply cancels as W1 as built
+  (`classifier-off`); with it on, the classifier's closed label (`yes`, `yes-and-more`, `no`, `other`, `unclear`; anything
+  else or a throw is `unclear`). `yes-and-more` binds and returns the rerun text for a NEW ordinary turn (the step is
+  `used`, so the rerun can never answer, widen or revive it): the whole message (r-01), or, when the reply has more than
+  one line and its first line is a closed yes token, the remaining lines (r-02, a rule-based cut). A cancelled multi-line
+  reply within the caps is consumed and not re-planned; a single-line `other`, structural failure or switch-off reply takes
+  the normal path; a no is consumed. `unclear` re-asks "보낼까요? (응/아니)" / "Shall I send it? (yes/no)" once; a second
+  `unclear` cancels. Audit: closed codes only (`closed-yes`, `closed-no`, `classifier-yes`, `classifier-yes-and-more`,
+  `classifier-no`, `classifier-other`, `classifier-unclear`, `classifier-off`, `structural-fail`, `over-caps`, `claim-lost`,
+  `reask`), never the reply text. No word list: closed token sets and structural checks only; no provider or platform branch.
+- **The switch (composition root).** `apps/quoky/src/agent/consent-answer-config.ts` reads `QUOKY_CONSENT_ANSWER_CLASSIFIER`
+  into `QuokyConfig.consentAnswer`: unset or exactly `off` is `off`; exactly `on` is refused at startup with
+  `CONSENT_ANSWER_CLASSIFIER_NOT_RELEASED` (the code-level release gate, as `QUOKY_AGENT_MODE=active`; R10 allows `on` only
+  after A6-S2, the A6-S4 gate and the rule-① confirm slice); anything else is `CONSENT_ANSWER_CLASSIFIER_INVALID`.
+  Value-free preflight hints; `.env.example` documents it. Nothing reads the parsed value yet.
+- **Nothing REMOTE can bind (as the A5-S3 note anticipated).** Core had no summary-consent pending state. This slice adds
+  the type, the producer and the store, but no live caller: `consent-answer.boundary.test.ts` pins that no non-test source
+  file in any package or app imports the module, that the Core indexes do not export it, and that the approval, undo,
+  handoff, A7 destination-pick, channel-grant and runtime modules do not import it. The rule-① confirm slice must open a
+  `SummaryConsentPending` from the grant basis (question text with the recipient, `pending.sources`), call
+  `answerConsentTurn` from the runtime before ordinary routing, run the bound summary over exactly `itemIds` once, and
+  rerun `rerunText` as a new turn; the A2 answer slice does the same for `TopicConsentPending`. Neither is built here.
+- **Type-level and import tests.** The type test compiles a probe with the repository's strict options through the
+  TypeScript API: a channel-grant pending step, an approval request, any other kind, an unbranded literal, a hand-made
+  claim and a pending step passed to `answerConsentTurn` are each a type error; `ConsentPendingStore.open` accepts exactly
+  the two branded types; `origin` does not exist. A second run without the `@ts-expect-error` lines shows each is a real
+  error (not vacuous). The A4 request-list module is not built; the allowlist of no importers covers it when it is.
+- **Choices inside the ratified text (recorded; none loosens gold or `lastSelection` policy).** (1) The caps run before the
+  other structural checks, because R5 says a longer message is never consumed by the consent; the A6 target model checks
+  them in the other order, and no SR-1 or A2 case tells them apart. (2) `classifier-off` is added to the closed audit codes:
+  A6.3 names no code for the switch-off cancel, and a classifier code would mislabel it. (3) A reply with an attachment or a
+  platform quote range fails structurally (fail closed; the ADR is silent on attachments). (4) The r-02 cut uses the closed
+  yes set (응 / 네 / 예 / yes after the fast-path fold), not 응 alone. (5) A2 `rt-s2a-152` (exactly 600 s, gold
+  `decision-needed`) is read as late, like SR-1 `rt-s2r-450`; the gold is unchanged. (6) The classifier request carries only
+  the consent kind, the language and the reply (A6.4 content-free); A6-S2 adds the fixed question with placeholders.
+- **Gold and tests.** No gold changed. `consent-answer.gold.test.ts` runs the REAL pipeline over every SR-1 summary-consent
+  reply (68) and every A2 consent reply judged by `consentOutcome` (61): with the switch off the built floor holds case by case,
+  and only the A6-S1 targets SR-1 `rt-s2r-487` and A2 `rt-s2a-136` (fullwidth yes, NFKC) now bind; with the switch on and
+  the owner's verdict stubbed as the label, exactly `462`, `463`, `468`, `469`, `470`, `472`, `473`, `488` reach the
+  classifier, each `awaiting` `consentAnswer` and rerun holds, `462` reruns "드라이브도 같이" (r-02) and `472`, `473` the
+  whole message (r-01). The existing A6 target, A2 data, SR-1 corpus, grant producer and approval tests pass unchanged.
+- **Open points.** (1) The rule-① confirm slice and the A2 answer slice wire the store and the pipeline (above). (2) A6-S2:
+  the classifier call, `prompts/consent-answer.v1`, strict JSON and the 10 s bound (the pipeline already reads the result
+  strictly and fails closed to `unclear`). (3) The owner may reverse any of the recorded choices (1)–(6).
