@@ -233,7 +233,6 @@ export class ConsentPendingStore {
     return record !== undefined && record.pending === claim.pending && record.state === 'answering' && record.version === claim.version ? record : undefined;
   }
 
-  /** Whether the claim still holds its step in `answering` (inspection only; used for the audit). */
   /**
    * An owner turn that cannot be judged (e.g. the clock failed before the claim) still consumes the chance to answer, like `claim`
    * on a late or answering step: the record is dropped, so an in-flight bind for an earlier turn can no longer match.
@@ -242,6 +241,7 @@ export class ConsentPendingStore {
     this.records.delete(scopeKey(scope));
   }
 
+  /** Whether the claim still holds its step in `answering` (inspection only; used for the audit). */
   holds(claim: ConsentClaim): boolean {
     return this.held(claim) !== undefined;
   }
