@@ -240,7 +240,7 @@ describe('A6-S1 the atomic claim and the compare-and-set bind (A6.3 steps 1, 4, 
 
   it('a label that arrives after W2 cannot bind (the bind re-checks freshness)', async () => {
     const store = opened();
-    const decision = await answer(store, turn('ㅇㅇ', { atMs: T0 + 595_000 }), on('yes'), () => T0 + 605_000);
+    const decision = await answer(store, turn('ㅇㅇ', { atMs: T0 + 595_000 }), on('yes'), reads(T0 + 595_000, T0 + 605_000));
     expect(decision).toMatchObject({ kind: 'cancelled', audit: ['classifier-yes', 'claim-lost'] });
     expect(store.stateOf(DM)).toBe('expired');
   });
@@ -371,7 +371,7 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
   it('unclear with the clock past W2 expires the step: no re-ask, createdAtMs not refreshed', async () => {
     const p = summary();
     const store = opened(p);
-    expect(await answer(store, turn('음…', { atMs: T0 + 595_000 }), on('unclear'), () => T0 + 605_000)).toEqual({ kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' });
+    expect(await answer(store, turn('음…', { atMs: T0 + 595_000 }), on('unclear'), reads(T0 + 595_000, T0 + 605_000))).toEqual({ kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' });
     expect(store.stateOf(DM)).toBe('expired');
     expect(store.claim(DM, T0 + 606_000)).toEqual({ ok: false, reason: 'claim-lost' });
   });
