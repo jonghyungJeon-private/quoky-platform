@@ -37,6 +37,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - Owner questions 1–5 are answered in the ratification record. Each implementation slice retains its own review and gates.
   See DECISIONS "ADR-0125".
 
+### ADR-0121 A5-S3 grant-consent implemented, dormant (2026-11-24, branch `claude/v5-a5-s3-grant-consent`)
+
+- Core: the grant producer covers the five work sources through the summary-readout label; the catalog carries the English
+  names `pull request`, `repo`, `repository`, `meeting`; "sum them up" is read by a clause-structure rule; the 10 SR-1
+  known gaps are closed; `ownerSummaryConsentSources` derives the sources of the one consent question.
+- Switches still default off; a granted work source still ends listing-only until its switch is on (tests). Not done
+  (next): the question text, `pending.sources` and the bound-yes re-run (A6-S1, rule-① confirm slice), A5-S4 WS-1, A5-S5
+  gates (D12 modes needed: catalog data changed). See DECISIONS "ADR-0121 A5-S3 implementation note (2026-11-24)".
+
 ### ADR-0121 A5-S2 summary-schema implemented, dormant (2026-11-24, branch `claude/v5-a5-s2-summary-schema`)
 
 - Core: the digest schemas are pinned per source (one line of at most 280 characters, URL-free, credential guard, calendar

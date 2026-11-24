@@ -4,7 +4,7 @@ import { nlClauseNamesEntry, nlClauses, type NlClause } from '../nl-routing/clau
 import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
 import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, nlPreparedWithoutFilesLine, normalizeForMatch, type PreparedSelectionInput } from '../nl-routing/selection-input';
 import { groundingWordIn, nlItemReadVeto } from '../nl-routing/selection-validator';
-import { readOutputLabel } from './flow-policy';
+import { AGENT_READ_SOURCES, summaryReadoutLabel } from './flow-policy';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 
 /**
@@ -161,7 +161,7 @@ const keyOf = (step: number, entryId: string): string => `${step}:${entryId}`;
 
 /**
  * The (summarize step, source) pairs the owner's own words ask a summary of, for the sources that need a grant
- * (`REMOTE_ON_SUMMARY_REQUEST`). Pure and total; `[]` for anything but a validated `run` plan.
+ * (`REMOTE_ON_SUMMARY_REQUEST` under {@link summaryReadoutLabel}: mail, Drive and, since A5-S3, the five work sources). Pure and total; `[]` for anything but a validated `run` plan.
  */
 export function ownerSummaryRequests(plan: ValidatedAgentPlan, prepared: OwnerText): readonly OwnerSummaryRequest[] {
   if (plan.kind !== 'run') return [];
@@ -231,7 +231,7 @@ export function ownerAskedSummary(basis: SummaryGrantBasis | undefined, plan: ob
 
 function needsGrant(entryId: string): boolean {
   try {
-    return readOutputLabel(entryId as NlWave1EntryId).egress === 'REMOTE_ON_SUMMARY_REQUEST';
+    return summaryReadoutLabel(entryId as NlWave1EntryId).egress === 'REMOTE_ON_SUMMARY_REQUEST';
   } catch {
     return false;
   }
@@ -271,5 +271,48 @@ function coordinatesNouns(word: string, sourceNames: ReadonlySet<string>): boole
 /** A group asks for a summary: one of the approved summary words, and no exclusion or negation marker in it (fail-safe). */
 function asksSummary(group: NlClause): boolean {
   if (nlHasExclusionOrNegation(group.text)) return false;
-  return NL_MODE_SUMMARY_WORDS.some((word) => groundingWordIn(group.normalized, normalizeForMatch(word)));
+  return NL_MODE_SUMMARY_WORDS.some((word) => {
+    const normalized = normalizeForMatch(word);
+    return groundingWordIn(group.normalized, normalized) || splitParticleIn(group, normalized);
+  });
+}
+
+/** The most words a separated phrasal verb may hold between its verb and its particle ("sum all of them up"). */
+const SEPARABLE_OBJECT_WORDS = 3;
+
+/**
+ * ADR-0121 A5-S3, the separable particle of an existing summary word (a clause-structure rule, no new vocabulary): a summary
+ * word of exactly two ASCII words, a verb and its particle ("sum up"), also counts when the clause holds the verb and ends in
+ * the particle with one to {@link SEPARABLE_OBJECT_WORDS} words between them (its object: "sum them up", "sum it up"). The
+ * particle must be the LAST word of the clause (an object after the particle is the contiguous form, already matched), and the
+ * clause's own exclusion and negation check has run before this. Fail closed: any other shape is not a request.
+ */
+function splitParticleIn(group: NlClause, word: string): boolean {
+  const parts = word.split(' ');
+  if (parts.length !== 2 || !parts.every((part) => /^[a-z]+$/u.test(part))) return false;
+  const [verb, particle] = parts as [string, string];
+  const words = group.words.map((token) => token.word.replace(/[,،.!?]+$/u, ''));
+  if (words[words.length - 1] !== particle) return false;
+  const last = words.length - 1;
+  return words.some((token, index) => token === verb && last - index - 1 >= 1 && last - index - 1 <= SEPARABLE_OBJECT_WORDS);
+}
+
+/** The gated source names of one summarize step, for the one consent question (W5 as amended by A5): each once, sorted. */
+export interface OwnerSummaryConsentSources {
+  readonly step: number;
+  readonly sources: readonly string[];
+}
+
+/**
+ * ADR-0121 A5.4 (W5 amended): per summarize step, the source names the owner's words granted (the five work sources
+ * included), derived only from {@link ownerSummaryRequests}; the data of the ONE rule-① question of that step. Pure.
+ */
+export function ownerSummaryConsentSources(plan: ValidatedAgentPlan, prepared: OwnerText): readonly OwnerSummaryConsentSources[] {
+  const byStep = new Map<number, Set<string>>();
+  for (const request of ownerSummaryRequests(plan, prepared)) {
+    const source = AGENT_READ_SOURCES[request.entryId]?.source;
+    if (source === undefined) continue;
+    byStep.set(request.step, (byStep.get(request.step) ?? new Set<string>()).add(source));
+  }
+  return [...byStep].map(([step, sources]) => ({ step, sources: [...sources].sort() }));
 }

@@ -365,7 +365,7 @@ const githubItems: NlCatalogEntry = {
   risk: 'READ',
   dmOnly: false,
   label: { ko: 'GitHub 이슈·PR 조회', en: 'GitHub issues and PRs' },
-  aliases: ['github', '깃허브', '깃헙', 'pr', '풀리퀘'],
+  aliases: ['github', '깃허브', '깃헙', 'pr', '풀리퀘', 'pull request', 'repo', 'repository'],
   description: {
     en: "The owner's own open GitHub issues and pull requests, or the pull requests waiting for the owner's review.",
     ko: '내 GitHub 이슈·PR 목록, 또는 나에게 온 리뷰 요청.',
@@ -445,7 +445,7 @@ const calendarEvents: NlCatalogEntry = {
   inheritsHeldRange: true,
   rangeIsItemDate: true,
   label: { ko: '캘린더 일정 조회', en: 'Calendar events' },
-  aliases: ['calendar', '캘린더', '일정', '스케줄', '달력', '회의', '미팅'],
+  aliases: ['calendar', '캘린더', '일정', '스케줄', '달력', '회의', '미팅', 'meeting'],
   description: {
     en: "The owner's calendar events (schedule, meetings, appointments) for a period, the next upcoming event, or whether the owner is busy/free.",
     ko: '내 캘린더 일정·회의·약속(기간별), 다음 일정, 바쁜지 여부.',

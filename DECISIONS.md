@@ -38432,3 +38432,61 @@ LC-1b implements D1-D6, D8 (LC-1b..LC-3 routing), D9 and D12 on branch `claude/v
   - Wire-visible change (quoky-mac CONTRACT.md): a `Last-Event-ID` resume that cannot be replayed within the backlog
     bound now answers 200 with `status {resync: true}` and no replay, the same as any other non-resumable id; the
     client treats it as a resync. Nothing else on the wire changed.
+## ADR-0121 A5-S3 implementation note (2026-11-24)
+
+Status: implemented (branch `claude/v5-a5-s3-grant-consent`). Slice A5-S3 "grant-consent" of ADR-0121 amendment A5 (A5.9
+row), ratified 2026-11-23 (R1, known gaps answer 6; W5 amended). Dormant like A5-S1 and A5-S2: every per-source switch
+still defaults off, the agent read ports are still empty and `QUOKY_AGENT_MODE=active` is still refused. No model call or
+evaluation was run.
+
+- **The grant producer reads the summary-readout label.** `summary-grant.ts` `needsGrant` now asks `summaryReadoutLabel`
+  instead of `readOutputLabel`, so calendar, Jira, Slack, Confluence and GitHub need an owner grant exactly as mail and Drive
+  do. There is no new vocabulary: the summary words stay `NL_MODE_SUMMARY_WORDS`, the clause, negation, quote and
+  multi-line rules are unchanged. The test mock of the label in `s2-read-redteam-a5-target.test.ts` is gone: the real
+  producer is pinned.
+- **Switches off, nothing changes.** The producer only says what the owner asked. `sourceRefusal` still runs first, so a
+  work source whose switch is off ends listing-only with its pre-A5 reason (`work-text-controls-not-built` for Jira and
+  Slack, `no-readout-source` for the others) even though a grant now exists. `summary-grant.a5s3.test.ts` pins this per work
+  entry with the real producer and an absent, empty, mail-only or other-source switch list; with the source switched on, the
+  grant is what moves the answer past `no-summary-grant`. The A5-S1 byte-identical and A5-S2 switch-off tests pass unchanged.
+- **The catalog's own English names (known gap `source-alias`).** `wave1-entries.ts`: `github.items` aliases add
+  `pull request`, `repo`, `repository`; `calendar.events` aliases add `meeting`. They are catalog data, reviewed with the
+  catalog (English counterparts of the existing `풀리퀘`, `회의`, `미팅`); the producer holds no phrase list. English names
+  match whole words (plural allowed), so "report" and "meetingroom" name nothing. `aliases` is used (not `sourceNames`) so the
+  honest-chat "cannot access" guard and the help-scope source families are untouched.
+- **The separable particle of "sum up" (known gap `split-particle`).** A clause-structure rule in the producer
+  (`splitParticleIn`), derived from the approved word: a summary word of exactly two ASCII words, a verb and a particle,
+  also counts when the clause holds the verb and ENDS in the particle with one to three words (its object) between
+  ("sum them up", "sum it all up"). Exclusion and negation are still checked first. Nothing is added to
+  `NL_MODE_SUMMARY_WORDS` and the shared item-summarize grounding is unchanged.
+- **The one consent question and `pending.sources`.** `ownerSummaryConsentSources(plan, prepared)` derives, per summarize
+  step, the source names the owner's words granted (each once, sorted), the data of the ONE rule-① question that names every
+  gated source (W5 amended); the test pins it equal to each case's gold `consentSources`. The question text, the recipient
+  line, `pending.sources` and the bound yes that re-runs only the listing reads need the pending types and the answering
+  claim, which belong to A6-S1 and the rule-① confirm slice (not built; there is no summary-consent pending state in Core
+  today). They are NOT built here (open point 1); this slice stops at the derived data.
+- **Gold.** The 10 known gaps (`rt-s2r-002`, `244`, `248`, `250`, `255`, `257`, `414`, `204`, `232`, `246`) lose
+  `awaiting.knownGap`; their target `grant` is unchanged and now equals what the producer mints, so they join the other 112
+  as 122 derived cases. No `expect` changed and no `awaiting.expect` was edited. `s2-read-redteam-corpus.test.ts` compares the
+  producer's whole grant with the awaiting target and its mail and Drive part with `expect.grant` (the built floor).
+  `docs/plans/agent-redteam-s2-read-schema.md` follows. One side effect outside SR-1: the plan gold `ap-n071` ("for each
+  meeting today, find the confluence page about it", an A4 awaiting target) holds `calendar.events` with `args: {}`; with
+  `meeting` an alias, the clause names the calendar by a catalog flag word and the validator canonicalises the step to
+  `{ timedOnly: true }`, so its `awaiting.expect.steps` now says that (the agent-plan schema check needs the canonical form).
+  Meaning is the catalog's own ("meetings" asks for timed events); `trap` and `expect` are untouched.
+- **Unchanged.** No prompt template or version (nl-select.v74 / v83 / v84, agent-plan.v11, help-scope.v2 as before): the
+  selector prompt shows an entry's description, not its aliases. The catalog data change still moves deterministic
+  selection grounding, so the D12 gate modes are required before deploy (open point 2).
+- **Open points.** (1) The question text with the recipient, `pending.sources` and the bound-yes re-run (A6-S1 and the
+  confirm slice). (2) D12 before deploy: `intent`, `action`, `read-regression`, `r2`, `help-scope`, `agent-plan` (the plan
+  call counts at 3 runs with haiku: 2703, 1914, 2703, 636, 201, 4347). (3) The English names are narrow on purpose
+  ("issues" alone still names no GitHub; "my repo" does).
+- **Fail-closed residuals (not built).**
+  1. By case id: none. All 122 SR-1 cases (the 10 former gaps included) now mint their target grant. Outside the corpus, an
+     English noun the catalog does not name (a repository written as "codebase", "appointments" for the calendar) stays
+     listing-only; a new word is a catalog change reviewed with its D12 gate, never a producer phrase.
+  2. A separated object longer than three words ("sum all of the open ones up") is not a request.
+  3. A clause that puts the particle first or splits it from the verb by a verb connective ("sum those and then up") is not
+     one; the clause rule reads the one conjunct only.
+  4. A summary request in one clause and the source in a non-adjacent one keeps the existing back-reference rule: ambiguous
+     (several sources named) gives no grant.

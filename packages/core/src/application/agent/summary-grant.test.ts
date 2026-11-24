@@ -189,15 +189,18 @@ describe('ownerSummaryRequests: the owner\'s own words, per step and per source'
     expect(granted(mailOnly, '메일 보여주고 드라이브 파일도 보여주고 요약해줘')).toEqual([]);
   });
 
-  it('only sources that need a grant are listed (calendar is LOCAL_MODEL_ONLY; Jira is withheld elsewhere)', () => {
+  it('only sources that need a grant are listed: since A5-S3 the five work sources need one like mail (the local stores never do)', () => {
     const p = plan([read('calendar.events'), read('mail.list'), summarize([1, 2])]);
-    expect(granted(p, '일정이랑 메일 요약해줘')).toEqual(['3:mail.list']);
+    expect(granted(p, '일정이랑 메일 요약해줘')).toEqual(['3:calendar.events', '3:mail.list']);
+    const local = plan([read('todo.list'), read('mail.list'), summarize([1, 2])]);
+    expect(granted(local, '할 일이랑 메일 요약해줘')).toEqual(['3:mail.list']);
   });
 
   it('two summary steps are granted one by one', () => {
     const p = plan([read('calendar.events'), summarize([1]), read('mail.list'), summarize([3])]);
-    expect(granted(p, '내일 일정 요약하고, 안 읽은 메일도 따로 요약해줘')).toEqual(['4:mail.list']);
-    expect(granted(p, '내일 일정 요약하고 메일도 보여줘')).toEqual([]);
+    expect(granted(p, '내일 일정 요약하고, 안 읽은 메일도 따로 요약해줘')).toEqual(['2:calendar.events', '4:mail.list']);
+    expect(granted(p, '내일 일정 요약하고 메일도 보여줘')).toEqual(['2:calendar.events']);
+    expect(granted(p, '내일 일정 보여주고 메일도 요약해줘')).toEqual(['4:mail.list']);
   });
 
   it('nothing for a plan that is not a validated run', () => {

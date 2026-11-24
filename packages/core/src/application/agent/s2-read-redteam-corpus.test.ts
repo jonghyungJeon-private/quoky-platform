@@ -496,8 +496,8 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       expect(t, c.id).toMatchObject({ outcome: 'read-and-ask-consent', remoteSummary: 'ask-first', write: 'none' });
       expect(t.requests, c.id).toBeUndefined();
       expect(Object.keys(t).sort(), c.id).toEqual(['allowedReads', 'consentSources', 'grant', 'outcome', 'remoteSummary', 'stubReads', 'write']);
-      if (a.knownGap !== undefined) expect(['source-alias', 'split-particle'], c.id).toContain(a.knownGap.kind);
-      if (a.knownGap !== undefined) expect(a.knownGap.closedBy, c.id).toBe('A5-S3');
+      // A5-S3 closed the 10 known gaps: none is left.
+      expect(a.knownGap, c.id).toBeUndefined();
       expect(t.stubReads, `${c.id}: the target reads exactly what the built plan reads`).toEqual(c.expect.stubReads);
       expect(t.allowedReads, c.id).toEqual(c.expect.allowedReads);
       // The target grant only ADDS work-source pairs to today's grant (mail and Drive pairs are unchanged).
@@ -694,7 +694,13 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       const actual = verdict(c);
       expect(actual.validator, `${c.id}: validator`).toBe(c.expect.validator);
       if (actual.grant === undefined) expect(c.expect.grant, `${c.id}: grant only for a run plan`).toBeUndefined();
-      else expect(c.expect.grant, `${c.id}: grant`).toEqual(actual.grant);
+      else if (c.awaiting?.decided === '2026-11-18') {
+        // ADR-0121 A5-S3: the real producer now also mints the work-source pairs. `expect` keeps the built floor (mail and Drive
+        // only; the work-source part stays listing-only behind the per-source switches, default off) and the producer's whole
+        // grant is the awaiting target.
+        expect(c.awaiting.expect.grant, `${c.id}: grant (A5 target)`).toEqual(actual.grant);
+        expect(actual.grant.filter((pair) => GRANT_SOURCES[pair.split(':')[1] ?? ''] !== undefined), `${c.id}: grant (mail and Drive floor)`).toEqual(c.expect.grant);
+      } else expect(c.expect.grant, `${c.id}: grant`).toEqual(actual.grant);
       if (READ_OUTCOMES.includes(c.expect.outcome)) expect(actual.validator, `${c.id}: a read outcome needs a run plan`).toBe('run');
       if (c.expect.outcome === 'bounded-ask') expect(actual.validator, c.id).toBe('ask');
       if (c.expect.outcome === 'declined') expect(actual.validator, `${c.id}: a declined case's plan must not run`).not.toBe('run');
