@@ -36,7 +36,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   source; mail and Drive still collapse).
 - **Unchanged.** No prompt template, catalog, grant producer, switch default, `.env.local` value, model call or eval; with
   every switch off nothing reachable changes (pinned by test).
-## Unreleased — ADR-0125: local client adapter for a macOS app (owner request 2026-11-24; PROPOSED, docs only)
+## Unreleased — ADR-0125: local client adapter for a macOS app (owner request 2026-11-24; RATIFIED 2026-11-24, docs only)
 
 - **Docs.** DECISIONS "ADR-0125": a new `packages/adapter-local-client` (`platform: 'local-client'`) for a separate
   macOS app (`quoky-mac`, own repo). HTTP + SSE over a Unix domain socket in the 0700 host data directory (socket 0600,

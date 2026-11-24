@@ -5,7 +5,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
-### ADR-0125 drafted: local client adapter for a macOS app (2026-11-24, branch `claude/v5-adr-local-client`)
+### ADR-0125 ratified: local client adapter for a macOS app (2026-11-24, branch `claude/v5-adr-local-client`)
+
+- Ratified by the owner on 2026-11-24 (all five questions as recommended). Next: LC-1a, LC-1b (flag off), LC-2 in the separate `quoky-mac` repo. See DECISIONS "ADR-0125 ratification record (owner, 2026-11-24)".
 
 - PROPOSED, docs only, revised after Chief Architect review round 1 (CHANGES REQUIRED). A Unix-socket-only,
   token-gated, default-off chat adapter (`packages/adapter-local-client`) for a separate macOS app (`quoky-mac`): text
