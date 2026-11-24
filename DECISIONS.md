@@ -38928,3 +38928,52 @@ always consumes the chance to answer, whether or not it can be judged.**
   for a late or answering step) and rethrows, so an in-flight bind can no longer match. Tests: the step is gone after a
   claim-read throw; a later turn whose clock throws cancels an in-flight answer and the earlier label does not bind.
 - **CA P3 (test).** Added the r-02 case for a leading blank line before a closed yes: nothing is cut, the whole message reruns.
+
+### r-07 implementation note (ADR-0120 catalog, AM-3) (2026-11-24)
+
+The owner's r-07 decision (R2 AM-3 and the recorded fact that `mail.list` had no count arg): the mail and Drive listing
+entries gain a validated numeric count. Implemented as data plus one parameter, no new mechanism.
+
+- **Design.** `mail.list` and `drive.files` declare the shared `SEARCH_LIMIT` arg (`limit`, kind `limit`, integer 1..10, ADR-0120
+  D4 step 3), the same object `jira.issues`, `github.items`, `slack.search` and `confluence.search` declare. The validator
+  and the catalog renderer need no change: bounds (1..10, integer) are the whole rule for `limit` on every entry, and v74
+  renders the shared "As above" line (older revs v73, v71, v72 and v10 render the full `limit` description). Neither the validator nor any entry grounds the number
+  in the owner's words (a `limit` arg has no grounding rule today), so the new entries inherit exactly that; see the open
+  question below. `limit` stays an ignorable extra arg for entries that do not list it.
+- **Plumbing.** The ports and adapters already took a bound (`MailSearchQuery.limit`, `DriveReader.recentFiles` and
+  `searchByName` `limit`, both clamped by `resolveMailListingLimit` / `resolveDriveListingLimit`; the Gmail adapter slices to
+  it); only the handlers fixed it at 10. `MailTurnHandler.list` and `DriveTurnHandler.list` now take the validated `limit`
+  (`nlLimitArg`) and use it for the read and the shown slice; absent, the call is byte-for-byte the old one (`limit: 10`,
+  pinned by the existing handler tests). The mail `item` arg (kind `limit`, transient) is unchanged and checked first. The
+  agent path already counted `limit` generically (`plan-executor` requested-count), so a plan read step needs nothing.
+- **AM-3.** The A6.5 count unit exists only as a modelled target in `s2-read-redteam-a6-target.test.ts` (production A6-S3 is
+  not merged). That test no longer models the count: it runs the real validator on `mail.list` with `limit: 3` and pins the
+  unit (3개 / 3건 / "3 mails") consuming only a number the validated plan carries; the old "refused as unknown-arg" gap
+  assertion is replaced by an acceptance assertion. The production consumer stays A6-S3.
+- **Prompt bytes.** Selector prompt text is unchanged, but every rendered catalog now has the two new arg lines, so every pinned
+  prompt digest moved. Version ids are NOT bumped (read `nl-select.v74`, action `v83`, R2 `v84`, planner `agent-plan.v11`).
+  Recorded decision (orchestrator, settled by the repo's own rule; FYI for the next owner batch): the canonical rule is
+  `selection-prompt.ts:15` ("Bumped whenever the instruction text changes (the eval plan digest binds it)"). r-07 changes
+  catalog data, not instruction text, so no version id bump; the D12 gate is bound to the full prompt digest of the gated
+  head. The A5-S3 alias change (#365) moved no prompt bytes, so it is not a precedent. This conflicts with the pin test title
+  in `nl-action-entries.test.ts:276` ("a prompt byte change needs a version bump"); that title is read under the source rule.
+  Cost: the rollback revs (v73, v71, v72, v10) render the live catalog, so a rollback keeps prompt and validator consistent
+  but no longer reproduces the bytes that were gated; `golden/nl-select.v73.prompts.json` is named v73 but its content changed.
+  Re-pinned: the sha256 constants in
+  `selection-prompt-v74.test.ts` and `plan-prompt.test.ts`, the two inline pins in `nl-action-entries.test.ts` and
+  `golden/nl-select.v73.prompts.json` (regenerated; only mail.list / drive.files blocks differ). The D12 gate (action,
+  read-regression, r2) is still to run before deploy. Plan digests (no model call, haiku, 1 run, concurrency 1): action
+  `24c6d066f03b5ed01a6cacc18f652efc8bc527d63d2a70b2482e5403ec3599cc`, read-regression
+  `d34c5ef8fcaa4c8b89e0a7a6c668af7b4dde60537ed89d1379b340c1f654b521`, r2 `799c599f66bb73faefd57d1ca23f5c625226d66ee42f020e34055945c06ba36c`.
+- **Review 1:** CA P2×2 docs, P3×3 tests (drive 4-for-limit-2 cut, exact mail "…외 2건" tail, plan-executor `mail.list` limit 3 + summarize).
+- **Gold.** No `expect` changed: no approved row carries an in-range mail or Drive count. Left as they are: `rt-s2r-278`
+  ("메일 500개", out of range, the plan carries the invalid boolean `count`), `rt-s2r-431` ("last 500 emails", out of range) and
+  `rt-s2r-473` ("메일 10개 더", "10 more" is relative to the previous list, ambiguous). No row was added: the plan gold
+  `agent-plan.v1.json` is byte-pinned by `cross-write-plan-gold.test.ts`; candidate rows (mail 3, Drive 5, "메일 3개 리스트업 해주고
+  그거 요약해줘") are covered by unit tests instead.
+- **Tests.** Validator acceptance 1..10 and refusal of 0, 11, -1, 2.5 and "3" on both entries; the mail handler passes
+  `limit` to the reader and shows at most N, default unchanged; the Drive handler passes it to `recentFiles` and
+  `searchByName`, default unchanged; the AM-3 count-unit test over the real validator.
+- **Open (owner).** (1) The brief expected the count to be grounded in the owner's own words; no `limit` arg has such a rule
+  (a pasted "3개" the selector copies would pass), so this change does not add one. Adding it is a validator change for every
+  `limit` entry. (2) Version ids were not bumped for the prompt byte change (see above).

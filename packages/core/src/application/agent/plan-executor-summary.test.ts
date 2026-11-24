@@ -177,6 +177,17 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.breach).toBeUndefined();
     });
 
+    it('r-07: a mail.list read with limit 3 requests 3 and the summarize step counts 3 as asked (all 3 documents reach the model, none capped to 1)', async () => {
+      const fake = model('LOCAL', '{"items":[{"n":1,"summary":"one"},{"n":2,"summary":"two"},{"n":3,"summary":"three"}]}');
+      const mail = port(['m1', 'm2', 'm3'], docs('BODY-ALPHA', 'BODY-BETA', 'BODY-GAMMA'));
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: via(fake) }).execute(plan([wideRead('mail.list', 3), summarize([1])]));
+      expect(mail.requests[0]?.args).toEqual({ limit: 3 });
+      expect(result.steps[1]).toMatchObject({ kind: 'summarize', status: 'ok', omitted: 0 });
+      const sent = JSON.stringify(fake.requests[0]);
+      for (const body of ['BODY-ALPHA', 'BODY-BETA', 'BODY-GAMMA']) expect(sent).toContain(body);
+      expect(result.outcome).toBe('complete');
+    });
+
     it('S2: omitted is the listed items minus the entries the summary carries (3 listed, 1 document: omitted 2, partial)', async () => {
       const exec = new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2', 'm3'], docs('a')) }, summarizer: via(model('LOCAL', '{"items":[{"n":1,"summary":"first"}]}')) });
       const result = await exec.execute(MAIL_PLAN());

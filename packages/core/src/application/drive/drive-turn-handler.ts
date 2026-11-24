@@ -1,4 +1,4 @@
-import { nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
+import { nlLimitArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import type {
@@ -230,23 +230,25 @@ export class DriveTurnHandler implements ConversationTurnHandler {
     const kind = nlStringArg(selected.args, 'kind');
     const fileKind = kind !== undefined && (DRIVE_LISTING_KINDS as readonly string[]).includes(kind) ? (kind as DriveListingKind) : undefined;
     const narrowed = fileKind !== undefined ? { fileKind } : {};
-    return this.list(ctx, name === undefined ? { kind: 'recent', ...narrowed } : { kind: 'search', name, ...narrowed }, language);
+    // r-07: the validated "at most N" (1..10); absent keeps the default listing size.
+    const limit = nlLimitArg(selected.args);
+    return this.list(ctx, name === undefined ? { kind: 'recent', ...narrowed } : { kind: 'search', name, ...narrowed }, language, limit);
   }
 
-  private async list(ctx: TurnHandlerContext, filter: DriveListingFilter, language: DriveLanguage): Promise<TurnHandlerReply> {
+  private async list(ctx: TurnHandlerContext, filter: DriveListingFilter, language: DriveLanguage, limit = DRIVE_LISTING_MAX_ENTRIES): Promise<TurnHandlerReply> {
     let result: DriveListResult;
     try {
       result = await this.withTimeout(
         filter.kind === 'recent'
-          ? this.deps.reader.recentFiles(DRIVE_LISTING_MAX_ENTRIES, ...(filter.fileKind !== undefined ? [filter.fileKind] : []))
-          : this.deps.reader.searchByName(filter.name, DRIVE_LISTING_MAX_ENTRIES, filter.fileKind),
+          ? this.deps.reader.recentFiles(limit, ...(filter.fileKind !== undefined ? [filter.fileKind] : []))
+          : this.deps.reader.searchByName(filter.name, limit, filter.fileKind),
       );
     } catch (error) {
       const failure = failureOf(error);
       this.log('warn', 'drive.turn_handler.read_failed', { kind: filter.kind, reason: failure });
       return this.reply(ctx, renderDriveReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
     }
-    const files = result.files.slice(0, DRIVE_LISTING_MAX_ENTRIES);
+    const files = result.files.slice(0, limit);
     this.log('info', 'drive.turn_handler.listed', { kind: filter.kind, shown: files.length, matched: result.matched });
     this.rememberListing(ctx, files.map((file) => ({ id: file.id, kind: file.kind })));
     await this.persistShown(ctx, files.map((file) => file.id));

@@ -245,15 +245,14 @@ function lineConsumed(line: string, plan: ValidatedPlan): boolean {
 }
 
 /**
- * The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 two-line rule. `modelPlan`
- * models a plan the catalog cannot validate yet (AM-3: a numeric count on `mail.list`), applied after the real validator.
+ * The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 two-line rule.
  */
-function grantOf(c: Pick<Case, 'text' | 'planner' | 'channel'>, asOneLine: boolean, modelPlan: (plan: ValidatedPlan) => ValidatedPlan = (plan) => plan): string[] {
+function grantOf(c: Pick<Case, 'text' | 'planner' | 'channel'>, asOneLine: boolean): string[] {
   const prepared = prepareSelectionInput(c.text);
   if ('skip' in prepared) return [];
   const validated = validatedPlan(c, prepared.groundingText);
   if (validated === undefined) return [];
-  const plan = modelPlan(validated);
+  const plan = validated;
   if (!asOneLine) return ownerSummaryRequests(plan, prepared).map((request) => `${request.step}:${request.entryId}`);
   // The line check runs on the RAW text (P2-2); the whole message keeps every marker check; each raw line must be consumed.
   const lines = rawTwoLines(c.text);
@@ -330,48 +329,36 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
     expect(grant('김팀장 전달\n메일 요약해줘')).toEqual([]);
     expect(grant('메일 보여줘\n팀장님이 보낸 거 위주로\n요약해줘')).toEqual([]);
     expect(grant('메일 보여줘\n\n\n요약해줘')).toEqual(['2:mail.list']);
-    // Review round 2 (P2-1), kept under AM-3: "3개" is a count no validated arg of THIS plan carries (`mail.list` has no
-    // numeric count arg; its `count` is the how-many flag), so it is unexplained residue and the line stays closed. AM-3 makes
-    // it a unit only when the validated plan carries 3 (see the AM-3 test below).
+    // Review round 2 (P2-1), kept under AM-3: "3개" is a count no validated arg of THIS plan carries (this plan has no
+    // `limit`), so it is unexplained residue and the line stays closed. AM-3 makes it a unit only when the validated plan
+    // carries 3 (see the AM-3 test below).
     expect(grant('메일 3개\n요약해줘')).toEqual([]);
     expect(grant('메일 3개 보여줘\n요약하지 말고')).toEqual([]);
   });
 
   /**
-   * AM-3 (owner, 2026-11-23: "메일 3개 리스트업 해주고, 그거 요약해주면 되는거 아닌가?"). TARGET, pending slice A6-S3 AND a
-   * catalog change: today the real validator refuses a numeric count on `mail.list` (`unknown-arg`; the catalog's numeric
-   * "at most N" arg, `limit`, exists on Jira, GitHub, Slack and Confluence only, and `count` is the boolean how-many flag),
-   * so no validated mail plan can carry 3 yet. The plan carrying 3 is modelled by giving the validated `mail.list` step the
-   * catalog's own shared `limit` spec (the one `jira.issues` declares) with the value 3.
+   * AM-3 (owner, 2026-11-23: "메일 3개 리스트업 해주고, 그거 요약해주면 되는거 아닌가?"). r-07 (2026-11-24) gave `mail.list` and
+   * `drive.files` the catalog's shared numeric `limit` arg, so the REAL validator now carries the owner's count on a mail
+   * plan and the count unit consumes it (the unit model above is still the A6-S3 target; no production consumer yet).
    */
   it('AM-3: "메일 3개 / 요약해줘" grants when the validated plan carries count 3, and stays closed when it carries none or another number', () => {
-    const LIMIT = NL_WAVE1_ENTRIES['jira.issues'].args.find((spec) => spec.name === 'limit')!;
+    const LIMIT = NL_WAVE1_ENTRIES['mail.list'].args.find((spec) => spec.name === 'limit')!;
     expect(LIMIT.kind).toBe('limit');
-    const withCount = (n: number) => (plan: ValidatedPlan): ValidatedPlan =>
-      ({
-        ...plan,
-        steps: plan.steps.map((step) => (step.kind === 'read' ? { ...step, entry: { ...step.entry, args: [...step.entry.args, LIMIT] }, args: { ...step.args, limit: n } } : step)),
-      }) as ValidatedPlan;
-    // The gap, pinned: the catalog cannot validate the count on mail.list today.
-    const refused = validateAgentPlan({ kind: 'steps', form: 'steps', steps: [{ kind: 'read', entryId: 'mail.list', args: { limit: 3 } }, { kind: 'summarize', from: [1], schema: 'digest.v1' }], ambiguity: 'CLEAR', alternatives: [] } as never, {
-      offered: OFFERED,
-      groundingText: '메일 3개 요약해줘',
-      now: CORPUS.fixture.now as never,
-      timeZone: CORPUS.fixture.timeZone,
-      direct: true,
-    });
-    expect(refused).toMatchObject({ ok: false, reason: 'step-invalid' });
-    // The target: the plan carries 3, so "3개" / "3건" / "3 mails" is a recognised unit and both lines are consumed.
-    expect(grantOf({ text: '메일 3개\n요약해줘', planner: MAIL }, true, withCount(3))).toEqual(['2:mail.list']);
-    expect(grantOf({ text: '메일 3건 보여줘\n요약해줘', planner: MAIL }, true, withCount(3))).toEqual(['2:mail.list']);
-    expect(grantOf({ text: 'show 3 mails\nsummarize them', planner: MAIL }, true, withCount(3))).toEqual(['2:mail.list']);
-    // The variant whose plan has no count: the line keeps its residue, no grant (the real validated plan).
+    expect(NL_WAVE1_ENTRIES['drive.files'].args.some((spec) => spec.name === 'limit' && spec.kind === 'limit')).toBe(true);
+    const mailWith = (n: number): readonly PlannerStep[] => [{ entryId: 'mail.list', args: { limit: n } }, { summarize: [1], schema: 'digest.v1' }];
+    // The real validator now carries the count on mail.list (it refused it as unknown-arg before r-07).
+    expect(validatedPlan({ planner: mailWith(3) }, '메일 3개 요약해줘')).toBeDefined();
+    // The plan carries 3, so "3개" / "3건" / "3 mails" is a recognised unit and both lines are consumed.
+    expect(grantOf({ text: '메일 3개\n요약해줘', planner: mailWith(3) }, true)).toEqual(['2:mail.list']);
+    expect(grantOf({ text: '메일 3건 보여줘\n요약해줘', planner: mailWith(3) }, true)).toEqual(['2:mail.list']);
+    expect(grantOf({ text: 'show 3 mails\nsummarize them', planner: mailWith(3) }, true)).toEqual(['2:mail.list']);
+    // The variant whose plan has no count: the line keeps its residue, no grant.
     expect(grantOf({ text: '메일 3개\n요약해줘', planner: MAIL }, true)).toEqual([]);
     // A number the plan does not carry is residue too, and so is a bare numeral of another kind.
-    expect(grantOf({ text: '메일 3개\n요약해줘', planner: MAIL }, true, withCount(5))).toEqual([]);
-    expect(grantOf({ text: '메일 13개\n요약해줘', planner: MAIL }, true, withCount(3))).toEqual([]);
+    expect(grantOf({ text: '메일 3개\n요약해줘', planner: mailWith(5) }, true)).toEqual([]);
+    expect(grantOf({ text: '메일 13개\n요약해줘', planner: mailWith(3) }, true)).toEqual([]);
     // The rest of the rule is unchanged: a pasted line with a count still leaves residue.
-    expect(grantOf({ text: '김 대리가 메일 3개 요약해달라고 했어요\n메일 보여줘', planner: MAIL }, true, withCount(3))).toEqual([]);
+    expect(grantOf({ text: '김 대리가 메일 3개 요약해달라고 했어요\n메일 보여줘', planner: mailWith(3) }, true)).toEqual([]);
   });
 
   it('review round 2 (P2-1): a pasted line holding a summary word or a source name is not consumed when it leaves residue', () => {

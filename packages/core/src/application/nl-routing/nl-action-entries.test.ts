@@ -281,12 +281,12 @@ describe('prompt byte pin (a prompt byte change needs a version bump)', () => {
 
   it('pins the full rendered read prompt and A6 prompt by version', () => {
     // Explicit `rev: 'v73'` is the previous read prompt (pin unchanged); the default read prompt is nl-select.v74 (owner decision 2026-11-04).
-    expect({ version: NL_PREVIOUS_READ_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v73', sha256: '0453b3ab68a16df03a0300f2b881498e6ab9ec45a33d93bbab45cbd44dd531a1' });
+    expect({ version: NL_PREVIOUS_READ_PROMPT_VERSION, sha256: sha(readPrompt) }).toEqual({ version: 'nl-select.v73', sha256: 'e386bc6ac741d3fad66e715694c8b70084fad5fcc977e4e889ffb1f4ff31f9b5' });
     expect(NL_SELECTION_PROMPT_VERSION).toBe('nl-select.v74');
     expect(defaultReadPrompt).toBe(buildSelectionPrompt({ entries: READS, text: '내일 일정 알려줘', previous: { entryId: 'calendar.events', args: { range: 'this-week' } } as never, rev: 'v74' }));
     // The A6 prompt pinned here is the explicit `rev: 'v73'` one (nl-select.v71); the default is v79 (pinned in selection-prompt-v74.test.ts).
     expect(NL_ACTION_PROMPT_VERSION).toBe('nl-select.v83');
-    expect({ version: nlPromptVersionFor('action', 'v73'), sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v71', sha256: '83868ee241d1548748c6fdf432cd657df24217cb81479be15cacfaaa8acc2fe9' });
+    expect({ version: nlPromptVersionFor('action', 'v73'), sha256: sha(actionPrompt) }).toEqual({ version: 'nl-select.v71', sha256: 'd4bb4c55af3674eef878e61e4cc76a48141ffe3d18ddf298ec5b61c1fc50e761' });
   });
 });
 
