@@ -69,10 +69,15 @@ import { ConsentPendingStore, summaryConsentPending, topicConsentPending, type C
 import { answerConsentTurn } from './consent-answer';
 import type { SurfaceGrantPending } from '../surface-grants/surface-grant-service';
 import type { ApprovalRequest } from '../../domain';
+import type { PendingQuestion } from '../nl-routing/selection-state';
+import type { ValidatedAgentHandoff } from '../agent/plan-validator';
 
 declare const store: ConsentPendingStore;
 declare const grant: SurfaceGrantPending;
 declare const approval: ApprovalRequest;
+declare const undoConfirm: Extract<PendingQuestion, { kind: 'action-undo-confirm' }>;
+declare const handoff: ValidatedAgentHandoff;
+declare const requestList: Extract<PendingQuestion, { kind: 'entry' }>;
 const scope = { actorId: 'a', conversationKey: 'c' };
 const summary = summaryConsentPending({ scope, language: 'ko', createdAtMs: 0, recipient: 'r', itemIds: ['i'], sources: ['mail'] });
 const topic = topicConsentPending({ scope, language: 'ko', createdAtMs: 0, recipient: 'r', topic: 't' });
@@ -84,8 +89,12 @@ store.open(either);
 store.open(grant);
 // @ts-expect-error EXPECT an approval request is no consent step
 store.open(approval);
-// @ts-expect-error EXPECT an undo, handoff-pick or request-list step (any other kind) is no consent step
-store.open({ kind: 'undo-confirm', id: 'u' });
+// @ts-expect-error EXPECT the undo-confirm pending step is no consent step
+store.open(undoConfirm);
+// @ts-expect-error EXPECT a validated handoff (handoff slots) is no consent step
+store.open(handoff);
+// @ts-expect-error EXPECT the request-list (numbered entry) pending step is no consent step
+store.open(requestList);
 // @ts-expect-error EXPECT a structurally identical literal without the producer's brand is refused
 store.open({ kind: 'summary-consent', scope, language: 'ko', createdAtMs: 0, recipient: 'r', reasked: false, itemIds: ['i'], sources: ['mail'] });
 // @ts-expect-error EXPECT no origin field (AM-1, R10)
@@ -122,7 +131,7 @@ describe('A6-S1 type-level boundary: only the two branded consent steps reach th
 
   it('is not vacuous: without the directives each marked line is an error', () => {
     const expected = PROBE_SOURCE.split('\n').filter((line) => line.includes('@ts-expect-error EXPECT')).length;
-    expect(expected).toBe(7);
+    expect(expected).toBe(9);
     const stripped = PROBE_SOURCE.replace(/\/\/ @ts-expect-error EXPECT/gu, '// refused:');
     const lines = new Set(probeDiagnostics(stripped).map((d) => d.file?.getLineAndCharacterOfPosition(d.start ?? 0).line));
     expect(lines.size).toBe(expected);

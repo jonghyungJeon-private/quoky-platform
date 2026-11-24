@@ -190,12 +190,18 @@ const fresh = (pending: ConsentPending, atMs: number): boolean =>
  */
 export class ConsentPendingStore {
   private readonly records = new Map<string, ConsentRecord>();
+  /** Store-wide, never reused or reset (not even when a record is deleted): every version is a fresh value of it. */
+  private generation = 0;
+
+  private nextVersion(): number {
+    this.generation += 1;
+    return this.generation;
+  }
 
   /** Open a pending step (a newer step in the same scope supersedes the older one, whose claim can then never bind). */
   open(pending: ConsentPending): void {
     if (!isConsentPending(pending)) throw new TypeError('consent-pending-not-minted');
-    const previous = this.records.get(scopeKey(pending.scope));
-    this.records.set(scopeKey(pending.scope), { pending, state: 'open', version: (previous?.version ?? 0) + 1 });
+    this.records.set(scopeKey(pending.scope), { pending, state: 'open', version: this.nextVersion() });
   }
 
   /** The state of the step in `scope`, or `undefined` (inspection only; never an answer). */
@@ -217,7 +223,7 @@ export class ConsentPendingStore {
       return { ok: false, reason: 'claim-lost' };
     }
     record.state = 'answering';
-    record.version += 1;
+    record.version = this.nextVersion();
     return { ok: true, claim: Object.freeze({ pending: record.pending, version: record.version }) as ConsentClaim };
   }
 
@@ -227,11 +233,16 @@ export class ConsentPendingStore {
     return record !== undefined && record.pending === claim.pending && record.state === 'answering' && record.version === claim.version ? record : undefined;
   }
 
+  /** Whether the claim still holds its step in `answering` (inspection only; used for the audit). */
+  holds(claim: ConsentClaim): boolean {
+    return this.held(claim) !== undefined;
+  }
+
   /** A6.3 step 4: `answering` → `used` by compare-and-set, only while still fresh. `undefined`: nothing may be sent. */
   bind(claim: ConsentClaim, atMs: number): BoundConsent | undefined {
     const record = this.held(claim);
     if (record === undefined) return undefined;
-    record.version += 1;
+    record.version = this.nextVersion();
     if (!fresh(record.pending, atMs)) {
       record.state = 'expired';
       return undefined;
@@ -245,7 +256,7 @@ export class ConsentPendingStore {
     const record = this.held(claim);
     if (record === undefined) return;
     record.state = 'cancelled';
-    record.version += 1;
+    record.version = this.nextVersion();
   }
 
   /**
@@ -255,8 +266,14 @@ export class ConsentPendingStore {
   reask(claim: ConsentClaim, atMs: number): ConsentPending | undefined {
     const record = this.held(claim);
     if (record === undefined || claim.pending.reasked || !Number.isFinite(atMs)) return undefined;
+    // A late step is not re-asked: it expires (W2 is judged on the caller's fresh clock read).
+    if (!fresh(record.pending, atMs)) {
+      record.state = 'expired';
+      record.version = this.nextVersion();
+      return undefined;
+    }
     const next = reaskedCopy(claim.pending, atMs);
-    this.records.set(scopeKey(next.scope), { pending: next, state: 'open', version: record.version + 1 });
+    this.records.set(scopeKey(next.scope), { pending: next, state: 'open', version: this.nextVersion() });
     return next;
   }
 
@@ -265,7 +282,7 @@ export class ConsentPendingStore {
     for (const record of this.records.values()) {
       if (record.state === 'open' || record.state === 'answering') {
         record.state = 'voided';
-        record.version += 1;
+        record.version = this.nextVersion();
       }
     }
   }

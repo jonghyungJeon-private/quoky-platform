@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { answerConsentTurn, type ConsentAnswerClassifier, type ConsentClassifierSwitch, type ConsentTurnDecision } from './consent-answer';
+import { answerConsentTurn, type ConsentAnswerClassifier, type ConsentClassifierSwitch, type ConsentReplyTurn, type ConsentTurnDecision } from './consent-answer';
 import { ConsentPendingStore, summaryConsentPending, topicConsentPending, type ConsentScope } from './consent-pending';
 
 /**
@@ -16,6 +16,8 @@ import { ConsentPendingStore, summaryConsentPending, topicConsentPending, type C
 const NOW = 1_800_000_000_000;
 const DM: ConsentScope = { actorId: 'owner', conversationKey: 'owner-dm' };
 const OFF: ConsentClassifierSwitch = { mode: 'off' };
+/** The bind time is a fresh `now()` read; the gold replays use the turn's own time as the clock. */
+const answer = (store: ConsentPendingStore, t: ConsentReplyTurn, classifier: ConsentClassifierSwitch): Promise<ConsentTurnDecision> => answerConsentTurn(store, t, classifier, () => t.atMs);
 
 interface Sr1Case {
   readonly id: string;
@@ -52,11 +54,11 @@ async function runSr1(c: Sr1Case, classifier: ConsentClassifierSwitch): Promise<
   const store = new ConsentPendingStore();
   const age = (p.ageSeconds ?? 0) * 1000;
   store.open(summaryConsentPending({ scope: DM, language: 'ko', createdAtMs: NOW - age, recipient: 'Claude', itemIds: p.itemIds ?? ['item'], sources: [p.source ?? 'mail'] }));
-  if (p.state === 'superseded') await answerConsentTurn(store, { scope: DM, ownerDm: true, text: '다른 얘기', atMs: NOW - 1_000 }, OFF);
-  if (p.state === 'consumed') await answerConsentTurn(store, { scope: DM, ownerDm: true, text: '응', atMs: NOW - 1_000 }, OFF);
+  if (p.state === 'superseded') await answer(store, { scope: DM, ownerDm: true, text: '다른 얘기', atMs: NOW - 1_000 }, OFF);
+  if (p.state === 'consumed') await answer(store, { scope: DM, ownerDm: true, text: '응', atMs: NOW - 1_000 }, OFF);
   if (p.state === 'voided') store.voidAll();
   const other = p.state === 'other-conversation';
-  return answerConsentTurn(store, { scope: other ? { ...DM, conversationKey: 'elsewhere' } : DM, ownerDm: (c.channel ?? 'owner-dm') === 'owner-dm', text: c.text, atMs: NOW }, classifier);
+  return answer(store, { scope: other ? { ...DM, conversationKey: 'elsewhere' } : DM, ownerDm: (c.channel ?? 'owner-dm') === 'owner-dm', text: c.text, atMs: NOW }, classifier);
 }
 
 describe('A6-S1 over SR-1 (the summary consent)', () => {
@@ -123,10 +125,10 @@ async function runA2(c: A2Case, classifier: ConsentClassifierSwitch): Promise<Co
   for (const between of c.turnsBetween ?? []) {
     // The kill-switch command voids every pending consent; any other owner turn supersedes it by being the next turn.
     if (between.text === '에이전트 중지') store.voidAll();
-    else await answerConsentTurn(store, { scope: DM, ownerDm: true, text: between.text, atMs: NOW - 1_000 }, OFF);
+    else await answer(store, { scope: DM, ownerDm: true, text: between.text, atMs: NOW - 1_000 }, OFF);
   }
   const scope = c.replyPlatform !== undefined ? { ...DM, conversationKey: `${c.replyPlatform}-dm` } : DM;
-  return answerConsentTurn(store, { scope, ownerDm: c.conversation === undefined, text: c.ownerReply!, atMs: NOW }, classifier);
+  return answer(store, { scope, ownerDm: c.conversation === undefined, text: c.ownerReply!, atMs: NOW }, classifier);
 }
 
 describe('A6-S1 over the A2 red-team corpus (the topic consent)', () => {
@@ -156,7 +158,7 @@ describe('A6-S1 over the A2 red-team corpus (the topic consent)', () => {
     const store = new ConsentPendingStore();
     store.open(topicConsentPending({ scope: DM, language: 'ko', createdAtMs: NOW - 10_000, recipient: 'Claude', topic: c.fixture!.pendingConsent!.topic }));
     const results: ConsentTurnDecision[] = [];
-    for (const t of c.turns ?? []) results.push(await answerConsentTurn(store, { scope: DM, ownerDm: true, text: t.text, atMs: NOW }, OFF));
+    for (const t of c.turns ?? []) results.push(await answer(store, { scope: DM, ownerDm: true, text: t.text, atMs: NOW }, OFF));
     expect(results.map((d) => d.kind)).toEqual(['bound', 'not-an-answer']);
   });
 

@@ -101,6 +101,7 @@ export type ConsentTurnDecision =
 
 /** Every line or paragraph separator a reply may carry (the caps count lines over all of them). */
 const LINE_BREAKS = /[\n\r\u2028\u2029\u0085\v\f]+/u;
+const FIRST_LINE = /^([^\n\r\u2028\u2029\u0085\v\f]*)(\r\n|[\n\r\u2028\u2029\u0085\v\f])/u;
 const FORMAT_CHARACTER = /\p{Cf}/u;
 const CLOSED_YES: readonly string[] = ['응', '네', '예', 'yes'];
 const CLOSED_NO: readonly string[] = ['아니', '아니요', '아니오', '아뇨', '취소', 'no'];
@@ -146,11 +147,14 @@ export function consentAnswerLabel(raw: unknown): ConsentAnswerLabel {
 
 /**
  * r-02 (2026-11-24): the text a `yes-and-more` reply reruns. When the reply has more than one line and its first line is a
- * closed yes token, only the remaining lines run (a rule-based cut); otherwise the whole message runs (r-01). Pure.
+ * closed yes token, only the text after that first line and its terminator runs, byte-identical (a rule-based cut); otherwise the whole message runs (r-01). Pure.
  */
 export function consentRerunText(reply: string): string {
-  const lines = nonEmptyLines(reply);
-  return lines.length > 1 && closedConsentToken(lines[0] ?? '') === 'yes' ? lines.slice(1).join('\n') : reply;
+  const first = FIRST_LINE.exec(reply);
+  if (first === null || closedConsentToken(first[1] ?? '') !== 'yes') return reply;
+  // Only the first line and its own terminator (a CRLF as a unit) are removed; the remainder is returned byte-identical.
+  const rest = reply.slice(first[0].length);
+  return rest.trim().length > 0 ? rest : reply;
 }
 
 async function classifyStrict(classify: ConsentAnswerClassifier, request: ConsentClassifierRequest): Promise<ConsentAnswerLabel> {
@@ -175,19 +179,35 @@ function bindOrLost(
 }
 
 /**
- * The A6.3 pipeline for one owner turn. `atMs` of the bind is read again after the classifier (`now`), so a late label
- * cannot bind a step past W2. The classifier is called only with the switch on, at most once per turn.
+ * The A6.3 pipeline for one owner turn. The time of every bind (and of the re-ask) is a fresh `now()` read (default: the real
+ * clock), never the message's arrival time, so a late label or a slow turn cannot bind a step at or past W2. The classifier is called only with the switch on, at most once per turn.
  */
 export async function answerConsentTurn(
   store: ConsentPendingStore,
   turn: ConsentReplyTurn,
   classifier: ConsentClassifierSwitch,
-  now: () => number = () => turn.atMs,
+  now: () => number = () => Date.now(),
 ): Promise<ConsentTurnDecision> {
   if (!turn.ownerDm) return { kind: 'not-an-answer', audit: [], next: 'ordinary' };
   const claimed = store.claim(turn.scope, turn.atMs);
   if (!claimed.ok) return { kind: 'not-an-answer', audit: claimed.reason === 'claim-lost' ? ['claim-lost'] : [], next: 'ordinary' };
   const { claim } = claimed;
+  try {
+    return await decideClaimed(store, claim, turn, classifier, now);
+  } catch (error) {
+    // Any throw after the claim (a caller clock included) releases the step instead of leaving it `answering`.
+    store.cancel(claim);
+    throw error;
+  }
+}
+
+async function decideClaimed(
+  store: ConsentPendingStore,
+  claim: ConsentClaim,
+  turn: ConsentReplyTurn,
+  classifier: ConsentClassifierSwitch,
+  now: () => number,
+): Promise<ConsentTurnDecision> {
   const shape = consentReplyShape(turn);
   if (shape.kind === 'over-caps') {
     store.cancel(claim);
@@ -199,7 +219,7 @@ export async function answerConsentTurn(
     return { kind: 'cancelled', audit: ['structural-fail'], next: afterCancel(shape.lines) };
   }
   const closed = closedConsentToken(turn.text);
-  if (closed === 'yes') return bindOrLost(store, claim, turn.atMs, 'closed-yes');
+  if (closed === 'yes') return bindOrLost(store, claim, now(), 'closed-yes');
   if (closed === 'no') {
     store.cancel(claim);
     return { kind: 'cancelled', audit: ['closed-no'], next: 'consumed' };
@@ -209,6 +229,7 @@ export async function answerConsentTurn(
     return { kind: 'cancelled', audit: ['classifier-off'], next: afterCancel(shape.lines) };
   }
   const label = await classifyStrict(classifier.classify, { consent: claim.pending.kind, language: claim.pending.language, reply: turn.text });
+  // Freshness is judged on a fresh clock read after the classifier, never on the arrival time of the message.
   const atMs = now();
   switch (label) {
     case 'yes':
@@ -223,8 +244,9 @@ export async function answerConsentTurn(
       return { kind: 'cancelled', audit: ['classifier-other'], next: afterCancel(shape.lines) };
     case 'unclear': {
       if (claim.pending.reasked) {
+        const lost = !store.holds(claim);
         store.cancel(claim);
-        return { kind: 'cancelled', audit: ['classifier-unclear'], next: 'consumed' };
+        return { kind: 'cancelled', audit: lost ? ['classifier-unclear', 'claim-lost'] : ['classifier-unclear'], next: 'consumed' };
       }
       const pending = store.reask(claim, atMs);
       if (pending === undefined) return { kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' };
