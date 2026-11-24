@@ -10,6 +10,7 @@ import { ACTION_SWITCH_METADATA_KEY } from '../nl-routing/action-switch';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_ACTIVE_LOG_EVENT, AgentRunService, type AgentActiveOutcome, type AgentActiveTurn, type AgentMode } from './agent-run-service';
+import type { AgentCrossWriteContext } from './cross-write';
 import type { AgentReadPort, AgentReadPorts, AgentReadRequest, AgentReadResponse } from './plan-executor';
 import type { AgentRunBoundValues } from './run-bounds';
 import type { AgentWorkSummarySource } from './flow-policy';
@@ -56,6 +57,8 @@ interface Options {
   readonly workSummarySources?: readonly AgentWorkSummarySource[];
   /** The M2 provider's locality (default REMOTE). */
   readonly summarizerLocality?: AiExecutionLocality;
+  /** ADR-0121 A7-S1: the closed cross-source write context handed to the plan validator (default: absent, A7 off). */
+  readonly crossWrite?: AgentCrossWriteContext;
 }
 
 const documents = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `m${i + 1}`, position: i + 1, title: `t${i + 1}`, author: 'a', date: '2026-11-01T09:00:00.000Z', body: `${BODY_CANARY} ${i + 1}` }));
@@ -125,6 +128,7 @@ function harness(options: Options = {}): Harness {
     timeoutMs: 6_000,
     ...(options.caps !== undefined ? { caps: options.caps } : {}),
     ...(options.bounds !== undefined ? { bounds: options.bounds } : {}),
+    ...(options.crossWrite !== undefined ? { crossWrite: options.crossWrite } : {}),
     ...(mode === 'active' ? { readers, summarizer: new CapabilityRouter(new AiProviderManager([summarizer]), policy), ...(options.workSummarySources !== undefined ? { workSummarySources: options.workSummarySources } : {}), ...(options.released !== false ? { released: true } : {}) } : {}),
   });
   return state;
@@ -239,6 +243,42 @@ describe('AgentRunService.runActive — end to end with fake ports', () => {
     expect(await h.service.runActive(turn(h, '지난번 메일에 적힌 마감일로 일정 확인해줘'), async () => CHAT)).toEqual({ kind: 'declined', reason: 'handoff-off' });
     expect(h.reads).toEqual([]);
     expect(h.plannerCalls).toHaveLength(1);
+  });
+
+  describe('ADR-0121 A7-S1: a validated cross-source write plan is never runnable', () => {
+    const A7_CONTEXT: AgentCrossWriteContext = {
+      active: { jira: true, slack: true, calendar: true },
+      writers: { jira: true, slack: true, calendar: true },
+      jiraProjects: ['BE'],
+      slackChannels: ['quoky-test'],
+      sources: ['slack.search', 'jira.issues', 'jira.release'],
+    };
+    const FORM_A = JSON.stringify({
+      steps: [{ entryId: 'jira.issues', args: {} }, { summarize: [1], schema: 'payload-draft.v1' }, { propose: 'slack.post.propose', args: { channel: 'quoky-test' } }],
+      ambiguity: 'CLEAR',
+    });
+    const TEXT_A = '지라 이슈 요약해서 #quoky-test에 올려줘';
+    const FORM_B = JSON.stringify({ steps: [{ summarize: [], schema: 'payload-draft.v1' }, { propose: 'slack.post.propose', args: { channel: 'quoky-test' } }], ambiguity: 'CLEAR' });
+
+    it('is declined cross-write-off: no read, no M2 call, no card, one planner call; the log line holds no content', async () => {
+      const h = harness({ script: [FORM_A], crossWrite: A7_CONTEXT });
+      expect(await h.service.runActive(turn(h, TEXT_A), async () => CHAT)).toEqual({ kind: 'declined', reason: 'cross-write-off' });
+      expect(h.reads).toEqual([]);
+      expect(h.m2Calls).toEqual([]);
+      expect(h.plannerCalls).toHaveLength(1);
+      expect(JSON.stringify(activeLines(h))).not.toContain('quoky-test');
+    });
+
+    it('form b (a held receipt) is just as unrunnable, and an A7 plan with no context is refused before that', async () => {
+      const receipt = { ...A7_CONTEXT, receipt: { fresh: true, sourceEntryId: 'jira.issues', items: 2, hostOnly: false, handoffBuilt: false } };
+      const withReceipt = harness({ script: [FORM_B], crossWrite: receipt });
+      expect(await withReceipt.service.runActive(turn(withReceipt, '해당 내용 요약해서 #quoky-test에 올려줘'), async () => CHAT)).toEqual({ kind: 'declined', reason: 'cross-write-off' });
+      expect(withReceipt.reads).toEqual([]);
+      const off = harness({ script: [FORM_A] });
+      expect(await off.service.runActive(turn(off, TEXT_A), async () => CHAT)).toEqual({ kind: 'declined', reason: 'refused' });
+      expect(off.reads).toEqual([]);
+      expect(off.m2Calls).toEqual([]);
+    });
   });
 
   it('a failed read ends in the partial reply, never a retry', async () => {

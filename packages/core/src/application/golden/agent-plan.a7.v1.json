@@ -1,0 +1,5368 @@
+{
+ "version": 1,
+ "description": "ADR-0121 amendment A7 (S3 cross-source actions), slice A7-S1 plan-form gold: the plan-form share of the A7.9 plan gold. Every case is pending-owner-approval (A7.9: every batch is reviewed by the owner); nothing here is scored by a model, and no planner prompt names the A7 form yet. Each case holds the owner message, the deployment context by name, and the expected result of the REAL validator (`plan` + `expect`) and/or of the A7.5 step 0 router (`route`). Synthetic names only (BE, FE, #quoky-test, #dev).",
+ "contexts": {
+  "on": "A7 active for every kind, writers on, BE allowlisted, #quoky-test allowlisted, sources slack.search jira.issues jira.release",
+  "off": "no A7 context (the default): A7 off",
+  "jira-inactive": "A7 not active for the Jira kind (active for Slack and calendar)",
+  "jira-writer-off": "the Jira writer is disabled",
+  "slack-writer-off": "the Slack writer is disabled",
+  "slack-source-off": "the Slack source is switched off",
+  "two-projects": "BE and FE are both allowlisted",
+  "receipt-slack": "a fresh receipt of 3 slack.search items",
+  "receipt-jira": "a fresh receipt of 3 jira.issues items",
+  "receipt-stale": "an expired receipt",
+  "receipt-empty": "an empty receipt",
+  "receipt-hostonly": "a receipt holding a HOST_ONLY item",
+  "receipt-handoff": "a receipt built with a handoff value",
+  "receipt-mail": "a receipt of a mail source (not an A7 source)",
+  "receipt-source-off": "a receipt of a source that is switched off"
+ },
+ "fixture": {
+  "now": "2026-11-24T03:00:00.000Z",
+  "timeZone": "Asia/Seoul",
+  "direct": true,
+  "offered": "every READ catalog entry and the A6 action entries"
+ },
+ "cases": [
+  {
+   "id": "a7p-001",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-002",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 배포 논의 정리해서 BE-45 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "배포"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-45"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-45",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-003",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙에서 장애 대응 대화 요약해서 지라 BE-77에 댓글 남겨줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "장애"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-77"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-77",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-004",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 스프린트 회고 요약해서 BE-9 이슈에 코멘트 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "회고"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-9"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-9",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-005",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 온보딩 질문 정리해서 BE-2에 추가해줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "온보딩"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-2"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-2",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-006",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 점검 공지 짧게 정리해서 BE-310에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "점검"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-310"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-310",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-007",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 회의록 요약해서 BE-12에다가 댓글 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "회의록"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-12"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-12",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-008",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에도 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-009",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "en",
+   "text": "summarize the slack release thread and add a comment to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "release"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-010",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "en",
+   "text": "summarize slack standup notes and add a comment to the BE-8 ticket",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "standup"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-8"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-8",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-011",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "en",
+   "text": "summarize slack incident chatter and add it to BE-5",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "incident"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-5"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-5",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-012",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-013",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "내 지라 이슈 정리해서 #quoky-test 채널에 게시해줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-014",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "지라 결제 이슈 요약해서 슬랙 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "결제"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-015",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "지라 이슈 짧게 요약해서 #quoky-test에다가 보내줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-016",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "지라 이슈 정리해서 #quoky-test에도 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-017",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "en",
+   "text": "summarize my jira issues and post it to #quoky-test",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "#quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-018",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "en",
+   "text": "summarize the jira issues and send it to #quoky-test",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "#quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-019",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 장애 대화 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "장애"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-020",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 노트 정리해서 #quoky-test 채널에 게시해줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-021",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "one-message",
+   "lang": "en",
+   "text": "summarize the slack release thread and post it to #quoky-test",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "release"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-022",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 내일 오후 3시에 배포 점검 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "배포 점검",
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "배포 점검",
+     "when": "내일 오후 3시",
+     "missing": []
+    }
+   }
+  },
+  {
+   "id": "a7p-023",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 모레 10시 스프린트 리뷰 일정 잡아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "스프린트 리뷰",
+       "when": "모레 10시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "스프린트 리뷰",
+     "when": "모레 10시",
+     "missing": []
+    }
+   }
+  },
+  {
+   "id": "a7p-024",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 회고 대화 정리해서 금요일 오후 2시 회고 정리 일정 추가해줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "회고"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "회고 정리",
+       "when": "금요일 오후 2시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "회고 정리",
+     "when": "금요일 오후 2시",
+     "missing": []
+    }
+   }
+  },
+  {
+   "id": "a7p-025",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "en",
+   "text": "summarize the slack release thread and create an event tomorrow at 3pm called Deploy check",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "release"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "Deploy check",
+       "when": "tomorrow at 3pm"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "Deploy check",
+     "when": "tomorrow at 3pm",
+     "missing": []
+    }
+   }
+  },
+  {
+   "id": "a7p-026",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 배포 점검 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "배포 점검"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "배포 점검",
+     "missing": [
+      "when"
+     ]
+    }
+   },
+   "note": "the time is missing: the existing A6 clarification"
+  },
+  {
+   "id": "a7p-027",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 내일 오후 3시 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "when": "내일 오후 3시",
+     "missing": [
+      "title"
+     ]
+    }
+   },
+   "note": "the title is missing: clarification"
+  },
+  {
+   "id": "a7p-028",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "missing": [
+      "title",
+      "when"
+     ]
+    }
+   }
+  },
+  {
+   "id": "a7n-001",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 내일 3시에 배포 회의 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "배포 점검",
+       "when": "내일 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-span"
+   },
+   "note": "the title is not the owner words"
+  },
+  {
+   "id": "a7n-002",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 그 내용 내일 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "그 내용",
+       "when": "내일"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-span"
+   },
+   "note": "a deictic title points back"
+  },
+  {
+   "id": "a7n-003",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "배포",
+       "when": "내일"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-role"
+   },
+   "note": "a Jira destination for a calendar propose"
+  },
+  {
+   "id": "a7p-029",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-030",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 내용 요약해서 지라 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-031",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 내용 요약해서 BE-124에도 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-124"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-124",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-032",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "이 대화 요약해서 지라 BE-5 티켓에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-5"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-5",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-033",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-034",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "슬랙 대화 정리해서 BE-8에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-8"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-8",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-035",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 #quoky-test에 올려줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-036",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 내용 정리해서 슬랙 #quoky-test에 올려줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-037",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #quoky-test에 올려줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-038",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "지라 내용 정리해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-039",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize that and add a comment to BE-123",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-040",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize it and post it to #quoky-test",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7n-004",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "지라 이슈 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-new-source"
+   },
+   "note": "names a new source: form (a)"
+  },
+  {
+   "id": "a7n-005",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "expired or not the next turn"
+  },
+  {
+   "id": "a7n-006",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-empty",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "empty receipt"
+  },
+  {
+   "id": "a7n-007",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-hostonly",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "a HOST_ONLY item"
+  },
+  {
+   "id": "a7n-008",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-handoff",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "built with a handoff value"
+  },
+  {
+   "id": "a7n-009",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-mail",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "a source that is not an A7 source"
+  },
+  {
+   "id": "a7n-010",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-source-off",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "a source switched off"
+  },
+  {
+   "id": "a7n-011",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "note": "no receipt"
+  },
+  {
+   "id": "a7p-041",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 지라 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "BE"
+    }
+   },
+   "note": "a7-09: the single allowlisted project skips the project question"
+  },
+  {
+   "id": "a7p-042",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 지라 이슈에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-043",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 BE 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "project": "BE"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "BE"
+    }
+   },
+   "note": "the named project"
+  },
+  {
+   "id": "a7p-044",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 지라 티켓에 달아줘",
+   "context": "two-projects",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-project",
+     "kind": "jira",
+     "projects": [
+      "BE",
+      "FE"
+     ]
+    }
+   },
+   "note": "a7-09: two projects, ask the project first"
+  },
+  {
+   "id": "a7p-045",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 FE 티켓에 달아줘",
+   "context": "two-projects",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "project": "FE"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "FE"
+    }
+   },
+   "note": "a named project skips the project question"
+  },
+  {
+   "id": "a7p-046",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 FE에 달아줘",
+   "context": "two-projects",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "project": "FE"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "FE"
+    }
+   }
+  },
+  {
+   "id": "a7n-012",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 지라 티켓에 달아줘",
+   "context": "two-projects",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "project": "FE"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-ungrounded"
+   },
+   "note": "the planner project is not in the owner words"
+  },
+  {
+   "id": "a7p-047",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 슬랙 채널에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "pick-channel",
+     "kind": "slack",
+     "channels": [
+      "quoky-test"
+     ]
+    }
+   }
+  },
+  {
+   "id": "a7p-048",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 슬랙에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "pick-channel",
+     "kind": "slack",
+     "channels": [
+      "quoky-test"
+     ]
+    }
+   }
+  },
+  {
+   "id": "a7p-049",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "en",
+   "text": "summarize the jira issues and post it to a slack channel",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "pick-channel",
+     "kind": "slack",
+     "channels": [
+      "quoky-test"
+     ]
+    }
+   }
+  },
+  {
+   "id": "a7p-050",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "en",
+   "text": "summarize the slack thread and add a comment to a jira ticket",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "thread"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-051",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "missing",
+     "kind": "slack"
+    }
+   },
+   "note": "no destination named: ask where"
+  },
+  {
+   "id": "a7p-052",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "missing",
+     "kind": "jira"
+    }
+   }
+  },
+  {
+   "id": "a7p-053",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 지라에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7n-013",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-role"
+   },
+   "note": "the planner left out the marked destination: not the rule role"
+  },
+  {
+   "id": "a7n-014",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-ungrounded"
+   },
+   "note": "a key the owner never wrote"
+  },
+  {
+   "id": "a7n-015",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 지라 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-ungrounded"
+   },
+   "note": "a channel the owner never wrote"
+  },
+  {
+   "id": "a7p-054",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-12 댓글 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-055",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-12 요약해서 BE-123 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-056",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-12로 인한 장애 요약해서 BE-123 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   },
+   "note": "로 never marks"
+  },
+  {
+   "id": "a7p-057",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "#quoky-test 대화 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "quoky-test"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-058",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-123 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-123"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7n-016",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-12 댓글 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-12"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-role"
+   },
+   "note": "the planner swapped the roles"
+  },
+  {
+   "id": "a7p-059",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-123 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-123"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   }
+  },
+  {
+   "id": "a7p-060",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "#quoky-test 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "quoky-test"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-061",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "en",
+   "text": "summarize BE-12 and add a comment to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-062",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "en",
+   "text": "summarize the thread in #quoky-test and add a comment to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "quoky-test"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   }
+  },
+  {
+   "id": "a7p-063",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "BE-123에 BE-12 요약해서 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-readings",
+     "readings": [
+      {
+       "source": "BE-123",
+       "destination": "BE-12"
+      },
+      {
+       "source": "BE-12",
+       "destination": "BE-123"
+      }
+     ]
+    }
+   },
+   "note": "에 is not followed by the write clause: ask with the readings"
+  },
+  {
+   "id": "a7p-064",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "BE-12에서 가져와서 BE-123으로 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-readings",
+     "readings": [
+      {
+       "source": "BE-12",
+       "destination": "BE-123"
+      },
+      {
+       "source": "BE-123",
+       "destination": "BE-12"
+      }
+     ]
+    }
+   },
+   "note": "에서 and 으로 never mark"
+  },
+  {
+   "id": "a7p-065",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "BE-12 요약해서 BE-123으로 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-readings",
+     "readings": [
+      {
+       "source": "BE-12",
+       "destination": "BE-123"
+      },
+      {
+       "source": "BE-123",
+       "destination": "BE-12"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a7p-066",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "BE-12에서 요약해서 BE-123에서 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-readings",
+     "readings": [
+      {
+       "source": "BE-12",
+       "destination": "BE-123"
+      },
+      {
+       "source": "BE-123",
+       "destination": "BE-12"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "a7p-067",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "#quoky-test 요약해서 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "quoky-test"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   },
+   "note": "one unmarked literal: restate with the destination marked"
+  },
+  {
+   "id": "a7p-068",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "BE-123 요약해서 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-123"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   }
+  },
+  {
+   "id": "a7p-069",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123으로 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   },
+   "note": "으로 never marks"
+  },
+  {
+   "id": "a7p-070",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에서 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   }
+  },
+  {
+   "id": "a7p-071",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "en",
+   "text": "summarize the slack thread and add a comment on BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "thread"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   },
+   "note": "on never marks"
+  },
+  {
+   "id": "a7p-072",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "en",
+   "text": "summarize the jira issues and post the summary in #quoky-test",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   },
+   "note": "in never marks"
+  },
+  {
+   "id": "a7p-073",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   },
+   "note": "kind mismatch: a channel for a comment"
+  },
+  {
+   "id": "a7p-074",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "ask-restate"
+    }
+   },
+   "note": "kind mismatch: a key for a post"
+  },
+  {
+   "id": "a7n-017",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 ZZ-5에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "ZZ-5"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-not-allowed"
+   },
+   "note": "a project off the allowlist"
+  },
+  {
+   "id": "a7n-018",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 ZZ-5 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "ZZ-5"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-not-allowed"
+   }
+  },
+  {
+   "id": "a7n-019",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #random에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "random"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-not-allowed"
+   },
+   "note": "a channel off the allowlist"
+  },
+  {
+   "id": "a7n-020",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #private-ops에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "private-ops"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-not-allowed"
+   },
+   "note": "a private channel is never on the allowlist"
+  },
+  {
+   "id": "a7n-021",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "en",
+   "text": "summarize the jira issues and post it to #random",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "random"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-not-allowed"
+   }
+  },
+  {
+   "id": "a7n-022",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "en",
+   "text": "summarize the slack thread and add a comment to ZZ-5",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "thread"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "ZZ-5"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-not-allowed"
+   }
+  },
+  {
+   "id": "a7n-023",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 \"BE-123에\" 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-ungrounded"
+   },
+   "note": "the destination is only in quoted text"
+  },
+  {
+   "id": "a7n-024",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 \"#quoky-test에\" 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-ungrounded"
+   },
+   "note": "quoted channel"
+  },
+  {
+   "id": "a7n-025",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "note": "two destinations in one request"
+  },
+  {
+   "id": "a7n-026",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #quoky-test에 올려줘 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   }
+  },
+  {
+   "id": "a7n-027",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "en",
+   "text": "summarize the slack thread and add a comment to BE-123 and post it to #quoky-test",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "thread"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "note": "two destinations in one request"
+  },
+  {
+   "id": "a7n-028",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "jira-writer-off",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writer"
+   },
+   "note": "the writer is disabled"
+  },
+  {
+   "id": "a7n-029",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #quoky-test에 올려줘",
+   "context": "slack-writer-off",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writer"
+   }
+  },
+  {
+   "id": "a7n-030",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "jira-inactive",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-off"
+   },
+   "note": "A7 is not active for the Jira kind"
+  },
+  {
+   "id": "a7n-031",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "off",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-off"
+   },
+   "note": "A7 off: any A7 plan is refused"
+  },
+  {
+   "id": "a7n-032",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "메일 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "mail.list",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-source"
+   },
+   "note": "mail is not an A7 source in the first slices"
+  },
+  {
+   "id": "a7n-033",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "slack-source-off",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-source"
+   }
+  },
+  {
+   "id": "a7n-034",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123 상태를 완료로 바꿔줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.transition.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-target"
+   },
+   "note": "an operation outside the closed three"
+  },
+  {
+   "id": "a7n-035",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 메일로 보내줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "mail.send.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-target"
+   },
+   "note": "mail send is never covered"
+  },
+  {
+   "id": "a7n-036",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 컨플루언스에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "confluence.page.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-target"
+   },
+   "note": "an unsupported destination kind"
+  },
+  {
+   "id": "a7n-037",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123",
+       "text": "확인했습니다"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "the planner may not write a payload"
+  },
+  {
+   "id": "a7n-038",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123",
+       "body": "확인했습니다"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   }
+  },
+  {
+   "id": "a7n-039",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test",
+       "text": "배포 완료"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   }
+  },
+  {
+   "id": "a7n-040",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "digest.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "the draft step must be payload-draft.v1"
+  },
+  {
+   "id": "a7n-041",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "one source entry per request"
+  },
+  {
+   "id": "a7n-042",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "NEEDS_CLARIFICATION"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   }
+  },
+  {
+   "id": "a7n-043",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 배포 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "step-invalid"
+   },
+   "note": "the source keyword is not in the owner words (ADR-0120 D4)"
+  },
+  {
+   "id": "a7n-044",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "Jira BE-123에 댓글: 슬랙 대화 요약본 첨부함",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-045",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "BE-123에 댓글: 배포 완료",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-046",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "Jira BE-45 이슈에 댓글 달아줘: 확인했습니다",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-047",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "Slack #quoky-test에 게시: 배포 완료",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-048",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "슬랙 #quoky-test 채널에 게시: #dev 대화 요약해서 공유",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-049",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "#quoky-test에 올려줘: 점심 공유",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-050",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "en",
+   "text": "add a comment to BE-123: deployed",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-051",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "en",
+   "text": "post to #quoky-test: release done",
+   "context": "on",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-052",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "Jira BE-123에 댓글: 슬랙 대화 요약본 첨부함",
+   "context": "off",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-053",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "verbatim-payload",
+   "lang": "ko",
+   "text": "Slack #quoky-test에 게시: 배포 완료",
+   "context": "off",
+   "route": {
+    "route": "grammar"
+   }
+  },
+  {
+   "id": "a7n-054",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "#quoky-test에 회의 정리 끝났다고 올려줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-055",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "#quoky-test에 회의 정리 끝났다고 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-056",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "BE-123에 짧게 배포 완료 달아줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-057",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "BE-123에 짧게 배포 완료 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-058",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "#quoky-test에 점심 요약 공유했다고 올려줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-059",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "#quoky-test에 점심 요약 공유했다고 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-060",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "BE-123에 정리 끝남이라고 달아줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-061",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "BE-123에 정리 끝남이라고 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-062",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "#quoky-test에 회의 요약본 올렸다고 올려줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-063",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "literal-post-a6",
+   "lang": "ko",
+   "text": "#quoky-test에 회의 요약본 올렸다고 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-064",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "#dev 대화 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-065",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "#dev 대화 요약해서 #quoky-test에 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-066",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 대화 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-067",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 대화 요약해서 BE-123에 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-068",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "BE-12 댓글 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-069",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "BE-12 댓글 요약해서 BE-123에 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-070",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "그 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-071",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "그 내용 요약해서 BE-123에 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-072",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "해당 내용 정리해서 #quoky-test에 올려줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-073",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "해당 내용 정리해서 #quoky-test에 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-074",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #quoky-test에 올려줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-075",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "지라 이슈 요약해서 #quoky-test에 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-076",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 정리해서 BE-45 티켓에 달아줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-077",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 정리해서 BE-45 티켓에 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-078",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "#quoky-test 요약해서 올려줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-079",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "#quoky-test 요약해서 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 off: routing is as today"
+  },
+  {
+   "id": "a7n-080",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "en",
+   "text": "summarize #dev and post it to #quoky-test",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-081",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "en",
+   "text": "summarize the slack thread and add a comment to BE-123",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-082",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 대화 요약해서 BE-123에 달아줘",
+   "context": "jira-inactive",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "A7 is not active for the destination kind"
+  },
+  {
+   "id": "a7n-083",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 대화 요약해서 #quoky-test에 올려줘",
+   "context": "jira-inactive",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   }
+  },
+  {
+   "id": "a7n-084",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "응 그리고 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "a7",
+    "trigger": "receipt-followup"
+   }
+  },
+  {
+   "id": "a7n-085",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "응 그리고 BE-123에 달아줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "no fresh receipt: A6 as today"
+  },
+  {
+   "id": "a7n-086",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "응 그리고 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "an expired receipt"
+  },
+  {
+   "id": "a7n-087",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "응 그리고 BE-123에 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-088",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-124에도 달아줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "a7",
+    "trigger": "receipt-followup"
+   }
+  },
+  {
+   "id": "a7n-089",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-124에도 달아줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "no fresh receipt: A6 as today"
+  },
+  {
+   "id": "a7n-090",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-124에도 달아줘",
+   "context": "receipt-stale",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "an expired receipt"
+  },
+  {
+   "id": "a7n-091",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-124에도 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-092",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-123 티켓에도 달아줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "a7",
+    "trigger": "receipt-followup"
+   }
+  },
+  {
+   "id": "a7n-093",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-123 티켓에도 달아줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "no fresh receipt: A6 as today"
+  },
+  {
+   "id": "a7n-094",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-123 티켓에도 달아줘",
+   "context": "receipt-stale",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "an expired receipt"
+  },
+  {
+   "id": "a7n-095",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-123 티켓에도 달아줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-096",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "#quoky-test에도 올려줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "a7",
+    "trigger": "receipt-followup"
+   }
+  },
+  {
+   "id": "a7n-097",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "#quoky-test에도 올려줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "no fresh receipt: A6 as today"
+  },
+  {
+   "id": "a7n-098",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "#quoky-test에도 올려줘",
+   "context": "receipt-stale",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "an expired receipt"
+  },
+  {
+   "id": "a7n-099",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "#quoky-test에도 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-100",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "그리고 #quoky-test에 올려줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "a7",
+    "trigger": "receipt-followup"
+   }
+  },
+  {
+   "id": "a7n-101",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "그리고 #quoky-test에 올려줘",
+   "context": "on",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "no fresh receipt: A6 as today"
+  },
+  {
+   "id": "a7n-102",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "그리고 #quoky-test에 올려줘",
+   "context": "receipt-stale",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "an expired receipt"
+  },
+  {
+   "id": "a7n-103",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "그리고 #quoky-test에 올려줘",
+   "context": "off",
+   "route": {
+    "route": "ordinary"
+   }
+  },
+  {
+   "id": "a7n-104",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-123에 확인했습니다 달아줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "the owner typed their own text: the A6 / ADR-0112 path"
+  },
+  {
+   "id": "a7n-105",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "BE-123에 배포 끝났다고 달아줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "the owner typed their own text: the A6 / ADR-0112 path"
+  },
+  {
+   "id": "a7n-106",
+   "batch": "A7-1",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "#quoky-test에 점심 갔다 온다고 올려줘",
+   "context": "receipt-slack",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "the owner typed their own text: the A6 / ADR-0112 path"
+  }
+ ]
+}

@@ -10,6 +10,7 @@ import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry,
 import { nlSameEgress } from '../nl-routing/selection-egress';
 import { nlSelectionMeaning } from '../nl-routing/selection-meaning';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
+import type { AgentCrossWriteContext } from './cross-write';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf, type AgentWorkSummarySource } from './flow-policy';
 import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
@@ -187,9 +188,14 @@ export interface AgentRunServiceDeps {
    * (`agent-config.ts`), so a config change alone can never build an `active` service (review round 1 item 5).
    */
   readonly released?: boolean;
+  /**
+   * ADR-0121 A7 (A7-S1): the closed deployment context of the cross-source write plan, passed to the plan validator only. Absent
+   * (the default): A7 is off and an A7 plan is refused. Even when set, a validated A7 plan is not runnable (A7-S4 builds the card).
+   */
+  readonly crossWrite?: AgentCrossWriteContext;
 }
 
-type ShadowOutcome = 'planned' | 'handoff' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
+type ShadowOutcome = 'planned' | 'handoff' | 'cross-write' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
 
 class ShadowTimeout extends Error {
   constructor() {
@@ -460,6 +466,7 @@ export class AgentRunService {
       now: turn.now,
       timeZone: this.deps.timeZone,
       direct: turn.direct,
+      ...(this.deps.crossWrite !== undefined ? { crossWrite: this.deps.crossWrite } : {}),
     });
     if (!validation.ok) return declined('refused', { validator: validation.reason, ...callFields });
     const validated = validation.plan;
@@ -467,6 +474,8 @@ export class AgentRunService {
     if (validated.kind === 'ask' || validated.kind === 'clarify') return declined(validated.kind, callFields);
     // ADR-0121 A4 (A4-S1): a validated handoff is not runnable until A4-S2 and its flag `QUOKY_AGENT_HANDOFF` (off): fail closed.
     if (validated.kind === 'handoff') return declined('handoff-off', callFields);
+    // ADR-0121 A7 (A7-S1): a validated cross-source write plan is not runnable (no read, draft, card or send is built): fail closed.
+    if (validated.kind === 'cross-write') return declined('cross-write-off', callFields);
     // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the
     // read + write composition is stage P5, so the run never drops it silently.
     if (agentReadWriteProbeClauses(validated, prepared.groundingText).length > 0) return declined('write-clause', callFields);
@@ -656,6 +665,7 @@ export class AgentRunService {
       now: turn.now,
       timeZone: this.deps.timeZone,
       direct: turn.direct,
+      ...(this.deps.crossWrite !== undefined ? { crossWrite: this.deps.crossWrite } : {}),
     };
     const validation = validateAgentPlan(plan, ctx);
     // With a help split the live path answered the whole message: the rest plan has no one-step equivalent to agree with.
@@ -745,6 +755,10 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
     const suggestion = validation.plan.suggestion.map((step) => (step.kind === 'summarize' ? `summarize:${step.schema}` : step.entry.id)).join(',');
     return { outcome: 'ask', ...fields, bound: validation.plan.bound, suggestion };
   }
+  if (validation.plan.kind === 'cross-write') {
+    const cross = validation.plan;
+    return { outcome: 'cross-write', ...fields, connectorCalls: cross.connectorCalls, crossForm: cross.form, crossTarget: cross.target, crossDestination: cross.destination.state };
+  }
   if (validation.plan.kind === 'handoff') {
     const { handoff } = validation.plan;
     return { outcome: 'handoff', ...fields, connectorCalls: validation.plan.connectorCalls, handoffKind: handoff.kind, handoffScope: handoff.scope, handoffSlot: `${handoff.to.entry.id}.${handoff.to.slot}` };
@@ -768,7 +782,7 @@ function planFields(plan: AgentPlan, validation: AgentPlanValidation): LogFields
  */
 function splitFields(split: AgentHelpSplit | undefined, validation: AgentPlanValidation): LogFields {
   if (split !== undefined) return { split: 'help', helpTopic: split.topic };
-  const brief = validation.ok && validation.plan.kind !== 'none' && validation.plan.kind !== 'ask' && validation.plan.steps.length > 1 && validation.plan.steps.some((step) => step.kind === 'read' && step.entry.id === 'brief.today');
+  const brief = validation.ok && validation.plan.kind !== 'none' && validation.plan.kind !== 'ask' && validation.plan.kind !== 'cross-write' && validation.plan.steps.length > 1 && validation.plan.steps.some((step) => step.kind === 'read' && step.entry.id === 'brief.today');
   return { split: brief ? 'brief' : 'none' };
 }
 

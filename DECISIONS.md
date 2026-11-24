@@ -38538,3 +38538,91 @@ evaluation was run.
 4. **Gold `rt-s2r-244` / `rt-s2r-250` kept byte-identical** (orchestrator decision; the gold is not edited). On these two rows
    `knownGap.closedBy` and the note text are historical metadata and are never asserted. Removing the `repo` alias (round 1,
    item 2) reopened them, and they stay open until a catalog-change slice adds a non-hazardous alias for "repo".
+## ADR-0121 A7-S1 implementation note (2026-11-24)
+
+Status: implemented (branch `claude/v5-a7-s1-plan-form`). Slice A7-S1 "plan-form" of ADR-0121 amendment A7 (A7.10 row),
+ratified 2026-11-24. Append-only: no amendment text, ratification record or clause is changed. It is dormant like A4-S1: a
+validated A7 plan is not runnable, the A7 context is absent by default (so A7 is off), the agent mode is unchanged, and no
+planner prompt, catalog entry, grant producer, consent pending type or flag was touched. No model was called and no
+evaluation was run.
+
+- **Built.**
+  - *Plan schema* (`plan-schema.ts`). The steps form accepts a trailing `{"propose": "<x>.propose", "args"?}` element and a
+    `summarize` step with the schema `payload-draft.v1` and an empty source list (form b). The parser takes the propose step
+    out of `steps` and keeps it beside them (`AgentPlan.propose`), so every consumer of `steps` is exactly as before. A propose
+    step that is not last, a second one, an extra key or a malformed target is a parse failure; an empty summary source list is
+    valid for `payload-draft.v1` only.
+  - *Rule 9 of the validator* (`cross-write-validator.ts`, called from `plan-validator.ts` before any read-plan rule). A plan with
+    a propose step, or with the `payload-draft.v1` summary, is judged by rule 9 alone and never becomes a `run`. The shape is
+    form a `[read, summarize(payload-draft.v1 over 1)]` plus propose, or form b `[summarize]` plus propose. The target is one of
+    `jira.comment.propose`, `slack.post.propose`, `calendar.create.propose`; the propose args are a closed name set per target
+    (`issueKey`/`project`, `channel`, `title`/`when`), so there is no payload argument. The source read is an A7 source that is
+    switched on and passes ADR-0120 D4 and the request vetoes exactly as any read step. Form b needs a fresh, content-free
+    receipt of 1 to 10 items of an A7 source that is on, none HOST_ONLY, none built from a handoff value. New closed refusals:
+    `cross-write-off`, `-invalid`, `-target`, `-writer`, `-source`, `-ungrounded`, `-not-allowed`, `-role`, `-writes`,
+    `-receipt`, `-new-source`, `-span`. The validated plan is the new kind `cross-write` (form, target, operation, source read,
+    static connector charge, destination state, calendar spans).
+  - *Destination grounding and the A7.4a role rule* (`cross-write.ts`). The destination is never the planner's word: it is the
+    literal the rule marks in the owner's non-quoted words, and the planner's role must equal it or the plan is refused
+    (`cross-write-role`; never corrected). A literal is marked only by the closed locative particle (에, 에다, 에다가, optionally
+    followed by 도 or 는) on the literal or on a later word reached through closed-class words and the destination's own catalog
+    noun, with only the write request unit after it; English `to` or `into` with a write verb before it and only closed-class
+    words after the literal. `에서`, `로`, `으로` and English `on`/`in` never mark. The kind check is part of marking. No marked
+    literal: two eligible literals ask with at most 2 readings, one literal asks to restate, a kind named with no instance is a
+    pick, nothing named is `missing`. More than one write unit in the message is refused (`cross-write-writes`).
+  - *a7-09 (kind-only destination).* The validated destination states are `pick-ticket` (a named allowlisted project, or the
+    single allowlisted project, skips the project question), `pick-project` (two or more projects allowlisted and none named),
+    `pick-channel` (Slack: the allowlisted channels), and `missing`. The plan form therefore carries the two-step Jira pick; the
+    receipt-spanning-both-listing-turns wording change of A7.4b is built with the pick itself in A7-S4 (the receipt is A7-S2's).
+  - *a7-08 (names on the card).* The plan form needs no name or pseudonym field: the A5.2 fields, the pseudonym map and the remap
+    are Core-local at draft and card time (A7-S3, A7-S4). The design recorded in the ratification record (Q6, by precedent) is
+    unchanged and nothing in this slice contradicts it.
+  - *Destination-span exclusion.* `crossWriteTextOutsideSpan` removes the destination literal and the closed-class and catalog
+    words that touch it; form b's source-name check runs on the rest, so "해당 내용 요약해서 지라 BE-123에 달아줘" names no source.
+    A named entry that shares a source name with the held entry (jira.issues and jira.release are both Jira) is not new.
+  - *Routing precedence of A7.5 step 0* (`routeCrossWrite`, pure): (1) the ADR-0112 grammar with the owner's own payload first
+    (`nlIsExactConnectorWrite`, a new pure helper over the existing grammar); (2) only while A7 is active for the destination's kind,
+    R2a (a source name outside the destination span, a second literal, or a summary word acting on an object that is a source name,
+    a literal or the point-back form) and R2b (a fresh receipt, a marked destination, only closed-class words besides the write
+    unit); (3) everything else `ordinary` (A6 and W1 as today). With A7 off the answer is only `grammar` or `ordinary`.
+  - *Pre-read destination check.* `checkCrossWriteDestination` over a two-method port (`jiraIssueExists`,
+    `slackChannelIsPublic`), fail closed (`not-found`, `not-public`, `unreachable`). The port is an interface in the agent
+    module; the composition root wires it in A7-S4 (the import scan that no writer is reachable from the agent module still holds).
+  - *Not runnable.* `runActive` declines a validated A7 plan `cross-write-off` before any read or model call; the shadow job logs
+    it as outcome `cross-write` with closed fields only (form, target, destination state, charge). `AgentRunServiceDeps` gains the
+    optional closed data field `crossWrite` (the pin in `agent-contract-check.ts` is updated); absent, every A7 plan is
+    refused `cross-write-off`. The plan eval scores a validated A7 plan `wrong` (`cross-write-unscored`), like the handoff.
+- **Gold.** `golden/agent-plan.a7.v1.json`: 180 cases (74 cross-write results, 106 refusals and routes), all
+  `pending-owner-approval`, KO 158 of 180, synthetic names only, never scored by a model. Each case pins the REAL validator
+  and the REAL router (`cross-write-plan-gold.test.ts`). Share of the A7.9 minimums built here: one-message 21, calendar 10,
+  follow-up 12, destination pick 17, two literals plus roles 22, unsuitable 27, inapplicable 8, verbatim payload 10, literal
+  posts staying A6 10 (each with A7 active and off), routing precedence 20, receipt-bound follow-ups 23. Out of this slice (later
+  slices' machinery): pick with a frozen receipt, a listing whose content pushes a pick, consent replies and open or closed cards,
+  re-draft, unrelated next turn. The 275 total is therefore NOT met; the rest comes with A7-S2, S4, S5 and S9. The existing
+  `agent-plan.v1.json`, `agent-plan.ap8.v1.json` and the handoff red-team corpus are byte-identical (sha256 pinned by a test).
+- **Prompt and gates.** The planner prompt is unchanged (`agent-plan.v11`; a test pins that it names neither a propose step nor
+  `payload-draft.v1`), so no model emits the A7 form and no D12 gate item arises from this slice. The prompt rule that makes the
+  planner emit it is a later slice and will need the `agent-plan` mode (plan, then run) and the `s3-cross-write` red-team arms,
+  each behind the owner's notice and yes (a7-13, B2). No call count was measured; none is needed now.
+- **Residuals (recorded, not hidden).**
+  1. `routeCrossWrite` is the pure contract of step 0; it is not wired into the live turn router (A7 is off, nothing to route).
+     Wiring comes with the card slice (A7-S4) and must keep `routing-changed-when-off` at 0.
+  2. "해당 내용" is named by A7.5 step 0 as a W1 point-back form, but `해당` is not in the A6 determiner set (이, 그, 저). The A6 set
+     is not widened (W1 stays byte-identical); the A7 router adds `해당` locally. Owner: confirm or widen both.
+  3. "A read source name" in R2a and in the form-b source check means the catalog's SOURCE names (슬랙, slack, 지라, jira), not an
+     entry's topic aliases. A7.4 says "names and aliases", but the A7.9 example "BE-123에 짧게 배포 완료 달아줘" must stay an A6
+     literal post, and 배포 is an alias of `jira.release`. Aliases of the destination's own entry (이슈, 티켓) are catalog nouns of
+     the destination span instead.
+  4. The closed classes are small constants in `cross-write.ts`: the English determiner and pronoun class, the conjunction words
+     and the A6 yes token that may open a follow-up (그리고, and, 응, also), 좀 and 다. The destination nouns and write verbs are
+     the ADR-0112 grammar's own and a test pins each to that grammar. English write verbs are add, post and send (comment is
+     a noun too).
+  5. Calendar: the plan form and its spans are validated, but R2a and R2b route only Jira and Slack destinations; calendar has
+     no write-clause detector yet (A7-S7). The calendar time is a verbatim, bounded span of the owner's words; Core's symbolic time
+     resolves it at the card (A7-S7).
+  6. The marking rule fails closed by design: "BE-123에 BE-12 요약해서 달아줘" and "BE-12에서 가져와서 BE-123으로 달아줘" ask with
+     readings; a literal off the allowlist that would be marked is refused, one that is not marked is treated as absent.
+  7. The English forms are covered by the same structure but by few cases; the red-team batch CW-1 (A7-S5) must add more.
+- **Not done here.** The held receipt (A7-S2), the drafter, the defanger and the remap (A7-S3), the proposal port, card,
+  pick and one-open-card rule (A7-S4), the CW-1 corpus and plan eval (A7-S5), the Slack and calendar destinations' own gold and
+  red-team share (A7-S6, A7-S7), the planner prompt rule, and any flag.

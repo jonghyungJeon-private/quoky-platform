@@ -47,3 +47,17 @@ export function nlWriteClausePointsBack(clause: string, spans: readonly string[]
     })
   );
 }
+
+/**
+ * ADR-0121 A7 (A7-S1), pipeline step 0 item 1: whether the message is an ADR-0112 connector-write command that carries the
+ * owner's own payload (`Jira KEY에 댓글: <text>`, `Slack #<channel>에 게시: <text>`): the existing exact grammar decides, and the
+ * write-shaped request without a payload (a usage hint) is NOT one (it never carries a payload). Pure; never throws.
+ */
+export function nlIsExactConnectorWrite(text: string): boolean {
+  try {
+    const command = detectWorkChatCommand(text);
+    return command !== null && command.kind === 'connector-write' && command.draft.kind !== 'usage';
+  } catch {
+    return false;
+  }
+}

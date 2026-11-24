@@ -46,6 +46,17 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Live on deploy.** The catalog alias change (`pull request`, `repository`, `meeting`) is NOT behind any switch. Its one intended
   behaviour change: a multi-clause English "meetings" request gets `timedOnly`, matching Korean 회의.
 - **Rule ① guard.** Core derives LOCAL only for the five work sources (no REMOTE) until the confirm slice; mail and Drive unchanged.
+## Unreleased — ADR-0121 A7-S1 plan-form (2026-11-24; dormant, A7 off, not runnable)
+
+- **Added.** The `propose` step (`jira.comment.propose`, `slack.post.propose`, `calendar.create.propose`) and the
+  `payload-draft.v1` summary in the plan schema; rule 9 of the plan validator (destination grounding in the owner's own words,
+  the A7.4a role rule, the destination-span exclusion, kind-only destination states, form b over a held receipt); the A7.5 step 0
+  routing precedence as a pure function; the pre-read destination check over an injected port; 180 plan-form gold cases
+  (`agent-plan.a7.v1.json`, pending owner approval).
+- **Unchanged.** A validated A7 plan is declined before any read (like the A4-S1 handoff); the A7 context is absent by default;
+  the planner prompt (`agent-plan.v11`), the catalog, the grant producer and every flag are untouched; the existing plan golds are
+  byte-identical (pinned).
+- See DECISIONS "ADR-0121 A7-S1 implementation note (2026-11-24)".
 
 ## Unreleased — ADR-0121 A7 ratified, and the A6/A4 follow-up answers (owner decisions 2026-11-24; docs, gold, tests only)
 

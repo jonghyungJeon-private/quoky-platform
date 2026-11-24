@@ -48,6 +48,17 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   (next): the question text, `pending.sources` and the bound-yes re-run (A6-S1, rule-① confirm slice), A5-S4 WS-1, A5-S5
   gates (D12 modes needed: catalog data changed). See DECISIONS "ADR-0121 A5-S3 implementation note (2026-11-24)".
 
+### ADR-0121 A7-S1 plan-form implemented, dormant (2026-11-24, branch `claude/v5-a7-s1-plan-form`)
+
+- Core: the plan schema takes the `propose` step and `payload-draft.v1`; the validator's rule 9 grounds the destination in the
+  owner's own words (A7.4a role rule, destination-span exclusion, allowlist, kind-only pick states, calendar spans) and returns a
+  `cross-write` plan that is never runnable (declined `cross-write-off`; shadow logs closed fields). The A7.5 step 0 router and
+  the pre-read destination check exist as pure code and a port; neither is wired into the live turn.
+- Gold: `agent-plan.a7.v1.json`, 180 cases pending owner approval (plan-form share only; the 275 total is NOT met). The planner
+  prompt (`agent-plan.v11`), the catalog, the grant producer, the flags and the existing golds are unchanged.
+- Not done (next): A7-S2 held receipt, A7-S3 drafter, A7-S4 card and pick, A7-S5 gates. See DECISIONS "ADR-0121 A7-S1
+  implementation note (2026-11-24)".
+
 ### ADR-0121 A5-S2 summary-schema implemented, dormant (2026-11-24, branch `claude/v5-a5-s2-summary-schema`)
 
 - Core: the digest schemas are pinned per source (one line of at most 280 characters, URL-free, credential guard, calendar

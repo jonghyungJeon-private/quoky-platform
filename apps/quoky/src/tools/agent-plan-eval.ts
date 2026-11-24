@@ -736,6 +736,9 @@ function scoreRestPlan(golden: AgentPlanEvalCase, raw: string, fixture: AgentPla
   // ADR-0121 A4 (A4-S1): no scored gold targets the handoff form yet (its prompt rule is A4-S4, behind the D12 gates), so a
   // handoff plan is never an expected answer: it scores wrong (it would run nothing today).
   if (validation.plan.kind === 'handoff') return { outcome: 'wrong', gotEntries, reason: 'handoff-unscored' };
+  // ADR-0121 A7 (A7-S1): likewise no scored gold targets a cross-source write plan (its gold is `agent-plan.a7.v1.json`, never scored by
+  // this eval), and a validated one runs nothing: it scores wrong.
+  if (validation.plan.kind === 'cross-write') return { outcome: 'wrong', gotEntries, reason: 'cross-write-unscored' };
   if (validation.plan.kind === 'ask') {
     const gold = golden.gold;
     const same = isAgentPlanAskExpect(gold) && gold.bound === validation.plan.bound && graphDiff(validatedGraph(validation.plan.suggestion), goldGraph(gold.suggestion)) === undefined;

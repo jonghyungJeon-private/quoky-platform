@@ -50,10 +50,11 @@ export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQu
 /**
  * The service: the router, the actor repository (kill switch), the logger and configuration values; for `active` only (the S2
  * wiring slice), the narrow read ports and M2's route selector (the existing `ProviderSelector`), the explicit P5 `released`
- * flag (a boolean, false by default) and a test-only bounds override that can only lower a bound.
+ * flag (a boolean, false by default) and a test-only bounds override that can only lower a bound. ADR-0121 A7-S1 adds the
+ * closed data context `crossWrite` (allowlists and switches by value, no port, no model list); it reaches the plan validator only.
  */
 export type AgentServiceDepsPinned = Assert<
-  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released'>
+  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite'>
 >;
 export type AgentServiceReleasedPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['released']>, boolean>>;
 export type AgentServiceReadersPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['readers']>, AgentPlanExecutorDeps['readers']>>;
