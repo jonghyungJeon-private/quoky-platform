@@ -194,6 +194,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_LAUNCHER and QUOKY_LAUNCHER_RECENT_STARTS are written by ops/launchd/quoky-launch.sh only; remove them from .env.local and the shell.',
   // ADR-0114 D13 (TG-1). Names and shapes only, never a value.
   [QuokyConfigErrorCode.TELEGRAM_ENABLED_INVALID]: 'QUOKY_TELEGRAM_ENABLED must be unset, "true", or "false".',
+  // ADR-0125 (LC-1b).
+  [QuokyConfigErrorCode.LOCAL_CLIENT_ENABLED_INVALID]: 'QUOKY_LOCAL_CLIENT_ENABLED must be unset, "true", or "false".',
   [QuokyConfigErrorCode.TELEGRAM_BOT_TOKEN_MISSING]:
     'QUOKY_TELEGRAM_ENABLED=true requires QUOKY_TELEGRAM_BOT_TOKEN (the BotFather token, in .env.local at mode 600).',
   [QuokyConfigErrorCode.TELEGRAM_BOT_TOKEN_INVALID]:

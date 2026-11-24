@@ -628,6 +628,54 @@ describe.skipIf(process.platform !== 'darwin')('quokyctl.sh telegram (TG-3, ADR-
   });
 });
 
+describe.skipIf(process.platform !== 'darwin')('quokyctl.sh local-client rotate-token (ADR-0125 D3)', () => {
+  const SECRET = ['lc', 'secret', 'value', '0123456789'].join('-');
+
+  it('needs the rotate-token subcommand and refuses anything else', () => {
+    const box = sandbox();
+    expect(runCtl(box, ['local-client']).status).not.toBe(0);
+    expect(runCtl(box, ['local-client', 'other']).status).not.toBe(0);
+  });
+
+  it('refuses without a socket or token file, and never reaches launchctl', () => {
+    const box = sandbox();
+    const result = runCtl(box, ['local-client', 'rotate-token']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('no socket');
+    expect(existsSync(box.launchctlLog) ? readFileSync(box.launchctlLog, 'utf8').trim() : '').toBe('');
+  });
+
+  it('dry-run (the default) changes nothing; --apply posts the rotate request with the bearer token on stdin, never printing it', async () => {
+    const box = sandbox();
+    mkdirSync(box.dataDir, { recursive: true });
+    writeFileSync(path.join(box.dataDir, 'local-client.token'), `${SECRET}\n`, { mode: 0o600 });
+    const seen = path.join(box.dataDir, 'seen.txt');
+    // The server binds a RELATIVE socket path from inside the data directory (the absolute one would pass 103 bytes).
+    const server = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const http=require('http'),fs=require('fs');http.createServer((req,res)=>{fs.writeFileSync(${JSON.stringify(seen)},[req.method,req.url,req.headers.host,req.headers.authorization,req.headers['content-type']].join('|'));res.writeHead(200,{'Content-Type':'application/json'});res.end('{"rotated":true}')}).listen('local-client.sock',()=>console.log('up'))`,
+      ],
+      { cwd: box.dataDir, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    try {
+      await new Promise<void>((resolve) => server.stdout?.once('data', () => resolve()));
+      const dry = runCtl(box, ['local-client', 'rotate-token']);
+      expect(dry.status).toBe(0);
+      expect(dry.stdout).toContain('dry-run');
+      expect(existsSync(seen)).toBe(false);
+      const applied = runCtl(box, ['local-client', 'rotate-token', '--apply']);
+      expect(applied.status).toBe(0);
+      expect(applied.stdout).toContain('token rotated');
+      expect(readFileSync(seen, 'utf8')).toBe(`POST|/client/v1/token/rotate|localhost|Bearer ${SECRET}|application/json`);
+      expect(applied.stdout + applied.stderr).not.toContain(SECRET);
+    } finally {
+      server.kill('SIGKILL');
+    }
+  });
+});
+
 describe.skipIf(process.platform !== 'darwin')('quokyctl.sh backup (on-demand, while the service runs)', () => {
   const BACKUP_ENV_NAMES = ['HOME', 'PATH', 'LANG', 'QUOKY_DB_PATH', 'QUOKY_VECTOR_PATH', 'QUOKY_LAUNCHER'];
 

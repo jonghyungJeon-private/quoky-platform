@@ -119,6 +119,19 @@ export interface OpsRuntimeFacts {
 }
 
 /**
+ * ADR-0125 D12: the local-client adapter's content-free status, seen structurally (`LocalClientAdapterStatus`): booleans,
+ * counts, a time and a reason code. No content, id, path or token can be expressed.
+ */
+export interface OpsLocalClientStatus {
+  readonly enabled: boolean;
+  readonly listening: boolean;
+  readonly openStreams: number;
+  readonly lastTurnAt?: string;
+  readonly authFailuresLastHour: number;
+  readonly disabledReason?: string;
+}
+
+/**
  * TG-3 (ADR-0114 D12): the Telegram adapter's content-free status, seen structurally (`TelegramAdapterStatus`): booleans,
  * a halt code, a time, a count and value-free drop counters per reason. No id, no content, no token can be expressed.
  */
@@ -207,6 +220,11 @@ export interface OpsSnapshotSources {
    */
   readonly telegram?: () => OpsTelegramStatus | undefined;
   /**
+   * ADR-0125 D12: the local-client status, read per build. Absent, or undefined (the surface is off and not composed) → no
+   * panel at all, so the page is byte-identical to the one without the local client.
+   */
+  readonly localClient?: () => OpsLocalClientStatus | undefined;
+  /**
    * ADR-0115 D8 (PRV-3): monthly provider usage (current, previous). Absent, or no run with usage in either month → no
    * panel at all, so the page is byte-identical to the one without the ledger.
    */
@@ -292,7 +310,15 @@ export class OpsSnapshotBuilder {
     ]);
     const agentPanel = this.sources.agent === undefined ? undefined : await panel('agent', '에이전트 (읽기 전용)', async () => this.agent(await ownerPromise));
     const usagePanel = await this.providerUsagePanel();
-    const all = [...panels, ...(agentPanel !== undefined ? [agentPanel] : []), ...(usagePanel !== undefined ? [usagePanel] : [])];
+    const localClientStatus = this.sources.localClient?.();
+    const localClientPanel =
+      localClientStatus === undefined ? undefined : await panel('local-client', 'Mac 앱 (local client)', async () => this.localClient(localClientStatus));
+    const all = [
+      ...panels,
+      ...(agentPanel !== undefined ? [agentPanel] : []),
+      ...(usagePanel !== undefined ? [usagePanel] : []),
+      ...(localClientPanel !== undefined ? [localClientPanel] : []),
+    ];
     return guardViewModel({ generatedAt: this.time(now), panels: all });
   }
 
@@ -628,6 +654,28 @@ export class OpsSnapshotBuilder {
     };
   }
 
+  /**
+   * ADR-0125 D12: the local client at a glance. Booleans, counts, the last turn time and the disable reason code: never a
+   * message, an id, a path or the token (the status cannot carry them).
+   */
+  private localClient(status: OpsLocalClientStatus): PanelBody {
+    const reason = status.disabledReason === undefined ? undefined : LOCAL_CLIENT_REASON_CODE.test(status.disabledReason) ? status.disabledReason : OPS_UNKNOWN;
+    return {
+      fields: [
+        { label: '켜짐', value: status.enabled ? '예' : '아니요' },
+        { label: '소켓 대기 중', value: status.listening ? '예' : '아니요' },
+        { label: '열린 이벤트 스트림', value: localClientCount(status.openStreams) },
+        { label: '마지막 대화', value: status.lastTurnAt === undefined ? '없음' : this.time(status.lastTurnAt) },
+        { label: '최근 1시간 인증 실패', value: localClientCount(status.authFailuresLastHour) },
+        { label: '꺼진 이유', value: reason ?? '없음' },
+      ],
+      notes: [
+        '같은 Mac의 Unix 소켓으로만 연결해요 (TCP 포트 없음). 메시지 내용, ID, 파일 경로, 토큰은 표시하지 않아요.',
+        ...(reason === undefined ? [] : ['꺼져 있어도 Discord와 Telegram은 계속 동작해요. 이유 코드는 운영 문서의 로컬 클라이언트 절을 보세요.']),
+      ],
+    };
+  }
+
   private telegram(): PanelBody {
     const status = this.sources.telegram?.();
     if (status === undefined) {
@@ -760,6 +808,12 @@ const TELEGRAM_DROP_TEXT: Readonly<Record<string, string>> = {
   stale: '10분보다 오래됨',
   'not-feedback': '피드백이 아닌 반응',
 };
+
+const LOCAL_CLIENT_REASON_CODE = /^[A-Z][A-Z0-9_]{0,48}$/;
+
+function localClientCount(value: unknown): string {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : OPS_UNKNOWN;
+}
 
 function telegramCount(value: unknown): string {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : OPS_UNKNOWN;

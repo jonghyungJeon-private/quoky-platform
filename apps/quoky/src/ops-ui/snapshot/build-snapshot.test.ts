@@ -822,3 +822,33 @@ describe('ADR-0121 S2 agent panel (D7: the mode and the kill switch, read-only)'
     expect(view.panels.some((p) => p.id === 'agent')).toBe(false);
   });
 });
+
+describe('ADR-0125 D12 local-client panel', () => {
+  it('absent or not composed: no panel (the page stays byte-identical)', async () => {
+    const none = await new OpsSnapshotBuilder(fixture()).build();
+    expect(none.panels.some((p) => p.id === 'local-client')).toBe(false);
+    const off = await new OpsSnapshotBuilder(fixture({ localClient: () => undefined })).build();
+    expect(off.panels.map((p) => p.id)).toEqual(none.panels.map((p) => p.id));
+  });
+
+  it('shows booleans, counts, the last turn and the reason code only', async () => {
+    const view = await new OpsSnapshotBuilder(
+      fixture({ localClient: () => ({ enabled: true, listening: true, openStreams: 1, lastTurnAt: '2026-11-24T01:00:00.000Z', authFailuresLastHour: 3 }) }),
+    ).build();
+    expect(field(view, 'local-client', '켜짐')).toBe('예');
+    expect(field(view, 'local-client', '소켓 대기 중')).toBe('예');
+    expect(field(view, 'local-client', '열린 이벤트 스트림')).toBe('1');
+    expect(field(view, 'local-client', '최근 1시간 인증 실패')).toBe('3');
+    expect(field(view, 'local-client', '꺼진 이유')).toBe('없음');
+    const off = await new OpsSnapshotBuilder(
+      fixture({ localClient: () => ({ enabled: false, listening: false, openStreams: 0, authFailuresLastHour: 0, disabledReason: 'SOCKET_LIVE' }) }),
+    ).build();
+    expect(field(off, 'local-client', '꺼진 이유')).toBe('SOCKET_LIVE');
+    // anything that is not a reason code is never echoed
+    const odd = await new OpsSnapshotBuilder(
+      fixture({ localClient: () => ({ enabled: false, listening: false, openStreams: 0, authFailuresLastHour: 0, disabledReason: '/Users/x/Library/local-client.sock' }) }),
+    ).build();
+    expect(field(odd, 'local-client', '꺼진 이유')).toBe('unknown');
+    expect(JSON.stringify(odd)).not.toContain('/Users/x');
+  });
+});

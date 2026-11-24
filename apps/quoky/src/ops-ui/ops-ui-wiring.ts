@@ -40,6 +40,7 @@ import { describeImageUnderstandingSelection } from '../image-understanding-prov
 import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
 import { CompositePlatformAdapter } from '../platform/composite-platform-adapter';
+import { localClientStatusOf } from '../platform/platform-composition';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
 import { OpsUiActions } from './actions/ops-actions';
 import type { OpsDecisionResultTarget } from './actions/ops-actions';
@@ -315,6 +316,8 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       providerSelection: selection !== undefined,
     },
     telegram: () => telegramStatusOf(platform),
+    // ADR-0125 D12: undefined (no panel) unless the local client is composed.
+    localClient: () => localClientStatusOf(platform),
     // ADR-0121 S2 (D7): the agent mode and the owner's kill switch, read-only.
     ...(agentRuns === undefined
       ? {}

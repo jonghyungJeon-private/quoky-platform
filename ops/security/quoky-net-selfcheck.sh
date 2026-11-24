@@ -13,12 +13,15 @@
 # (tunnel/VPN software, listeners on 22 and 5900, ledger findings) must still be clean.
 #
 # Environment (optional): QUOKY_LAUNCHD_LABEL (default com.quoky.personal), QUOKY_SELFCHECK_EXTRA_HOSTS (space
-# separated EXACT host names to add to the static allowlist), QUOKY_OPS_UI_PORT (default 47613), QUOKY_LEDGER_DIR.
+# separated EXACT host names to add to the static allowlist), QUOKY_OPS_UI_PORT (default 47613), QUOKY_LEDGER_DIR,
+# QUOKY_SELFCHECK_DATA_DIR (where local-client.sock lives; default ~/Library/Application Support/Quoky).
 #
 # Sourcing this file defines the parsing functions only (used by quoky-net-selfcheck.test.sh); it runs when executed.
 
 SC_LABEL="${QUOKY_LAUNCHD_LABEL:-com.quoky.personal}"
 SC_OPS_PORT="${QUOKY_OPS_UI_PORT:-47613}"
+# ADR-0125 D12: the host data directory that holds the local-client socket (override for tests).
+SC_DATA_DIR="${QUOKY_SELFCHECK_DATA_DIR:-$HOME/Library/Application Support/Quoky}"
 
 # Static allowlist of EXACT host names (design 5.1). A live remote address is verified by the traffic ledger's
 # `connect` records (IP -> host, design 5.5.3). With no ledger mapping it is "unverified" (a warning); it is a failure
@@ -94,6 +97,40 @@ sc_parse_lsof_conns() {
       if (proto == "UDP") state = (rem == "" ? "BOUND" : "CONNECTED")
       printf "%s\t%s\t%s\t%s\t%s\t%s\n", $2, $1, proto, state, loc, rem
     }'
+}
+
+# sc_stat_mode_owner PATH -> "<permission-octal> <owner-uid>" without following a symlink (BSD stat, GNU fallback).
+sc_stat_mode_owner() {
+  stat -f '%Lp %u' "$1" 2>/dev/null || stat -c '%a %u' "$1" 2>/dev/null
+}
+
+# sc_local_client_findings DATA_DIR -> one finding per line; empty when the socket is absent or correct. ADR-0125 D12:
+# when `local-client.sock` exists it must be a socket (not a symlink or file) of mode 600 in a directory of mode 700,
+# both owned by the service user. A Unix socket is not a network listener; this is the only added file check, and any
+# TCP listener still fails the self-check as before. Only names and modes are reported, never a path or a content.
+sc_local_client_findings() {
+  local dir="$1" sock info perm owner uid
+  sock="$dir/local-client.sock"
+  { [ -e "$sock" ] || [ -L "$sock" ]; } || return 0
+  uid="$(id -u)"
+  if [ -L "$sock" ] || [ ! -S "$sock" ]; then
+    echo "local-client.sock exists but is not a socket"
+    return 0
+  fi
+  if info="$(sc_stat_mode_owner "$sock")"; then
+    read -r perm owner <<<"$info"
+    [ "$perm" = 600 ] || echo "local-client.sock mode is $perm (expected 600)"
+    [ "$owner" = "$uid" ] || echo "local-client.sock is not owned by the service user"
+  else
+    echo "local-client.sock cannot be inspected"
+  fi
+  if [ -L "$dir" ] || ! info="$(sc_stat_mode_owner "$dir")"; then
+    echo "data directory is a symlink or cannot be inspected"
+    return 0
+  fi
+  read -r perm owner <<<"$info"
+  [ "$perm" = 700 ] || echo "data directory mode is $perm (expected 700)"
+  [ "$owner" = "$uid" ] || echo "data directory is not owned by the service user"
 }
 
 # sc_parse_listen_netstat < netstat -an -p tcp text -> "port<TAB>local" per LISTEN socket.
@@ -398,6 +435,16 @@ sc_main() {
         ;;
     esac
   done <<<"$conns"
+  # ADR-0125 D12: the local-client socket (when it exists) is a 0600 socket in a 0700 directory of the service user.
+  local lc_line lc_found=0
+  while IFS= read -r lc_line; do
+    [ -n "$lc_line" ] || continue
+    lc_found=1
+    sc_fail "$lc_line"
+  done <<<"$(sc_local_client_findings "$SC_DATA_DIR")"
+  if [ "$lc_found" -eq 0 ] && [ -S "$SC_DATA_DIR/local-client.sock" ]; then
+    listeners="${listeners}unix local-client.sock (mode 600 in a 700 directory, ok; not a network listener)"$'\n'
+  fi
 
   # 3. remote-access, tunnel and VPN software
   local ra="" label name app procs cg nc ssh_state="off" vnc_state="off" tcp_listen

@@ -9,6 +9,11 @@
 #   quokyctl.sh backup   [--dry-run] | --apply  take a verified DB copy + vector snapshot now (kind manual, 5 kept)
 #   quokyctl.sh backup   --verify NAME          read-only: re-verify a retained copy and its vector snapshot
 #   quokyctl.sh telegram                        read-only: Telegram files (poll offset, halt notices) and the runbook
+#   quokyctl.sh local-client rotate-token [--dry-run] | --apply
+#                                               ADR-0125 D3: ask the running service to rotate the local-client token
+#                                               (POST /client/v1/token/rotate over the Unix socket, via curl); the old
+#                                               token stops working at once and open event streams close. Never prints
+#                                               the token. Default --dry-run.
 #
 # Options: --repo DIR (default: this checkout)  --env-file FILE (default: <repo>/.env.local)
 #          --label LABEL (default: com.quoky.personal)  --node FILE (default: the node on PATH)
@@ -33,7 +38,7 @@ LAUNCHER="$CTL_DIR/quoky-launch.sh"
 SYSTEM_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2
 }
 
 fail() {
@@ -43,6 +48,10 @@ fail() {
 
 COMMAND=${1:-}
 [ $# -gt 0 ] && shift
+SUBCOMMAND=""
+if [ "$COMMAND" = "local-client" ] && [ $# -gt 0 ]; then
+  case "$1" in -*) ;; *) SUBCOMMAND=$1; shift ;; esac
+fi
 MODE="" REPO="" ENV_FILE="" LABEL="$QUOKY_DEFAULT_LABEL" NODE_BIN="" VERIFY=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -64,6 +73,10 @@ case "$COMMAND" in
     ;;
   status | render | telegram)
     [ -z "$MODE" ] || fail "$COMMAND is read-only; it takes no --dry-run/--apply"
+    ;;
+  local-client)
+    [ "$SUBCOMMAND" = "rotate-token" ] || { usage; fail "local-client needs a subcommand: rotate-token"; }
+    [ -n "$MODE" ] || MODE=dry-run
     ;;
   backup)
     if [ -n "$VERIFY" ]; then
@@ -387,6 +400,28 @@ unlink the Telegram identity: DECISIONS.md, ADR-0114 TG-1 note, "Identity (D3)" 
 RUNBOOK
 }
 
+# ADR-0125 D3: rotate the local-client token over the Unix socket. The request is made from inside the data directory
+# with a relative socket path (the 103-byte socket path limit never applies to the client side), the token goes to curl
+# on stdin (never on a command line), and the response body, which has no token, is discarded.
+cmd_local_client() {
+  local sock="$DATA_DIR/local-client.sock" token_file="$DATA_DIR/local-client.token" token code
+  [ -S "$sock" ] && [ ! -L "$sock" ] || fail "local-client: no socket in the data directory (the surface is off or Quoky is not running)"
+  { [ -f "$token_file" ] && [ ! -L "$token_file" ]; } || fail "local-client: no token file in the data directory"
+  command -v curl >/dev/null 2>&1 || fail "local-client: curl is not on PATH"
+  if [ "$MODE" != apply ]; then
+    echo "dry-run: would POST /client/v1/token/rotate to the local-client socket; nothing was changed (run with --apply)"
+    return 0
+  fi
+  token=$(head -n 1 "$token_file")
+  code=$(cd "$DATA_DIR" && printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --silent --show-error --max-time 10 \
+    --output /dev/null --write-out '%{http_code}' --unix-socket local-client.sock -K - \
+    -X POST -H 'Host: localhost' -H 'Content-Type: application/json' --data '{}' \
+    http://localhost/client/v1/token/rotate) || fail "local-client: the request failed"
+  token=""
+  [ "$code" = 200 ] || fail "local-client: rotation refused (HTTP $code)"
+  echo "local-client: token rotated; the old token no longer works and open streams were closed (the app re-reads the token file)"
+}
+
 # The on-demand backup tool, in the service's own environment shape: built from nothing (env -i) with the service's DB
 # and vector paths (the launcher's own helpers). Neither this script nor the tool reads the env file for a backup: the
 # tool takes the backup directory, switch and time zone from the configuration the running service publishes
@@ -438,5 +473,6 @@ case "$COMMAND" in
   restart) cmd_restart ;;
   status) cmd_status ;;
   telegram) cmd_telegram ;;
+  local-client) cmd_local_client ;;
   render) cmd_render ;;
 esac

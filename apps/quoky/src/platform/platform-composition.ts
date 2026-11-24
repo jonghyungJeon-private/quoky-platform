@@ -1,17 +1,44 @@
 import { TELEGRAM_PLATFORM, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
 import type { TelegramStartupError, TelegramStartupErrorCode } from '@quoky/adapter-telegram';
 import type { TelegramAdapterOptions } from '@quoky/adapter-telegram';
+import { LOCAL_CLIENT_PLATFORM, LocalClientPlatformAdapter } from '@quoky/adapter-local-client';
+import type { LocalClientAdapterOptions, LocalClientAdapterStatus } from '@quoky/adapter-local-client';
 import type { Logger, PlatformAdapter } from '@quoky/core';
+import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
 import { isConnectedIdentityReader } from '../ops/startup-identity-check';
 import type { PlatformIdentityLink } from '../actor-identity-provisioner';
 import type { TelegramConfig } from '../telegram/telegram-config';
 import { telegramOffsetStoreFor } from '../telegram/telegram-offset-store';
+import type { LocalClientConfig } from '../local-client/local-client-config';
 import { CompositePlatformAdapter } from './composite-platform-adapter';
+import type { NotificationRedirect } from './composite-platform-adapter';
 
 /**
- * ADR-0114 D6/D13: the adapter bound to `PLATFORM_ADAPTER`. With Telegram off (no `config.telegram`) it is the Discord
- * adapter itself, exactly as before; nothing Telegram-related is constructed. With Telegram on it is one composite over
- * Discord (primary) and Telegram.
+ * ADR-0125 D1 (LC-1b): what the composition root needs to join the local client. Present only when
+ * `QUOKY_LOCAL_CLIENT_ENABLED=true`; absent, nothing local-client related is constructed.
+ */
+export interface LocalClientComposition {
+  readonly config: LocalClientConfig;
+  /** The ADR-0102 D3 host data directory (the database's directory). */
+  readonly dataDir: string;
+  /** ADR-0102 D4: `main.ts` took the single-instance lock. */
+  readonly instanceLockHeld: boolean;
+  /** The database is a file, not `:memory:`. */
+  readonly fileBackedDb: boolean;
+  /** `QUOKY_DISCORD_OWNER_IDS` (D5 checks the configured owner against them). */
+  readonly discordOwnerIds: readonly string[];
+  /** D5: the owner id maps, through the ADR-0009 seam, to exactly one Actor (called when the adapter starts). */
+  readonly verifyOwner: () => Promise<boolean>;
+  /** Test seams for the adapter (probe timeout, limits). */
+  readonly adapterOptions?: Partial<LocalClientAdapterOptions>;
+}
+
+/**
+ * ADR-0114 D6/D13 and ADR-0125 D1: the adapter bound to `PLATFORM_ADAPTER`. With Telegram and the local client off (no
+ * `config.telegram`, no `deps.localClient`) it is the Discord adapter itself, exactly as before; nothing Telegram- or
+ * local-client-related is constructed. Otherwise it is one composite over Discord (primary), Telegram and the local client.
+ * The local client is joined only with the instance lock held and a file-backed database (D2 step 0); otherwise it is not
+ * constructed and the log says why.
  */
 export function composePlatformAdapter(
   discord: PlatformAdapter,
@@ -21,15 +48,64 @@ export function composePlatformAdapter(
     /** The database path: the poll offset is persisted beside it (`ops/telegram-offset.json`). */
     readonly dbPath: string;
     readonly telegramOptions?: TelegramAdapterOptions;
+    readonly localClient?: LocalClientComposition;
   },
 ): PlatformAdapter {
-  if (telegram === undefined) return discord;
-  const adapter = new TelegramPlatformAdapter(
-    { token: telegram.token, expectedBotId: telegram.expectedBotId, ownerIds: telegram.ownerIds },
-    deps.logger('telegram'),
-    { offsetStore: telegramOffsetStoreFor(deps.dbPath, telegram.expectedBotId), ...deps.telegramOptions },
-  );
-  return new CompositePlatformAdapter(discord, [adapter], deps.logger('platform'));
+  const children: PlatformAdapter[] = [];
+  if (telegram !== undefined) {
+    children.push(
+      new TelegramPlatformAdapter(
+        { token: telegram.token, expectedBotId: telegram.expectedBotId, ownerIds: telegram.ownerIds },
+        deps.logger('telegram'),
+        { offsetStore: telegramOffsetStoreFor(deps.dbPath, telegram.expectedBotId), ...deps.telegramOptions },
+      ),
+    );
+  }
+  const localClient = deps.localClient;
+  let redirect: NotificationRedirect | undefined;
+  if (localClient !== undefined) {
+    if (!localClient.instanceLockHeld || !localClient.fileBackedDb) {
+      deps.logger('platform').warn('local-client.not-composed', { reason: localClient.instanceLockHeld ? 'DB_NOT_FILE_BACKED' : 'NO_INSTANCE_LOCK' });
+    } else {
+      const owner = localClient.config.ownerActor;
+      children.push(
+        new LocalClientPlatformAdapter({
+          dataDir: localClient.dataDir,
+          instanceLockHeld: localClient.instanceLockHeld,
+          fileBackedDb: localClient.fileBackedDb,
+          ownerUserId: owner,
+          ownerIsDiscordOwner: owner !== undefined && localClient.discordOwnerIds.includes(owner),
+          verifyOwner: localClient.verifyOwner,
+          logger: deps.logger('local-client'),
+          ...localClient.adapterOptions,
+        }),
+      );
+      // ADR-0125 D8 (LC-1b to LC-3): a reminder created in the app is delivered to the owner's Discord DM.
+      redirect = {
+        from: LOCAL_CLIENT_PLATFORM,
+        toTarget: (target) =>
+          owner === undefined ? undefined : { platform: DISCORD_NOTIFICATION_PLATFORM, channelId: target.channelId, userId: owner },
+      };
+    }
+  }
+  if (children.length === 0) return discord;
+  return new CompositePlatformAdapter(discord, children, deps.logger('platform'), redirect);
+}
+
+/** ADR-0125 D5: the local-client owner id links to the configured Discord owner's Actor (the ADR-0009 seam). */
+export function localClientOwnerIdentityLinks(
+  localClient: LocalClientConfig | undefined,
+  discordOwnerIds: readonly string[],
+): PlatformIdentityLink[] {
+  const owner = localClient?.ownerActor;
+  if (owner === undefined || !discordOwnerIds.includes(owner)) return [];
+  return [{ identity: { platform: LOCAL_CLIENT_PLATFORM, externalId: owner }, owner: { platform: DISCORD_NOTIFICATION_PLATFORM, externalId: owner } }];
+}
+
+/** ADR-0125 D12: the composed local-client adapter's content-free status, or undefined when it is not composed. */
+export function localClientStatusOf(platform: PlatformAdapter | undefined): LocalClientAdapterStatus | undefined {
+  const adapter = platform instanceof CompositePlatformAdapter ? platform.adapterFor(LOCAL_CLIENT_PLATFORM) : undefined;
+  return adapter instanceof LocalClientPlatformAdapter ? adapter.status() : undefined;
 }
 
 /**
