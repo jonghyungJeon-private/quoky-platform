@@ -141,6 +141,18 @@ describe('A6-S1 the atomic claim and the compare-and-set bind (A6.3 steps 1, 4, 
     expect(await inFlight).toEqual({ kind: 'cancelled', audit: ['classifier-yes', 'claim-lost'], next: 'consumed' });
   });
 
+  it('a later turn whose clock throws at the claim read still cancels an in-flight answer: the earlier label never binds', async () => {
+    const store = opened();
+    let release: (label: string) => void = () => undefined;
+    const classify = vi.fn<ConsentAnswerClassifier>(() => new Promise((resolve) => (release = resolve)));
+    const inFlight = answer(store, turn('ㅇㅇ'), { mode: 'on', classify });
+    expect(store.stateOf(DM)).toBe('answering');
+    await expect(answer(store, turn('아니', { atMs: T0 + 31_000 }), OFF, () => { throw new Error('clock'); })).rejects.toThrow('clock');
+    expect(store.stateOf(DM)).toBeUndefined();
+    release('yes');
+    expect(await inFlight).toEqual({ kind: 'cancelled', audit: ['classifier-yes', 'claim-lost'], next: 'consumed' });
+  });
+
   it('the kill switch during the classifier call voids the step: the bind fails', async () => {
     const store = opened();
     const classify = vi.fn<ConsentAnswerClassifier>(async () => {
@@ -177,10 +189,10 @@ describe('A6-S1 the atomic claim and the compare-and-set bind (A6.3 steps 1, 4, 
     expect(await answerConsentTurn(opened(pending), { scope: DM, ownerDm: true, text: '응', atMs: real }, OFF)).toMatchObject({ kind: 'bound' });
   });
 
-  it('a clock that throws at the claim read leaves the step open; one that throws at bind releases the claim (never left answering) and rethrows', async () => {
-    const untouched = opened();
-    await expect(answer(untouched, turn('응'), OFF, () => { throw new Error('clock'); })).rejects.toThrow('clock');
-    expect(untouched.stateOf(DM)).toBe('open');
+  it('a clock that throws at the claim read drops the step; one that throws at bind releases the claim (never left answering) and rethrows', async () => {
+    const dropped = opened();
+    await expect(answer(dropped, turn('응'), OFF, () => { throw new Error('clock'); })).rejects.toThrow('clock');
+    expect(dropped.stateOf(DM)).toBeUndefined();
     const throwAtBind = (): (() => number) => {
       let reads = 0;
       return () => {
@@ -393,6 +405,8 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
     expect(consentRerunText(`네\r\n${rest}`)).toBe(rest);
     expect(consentRerunText(`yes\u2028${rest}`)).toBe(rest);
     expect(consentRerunText(`응\n\n${rest}`)).toBe(`\n${rest}`);
+    // A leading blank line: the first physical line is not a closed yes, so nothing is cut and the whole message reruns.
+    expect(consentRerunText(`\n응\n${rest}`)).toBe(`\n응\n${rest}`);
     // Only whitespace remains: no remaining request, the whole message as before.
     expect(consentRerunText('응\n  \n')).toBe('응\n  \n');
     expect(consentRerunText('응')).toBe('응');

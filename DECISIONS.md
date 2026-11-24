@@ -38908,9 +38908,23 @@ and their tests. No gold, prompt, catalog or flag default changed.
   convention as an expiry at bind. `claim`, `bind` and `cancel` were audited: a non-finite time there already deletes (claim) or
   expires (bind) the step. Tests for NaN and both infinities, and a later bind with the old claim.
 - **P3 (single clock domain).** The claim was judged on the platform `turn.atMs` while the bind used `now()`. The claim now uses
-  `now()` too (read once for the claim, read afresh at bind). A throwing clock at the claim read leaves the step `open`.
+  `now()` too (read once for the claim, read afresh at bind). (Superseded by Review 3: a throwing clock at the claim read
+  drops the step instead of leaving it `open`.)
 - **P3 (generation counter).** The version counter is module-level (never reused across stores in the process), so a claim of
   one store never matches a version in another. Test: two stores, the same pending object.
 - **P3 (tests).** The literal U+2028 in the r-02 test is the `\u2028` escape; a classifier-path case with no clock argument
   was added next to the real-default-clock test.
 - **P3 (DECISIONS note).** The Review 1 note is corrected (blank-line cut, "next answer is processed").
+
+### ADR-0121 A6-S1 implementation note: Review 3 (2026-11-24)
+
+Codex delta review of Review 2 (one P2, fail-open); Claude delta review PASS with one P3. The throw-safety family has now had
+its two fix rounds, so this one is a structural rule rather than another patch: **an owner turn that reaches the pipeline
+always consumes the chance to answer, whether or not it can be judged.**
+
+- **Codex P2 (clock throw before the claim).** `now()` threw before `claim`, so the step was not touched: with a label in
+  flight for an earlier turn, a later owner "아니" whose clock read failed left the step `answering`, and the earlier `yes`
+  then bound. Fix: a throw at the claim read calls `ConsentPendingStore.forfeit(scope)` (drops the record, like `claim` does
+  for a late or answering step) and rethrows, so an in-flight bind can no longer match. Tests: the step is gone after a
+  claim-read throw; a later turn whose clock throws cancels an in-flight answer and the earlier label does not bind.
+- **CA P3 (test).** Added the r-02 case for a leading blank line before a closed yes: nothing is cut, the whole message reruns.

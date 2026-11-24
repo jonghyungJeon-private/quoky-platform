@@ -190,7 +190,15 @@ export async function answerConsentTurn(
 ): Promise<ConsentTurnDecision> {
   if (!turn.ownerDm) return { kind: 'not-an-answer', audit: [], next: 'ordinary' };
   // One clock domain for the whole pipeline: the claim and the bind both judge freshness on `now()` (read afresh each time).
-  const claimed = store.claim(turn.scope, now());
+  let claimAtMs: number;
+  try {
+    claimAtMs = now();
+  } catch (error) {
+    // A turn that cannot be judged still consumes the chance to answer: an earlier in-flight label must never bind after it.
+    store.forfeit(turn.scope);
+    throw error;
+  }
+  const claimed = store.claim(turn.scope, claimAtMs);
   if (!claimed.ok) return { kind: 'not-an-answer', audit: claimed.reason === 'claim-lost' ? ['claim-lost'] : [], next: 'ordinary' };
   const { claim } = claimed;
   try {
