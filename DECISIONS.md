@@ -38862,3 +38862,34 @@ changed; no model call or evaluation was run, so no D12 gate is needed for this 
 - **Open points.** (1) The rule-① confirm slice and the A2 answer slice wire the store and the pipeline (above). (2) A6-S2:
   the classifier call, `prompts/consent-answer.v1`, strict JSON and the 10 s bound (the pipeline already reads the result
   strictly and fails closed to `unclear`). (3) The owner may reverse any of the recorded choices (1)–(6).
+
+### ADR-0121 A6-S1 implementation note: Review 1 (2026-11-24)
+
+Codex review (P2 x4) and Chief Architect review (P2 + P3s) of the A6-S1 branch, each fixed in `consent-pending.ts`,
+`consent-answer.ts` and their tests. No gold, prompt, catalog or flag default changed.
+
+- **Codex P2 (clock).** Freshness is judged on a fresh `now()` read at bind time on every path, a closed yes included; the
+  default clock is the real current time (`Date.now()`), not the message arrival time. A bind or label at exactly 600 s is late
+  (fail closed). Tests: a classifier result at exactly 600 s does not bind; a closed yes uses the supplied clock.
+- **Codex P2 (monotonic version).** Versions come from one store-wide, never-reused generation counter, so deleting a record
+  can no longer reset version history: reopening the same minted pending gets a strictly greater version and an old claim
+  never matches. Test: open, claim, void, forget, reopen the same pending, the old claim's bind fails.
+- **Codex P2 (r-02 cut).** Only the first line and its own terminator (LF, CR, U+2028, U+2029, U+0085, VT, FF, or CRLF as a
+  unit) are removed; the remainder is returned byte-identical (no blank-line removal, no separator normalisation, no trim). A
+  whitespace-only remainder keeps the "no remaining request" behaviour (the whole message runs). Test: CRLF, blank lines and
+  U+2028 in the remainder.
+- **Codex P2 + CA P3 (throw safety).** The post-claim body runs under a guard: any throw (a throwing caller clock included)
+  cancels the claim and rethrows, so a step is never left `answering`. Test: a throwing clock, then the next answer is processed.
+- **CA P2 (re-ask freshness).** `reask` on a late step sets `expired` and returns nothing (the caller reports `cancelled`
+  with `classifier-unclear`, `claim-lost`); `createdAtMs` is not refreshed.
+- **CA P3 (audit).** A second `unclear` after the claim was lost carries `claim-lost` (`ConsentPendingStore.holds` is checked first).
+- **CA P3 (NFKC pins), owner-visible.** The NFKC fast path folds compatibility forms, and these now have pinned outcomes:
+  `ㄴㅔ` is `네` (yes), `ㅇㅖ` is `예` (yes), `ʸᵉˢ`, `yeſ`, `𝐲𝐞𝐬` are `yes`, and `№` is `no` (NFKC gives "No"). All were as
+  expected; no word list was added.
+- **CA P3 (boundary test).** The made-up undo, handoff and request-list literal is replaced by the real pending types
+  (`PendingQuestion` `action-undo-confirm` and `entry` from `nl-routing/selection-state`, `ValidatedAgentHandoff` from
+  `agent/plan-validator`), imported as `SurfaceGrantPending` is.
+- **Deferred to A6-S2 (residual).** `아니\n<request>` with the label `yes-and-more` binds: a classifier-trust case. A structural
+  guard "a closed-no first line never binds" is to be considered in A6-S2 / the A6-S4 gate.
+- **FYI for the next owner batch.** Choice (4) above (the r-02 cut on the whole closed-yes set, not only `응`) was confirmed
+  by the Chief Architect as not a loosening.
