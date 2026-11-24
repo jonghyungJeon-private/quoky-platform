@@ -21,7 +21,7 @@ description: Quoky Platform 전용 출하 파이프라인. 전역 스킬(side-jo
   - upstream 은 해제한다.
 - orchestrate §2·§3 에 따라 실행 방식(직접·서브에이전트·팀원·Codex 레인·Workflow)을 정하고, 모델·effort 는 `token-budget` 스킬로 정한다(등급 J1/J2/J3/I/M/X, effort = min(기준값, 세션 effort), 예산 모드 포함). Quoky 작업의 등급은 다음과 같다.
   - **J1**: 새 egress·inbound·인증·플랫폼 어댑터·새 provider 설계, ADR 설계·해석·충돌, 필수 CA 대상(PLT-0, TG-1, PRV-1, LRN-5, GML-1, PRV-3, 새 커넥터)의 첫 리뷰
-  - **J2**: 기존 쓰기·권한 경로의 보안 수정(명세가 확정되면 token-budget §2 예외에 따라 sonnet·high 로 구현하고 J2 가 리뷰한다), 기존 ADR 안의 설계, 일반 CA 리뷰, 원인 불명 평가 회귀 디버깅
+  - **J2**: 기존 쓰기·권한 경로의 보안 수정(구현자는 token-budget §2 "구현 모델 경계"로 정하고, 재리뷰는 J2), 기존 ADR 안의 설계, 일반 CA 리뷰, 원인 불명 평가 회귀 디버깅
   - **J3**: CA·Codex 지적 수정분의 delta 재리뷰, 조항이 명확한 ADR 대조
   - **I**: 여러 파일에 걸친 명세가 분명한 기능, 평가 실패 원인 분석·분류
   - **M**: 작고 명확한 리뷰 지적, 테스트 행, 문서·기록(DECISIONS/CHANGELOG/CURRENT_STATE), 소유자 승인 골든 반영·승인 표시·시트 상태 갱신, 단순 rebase 충돌 해소
@@ -44,7 +44,7 @@ Codex 레인이 열려 있으면(token-budget §3.5, `bash ~/.claude/skills/toke
   - 평가 결과 파일(`data/eval/*.json`)의 오프라인 실패 분류, 코드 경로 조사
 - **맡기지 않는 것**: J1·J2(새 경계·쓰기·권한 경로·ADR 해석), §7 Strict 항목 전부(모델 호출 평가, `.env.local`, live UAT, 배포·재시작), push·PR·merge, 전체 `pnpm test`, 소유자 결정이 필요한 골든·정책 변경.
 - **실행**: Codex 전용 worktree `claude/<wave>-<task>-codex` 를 Claude 작업 브랜치의 현재 HEAD 에서 만들고,
-  `codex exec -s workspace-write -C <codex worktree> -o <scratchpad>/codex-<task>.md "<지시문>"` 을 Bash `run_in_background` 로 돌린다. 끝나면 오케스트레이터가 Codex 커밋을 Claude 작업 브랜치로 cherry-pick 한다.
+  `codex exec -s workspace-write -C <codex worktree> -o <scratchpad>/codex-<task>.md "<지시문>"` 을 Bash `run_in_background` 로 돌린다. 끝나면 오케스트레이터가 Codex 커밋을 Claude 작업 브랜치로 cherry-pick 한다. 단 Codex 단위가 Claude 작업의 하위 작업이 아니라 독립 슬라이스면 `-codex` worktree 대신 그 슬라이스 브랜치·worktree 에서 돌리고, 커밋·PR 은 오케스트레이터가 §7 승인 규칙대로 낸다. 이 PR 의 Codex 리뷰는 두 번째 의견일 뿐 독립 리뷰로 세지 않으며, Claude 리뷰어(§2 등급)가 판정한다. linked worktree 에서는 Codex 가 커밋하지 못하므로(git 디렉터리가 샌드박스 밖) `--add-dir "$(git -C <worktree> rev-parse --git-common-dir)"` 를 붙이거나(codex-cli 0.169.0 기준, 첫 사용 때 커밋이 되는지 확인) diff 로 받아 오케스트레이터가 출처를 적어 커밋한다(token-budget §3.5).
 - **지시문에 반드시 넣을 것**(§1 구현 에이전트 지시와 같은 규칙):
   - `AGENTS.md` loading router, 관련 ADR 조항, 바꿀 파일 범위(이 밖은 건드리지 않는다)
   - Node 22 PATH 줄(§2), 대상 테스트만(`pnpm vitest run <파일>`), 전체 suite 금지
@@ -59,7 +59,7 @@ Codex 레인이 열려 있으면(token-budget §3.5, `bash ~/.claude/skills/toke
 **Node 버전 (2026-10-13~):** 저장소 기준은 `.nvmrc` 다(버전은 그 파일에만 적는다). 셸 기본 node는 아직 18일 수 있으므로 모든 pnpm/node 명령 앞에 `export PATH=$HOME/.nvm/versions/node/$(cat .nvmrc | sed 's/^v//;s/^/v/')/bin:$PATH` 를 붙이고, 구현 에이전트에게도 같은 지시를 준다. worktree 의 `better-sqlite3` 가 다른 ABI(NODE_MODULE_VERSION 불일치)로 빌드돼 있으면 `~/Library/Application Support/Quoky/rollback-node18/better_sqlite3.node22.node` 를 `build/Release/better_sqlite3.node` 로 복사한다(로컬 node-gyp 컴파일은 macOS 27 SDK 문제로 실패한다). 롤백용 Node 18 바이너리: `~/Library/Application Support/Quoky/rollback-node18/`.
 
 ```bash
-pnpm install --frozen-lockfile   # rebase 로 새 패키지가 들어왔으면 필수
+CI=true pnpm install --frozen-lockfile   # rebase 로 새 패키지가 들어왔으면 필수. CI=true 없이 백그라운드로 돌리면 TTY 확인에서 멈춘다(ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY)
 pnpm build && pnpm typecheck && pnpm test
 git diff --check origin/main..HEAD
 git log origin/main..HEAD --format=%B | grep -ci co-authored   # 0 이어야 함
@@ -110,12 +110,12 @@ tmux attach -t gates-<name>                                          # 진행 �
   - PLT-0, TG-1, PRV-1, LRN-5, GML-1, PRV-3
   - 새 egress, 새 inbound surface, Core 경계 변경. DRV-1 같은 커넥터가 여기에 해당한다.
   - 판정이 CHANGES REQUIRED 이면 수정한 뒤 재리뷰를 받는다.
-- **delta 리뷰**: 수정 후에는 `git diff <이전 리뷰 시점>..HEAD` 만 다시 Codex 에 맡긴다. Claude 쪽 delta 재리뷰는 J3 이고, 수정이 인증 순서·기본값·공용 helper·실패 동작을 바꿨으면 J2/J1 로 올린다.
+- **delta 리뷰**: 수정 후에는 `git diff <이전 리뷰 시점>..HEAD` 만 다시 Codex 에 맡긴다. Claude 쪽 delta 재리뷰는 J3 이고, 수정이 인증 순서·기본값·공용 helper·실패 동작을 바꿨거나 token-budget §2 "구현 모델 경계"가 재리뷰를 J2 로 정한 수정(경계 ①~③의 opus 구현, 국소 수정 예외의 sonnet 구현)이면 J2(새 경계·ADR 해석이면 J1)로 올린다.
 - **Claude ↔ Codex 이견**: token-budget §5 를 따른다(최대 2라운드, 소유자 규칙 → ADR → 재현 근거 → 판단 순, 경계 위험은 엄격한 쪽, 정책 변경은 소유자 결정). 보고에 쟁점별 `Claude 안 / Codex 안 / 결론` 을 남긴다.
 - **fix loop 상한**: 같은 지적의 수정은 2회까지다. 그 뒤에는 오케스트레이터가 범위 축소, 잔여 위험으로 수용, 중단 중 하나를 정하고 해당 ADR 구현 노트에 기록한다.
 - **ADR 충돌**: 구현이나 결정이 `ARCHITECTURE.md` 또는 확정된 ADR 과 충돌하면 멈추고, ADR 에 맞추거나 소유자에게 보고한다. ADR 을 우회하는 예외를 스스로 만들지 않는다.
 - **리뷰 지적 반영에 쓰는 모델 (보내기 전에 분류부터)**: 리뷰 결과를 받으면 지적마다 먼저 분류한 뒤 나눠 보낸다(token-budget §2 등급표).
-  - J1·J2 지적(쓰기·권한 경로, 새 경계 규칙, ADR 해석) → 지적 반영은 다음 단계이므로 **새** 에이전트에 보낸다. token-budget §2 대로 판단과 구현을 나눈다: 고칠 내용(변경·지킬 불변식·입증 테스트)은 J1·J2 판단(리뷰어, 없으면 새 opus 에이전트 — J1 cap, J2 high)이 명시하고, 구현은 원칙대로 sonnet · high 가 하며, 결과는 J2(opus · high, 새 경계·ADR 해석이면 J1)가 재리뷰한다. 명시가 없으면 구현을 보내기 전에 명시부터 받는다. opus 로 구현하는 것은 그 명시조차 만들 수 없는 원인 불명 수정뿐이고, 그때는 보고 줄에 이유를 남긴다. 프롬프트에 핸드오프 요약(목표·결정·바뀐 파일·남은 일)과 지적 원문을 붙이고, 원래 에이전트에 SendMessage 로 이어 쓰지 않는다(orchestrate §2, token-budget §2 수명 제한).
+  - J1·J2 지적(쓰기·권한 경로, 새 경계 규칙, ADR 해석) → 지적 반영은 다음 단계이므로 **새** 에이전트에 보낸다. 누가 구현할지는 token-budget §2 "구현 모델 경계"로 정한다: 지적 하나에 갇힌 수정이고 J1·J2 판단(리뷰어, 없으면 새 opus 에이전트 — J1 cap, J2 high)이 변경·지킬 불변식·입증 테스트를 명시했으면 sonnet · high 가 구현한다(국소 수정 예외). 명시가 없으면 구현을 보내기 전에 판단자에게 받는다. 명시를 만들 수 없을 만큼 깊거나(경계 ①), 경계 ②의 항목(인증·권한 판정, 비밀·토큰, egress 데이터 범위, 영구 데이터 마이그레이션·삭제, 돈·과금)의 본체를 지적 하나를 넘어 바꾸는 수정(경계 ②), 한 번 시도한 뒤에도 원인 불명이거나 sonnet 이 같은 지적에서 추론 부족으로(오타·fixture 실패 제외) 한 번 실패한 수정(경계 ③, 두 번째 시도 — 아래 fix loop 상한 2회는 그대로)은 opus 가 구현하고 보고 줄에 경계 번호를 남긴다. 어느 쪽이든 결과는 구현자가 아닌 J2(opus · high, 새 경계·ADR 해석이면 J1)가 재리뷰한다. 프롬프트에 핸드오프 요약(목표·결정·바뀐 파일·남은 일)과 지적 원문을 붙이고, 원래 에이전트에 SendMessage 로 이어 쓰지 않는다(orchestrate §2, token-budget §2 수명 제한).
   - M 지적(문구, 테스트 행, 정답·기록 갱신, 주석, 오래된 문서 줄) → 새 haiku · medium 에이전트(여러 파일 I 면 sonnet · high)에 같은 worktree 로.
   - 한 라운드에 두 종류가 섞이면 쪼개서 동시에 보낸다. 같은 파일을 건드리면 opus 작업이 끝난 뒤 haiku 를 띄운다.
   - 보고서에 token-budget §6 형식(예산 줄 + 에이전트별 `<등급> · <model> · <effort>`)으로 라운드마다 남긴다.
