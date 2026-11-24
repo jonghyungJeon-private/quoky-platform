@@ -26,6 +26,16 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   precedent: a7-08 (local pseudonym map, refuse unknown labels, plain-text names), a7-09 (skip the project question with one
   allowlisted project), a7-02 caveat (no shared drafter change during the Jira shadow). No sha256 pin covers these corpora.
 - **Tests.** `s2-read-redteam-a6-target.test.ts` and `s2-read-redteam-corpus.test.ts` follow. No product code, prompt, catalog or flag change; no model call or eval.
+## Unreleased — ADR-0121 A5-S2 summary-schema (2026-11-24; dormant, every switch off)
+
+- **Added.** A per-source model-written marker on every work-source summary line, and a per-source REMOTE disclosure line
+  (`QuarantinedCallAudit.workSources`, set only for calls that carried a work-source item; the generic line stays for mail
+  and Drive). Tests pin `digest.v1` / `meeting-digest.v1` for all five sources (one line of at most 280 characters,
+  URL-free, credential guard, calendar topics at most 3).
+- **Changed.** A line break inside a work-source summary or topic is a `schema` failure (it was collapsed before for every
+  source; mail and Drive still collapse).
+- **Unchanged.** No prompt template, catalog, grant producer, switch default, `.env.local` value, model call or eval; with
+  every switch off nothing reachable changes (pinned by test).
 
 ## Unreleased — ADR-0121 A5-S1 summary-readout (2026-11-23; dormant, every switch off)
 

@@ -4,6 +4,7 @@ import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { containsCredentialFileContent, containsCredentialMaterial } from '../credential-guard';
 import { containsDocumentActionClaim } from '../document-summary-claim-guard';
 import { containsLink, neutralizeLinks } from '../link-neutralizer';
+import { AGENT_WORK_SUMMARY_SOURCES, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import type { AgentRunResult } from './plan-executor';
 import { agentReplyNotes, type AgentNoteLanguage, type AgentStepCount, type AgentStepsPlan } from './reply-notes';
 import { AGENT_SUMMARY_READOUT_SOURCE, summaryEntriesForAssembler, type QuarantinedListingOnlyReason } from './quarantined-summary';
@@ -24,7 +25,9 @@ import type { StructureProjection } from './structure-projector';
  * - **Scope (D4/D5).** Agent runs happen in the owner's DM only: for any other destination the reply is one fixed refusal
  *   line and nothing of the content, whatever the label.
  * - **Disclosure.** When any M2 call of the run was sent to a `REMOTE` model (each call of a split batch is audited on its own), one
- *   fixed line says part of the text was sent to an outside model.
+ *   fixed line says part of the text was sent to an outside model. A5-S2: a REMOTE call that carried work-source items (calendar,
+ *   Jira, Slack, Confluence, GitHub) is disclosed instead by one fixed line per source naming it, and each work-source summary
+ *   line carries its own fixed model-written marker.
  * - **Rendering input.** `parts` is the only rendering input; `text` is those parts joined and is for logs and plain-text sinks.
  * - **Content-free log.** One `agent_run.assemble` line: counters only.
  */
@@ -76,6 +79,15 @@ const NOUN: Readonly<Record<NlWave1EntryId, { readonly ko: string; readonly en: 
   'help.topic': { ko: '도움말', en: 'Help' },
 };
 
+/** Closed display names of the five A5 work sources (the per-source disclosure line). */
+const WORK_SOURCE_NAME: Readonly<Record<AgentWorkSummarySource, { readonly ko: string; readonly en: string }>> = {
+  calendar: { ko: '캘린더', en: 'Calendar' },
+  jira: { ko: '지라', en: 'Jira' },
+  slack: { ko: '슬랙', en: 'Slack' },
+  confluence: { ko: '컨플루언스', en: 'Confluence' },
+  github: { ko: '깃허브', en: 'GitHub' },
+};
+
 const T = {
   ko: {
     count: (noun: string, n: number, more: boolean) => `• ${noun}: ${n}개${more ? ' 이상' : ''}`,
@@ -99,6 +111,8 @@ const T = {
     summaryUnavailable: '요약을 보여드릴 수 없었어요.',
     credentialWithheld: '민감한 정보가 있는 것 같은 항목은 요약에서 뺐어요.',
     remoteDisclosure: '이 요약을 만들려고 원문 일부를 외부 모델로 보냈어요.',
+    workMarker: '[모델 요약] ',
+    workRemoteDisclosure: (name: string) => `${name} 요약을 만들려고 ${name} 원문 일부를 외부 모델로 보냈어요.`,
     summaryFailed: '요약을 만들지 못해서 목록만 보여드려요.',
     boundStopped: '한도에 도달해서 여기까지만 보여드려요.',
     agentStopped: '에이전트 중지로 남은 단계는 실행하지 않았어요.',
@@ -126,6 +140,8 @@ const T = {
     summaryUnavailable: 'A summary could not be shown.',
     credentialWithheld: 'Items that looked sensitive were left out of the summary.',
     remoteDisclosure: 'Part of the original text was sent to an outside model to make this summary.',
+    workMarker: '[Model summary] ',
+    workRemoteDisclosure: (name: string) => `Part of the original ${name} text was sent to an outside model to make this summary.`,
     summaryFailed: 'A summary could not be made, so this is the listing only.',
     boundStopped: 'A limit was reached, so this is as far as it goes.',
     agentStopped: 'The agent was stopped, so the remaining steps were not run.',
@@ -181,7 +197,8 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
         droppedLines += 1;
         continue;
       }
-      lines.push(t.summaryLine(noun, entry.position, text, topics as string[]));
+      // A5-S2: a work-source line carries its own fixed model-written marker (the header above stays for every source).
+      lines.push((workSummarySourceOf(entry.entryId) !== undefined ? t.workMarker : '') + t.summaryLine(noun, entry.position, text, topics as string[]));
     }
     if (lines.length === 0) {
       unavailable = true;
@@ -196,10 +213,19 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   }
   // A remote call is disclosed whatever became of its answer (ok, failed, refused after another call was sent, or cut off after it
   // started): every sent call of every summary step is in that step's `audits`, so a split remote batch is disclosed whole.
+  // A5-S2: a REMOTE call that carried work-source items is disclosed once per source (naming it); a REMOTE call with no work
+  // source (mail, Drive) keeps the one fixed line.
+  const remoteWork = new Set<AgentWorkSummarySource>();
   for (const step of result.steps) {
-    if (step.kind === 'summarize' && 'audits' in step && (step.audits ?? []).some((audit) => audit.locality === 'REMOTE')) remote = true;
+    if (step.kind !== 'summarize' || !('audits' in step)) continue;
+    for (const audit of step.audits ?? []) {
+      if (audit.locality !== 'REMOTE') continue;
+      if (audit.workSources === undefined || audit.workSources.length === 0) remote = true;
+      else for (const name of audit.workSources) remoteWork.add(name);
+    }
   }
   if (remote) parts.push({ kind: 'status', text: t.remoteDisclosure });
+  for (const name of AGENT_WORK_SUMMARY_SOURCES) if (remoteWork.has(name)) parts.push({ kind: 'status', text: t.workRemoteDisclosure(WORK_SOURCE_NAME[name][language]) });
 
   // 4. Fixed status lines: no model call was made, a call failed, a bound stopped the run.
   const sum = result.steps.filter((step) => step.kind === 'summarize');

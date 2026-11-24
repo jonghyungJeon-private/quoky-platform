@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 A5-S2 summary-schema implemented, dormant (2026-11-24, branch `claude/v5-a5-s2-summary-schema`)
+
+- Core: the digest schemas are pinned per source (one line of at most 280 characters, URL-free, credential guard, calendar
+  topics at most 3); a line break in a work-source summary fails the schema; each work-source summary line carries a fixed
+  model-written marker; a REMOTE call that carried a work source is disclosed by one line naming that source
+  (`QuarantinedCallAudit.workSources`).
+- Switches still default off; nothing live; no prompt, catalog or grant-producer change. With all off behaviour is unchanged
+  (tests). Not done (next): A5-S3 grant producer and `pending.sources`, the rule-① confirm slice, A5-S4 WS-1, A5-S5 gates, A5-S6.
+  See DECISIONS "ADR-0121 A5-S2 implementation note (2026-11-24)".
+
 ### ADR-0121 A7 ratified; A6/A4 follow-ups answered (2026-11-24, branch `claude/v5-decisions-2-record`)
 
 - A7 (S3 cross-source summary writes) is ratified, Strict, with two amendments: real names on the approved card (the remote

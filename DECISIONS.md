@@ -37694,3 +37694,55 @@ guidance, the OpenAI Model Spec, Unicode UTS #39.
 ### Q8. Not part of this record
 
 The red-team page cases other than the ones above stay as they were. The other A7.11 residuals (A7.12) stand.
+## ADR-0121 A5-S2 implementation note (2026-11-24)
+
+Status: implemented (branch `claude/v5-a5-s2-summary-schema`). Slice A5-S2 "summary-schema" of ADR-0121 amendment A5 (A5.9
+row), ratified 2026-11-23 (R1). Dormant like A5-S1: every per-source switch is still off by default, the agent read ports
+are still empty and `QUOKY_AGENT_MODE=active` is still refused. No model prompt template, catalog entry, `.env.local`
+value, model call or evaluation was touched or run. The planner prompt (`plan-prompt.ts`) already tells the planner to use
+`meeting-digest.v1` for calendar-only steps and `digest.v1` otherwise, so no prompt text had to change.
+
+- **What already held.** `digest.v1` (`{items:[{n, summary}]}`) and `meeting-digest.v1` (adds at most 3 topics of at most
+  60 characters) are one closed parser, `parseQuarantinedOutput`, for every source: whole text is one JSON object, unknown
+  or missing keys, repeated or unknown item numbers and over-long strings fail with `schema`, links are neutralised to a
+  placeholder and a link that survives fails, the credential guard on all kept text fails the output with `credential`,
+  and a line that claims an action Quoky did is dropped with the guard of its own source. `meeting-digest.v1` over a
+  non-calendar source ends `no-readout-source` in `sourceRefusal`. A5-S2 pins all of this per source in a test.
+- **One line per work item.** For the five work sources, a line break inside a summary or a topic (CR, LF, NEL, line or
+  paragraph separator) is now a `schema` failure instead of being collapsed to a space. "One sentence" is enforced as one
+  line of at most 280 characters; no sentence splitter is used (it would reject "v1.2" and similar). Mail and Drive keep
+  the pre-A5 collapse.
+- **Per-source marker.** The assembler prefixes every work-source summary line with a fixed marker (`[모델 요약] ` or
+  `[Model summary] `) in addition to the existing header. Mail and Drive lines are unchanged.
+- **Per-source REMOTE disclosure.** `QuarantinedCallAudit` gets an optional `workSources` (closed names in the
+  `AGENT_WORK_SUMMARY_SOURCES` order), set only when the call carried at least one work-source item, so a mail or Drive
+  audit still has exactly its four keys. A call holds items of one source, so the list has one name. The assembler
+  emits one fixed line per source that had a REMOTE call, naming it ("Part of the original Jira text was sent to an
+  outside model to make this summary."), and keeps the single generic line for a REMOTE call that has no work source. A
+  REMOTE call is disclosed whatever became of its answer, as before.
+- **Calendar.** Calendar stays `LOCAL_MODEL_ONLY` for the planner and every other use. The ratification record (R1 and the
+  A5.3 provider constraints) allows a calendar summary on a REMOTE route only after the owner's yes on a no-training,
+  non-vendor provider; nothing in this slice changes that, and the calendar disclosure line uses the same path.
+- **Switch off is unchanged.** `work-summary-schema.a5s2.test.ts` runs every work entry with no switch list, an empty
+  list and another source on: the summarize step is listing-only with the pre-A5 reason, no audit carries `workSources`,
+  and the reply holds no marker and no disclosure. The A5-S1 byte-identical test and the whole agent test folder
+  (795 tests) pass.
+- **Fail-closed residuals (not built here).**
+  1. "One sentence" is one line plus the 280-character cap; a model may still put two sentences on one line.
+  2. A mention-like token (an at-sign handle or a channel ping) in a Slack summary is not stripped or rejected; the
+     platform layer's own neutralisation is the only guard. A reply-level rule would be an A5-S4 red-team finding first.
+  3. The disclosure names the source, not the provider or the item count; the owner's per-step consent question
+     (A5-S3) is where the recipient is named.
+  4. The grant producer still reads `readOutputLabel` (A5-S3), so with a switch on a work summary still ends
+     `no-summary-grant`; the schema and the lines are therefore not reachable end to end until A5-S3.
+  5. The new marker and disclosure strings are fixed reply text, not model prompt text; they go through the A5-S5 review
+     with the S1 prompt strings.
+
+Review round 1 (2026-11-24). (1) "One sentence" is now structural for work sources: a summary or topic fails the schema
+when a Unicode sentence terminator (`\p{Sentence_Terminal}`) is followed by whitespace and then more non-whitespace text; a
+final terminator or one inside a token ("3.5", "v1.2") passes; mail and Drive are byte-identical. (2) The line-break set
+adds VT and FF. (3) The credential guard runs on the raw work-source summary and topics before the schema checks, so
+credential plus line-break output is `credential`. (4) The switch-off test asserts no model request was made and the closed
+`reason`. (5) The REMOTE disclosure test builds the exact EN and KO line per source. (6) The U+2028 case is an escape and a
+U+0085 case is added. Residual (fail closed): an abbreviation such as "e.g. x" in a work summary is read as a second
+sentence and the summary is withheld; a language that writes no space after its terminator is not caught by this check.
