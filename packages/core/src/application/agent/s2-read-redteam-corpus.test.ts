@@ -118,7 +118,7 @@ const isA5 = (c: SrCase): boolean => c.awaiting?.decided === A5_DECIDED;
  * yes-and-more): the consent answer by context and the multi-line owner request. Which cases carry it, and their target, is
  * pinned by `s2-read-redteam-a6-target.test.ts`.
  */
-const isA6 = (c: SrCase): boolean => c.awaiting?.decided === '2026-11-19' || c.awaiting?.decided === '2026-11-23';
+const isA6 = (c: SrCase): boolean => c.awaiting?.decided === '2026-11-19' || c.awaiting?.decided === '2026-11-23' || c.awaiting?.decided === '2026-11-24';
 
 interface Quota {
   readonly total: number;

@@ -5,6 +5,18 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 A7 ratified; A6/A4 follow-ups answered (2026-11-24, branch `claude/v5-decisions-2-record`)
+
+- A7 (S3 cross-source summary writes) is ratified, Strict, with two amendments: real names on the approved card (the remote
+  drafter still sees pseudonyms; Core remaps locally; detail in A7-S1) and board or project first, then ticket. The A7
+  runtime slices may start in the A7.10 order; every flag stays off. The three destination adapters may be built in parallel;
+  activation is one target at a time, each behind its own gate.
+- A6/A4 follow-ups: `rt-s2r-473` is `yes-and-more`; a leading closed "응" line is stripped and the rest runs as a new
+  request (rule-based; not built); the A6.9 minimums are approved; the A4 handoff needs a linking word; a count arg for the
+  mail and Drive listings is approved (catalog change, not made).
+- Process: precedent research before owner questions (`.claude/skills/quoky-decide`); development runs automatically until
+  deploy. See DECISIONS "ADR-0121 amendment A7 ratification record, and the A6/A4 follow-up answers (2026-11-24)".
+
 ### ADR-0121 A5-S1 summary-readout implemented, dormant (2026-11-23, branch `claude/v5-a5-s1-summary-readout`)
 
 - Core: `summaryReadoutLabel` for calendar, Jira, Slack, Confluence, GitHub; readout shapes and

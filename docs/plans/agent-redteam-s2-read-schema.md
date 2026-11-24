@@ -773,7 +773,7 @@ ratification record states (DECISIONS.md "ADR-0121 amendments A5 and A6 ratifica
   grant nothing; "드라이브 / 메일 요약해줘" grants both sources; "메일 3개 / 요약해줘" grants only with a plan that carries 3),
   that a question raised by a two-line grant routes exactly like a single-line one, that the replies reaching the
   classifier are exactly `462`, `463`, `468`, `469`, `470`, `472`, `473` and `488` (labels: `462` yes-and-more by the
-  owner, `472` yes-and-more by the ratified rule; `463`, `468`, `469`, `470`, `488` yes; `473` waits for the owner), that
+  owner, `472` yes-and-more by the ratified rule; `463`, `468`, `469`, `470`, `488` yes; `473` yes-and-more by the owner on 2026-11-24, r-01), that
   `487` is the only NFKC-only closed yes, that the rerun of `462` cannot mint a summary grant for Drive while the rerun of
   `472` is its built Drive request, and that `483`–`485`, every non-fresh pending step, the
   write approval and the A2 topic consent are never routed to the classifier.
@@ -781,10 +781,11 @@ ratification record states (DECISIONS.md "ADR-0121 amendments A5 and A6 ratifica
   check of this document still runs on it. The floor is not lowered. A bound-yes target case gains its `readContent`
   when its slices land.
 - **Stays as built (owner verdict).** `483`–`485` (a quoted, quotation-marked or code-marked "응"/"yes" is pasted text).
-- **Waits for the owner.** `473` ("응 근데 메일 10개 더 요약해줘") had `other` only by analogy with the old `462` verdict.
-  Recommended: `other` (it widens the same pending step's items); it stays `pending-owner-approval`. Also an owner
-  question: the rerun of `462` is the whole two-line message, so "드라이브도 같이" gets at most a Drive listing (recommended:
-  accept, fail closed).
+- **Decided by the owner (2026-11-24, r-01).** `473` ("응 근데 메일 10개 더 요약해줘") is `yes-and-more`: the asked mail is
+  summarised and "10개 더" runs as a new request (REMOTE asks again for those 10). It carries the same target as `462` and
+  `472` (`awaiting.decided: "2026-11-24"`). Also decided (r-02): when the first line is the fixed closed "응" token, Core
+  strips only that line and runs the remaining lines as the new request (a rule-based cut, never the classifier), so the
+  rerun of `462` can ask its own Drive question. Core has not built this yet; the case keeps its built `expect` as the floor.
 - **When the slices land**, their PR moves `awaiting.expect` into `expect`, drops `awaiting`, and the runner judges with
   the header's `consentAnswerJudging`, word for word:
 
