@@ -388,6 +388,25 @@ describe('events (D4)', () => {
 
   // 'a seq before the ring' is in the local-client-surface corpus (forged-last-event-id).
 
+  it.each([
+    ['a replay that passes the backlog bound', 12, 2000],
+    ['a single queued reply that alone passes the bound', 1, 20_000],
+  ])('treats %s as not resumable: 200, resync, no replay, stream kept open', async (_name, count, size) => {
+    // Regression: such a resume used to be destroyed before the head was flushed (0 bytes, dropped again on every retry).
+    const h = await start({ maxStreamBacklogBytes: 16 * 1024 });
+    for (let i = 0; i < count; i += 1) await h.adapter.sendMessage(outboundMessage(ctx, `${i}:${'q'.repeat(size)}`) as never);
+    const req = `GET /client/v1/events HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${h.token()}\r\nLast-Event-ID: ${h.adapter.epoch}-0\r\n\r\n`;
+    const pending = raw(h.socket, req, 300);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(h.adapter.status().openStreams).toBe(1);
+    const out = await pending;
+    expect(out.startsWith('HTTP/1.1 200')).toBe(true);
+    expect(out).toContain('event: status');
+    expect(out).toContain('"resync":true');
+    expect(out).not.toContain('event: reply');
+    expect(h.adapter.peakStreamBacklogBytes).toBeLessThanOrEqual(16 * 1024);
+  });
+
   it('allows at most 2 streams (429) and sends heartbeat comments', async () => {
     const h = await start({ heartbeatMs: 40 });
     const a = await openStream(h.socket, h.token());

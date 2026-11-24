@@ -375,7 +375,7 @@ const waitFor = async (predicate: () => boolean, ms = 2000): Promise<boolean> =>
   }
   return predicate();
 };
-add('floods', 'a paused stream reader is dropped at the backlog limit, by publish and by replay', async () => {
+add('floods', 'a paused stream reader is dropped at the backlog limit; an oversized replay is not resumable', async () => {
   const limit = 64 * 1024;
   const h = await start({ maxStreamBacklogBytes: limit });
   const big = (i: number) => outboundMessage(ctx, `${i}:${'z'.repeat(2000)}`) as OutboundMessage;
@@ -387,22 +387,23 @@ add('floods', 'a paused stream reader is dropped at the backlog limit, by publis
     await sleep(1);
   }
   const keptLive = h.adapter.status().openStreams !== 0;
-  // Replay: a resume from the start of the ring (200 events, far over the limit) is dropped by the same guard.
+  // Replay: a resume from the start of the ring (200 events, far over the limit) cannot fit in the backlog bound, so
+  // it is not resumable (D4 "now + resync"): 200, one `status {resync: true}`, no replayed reply, the stream stays open.
   let lastId = '';
   for (let i = 0; i < 210; i += 1) lastId = ((await h.adapter.sendMessage(big(1000 + i))) as { platformMessageIds: string[] }).platformMessageIds[0] ?? '';
   const firstInRing = Number(/-(\d+)$/.exec(lastId)?.[1]) - 199;
   const resume = (from: number, waitMs: number) =>
     raw(h.socket, `GET /client/v1/events HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${h.token()}\r\nLast-Event-ID: ${h.adapter.epoch}-${from}\r\n\r\n`, waitMs);
-  // Control: the same request resuming one event back opens and replays that event.
+  // Control: the same request resuming one event back opens and replays that event, with no resync.
   const control = await resume(firstInRing + 198, 200);
-  const controlOk = control.startsWith('HTTP/1.1 200') && (control.match(/^event: reply$/gm) ?? []).length === 1;
+  const controlOk = control.startsWith('HTTP/1.1 200') && (control.match(/^event: reply$/gm) ?? []).length === 1 && !control.includes('"resync":true');
   await waitFor(() => h.adapter.status().openStreams === 0);
-  const began = Date.now();
-  const replay = await resume(firstInRing - 1, 1500);
-  // The whole replay is written in one tick, so the guard drops the stream before anything is flushed: the server
-  // closes at once (no 4xx, no waiting for the client's timeout) with far fewer than 200 replayed events.
-  const closedByServer = Date.now() - began < 1000 && !/^HTTP\/1\.1 [^2]/.test(replay);
-  const keptReplay = !controlOk || !closedByServer || (replay.match(/^event: reply$/gm) ?? []).length >= 200 || h.adapter.status().openStreams !== 0;
+  let openDuring = 0;
+  const pending = resume(firstInRing - 1, 400);
+  await waitFor(() => (openDuring = h.adapter.status().openStreams) === 1, 300);
+  const replay = await pending;
+  const resynced = replay.startsWith('HTTP/1.1 200') && replay.includes('"resync":true') && (replay.match(/^event: reply$/gm) ?? []).length === 0;
+  const keptReplay = !controlOk || !resynced || openDuring !== 1;
   return keptLive || keptReplay || h.adapter.peakStreamBacklogBytes > limit;
 });
 add('floods', 'a notice-ack flood reaches nothing (the endpoint is LC-4)', async () => {

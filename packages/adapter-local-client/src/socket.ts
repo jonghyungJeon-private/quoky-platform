@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, renameSync, unlinkSync } from 'node:fs';
+import { chmodSync, linkSync, lstatSync, readdirSync, unlinkSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import net from 'node:net';
 import type http from 'node:http';
@@ -60,6 +60,9 @@ export function probeSocket(socketPath: string, timeoutMs: number = SOCKET_PROBE
   });
 }
 
+/** The adapter's own temporary bind names (see `temporaryBindPath`). */
+export const TEMPORARY_BIND_NAME = /^\.lc-[0-9a-f]{8}\.sock$/;
+
 export interface SocketPreflightInput {
   readonly dataDir: string;
   readonly instanceLockHeld: boolean;
@@ -90,6 +93,7 @@ export async function preflightSocketPath(input: SocketPreflightInput): Promise<
     if (dir === undefined || !dir.isDirectory() || dir.isSymbolicLink() || dir.uid !== BigInt(uid) || (dir.mode & 0o077n) !== 0n) {
       return { ok: false, reason: 'DATA_DIR_UNSAFE' };
     }
+    await removeStaleTemporaryBinds(path.dirname(socketPath), uid, input.probeTimeoutMs);
     const existing = lstatOrUndefined(socketPath);
     if (existing === undefined) return { ok: true, socketPath };
     if (!existing.isSocket() || existing.uid !== BigInt(uid)) return { ok: false, reason: 'SOCKET_PATH_OCCUPIED' };
@@ -106,6 +110,32 @@ export async function preflightSocketPath(input: SocketPreflightInput): Promise<
     return { ok: true, socketPath };
   } catch {
     return { ok: false, reason: 'DATA_DIR_UNSAFE' };
+  }
+}
+
+/**
+ * A crash between the temporary bind and publication can leave one of the adapter's own temporary names behind. Under
+ * the same D4 lock, such an entry is unlinked only when it matches the adapter's temporary-name format, is a socket
+ * owned by the uid, refuses a connect (`ECONNREFUSED`) and is still the very file that was probed. Best effort: any
+ * other entry, errno or failure leaves it alone and never refuses the start.
+ */
+async function removeStaleTemporaryBinds(dir: string, uid: number, probeTimeoutMs: number | undefined): Promise<void> {
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((name) => TEMPORARY_BIND_NAME.test(name));
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const target = path.join(dir, name);
+    try {
+      const stat = lstatOrUndefined(target);
+      if (stat === undefined || !stat.isSocket() || stat.uid !== BigInt(uid)) continue;
+      if ((await probeSocket(target, probeTimeoutMs)) !== 'refused') continue;
+      if (sameIdentity(identityOf(stat), lstatIdentity(target))) unlinkSync(target);
+    } catch {
+      // not ours to remove, or already gone
+    }
   }
 }
 
@@ -133,11 +163,12 @@ export function closeServer(server: http.Server): Promise<void> {
 
 /**
  * D2 steps 3-4. The server binds to a random temporary name inside the 0700 data directory, the socket is `chmod`ed to
- * 0600 and `lstat`ed (a socket, our uid, mode 0600) and its `(dev, ino)` recorded, and only then is it `rename`d onto
- * `local-client.sock` (never over an existing entry). libuv remembers the name it bound and unlinks THAT name on close,
- * which is already gone after the rename, so the adapter can always close the server without touching whatever is at
- * the real path. Any mismatch closes the server and disables the adapter; the real path is removed only while it still
- * has the recorded `(dev, ino)`.
+ * 0600 and `lstat`ed (a socket, our uid, mode 0600) and its `(dev, ino)` recorded, and only then is it published at
+ * `local-client.sock` with `link` (atomic and no-replace: an entry already there, however recently created, fails the
+ * link with `EEXIST` and is never touched), after which the temporary name is unlinked. libuv remembers the name it
+ * bound and unlinks THAT name on close, which is already gone after publication, so the adapter can always close the
+ * server without touching whatever is at the real path. Any mismatch closes the server and disables the adapter; the
+ * real path is removed only while it still has the recorded `(dev, ino)`.
  */
 export async function bindSocket(server: http.Server, socketPath: string, uid: number): Promise<BindResult> {
   const tempPath = temporaryBindPath(socketPath);
@@ -162,13 +193,18 @@ export async function bindSocket(server: http.Server, socketPath: string, uid: n
       return { ok: false, reason: 'SOCKET_VERIFY_FAILED' };
     }
     const recorded = identityOf(stat);
-    // `rename` replaces silently; the path was free at preflight and must still be (nothing is ever clobbered).
-    if (lstatOrUndefined(socketPath) !== undefined) {
+    try {
+      linkSync(tempPath, socketPath);
+    } catch (err) {
       await closeServer(server);
-      return { ok: false, reason: 'SOCKET_PATH_OCCUPIED' };
+      return { ok: false, reason: errnoOf(err) === 'EEXIST' ? 'SOCKET_PATH_OCCUPIED' : 'SOCKET_VERIFY_FAILED' };
     }
-    renameSync(tempPath, socketPath);
     identity = recorded;
+    try {
+      unlinkSync(tempPath);
+    } catch {
+      // libuv unlinks the bound name on close in any case
+    }
     if (!sameIdentity(lstatIdentity(socketPath), recorded)) {
       await releaseSocket(server, socketPath, recorded);
       return { ok: false, reason: 'SOCKET_VERIFY_FAILED' };
@@ -181,7 +217,7 @@ export async function bindSocket(server: http.Server, socketPath: string, uid: n
 }
 
 /**
- * D2 end of life: the server is always closed (libuv unlinks only the temporary bind name, gone since the rename), and
+ * D2 end of life: the server is always closed (libuv unlinks only the temporary bind name, gone since publication), and
  * the socket path is unlinked only while it still has the recorded `(dev, ino)`; a replaced file is left alone.
  */
 export async function releaseSocket(server: http.Server, socketPath: string, recorded: FileIdentity | undefined): Promise<void> {

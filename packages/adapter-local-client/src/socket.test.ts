@@ -126,7 +126,7 @@ function connectErrno(target: string): Promise<string> {
   });
 }
 
-describe('bind by temporary name and rename (D2 steps 3-4)', () => {
+describe('bind by temporary name and no-replace link (D2 steps 3-4)', () => {
   it('a verify failure closes the server: no listener and no file remain', async () => {
     const d = dir();
     const socket = path.join(d, 'local-client.sock');
@@ -139,16 +139,30 @@ describe('bind by temporary name and rename (D2 steps 3-4)', () => {
     expect(await connectErrno(socket)).toBe('ENOENT');
   });
 
-  it('never renames over an entry that appeared at the path after preflight; that entry is left alone', async () => {
+  it('never publishes over an entry that appeared at the path after preflight; that entry is left alone', async () => {
+    // bindSocket has no check-then-act step left: the pre-created entry is met by the atomic link itself (EEXIST).
     const d = dir();
     const socket = path.join(d, 'local-client.sock');
     writeFileSync(socket, 'theirs');
+    const before = lstatSync(socket, { bigint: true });
     const server = http.createServer();
     const result = await bindSocket(server, socket, process.getuid?.() ?? 0);
     expect(result).toEqual({ ok: false, reason: 'SOCKET_PATH_OCCUPIED' });
     expect(server.listening).toBe(false);
+    const after = lstatSync(socket, { bigint: true });
+    expect([after.dev, after.ino, after.nlink]).toEqual([before.dev, before.ino, before.nlink]);
     expect(readFileSync(socket, 'utf8')).toBe('theirs');
     expect(readdirSync(d)).toEqual(['local-client.sock']);
+  });
+
+  it('a successful bind leaves the socket with one link only (the temporary name is gone)', async () => {
+    const d = dir();
+    const socket = path.join(d, 'local-client.sock');
+    const server = http.createServer();
+    expect((await bindSocket(server, socket, process.getuid?.() ?? 0)).ok).toBe(true);
+    expect(lstatSync(socket, { bigint: true }).nlink).toBe(1n);
+    expect(readdirSync(d)).toEqual(['local-client.sock']);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
   it('a successful bind places the socket at the real path, mode 0600, and returns its (dev, ino)', async () => {
@@ -163,6 +177,37 @@ describe('bind by temporary name and rename (D2 steps 3-4)', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     // libuv unlinks only the temporary name it bound (already gone): the real path is the adapter's to remove.
     expect(existsSync(socket)).toBe(true);
+  });
+});
+
+describe('leftover temporary bind names (D2, under the D4 lock)', () => {
+  it('removes only a stale socket in the adapter temp-name format; other entries are left alone', async () => {
+    const d = dir();
+    const staleTemp = path.join(d, '.lc-0a1b2c3d.sock');
+    await leaveStaleSocket(staleTemp);
+    const plainTemp = path.join(d, '.lc-00ff00ff.sock');
+    writeFileSync(plainTemp, 'not a socket');
+    const otherName = path.join(d, '.lc-stale.sock');
+    await leaveStaleSocket(otherName);
+    const liveTemp = path.join(d, '.lc-11223344.sock');
+    const live = net.createServer((c) => c.end('live'));
+    await new Promise<void>((resolve) => live.listen(liveTemp, resolve));
+    const h = await start({ dir: d });
+    expect(h.adapter.status().listening).toBe(true);
+    expect(existsSync(staleTemp)).toBe(false);
+    expect(readFileSync(plainTemp, 'utf8')).toBe('not a socket');
+    expect(lstatSync(otherName).isSocket()).toBe(true);
+    expect(lstatSync(liveTemp).isSocket()).toBe(true);
+    await new Promise<void>((resolve) => live.close(() => resolve()));
+  });
+
+  it('never touches temp-named entries without the instance lock', async () => {
+    const d = dir();
+    const staleTemp = path.join(d, '.lc-0a1b2c3d.sock');
+    await leaveStaleSocket(staleTemp);
+    const h = await start({ dir: d, instanceLockHeld: false });
+    expect(h.adapter.status().disabledReason).toBe('NO_INSTANCE_LOCK');
+    expect(lstatSync(staleTemp).isSocket()).toBe(true);
   });
 });
 

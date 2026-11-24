@@ -39,6 +39,8 @@ function frame(event: { id?: string; type: string; data: string }): string {
 
 /** HTTP/1.1 chunked framing added to each write (hex length and two CRLFs), so the guard holds after framing too. */
 const CHUNK_FRAMING_BYTES = 16;
+/** The response head is buffered with the first write; a generous bound for the fixed head `attach` writes. */
+const RESPONSE_HEAD_ALLOWANCE_BYTES = 512;
 
 export class EventHub {
   readonly epoch: string;
@@ -93,31 +95,42 @@ export class EventHub {
   /**
    * Open a stream. The caller has already checked readiness. `lastEventId` is the raw header value (or undefined).
    * Writes the response head, one id-less `status` event (epoch, plus `resync: true` when a header was sent that is
-   * not resumable), then the replay. Every byte after the head goes through the same backlog guard as a publish, so a
-   * replay that would pass the limit drops the stream like a slow reader does.
+   * not resumable), then the replay. Before the head is written the status event and the replay are sized (serialized
+   * bytes plus chunk framing per write, plus a response-head allowance): a resume whose replay would not fit in the
+   * backlog bound is NOT resumable (D4 "not resumable -> now + resync"), so it gets no replay, `resync: true` and an
+   * open stream, instead of being dropped before any byte is sent. Every byte after the head still goes through the
+   * same backlog guard as a publish.
    */
   attach(res: ServerResponse, lastEventId: string | undefined, status: string): AttachResult {
     if (this.streams.size >= this.maxStreams) return 'TOO_MANY_STREAMS';
     this.prune();
-    const resume = lastEventId === undefined ? undefined : this.resumeFrom(lastEventId);
+    const position = lastEventId === undefined ? undefined : this.resumeFrom(lastEventId);
+    const statusFrame = (resync: boolean): string =>
+      frame({ type: 'status', data: JSON.stringify({ status, epoch: this.epoch, ...(resync ? { resync: true } : {}) }) });
+    const replay = position === undefined ? [] : this.ring.filter((event) => event.seq > position).map((event) => frame(event));
+    const resumable = position !== undefined && this.planBytes([statusFrame(false), ...replay]) <= this.maxBacklogBytes;
+    const frames = resumable ? [statusFrame(false), ...replay] : [statusFrame(lastEventId !== undefined)];
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-store',
       Connection: 'close',
       'X-Content-Type-Options': 'nosniff',
     });
-    const resync = lastEventId !== undefined && resume === undefined;
     this.streams.add(res);
     res.once('close', () => {
       this.streams.delete(res);
       this.stopHeartbeatIfIdle();
     });
-    if (!this.write(res, frame({ type: 'status', data: JSON.stringify({ status, epoch: this.epoch, ...(resync ? { resync: true } : {}) }) }))) return 'ok';
-    if (resume !== undefined) {
-      for (const event of [...this.ring]) if (event.seq > resume && !this.write(res, frame(event))) return 'ok';
-    }
+    for (const text of frames) if (!this.write(res, text)) return 'ok';
     this.startHeartbeat();
     return 'ok';
+  }
+
+  /** The bytes a sequence of writes adds to a fresh stream's backlog (frames, chunk framing, the response head). */
+  private planBytes(frames: readonly string[]): number {
+    let total = RESPONSE_HEAD_ALLOWANCE_BYTES;
+    for (const text of frames) total += Buffer.byteLength(text, 'utf8') + CHUNK_FRAMING_BYTES;
+    return total;
   }
 
   /** The `seq` to replay after, or undefined for a resync. */
