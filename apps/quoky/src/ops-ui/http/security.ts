@@ -1,7 +1,7 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { constantTimeEquals, newSecret } from '@quoky/local-auth';
 
 /**
- * OPS-1 browser hardening and access primitives (ADR-0113 D3/D4). `node:*` only.
+ * OPS-1 browser hardening and access primitives (ADR-0113 D3/D4). Shared auth comes from `@quoky/local-auth` (ADR-0125 D11).
  */
 
 /** ADR-0113 D4: the exact policy string. No `'unsafe-inline'`, `'unsafe-eval'`, nonce or hash. */
@@ -24,53 +24,6 @@ export const OPS_UI_SESSION_COOKIE = 'quoky_ops_session';
 export const OPS_UI_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 /** Oldest sessions are dropped beyond this many. */
 export const OPS_UI_MAX_SESSIONS = 8;
-
-/** ADR-0113 D3: 5 failed sign-ins per minute, then a 60 s lockout. */
-export const SIGN_IN_MAX_FAILURES = 5;
-export const SIGN_IN_WINDOW_MS = 60_000;
-export const SIGN_IN_LOCKOUT_MS = 60_000;
-
-/** A random 256-bit secret, base64url (43 characters). */
-export function newSecret(): string {
-  return randomBytes(32).toString('base64url');
-}
-
-/**
- * Constant-time string equality: both sides are hashed to fixed-length digests first, so neither the content nor the
- * length of the expected value is revealed by timing.
- */
-export function constantTimeEquals(candidate: string, expected: string): boolean {
-  const a = createHash('sha256').update(candidate, 'utf8').digest();
-  const b = createHash('sha256').update(expected, 'utf8').digest();
-  return timingSafeEqual(a, b) && candidate.length === expected.length;
-}
-
-/** Global (single-owner, loopback) sign-in failure limiter. */
-export class SignInRateLimiter {
-  private failures: number[] = [];
-  private lockedUntilMs = 0;
-
-  constructor(private readonly nowMs: () => number) {}
-
-  /** True while sign-in is refused (lockout). */
-  isLocked(): boolean {
-    return this.nowMs() < this.lockedUntilMs;
-  }
-
-  recordFailure(): void {
-    const now = this.nowMs();
-    this.failures = this.failures.filter((at) => now - at < SIGN_IN_WINDOW_MS);
-    this.failures.push(now);
-    if (this.failures.length >= SIGN_IN_MAX_FAILURES) {
-      this.lockedUntilMs = now + SIGN_IN_LOCKOUT_MS;
-      this.failures = [];
-    }
-  }
-
-  recordSuccess(): void {
-    this.failures = [];
-  }
-}
 
 export interface OpsUiSession {
   readonly id: string;

@@ -3,6 +3,8 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Socket } from 'node:net';
 
+import { SignInRateLimiter, constantTimeEquals, newSecret, removeTokenFile, writeTokenFile } from '@quoky/local-auth';
+
 import { OPS_UI_CSS, OPS_UI_DEFAULT_REFRESH_SECONDS, OPS_UI_JS, OPS_UI_MIN_REFRESH_SECONDS } from './assets';
 import { OPS_MAX_CODE_ATTEMPTS, OpsIntentStore } from './intents';
 import {
@@ -20,15 +22,11 @@ import {
   OPS_UI_SECURITY_HEADERS,
   OPS_UI_SESSION_COOKIE,
   OpsUiSessionStore,
-  SignInRateLimiter,
   clearedSessionCookie,
-  constantTimeEquals,
-  newSecret,
   readCookie,
   sessionCookie,
 } from './security';
 import type { OpsUiSession } from './security';
-import { removeTokenFile, writeTokenFile } from './token-file';
 import type { OpsActions, OpsUiEventLog, OpsViewModelSource } from './view-model';
 
 /**
