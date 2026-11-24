@@ -38768,3 +38768,14 @@ stay as written; this record is the exact change and supersedes them for this on
     an earlier answer ("#dev 대화 요약해서 그 결과 BE-123에 달아줘"); an incidental 이 / 그 standing as a word ("슬랙 릴리즈 대화 요약해서
     이 정도로 BE-123에 달아줘"); a recency word inside another word ("아까운 …"). Each is refused `cross-write-invalid` as form a. "이번
     주 …" is not affected (이번 is not 이). Owner: confirm the residual, or request a narrower rule with its own review.
+- **Review 3 (Codex P2, fail-open after Review 2; input normalization).** Compatibility forms and punctuation hid the closed
+  point-back token from the whitespace tokenizer: "summarize ｔｈａｔ slack content and post to BE-123" (full-width) and "summarize
+  (those) slack content …" let an injected form-a `slack.search` plan validate under a missing, stale or different-source receipt.
+  Fix (structural, one place, `crossWritePointBackText`): before the closed-token match the text outside the destination span is
+  NFKC-folded, lower-cased, stripped of format characters (`\p{Cf}`, zero-width) and split on every character that is not a
+  letter, mark or number (Hangul is a letter), so brackets, quotes and punctuation around a token never hide it ("(those)",
+  "\"that\"", "그(슬랙)"). The span exclusion is unchanged (the normalization runs on its output, so spans still line up). No word
+  is added; Korean particle handling is the existing one; A6, W1 and `agent-plan.v11` are unchanged. Over-refusal widens only to
+  the same closed tokens (a token inside brackets or quotes is a token). Gold `a7n-163` to `a7n-177` (full-width, bracketed,
+  quoted, 그(슬랙), zero-width inside a token; each under no, stale and different-source receipts), all `cross-write-invalid`,
+  `pending-owner-approval`; the file now holds 252 cases.

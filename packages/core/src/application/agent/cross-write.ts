@@ -666,6 +666,22 @@ function recencyPointsBack(parts: readonly Token[]): boolean {
 }
 
 /**
+ * The owner's words as the closed point-back tokens are matched in (review 3): NFKC (full-width and other compatibility forms
+ * fold to their plain form), lower-case, zero-width and other format characters (\p{Cf}) removed, and every character that is
+ * not a letter, a mark or a number (Hangul is \p{L}) a word boundary, so brackets, quotes and punctuation around a token never
+ * hide it ("(those)", "\"that\"", "그(슬랙)"). Applied to the text outside the destination span, so the spans still line up.
+ * Pure.
+ */
+export function crossWritePointBackText(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(/\p{Cf}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/**
  * Whether the request is a point-back request (A7.5 step 0, review 2 of the recency amendment): a CLOSED-TOKEN rule, fail
  * closed on purpose. The owner's words outside the destination span carry ANY token of the existing closed point-back sets,
  * whatever follows it (a source name, an item noun or any content word):
@@ -678,7 +694,8 @@ function recencyPointsBack(parts: readonly Token[]): boolean {
  * Over-refusal of a form-a request with an incidental closed token ("… and post it to BE-123") is an accepted, recorded
  * residual (DECISIONS). No word is added. Pure.
  */
-export function crossWriteIsPointBackRequest(outside: string): boolean {
+export function crossWriteIsPointBackRequest(rawOutside: string): boolean {
+  const outside = crossWritePointBackText(rawOutside);
   if (nlHasRecencyWord(outside) || hasNlDeictic(outside)) return true;
   return tokensOf(outside).some((token) => {
     const word = token.word.replace(/[.,!?~]+$/u, '');

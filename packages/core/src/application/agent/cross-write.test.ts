@@ -540,6 +540,15 @@ describe('A7.5 step 0 review 2 (Codex, fail-open): the point-back request is a c
     }
   });
 
+  it('compatibility forms, punctuation and zero-width characters never hide a closed point-back token (review 3)', () => {
+    for (const text of ['summarize ｔｈａｔ slack content and post to', 'summarize (those) slack content and post to', 'summarize "that" slack content and post to', '그(슬랙) 내용 요약해서', 'summarize th\u200bat slack content and post to', '「그」 슬랙 내용 요약해서', 'SUMMARIZE [This] thread']) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(true);
+    }
+    for (const text of ['summarize (slack) content and post to', '"슬랙" 릴리즈 요약해서', 'summarize ｓｌａｃｋ thread and post to']) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(false);
+    }
+  });
+
   it('the same requests stand only as form b on a fresh same-source receipt', () => {
     expect(check(formB(jira({ issueKey: 'BE-123' })), '그 슬랙 내용 요약해서 BE-123에 달아줘', contexts.fresh)).toMatchObject({ ok: true, plan: { form: 'b' } });
     expect(check(formB(jira({ issueKey: 'BE-123' })), '그 슬랙 내용 요약해서 BE-123에 달아줘', contexts.missing)).toMatchObject({ ok: false, reason: 'cross-write-receipt' });
