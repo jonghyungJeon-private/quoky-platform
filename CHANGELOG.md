@@ -36,6 +36,22 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   source; mail and Drive still collapse).
 - **Unchanged.** No prompt template, catalog, grant producer, switch default, `.env.local` value, model call or eval; with
   every switch off nothing reachable changes (pinned by test).
+## Unreleased — ADR-0125: local client adapter for a macOS app (owner request 2026-11-24; PROPOSED, docs only)
+
+- **Docs.** DECISIONS "ADR-0125": a new `packages/adapter-local-client` (`platform: 'local-client'`) for a separate
+  macOS app (`quoky-mac`, own repo). A second loopback-only listener (`127.0.0.1`, default port 47614, flag
+  `QUOKY_LOCAL_CLIENT_ENABLED` default off) with its own per-start `local-client.token` (0600, Bearer), a Host check,
+  refusal of any `Origin`, no CORS and rate limits. Endpoints: messages, an SSE event stream, card decisions, status.
+  Turns become ordinary `InboundMessage`s for the existing owner `Actor`; Core never branches on the platform. Cards show
+  the exact chat approval reply with the full payload; buttons (flag `QUOKY_LOCAL_CLIENT_APPROVAL_BUTTONS`, default off)
+  go through `ApprovalDecisionService` with a `local-client` marker, single use, one step per press, local-client
+  approvals only. Undo is the text `되돌려줘`. The app gets no secrets, tokens, provider ids, paths or stacks. The OPS-UI
+  loopback primitives move to one shared `node:*`-only module.
+- **Proposed, not applied.** Narrow amendments of ADR-0113 D1 (two loopback listeners), D10 and D11, ADR-0114 D10 (buttons
+  on this surface only), the ADR-0091 extension, a notification fallback under ADR-0114 D11 and the `ARCHITECTURE.md`
+  §13 Platform row. Red-team family `local-client-surface` ≥ 60 deterministic cases, 0 successes over 3 runs. Slices
+  LC-0..LC-4 (ADR, adapter, app skeleton, on-device voice, cards and undo). Four items precedent-decided (repo, transport,
+  staging, timing); 3 owner questions. No runtime, config, flag, gold or test change, and no model call.
 
 ## Unreleased — ADR-0121 A5-S1 summary-readout (2026-11-23; dormant, every switch off)
 

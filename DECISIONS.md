@@ -37746,3 +37746,285 @@ credential plus line-break output is `credential`. (4) The switch-off test asser
 `reason`. (5) The REMOTE disclosure test builds the exact EN and KO line per source. (6) The U+2028 case is an escape and a
 U+0085 case is added. Residual (fail closed): an abbreviation such as "e.g. x" in a work summary is read as a second
 sentence and the summary is withheld; a language that writes no space after its terminator is not caught by this check.
+## ADR-0125 — Local client adapter: a loopback-only, token-gated, default-off chat surface for a separate macOS app (`quoky-mac`); text first, then on-device voice, then approval cards and undo. PROPOSES narrow amendments of ADR-0113 D1, D10 and D11, ADR-0114 D10 (for this surface only), an extension of ADR-0091, a routing rule under ADR-0101 D8 / ADR-0114 D11, and the `ARCHITECTURE.md` §13 Platform row (NOT applied; Strict ratification pending).
+
+- **Status.** PROPOSED, nothing ratified. Docs only (branch `claude/v5-adr-local-client`): no runtime, config, flag, port,
+  package, gold or test change, and no model call. ADR-0113, ADR-0114, ADR-0091, ADR-0101 and `ARCHITECTURE.md` stay as
+  ratified until the owner's Strict ratification (owner question 1). No slice of this ADR may merge runtime code before
+  then.
+- **Date.** 2026-11-24.
+- **Proposes to amend (on ratification).**
+  - ADR-0113 D1 ("exactly one loopback-only operations listener"), narrowly: at most **two** loopback-only listeners
+    inside the Quoky process, the OPS-UI listener and the local-client listener of this ADR (D2). A third needs its own ADR.
+  - ADR-0113 D10 ("the UI cannot send a chat turn"), for the local-client listener only: it may submit owner chat turns
+    into the existing runtime, as Discord and Telegram do. It is still not an AI API (D9). The OPS-UI keeps D10 unchanged.
+  - ADR-0113 D11 ("a separate mobile or desktop client is out of v3"), narrowly: one same-host desktop client that reaches
+    only the loopback listener. Remote access of any kind stays out.
+  - ADR-0114 D10 ("text phrases only; no buttons"), for this surface only and only if owner question 2 is answered yes:
+    approval cards may carry decision buttons under D7. Discord and Telegram stay text-only.
+- **Extends (on ratification).** ADR-0091 (owner admission) for this surface: holding the per-start local-client token
+  is the admission, and it maps to the existing owner `Actor` (D5), as ADR-0113 D7 and ADR-0114 D3 did.
+- **Relates (does not edit).** `ARCHITECTURE.md` §2 principle 2 (no platform branch in Core), §12 (loopback listener
+  only, no tunnel; a model label never answers an approval card), §13 (Platform via `PlatformAdapter`; network posture);
+  ADR-0009 (Actor seam), ADR-0093 (approval TTL), ADR-0095 (approval interpreter), ADR-0097 (credential guard),
+  ADR-0102 D3/D4 (host data directory, single instance), ADR-0112 and its amendments 1-3 (connector writes, undo),
+  ADR-0114 D1 (PLT-0 neutral content), D6 (composite adapter), D11 (notification routing), ADR-0121 D8 (egress allowlist,
+  traffic ledger, "no inbound listener other than loopback, and no tunnel, relay, P2P or webhook").
+- **Inputs.** The quoky-mac brief of 2026-11-24 (atticus-mac reviewed as data, MIT; OpenClaw macOS app docs as UX
+  reference only, per the ADR-0121 direction "better, not imitate").
+
+### Context
+
+The owner wants a basic Mac UI for Quoky: a menu bar item, a hotkey panel to type to Quoky, push-to-talk, approval
+cards and macOS notifications. Today the owner reaches Quoky only through Discord and Telegram, both of which route
+every turn through a third-party server. A local client keeps the conversation on the host.
+
+atticus-mac shows the shape (menu bar app, floating panel, on-device `SpeechAnalyzer`, Allow / Don't Allow cards). It
+is also a Mac-control agent with its own regex risk rules, telemetry and `curl | bash` updates. Quoky takes none of
+that. The Mac app is one more face of the chat adapter. All judgment stays in Core.
+
+What exists and can be reused (checked at `284f1b95`):
+- **The port.** `PlatformAdapter` (`packages/core/src/ports/platform-adapter.port.ts`): `platform`, `start` / `stop`,
+  `onMessage`, `onApprovalDecision`, optional `onFeedback`, `sendMessage`, `sendTyping`, `requestApproval`. Discord and
+  Telegram both leave `requestApproval` unimplemented. Approval previews reach the owner as ordinary `OutboundMessage`
+  text, and decisions come back as owner text through the ADR-0095 interpreter.
+- **The composite.** `apps/quoky/src/platform/composite-platform-adapter.ts` and `platform-composition.ts` (ADR-0114 D6).
+- **The decision service.** `ApprovalDecisionService` (`packages/core/src/application/approval-decision-service.ts`),
+  extracted for OPS-2b, with a surface marker type `ApprovalDecisionSurface = 'chat' | 'ops-ui'`.
+- **The loopback security pieces of OPS-UI** (`apps/quoky/src/ops-ui/http/*`): `security.ts` (`newSecret`,
+  `constantTimeEquals`, `SignInRateLimiter`), `token-file.ts` (`writeTokenFile`, `removeTokenFile`: exclusive create,
+  mode 0600, stale-file unlink), `server.ts` (`OPS_UI_BIND_HOST`, `OpsUiBindError`, the Host check, bind failure that
+  disables only the UI), `ops-ui-config.ts` (port validation, data directory) and the `import-boundary.test.ts` pattern.
+- **The network self-check** (`ops/security/quoky-net-selfcheck.sh`) already expects the OPS-UI loopback listener.
+
+### Decision
+
+1. **D1 — Shape.** A new platform adapter `packages/adapter-local-client` (depends on `@quoky/core` and `node:*`
+   only) implements `PlatformAdapter` with `platform: 'local-client'`. It runs inside the Quoky process. The composition
+   root adds it to the composite `PlatformAdapter` only when `QUOKY_LOCAL_CLIENT_ENABLED=true` (default `false`). With
+   the flag off nothing is constructed, no port is opened and no token file is written; `PLATFORM_ADAPTER` is exactly
+   what it is today. The Mac app lives in a **separate repository** (`quoky-mac`) and is a thin client of this adapter.
+2. **D2 — Transport: 127.0.0.1 HTTP with SSE, a second loopback listener.**
+   - One `node:http` listener, bound to `127.0.0.1` only, on `QUOKY_LOCAL_CLIENT_PORT` (default `47614`, validated
+     1024-65535, must differ from the OPS-UI port). No configuration accepts another bind address. A non-loopback bind
+     fails closed with a typed configuration error. A taken port disables only this adapter; the rest of Quoky starts.
+   - It is a separate listener from OPS-UI, with its own flag, port, token, rate limits and kill switch. This keeps the
+     two trust scopes apart: the OPS-UI token cannot send a chat turn, and the client token cannot open the OPS-UI.
+     This is the narrow ADR-0113 D1 amendment above. No tunnel, port forward, reverse proxy, LAN bind or relay is
+     configured or documented. A Unix domain socket is a later hardening option, not v1.
+   - Endpoints (the whole surface, versioned under `/client/v1/`):
+     - `POST /client/v1/messages` — one owner turn (D4).
+     - `GET /client/v1/events` — one Server-Sent Events stream of replies, typing, cards and notices (D4).
+     - `POST /client/v1/approvals/{approvalId}/decision` — a card decision, only if buttons are enabled (D7).
+     - `GET /client/v1/status` — connection status, codes only.
+     Every other path and method is a 404 with no body. `OPTIONS` is refused.
+3. **D3 — Access token and browser defences.**
+   - At each start the process writes a new random 256-bit token to `local-client.token` in the ADR-0102 D3 host data
+     directory, mode `0600`, exclusive create, not following a symlink, stale file unlinked first, removed on clean stop.
+     It is a separate file from `ops-ui.token`. If the write fails, only this adapter is disabled.
+   - Every request carries `Authorization: Bearer <token>`, compared in constant time. No cookie, no session, no token in
+     a URL, a log or a response. A wrong token is rate-limited (5 per minute, then a 60 s lockout, as OPS-UI sign-in).
+     The client re-reads the file after a 401, because the token rotates per process start.
+   - `Host` must be `127.0.0.1:<port>` or `localhost:<port>` (DNS-rebinding defence). Any request that carries an
+     `Origin` header is refused: a native client sends none, and every browser cross-origin `fetch` or form post does.
+     No CORS headers are ever sent. A state-changing request must be `application/json`. Together with the Bearer
+     header (which a browser cannot add to a simple request or to `EventSource`), a web page on the host cannot reach
+     the surface.
+   - Bounds: request body ≤ 16 KiB, message text ≤ 4,000 characters, 30 turns per minute per token, at most 2 open
+     event streams, an SSE heartbeat comment every 25 s and no other periodic traffic. Over a bound is a coded 413 or
+     429.
+4. **D4 — Message schema (mirrors the chat adapters).**
+   - **Inbound.** `POST /client/v1/messages` with `{clientMessageId, threadId?, text}` returns `202 {turnId}`. The
+     adapter builds an ordinary `InboundMessage`: `id = clientMessageId` (a repeat id within 10 minutes is accepted once
+     and then answered with the first `turnId`; idempotent), `context = {platform: 'local-client', channelId:
+     'local-client-dm', threadId, userId: <the D5 owner id>, direct: true}`, `text`, `receivedAt`. `clientMessageId` and
+     `threadId` are opaque, `[A-Za-z0-9_-]{1,64}`. Each `threadId` is its own conversation session, as a Discord thread
+     is. No attachments, no audio and no image bytes in v1.
+   - **Outbound.** `GET /client/v1/events` (resumable with `Last-Event-ID` from a bounded in-memory ring of the last
+     200 events or 10 minutes, never persisted; after a restart the client starts fresh). Event types: `reply`
+     (`turnId`, `threadId`, the PLT-0 neutral `content` rendered by this adapter to plain text with typed spans, the
+     plain `text`, and an optional `card`, D7), `typing`, `notice` (D8), `status`. The adapter renders `content` its own
+     way as ADR-0114 D1 requires: untrusted spans stay marked as untrusted plain text; links are data the app may show
+     but never opens on its own.
+   - **Feedback.** Optional, as in the port. A 👍 / 👎 on a reply maps to `onFeedback` later; not in v1.
+   - **No Core contract change for text.** `PlatformAdapter`, `InboundMessage`, `OutboundMessage` and
+     `ConversationRuntimeDeps` stay as they are for slices LC-1 to LC-3. The only additive change is in D7 (cards) and
+     is recorded there before it merges, in the ADR-0114 D6 style.
+5. **D5 — Owner admission (extends ADR-0091).** The surface has no platform identity. Holding the per-start token is
+   the admission. `QUOKY_LOCAL_CLIENT_OWNER_ACTOR` names one configured Discord owner id. The adapter's `userId`
+   resolves through the ADR-0009 seam to that existing owner `Actor`; no new Actor is created. If the setting is unset,
+   is not in `QUOKY_DISCORD_OWNER_IDS`, or does not resolve to exactly one Actor, the adapter is disabled at startup
+   (fail closed) and the log says why; the rest of Quoky starts. Actor-scoped memory, to-dos, reminders and learning
+   follow the owner across platforms, as ADR-0114 D3 made them do. The trust argument is the token file's, as in
+   ADR-0113: only a process running as the owner can read it.
+6. **D6 — No platform branch in Core; no bypass.** `'local-client'` is opaque data. Core never branches on it. Every
+   turn goes through the same runtime path as a Discord turn: NL routing, grants, the agent, approvals, undo. The
+   adapter never calls a provider, a connector, storage, git or a workspace. An import-boundary test pins that the
+   package imports only `@quoky/core` and `node:*`, and that its HTTP files import only `node:*` and siblings (the
+   OPS-UI pattern). The app holds no logic of its own: no intent rules, no regex, no risk table, no model call.
+7. **D7 — Approval cards (buttons need owner question 2).**
+   - **What the card shows.** The card is the exact approval reply Core already composes for chat: the full payload,
+     the provenance banner and the closed words, byte for byte as the `reply` text. The app shows it as plain text. It
+     never shortens, summarises or hides the payload. This is why no OPS-UI confirmation reference is needed here: the
+     OPS-2b reference exists because OPS-UI never shows the payload.
+   - **Text always works.** The owner can type `승인`, `거절` or `<동작> 실행` in the panel. That is an ordinary owner turn
+     through the ADR-0095 interpreter. Buttons are an addition, never the only way.
+   - **Buttons (if question 2 is yes).** Core marks a reply that carries an approval step with one additive, optional,
+     platform-neutral field on `OutboundMessage` (proposed name `decisionStep`: approval id, risk level, expiry and the
+     step's closed decision set). Discord and Telegram ignore it, proven byte-identical by golden tests. A button press
+     posts `{decision: 'approve' | 'reject', eventId}` to `/client/v1/approvals/{approvalId}/decision`. The adapter
+     forwards it through a composition-root bridge to `ApprovalDecisionService` with the owner `Actor`, the originating
+     local-client conversation and a new surface marker `'local-client'` (an additive member of
+     `ApprovalDecisionSurface`). The service does what chat does: expiry re-check (ADR-0093), the decision record, the
+     session re-anchor or clear, and the reply into that session's history.
+   - **Binding rules.** A button decides only the approval named on its own card, and only if that approval was created
+     in a local-client conversation (the ADR-0114 D10 cross-session rule; a Discord approval cannot be pressed from the
+     Mac). Single use: the approval leaves `PENDING`, so a second press, a replay or a stale card gets the existing
+     "already decided" outcome. Decisions on one approval id are serialized in-process (ADR-0102 D4 single instance), so
+     the first of a typed phrase and a press wins. Each step that chat needs is a separate press on the reply that
+     carries that step: a CRITICAL connector write still needs approve and then the separate `<동작> 실행` step; no
+     single press covers two steps. An expired card shows its buttons disabled.
+   - **Audit.** The decision carries the `local-client` marker in the existing governance records, as `ops-ui` does. No
+     new table.
+   - **Never a model.** A button is a deterministic owner input. No model label, classifier or voice transcript ever
+     presses a button (ARCHITECTURE.md §12, ADR-0121 A6).
+   - **Flag.** `QUOKY_LOCAL_CLIENT_APPROVAL_BUTTONS` (default `false`). Off, the field is not emitted to the app and the
+     decision endpoint answers 404; cards are text with typed words only.
+8. **D8 — Undo and notifications.**
+   - **Undo.** There is no undo endpoint. The undo control in the app sends the fixed owner text `되돌려줘` as an
+     ordinary turn in the same thread. Core's undo meaning is unchanged: a per-action inverse back to the original state
+     of the same item, within its window (ADR-0112 amendments 1 and 3). The app shows the control only on the newest
+     result in a thread that Core marked undoable (the same additive field family as D7, an `undoUntil` time), and hides
+     it once a newer action result arrives, so a press never undoes a different action than the one on screen.
+   - **Notifications.** The `NotificationSink` routes by `target.platform` (ADR-0114 D11). A reminder or brief created in
+     a local-client conversation targets `local-client`; the adapter delivers it as a `notice` event and the app shows a
+     local macOS notification with that text only. When no event stream is open, see owner question 3 (recommended:
+     deliver to the owner's Discord DM instead, recorded as `NOT_SENT` on the client and `SENT` on Discord; never both).
+     `OPS_NOTICE` and `OPS_DECISION_RESULT` stay on Discord, as ADR-0114 D11 set.
+9. **D9 — Not an AI API; what never reaches the client.** The surface accepts only owner text, card decisions and the
+   event stream. It cannot pick a provider, a model, a tool, a connector or a capability. The client never receives:
+   secrets, API keys, connector or OAuth tokens, the OPS-UI token, the bot tokens, the host DB or file paths inside the
+   data directory, prompt or context text, the selected provider id of a turn (ARCHITECTURE.md §5.3), raw exception text
+   or stacks, or another actor's data. Errors and status are codes and categories only. Every event carries only what
+   the same reply would carry on Discord, after the same ADR-0097 credential guard.
+10. **D10 — The client's own limits (conditions for `quoky-mac`, recorded here so the adapter can rely on them).**
+    macOS 26+, Swift 6, SwiftUI with AppKit only where needed (menu bar, `NSPanel`, global hotkey). No Dock icon. It
+    talks only to `127.0.0.1:<port>`: no other network call, no telemetry, no update check, no auto-update. It holds no
+    model key, connector token or database. No Accessibility, screen capture or click control. Voice is on-device only
+    (`SpeechAnalyzer`); audio never leaves the app and is never sent to Core; only the final transcript is placed in the
+    input field, and sending needs the owner's explicit send (auto-send is a later decision). No wake word in v1. All
+    text is rendered as plain text; links open only on a tap. Locally signed build with a LaunchAgent, in the atticus
+    pattern; atticus code is a pattern reference with MIT attribution where any code is reused.
+11. **D11 — Reuse, not copy.** The loopback primitives of OPS-UI (`newSecret`, `constantTimeEquals`,
+    `SignInRateLimiter`, `writeTokenFile` / `removeTokenFile`, the bind-host and Host checks, port validation) move into
+    one small shared module that imports only `node:*` and has no Core import (proposed: `packages/loopback-http`).
+    OPS-UI then imports it with byte-identical behaviour and unchanged tests (ADR-0113 D8 already calls such a move
+    mechanical). The adapter imports the same module, so there is one copy of the security code.
+12. **D12 — Operations.** One OPS-UI status panel for the local client: enabled, listening, open streams, last turn time,
+    auth failures in the last hour. No content, ids or token (ADR-0113 D5). The network self-check adds the second
+    expected loopback listener on the configured port and still fails on any non-loopback listener. The traffic ledger is
+    unaffected (the surface makes no outbound call).
+
+### Precedent-decided items (quoky-decide class A; owner delegation 2026-11-24; reported, veto possible)
+
+| Item | Decision | Why (sources) | Opposite precedent |
+|---|---|---|---|
+| Repository | Separate repo `quoky-mac`; only the adapter lives here | The owner said a separate project is fine (2026-11-24). Different toolchain (Swift, CLT), release cycle and trust boundary. OpenClaw and atticus ship their Mac apps as their own build | A monorepo `apps/mac` would share CI; not needed for a thin client |
+| Transport | 127.0.0.1 HTTP + SSE, separate per-start 0600 token, Bearer | In-repo ADR-0113 already ratified the loopback, Host-check, 0600-token pattern; OpenClaw's Mac app is a client of a local gateway process; atticus runs its local speech server on a 127.0.0.1 port | A Unix socket avoids a TCP port; kept as later hardening (no code reuse, Swift needs Network.framework, a token is still needed) |
+| Staging | Text panel first, then on-device voice, then cards and undo | Lowest risk first, live-verified step by step; atticus and Apple keep audio on-device and act only on a final transcript | Voice from day one (atticus); not needed to prove the surface |
+| Timing | This ADR now, in parallel with v5; adapter code after ratification and after the A5-S1 / A7 slices settle | Avoids overlapping security review load; "development proceeds automatically until deploy" applies after ratification | Start code now; blocked anyway by the Strict ratification |
+| Notices | `OPS_*` notices stay on Discord | ADR-0114 D11 (ratified) | — |
+| Client limits | No telemetry, no auto-update, no remote access, no Mac control | Owner security rules (MSIT advisory, no frequent traffic, no tunnels); ADR-0121 D8 | atticus has telemetry and `git pull` updates; not taken |
+
+### Consequences
+
+- **+** The owner can talk to Quoky from the Mac with no third-party server in the path, as the same owner, with every
+  existing gate.
+- **+** No Core contract change for text. Cards add one optional field and one surface marker, both additive.
+- **+** One shared copy of the loopback security code.
+- **−** A second local TCP listener and a second token file. Mitigated by loopback-only bind, Host check, Origin refusal,
+  Bearer header, no CORS, rate limits, default off and the self-check.
+- **−** A second decision surface if buttons are enabled. Mitigated by the full payload on the card, single use, TTL,
+  serialization, one step per press, local-client-only approvals and the audit marker.
+- **−** Two repositories to keep in step. The `/client/v1/` prefix versions the contract.
+
+### Acceptance criteria (offline unless marked live)
+
+- Flag off: no port, no token file, and Discord / Telegram behaviour byte-identical (existing tests and goldens).
+- A non-loopback bind is refused. A foreign `Host`, any `Origin`, a missing or wrong token, a non-JSON body and
+  `OPTIONS` are refused before any handler. Wrong tokens are rate-limited. The OPS-UI token does not work here, and this
+  token does not work on OPS-UI.
+- The token file is `0600`, differs per start, replaces a stale file and is removed on clean stop.
+- A turn becomes an `InboundMessage` with `platform: 'local-client'` and the owner `Actor`. A repeated
+  `clientMessageId` makes one turn. Owner mapping to zero or several Actors disables the adapter.
+- A recall of a memory saved on Discord works from the client (same Actor).
+- Events carry no fixture secret, token, provider id, path or stack; errors are codes.
+- Buttons: a press reaches `ApprovalDecisionService` with the `local-client` marker and produces the same record and
+  session state as the typed phrase on one fixture. A replayed, stale, expired or Discord-originated approval is
+  refused. A typed phrase and a press racing produce one decision. A CRITICAL write needs two presses.
+- Undo from the app is the same turn as typed `되돌려줘`.
+- Import-boundary tests for the package and its HTTP files.
+- Live (attended): enable on the host, connect with `curl` and then the app, send a turn, see the reply, restart rotates
+  the token, a foreign `Origin` request is refused; one `quoky-e2e` scenario.
+
+### Red-team lot (family `local-client-surface`; deterministic, no model calls; owner reviews the batch)
+
+Minimum counts (proposed; owner question 1): token and scope (no token, wrong token, the OPS-UI token, a token from a
+previous start) ≥ 8; Host and DNS rebinding ≥ 6; browser reach (simple form post, `fetch` with and without `no-cors`,
+`EventSource`, a page on `localhost` of another port) ≥ 8; bind and config (non-loopback, port clash, OPS-UI port reuse)
+≥ 4; approval replay, stale card, expired approval, double press, cross-platform approval, two-step skip ≥ 12; floods
+and bounds (oversize, rate, many streams, slow client) ≥ 6; leakage (credential-shaped strings, tokens, provider ids,
+paths, stacks in any event) ≥ 10; content that imitates a card or a button, or asks to be approved, inside a reply ≥ 6.
+Total ≥ 60. Pass: 0 successes over 3 runs. The model-facing families (S2, A6, A7) are unchanged: this surface adds no
+new model path, so their existing gates cover turns from it.
+
+### Gates
+
+Strict: the owner's ratification of this ADR; the `.env.local` edit that enables the adapter; the first live session.
+Before LC-1 merges: Codex review and an independent Chief Architect review (new listener, ADR-0113 amendments, D11
+move). Before LC-4 merges: the same, plus the red-team lot at 0 and the owner's yes to question 2.
+
+### Slice plan
+
+| Slice | Repo | Content | Depends on |
+|---|---|---|---|
+| LC-0 | quoky-platform | This ADR (docs) | — |
+| LC-1 | quoky-platform | D11 shared loopback module (OPS-UI byte-identical), `packages/adapter-local-client` text only (D1-D6, D9), composite wiring, OPS-UI panel, self-check update, default off, red-team cases for token / Host / browser / bind / flood / leakage | Ratification (question 1) |
+| LC-2 | quoky-mac | App skeleton: menu bar, hotkey panel, token file read, SSE connect and reconnect, text turns and replies, local signed build, LaunchAgent | LC-1 |
+| LC-3 | quoky-mac | Voice: `SpeechAnalyzer` push-to-talk, final transcript into the input field, permission prompts | LC-2 |
+| LC-4 | both | Cards and undo: the additive `decisionStep` / `undoUntil` field, the `local-client` surface marker, the decision endpoint behind its flag, app cards, undo control, notices and macOS notifications, the full red-team lot, live UAT | LC-2; buttons need question 2 |
+
+LC-3 and LC-4 may run in parallel after LC-2.
+
+### Proposed `ARCHITECTURE.md` text (NOT applied)
+
+- §13 Platform row: "+ Telegram, web" becomes "+ Telegram, web, a same-host local client over loopback (ADR-0125)".
+- §12 and §13 network posture: unchanged. Two loopback listeners are still "loopback listener only".
+
+### Residual risks
+
+- **R1 — Same-user processes.** Any process running as the owner can read the token and act as the owner. Accepted on
+  the ADR-0113 reasoning: such a process already has the owner's authority (`.env.local`, the DB).
+- **R2 — A press is easier than typing.** Mitigated by the full payload, one step per press, the two-step CRITICAL flow
+  and the expiry. Buttons stay behind their own flag.
+- **R3 — Speech errors.** A misheard transcript is only placed in the input field; the owner sends it. A voice
+  transcript never presses a button.
+- **R4 — Client integrity.** The app is a local self-signed build. A replaced binary is a same-user compromise (R1).
+- **R5 — Lost notices.** With the app closed, a local-client reminder needs the question 3 fallback, or it is
+  `NOT_SENT`.
+- **R6 — Contract drift between two repos.** Mitigated by the `/client/v1/` prefix and a contract test fixture shared
+  as a JSON file.
+
+### Owner questions (class B only; each with the recommended answer)
+
+1. **Ratify ADR-0125 (Strict)**, including the narrow ADR-0113 D1 / D10 / D11 amendments, the ADR-0091 extension, the
+   §13 text, the gates and the red-team minimum (≥ 60, 0 successes)? Recommended: **yes**.
+   (KO) ADR-0125를 비준할까요? ADR-0113 D1/D10/D11 좁은 개정, 두 번째 loopback 리스너, 레드팀 60건 이상·0건 성공 포함. 추천: **예**.
+2. **Approval buttons on Mac cards** (amends ADR-0114 D10 for this surface only), with the full payload on the card,
+   single use, TTL, serialized decisions, one step per press and the audit marker, and **no** OPS-UI confirmation
+   reference? Recommended: **yes, buttons allowed, no reference code**, behind `QUOKY_LOCAL_CLIENT_APPROVAL_BUTTONS`
+   (default off until LC-4 passes its gates).
+   (KO) Mac 승인 카드에 승인/거절 버튼을 허용할까요(텔레그램은 계속 문구만)? 카드에 payload 전문 표시·1회용·만료·직렬화·단계별 한 번 누름·감사 표식, 확인 코드는 요구하지 않음. 추천: **버튼 허용, 확인 코드 없음**.
+3. **A reminder or brief created on the Mac while the app is not connected**: deliver it to your Discord DM instead?
+   Recommended: **yes, fall back to the Discord DM** (once, never both; `OPS_*` notices stay on Discord as today).
+   (KO) Mac에서 만든 리마인더가 울릴 때 앱이 꺼져 있으면 디스코드 DM으로 대신 보낼까요? 추천: **예, 디스코드 DM으로 한 번만**.

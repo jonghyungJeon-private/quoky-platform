@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0125 drafted: local client adapter for a macOS app (2026-11-24, branch `claude/v5-adr-local-client`)
+
+- PROPOSED, docs only. A loopback-only, token-gated, default-off chat adapter (`packages/adapter-local-client`) for a
+  separate macOS app (`quoky-mac`): text panel first, then on-device voice, then approval cards and undo.
+- Design: second `127.0.0.1` listener with its own 0600 token and Bearer auth; HTTP + SSE; the existing owner `Actor`;
+  no Core platform branch; cards show the full payload; buttons only after owner question 2; nothing secret reaches the
+  client.
+- Blocked on: Strict ratification (owner question 1). Owner questions 2 (buttons) and 3 (notice fallback) open. See
+  DECISIONS "ADR-0125".
+
 ### ADR-0121 A5-S2 summary-schema implemented, dormant (2026-11-24, branch `claude/v5-a5-s2-summary-schema`)
 
 - Core: the digest schemas are pinned per source (one line of at most 280 characters, URL-free, credential guard, calendar
