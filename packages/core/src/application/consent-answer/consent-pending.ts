@@ -182,6 +182,10 @@ const scopeKey = (scope: ConsentScope): string => `${scope.actorId}\u0000${scope
 const fresh = (pending: ConsentPending, atMs: number): boolean =>
   Number.isFinite(atMs) && atMs >= pending.createdAtMs && atMs - pending.createdAtMs < CONSENT_ANSWER_WINDOW_MS;
 
+/** Module-wide, never reused or reset (not per store, not when a record is deleted): a claim of one store never matches a version of another. */
+let generation = 0;
+const nextGeneration = (): number => (generation += 1);
+
 /**
  * The pending consent steps, one per (actor, conversation), with their state machine:
  * `open` → `answering` (claim) → `used` (bind) | `cancelled` | `open` again as a re-asked step; `voided` by the kill switch;
@@ -190,12 +194,8 @@ const fresh = (pending: ConsentPending, atMs: number): boolean =>
  */
 export class ConsentPendingStore {
   private readonly records = new Map<string, ConsentRecord>();
-  /** Store-wide, never reused or reset (not even when a record is deleted): every version is a fresh value of it. */
-  private generation = 0;
-
   private nextVersion(): number {
-    this.generation += 1;
-    return this.generation;
+    return nextGeneration();
   }
 
   /** Open a pending step (a newer step in the same scope supersedes the older one, whose claim can then never bind). */
@@ -265,8 +265,8 @@ export class ConsentPendingStore {
    */
   reask(claim: ConsentClaim, atMs: number): ConsentPending | undefined {
     const record = this.held(claim);
-    if (record === undefined || claim.pending.reasked || !Number.isFinite(atMs)) return undefined;
-    // A late step is not re-asked: it expires (W2 is judged on the caller's fresh clock read).
+    if (record === undefined || claim.pending.reasked) return undefined;
+    // A late step, or a non-finite clock read, is not re-asked: it expires (W2 is judged on the caller's fresh clock read).
     if (!fresh(record.pending, atMs)) {
       record.state = 'expired';
       record.version = this.nextVersion();

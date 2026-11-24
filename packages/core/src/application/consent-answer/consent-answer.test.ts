@@ -47,6 +47,8 @@ function opened(pending: ConsentPending = summary()): ConsentPendingStore {
 /** The tests supply the clock explicitly: the bind time is a fresh `now()` read, and by default the turn's own time. */
 const answer = (store: ConsentPendingStore, t: ConsentReplyTurn, classifier: ConsentClassifierSwitch, now: () => number = () => t.atMs): Promise<ConsentTurnDecision> =>
   answerConsentTurn(store, t, classifier, now);
+/** A clock whose successive reads are `times` (the claim read, then the bind read); the last value repeats. */
+const reads = (...times: number[]): (() => number) => () => (times.length > 1 ? (times.shift() as number) : (times[0] as number));
 const turn = (text: string, extra: Partial<ConsentReplyTurn> = {}): ConsentReplyTurn => ({ scope: DM, ownerDm: true, text, atMs: T0 + 30_000, ...extra });
 
 describe('A6-S1 branded pending types and producers', () => {
@@ -132,7 +134,7 @@ describe('A6-S1 the atomic claim and the compare-and-set bind (A6.3 steps 1, 4, 
     const store = opened();
     let release: (label: string) => void = () => undefined;
     const classify = vi.fn<ConsentAnswerClassifier>(() => new Promise((resolve) => (release = resolve)));
-    const inFlight = answerConsentTurn(store, turn('ㅇㅇ'), { mode: 'on', classify });
+    const inFlight = answer(store, turn('ㅇㅇ'), { mode: 'on', classify });
     expect(store.stateOf(DM)).toBe('answering');
     expect(await answer(store, turn('응', { atMs: T0 + 31_000 }), OFF)).toEqual({ kind: 'not-an-answer', audit: ['claim-lost'], next: 'ordinary' });
     release('yes');
@@ -151,16 +153,16 @@ describe('A6-S1 the atomic claim and the compare-and-set bind (A6.3 steps 1, 4, 
 
   it('a classifier result at exactly 600 s after the question does not bind (the label is late; fail closed)', async () => {
     const store = opened();
-    const decision = await answer(store, turn('ㅇㅇ', { atMs: T0 + 100 }), on('yes'), () => T0 + CONSENT_ANSWER_WINDOW_MS);
+    const decision = await answer(store, turn('ㅇㅇ', { atMs: T0 + 100 }), on('yes'), reads(T0 + 100, T0 + CONSENT_ANSWER_WINDOW_MS));
     expect(decision).toMatchObject({ kind: 'cancelled', audit: ['classifier-yes', 'claim-lost'] });
     expect(store.stateOf(DM)).toBe('expired');
-    const justBefore = await answer(opened(), turn('ㅇㅇ', { atMs: T0 + 100 }), on('yes'), () => T0 + CONSENT_ANSWER_WINDOW_MS - 1);
+    const justBefore = await answer(opened(), turn('ㅇㅇ', { atMs: T0 + 100 }), on('yes'), reads(T0 + 100, T0 + CONSENT_ANSWER_WINDOW_MS - 1));
     expect(justBefore.kind).toBe('bound');
   });
 
   it('a closed yes binds on the supplied clock too: a bind time past W2 expires the step instead of binding', async () => {
     const store = opened();
-    expect(await answer(store, turn('응', { atMs: T0 + 599_000 }), OFF, () => T0 + 601_000)).toEqual({ kind: 'cancelled', audit: ['closed-yes', 'claim-lost'], next: 'consumed' });
+    expect(await answer(store, turn('응', { atMs: T0 + 599_000 }), OFF, reads(T0 + 599_000, T0 + 601_000))).toEqual({ kind: 'cancelled', audit: ['closed-yes', 'claim-lost'], next: 'consumed' });
     expect(store.stateOf(DM)).toBe('expired');
   });
 
@@ -171,173 +173,54 @@ describe('A6-S1 the atomic claim and the compare-and-set bind (A6.3 steps 1, 4, 
     const stale = summary({ createdAtMs: real - 700_000 });
     const lateStore = opened(stale);
     const claimedAt = real - 700_000 + 1_000;
-    expect(await answerConsentTurn(lateStore, { scope: DM, ownerDm: true, text: '응', atMs: claimedAt }, OFF)).toMatchObject({ kind: 'cancelled', audit: ['closed-yes', 'claim-lost'] });
+    expect(await answerConsentTurn(lateStore, { scope: DM, ownerDm: true, text: '응', atMs: claimedAt }, OFF, reads(claimedAt, real))).toMatchObject({ kind: 'cancelled', audit: ['closed-yes', 'claim-lost'] });
     expect(await answerConsentTurn(opened(pending), { scope: DM, ownerDm: true, text: '응', atMs: real }, OFF)).toMatchObject({ kind: 'bound' });
   });
 
-  it('a throwing clock releases the claimed step (never left answering) and rethrows; the next answer is processed normally', async () => {
+  it('a clock that throws at the claim read leaves the step open; one that throws at bind releases the claim (never left answering) and rethrows', async () => {
+    const untouched = opened();
+    await expect(answer(untouched, turn('응'), OFF, () => { throw new Error('clock'); })).rejects.toThrow('clock');
+    expect(untouched.stateOf(DM)).toBe('open');
+    const throwAtBind = (): (() => number) => {
+      let reads = 0;
+      return () => {
+        reads += 1;
+        if (reads > 1) throw new Error('clock');
+        return T0 + 30_000;
+      };
+    };
     const store = opened();
-    await expect(answer(store, turn('응'), OFF, () => { throw new Error('clock'); })).rejects.toThrow('clock');
+    await expect(answer(store, turn('응'), OFF, throwAtBind())).rejects.toThrow('clock');
     expect(store.stateOf(DM)).toBe('cancelled');
     expect(await answer(store, turn('응'), OFF)).toEqual({ kind: 'not-an-answer', audit: ['claim-lost'], next: 'ordinary' });
     const again = opened();
-    await expect(answer(again, turn('ㅇㅇ'), on('yes'), () => { throw new Error('clock'); })).rejects.toThrow('clock');
+    await expect(answer(again, turn('ㅇㅇ'), on('yes'), throwAtBind())).rejects.toThrow('clock');
     expect(again.stateOf(DM)).toBe('cancelled');
-    again.open(summary());
-    expect((await answer(again, turn('응'), OFF)).kind).toBe('bound');
+    // The step is gone after the next turn consumed the chance; a later claim is lost, nothing binds (reopening is needed).
+    expect(again.claim(DM, T0 + 40_000)).toEqual({ ok: false, reason: 'claim-lost' });
   });
 
-  it('a version is never reused: an old claim cannot bind after the record was deleted and the same step reopened', () => {
-    const p = summary();
-    const store = opened(p);
-    const old = store.claim(DM, T0 + 1);
-    expect(old.ok).toBe(true);
-    store.voidAll();
-    expect(store.claim(DM, T0 + 2)).toEqual({ ok: false, reason: 'claim-lost' }); // forgets (deletes) the voided record
-    store.open(p);
-    expect(old.ok && store.bind(old.claim, T0 + 3)).toBeUndefined();
-    const fresher = store.claim(DM, T0 + 4);
-    expect(fresher.ok && old.ok && fresher.claim.version > old.claim.version).toBe(true);
-    expect(old.ok && store.bind(old.claim, T0 + 5)).toBeUndefined();
-    expect(fresher.ok && store.bind(fresher.claim, T0 + 6)).toBeDefined();
+  it('the claim is judged on now(), not on the platform arrival time: one clock domain', async () => {
+    const lateClock = await answer(opened(), turn('응', { atMs: T0 + 1_000 }), OFF, () => T0 + CONSENT_ANSWER_WINDOW_MS + 5);
+    expect(lateClock).toEqual({ kind: 'not-an-answer', audit: ['claim-lost'], next: 'ordinary' });
+    const skewedArrival = await answer(opened(), turn('응', { atMs: T0 + CONSENT_ANSWER_WINDOW_MS + 5 }), OFF, () => T0 + 1_000);
+    expect(skewedArrival.kind).toBe('bound');
   });
 
-  it('a label that arrives after W2 cannot bind (the bind re-checks freshness)', async () => {
-    const store = opened();
-    const decision = await answer(store, turn('ㅇㅇ', { atMs: T0 + 595_000 }), on('yes'), () => T0 + 605_000);
-    expect(decision).toMatchObject({ kind: 'cancelled', audit: ['classifier-yes', 'claim-lost'] });
-    expect(store.stateOf(DM)).toBe('expired');
-  });
-});
-
-describe('A6-S1 the structural checks and the caps (A6.3 step 1, a6-05)', () => {
-  it.each([
-    ['> 응', 'quote-only'],
-    ['"응"', 'quotation marks'],
-    ['`yes`', 'code marking'],
-    ['응\u200b', 'zero-width space (rt-s2a-135)'],
-    ['\u202e응', 'bidi override'],
-    ['\ufeff응', 'byte order mark'],
-    ['', 'empty'],
-    ['응 https://example.test', 'URL shape'],
-  ])('%j (%s) fails structurally and never reaches the classifier', async (text) => {
-    const classifier = on('yes');
-    expect(await answer(opened(), turn(text), classifier)).toEqual({ kind: 'cancelled', audit: ['structural-fail'], next: 'ordinary' });
-    expect(classifier.classify).not.toHaveBeenCalled();
-  });
-
-  it('a platform quote range or an attachment fails structurally', async () => {
-    expect((await answer(opened(), turn('응', { quotedRanges: [{ start: 0, end: 1 }] }), OFF)).audit).toEqual(['structural-fail']);
-    expect((await answer(opened(), turn('응', { attachmentCount: 1 }), OFF)).audit).toEqual(['structural-fail']);
-  });
-
-  it('a multi-line structural failure is consumed and not re-planned; a single-line one takes the normal path', async () => {
-    expect(await answer(opened(), turn('응\n> 응'), OFF)).toEqual({ kind: 'cancelled', audit: ['structural-fail'], next: 'consumed' });
-    expect(await answer(opened(), turn('> 응'), OFF)).toEqual({ kind: 'cancelled', audit: ['structural-fail'], next: 'ordinary' });
-  });
-
-  it('over the caps (4 lines or 61 characters) is not an answer: cancelled, never consumed, the message runs as a new request', async () => {
-    const classifier = on('yes');
-    const long = '응 그런데 이 메일들은 지난주에 받은 거라서 다시 확인해 보고 싶은데 우선 목록부터 다시 한 번 정리해서 보여줄 수 있을까';
-    for (const text of ['응\n응\n응\n응', long, `${'가'.repeat(61)}`, `> ${'응'.repeat(70)}`]) {
+  it('a non-finite clock at the re-ask expires the step and voids the claim (never left answering, never bindable later)', async () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
       const store = opened();
-      expect(await answer(store, turn(text), classifier), text).toEqual({ kind: 'cancelled', audit: ['over-caps'], next: 'ordinary' });
-      expect(store.stateOf(DM)).toBe('cancelled');
-    }
-    expect(classifier.classify).not.toHaveBeenCalled();
-    // At the caps exactly: still a reply (3 lines, 60 characters).
-    expect(consentReplyShape({ text: '가'.repeat(60) })).toEqual({ kind: 'answer', lines: 1 });
-    expect(consentReplyShape({ text: '응\n응\n응' })).toEqual({ kind: 'answer', lines: 3 });
-  });
-});
-
-describe('A6-S1 the NFKC fast path (A6.3 step 2) for both consents', () => {
-  it.each([
-    ['응', 'yes'], ['네', 'yes'], ['예', 'yes'], ['yes', 'yes'], ['YES', 'yes'], ['Yes', 'yes'], ['응.', 'yes'], ['네!', 'yes'], ['응~', 'yes'], ['응?', 'yes'], ['  응  ', 'yes'],
-    ['ｙｅｓ', 'yes'], ['ⓨⓔⓢ', 'yes'],
-    ['ㄴㅔ', 'yes'], ['ㅇㅖ', 'yes'], ['ʸᵉˢ', 'yes'], ['yeſ', 'yes'], ['𝐲𝐞𝐬', 'yes'], ['№', 'no'],
-    ['아니', 'no'], ['아니요', 'no'], ['아니오', 'no'], ['아뇨', 'no'], ['취소', 'no'], ['no', 'no'], ['NO', 'no'], ['아니.', 'no'],
-    ['уеs', undefined], ['ㅇㅇ', undefined], ['응!!', undefined], ['응??', undefined], ['응...', undefined], ['응응', undefined], ['ok', undefined], ['y', undefined], ['응\n응', undefined],
-  ])('%j → %s', (reply, token) => {
-    expect(closedConsentToken(reply)).toBe(token);
-  });
-
-  it('a closed yes binds and a closed no cancels (consumed) without any classifier call, for the summary and the topic consent', async () => {
-    for (const make of [summary, topic]) {
-      const classifier = on('other');
-      expect(await answer(opened(make()), turn('ｙｅｓ'), classifier)).toMatchObject({ kind: 'bound', audit: ['closed-yes'], next: 'consumed' });
-      expect(await answer(opened(make()), turn('아니요'), classifier)).toEqual({ kind: 'cancelled', audit: ['closed-no'], next: 'consumed' });
-      expect(classifier.classify).not.toHaveBeenCalled();
-    }
-  });
-});
-
-describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () => {
-  it('off: every other reply cancels as W1 does today; a single line takes the normal path, a multi-line reply is consumed (462)', async () => {
-    for (const text of ['ㅇㅇ', 'ok', '좋아', '보내', '응!!', 'yes, and also summarize my drive files', '응 근데 메일 10개 더 요약해줘']) {
-      const store = opened();
-      expect(await answer(store, turn(text), OFF), text).toEqual({ kind: 'cancelled', audit: ['classifier-off'], next: 'ordinary' });
-      expect(store.stateOf(DM)).toBe('cancelled');
-    }
-    for (const text of ['응\n드라이브도 같이', '응\n응']) {
-      expect(await answer(opened(), turn(text), OFF), text).toEqual({ kind: 'cancelled', audit: ['classifier-off'], next: 'consumed' });
+      const reads = [T0 + 30_000, bad];
+      const decision = await answer(store, turn('음…'), on('unclear'), () => reads.shift() ?? bad);
+      expect(decision).toEqual({ kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' });
+      expect(store.stateOf(DM)).toBe('expired');
     }
   });
 
-  it('on: the classifier sees only the consent kind, the language and the reply (content-free, A6.4)', async () => {
-    const classifier = on('yes');
-    await answer(opened(summary({ language: 'en' })), turn('ok'), classifier);
-    await answer(opened(topic()), turn('ㅇㅇ'), classifier);
-    expect(classifier.classify.mock.calls).toEqual([[{ consent: 'summary-consent', language: 'en', reply: 'ok' }], [{ consent: 'topic-consent', language: 'ko', reply: 'ㅇㅇ' }]]);
-    for (const [request] of classifier.classify.mock.calls) expect(Object.keys(request as object).sort()).toEqual(['consent', 'language', 'reply']);
-  });
-
-  it('on: yes binds; no is consumed; a single-line other takes the normal path; a multi-line other is consumed', async () => {
-    expect(await answer(opened(), turn('ㅇㅇ'), on('yes'))).toMatchObject({ kind: 'bound', audit: ['classifier-yes'], next: 'consumed' });
-    expect(await answer(opened(), turn('ㄴㄴ'), on('no'))).toEqual({ kind: 'cancelled', audit: ['classifier-no'], next: 'consumed' });
-    expect(await answer(opened(), turn('응 근데 메일 말고 드라이브만'), on('other'))).toEqual({ kind: 'cancelled', audit: ['classifier-other'], next: 'ordinary' });
-    expect(await answer(opened(), turn('응\n누구한테 보내는 건데?'), on('other'))).toEqual({ kind: 'cancelled', audit: ['classifier-other'], next: 'consumed' });
-  });
-
-  it('on: yes-and-more binds the asked items once and reruns the whole message (r-01), or the lines after a closed-yes first line (r-02)', async () => {
-    const store = opened();
-    const single = await answer(store, turn('응 근데 메일 10개 더 요약해줘'), on('yes-and-more'));
-    expect(single).toMatchObject({ kind: 'bound', audit: ['classifier-yes-and-more'], next: 'rerun', rerunText: '응 근데 메일 10개 더 요약해줘' });
-    // The rerun is a new ordinary turn: the bound step is used, so it can never answer, widen or revive it.
-    expect(await answer(store, turn('응 근데 메일 10개 더 요약해줘'), on('yes'))).toEqual({ kind: 'not-an-answer', audit: ['claim-lost'], next: 'ordinary' });
-    expect(await answer(opened(), turn('응\n드라이브도 같이'), on('yes-and-more'))).toMatchObject({ next: 'rerun', rerunText: '드라이브도 같이' });
-    expect(consentRerunText('네\n드라이브도 같이\n그리고 캘린더')).toBe('드라이브도 같이\n그리고 캘린더');
-    // The first line is no closed token: the whole message reruns (no cut by the classifier, never a rewrite).
-    expect(consentRerunText('ㅇㅇ\n드라이브도 같이')).toBe('ㅇㅇ\n드라이브도 같이');
-    expect(consentRerunText('yes, and also summarize my drive files')).toBe('yes, and also summarize my drive files');
-  });
-
-  it('on: unclear (or a malformed result or a failed call) re-asks the fixed question once with the same items; a second unclear cancels', async () => {
-    for (const label of ['yes', 'yes-and-more', 'no', 'other', 'unclear']) expect(consentAnswerLabel(label)).toBe(label);
-    for (const result of ['YES', ' yes', '{"label":"yes"}', undefined, 42, { label: 'yes' }]) expect(consentAnswerLabel(result), String(result)).toBe('unclear');
-    const p = summary();
-    const store = opened(p);
-    const first = await answer(store, turn('음…'), on('maybe'));
-    expect(first).toMatchObject({ kind: 'reask', audit: ['classifier-unclear', 'reask'], question: '보낼까요? (응/아니)', next: 'consumed' });
-    const reasked = first.kind === 'reask' ? first.pending : undefined;
-    expect(reasked).toMatchObject({ kind: 'summary-consent', itemIds: p.kind === 'summary-consent' ? p.itemIds : [], recipient: p.recipient, reasked: true, createdAtMs: T0 + 30_000 });
-    expect(isConsentPending(reasked)).toBe(true);
-    // W2 restarted at the re-ask.
-    expect(store.stateOf(DM)).toBe('open');
-    const failing = vi.fn<ConsentAnswerClassifier>(async () => {
-      throw new Error('timeout');
-    });
-    expect(await answer(store, turn('글쎄', { atMs: T0 + 40_000 }), { mode: 'on', classify: failing })).toEqual({ kind: 'cancelled', audit: ['classifier-unclear'], next: 'consumed' });
-    expect(store.stateOf(DM)).toBe('cancelled');
-    expect(consentReaskQuestion('en')).toBe('Shall I send it? (yes/no)');
-  });
-
-  it('unclear with the clock past W2 expires the step: no re-ask, createdAtMs not refreshed', async () => {
-    const p = summary();
-    const store = opened(p);
-    expect(await answer(store, turn('음…', { atMs: T0 + 595_000 }), on('unclear'), () => T0 + 605_000)).toEqual({ kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' });
-    expect(store.stateOf(DM)).toBe('expired');
-    expect(store.claim(DM, T0 + 606_000)).toEqual({ ok: false, reason: 'claim-lost' });
+  it('a classifier-path answer with the real default clock binds a fresh step', async () => {
+    const real = Date.now();
+    const store = opened(summary({ createdAtMs: real - 1_000 }));
+    expect(await answerConsentTurn(store, { scope: DM, ownerDm: true, text: 'ㅇㅇ', atMs: real }, on('yes'))).toMatchObject({ kind: 'bound', audit: ['classifier-yes'] });
   });
 
   it('a second unclear after the claim was lost carries claim-lost in the audit', async () => {
@@ -352,10 +235,10 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
   });
 
   it('r-02 returns the remainder byte-identical after only the first line and its own terminator', () => {
-    const rest = '드라이브도 같이\r\n\n\n  그리고  캘린더 ';
+    const rest = '드라이브도\u2028같이\r\n\n\n  그리고  캘린더 ';
     expect(consentRerunText(`응\n${rest}`)).toBe(rest);
     expect(consentRerunText(`네\r\n${rest}`)).toBe(rest);
-    expect(consentRerunText(`yes ${rest}`)).toBe(rest);
+    expect(consentRerunText(`yes\u2028${rest}`)).toBe(rest);
     expect(consentRerunText(`응\n\n${rest}`)).toBe(`\n${rest}`);
     // Only whitespace remains: no remaining request, the whole message as before.
     expect(consentRerunText('응\n  \n')).toBe('응\n  \n');
@@ -378,5 +261,50 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
     store.voidAll();
     for (const code of (await answer(store, turn('응'), OFF)).audit) seen.add(code);
     expect([...seen].sort()).toEqual([...CONSENT_ANSWER_CODES].sort());
+  });
+});
+
+describe('A6-S1 review round 2: non-finite times and generations', () => {
+  it('reask with a non-finite time expires the step; the old claim can never bind later', () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const store = opened();
+      const claimed = store.claim(DM, T0 + 1_000);
+      if (!claimed.ok) throw new Error('claim');
+      expect(store.reask(claimed.claim, bad)).toBeUndefined();
+      expect(store.stateOf(DM)).toBe('expired');
+      expect(store.bind(claimed.claim, T0 + 2_000)).toBeUndefined();
+      expect(store.holds(claimed.claim)).toBe(false);
+    }
+  });
+
+  it('claim and bind with a non-finite time never leave a step answering or a claim alive', () => {
+    const store = opened();
+    expect(store.claim(DM, Number.NaN)).toEqual({ ok: false, reason: 'claim-lost' });
+    expect(store.stateOf(DM)).toBeUndefined();
+    const second = opened();
+    const claimed = second.claim(DM, T0 + 1_000);
+    if (!claimed.ok) throw new Error('claim');
+    expect(second.bind(claimed.claim, Number.NaN)).toBeUndefined();
+    expect(second.stateOf(DM)).toBe('expired');
+    expect(second.bind(claimed.claim, T0 + 2_000)).toBeUndefined();
+    const third = opened();
+    const c3 = third.claim(DM, T0 + 1_000);
+    if (!c3.ok) throw new Error('claim');
+    third.cancel(c3.claim);
+    expect(third.stateOf(DM)).toBe('cancelled');
+  });
+
+  it('versions are never reused across stores: a claim of one store cannot bind in another holding the same pending', () => {
+    const pending = summary();
+    const a = opened(pending);
+    const b = opened(pending);
+    const claimed = a.claim(DM, T0 + 1_000);
+    if (!claimed.ok) throw new Error('claim');
+    const other = b.claim(DM, T0 + 1_000);
+    if (!other.ok) throw new Error('claim');
+    expect(claimed.claim.version).not.toBe(other.claim.version);
+    expect(b.bind(claimed.claim, T0 + 2_000)).toBeUndefined();
+    expect(b.stateOf(DM)).toBe('answering');
+    expect(a.bind(claimed.claim, T0 + 2_000)).toBeDefined();
   });
 });

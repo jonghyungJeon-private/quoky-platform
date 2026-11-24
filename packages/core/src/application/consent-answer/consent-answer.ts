@@ -179,7 +179,7 @@ function bindOrLost(
 }
 
 /**
- * The A6.3 pipeline for one owner turn. The time of every bind (and of the re-ask) is a fresh `now()` read (default: the real
+ * The A6.3 pipeline for one owner turn. The time of the claim, of every bind and of the re-ask is a fresh `now()` read (default: the real
  * clock), never the message's arrival time, so a late label or a slow turn cannot bind a step at or past W2. The classifier is called only with the switch on, at most once per turn.
  */
 export async function answerConsentTurn(
@@ -189,7 +189,8 @@ export async function answerConsentTurn(
   now: () => number = () => Date.now(),
 ): Promise<ConsentTurnDecision> {
   if (!turn.ownerDm) return { kind: 'not-an-answer', audit: [], next: 'ordinary' };
-  const claimed = store.claim(turn.scope, turn.atMs);
+  // One clock domain for the whole pipeline: the claim and the bind both judge freshness on `now()` (read afresh each time).
+  const claimed = store.claim(turn.scope, now());
   if (!claimed.ok) return { kind: 'not-an-answer', audit: claimed.reason === 'claim-lost' ? ['claim-lost'] : [], next: 'ordinary' };
   const { claim } = claimed;
   try {
@@ -249,6 +250,7 @@ async function decideClaimed(
         return { kind: 'cancelled', audit: lost ? ['classifier-unclear', 'claim-lost'] : ['classifier-unclear'], next: 'consumed' };
       }
       const pending = store.reask(claim, atMs);
+      // Lost or expired (late or non-finite clock): the step is not re-asked; an expiry reports `claim-lost` like a late bind.
       if (pending === undefined) return { kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' };
       return { kind: 'reask', audit: ['classifier-unclear', 'reask'], pending, question: consentReaskQuestion(pending.language), next: 'consumed' };
     }
