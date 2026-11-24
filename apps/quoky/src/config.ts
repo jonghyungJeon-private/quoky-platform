@@ -17,6 +17,7 @@ import type { NlSelectionConfig } from './nl-selection/nl-selection-config';
 import { EgressConfigErrorCode, parseEgressConfig } from './security/egress-config';
 import { ChannelGrantsConfigErrorCode, parseChannelGrantsConfig, type ChannelGrantsConfig } from './surface-grants/channel-grants-config';
 import { AgentConfigErrorCode, parseAgentConfig, type AgentConfig } from './agent/agent-config';
+import { ConsentAnswerConfigErrorCode, parseConsentAnswerConfig, type ConsentAnswerConfig } from './agent/consent-answer-config';
 import { ChunkItemsConfigErrorCode, parseChunkItemsConfig, type ChunkItemsConfig } from './item-summary/chunk-items-config';
 import type { EgressGuardConfig } from './security/egress-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
@@ -144,6 +145,11 @@ export interface QuokyConfig {
    * `QUOKY_NL_INTENT_MODE=active`). See `agent/agent-config.ts`.
    */
   agent: AgentConfig;
+  /**
+   * ADR-0121 amendment A6 (slice A6-S1): `QUOKY_CONSENT_ANSWER_CLASSIFIER` (`off`, the default; `on` is refused at startup
+   * until A6-S2, the A6-S4 gate and the rule-① confirm slice). See `agent/consent-answer-config.ts`.
+   */
+  consentAnswer: ConsentAnswerConfig;
   /**
    * ADR-0124 Part L: `QUOKY_CHUNK_ITEMS` (`off` | `shadow` | `on`, default `off`; anything else is refused at startup), and
    * (slice 2) the long-item model `QUOKY_CHUNK_ITEMS_MODEL` with its required pin `QUOKY_CHUNK_ITEMS_MODEL_DIGEST` (`on`
@@ -344,6 +350,7 @@ export const QuokyConfigErrorCode = {
   ...EgressConfigErrorCode,
   ...ChannelGrantsConfigErrorCode,
   ...AgentConfigErrorCode,
+  ...ConsentAnswerConfigErrorCode,
   ...ChunkItemsConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
   DISCORD_EXPECTED_BOT_ID_INVALID: 'DISCORD_EXPECTED_BOT_ID_INVALID',
@@ -612,6 +619,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const nlSelection = parseNlSelectionConfig(env);
   const egress = parseEgressConfig(env);
   const agent = parseAgentConfig(env);
+  const consentAnswer = parseConsentAnswerConfig(env);
   const chunkItems = parseChunkItemsConfig(env);
   const discordGuildId = env.DISCORD_GUILD_ID;
   const discordChannelIds = parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID);
@@ -665,6 +673,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     egress,
     channelGrants,
     agent,
+    consentAnswer,
     chunkItems,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),

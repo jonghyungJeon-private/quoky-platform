@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 A6-S1 answer-checks implemented, dormant (2026-11-24, branch `claude/v5-a6-s1-answer-checks`)
+
+- Core `consent-answer/`: branded summary and topic consent steps (no `origin`), the atomic claim and compare-and-set bind,
+  caps and structural checks, the NFKC fast path, the no-re-plan rule, the `yes-and-more` bind and rerun text (r-01, r-02),
+  the fixed re-ask and closed audit codes. `QUOKY_CONSENT_ANSWER_CLASSIFIER` defaults `off`; `on` is refused at startup.
+- Not wired: no live path opens a consent step, so nothing REMOTE can bind before the rule-① confirm slice (pinned by an
+  import-boundary test). No prompt, catalog or gold change; build, typecheck and targeted tests pass.
+- Next: A6-S2 (classifier), the rule-① confirm slice (wires the summary consent), the A2 answer slice. See DECISIONS
+  "ADR-0121 A6-S1 implementation note (2026-11-24)".
+
 ### ADR-0125 LC-1b implemented: local-client adapter, flag off (2026-11-24, branch `claude/v5-lc1b-local-client-adapter`)
 
 - `@quoky/adapter-local-client` serves text turns over a Unix socket in the 0700 data directory with a per-start token;
