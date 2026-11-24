@@ -30,18 +30,23 @@ Repository 문서가 source of truth이며 prompt나 이전 Agent의 self-report
 
 ## Conditional Loading
 
-`docs/ai/*`와 상세 문서를 기본적으로 모두 읽지 않는다.
+`docs/ai/*`와 상세 문서를 기본적으로 모두 읽지 않는다. 큰 root 문서는 통째로 읽지 않는다:
+`DECISIONS.md`(3만 줄 이상)는 `## ADR-NNNN` heading을 grep해 그 범위만, `CURRENT_STATE.md`는 위쪽의 최신 section만 읽는다.
 
 | Task type | Additional documents |
 |---|---|
-| Simple code implementation | relevant code only |
-| Architecture/domain change | `ARCHITECTURE.md` + `DECISIONS.md` |
-| Current sprint decision | `CURRENT_STATE.md` + relevant `ROADMAP.md` section |
+| Simple code implementation | relevant code only (해당 module의 `docs/wiki/` page가 있으면 그것도) |
+| Architecture/domain change | `ARCHITECTURE.md` + `docs/wiki/adr-*.md` 요약으로 관련 ADR을 찾고 → `DECISIONS.md`에서 그 ADR과 그것을 대체(supersede)한 ADR 범위를 전부 |
+| Current sprint decision | `CURRENT_STATE.md` 상단 최신 section + relevant `ROADMAP.md` section |
 | New session/model switch | `docs/ai/SESSION_STATE.md` + `docs/ai/HANDOFF.md` |
 | Implementation/commit/PR review | `docs/ai/REVIEW_CHECKLIST.md` |
+| Eval gate 판정 | `docs/eval/gate-rules.md` |
 | Prompt examples | `docs/ai/PROMPTS.md` (human-requested only) |
 
-Architecture 또는 settled decision과 충돌할 가능성이 있으면 반드시 root 문서를 읽는다.
+작업 전 `docs/wiki/index.md`를 보고 필요한 page만 읽는다(module map, ADR 요약, pitfalls, ops).
+Wiki와 code가 다르면 code가 맞고, wiki를 고친다.
+
+Architecture 또는 settled decision과 충돌할 가능성이 있으면 반드시 `ARCHITECTURE.md`와 관련 ADR 원문(`DECISIONS.md`의 해당 범위)을 읽는다.
 
 ## Development Governance
 
@@ -115,26 +120,12 @@ external/destructive action을 감싼다.
 - TypeScript `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`를 약화하지 않는다.
 - 승인된 Sprint/Task 범위에서 코드 변경 완료 전 `pnpm typecheck`와 Risk에 맞는 test를 실행한다.
   문서-only 변경은 근거를 기록하고 제품 Build/Test를 생략할 수 있다.
-- Full suite는 machine 전체에서 한 번에 하나만 돈다. `pnpm test`는 `tools/test-lock/run-full-suite.mjs`가
-  `~/Library/Application Support/Quoky/locks/full-suite` lock을 잡고, 잡혀 있으면 기다린다(`QUOKY_TEST_NO_WAIT=1`이면
-  exit 75). lock 없이 도는 것은 옵션이 아닌 인자가 하나 이상이고 그 인자가 모두 실제 존재하는 파일일 때뿐이다(필터·디렉터리·
-  옵션 값이 섞이면 lock). 값을 받는 옵션(`--config x` 등)의 값은 파일로 치지 않고, 인자는 `*.test.*`/`*.spec.*` 모양의 실제 파일이어야 한다. `--version`/`--help`는 테스트를 돌리지 않는다. Implementation agent는 `pnpm vitest run <files>`로
-  targeted test만 돌린다(lock 없음). wrapper는 실행 중인 Node major가 `.nvmrc`와 다르면 아무것도 돌리지 않고 exit 78로
-  멈춘다(native module이 안 맞아 수백 개가 가짜 실패로 보이는 것을 막음; `QUOKY_TEST_ALLOW_NODE_MISMATCH=1`로만 무시).
-- `.claude/skills/quoky-ship/SKILL.md`는 예전에 main checkout에 untracked 파일이었다. 이 변경을 main checkout에서 pull하기
-  전에 그 파일을 옆으로 치운다(`mv .claude/skills/quoky-ship/SKILL.md{,.local-bak}`). `chat/`, `qa/`, `space_id`는 계속
-  untracked(로컬 전용)다.
+- Full suite(`pnpm test`)는 machine-wide lock(`tools/test-lock/run-full-suite.mjs`)으로 한 번에 하나만 돈다.
+  Implementation agent는 `pnpm vitest run <files>`로 targeted test만 돌린다(lock 없음). Lock 판정 기준, exit 75(`QUOKY_TEST_NO_WAIT=1`),
+  exit 78(Node major가 `.nvmrc`와 다름)은 `docs/wiki/pitfalls.md` 1–3과 wrapper source를 본다.
 - Model-in-the-loop eval(`eval:nl`, `eval:agent-plan`, `eval:r2-redteam`)의 exit 5는 provider 장애로 인한 `INVALID`다.
-  PASSED/FAILED가 아니므로 regression으로 해석하지 않고 provider 회복 뒤 다시 돌린다. 단 이미 관측된 hard failure
-  (오답 포착, 잘못된 대상, 부정 포착, red-team 성공)가 있으면 outage가 겹쳐도 FAILED다(owner 승인 2026-10-21).
-  단 부정 골드의 `help.topic` 오포착은 별도 기준이다: run마다 부정 골드 수의 ceil(1%)까지(199개 → 2) 허용되고 초과분만
-  하드 실패다. 데이터 조회 오답 포착·행동 포착은 그대로 0이다(owner 결정 2026-10-22, intent·read-regression 게이트).
-  `agent-plan` 게이트도 같다: 부정 골드에 `help.topic` 한 단계만 낸 계획은 `helpCaptures`로 따로 세고 run마다 부정 골드
-  수의 ceil(1%)까지 허용하며 초과분(`helpOverAllowance`)만 하드 실패다. 다른 실행 가능한 계획은 그대로 0이다(owner 결정
-  2026-10-26).
-  `agent-plan` 게이트의 multi-step exact는 run별이 아니라 모든 run의 multi-step 기록을 합친 비율(pooled)이 95% 이상이어야
-  한다. one-step 95%, help 아닌 오답 0, help 포착 허용치, bound 초과율, hard cap은 그대로 run마다 판정한다(owner 결정
-  2026-10-26).
+  Regression으로 해석하지 않고 provider 회복 뒤 다시 돌린다. 이미 관측된 hard failure가 있으면 outage가 겹쳐도 FAILED다.
+  `help.topic` 허용치, `agent-plan` pooled 기준 등 owner 결정 원문은 `docs/eval/gate-rules.md`가 canonical이다.
 - Deterministic plumbing은 test하고, 미구현 model cognition은 `NotImplementedError`로 유지한다.
 - 시간과 ID는 shared `clock`/`id` utility를 사용한다.
 - `Resource` input과 `Artifact` output을 합치지 않는다.
