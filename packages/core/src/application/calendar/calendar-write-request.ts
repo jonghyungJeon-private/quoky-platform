@@ -16,6 +16,7 @@ import type {
 import { addLocalDays, isValidLocalDate, zonedToUtc, type LocalDate } from '../reminders/zoned-time';
 import { extractSpan, placeCalendarSpan } from './calendar-question';
 import { CALENDAR_RELOCATE, CALENDAR_RENAME } from './calendar-field-change';
+import { CALENDAR_BOOKING_VERB, CALENDAR_DELETE_VERB } from '../nl-routing/write-clause';
 
 /**
  * Calendar WRITE requests (ADR-0110 amendment D3, CWR-2) — the pure grammar that turns a message the calendar handler
@@ -52,7 +53,7 @@ const LINK_PARTICLES = '에서|에는|에|부터|까지|동안|짜리|간';
 const DEFAULT_DURATION_MINUTES = 60;
 const MAX_DURATION_MINUTES = 24 * 60;
 
-const DELETE_VERB = /(?:취소|삭제|지워|지우|빼)\s*(?:해)?\s*(?:줘|주세요|줄래|주실래요|줄\s*수\s*있)|\b(?:cancel|delete|remove)\b/iu;
+const DELETE_VERB = CALENDAR_DELETE_VERB;
 const UPDATE_VERB = /(?:옮겨|바꿔|미뤄|당겨|(?:변경|수정|이동|조정)\s*해)\s*(?:줘|주세요|줄래|주실래요|줄\s*수\s*있)|\b(?:move|reschedule|postpone|push\s+back)\b/iu;
 
 const MERIDIEM = String.raw`(?:(오전|오후|아침|새벽|낮|점심|저녁|밤)\s*)?`;
@@ -296,7 +297,7 @@ function parseCreate(text: string, options: CalendarWriteGrammarOptions): Connec
  * The booking verb as the owner's request ("잡아줘", "추가해 줘"): the stem must be followed by a request ending, so a
  * participle inside the title ("넣어둔 제목 정리 회의") is not the verb.
  */
-const BOOKING_VERB = /(?:잡아|넣어|만들어|(?:추가|등록|예약)\s*해)(?=\s*(?:줘|주세요|줄래|주실래요|줄\s*수)|\s*[.!~?]*$)/u;
+const BOOKING_VERB = CALENDAR_BOOKING_VERB;
 /** One booking request ending as the existing `BOOKING_VERB` knows it ("으로 잡아줘", "추가해 줘"). */
 const BOOKING_REQUEST_END = new RegExp(
   String.raw`\s*(?:(?:으로|로)\s*)?${BOOKING_VERB.source}\s*(?:줘|주세요|줄래|주실래요)?\s*[.!~]*$`,

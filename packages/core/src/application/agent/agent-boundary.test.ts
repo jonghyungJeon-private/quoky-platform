@@ -62,7 +62,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
     // The claim guard the summaries pass through is pure: its only import is a type (erased).

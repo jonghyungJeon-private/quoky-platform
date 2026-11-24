@@ -14,6 +14,8 @@ import { aliasStarts, conjunctTokens } from './conjuncts';
 import { nlClauseGroundedFlagNames, nlClauseNamesEntry as clauseNamesEntry, nlClauses as planClauses, nlClauseStringValues as stringValues, type NlClause as PlanClause } from '../nl-routing/clause-flags';
 import { AGENT_POSITION_REF_SOURCES, AGENT_READ_SOURCES } from './flow-policy';
 import { handoffOwnerUnit } from './handoff-grounding';
+import type { AgentCrossWriteContext } from './cross-write';
+import { isCrossWritePlan, validateCrossWritePlan, type ValidatedCrossWritePlan } from './cross-write-validator';
 import { AGENT_HANDOFF_CONSENT, AGENT_HANDOFF_FREE_TEXT_KINDS, AGENT_HANDOFF_ITEMS, AGENT_HANDOFF_KINDS, AGENT_HANDOFF_SCOPES, AGENT_HANDOFF_SLOTS, type AgentHandoffKind } from './handoff-slots';
 import { AGENT_PLAN_MAX_STEPS, type AgentPlan, type AgentPlanHandoff, type AgentPlanHandoffDestination, type AgentPlanStep } from './plan-schema';
 
@@ -147,6 +149,30 @@ export type AgentPlanRefusal =
    * a clause a write grammar claims.
    */
   | 'ref-position'
+  /**
+   * ADR-0121 A7 (A7-S1), rule 9: A7 is not configured or is not `active` for the propose step's destination kind
+   * (`cross-write-off`); the plan is not the closed A7 shape (`cross-write-invalid`); the propose target is not one of the three
+   * closed ones (`cross-write-target`); the kind's writer is off (`cross-write-writer`); the source read is not an A7 source
+   * or is switched off (`cross-write-source`); the destination literal is not in the owner's own words (`cross-write-ungrounded`);
+   * the destination is off the allowlist (`cross-write-not-allowed`); the planner's role is not the A7.4a rule's role
+   * (`cross-write-role`); more than one write in one request (`cross-write-writes`); form b without a usable held receipt
+   * (`cross-write-receipt`), naming a new source (`cross-write-new-source`) or carrying a new read condition, a time scope or a
+   * filter slot of the held entry (`cross-write-read-condition`, review round 1); a calendar title or time that is not the owner's
+   * own span (`cross-write-span`).
+   */
+  | 'cross-write-off'
+  | 'cross-write-invalid'
+  | 'cross-write-target'
+  | 'cross-write-writer'
+  | 'cross-write-source'
+  | 'cross-write-ungrounded'
+  | 'cross-write-not-allowed'
+  | 'cross-write-role'
+  | 'cross-write-writes'
+  | 'cross-write-receipt'
+  | 'cross-write-new-source'
+  | 'cross-write-read-condition'
+  | 'cross-write-span'
   | 'run-refs-too-many'
   | 'summary-schema'
   | 'summary-source'
@@ -175,6 +201,11 @@ export interface AgentPlanValidationContext {
    * {@link AGENT_BRIEF_MAX_CONNECTOR_CALLS} (every section on).
    */
   readonly briefConnectorCalls?: number;
+  /**
+   * ADR-0121 A7 (A7-S1): the closed deployment context of the cross-source write plan. Absent: A7 is off and any A7 plan is
+   * refused `cross-write-off` (the validator never reads a flag itself).
+   */
+  readonly crossWrite?: AgentCrossWriteContext;
 }
 
 /** Where an argument value came from (ADR-0121 D2): the owner's words, or an earlier step's projected ids. */
@@ -255,6 +286,11 @@ export type ValidatedAgentPlan =
       readonly connectorCalls: number;
       readonly handoff: ValidatedAgentHandoff;
     }
+  /**
+   * ADR-0121 A7 (A7-S1): a validated cross-source write plan. Not runnable yet: callers treat it as not enabled (like the A4-S1
+   * handoff); no read, draft, card or send is reachable from it.
+   */
+  | ValidatedCrossWritePlan
   | { readonly kind: 'ask'; readonly reason: 'unbounded'; readonly bound: AgentUnboundedKind; readonly suggestion: readonly ValidatedAgentStep[] };
 
 export type AgentPlanValidation =
@@ -274,6 +310,20 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   if (plan.kind === 'none') return { ok: true, plan: { kind: 'none' } };
   const steps = plan.steps;
   if (nlIsPastStatement(ctx.groundingText)) return refuse('veto-past-statement');
+  // Rule 9 (ADR-0121 A7, A7-S1): a plan with a propose step or the `payload-draft.v1` summary is judged by the cross-source
+  // write rule alone, before any read-plan rule; it never becomes a `run`.
+  if (plan.kind === 'steps' && isCrossWritePlan(plan)) {
+    return validateCrossWritePlan(plan, ctx, {
+      // The source read is step 1 of the plan's own steps (so the multi-step clause grounding applies), grounded in the owner's
+      // words outside the destination span (review round 1); the request vetoes read the whole message, as for any read.
+      checkRead: (step, planSteps, groundingText) => {
+        const veto = nlReadNotRequest(ctx.groundingText, step.args);
+        if (veto !== undefined) return refuse(veto === 'quoted-request' ? 'veto-quoted-request' : 'veto-reason-statement', 1);
+        return checkRead(step, 1, planSteps, { ...ctx, groundingText }, undefined);
+      },
+      charge: (validatedSteps) => agentPlanConnectorCharge(validatedSteps, ctx),
+    });
+  }
   // A quoted span consumed as ANY step's search keyword is the owner's search term for the whole plan (Codex P2): each
   // step's quoted-request check sees its own args plus every step's keyword-kind values. An unconsumed quote still vetoes.
   const planKeywords: Record<string, string> = {};

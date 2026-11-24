@@ -38538,3 +38538,265 @@ evaluation was run.
 4. **Gold `rt-s2r-244` / `rt-s2r-250` kept byte-identical** (orchestrator decision; the gold is not edited). On these two rows
    `knownGap.closedBy` and the note text are historical metadata and are never asserted. Removing the `repo` alias (round 1,
    item 2) reopened them, and they stay open until a catalog-change slice adds a non-hazardous alias for "repo".
+## ADR-0121 A7-S1 implementation note (2026-11-24)
+
+Status: implemented (branch `claude/v5-a7-s1-plan-form`). Slice A7-S1 "plan-form" of ADR-0121 amendment A7 (A7.10 row),
+ratified 2026-11-24. Append-only: no amendment text, ratification record or clause is changed. It is dormant like A4-S1: a
+validated A7 plan is not runnable, the A7 context is absent by default (so A7 is off), the agent mode is unchanged, and no
+planner prompt, catalog entry, grant producer, consent pending type or flag was touched. No model was called and no
+evaluation was run.
+
+- **Built.**
+  - *Plan schema* (`plan-schema.ts`). The steps form accepts a trailing `{"propose": "<x>.propose", "args"?}` element and a
+    `summarize` step with the schema `payload-draft.v1` and an empty source list (form b). The parser takes the propose step
+    out of `steps` and keeps it beside them (`AgentPlan.propose`), so every consumer of `steps` is exactly as before. A propose
+    step that is not last, a second one, an extra key or a malformed target is a parse failure; an empty summary source list is
+    valid for `payload-draft.v1` only.
+  - *Rule 9 of the validator* (`cross-write-validator.ts`, called from `plan-validator.ts` before any read-plan rule). A plan with
+    a propose step, or with the `payload-draft.v1` summary, is judged by rule 9 alone and never becomes a `run`. The shape is
+    form a `[read, summarize(payload-draft.v1 over 1)]` plus propose, or form b `[summarize]` plus propose. The target is one of
+    `jira.comment.propose`, `slack.post.propose`, `calendar.create.propose`; the propose args are a closed name set per target
+    (`issueKey`/`project`, `channel`, `title`/`when`), so there is no payload argument. The source read is an A7 source that is
+    switched on and passes ADR-0120 D4 and the request vetoes exactly as any read step. Form b needs a fresh, content-free
+    receipt of 1 to 10 items of an A7 source that is on, none HOST_ONLY, none built from a handoff value. New closed refusals:
+    `cross-write-off`, `-invalid`, `-target`, `-writer`, `-source`, `-ungrounded`, `-not-allowed`, `-role`, `-writes`,
+    `-receipt`, `-new-source`, `-span`. The validated plan is the new kind `cross-write` (form, target, operation, source read,
+    static connector charge, destination state, calendar spans).
+  - *Destination grounding and the A7.4a role rule* (`cross-write.ts`). The destination is never the planner's word: it is the
+    literal the rule marks in the owner's non-quoted words, and the planner's role must equal it or the plan is refused
+    (`cross-write-role`; never corrected). A literal is marked only by the closed locative particle (에, 에다, 에다가, optionally
+    followed by 도 or 는) on the literal or on a later word reached through closed-class words and the destination's own catalog
+    noun, with only the write request unit after it; English `to` or `into` with a write verb before it and only closed-class
+    words after the literal. `에서`, `로`, `으로` and English `on`/`in` never mark. The kind check is part of marking. No marked
+    literal: two eligible literals ask with at most 2 readings, one literal asks to restate, a kind named with no instance is a
+    pick, nothing named is `missing`. More than one write unit in the message is refused (`cross-write-writes`).
+  - *a7-09 (kind-only destination).* The validated destination states are `pick-ticket` (a named allowlisted project, or the
+    single allowlisted project, skips the project question), `pick-project` (two or more projects allowlisted and none named),
+    `pick-channel` (Slack: the allowlisted channels), and `missing`. The plan form therefore carries the two-step Jira pick; the
+    receipt-spanning-both-listing-turns wording change of A7.4b is built with the pick itself in A7-S4 (the receipt is A7-S2's).
+  - *a7-08 (names on the card).* The plan form needs no name or pseudonym field: the A5.2 fields, the pseudonym map and the remap
+    are Core-local at draft and card time (A7-S3, A7-S4). The design recorded in the ratification record (Q6, by precedent) is
+    unchanged and nothing in this slice contradicts it.
+  - *Destination-span exclusion.* `crossWriteTextOutsideSpan` removes the destination literal and the closed-class and catalog
+    words that touch it; form b's source-name check runs on the rest, so "해당 내용 요약해서 지라 BE-123에 달아줘" names no source.
+    A named entry that shares a source name with the held entry (jira.issues and jira.release are both Jira) is not new.
+  - *Routing precedence of A7.5 step 0* (`routeCrossWrite`, pure): (1) the ADR-0112 grammar with the owner's own payload first
+    (`nlIsExactConnectorWrite`, a new pure helper over the existing grammar); (2) only while A7 is active for the destination's kind,
+    R2a (a source name outside the destination span, a second literal, or a summary word acting on an object that is a source name,
+    a literal or the point-back form) and R2b (a fresh receipt, a marked destination, only closed-class words besides the write
+    unit); (3) everything else `ordinary` (A6 and W1 as today). With A7 off the answer is only `grammar` or `ordinary`.
+  - *Pre-read destination check.* `checkCrossWriteDestination` over a two-method port (`jiraIssueExists`,
+    `slackChannelIsPublic`), fail closed (`not-found`, `not-public`, `unreachable`). The port is an interface in the agent
+    module; the composition root wires it in A7-S4 (the import scan that no writer is reachable from the agent module still holds).
+  - *Not runnable.* `runActive` declines a validated A7 plan `cross-write-off` before any read or model call; the shadow job logs
+    it as outcome `cross-write` with closed fields only (form, target, destination state, charge). `AgentRunServiceDeps` gains the
+    optional closed data field `crossWrite` (the pin in `agent-contract-check.ts` is updated); absent, every A7 plan is
+    refused `cross-write-off`. The plan eval scores a validated A7 plan `wrong` (`cross-write-unscored`), like the handoff.
+- **Gold.** `golden/agent-plan.a7.v1.json`: 180 cases (74 cross-write results, 106 refusals and routes), all
+  `pending-owner-approval`, KO 158 of 180, synthetic names only, never scored by a model. Each case pins the REAL validator
+  and the REAL router (`cross-write-plan-gold.test.ts`). Share of the A7.9 minimums built here: one-message 21, calendar 10,
+  follow-up 12, destination pick 17, two literals plus roles 22, unsuitable 27, inapplicable 8, verbatim payload 10, literal
+  posts staying A6 10 (each with A7 active and off), routing precedence 20, receipt-bound follow-ups 23. Out of this slice (later
+  slices' machinery): pick with a frozen receipt, a listing whose content pushes a pick, consent replies and open or closed cards,
+  re-draft, unrelated next turn. The 275 total is therefore NOT met; the rest comes with A7-S2, S4, S5 and S9. The existing
+  `agent-plan.v1.json`, `agent-plan.ap8.v1.json` and the handoff red-team corpus are byte-identical (sha256 pinned by a test).
+- **Prompt and gates.** The planner prompt is unchanged (`agent-plan.v11`; a test pins that it names neither a propose step nor
+  `payload-draft.v1`), so no model emits the A7 form and no D12 gate item arises from this slice. The prompt rule that makes the
+  planner emit it is a later slice and will need the `agent-plan` mode (plan, then run) and the `s3-cross-write` red-team arms,
+  each behind the owner's notice and yes (a7-13, B2). No call count was measured; none is needed now.
+- **Residuals (recorded, not hidden).**
+  1. `routeCrossWrite` is the pure contract of step 0; it is not wired into the live turn router (A7 is off, nothing to route).
+     Wiring comes with the card slice (A7-S4) and must keep `routing-changed-when-off` at 0.
+  2. "해당 내용" is named by A7.5 step 0 as a W1 point-back form, but `해당` is not in the A6 determiner set (이, 그, 저). The A6 set
+     is not widened (W1 stays byte-identical); the A7 router adds `해당` locally. Owner: confirm or widen both.
+  3. "A read source name" in R2a and in the form-b source check means the catalog's SOURCE names (슬랙, slack, 지라, jira), not an
+     entry's topic aliases. A7.4 says "names and aliases", but the A7.9 example "BE-123에 짧게 배포 완료 달아줘" must stay an A6
+     literal post, and 배포 is an alias of `jira.release`. Aliases of the destination's own entry (이슈, 티켓) are catalog nouns of
+     the destination span instead.
+  4. The closed classes are small constants in `cross-write.ts`: the English determiner and pronoun class, the conjunction words
+     and the A6 yes token that may open a follow-up (그리고, and, 응, also), 좀 and 다. The destination nouns and write verbs are
+     the ADR-0112 grammar's own and a test pins each to that grammar. English write verbs are add, post and send (comment is
+     a noun too).
+  5. Calendar: the plan form and its spans are validated, but R2a and R2b route only Jira and Slack destinations; calendar has
+     no write-clause detector yet (A7-S7). The calendar time is a verbatim, bounded span of the owner's words; Core's symbolic time
+     resolves it at the card (A7-S7).
+  6. The marking rule fails closed by design: "BE-123에 BE-12 요약해서 달아줘" and "BE-12에서 가져와서 BE-123으로 달아줘" ask with
+     readings; a literal off the allowlist that would be marked is refused, one that is not marked is treated as absent.
+  7. The English forms are covered by the same structure but by few cases; the red-team batch CW-1 (A7-S5) must add more.
+- **Not done here.** The held receipt (A7-S2), the drafter, the defanger and the remap (A7-S3), the proposal port, card,
+  pick and one-open-card rule (A7-S4), the CW-1 corpus and plan eval (A7-S5), the Slack and calendar destinations' own gold and
+  red-team share (A7-S6, A7-S7), the planner prompt rule, and any flag.
+
+### A7-S1 review round 1 (2026-11-24; Chief Architect and Codex)
+
+Two independent reviews of `901d836b` returned 7 P2 and 5 P3 findings. Every fix is structural (closed catalog values, validator
+constraints, fail-closed refusals); no word list or phrase was added, Core has no provider or platform branch, the planner prompt
+(`agent-plan.v11`) and the pinned golds (`agent-plan.v1.json`, `agent-plan.ap8.v1.json`, the handoff red-team corpus) are
+byte-identical, and A6 and W1 are unchanged (the ADR-0112 grammar regexes are composed from the exported word sets character for
+character; checked by comparing every pattern source before and after).
+
+| Finding | Fix |
+|---|---|
+| P2-1 form-b new source used A7 source names only | `crossWriteNamesNewSource`: per word, the catalog names AND aliases of EVERY READ entry (A7.4). A word naming an entry other than the held one is a new source ("메일 …", "릴리즈 관련 그 내용 …", "그 이슈 …" after a Slack receipt); a word naming the held entry still binds ("지라" names both Jira entries). R2a stays names only, now over every catalog read source (so "메일 내용 요약해서 BE-123에 달아줘" goes to A7 and is refused there, never an A6 literal post). |
+| P2-2 form b with a new read condition reused the receipt | `crossWriteHasReadCondition`: outside the destination span, a time expression (the A6 time grammar, `containsNlTimeExpression`) or a filter slot of the held entry (its enums' `valueGrounding`, its flags' `flagGrounding`) means a new read: refused `cross-write-read-condition` (new closed refusal). The calendar title and time spans are the destination's and are excluded first. |
+| P2-3 writes counted only with a request ending | `WRITE_VERB_TOKEN` counts the grammar's verb stems (and the 하 stem of each 해-verb) with any closed verbal ending: the request ending, the connectives of the request auxiliary (주고, 주면서, 주시고, 줘서), 고, 서, and 해 / 하고 / 하면서. The >1 refusal runs before the route re-check and the calendar branch; beside a calendar event (whose own verb is not counted), a comment or post verb in a clause with a Jira key, a `#channel` or a marked destination noun is a second write (`crossWriteSecondWriteBesideCalendar`). |
+| P2-4 the validator did not re-check routing | `validateCrossWritePlan` calls `routeCrossWrite` and refuses `cross-write-invalid` unless the route is `a7`; form a needs the `cross-source` trigger. The router has no calendar write-clause detector (A7-S7), so a calendar plan needs the same cross-source trigger over its words outside the title and time spans. |
+| P2-5 the source read was not grounded | The source read is checked with the plan's own steps (the multi-step clause grounding applies) over the words outside the destination span, and its entry must be named there by the catalog's names or aliases; when those words name no read entry at all, the read must carry a grounded value of its own (a source literal). Otherwise `step-invalid` / `ungrounded`. |
+| P2-6 kind activation only for a marked destination | `crossWriteResolvableKinds`: the marked literal's kind; with none marked, every literal's kind and every marked kind noun's kind. Any inactive kind keeps the turn ordinary (and the validator refuses through P2-4). |
+| P2-7 a kind-only destination had no span | The analysis records `kindSpans`; `crossWriteDestinationSpan` returns the literal's or the kind-only span, used by the router and by form b, so "해당 내용 요약해서 지라 티켓에 달아줘" after a Slack listing is the a7-09 pick, not a new source. |
+| P3-8 rule 5 in the ask and kind-only branches | With no literal marked, a destination literal the planner names is refused `cross-write-role` in every branch (readings, restate, kind-only pick); a project beside the readings too. |
+| P3-9 named project case | The allowlist match ignores case; the named project is upper case. |
+| P3-10 copied grammar words | `work-chat-command.ts` exports its closed word sets and request ending; `nl-routing/write-clause.ts` re-exports them (the agent boundary allowlist of ADR-0121 D5 admits no `work-chat` import) and `cross-write.ts` imports them. A test pins the exported values and the grammar's behaviour. |
+| P3-11 '해당' | A named closed constant `A7_POINT_BACK_DETERMINERS`, used by the A7 router only. |
+| P3-12 log reason | Recorded: a plan carrying `payload-draft.v1` (or a propose step) is judged by rule 9 alone, so with A7 off it now logs `cross-write-off` where it logged `summary-schema` before this slice. |
+
+- **Gold.** `agent-plan.a7.v1.json` now holds 202 cases (79 cross-write results, 123 refusals and routes; KO 180 of 202), all
+  `pending-owner-approval`. 22 rows of batch `A7-2` cover the findings. Two batch `A7-1` rows changed with P2-4: `a7p-030` and
+  `a7p-036` ("방금 내용 …") are now `a7n-107` and `a7n-108`, refused `cross-write-invalid`, because "방금" is neither a W1
+  point-back determiner nor a source name and step 0 leaves the turn ordinary; `a7p-079` and `a7p-080` ("그 대화 …") replace them.
+- **Residuals (recorded).**
+  1. R2a stays names only: an alias alone ("릴리즈 내용 요약해서 BE-123에 달아줘", "BE-123에 짧게 배포 완료 달아줘") is no routing
+     trigger, so such a turn stays ordinary (A6 as today) and a form-b plan for it is refused `cross-write-invalid`.
+  2. `해당` stays A7-router-only; the A6 determiner set is not widened. "방금 내용" has no structural trigger (above).
+  3. An unquoted free keyword ("장애 관련 슬랙 내용 …") is not recognised by any slot grammar, so it is not a read condition of
+     form b. The bind re-reads only the held items, so no other content moves; the card's banner names the source.
+  4. The calendar second-write rule is clause-based (a comment or post verb beside a destination literal or marked noun); a
+     kind-only Jira or Slack request beside a calendar event without a marker is not caught until the calendar write-clause
+     detector (A7-S7).
+
+### A7-S1 review round 2 (2026-11-24; Chief Architect and Codex delta; the fix-loop cap)
+
+The delta reviews of `f529f538` returned 3 P2 and 3 P3 findings; the orchestrator decided each fix. Every fix is structural; no
+word list or phrase was added, Core has no provider or platform branch, the planner prompt (`agent-plan.v11`) and the pinned golds
+(`agent-plan.v1.json`, `agent-plan.ap8.v1.json`, the handoff red-team corpus) are byte-identical, A6 and W1 are unchanged, and a
+validated A7 plan still never runs.
+
+| Finding | Fix |
+|---|---|
+| P2-a the second-write count depended on the verb ending ("BE-1에 달고 #quoky-test에 올려줘", the mirror "#…에 올리고 BE-1에 달아줘", "BE-123에 남기고 … 일정 만들어줘", Codex "BE-123에 댓글 달아 주고 … 일정 만들어줘") | DESTINATION counting replaces verb counting. `analyseCrossWriteLiterals` records `destinations`: every destination literal, destination kind noun (the destination entries' own catalog nouns) or allowlisted project key carrying the closed locative particle of A7.4a (에, 에다, 에다가; `에서`, `로`, `으로` never), and in English every `to` / `into` whose object is a literal or a kind noun. A noun phrase counts once (only its last word carries the particle). The validator refuses `cross-write-writes` when (i) two or more are marked, or (ii) a calendar plan's words hold any marked Jira or Slack destination; the router leaves a message with two or more ordinary. The grammar's verb count (`WRITE_VERB_TOKEN`) is no longer the count of record: it stays only as "a write clause exists" for the router and as an extra fail-closed signal (it can only add refusals). All four probes are gold refusals. |
+| P2-b a calendar plan skipped the route re-check (Codex: "슬랙 릴리즈 대화 요약해줘" with an injected calendar propose step validated) | **Gate, not refuse-all.** A calendar plan needs the cross-source trigger over its words outside the title and time spans AND a create request of the EXISTING calendar write grammar (ADR-0110 D3): `nlIsCalendarCreateRequest` = a Korean message, no delete verb, the booking verb as the request (so `parseCalendarWriteRequest` takes its create branch), and no to-do or reminder list named as the place (`nlLocalListTarget`, the calendar classifier's own exclusion). The nl-routing import scan admits no `calendar/` import and the agent boundary admits only nl-routing, so the parser's `DELETE_VERB` and `BOOKING_VERB` moved verbatim to `nl-routing/write-clause.ts` (`CALENDAR_DELETE_VERB`, `CALENDAR_BOOKING_VERB`) and `calendar-write-request.ts` imports them (sources and flags compared equal before and after). The calendar role check now runs before the gate, so a calendar plan for a Jira-marked message keeps `cross-write-role`. |
+| P2-c an alias overrode a source name in the read grounding ("슬랙 릴리즈 대화 …" with `jira.release {release:'릴리즈'}`) | When the words outside the destination name an entry by its catalog SOURCE names (`crossWriteNamedSources`), the read entry must be one of those; the names-and-aliases set decides only when no source name appears. |
+| P3 `export … from` above an import in `write-clause.ts` | Moved below the import block. |
+| P3 calendar span removal took the first match | `crossWriteCalendarOutside` removes each span at its LAST occurrence (the title and time stand by the create verb at the end of the request), so "슬랙 점검 대화 요약해서 내일 오후 3시에 점검 일정 만들어줘" keeps the source's "점검" outside. |
+| P3 residuals | Restated below (1, 2). |
+
+- **Gold.** `agent-plan.a7.v1.json` now holds 212 cases (79 cross-write results, 133 refusals and routes; KO 189 of 212), all
+  `pending-owner-approval`. Batch `A7-3` adds 10 rows: the four P2-a probes and an English two-destination row (`a7n-125`..`128`,
+  `a7n-132`), the P2-b injected calendar step and a to-do-list booking (`a7n-129`, `a7n-130`), the P2-c alias row (`a7n-131`), a
+  calendar row whose title word also stands in the source part (`a7p-082`), and the R2a residual route (`a7n-133`). One batch
+  `A7-1` row changed with P2-b: `a7p-025` (English calendar create) is now `a7n-124`, refused `cross-write-invalid`, because the
+  calendar write grammar has no English create verb.
+- **Residuals (recorded).**
+  1. R2a runs over every catalog read source's names, so while A7 is active a verbatim post that names one ("BE-123에 메일 보냈다고
+     달아줘") routes to A7, where a plan for it is refused, instead of being an A6 literal post. Fail closed; listed next to the
+     A7.9 "literal posts staying A6" minimum (gold `a7n-133`). With A7 off nothing changes.
+  2. (Round 1 residual 2, restated.) "방금 내용 요약해서 BE-123에 달아줘" (`RECENCY_KO` plus a content noun) is NOT a step 0 point-back
+     form under the ratified text, so the route is `ordinary` and the turn goes to A6 as today (not a refusal); a form-b plan for
+     it is refused `cross-write-invalid`. **Owner question pending:** should step 0 accept `RECENCY_KO` plus a content noun (it reuses
+     the existing closed set, but needs an ADR text amendment)? Not implemented.
+  3. Destination counting fails closed: a SOURCE phrase that carries the locative particle counts as a destination ("BE-12에 달린 댓글
+     요약해서 BE-123에 달아줘", "슬랙에 있는 대화 요약해서 …"), so such a turn is refused or stays ordinary. `에서` or `의` there never counts.
+  4. English calendar plans are refused until the A7-S7 calendar write-clause detector (no English create verb in the grammar), and a
+     Korean create the booking verb does not carry is refused too. Round 1 residual 4 (the clause-based calendar rule) is superseded
+     by P2-a (ii) for every marked destination; a kind-only Jira or Slack request beside an event WITHOUT a marker is still caught only
+     by the clause rule until A7-S7.
+
+## ADR-0121 amendment A7.5 step 0 — recency point-back (owner-approved 2026-11-24)
+
+Status: owner-approved amendment (terminal, 2026-11-24). Append-only: the A7 amendment text above and its ratification record
+stay as written; this record is the exact change and supersedes them for this one clause.
+
+- **Text change to A7.5 step 0.** The point-back form of the summary-word-on-an-object trigger and of the form-b binding reads:
+  the existing W1 point-back form (`nlWriteClausePointsBack`: "그 내용", "해당 내용") **or a closed recency word of A6-D2
+  (`RECENCY_KO`: 방금, 아까) followed by one content noun ("방금 내용", "아까 대화")**. The recency form points at the
+  immediately previous answer only, within 10 minutes (a7-05 unchanged), is bound to the held receipt (form b), and meets the
+  same a7-06 changed-source rule ("방금 슬랙 내용 …" after a Jira receipt is `cross-write-new-source`). With no fresh held
+  receipt the plan is refused `cross-write-receipt`. A recency word without a content noun is not this form.
+- **Owner answer (verbatim).** "인정" (to residual 2 of the A7-S1 notes: should step 0 accept `RECENCY_KO` plus a content noun?).
+- **Why.** It is natural conversation: "방금 내용 요약해서 BE-123에 달아줘" means the same as "그 내용 …". It adds no word: it reuses the
+  closed A6-D2 set `RECENCY_KO` (re-exported from nl-routing for the A7 router, never copied) and the same open content-noun
+  position as the "그/해당 내용" form. "아까 그거" already routes to A7 (a deictic-only payload of the W1 grammar), so the
+  amendment makes the noun form consistent with it. A7 router only: A6 and W1 are byte-identical (their pins and tests pass
+  unchanged), the planner prompt is `agent-plan.v11` unchanged, and A7 still never executes.
+- **Residual 2 of A7-S1 review round 2: closed.** Gold: `a7p-030` and `a7p-036` (restored accepted form-b rows; history
+  a7p-030/036 in A7-1, a7n-107/108 refused in round 1), `a7p-083` ("아까 내용 …" form b), `a7n-134` (no receipt,
+  `cross-write-receipt`), `a7n-135` (11-minute-old receipt, `cross-write-receipt`), `a7n-136` (Jira receipt, "방금 슬랙 내용 …",
+  `cross-write-new-source`), `a7n-137` (recency word without a noun). All `pending-owner-approval`; the file holds 217 cases.
+- **Observed, recorded (a7n-137).** The owner brief said a recency word without a noun "stays ordinary". Checked against the code
+  before this amendment: "방금 요약해서 BE-123에 달아줘" already routes to A7, because the bare recency word is a deictic-only
+  payload of the existing A6 grammar (like "그거"). This is unchanged by the amendment and the row pins that behaviour; making it
+  ordinary would need a change to the A6 grammar or to existing A7 behaviour. Owner: confirm or request that change.
+- **Review (Codex P2, fail-open; fixed after the amendment).** The recency point-back had become a general cross-source trigger, so
+  "방금 내용 요약해서 BE-123에 달아줘" accepted a form-a `slack.search(keyword="내용") -> draft -> propose` plan with a missing, stale
+  or different-source receipt. Rule (structural, validator rule 9): a point-back request (그 / 해당 / recency forms alike) is
+  receipt-only. It validates only as form b bound to a fresh (10 min), same-source held receipt (missing or stale receipt is
+  `cross-write-receipt`, a different source `cross-write-new-source`); a form-a plan for it is refused `cross-write-invalid`
+  (`crossWriteIsPointBackRequest`; a bare item noun that is a source name, like "메일", is a source name, not a point-back).
+  The 그 / 해당 path has the same guarantee. Gold `a7n-138` to `a7n-142` (form-a injected: no receipt, stale, different-source, 해당, 그);
+  all `pending-owner-approval`; the file now holds 222 cases. No new word; A6, W1 and `agent-plan.v11` unchanged.
+- **Review 2 (Codex P2, fail-open after `a8d1ccd6`; structural redesign, fail closed on purpose).** The shape-based detection
+  (`summaryActsOnObject` reading the object phrase of the summary word) still let a closed point-back token through when a source
+  name or another content word followed it: "{그 / 해당 / 방금 / 아까} 슬랙 내용 요약해서 BE-123에 달아줘" and "summarize that content
+  and post it to BE-123" validated an injected form-a `slack.search(keyword="내용" | "content") -> draft -> propose` plan with a
+  missing, stale or different-source receipt. The heuristic cap was reached, so the detection is replaced, not patched with another
+  phrase shape. **Rule (closed-token, validator rule 9):** a request is a point-back request when the owner's words OUTSIDE the
+  destination span carry ANY token of the existing closed point-back sets, whatever follows it (a source name, an item noun or any
+  content word): the W1 determiners standing as their own word (이, 그 via `nlSpanStartsWithDeterminer`; 저 stays out as there,
+  the first-person pronoun) and the A7-only 해당 (`A7_POINT_BACK_DETERMINERS`, also glued: "해당내용"); the A6-D2 recency words
+  (`RECENCY_KO` and "just now" via `nlHasRecencyWord`, Korean inside a token as every deictic); the A6-D2 deictics (그거, 이거,
+  그걸 …, it / that / this via `hasNlDeictic`); and the demonstrative members of the closed English class `EN_CLOSED` (it, that,
+  this, them, these, those, its), split out of it unchanged as `A7_POINT_BACK_EN`. No word is added. A point-back request
+  validates only as form b bound to a fresh, same-source held receipt; a form-a plan for it is refused `cross-write-invalid`
+  before the read and destination checks, so the reason is always that one. `crossWriteIsPointBackRequest(outside)` is now
+  token-only; `summaryActsOnObject` (the router's cross-source trigger) is back to its pre-`a8d1ccd6` form, so routing is unchanged.
+  A6, W1 (their pins pass unchanged), the agent boundary and `agent-plan.v11` are unchanged; A7 still never executes.
+  - *Gold.* New refusal rows `a7n-148` to `a7n-162` (batch A7-5, `followup`): the five Codex repros (그 / 해당 / 방금 / 아까 +
+    "슬랙 내용", and "summarize that content and post it to BE-123") each under no receipt (`on`), a stale receipt and a
+    different-source (Jira) receipt, all `cross-write-invalid`. All `pending-owner-approval`; the file now holds 237 cases.
+  - *Converted (previously accepted form a, now refused `cross-write-invalid`; the rule is not loosened to keep them).*
+    `a7p-011` -> `a7n-143` ("summarize slack incident chatter and add it to BE-5"), `a7p-017` -> `a7n-144` ("summarize my jira
+    issues and post it to #quoky-test"), `a7p-018` -> `a7n-145` ("… and send it to #quoky-test"), `a7p-021` -> `a7n-146`
+    ("summarize the slack release thread and post it to #quoky-test"), `a7p-049` -> `a7n-147` ("summarize the jira issues and post
+    it to a slack channel"). All five over-refuse on the incidental object pronoun "it" of the write clause.
+  - *Reason changed (already refused, still refused).* `a7n-002` ("슬랙 릴리즈 요약해서 그 내용 내일 일정 만들어줘") was
+    `cross-write-span`, `a7n-021` ("summarize the jira issues and post it to #random") was `cross-write-not-allowed`; both are now
+    `cross-write-invalid` because the point-back refusal runs first. The deictic-title span rule stays pinned for form b in
+    `cross-write.test.ts`.
+  - *Recorded fail-closed residuals (over-refusal of form a; accepted).* Any English write clause with an object pronoun ("… and
+    post it to #quoky-test"; "… and post to #quoky-test" still validates as form a); a time phrase with a demonstrative
+    ("summarize this week's slack release thread and post to #quoky-test"); a determiner that refers to the summary itself, not to
+    an earlier answer ("#dev 대화 요약해서 그 결과 BE-123에 달아줘"); an incidental 이 / 그 standing as a word ("슬랙 릴리즈 대화 요약해서
+    이 정도로 BE-123에 달아줘"); a recency word inside another word ("아까운 …"). Each is refused `cross-write-invalid` as form a. "이번
+    주 …" is not affected (이번 is not 이). Owner: confirm the residual, or request a narrower rule with its own review.
+- **Review 3 (Codex P2, fail-open after Review 2; input normalization).** Compatibility forms and punctuation hid the closed
+  point-back token from the whitespace tokenizer: "summarize ｔｈａｔ slack content and post to BE-123" (full-width) and "summarize
+  (those) slack content …" let an injected form-a `slack.search` plan validate under a missing, stale or different-source receipt.
+  Fix (structural, one place, `crossWritePointBackText`): before the closed-token match the text outside the destination span is
+  NFKC-folded, lower-cased, stripped of format characters (`\p{Cf}`, zero-width) and split on every character that is not a
+  letter, mark or number (Hangul is a letter), so brackets, quotes and punctuation around a token never hide it ("(those)",
+  "\"that\"", "그(슬랙)"). The span exclusion is unchanged (the normalization runs on its output, so spans still line up). No word
+  is added; Korean particle handling is the existing one; A6, W1 and `agent-plan.v11` are unchanged. Over-refusal widens only to
+  the same closed tokens (a token inside brackets or quotes is a token). Gold `a7n-163` to `a7n-177` (full-width, bracketed,
+  quoted, 그(슬랙), zero-width inside a token; each under no, stale and different-source receipts), all `cross-write-invalid`,
+  `pending-owner-approval`; the file now holds 252 cases.
+- **Review 4 (Codex P2, fail-open after Review 3; retained combining marks).** Marks survived the review-3 normalization and
+  evaded the token match: `th\u034Fat` (CGJ), `그\uFE0F` (variation selector), `THİS` (U+0130), `thát` (precomposed accent);
+  each let an injected form-a plan validate under a missing, stale or different-source receipt. Fix (one function,
+  `crossWritePointBackText`, point-back detection only; A6 and W1 untouched): NFKC, NFD, remove every `\p{M}` code point, NFC
+  (Hangul conjoining jamo are `\p{Lo}`, so syllables recompose; 그 / 해당 / 방금 / 아까 and Korean particles still match as
+  before), strip `\p{Cf}`, locale-independent `toLowerCase()` (after mark removal U+0130 yields "i"), split on every non
+  letter / number. Gold `a7n-178` to `a7n-189` (the four repros under no, stale and different-source receipts), all
+  `cross-write-invalid`, `pending-owner-approval`; the file now holds 264 cases. Negatives in `cross-write.test.ts` prove ordinary
+  Korean form-a sentences without a point-back token still validate.
+  - *Accepted residual.* Further exotic evasions, such as other-script homoglyphs that NFKC does not fold (Cyrillic "а" in
+    "thаt"), are not covered. Accepted: A7 is off, the text is the owner's own message, and every A7 write still needs the
+    owner's approval card.
+- **Review 5 (Codex P2 after Review 4; closed by the fix-loop cap, orchestrator decision 2026-11-24).** The shared A6
+  selection-input normalization (`nl-routing/selection-input.ts:72`, whitespace-class `/\s+/g`, which includes U+FEFF) turns a BOM inside a word into a space before A7
+  sees the text, so `th\uFEFFat` reaches point-back detection as `th at` and an injected form-a plan validates under a
+  missing, stale or different-source receipt. Not fixed in A7-S1: the fix would change the shared A6 normalizer (A6 must stay
+  byte-identical) or give A7 a second raw-text path; the point-back rule has had four hardening rounds (review-loop
+  discipline: stop adding rounds). Recorded as an accepted fail-open residual with these bounds: the input needs an invisible
+  whitespace-class character (such as U+FEFF) pasted inside a closed token, which owner typing does not produce; A7 is off; any A7 write still needs the
+  owner's approval card showing the real destination and payload. Revisit in the slice that activates A7 (A7-S2+), where
+  the router can run on the raw owner text before the A6 normalizer.

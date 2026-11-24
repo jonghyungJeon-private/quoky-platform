@@ -46,6 +46,26 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Live on deploy.** The catalog alias change (`pull request`, `repository`, `meeting`) is NOT behind any switch. Its one intended
   behaviour change: a multi-clause English "meetings" request gets `timedOnly`, matching Korean 회의.
 - **Rule ① guard.** Core derives LOCAL only for the five work sources (no REMOTE) until the confirm slice; mail and Drive unchanged.
+## Unreleased — ADR-0121 A7-S1 plan-form (2026-11-24; dormant, A7 off, not runnable)
+
+- **Added.** The `propose` step (`jira.comment.propose`, `slack.post.propose`, `calendar.create.propose`) and the
+  `payload-draft.v1` summary in the plan schema; rule 9 of the plan validator (destination grounding in the owner's own words,
+  the A7.4a role rule, the destination-span exclusion, kind-only destination states, form b over a held receipt); the A7.5 step 0
+  routing precedence as a pure function; the pre-read destination check over an injected port; 212 plan-form gold cases
+  (`agent-plan.a7.v1.json`, pending owner approval).
+- **Review round 1.** Form b names no new source (catalog names and aliases of every read source) and no new read condition
+  (time scope or a slot of the held entry); writes are counted whatever the verb ending; the validator re-checks the step 0 route
+  and grounds the source read outside the destination span; every resolvable destination kind must be active; a kind-only
+  destination has a span; the ADR-0112 grammar words are imported, not copied.
+- **Review round 2.** More than one write is counted by locatively marked destinations, not verbs; a marked Jira or Slack
+  destination beside a calendar event is a second write; a calendar plan needs a create request of the existing calendar write
+  grammar (its booking verb, moved verbatim to `nl-routing/write-clause.ts`); a source name outranks an alias in the source-read
+  grounding; a calendar span is anchored on its last occurrence.
+- **Unchanged.** A validated A7 plan is declined before any read (like the A4-S1 handoff); the A7 context is absent by default;
+  the planner prompt (`agent-plan.v11`), the catalog, the grant producer and every flag are untouched; the existing plan golds are
+  byte-identical (pinned).
+- See DECISIONS "ADR-0121 A7-S1 implementation note (2026-11-24)".
+- **Amended (owner, 2026-11-24).** A7.5 step 0 accepts a recency word (`RECENCY_KO`) plus a content noun as a point-back form ("방금 내용 …"), bound to the held receipt like "그 내용"; A7 router only, A6 and W1 unchanged; 5 gold rows added, 2 restored.
 
 ## Unreleased — ADR-0121 A7 ratified, and the A6/A4 follow-up answers (owner decisions 2026-11-24; docs, gold, tests only)
 

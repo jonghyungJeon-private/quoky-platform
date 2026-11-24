@@ -25,6 +25,12 @@ import { NL_SELECTION_OUTPUT_MAX_BYTES, parseSelectionOutput, type NlAmbiguity, 
  *   The parser checks the shape only (closed keys, types, bounded strings); the closed value sets, the slot table and the
  *   grounding in the owner's own words are the validator's. No planner prompt names it yet (A4-S4), so no model emits it today.
  *
+ * - **the A7 cross-source write** (ADR-0121 amendment A7, slice A7-S1): a third step kind, a propose step
+ *   `{"propose": "<operation>.propose", "args"?: {…}}` (shape only; the closed target set, the destination grounding and every
+ *   other rule are the validator's), and a `summarize` step whose `schema` is `payload-draft.v1` and whose source list may be
+ *   EMPTY (form b: the held receipt of the previous turn is its input, A7.4). A propose step has no payload argument (A7.5
+ *   step 1). No planner prompt names either yet, so no model emits them today.
+ *
  * Parsing is strict and total: unknown keys, wrong types, out-of-range numbers, more than 6 steps or more than 2 KB give
  * `null` (the caller treats the call as failed; no retry). The catalog, the step mix, the references and every argument
  * are checked later by the deterministic `plan-validator.ts`, never here.
@@ -92,6 +98,16 @@ export type AgentPlanStep =
       readonly schema: string;
     };
 
+/**
+ * ADR-0121 A7 (A7-S1): the one propose step of a cross-source write, as the planner wrote it (shape only). It is kept beside the
+ * steps (`AgentPlan.propose`), never inside them, so every consumer of `steps` stays exactly as it was: the parser takes a
+ * trailing `{"propose": …}` element out of the planner's `steps` array. Destination args only; never a payload.
+ */
+export interface AgentPlanPropose {
+  readonly target: string;
+  readonly args: Readonly<Record<string, NlArgValue>>;
+}
+
 export type AgentPlan =
   /** The planner found no entry (`entryId: "none"` in the selection form): honest chat. */
   | { readonly kind: 'none'; readonly form: 'selection' }
@@ -113,6 +129,8 @@ export type AgentPlan =
       readonly related?: number;
       /** Steps form only (ADR-0121 A4, slice A4-S1): one declared owner-grounded handoff into a READ slot. */
       readonly handoff?: AgentPlanHandoff;
+      /** Steps form only (ADR-0121 A7, slice A7-S1): the trailing propose step of a cross-source write. */
+      readonly propose?: AgentPlanPropose;
     };
 
 const STEPS_TOP_KEYS = new Set(['steps', 'ambiguity', 'confidence', 'related', 'handoff']);
@@ -123,6 +141,9 @@ const MAX_HANDOFF_WORD_CHARS = 32;
 const READ_KEYS = new Set(['entryId', 'args', 'ref']);
 const SUMMARY_KEYS = new Set(['summarize', 'schema']);
 const REF_KEYS = new Set(['step', 'field', 'take', 'at']);
+const PROPOSE_KEYS = new Set(['propose', 'args']);
+/** ADR-0121 A7: the one summarize schema that may have an empty source list (form b, the held receipt). */
+const PAYLOAD_DRAFT_SCHEMA = 'payload-draft.v1';
 
 /** Parse the planner's raw text strictly (a single surrounding code fence is tolerated, as for the selection output). */
 export function parseAgentPlanOutput(raw: string): AgentPlan | null {
@@ -153,11 +174,20 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
   const rawSteps = value.steps;
   if (!Array.isArray(rawSteps) || rawSteps.length === 0 || rawSteps.length > AGENT_PLAN_MAX_STEPS) return null;
   const steps: AgentPlanStep[] = [];
-  for (const rawStep of rawSteps) {
+  let propose: AgentPlanPropose | undefined;
+  for (const [index, rawStep] of rawSteps.entries()) {
+    // ADR-0121 A7: a propose step is valid only as the LAST element, and at most one; it is held beside the steps.
+    if (isPlainObject(rawStep) && 'propose' in rawStep) {
+      const parsed = index === rawSteps.length - 1 ? parseProposeStep(rawStep) : null;
+      if (parsed === null) return null;
+      propose = parsed;
+      continue;
+    }
     const step = parseStep(rawStep);
     if (step === null) return null;
     steps.push(step);
   }
+  if (steps.length === 0) return null;
   return {
     kind: 'steps',
     form: 'steps',
@@ -167,6 +197,7 @@ export function parseAgentPlanOutput(raw: string): AgentPlan | null {
     ...(typeof confidence === 'number' ? { confidence } : {}),
     ...(typeof related === 'number' ? { related } : {}),
     ...(handoff !== undefined ? { handoff } : {}),
+    ...(propose !== undefined ? { propose } : {}),
   };
 }
 
@@ -213,9 +244,9 @@ function parseStep(value: unknown): AgentPlanStep | null {
   if ('summarize' in value) {
     if (!keys.every((key) => SUMMARY_KEYS.has(key))) return null;
     const from = value.summarize;
-    if (!Array.isArray(from) || from.length === 0 || from.length > MAX_SUMMARY_SOURCES) return null;
-    if (!from.every((n) => isStepNumber(n))) return null;
     const schema = value.schema;
+    if (!Array.isArray(from) || from.length > MAX_SUMMARY_SOURCES || (from.length === 0 && schema !== PAYLOAD_DRAFT_SCHEMA)) return null;
+    if (!from.every((n) => isStepNumber(n))) return null;
     if (typeof schema !== 'string' || schema.length > MAX_SCHEMA_CHARS || !/^[a-z][a-z0-9-]*\.v[1-9][0-9]?$/.test(schema)) return null;
     return { kind: 'summarize', from: from as number[], schema };
   }
@@ -228,6 +259,14 @@ function parseStep(value: unknown): AgentPlanStep | null {
   const ref = parseRef(value.ref);
   if (ref === null) return null;
   return { kind: 'read', entryId, args, ref };
+}
+
+function parseProposeStep(value: Record<string, unknown>): AgentPlanPropose | null {
+  if (!Object.keys(value).every((key) => PROPOSE_KEYS.has(key))) return null;
+  const target = value.propose;
+  if (typeof target !== 'string' || target.length > MAX_ID_CHARS || !/^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*\.propose$/.test(target)) return null;
+  const args = parseArgs(value.args);
+  return args === null ? null : { target, args };
 }
 
 function handoffWord(value: unknown): string | null {

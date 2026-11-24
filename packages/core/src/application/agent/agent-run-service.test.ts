@@ -6,6 +6,7 @@ import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog
 import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AGENT_SHADOW_DEFAULT_TIMEOUT_MS, AGENT_SHADOW_LOG_EVENT, AgentModeError, AgentRunService, type AgentMode, type AgentShadowLive, type AgentShadowTurn } from './agent-run-service';
+import type { AgentCrossWriteContext } from './cross-write';
 import { NL_SELECTION_TIMEOUT_MS } from '../nl-routing/nl-selection-service';
 
 // ADR-0121 D1 / D7 (stage S2 P1): AgentRunService in `off` and `shadow` with a scripted planner (no model): one
@@ -29,7 +30,7 @@ interface Harness {
   release?: () => void;
 }
 
-function harness(options: { mode?: AgentMode; script?: string[]; hang?: boolean; family?: string; caps?: { perHour?: number; perDay?: number }; timeoutMs?: number; usage?: AiUsage } = {}): Harness {
+function harness(options: { mode?: AgentMode; script?: string[]; hang?: boolean; family?: string; caps?: { perHour?: number; perDay?: number }; timeoutMs?: number; usage?: AiUsage; crossWrite?: AgentCrossWriteContext } = {}): Harness {
   const calls: AiRequest[] = [];
   const selects: Capability[] = [];
   const logs: Array<{ event: string; fields?: LogFields }> = [];
@@ -81,6 +82,7 @@ function harness(options: { mode?: AgentMode; script?: string[]; hang?: boolean;
     timeoutMs: options.timeoutMs ?? 6_000,
     elapsed: () => state.clock,
     ...(options.caps !== undefined ? { caps: options.caps } : {}),
+    ...(options.crossWrite !== undefined ? { crossWrite: options.crossWrite } : {}),
   });
   (state as { service: AgentRunService }).service = service;
   return state;
@@ -460,5 +462,37 @@ describe('owner decision of 2026-10-28: the agent shadow bound', () => {
   it('is 10 s, the same as the selector bound (the planner shares its capability at high effort)', () => {
     expect(AGENT_SHADOW_DEFAULT_TIMEOUT_MS).toBe(10_000);
     expect(AGENT_SHADOW_DEFAULT_TIMEOUT_MS).toBe(NL_SELECTION_TIMEOUT_MS);
+  });
+});
+
+describe('AgentRunService shadow: ADR-0121 A7-S1 cross-source write plan (plan form only)', () => {
+  const A7_CONTEXT: AgentCrossWriteContext = {
+    active: { jira: true, slack: true, calendar: true },
+    writers: { jira: true, slack: true, calendar: true },
+    jiraProjects: ['BE'],
+    slackChannels: ['quoky-test'],
+    sources: ['slack.search', 'jira.issues', 'jira.release'],
+  };
+  const A7_PLAN = JSON.stringify({
+    steps: [{ entryId: 'slack.search', args: { keyword: '릴리즈' } }, { summarize: [1], schema: 'payload-draft.v1' }, { propose: 'jira.comment.propose', args: { issueKey: 'BE-123' } }],
+    ambiguity: 'CLEAR',
+  });
+  const A7_TEXT = '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘';
+
+  it('logs a validated A7 plan as outcome cross-write with closed fields only (no owner text, no key), after exactly one planner call', async () => {
+    const h = harness({ script: [A7_PLAN], crossWrite: A7_CONTEXT });
+    await h.service.runShadow(turn(h, { text: A7_TEXT }), async () => CHAT);
+    expect(h.calls).toHaveLength(1);
+    const [line] = shadowLines(h);
+    expect(line).toMatchObject({ outcome: 'cross-write', validator: 'ok', crossForm: 'a', crossTarget: 'jira.comment.propose', crossDestination: 'named', connectorCalls: 1 });
+    const text = JSON.stringify(line);
+    expect(text).not.toContain('BE-123');
+    expect(text).not.toContain('릴리즈');
+  });
+
+  it('without the A7 context (the default) the same plan is refused cross-write-off in shadow', async () => {
+    const h = harness({ script: [A7_PLAN] });
+    await h.service.runShadow(turn(h, { text: A7_TEXT }), async () => CHAT);
+    expect(shadowLines(h)[0]).toMatchObject({ outcome: 'refused', validator: 'cross-write-off' });
   });
 });
