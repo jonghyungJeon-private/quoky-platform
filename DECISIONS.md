@@ -38936,8 +38936,8 @@ entries gain a validated numeric count. Implemented as data plus one parameter, 
 
 - **Design.** `mail.list` and `drive.files` declare the shared `SEARCH_LIMIT` arg (`limit`, kind `limit`, integer 1..10, ADR-0120
   D4 step 3), the same object `jira.issues`, `github.items`, `slack.search` and `confluence.search` declare. The validator
-  and the catalog renderer need no change: bounds (1..10, integer) are the whole rule for `limit` on every entry, and the
-  prompt lists the arg through the existing "As above" shared line. Neither the validator nor any entry grounds the number
+  and the catalog renderer need no change: bounds (1..10, integer) are the whole rule for `limit` on every entry, and v74
+  renders the shared "As above" line (older revs v73, v71, v72 and v10 render the full `limit` description). Neither the validator nor any entry grounds the number
   in the owner's words (a `limit` arg has no grounding rule today), so the new entries inherit exactly that; see the open
   question below. `limit` stays an ignorable extra arg for entries that do not list it.
 - **Plumbing.** The ports and adapters already took a bound (`MailSearchQuery.limit`, `DriveReader.recentFiles` and
@@ -38951,13 +38951,21 @@ entries gain a validated numeric count. Implemented as data plus one parameter, 
   unit (3개 / 3건 / "3 mails") consuming only a number the validated plan carries; the old "refused as unknown-arg" gap
   assertion is replaced by an acceptance assertion. The production consumer stays A6-S3.
 - **Prompt bytes.** Selector prompt text is unchanged, but every rendered catalog now has the two new arg lines, so every pinned
-  prompt digest moved. Version ids are NOT bumped (read `nl-select.v74`, action `v83`, R2 `v84`, planner `agent-plan.v11`):
-  the change is catalog data, as the A5-S3 alias change was. Re-pinned: the sha256 constants in
+  prompt digest moved. Version ids are NOT bumped (read `nl-select.v74`, action `v83`, R2 `v84`, planner `agent-plan.v11`).
+  Recorded decision (orchestrator, settled by the repo's own rule; FYI for the next owner batch): the canonical rule is
+  `selection-prompt.ts:15` ("Bumped whenever the instruction text changes (the eval plan digest binds it)"). r-07 changes
+  catalog data, not instruction text, so no version id bump; the D12 gate is bound to the full prompt digest of the gated
+  head. The A5-S3 alias change (#365) moved no prompt bytes, so it is not a precedent. This conflicts with the pin test title
+  in `nl-action-entries.test.ts:276` ("a prompt byte change needs a version bump"); that title is read under the source rule.
+  Cost: the rollback revs (v73, v71, v72, v10) render the live catalog, so a rollback keeps prompt and validator consistent
+  but no longer reproduces the bytes that were gated; `golden/nl-select.v73.prompts.json` is named v73 but its content changed.
+  Re-pinned: the sha256 constants in
   `selection-prompt-v74.test.ts` and `plan-prompt.test.ts`, the two inline pins in `nl-action-entries.test.ts` and
   `golden/nl-select.v73.prompts.json` (regenerated; only mail.list / drive.files blocks differ). The D12 gate (action,
   read-regression, r2) is still to run before deploy. Plan digests (no model call, haiku, 1 run, concurrency 1): action
   `24c6d066f03b5ed01a6cacc18f652efc8bc527d63d2a70b2482e5403ec3599cc`, read-regression
   `d34c5ef8fcaa4c8b89e0a7a6c668af7b4dde60537ed89d1379b340c1f654b521`, r2 `799c599f66bb73faefd57d1ca23f5c625226d66ee42f020e34055945c06ba36c`.
+- **Review 1:** CA P2×2 docs, P3×3 tests (drive 4-for-limit-2 cut, exact mail "…외 2건" tail, plan-executor `mail.list` limit 3 + summarize).
 - **Gold.** No `expect` changed: no approved row carries an in-range mail or Drive count. Left as they are: `rt-s2r-278`
   ("메일 500개", out of range, the plan carries the invalid boolean `count`), `rt-s2r-431` ("last 500 emails", out of range) and
   `rt-s2r-473` ("메일 10개 더", "10 more" is relative to the previous list, ambiguous). No row was added: the plan gold

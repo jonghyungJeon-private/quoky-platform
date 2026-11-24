@@ -10,7 +10,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed.** `mail.list` and `drive.files` declare the shared numeric `limit` arg (integer 1..10), like `jira.issues` and
   the other listings. The mail and Drive handlers pass it to the reader and show at most that many; without it the read is
   unchanged (10). The AM-3 count-unit test now runs over the real validator.
-- **Prompt bytes.** Every rendered catalog gains the two arg lines; the pinned digests were re-pinned, version ids unchanged.
+- **Prompt bytes.** Every rendered catalog gains the two arg lines; the pinned digests were re-pinned, version ids unchanged. Version ids stay (selection-prompt.ts:15: bumped when instruction text changes; r-07 changes catalog data); the D12 gate binds the full prompt digest of the gated head; rollback revs render the live catalog.
   The D12 gate (action, read-regression, r2) must run before deploy. No model call was made.
 - **Gold.** No `expect` changed; no row added (`agent-plan.v1.json` is byte-pinned).
 
