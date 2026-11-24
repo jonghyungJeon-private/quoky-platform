@@ -14,7 +14,7 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
+import { AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
@@ -150,6 +150,12 @@ export interface QuarantinedCallAudit {
   readonly auditId: string;
   readonly estimatedTokens: number;
   readonly latencyMs: number;
+  /**
+   * A5-S2: the work sources (A5-S1 vocabulary) whose items this call carried, in the closed order of
+   * `AGENT_WORK_SUMMARY_SOURCES`. Present only when the call held at least one work-source item, so the audit of a mail or Drive
+   * call keeps its four keys. Content-free: closed names only. The reply's per-source REMOTE disclosure reads it.
+   */
+  readonly workSources?: readonly AgentWorkSummarySource[];
 }
 
 // ── the sealed summary ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -596,6 +602,8 @@ export function renderQuarantinedPrompt(schema: AgentSummarySchemaId, rendered: 
 
 export type QuarantinedOutputFailure = 'schema' | 'credential';
 
+const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
+
 function plainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
@@ -644,6 +652,12 @@ export function parseQuarantinedOutput(
     const source = typeof raw.n === 'number' && Number.isInteger(raw.n) ? byN.get(raw.n) : undefined;
     if (source === undefined || seen.has(source.n)) return { ok: false, reason: 'schema' };
     seen.add(source.n);
+    // A5-S2: "one sentence" for a work source is one line. A line break inside a work-source summary or topic is a schema
+    // failure (never repaired by collapsing it); mail and Drive keep their pre-A5 collapse.
+    const oneLine = workSummarySourceOf(source.entryId) !== undefined;
+    if (oneLine && [raw.summary, ...(Array.isArray(raw.topics) ? raw.topics : [])].some((part) => typeof part === 'string' && LINE_BREAK.test(part))) {
+      return { ok: false, reason: 'schema' };
+    }
     const summary = cleanText(raw.summary, AGENT_M2_SUMMARY_MAX_CHARS);
     if (summary === undefined) return { ok: false, reason: 'schema' };
     const topics: string[] = [];
@@ -951,11 +965,13 @@ function launchCall(
   const aiRequest: AiRequest = { capability: Capability.SUMMARIZATION, prompt, ...(request.signal !== undefined ? { signal: request.signal } : {}) };
   let dispatched: AiExecutionLocality = picked.locality;
   let refused = false;
+  const workSources = AGENT_WORK_SUMMARY_SOURCES.filter((name) => call.items.some((item) => workSummarySourceOf(item.entryId) === name));
   const audit = (): QuarantinedCallAudit => ({
     locality: dispatched,
     auditId: picked.auditId,
     estimatedTokens,
     latencyMs: Math.max(0, now() - started),
+    ...(workSources.length > 0 ? { workSources: Object.freeze(workSources) } : {}),
   });
   try {
     request.onCallStart?.(() => (refused ? undefined : audit()));
