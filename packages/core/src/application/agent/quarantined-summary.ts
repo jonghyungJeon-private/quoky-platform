@@ -602,7 +602,9 @@ export function renderQuarantinedPrompt(schema: AgentSummarySchemaId, rendered: 
 
 export type QuarantinedOutputFailure = 'schema' | 'credential';
 
-const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
+const LINE_BREAK = /[\n\v\f\r\u0085\u2028\u2029]/;
+/** A sentence terminator followed by whitespace and then more text: a second sentence (structural; "3.5" and "v1.2" pass). */
+const SECOND_SENTENCE = /\p{Sentence_Terminal}\s+\S/u;
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
@@ -652,11 +654,16 @@ export function parseQuarantinedOutput(
     const source = typeof raw.n === 'number' && Number.isInteger(raw.n) ? byN.get(raw.n) : undefined;
     if (source === undefined || seen.has(source.n)) return { ok: false, reason: 'schema' };
     seen.add(source.n);
-    // A5-S2: "one sentence" for a work source is one line. A line break inside a work-source summary or topic is a schema
-    // failure (never repaired by collapsing it); mail and Drive keep their pre-A5 collapse.
+    // A5-S2: "one sentence" for a work source is one line holding one sentence. A line break, or a sentence terminator followed
+    // by whitespace and more text, inside a work-source summary or topic is a schema failure (never repaired by collapsing it);
+    // the credential guard runs on the raw strings first so credential material is reported as such. Mail and Drive keep their
+    // pre-A5 collapse and order.
     const oneLine = workSummarySourceOf(source.entryId) !== undefined;
-    if (oneLine && [raw.summary, ...(Array.isArray(raw.topics) ? raw.topics : [])].some((part) => typeof part === 'string' && LINE_BREAK.test(part))) {
-      return { ok: false, reason: 'schema' };
+    if (oneLine) {
+      const parts = [raw.summary, ...(Array.isArray(raw.topics) ? raw.topics : [])].filter((part): part is string => typeof part === 'string');
+      const rawJoined = parts.join('\n');
+      if (containsCredentialMaterial(rawJoined) || containsCredentialFileContent(rawJoined)) return { ok: false, reason: 'credential' };
+      if (parts.some((part) => LINE_BREAK.test(part) || SECOND_SENTENCE.test(part))) return { ok: false, reason: 'schema' };
     }
     const summary = cleanText(raw.summary, AGENT_M2_SUMMARY_MAX_CHARS);
     if (summary === undefined) return { ok: false, reason: 'schema' };

@@ -37737,3 +37737,12 @@ value, model call or evaluation was touched or run. The planner prompt (`plan-pr
      `no-summary-grant`; the schema and the lines are therefore not reachable end to end until A5-S3.
   5. The new marker and disclosure strings are fixed reply text, not model prompt text; they go through the A5-S5 review
      with the S1 prompt strings.
+
+Review round 1 (2026-11-24). (1) "One sentence" is now structural for work sources: a summary or topic fails the schema
+when a Unicode sentence terminator (`\p{Sentence_Terminal}`) is followed by whitespace and then more non-whitespace text; a
+final terminator or one inside a token ("3.5", "v1.2") passes; mail and Drive are byte-identical. (2) The line-break set
+adds VT and FF. (3) The credential guard runs on the raw work-source summary and topics before the schema checks, so
+credential plus line-break output is `credential`. (4) The switch-off test asserts no model request was made and the closed
+`reason`. (5) The REMOTE disclosure test builds the exact EN and KO line per source. (6) The U+2028 case is an escape and a
+U+0085 case is added. Residual (fail closed): an abbreviation such as "e.g. x" in a work summary is read as a second
+sentence and the summary is withheld; a language that writes no space after its terminator is not caught by this check.

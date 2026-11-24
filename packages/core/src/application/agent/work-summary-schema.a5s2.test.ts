@@ -11,6 +11,7 @@ import { AgentPlanExecutor, type AgentReadPort, type AgentRunResult } from './pl
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import {
   AGENT_M2_SUMMARY_MAX_CHARS,
+  AGENT_SUMMARY_WORK_TEXT_PENDING,
   parseQuarantinedOutput,
   quarantinedSummarize,
   mintSummaryEgressGrantForTest,
@@ -65,6 +66,8 @@ async function run(entryId: NlWave1EntryId, locality: 'LOCAL' | 'REMOTE', answer
 }
 const reply = (r: { plan: RunPlan; result: AgentRunResult }, language: 'ko' | 'en') => assembleAgentReply({ plan: r.plan as AgentStepsPlan, result: r.result, language, destinationIsOwnerDm: true });
 const answerOf = (entryId: NlWave1EntryId): string => (entryId === 'calendar.events' ? '{"items":[{"n":1,"summary":"A short sync.","topics":["plan"]}]}' : '{"items":[{"n":1,"summary":"A short note."}]}');
+const EN_NAME: Readonly<Record<string, string>> = { calendar: 'Calendar', jira: 'Jira', slack: 'Slack', confluence: 'Confluence', github: 'GitHub' };
+const KO_NAME: Readonly<Record<string, string>> = { calendar: '캘린더', jira: '지라', slack: '슬랙', confluence: '컨플루언스', github: '깃허브' };
 const numbered = (entryId: NlWave1EntryId) => [{ n: 1, entryId, position: 1 }];
 
 describe('A5-S2 schema validation per source', () => {
@@ -73,8 +76,15 @@ describe('A5-S2 schema validation per source', () => {
     const extra = schema === 'meeting-digest.v1' ? ',"topics":[]' : '';
     const wrap = (summary: string): string => JSON.stringify({ items: [{ n: 1, summary, ...(schema === 'meeting-digest.v1' ? { topics: [] } : {}) }] });
     expect(parseQuarantinedOutput(schema, wrap('x'.repeat(AGENT_M2_SUMMARY_MAX_CHARS)), numbered(entryId)).ok).toBe(true);
-    for (const bad of ['x'.repeat(AGENT_M2_SUMMARY_MAX_CHARS + 1), 'first line\nsecond line', 'one\r\ntwo', 'one two', '']) {
+    for (const bad of ['x'.repeat(AGENT_M2_SUMMARY_MAX_CHARS + 1), 'first line\nsecond line', 'one\r\ntwo', 'one\u2028two', 'one\u0085two', 'one\u000btwo', 'one\u000ctwo', '']) {
       expect(parseQuarantinedOutput(schema, wrap(bad), numbered(entryId)), JSON.stringify(bad)).toEqual({ ok: false, reason: 'schema' });
+    }
+    // One sentence: a terminator followed by whitespace and more text is a second sentence; a final or inner (3.5, v1.2) one is fine.
+    for (const bad of ['회의를 했다. 다음 주에 배포한다.', 'Shipped it. Next is QA', '何かした。 次もする', 'Really? yes']) {
+      expect(parseQuarantinedOutput(schema, wrap(bad), numbered(entryId)), JSON.stringify(bad)).toEqual({ ok: false, reason: 'schema' });
+    }
+    for (const good of ['버전 3.5 배포를 논의했다.', '끝났다!', 'Upgrade to v1.2 done.', '完了した。']) {
+      expect(parseQuarantinedOutput(schema, wrap(good), numbered(entryId)).ok, good).toBe(true);
     }
     // A link is neutralised to a fixed placeholder (URL-free output, as for mail and Drive), never passed through.
     for (const link of ['see https://example.test/page now', 'see www.example.test now']) {
@@ -91,6 +101,15 @@ describe('A5-S2 schema validation per source', () => {
     for (const entryId of WORK) {
       const schema = schemaOf(entryId);
       const text = JSON.stringify({ items: [{ n: 1, summary: `token ${secret}`, ...(schema === 'meeting-digest.v1' ? { topics: [] } : {}) }] });
+      expect(parseQuarantinedOutput(schema, text, numbered(entryId)), entryId).toEqual({ ok: false, reason: 'credential' });
+    }
+  });
+
+  it('credential material wins over a line break in a work-source summary', () => {
+    const secret = ['gh', 'p_', 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'].join('');
+    for (const entryId of WORK) {
+      const schema = schemaOf(entryId);
+      const text = JSON.stringify({ items: [{ n: 1, summary: `token ${secret}\nmore`, ...(schema === 'meeting-digest.v1' ? { topics: [] } : {}) }] });
       expect(parseQuarantinedOutput(schema, text, numbered(entryId)), entryId).toEqual({ ok: false, reason: 'credential' });
     }
   });
@@ -126,14 +145,12 @@ describe('A5-S2 the reply: per-source marker and REMOTE disclosure', () => {
     const r = await run(entryId, 'REMOTE', answerOf(entryId), AGENT_WORK_SUMMARY_SOURCES);
     const step = r.result.steps[1];
     expect(step).toMatchObject({ kind: 'summarize', status: 'ok' });
-    if (step?.kind === 'summarize' && 'audits' in step) expect(step.audits?.[0]?.workSources).toEqual([workSummarySourceOf(entryId)]);
+    expect(step?.kind === 'summarize' && 'audits' in step ? step.audits?.[0]?.workSources : undefined).toEqual([workSummarySourceOf(entryId)]);
+    const name = workSummarySourceOf(entryId) as string;
     const en = reply(r, 'en').parts.filter((part) => part.text.includes('outside model'));
-    expect(en).toHaveLength(1);
-    expect(en[0]?.text).toMatch(/^Part of the original (Calendar|Jira|Slack|Confluence|GitHub) text was sent to an outside model to make this summary\.$/u);
-    expect(en[0]?.text).not.toBe('Part of the original text was sent to an outside model to make this summary.');
+    expect(en.map((part) => part.text)).toEqual([`Part of the original ${EN_NAME[name]} text was sent to an outside model to make this summary.`]);
     const ko = reply(r, 'ko').parts.filter((part) => part.text.includes('외부 모델'));
-    expect(ko).toHaveLength(1);
-    expect(ko[0]?.text).toMatch(/요약을 만들려고 .+ 원문 일부를 외부 모델로 보냈어요\.$/u);
+    expect(ko.map((part) => part.text)).toEqual([`${KO_NAME[name]} 요약을 만들려고 ${KO_NAME[name]} 원문 일부를 외부 모델로 보냈어요.`]);
   });
 
   it('a LOCAL-only calendar summary (the LOCAL_MODEL_ONLY default) is not disclosed as remote', async () => {
@@ -144,8 +161,13 @@ describe('A5-S2 the reply: per-source marker and REMOTE disclosure', () => {
   it('switch off: no marker, no per-source disclosure and no audit carries a work source (listing only, nothing sent)', async () => {
     for (const entryId of WORK) {
       for (const off of [undefined, [], [workSummarySourceOf(entryId) === 'github' ? 'jira' : 'github']] as const) {
-        const r = await run(entryId, 'REMOTE', answerOf(entryId), off as unknown as QuarantinedSummarizerRoute['workSummarySources']);
-        expect(r.result.steps[1], entryId).toMatchObject({ kind: 'summarize', status: 'listing-only' });
+        const requests: AiRequest[] = [];
+        grantAll();
+        const p = plan([read(entryId), { kind: 'summarize', from: [1], schema: schemaOf(entryId) }]);
+        const result = await new AgentPlanExecutor({ readers: { [entryId]: port(ITEM[entryId] as Record<string, unknown>) }, summarizer: route('REMOTE', answerOf(entryId), off as unknown as QuarantinedSummarizerRoute['workSummarySources'], requests) }).execute(p);
+        const r = { plan: p, result };
+        expect(requests, entryId).toHaveLength(0);
+        expect(r.result.steps[1], entryId).toMatchObject({ kind: 'summarize', status: 'listing-only', reason: AGENT_SUMMARY_WORK_TEXT_PENDING.includes(entryId) ? 'work-text-controls-not-built' : 'no-readout-source' });
         expect(JSON.stringify(r.result), entryId).not.toContain('workSources');
         const out = reply(r, 'en');
         expect(out.parts.some((part) => part.kind === 'summary'), entryId).toBe(false);
