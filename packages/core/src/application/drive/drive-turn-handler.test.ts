@@ -457,6 +457,16 @@ describe('Drive turn handler — file kind (ADR-0120 follow-up)', () => {
     expect(calls).toEqual(['recent:3', 'search:기획서:1:pdf', 'recent:10']);
   });
 
+  it('r-07: a reader that returns 4 files for limit 2 is cut to exactly 2 listed lines plus the "…외 N건" tail', async () => {
+    const four = async () => ({ files: ['f1', 'f2', 'f3', 'f4'].map((id) => file(id)), matched: 4, matchedIsLowerBound: false });
+    const { reader } = fakeReader({ list: four });
+    const text = textOf((await createDriveTurnHandler({ reader, timeZone: SEOUL }).handleSelected?.(selected({ limit: 2 }), ctx('최근 드라이브 파일 2개'))) as TurnHandlerOutcome);
+    expect(text).toContain('최근 수정한 파일: 4건');
+    expect(text.match(/^\d+\. /gm)).toHaveLength(2);
+    expect(text).toContain('…외 2건');
+    expect(text).not.toContain('회의록 f3');
+  });
+
   it('without a kind the reader call is unchanged, and a kind outside the closed set is ignored', async () => {
     const { reader, calls } = fakeReader();
     const handler = createDriveTurnHandler({ reader, timeZone: SEOUL });

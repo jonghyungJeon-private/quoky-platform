@@ -501,7 +501,9 @@ describe('mail turn handler — symbolic period and item picks (live UAT R1/R6)'
     const limited = textOf(await handler.handleSelected?.(selected({ limit: 2 }), ctx('메일 2개 보여줘')));
     const plain = textOf(await handler.handleSelected?.(selected({}), ctx('메일함')));
     expect(searches).toEqual([{ limit: 2 }, { limit: 10 }]);
-    expect(limited).toContain('2건');
+    expect(limited).toContain('메일: 4건');
+    expect(limited).toContain('…외 2건');
+    expect(limited.match(/^\d+\. /gm)).toHaveLength(2);
     expect(limited).not.toContain('회의 자료 m3');
     expect(limited).toContain('회의 자료 m2');
     expect(plain).not.toBe(limited);
