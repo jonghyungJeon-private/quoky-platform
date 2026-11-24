@@ -400,7 +400,7 @@ describe('review round 1 (CA + Codex): every finding has a regression', () => {
     expect(check({ steps: [jiraRead(), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, text)).toMatchObject({ ok: false, reason: 'step-invalid', step: 1, stepReason: 'ungrounded' });
     expect(check({ steps: [jiraRead({ keyword: '릴리즈' }), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, text)).toMatchObject({ ok: false, reason: 'step-invalid', step: 1 });
     // "지라" inside the destination span grounds no Jira read.
-    expect(check({ steps: [jiraRead(), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, '그 대화 요약해서 지라 BE-123에 달아줘')).toMatchObject({ ok: false, reason: 'step-invalid' });
+    expect(check({ steps: [jiraRead(), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, '그 대화 요약해서 지라 BE-123에 달아줘')).toMatchObject({ ok: false, reason: 'cross-write-invalid' }); // a point-back request is receipt-only, never form a
     // Grounded: the entry is named outside the span, or nothing is named and the read carries the owner's own source literal.
     expect(check({ steps: [jiraRead(), DRAFT_A, slack({ channel: 'quoky-test' })], ambiguity: 'CLEAR' }, '지라 이슈 요약해서 #quoky-test에 올려줘')).toMatchObject({ ok: true });
     expect(check({ steps: [jiraRead({ keyword: 'BE-12' }), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, 'BE-12 댓글 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true });
@@ -479,5 +479,36 @@ describe('review round 2 (CA + Codex): every finding has a regression', () => {
 
   it('P3: a calendar span is removed at its last occurrence, so the same word in the source part stays outside', () => {
     expect(crossWriteCalendarOutside('슬랙 점검 대화 요약해서 내일 오후 3시에 점검 일정 만들어줘', ['점검', '내일 오후 3시'], OFFERED)).toBe('슬랙 점검 대화 요약해서 에 만들어줘');
+  });
+});
+
+describe('review of the recency amendment (P2): a point-back request is receipt-only', () => {
+  const dest = (text: string) => `${text} 요약해서 BE-123에 달아줘`;
+  const planA = formA('내용', jira({ issueKey: 'BE-123' }));
+  const planB = formB(jira({ issueKey: 'BE-123' }));
+  const contexts: Record<string, AgentCrossWriteContext> = {
+    missing: CW,
+    stale: { ...CW, receipt: { ...RECEIPT, fresh: false } },
+    'different-source': { ...CW, receipt: { ...RECEIPT, sourceEntryId: 'jira.issues' } },
+    fresh: withReceipt,
+  };
+
+  it('never accepts a form-a plan for a recency, 그 or 해당 point-back request, whatever the receipt', () => {
+    for (const lead of ['방금 내용', '아까 대화', '그 내용', '해당 내용']) {
+      for (const [name, context] of Object.entries(contexts)) {
+        expect(check(planA, dest(lead), context), `${lead} / ${name}`).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+      }
+    }
+  });
+
+  it('form b over the recency form: missing or stale receipt is cross-write-receipt, a different source is cross-write-new-source', () => {
+    expect(check(planB, dest('방금 내용'), contexts.missing)).toMatchObject({ ok: false, reason: 'cross-write-receipt' });
+    expect(check(planB, dest('방금 내용'), contexts.stale)).toMatchObject({ ok: false, reason: 'cross-write-receipt' });
+    expect(check(planB, dest('방금 슬랙 내용'), { ...CW, receipt: { ...RECEIPT, sourceEntryId: 'jira.issues' } })).toMatchObject({ ok: false, reason: 'cross-write-new-source' });
+    for (const lead of ['방금 내용', '그 내용', '해당 내용']) expect(check(planB, dest(lead), contexts.fresh), lead).toMatchObject({ ok: true, plan: { form: 'b' } });
+  });
+
+  it('an ordinary cross-source request still accepts form a', () => {
+    expect(check(formA('릴리즈', jira({ issueKey: 'BE-123' })), '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true, plan: { form: 'a' } });
   });
 });

@@ -6655,6 +6655,191 @@
     "trigger": "cross-source"
    },
    "note": "Owner amendment 2026-11-24: a RECENCY word WITHOUT a content noun is not the new recency + noun form, and this amendment changes nothing for it. Observed behaviour, identical before and after the amendment (checked against the previous code): the bare recency word is already a deictic-only payload of the existing A6 point-back grammar (isNlDeicticOnlyPayload, like \"그거\"), so step 0 routes it to A7, where with no held receipt a plan is refused cross-write-receipt. Recorded as a discrepancy with the owner note \"stays ordinary\"; not changed because that would alter the A6 grammar or an unchanged A7 behaviour."
+  },
+  {
+   "id": "a7n-138",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review of the recency amendment (P2, fail-open): a point-back request (그/해당/recency alike) is receipt-only. An injected form-a slack.search plan is refused cross-write-invalid, never accepted as the cross-source trigger. No held receipt."
+  },
+  {
+   "id": "a7n-139",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review of the recency amendment (P2, fail-open): a point-back request (그/해당/recency alike) is receipt-only. An injected form-a slack.search plan is refused cross-write-invalid, never accepted as the cross-source trigger. Stale receipt."
+  },
+  {
+   "id": "a7n-140",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review of the recency amendment (P2, fail-open): a point-back request (그/해당/recency alike) is receipt-only. An injected form-a slack.search plan is refused cross-write-invalid, never accepted as the cross-source trigger. Receipt of a different source (jira.issues)."
+  },
+  {
+   "id": "a7n-141",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review of the recency amendment (P2, fail-open): a point-back request (그/해당/recency alike) is receipt-only. An injected form-a slack.search plan is refused cross-write-invalid, never accepted as the cross-source trigger. The 해당 form, no receipt."
+  },
+  {
+   "id": "a7n-142",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review of the recency amendment (P2, fail-open): a point-back request (그/해당/recency alike) is receipt-only. An injected form-a slack.search plan is refused cross-write-invalid, never accepted as the cross-source trigger. The 그 form, stale receipt."
   }
  ]
 }

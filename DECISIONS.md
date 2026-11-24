@@ -38726,3 +38726,11 @@ stay as written; this record is the exact change and supersedes them for this on
   before this amendment: "방금 요약해서 BE-123에 달아줘" already routes to A7, because the bare recency word is a deictic-only
   payload of the existing A6 grammar (like "그거"). This is unchanged by the amendment and the row pins that behaviour; making it
   ordinary would need a change to the A6 grammar or to existing A7 behaviour. Owner: confirm or request that change.
+- **Review (Codex P2, fail-open; fixed after the amendment).** The recency point-back had become a general cross-source trigger, so
+  "방금 내용 요약해서 BE-123에 달아줘" accepted a form-a `slack.search(keyword="내용") -> draft -> propose` plan with a missing, stale
+  or different-source receipt. Rule (structural, validator rule 9): a point-back request (그 / 해당 / recency forms alike) is
+  receipt-only. It validates only as form b bound to a fresh (10 min), same-source held receipt (missing or stale receipt is
+  `cross-write-receipt`, a different source `cross-write-new-source`); a form-a plan for it is refused `cross-write-invalid`
+  (`crossWriteIsPointBackRequest`; a bare item noun that is a source name, like "메일", is a source name, not a point-back).
+  The 그 / 해당 path has the same guarantee. Gold `a7n-138` to `a7n-142` (form-a injected: no receipt, stale, different-source, 해당, 그);
+  all `pending-owner-approval`; the file now holds 222 cases. No new word; A6, W1 and `agent-plan.v11` unchanged.

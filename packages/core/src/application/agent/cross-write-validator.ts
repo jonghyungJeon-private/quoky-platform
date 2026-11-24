@@ -10,6 +10,7 @@ import {
   analyseCrossWriteLiterals,
   crossWriteCalendarOutside,
   crossWriteCrossSourceTrigger,
+  crossWriteIsPointBackRequest,
   crossWriteDestinationSpan,
   crossWriteHasReadCondition,
   crossWriteNamedEntries,
@@ -170,6 +171,9 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
     const route = routeCrossWrite({ groundingText: ctx.groundingText, context: cw, offered: ctx.offered });
     if (route.route !== 'a7' || (form === 'a' && route.trigger !== 'cross-source')) return refuse('cross-write-invalid', stepNo);
   }
+
+  // A point-back request (그 / 해당 / 방금 + noun) is receipt-only: form a never stands on it, whatever read the planner wrote.
+  if (form === 'a' && crossWriteIsPointBackRequest(outside, ctx.offered, analysis)) return refuse('cross-write-invalid', 1);
 
   let source: Extract<ValidatedAgentStep, { kind: 'read' }> | undefined;
   let connectorCalls = 0;
