@@ -40,16 +40,21 @@ const CORPUS = JSON.parse(readFileSync(new URL('../golden/agent-redteam.s2-read.
   readonly cases: readonly Case[];
 };
 
-/** The 10 cases that were known gaps before A5-S3 (catalog source names, the separable particle of "sum up"); closed there. */
-const CLOSED_GAPS = [2, 204, 232, 244, 246, 248, 250, 255, 257, 414].map((n) => `rt-s2r-${String(n).padStart(3, '0')}`);
+/**
+ * The 8 cases that were known gaps before A5-S3 and are closed there (catalog source names, the separable particle of
+ * "sum up"). Review round 1 removed the `repo` alias (substring hazard: "report"), so `rt-s2r-244` and `rt-s2r-250` ("my repo")
+ * stay open known gaps (`source-alias`); a new word is a catalog change reviewed with its D12 gate.
+ */
+const CLOSED_GAPS = [2, 204, 232, 246, 248, 255, 257, 414].map((n) => `rt-s2r-${String(n).padStart(3, '0')}`);
 
-/** The 112 derived SR-1 cases the owner's 2026-11-18 decision changes (DECISIONS.md "ADR-0121 amendment A5", A5.6), then the 10 closed gaps, in corpus order. */
+/** The 112 derived SR-1 cases the owner's 2026-11-18 decision changes (DECISIONS.md "ADR-0121 amendment A5", A5.6), then the 8 closed gaps, in corpus order. */
 const A5_CASES = [
   6, 11, 128, 129, 130, 131, 134, 136, 137, 141, 201, 202, 203, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222,
   223, 224, 225, 226, 227, 228, 229, 230, 231, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 245, 247, 249, 251, 252, 253, 254, 256, 258, 259,
   260, 261, 262, 263, 264, 265, 266, 274, 277, 279, 281, 332, 333, 348, 349, 350, 352, 353, 355, 356, 357, 358, 361, 362, 363, 364, 365, 368, 369, 370,
   371, 372, 375, 376, 377, 378, 379, 409, 410, 411, 412, 413, 415, 416, 418, 419, 426, 432, 443, 492, 493,
 ].map((n) => `rt-s2r-${String(n).padStart(3, '0')}`);
+const OPEN_GAPS: Readonly<Record<string, 'source-alias'>> = { 'rt-s2r-244': 'source-alias', 'rt-s2r-250': 'source-alias' };
 const A5_ALL = new Set([...A5_CASES, ...CLOSED_GAPS]);
 
 const OFFERED = new Map(
@@ -79,19 +84,25 @@ function a5Grant(c: Case): string[] {
 const isWork = (pair: string): boolean => A5_SOURCES.includes(AGENT_READ_SOURCES[pair.split(':')[1] as keyof typeof AGENT_READ_SOURCES]?.source ?? '');
 
 describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision changes', () => {
-  it('are exactly the 122 cases whose grant gains a work-source pair, and they carry that grant as the target', () => {
+  it('are exactly the 120 cases whose grant gains a work-source pair (plus the 2 open gaps, which carry their target by hand)', () => {
     const inCorpus = CORPUS.cases.map((c) => c.id).filter((id) => A5_ALL.has(id));
-    expect(A5_ALL.size).toBe(122);
+    expect(A5_ALL.size).toBe(120);
     expect(CORPUS.cases.filter((c) => a5Grant(c).some(isWork)).map((c) => c.id)).toEqual(inCorpus);
-    expect(CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18').map((c) => c.id)).toEqual(inCorpus);
+    expect(CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18').map((c) => c.id)).toEqual([...A5_ALL, ...Object.keys(OPEN_GAPS)].sort((a, b) => CORPUS.cases.findIndex((c) => c.id === a) - CORPUS.cases.findIndex((c) => c.id === b)));
     for (const c of CORPUS.cases.filter((x) => A5_ALL.has(x.id))) {
       expect(c.status, c.id).toBe('approved-awaiting-implementation');
       expect(c.awaiting?.expect.grant, c.id).toEqual(a5Grant(c));
     }
   });
 
-  it('A5-S3 closed the 10 known gaps: no case carries `knownGap` any more and each now mints its covered work-source reads', () => {
-    expect(CORPUS.cases.filter((c) => c.awaiting?.knownGap !== undefined)).toEqual([]);
+  it('A5-S3 closed 8 known gaps (each now mints its covered work-source reads); the 2 "my repo" cases stay open known gaps', () => {
+    const open = CORPUS.cases.filter((c) => c.awaiting?.knownGap !== undefined);
+    expect(open.map((c) => c.id)).toEqual(Object.keys(OPEN_GAPS));
+    for (const c of open) {
+      expect(c.awaiting?.knownGap?.kind, c.id).toBe(OPEN_GAPS[c.id]);
+      // Still a gap: the producer mints no work-source pair without a `repo` alias.
+      expect(a5Grant(c).some(isWork), c.id).toBe(false);
+    }
     for (const id of CLOSED_GAPS) {
       const c = CORPUS.cases.find((x) => x.id === id)!;
       expect(c.awaiting?.decided, id).toBe('2026-11-18');

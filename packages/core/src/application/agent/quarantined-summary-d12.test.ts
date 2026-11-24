@@ -406,3 +406,54 @@ describe('D12 review round 1 (Chief Architect and Codex)', () => {
     expect(audits).toEqual(['LOCAL']);
   });
 });
+
+// A5-S3 review round 1, rule ①: until the rule-① confirm slice lands there is no bound consent token, so a summary over one of
+// the five work sources never gets a REMOTE locality, grant or not. The confirm slice replaces this guard with the token check.
+describe('D12 / A5-S3: work sources are LOCAL-only in Core until the rule-① confirm slice', () => {
+  const work = (entryId: 'calendar.events' | 'jira.issues' | 'slack.search' | 'confluence.search' | 'github.items', grant: SummaryEgressGrant | undefined, ...documents: AgentSourceDocument[]): AgentSummarySource => ({
+    entryId,
+    documents,
+    ...(grant !== undefined ? { grant } : {}),
+  });
+
+  it('pure: a granted work-source label derives LOCAL only; mail and Drive (no work source) still derive LOCAL and REMOTE', () => {
+    const granted = { egress: 'REMOTE_ON_SUMMARY_REQUEST' as const, needsGrant: true, granted: true, askedItems: 1 };
+    expect(deriveM2Localities({ ...granted, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ ...granted, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    expect(deriveM2Localities(granted)).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    // The guard only narrows: no grant is still no grant, and the other labels are untouched.
+    expect(deriveM2Localities({ ...granted, granted: false, workSource: true })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1, workSource: true })).toEqual({ ok: false, reason: 'host-only' });
+    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 1, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
+  });
+
+  it.each(['calendar.events', 'jira.issues', 'slack.search', 'confluence.search', 'github.items'] as const)(
+    '%s: grant + switch on + no consent: the selector is asked for LOCAL only; a remote-only provider is never selected or called',
+    async (entryId) => {
+      const remote = spy('p-remote', 'REMOTE', 1);
+      const { selector, selects } = recording(remote);
+      const grant = mintSummaryEgressGrantForTest(1, entryId, RUN);
+      const schema = entryId === 'calendar.events' ? ('meeting-digest.v1' as const) : ('digest.v1' as const);
+      await quarantinedSummarize({ ...base, schema, sources: [work(entryId, grant, doc(1))], route: { selector, workSummarySources: ['calendar', 'jira', 'slack', 'confluence', 'github'] } });
+      expect(selects.length, entryId).toBeGreaterThan(0);
+      for (const context of selects) expect(context.allowedExecutionLocalities, entryId).toEqual(['LOCAL']);
+      expect(remote.requests, entryId).toHaveLength(0);
+    },
+  );
+
+  it('a work source mixed with mail narrows the whole step to LOCAL; mail alone keeps LOCAL and REMOTE', async () => {
+    const local = spy('p-local', 'LOCAL', 1);
+    const mixed = recording(local);
+    await quarantinedSummarize({
+      ...base,
+      sources: [mail(GRANT(), doc(1)), work('github.items', mintSummaryEgressGrantForTest(1, 'github.items', RUN), { ...doc(2), id: 'm2' })],
+      route: { selector: mixed.selector, workSummarySources: ['github'] },
+    });
+    expect(mixed.selects.length).toBeGreaterThan(0);
+    for (const context of mixed.selects) expect(context.allowedExecutionLocalities).toEqual(['LOCAL']);
+    const alone = recording(local);
+    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: alone.selector } });
+    expect(alone.selects.length).toBeGreaterThan(0);
+    for (const context of alone.selects) expect(context.allowedExecutionLocalities).toEqual(['LOCAL', 'REMOTE']);
+  });
+});

@@ -40,8 +40,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 ### ADR-0121 A5-S3 grant-consent implemented, dormant (2026-11-24, branch `claude/v5-a5-s3-grant-consent`)
 
 - Core: the grant producer covers the five work sources through the summary-readout label; the catalog carries the English
-  names `pull request`, `repo`, `repository`, `meeting`; "sum them up" is read by a clause-structure rule; the 10 SR-1
-  known gaps are closed; `ownerSummaryConsentSources` derives the sources of the one consent question.
+  names `pull request`, `repository`, `meeting`; "sum them up" is read by a clause-structure rule; 8 of the 10 SR-1
+  known gaps are closed (`rt-s2r-244`, `rt-s2r-250` stay open: no `repo` alias); `ownerSummaryConsentSources` derives the sources of the one consent question.
+- The catalog alias change is LIVE on deploy (no switch); its one intended behaviour change: multi-clause English "meetings" gets
+  `timedOnly`, matching Korean 회의. Core derives LOCAL only for the five work sources until the rule-① confirm slice.
 - Switches still default off; a granted work source still ends listing-only until its switch is on (tests). Not done
   (next): the question text, `pending.sources` and the bound-yes re-run (A6-S1, rule-① confirm slice), A5-S4 WS-1, A5-S5
   gates (D12 modes needed: catalog data changed). See DECISIONS "ADR-0121 A5-S3 implementation note (2026-11-24)".
@@ -156,7 +158,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   like mail and Drive: rule ① before every remote summary, the listed fields only, schema-bound and URL-free output,
   HOST_ONLY items withheld. Recommended: no-training, non-vendor providers and a per-source switch (default off).
 - The clause, design and `ARCHITECTURE.md` amendments are proposed, not applied; Strict ratification is needed before
-  slices A5-S1..S3 change runtime. 122 SR-1 cases await implementation (10 of them known gaps closed by A5-S3; `expect`
+  slices A5-S1..S3 change runtime. 120 SR-1 cases await implementation (8 of them former known gaps closed by A5-S3, 2 still open; `expect`
   unchanged, still judged).
 - Red-team lot WS-1 (50 per source) is defined; drafting it is A5-S4, and a source's switch needs 0 successes on it.
   Open: 9 owner questions, including rule ① for the ADR-0100 D8 lookup. See DECISIONS "ADR-0121 amendment A5".

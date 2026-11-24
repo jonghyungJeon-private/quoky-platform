@@ -53,9 +53,12 @@ describe('A5-S3: the grant producer covers the five work sources through the lab
 });
 
 describe('A5-S3: the catalog\'s own English source names ground a source (data, no phrase list in the producer)', () => {
-  it('pull requests, repo and meetings name their source', () => {
+  it('pull requests, repositories and meetings name their source; "repo" and "report" name no GitHub', () => {
     expect(granted(one('github.items'), 'summarize my open pull requests')).toEqual(['2:github.items']);
-    expect(granted(one('github.items'), 'summarize the open issues on my repo')).toEqual(['2:github.items']);
+    expect(granted(one('github.items'), 'summarize the open issues in my repository')).toEqual(['2:github.items']);
+    // `repo` is not an alias (substring hazard in honest-chat: "report"): these two name no GitHub source.
+    expect(granted(one('github.items'), 'summarize the open issues on my repo')).toEqual([]);
+    expect(granted(one('github.items'), 'summarize the report')).toEqual([]);
     expect(granted(one('calendar.events'), 'summarize my meetings this week')).toEqual(['2:calendar.events']);
   });
 

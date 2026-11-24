@@ -676,9 +676,9 @@ here; rule ① for it is its own later slice.)
   - **112** are derived: `grant` is what the real grant producer mints under the A5 summary-readout label.
     `s2-read-redteam-a5-target.test.ts` pins that these are exactly the cases whose grant gains a work-source pair, and
     that the label changes nothing else.
-  - **10 were known gaps** and are closed by A5-S3 (`awaiting.knownGap` is gone): the catalog now carries the English
-    names `pull request`, `repo`, `repository` (GitHub) and `meeting` (calendar) as `aliases` (`002`, `244`, `248`, `250`,
-    `255`, `257`, `414`), and the grant producer reads the separable particle of "sum up" as a clause-structure rule
+  - **10 were known gaps**; 8 are closed by A5-S3 (`awaiting.knownGap` is gone) and `rt-s2r-244`, `rt-s2r-250` ("my repo") stay open after review round 1 (no `repo` alias): the catalog now carries the English
+    names `pull request`, `repository` (GitHub) and `meeting` (calendar) as `aliases` (`002`, `248`,
+    `255`, `257`, `414`; `244` and `250` need `repo` and stay open), and the grant producer reads the separable particle of "sum up" as a clause-structure rule
     ("sum them up": `204`, `232`, `246`). The same test pins that the producer mints their `grant`, and that each
     case's `consentSources` equal what `ownerSummaryConsentSources` derives.
 - **`expect` is unchanged.** It is the behaviour of the code as built (the listing only, no grant), and every check of this

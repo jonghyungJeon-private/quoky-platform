@@ -331,10 +331,18 @@ export function deriveM2Localities(input: {
   readonly needsGrant: boolean;
   readonly granted: boolean;
   readonly askedItems: number;
+  /**
+   * A5-S3 review round 1 (rule ①): true when any covered source is one of the five A5 work sources (calendar, Jira, Slack,
+   * Confluence, GitHub). Until the rule-① confirm slice lands there is no bound consent token, so a work source never gets
+   * `REMOTE`, grant or not: `LOCAL` only. The confirm slice replaces this guard with the token check. Mail and Drive pass
+   * `false` or omit it, and are unchanged.
+   */
+  readonly workSource?: boolean;
 }):
   | { readonly ok: true; readonly localities: readonly AiExecutionLocality[] }
   | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
   const { egress, needsGrant, granted, askedItems } = input;
+  const workSource = input.workSource === true;
   if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
   if (needsGrant && granted !== true) return { ok: false, reason: 'no-summary-grant' };
   if (typeof askedItems !== 'number' || !Number.isInteger(askedItems) || askedItems < 1) return { ok: false, reason: 'no-model' };
@@ -343,6 +351,7 @@ export function deriveM2Localities(input: {
       return { ok: true, localities: Object.freeze(['LOCAL'] as const) };
     case 'REMOTE_ON_SUMMARY_REQUEST':
       if (!needsGrant || granted !== true) return { ok: false, reason: 'no-summary-grant' };
+      if (workSource) return { ok: true, localities: Object.freeze(['LOCAL'] as const) };
       return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
     case 'REMOTE_OK':
       return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
@@ -462,9 +471,10 @@ function grantState(
   sources: readonly { readonly entryId: NlWave1EntryId; readonly grant?: SummaryEgressGrant | undefined }[],
   step: number,
   run: SummaryRunToken,
-): { readonly needsGrant: boolean; readonly granted: boolean } {
+): { readonly needsGrant: boolean; readonly granted: boolean; readonly workSource: boolean } {
+  const workSource = sources.some((source) => workSummarySourceOf(source.entryId) !== undefined);
   const needing = sources.filter((source) => summaryReadoutLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
-  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)) };
+  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)), workSource };
 }
 
 export type QuarantinedListingOnlyReason =

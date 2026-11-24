@@ -11,7 +11,8 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
  * ADR-0121 S2 wiring slice: the summary grant PRODUCER (P3-3b owner answer 2 of 2026-11-03, "Summary grant derivation").
  *
  * Core derives, per `summarize` step and per covered source whose content is `REMOTE_ON_SUMMARY_REQUEST` (mail, Drive;
- * ADR-0118 D7), whether the OWNER'S OWN WORDS ask for a summary of that source. The result is an opaque
+ * ADR-0118 D7; and, since A5-S3, the five work sources calendar, Jira, Slack, Confluence and GitHub through
+ * `summaryReadoutLabel`), whether the OWNER'S OWN WORDS ask for a summary of that source. The result is an opaque
  * {@link SummaryGrantBasis} bound to one validated plan; the executor hands it to `summaryGrantFor`, which mints the actual
  * `SummaryEgressGrant` through the module-private `mintGrant`, keyed to the run token of that one `execute` call.
  *

@@ -147,3 +147,16 @@ describe('splitHelpClause (A1-E1; S2 P3 part 2: owner Q2 and CA findings 1-2)', 
     expect(conjunctTokens('지라하고 메일').map((token) => token.conjunct)).toEqual([0, 1]);
   });
 });
+
+describe('splitHelpClause: A5-S3 catalog aliases (`meeting`, `repository`, `pull request`; `repo` is not an alias)', () => {
+  it('an English meeting or repository word in the rest splits like its Korean twin; "report" names no source', () => {
+    expect(split('help and my meetings')).toEqual({ topic: 'all', rest: 'my meetings' });
+    expect(split('도움말이랑 회의 보여줘')).toEqual({ topic: 'all', rest: '회의 보여줘' });
+    expect(split('help and my repository')).toEqual({ topic: 'all', rest: 'my repository' });
+    expect(split('help and the report')).toEqual({ topic: 'all', rest: 'the report' });
+  });
+
+  it('a help clause that names a source by an English alias fails closed to the same split as before', () => {
+    expect(split('show the help page, and my meetings next week')).toEqual({ topic: 'all', rest: 'show my meetings next week' });
+  });
+});

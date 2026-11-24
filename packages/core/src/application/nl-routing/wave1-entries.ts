@@ -365,7 +365,7 @@ const githubItems: NlCatalogEntry = {
   risk: 'READ',
   dmOnly: false,
   label: { ko: 'GitHub 이슈·PR 조회', en: 'GitHub issues and PRs' },
-  aliases: ['github', '깃허브', '깃헙', 'pr', '풀리퀘', 'pull request', 'repo', 'repository'],
+  aliases: ['github', '깃허브', '깃헙', 'pr', '풀리퀘', 'pull request', 'repository'],
   description: {
     en: "The owner's own open GitHub issues and pull requests, or the pull requests waiting for the owner's review.",
     ko: '내 GitHub 이슈·PR 목록, 또는 나에게 온 리뷰 요청.',

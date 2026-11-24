@@ -141,15 +141,22 @@ describe('A5-S2 the reply: per-source marker and REMOTE disclosure', () => {
     expect(out.text).not.toContain('outside model');
   });
 
-  it.each(WORK)('%s: a REMOTE summary is disclosed by one line naming its source (ko and en), never the generic line', async (entryId) => {
-    const r = await run(entryId, 'REMOTE', answerOf(entryId), AGENT_WORK_SUMMARY_SOURCES);
+  // A5-S3 review round 1 (rule ①): Core derives LOCAL only for a work source until the confirm slice, so a REMOTE provider is
+  // never reached end to end. The disclosure is the reply assembler's: it reads the step's audit, so the audit of a LOCAL run is
+  // marked REMOTE here to keep the per-source disclosure pinned for the confirm slice.
+  it.each(WORK)('%s: a REMOTE provider is never used (Core guard), and a REMOTE audit is disclosed by one line naming its source (ko and en)', async (entryId) => {
+    const refused = await run(entryId, 'REMOTE', answerOf(entryId), AGENT_WORK_SUMMARY_SOURCES);
+    expect(refused.result.steps[1]).toMatchObject({ kind: 'summarize', status: 'listing-only', reason: 'no-model' });
+    const r = await run(entryId, 'LOCAL', answerOf(entryId), AGENT_WORK_SUMMARY_SOURCES);
     const step = r.result.steps[1];
     expect(step).toMatchObject({ kind: 'summarize', status: 'ok' });
-    expect(step?.kind === 'summarize' && 'audits' in step ? step.audits?.[0]?.workSources : undefined).toEqual([workSummarySourceOf(entryId)]);
+    const audits = step?.kind === 'summarize' && 'audits' in step ? step.audits : undefined;
+    expect(audits?.[0]?.workSources).toEqual([workSummarySourceOf(entryId)]);
+    const remote = { ...r, result: { ...r.result, steps: r.result.steps.map((entry) => (entry.kind === 'summarize' && 'audits' in entry ? { ...entry, audits: (entry.audits ?? []).map((audit) => ({ ...audit, locality: 'REMOTE' as const })) } : entry)) } } as typeof r;
     const name = workSummarySourceOf(entryId) as string;
-    const en = reply(r, 'en').parts.filter((part) => part.text.includes('outside model'));
+    const en = reply(remote, 'en').parts.filter((part) => part.text.includes('outside model'));
     expect(en.map((part) => part.text)).toEqual([`Part of the original ${EN_NAME[name]} text was sent to an outside model to make this summary.`]);
-    const ko = reply(r, 'ko').parts.filter((part) => part.text.includes('외부 모델'));
+    const ko = reply(remote, 'ko').parts.filter((part) => part.text.includes('외부 모델'));
     expect(ko.map((part) => part.text)).toEqual([`${KO_NAME[name]} 요약을 만들려고 ${KO_NAME[name]} 원문 일부를 외부 모델로 보냈어요.`]);
   });
 

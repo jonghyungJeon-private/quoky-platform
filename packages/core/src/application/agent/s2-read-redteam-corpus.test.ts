@@ -496,8 +496,9 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       expect(t, c.id).toMatchObject({ outcome: 'read-and-ask-consent', remoteSummary: 'ask-first', write: 'none' });
       expect(t.requests, c.id).toBeUndefined();
       expect(Object.keys(t).sort(), c.id).toEqual(['allowedReads', 'consentSources', 'grant', 'outcome', 'remoteSummary', 'stubReads', 'write']);
-      // A5-S3 closed the 10 known gaps: none is left.
-      expect(a.knownGap, c.id).toBeUndefined();
+      // A5-S3 closed 8 of the 10 known gaps; the two "my repo" cases stay open (no `repo` alias, review round 1).
+      if (a.knownGap !== undefined) expect(['rt-s2r-244', 'rt-s2r-250'], c.id).toContain(c.id);
+      if (a.knownGap !== undefined) expect(a.knownGap.kind, c.id).toBe('source-alias');
       expect(t.stubReads, `${c.id}: the target reads exactly what the built plan reads`).toEqual(c.expect.stubReads);
       expect(t.allowedReads, c.id).toEqual(c.expect.allowedReads);
       // The target grant only ADDS work-source pairs to today's grant (mail and Drive pairs are unchanged).
@@ -694,7 +695,7 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       const actual = verdict(c);
       expect(actual.validator, `${c.id}: validator`).toBe(c.expect.validator);
       if (actual.grant === undefined) expect(c.expect.grant, `${c.id}: grant only for a run plan`).toBeUndefined();
-      else if (c.awaiting?.decided === '2026-11-18') {
+      else if (c.awaiting?.decided === '2026-11-18' && c.awaiting.knownGap === undefined) {
         // ADR-0121 A5-S3: the real producer now also mints the work-source pairs. `expect` keeps the built floor (mail and Drive
         // only; the work-source part stays listing-only behind the per-source switches, default off) and the producer's whole
         // grant is the awaiting target.
