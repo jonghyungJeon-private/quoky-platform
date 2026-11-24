@@ -21,6 +21,7 @@ import {
   checkCrossWriteDestination,
   crossWriteCalendarOutside,
   crossWriteIsPointBackRequest,
+  crossWritePointBackText,
   crossWriteNouns,
   routeCrossWrite,
   type AgentCrossWriteContext,
@@ -547,6 +548,29 @@ describe('A7.5 step 0 review 2 (Codex, fail-open): the point-back request is a c
     for (const text of ['summarize (slack) content and post to', '"슬랙" 릴리즈 요약해서', 'summarize ｓｌａｃｋ thread and post to']) {
       expect(crossWriteIsPointBackRequest(text), text).toBe(false);
     }
+  });
+
+  it('retained combining marks, variation selectors and U+0130 never hide a closed point-back token (review 4)', () => {
+    const repros = ['summarize th\u034fat slack content and post to BE-123', '그\ufe0f 슬랙 내용 요약해서 BE-123에 달아줘', 'summarize TH\u0130S slack content and post to BE-123', 'summarize th\u00e1t slack content and post to BE-123', 'summarize the\u0301se slack content and post to BE-123'];
+    for (const text of repros) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(true);
+      for (const [name, context] of Object.entries(contexts)) {
+        if (name === 'fresh') continue;
+        expect(check(formA('content', jira({ issueKey: 'BE-123' })), text, context), `${text} / ${name}`).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+      }
+    }
+  });
+
+  it('the canonical skeleton keeps Korean syllables and particles intact', () => {
+    expect(crossWritePointBackText('그 해당 방금 아까')).toBe('그 해당 방금 아까');
+    expect(crossWritePointBackText('그가 슬랙에서')).toBe('그가 슬랙에서');
+    for (const text of ['그 슬랙 내용 요약해서', '해당 지라 이슈 요약해서', '방금 슬랙 대화 요약해서', '아까 릴리즈 요약해서']) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(true);
+    }
+    for (const text of ['슬랙 릴리즈 대화 요약해서 달아줘', '지라 이슈를 요약해서 BE-123에 달아줘', '슬랙에서 릴리즈 스레드를 요약해서 올려줘', 'summarize the slack release thread and post to']) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(false);
+    }
+    expect(check(formA('릴리즈', jira({ issueKey: 'BE-123' })), '슬랙 릴리즈 대화를 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true, plan: { form: 'a' } });
   });
 
   it('the same requests stand only as form b on a fresh same-source receipt', () => {

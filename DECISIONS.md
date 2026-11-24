@@ -38779,3 +38779,15 @@ stay as written; this record is the exact change and supersedes them for this on
   the same closed tokens (a token inside brackets or quotes is a token). Gold `a7n-163` to `a7n-177` (full-width, bracketed,
   quoted, 그(슬랙), zero-width inside a token; each under no, stale and different-source receipts), all `cross-write-invalid`,
   `pending-owner-approval`; the file now holds 252 cases.
+- **Review 4 (Codex P2, fail-open after Review 3; retained combining marks).** Marks survived the review-3 normalization and
+  evaded the token match: `th\u034Fat` (CGJ), `그\uFE0F` (variation selector), `THİS` (U+0130), `thát` (precomposed accent);
+  each let an injected form-a plan validate under a missing, stale or different-source receipt. Fix (one function,
+  `crossWritePointBackText`, point-back detection only; A6 and W1 untouched): NFKC, NFD, remove every `\p{M}` code point, NFC
+  (Hangul conjoining jamo are `\p{Lo}`, so syllables recompose; 그 / 해당 / 방금 / 아까 and Korean particles still match as
+  before), strip `\p{Cf}`, locale-independent `toLowerCase()` (after mark removal U+0130 yields "i"), split on every non
+  letter / number. Gold `a7n-178` to `a7n-189` (the four repros under no, stale and different-source receipts), all
+  `cross-write-invalid`, `pending-owner-approval`; the file now holds 264 cases. Negatives in `cross-write.test.ts` prove ordinary
+  Korean form-a sentences without a point-back token still validate.
+  - *Accepted residual.* Further exotic evasions, such as other-script homoglyphs that NFKC does not fold (Cyrillic "а" in
+    "thаt"), are not covered. Accepted: A7 is off, the text is the owner's own message, and every A7 write still needs the
+    owner's approval card.

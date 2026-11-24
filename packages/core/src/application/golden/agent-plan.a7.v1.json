@@ -7923,6 +7923,450 @@
     "reason": "cross-write-invalid"
    },
    "note": "A7.5 step 0 review 3 (Codex, fail-open): zero-width inside a token hid the closed point-back token from the token match. Owner text is NFKC-folded, format characters removed and split on non-letter/number boundaries before matching; the injected form-a slack.search plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-178",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize th͏at slack content and post to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): combining grapheme joiner (U+034F) inside a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-179",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize th͏at slack content and post to BE-123",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): combining grapheme joiner (U+034F) inside a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-180",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize th͏at slack content and post to BE-123",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): combining grapheme joiner (U+034F) inside a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-181",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그️ 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): variation selector (U+FE0F) after the determiner hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-182",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그️ 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): variation selector (U+FE0F) after the determiner hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-183",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그️ 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): variation selector (U+FE0F) after the determiner hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-184",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize THİS slack content and post to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): capital dotted I (U+0130) in a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-185",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize THİS slack content and post to BE-123",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): capital dotted I (U+0130) in a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-186",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize THİS slack content and post to BE-123",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): capital dotted I (U+0130) in a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-187",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize thát slack content and post to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): precomposed accent inside a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-188",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize thát slack content and post to BE-123",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): precomposed accent inside a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-189",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize thát slack content and post to BE-123",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 4 (Codex, fail-open): precomposed accent inside a token hid the closed point-back token from the token match. Owner text is NFKC, NFD, mark-stripped (\\\\p{M}), NFC, format-stripped and lower-cased before matching; the injected form-a slack.search plan is refused cross-write-invalid. different-source (Jira) receipt."
   }
  ]
 }

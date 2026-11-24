@@ -666,18 +666,22 @@ function recencyPointsBack(parts: readonly Token[]): boolean {
 }
 
 /**
- * The owner's words as the closed point-back tokens are matched in (review 3): NFKC (full-width and other compatibility forms
- * fold to their plain form), lower-case, zero-width and other format characters (\p{Cf}) removed, and every character that is
- * not a letter, a mark or a number (Hangul is \p{L}) a word boundary, so brackets, quotes and punctuation around a token never
- * hide it ("(those)", "\"that\"", "그(슬랙)"). Applied to the text outside the destination span, so the spans still line up.
- * Pure.
+ * The owner's words as the closed point-back tokens are matched in: one canonical skeleton (reviews 3 and 4). NFKC (compatibility
+ * forms fold), NFD, every \p{M} code point removed (combining marks, variation selectors, CGJ: "th\u034Fat", "그\uFE0F", "thát",
+ * and U+0130 which decomposes to I + U+0307), NFC (Hangul conjoining jamo are \p{Lo}, so syllables recompose), format characters
+ * (\p{Cf}, zero-width) removed, locale-independent lower-case, and every character that is not a letter or a number a word
+ * boundary (Hangul is \p{L}), so punctuation around a token never hides it. Applied to the text outside the destination span, so
+ * the spans still line up. Point-back detection only (A6 and W1 untouched). Pure.
  */
 export function crossWritePointBackText(text: string): string {
   return text
     .normalize('NFKC')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .normalize('NFC')
     .replace(/\p{Cf}/gu, '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
