@@ -280,6 +280,8 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     const item = nlLimitArg(selected.args, 'item');
     if (item !== undefined) return this.pick(ctx, item, language);
     const from = nlStringArg(selected.args, 'from');
+    // r-07: the validated "at most N" (1..10); absent keeps the default listing size.
+    const limit = nlLimitArg(selected.args);
     // Live UAT R1: a symbolic period; the older `today` flag (a stored selection) is the same period.
     const range = selected.range;
     const today = nlFlagArg(selected.args, 'today') || range?.symbol === 'today';
@@ -293,6 +295,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       },
       language,
       range !== undefined && !today ? range : undefined,
+      limit,
     );
   }
 
@@ -317,14 +320,14 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
     return this.reply(ctx, line, 'RESPONDED', language, 'listed', { kind: 'pick', index });
   }
 
-  private async list(ctx: TurnHandlerContext, filter: MailListingFilter, language: MailLanguage, range?: NlResolvedRange): Promise<TurnHandlerReply> {
+  private async list(ctx: TurnHandlerContext, filter: MailListingFilter, language: MailLanguage, range?: NlResolvedRange, limit?: number): Promise<TurnHandlerReply> {
     const query: MailSearchQuery = {
       ...(filter.unread ? { unreadOnly: true } : {}),
       ...(filter.today ? { receivedAfter: startOfLocalDay(ctx.now, this.deps.timeZone) } : {}),
       // A symbolic period other than today is placed by Core (the owner's zone); the adapter renders the vendor query.
       ...(range !== undefined ? { receivedAfter: range.from, receivedBefore: range.to } : {}),
       ...(filter.from !== undefined ? { from: filter.from } : {}),
-      limit: MAIL_LISTING_MAX_ENTRIES,
+      limit: limit ?? MAIL_LISTING_MAX_ENTRIES,
     };
     let result: MailSearchResult;
     try {
@@ -334,7 +337,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       this.log('warn', 'mail.turn_handler.read_failed', { kind: 'list', reason: failure });
       return this.reply(ctx, renderMailReadFailure(failure, language, this.deps.copy), 'FAILED', language, 'not-read');
     }
-    const messages = result.messages.slice(0, MAIL_LISTING_MAX_ENTRIES);
+    const messages = result.messages.slice(0, limit ?? MAIL_LISTING_MAX_ENTRIES);
     this.log('info', 'mail.turn_handler.listed', { shown: messages.length, matched: result.matched });
     const shownIds = messages.map((message) => message.id);
     this.rememberListing(ctx, shownIds);

@@ -494,6 +494,19 @@ describe('mail turn handler — symbolic period and item picks (live UAT R1/R6)'
     expect(searches[0]).toMatchObject({ unreadOnly: true, from: '김철수', receivedAfter: '2026-10-04T15:00:00.000Z', receivedBefore: '2026-10-11T15:00:00.000Z' });
   });
 
+  it('r-07: a validated limit bounds the read and the listing; without it the default 10 is unchanged', async () => {
+    const many = async () => ({ messages: ['m1', 'm2', 'm3', 'm4'].map((id) => summary(id)), matched: 4, matchedIsLowerBound: false });
+    const { reader, searches } = fakeReader({ search: many });
+    const handler = createMailTurnHandler({ reader, timeZone: SEOUL });
+    const limited = textOf(await handler.handleSelected?.(selected({ limit: 2 }), ctx('메일 2개 보여줘')));
+    const plain = textOf(await handler.handleSelected?.(selected({}), ctx('메일함')));
+    expect(searches).toEqual([{ limit: 2 }, { limit: 10 }]);
+    expect(limited).toContain('2건');
+    expect(limited).not.toContain('회의 자료 m3');
+    expect(limited).toContain('회의 자료 m2');
+    expect(plain).not.toBe(limited);
+  });
+
   it('a pick past the end of the last list says how many it held, re-lists nothing and reads nothing', async () => {
     const two = async () => ({ messages: [summary('m1'), summary('m2')], matched: 2, matchedIsLowerBound: false });
     const { reader, searches, gets } = fakeReader({ search: two });

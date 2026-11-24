@@ -219,6 +219,18 @@ describe('deterministic validation (ADR-0120 D4)', () => {
     expect(validateSelection({ entryId: 'slack.search', args: {} }, ctx('슬랙'))).toMatchObject({ reason: 'missing-arg', arg: 'keyword' });
   });
 
+  it('r-07: mail.list and drive.files take the same numeric limit as the other listings (integer 1..10)', () => {
+    for (const entryId of ['mail.list', 'drive.files'] as const) {
+      for (const limit of [1, 3, 10]) {
+        expect(validateSelection({ entryId, args: { limit } }, ctx(''))).toMatchObject({ ok: true });
+      }
+      for (const limit of [0, 11, -1, 2.5]) {
+        expect(validateSelection({ entryId, args: { limit } }, ctx(''))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'limit' });
+      }
+      expect(validateSelection({ entryId, args: { limit: '3' } }, ctx(''))).toMatchObject({ ok: false, reason: 'invalid-arg', arg: 'limit' });
+    }
+  });
+
   it('resolves time symbolically and refuses a period over 31 days or `upcoming` outside the calendar', () => {
     const result = validateSelection({ entryId: 'jira.issues', args: { window: 'created', range: 'yesterday' } }, ctx(''));
     expect(result).toMatchObject({ ok: true, value: { range: { from: '2026-10-10T15:00:00.000Z', to: '2026-10-11T15:00:00.000Z' } } });

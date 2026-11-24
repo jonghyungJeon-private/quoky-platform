@@ -116,7 +116,7 @@ describe('agent-plan.v9 prompt', () => {
   });
 });
 
-const PINNED_SHA256 = '7a091783679f54145e1cab9f5aa3467fb4493ee10370c78acda219588cfe604f';
+const PINNED_SHA256 = '5213438c53435e3d0dc2159af7aee1b8aaadabda7c80fe7b5c91b1f76c24b60c';
 
 describe('agent-plan.v9: the position reference sentence (owner decision of 2026-10-26)', () => {
   it('names every item-summary source\'s entries with their own id field, and only those', () => {

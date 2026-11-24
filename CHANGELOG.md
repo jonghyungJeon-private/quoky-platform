@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — r-07 mail and Drive numeric limit (2026-11-24; catalog change, D12 gate pending)
+
+- **Changed.** `mail.list` and `drive.files` declare the shared numeric `limit` arg (integer 1..10), like `jira.issues` and
+  the other listings. The mail and Drive handlers pass it to the reader and show at most that many; without it the read is
+  unchanged (10). The AM-3 count-unit test now runs over the real validator.
+- **Prompt bytes.** Every rendered catalog gains the two arg lines; the pinned digests were re-pinned, version ids unchanged.
+  The D12 gate (action, read-regression, r2) must run before deploy. No model call was made.
+- **Gold.** No `expect` changed; no row added (`agent-plan.v1.json` is byte-pinned).
+
 ## Unreleased — ADR-0121 A6-S1 answer-checks (2026-11-24; dormant, switch default off)
 
 - **Added.** Core `consent-answer/`: the branded `SummaryConsentPending` (no `origin`) and `TopicConsentPending` with their

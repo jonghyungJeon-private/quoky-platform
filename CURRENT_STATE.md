@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### r-07 mail and Drive numeric limit implemented (2026-11-24, branch `claude/v5-r07-list-count`)
+
+- `mail.list` and `drive.files` take the shared `limit` arg (1..10); the handlers pass it to the existing reader bound, the
+  default read is unchanged. AM-3's count unit is tested over the real validator (production consumer is A6-S3).
+- Catalog change: prompt digests re-pinned, version ids unchanged; the D12 gate is still to run. No gold `expect` changed.
+  See DECISIONS "r-07 implementation note (ADR-0120 catalog, AM-3)".
+
 ### ADR-0121 A6-S1 answer-checks implemented, dormant (2026-11-24, branch `claude/v5-a6-s1-answer-checks`)
 
 - Core `consent-answer/`: branded summary and topic consent steps (no `origin`), the atomic claim and compare-and-set bind,
