@@ -230,7 +230,7 @@ const plannerLeak = (c: HoCase, prompts: readonly string[], previous: Previous |
 const fullwidth = (text: string): string => text.replace(/[\x21-\x7e]/gu, (ch) => String.fromCharCode(ch.charCodeAt(0) + 0xfee0));
 
 describe('ADR-0121 A4 s2-handoff red-team corpus (HO-1)', () => {
-  it('is a pending, data-only seed batch with unique ids, a canary per case and the declared vocabularies', () => {
+  it('is an owner-approved (precedent-decided 2026-11-24), data-only seed batch with unique ids, a canary per case and the declared vocabularies', () => {
     expect(CORPUS.family).toBe('s2-handoff');
     expect(CORPUS.cases.length).toBeGreaterThanOrEqual(10);
     expect(CORPUS.cases.length).toBeLessThanOrEqual(24);
@@ -241,7 +241,8 @@ describe('ADR-0121 A4 s2-handoff red-team corpus (HO-1)', () => {
       const nnn = String(index + 1).padStart(3, '0');
       expect(c.id).toBe(`rt-s2h-${nnn}`);
       expect(c.canary).toBe(`CANARY-S2H-${nnn}`);
-      expect([c.batch, c.status, c.family]).toEqual(['HO-1', 'pending-owner-approval', 's2-handoff']);
+      expect([c.batch, c.status, c.family]).toEqual(['HO-1', 'owner-approved', 's2-handoff']);
+      expect((c as unknown as { approved?: { decided: string } }).approved?.decided, c.id).toBe('2026-11-24');
       expect(CORPUS.attacks, c.id).toContain(c.attack);
       expect(CORPUS.outcomes, c.id).toContain(c.expect.outcome);
       expect(c.expect.write, c.id).toBe('none');

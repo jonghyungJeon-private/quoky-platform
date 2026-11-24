@@ -75,6 +75,8 @@ const CASES = CORPUS.cases;
 const A6_DECIDED = '2026-11-19';
 /** The owner's ratification of A6 with AM-1..AM-3 (2026-11-23): the date of every target that ratification decided. */
 const A6_RATIFIED = '2026-11-23';
+/** The owner's answer on `473` (second decision page, r-01, 2026-11-24): `yes-and-more`. */
+const A7_PAGE_ANSWER = '2026-11-24';
 const id = (n: number): string => `rt-s2r-${String(n).padStart(3, '0')}`;
 const sorted = (values: readonly string[]): string[] => [...values].sort();
 
@@ -85,8 +87,8 @@ const MULTI_LINE = [460, 461].map(id);
  * owner's verdict: `yes` (2026-11-19, fix) or `yes-and-more` (2026-11-23, AM-2: `462` reversed, the yes binds the asked mail
  * and "드라이브도 같이" runs as a new turn). `472` ("yes, and also summarize my drive files") is `yes-and-more` DERIVED from the
  * ratified general rule (a yes plus a separate request), not an owner pick on that exact reply. `473` ("응 근데 메일 10개 더
- * 요약해줘") waits for the owner (`owner-to-confirm`; recommended `other`, a widening of the same pending step's items like
- * the AM-2 scope-change example). Its built `expect` stays the floor either way.
+ * 요약해줘") is `yes-and-more` by the owner (2026-11-24, r-01): the asked mail is summarised and "10개 더" runs as a new request.
+ * Its built `expect` stays the floor.
  */
 const CLASSIFIER_ROUTE: Readonly<Record<string, 'yes' | 'yes-and-more' | 'owner-to-confirm'>> = {
   [id(462)]: 'yes-and-more',
@@ -95,7 +97,7 @@ const CLASSIFIER_ROUTE: Readonly<Record<string, 'yes' | 'yes-and-more' | 'owner-
   [id(469)]: 'yes',
   [id(470)]: 'yes',
   [id(472)]: 'yes-and-more',
-  [id(473)]: 'owner-to-confirm',
+  [id(473)]: 'yes-and-more',
   [id(488)]: 'yes',
 };
 /** A6.3: a closed yes only after the NFKC fold (owner verdict "fix"): the fast path, no classifier call. */
@@ -573,23 +575,19 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
       });
       expect(c.expect, `${caseId}: as built, W1 cancels`).toMatchObject({ outcome: 'declined', remoteSummary: 'never', stubReads: [] });
     }
-    for (const [caseId, label] of Object.entries(CLASSIFIER_ROUTE)) {
-      if (label !== 'owner-to-confirm') continue;
-      expect(byId.get(caseId)?.awaiting, caseId).toBeUndefined();
-      expect(byId.get(caseId)?.status, caseId).toBe('pending-owner-approval');
-    }
-    expect(Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'owner-to-confirm').map(([caseId]) => caseId)).toEqual([id(473)]);
+    // No label is left undecided: the owner answered `473` on 2026-11-24 (r-01).
+    expect(Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'owner-to-confirm').map(([caseId]) => caseId)).toEqual([]);
   });
 
   it('AM-2: a yes-and-more reply binds exactly the asked items, once, and the whole message reruns as a new ordinary turn (462 reversed, 472 by the rule)', () => {
     const yesAndMore = Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'yes-and-more').map(([caseId]) => caseId);
-    expect(yesAndMore).toEqual([id(462), id(472)]);
+    expect(yesAndMore).toEqual([id(462), id(472), id(473)]);
     for (const caseId of yesAndMore) {
       const c = byId.get(caseId)!;
       const p = c.pending!;
       const reads = sorted([...new Set((p.planner ?? []).flatMap((s) => (s.entryId !== undefined && AGENT_READ_SOURCES[s.entryId as keyof typeof AGENT_READ_SOURCES]?.source === p.source ? [s.entryId] : [])))]);
       expect(c.status, caseId).toBe('approved-awaiting-implementation');
-      expect([c.awaiting?.decided, c.awaiting?.slices], caseId).toEqual([A6_RATIFIED, SLICES.classifier]);
+      expect([c.awaiting?.decided, c.awaiting?.slices], caseId).toEqual([caseId === id(473) ? A7_PAGE_ANSWER : A6_RATIFIED, SLICES.classifier]);
       // The bind: the asked mail items only (the pending source's re-read), once; the rerun is a separate, ordinary turn.
       expect(c.awaiting?.expect, caseId).toEqual({
         outcome: 'summary-after-yes',
@@ -606,7 +604,7 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
         // question (a grant over Drive only, never the bound mail); no M2 call in the rerun turn.
         expect(grantOf(c, false), caseId).toEqual(c.expect.grant);
         expect(c.expect, caseId).toMatchObject({ outcome: 'read-and-ask-consent', remoteSummary: 'ask-first' });
-        expect(c.note, caseId).toContain('derived from the ratified general rule');
+        expect(c.note, caseId).toContain(caseId === id(473) ? 'owner 2026-11-24 r-01' : 'derived from the ratified general rule');
       } else {
         // 462: the rerun cannot widen the bound consent into a summary of the extra source: the whole message is a two-line
         // message whose line "응" holds no recognised unit, so even a Drive summary plan mints no grant from it. The
@@ -657,6 +655,8 @@ describe('ADR-0121 amendment A6: the awaiting set and the header', () => {
     }
     // The ratification (2026-11-23) decided two more SR-1 targets: 462 (the owner's AM-2) and 472 (the ratified rule).
     expect(CASES.filter((c) => c.awaiting?.decided === A6_RATIFIED).map((c) => c.id)).toEqual([id(462), id(472)]);
+    // The second decision page (2026-11-24, r-01) decided 473.
+    expect(CASES.filter((c) => c.awaiting?.decided === A7_PAGE_ANSWER).map((c) => c.id)).toEqual([id(473)]);
   });
 
   it('states the judging rule word for word in the schema doc and records the W1–W5 answers as ratified', () => {
