@@ -146,6 +146,10 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   // ADR-0121 A5-S1. Names and shapes only, never a value.
   [QuokyConfigErrorCode.AGENT_SUMMARY_SWITCH_INVALID]:
     'QUOKY_AGENT_SUMMARY_CALENDAR, _JIRA, _SLACK, _CONFLUENCE and _GITHUB must each be unset, "true" or "false".',
+  // ADR-0121 amendment A6 (A6-S1). Names and shapes only, never a value.
+  [QuokyConfigErrorCode.CONSENT_ANSWER_CLASSIFIER_INVALID]: 'QUOKY_CONSENT_ANSWER_CLASSIFIER must be unset (off) or "off" (exactly, lowercase).',
+  [QuokyConfigErrorCode.CONSENT_ANSWER_CLASSIFIER_NOT_RELEASED]:
+    'QUOKY_CONSENT_ANSWER_CLASSIFIER=on is not released yet (ADR-0121 A6: the classifier, its A6-S4 gate and the rule-① confirm slice come first); use "off".',
   // ADR-0124 Part L C5a. Names and shapes only, never a value.
   [QuokyConfigErrorCode.CHUNK_ITEMS_INVALID]: 'QUOKY_CHUNK_ITEMS must be unset, "off", "shadow", or "on".',
   [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_INVALID]:
