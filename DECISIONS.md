@@ -38877,9 +38877,12 @@ Codex review (P2 x4) and Chief Architect review (P2 + P3s) of the A6-S1 branch, 
 - **Codex P2 (r-02 cut).** Only the first line and its own terminator (LF, CR, U+2028, U+2029, U+0085, VT, FF, or CRLF as a
   unit) are removed; the remainder is returned byte-identical (no blank-line removal, no separator normalisation, no trim). A
   whitespace-only remainder keeps the "no remaining request" behaviour (the whole message runs). Test: CRLF, blank lines and
-  U+2028 in the remainder.
+  U+2028 in the remainder. Correction (Review 2): a leading blank line after a closed-yes first line now means no cut (the
+  whole message reruns); earlier code skipped blank lines before cutting. Both reviewers asked for this fail-closed behaviour.
 - **Codex P2 + CA P3 (throw safety).** The post-claim body runs under a guard: any throw (a throwing caller clock included)
-  cancels the claim and rethrows, so a step is never left `answering`. Test: a throwing clock, then the next answer is processed.
+  cancels the claim and rethrows, so a step is never left `answering`. Test: a throwing clock; the step is `cancelled`, the next
+  claim reports `claim-lost` (the step is forgotten), and a bind is possible only after the step is reopened. (The earlier note
+  said "the next answer is processed"; that was wrong.)
 - **CA P2 (re-ask freshness).** `reask` on a late step sets `expired` and returns nothing (the caller reports `cancelled`
   with `classifier-unclear`, `claim-lost`); `createdAtMs` is not refreshed.
 - **CA P3 (audit).** A second `unclear` after the claim was lost carries `claim-lost` (`ConsentPendingStore.holds` is checked first).
@@ -38893,3 +38896,21 @@ Codex review (P2 x4) and Chief Architect review (P2 + P3s) of the A6-S1 branch, 
   guard "a closed-no first line never binds" is to be considered in A6-S2 / the A6-S4 gate.
 - **FYI for the next owner batch.** Choice (4) above (the r-02 cut on the whole closed-yes set, not only `응`) was confirmed
   by the Chief Architect as not a loosening.
+
+### ADR-0121 A6-S1 implementation note: Review 2 (2026-11-24)
+
+Codex and Chief Architect reviews of round 1 (P2 found by both, three P3s). Fixed in `consent-pending.ts`, `consent-answer.ts`
+and their tests. No gold, prompt, catalog or flag default changed.
+
+- **P2 (re-ask with a non-finite clock).** `reask` returned early on a non-finite time before the freshness check, leaving the
+  step `answering` so the same claim could bind later at a valid time. The early return is removed: the time goes through
+  `fresh()`, the step becomes `expired`, the claim dies. The audit stays `classifier-unclear` + `claim-lost`, the same
+  convention as an expiry at bind. `claim`, `bind` and `cancel` were audited: a non-finite time there already deletes (claim) or
+  expires (bind) the step. Tests for NaN and both infinities, and a later bind with the old claim.
+- **P3 (single clock domain).** The claim was judged on the platform `turn.atMs` while the bind used `now()`. The claim now uses
+  `now()` too (read once for the claim, read afresh at bind). A throwing clock at the claim read leaves the step `open`.
+- **P3 (generation counter).** The version counter is module-level (never reused across stores in the process), so a claim of
+  one store never matches a version in another. Test: two stores, the same pending object.
+- **P3 (tests).** The literal U+2028 in the r-02 test is the `\u2028` escape; a classifier-path case with no clock argument
+  was added next to the real-default-clock test.
+- **P3 (DECISIONS note).** The Review 1 note is corrected (blank-line cut, "next answer is processed").
