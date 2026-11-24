@@ -153,10 +153,10 @@ describe('A7-S1 plan gold (agent-plan.a7.v1.json)', () => {
 
 describe('A7-S1 leaves everything that exists unchanged', () => {
   const sha = (path: string): string => createHash('sha256').update(readFileSync(new URL(path, import.meta.url))).digest('hex');
-  it('the existing plan golds and the handoff red-team corpus are byte-identical to the base (d77d65c9)', () => {
-    expect(sha('../golden/agent-plan.v1.json')).toBe('3b7393419ae33076119f5b2433c06c158153143f828dd1d0c64658acc51f73a1');
+  it('the existing plan golds and the handoff red-team corpus are byte-identical to the base (origin/main d6602978, after #365 A5-S3 edited ap-n071 and rt-s2h-015)', () => {
+    expect(sha('../golden/agent-plan.v1.json')).toBe('82d6913d41c74339f6a9caf99f5c19048149e720df092fb5bcf0a21dcf636dce');
     expect(sha('../golden/a2/agent-plan.ap8.v1.json')).toBe('65d8222abd9bfed1d646a15594245b66571a9ee1e73fb01352eaf0669644e36a');
-    expect(sha('../golden/agent-redteam.s2-handoff.v1.json')).toBe('34618fa8a1c1020c7e9d39f43d1744ec51f6f1beecbda06c68bf3865b7d6ff36');
+    expect(sha('../golden/agent-redteam.s2-handoff.v1.json')).toBe('cd8e95ef6091566f627db1e4d409c8f0e98104e992e48d6fadbc5e6c958a7f02');
   });
 
   it('the planner prompt is unchanged: same version, and it names neither a propose step nor payload-draft.v1 (no D12 gate item)', () => {
