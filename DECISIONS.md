@@ -38626,3 +38626,40 @@ evaluation was run.
 - **Not done here.** The held receipt (A7-S2), the drafter, the defanger and the remap (A7-S3), the proposal port, card,
   pick and one-open-card rule (A7-S4), the CW-1 corpus and plan eval (A7-S5), the Slack and calendar destinations' own gold and
   red-team share (A7-S6, A7-S7), the planner prompt rule, and any flag.
+
+### A7-S1 review round 1 (2026-11-24; Chief Architect and Codex)
+
+Two independent reviews of `901d836b` returned 7 P2 and 5 P3 findings. Every fix is structural (closed catalog values, validator
+constraints, fail-closed refusals); no word list or phrase was added, Core has no provider or platform branch, the planner prompt
+(`agent-plan.v11`) and the pinned golds (`agent-plan.v1.json`, `agent-plan.ap8.v1.json`, the handoff red-team corpus) are
+byte-identical, and A6 and W1 are unchanged (the ADR-0112 grammar regexes are composed from the exported word sets character for
+character; checked by comparing every pattern source before and after).
+
+| Finding | Fix |
+|---|---|
+| P2-1 form-b new source used A7 source names only | `crossWriteNamesNewSource`: per word, the catalog names AND aliases of EVERY READ entry (A7.4). A word naming an entry other than the held one is a new source ("메일 …", "릴리즈 관련 그 내용 …", "그 이슈 …" after a Slack receipt); a word naming the held entry still binds ("지라" names both Jira entries). R2a stays names only, now over every catalog read source (so "메일 내용 요약해서 BE-123에 달아줘" goes to A7 and is refused there, never an A6 literal post). |
+| P2-2 form b with a new read condition reused the receipt | `crossWriteHasReadCondition`: outside the destination span, a time expression (the A6 time grammar, `containsNlTimeExpression`) or a filter slot of the held entry (its enums' `valueGrounding`, its flags' `flagGrounding`) means a new read: refused `cross-write-read-condition` (new closed refusal). The calendar title and time spans are the destination's and are excluded first. |
+| P2-3 writes counted only with a request ending | `WRITE_VERB_TOKEN` counts the grammar's verb stems (and the 하 stem of each 해-verb) with any closed verbal ending: the request ending, the connectives of the request auxiliary (주고, 주면서, 주시고, 줘서), 고, 서, and 해 / 하고 / 하면서. The >1 refusal runs before the route re-check and the calendar branch; beside a calendar event (whose own verb is not counted), a comment or post verb in a clause with a Jira key, a `#channel` or a marked destination noun is a second write (`crossWriteSecondWriteBesideCalendar`). |
+| P2-4 the validator did not re-check routing | `validateCrossWritePlan` calls `routeCrossWrite` and refuses `cross-write-invalid` unless the route is `a7`; form a needs the `cross-source` trigger. The router has no calendar write-clause detector (A7-S7), so a calendar plan needs the same cross-source trigger over its words outside the title and time spans. |
+| P2-5 the source read was not grounded | The source read is checked with the plan's own steps (the multi-step clause grounding applies) over the words outside the destination span, and its entry must be named there by the catalog's names or aliases; when those words name no read entry at all, the read must carry a grounded value of its own (a source literal). Otherwise `step-invalid` / `ungrounded`. |
+| P2-6 kind activation only for a marked destination | `crossWriteResolvableKinds`: the marked literal's kind; with none marked, every literal's kind and every marked kind noun's kind. Any inactive kind keeps the turn ordinary (and the validator refuses through P2-4). |
+| P2-7 a kind-only destination had no span | The analysis records `kindSpans`; `crossWriteDestinationSpan` returns the literal's or the kind-only span, used by the router and by form b, so "해당 내용 요약해서 지라 티켓에 달아줘" after a Slack listing is the a7-09 pick, not a new source. |
+| P3-8 rule 5 in the ask and kind-only branches | With no literal marked, a destination literal the planner names is refused `cross-write-role` in every branch (readings, restate, kind-only pick); a project beside the readings too. |
+| P3-9 named project case | The allowlist match ignores case; the named project is upper case. |
+| P3-10 copied grammar words | `work-chat-command.ts` exports its closed word sets and request ending; `nl-routing/write-clause.ts` re-exports them (the agent boundary allowlist of ADR-0121 D5 admits no `work-chat` import) and `cross-write.ts` imports them. A test pins the exported values and the grammar's behaviour. |
+| P3-11 '해당' | A named closed constant `A7_POINT_BACK_DETERMINERS`, used by the A7 router only. |
+| P3-12 log reason | Recorded: a plan carrying `payload-draft.v1` (or a propose step) is judged by rule 9 alone, so with A7 off it now logs `cross-write-off` where it logged `summary-schema` before this slice. |
+
+- **Gold.** `agent-plan.a7.v1.json` now holds 202 cases (79 cross-write results, 123 refusals and routes; KO 180 of 202), all
+  `pending-owner-approval`. 22 rows of batch `A7-2` cover the findings. Two batch `A7-1` rows changed with P2-4: `a7p-030` and
+  `a7p-036` ("방금 내용 …") are now `a7n-107` and `a7n-108`, refused `cross-write-invalid`, because "방금" is neither a W1
+  point-back determiner nor a source name and step 0 leaves the turn ordinary; `a7p-079` and `a7p-080` ("그 대화 …") replace them.
+- **Residuals (recorded).**
+  1. R2a stays names only: an alias alone ("릴리즈 내용 요약해서 BE-123에 달아줘", "BE-123에 짧게 배포 완료 달아줘") is no routing
+     trigger, so such a turn stays ordinary (A6 as today) and a form-b plan for it is refused `cross-write-invalid`.
+  2. `해당` stays A7-router-only; the A6 determiner set is not widened. "방금 내용" has no structural trigger (above).
+  3. An unquoted free keyword ("장애 관련 슬랙 내용 …") is not recognised by any slot grammar, so it is not a read condition of
+     form b. The bind re-reads only the held items, so no other content moves; the card's banner names the source.
+  4. The calendar second-write rule is clause-based (a comment or post verb beside a destination literal or marked noun); a
+     kind-only Jira or Slack request beside a calendar event without a marker is not caught until the calendar write-clause
+     detector (A7-S7).

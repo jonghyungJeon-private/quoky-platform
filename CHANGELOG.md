@@ -51,8 +51,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added.** The `propose` step (`jira.comment.propose`, `slack.post.propose`, `calendar.create.propose`) and the
   `payload-draft.v1` summary in the plan schema; rule 9 of the plan validator (destination grounding in the owner's own words,
   the A7.4a role rule, the destination-span exclusion, kind-only destination states, form b over a held receipt); the A7.5 step 0
-  routing precedence as a pure function; the pre-read destination check over an injected port; 180 plan-form gold cases
+  routing precedence as a pure function; the pre-read destination check over an injected port; 202 plan-form gold cases
   (`agent-plan.a7.v1.json`, pending owner approval).
+- **Review round 1.** Form b names no new source (catalog names and aliases of every read source) and no new read condition
+  (time scope or a slot of the held entry); writes are counted whatever the verb ending; the validator re-checks the step 0 route
+  and grounds the source read outside the destination span; every resolvable destination kind must be active; a kind-only
+  destination has a span; the ADR-0112 grammar words are imported, not copied.
 - **Unchanged.** A validated A7 plan is declined before any read (like the A4-S1 handoff); the A7 context is absent by default;
   the planner prompt (`agent-plan.v11`), the catalog, the grant producer and every flag are untouched; the existing plan golds are
   byte-identical (pinned).

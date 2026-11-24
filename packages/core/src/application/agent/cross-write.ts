@@ -1,8 +1,18 @@
 import type { NlCatalogEntry } from '../nl-routing/catalog';
-import { NL_MODE_SUMMARY_WORDS } from '../nl-routing/action-entries';
-import { nlClauses } from '../nl-routing/clause-flags';
+import { NL_MODE_SUMMARY_WORDS, containsNlTimeExpression } from '../nl-routing/action-entries';
+import { nlClauseNamesEntry, nlClauses } from '../nl-routing/clause-flags';
+import {
+  WORK_CHAT_CHANNEL_NOUNS,
+  WORK_CHAT_COMMENT_NOUNS,
+  WORK_CHAT_COMMENT_VERBS,
+  WORK_CHAT_ISSUE_NOUNS,
+  WORK_CHAT_POST_NOUNS,
+  WORK_CHAT_POST_VERBS,
+  WORK_CHAT_REQUEST_ENDING_FORMS,
+  nlIsExactConnectorWrite,
+  nlWriteClausePointsBack,
+} from '../nl-routing/write-clause';
 import { aliasStarts } from './conjuncts';
-import { nlIsExactConnectorWrite, nlWriteClausePointsBack } from '../nl-routing/write-clause';
 import { normalizeForMatch } from '../nl-routing/selection-input';
 import { groundingWordIn } from '../nl-routing/selection-validator';
 
@@ -18,8 +28,9 @@ import { groundingWordIn } from '../nl-routing/selection-validator';
  *   destination-eligible literal is MARKED as the destination, by the closed locative particle (에, 에다, 에다가, with an
  *   optional 도 or 는) or the English `to` / `into`, with only closed-class words and the destination entry's own catalog
  *   noun between, and only the write request unit after it. `에서`, `로`, `으로` and English `on` / `in` never mark. No
- *   phrase is added to any vocabulary: the pieces are the ADR-0112 grammar's own destination nouns and write verbs
- *   (pinned equal to that grammar by `cross-write.test.ts`), the catalog's own names and the existing summary words;
+ *   phrase is added to any vocabulary: the pieces are the ADR-0112 grammar's own destination nouns, write verbs and request
+ *   ending (exported by `work-chat-command.ts`, re-exported by `nl-routing/write-clause.ts`, never copied), the catalog's own
+ *   names and aliases and the existing summary, time and slot grammars;
  * - the destination span (the destination literal plus the catalog names that touch it with only closed-class words between),
  *   which the source-name check skips (A7.4, review round 1);
  * - the routing precedence of A7.5 step 0 ({@link routeCrossWrite}): the ADR-0112 grammar first, then R2a / R2b only while A7
@@ -88,12 +99,12 @@ export interface AgentCrossWriteContext {
 // ── closed word classes ───────────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * The destination nouns of the ADR-0112 grammar (`ISSUE_NOUN`, `CHANNEL_NOUN` in `work-chat-command.ts`) and their English
- * forms. `cross-write.test.ts` pins the Korean ones to that grammar (it must accept each between the literal and its particle).
+ * The destination nouns of the ADR-0112 grammar (imported from `work-chat-command.ts`, never copied) and their English forms.
+ * `cross-write.test.ts` pins the Korean ones to that grammar (it must accept each between the literal and its particle).
  */
 const KIND_NOUNS: Readonly<Record<'jira' | 'slack', readonly string[]>> = {
-  jira: ['이슈', '티켓', 'issue', 'ticket'],
-  slack: ['채널', 'channel'],
+  jira: [...WORK_CHAT_ISSUE_NOUNS, 'issue', 'ticket'],
+  slack: [...WORK_CHAT_CHANNEL_NOUNS, 'channel'],
 };
 /** The English determiner and pronoun class, plus the English request leads: closed grammatical words, never topic words. */
 const EN_CLOSED = new Set(['the', 'a', 'an', 'it', 'that', 'this', 'them', 'these', 'those', 'my', 'our', 'its', 'please', 'pls', 'plz', 'kindly']);
@@ -110,16 +121,28 @@ const MARKER_PARTICLE = '(?:에다가|에다|에)(?:도|는)?';
 const MARKER_TAIL = new RegExp(`^(?<stem>.*?)(?<particle>${MARKER_PARTICLE})[.,!?~]*$`, 'u');
 /** Any particle that may follow a literal: marker or not. A literal followed by anything else is not a literal token. */
 const ANY_PARTICLE = /^(?:(?:에다가|에다|에)(?:도|는)?|에서(?:는|도)?|에게서|으로(?:는|도)?|로(?:는|도)?|의|을|를|은|는|이|가|도|만|와|과)?[.,!?~]*$/u;
+const alt = (words: readonly string[]): string => `(?:${words.join('|')})`;
 /**
- * The write request unit, from the ADR-0112 grammar's own verbs (`COMMENT_VERB`, `POST_VERB`, `REQUEST_ENDING`): an optional
- * noun, an optional object particle, the verb, the request ending. Pinned to the grammar by `cross-write.test.ts`.
+ * The write request unit, from the ADR-0112 grammar's own nouns, verbs and request ending (imported from `work-chat-command.ts`,
+ * never copied): an optional noun, an optional object particle, the verb, the request ending.
  */
 const WRITE_UNIT_KO: Readonly<Record<'jira' | 'slack', RegExp>> = {
-  jira: /^(?:(?:댓글|코멘트)\s*(?:을|를)?\s*)?(?:(?:달아|남겨|써|작성해|추가해|등록해)(?:줘|주세요|줄래(?:요)?|줘요)?)?[.!~]*$/u,
-  slack: /^(?:(?:메시지|글)\s*(?:을|를)?\s*)?(?:(?:게시|올려|보내|포스트|전송)(?:\s*해)?(?:줘|주세요|줄래(?:요)?|줘요)?)[.!~]*$/u,
+  jira: new RegExp(String.raw`^(?:${alt(WORK_CHAT_COMMENT_NOUNS)}\s*(?:을|를)?\s*)?(?:${alt(WORK_CHAT_COMMENT_VERBS)}${WORK_CHAT_REQUEST_ENDING_FORMS}?)?[.!~]*$`, 'u'),
+  slack: new RegExp(String.raw`^(?:${alt(WORK_CHAT_POST_NOUNS)}\s*(?:을|를)?\s*)?(?:${alt(WORK_CHAT_POST_VERBS)}(?:\s*해)?${WORK_CHAT_REQUEST_ENDING_FORMS}?)[.!~]*$`, 'u'),
 };
-/** A single word that is a write request unit (the verb with its request ending, the noun optionally glued): counts the writes of a message. */
-const WRITE_VERB_TOKEN = /^(?:(?:댓글|코멘트|메시지|글)(?:을|를)?)?(?:달아|남겨|써|작성해|추가해|등록해|게시|올려|보내|포스트|전송)(?:해)?(?:줘|주세요|줄래(?:요)?|줘요)[.!~]*$/u;
+/**
+ * The verb stems that count a write (review round 1, P2): the grammar's comment and post verbs, plus the 하 stem of each
+ * 해-form verb (작성해 → 작성하, 게시 + 해 → 게시하), so a connective form counts as well as a request form.
+ */
+const WRITE_STEMS: readonly string[] = [...WORK_CHAT_COMMENT_VERBS, ...WORK_CHAT_POST_VERBS].flatMap((verb) => (verb.endsWith('해') ? [verb, verb.slice(0, -1)] : [verb]));
+/**
+ * The closed verbal endings a counted write verb may carry (review round 1, P2: any ending, connectives included): the request
+ * ending, the connective forms of the same request auxiliary (주고, 주면서, 주시고, 줘서), the bare connectives 고 and 서, and the
+ * 해 / 하 forms of a 해-verb (게시해, 게시해서, 게시하고, 작성하면서). A grammatical class, never a topic word.
+ */
+const WRITE_ENDING = String.raw`(?:(?:해)?(?:${WORK_CHAT_REQUEST_ENDING_FORMS}|주고|주면서|주시고|줘서|서|고)|해|하(?:고|면서))`;
+/** One word that is a write verb (the grammar noun optionally glued): counts the writes of a message, whatever the ending. */
+const WRITE_VERB_TOKEN = new RegExp(String.raw`^(?:${alt([...WORK_CHAT_COMMENT_NOUNS, ...WORK_CHAT_POST_NOUNS])}(?:을|를)?)?${alt(WRITE_STEMS)}${WRITE_ENDING}[.,!~]*$`, 'u');
 /** The English words that count a write request in a message (`comment` is also a noun, so it does not count). */
 const WRITE_COUNT_EN = new Set(['add', 'post', 'send']);
 /** English write verbs of the ADR-0112 grammar (`COMMENT_EN`, `POST_EN`): add, comment, post, send. */
@@ -221,18 +244,29 @@ function isKoreanWord(word: string): boolean {
   return /[가-힣]/u.test(word);
 }
 
+/** A destination span by token index of the owner's words (inclusive). */
+export interface CrossWriteSpan {
+  readonly start: number;
+  readonly end: number;
+}
+
 export interface CrossWriteAnalysis {
   readonly literals: readonly CrossWriteLiteral[];
   /** The literals the A7.4a rule marked: all conditions of rule 2 hold. */
   readonly marked: readonly CrossWriteLiteral[];
   /** The destination span of each marked literal, by token index (inclusive). */
-  readonly spans: ReadonlyMap<number, { readonly start: number; readonly end: number }>;
+  readonly spans: ReadonlyMap<number, CrossWriteSpan>;
   /**
    * The kind is named as the destination with no instance (a7-09: "지라 티켓에 달아줘", "BE에 달아줘", "슬랙 채널에 올려줘"): the
    * destination entry's own catalog noun, or an allowlisted project key, is marked exactly as a literal is.
    */
   readonly kindMarked: Readonly<Record<'jira' | 'slack', boolean>>;
-  /** The allowlisted project key the owner's words name as the destination (Jira kind-only), exact case. */
+  /**
+   * The destination span of a kind-only destination (review round 1, P2): the marked kind noun or project key plus the closed-class
+   * words and catalog names that touch it, by token index (inclusive). The source-name check skips it, as it skips a literal's span.
+   */
+  readonly kindSpans: Readonly<Partial<Record<'jira' | 'slack', CrossWriteSpan>>>;
+  /** The allowlisted project key the owner's words name as the destination (Jira kind-only), upper case (matched without case). */
   readonly namedProject?: string;
   /** The write request unit appears twice or more: more than one write (A7.3 "never covered"). */
   readonly writeUnits: number;
@@ -299,6 +333,7 @@ export function analyseCrossWriteLiterals(groundingText: string, context: AgentC
   }
   // The kind named with no instance: the catalog noun (or an allowlisted project key, exact case) in the literal's place.
   const kindMarked = { jira: false, slack: false };
+  const kindSpans: Partial<Record<'jira' | 'slack', CrossWriteSpan>> = {};
   let namedProject: string | undefined;
   for (const [index, token] of tokens.entries()) {
     if (literals.some((literal) => literal.index === index)) continue;
@@ -307,17 +342,42 @@ export function analyseCrossWriteLiterals(groundingText: string, context: AgentC
     const rest = marker !== undefined && isKoreanWord(token.word) && marker.stem.length > 0 ? marker.particle : '';
     const rawStem = marker !== undefined && isKoreanWord(token.word) ? token.text.slice(0, token.text.length - (token.word.length - marker.stem.length)) : token.text.replace(/[.,!?~]+$/u, '');
     for (const kind of ['jira', 'slack'] as const) {
-      const project = kind === 'jira' && context.jiraProjects.includes(rawStem) ? rawStem : undefined;
+      // The allowlist match ignores case, like `allowedProject` (review round 1, P3); the named project is upper case.
+      const project = kind === 'jira' && context.jiraProjects.some((listed) => listed.toUpperCase() === rawStem.toUpperCase()) ? rawStem.toUpperCase() : undefined;
       if (!kindNouns(kind).has(stem) && project === undefined) continue;
       // A glued-particle noun is its own reading; a bare noun looks forward like a literal.
-      if (markAt(index, rest, kind) !== undefined) {
+      const span = markAt(index, rest, kind);
+      if (span !== undefined) {
         kindMarked[kind] = true;
+        // The widest reading of the kind's span (a project key and a noun after it: "FE 티켓에").
+        const held = kindSpans[kind];
+        kindSpans[kind] = held === undefined ? span : { start: Math.min(held.start, span.start), end: Math.max(held.end, span.end) };
         if (project !== undefined) namedProject = project;
       }
     }
   }
   const writeUnits = tokens.filter((token) => WRITE_VERB_TOKEN.test(token.word) || WRITE_COUNT_EN.has(token.word)).length;
-  return { literals, marked, spans, kindMarked, ...(namedProject !== undefined ? { namedProject } : {}), writeUnits, tokens };
+  return { literals, marked, spans, kindMarked, kindSpans, ...(namedProject !== undefined ? { namedProject } : {}), writeUnits, tokens };
+}
+
+/**
+ * A calendar target only (review round 1, P2): the calendar's own request verb is not a comment or post verb, so a second write
+ * beside a calendar event can count as one unit ("… BE-123에 달아주고 내일 3시에 점검 일정 만들어줘"). Such a comment or post verb
+ * stands in a clause (the S2 conjuncts, the verb connective included) that also holds a Jira key or a `#channel` literal, or a
+ * destination noun of the grammar with the locative particle: that is a second destination, so a second write. Pure.
+ */
+export function crossWriteSecondWriteBesideCalendar(groundingText: string): boolean {
+  const destinationNouns = new Set([...KIND_NOUNS.jira, ...KIND_NOUNS.slack]);
+  return nlClauses(groundingText).some((clause) => {
+    const words = clause.words.map((token) => token.word);
+    if (!words.some((word) => WRITE_VERB_TOKEN.test(word))) return false;
+    return words.some((word) => {
+      const jira = JIRA_LITERAL.exec(word);
+      if ((jira?.groups !== undefined && ANY_PARTICLE.test(jira.groups.rest ?? '')) || CHANNEL_LITERAL.test(word.replace(/[.,!?~]+$/u, '')) || word.startsWith('#')) return true;
+      const marker = markerOf(word);
+      return marker !== undefined && destinationNouns.has(marker.stem);
+    });
+  });
 }
 
 function spanStart(tokens: readonly Token[], literalIndex: number, kind: 'jira' | 'slack', closed: (word: string, kind: 'jira' | 'slack') => boolean): number {
@@ -326,28 +386,130 @@ function spanStart(tokens: readonly Token[], literalIndex: number, kind: 'jira' 
   return start;
 }
 
+/**
+ * The destination span of the analysis for one destination kind (or any kind): the span of the one marked literal, else the
+ * span of the marked kind noun or project key (a kind-only destination, a7-09). `undefined` when no destination is marked.
+ */
+export function crossWriteDestinationSpan(analysis: CrossWriteAnalysis, kind?: 'jira' | 'slack'): CrossWriteSpan | undefined {
+  const marked = analysis.marked.filter((literal) => kind === undefined || literal.kind === kind);
+  if (marked.length === 1) return analysis.spans.get((marked[0] as CrossWriteLiteral).index);
+  if (marked.length > 1) return undefined;
+  if (kind !== undefined) return analysis.kindSpans[kind];
+  const kinds = (['jira', 'slack'] as const).filter((each) => analysis.kindSpans[each] !== undefined);
+  return kinds.length === 1 ? analysis.kindSpans[kinds[0] as 'jira' | 'slack'] : undefined;
+}
+
 /** The owner's words with the destination span removed (A7.4, review round 1: the source-name check skips it). */
-export function crossWriteTextOutsideSpan(analysis: CrossWriteAnalysis, destination: CrossWriteLiteral | undefined): string {
-  const span = destination === undefined ? undefined : analysis.spans.get(destination.index);
+export function crossWriteTextOutsideSpan(analysis: CrossWriteAnalysis, destination: CrossWriteLiteral | CrossWriteSpan | undefined): string {
+  const span = destination === undefined ? undefined : 'start' in destination ? destination : analysis.spans.get(destination.index);
   return analysis.tokens
     .filter((_, index) => span === undefined || index < span.start || index > span.end)
     .map((token) => token.text)
     .join(' ');
 }
 
+/** The catalog entry whose names and aliases are a calendar destination's own nouns ("일정" in "점검 일정 만들어줘"). */
+const CALENDAR_DESTINATION_ENTRY = 'calendar.events';
+const SPAN_MARK = '\u0001';
+
 /**
- * The A7 source entries (offered READ entries of {@link AGENT_A7_SOURCES}) the text names by the catalog's own SOURCE names
- * (`sourceNames`: 슬랙, slack, 지라, jira), never by an entry's topic aliases: "배포" is a word of the release entry, but "BE-123에
- * 짧게 배포 완료 달아줘" names no source (A7.9: it stays an A6 literal post).
+ * A calendar target (A7.3, review round 1): the owner's words outside the destination span, which for a calendar event is the
+ * verbatim title and time spans plus the names and aliases of the calendar entry that touch them with only a particle between
+ * ("배포 점검 일정 만들어줘": "일정" is the event's own noun, never a source). Pure.
+ */
+export function crossWriteCalendarOutside(text: string, spans: readonly (string | undefined)[], offered: ReadonlyMap<string, NlCatalogEntry>): string {
+  let marked = text.normalize('NFC').replace(/\s+/gu, ' ');
+  for (const span of spans) {
+    if (span === undefined || span.length === 0) continue;
+    const at = marked.indexOf(span);
+    if (at >= 0) marked = `${marked.slice(0, at)} ${SPAN_MARK} ${marked.slice(at + span.length)}`;
+  }
+  const entry = offered.get(CALENDAR_DESTINATION_ENTRY);
+  const names = [...(entry?.aliases ?? []), ...(entry?.sourceNames ?? [])].map((name) => normalizeForMatch(name)).filter((name) => name.length > 0 && !name.includes(' '));
+  const tokens = marked.split(' ').filter((token) => token.length > 0);
+  const particleOnly = (token: string | undefined): boolean => token !== undefined && token !== SPAN_MARK && ANY_PARTICLE.test(token) && token.length > 0;
+  const touches = (index: number, step: 1 | -1): boolean => {
+    const next = tokens[index + step];
+    return next === SPAN_MARK || (particleOnly(next) && tokens[index + 2 * step] === SPAN_MARK);
+  };
+  return tokens
+    .filter((token, index) => {
+      if (token === SPAN_MARK) return false;
+      const word = normalizeForMatch(token);
+      const own = names.some((name) => aliasStarts(word, name));
+      return !(own && (touches(index, 1) || touches(index, -1)));
+    })
+    .join(' ');
+}
+
+/** The offered READ entries of the catalog (every read source, not only the A7 ones). */
+function readEntries(offered: ReadonlyMap<string, NlCatalogEntry>): NlCatalogEntry[] {
+  return [...offered.values()].filter((entry) => entry.risk === 'READ');
+}
+
+/**
+ * The READ entries (EVERY catalog read source, review round 1) the text names by the catalog's own SOURCE names (`sourceNames`:
+ * 슬랙, slack, 지라, jira, 메일, 드라이브 …), never by an entry's topic aliases. This is the R2a routing trigger, names only (a
+ * recorded residual of review round 1): "배포" is a word of the release entry, but "BE-123에 짧게 배포 완료 달아줘" names no source
+ * (A7.9: it stays an A6 literal post).
  */
 export function crossWriteNamedSources(text: string, offered: ReadonlyMap<string, NlCatalogEntry>): string[] {
   const clauses = nlClauses(text);
-  return AGENT_A7_SOURCES.filter((id) => {
-    const entry = offered.get(id);
-    if (entry === undefined || entry.risk !== 'READ') return false;
-    const names = (entry.sourceNames ?? []).map((name) => normalizeForMatch(name)).filter((name) => name.length > 0);
-    return clauses.some((clause) => clause.words.some((token) => names.some((name) => !name.includes(' ') && aliasStarts(token.word, name))) || names.some((name) => name.includes(' ') && ` ${clause.normalized} `.includes(` ${name}`)));
-  });
+  return readEntries(offered)
+    .filter((entry) => {
+      const names = (entry.sourceNames ?? []).map((name) => normalizeForMatch(name)).filter((name) => name.length > 0);
+      return clauses.some((clause) => clause.words.some((token) => names.some((name) => !name.includes(' ') && aliasStarts(token.word, name))) || names.some((name) => name.includes(' ') && ` ${clause.normalized} `.includes(` ${name}`)));
+    })
+    .map((entry) => entry.id);
+}
+
+/**
+ * The READ entries the text names by the catalog's names AND aliases (A7.4: "the source names and aliases are the catalog's
+ * own"), every catalog read source. Used by the form-b source check and by the source-read grounding. Pure.
+ */
+export function crossWriteNamedEntries(text: string, offered: ReadonlyMap<string, NlCatalogEntry>): string[] {
+  const clauses = nlClauses(text);
+  return readEntries(offered)
+    .filter((entry) => clauses.some((clause) => nlClauseNamesEntry(clause, entry)))
+    .map((entry) => entry.id);
+}
+
+/**
+ * Form b (A7.4, review round 1, P2): whether the text (the owner's words outside the destination span) names a source other
+ * than the held one. Judged per word, by the catalog's names and aliases of every READ entry: a word that names at least one
+ * entry and not the held entry is a new source ("메일", "릴리즈", "이슈" after a Slack receipt). A word that names the held entry
+ * (also when it names another entry too: "지라" names both Jira entries) is the owner saying where the content came from. Pure.
+ */
+export function crossWriteNamesNewSource(text: string, offered: ReadonlyMap<string, NlCatalogEntry>, heldEntryId: string): boolean {
+  const entries = readEntries(offered).map((entry) => ({
+    id: entry.id,
+    names: [...entry.aliases, ...(entry.sourceNames ?? [])].map((name) => normalizeForMatch(name)).filter((name) => name.length > 0),
+  }));
+  for (const clause of nlClauses(text)) {
+    const padded = ` ${clause.normalized} `;
+    const units: (readonly string[])[] = [
+      ...clause.words.map((token) => entries.filter((entry) => entry.names.some((name) => !name.includes(' ') && aliasStarts(token.word, name))).map((entry) => entry.id)),
+      // A multi-word name ("구글 캘린더", "할 일") is one unit.
+      ...entries.flatMap((entry) => entry.names.filter((name) => name.includes(' ') && padded.includes(` ${name}`)).map((name) => entries.filter((other) => other.names.includes(name)).map((other) => other.id))),
+    ];
+    if (units.some((ids) => ids.length > 0 && !ids.includes(heldEntryId))) return true;
+  }
+  return false;
+}
+
+/**
+ * Form b (A7.4, review round 1, P2): whether the text carries a read condition of its own, by the existing grammars only: a
+ * time expression (the A6 time grammar, `containsNlTimeExpression`), or a filter slot of the held entry recognised by the
+ * catalog's own slot grammar (an enum's `valueGrounding` words, a flag's `flagGrounding` words). Such a turn asks for a new read,
+ * so it is not form b. An unquoted free keyword is not recognised by any slot grammar (a recorded residual): the bind still
+ * re-reads only the held items, so no other content moves. Pure.
+ */
+export function crossWriteHasReadCondition(text: string, heldEntry: NlCatalogEntry | undefined): boolean {
+  if (containsNlTimeExpression(text)) return true;
+  if (heldEntry === undefined) return false;
+  const normalized = normalizeForMatch(text);
+  const words = heldEntry.args.flatMap((spec) => [...Object.values(spec.valueGrounding ?? {}).flat(), ...(spec.kind === 'flag' ? (spec.flagGrounding ?? []) : [])]);
+  return words.some((word) => groundingWordIn(normalized, normalizeForMatch(word)));
 }
 
 // ── routing precedence (A7.5 step 0) ──────────────────────────────────────────────────────────────────────────────
@@ -382,17 +544,43 @@ export function routeCrossWrite(input: CrossWriteRoutingInput): CrossWriteRoute 
   // R2a / R2b need a write clause: the write request unit of a covered destination kind.
   if (analysis.writeUnits === 0 || analysis.writeUnits > 1) return { route: 'ordinary' };
   const destination = analysis.marked.length === 1 ? (analysis.marked[0] as CrossWriteLiteral) : undefined;
-  if (destination !== undefined && !context.active[destination.kind]) return { route: 'ordinary' };
-  const outside = crossWriteTextOutsideSpan(analysis, destination);
-  // A second literal of the destination shape (the allowlist decides later whether it can be a destination; a source need not be on it).
-  const secondLiteral = analysis.literals.length >= 2;
-  const namesSource = crossWriteNamedSources(outside, input.offered).length > 0;
-  const summaryOnObject = summaryActsOnObject(outside, input.offered, analysis);
-  if (namesSource || secondLiteral || summaryOnObject) return { route: 'a7', trigger: 'cross-source' };
+  // Review round 1, P2: A7 must be active for EVERY destination kind the words can resolve to: the marked literal's kind; with
+  // none marked, every literal's kind (any of them may be the destination) and every marked kind noun's kind.
+  if (crossWriteResolvableKinds(analysis).some((kind) => !context.active[kind])) return { route: 'ordinary' };
+  const outside = crossWriteTextOutsideSpan(analysis, crossWriteDestinationSpan(analysis));
+  if (crossWriteCrossSourceTrigger(outside, input.offered, analysis)) return { route: 'a7', trigger: 'cross-source' };
   // R2b: no summary word, no source name; a fresh receipt, a marked destination, the rest closed-class only.
   if (destination !== undefined && context.receipt?.fresh === true && onlyClosedBesidesWrite(outside, destination.kind, nouns)) return { route: 'a7', trigger: 'receipt-followup' };
   return { route: 'ordinary' };
 }
+
+/**
+ * The destination kinds the owner's words can resolve to (review round 1, P2): the one marked literal's kind; with none marked,
+ * the kind of every literal and of every marked kind noun or project key. Pure.
+ */
+export function crossWriteResolvableKinds(analysis: CrossWriteAnalysis): ('jira' | 'slack')[] {
+  if (analysis.marked.length === 1) return [(analysis.marked[0] as CrossWriteLiteral).kind];
+  const kinds = new Set<'jira' | 'slack'>(analysis.literals.map((literal) => literal.kind));
+  for (const kind of ['jira', 'slack'] as const) if (analysis.kindMarked[kind]) kinds.add(kind);
+  return [...kinds];
+}
+
+/**
+ * The R2a cross-source trigger over the owner's words outside the destination span: a read source name (names only), a second
+ * destination-eligible literal, or a summary word acting on an object (a source name, a literal or the point-back form). Pure.
+ */
+export function crossWriteCrossSourceTrigger(outside: string, offered: ReadonlyMap<string, NlCatalogEntry>, analysis: CrossWriteAnalysis): boolean {
+  // A second literal of the destination shape (the allowlist decides later whether it can be a destination; a source need not be on it).
+  const secondLiteral = analysis.literals.length >= 2;
+  return secondLiteral || crossWriteNamedSources(outside, offered).length > 0 || summaryActsOnObject(outside, offered, analysis);
+}
+
+/**
+ * The determiner 해당 ("해당 내용"): A7.5 step 0 names "해당 내용" as a W1 point-back form, but 해당 is not in the A6 determiner set
+ * (이, 그, 저). A closed constant of the A7 router ONLY (review round 1, P3): the A6 set is not widened, so A6 and W1 stay
+ * byte-identical. A recorded residual (the owner may confirm it or widen both sets).
+ */
+export const A7_POINT_BACK_DETERMINERS: readonly string[] = ['해당'];
 
 /** A summary word whose object noun phrase (only closed-class words between) is a source name, a literal or the W1 point-back form. */
 function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCatalogEntry>, analysis: CrossWriteAnalysis): boolean {
@@ -402,10 +590,9 @@ function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCat
   const literalTokens = new Set(analysis.literals.filter((literal) => ['', '을', '를', '의', '은', '는'].includes(literal.rest.replace(/[.,!?~]+$/u, ''))).map((literal) => (analysis.tokens[literal.index] as Token).word));
   const textOf = (parts: readonly Token[]): string => parts.map((token) => token.text).join(' ');
   const isObject = (parts: readonly Token[]): boolean => parts.length > 0 && (parts.some((token) => literalTokens.has(token.word)) || crossWriteNamedSources(textOf(parts), offered).length > 0);
-  // The W1 point-back form ("그 내용", "해당 내용"): the existing determiner grammar, over the phrase and as a payload span.
-  // A7 supplement: the determiner 해당 ("해당 내용") is named by A7.5 step 0 as a point-back form but is not in the A6 determiner set;
-  // it is added here only, so A6 and W1 stay byte-identical.
-  const pointsBack = (parts: readonly Token[]): boolean => parts.length > 0 && (nlWriteClausePointsBack(textOf(parts), [textOf(parts)]) || parts[0]?.word === '해당');
+  // The W1 point-back form ("그 내용", "해당 내용"): the existing determiner grammar, over the phrase and as a payload span, plus
+  // the A7-only determiner {@link A7_POINT_BACK_DETERMINERS}.
+  const pointsBack = (parts: readonly Token[]): boolean => parts.length > 0 && (nlWriteClausePointsBack(textOf(parts), [textOf(parts)]) || A7_POINT_BACK_DETERMINERS.includes(parts[0]?.word ?? ''));
   for (const [index, token] of tokens.entries()) {
     if (!isSummary(token.word)) continue;
     const latin = /^[a-z0-9 .;-]+$/u.test(token.word);
@@ -416,7 +603,9 @@ function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCat
         after.push(tokens[next] as Token);
         if (!EN_CLOSED.has(word)) break;
       }
-      if (isObject(after) || pointsBack(after)) return true;
+      // The object may be a closed pronoun alone ("summarize that and …"): the point-back grammar then judges the closed words.
+      const closedOnly = after.filter((part) => EN_CLOSED.has(part.word));
+      if (isObject(after) || pointsBack(after) || (closedOnly.length > 0 && closedOnly.length < after.length && pointsBack(closedOnly))) return true;
     } else {
       const before: Token[] = [];
       for (let prev = index - 1; prev >= 0; prev -= 1) {

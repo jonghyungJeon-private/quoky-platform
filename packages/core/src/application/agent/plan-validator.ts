@@ -156,7 +156,8 @@ export type AgentPlanRefusal =
    * or is switched off (`cross-write-source`); the destination literal is not in the owner's own words (`cross-write-ungrounded`);
    * the destination is off the allowlist (`cross-write-not-allowed`); the planner's role is not the A7.4a rule's role
    * (`cross-write-role`); more than one write in one request (`cross-write-writes`); form b without a usable held receipt
-   * (`cross-write-receipt`) or naming a new source (`cross-write-new-source`); a calendar title or time that is not the owner's
+   * (`cross-write-receipt`), naming a new source (`cross-write-new-source`) or carrying a new read condition, a time scope or a
+   * filter slot of the held entry (`cross-write-read-condition`, review round 1); a calendar title or time that is not the owner's
    * own span (`cross-write-span`).
    */
   | 'cross-write-off'
@@ -170,6 +171,7 @@ export type AgentPlanRefusal =
   | 'cross-write-writes'
   | 'cross-write-receipt'
   | 'cross-write-new-source'
+  | 'cross-write-read-condition'
   | 'cross-write-span'
   | 'run-refs-too-many'
   | 'summary-schema'
@@ -312,10 +314,12 @@ export function validateAgentPlan(plan: AgentPlan, ctx: AgentPlanValidationConte
   // write rule alone, before any read-plan rule; it never becomes a `run`.
   if (plan.kind === 'steps' && isCrossWritePlan(plan)) {
     return validateCrossWritePlan(plan, ctx, {
-      checkRead: (step) => {
+      // The source read is step 1 of the plan's own steps (so the multi-step clause grounding applies), grounded in the owner's
+      // words outside the destination span (review round 1); the request vetoes read the whole message, as for any read.
+      checkRead: (step, planSteps, groundingText) => {
         const veto = nlReadNotRequest(ctx.groundingText, step.args);
         if (veto !== undefined) return refuse(veto === 'quoted-request' ? 'veto-quoted-request' : 'veto-reason-statement', 1);
-        return checkRead(step, 1, [step], ctx, undefined);
+        return checkRead(step, 1, planSteps, { ...ctx, groundingText }, undefined);
       },
       charge: (validatedSteps) => agentPlanConnectorCharge(validatedSteps, ctx),
     });

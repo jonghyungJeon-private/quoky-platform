@@ -1,6 +1,21 @@
 import type { IsoTimestamp } from '../../domain';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { detectWorkChatCommand, type WorkChatCommand } from '../work-chat/work-chat-command';
+
+/**
+ * ADR-0121 A7 (A7-S1, review round 1, P3): the ADR-0112 grammar's closed word sets, re-exported for the A7 router
+ * (`agent/cross-write.ts`) so it reads the grammar's own words, never a copy. The agent module imports only through this
+ * routing module (the agent boundary allowlist, ADR-0121 D5); nothing here adds a word.
+ */
+export {
+  WORK_CHAT_CHANNEL_NOUNS,
+  WORK_CHAT_COMMENT_NOUNS,
+  WORK_CHAT_COMMENT_VERBS,
+  WORK_CHAT_ISSUE_NOUNS,
+  WORK_CHAT_POST_NOUNS,
+  WORK_CHAT_POST_VERBS,
+  WORK_CHAT_REQUEST_ENDING_FORMS,
+} from '../work-chat/work-chat-command';
 import { isNlDeicticOnlyPayload, nlDeterminerSources, nlSpanStartsWithDeterminer, normalizeNlSpan } from './action-entries';
 
 /**

@@ -1376,7 +1376,7 @@
    }
   },
   {
-   "id": "a7p-030",
+   "id": "a7n-107",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "followup",
@@ -1399,16 +1399,13 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "b",
-    "target": "jira.comment.propose",
-    "destination": {
-     "state": "named",
-     "kind": "jira",
-     "issueKey": "BE-123",
-     "project": "BE"
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 1 (2026-11-24): was a7p-030. P2-4: the validator re-checks the A7.5 step 0 route. \"방금\" is neither a determiner of the W1 point-back grammar nor a source name, so step 0 leaves this turn ordinary and the form-b plan is refused (recorded residual; no word is added). Replaced by a7p-079 / a7p-080 (\"그 대화\")."
   },
   {
    "id": "a7p-031",
@@ -1585,7 +1582,7 @@
    }
   },
   {
-   "id": "a7p-036",
+   "id": "a7n-108",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "followup",
@@ -1608,15 +1605,13 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "b",
-    "target": "slack.post.propose",
-    "destination": {
-     "state": "named",
-     "kind": "slack",
-     "channel": "quoky-test"
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 1 (2026-11-24): was a7p-036. P2-4: the validator re-checks the A7.5 step 0 route. \"방금\" is neither a determiner of the W1 point-back grammar nor a source name, so step 0 leaves this turn ordinary and the form-b plan is refused (recorded residual; no word is added). Replaced by a7p-079 / a7p-080 (\"그 대화\")."
   },
   {
    "id": "a7p-037",
@@ -5363,6 +5358,753 @@
     "route": "ordinary"
    },
    "note": "the owner typed their own text: the A6 / ADR-0112 path"
+  },
+  {
+   "id": "a7n-109",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "메일 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-new-source"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-1: a source other than the held one (mail, every catalog read source counts) is a new source; R2a names over every catalog read source route it to A7, where form b is refused."
+  },
+  {
+   "id": "a7n-110",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "릴리즈 관련 그 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-new-source"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-1: \"릴리즈\" is an alias of jira.release (A7.4: names AND aliases), not the held Slack source."
+  },
+  {
+   "id": "a7n-111",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 이슈 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-new-source"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-1: \"이슈\" outside the destination span names jira.issues, not the held Slack source."
+  },
+  {
+   "id": "a7n-112",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "릴리즈 관련 그 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-new-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-1: judged per word: \"릴리즈\" names only jira.release, a sibling of the held jira.issues, so it is a new source."
+  },
+  {
+   "id": "a7n-113",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "어제 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-read-condition"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-2: a time scope of its own (the A6 time grammar) asks for a new read: not form b."
+  },
+  {
+   "id": "a7n-114",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "진행 중인 지라 이슈 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-read-condition"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-2: a filter slot of the held entry (jira.issues status, the catalog valueGrounding) asks for a new read: not form b."
+  },
+  {
+   "id": "a7n-115",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "오늘 그 내용 정리해서 #quoky-test에 올려줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-read-condition"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-2: a time scope of its own: not form b."
+  },
+  {
+   "id": "a7n-116",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 회의 요약해서 BE-1에 달아주고 #quoky-test에도 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "회의"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-1"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 1 (2026-11-24): P2-3: the connective \"달아주고\" is a write verb of the grammar too: two writes, never covered."
+  },
+  {
+   "id": "a7n-117",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 달아주고 내일 오후 3시에 점검 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "점검",
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "note": "Review round 1 (2026-11-24): P2-3: a comment beside a calendar event is a second write (a comment verb in a clause with a Jira key)."
+  },
+  {
+   "id": "a7n-118",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "receipt-followup-route",
+   "lang": "ko",
+   "text": "확인했습니다 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 1 (2026-11-24): P2-4: the owner typed their own text; step 0 says ordinary (A6 / ADR-0112), so a form-b plan is refused."
+  },
+  {
+   "id": "a7n-119",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {}
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "step-invalid"
+   },
+   "note": "Review round 1 (2026-11-24): P2-5: the source read must be grounded in the words outside the destination span; they name Slack, not jira.issues."
+  },
+  {
+   "id": "a7n-120",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "BE-12 댓글 요약해서 BE-123으로 올려줘",
+   "context": "jira-inactive",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 1 (2026-11-24): P2-6: no literal is marked, so every literal kind is a possible destination; Jira is not active, so the turn stays ordinary."
+  },
+  {
+   "id": "a7n-121",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "슬랙 대화 요약해서 지라 티켓에 달아줘",
+   "context": "jira-inactive",
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 1 (2026-11-24): P2-6: the kind noun marks a Jira destination; Jira is not active, so the turn stays ordinary."
+  },
+  {
+   "id": "a7p-075",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "해당 내용 요약해서 지라 티켓에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "BE"
+    }
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-7: the kind-only destination has a span (\"지라 티켓에\"), so form b names no new source and asks the ticket (a7-09, one project allowlisted)."
+  },
+  {
+   "id": "a7p-076",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "그 내용 정리해서 슬랙 채널에 올려줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "destination": {
+     "state": "pick-channel",
+     "kind": "slack",
+     "channels": [
+      "quoky-test"
+     ]
+    }
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-7: \"슬랙 채널에\" is the destination span; form b lists the allowlisted channels."
+  },
+  {
+   "id": "a7p-077",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "지라 이슈 정리해서 슬랙 채널에 올려줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {}
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "destination": {
+     "state": "pick-channel",
+     "kind": "slack",
+     "channels": [
+      "quoky-test"
+     ]
+    }
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-7: \"지라 이슈\" names the held source (it binds); \"슬랙 채널에\" is the destination span."
+  },
+  {
+   "id": "a7n-122",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "two-literals",
+   "lang": "ko",
+   "text": "BE-12에서 가져와서 BE-123으로 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "BE-12"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-role"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P3-8: no literal is marked; a destination literal the planner names anyway is a role the rule did not give (the readings branch)."
+  },
+  {
+   "id": "a7n-123",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "지라 ZZ-5 요약해서 지라 티켓에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.issues",
+      "args": {
+       "keyword": "ZZ-5"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "ZZ-5"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-role"
+   },
+   "note": "Review round 1 (2026-11-24): P3-8: the kind-only branch never ignores a planner issueKey: refused as a role the rule did not give."
+  },
+  {
+   "id": "a7p-078",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "destination-pick",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 fe 티켓에 달아줘",
+   "context": "two-projects",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "project": "fe"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "destination": {
+     "state": "pick-ticket",
+     "kind": "jira",
+     "project": "FE"
+    }
+   },
+   "note": "Review round 1 (2026-11-24): P3-9: the named project matches the allowlist without case, like an issue key."
+  },
+  {
+   "id": "a7p-079",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 대화 요약해서 지라 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-4: replaces a7p-030 with the point-back form; \"지라\" is in the destination span."
+  },
+  {
+   "id": "a7p-080",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 대화 정리해서 슬랙 #quoky-test에 올려줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 1 (2026-11-24): P2-4: replaces a7p-036 with the point-back form; \"슬랙\" is in the destination span."
+  },
+  {
+   "id": "a7p-081",
+   "batch": "A7-2",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "그 내용 요약해서 내일 오후 3시에 배포 점검 일정 만들어줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "배포 점검",
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "배포 점검",
+     "when": "내일 오후 3시",
+     "missing": []
+    }
+   },
+   "note": "Review round 1 (2026-11-24): P2-2: the event time is the destination's own span, never a read condition; \"일정\" touching the title is the event's own noun."
   }
  ]
 }

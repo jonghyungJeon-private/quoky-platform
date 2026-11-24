@@ -1,16 +1,24 @@
 import { NL_SPAN_MAX_CHARS, NL_WHEN_MAX_CHARS, isNlSpanGrounded, normalizeNlSpan } from '../nl-routing/action-entries';
 import { nlWriteClausePointsBack } from '../nl-routing/write-clause';
 import { containsCredentialMaterial } from '../credential-guard';
+import type { NlValidationFailureReason } from '../nl-routing/selection-validator';
 import {
   AGENT_A7_DRAFT_SCHEMA,
   AGENT_A7_SOURCES,
   AGENT_A7_TARGETS,
   AGENT_A7_TARGET_ARGS,
   analyseCrossWriteLiterals,
-  crossWriteNamedSources,
+  crossWriteCalendarOutside,
+  crossWriteCrossSourceTrigger,
+  crossWriteDestinationSpan,
+  crossWriteHasReadCondition,
+  crossWriteNamedEntries,
+  crossWriteNamesNewSource,
   crossWriteNouns,
+  crossWriteSecondWriteBesideCalendar,
   crossWriteTextOutsideSpan,
   isAgentA7Target,
+  routeCrossWrite,
   type AgentA7Kind,
   type AgentA7Operation,
   type AgentA7Target,
@@ -78,15 +86,23 @@ export interface ValidatedCrossWritePlan {
 }
 
 export interface CrossWriteDeps {
-  /** The validator's own per-read check (ADR-0120 D4, the vetoes), so a source read is judged exactly as any read step. */
-  readonly checkRead: (step: Extract<AgentPlanStep, { kind: 'read' }>) => { readonly ok: true; readonly step: ValidatedAgentStep } | Extract<AgentPlanValidation, { ok: false }>;
+  /**
+   * The validator's own per-read check (ADR-0120 D4, the vetoes, the multi-step clause grounding), so a source read is judged
+   * exactly as any read step of a plan of these `steps`, grounded in `groundingText` (the owner's words outside the destination
+   * span, review round 1).
+   */
+  readonly checkRead: (
+    step: Extract<AgentPlanStep, { kind: 'read' }>,
+    steps: readonly AgentPlanStep[],
+    groundingText: string,
+  ) => { readonly ok: true; readonly step: ValidatedAgentStep } | Extract<AgentPlanValidation, { ok: false }>;
   readonly charge: (steps: readonly ValidatedAgentStep[]) => number;
 }
 
 type Result = { readonly ok: true; readonly plan: ValidatedCrossWritePlan } | Extract<AgentPlanValidation, { ok: false }>;
 
-function refuse(reason: AgentPlanRefusal, step?: number): Extract<AgentPlanValidation, { ok: false }> {
-  return { ok: false, reason, ...(step !== undefined ? { step } : {}) };
+function refuse(reason: AgentPlanRefusal, step?: number, stepReason?: NlValidationFailureReason): Extract<AgentPlanValidation, { ok: false }> {
+  return { ok: false, reason, ...(step !== undefined ? { step } : {}), ...(stepReason !== undefined ? { stepReason } : {}) };
 }
 
 /** Whether a plan is an A7 plan at all (a propose step, or the `payload-draft.v1` summary): such a plan takes rule 9 and no other. */
@@ -116,15 +132,46 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
   const argNames = AGENT_A7_TARGET_ARGS[propose.target];
   if (!Object.keys(propose.args).every((name) => argNames.includes(name))) return refuse('cross-write-invalid', stepNo);
 
+  const nouns = crossWriteNouns(ctx.offered);
+  const destinationKind = spec.kind === 'calendar' ? undefined : spec.kind;
+  const analysis = analyseCrossWriteLiterals(ctx.groundingText, cw, nouns, destinationKind);
+  // Calendar: the title and the time are the owner's own spans (A7.3); computed here (pure), refused at their place below.
+  const spans = spec.kind === 'calendar' ? calendarSpans(propose.args, ctx.groundingText) : undefined;
+  // The owner's words outside the destination span (A7.4, review round 1): the marked literal's span or the kind-only span; for
+  // a calendar event, the words without the title and time spans. The source checks and the source-read grounding read only these.
+  const outside =
+    spec.kind === 'calendar'
+      ? crossWriteCalendarOutside(ctx.groundingText, [spans?.title, spans?.when], ctx.offered)
+      : crossWriteTextOutsideSpan(analysis, crossWriteDestinationSpan(analysis, spec.kind));
+
+  // More than one write in one request is never covered (A7.3), for every destination kind, the calendar included, and before
+  // the route re-check (the router leaves a two-write message ordinary) (review round 1, P2).
+  if (analysis.writeUnits > 1) return refuse('cross-write-writes', stepNo);
+
+  // A7.5 step 0, re-checked (review round 1, P2): the plan stands only on a turn the router sends to A7. Form a needs the
+  // cross-source trigger; form b either trigger. The router has no calendar write-clause detector yet (A7-S7), so a calendar plan
+  // needs the same cross-source trigger over its words outside the title and time spans.
+  if (spec.kind === 'calendar') {
+    if (!crossWriteCrossSourceTrigger(outside, ctx.offered, analysis)) return refuse('cross-write-invalid', stepNo);
+  } else {
+    const route = routeCrossWrite({ groundingText: ctx.groundingText, context: cw, offered: ctx.offered });
+    if (route.route !== 'a7' || (form === 'a' && route.trigger !== 'cross-source')) return refuse('cross-write-invalid', stepNo);
+  }
+
   let source: Extract<ValidatedAgentStep, { kind: 'read' }> | undefined;
   let connectorCalls = 0;
   if (form === 'a') {
     const read = steps[0];
     if (read?.kind !== 'read' || read.ref !== undefined) return refuse('cross-write-invalid', 1);
     if (!(AGENT_A7_SOURCES as readonly string[]).includes(read.entryId) || !cw.sources.includes(read.entryId)) return refuse('cross-write-source', 1);
-    const checked = deps.checkRead(read);
+    // The normal multi-step grounding of a read step, over the words outside the destination span (review round 1, P2).
+    const checked = deps.checkRead(read, steps, outside);
     if (!checked.ok) return checked;
     if (checked.step.kind !== 'read') return refuse('cross-write-invalid', 1);
+    // The source's role is grounded in those words: they name the read's entry (the catalog's names and aliases), or they name no
+    // read entry at all and the read carries a grounded value of its own (a source literal: "BE-12 댓글 요약해서 …").
+    const named = crossWriteNamedEntries(outside, ctx.offered);
+    if (!named.includes(read.entryId) && (named.length > 0 || Object.keys(checked.step.args).length === 0)) return refuse('step-invalid', 1, 'ungrounded');
     source = checked.step;
     connectorCalls = deps.charge([checked.step]);
   } else {
@@ -143,54 +190,53 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
     }
   }
 
-  const nouns = crossWriteNouns(ctx.offered);
   const base = { kind: 'cross-write' as const, form, target: propose.target, operation: spec.operation, destinationKind: spec.kind, ...(source !== undefined ? { source } : {}), connectorCalls };
 
-  // Calendar: the primary calendar is the destination; the title and the time are the owner's own spans (A7.3).
   if (spec.kind === 'calendar') {
-    const analysis = analyseCrossWriteLiterals(ctx.groundingText, cw, nouns, undefined);
+    // A destination marked for another kind is not a calendar request (`analysis` judged every kind for a calendar target).
     if (analysis.marked.length > 0 || analysis.kindMarked.jira || analysis.kindMarked.slack) return refuse('cross-write-role', stepNo);
-    const spans = calendarSpans(propose.args, ctx.groundingText);
+    // A comment or post beside the event is a second write, though its verb is the only one counted (review round 1, P2).
+    if (crossWriteSecondWriteBesideCalendar(ctx.groundingText)) return refuse('cross-write-writes', stepNo);
     if (spans === undefined) return refuse('cross-write-span', stepNo);
-    if (form === 'b') return finishB(base, { state: 'primary-calendar' }, ctx, nouns, analysis, undefined, spans);
+    if (form === 'b') return finishB(base, { state: 'primary-calendar' }, ctx, outside, spans);
     return { ok: true, plan: { ...base, destination: { state: 'primary-calendar' }, calendar: spans } };
   }
 
-  const analysis = analyseCrossWriteLiterals(ctx.groundingText, cw, nouns, spec.kind);
-  // More than one write in one request is never covered (A7.3).
-  if (analysis.writeUnits > 1) return refuse('cross-write-writes', stepNo);
   const eligible = analysis.literals.filter((literal) => literal.allowed);
   const plannerKey = spec.kind === 'jira' ? stringArg(propose.args.issueKey)?.toUpperCase() : undefined;
   const plannerChannel = spec.kind === 'slack' ? stringArg(propose.args.channel)?.replace(/^#/u, '').toLowerCase() : undefined;
   const plannerLiteral = plannerKey ?? plannerChannel;
-  const plannerProject = spec.kind === 'jira' ? stringArg(propose.args.project) : undefined;
+  const plannerProject = spec.kind === 'jira' ? stringArg(propose.args.project)?.toUpperCase() : undefined;
   // A literal the planner wrote that is not in the owner's own words at all is never grounded.
   if (plannerLiteral !== undefined && !analysis.literals.some((literal) => literal.value === plannerLiteral)) return refuse('cross-write-ungrounded', stepNo);
 
   let destination: AgentCrossWriteDestination;
-  let named: CrossWriteLiteral | undefined;
   if (analysis.marked.length === 1) {
-    named = analysis.marked[0] as CrossWriteLiteral;
+    const named = analysis.marked[0] as CrossWriteLiteral;
     if (!named.allowed) return refuse('cross-write-not-allowed', stepNo);
     // Rule 5: the planner's role equals the rule's role; a project beside a named key is not a role of this plan.
     if (plannerLiteral !== named.value || plannerProject !== undefined) return refuse('cross-write-role', stepNo);
     destination = named.kind === 'jira' ? { state: 'named', kind: 'jira', issueKey: named.value, project: named.project as string } : { state: 'named', kind: 'slack', channel: named.value };
-  } else if (analysis.marked.length > 1 || eligible.length > 0) {
-    // A7.4a rule 4: no literal marked, or several. Two literals: the readings (at most 2 per pair); one: restate. Nothing is read.
-    const readings =
-      eligible.length === 2
-        ? [
-            { source: (eligible[0] as CrossWriteLiteral).value, destination: (eligible[1] as CrossWriteLiteral).value, kind: (eligible[1] as CrossWriteLiteral).kind },
-            { source: (eligible[1] as CrossWriteLiteral).value, destination: (eligible[0] as CrossWriteLiteral).value, kind: (eligible[0] as CrossWriteLiteral).kind },
-          ]
-            .filter((reading) => reading.kind === spec.kind)
-            .map(({ source: from, destination: to }) => ({ source: from, destination: to }))
-        : [];
-    destination = readings.length > 0 ? { state: 'ask-readings', readings } : { state: 'ask-restate' };
   } else {
-    // No eligible literal: a literal off the allowlist that is marked as the destination was refused above; here the kind is
-    // named with no instance (a7-09), or nothing is named at all.
-    if (spec.kind === 'jira') {
+    // Rule 5 (review round 1, P3): the rule marked no literal, so a destination literal the planner names is a role the rule did
+    // not give it, in every branch below (the readings, the restate, the kind-only pick): refused, never corrected.
+    if (plannerLiteral !== undefined) return refuse('cross-write-role', stepNo);
+    if (analysis.marked.length > 1 || eligible.length > 0) {
+      // A7.4a rule 4: no literal marked, or several. Two literals: the readings (at most 2 per pair); one: restate. Nothing is read.
+      if (plannerProject !== undefined) return refuse('cross-write-role', stepNo);
+      const readings =
+        eligible.length === 2
+          ? [
+              { source: (eligible[0] as CrossWriteLiteral).value, destination: (eligible[1] as CrossWriteLiteral).value, kind: (eligible[1] as CrossWriteLiteral).kind },
+              { source: (eligible[1] as CrossWriteLiteral).value, destination: (eligible[0] as CrossWriteLiteral).value, kind: (eligible[0] as CrossWriteLiteral).kind },
+            ]
+              .filter((reading) => reading.kind === spec.kind)
+              .map(({ source: from, destination: to }) => ({ source: from, destination: to }))
+          : [];
+      destination = readings.length > 0 ? { state: 'ask-readings', readings } : { state: 'ask-restate' };
+    } else if (spec.kind === 'jira') {
+      // No eligible literal: a literal off the allowlist that is marked as the destination was refused above; here the kind is
+      // named with no instance (a7-09), or nothing is named at all.
       const project = analysis.namedProject;
       if (plannerProject !== undefined && plannerProject !== project) return refuse('cross-write-ungrounded', stepNo);
       if (!analysis.kindMarked.jira) destination = { state: 'missing', kind: 'jira' };
@@ -199,37 +245,35 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
       else if (cw.jiraProjects.length > 1) destination = { state: 'pick-project', kind: 'jira', projects: cw.jiraProjects.map((key) => key.toUpperCase()) };
       else return refuse('cross-write-not-allowed', stepNo);
     } else {
-      if (plannerChannel !== undefined) return refuse('cross-write-ungrounded', stepNo);
       if (!analysis.kindMarked.slack) destination = { state: 'missing', kind: 'slack' };
       else if (cw.slackChannels.length > 0) destination = { state: 'pick-channel', kind: 'slack', channels: cw.slackChannels.map((name) => name.toLowerCase()) };
       else return refuse('cross-write-not-allowed', stepNo);
     }
   }
-  if (form === 'b') return finishB(base, destination, ctx, nouns, analysis, named);
+  if (form === 'b') return finishB(base, destination, ctx, outside);
   return { ok: true, plan: { ...base, destination } };
 }
 
 /**
- * Form b (A7.4): the turn names no new source. The source-name check runs on the owner's words OUTSIDE the destination span
- * (the destination literal plus the catalog names that touch it), so "해당 내용 요약해서 지라 BE-123에 달아줘" names no source.
- * A remaining name of the held entry's own source still binds; any other source name is form (a) over that source, so this
- * plan (which has no read step) is refused.
+ * Form b (A7.4, review round 1): the turn names no new source and no new read condition. Both checks run on the owner's words
+ * OUTSIDE the destination span (the destination literal or the kind-only span, plus the catalog names that touch it; for a
+ * calendar event, outside the title and time spans), so "해당 내용 요약해서 지라 BE-123에 달아줘" names no source.
+ * - A word naming a READ entry (any catalog read source, by its names and aliases) other than the held entry is a new source.
+ *   A word naming the held entry still binds (the owner says where the content came from).
+ * - A time expression or a filter slot of the held entry (the existing time and slot grammars) is a new read condition
+ *   ("어제 슬랙 내용 요약해서 …"): the turn asks for a new read, so it is not form b.
+ * Either way this plan (which has no read step) is refused, fail closed; form a over that source is the planner's other form.
  */
 function finishB(
   base: Omit<ValidatedCrossWritePlan, 'destination' | 'calendar'>,
   destination: AgentCrossWriteDestination,
   ctx: AgentPlanValidationContext,
-  _nouns: ReturnType<typeof crossWriteNouns>,
-  analysis: ReturnType<typeof analyseCrossWriteLiterals>,
-  named: CrossWriteLiteral | undefined,
+  outside: string,
   calendar?: ValidatedCrossWritePlan['calendar'],
 ): Result {
-  const held = ctx.offered.get(ctx.crossWrite?.receipt?.sourceEntryId ?? '');
-  const heldNames = new Set((held?.sourceNames ?? []).map((name) => name.toLowerCase()));
-  const outside = crossWriteTextOutsideSpan(analysis, named);
-  // A named entry is a NEW source unless it shares a source name with the held entry (jira.issues and jira.release are both Jira).
-  const sources = crossWriteNamedSources(outside, ctx.offered).filter((id) => !(ctx.offered.get(id)?.sourceNames ?? []).some((name) => heldNames.has(name.toLowerCase())));
-  if (sources.length > 0) return refuse('cross-write-new-source');
+  const heldId = ctx.crossWrite?.receipt?.sourceEntryId ?? '';
+  if (crossWriteNamesNewSource(outside, ctx.offered, heldId)) return refuse('cross-write-new-source');
+  if (crossWriteHasReadCondition(outside, ctx.offered.get(heldId))) return refuse('cross-write-read-condition');
   return { ok: true, plan: { ...base, destination, ...(calendar !== undefined ? { calendar } : {}) } };
 }
 

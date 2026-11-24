@@ -54,7 +54,8 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   owner's own words (A7.4a role rule, destination-span exclusion, allowlist, kind-only pick states, calendar spans) and returns a
   `cross-write` plan that is never runnable (declined `cross-write-off`; shadow logs closed fields). The A7.5 step 0 router and
   the pre-read destination check exist as pure code and a port; neither is wired into the live turn.
-- Gold: `agent-plan.a7.v1.json`, 180 cases pending owner approval (plan-form share only; the 275 total is NOT met). The planner
+- Review round 1 (CA + Codex, 7 P2 + 5 P3) fixed structurally; see DECISIONS "A7-S1 review round 1".
+- Gold: `agent-plan.a7.v1.json`, 202 cases pending owner approval (plan-form share only; the 275 total is NOT met). The planner
   prompt (`agent-plan.v11`), the catalog, the grant producer, the flags and the existing golds are unchanged.
 - Not done (next): A7-S2 held receipt, A7-S3 drafter, A7-S4 card and pick, A7-S5 gates. See DECISIONS "ADR-0121 A7-S1
   implementation note (2026-11-24)".

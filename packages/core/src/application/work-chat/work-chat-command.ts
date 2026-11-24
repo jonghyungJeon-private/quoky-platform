@@ -974,15 +974,28 @@ export function detectWorkChatCommand(text: string, options: { readonly yieldToS
  */
 const ISSUE_KEY_TOKEN = String.raw`([A-Za-z][A-Za-z0-9_]{0,63}-[1-9]\d{0,8})`;
 const JIRA_WORD = String.raw`(?:(?:jira|지라)\s*)?`;
-const ISSUE_NOUN = String.raw`(?:\s*(?:이슈|티켓))?`;
-const REQUEST_ENDING = String.raw`(?:\s*(?:줘|주세요|줄래(?:요)?|줘요))`;
-const COMMENT_VERB = String.raw`(?:\s*(?:을|를))?(?:\s*(?:달아|남겨|써|작성해|추가해|등록해)${REQUEST_ENDING}?)?`;
+/**
+ * The closed word sets of this grammar, exported so the A7 cross-source router (`agent/cross-write.ts`, ADR-0121 A7) reads the
+ * SAME words instead of a copy. Each regex below is composed from them, character for character as before (pinned by
+ * `cross-write.test.ts`).
+ */
+export const WORK_CHAT_ISSUE_NOUNS = ['이슈', '티켓'] as const;
+export const WORK_CHAT_CHANNEL_NOUNS = ['채널'] as const;
+export const WORK_CHAT_COMMENT_NOUNS = ['댓글', '코멘트'] as const;
+export const WORK_CHAT_POST_NOUNS = ['메시지', '글'] as const;
+export const WORK_CHAT_COMMENT_VERBS = ['달아', '남겨', '써', '작성해', '추가해', '등록해'] as const;
+export const WORK_CHAT_POST_VERBS = ['게시', '올려', '보내', '포스트', '전송'] as const;
+/** The request ending alternation (without the leading optional whitespace). */
+export const WORK_CHAT_REQUEST_ENDING_FORMS = String.raw`(?:줘|주세요|줄래(?:요)?|줘요)`;
+const ISSUE_NOUN = String.raw`(?:\s*(?:${WORK_CHAT_ISSUE_NOUNS.join('|')}))?`;
+const REQUEST_ENDING = String.raw`(?:\s*${WORK_CHAT_REQUEST_ENDING_FORMS})`;
+const COMMENT_VERB = String.raw`(?:\s*(?:을|를))?(?:\s*(?:${WORK_CHAT_COMMENT_VERBS.join('|')})${REQUEST_ENDING}?)?`;
 const COMMENT_KO = new RegExp(
-  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}\s*에\s*(?:댓글|코멘트)${COMMENT_VERB}\s*[:：]\s*([\s\S]*)$`,
+  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}\s*에\s*(?:${WORK_CHAT_COMMENT_NOUNS.join('|')})${COMMENT_VERB}\s*[:：]\s*([\s\S]*)$`,
   'iu',
 );
 const COMMENT_KO_NO_TEXT = new RegExp(
-  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}\s*에\s*(?:댓글|코멘트)${COMMENT_VERB}\s*[.!~]*$`,
+  String.raw`^${JIRA_WORD}${ISSUE_KEY_TOKEN}${ISSUE_NOUN}\s*에\s*(?:${WORK_CHAT_COMMENT_NOUNS.join('|')})${COMMENT_VERB}\s*[.!~]*$`,
   'iu',
 );
 const COMMENT_EN = new RegExp(
@@ -1002,8 +1015,8 @@ const TRANSITION_EN = new RegExp(
 const NON_STATUS_FIELD = /담당자|담당|우선순위|제목|설명|라벨|레이블|기한|마감|스프린트|에픽|assignee|priority|title|summary|description|label|due|sprint|epic/iu;
 const CHANNEL_TOKEN = String.raw`#([\p{L}\p{N}][\p{L}\p{N}._-]{0,79})`;
 const SLACK_WORD = String.raw`(?:(?:slack|슬랙)\s*)?`;
-const CHANNEL_NOUN = String.raw`(?:\s*채널)?`;
-const POST_VERB = String.raw`(?:(?:메시지|글)\s*(?:을|를)?\s*)?(?:게시|올려|보내|포스트|전송)(?:\s*해)?${REQUEST_ENDING}?`;
+const CHANNEL_NOUN = String.raw`(?:\s*${WORK_CHAT_CHANNEL_NOUNS.join('|')})?`;
+const POST_VERB = String.raw`(?:(?:${WORK_CHAT_POST_NOUNS.join('|')})\s*(?:을|를)?\s*)?(?:${WORK_CHAT_POST_VERBS.join('|')})(?:\s*해)?${REQUEST_ENDING}?`;
 const POST_COLON_KO = new RegExp(
   String.raw`^${SLACK_WORD}${CHANNEL_TOKEN}${CHANNEL_NOUN}\s*에\s*${POST_VERB}\s*[:：]\s*([\s\S]*)$`,
   'iu',

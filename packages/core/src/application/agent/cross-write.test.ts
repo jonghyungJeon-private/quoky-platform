@@ -2,9 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { NL_ACTION_ENTRIES } from '../nl-routing/action-entries';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
-import { detectWorkChatCommand } from '../work-chat/work-chat-command';
+import {
+  WORK_CHAT_CHANNEL_NOUNS,
+  WORK_CHAT_COMMENT_NOUNS,
+  WORK_CHAT_COMMENT_VERBS,
+  WORK_CHAT_ISSUE_NOUNS,
+  WORK_CHAT_POST_NOUNS,
+  WORK_CHAT_POST_VERBS,
+  WORK_CHAT_REQUEST_ENDING_FORMS,
+  detectWorkChatCommand,
+} from '../work-chat/work-chat-command';
 import { ConnectorWriteOperation } from '../../ports';
 import {
+  A7_POINT_BACK_DETERMINERS,
   AGENT_A7_TARGETS,
   analyseCrossWriteLiterals,
   checkCrossWriteDestination,
@@ -309,7 +319,121 @@ describe('pinned to the existing grammar and ports', () => {
     for (const verb of ['달아줘', '남겨줘', '써줘', '작성해줘', '추가해줘', '등록해줘']) expect(detectWorkChatCommand(`BE-123에 댓글 ${verb}`)?.kind, verb).toBe('connector-write');
     for (const verb of ['게시해줘', '올려줘', '보내줘', '포스트해줘', '전송해줘']) expect(detectWorkChatCommand(`#quoky-test에 ${verb}`)?.kind, verb).toBe('connector-write');
   });
+  it('the grammar pieces A7 imports are the ADR-0112 grammar\'s own exported words, unchanged (review round 1, P3)', () => {
+    expect([WORK_CHAT_ISSUE_NOUNS, WORK_CHAT_CHANNEL_NOUNS, WORK_CHAT_COMMENT_NOUNS, WORK_CHAT_POST_NOUNS]).toEqual([['이슈', '티켓'], ['채널'], ['댓글', '코멘트'], ['메시지', '글']]);
+    expect(WORK_CHAT_COMMENT_VERBS).toEqual(['달아', '남겨', '써', '작성해', '추가해', '등록해']);
+    expect(WORK_CHAT_POST_VERBS).toEqual(['게시', '올려', '보내', '포스트', '전송']);
+    expect(WORK_CHAT_REQUEST_ENDING_FORMS).toBe('(?:줘|주세요|줄래(?:요)?|줘요)');
+    // The grammar still behaves as before with the composed patterns (verbatim payload, usage hint, quoted post).
+    expect(detectWorkChatCommand('Jira BE-123 티켓에 코멘트 남겨줘: 확인')?.kind).toBe('connector-write');
+    expect(detectWorkChatCommand('슬랙 #quoky-test 채널에 메시지를 게시해줘: 공지')?.kind).toBe('connector-write');
+    expect(detectWorkChatCommand('#quoky-test에 "배포 완료"라고 올려줘')?.kind).toBe('connector-write');
+  });
   it('the three operations are the ports\' own operation names', () => {
     expect(Object.values(AGENT_A7_TARGETS).map((target) => target.operation).sort()).toEqual([ConnectorWriteOperation.CALENDAR_EVENT_CREATE, ConnectorWriteOperation.CHANNEL_POST, ConnectorWriteOperation.ISSUE_COMMENT].sort());
+  });
+});
+
+describe('review round 1 (CA + Codex): every finding has a regression', () => {
+  const route = (groundingText: string, context: AgentCrossWriteContext | undefined = CW) => routeCrossWrite({ groundingText, context, offered: OFFERED });
+  const jiraRead = (args: Record<string, unknown> = {}) => ({ entryId: 'jira.issues', args });
+
+  it('P2-1: form b names a new source by the catalog names AND aliases of EVERY read source, outside the destination span', () => {
+    for (const text of ['메일 내용 요약해서 BE-123에 달아줘', '릴리즈 관련 그 내용 요약해서 BE-123에 달아줘', '그 이슈 요약해서 BE-123에 달아줘', '드라이브 문서 정리해서 #quoky-test에 올려줘']) {
+      const body = text.includes('#') ? formB(slack({ channel: 'quoky-test' })) : formB(jira({ issueKey: 'BE-123' }));
+      expect(check(body, text, withReceipt), text).toMatchObject({ ok: false, reason: 'cross-write-new-source' });
+    }
+    // A word naming the held entry still binds, also when it names a sibling entry too ("지라": both Jira entries).
+    const jiraReceipt = { ...CW, receipt: { ...RECEIPT, sourceEntryId: 'jira.issues' } };
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '지라 내용 요약해서 BE-123에 달아줘', jiraReceipt)).toMatchObject({ ok: true });
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '그 이슈들 요약해서 BE-123에 달아줘', jiraReceipt)).toMatchObject({ ok: true });
+    // An alias of a sibling entry alone is a new source: the release entry is not the held issues.
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '릴리즈 관련 그 내용 요약해서 BE-123에 달아줘', jiraReceipt)).toMatchObject({ ok: false, reason: 'cross-write-new-source' });
+    // With no structural trigger the router leaves the turn ordinary (R2a is names only), so the plan is refused before the bind.
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '릴리즈 내용 요약해서 BE-123에 달아줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+  });
+
+  it('P2-1 residual: R2a stays names only, now over every catalog read source; an alias alone keeps an A6 literal post', () => {
+    expect(route('메일 내용 요약해서 BE-123에 달아줘')).toEqual({ route: 'a7', trigger: 'cross-source' });
+    expect(route('BE-123에 짧게 배포 완료 달아줘')).toEqual({ route: 'ordinary' });
+  });
+
+  it('P2-2: form b with a read condition of its own (time scope, a filter slot of the held entry) is not form b', () => {
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '어제 슬랙 내용 요약해서 BE-123에 달아줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-read-condition' });
+    expect(check(formB(slack({ channel: 'quoky-test' })), '오늘 그 내용 정리해서 #quoky-test에 올려줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-read-condition' });
+    const jiraReceipt = { ...CW, receipt: { ...RECEIPT, sourceEntryId: 'jira.issues' } };
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '진행 중인 지라 이슈 요약해서 BE-123에 달아줘', jiraReceipt)).toMatchObject({ ok: false, reason: 'cross-write-read-condition' });
+    // The same words with the read step are form a over that source, validated as any read.
+    expect(check(formA('릴리즈', jira({ issueKey: 'BE-123' })), '어제 슬랙 릴리즈 대화 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true, plan: { form: 'a' } });
+    // A calendar's own time span is the destination's, never a read condition.
+    expect(check(formB(calendar({ title: '배포 점검', when: '내일 오후 3시' })), '그 내용 요약해서 내일 오후 3시에 배포 점검 일정 만들어줘', withReceipt)).toMatchObject({ ok: true, plan: { form: 'b', calendar: { when: '내일 오후 3시' } } });
+  });
+
+  it('P2-3: writes are counted by the grammar verb stems whatever the ending, connectives included, calendar too', () => {
+    const text = '슬랙 회의 요약해서 BE-1에 달아주고 #quoky-test에도 올려줘';
+    expect(check(formA('회의', jira({ issueKey: 'BE-1' })), text)).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+    expect(check(formA('회의', slack({ channel: 'quoky-test' })), text)).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+    expect(analyseCrossWriteLiterals(text, CW, crossWriteNouns(OFFERED)).writeUnits).toBe(2);
+    expect(analyseCrossWriteLiterals('슬랙 릴리즈 요약해서 #quoky-test에 게시하고 BE-1에 남겨줘', CW, crossWriteNouns(OFFERED)).writeUnits).toBe(2);
+    expect(route(text)).toEqual({ route: 'ordinary' });
+    // Beside a calendar event (whose own verb is not a comment or post verb), the comment is a second write.
+    expect(check(formA('릴리즈', calendar({ title: '점검', when: '내일 오후 3시' })), '슬랙 릴리즈 요약해서 BE-123에 달아주고 내일 오후 3시에 점검 일정 만들어줘')).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+    // A relative form is no write ("보내준": someone sent); one write stays one.
+    expect(analyseCrossWriteLiterals('보내준 슬랙 대화 요약해서 BE-123에 달아줘', CW, crossWriteNouns(OFFERED)).writeUnits).toBe(1);
+  });
+
+  it('P2-4: the validator re-checks the step 0 route: an ordinary turn is never an A7 plan; form a needs the cross-source trigger', () => {
+    expect(route('확인했습니다 BE-123에 달아줘', withReceipt)).toEqual({ route: 'ordinary' });
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '확인했습니다 BE-123에 달아줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+    expect(check(formB(jira({ issueKey: 'BE-123' })), 'BE-123에 확인했습니다 달아줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+    // A bare receipt-bound follow-up is form b only; as form a it has no cross-source trigger.
+    expect(check(formB(jira({ issueKey: 'BE-124' })), 'BE-124에도 달아줘', withReceipt)).toMatchObject({ ok: true, plan: { form: 'b' } });
+    expect(check(formA('릴리즈', jira({ issueKey: 'BE-124' })), 'BE-124에도 달아줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+    // A calendar plan needs the same cross-source trigger outside its title and time spans.
+    expect(check(formB(calendar({ title: '배포 점검', when: '내일 오후 3시' })), '확인 내일 오후 3시에 배포 점검 일정 만들어줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+  });
+
+  it('P2-5: the source read is grounded in the owner\'s words outside the destination span (its entry named, or its own value)', () => {
+    const text = '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘';
+    expect(check({ steps: [jiraRead(), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, text)).toMatchObject({ ok: false, reason: 'step-invalid', step: 1, stepReason: 'ungrounded' });
+    expect(check({ steps: [jiraRead({ keyword: '릴리즈' }), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, text)).toMatchObject({ ok: false, reason: 'step-invalid', step: 1 });
+    // "지라" inside the destination span grounds no Jira read.
+    expect(check({ steps: [jiraRead(), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, '그 대화 요약해서 지라 BE-123에 달아줘')).toMatchObject({ ok: false, reason: 'step-invalid' });
+    // Grounded: the entry is named outside the span, or nothing is named and the read carries the owner's own source literal.
+    expect(check({ steps: [jiraRead(), DRAFT_A, slack({ channel: 'quoky-test' })], ambiguity: 'CLEAR' }, '지라 이슈 요약해서 #quoky-test에 올려줘')).toMatchObject({ ok: true });
+    expect(check({ steps: [jiraRead({ keyword: 'BE-12' }), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, 'BE-12 댓글 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true });
+  });
+
+  it('P2-6: A7 must be active for every destination kind the words resolve to (marked, literal, or kind noun)', () => {
+    const slackOnly = { ...CW, active: { jira: false, slack: true, calendar: false } };
+    expect(route('BE-12 댓글 요약해서 BE-123으로 올려줘', slackOnly)).toEqual({ route: 'ordinary' });
+    expect(route('슬랙 대화 요약해서 지라 티켓에 달아줘', slackOnly)).toEqual({ route: 'ordinary' });
+    expect(route('BE-12 댓글 요약해서 BE-123으로 올려줘')).toEqual({ route: 'a7', trigger: 'cross-source' });
+    // The marked destination's kind decides; a source literal of an inactive kind does not block it.
+    expect(route('BE-12 댓글 요약해서 #quoky-test에 올려줘', slackOnly)).toEqual({ route: 'a7', trigger: 'cross-source' });
+  });
+
+  it('P2-7: a kind-only destination has a span: form b over it asks the project or channel (a7-09), never new-source', () => {
+    expect(check(formB(jira()), '해당 내용 요약해서 지라 티켓에 달아줘', withReceipt)).toMatchObject({ ok: true, plan: { form: 'b', destination: { state: 'pick-ticket', project: 'BE' } } });
+    expect(check(formB(jira()), '해당 내용 요약해서 지라 티켓에 달아줘', { ...withReceipt, jiraProjects: ['BE', 'FE'] })).toMatchObject({ ok: true, plan: { destination: { state: 'pick-project' } } });
+    expect(check(formB(slack()), '그 내용 정리해서 슬랙 채널에 올려줘', withReceipt)).toMatchObject({ ok: true, plan: { form: 'b', destination: { state: 'pick-channel' } } });
+    expect(route('해당 내용 요약해서 지라 티켓에 달아줘', withReceipt)).toEqual({ route: 'a7', trigger: 'cross-source' });
+  });
+
+  it('P3-8: a destination literal the planner names that the rule did not mark is a role the rule did not give: refused', () => {
+    expect(check({ steps: [jiraRead({ keyword: 'BE-12' }), DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' }, 'BE-12에서 가져와서 BE-123으로 올려줘')).toMatchObject({ ok: false, reason: 'cross-write-role' });
+    expect(check(formA('quoky-test', slack({ channel: 'quoky-test' })), '#quoky-test 요약해서 올려줘')).toMatchObject({ ok: false, reason: 'cross-write-role' });
+    expect(check({ steps: [jiraRead({ keyword: 'ZZ-5' }), DRAFT_A, jira({ issueKey: 'ZZ-5' })], ambiguity: 'CLEAR' }, '지라 ZZ-5 요약해서 지라 티켓에 달아줘')).toMatchObject({ ok: false, reason: 'cross-write-role' });
+  });
+
+  it('P3-9: the named project matches the allowlist without case', () => {
+    const two = { ...CW, jiraProjects: ['BE', 'FE'] };
+    expect(check(formA('릴리즈', jira({ project: 'fe' })), '슬랙 릴리즈 대화 요약해서 fe 티켓에 달아줘', two)).toMatchObject({ ok: true, plan: { destination: { state: 'pick-ticket', project: 'FE' } } });
+    expect(check(formA('릴리즈', jira()), '슬랙 릴리즈 대화 요약해서 Fe 티켓에 달아줘', { ...CW, jiraProjects: ['fe', 'BE'] })).toMatchObject({ ok: true, plan: { destination: { state: 'pick-ticket', project: 'FE' } } });
+  });
+
+  it('P3-11: 해당 is a named closed constant of the A7 router only; the A6 point-back grammar is not widened', () => {
+    expect(A7_POINT_BACK_DETERMINERS).toEqual(['해당']);
+    expect(route('해당 내용 정리해서 #quoky-test에 올려줘')).toEqual({ route: 'a7', trigger: 'cross-source' });
   });
 });
