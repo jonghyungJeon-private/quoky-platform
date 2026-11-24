@@ -39,19 +39,24 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — ADR-0125: local client adapter for a macOS app (owner request 2026-11-24; PROPOSED, docs only)
 
 - **Docs.** DECISIONS "ADR-0125": a new `packages/adapter-local-client` (`platform: 'local-client'`) for a separate
-  macOS app (`quoky-mac`, own repo). A second loopback-only listener (`127.0.0.1`, default port 47614, flag
-  `QUOKY_LOCAL_CLIENT_ENABLED` default off) with its own per-start `local-client.token` (0600, Bearer), a Host check,
-  refusal of any `Origin`, no CORS and rate limits. Endpoints: messages, an SSE event stream, card decisions, status.
-  Turns become ordinary `InboundMessage`s for the existing owner `Actor`; Core never branches on the platform. Cards show
-  the exact chat approval reply with the full payload; buttons (flag `QUOKY_LOCAL_CLIENT_APPROVAL_BUTTONS`, default off)
-  go through `ApprovalDecisionService` with a `local-client` marker, single use, one step per press, local-client
-  approvals only. Undo is the text `되돌려줘`. The app gets no secrets, tokens, provider ids, paths or stacks. The OPS-UI
-  loopback primitives move to one shared `node:*`-only module.
-- **Proposed, not applied.** Narrow amendments of ADR-0113 D1 (two loopback listeners), D10 and D11, ADR-0114 D10 (buttons
-  on this surface only), the ADR-0091 extension, a notification fallback under ADR-0114 D11 and the `ARCHITECTURE.md`
-  §13 Platform row. Red-team family `local-client-surface` ≥ 60 deterministic cases, 0 successes over 3 runs. Slices
-  LC-0..LC-4 (ADR, adapter, app skeleton, on-device voice, cards and undo). Four items precedent-decided (repo, transport,
-  staging, timing); 3 owner questions. No runtime, config, flag, gold or test change, and no model call.
+  macOS app (`quoky-mac`, own repo). HTTP + SSE over a Unix domain socket in the 0700 host data directory (socket 0600,
+  post-bind checks, stale-socket handling, **no TCP port**), flag `QUOKY_LOCAL_CLIENT_ENABLED` default off, a per-start
+  `local-client.token` (0600, Bearer) as defence in depth, header hygiene and rate limits whose lockout never blocks a
+  valid token. Endpoints: messages, an SSE event stream (`<epoch>-<seq>` ids), notice acks, card decisions, token
+  rotation, status. Turns become ordinary `InboundMessage`s with an adapter-minted `lc-<uuid>` id for the existing owner
+  `Actor`, after the ADR-0102 D5 inbound gate; Core never branches on the platform. Approve buttons only on
+  exact-payload connector-write cards, reject buttons on every card, through a by-id `decideFromLocalClient` sharing
+  `decideFromOpsUi`'s refusals with an echoed `bindingDigest`; a press never executes. Undo is the text `되돌려줘` with
+  `replyTo` its result. Local-client notices go to the Discord DM until LC-4, then to the app with SENT = the app's
+  ack. The OPS-UI auth primitives move byte-identically to `packages/local-auth`.
+- **Proposed, not applied.** Narrow amendments of ADR-0102 D1 (as amended by ADR-0113), ADR-0113 D8 / D10 / D11,
+  ADR-0114 D10 / D11 (this surface only), extensions of ADR-0091 and ADR-0122 D2.8 (`direct: true`) and the
+  `ARCHITECTURE.md` §13 Platform row. Red-team family `local-client-surface` ≥ 90 deterministic cases, 0 successes over
+  3 runs. Slices LC-0, LC-1a, LC-1b, LC-2..LC-4. 5 owner questions. No runtime, config, flag, gold or test change, and
+  no model call.
+- **Review round 1** (Chief Architect, CHANGES REQUIRED): transport moved from 127.0.0.1 TCP to a Unix socket; button
+  kinds narrowed; card digest; lockout, idempotency, notice delivery and red-team groups fixed; amendment citations
+  corrected; found that `approvalBindingDigest` binds only `{operation}` for connector writes (reported separately).
 
 ## Unreleased — ADR-0121 A5-S1 summary-readout (2026-11-23; dormant, every switch off)
 
