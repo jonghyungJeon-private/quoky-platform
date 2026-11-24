@@ -56,7 +56,8 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   no model call.
 - **Review round 1** (Chief Architect, CHANGES REQUIRED): transport moved from 127.0.0.1 TCP to a Unix socket; button
   kinds narrowed; card digest; lockout, idempotency, notice delivery and red-team groups fixed; amendment citations
-  corrected; found that `approvalBindingDigest` binds only `{operation}` for connector writes (reported separately).
+  corrected.
+- **Review round 2** (Chief Architect): stale-socket and end-of-life rules, card digest reuses `approvalBindingDigest`, peer-uid check, reconnect backoff, R1 reasoning corrected.
 
 ## Unreleased — ADR-0121 A5-S1 summary-readout (2026-11-23; dormant, every switch off)
 

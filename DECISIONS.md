@@ -37841,16 +37841,22 @@ What exists and can be reused (checked at `284f1b95`):
      directory only the owner can enter removes all three: only a process running as the owner can create, replace or
      connect to it.
    - **Where.** `<data dir>/local-client.sock`, where `<data dir>` is the ADR-0102 D3 host data directory. A path longer
-     than 103 bytes (macOS `sun_path` is 104 with the NUL) disables the adapter with a typed reason; there is no TCP
+     than 103 bytes (`Buffer.byteLength(resolvedPath, 'utf8') <= 103`; macOS `sun_path` is 104 with the NUL) disables the adapter with a typed reason; there is no TCP
      fallback, and no configuration accepts a host, a port or another path outside the data directory.
-   - **Start, in order.** (1) `lstat` the data directory: a real directory (not a symlink), owned by the process uid,
+   - **Start, in order.** (0) The adapter is enabled only when `instanceLockHeld` is true (the ADR-0102 D4 lock) and the
+     DB is file-backed (no `:memory:`). (1) `lstat` the data directory: a real directory (not a symlink), owned by the process uid,
      no group or other bits; otherwise the adapter is disabled (fail closed) and the rest of Quoky starts. (2) If the
-     socket path exists: a socket owned by the uid that refuses a connection (`ECONNREFUSED`) is stale and is unlinked;
-     one that accepts is a live server and disables the adapter (the ADR-0102 D4 single-instance lock makes this a
-     defect); anything that is not a socket owned by the uid (a file, a directory, a symlink) disables the adapter and
+     socket path exists: probe it with a connect that has a timeout. A socket owned by the uid whose probe fails with
+     `ECONNREFUSED` is stale and is unlinked, and only while the D4 lock is held; any other errno (timeout, `EACCES`,
+     `EAGAIN`, ...) disables the adapter and never unlinks (XNU also returns `ECONNREFUSED` on a full backlog, so the
+     lock, not the probe, is the real guard). A probe that connects is a live server and disables the adapter (the D4
+     lock makes this a defect); anything that is not a socket owned by the uid (a file, a directory, a symlink) disables the adapter and
      is never unlinked or followed. (3) `node:http` `server.listen(socketPath)`. (4) After a successful bind, `chmod`
-     the socket to `0600` and `lstat` it again (socket type, uid, mode); a mismatch closes the server and disables the
-     adapter. (5) Only then write the token file (D3). The socket and the token file are removed on clean stop.
+     the socket to `0600` and `lstat` it again (socket type, uid, mode, and record `(dev, ino)`); a mismatch closes the server and disables
+     the adapter. The bind-to-`chmod` window is closed by the step-1 0700 directory check plus `umask 077` in the
+     launcher (`quoky-launch.sh:159`). (5) Only then write the token file (D3, `(dev, ino)` recorded the same way).
+   - **End of life.** On stop, the socket and the token file are unlinked only if their `(dev, ino)` still match the
+     recorded values, and before the D4 lock is released (the `main.ts:96` exit handler); a replaced file is left alone.
    - It is a separate endpoint from OPS-UI, with its own flag, token, rate limits and kill switch: the OPS-UI token
      cannot send a chat turn, and the client token cannot open the OPS-UI. No tunnel, port forward, reverse proxy, LAN
      bind, TCP bridge (`socat` or similar) or relay is configured or documented.
@@ -37962,11 +37968,12 @@ What exists and can be reused (checked at `284f1b95`):
    - **The `decisionStep` field.** Core marks a reply that carries a pending approval with one additive, optional,
      platform-neutral field on `OutboundMessage`: `decisionStep = {approvalId, kind, riskLevel, expiresAt, approvable,
      bindingDigest}`. Discord and Telegram ignore it, proven byte-identical by golden tests. `bindingDigest` (P1-3) is
-     SHA-256 hex over the canonical JSON of `['quoky.local-client.card.v1', approvalId, kind, operation, target,
-     payloadSha256]` from the connector-write anchor (only `CONNECTOR_WRITE` cards carry it, since only they can be
-     approved by a press). It does **not** reuse `approvalBindingDigest`: at `284f1b95` that digest's CONNECTOR_WRITE
-     shape is `{operation}` only (`approval-decision-service.ts:283`), not the payload hash that ADR-0113 D7 describes
-     (a separate finding, reported, not fixed here).
+     the existing approval binding digest of the connector-write anchor (only `CONNECTOR_WRITE` cards carry it, since only they can be
+     approved by a press). It reuses `approvalBindingDigest(approval, bindingOf(lookup))`, which hashes `approval.reason`
+     (`approval-decision-service.ts:331-338`); for connector writes the reason is `connector-write: ${operation}
+     target=${target} sha256=${payloadSha256}...` (`connector-write-flow.ts:1047-1048`), so operation, target and
+     payload hash are covered, and execution re-checks the reason and recomputes the payload hash
+     (`:1695-1702`, `binding-mismatch`). No new tuple is defined.
    - **The press.** `POST /client/v1/approvals/{approvalId}/decision` with `{decision: 'approve' | 'reject',
      threadId, bindingDigest?}`. The raw, undecoded path segment must match the Core id shape (a lowercase UUID,
      `newId()` = `randomUUID()`); any `%`-escape, `/`, `..`, NUL or other character is a 404 before the service is
@@ -38019,8 +38026,10 @@ What exists and can be reused (checked at `284f1b95`):
 10. **D10 — The client's own limits (client-side only; not server-enforceable).** These are conditions for the
     `quoky-mac` repository and its review. The adapter **relies on none of them for safety**: every rule the server
     needs is enforced in D2-D9. macOS 26+, Swift 6, SwiftUI with AppKit only where needed (menu bar, `NSPanel`, global
-    hotkey). No Dock icon. Before connecting it checks that the data directory is a real directory owned by its uid
-    with mode 0700 and that the socket is a socket owned by its uid (not a symlink). It talks only to the socket: no
+    hotkey). No Dock icon; the app is not App-Sandboxed (a sandboxed app cannot reach `~/Library/Application Support/Quoky`).
+    After connecting it verifies the peer uid with `getpeereid()` / `LOCAL_PEERCRED` equals `getuid()` (this replaces
+    lstat-then-connect). While Quoky is down or restarting it reconnects with bounded backoff, and it retries after a
+    "live socket" disable instead of staying off until its next restart. It talks only to the socket: no
     other network call, no telemetry, no update check, no auto-update. It holds no model key, connector token or
     database. No Accessibility, screen capture or click control. Voice is on-device only (`SpeechAnalyzer`); audio never
     leaves the app and is never sent to Core; only the final transcript is placed in the input field, and sending needs
@@ -38141,7 +38150,7 @@ merges: the same, plus the red-team lot at 0 and the owner's answers to question
 | LC-0 | quoky-platform | This ADR (docs) | — |
 | LC-1a | quoky-platform | D11: byte-identical move of the OPS-UI auth primitives into `packages/local-auth`, the ADR-0113 D8 amendment, the widened `ops-ui/http` boundary test; no behaviour change | Ratification (question 1) |
 | LC-1b | quoky-platform | `packages/adapter-local-client` text only (D1-D6, D9), Unix socket and token, inbound gate, composite wiring, local-client notices to the Discord DM, rotation command, OPS-UI panel, self-check file check, default off, red-team groups other than approvals and notices | LC-1a; questions 2 and 4 |
-| LC-2 | quoky-mac | App skeleton: menu bar, hotkey panel, socket and token checks, HTTP/1.1 and SSE reader, reconnect with epoch, text turns and replies, local signed build, LaunchAgent | LC-1b |
+| LC-2 | quoky-mac | App skeleton: menu bar, hotkey panel, socket and token checks, HTTP/1.1 and SSE reader, reconnect with epoch and bounded backoff, peer-uid check, text turns and replies, local signed build, LaunchAgent | LC-1b |
 | LC-3 | quoky-mac | Voice: `SpeechAnalyzer` push-to-talk, final transcript into the input field, permission prompts | LC-2 |
 | LC-4 | both | Cards, undo and notices: `decisionStep` / `undoUntil`, the reference as a typed part, `decideFromLocalClient` and the `local-client` marker, the decision endpoint behind its flag, app cards with visible control characters, undo with `replyTo`, notices with ack and the Discord fallback, lock-screen setting, the full red-team lot, live UAT | LC-2; questions 3 and 5 |
 
@@ -38158,8 +38167,9 @@ LC-3 and LC-4 may run in parallel after LC-2.
 
 - **R1 — Same-user processes.** Any process running as the owner can read the token, connect to the socket, or remove
   and re-create the socket while Quoky is down, and so act as the owner or impersonate Quoky to the app. Accepted on
-  the ADR-0113 reasoning: such a process already has the owner's authority (`.env.local`, the DB). Other users and
-  sandboxed apps are kept out by the 0700 directory.
+  the ADR-0113 reasoning: such a process already has the owner's authority (`.env.local`, the DB). Sandboxed apps also run
+  as the owner's uid; the App Sandbox, not file permissions, keeps them out, and other macOS users are kept out by the
+  0700 directory and 0600 files.
 - **R2 — A press is easier than typing.** Mitigated by approve-by-button only for exact-payload connector writes, the
   echoed digest, no execution by press and the expiry. Buttons stay behind their own flag.
 - **R3 — Speech errors.** A misheard transcript is only placed in the input field; the owner sends it. A voice
@@ -38205,8 +38215,7 @@ LC-3 and LC-4 may run in parallel after LC-2.
   `SURFACE_DENIED`); a press never executes. The claim "the card is the full payload, so no reference is needed" is
   removed; the reference line is omitted from cards on this surface instead.
 - **P1-3.** `decisionStep.bindingDigest` binds approval id, operation, target and `payloadSha256`; the press echoes it
-  and it is compared in constant time (`CARD_STALE`). Found while checking: `approvalBindingDigest` for CONNECTOR_WRITE
-  is `{operation}` only (`approval-decision-service.ts:283`), unlike the ADR-0113 D7 text; reported separately.
+  and it is compared in constant time (`CARD_STALE`).
 - **P1-4.** Transport switched to HTTP over a Unix domain socket in the 0700 data directory (0600 socket, post-bind
   checks, stale-socket handling, no TCP port, Bearer token kept). Mutual HMAC over TCP recorded as the rejected
   alternative. The transport precedent row now says the review overrides the 127.0.0.1 precedent on security grounds.
@@ -38224,3 +38233,16 @@ LC-3 and LC-4 may run in parallel after LC-2.
   SSE id `<epoch>-<seq>` and dropped from the press body; undo sends `replyTo` the result event; intake waits for the
   ADR-0102 D5 gate; D10 marked client-side only; rotation endpoint and `quokyctl` command; lock-screen setting.
 - **Rule question.** ADR-0113 D11's edition rule is owner question 2.
+
+### Review round 2 (Chief Architect, 2026-11-24; addressed)
+
+- **P2-A.** The "pre-existing digest finding" was false and is removed. `approvalBindingDigest` hashes `approval.reason`,
+  which for connector writes embeds operation, target and payload hash; execution re-checks it. The card's
+  `bindingDigest` reuses `approvalBindingDigest(approval, bindingOf(lookup))`.
+- **P2-B.** The adapter starts only with `instanceLockHeld` and a file-backed DB; a stale socket is unlinked only under
+  the D4 lock, after a timed probe, and only on `ECONNREFUSED`; any other errno disables the adapter.
+- **P2-C.** `(dev, ino)` from the post-bind `lstat` is recorded; stop unlinks the socket and token file only on a match,
+  before the D4 lock is released.
+- **P3.** Bind-to-`chmod` window closed by the 0700 directory plus `umask 077`; path length checked in UTF-8 bytes (103);
+  D10 peer-uid check via `getpeereid()` / `LOCAL_PEERCRED` and no App Sandbox; R1 reasoning corrected (App Sandbox, not
+  file permissions); client reconnect backoff and retry after a "live socket" disable (D10, LC-2).
