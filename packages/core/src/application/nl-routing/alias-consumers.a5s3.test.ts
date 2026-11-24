@@ -49,11 +49,14 @@ describe('A5-S3 aliases in owner-period (other-source names leave the range to t
     return nlOwnerStatedRange(result.value, text, ctx(text)).args;
   };
 
-  it('a mail request "about the meeting last week" keeps its period behaviour (mail has no item-date range: untouched, as its Korean twin)', () => {
-    const korean = period('mail.list', '지난주 회의 관련 메일 보여줘', { range: 'this-week' });
-    const english = period('mail.list', 'show mail about the meeting last week', { range: 'this-week' });
+  it('a calendar request naming another source by an English alias leaves the range to the selector, as its Korean twin', () => {
+    // `pull request` is a github.items alias: the message names another source, so the owner-stated "next week" is not applied.
+    const korean = period('calendar.events', '다음 주 풀리퀘 리뷰 일정 보여줘', { range: 'this-week' });
+    const english = period('calendar.events', 'show the pull request review next week', { range: 'this-week' });
+    expect(korean).toEqual({ range: 'this-week' });
     expect(english).toEqual(korean);
-    expect(english).toEqual({ range: 'this-week' });
+    // Control: without the other source's name the same period is applied.
+    expect(period('calendar.events', 'show my schedule next week', { range: 'this-week' })).toEqual({ range: 'next-week' });
   });
 
   it('the calendar\'s own `meeting` word does not make it "another source": the owner-stated period still wins', () => {

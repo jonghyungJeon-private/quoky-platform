@@ -63,32 +63,32 @@ const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: (): boolea
 
 describe('D12: the derived localities (pure)', () => {
   it('derives from the label, the grant and the asked-for count', () => {
-    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: false, granted: false, askedItems: 1 })).toEqual({ ok: false, reason: 'host-only' });
+    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: false, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'host-only' });
     // HOST_ONLY gets no model even with a grant and a local provider in sight (P3-3b #5).
-    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1 })).toEqual({ ok: false, reason: 'host-only' });
-    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 5 })).toEqual({ ok: true, localities: ['LOCAL'] });
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems: 1 })).toEqual({ ok: false, reason: 'no-summary-grant' });
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems: 1 })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'host-only' });
+    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 5, workSource: false })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems: 1, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
     // A granted batch may go REMOTE too (owner 2026-11-03 answer 3, built 2026-11-16; supersedes the single-item rule).
     for (const askedItems of [2, 10, 20]) {
-      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
-      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems })).toEqual({ ok: false, reason: 'no-summary-grant' });
-      expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems })).toEqual({ ok: false, reason: 'host-only' });
-      expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems })).toEqual({ ok: true, localities: ['LOCAL'] });
+      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
+      expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems, workSource: false })).toEqual({ ok: false, reason: 'host-only' });
+      expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems, workSource: false })).toEqual({ ok: true, localities: ['LOCAL'] });
     }
-    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 3 })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 3, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
   });
 
   it('a grant-needing input without its grant is listing-only even when the joined label is stricter (no local fallback, P3-3b #4)', () => {
-    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: true, granted: false, askedItems: 1 })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: true, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
   });
 
   it('an unverifiable input admits nothing: an unknown label, a count that is not a positive integer, a RoSR label with no grant need', () => {
-    expect(deriveM2Localities({ egress: 'SOMETHING' as never, needsGrant: false, granted: false, askedItems: 1 })).toEqual({ ok: false, reason: 'no-model' });
+    expect(deriveM2Localities({ egress: 'SOMETHING' as never, needsGrant: false, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-model' });
     for (const askedItems of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems }), String(askedItems)).toEqual({ ok: false, reason: 'no-model' });
+      expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems, workSource: false }), String(askedItems)).toEqual({ ok: false, reason: 'no-model' });
     }
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: false, granted: true, askedItems: 1 })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: false, granted: true, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
   });
 
   it('the selection context keeps the base, narrows by a base constraint, and keeps or sets workText', () => {
@@ -417,7 +417,7 @@ describe('D12 / A5-S3: work sources are LOCAL-only in Core until the rule-① co
   });
 
   it('pure: a granted work-source label derives LOCAL only; mail and Drive (no work source) still derive LOCAL and REMOTE', () => {
-    const granted = { egress: 'REMOTE_ON_SUMMARY_REQUEST' as const, needsGrant: true, granted: true, askedItems: 1 };
+    const granted = { egress: 'REMOTE_ON_SUMMARY_REQUEST' as const, needsGrant: true, granted: true, askedItems: 1, workSource: false };
     expect(deriveM2Localities({ ...granted, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
     expect(deriveM2Localities({ ...granted, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
     expect(deriveM2Localities(granted)).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
@@ -425,6 +425,10 @@ describe('D12 / A5-S3: work sources are LOCAL-only in Core until the rule-① co
     expect(deriveM2Localities({ ...granted, granted: false, workSource: true })).toEqual({ ok: false, reason: 'no-summary-grant' });
     expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1, workSource: true })).toEqual({ ok: false, reason: 'host-only' });
     expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 1, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
+    // The guard is independent of the egress label: a work source with any label that would allow REMOTE still yields no REMOTE.
+    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 1, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: true, granted: true, askedItems: 3, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
   });
 
   it.each(['calendar.events', 'jira.issues', 'slack.search', 'confluence.search', 'github.items'] as const)(

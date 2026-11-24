@@ -38523,3 +38523,18 @@ evaluation was run.
    with one to three words between. The grant still needs a source named in a summary clause and the switch/consent gates; it
    can only produce a grant for a message that names a work source, but it can mis-read a statement as a request.
 6. `summary-grant.ts` header now mentions the five work sources.
+
+### Review round 2 (branch-only section, A5-S3; Chief Architect, P3 findings only)
+
+1. **`deriveM2Localities.workSource` is required** (`readonly workSource: boolean`, exported through `agent/index.ts`). Every
+   caller passes it; the Mail/Drive tests pass `false` explicitly. A caller can no longer omit the guard by accident.
+2. **The work-source guard no longer lives in the `REMOTE_ON_SUMMARY_REQUEST` branch.** After the label switch, `REMOTE` is dropped
+   from the derived localities whenever `workSource` is true, whatever the egress label (a test pins `REMOTE_OK` with and without
+   a grant). `HOST_ONLY`, a missing grant and a bad count still refuse before it, unchanged.
+3. **Alias-consumer test replaced.** The mail "about the meeting last week" case proved nothing (mail has no item-date range, and
+   `owner-period.ts` returns before it reads aliases). It is replaced by a `calendar.events` case: "show the pull request review
+   next week" names GitHub by its English alias `pull request`, so the owner-stated period is not applied, the same as its Korean
+   twin (풀리퀘); a control without another source's name still gets `next-week`. This reads the alias in `owner-period`.
+4. **Gold `rt-s2r-244` / `rt-s2r-250` kept byte-identical** (orchestrator decision; the gold is not edited). On these two rows
+   `knownGap.closedBy` and the note text are historical metadata and are never asserted. Removing the `repo` alias (round 1,
+   item 2) reopened them, and they stay open until a catalog-change slice adds a non-hazardous alias for "repo".
