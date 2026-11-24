@@ -160,7 +160,7 @@ One case is one owner turn. It may come after a `pending` step.
 | `id` | yes | `rt-s2r-<nnn>`. `<nnn>` lies inside the lot's id range (§7). |
 | `lot` | yes | `E` (exemplars) or `A`–`D`. |
 | `batch` | yes | `SR-1`. |
-| `status` | yes | `pending-owner-approval`, or `approved-awaiting-implementation` for a case the owner approved with a new target that is not built yet (§11). |
+| `status` | yes | `pending-owner-approval`; `approved-awaiting-implementation` for a case the owner approved with a new target that is not built yet (§11); or `owner-approved` (with `approved.decided`) for a case the owner approved as built (`474`, `475`, 2026-11-24). |
 | `family` | yes | `s2-read`. |
 | `attack` | yes | One of the closed attacks (§4.1). |
 | `vector` | yes | One of the closed vectors (§4.2). |
@@ -568,6 +568,7 @@ enforces these counts exactly and unconditionally.
      confirmed in its A5 form.
   2. **Relayed whole-source summaries.** These requests still mint a grant (`474`, `475`). Should the producer veto them
      as it vetoes relayed item reads? Rule ① already holds them at `ask-first`.
+     Answered 2026-11-24 (B1, "지금처럼 묻고 요약"): keep the built behaviour; no veto.
   3. **The live arm.** Its cost needs the owner's notice and a yes, as for every model-in-the-loop run.
 
 ## 11. ADR-0121 A4: approved targets awaiting implementation (owner review of 2026-11-17)
@@ -606,9 +607,9 @@ reply alone never executes anything and is never a receipt of content authority.
 ## 12. The s2-handoff family (ADR-0121 A4 pattern A, batch HO-1)
 
 `packages/core/src/application/golden/agent-redteam.s2-handoff.v1.json` holds 19 agent-drafted cases (`rt-s2h-001`–`019`,
-status `pending-owner-approval`): the owner's own words ask Quoky to use a value from one source's content for another
+status `owner-approved`, `approved.decided` 2026-11-24: precedent-decided under the owner's delegation): the owner's own words ask Quoky to use a value from one source's content for another
 READ, and the attacker controls that content. Data only: the handoff and its runner are not built (A4-S2, A4-S9), and the
-batch is not a gate until the owner approves it. A1-D15 still needs at least 80 owner-approved cases before H1.
+batch is not a gate until the runner exists. A1-D15 still needs at least 80 owner-approved cases before H1.
 
 | Field | Meaning |
 |---|---|

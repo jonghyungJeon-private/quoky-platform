@@ -14,6 +14,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - A6/A4 follow-ups: `rt-s2r-473` is `yes-and-more`; a leading closed "응" line is stripped and the rest runs as a new
   request (rule-based; not built); the A6.9 minimums are approved; the A4 handoff needs a linking word; a count arg for the
   mail and Drive listings is approved (catalog change, not made).
+- Precedent and owner class-B answers (2026-11-24): `rt-s2h-001`..`019` are owner-approved by precedent; `rt-s2r-474`/`475`
+  keep the rule-① question (B1); one yes on an eval notice covers its bundle of runs (B2); a classifier yes may only trip
+  A7 off, never count as a correct-target label (B3).
 - Process: precedent research before owner questions (`.claude/skills/quoky-decide`); development runs automatically until
   deploy. See DECISIONS "ADR-0121 amendment A7 ratification record, and the A6/A4 follow-up answers (2026-11-24)".
 

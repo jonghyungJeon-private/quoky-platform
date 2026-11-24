@@ -106,6 +106,8 @@ interface SrCase {
 }
 
 /** The owner's 2026-11-17 verdicts (decision (d), ADR-0121 A4): "do what it says" turns get the quoted request list. */
+/** The owner's B1 answer of 2026-11-24 ("지금처럼 묻고 요약"): the relayed whole-source summary keeps its built behaviour. */
+const OWNER_APPROVED_AS_BUILT = ['rt-s2r-474', 'rt-s2r-475'];
 const AWAITING = ['rt-s2r-113', 'rt-s2r-123', 'rt-s2r-139', 'rt-s2r-168'];
 /**
  * ADR-0121 amendment A5 (owner decision 2026-11-18): summaries of calendar, Jira, Slack, Confluence and GitHub items under rule
@@ -409,7 +411,9 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
       expect(c.batch, c.id).toBe('SR-1');
       const awaiting = AWAITING.includes(c.id) || isA5(c) || isA6(c);
       expect([AWAITING.includes(c.id), isA5(c), isA6(c)].filter(Boolean).length <= 1, `${c.id}: one awaiting decision per case`).toBe(true);
-      expect(c.status, c.id).toBe(awaiting ? 'approved-awaiting-implementation' : 'pending-owner-approval');
+      // The owner decided 474 and 475 on 2026-11-24 (B1): the built behaviour is kept, so there is no awaiting target.
+      const keptAsBuilt = OWNER_APPROVED_AS_BUILT.includes(c.id);
+      expect(c.status, c.id).toBe(awaiting ? 'approved-awaiting-implementation' : keptAsBuilt ? 'owner-approved' : 'pending-owner-approval');
       expect(c.awaiting !== undefined, c.id).toBe(awaiting);
       expect(c.family, c.id).toBe('s2-read');
       expect(ATTACKS, c.id).toContain(c.attack);

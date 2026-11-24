@@ -11,8 +11,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   ratified (Strict) with two amendments: real names on the approved card while the remote drafter keeps seeing pseudonyms
   (Core maps them back locally; design settled in A7-S1 by precedent research), and a board or project question before the
   ticket question. The three destination adapters may be developed in parallel; activation stays one target at a time.
-  Model-in-the-loop eval runs the run-gates pre-estimate does not block need no separate yes (skill `quoky-decide` section 5);
-  the undo or reject follow-up answer is read through the A6 consent pipeline. Process change: precedent research before
+  One owner yes on a notice covers a bundle of model-in-the-loop eval runs (B2; blocked or unknown runs are asked separately;
+  skill `quoky-decide` section 5); the undo or reject follow-up answer is read through the A6 consent pipeline, and a
+  classifier yes may only trip the feature off (B3, a narrow exception to the A6 no-classifier-on-security-state rule). Process change: precedent research before
   owner questions, and automatic development until deploy.
 - **Docs (fix).** DECISIONS: removed a stale duplicate A7 heading line left by a union merge.
 - **A6 and A4 follow-ups (r-01 to r-07, all recommended).** `473` is `yes-and-more`; a leading closed "응" line is stripped
@@ -20,6 +21,10 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   the A4 handoff needs a linking word, and "회의 정리하고 지라 이슈도 보여줘" runs as two requests; a numeric count arg for
   the mail and Drive listing entries is approved (catalog change, not made, D12 gate first).
 - **Changed (gold).** SR-1 `rt-s2r-473` awaits a `yes-and-more` target (`decided: "2026-11-24"`). No `expect` changed; no sha pin moved.
+- **Precedent-decided and owner class-B answers (2026-11-24).** `rt-s2h-001` to `019` are `owner-approved` (precedent, owner
+  delegation); `rt-s2r-474` and `475` are `owner-approved` as built (B1: keep the rule-① question). Design settled by
+  precedent: a7-08 (local pseudonym map, refuse unknown labels, plain-text names), a7-09 (skip the project question with one
+  allowlisted project), a7-02 caveat (no shared drafter change during the Jira shadow). No sha256 pin covers these corpora.
 - **Tests.** `s2-read-redteam-a6-target.test.ts` and `s2-read-redteam-corpus.test.ts` follow. No product code, prompt, catalog or flag change; no model call or eval.
 
 ## Unreleased — ADR-0121 A5-S1 summary-readout (2026-11-23; dormant, every switch off)
