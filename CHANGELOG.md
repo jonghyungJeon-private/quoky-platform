@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0125 LC-1b local-client adapter (2026-11-24; flag default off)
+
+- **Added.** `@quoky/adapter-local-client`: HTTP/1.1 and SSE over a Unix domain socket in the 0700 data directory (no TCP
+  port), per-start 0600 Bearer token file, strict request hygiene, `status` / `messages` / `events` / `token/rotate`,
+  adapter-minted `lc-<uuid>` ids with `clientMessageId` dedupe, epoch-tagged event ids with bounded resume, owner admission
+  (D5) and `direct: true`. Joined into the composite only with `QUOKY_LOCAL_CLIENT_ENABLED=true` (default off), the
+  instance lock and a file-backed DB; off, nothing is constructed and composition is unchanged.
+- **Changed.** Local-client reminders route to the owner Discord DM until LC-4 (composite `NotificationRedirect`); one
+  OPS-UI status panel (only when composed); `quoky-net-selfcheck.sh` checks the socket file mode; `quokyctl.sh local-client
+  rotate-token`. `.env.example` documents both flags. No Core change.
+- **Tests.** Package unit and integration tests over temp sockets (auth, lockout, Host/Origin, oversize, smuggling,
+  idempotency, SSE resume and forged `Last-Event-ID`, stale / live / replaced socket and token file), the
+  `local-client-surface` red-team corpus for the LC-1b groups (75 cases, 0 successes), import-boundary tests, composition,
+  config, panel, selfcheck and `quokyctl` tests. Build and typecheck pass; targeted runs only, no full suite.
+- **Docs.** DECISIONS LC-1b implementation note. Independent reviews required by the ADR before merge are still due.
+
 ## Unreleased — ADR-0125 LC-1a local-auth extraction (2026-11-24; behaviour unchanged)
 
 - **Changed.** OPS-UI auth primitives moved byte-identically into the Core-free, `node:*`-only `@quoky/local-auth`

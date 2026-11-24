@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0125 LC-1b implemented: local-client adapter, flag off (2026-11-24, branch `claude/v5-lc1b-local-client-adapter`)
+
+- `@quoky/adapter-local-client` serves text turns over a Unix socket in the 0700 data directory with a per-start token;
+  default off (`QUOKY_LOCAL_CLIENT_ENABLED`), joined only with the instance lock and a file-backed DB, owner mapped through
+  the existing Actor seam, `direct: true`. Reminders from it go to the Discord DM until LC-4. OPS-UI panel, selfcheck
+  socket check and `quokyctl local-client rotate-token` added. No Core change; no live enablement, no model call.
+- Red-team family `local-client-surface`: LC-1b groups at 0 successes over 3 runs; approvals and notices groups are LC-4.
+  Build, typecheck and targeted tests pass. See DECISIONS "ADR-0125 LC-1b implementation note (2026-11-24)".
+- Next: Codex and Chief Architect review before merge; LC-2 (quoky-mac) is unblocked once this lands.
+
 ### ADR-0125 LC-1a implemented: shared local auth (2026-11-24, branch `claude/v5-lc1a-local-auth`)
 
 - `@quoky/local-auth` holds the byte-identically moved OPS-UI auth primitives; imports only `node:*`, no Core.
