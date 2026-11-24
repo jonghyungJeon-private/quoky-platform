@@ -37759,6 +37759,9 @@ sentence and the summary is withheld; a language that writes no space after its 
     Quoky process"), narrowly: the OPS-UI listener stays the **only TCP listener**. The Quoky process may also serve
     one HTTP endpoint on a **Unix domain socket** inside the mode-0700 host data directory (D2). No TCP port is added.
     A further endpoint of either kind needs its own ADR.
+  - `ARCHITECTURE.md` §11 Coding Rules, rule 3 ("Adapter packages depend only on `@quoky/core`", lines 458-459), narrowly:
+    `packages/adapter-local-client` may also depend on `@quoky/local-auth`, a Core-free package that imports only
+    `node:*` (D11). No other adapter gains a dependency; a further exception needs its own ADR.
   - ADR-0113 D8 ("no new workspace package"; `ops-ui/http/*` imports only `node:*` built-ins and siblings, pinned by
     `apps/quoky/src/ops-ui/http/import-boundary.test.ts:33-35`), narrowly: one new workspace package
     `packages/local-auth` (imports only `node:*`, no Core) holds the OPS-UI auth primitives, and the `ops-ui/http`
@@ -38012,9 +38015,10 @@ What exists and can be reused (checked at `284f1b95`):
    - **Notifications, from LC-4.** A `local-client` target is delivered as a `notice` event, and the app shows a local
      macOS notification with that text only. **SENT means the app's ack**, not a stream write: the app posts
      `{eventId}` to `POST /client/v1/notices/ack` after it has handed the notification to macOS, within 30 s. Outcomes
-     (ADR-0101): no open stream, or the write failed → `NOT_SENT` on the client, then delivered once to the Discord DM
-     (`SENT` there); written but no ack within 30 s → `UNCERTAIN`, never re-sent anywhere (ADR-0101: no automatic resend
-     on UNCERTAIN); ack in time → `SENT`. An ack for an unknown, foreign or already-acked event id is ignored with a
+     (ADR-0101, `notification-sink.port.ts:48-53`): no open stream at send time, or the write was refused before any
+     byte was handed to the socket → `NOT_SENT` on the client (confirmed non-transmission), then delivered once to the
+     Discord DM (`SENT` there); any other write error, or written but no ack within 30 s → `UNCERTAIN`, never re-sent
+     anywhere (ADR-0101: no automatic resend on UNCERTAIN; when in doubt, `UNCERTAIN`); ack in time → `SENT`. An ack for an unknown, foreign or already-acked event id is ignored with a
      code. `OPS_NOTICE` and `OPS_DECISION_RESULT` stay on Discord, as ADR-0114 D11 set.
 9. **D9 — Not an AI API; what never reaches the client.** The surface accepts only owner text, card decisions, notice
    acks, token rotation and the event stream. It cannot pick a provider, a model, a tool, a connector or a capability.
@@ -38246,3 +38250,10 @@ LC-3 and LC-4 may run in parallel after LC-2.
 - **P3.** Bind-to-`chmod` window closed by the 0700 directory plus `umask 077`; path length checked in UTF-8 bytes (103);
   D10 peer-uid check via `getpeereid()` / `LOCAL_PEERCRED` and no App Sandbox; R1 reasoning corrected (App Sandbox, not
   file permissions); client reconnect backoff and retry after a "live socket" disable (D10, LC-2).
+
+- **Final orchestrator fixes (fix-loop cap reached after two Chief Architect rounds; Codex review of round 2).** (1) The
+  amendment list now names `ARCHITECTURE.md` §11 rule 3 (adapters depend only on `@quoky/core`), narrowly for
+  `@quoky/local-auth`. (2) A notice is `NOT_SENT` only on confirmed non-transmission (no open stream, or the write was
+  refused before any byte reached the socket); any other write error is `UNCERTAIN` with no resend, matching
+  `notification-sink.port.ts:48-53` and ADR-0101. (3) The branch was rebased onto `756001ac`, so the diff against main
+  is this ADR only.
