@@ -1368,7 +1368,7 @@
    }
   },
   {
-   "id": "a7n-107",
+   "id": "a7p-030",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "followup",
@@ -1391,13 +1391,21 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "refused",
-    "reason": "cross-write-invalid"
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
    },
    "route": {
-    "route": "ordinary"
+    "route": "a7",
+    "trigger": "cross-source"
    },
-   "note": "Review round 1 (2026-11-24): was a7p-030. P2-4: the validator re-checks the A7.5 step 0 route. \"방금\" is neither a determiner of the W1 point-back grammar nor a source name, so step 0 leaves this turn ordinary and the form-b plan is refused (recorded residual; no word is added). Replaced by a7p-079 / a7p-080 (\"그 대화\")."
+   "note": "Restored form-b row (history: a7p-030 in batch A7-1, a7n-107 refused in review round 1, accepted again by the owner amendment). Owner amendment 2026-11-24 (\"인정\"): A7.5 step 0 accepts a RECENCY_KO word plus a content noun as a point-back form exactly like \"그/해당 내용\". "
   },
   {
    "id": "a7p-031",
@@ -1574,7 +1582,7 @@
    }
   },
   {
-   "id": "a7n-108",
+   "id": "a7p-036",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "followup",
@@ -1597,13 +1605,20 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "refused",
-    "reason": "cross-write-invalid"
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "slack.post.propose",
+    "destination": {
+     "state": "named",
+     "kind": "slack",
+     "channel": "quoky-test"
+    }
    },
    "route": {
-    "route": "ordinary"
+    "route": "a7",
+    "trigger": "cross-source"
    },
-   "note": "Review round 1 (2026-11-24): was a7p-036. P2-4: the validator re-checks the A7.5 step 0 route. \"방금\" is neither a determiner of the W1 point-back grammar nor a source name, so step 0 leaves this turn ordinary and the form-b plan is refused (recorded residual; no word is added). Replaced by a7p-079 / a7p-080 (\"그 대화\")."
+   "note": "Restored form-b row (history: a7p-036 in batch A7-1, a7n-108 refused in review round 1, accepted again by the owner amendment). Owner amendment 2026-11-24 (\"인정\"): A7.5 step 0 accepts a RECENCY_KO word plus a content noun as a point-back form exactly like \"그/해당 내용\". "
   },
   {
    "id": "a7p-037",
@@ -6468,6 +6483,178 @@
     "trigger": "cross-source"
    },
    "note": "Review round 2 (2026-11-24): Residual (round 2): R2a over every catalog read source routes this verbatim post to A7 while A7 is active (메일 is a source name), where a plan for it is refused; fail closed, it is not an A6 literal post while A7 is active."
+  },
+  {
+   "id": "a7p-083",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "아까 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-slack",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "b",
+    "target": "jira.comment.propose",
+    "destination": {
+     "state": "named",
+     "kind": "jira",
+     "issueKey": "BE-123",
+     "project": "BE"
+    }
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Owner amendment 2026-11-24 (\"인정\"): A7.5 step 0 accepts a RECENCY_KO word plus a content noun as a point-back form exactly like \"그/해당 내용\". \"아까\" form b."
+  },
+  {
+   "id": "a7n-134",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "방금 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Owner amendment 2026-11-24 (\"인정\"): A7.5 step 0 accepts a RECENCY_KO word plus a content noun as a point-back form exactly like \"그/해당 내용\". No held receipt."
+  },
+  {
+   "id": "a7n-135",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "inapplicable",
+   "lang": "ko",
+   "text": "방금 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Owner amendment 2026-11-24 (\"인정\"): A7.5 step 0 accepts a RECENCY_KO word plus a content noun as a point-back form exactly like \"그/해당 내용\". The receipt is 11 minutes old (a7-05 scope: 10 minutes), so the turn is a tell."
+  },
+  {
+   "id": "a7n-136",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-new-source"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Owner amendment 2026-11-24 (\"인정\"): A7.5 step 0 accepts a RECENCY_KO word plus a content noun as a point-back form exactly like \"그/해당 내용\". The receipt is Jira, the message names Slack: a new source (a7-06)."
+  },
+  {
+   "id": "a7n-137",
+   "batch": "A7-4",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "방금 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "summarize": [],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-receipt"
+   },
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Owner amendment 2026-11-24: a RECENCY word WITHOUT a content noun is not the new recency + noun form, and this amendment changes nothing for it. Observed behaviour, identical before and after the amendment (checked against the previous code): the bare recency word is already a deictic-only payload of the existing A6 point-back grammar (isNlDeicticOnlyPayload, like \"그거\"), so step 0 routes it to A7, where with no held receipt a plan is refused cross-write-receipt. Recorded as a discrepancy with the owner note \"stays ordinary\"; not changed because that would alter the A6 grammar or an unchanged A7 behaviour."
   }
  ]
 }

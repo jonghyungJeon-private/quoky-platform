@@ -74,7 +74,7 @@ export function formatNlRef(ref: NlRef): string {
  * description, the R5a referent's recency check and Core's `recent` grounding of `item.summarize` (owner decision
  * 2026-10-19); one list, never a phrase list.
  */
-const RECENCY_KO = ['방금', '아까'] as const;
+export const RECENCY_KO = ['방금', '아까'] as const;
 const RECENCY_EN = ['just now'] as const;
 export const NL_RECENCY_WORDS: readonly string[] = [...RECENCY_KO, ...RECENCY_EN];
 /** A6-D2: the closed deictics that ground `recent` / `this`. Korean words match inside a token (particles glued on). */

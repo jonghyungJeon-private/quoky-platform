@@ -60,6 +60,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   prompt (`agent-plan.v11`), the catalog, the grant producer, the flags and the existing golds are unchanged.
 - Not done (next): A7-S2 held receipt, A7-S3 drafter, A7-S4 card and pick, A7-S5 gates. See DECISIONS "ADR-0121 A7-S1
   implementation note (2026-11-24)".
+- Owner amendment 2026-11-24: A7.5 step 0 point-back also accepts `RECENCY_KO` plus a content noun ("방금 내용 …", "아까 대화 …"); A7 router only (DECISIONS "ADR-0121 amendment A7.5 step 0 — recency point-back").
 
 ### ADR-0121 A5-S2 summary-schema implemented, dormant (2026-11-24, branch `claude/v5-a5-s2-summary-schema`)
 

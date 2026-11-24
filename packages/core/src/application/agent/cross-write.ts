@@ -8,6 +8,7 @@ import {
   WORK_CHAT_ISSUE_NOUNS,
   WORK_CHAT_POST_NOUNS,
   WORK_CHAT_POST_VERBS,
+  RECENCY_KO,
   WORK_CHAT_REQUEST_ENDING_FORMS,
   nlIsExactConnectorWrite,
   nlWriteClausePointsBack,
@@ -646,6 +647,19 @@ export function crossWriteCrossSourceTrigger(outside: string, offered: ReadonlyM
  */
 export const A7_POINT_BACK_DETERMINERS: readonly string[] = ['해당'];
 
+/**
+ * ADR-0121 A7.5 step 0 (owner amendment 2026-11-24, "인정"): a recency word of the closed A6-D2 set ({@link RECENCY_KO}) followed
+ * by ONE content noun ("방금 내용", "아까 대화") is a point-back form exactly like "그 내용" / "해당 내용". The noun is any content
+ * word, the same openness as the determiner form's (which takes any word after 그 / 해당); a closed-class word or another
+ * recency word is not a noun, so "방금 요약해서 …" (no noun) stays ordinary. A7 router ONLY: A6 and W1 are untouched.
+ */
+function recencyPointsBack(parts: readonly Token[]): boolean {
+  const [recency, noun] = parts;
+  if (parts.length !== 2 || recency === undefined || noun === undefined) return false;
+  const isRecency = (word: string): boolean => (RECENCY_KO as readonly string[]).includes(word);
+  return isRecency(recency.word) && !isRecency(noun.word) && !KO_CLOSED.has(noun.word);
+}
+
 /** A summary word whose object noun phrase (only closed-class words between) is a source name, a literal or the W1 point-back form. */
 function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCatalogEntry>, analysis: CrossWriteAnalysis): boolean {
   const tokens = tokensOf(outside);
@@ -678,7 +692,7 @@ function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCat
       }
       // The object noun phrase is the nearest content word and a determiner glued before it ("그 내용", "해당 내용").
       const wider = tokens.slice(Math.max(0, index - 2), index);
-      if (isObject(before) || pointsBack(wider)) return true;
+      if (isObject(before) || pointsBack(wider) || recencyPointsBack(wider)) return true;
     }
   }
   return false;

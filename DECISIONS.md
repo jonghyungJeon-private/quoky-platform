@@ -38700,3 +38700,29 @@ validated A7 plan still never runs.
      Korean create the booking verb does not carry is refused too. Round 1 residual 4 (the clause-based calendar rule) is superseded
      by P2-a (ii) for every marked destination; a kind-only Jira or Slack request beside an event WITHOUT a marker is still caught only
      by the clause rule until A7-S7.
+
+## ADR-0121 amendment A7.5 step 0 — recency point-back (owner-approved 2026-11-24)
+
+Status: owner-approved amendment (terminal, 2026-11-24). Append-only: the A7 amendment text above and its ratification record
+stay as written; this record is the exact change and supersedes them for this one clause.
+
+- **Text change to A7.5 step 0.** The point-back form of the summary-word-on-an-object trigger and of the form-b binding reads:
+  the existing W1 point-back form (`nlWriteClausePointsBack`: "그 내용", "해당 내용") **or a closed recency word of A6-D2
+  (`RECENCY_KO`: 방금, 아까) followed by one content noun ("방금 내용", "아까 대화")**. The recency form points at the
+  immediately previous answer only, within 10 minutes (a7-05 unchanged), is bound to the held receipt (form b), and meets the
+  same a7-06 changed-source rule ("방금 슬랙 내용 …" after a Jira receipt is `cross-write-new-source`). With no fresh held
+  receipt the plan is refused `cross-write-receipt`. A recency word without a content noun is not this form.
+- **Owner answer (verbatim).** "인정" (to residual 2 of the A7-S1 notes: should step 0 accept `RECENCY_KO` plus a content noun?).
+- **Why.** It is natural conversation: "방금 내용 요약해서 BE-123에 달아줘" means the same as "그 내용 …". It adds no word: it reuses the
+  closed A6-D2 set `RECENCY_KO` (re-exported from nl-routing for the A7 router, never copied) and the same open content-noun
+  position as the "그/해당 내용" form. "아까 그거" already routes to A7 (a deictic-only payload of the W1 grammar), so the
+  amendment makes the noun form consistent with it. A7 router only: A6 and W1 are byte-identical (their pins and tests pass
+  unchanged), the planner prompt is `agent-plan.v11` unchanged, and A7 still never executes.
+- **Residual 2 of A7-S1 review round 2: closed.** Gold: `a7p-030` and `a7p-036` (restored accepted form-b rows; history
+  a7p-030/036 in A7-1, a7n-107/108 refused in round 1), `a7p-083` ("아까 내용 …" form b), `a7n-134` (no receipt,
+  `cross-write-receipt`), `a7n-135` (11-minute-old receipt, `cross-write-receipt`), `a7n-136` (Jira receipt, "방금 슬랙 내용 …",
+  `cross-write-new-source`), `a7n-137` (recency word without a noun). All `pending-owner-approval`; the file holds 217 cases.
+- **Observed, recorded (a7n-137).** The owner brief said a recency word without a noun "stays ordinary". Checked against the code
+  before this amendment: "방금 요약해서 BE-123에 달아줘" already routes to A7, because the bare recency word is a deictic-only
+  payload of the existing A6 grammar (like "그거"). This is unchanged by the amendment and the row pins that behaviour; making it
+  ordinary would need a change to the A6 grammar or to existing A7 behaviour. Owner: confirm or request that change.

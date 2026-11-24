@@ -65,6 +65,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   the planner prompt (`agent-plan.v11`), the catalog, the grant producer and every flag are untouched; the existing plan golds are
   byte-identical (pinned).
 - See DECISIONS "ADR-0121 A7-S1 implementation note (2026-11-24)".
+- **Amended (owner, 2026-11-24).** A7.5 step 0 accepts a recency word (`RECENCY_KO`) plus a content noun as a point-back form ("방금 내용 …"), bound to the held receipt like "그 내용"; A7 router only, A6 and W1 unchanged; 5 gold rows added, 2 restored.
 
 ## Unreleased — ADR-0121 A7 ratified, and the A6/A4 follow-up answers (owner decisions 2026-11-24; docs, gold, tests only)
 

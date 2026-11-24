@@ -1,6 +1,8 @@
 import type { IsoTimestamp } from '../../domain';
 import { parseReminderMessage } from '../reminders/reminder-grammar';
 import { detectWorkChatCommand, type WorkChatCommand } from '../work-chat/work-chat-command';
+// ADR-0121 A7.5 step 0 (owner amendment 2026-11-24): the A6-D2 closed Korean recency words, re-exported for the A7 router only.
+export { RECENCY_KO } from './action-entries';
 import { isNlDeicticOnlyPayload, nlDeterminerSources, nlLocalListTarget, nlSpanStartsWithDeterminer, normalizeNlSpan } from './action-entries';
 
 /**
