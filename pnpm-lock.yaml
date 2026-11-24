@@ -77,6 +77,9 @@ importers:
       '@quoky/github-app-auth':
         specifier: workspace:*
         version: link:../../packages/github-app-auth
+      '@quoky/local-auth':
+        specifier: workspace:*
+        version: link:../../packages/local-auth
       '@quoky/queue-local':
         specifier: workspace:*
         version: link:../../packages/queue-local
@@ -211,6 +214,8 @@ importers:
         version: link:../core
 
   packages/github-app-auth: {}
+
+  packages/local-auth: {}
 
   packages/provider-routing-validation:
     dependencies:

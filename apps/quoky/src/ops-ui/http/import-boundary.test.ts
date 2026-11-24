@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * ADR-0113 D8: `ops-ui/http/*` imports only `node:*` built-ins and its own modules (the view-model types): no Core,
+ * ADR-0113 D8: `ops-ui/http/*` imports only `node:*` built-ins and its own modules plus `@quoky/local-auth` (ADR-0125 D11): no Core,
  * Nest, Discord, SQLite, provider or other app import. It receives already-guarded view-model strings.
  */
 
@@ -30,10 +30,10 @@ describe('ops-ui/http import boundary (ADR-0113 D8)', () => {
     expect(files.sort()).toEqual(['assets.ts', 'intents.ts', 'render.ts', 'security.ts', 'server.ts', 'token-file.ts', 'view-model.ts']);
   });
 
-  it.each(files)('%s imports only node:* built-ins and sibling http modules', (file) => {
+  it.each(files)('%s imports only node:*, @quoky/local-auth and sibling http modules', (file) => {
     const source = readFileSync(path.join(HTTP_DIR, file), 'utf8');
     for (const specifier of specifiers(source)) {
-      const allowed = specifier.startsWith('node:') || /^\.\/[a-z-]+$/.test(specifier);
+      const allowed = specifier.startsWith('node:') || specifier === '@quoky/local-auth' || /^\.\/[a-z-]+$/.test(specifier);
       expect(allowed, `${file} imports ${specifier}`).toBe(true);
     }
   });

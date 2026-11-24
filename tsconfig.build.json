@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
+    { "path": "packages/local-auth" },
     { "path": "packages/adapter-discord" },
     { "path": "packages/adapter-telegram" },
     { "path": "packages/storage-sqlite" },

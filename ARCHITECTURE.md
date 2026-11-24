@@ -456,7 +456,9 @@ planning. Approval requests and decisions are persisted as governance records.
 2. **Core is pure**: no NestJS decorators, no Node-framework deps; injection is
    explicit (constructor + DI tokens in the composition root).
 3. **One concrete provider concern per adapter package.** Adapter packages depend
-   only on `@quoky/core`.
+   only on `@quoky/core`. Narrow exception (ADR-0125): `packages/adapter-local-client` may also depend
+   on `@quoky/local-auth`, a Core-free package importing only `node:*`. No other adapter gains a dependency;
+   a further exception needs its own ADR.
 4. Cross-boundary types are domain types only — no Discord.js/SQL/CLI types in
    port signatures.
 5. Deterministic plumbing may be implemented; model-driven cognition is isolated
@@ -509,7 +511,7 @@ planning. Approval requests and decisions are persisted as governance records.
 | Identity | one local Actor ↔ Discord user | multi-actor teams | `Actor` seam `[RESERVE]` |
 | Storage | SQLite | Postgres | `StorageProvider` swap |
 | Queue / Events | in-process | Redis / Kafka | `QueueProvider` / `EventBus` port |
-| Platform | Discord | + Telegram, web | `PlatformAdapter` |
+| Platform | Discord | + Telegram, web, a same-host local client over a Unix domain socket (ADR-0125) | `PlatformAdapter` |
 | Workspace | local clone | git worktrees, sandboxes | `WorkspaceProvider` |
 | Connectors | Jira/Slack/Confluence read adapters (config-gated) | additional read/write systems | `ConnectorProvider` (ADR-0072); writes use separately approved narrow ports |
 | Extensibility | manual registration | plugin bundles + manifest | bundle of existing ports `[LATER]` |
@@ -517,6 +519,9 @@ planning. Approval requests and decisions are persisted as governance records.
 | Execution | single-shot + one bounded plan-then-execute read agent (ADR-0121) | write proposals, then further autonomy only by ADR | `AgentProfile` seam → bounded runtime `[NOW]` behind flags; broader runtime `[LATER]` |
 | Scheduling / notification | in-process, composition-root tick for owner reminders; owner-only `NotificationSink` (ADR-0101) | distributed scheduler / queue, multi-recipient notifications | `ReminderRepository` + `NotificationSink` ports; swap the tick driver and sink adapter, never the Core contracts |
 | Network posture | outbound-only to an allowlist, loopback listener only, traffic/volume ledger (ADR-0121) | same in Team Edition, enforced at the network layer | egress guard in the composition root; Core unaware |
+
+The OPS-UI listener stays the only loopback TCP listener. The same-host Unix domain socket (ADR-0125) is not a
+network listener; the network posture above and §12 are unchanged. A further endpoint of either kind needs its own ADR.
 
 **Rule of evolution:** an evolution step is valid only if it changes adapters,
 wiring, or `[RESERVE]`/`[LATER]` seams — **never the Core contracts above.** If a

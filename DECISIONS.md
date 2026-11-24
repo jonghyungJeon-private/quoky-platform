@@ -38275,3 +38275,28 @@ The owner answered the ADR-0125 owner questions in the terminal on 2026-11-24. E
 LC-3 (on-device voice) and LC-4 (cards and undo). Each slice keeps its own review and gates; the flag is turned on only
 after the `local-client-surface` red-team family passes (≥ 90 cases, 0 successes over 3 runs). The edits to
 `ARCHITECTURE.md` text are applied in LC-1a.
+
+
+## ADR-0125 LC-1a implementation note (2026-11-24)
+
+LC-1a implements D11 and the ratified ADR-0113 D8 amendment on branch `claude/v5-lc1a-local-auth`, based on
+`d77d65c94c74766114250b999117ce3f0ad936b1` (also the local `origin/main` reference at implementation start).
+
+- Added `@quoky/local-auth`, following the Core-free `github-app-auth` package setup. Production source imports only
+  `node:*`, with no package dependencies or TypeScript project references. `newSecret`, `constantTimeEquals`,
+  `SignInRateLimiter` and its constants, `writeTokenFile`, `removeTokenFile`, the errno helper and token-file result
+  types moved byte-identically into its entry point. OPS-UI imports the shared primitives; token-file naming, sessions,
+  cookies, CSRF, Host checks, bind host and port validation remain in the app. No call order or runtime behaviour changed.
+- Added the workspace dependency, build references, Vitest source alias and lockfile importer. The HTTP boundary allows
+  exactly one additional specifier, `@quoky/local-auth`. A recursive package boundary test pins production imports to
+  `node:*` and checks that the package declares no dependencies or project references.
+- Applied only the ratified `ARCHITECTURE.md` §11 rule 3 exception and §13 Platform / listener text. The exception is
+  exclusively for `adapter-local-client` depending on `local-auth`; it does not permit any other adapter dependency.
+  The OPS-UI listener remains the only loopback TCP listener; a Unix domain socket is not a network listener.
+- Validation: original moved code compared byte-for-byte against the parent commit; the three existing HTTP behaviour
+  test files are unchanged. `pnpm build`, `pnpm typecheck` and targeted `pnpm vitest run` passed (6 files, 60 tests):
+  HTTP server, actions, provider selection and boundary, plus local-auth primitives and boundary. Frozen installation
+  required the new workspace lockfile entries; `pnpm install` generated only those entries. No full suite was run.
+- No adapter, listener, Core, configuration, word list or prompt change; no application runtime, provider call, secret
+  access, push, PR or merge. LC-1b remains separate. The independent LC-1a review required by this ADR is still due
+  before merge; this implementation note does not claim that review.

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@quoky/core": "workspace:*",
+    "@quoky/local-auth": "workspace:*",
     "@quoky/adapter-discord": "workspace:*",
     "@quoky/adapter-telegram": "workspace:*",
     "@quoky/storage-sqlite": "workspace:*",

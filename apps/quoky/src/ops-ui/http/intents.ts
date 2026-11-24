@@ -1,8 +1,8 @@
-import { newSecret } from './security';
+import { newSecret } from '@quoky/local-auth';
 import type { OpsActionOutcome } from './view-model';
 
 /**
- * OPS-2 / OPS-2b one-time action intents (ADR-0113 D7), `node:*` only.
+ * OPS-2 / OPS-2b one-time action intents (ADR-0113 D7), shared randomness from `@quoky/local-auth` (ADR-0125 D11).
  *
  * A confirmation page carries a random nonce bound to the session, the action kind and its subject (the reminder
  * number, or the issued forget code). The executing `POST` names only the nonce: the subject comes from the

@@ -1,0 +1,21 @@
+{
+  "name": "@quoky/local-auth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Core-free local authentication primitives shared by OPS-UI and the local client (ADR-0125 D11).",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  }
+}

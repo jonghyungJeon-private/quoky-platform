@@ -17,6 +17,7 @@ const maxWorkers =
 export default defineConfig({
   resolve: {
     alias: {
+      '@quoky/local-auth': fileURLToPath(new URL('./packages/local-auth/src/index.ts', import.meta.url)),
       '@quoky/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@quoky/tool-mcp': fileURLToPath(new URL('./packages/tool-mcp/src/index.ts', import.meta.url)),
     },

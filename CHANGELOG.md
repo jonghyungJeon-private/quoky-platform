@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0125 LC-1a local-auth extraction (2026-11-24; behaviour unchanged)
+
+- **Changed.** OPS-UI auth primitives moved byte-identically into the Core-free, `node:*`-only `@quoky/local-auth`
+  workspace package. Sessions, CSRF, bind / Host / port checks and token-file naming remain in OPS-UI.
+- **Tests.** Existing HTTP behaviour tests unchanged; HTTP boundary permits exactly `@quoky/local-auth` in addition
+  to built-ins and siblings. New package primitive and import-boundary tests; 6 targeted files / 60 tests pass.
+  Build and typecheck pass. No full suite.
+- **Docs.** Applied the ratified §11 rule 3 exception and §13 Platform / listener text in `ARCHITECTURE.md`;
+  DECISIONS LC-1a implementation note. No adapter, listener or Core change. Independent review remains due before merge.
+
 ## Unreleased — ADR-0121 A7 ratified, and the A6/A4 follow-up answers (owner decisions 2026-11-24; docs, gold, tests only)
 
 - **Docs.** DECISIONS "ADR-0121 amendment A7 ratification record, and the A6/A4 follow-up answers (2026-11-24)". A7 is
