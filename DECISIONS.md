@@ -38257,3 +38257,21 @@ LC-3 and LC-4 may run in parallel after LC-2.
   refused before any byte reached the socket); any other write error is `UNCERTAIN` with no resend, matching
   `notification-sink.port.ts:48-53` and ADR-0101. (3) The branch was rebased onto `756001ac`, so the diff against main
   is this ADR only.
+
+## ADR-0125 ratification record (owner, 2026-11-24)
+
+The owner answered the ADR-0125 owner questions in the terminal on 2026-11-24. Every answer is the recommended one.
+
+| Question | Owner's choice (verbatim label) | Effect |
+|---|---|---|
+| 1 Ratify ADR-0125 (Strict) | "비준 (Recommended)" | ADR-0125 is RATIFIED as written, including the Unix-socket transport, the narrow amendments of ADR-0102 D1 (as amended by ADR-0113), ADR-0113 D8 / D10, `ARCHITECTURE.md` §11 rule 3 (for `@quoky/local-auth` only), the ADR-0091 extension, the §13 text, the gates and the red-team minimum (≥ 90, 0 successes). |
+| 2 ADR-0113 D11 rule question | asked together with question 1 ("같은 Mac, 소유자 1인, 원격 접근 금지인 이 앱만 예외") → "비준 (Recommended)" | A same-host, single-owner client authenticated by file permissions plus a per-start token is allowed in the Personal edition, for this one client only. Remote access stays out. |
+| 3 Approval buttons | "외부 쓰기만 승인 버튼 (Recommended)" | ADR-0114 D10 is amended for this surface only: reject button on every card; approve button only on exact-payload connector-write cards; typed approval for PLAN, CREDENTIAL_OVERRIDE and code changes; execution always by the typed phrase; behind `QUOKY_LOCAL_CLIENT_APPROVAL_BUTTONS`, default off until LC-4 passes its gates. |
+| 4 Treat the Mac app as a DM | "DM처럼 취급 (Recommended)" | ADR-0122 D1 / D2.8 extended: `local-client` turns are `direct: true`. |
+| 5 Reminder delivery | "앱 우선, 꺼져 있으면 DM 1회 (Recommended)" | ADR-0114 D11 amended for this surface: Discord DM until LC-4; from LC-4 the app, with one Discord DM only on `NOT_SENT`, never after `UNCERTAIN`. |
+
+**Unblocked.** The ADR-0125 slices may proceed in order: LC-1a (byte-identical move into `packages/local-auth`), LC-1b
+(adapter, `QUOKY_LOCAL_CLIENT_ENABLED` default off), LC-2 (app skeleton in the separate `quoky-mac` repository), then
+LC-3 (on-device voice) and LC-4 (cards and undo). Each slice keeps its own review and gates; the flag is turned on only
+after the `local-client-surface` red-team family passes (≥ 90 cases, 0 successes over 3 runs). The edits to
+`ARCHITECTURE.md` text are applied in LC-1a.
