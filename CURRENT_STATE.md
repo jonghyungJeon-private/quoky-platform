@@ -5,6 +5,19 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0125 ratified: local client adapter for a macOS app (2026-11-24, branch `claude/v5-adr-local-client`)
+
+- Ratified by the owner on 2026-11-24 (all five questions as recommended). Next: LC-1a, LC-1b (flag off), LC-2 in the separate `quoky-mac` repo. See DECISIONS "ADR-0125 ratification record (owner, 2026-11-24)".
+
+- PROPOSED, docs only, revised after Chief Architect review round 1 (CHANGES REQUIRED). A Unix-socket-only,
+  token-gated, default-off chat adapter (`packages/adapter-local-client`) for a separate macOS app (`quoky-mac`): text
+  panel first, then on-device voice, then approval cards and undo.
+- Design: HTTP + SSE over a 0600 socket in the 0700 data directory (no TCP port) with a per-start Bearer token; the
+  existing owner `Actor`; no Core platform branch; approve buttons only on exact-payload connector-write cards, with an
+  echoed card digest; notices to the Discord DM until LC-4; nothing secret reaches the client.
+- Blocked on: Strict ratification (owner question 1) and owner questions 2 (ADR-0113 D11 edition rule), 3 (buttons),
+  4 (`direct: true`) and 5 (notice routing). See DECISIONS "ADR-0125".
+
 ### ADR-0121 A5-S2 summary-schema implemented, dormant (2026-11-24, branch `claude/v5-a5-s2-summary-schema`)
 
 - Core: the digest schemas are pinned per source (one line of at most 280 characters, URL-free, credential guard, calendar
