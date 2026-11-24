@@ -1,0 +1,23 @@
+{
+  "name": "@quoky/adapter-local-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LocalClientPlatformAdapter (ADR-0125): a default-off, token-gated chat surface for the same-host macOS client over a Unix domain socket in the 0700 data directory; no TCP port.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@quoky/core": "workspace:*",
+    "@quoky/local-auth": "workspace:*"
+  }
+}
