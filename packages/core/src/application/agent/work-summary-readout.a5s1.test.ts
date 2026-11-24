@@ -277,10 +277,11 @@ describe('switch on', () => {
     for (const entryId of WORK_ENTRIES) expect(await ready(entryId, [model('LOCAL')], false), entryId).toBe('no-summary-grant');
   });
 
-  it('A5.3: a REMOTE provider must declare dataUse no-training (LOCAL needs none), for all five sources, calendar included', async () => {
+  it('A5.3 + rule ① guard: a work source is LOCAL-only in Core until the confirm slice (a REMOTE provider, declared or not, is never selected); LOCAL needs no declaration', async () => {
     for (const entryId of WORK_ENTRIES) {
       expect(await ready(entryId, [model('REMOTE')]), `${entryId} remote, no declaration`).toBe('no-model');
-      expect(await ready(entryId, [model('REMOTE', 'no-training')]), `${entryId} remote, no-training`).toBeUndefined();
+      // The no-training constraint stays on the context (next test); the guard excludes REMOTE before it matters.
+      expect(await ready(entryId, [model('REMOTE', 'no-training')]), `${entryId} remote, no-training`).toBe('no-model');
       expect(await ready(entryId, [model('LOCAL')]), `${entryId} local`).toBeUndefined();
     }
     // Mail keeps the pre-A5 rule: a remote provider with no declaration is fine.
@@ -301,7 +302,7 @@ describe('switch on', () => {
     expect(outcome).toEqual({ kind: 'listing-only', reason: 'no-model' });
     expect(undeclared.requests).toHaveLength(0);
     expect(declared.requests).toHaveLength(0);
-    expect(contexts[0]).toMatchObject({ workText: true, requiredDataUse: 'no-training', allowedExecutionLocalities: ['LOCAL', 'REMOTE'] });
+    expect(contexts[0]).toMatchObject({ workText: true, requiredDataUse: 'no-training', allowedExecutionLocalities: ['LOCAL'] });
   });
 
   it('a switch is per source: only the switched-on source runs', async () => {

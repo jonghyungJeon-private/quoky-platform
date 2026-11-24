@@ -331,24 +331,40 @@ export function deriveM2Localities(input: {
   readonly needsGrant: boolean;
   readonly granted: boolean;
   readonly askedItems: number;
+  /**
+   * A5-S3 review round 1 (rule ①): true when any covered source is one of the five A5 work sources (calendar, Jira, Slack,
+   * Confluence, GitHub). Until the rule-① confirm slice lands there is no bound consent token, so a work source never gets
+   * `REMOTE`, grant or not: `LOCAL` only. The confirm slice replaces this guard with the token check. Mail and Drive pass
+   * `false` explicitly, and are unchanged. Required, so a caller can never forget the guard. The guard is independent of the
+   * egress label: it drops `REMOTE` from whatever the label derived.
+   */
+  readonly workSource: boolean;
 }):
   | { readonly ok: true; readonly localities: readonly AiExecutionLocality[] }
   | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
   const { egress, needsGrant, granted, askedItems } = input;
+  const { workSource } = input;
   if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
   if (needsGrant && granted !== true) return { ok: false, reason: 'no-summary-grant' };
   if (typeof askedItems !== 'number' || !Number.isInteger(askedItems) || askedItems < 1) return { ok: false, reason: 'no-model' };
+  let localities: readonly AiExecutionLocality[];
   switch (egress) {
     case 'LOCAL_MODEL_ONLY':
-      return { ok: true, localities: Object.freeze(['LOCAL'] as const) };
+      localities = ['LOCAL'];
+      break;
     case 'REMOTE_ON_SUMMARY_REQUEST':
       if (!needsGrant || granted !== true) return { ok: false, reason: 'no-summary-grant' };
-      return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
+      localities = ['LOCAL', 'REMOTE'];
+      break;
     case 'REMOTE_OK':
-      return { ok: true, localities: Object.freeze(['LOCAL', 'REMOTE'] as const) };
+      localities = ['LOCAL', 'REMOTE'];
+      break;
     default:
       return { ok: false, reason: 'no-model' };
   }
+  // Rule ① guard, whatever the egress label: a work source never gets REMOTE until the bound consent token exists.
+  if (workSource) localities = localities.filter((locality) => locality !== 'REMOTE');
+  return { ok: true, localities: Object.freeze([...localities]) };
 }
 
 /**
@@ -462,9 +478,10 @@ function grantState(
   sources: readonly { readonly entryId: NlWave1EntryId; readonly grant?: SummaryEgressGrant | undefined }[],
   step: number,
   run: SummaryRunToken,
-): { readonly needsGrant: boolean; readonly granted: boolean } {
+): { readonly needsGrant: boolean; readonly granted: boolean; readonly workSource: boolean } {
+  const workSource = sources.some((source) => workSummarySourceOf(source.entryId) !== undefined);
   const needing = sources.filter((source) => summaryReadoutLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
-  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)) };
+  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)), workSource };
 }
 
 export type QuarantinedListingOnlyReason =

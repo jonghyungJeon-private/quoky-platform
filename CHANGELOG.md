@@ -30,6 +30,22 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   Build and typecheck pass. No full suite.
 - **Docs.** Applied the ratified §11 rule 3 exception and §13 Platform / listener text in `ARCHITECTURE.md`;
   DECISIONS LC-1a implementation note. No adapter, listener or Core change. Independent review remains due before merge.
+## Unreleased — ADR-0121 A5-S3 grant-consent (2026-11-24; dormant, every switch off)
+## Unreleased — ADR-0121 A5-S3 grant-consent (2026-11-24; dormant, every switch off, except the catalog alias change)
+
+- **Changed.** The summary grant producer reads the summary-readout label, so calendar, Jira, Slack, Confluence and GitHub
+  are granted from the owner's own words like mail and Drive (no new vocabulary). The separable particle of "sum up" ("sum
+  them up") is a clause-structure rule. The catalog's English source names are data: `pull request`, `repository`
+  (GitHub) and `meeting` (calendar) as `aliases` (review round 1 dropped `repo`: it matched "report"). `ownerSummaryConsentSources` derives the sources the one consent
+  question names.
+- **Gold.** 8 of the 10 SR-1 known gaps are closed (`awaiting.knownGap` removed; 120 derived cases); `rt-s2r-244` and `rt-s2r-250` ("my repo") stay open (no `repo` alias); no `expect` changed.
+  `ap-n071`'s A4 awaiting step and `rt-s2h-015`'s plan step are now the validator's canonical `{ timedOnly: true }`.
+- **Unchanged.** Every per-source switch stays default off (a granted work source still ends listing-only with its pre-A5
+  reason; tested). No prompt template or version change, no model call or eval. The question text, `pending.sources` and
+  the bound-yes re-run wait for A6-S1 and the rule-① confirm slice. A catalog data change: D12 gates before deploy.
+- **Live on deploy.** The catalog alias change (`pull request`, `repository`, `meeting`) is NOT behind any switch. Its one intended
+  behaviour change: a multi-clause English "meetings" request gets `timedOnly`, matching Korean 회의.
+- **Rule ① guard.** Core derives LOCAL only for the five work sources (no REMOTE) until the confirm slice; mail and Drive unchanged.
 
 ## Unreleased — ADR-0121 A7 ratified, and the A6/A4 follow-up answers (owner decisions 2026-11-24; docs, gold, tests only)
 
