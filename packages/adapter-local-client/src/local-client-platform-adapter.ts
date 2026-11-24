@@ -61,6 +61,10 @@ export interface LocalClientAdapterOptions {
   readonly maxTurnsPerMinute?: number;
   readonly headersTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  /** The unsent-backlog limit of one event stream (default `MAX_STREAM_BACKLOG_BYTES`). */
+  readonly maxStreamBacklogBytes?: number;
+  /** The uid the data directory and socket must belong to (default `process.getuid()`). */
+  readonly uid?: number;
 }
 
 /** Content-free status for the OPS-UI panel (D12): no content, id, path or token can be expressed. */
@@ -104,6 +108,7 @@ export class LocalClientPlatformAdapter implements PlatformAdapter {
       epoch: randomBytes(8).toString('hex'),
       now: this.nowMs,
       ...(options.heartbeatMs === undefined ? {} : { heartbeatMs: options.heartbeatMs }),
+      ...(options.maxStreamBacklogBytes === undefined ? {} : { maxBacklogBytes: options.maxStreamBacklogBytes }),
     });
     this.dedupe = new IdempotencyRing(this.nowMs);
     this.limiter = new SignInRateLimiter(this.nowMs);
@@ -112,6 +117,11 @@ export class LocalClientPlatformAdapter implements PlatformAdapter {
   /** The process epoch (random per start); every response and event carries it. */
   get epoch(): string {
     return this.hub.epoch;
+  }
+
+  /** The largest unsent backlog any stream has had, in bytes (content-free; the red-team corpus pins it to the limit). */
+  get peakStreamBacklogBytes(): number {
+    return this.hub.peakBacklogBytes;
   }
 
   /** D4 / ADR-0102 D5 (adapter-local): turns are `503 NOT_READY` until the gate resolves `true`; `false` stops the adapter. */
@@ -167,7 +177,7 @@ export class LocalClientPlatformAdapter implements PlatformAdapter {
     }
     if (!resolved) return this.disable('OWNER_UNRESOLVED');
 
-    const uid = process.getuid?.();
+    const uid = this.options.uid ?? process.getuid?.();
     const pre = await preflightSocketPath({
       dataDir: this.options.dataDir,
       instanceLockHeld: this.options.instanceLockHeld,
@@ -201,6 +211,7 @@ export class LocalClientPlatformAdapter implements PlatformAdapter {
     this.socketPath = pre.socketPath;
     const bound = await bindSocket(server, pre.socketPath, uid);
     if (!bound.ok) {
+      // bindSocket has already closed the server (no listener remains) and removed only what it placed.
       this.server = undefined;
       return this.disable(bound.reason);
     }

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -14,6 +15,14 @@ export const silentLogger: Logger = { debug: () => undefined, info: () => undefi
 export function tempDataDir(): string {
   // mkdtemp creates mode 0700 (the D2 data-directory rule).
   return mkdtempSync(path.join(os.tmpdir(), 'lc-'));
+}
+
+/** A socket file whose owner process was killed: nobody listens, the file stays (a stale socket). */
+export async function leaveStaleSocket(socketPath: string): Promise<void> {
+  const child = spawn(process.execPath, ['-e', `require('net').createServer().listen(${JSON.stringify(socketPath)}, () => console.log('up'))`], { stdio: ['ignore', 'pipe', 'ignore'] });
+  await new Promise<void>((resolve) => child.stdout.once('data', () => resolve()));
+  child.kill('SIGKILL');
+  await new Promise<void>((resolve) => child.once('exit', () => resolve()));
 }
 
 export interface Harness {

@@ -404,15 +404,16 @@ RUNBOOK
 # with a relative socket path (the 103-byte socket path limit never applies to the client side), the token goes to curl
 # on stdin (never on a command line), and the response body, which has no token, is discarded.
 cmd_local_client() {
-  local sock="$DATA_DIR/local-client.sock" token_file="$DATA_DIR/local-client.token" token code
+  local sock="$DATA_DIR/local-client.sock" tf_path token code
+  tf_path="$DATA_DIR/local-client.token"
   [ -S "$sock" ] && [ ! -L "$sock" ] || fail "local-client: no socket in the data directory (the surface is off or Quoky is not running)"
-  { [ -f "$token_file" ] && [ ! -L "$token_file" ]; } || fail "local-client: no token file in the data directory"
+  { [ -f "$tf_path" ] && [ ! -L "$tf_path" ]; } || fail "local-client: no token file in the data directory"
   command -v curl >/dev/null 2>&1 || fail "local-client: curl is not on PATH"
   if [ "$MODE" != apply ]; then
     echo "dry-run: would POST /client/v1/token/rotate to the local-client socket; nothing was changed (run with --apply)"
     return 0
   fi
-  token=$(head -n 1 "$token_file")
+  token=$(head -n 1 "$tf_path")
   code=$(cd "$DATA_DIR" && printf 'header = "Authorization: Bearer %s"\n' "$token" | curl --silent --show-error --max-time 10 \
     --output /dev/null --write-out '%{http_code}' --unix-socket local-client.sock -K - \
     -X POST -H 'Host: localhost' -H 'Content-Type: application/json' --data '{}' \

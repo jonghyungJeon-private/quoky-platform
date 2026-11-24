@@ -38320,14 +38320,14 @@ LC-1b implements D1-D6, D8 (LC-1b..LC-3 routing), D9 and D12 on branch `claude/v
 - **D2 start order** (`socket.ts`): lock and file-backed DB, UTF-8 path length <= 103, `lstat` of the data directory
   (real directory, process uid, no group/other bits; never created), existing path (non-socket or foreign uid is never
   unlinked; a connect probe with a 1 s timeout: connected = `SOCKET_LIVE`, only `ECONNREFUSED` = stale and unlinked, any
-  other errno or timeout = `SOCKET_PROBE_FAILED`, no unlink), `listen`, `chmod 0600`, `lstat` again with `(dev, ino)`
-  recorded, then the token file (`writeTokenFile`, only after those checks). Every refusal is a typed reason code; the
+  other errno or timeout = `SOCKET_PROBE_FAILED`, no unlink), `listen` on a random temporary name in the data directory
+  (same length as `local-client.sock`), `chmod 0600`, `lstat` again with `(dev, ino)` recorded, `rename` onto
+  `local-client.sock` (refused with `SOCKET_PATH_OCCUPIED` if anything appeared there), then the token file (`writeTokenFile`, only after those checks). Every refusal is a typed reason code; the
   adapter disables itself and `start()` resolves, so the rest of Quoky starts.
-- **End of life.** Stop closes streams, then unlinks the socket and the token file only while their recorded `(dev, ino)`
-  still match, inside `shutdown()` that `main.ts` runs before `process.exit` releases the D4 lock. Implementation detail
-  the ADR did not state: libuv unlinks the path of a closing pipe server unconditionally, so when the socket was replaced
-  the handle is deliberately NOT closed (it is unreferenced and unreachable by path) and goes with the process; a test
-  pins that the replacement keeps serving.
+- **End of life.** Stop closes streams, ALWAYS closes the server, then unlinks the socket and the token file only while
+  their recorded `(dev, ino)` still match, inside `shutdown()` that `main.ts` runs before `process.exit` releases the D4
+  lock. libuv unlinks the name a pipe server was bound to when it closes; because the bind used the temporary name
+  (already gone after the rename), closing never touches whatever is at `local-client.sock` (review round 1).
 - **D3 request hygiene** (`http.ts`): order is framing hygiene (any `Transfer-Encoding`, `Content-Encoding`, `Expect`,
   `Upgrade`, `TE`, `Trailer`, a repeated single-valued header, a control byte: 400), `Host` exactly `localhost` (400),
   any `Origin` (403), `OPTIONS` (405), exact route table (other paths, methods, queries: 404 with no body), Bearer token
@@ -38343,7 +38343,7 @@ LC-1b implements D1-D6, D8 (LC-1b..LC-3 routing), D9 and D12 on branch `claude/v
   start (16 hex characters) on every response and event; event ids `<epoch>-<seq>`, the id is the delivery receipt's
   `messageId`; a 200 event / 10 minute ring; `Last-Event-ID` resumes only for this epoch inside the ring, anything else
   gets one id-less `status {resync: true}` and no replay; at most 2 streams, 30 turns per minute, 25 s heartbeat, a stream
-  whose unsent backlog passes 1 MiB is dropped. Every stream starts with one id-less `status {status, epoch}` event.
+  whose unsent backlog would pass 1 MiB is dropped (status event, replay, publish and heartbeat share one guarded write). Every stream starts with one id-less `status {status, epoch}` event.
   Replies carry `text` (plain) and `content` (typed spans `text` / `untrusted` / `link` / `conversation`, concatenating
   to `text`); `context = {platform: 'local-client', channelId: 'local-client-dm', threadId?, userId: <owner>, direct:
   true}`, `replyTo` from `replyToEventId`. `status` answers 200 `{status: 'starting' | 'ready', epoch}` while the
@@ -38372,13 +38372,41 @@ LC-1b implements D1-D6, D8 (LC-1b..LC-3 routing), D9 and D12 on branch `claude/v
   socket of mode 600 in a 700 directory, both owned by the service user; any TCP listener fails as before.
 - **Red-team.** `local-client-surface.corpus.test.ts` is the deterministic family for the LC-1b groups (token and scope,
   socket path, no TCP, lockout DoS, idempotency, forged `Last-Event-ID`, encoded approval id, smuggling, floods, leakage,
-  content imitation; 75 cases, each at or above the ADR minimum): 0 successes over 3 consecutive runs. The groups
+  content imitation; 79 cases after review round 1, each at or above the ADR minimum): 0 successes over 3 consecutive runs. The groups
   "Approvals" and "Notices" (and the remaining count to the >= 90 total) belong to LC-4. The flag is NOT turned on by
   this slice; the ratified gate (3 runs at 0 over the whole family) still applies before any live enablement.
 - **Not in this slice.** `notices/ack`, the decision endpoint, `decisionStep` / `undoUntil`, the OPS-UI reference as a typed
-  part, feedback, attachments (LC-4 / later); `opsDecisionResultTarget` still falls back to the single Discord owner for a
-  `local-client` turn. No `docs/wiki` change.
+  part, feedback, attachments (LC-4 / later). No `docs/wiki` change.
 - **Validation.** `pnpm build` and `pnpm typecheck`; targeted `pnpm vitest run` only (see the CHANGELOG entry for counts).
   No full suite, no live service, no model call, no push.
 - **Gates.** Before merge: Codex review and an independent Chief Architect review (new endpoint, ADR-0102 D1 / ADR-0113
   amendments, the notice routing) per the ADR "Gates"; this note does not claim either.
+- **Review round 1 (Chief Architect + Codex, 2026-11-24).** Findings and fixes:
+  - P2 socket leak on `SOCKET_VERIFY_FAILED` and on a replaced path (the server was only `unref()`ed and kept
+    listening behind a moved name) -> the CA's structural fix: bind to a random temporary name in the 0700 directory,
+    `chmod`, `lstat`, record `(dev, ino)`, `rename` onto `local-client.sock`; both `unref()` branches removed, the
+    server is always closed, the real path is removed only on a `(dev, ino)` match. Stale-socket unlink is unchanged
+    (preflight, under the D4 lock, only on `ECONNREFUSED`). Tests: verify failure leaves no listener and no file; an
+    entry that appears at the path is never renamed over; a replaced path on stop leaves the replacement serving and
+    our server closed (`ECONNREFUSED` behind the moved name); a normal stop removes the path and leaves no temp name.
+  - P2 SSE replay bypassed the backlog guard (direct `res.write`) -> the status event and the replay go through the
+    one guarded write; a write that would take the unsent backlog past the limit (bytes, chunk framing included)
+    drops the stream and removes it from the open set at once. `maxStreamBacklogBytes` is a test option.
+  - P2 the red-team "slow stream reader" case could never fail -> replaced: a reader that pauses its socket, publishes
+    until the limit is passed (dropped, `openStreams === 0`, peak backlog <= limit), and a resume whose replay passes
+    the limit (closed by the server at once; a one-event resume is the control). Checked to fail on the old replay path.
+  - P2 secret-scan false positives (`quokyctl.sh` `token_file=` assignment) -> variable renamed `tf_path`; tree gating
+    is back to main's count; no allowlist entry.
+  - P3 "seq before the ring", "stale socket" (two cases) and "foreign-owned data dir" (adapter `uid` test seam) moved
+    into the corpus: 79 cases, 0 successes over 3 consecutive runs.
+  - P3 the composite redirected `SURFACE_GRANT` too -> only `TEXT` and `BRIEF` are redirected (D8); any other kind for
+    `local-client` is `NOT_SENT TARGET_NOT_ADMITTED`.
+  - P3 `opsDecisionResultTarget` -> a `local-client` turn whose `userId` is in `discord.ownerIds` goes to that owner's
+    Discord DM (D5); otherwise the existing rule (the only owner, or none) is unchanged.
+  - P3 `instanceLockHeld` -> `isInstanceLockHeld(lockDir)` reports the lock this process actually holds (set on acquire,
+    cleared on release) instead of inferring it from the path.
+  - Residuals: (a) a resume whose replay alone passes 1 MiB is dropped before any byte is sent (the replay is written in
+    one tick); a client that resumes again from the same id is dropped again until the events leave the ring (<= 10
+    min), so the Mac client should fall back to a reconnect without `Last-Event-ID` after a resume that closes with no
+    `status` event (quoky-mac CONTRACT.md). (b) A crash between the temporary bind and the rename can leave one
+    `.lc-<hex>.sock` file in the data directory; it is inert (nobody listens) and is not cleaned automatically.

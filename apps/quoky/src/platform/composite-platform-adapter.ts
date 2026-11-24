@@ -143,7 +143,9 @@ export class CompositePlatformAdapter implements PlatformAdapter, NotificationSi
    */
   async deliver(original: OwnerNotification): Promise<NotificationSinkOutcome> {
     let notification = original;
-    if (this.redirect !== undefined && original.kind !== 'OPS_DECISION_RESULT' && original.target.platform === this.redirect.from) {
+    // Only a reminder (`TEXT`) or the `BRIEF` is redirected (D8); any other kind for that platform stays fail-closed.
+    const redirectable = original.kind === 'TEXT' || original.kind === 'BRIEF';
+    if (this.redirect !== undefined && redirectable && original.target.platform === this.redirect.from) {
       const target = this.redirect.toTarget(original.target);
       if (target === undefined) return { status: 'NOT_SENT', reason: 'TARGET_NOT_ADMITTED', retryable: false };
       // A DM only: the originating conversation's channel recheck belongs to that conversation, not to the owner DM.

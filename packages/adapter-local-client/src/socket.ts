@@ -1,4 +1,5 @@
-import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, lstatSync, renameSync, unlinkSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import net from 'node:net';
 import type http from 'node:http';
@@ -117,60 +118,78 @@ export type BindResult =
   | { readonly ok: true; readonly identity: FileIdentity }
   | { readonly ok: false; readonly reason: LocalClientDisableReason };
 
+/** A random name beside the socket, the same length as `local-client.sock`, so the D2 path-length check covers it. */
+function temporaryBindPath(socketPath: string): string {
+  return path.join(path.dirname(socketPath), `.lc-${randomBytes(4).toString('hex')}.sock`);
+}
+
+/** Close a server (idempotent; resolves when it is not listening). libuv unlinks the name it was bound to. */
+export function closeServer(server: http.Server): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!server.listening) return resolve();
+    server.close(() => resolve());
+  });
+}
+
 /**
- * D2 steps 3-4: `listen(socketPath)`, then `chmod` to 0600 and `lstat` again (a socket, our uid, mode 0600), recording
- * `(dev, ino)`. A mismatch leaves the handle open but unreferenced (see {@link releaseSocket}) and disables the adapter.
+ * D2 steps 3-4. The server binds to a random temporary name inside the 0700 data directory, the socket is `chmod`ed to
+ * 0600 and `lstat`ed (a socket, our uid, mode 0600) and its `(dev, ino)` recorded, and only then is it `rename`d onto
+ * `local-client.sock` (never over an existing entry). libuv remembers the name it bound and unlinks THAT name on close,
+ * which is already gone after the rename, so the adapter can always close the server without touching whatever is at
+ * the real path. Any mismatch closes the server and disables the adapter; the real path is removed only while it still
+ * has the recorded `(dev, ino)`.
  */
 export async function bindSocket(server: http.Server, socketPath: string, uid: number): Promise<BindResult> {
+  const tempPath = temporaryBindPath(socketPath);
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(socketPath, () => {
+      server.listen(tempPath, () => {
         server.off('error', reject);
         resolve();
       });
     });
   } catch {
+    await closeServer(server);
     return { ok: false, reason: 'SOCKET_BIND_FAILED' };
   }
+  let identity: FileIdentity | undefined;
   try {
-    chmodSync(socketPath, 0o600);
-    const stat = lstatOrUndefined(socketPath);
+    chmodSync(tempPath, 0o600);
+    const stat = lstatOrUndefined(tempPath);
     if (stat === undefined || !stat.isSocket() || stat.uid !== BigInt(uid) || (stat.mode & 0o777n) !== 0o600n) {
-      server.unref();
+      await closeServer(server);
       return { ok: false, reason: 'SOCKET_VERIFY_FAILED' };
     }
-    return { ok: true, identity: identityOf(stat) };
+    const recorded = identityOf(stat);
+    // `rename` replaces silently; the path was free at preflight and must still be (nothing is ever clobbered).
+    if (lstatOrUndefined(socketPath) !== undefined) {
+      await closeServer(server);
+      return { ok: false, reason: 'SOCKET_PATH_OCCUPIED' };
+    }
+    renameSync(tempPath, socketPath);
+    identity = recorded;
+    if (!sameIdentity(lstatIdentity(socketPath), recorded)) {
+      await releaseSocket(server, socketPath, recorded);
+      return { ok: false, reason: 'SOCKET_VERIFY_FAILED' };
+    }
+    return { ok: true, identity: recorded };
   } catch {
-    server.unref();
+    await releaseSocket(server, socketPath, identity);
     return { ok: false, reason: 'SOCKET_VERIFY_FAILED' };
   }
 }
 
 /**
- * D2 end of life: the socket is unlinked only while the path still has the recorded `(dev, ino)`. libuv unlinks the
- * path of a closing pipe server unconditionally, so when the path was replaced the handle is NOT closed (a replaced
- * file is left alone); it is unreferenced, accepts nothing the path can reach, and goes away with the process.
+ * D2 end of life: the server is always closed (libuv unlinks only the temporary bind name, gone since the rename), and
+ * the socket path is unlinked only while it still has the recorded `(dev, ino)`; a replaced file is left alone.
  */
 export async function releaseSocket(server: http.Server, socketPath: string, recorded: FileIdentity | undefined): Promise<void> {
-  let current: FileIdentity | undefined;
-  try {
-    current = lstatIdentity(socketPath);
-  } catch {
-    current = undefined;
-  }
   server.closeAllConnections();
-  if (current === undefined || sameIdentity(current, recorded)) {
-    await new Promise<void>((resolve) => {
-      if (!server.listening) return resolve();
-      server.close(() => resolve());
-    });
-    try {
-      if (sameIdentity(lstatIdentity(socketPath), recorded)) unlinkSync(socketPath);
-    } catch {
-      // already gone
-    }
-    return;
+  await closeServer(server);
+  try {
+    if (sameIdentity(lstatIdentity(socketPath), recorded)) unlinkSync(socketPath);
+  } catch {
+    // already gone, or not ours to remove
   }
-  server.unref();
 }

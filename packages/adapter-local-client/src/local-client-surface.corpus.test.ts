@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { messageContent, outboundMessage, untrustedText } from '@quoky/core';
 import type { ConversationContext, OutboundMessage } from '@quoky/core';
 
-import { OWNER, openStream, postMessage, raw, request, startHarness, tempDataDir } from './test-support';
+import { OWNER, leaveStaleSocket, openStream, postMessage, raw, request, startHarness, tempDataDir } from './test-support';
 import type { Harness } from './test-support';
 
 /**
@@ -151,6 +151,23 @@ add('socket-path', 'a replaced token file is not removed at stop', async () => {
   await h.adapter.stop();
   return !existsSync(t) || readFileSync(t, 'utf8') !== 'theirs';
 });
+add('socket-path', 'a stale socket of ours (probe refused) does not keep the surface down while the lock is held', async () => {
+  const dir = tempDataDir();
+  await leaveStaleSocket(sockOf(dir));
+  const h = await start({ dir });
+  return !h.adapter.status().listening;
+});
+add('socket-path', 'a stale socket is never unlinked without the instance lock', async () => {
+  const dir = tempDataDir();
+  await leaveStaleSocket(sockOf(dir));
+  const h = await start({ dir, instanceLockHeld: false });
+  return h.adapter.status().listening || lstatSync(sockOf(dir), { throwIfNoEntry: false })?.isSocket() !== true;
+});
+add('socket-path', 'a data directory owned by another uid', async () => {
+  const dir = tempDataDir();
+  const h = await start({ dir, uid: (process.getuid?.() ?? 0) + 1 });
+  return h.adapter.status().listening || h.adapter.status().disabledReason !== 'DATA_DIR_UNSAFE' || existsSync(sockOf(dir)) || existsSync(path.join(dir, 'local-client.token'));
+});
 
 // ---- No TCP reach (4)
 add('no-tcp', 'no TCP listener appears with the flag on', async () => {
@@ -258,6 +275,16 @@ add('forged-last-event-id', 'non-numeric', forged((e) => `${e}-abc`));
 add('forged-last-event-id', 'negative', forged((e) => `${e}--5`));
 add('forged-last-event-id', 'overlong', forged((e) => `${e}-${'1'.repeat(500)}`));
 add('forged-last-event-id', 'a path-like value', forged(() => '../../etc/passwd'));
+add('forged-last-event-id', 'a seq before the ring (more than 200 events behind) replays nothing', async () => {
+  const h = await start();
+  for (let i = 0; i < 205; i += 1) await h.adapter.sendMessage(outboundMessage(ctx, `m${i}`) as OutboundMessage);
+  const s = await openStream(h.socket, h.token(), { 'Last-Event-ID': `${h.adapter.epoch}-2` });
+  await s.until((t) => t.includes('event: status'));
+  await sleep(40);
+  const replayed = !s.text().includes('"resync":true') || s.text().includes('event: reply');
+  s.close();
+  return replayed;
+});
 
 // ---- Encoded / traversal approvalId (6): the decision endpoint does not exist in LC-1b, and an encoded id never reaches a handler.
 const GOOD = '3f2b8c1e-9d4a-4e7b-8a21-6c5d4e3f2a10';
@@ -331,12 +358,52 @@ add('floods', 'a third event stream', async () => {
   b.close();
   return ok2xx(c.status);
 });
-add('floods', 'a slow stream reader cannot grow the process without bound', async () => {
-  const h = await start({ heartbeatMs: 20 });
-  const s = await openStream(h.socket, h.token());
-  for (let i = 0; i < 300; i += 1) await h.adapter.sendMessage(outboundMessage(ctx, 'z'.repeat(2000)) as OutboundMessage);
-  s.close();
-  return h.adapter.status().openStreams > 2;
+/** An event stream whose reader never reads: the socket is paused right after the request is written. */
+const pausedReader = (h: Harness, extra = ''): net.Socket => {
+  const c = net.connect(h.socket, () => {
+    c.write(`GET /client/v1/events HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${h.token()}\r\n${extra}\r\n`);
+    c.pause();
+  });
+  c.on('error', () => undefined);
+  cleanups.push(() => c.destroy());
+  return c;
+};
+const waitFor = async (predicate: () => boolean, ms = 2000): Promise<boolean> => {
+  for (let waited = 0; waited < ms; waited += 10) {
+    if (predicate()) return true;
+    await sleep(10);
+  }
+  return predicate();
+};
+add('floods', 'a paused stream reader is dropped at the backlog limit, by publish and by replay', async () => {
+  const limit = 64 * 1024;
+  const h = await start({ maxStreamBacklogBytes: limit });
+  const big = (i: number) => outboundMessage(ctx, `${i}:${'z'.repeat(2000)}`) as OutboundMessage;
+  // Live: publish until the limit is passed while the reader never reads.
+  pausedReader(h);
+  if (!(await waitFor(() => h.adapter.status().openStreams === 1))) return true;
+  for (let i = 0; i < 300 && h.adapter.status().openStreams > 0; i += 1) {
+    await h.adapter.sendMessage(big(i));
+    await sleep(1);
+  }
+  const keptLive = h.adapter.status().openStreams !== 0;
+  // Replay: a resume from the start of the ring (200 events, far over the limit) is dropped by the same guard.
+  let lastId = '';
+  for (let i = 0; i < 210; i += 1) lastId = ((await h.adapter.sendMessage(big(1000 + i))) as { platformMessageIds: string[] }).platformMessageIds[0] ?? '';
+  const firstInRing = Number(/-(\d+)$/.exec(lastId)?.[1]) - 199;
+  const resume = (from: number, waitMs: number) =>
+    raw(h.socket, `GET /client/v1/events HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${h.token()}\r\nLast-Event-ID: ${h.adapter.epoch}-${from}\r\n\r\n`, waitMs);
+  // Control: the same request resuming one event back opens and replays that event.
+  const control = await resume(firstInRing + 198, 200);
+  const controlOk = control.startsWith('HTTP/1.1 200') && (control.match(/^event: reply$/gm) ?? []).length === 1;
+  await waitFor(() => h.adapter.status().openStreams === 0);
+  const began = Date.now();
+  const replay = await resume(firstInRing - 1, 1500);
+  // The whole replay is written in one tick, so the guard drops the stream before anything is flushed: the server
+  // closes at once (no 4xx, no waiting for the client's timeout) with far fewer than 200 replayed events.
+  const closedByServer = Date.now() - began < 1000 && !/^HTTP\/1\.1 [^2]/.test(replay);
+  const keptReplay = !controlOk || !closedByServer || (replay.match(/^event: reply$/gm) ?? []).length >= 200 || h.adapter.status().openStreams !== 0;
+  return keptLive || keptReplay || h.adapter.peakStreamBacklogBytes > limit;
 });
 add('floods', 'a notice-ack flood reaches nothing (the endpoint is LC-4)', async () => {
   const h = await start();

@@ -6,6 +6,7 @@ import { BootstrapPreflightError } from '../bootstrap-preflight';
 import {
   acquireInstanceLock,
   instanceLockPath,
+  isInstanceLockHeld,
   parseLockRecord,
   readHostBootId,
   type InstanceLock,
@@ -335,6 +336,16 @@ describe('acquireInstanceLock takeover races (Codex P1: no read→unlink window)
 });
 
 describe('InstanceLock.release (ADR-0102 D4)', () => {
+  it('isInstanceLockHeld reports the real held state: true after acquire, false after release or for no path', () => {
+    const store: Store = new Map();
+    const a = runStarter(store, new Set<number>(), 'a', 100);
+    expect(isInstanceLockHeld(LOCK)).toBe(true);
+    expect(isInstanceLockHeld('/data/other.db.lock')).toBe(false);
+    expect(isInstanceLockHeld(undefined)).toBe(false);
+    a.lock!.release();
+    expect(isInstanceLockHeld(LOCK)).toBe(false);
+  });
+
   it('writes a released marker above its generation, removes the older ones, and is idempotent', () => {
     const store: Store = new Map();
     const alive = new Set<number>();

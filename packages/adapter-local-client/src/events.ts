@@ -27,6 +27,8 @@ export interface EventHubOptions {
   readonly ringMs?: number;
   readonly heartbeatMs?: number;
   readonly maxStreams?: number;
+  /** A stream whose unsent backlog would pass this many bytes is dropped (default `MAX_STREAM_BACKLOG_BYTES`). */
+  readonly maxBacklogBytes?: number;
 }
 
 export type AttachResult = 'ok' | 'TOO_MANY_STREAMS';
@@ -34,6 +36,9 @@ export type AttachResult = 'ok' | 'TOO_MANY_STREAMS';
 function frame(event: { id?: string; type: string; data: string }): string {
   return `${event.id === undefined ? '' : `id: ${event.id}\n`}event: ${event.type}\ndata: ${event.data}\n\n`;
 }
+
+/** HTTP/1.1 chunked framing added to each write (hex length and two CRLFs), so the guard holds after framing too. */
+const CHUNK_FRAMING_BYTES = 16;
 
 export class EventHub {
   readonly epoch: string;
@@ -46,6 +51,8 @@ export class EventHub {
   private readonly ringMs: number;
   private readonly heartbeatMs: number;
   private readonly maxStreams: number;
+  private readonly maxBacklogBytes: number;
+  private peakBacklog = 0;
 
   constructor(options: EventHubOptions) {
     this.epoch = options.epoch;
@@ -54,10 +61,16 @@ export class EventHub {
     this.ringMs = options.ringMs ?? EVENT_RING_MS;
     this.heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
     this.maxStreams = options.maxStreams ?? MAX_EVENT_STREAMS;
+    this.maxBacklogBytes = options.maxBacklogBytes ?? MAX_STREAM_BACKLOG_BYTES;
   }
 
   get openStreams(): number {
     return this.streams.size;
+  }
+
+  /** The largest unsent backlog any stream has had after a write (bytes); never above the limit. */
+  get peakBacklogBytes(): number {
+    return this.peakBacklog;
   }
 
   /** Record one event (always carrying the process epoch) and write it to every open stream. */
@@ -80,7 +93,8 @@ export class EventHub {
   /**
    * Open a stream. The caller has already checked readiness. `lastEventId` is the raw header value (or undefined).
    * Writes the response head, one id-less `status` event (epoch, plus `resync: true` when a header was sent that is
-   * not resumable), then the replay.
+   * not resumable), then the replay. Every byte after the head goes through the same backlog guard as a publish, so a
+   * replay that would pass the limit drops the stream like a slow reader does.
    */
   attach(res: ServerResponse, lastEventId: string | undefined, status: string): AttachResult {
     if (this.streams.size >= this.maxStreams) return 'TOO_MANY_STREAMS';
@@ -93,13 +107,15 @@ export class EventHub {
       'X-Content-Type-Options': 'nosniff',
     });
     const resync = lastEventId !== undefined && resume === undefined;
-    res.write(frame({ type: 'status', data: JSON.stringify({ status, epoch: this.epoch, ...(resync ? { resync: true } : {}) }) }));
-    if (resume !== undefined) for (const event of this.ring) if (event.seq > resume) res.write(frame(event));
     this.streams.add(res);
     res.once('close', () => {
       this.streams.delete(res);
       this.stopHeartbeatIfIdle();
     });
+    if (!this.write(res, frame({ type: 'status', data: JSON.stringify({ status, epoch: this.epoch, ...(resync ? { resync: true } : {}) }) }))) return 'ok';
+    if (resume !== undefined) {
+      for (const event of [...this.ring]) if (event.seq > resume && !this.write(res, frame(event))) return 'ok';
+    }
     this.startHeartbeat();
     return 'ok';
   }
@@ -120,13 +136,22 @@ export class EventHub {
     this.stopHeartbeatIfIdle();
   }
 
-  private write(stream: ServerResponse, text: string): void {
-    if (stream.destroyed || stream.writableEnded) return;
-    if (stream.writableLength > MAX_STREAM_BACKLOG_BYTES) {
+  /**
+   * The one write path (publish, replay, heartbeat): a write that would take the stream's unsent backlog past the limit
+   * drops the stream instead (it leaves the set at once). Returns whether the stream is still open.
+   */
+  private write(stream: ServerResponse, text: string): boolean {
+    if (stream.destroyed || stream.writableEnded) return false;
+    const bytes = Buffer.from(text, 'utf8');
+    if (stream.writableLength + bytes.length + CHUNK_FRAMING_BYTES > this.maxBacklogBytes) {
+      this.streams.delete(stream);
       stream.destroy();
-      return;
+      this.stopHeartbeatIfIdle();
+      return false;
     }
-    stream.write(text);
+    stream.write(bytes);
+    if (stream.writableLength > this.peakBacklog) this.peakBacklog = stream.writableLength;
+    return true;
   }
 
   private prune(): void {

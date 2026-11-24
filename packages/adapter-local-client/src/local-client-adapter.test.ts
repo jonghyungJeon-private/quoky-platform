@@ -386,14 +386,7 @@ describe('events (D4)', () => {
     stream.close();
   });
 
-  it('resyncs for a seq before the ring (more than 200 events behind)', async () => {
-    const h = await start();
-    for (let i = 0; i < 205; i += 1) await h.adapter.sendMessage(outboundMessage(ctx, `m${i}`) as never);
-    const stream = await openStream(h.socket, h.token(), { 'Last-Event-ID': `${h.adapter.epoch}-2` });
-    await stream.until((t) => t.includes('"resync":true'));
-    expect(stream.text()).not.toContain('event: reply');
-    stream.close();
-  });
+  // 'a seq before the ring' is in the local-client-surface corpus (forged-last-event-id).
 
   it('allows at most 2 streams (429) and sends heartbeat comments', async () => {
     const h = await start({ heartbeatMs: 40 });

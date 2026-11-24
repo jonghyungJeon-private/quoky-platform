@@ -1,12 +1,13 @@
-import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { MAX_SOCKET_PATH_BYTES } from './constants';
-import { startHarness, tempDataDir } from './test-support';
+import { bindSocket } from './socket';
+import { leaveStaleSocket, startHarness, tempDataDir } from './test-support';
 import type { Harness } from './test-support';
 
 const open: Harness[] = [];
@@ -33,32 +34,8 @@ afterEach(async () => {
   }
 });
 
-/** A socket file whose owner process was killed: nobody listens, the file stays (a stale socket). */
-async function leaveStaleSocket(socketPath: string): Promise<void> {
-  const child = spawn(process.execPath, ['-e', `require('net').createServer().listen(${JSON.stringify(socketPath)}, () => console.log('up'))`], { stdio: ['ignore', 'pipe', 'ignore'] });
-  await new Promise<void>((resolve) => child.stdout.once('data', () => resolve()));
-  child.kill('SIGKILL');
-  await new Promise<void>((resolve) => child.once('exit', () => resolve()));
-}
-
 describe('stale and hostile socket paths (D2 step 2)', () => {
-  it('replaces a stale socket (ECONNREFUSED, owned by us) while the lock is held', async () => {
-    const d = dir();
-    const socket = path.join(d, 'local-client.sock');
-    await leaveStaleSocket(socket);
-    expect(lstatSync(socket).isSocket()).toBe(true);
-    const h = await start({ dir: d });
-    expect(h.adapter.status().listening).toBe(true);
-  });
-
-  it('never unlinks a stale socket without the instance lock', async () => {
-    const d = dir();
-    const socket = path.join(d, 'local-client.sock');
-    await leaveStaleSocket(socket);
-    const h = await start({ dir: d, instanceLockHeld: false });
-    expect(h.adapter.status().disabledReason).toBe('NO_INSTANCE_LOCK');
-    expect(lstatSync(socket).isSocket()).toBe(true);
-  });
+  // The stale-socket cases (replaced under the lock, never unlinked without it) are in the local-client-surface corpus.
 
   it('a live socket disables the adapter and is never unlinked or disturbed', async () => {
     const d = dir();
@@ -138,6 +115,57 @@ describe('stale and hostile socket paths (D2 step 2)', () => {
   });
 });
 
+function connectErrno(target: string): Promise<string> {
+  return new Promise((resolve) => {
+    const c = net.connect(target);
+    c.once('connect', () => {
+      c.destroy();
+      resolve('CONNECTED');
+    });
+    c.once('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? 'UNKNOWN'));
+  });
+}
+
+describe('bind by temporary name and rename (D2 steps 3-4)', () => {
+  it('a verify failure closes the server: no listener and no file remain', async () => {
+    const d = dir();
+    const socket = path.join(d, 'local-client.sock');
+    const server = http.createServer();
+    // A uid that is not ours: the post-bind lstat cannot match, so the bind is refused after listen.
+    const result = await bindSocket(server, socket, (process.getuid?.() ?? 0) + 1);
+    expect(result).toEqual({ ok: false, reason: 'SOCKET_VERIFY_FAILED' });
+    expect(server.listening).toBe(false);
+    expect(readdirSync(d)).toEqual([]);
+    expect(await connectErrno(socket)).toBe('ENOENT');
+  });
+
+  it('never renames over an entry that appeared at the path after preflight; that entry is left alone', async () => {
+    const d = dir();
+    const socket = path.join(d, 'local-client.sock');
+    writeFileSync(socket, 'theirs');
+    const server = http.createServer();
+    const result = await bindSocket(server, socket, process.getuid?.() ?? 0);
+    expect(result).toEqual({ ok: false, reason: 'SOCKET_PATH_OCCUPIED' });
+    expect(server.listening).toBe(false);
+    expect(readFileSync(socket, 'utf8')).toBe('theirs');
+    expect(readdirSync(d)).toEqual(['local-client.sock']);
+  });
+
+  it('a successful bind places the socket at the real path, mode 0600, and returns its (dev, ino)', async () => {
+    const d = dir();
+    const socket = path.join(d, 'local-client.sock');
+    const server = http.createServer();
+    const result = await bindSocket(server, socket, process.getuid?.() ?? 0);
+    const stat = lstatSync(socket, { bigint: true });
+    expect(result).toEqual({ ok: true, identity: { dev: stat.dev, ino: stat.ino } });
+    expect(Number(stat.mode & 0o777n)).toBe(0o600);
+    expect(readdirSync(d)).toEqual(['local-client.sock']);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // libuv unlinks only the temporary name it bound (already gone): the real path is the adapter's to remove.
+    expect(existsSync(socket)).toBe(true);
+  });
+});
+
 describe('end of life by (dev, ino) (D2)', () => {
   it('does not unlink a socket that was replaced after the bind (and leaves the replacement serving)', async () => {
     const d = dir();
@@ -155,7 +183,20 @@ describe('end of life by (dev, ino) (D2)', () => {
       c.on('data', (b) => resolve(b.toString()));
     });
     expect(answer).toBe('theirs');
+    // Our server is closed even though its file was moved away: nothing listens behind the moved name any more.
+    expect(h.adapter.status().listening).toBe(false);
+    expect(await connectErrno(path.join(d, 'moved.sock'))).toBe('ECONNREFUSED');
     await new Promise<void>((resolve) => theirs.close(() => resolve()));
+  });
+
+  it('a normal stop closes the server and removes the socket; no temporary bind name is left', async () => {
+    const d = dir();
+    const h = await start({ dir: d });
+    expect(lstatSync(path.join(d, 'local-client.sock')).isSocket()).toBe(true);
+    expect(readdirSync(d).sort()).toEqual(['local-client.sock', 'local-client.token']);
+    await h.adapter.stop();
+    expect(h.adapter.status().listening).toBe(false);
+    expect(readdirSync(d)).toEqual([]);
   });
 
   it('does not unlink a token file that was replaced (different inode)', async () => {

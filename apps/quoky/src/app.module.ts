@@ -145,7 +145,7 @@ import { remindersProviders, withReminderChannelDelivery } from './features/remi
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
 import { composePlatformAdapter, localClientOwnerIdentityLinks, telegramOwnerIdentityLinks } from './platform/platform-composition';
-import { instanceLockPath } from './ops/instance-lock';
+import { instanceLockPath, isInstanceLockHeld } from './ops/instance-lock';
 import { opsUiDataDir } from './ops-ui/ops-ui-config';
 
 const config = loadConfig();
@@ -376,8 +376,8 @@ const infrastructure: Provider[] = [
                 localClient: {
                   config: config.localClient,
                   dataDir: opsUiDataDir(config.storage.dbPath),
-                  // main.ts takes the ADR-0102 D4 lock exactly when the database is a file (`instanceLockPath`).
-                  instanceLockHeld: instanceLockPath(config.storage.dbPath) !== undefined,
+                  // The real ADR-0102 D4 state: main.ts acquires the lock before this module is created.
+                  instanceLockHeld: isInstanceLockHeld(instanceLockPath(config.storage.dbPath)),
                   fileBackedDb: instanceLockPath(config.storage.dbPath) !== undefined,
                   discordOwnerIds: config.discord.ownerIds,
                   verifyOwner: async () => {

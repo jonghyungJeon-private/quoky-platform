@@ -17,7 +17,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   rotate-token`. `.env.example` documents both flags. No Core change.
 - **Tests.** Package unit and integration tests over temp sockets (auth, lockout, Host/Origin, oversize, smuggling,
   idempotency, SSE resume and forged `Last-Event-ID`, stale / live / replaced socket and token file), the
-  `local-client-surface` red-team corpus for the LC-1b groups (75 cases, 0 successes), import-boundary tests, composition,
+  `local-client-surface` red-team corpus for the LC-1b groups (79 cases after review round 1, 0 successes), import-boundary tests, composition,
   config, panel, selfcheck and `quokyctl` tests. Build and typecheck pass; targeted runs only, no full suite.
 - **Docs.** DECISIONS LC-1b implementation note. Independent reviews required by the ADR before merge are still due.
 

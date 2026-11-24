@@ -168,6 +168,18 @@ describe('flag on (ADR-0125 D1, D2 step 0, D5, D8)', () => {
     expect(discord.notifications).toHaveLength(2);
   });
 
+  it('redirects only TEXT and BRIEF (D8): a SURFACE_GRANT for local-client is NOT_SENT and never reaches the Discord DM', async () => {
+    const discord = new FakeDiscord();
+    const composed = composePlatformAdapter(discord, undefined, deps(localClient())) as CompositePlatformAdapter;
+    const target: ConversationContext = { platform: 'local-client', channelId: 'local-client-dm', userId: OWNER, direct: true };
+    expect(await composed.deliver({ correlationId: 'c4', target, kind: 'SURFACE_GRANT', text: 'grant' })).toEqual({
+      status: 'NOT_SENT',
+      reason: 'TARGET_NOT_ADMITTED',
+      retryable: false,
+    });
+    expect(discord.notifications).toHaveLength(0);
+  });
+
   it('a local-client notification with no configured owner is NOT_SENT TARGET_NOT_ADMITTED and reaches nothing', async () => {
     const discord = new FakeDiscord();
     const composed = composePlatformAdapter(discord, undefined, deps(localClient({ config: {} })));
