@@ -38734,3 +38734,37 @@ stay as written; this record is the exact change and supersedes them for this on
   (`crossWriteIsPointBackRequest`; a bare item noun that is a source name, like "메일", is a source name, not a point-back).
   The 그 / 해당 path has the same guarantee. Gold `a7n-138` to `a7n-142` (form-a injected: no receipt, stale, different-source, 해당, 그);
   all `pending-owner-approval`; the file now holds 222 cases. No new word; A6, W1 and `agent-plan.v11` unchanged.
+- **Review 2 (Codex P2, fail-open after `a8d1ccd6`; structural redesign, fail closed on purpose).** The shape-based detection
+  (`summaryActsOnObject` reading the object phrase of the summary word) still let a closed point-back token through when a source
+  name or another content word followed it: "{그 / 해당 / 방금 / 아까} 슬랙 내용 요약해서 BE-123에 달아줘" and "summarize that content
+  and post it to BE-123" validated an injected form-a `slack.search(keyword="내용" | "content") -> draft -> propose` plan with a
+  missing, stale or different-source receipt. The heuristic cap was reached, so the detection is replaced, not patched with another
+  phrase shape. **Rule (closed-token, validator rule 9):** a request is a point-back request when the owner's words OUTSIDE the
+  destination span carry ANY token of the existing closed point-back sets, whatever follows it (a source name, an item noun or any
+  content word): the W1 determiners standing as their own word (이, 그 via `nlSpanStartsWithDeterminer`; 저 stays out as there,
+  the first-person pronoun) and the A7-only 해당 (`A7_POINT_BACK_DETERMINERS`, also glued: "해당내용"); the A6-D2 recency words
+  (`RECENCY_KO` and "just now" via `nlHasRecencyWord`, Korean inside a token as every deictic); the A6-D2 deictics (그거, 이거,
+  그걸 …, it / that / this via `hasNlDeictic`); and the demonstrative members of the closed English class `EN_CLOSED` (it, that,
+  this, them, these, those, its), split out of it unchanged as `A7_POINT_BACK_EN`. No word is added. A point-back request
+  validates only as form b bound to a fresh, same-source held receipt; a form-a plan for it is refused `cross-write-invalid`
+  before the read and destination checks, so the reason is always that one. `crossWriteIsPointBackRequest(outside)` is now
+  token-only; `summaryActsOnObject` (the router's cross-source trigger) is back to its pre-`a8d1ccd6` form, so routing is unchanged.
+  A6, W1 (their pins pass unchanged), the agent boundary and `agent-plan.v11` are unchanged; A7 still never executes.
+  - *Gold.* New refusal rows `a7n-148` to `a7n-162` (batch A7-5, `followup`): the five Codex repros (그 / 해당 / 방금 / 아까 +
+    "슬랙 내용", and "summarize that content and post it to BE-123") each under no receipt (`on`), a stale receipt and a
+    different-source (Jira) receipt, all `cross-write-invalid`. All `pending-owner-approval`; the file now holds 237 cases.
+  - *Converted (previously accepted form a, now refused `cross-write-invalid`; the rule is not loosened to keep them).*
+    `a7p-011` -> `a7n-143` ("summarize slack incident chatter and add it to BE-5"), `a7p-017` -> `a7n-144` ("summarize my jira
+    issues and post it to #quoky-test"), `a7p-018` -> `a7n-145` ("… and send it to #quoky-test"), `a7p-021` -> `a7n-146`
+    ("summarize the slack release thread and post it to #quoky-test"), `a7p-049` -> `a7n-147` ("summarize the jira issues and post
+    it to a slack channel"). All five over-refuse on the incidental object pronoun "it" of the write clause.
+  - *Reason changed (already refused, still refused).* `a7n-002` ("슬랙 릴리즈 요약해서 그 내용 내일 일정 만들어줘") was
+    `cross-write-span`, `a7n-021` ("summarize the jira issues and post it to #random") was `cross-write-not-allowed`; both are now
+    `cross-write-invalid` because the point-back refusal runs first. The deictic-title span rule stays pinned for form b in
+    `cross-write.test.ts`.
+  - *Recorded fail-closed residuals (over-refusal of form a; accepted).* Any English write clause with an object pronoun ("… and
+    post it to #quoky-test"; "… and post to #quoky-test" still validates as form a); a time phrase with a demonstrative
+    ("summarize this week's slack release thread and post to #quoky-test"); a determiner that refers to the summary itself, not to
+    an earlier answer ("#dev 대화 요약해서 그 결과 BE-123에 달아줘"); an incidental 이 / 그 standing as a word ("슬랙 릴리즈 대화 요약해서
+    이 정도로 BE-123에 달아줘"); a recency word inside another word ("아까운 …"). Each is refused `cross-write-invalid` as form a. "이번
+    주 …" is not affected (이번 is not 이). Owner: confirm the residual, or request a narrower rule with its own review.

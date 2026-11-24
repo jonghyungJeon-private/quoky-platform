@@ -456,7 +456,7 @@
    }
   },
   {
-   "id": "a7p-011",
+   "id": "a7n-143",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "one-message",
@@ -487,16 +487,10 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "a",
-    "target": "jira.comment.propose",
-    "destination": {
-     "state": "named",
-     "kind": "jira",
-     "issueKey": "BE-5",
-     "project": "BE"
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Formerly a7p-011 (accepted form a, A7-1). A7.5 step 0 review 2 (closed-token rule, fail closed): the closed pronoun 'it' outside the destination span makes this a point-back request, so form a is refused cross-write-invalid. Recorded over-refusal residual; the rule is not loosened to keep it."
   },
   {
    "id": "a7p-012",
@@ -701,7 +695,7 @@
    }
   },
   {
-   "id": "a7p-017",
+   "id": "a7n-144",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "one-message",
@@ -730,18 +724,13 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "a",
-    "target": "slack.post.propose",
-    "destination": {
-     "state": "named",
-     "kind": "slack",
-     "channel": "quoky-test"
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Formerly a7p-017 (accepted form a, A7-1). A7.5 step 0 review 2 (closed-token rule, fail closed): the closed pronoun 'it' outside the destination span makes this a point-back request, so form a is refused cross-write-invalid. Recorded over-refusal residual; the rule is not loosened to keep it."
   },
   {
-   "id": "a7p-018",
+   "id": "a7n-145",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "one-message",
@@ -770,15 +759,10 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "a",
-    "target": "slack.post.propose",
-    "destination": {
-     "state": "named",
-     "kind": "slack",
-     "channel": "quoky-test"
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Formerly a7p-018 (accepted form a, A7-1). A7.5 step 0 review 2 (closed-token rule, fail closed): the closed pronoun 'it' outside the destination span makes this a point-back request, so form a is refused cross-write-invalid. Recorded over-refusal residual; the rule is not loosened to keep it."
   },
   {
    "id": "a7p-019",
@@ -865,7 +849,7 @@
    }
   },
   {
-   "id": "a7p-021",
+   "id": "a7n-146",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "one-message",
@@ -896,15 +880,10 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "a",
-    "target": "slack.post.propose",
-    "destination": {
-     "state": "named",
-     "kind": "slack",
-     "channel": "quoky-test"
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Formerly a7p-021 (accepted form a, A7-1). A7.5 step 0 review 2 (closed-token rule, fail closed): the closed pronoun 'it' outside the destination span makes this a point-back request, so form a is refused cross-write-invalid. Recorded over-refusal residual; the rule is not loosened to keep it."
   },
   {
    "id": "a7p-022",
@@ -1290,9 +1269,9 @@
    },
    "expect": {
     "outcome": "refused",
-    "reason": "cross-write-span"
+    "reason": "cross-write-invalid"
    },
-   "note": "a deictic title points back"
+   "note": "a deictic title points back. A7.5 step 0 review 2: was cross-write-span; the determiner 그 outside the title and time spans now makes it a point-back request, refused cross-write-invalid before the span rule (the span rule is still pinned for form b in cross-write.test.ts)."
   },
   {
    "id": "a7n-003",
@@ -2361,7 +2340,7 @@
    }
   },
   {
-   "id": "a7p-049",
+   "id": "a7n-147",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "destination-pick",
@@ -2388,17 +2367,10 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "a",
-    "target": "slack.post.propose",
-    "destination": {
-     "state": "pick-channel",
-     "kind": "slack",
-     "channels": [
-      "quoky-test"
-     ]
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Formerly a7p-049 (accepted form a, A7-1). A7.5 step 0 review 2 (closed-token rule, fail closed): the closed pronoun 'it' outside the destination span makes this a point-back request, so form a is refused cross-write-invalid. Recorded over-refusal residual; the rule is not loosened to keep it."
   },
   {
    "id": "a7p-050",
@@ -3765,8 +3737,9 @@
    },
    "expect": {
     "outcome": "refused",
-    "reason": "cross-write-not-allowed"
-   }
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2: was cross-write-not-allowed; the closed pronoun 'it' outside the destination span makes it a point-back request, refused cross-write-invalid before the destination checks (still refused)."
   },
   {
    "id": "a7n-022",
@@ -6840,6 +6813,561 @@
     "reason": "cross-write-invalid"
    },
    "note": "Review of the recency amendment (P2, fail-open): a point-back request (그/해당/recency alike) is receipt-only. An injected form-a slack.search plan is refused cross-write-invalid, never accepted as the cross-source trigger. The 그 form, stale receipt."
+  },
+  {
+   "id": "a7n-148",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '그' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-149",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '그' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-150",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "그 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '그' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-151",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "해당 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '해당' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-152",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "해당 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '해당' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-153",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "해당 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '해당' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-154",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '방금' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-155",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '방금' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-156",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "방금 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '방금' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-157",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "아까 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '아까' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-158",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "아까 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '아까' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-159",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "ko",
+   "text": "아까 슬랙 내용 요약해서 BE-123에 달아줘",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "내용"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token '아까' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='내용') plan is refused cross-write-invalid. different-source (Jira) receipt."
+  },
+  {
+   "id": "a7n-160",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize that content and post it to BE-123",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token 'that' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='content') plan is refused cross-write-invalid. no receipt."
+  },
+  {
+   "id": "a7n-161",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize that content and post it to BE-123",
+   "context": "receipt-stale",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token 'that' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='content') plan is refused cross-write-invalid. stale receipt."
+  },
+  {
+   "id": "a7n-162",
+   "batch": "A7-5",
+   "status": "pending-owner-approval",
+   "category": "followup",
+   "lang": "en",
+   "text": "summarize that content and post it to BE-123",
+   "context": "receipt-jira",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "content"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "A7.5 step 0 review 2 (Codex, fail-open): the closed point-back token 'that' followed by a source name or content word bypassed the shape-based detection. Closed-token rule: any closed point-back token outside the destination span makes the request receipt-only; the injected form-a slack.search(keyword='content') plan is refused cross-write-invalid. different-source (Jira) receipt."
   }
  ]
 }

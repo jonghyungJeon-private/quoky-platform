@@ -1,5 +1,5 @@
 import type { NlCatalogEntry } from '../nl-routing/catalog';
-import { NL_MODE_SUMMARY_WORDS, containsNlTimeExpression, nlSpanStartsWithDeterminer } from '../nl-routing/action-entries';
+import { NL_MODE_SUMMARY_WORDS, containsNlTimeExpression, hasNlDeictic, nlHasRecencyWord, nlSpanStartsWithDeterminer } from '../nl-routing/action-entries';
 import { nlClauseNamesEntry, nlClauses } from '../nl-routing/clause-flags';
 import {
   WORK_CHAT_CHANNEL_NOUNS,
@@ -107,8 +107,13 @@ const KIND_NOUNS: Readonly<Record<'jira' | 'slack', readonly string[]>> = {
   jira: [...WORK_CHAT_ISSUE_NOUNS, 'issue', 'ticket'],
   slack: [...WORK_CHAT_CHANNEL_NOUNS, 'channel'],
 };
+/**
+ * The English demonstrative determiners and pronouns of {@link EN_CLOSED} (the members that point back at something already
+ * shown). Split out of EN_CLOSED unchanged (A7.5 step 0 review 2): the point-back token rule reads them; no word is added.
+ */
+export const A7_POINT_BACK_EN: readonly string[] = ['it', 'that', 'this', 'them', 'these', 'those', 'its'];
 /** The English determiner and pronoun class, plus the English request leads: closed grammatical words, never topic words. */
-const EN_CLOSED = new Set(['the', 'a', 'an', 'it', 'that', 'this', 'them', 'these', 'those', 'my', 'our', 'its', 'please', 'pls', 'plz', 'kindly']);
+const EN_CLOSED = new Set(['the', 'a', 'an', ...A7_POINT_BACK_EN, 'my', 'our', 'please', 'pls', 'plz', 'kindly']);
 /** Conjunction words and the A6 closed yes token that may open a message ("응 그리고 BE-123에 달아줘"). */
 const LEADING_CLOSED = new Set(['그리고', 'and', '응', 'also']);
 /** The Korean closed-class filler of an object ("좀", "다"). */
@@ -661,32 +666,37 @@ function recencyPointsBack(parts: readonly Token[]): boolean {
 }
 
 /**
- * Whether the request is a point-back request ("그 내용", "해당 내용", "방금 내용" alike): a summary word acting on the point-back
- * form. Such a request is receipt-only (review of the recency amendment, P2): it may validate only as form b bound to a fresh,
- * same-source held receipt, never as the cross-source trigger of form a. Pure.
+ * Whether the request is a point-back request (A7.5 step 0, review 2 of the recency amendment): a CLOSED-TOKEN rule, fail
+ * closed on purpose. The owner's words outside the destination span carry ANY token of the existing closed point-back sets,
+ * whatever follows it (a source name, an item noun or any content word):
+ * - a Korean determiner of the W1 point-back grammar standing as its own word (이, 그: {@link nlSpanStartsWithDeterminer}; 저 is
+ *   the first-person pronoun and stays out, as there) or the A7-only determiner {@link A7_POINT_BACK_DETERMINERS} (해당);
+ * - a recency word of A6-D2 ({@link RECENCY_KO}, "just now": {@link nlHasRecencyWord}, Korean inside a token as every deictic);
+ * - a closed A6-D2 deictic (그거, 이거, 그걸 …, it / that / this: {@link hasNlDeictic});
+ * - an English demonstrative determiner or pronoun of {@link EN_CLOSED} ({@link A7_POINT_BACK_EN}).
+ * Such a request is receipt-only: it validates only as form b bound to a fresh, same-source held receipt, never as form a.
+ * Over-refusal of a form-a request with an incidental closed token ("… and post it to BE-123") is an accepted, recorded
+ * residual (DECISIONS). No word is added. Pure.
  */
-export function crossWriteIsPointBackRequest(outside: string, offered: ReadonlyMap<string, NlCatalogEntry>, analysis: CrossWriteAnalysis): boolean {
-  return summaryActsOnObject(outside, offered, analysis, true);
+export function crossWriteIsPointBackRequest(outside: string): boolean {
+  if (nlHasRecencyWord(outside) || hasNlDeictic(outside)) return true;
+  return tokensOf(outside).some((token) => {
+    const word = token.word.replace(/[.,!?~]+$/u, '');
+    return nlSpanStartsWithDeterminer(word) || A7_POINT_BACK_DETERMINERS.some((determiner) => word.startsWith(determiner)) || A7_POINT_BACK_EN.includes(word);
+  });
 }
 
 /** A summary word whose object noun phrase (only closed-class words between) is a source name, a literal or the W1 point-back form. */
-function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCatalogEntry>, analysis: CrossWriteAnalysis, pointBackOnly = false): boolean {
+function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCatalogEntry>, analysis: CrossWriteAnalysis): boolean {
   const tokens = tokensOf(outside);
   const isSummary = (word: string): boolean => NL_MODE_SUMMARY_WORDS.some((summary) => groundingWordIn(word, normalizeForMatch(summary)));
   // A literal is the object of a summary word only when no locative or other case particle is glued on it (an object takes none, or 을 / 를 / 의).
   const literalTokens = new Set(analysis.literals.filter((literal) => ['', '을', '를', '의', '은', '는'].includes(literal.rest.replace(/[.,!?~]+$/u, ''))).map((literal) => (analysis.tokens[literal.index] as Token).word));
   const textOf = (parts: readonly Token[]): string => parts.map((token) => token.text).join(' ');
-  const isObject = (parts: readonly Token[]): boolean => !pointBackOnly && parts.length > 0 && (parts.some((token) => literalTokens.has(token.word)) || crossWriteNamedSources(textOf(parts), offered).length > 0);
+  const isObject = (parts: readonly Token[]): boolean => parts.length > 0 && (parts.some((token) => literalTokens.has(token.word)) || crossWriteNamedSources(textOf(parts), offered).length > 0);
   // The W1 point-back form ("그 내용", "해당 내용"): the existing determiner grammar, over the phrase and as a payload span, plus
   // the A7-only determiner {@link A7_POINT_BACK_DETERMINERS}.
-  // A bare item noun that is a source name ("메일") is deictic-only in the A6 grammar but is a source name here, not a point-back:
-  // the point-back-only reading (the receipt-only rule) takes an explicit determiner form or a deictic that names no source.
-  const pointsBack = (parts: readonly Token[]): boolean => {
-    if (parts.length === 0) return false;
-    const determiner = A7_POINT_BACK_DETERMINERS.includes(parts[0]?.word ?? '') || nlSpanStartsWithDeterminer(textOf(parts));
-    if (pointBackOnly && !determiner && crossWriteNamedSources(textOf(parts), offered).length > 0) return false;
-    return nlWriteClausePointsBack(textOf(parts), [textOf(parts)]) || determiner;
-  };
+  const pointsBack = (parts: readonly Token[]): boolean => parts.length > 0 && (nlWriteClausePointsBack(textOf(parts), [textOf(parts)]) || A7_POINT_BACK_DETERMINERS.includes(parts[0]?.word ?? ''));
   for (const [index, token] of tokens.entries()) {
     if (!isSummary(token.word)) continue;
     const latin = /^[a-z0-9 .;-]+$/u.test(token.word);
@@ -699,7 +709,7 @@ function summaryActsOnObject(outside: string, offered: ReadonlyMap<string, NlCat
       }
       // The object may be a closed pronoun alone ("summarize that and …"): the point-back grammar then judges the closed words.
       const closedOnly = after.filter((part) => EN_CLOSED.has(part.word));
-      if (isObject(after) || pointsBack(after) || (!pointBackOnly && closedOnly.length > 0 && closedOnly.length < after.length && pointsBack(closedOnly))) return true;
+      if (isObject(after) || pointsBack(after) || (closedOnly.length > 0 && closedOnly.length < after.length && pointsBack(closedOnly))) return true;
     } else {
       const before: Token[] = [];
       for (let prev = index - 1; prev >= 0; prev -= 1) {

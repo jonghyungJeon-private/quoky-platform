@@ -172,8 +172,10 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
     if (route.route !== 'a7' || (form === 'a' && route.trigger !== 'cross-source')) return refuse('cross-write-invalid', stepNo);
   }
 
-  // A point-back request (그 / 해당 / 방금 + noun) is receipt-only: form a never stands on it, whatever read the planner wrote.
-  if (form === 'a' && crossWriteIsPointBackRequest(outside, ctx.offered, analysis)) return refuse('cross-write-invalid', 1);
+  // A point-back request (any closed point-back token outside the destination span: 이 / 그 / 해당, 방금 / 아까, 그거 …, it / that /
+  // this / those …; A7.5 step 0 review 2) is receipt-only: form a never stands on it, whatever read the planner wrote. Refused
+  // here, before the read and destination checks, so the reason is always `cross-write-invalid`.
+  if (form === 'a' && crossWriteIsPointBackRequest(outside)) return refuse('cross-write-invalid', 1);
 
   let source: Extract<ValidatedAgentStep, { kind: 'read' }> | undefined;
   let connectorCalls = 0;

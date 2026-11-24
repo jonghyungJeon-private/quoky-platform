@@ -15,10 +15,12 @@ import {
 import { ConnectorWriteOperation } from '../../ports';
 import {
   A7_POINT_BACK_DETERMINERS,
+  A7_POINT_BACK_EN,
   AGENT_A7_TARGETS,
   analyseCrossWriteLiterals,
   checkCrossWriteDestination,
   crossWriteCalendarOutside,
+  crossWriteIsPointBackRequest,
   crossWriteNouns,
   routeCrossWrite,
   type AgentCrossWriteContext,
@@ -113,7 +115,10 @@ describe('plan validator rule 9: a validated A7 plan (form a)', () => {
 
   it('accepts the English `to` marker with a write verb before it', () => {
     expect(check(formA('release', jira({ issueKey: 'BE-123' })), 'summarize the slack release thread and add a comment to the BE-123 ticket')).toMatchObject({ ok: true, plan: { destination: { state: 'named', issueKey: 'BE-123' } } });
-    expect(check(formA('release', slack({ channel: '#quoky-test' })), 'summarize the slack release thread and post it to #quoky-test')).toMatchObject({ ok: true, plan: { destination: { state: 'named', channel: 'quoky-test' } } });
+    expect(check(formA('release', slack({ channel: '#quoky-test' })), 'summarize the slack release thread and post to #quoky-test')).toMatchObject({ ok: true, plan: { destination: { state: 'named', channel: 'quoky-test' } } });
+    // A7.5 step 0 review 2 (closed-token rule, fail closed): "post it to" carries the closed pronoun `it` outside the destination
+    // span, so the request is a point-back request and form a is refused (a recorded residual, never loosened).
+    expect(check(formA('release', slack({ channel: '#quoky-test' })), 'summarize the slack release thread and post it to #quoky-test')).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
   });
 
   it('the planner may not write a payload: a payload-shaped arg name is refused as not the closed shape', () => {
@@ -256,7 +261,10 @@ describe('calendar propose: the title and the time are the owner\'s own spans (A
   });
   it('refuses a span that is not the owner\'s words, a deictic title and a kind-marked destination', () => {
     expect(check(formA('릴리즈', calendar({ title: '배포 회의', when: '내일 오후 3시' })), text)).toMatchObject({ ok: false, reason: 'cross-write-span' });
-    expect(check(formA('릴리즈', calendar({ title: '그 내용', when: '내일' })), '슬랙 릴리즈 요약해서 그 내용 내일 일정 만들어줘')).toMatchObject({ ok: false, reason: 'cross-write-span' });
+    // Review 2: the deictic 그 outside the spans makes this a point-back request, so form a is refused first; form b still meets
+    // the span rule.
+    expect(check(formA('릴리즈', calendar({ title: '그 내용', when: '내일' })), '슬랙 릴리즈 요약해서 그 내용 내일 일정 만들어줘')).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+    expect(check(formB(calendar({ title: '그 내용', when: '내일' })), '슬랙 릴리즈 요약해서 그 내용 내일 일정 만들어줘', withReceipt)).toMatchObject({ ok: false, reason: 'cross-write-span' });
     // A destination marked for another kind is not a calendar request.
     expect(check(formA('릴리즈', calendar({ title: '배포', when: '내일' })), '슬랙 릴리즈 요약해서 BE-123에 달아줘')).toMatchObject({ ok: false, reason: 'cross-write-role' });
   });
@@ -509,6 +517,50 @@ describe('review of the recency amendment (P2): a point-back request is receipt-
   });
 
   it('an ordinary cross-source request still accepts form a', () => {
+    expect(check(formA('릴리즈', jira({ issueKey: 'BE-123' })), '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true, plan: { form: 'a' } });
+  });
+});
+
+describe('A7.5 step 0 review 2 (Codex, fail-open): the point-back request is a closed-token rule', () => {
+  const contexts: Record<string, AgentCrossWriteContext> = {
+    missing: CW,
+    stale: { ...CW, receipt: { ...RECEIPT, fresh: false } },
+    'different-source': { ...CW, receipt: { ...RECEIPT, sourceEntryId: 'jira.issues' } },
+    fresh: withReceipt,
+  };
+
+  it('refuses form a for a closed point-back token followed by a source name, whatever the receipt (the Codex repros)', () => {
+    for (const lead of ['그', '해당', '방금', '아까']) {
+      for (const [name, context] of Object.entries(contexts)) {
+        expect(check(formA('내용', jira({ issueKey: 'BE-123' })), `${lead} 슬랙 내용 요약해서 BE-123에 달아줘`, context), `${lead} / ${name}`).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+      }
+    }
+    for (const [name, context] of Object.entries(contexts)) {
+      expect(check(formA('content', jira({ issueKey: 'BE-123' })), 'summarize that content and post it to BE-123', context), name).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+    }
+  });
+
+  it('the same requests stand only as form b on a fresh same-source receipt', () => {
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '그 슬랙 내용 요약해서 BE-123에 달아줘', contexts.fresh)).toMatchObject({ ok: true, plan: { form: 'b' } });
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '그 슬랙 내용 요약해서 BE-123에 달아줘', contexts.missing)).toMatchObject({ ok: false, reason: 'cross-write-receipt' });
+    expect(check(formB(jira({ issueKey: 'BE-123' })), '그 슬랙 내용 요약해서 BE-123에 달아줘', contexts['different-source'])).toMatchObject({ ok: false, reason: 'cross-write-new-source' });
+  });
+
+  it('any closed point-back token counts, regardless of what follows; 저 (the first-person pronoun) and other words do not', () => {
+    for (const text of ['그 슬랙 내용 요약해서', '이 슬랙 스레드 요약해서', '해당 지라 이슈 요약해서', '방금 슬랙 대화 요약해서', '아까 릴리즈 요약해서', '그거 요약해서', '그걸 정리해서', 'summarize that content and', 'summarize this thread and', 'summarize those issues and', 'post it', 'summarize the release just now and']) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(true);
+    }
+    for (const text of ['슬랙 릴리즈 대화 요약해서 달아줘', '지라 이슈 요약해서 올려줘', '저 슬랙 대화 요약해서 달아줘', 'summarize the slack release thread and post to', '#dev 요약해서 올려줘']) {
+      expect(crossWriteIsPointBackRequest(text), text).toBe(false);
+    }
+  });
+
+  it('adds no word: the English set is the demonstrative members of the closed English class', () => {
+    expect(A7_POINT_BACK_EN).toEqual(['it', 'that', 'this', 'them', 'these', 'those', 'its']);
+    expect(A7_POINT_BACK_DETERMINERS).toEqual(['해당']);
+  });
+
+  it('an ordinary cross-source request with no closed point-back token still accepts form a', () => {
     expect(check(formA('릴리즈', jira({ issueKey: 'BE-123' })), '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true, plan: { form: 'a' } });
   });
 });
