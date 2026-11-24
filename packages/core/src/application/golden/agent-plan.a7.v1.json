@@ -1043,7 +1043,7 @@
    }
   },
   {
-   "id": "a7p-025",
+   "id": "a7n-124",
    "batch": "A7-1",
    "status": "pending-owner-approval",
    "category": "calendar-destination",
@@ -1075,18 +1075,10 @@
     "ambiguity": "CLEAR"
    },
    "expect": {
-    "outcome": "cross-write",
-    "form": "a",
-    "target": "calendar.create.propose",
-    "destination": {
-     "state": "primary-calendar"
-    },
-    "calendar": {
-     "title": "Deploy check",
-     "when": "tomorrow at 3pm",
-     "missing": []
-    }
-   }
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review round 2 (2026-11-24): was a7p-025. P2-b: a calendar plan stands only on a create request of the EXISTING calendar write grammar (its booking verb); that grammar has no English create verb, so an English calendar plan is refused until the A7-S7 calendar write-clause detector (recorded residual; no word is added)."
   },
   {
    "id": "a7p-026",
@@ -6105,6 +6097,377 @@
     }
    },
    "note": "Review round 1 (2026-11-24): P2-2: the event time is the destination's own span, never a read condition; \"일정\" touching the title is the event's own noun."
+  },
+  {
+   "id": "a7n-125",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 회의 요약해서 BE-1에 달고 #quoky-test에 올려줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "회의"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "slack.post.propose",
+      "args": {
+       "channel": "quoky-test"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 2 (2026-11-24): P2-a: two locatively marked destinations (BE-1에, #quoky-test에) are two writes, whatever the verb ending (달고); counted by destinations, not verbs."
+  },
+  {
+   "id": "a7n-126",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "ko",
+   "text": "슬랙 회의 요약해서 #quoky-test에 올리고 BE-1에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "회의"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-1"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 2 (2026-11-24): P2-a: the mirror of a7n-125 (올리고, then the Jira comment): two marked destinations."
+  },
+  {
+   "id": "a7n-127",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 남기고 내일 오후 3시에 점검 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "점검",
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "note": "Review round 2 (2026-11-24): P2-a (ii): a marked Jira destination beside a calendar event is a second write (남기고 is not a verb of the comment grammar; the destination decides)."
+  },
+  {
+   "id": "a7n-128",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 요약해서 BE-123에 댓글 달아 주고 내일 오후 3시에 점검 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "점검",
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "note": "Review round 2 (2026-11-24): P2-a (ii), Codex: the spaced auxiliary (달아 주고) is no longer a gap: the marked destination BE-123에 decides."
+  },
+  {
+   "id": "a7n-129",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "릴리즈"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 2 (2026-11-24): P2-b, Codex: a calendar propose step injected into a plain summary: the message has no booking verb of the existing calendar write grammar, so the calendar plan fails the step 0 gate."
+  },
+  {
+   "id": "a7n-130",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 할 일에 추가해줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "릴리즈"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-invalid"
+   },
+   "note": "Review round 2 (2026-11-24): P2-b: the booking verb names Quoky's own to-do list as the place of the write (the calendar classifier's existing local-list exclusion), so it is not a calendar create request."
+  },
+  {
+   "id": "a7n-131",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "literal-roles",
+   "lang": "ko",
+   "text": "슬랙 릴리즈 대화 요약해서 BE-123에 달아줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "jira.release",
+      "args": {
+       "release": "릴리즈"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "step-invalid"
+   },
+   "note": "Review round 2 (2026-11-24): P2-c: the words name the Slack source by its source name (슬랙), so the read must be slack.search; the alias 릴리즈 of jira.release never overrides a source name."
+  },
+  {
+   "id": "a7n-132",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "unsuitable",
+   "lang": "en",
+   "text": "summarize the slack release thread and add it to BE-123 and post it to #quoky-test",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "release"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "jira.comment.propose",
+      "args": {
+       "issueKey": "BE-123"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "refused",
+    "reason": "cross-write-writes"
+   },
+   "route": {
+    "route": "ordinary"
+   },
+   "note": "Review round 2 (2026-11-24): P2-a: English destinations are counted by the A7.4a marker to: two marked destinations are two writes."
+  },
+  {
+   "id": "a7p-082",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "calendar-destination",
+   "lang": "ko",
+   "text": "슬랙 점검 대화 요약해서 내일 오후 3시에 점검 일정 만들어줘",
+   "context": "on",
+   "plan": {
+    "steps": [
+     {
+      "entryId": "slack.search",
+      "args": {
+       "keyword": "점검"
+      }
+     },
+     {
+      "summarize": [
+       1
+      ],
+      "schema": "payload-draft.v1"
+     },
+     {
+      "propose": "calendar.create.propose",
+      "args": {
+       "title": "점검",
+       "when": "내일 오후 3시"
+      }
+     }
+    ],
+    "ambiguity": "CLEAR"
+   },
+   "expect": {
+    "outcome": "cross-write",
+    "form": "a",
+    "target": "calendar.create.propose",
+    "destination": {
+     "state": "primary-calendar"
+    },
+    "calendar": {
+     "title": "점검",
+     "when": "내일 오후 3시",
+     "missing": []
+    }
+   },
+   "note": "Review round 2 (2026-11-24): P3: the title span is anchored on its last occurrence (by the create verb), so the same word in the source part (슬랙 점검 대화) stays outside the span and grounds the read."
+  },
+  {
+   "id": "a7n-133",
+   "batch": "A7-3",
+   "status": "pending-owner-approval",
+   "category": "routing-precedence",
+   "lang": "ko",
+   "text": "BE-123에 메일 보냈다고 달아줘",
+   "context": "on",
+   "route": {
+    "route": "a7",
+    "trigger": "cross-source"
+   },
+   "note": "Review round 2 (2026-11-24): Residual (round 2): R2a over every catalog read source routes this verbatim post to A7 while A7 is active (메일 is a source name), where a plan for it is refused; fail closed, it is not an A6 literal post while A7 is active."
   }
  ]
 }

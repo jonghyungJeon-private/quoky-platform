@@ -18,11 +18,13 @@ import {
   AGENT_A7_TARGETS,
   analyseCrossWriteLiterals,
   checkCrossWriteDestination,
+  crossWriteCalendarOutside,
   crossWriteNouns,
   routeCrossWrite,
   type AgentCrossWriteContext,
   type CrossWriteDestinationPort,
 } from './cross-write';
+import { nlIsCalendarCreateRequest } from '../nl-routing/write-clause';
 import { agentPlanParseFailure, parseAgentPlanOutput } from './plan-schema';
 import { validateAgentPlan, type AgentPlanValidationContext } from './plan-validator';
 
@@ -435,5 +437,47 @@ describe('review round 1 (CA + Codex): every finding has a regression', () => {
   it('P3-11: 해당 is a named closed constant of the A7 router only; the A6 point-back grammar is not widened', () => {
     expect(A7_POINT_BACK_DETERMINERS).toEqual(['해당']);
     expect(route('해당 내용 정리해서 #quoky-test에 올려줘')).toEqual({ route: 'a7', trigger: 'cross-source' });
+  });
+});
+
+describe('review round 2 (CA + Codex): every finding has a regression', () => {
+  const route = (groundingText: string) => routeCrossWrite({ groundingText, context: CW, offered: OFFERED });
+  const destinations = (text: string) => analyseCrossWriteLiterals(text, CW, crossWriteNouns(OFFERED)).destinations.map((mark) => mark.kind);
+
+  it('P2-a: destinations are counted by the locative marker and the destination shape, never by the verb or its ending', () => {
+    expect(destinations('슬랙 회의 요약해서 BE-1에 달고 #quoky-test에 올려줘')).toEqual(['jira', 'slack']);
+    expect(destinations('슬랙 회의 요약해서 BE-123 이슈에 달아줘')).toEqual(['jira']);
+    expect(destinations('슬랙 대화 요약해서 슬랙 채널에 올려줘')).toEqual(['slack']);
+    expect(destinations('BE-12에서 가져와서 BE-123으로 올려줘')).toEqual([]);
+    expect(destinations('summarize the slack release thread and add it to BE-123 and post it to #quoky-test')).toEqual(['jira', 'slack']);
+    expect(check(formA('회의', slack({ channel: 'quoky-test' })), '슬랙 회의 요약해서 BE-1에 달고 #quoky-test에 올려줘')).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+    expect(check(formA('회의', jira({ issueKey: 'BE-1' })), '슬랙 회의 요약해서 #quoky-test에 올리고 BE-1에 달아줘')).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+    expect(route('슬랙 회의 요약해서 BE-1에 달고 #quoky-test에 올려줘')).toEqual({ route: 'ordinary' });
+  });
+
+  it('P2-a (ii): a marked Jira or Slack destination beside a calendar event is a second write', () => {
+    const event = calendar({ title: '점검', when: '내일 오후 3시' });
+    expect(check(formA('릴리즈', event), '슬랙 릴리즈 요약해서 BE-123에 남기고 내일 오후 3시에 점검 일정 만들어줘')).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+    expect(check(formA('릴리즈', event), '슬랙 릴리즈 요약해서 BE-123에 댓글 달아 주고 내일 오후 3시에 점검 일정 만들어줘')).toMatchObject({ ok: false, reason: 'cross-write-writes' });
+  });
+
+  it('P2-b: a calendar plan needs the trigger AND a create request of the existing calendar write grammar', () => {
+    expect(nlIsCalendarCreateRequest('슬랙 릴리즈 대화 요약해서 내일 오후 3시에 배포 점검 일정 만들어줘')).toBe(true);
+    expect(nlIsCalendarCreateRequest('슬랙 릴리즈 대화 요약해서 일정 만들어줘')).toBe(true);
+    expect(nlIsCalendarCreateRequest('슬랙 릴리즈 대화 요약해줘')).toBe(false);
+    expect(nlIsCalendarCreateRequest('내일 3시 회의 취소해줘')).toBe(false);
+    expect(nlIsCalendarCreateRequest('슬랙 릴리즈 대화 요약해서 할 일에 추가해줘')).toBe(false);
+    expect(nlIsCalendarCreateRequest('summarize the slack release thread and create an event tomorrow at 3pm')).toBe(false);
+    expect(check(formA('릴리즈', calendar({ title: '릴리즈' })), '슬랙 릴리즈 대화 요약해줘')).toMatchObject({ ok: false, reason: 'cross-write-invalid' });
+  });
+
+  it('P2-c: a source name outranks an alias in the source-read grounding', () => {
+    const release = { steps: [{ entryId: 'jira.release', args: { release: '릴리즈' } }, DRAFT_A, jira({ issueKey: 'BE-123' })], ambiguity: 'CLEAR' };
+    expect(check(release, '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘')).toMatchObject({ ok: false, reason: 'step-invalid', stepReason: 'ungrounded' });
+    expect(check(formA('릴리즈', jira({ issueKey: 'BE-123' })), '슬랙 릴리즈 대화 요약해서 BE-123에 달아줘')).toMatchObject({ ok: true });
+  });
+
+  it('P3: a calendar span is removed at its last occurrence, so the same word in the source part stays outside', () => {
+    expect(crossWriteCalendarOutside('슬랙 점검 대화 요약해서 내일 오후 3시에 점검 일정 만들어줘', ['점검', '내일 오후 3시'], OFFERED)).toBe('슬랙 점검 대화 요약해서 에 만들어줘');
   });
 });

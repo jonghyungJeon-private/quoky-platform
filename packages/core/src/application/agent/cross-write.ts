@@ -250,6 +250,12 @@ export interface CrossWriteSpan {
   readonly end: number;
 }
 
+/** One locatively marked Jira or Slack destination phrase (review round 2, P2-a), by the token index of its marked word. */
+export interface CrossWriteDestinationMark {
+  readonly kind: 'jira' | 'slack';
+  readonly index: number;
+}
+
 export interface CrossWriteAnalysis {
   readonly literals: readonly CrossWriteLiteral[];
   /** The literals the A7.4a rule marked: all conditions of rule 2 hold. */
@@ -268,8 +274,20 @@ export interface CrossWriteAnalysis {
   readonly kindSpans: Readonly<Partial<Record<'jira' | 'slack', CrossWriteSpan>>>;
   /** The allowlisted project key the owner's words name as the destination (Jira kind-only), upper case (matched without case). */
   readonly namedProject?: string;
-  /** The write request unit appears twice or more: more than one write (A7.3 "never covered"). */
+  /**
+   * The write verbs of the grammar in the message, by any closed ending. Used for "a write clause exists" (the router needs one)
+   * and as an additional fail-closed signal only; the count of record for "more than one write" is {@link destinations}
+   * (review round 2, P2-a: a verb count depends on the verb's ending and spacing).
+   */
   readonly writeUnits: number;
+  /**
+   * Review round 2, P2-a: every Jira or Slack destination the owner's words mark LOCATIVELY, whatever verb follows: a destination
+   * literal, or a destination kind noun (the destination entries' own catalog nouns) or an allowlisted project key, that carries the
+   * closed locative particle of A7.4a (에, 에다, 에다가; `에서`, `로`, `으로` never), or (English) stands after `to` / `into` with
+   * only closed-class words between. A noun phrase counts once (only its last word carries the particle: "BE-123 이슈에"). Two or
+   * more is two writes (A7.3 "never covered"); one beside a calendar event is a second write.
+   */
+  readonly destinations: readonly CrossWriteDestinationMark[];
   readonly tokens: readonly Token[];
 }
 
@@ -357,7 +375,50 @@ export function analyseCrossWriteLiterals(groundingText: string, context: AgentC
     }
   }
   const writeUnits = tokens.filter((token) => WRITE_VERB_TOKEN.test(token.word) || WRITE_COUNT_EN.has(token.word)).length;
-  return { literals, marked, spans, kindMarked, kindSpans, ...(namedProject !== undefined ? { namedProject } : {}), writeUnits, tokens };
+  const destinations = markedDestinationsOf(tokens, literals, context, nouns);
+  return { literals, marked, spans, kindMarked, kindSpans, ...(namedProject !== undefined ? { namedProject } : {}), writeUnits, destinations, tokens };
+}
+
+/**
+ * Review round 2, P2-a: the locatively marked destination phrases of the owner's words (see {@link CrossWriteAnalysis.destinations}).
+ * Destination counting replaces verb counting: the particle and the destination's shape decide, never the verb, its ending or its
+ * spacing ("BE-1에 달고 #quoky-test에 올려줘", "BE-123에 댓글 달아 주고 …"). Fail closed by design: a source phrase that carries the
+ * locative particle ("BE-12에 달린 댓글 …", "슬랙에 있는 대화 …") counts as well; `에서` or `의` there never counts. Pure.
+ */
+function markedDestinationsOf(
+  tokens: readonly Token[],
+  literals: readonly CrossWriteLiteral[],
+  context: Pick<AgentCrossWriteContext, 'jiraProjects'>,
+  nouns: CrossWriteNouns,
+): CrossWriteDestinationMark[] {
+  const out: CrossWriteDestinationMark[] = [];
+  const kindOfNoun = (word: string, raw: string): 'jira' | 'slack' | undefined =>
+    nouns.jira.includes(word) || context.jiraProjects.some((listed) => listed.toUpperCase() === raw.toUpperCase()) ? 'jira' : nouns.slack.includes(word) ? 'slack' : undefined;
+  for (const [index, token] of tokens.entries()) {
+    const literal = literals.find((each) => each.index === index);
+    if (literal !== undefined) {
+      if (markerOf(literal.rest)?.stem === '') out.push({ kind: literal.kind, index });
+      continue;
+    }
+    const marker = markerOf(token.word);
+    if (marker === undefined || marker.stem.length === 0 || !isKoreanWord(token.word)) continue;
+    const rawStem = token.text.slice(0, token.text.length - (token.word.length - marker.stem.length));
+    const kind = kindOfNoun(marker.stem, rawStem);
+    if (kind !== undefined) out.push({ kind, index });
+  }
+  // English: one phrase per `to` / `into` whose object (closed-class words skipped) is a literal or a destination kind noun.
+  for (const [index, token] of tokens.entries()) {
+    if (token.word !== 'to' && token.word !== 'into') continue;
+    let next = index + 1;
+    while (next < tokens.length && EN_CLOSED.has((tokens[next] as Token).word)) next += 1;
+    const object = tokens[next];
+    if (object === undefined) continue;
+    const literal = literals.find((each) => each.index === next);
+    const bare = object.word.replace(/[.,!?~]+$/u, '');
+    const kind = literal?.kind ?? kindOfNoun(bare, object.text.replace(/[.,!?~]+$/u, ''));
+    if (kind !== undefined) out.push({ kind, index: next });
+  }
+  return out;
 }
 
 /**
@@ -421,7 +482,9 @@ export function crossWriteCalendarOutside(text: string, spans: readonly (string 
   let marked = text.normalize('NFC').replace(/\s+/gu, ' ');
   for (const span of spans) {
     if (span === undefined || span.length === 0) continue;
-    const at = marked.indexOf(span);
+    // Review round 2, P3: the span is anchored on its LAST occurrence (the event's title and time stand by the create verb at the end
+    // of the request), so a same word earlier in the source part ("슬랙 점검 대화 …") is never the one removed.
+    const at = marked.lastIndexOf(span);
     if (at >= 0) marked = `${marked.slice(0, at)} ${SPAN_MARK} ${marked.slice(at + span.length)}`;
   }
   const entry = offered.get(CALENDAR_DESTINATION_ENTRY);
@@ -542,7 +605,8 @@ export function routeCrossWrite(input: CrossWriteRoutingInput): CrossWriteRoute 
   const nouns = crossWriteNouns(input.offered);
   const analysis = analyseCrossWriteLiterals(input.groundingText, context, nouns);
   // R2a / R2b need a write clause: the write request unit of a covered destination kind.
-  if (analysis.writeUnits === 0 || analysis.writeUnits > 1) return { route: 'ordinary' };
+  // More than one write (review round 2, P2-a: two or more locatively marked destinations; the verb count only as an extra signal).
+  if (analysis.writeUnits === 0 || analysis.writeUnits > 1 || analysis.destinations.length > 1) return { route: 'ordinary' };
   const destination = analysis.marked.length === 1 ? (analysis.marked[0] as CrossWriteLiteral) : undefined;
   // Review round 1, P2: A7 must be active for EVERY destination kind the words can resolve to: the marked literal's kind; with
   // none marked, every literal's kind (any of them may be the destination) and every marked kind noun's kind.

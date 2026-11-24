@@ -1,5 +1,5 @@
 import { NL_SPAN_MAX_CHARS, NL_WHEN_MAX_CHARS, isNlSpanGrounded, normalizeNlSpan } from '../nl-routing/action-entries';
-import { nlWriteClausePointsBack } from '../nl-routing/write-clause';
+import { nlIsCalendarCreateRequest, nlWriteClausePointsBack } from '../nl-routing/write-clause';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { NlValidationFailureReason } from '../nl-routing/selection-validator';
 import {
@@ -13,6 +13,7 @@ import {
   crossWriteDestinationSpan,
   crossWriteHasReadCondition,
   crossWriteNamedEntries,
+  crossWriteNamedSources,
   crossWriteNamesNewSource,
   crossWriteNouns,
   crossWriteSecondWriteBesideCalendar,
@@ -145,14 +146,26 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
       : crossWriteTextOutsideSpan(analysis, crossWriteDestinationSpan(analysis, spec.kind));
 
   // More than one write in one request is never covered (A7.3), for every destination kind, the calendar included, and before
-  // the route re-check (the router leaves a two-write message ordinary) (review round 1, P2).
-  if (analysis.writeUnits > 1) return refuse('cross-write-writes', stepNo);
+  // the route re-check (the router leaves a two-write message ordinary). Review round 2, P2-a: counted by DESTINATIONS, not by
+  // verbs: two or more locatively marked Jira or Slack destinations are two writes, whatever verb, ending or spacing follows each.
+  // The grammar's verb count stays an additional fail-closed signal only.
+  if (analysis.destinations.length > 1 || analysis.writeUnits > 1) return refuse('cross-write-writes', stepNo);
+
+  if (spec.kind === 'calendar') {
+    // A destination marked for another kind (only the write unit after it) is that kind's request, not a calendar one.
+    if (analysis.marked.length > 0 || analysis.kindMarked.jira || analysis.kindMarked.slack) return refuse('cross-write-role', stepNo);
+    // Review round 2, P2-a (ii): any locatively marked Jira or Slack destination beside the event is a second write, whatever verb
+    // follows it ("… BE-123에 남기고 내일 오후 3시에 점검 일정 만들어줘"). The clause rule of round 1 stays as an extra signal.
+    if (analysis.destinations.length > 0 || crossWriteSecondWriteBesideCalendar(ctx.groundingText)) return refuse('cross-write-writes', stepNo);
+  }
 
   // A7.5 step 0, re-checked (review round 1, P2): the plan stands only on a turn the router sends to A7. Form a needs the
   // cross-source trigger; form b either trigger. The router has no calendar write-clause detector yet (A7-S7), so a calendar plan
-  // needs the same cross-source trigger over its words outside the title and time spans.
+  // passes the same structural gate (review round 2, P2-b): the cross-source trigger over its words outside the title and time
+  // spans AND a calendar create request by the EXISTING calendar write grammar (its classifier and its parser; no new word).
   if (spec.kind === 'calendar') {
     if (!crossWriteCrossSourceTrigger(outside, ctx.offered, analysis)) return refuse('cross-write-invalid', stepNo);
+    if (!nlIsCalendarCreateRequest(ctx.groundingText)) return refuse('cross-write-invalid', stepNo);
   } else {
     const route = routeCrossWrite({ groundingText: ctx.groundingText, context: cw, offered: ctx.offered });
     if (route.route !== 'a7' || (form === 'a' && route.trigger !== 'cross-source')) return refuse('cross-write-invalid', stepNo);
@@ -168,9 +181,13 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
     const checked = deps.checkRead(read, steps, outside);
     if (!checked.ok) return checked;
     if (checked.step.kind !== 'read') return refuse('cross-write-invalid', 1);
-    // The source's role is grounded in those words: they name the read's entry (the catalog's names and aliases), or they name no
-    // read entry at all and the read carries a grounded value of its own (a source literal: "BE-12 댓글 요약해서 …").
-    const named = crossWriteNamedEntries(outside, ctx.offered);
+    // The source's role is grounded in those words: they name the read's entry, or they name no read entry at all and the read
+    // carries a grounded value of its own (a source literal: "BE-12 댓글 요약해서 …"). Review round 2, P2-c: a SOURCE name
+    // (`sourceNames`: 슬랙, 지라 …) outranks an alias: when the words name an entry by its source name, the read must be one of
+    // those entries ("슬랙 릴리즈 대화 …" is never a `jira.release` read through the alias 릴리즈); names and aliases together decide
+    // only when no source name appears.
+    const bySourceName = crossWriteNamedSources(outside, ctx.offered);
+    const named = bySourceName.length > 0 ? bySourceName : crossWriteNamedEntries(outside, ctx.offered);
     if (!named.includes(read.entryId) && (named.length > 0 || Object.keys(checked.step.args).length === 0)) return refuse('step-invalid', 1, 'ungrounded');
     source = checked.step;
     connectorCalls = deps.charge([checked.step]);
@@ -193,10 +210,6 @@ export function validateCrossWritePlan(plan: Extract<AgentPlan, { kind: 'steps' 
   const base = { kind: 'cross-write' as const, form, target: propose.target, operation: spec.operation, destinationKind: spec.kind, ...(source !== undefined ? { source } : {}), connectorCalls };
 
   if (spec.kind === 'calendar') {
-    // A destination marked for another kind is not a calendar request (`analysis` judged every kind for a calendar target).
-    if (analysis.marked.length > 0 || analysis.kindMarked.jira || analysis.kindMarked.slack) return refuse('cross-write-role', stepNo);
-    // A comment or post beside the event is a second write, though its verb is the only one counted (review round 1, P2).
-    if (crossWriteSecondWriteBesideCalendar(ctx.groundingText)) return refuse('cross-write-writes', stepNo);
     if (spans === undefined) return refuse('cross-write-span', stepNo);
     if (form === 'b') return finishB(base, { state: 'primary-calendar' }, ctx, outside, spans);
     return { ok: true, plan: { ...base, destination: { state: 'primary-calendar' }, calendar: spans } };

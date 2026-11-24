@@ -38663,3 +38663,40 @@ character; checked by comparing every pattern source before and after).
   4. The calendar second-write rule is clause-based (a comment or post verb beside a destination literal or marked noun); a
      kind-only Jira or Slack request beside a calendar event without a marker is not caught until the calendar write-clause
      detector (A7-S7).
+
+### A7-S1 review round 2 (2026-11-24; Chief Architect and Codex delta; the fix-loop cap)
+
+The delta reviews of `f529f538` returned 3 P2 and 3 P3 findings; the orchestrator decided each fix. Every fix is structural; no
+word list or phrase was added, Core has no provider or platform branch, the planner prompt (`agent-plan.v11`) and the pinned golds
+(`agent-plan.v1.json`, `agent-plan.ap8.v1.json`, the handoff red-team corpus) are byte-identical, A6 and W1 are unchanged, and a
+validated A7 plan still never runs.
+
+| Finding | Fix |
+|---|---|
+| P2-a the second-write count depended on the verb ending ("BE-1에 달고 #quoky-test에 올려줘", the mirror "#…에 올리고 BE-1에 달아줘", "BE-123에 남기고 … 일정 만들어줘", Codex "BE-123에 댓글 달아 주고 … 일정 만들어줘") | DESTINATION counting replaces verb counting. `analyseCrossWriteLiterals` records `destinations`: every destination literal, destination kind noun (the destination entries' own catalog nouns) or allowlisted project key carrying the closed locative particle of A7.4a (에, 에다, 에다가; `에서`, `로`, `으로` never), and in English every `to` / `into` whose object is a literal or a kind noun. A noun phrase counts once (only its last word carries the particle). The validator refuses `cross-write-writes` when (i) two or more are marked, or (ii) a calendar plan's words hold any marked Jira or Slack destination; the router leaves a message with two or more ordinary. The grammar's verb count (`WRITE_VERB_TOKEN`) is no longer the count of record: it stays only as "a write clause exists" for the router and as an extra fail-closed signal (it can only add refusals). All four probes are gold refusals. |
+| P2-b a calendar plan skipped the route re-check (Codex: "슬랙 릴리즈 대화 요약해줘" with an injected calendar propose step validated) | **Gate, not refuse-all.** A calendar plan needs the cross-source trigger over its words outside the title and time spans AND a create request of the EXISTING calendar write grammar (ADR-0110 D3): `nlIsCalendarCreateRequest` = a Korean message, no delete verb, the booking verb as the request (so `parseCalendarWriteRequest` takes its create branch), and no to-do or reminder list named as the place (`nlLocalListTarget`, the calendar classifier's own exclusion). The nl-routing import scan admits no `calendar/` import and the agent boundary admits only nl-routing, so the parser's `DELETE_VERB` and `BOOKING_VERB` moved verbatim to `nl-routing/write-clause.ts` (`CALENDAR_DELETE_VERB`, `CALENDAR_BOOKING_VERB`) and `calendar-write-request.ts` imports them (sources and flags compared equal before and after). The calendar role check now runs before the gate, so a calendar plan for a Jira-marked message keeps `cross-write-role`. |
+| P2-c an alias overrode a source name in the read grounding ("슬랙 릴리즈 대화 …" with `jira.release {release:'릴리즈'}`) | When the words outside the destination name an entry by its catalog SOURCE names (`crossWriteNamedSources`), the read entry must be one of those; the names-and-aliases set decides only when no source name appears. |
+| P3 `export … from` above an import in `write-clause.ts` | Moved below the import block. |
+| P3 calendar span removal took the first match | `crossWriteCalendarOutside` removes each span at its LAST occurrence (the title and time stand by the create verb at the end of the request), so "슬랙 점검 대화 요약해서 내일 오후 3시에 점검 일정 만들어줘" keeps the source's "점검" outside. |
+| P3 residuals | Restated below (1, 2). |
+
+- **Gold.** `agent-plan.a7.v1.json` now holds 212 cases (79 cross-write results, 133 refusals and routes; KO 189 of 212), all
+  `pending-owner-approval`. Batch `A7-3` adds 10 rows: the four P2-a probes and an English two-destination row (`a7n-125`..`128`,
+  `a7n-132`), the P2-b injected calendar step and a to-do-list booking (`a7n-129`, `a7n-130`), the P2-c alias row (`a7n-131`), a
+  calendar row whose title word also stands in the source part (`a7p-082`), and the R2a residual route (`a7n-133`). One batch
+  `A7-1` row changed with P2-b: `a7p-025` (English calendar create) is now `a7n-124`, refused `cross-write-invalid`, because the
+  calendar write grammar has no English create verb.
+- **Residuals (recorded).**
+  1. R2a runs over every catalog read source's names, so while A7 is active a verbatim post that names one ("BE-123에 메일 보냈다고
+     달아줘") routes to A7, where a plan for it is refused, instead of being an A6 literal post. Fail closed; listed next to the
+     A7.9 "literal posts staying A6" minimum (gold `a7n-133`). With A7 off nothing changes.
+  2. (Round 1 residual 2, restated.) "방금 내용 요약해서 BE-123에 달아줘" (`RECENCY_KO` plus a content noun) is NOT a step 0 point-back
+     form under the ratified text, so the route is `ordinary` and the turn goes to A6 as today (not a refusal); a form-b plan for
+     it is refused `cross-write-invalid`. **Owner question pending:** should step 0 accept `RECENCY_KO` plus a content noun (it reuses
+     the existing closed set, but needs an ADR text amendment)? Not implemented.
+  3. Destination counting fails closed: a SOURCE phrase that carries the locative particle counts as a destination ("BE-12에 달린 댓글
+     요약해서 BE-123에 달아줘", "슬랙에 있는 대화 요약해서 …"), so such a turn is refused or stays ordinary. `에서` or `의` there never counts.
+  4. English calendar plans are refused until the A7-S7 calendar write-clause detector (no English create verb in the grammar), and a
+     Korean create the booking verb does not carry is refused too. Round 1 residual 4 (the clause-based calendar rule) is superseded
+     by P2-a (ii) for every marked destination; a kind-only Jira or Slack request beside an event WITHOUT a marker is still caught only
+     by the clause rule until A7-S7.
