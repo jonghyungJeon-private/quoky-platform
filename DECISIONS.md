@@ -38305,3 +38305,130 @@ LC-1a implements D11 and the ratified ADR-0113 D8 amendment on branch `claude/v5
 - No adapter, listener, Core, configuration, word list or prompt change; no application runtime, provider call, secret
   access, push, PR or merge. LC-1b remains separate. The independent LC-1a review required by this ADR is still due
   before merge; this implementation note does not claim that review.
+
+
+## ADR-0125 LC-1b implementation note (2026-11-24)
+
+LC-1b implements D1-D6, D8 (LC-1b..LC-3 routing), D9 and D12 on branch `claude/v5-lc1b-local-client-adapter`, based on
+`6c1b21bf` (which contains LC-1a). Text turns only; no buttons, no `decisionStep`, no `notices/ack` or decision endpoint
+(both are 404, LC-4). Flag `QUOKY_LOCAL_CLIENT_ENABLED` is default off; nothing is enabled or turned on live.
+
+- **Package.** `packages/adapter-local-client` (`@quoky/adapter-local-client`, platform `'local-client'`) depends on
+  `@quoky/core`, `@quoky/local-auth` and `node:*` only. Its HTTP-side modules (`constants`, `events`, `http`,
+  `idempotency`, `socket`) import no Core at all; an import-boundary test pins both rules, the two-entry dependency list
+  and "no TCP listener API", and that Core never mentions `local-client`.
+- **D2 start order** (`socket.ts`): lock and file-backed DB, UTF-8 path length <= 103, `lstat` of the data directory
+  (real directory, process uid, no group/other bits; never created), existing path (non-socket or foreign uid is never
+  unlinked; a connect probe with a 1 s timeout: connected = `SOCKET_LIVE`, only `ECONNREFUSED` = stale and unlinked, any
+  other errno or timeout = `SOCKET_PROBE_FAILED`, no unlink), `listen` on a random temporary name in the data directory
+  (same length as `local-client.sock`), `chmod 0600`, `lstat` again with `(dev, ino)` recorded, `link` onto
+  `local-client.sock` (atomic and no-replace: `EEXIST` closes the server with `SOCKET_PATH_OCCUPIED`, the existing entry
+  untouched), `unlink` of the temporary name, the `(dev, ino)` re-check at the real path, then the token file (`writeTokenFile`, only after those checks). Every refusal is a typed reason code; the
+  adapter disables itself and `start()` resolves, so the rest of Quoky starts.
+- **End of life.** Stop closes streams, ALWAYS closes the server, then unlinks the socket and the token file only while
+  their recorded `(dev, ino)` still match, inside `shutdown()` that `main.ts` runs before `process.exit` releases the D4
+  lock. libuv unlinks the name a pipe server was bound to when it closes; because the bind used the temporary name
+  (already gone after publication), closing never touches whatever is at `local-client.sock` (review rounds 1-2).
+- **D3 request hygiene** (`http.ts`): order is framing hygiene (any `Transfer-Encoding`, `Content-Encoding`, `Expect`,
+  `Upgrade`, `TE`, `Trailer`, a repeated single-valued header, a control byte: 400), `Host` exactly `localhost` (400),
+  any `Origin` (403), `OPTIONS` (405), exact route table (other paths, methods, queries: 404 with no body), Bearer token
+  (401; 429 only for a wrong token during a lockout), `503 NOT_READY`, then JSON content type (415), one numeric
+  `Content-Length` (411), body <= 16 KiB from the declared length alone (413), text <= 4,000 UTF-16 units (413). The
+  token is compared first and the `SignInRateLimiter` is consulted only on a failure (P2-2), so a valid token is served
+  during a lockout; failed requests are the only thing counted. `node:http` runs with the strict parser, an 8 KiB header
+  limit, header and request timeouts, one request per socket and `Connection: close`; parser refusals (duplicate or
+  conflicting `Content-Length`, folding, oversize header block) are a fixed 400. Unknown body fields are a 400, so no
+  provider, model or tool can be named (D9).
+- **D4.** `lc-<uuid>` ids minted by the adapter (the turn id is the message id); `clientMessageId` only in the 500 / 10
+  minute in-memory ring (same key and text replays the first `turnId`, another text or thread is 409); a new epoch per
+  start (16 hex characters) on every response and event; event ids `<epoch>-<seq>`, the id is the delivery receipt's
+  `messageId`; a 200 event / 10 minute ring; `Last-Event-ID` resumes only for this epoch inside the ring, anything else
+  gets one id-less `status {resync: true}` and no replay (so does a resume whose status event and replay would not fit
+  in the backlog bound, review round 2); at most 2 streams, 30 turns per minute, 25 s heartbeat, a stream
+  whose unsent backlog would pass 1 MiB is dropped (status event, replay, publish and heartbeat share one guarded write). Every stream starts with one id-less `status {status, epoch}` event.
+  Replies carry `text` (plain) and `content` (typed spans `text` / `untrusted` / `link` / `conversation`, concatenating
+  to `text`); `context = {platform: 'local-client', channelId: 'local-client-dm', threadId?, userId: <owner>, direct:
+  true}`, `replyTo` from `replyToEventId`. `status` answers 200 `{status: 'starting' | 'ready', epoch}` while the
+  inbound gate is closed (the quoky-mac CONTRACT.md assumption); `POST` and `events` answer `503 NOT_READY`.
+- **D3 rotation.** `POST /client/v1/token/rotate` writes a new token file, swaps the in-memory token, closes every stream
+  and returns `{rotated: true, epoch}` (never the token). A failed rewrite fails closed: the adapter disables itself
+  (`TOKEN_ROTATION_FAILED`). `ops/launchd/quokyctl.sh local-client rotate-token [--dry-run|--apply]` is the thin `curl
+  --unix-socket` wrapper (relative socket path from inside the data directory, token on curl's stdin, default dry-run).
+- **D5.** `QUOKY_LOCAL_CLIENT_OWNER_ACTOR` must be one of `QUOKY_DISCORD_OWNER_IDS`; the composition root adds the identity
+  link `(local-client, <id>) -> (discord, <id>)` through the existing provisioner (ADR-0114 D3 mechanism), and at start the
+  adapter requires both identities to resolve to the same single Actor. Unset, not an owner, or unresolved: the adapter
+  disables itself with a reason code and Quoky starts. A mistyped flag value (not exactly `true` or `false`) is a startup
+  configuration error with `LOCAL_CLIENT_ENABLED_INVALID`, as for Telegram.
+- **D1 / D6 composition.** `composePlatformAdapter` joins the adapter only when the flag is on, the instance lock is held
+  and the DB is file-backed (the adapter re-checks both); with the flag off nothing is constructed and the bound adapter
+  is the same object as before (a test pins this). The adapter takes the ADR-0102 D5 `gateInbound` through the composite;
+  a `false` gate stops it. `direct: true` (owner question 4) is the adapter's context. Core is unchanged: no platform
+  branch, no contract change.
+- **D8 (LC-1b..LC-3).** `CompositePlatformAdapter` gets an optional `NotificationRedirect`: a `TEXT` or `BRIEF`
+  notification whose target platform is `local-client` is delivered as an owner Discord DM (`spaceId` and
+  `channelRecheck` removed so it can only be a DM); no configured owner is `NOT_SENT TARGET_NOT_ADMITTED`;
+  `OPS_DECISION_RESULT` is unchanged. The adapter has no `deliver` of its own.
+- **D12.** One OPS-UI panel (`local-client`, only when the adapter is composed): enabled, listening, open streams, last turn
+  time, auth failures in the last hour, the disable reason code; the page without it is byte-identical. The network
+  self-check (`ops/security/quoky-net-selfcheck.sh`) adds one file check: when `local-client.sock` exists it must be a
+  socket of mode 600 in a 700 directory, both owned by the service user; any TCP listener fails as before.
+- **Red-team.** `local-client-surface.corpus.test.ts` is the deterministic family for the LC-1b groups (token and scope,
+  socket path, no TCP, lockout DoS, idempotency, forged `Last-Event-ID`, encoded approval id, smuggling, floods, leakage,
+  content imitation; 79 cases after review round 1, each at or above the ADR minimum): 0 successes over 3 consecutive runs. The groups
+  "Approvals" and "Notices" (and the remaining count to the >= 90 total) belong to LC-4. The flag is NOT turned on by
+  this slice; the ratified gate (3 runs at 0 over the whole family) still applies before any live enablement.
+- **Not in this slice.** `notices/ack`, the decision endpoint, `decisionStep` / `undoUntil`, the OPS-UI reference as a typed
+  part, feedback, attachments (LC-4 / later). No `docs/wiki` change.
+- **Validation.** `pnpm build` and `pnpm typecheck`; targeted `pnpm vitest run` only (see the CHANGELOG entry for counts).
+  No full suite, no live service, no model call, no push.
+- **Gates.** Before merge: Codex review and an independent Chief Architect review (new endpoint, ADR-0102 D1 / ADR-0113
+  amendments, the notice routing) per the ADR "Gates"; this note does not claim either.
+- **Review round 1 (Chief Architect + Codex, 2026-11-24).** Findings and fixes:
+  - P2 socket leak on `SOCKET_VERIFY_FAILED` and on a replaced path (the server was only `unref()`ed and kept
+    listening behind a moved name) -> the CA's structural fix: bind to a random temporary name in the 0700 directory,
+    `chmod`, `lstat`, record `(dev, ino)`, `rename` onto `local-client.sock`; both `unref()` branches removed, the
+    server is always closed, the real path is removed only on a `(dev, ino)` match. Stale-socket unlink is unchanged
+    (preflight, under the D4 lock, only on `ECONNREFUSED`). Tests: verify failure leaves no listener and no file; an
+    entry that appears at the path is never renamed over; a replaced path on stop leaves the replacement serving and
+    our server closed (`ECONNREFUSED` behind the moved name); a normal stop removes the path and leaves no temp name.
+  - P2 SSE replay bypassed the backlog guard (direct `res.write`) -> the status event and the replay go through the
+    one guarded write; a write that would take the unsent backlog past the limit (bytes, chunk framing included)
+    drops the stream and removes it from the open set at once. `maxStreamBacklogBytes` is a test option.
+  - P2 the red-team "slow stream reader" case could never fail -> replaced: a reader that pauses its socket, publishes
+    until the limit is passed (dropped, `openStreams === 0`, peak backlog <= limit), and a resume whose replay passes
+    the limit (closed by the server at once; a one-event resume is the control). Checked to fail on the old replay path.
+  - P2 secret-scan false positives (`quokyctl.sh` `token_file=` assignment) -> variable renamed `tf_path`; tree gating
+    is back to main's count; no allowlist entry.
+  - P3 "seq before the ring", "stale socket" (two cases) and "foreign-owned data dir" (adapter `uid` test seam) moved
+    into the corpus: 79 cases, 0 successes over 3 consecutive runs.
+  - P3 the composite redirected `SURFACE_GRANT` too -> only `TEXT` and `BRIEF` are redirected (D8); any other kind for
+    `local-client` is `NOT_SENT TARGET_NOT_ADMITTED`.
+  - P3 `opsDecisionResultTarget` -> a `local-client` turn whose `userId` is in `discord.ownerIds` goes to that owner's
+    Discord DM (D5); otherwise the existing rule (the only owner, or none) is unchanged.
+  - P3 `instanceLockHeld` -> `isInstanceLockHeld(lockDir)` reports the lock this process actually holds (set on acquire,
+    cleared on release) instead of inferring it from the path.
+  - Residuals (both closed in review round 2): (a) an oversized replay was dropped before any byte was sent; (b) a
+    crash between the temporary bind and publication could leave one `.lc-<hex>.sock` file behind.
+- **Review round 2 (Chief Architect delta + Codex delta, 2026-11-24).** Findings and fixes:
+  - P2 oversized replay liveness: a resume whose replay passed the backlog bound was destroyed before the head was
+    flushed (0 bytes; the client kept its `Last-Event-ID` and was dropped again on every reconnect for up to 10 min).
+    -> server rule, D4 "not resumable -> now + resync": before `writeHead`, `attach()` sizes the status event and the
+    replay (serialized bytes, 16 bytes of chunk framing per write, a 512-byte response-head allowance); if that passes
+    the bound (a long replay, or one queued reply that alone passes it), the request is not resumable: no replay, one
+    `status {resync: true}`, the stream stays open. No client-side fallback heuristic (residual (a) of round 1 is
+    withdrawn). The red-team replay case now expects 200, `"resync":true`, 0 replayed replies and one open stream; two
+    unit regressions (long replay, single oversized reply) reproduce the old 0-byte drop and were checked to fail on
+    the round-1 code.
+  - P2/P3 non-atomic no-replace publication (`lstat` then `rename` could clobber an entry created in between) ->
+    `linkSync(temp, local-client.sock)` (atomic, never replaces; `EEXIST` closes the server, `SOCKET_PATH_OCCUPIED`),
+    then `unlinkSync(temp)`; the `(dev, ino)` re-check at the real path stays. The check-then-act step is gone, so a
+    pre-created entry exercises the race path itself: it is left untouched (same `dev`, `ino`, `nlink`, content) and
+    the start fails with `SOCKET_PATH_OCCUPIED`; a successful bind leaves one link only.
+  - Optional (done): `preflightSocketPath`, under the D4 lock, unlinks leftover entries matching the adapter's own
+    temporary-name format only when each is a socket owned by the uid, refuses a connect (`ECONNREFUSED`) and is still
+    the probed `(dev, ino)`; anything else is left alone and never refuses the start. Tests: a stale temp socket is
+    removed while a non-socket temp name, a stale socket of another name and a live temp-named socket stay; nothing is
+    touched without the lock.
+  - Wire-visible change (quoky-mac CONTRACT.md): a `Last-Event-ID` resume that cannot be replayed within the backlog
+    bound now answers 200 with `status {resync: true}` and no replay, the same as any other non-resumable id; the
+    client treats it as a resync. Nothing else on the wire changed.

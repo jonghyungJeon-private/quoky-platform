@@ -29,6 +29,16 @@ import type { ConnectedIdentityFacts } from '../ops/startup-identity-check';
  * - Lifecycle: children start in order (primary first); when one fails, the ones already started are stopped and the
  *   error is rethrown unchanged (a typed startup refusal keeps its code). Stop runs in reverse order.
  */
+/**
+ * ADR-0125 D8 (LC-1b to LC-3): a notification whose target platform is `from` has no delivery of its own yet, so it is
+ * delivered as `toTarget(target)` through the PRIMARY platform's owner DM (the ADR-0114 D11 primary). `undefined` = no
+ * admissible DM, which is `NOT_SENT TARGET_NOT_ADMITTED`. The composition root builds it; Core never sees it.
+ */
+export interface NotificationRedirect {
+  readonly from: string;
+  readonly toTarget: (target: ConversationContext) => ConversationContext | undefined;
+}
+
 export class CompositePlatformAdapter implements PlatformAdapter, NotificationSink {
   readonly platform: string;
   private readonly children: readonly PlatformAdapter[];
@@ -37,6 +47,7 @@ export class CompositePlatformAdapter implements PlatformAdapter, NotificationSi
     private readonly primary: PlatformAdapter,
     others: readonly PlatformAdapter[],
     private readonly logger: Logger,
+    private readonly redirect?: NotificationRedirect,
   ) {
     this.children = [primary, ...others];
     const ids = this.children.map((child) => child.platform);
@@ -127,8 +138,20 @@ export class CompositePlatformAdapter implements PlatformAdapter, NotificationSi
    * - `TEXT` reminders and the `BRIEF` go to the child whose platform is `target.platform`: a reminder is delivered
    *   where it was created. That child's own sink rechecks owner and target.
    * - A platform that is not composed, or a child without a sink, is `NOT_SENT TARGET_NOT_ADMITTED` (never re-routed).
+   * - ADR-0125 D8: with a {@link NotificationRedirect} (local client on), a notification targeted at that platform goes to
+   *   the owner's Discord DM instead (LC-1b to LC-3), as `TEXT` or `BRIEF` only.
    */
-  async deliver(notification: OwnerNotification): Promise<NotificationSinkOutcome> {
+  async deliver(original: OwnerNotification): Promise<NotificationSinkOutcome> {
+    let notification = original;
+    // Only a reminder (`TEXT`) or the `BRIEF` is redirected (D8); any other kind for that platform stays fail-closed.
+    const redirectable = original.kind === 'TEXT' || original.kind === 'BRIEF';
+    if (this.redirect !== undefined && redirectable && original.target.platform === this.redirect.from) {
+      const target = this.redirect.toTarget(original.target);
+      if (target === undefined) return { status: 'NOT_SENT', reason: 'TARGET_NOT_ADMITTED', retryable: false };
+      // A DM only: the originating conversation's channel recheck belongs to that conversation, not to the owner DM.
+      const { channelRecheck: _dropped, ...rest } = original;
+      notification = { ...rest, target };
+    }
     const child = notification.kind === 'OPS_DECISION_RESULT' ? this.primary : this.childFor(notification.target.platform);
     const sink = child as Partial<NotificationSink> | undefined;
     if (!child || typeof sink?.deliver !== 'function') return { status: 'NOT_SENT', reason: 'TARGET_NOT_ADMITTED', retryable: false };

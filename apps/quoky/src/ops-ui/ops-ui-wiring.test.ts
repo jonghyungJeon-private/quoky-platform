@@ -600,4 +600,16 @@ describe('TG-3 decision-result owner DM (ADR-0114 D11)', () => {
     });
     expect(opsDecisionResultTarget({ discord: { ownerIds: ['1', '2'] }, ...map })(chat)).toBeUndefined();
   });
+
+  it('ADR-0125 D5: a local-client turn goes to its own Discord owner DM when its userId is a configured owner', () => {
+    const target = opsDecisionResultTarget({ discord: { ownerIds: ['111111111111111111', '222222222222222222'] } });
+    const chat = { platform: 'local-client', channelId: 'local-client-dm', userId: '222222222222222222', direct: true };
+    expect(target(chat)).toEqual({ platform: 'discord', userId: '222222222222222222' });
+    // Not a configured owner: the existing rule (the only owner, or nobody) applies.
+    expect(target({ ...chat, userId: '333333333333333333' })).toBeUndefined();
+    expect(opsDecisionResultTarget({ discord: { ownerIds: ['111111111111111111'] } })({ ...chat, userId: '333333333333333333' })).toEqual({
+      platform: 'discord',
+      userId: '111111111111111111',
+    });
+  });
 });

@@ -32,6 +32,7 @@ import type {
   StorageProvider,
 } from '@quoky/core';
 import { DISCORD_NOTIFICATION_PLATFORM } from '@quoky/adapter-discord';
+import { LOCAL_CLIENT_PLATFORM } from '@quoky/adapter-local-client';
 import { TELEGRAM_PLATFORM, TelegramPlatformAdapter } from '@quoky/adapter-telegram';
 import { readSqliteUserVersion } from '@quoky/storage-sqlite';
 
@@ -40,6 +41,7 @@ import { describeImageUnderstandingSelection } from '../image-understanding-prov
 import type { QuokyConfig } from '../config';
 import type { OpsRuntime } from '../ops/ops-runtime';
 import { CompositePlatformAdapter } from '../platform/composite-platform-adapter';
+import { localClientStatusOf } from '../platform/platform-composition';
 import { ReminderTickDriver } from '../reminders/reminder-tick-driver';
 import { OpsUiActions } from './actions/ops-actions';
 import type { OpsDecisionResultTarget } from './actions/ops-actions';
@@ -315,6 +317,8 @@ export function opsSnapshotSources(input: OpsUiWiringInput, errorRing: OpsErrorR
       providerSelection: selection !== undefined,
     },
     telegram: () => telegramStatusOf(platform),
+    // ADR-0125 D12: undefined (no panel) unless the local client is composed.
+    localClient: () => localClientStatusOf(platform),
     // ADR-0121 S2 (D7): the agent mode and the owner's kill switch, read-only.
     ...(agentRuns === undefined
       ? {}
@@ -363,7 +367,9 @@ async function openSessionsWithFocus(storage: StorageProvider): Promise<readonly
 /**
  * TG-3 (ADR-0114 D11, amending ADR-0113 D7): an `OPS_DECISION_RESULT` goes to the primary platform's owner DM. A Discord
  * conversation keeps its own owner (unchanged); a Telegram one goes to the Discord owner its Telegram id is mapped to
- * (`QUOKY_TELEGRAM_OWNER_ACTOR_MAP`), or to the only configured Discord owner. Anything else has no admissible DM.
+ * (`QUOKY_TELEGRAM_OWNER_ACTOR_MAP`), or to the only configured Discord owner. ADR-0125 D5: a local-client turn's
+ * `userId` IS a configured Discord owner id, so it goes to that owner's DM when it is one of `discord.ownerIds`.
+ * Anything else has no admissible DM.
  */
 export function opsDecisionResultTarget(
   config: Pick<OpsUiWiringInput['config'], 'discord' | 'telegram'>,
@@ -371,7 +377,8 @@ export function opsDecisionResultTarget(
   return (chat) => {
     if (chat.platform === DISCORD_NOTIFICATION_PLATFORM) return { platform: chat.platform, userId: chat.userId };
     const mapped = config.telegram?.ownerActorMap.find((link) => link.telegramId === chat.userId)?.discordOwnerId;
-    const owner = chat.platform === TELEGRAM_PLATFORM ? mapped : undefined;
+    const localOwner = chat.platform === LOCAL_CLIENT_PLATFORM && config.discord.ownerIds.includes(chat.userId) ? chat.userId : undefined;
+    const owner = chat.platform === TELEGRAM_PLATFORM ? mapped : localOwner;
     const fallback = config.discord.ownerIds.length === 1 ? config.discord.ownerIds[0] : undefined;
     const userId = owner ?? fallback;
     return userId === undefined ? undefined : { platform: DISCORD_NOTIFICATION_PLATFORM, userId };

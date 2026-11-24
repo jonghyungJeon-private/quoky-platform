@@ -23,6 +23,8 @@ import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allo
 import type { ReminderConfig } from './reminders/reminder-config';
 import { parseTelegramConfig, TelegramConfigErrorCode } from './telegram/telegram-config';
 import type { TelegramConfig } from './telegram/telegram-config';
+import { LocalClientConfigErrorCode, parseLocalClientConfig } from './local-client/local-client-config';
+import type { LocalClientConfig } from './local-client/local-client-config';
 
 /**
  * Reads runtime configuration from the environment. QUOKY_* takes precedence over
@@ -52,6 +54,11 @@ export interface QuokyConfig {
    * nothing Telegram-related is constructed). See `telegram/telegram-config.ts`. The bot token is a secret holder.
    */
   telegram?: TelegramConfig;
+  /**
+   * ADR-0125 (LC-1b): the local-client surface, present only when `QUOKY_LOCAL_CLIENT_ENABLED=true` (default off; then no
+   * socket and no token file exist). See `local-client/local-client-config.ts`.
+   */
+  localClient?: LocalClientConfig;
   /**
    * ADR-0102 always-on host runtime (SUB-1). Both values are written by `ops/launchd/quoky-launch.sh`, never by
    * the owner's `.env.local`: `launcher` is `'launchd'` under the launcher (`QUOKY_LAUNCHER`), and `recentStarts` is
@@ -332,6 +339,7 @@ export const QuokyConfigErrorCode = {
   MEMORY_ARCHIVE_DAYS_INVALID: 'MEMORY_ARCHIVE_DAYS_INVALID',
   ...ReminderConfigErrorCode,
   ...TelegramConfigErrorCode,
+  ...LocalClientConfigErrorCode,
   ...NlSelectionConfigErrorCode,
   ...EgressConfigErrorCode,
   ...ChannelGrantsConfigErrorCode,
@@ -599,6 +607,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const gemini = parseGeminiConfig(env, { chat: chat.provider === 'gemini', image: imageUnderstanding.provider === 'gemini' });
   // ADR-0114 D13: off unless QUOKY_TELEGRAM_ENABLED=true; every owner must map to a Discord owner (D3).
   const telegram = parseTelegramConfig(env, ownerIds);
+  // ADR-0125 D1: off unless QUOKY_LOCAL_CLIENT_ENABLED=true; the owner mapping (D5) is checked when the adapter starts.
+  const localClient = parseLocalClientConfig(env);
   const nlSelection = parseNlSelectionConfig(env);
   const egress = parseEgressConfig(env);
   const agent = parseAgentConfig(env);
@@ -619,6 +629,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
       ...(expectedBotId !== undefined ? { expectedBotId } : {}),
     },
     ...(telegram !== undefined ? { telegram } : {}),
+    ...(localClient !== undefined ? { localClient } : {}),
     host,
     storage: { dbPath: resolveDataPaths(env).dbPath },
     vector: { storePath: resolveDataPaths(env).vectorPath },

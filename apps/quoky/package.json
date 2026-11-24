@@ -16,6 +16,7 @@
     "@quoky/local-auth": "workspace:*",
     "@quoky/adapter-discord": "workspace:*",
     "@quoky/adapter-telegram": "workspace:*",
+    "@quoky/adapter-local-client": "workspace:*",
     "@quoky/storage-sqlite": "workspace:*",
     "@quoky/queue-local": "workspace:*",
     "@quoky/vector-local": "workspace:*",

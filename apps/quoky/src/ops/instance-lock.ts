@@ -127,6 +127,14 @@ export interface InstanceLock {
   release(): void;
 }
 
+/** The lock directories this process holds right now (acquired and not yet released). */
+const heldInThisProcess = new Set<string>();
+
+/** True only while this process holds the lock at `lockDir` (ADR-0125 D2 step 0 reads the real state, not the path). */
+export function isInstanceLockHeld(lockDir: string | undefined): boolean {
+  return lockDir !== undefined && heldInThisProcess.has(lockDir);
+}
+
 /** `<db>.lock` (a directory) beside the database; `undefined` for an in-memory or unset database. */
 export function instanceLockPath(dbPath: string): string | undefined {
   if (dbPath === '' || dbPath === ':memory:') return undefined;
@@ -274,12 +282,14 @@ function ownedLock(
   now: () => Date,
 ): InstanceLock {
   let released = false;
+  heldInThisProcess.add(lockDir);
   return {
     path: lockDir,
     generation,
     release(): void {
       if (released) return;
       released = true;
+      heldInThisProcess.delete(lockDir);
       try {
         if (highestGeneration(fs, lockDir) !== generation) return;
         const current = readOrUndefined(fs, generationPath(lockDir, generation));

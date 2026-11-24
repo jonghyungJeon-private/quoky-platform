@@ -5,6 +5,7 @@
     { "path": "packages/local-auth" },
     { "path": "packages/adapter-discord" },
     { "path": "packages/adapter-telegram" },
+    { "path": "packages/adapter-local-client" },
     { "path": "packages/storage-sqlite" },
     { "path": "packages/queue-local" },
     { "path": "packages/vector-local" },

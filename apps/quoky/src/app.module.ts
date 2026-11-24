@@ -144,7 +144,9 @@ import { AGENT_RUNS, createAgentProviders } from './features/agent.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
-import { composePlatformAdapter, telegramOwnerIdentityLinks } from './platform/platform-composition';
+import { composePlatformAdapter, localClientOwnerIdentityLinks, telegramOwnerIdentityLinks } from './platform/platform-composition';
+import { instanceLockPath, isInstanceLockHeld } from './ops/instance-lock';
+import { opsUiDataDir } from './ops-ui/ops-ui-config';
 
 const config = loadConfig();
 const coreLogger = new ConsoleLogger('quoky');
@@ -360,12 +362,36 @@ const infrastructure: Provider[] = [
     // ADR-0091: the owner/channel admission gate is Discord-adapter config; Core never receives these ids.
     // ADR-0101 D8: the reminder channel-delivery opt-in reaches the adapter here (inert while reminders are off).
     // ADR-0114 D6: with Telegram on, one composite over Discord (primary) and Telegram; off, the Discord adapter itself.
-    useFactory: () =>
+    // ADR-0125 D1 (LC-1b): with QUOKY_LOCAL_CLIENT_ENABLED=true the local client joins the composite; off, nothing changes.
+    useFactory: (storage: StorageProvider) =>
       composePlatformAdapter(
         new DiscordPlatformAdapter(withReminderChannelDelivery(config.discord, config.reminders), new ConsoleLogger('discord')),
         config.telegram,
-        { logger: (scope) => new ConsoleLogger(scope), dbPath: config.storage.dbPath },
+        {
+          logger: (scope) => new ConsoleLogger(scope),
+          dbPath: config.storage.dbPath,
+          ...(config.localClient === undefined
+            ? {}
+            : {
+                localClient: {
+                  config: config.localClient,
+                  dataDir: opsUiDataDir(config.storage.dbPath),
+                  // The real ADR-0102 D4 state: main.ts acquires the lock before this module is created.
+                  instanceLockHeld: isInstanceLockHeld(instanceLockPath(config.storage.dbPath)),
+                  fileBackedDb: instanceLockPath(config.storage.dbPath) !== undefined,
+                  discordOwnerIds: config.discord.ownerIds,
+                  verifyOwner: async () => {
+                    const owner = config.localClient?.ownerActor;
+                    if (owner === undefined) return false;
+                    const viaLocalClient = await storage.actors.findByExternalIdentity('local-client', owner);
+                    const viaDiscord = await storage.actors.findByExternalIdentity('discord', owner);
+                    return viaLocalClient !== null && viaDiscord !== null && viaLocalClient.id === viaDiscord.id;
+                  },
+                },
+              }),
+        },
       ),
+    inject: [STORAGE_PROVIDER],
   },
   {
     provide: AI_PROVIDERS,
@@ -395,7 +421,7 @@ const application: Provider[] = [
   {
     provide: ActorIdentityProvisioner,
     useFactory: (storage: StorageProvider) =>
-      new ActorIdentityProvisioner(storage, config.actorIdentityMappings, new ConsoleLogger('actor-identity'), telegramOwnerIdentityLinks(config.telegram)),
+      new ActorIdentityProvisioner(storage, config.actorIdentityMappings, new ConsoleLogger('actor-identity'), [...telegramOwnerIdentityLinks(config.telegram), ...localClientOwnerIdentityLinks(config.localClient, config.discord.ownerIds)]),
     inject: [STORAGE_PROVIDER],
   },
   { provide: RiskPolicy, useFactory: () => new RiskPolicy() },

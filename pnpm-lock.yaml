@@ -32,6 +32,9 @@ importers:
       '@quoky/adapter-discord':
         specifier: workspace:*
         version: link:../../packages/adapter-discord
+      '@quoky/adapter-local-client':
+        specifier: workspace:*
+        version: link:../../packages/adapter-local-client
       '@quoky/adapter-telegram':
         specifier: workspace:*
         version: link:../../packages/adapter-telegram
@@ -126,6 +129,15 @@ importers:
       discord.js:
         specifier: 14.16.3
         version: 14.16.3
+
+  packages/adapter-local-client:
+    dependencies:
+      '@quoky/core':
+        specifier: workspace:*
+        version: link:../core
+      '@quoky/local-auth':
+        specifier: workspace:*
+        version: link:../local-auth
 
   packages/adapter-telegram:
     dependencies:
