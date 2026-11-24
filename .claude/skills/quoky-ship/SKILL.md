@@ -1,11 +1,11 @@
 ---
 name: quoky-ship
-description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 호출해 worktree, 실행 방식, 모델 선택(Codex 레인이 열려 있으면 Codex 병행 작업 포함)을 처리한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크(quoky-e2e) → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
+description: Quoky Platform 전용 출하 파이프라인. 전역 스킬(side-job: worktree, orchestrate: 실행 방식·작업자 배분·Codex 레인, token-budget: 모델·effort)을 따라 작업한 뒤, 오프라인 검증 → 독립 리뷰(Codex PASS, 필요 시 Chief Architect) → rebase → Push → PR → Merge → 상시 서비스 배포 → 스모크(quoky-e2e) → 소유자 보고까지 진행한다. Triggers - "quoky-ship", "출하", "머지하고 배포", "ship", "v4 작업 진행", "웨이브 진행", "PR 올리고 머지".
 ---
 
-# Quoky Ship (side-job + Quoky 출하 절차)
+# Quoky Ship (side-job·orchestrate + Quoky 출하 절차)
 
-이 스킬은 Quoky 저장소 전용이다. 공통 절차(worktree 격리, 실행 방식, 모델 선택)는 **side-job 스킬을 호출해** 처리하고, 이 스킬은 그 위에 Quoky 출하 절차만 얹는다.
+이 스킬은 Quoky 저장소 전용이다. 공통 절차는 전역 스킬을 따른다: worktree 격리는 **side-job**, 실행 방식·작업자 배분·웨이브·독립 리뷰는 **orchestrate**, 모델·effort 는 **token-budget**. 이 스킬은 그 위에 Quoky 출하 절차만 얹는다. 전역 스킬과 이 스킬이 다르면 이 repo 에서는 이 스킬이 우선이고, 그 차이를 보고한다(orchestrate §6).
 
 **상시 승인**: 소유자가 v5 웨이브에 대해 "오프라인 검증 + 독립 리뷰 + Codex PASS 후 자동 Push → PR → Merge → 상시 서비스 배포 → 스모크"를 승인했다(v4와 같은 조건, 2026-10-12 v5 비준 기록 결정 1). 이 승인 범위를 벗어나는 Strict 항목(§7)은 그때마다 따로 묻는다.
 
@@ -19,7 +19,7 @@ description: Quoky Platform 전용 출하 파이프라인. side-job 스킬을 �
   - 브랜치명: `claude/<wave>-<task>`
   - `.env.local` 은 복사하지 않는다(코드 작업에는 필요 없음).
   - upstream 은 해제한다.
-- side-job §6.5 에 따라 실행 방식을 정하고, 모델·effort 는 `token-budget` 스킬로 정한다(등급 J1/J2/J3/I/M/X, effort = min(기준값, 세션 effort), 예산 모드 포함). Quoky 작업의 등급은 다음과 같다.
+- orchestrate §2·§3 에 따라 실행 방식(직접·서브에이전트·팀원·Codex 레인·Workflow)을 정하고, 모델·effort 는 `token-budget` 스킬로 정한다(등급 J1/J2/J3/I/M/X, effort = min(기준값, 세션 effort), 예산 모드 포함). Quoky 작업의 등급은 다음과 같다.
   - **J1**: 새 egress·inbound·인증·플랫폼 어댑터·새 provider 설계, ADR 설계·해석·충돌, 필수 CA 대상(PLT-0, TG-1, PRV-1, LRN-5, GML-1, PRV-3, 새 커넥터)의 첫 리뷰
   - **J2**: 기존 쓰기·권한 경로의 보안 수정(명세가 확정되면 token-budget §2 예외에 따라 sonnet·high 로 구현하고 J2 가 리뷰한다), 기존 ADR 안의 설계, 일반 CA 리뷰, 원인 불명 평가 회귀 디버깅
   - **J3**: CA·Codex 지적 수정분의 delta 재리뷰, 조항이 명확한 ADR 대조
@@ -115,7 +115,7 @@ tmux attach -t gates-<name>                                          # 진행 �
 - **fix loop 상한**: 같은 지적의 수정은 2회까지다. 그 뒤에는 오케스트레이터가 범위 축소, 잔여 위험으로 수용, 중단 중 하나를 정하고 해당 ADR 구현 노트에 기록한다.
 - **ADR 충돌**: 구현이나 결정이 `ARCHITECTURE.md` 또는 확정된 ADR 과 충돌하면 멈추고, ADR 에 맞추거나 소유자에게 보고한다. ADR 을 우회하는 예외를 스스로 만들지 않는다.
 - **리뷰 지적 반영에 쓰는 모델 (보내기 전에 분류부터)**: 리뷰 결과를 받으면 지적마다 먼저 분류한 뒤 나눠 보낸다(token-budget §2 등급표).
-  - J1·J2 지적(쓰기·권한 경로, 새 경계 규칙, ADR 해석) → 원래 opus 에이전트에 SendMessage 로 이어서(모델·effort 는 처음 값 그대로).
+  - J1·J2 지적(쓰기·권한 경로, 새 경계 규칙, ADR 해석) → 지적 반영은 다음 단계이므로 **새** 에이전트에 보낸다. token-budget §2 대로 판단과 구현을 나눈다: 고칠 내용(변경·지킬 불변식·입증 테스트)은 J1·J2 판단(리뷰어, 없으면 새 opus 에이전트 — J1 cap, J2 high)이 명시하고, 구현은 원칙대로 sonnet · high 가 하며, 결과는 J2(opus · high, 새 경계·ADR 해석이면 J1)가 재리뷰한다. 명시가 없으면 구현을 보내기 전에 명시부터 받는다. opus 로 구현하는 것은 그 명시조차 만들 수 없는 원인 불명 수정뿐이고, 그때는 보고 줄에 이유를 남긴다. 프롬프트에 핸드오프 요약(목표·결정·바뀐 파일·남은 일)과 지적 원문을 붙이고, 원래 에이전트에 SendMessage 로 이어 쓰지 않는다(orchestrate §2, token-budget §2 수명 제한).
   - M 지적(문구, 테스트 행, 정답·기록 갱신, 주석, 오래된 문서 줄) → 새 haiku · medium 에이전트(여러 파일 I 면 sonnet · high)에 같은 worktree 로.
   - 한 라운드에 두 종류가 섞이면 쪼개서 동시에 보낸다. 같은 파일을 건드리면 opus 작업이 끝난 뒤 haiku 를 띄운다.
   - 보고서에 token-budget §6 형식(예산 줄 + 에이전트별 `<등급> · <model> · <effort>`)으로 라운드마다 남긴다.
@@ -202,7 +202,7 @@ tail ~/Library/Logs/Quoky/quoky.log    # "[quoky] started" 확인
 
 ## 8. 보고 템플릿
 
-side-job 보고 템플릿에 다음을 덧붙인다.
+side-job 보고 템플릿(§9)에 다음을 덧붙인다. 작업자를 여럿 썼으면 orchestrate §5 보고 형식도 함께 쓴다.
 
 ```
 - 리뷰: Codex <라운드/최종 PASS>, Chief Architect <판정>

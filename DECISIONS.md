@@ -6,6 +6,11 @@ the "case law" companion to `ARCHITECTURE.md` (the "constitution"). AI agents an
 humans MUST read both before writing code, and must not re-litigate a settled
 decision without adding a new superseding ADR.
 
+> **How to read this file (owner decision 2026-11-24).** It is too large to load whole. "Read" means the ADRs
+> relevant to the change: find them through `docs/wiki/adr-*.md` (or grep the `## ADR-NNNN` heading) and read each
+> relevant entry in full, including the entries that supersede it. `ARCHITECTURE.md` is still read in full. See the
+> Conditional Loading table in `AGENTS.md`.
+
 ### Status vocabulary
 
 | Status | Meaning | Build now? |

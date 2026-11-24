@@ -36,7 +36,7 @@ Repository 문서가 source of truth이며 prompt나 이전 Agent의 self-report
 | Task type | Additional documents |
 |---|---|
 | Simple code implementation | relevant code only (해당 module의 `docs/wiki/` page가 있으면 그것도) |
-| Architecture/domain change | `ARCHITECTURE.md` + `docs/wiki/adr-*.md` 요약으로 관련 ADR을 찾고 → `DECISIONS.md`에서 그 ADR 범위만 |
+| Architecture/domain change | `ARCHITECTURE.md` + `docs/wiki/adr-*.md` 요약으로 관련 ADR을 찾고 → `DECISIONS.md`에서 그 ADR과 그것을 대체(supersede)한 ADR 범위를 전부 |
 | Current sprint decision | `CURRENT_STATE.md` 상단 최신 section + relevant `ROADMAP.md` section |
 | New session/model switch | `docs/ai/SESSION_STATE.md` + `docs/ai/HANDOFF.md` |
 | Implementation/commit/PR review | `docs/ai/REVIEW_CHECKLIST.md` |
