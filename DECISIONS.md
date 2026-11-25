@@ -39371,3 +39371,14 @@ catalog, gold or CS-3 harness change (no D12 gate: all new text is fixed reply t
 **Review round 1 (Chief Architect P2, P3).** `isConsentControlTurn` now also ORs the existing `isExplicitTurnHandlerCommand` (model selection `모델 변경: codex` / `/model`, memory, learning, work-chat, reminder grammars), so a provider-choice or memory command forfeits the step without a claim and never reaches the classifier; a consumed turn sets `nlReplyKinds` (`question` for a re-ask, else `note`) so `quoky.lastTurn` agrees with `lastReply`; the owner-step flag is computed once per message in `consentOwnerStepPending` (a `WeakMap`) and `agentConsentFacts(message)` reads it (no recomputation for the S2 P5 caller); `ConsentPendingStore.forfeit` returns whether it dropped a step and the gate logs `forfeit` only then; tests cover the kill-switch void on the `nlSelection` and enforced `surfaceService` paths.
 
 **Review round 2 (Codex P2).** `isConsentControlTurn` also treats any `detectWorkChatCommand` hit, including the `usage` form (`할 일 추가`) that `isExplicitTurnHandlerCommand` deliberately skips, as a control turn, so it forfeits without a claim and never reaches the classifier; `isExplicitTurnHandlerCommand` itself is unchanged.
+
+**Review round 3 (Codex P2, recorded residual, not chased).** With a stub classifier that answers `yes` to everything, other
+owner requests (`브랜치 만들어줘 feat/test`, `피드백 요약`, `오늘 메일 보여줘`, `오늘 일정 보여줘`) reach the classifier and a `yes`
+would continue the summary. This family hit the fix-loop cap (rounds 1–3: control phrases, explicit handler grammars, work-chat
+usage), and adding every registered grammar would turn the gate into a growing command list. The structural line stays where
+A6.2 and ARCHITECTURE.md section 12 draw it: lifecycle and control commands never reach the classifier; any other owner turn is
+an ordinary reply that the classifier must label `other` (A6.3 step 3: "a new or changed request"). Why this is not fail-open
+today: the classifier is off and `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` is refused, so such a turn is `classifier-off` (silent
+cancel, normal routing). Before the switch may turn on, the A6-S4 gate must show 0 non-answers captured as yes (r-03 ③); the
+A6-S4 corpus must therefore include, as non-answer cases, owner requests in every registered turn-handler grammar and ordinary
+new requests over every source (mail, Drive, calendar, branch, feedback, to-do, reminder), in both languages.
