@@ -38982,6 +38982,47 @@ always consumes the chance to answer, whether or not it can be judged.**
   claim-read throw; a later turn whose clock throws cancels an in-flight answer and the earlier label does not bind.
 - **CA P3 (test).** Added the r-02 case for a leading blank line before a closed yes: nothing is cut, the whole message reruns.
 
+### ADR-0121 A6-S2 implementation note (2026-11-25)
+
+Slice A6-S2 "consent-classifier" (R10): the classifier behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`, built and unit-tested, with no
+live caller. No model call, eval, gold, catalog, selection prompt or flag default changed.
+
+- **Prompt asset.** The repo keeps runtime prompts as versioned TypeScript modules (the help-scope classifier:
+  `nl-routing/help-scope-classifier.ts`, `help-scope.v2`), not under a `prompts/` directory, so `consent-answer.v1` is
+  `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION` in `packages/core/src/application/consent-answer/consent-classifier.ts`
+  (`buildConsentClassifierPrompt`). Generic instruction, the five closed labels (`yes`, `yes-and-more`, `no`, `other`, `unclear`,
+  AM-2), no example at all, question and reply as delimited data (delimiter tags blanked to a fixed point). Output is one JSON
+  object `{"label":"<label>"}`, read as text: an extra or duplicate key, an unknown label, prose around it or non-JSON is `unclear`.
+- **Content-free request (A6.4).** `ConsentClassifierRequest` is now `{ question, reply }` (was kind, language, reply).
+  `buildConsentClassifierRequest(pending, reply)` is pure and the only builder. `question` is the per-kind, per-language fixed
+  question with `{개수}` (rule ①) or `{주제}` (A2); the source noun (`pending.sources`, closed labels) and the recipient display name
+  stay. Item ids, topic, count, requestText and history are never read. A test fails if any item id, the topic or the count
+  appears in the request or the prompt (this is what A6-S4 `classifier-sees-content` will judge).
+- **Adapter.** `createConsentAnswerClassifier({ select, timeoutMs? })`: one `Capability.INTENT_SELECTION` call with
+  `intentSelectionTier: 'stronger'` (as help-scope: sonnet low, Claude CLI, ADR-0120 D2, picked by the router the caller
+  passes as `select`), bound 10 s (`CONSENT_CLASSIFIER_TIMEOUT_MS`), an abort signal on timeout. Every failure (no provider, no
+  tier support is the provider's own fallback, throw, timeout, credential-shaped reply not sent, malformed output) is
+  `unclear`; only a clean `{"label":"yes"}` can be `yes`. It returns and logs only the label, never the reply. Calls: the
+  pipeline calls it at most once per turn and a step is re-asked at most once (A6.3 step 4), so at most twice per step, inside
+  the existing per-actor model-call caps (no new cap).
+- **Fixed question text is a stand-in.** The single-line rule-① and A2 owner-facing question wording is not built yet (the
+  rule-① confirm slice and the A2 answer slice own it). `consentClassifierQuestion` defines the classifier's view of it;
+  those slices must render their owner-facing text from the same template (or move it) so A6-S4 judges what is really asked.
+- **Switch and wiring.** Default stays `off` and `on` stays refused with `CONSENT_ANSWER_CLASSIFIER_NOT_RELEASED` (A6-S4 gate
+  and the rule-① confirm slice are not done). The A6-S1 import-boundary pin allows no importer of `consent-answer/` outside
+  it, so the adapter is not imported by the composition root here; the composition root builds it as
+  `createConsentAnswerClassifier({ select: () => router.select(Capability.INTENT_SELECTION) })` in the confirm slice together
+  with lifting the refusal. No live path calls it.
+- **`two-line-grant` (A6.3 step 3).** AM-1 (R2) dropped `origin`, so no pending step carries it and every step is answered
+  alike; the type-level pin (`origin` does not exist) and the A6 target pin (`consentAnswerJudging` has no `two-line-grant`)
+  stay and still hold. Nothing in this slice routes a step by how its grant was minted.
+- **Tests.** `consent-classifier.test.ts` (24): request content-free and pure, placeholders, prompt delimiters and labels, strict
+  output, adapter route/tier/bound, fail closed (no provider, throw, malformed, unknown label, extra key), timeout abort,
+  credential-shaped reply never sent. Targeted runs of consent-answer, the A6 target and the app agent config pass; build and typecheck pass.
+- **Open points.** (1) A6-S3 (count/unit), A6-S4 (corpus, eval, both arms, `classifier-sees-content`). (2) The confirm and A2
+  answer slices render the owner-facing question from the shared template and wire the adapter. (3) Any change of the prompt
+  bytes, model, effort or tier needs the A6-S4 gate again (a6-12).
+
 ### r-07 implementation note (ADR-0120 catalog, AM-3) (2026-11-24)
 
 The owner's r-07 decision (R2 AM-3 and the recorded fact that `mail.list` had no count arg): the mail and Drive listing
