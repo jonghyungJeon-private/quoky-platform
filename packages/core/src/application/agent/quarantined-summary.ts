@@ -14,7 +14,8 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { isBoundConsent, type BoundConsent } from '../consent-answer/consent-pending';
+import type { BoundConsent } from '../consent-answer/consent-pending';
+import { isOwnerYes } from '../consent-answer/consent-yes';
 import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
@@ -342,7 +343,7 @@ export function mintSummaryConsentToken(input: {
 }): SummaryConsentToken | undefined {
   try {
     const { bound, reads } = input;
-    if (!isBoundConsent(bound) || MINTED_FROM.has(bound)) return undefined;
+    if (!isOwnerYes(bound) || MINTED_FROM.has(bound)) return undefined;
     const pending = bound.pending;
     if (pending.kind !== 'summary-consent' || pending.runRef !== input.runRef) return undefined;
     if (typeof input.run !== 'object' || input.run === null || !Number.isInteger(input.step) || input.step < 1) return undefined;

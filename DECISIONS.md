@@ -39182,11 +39182,12 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   1. *Production bypass removed.* The env-only seam `setSummaryConsentAllowAllForTest` (and `mintSummaryConsentTokenForTest`)
      trusted `VITEST=true`, so plain Node with that variable admitted REMOTE without consent. Both are deleted, and a pin test
      fails on any mention. The structural replacement is `mintSummaryConsentToken({ bound, runRef, run, step, reads })` in
-     `quarantined-summary.ts`: it accepts only a genuine `BoundConsent` (a module-private `WeakSet` filled by
-     `ConsentPendingStore.bind`; a copy, claim or open step is refused), of a `summary-consent` step, once per bound yes, with the
+     `quarantined-summary.ts`: it accepts only a `BoundConsent` the answer pipeline recorded as the owner's YES (a module-private `WeakSet` in
+     `consent-answer/consent-yes.ts`, filled only by the yes path of `answerConsentTurn`: `closed-yes`, `classifier-yes`,
+     `classifier-yes-and-more`; a bind without the pipeline, a no, other, unclear, a copy, claim or open step is refused), of a `summary-consent` step, once per bound yes, with the
      step's own `runRef`, and only when the per-source union of the reads' ids equals EXACTLY the recorded ids (every recorded
      source covered, no other source, no other id). The token carries the step's recipient, re-checked at every dispatch. It has
-     no production caller (CS-1b). `quarantined-summary.ts` is the third allowed importer of `consent-pending` (the brand check).
+     no production caller (CS-1b). `quarantined-summary.ts` is the third allowed importer of `consent-answer/`, pinned by imported name: the `BoundConsent` type and `isOwnerYes`.
      Tests obtain tokens the real way (`summary-consent.test-support.ts`). Executor-level suites cannot carry a token until
      CS-1b, and a token covers at most 10 items per source, so suites about batching, budgets and disclosure moved to a LOCAL
      model (the assembler's disclosure tests mark the audits REMOTE after the run).
@@ -39202,7 +39203,21 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   5. *Minor.* An unnamed REMOTE provider falls back to the guarded LOCAL selection; the continuation record is deleted if the
      step does not open; `{개수}` and `{count}` are both exported (`CONSENT_COUNT_PLACEHOLDER_KO`, `_EN`); the question carries
      `SUMMARY_CONSENT_QUESTION_VERSION` (`summary-consent-question.v1`; any wording change bumps it, and the A6-S4 plan digest
-     binds it, a6-12); the `sources` doc of the question input says plan order.
+     will bind it, a6-12; `summary-consent.cs1a-round2.test.ts` pins a SHA-256 of the rendered KO/EN templates next to the version); the `sources` doc of the question input says plan order.
+- **Review round 2 (Chief Architect delta), fixes.**
+  1. *No token without a yes.* `bind` no longer brands anything; the yes brand (`consent-answer/consent-yes.ts`, `recordOwnerYes` /
+     `isOwnerYes`) is recorded only by the yes path of `answerConsentTurn`, and `mintSummaryConsentToken` requires it (a test pins
+     that `consent-answer.ts` is the only caller of `recordOwnerYes`). Tests obtain tokens by running `answerConsentTurn` with a
+     closed yes over a real store; bind-only, no, other and unclear leave no token. Residual: `run` and `step` are still caller
+     parameters of the mint (only `runRef` is checked against the record); CS-1b MUST derive run and step from the continuation
+     record (`record.summaryStep`), never from caller parameters.
+  2. *Import guard.* A pin test fails if any non-test source imports a `*.test-support` module.
+  3. *REMOTE multi-call coverage.* Real-token cases: mail plus Drive in parallel, a byte budget that fits one of two calls, one call
+     sent and the next refused at dispatch (recipient changed); all audits stay REMOTE.
+  4. *Narrow importer.* `quarantined-summary.ts` imports from `consent-answer/` exactly `BoundConsent` (type) and `isOwnerYes`, pinned by name.
+  5. *Accuracy.* The question-template hash is pinned (above). Pre-existing, NOT fixed here: `sealQuarantinedSummaryForTest` (and the
+     other `*ForTest` makers) can fake a sealed summary under `VITEST=true` in plain Node; to be fixed in its own PR, owner: the
+     next agent-hardening slice.
 - **Open points for CS-1b and CS-2.** CS-1b: call `mintSummaryConsentToken` with the `BoundConsent` (keyed to the run and `record.summaryStep`),
   the executor `continuation` option, the W3 id filter, the recipient re-check against `bound.pending.recipient`, single use,
   `continueSummaryConsent` and the assembler's continuation mode. CS-2: the gate in `ConversationRuntime`, the one shared

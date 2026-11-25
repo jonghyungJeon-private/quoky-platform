@@ -49,13 +49,30 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     ]);
   });
 
-  it('the three allowed importers reach only consent-pending (never the answer function or the classifier)', () => {
-    for (const path of ['application/agent/agent-run-service.ts', 'application/agent/agent-contract-check.ts', 'application/agent/quarantined-summary.ts']) {
+  it('the two pending-only importers reach only consent-pending (never the answer function or the classifier)', () => {
+    for (const path of ['application/agent/agent-run-service.ts', 'application/agent/agent-contract-check.ts']) {
       const file = join(CORE_SRC, path);
       const specifiers = importsOf(file).filter((specifier) => intoConsentAnswer(file, specifier));
       expect(specifiers.length, path).toBeGreaterThan(0);
       for (const specifier of specifiers) expect(specifier, path).toBe('../consent-answer/consent-pending');
     }
+  });
+
+  it('quarantined-summary.ts imports from consent-answer/ exactly the BoundConsent type and the yes-brand check, by name', () => {
+    const file = join(CORE_SRC, 'application/agent/quarantined-summary.ts');
+    const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const imported: string[] = [];
+    for (const node of source.statements) {
+      if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier) || !node.moduleSpecifier.text.includes('consent-answer')) continue;
+      const clause = node.importClause;
+      expect(clause?.name, 'no default import').toBeUndefined();
+      const bindings = clause?.namedBindings;
+      expect(bindings !== undefined && ts.isNamedImports(bindings), 'named imports only').toBe(true);
+      if (bindings !== undefined && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) imported.push(`${node.moduleSpecifier.text}#${element.propertyName?.text ?? element.name.text}${clause?.isTypeOnly || element.isTypeOnly ? ':type' : ''}`);
+      }
+    }
+    expect(imported.sort()).toEqual(['../consent-answer/consent-pending#BoundConsent:type', '../consent-answer/consent-yes#isOwnerYes']);
   });
 
   it('the Core package and application indexes do not export it', () => {

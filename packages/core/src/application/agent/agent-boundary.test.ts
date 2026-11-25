@@ -43,6 +43,8 @@ function allowedSpecifier(specifier: string): boolean {
   // ADR-0121 rule ① (CS-1a): the pending summary-consent producer and store type, imported by `agent-run-service.ts` (and its
   // dependency pin) and, for the brand check of the one consent-token maker, `quarantined-summary.ts` only: `consent-answer.boundary.test.ts` pins the exact importer list. Pure, in-memory, no I/O.
   if (specifier === '../consent-answer/consent-pending') return true;
+  // Round 2: the owner-yes brand check (`isOwnerYes`), imported by `quarantined-summary.ts` only (boundary test pins it by name). Pure.
+  if (specifier === '../consent-answer/consent-yes') return true;
   // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
   if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;
   // The document action-claim guard (pure: its only import is a type), run on every model-derived summary line.

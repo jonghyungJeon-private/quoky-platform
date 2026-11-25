@@ -103,13 +103,6 @@ export class ConsentPendingInvalidError extends Error {
 }
 
 const MINTED = new WeakSet<object>();
-/** The bound consents {@link ConsentPendingStore.bind} made (the run-time half of the {@link BoundConsent} brand). */
-const BOUND = new WeakSet<object>();
-
-/** Whether `value` is a genuine {@link BoundConsent}: made by a store's `bind` (a structural copy is not). */
-export function isBoundConsent(value: unknown): value is BoundConsent {
-  return typeof value === 'object' && value !== null && BOUND.has(value);
-}
 
 /** Whether `value` was made by one of this module's producers (the run-time half of the brand). */
 export function isConsentPending(value: unknown): value is ConsentPending {
@@ -280,7 +273,6 @@ export class ConsentPendingStore {
     }
     record.state = 'used';
     const bound = Object.freeze({ pending: record.pending, boundAtMs: atMs }) as BoundConsent;
-    BOUND.add(bound);
     return bound;
   }
 

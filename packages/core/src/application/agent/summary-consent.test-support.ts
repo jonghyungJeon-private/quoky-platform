@@ -1,12 +1,15 @@
+import { answerConsentTurn } from '../consent-answer/consent-answer';
 import { ConsentPendingStore, summaryConsentPending, type BoundConsent } from '../consent-answer/consent-pending';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { AGENT_READ_SOURCES } from './flow-policy';
 import { mintSummaryConsentToken, type SummaryConsentToken, type SummaryRunToken } from './quarantined-summary';
 
 /**
- * Test support (never imported by production code): a rule-① consent token obtained the REAL way. A `ConsentPendingStore` opens a
- * `summaryConsentPending`, the step is claimed and bound with a closed yes (the store's own `bind`), and the token is minted by
- * the production {@link mintSummaryConsentToken}. There is no shortcut that skips the bound consent.
+ * Test support (never imported by production code; a pin test enforces it): a rule-① consent token obtained the REAL way. A
+ * `ConsentPendingStore` opens a `summaryConsentPending`, and the production `answerConsentTurn` runs a closed yes ("응") over it
+ * (claim, bind, record the owner's yes), then the production {@link mintSummaryConsentToken} mints. A bind that the pipeline did
+ * not answer yes is never accepted by the mint. The closed-yes path has no await before its bind, so the pipeline has bound
+ * (synchronously) when the call returns its promise; the bound consent is read off the store's own `bind`.
  */
 export interface ConsentRead {
   readonly entryId: NlWave1EntryId;
@@ -17,6 +20,21 @@ export interface ConsentFixture {
   readonly recipient: string;
   readonly runRef?: string;
   readonly reads: readonly ConsentRead[];
+}
+
+const SCOPE_NOTE = 'closed yes through answerConsentTurn';
+
+/** Run a closed yes through the real pipeline over `store` and return the bound consent it produced (synchronously bound). */
+export function yesBound(store: ConsentPendingStore, scope: { actorId: string; conversationKey: string }, text = '응'): BoundConsent {
+  let captured: BoundConsent | undefined;
+  const realBind = store.bind.bind(store);
+  store.bind = (claim, atMs) => {
+    captured = realBind(claim, atMs);
+    return captured;
+  };
+  void answerConsentTurn(store, { scope, ownerDm: true, text, atMs: 1 }, { mode: 'off' }, () => 2);
+  if (captured === undefined) throw new Error(`test consent not bound by ${SCOPE_NOTE}`);
+  return captured;
 }
 
 /** A genuine bound consent for the step a fixture describes, with the `runRef` it was opened under. */
@@ -41,11 +59,7 @@ export function boundConsentFor(fixture: ConsentFixture): { readonly bound: Boun
       runRef,
     }),
   );
-  const claimed = store.claim(scope, 1);
-  if (!claimed.ok) throw new Error('test consent claim failed');
-  const bound = store.bind(claimed.claim, 2);
-  if (bound === undefined) throw new Error('test consent bind failed');
-  return { bound, runRef };
+  return { bound: yesBound(store, scope), runRef };
 }
 
 /** A real consent token for `run` and `step` over the fixture's reads, exactly the scope its pending step recorded. */

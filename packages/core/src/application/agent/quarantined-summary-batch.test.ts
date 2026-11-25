@@ -24,9 +24,10 @@ import {
 } from './quarantined-summary';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 
-// Rule ① (CS-1a): batching, budgets and merge are locality-independent, and a REMOTE call now needs a real consent token that covers at
-// most the ten items a question may count (so a split of more than ten items can never be REMOTE); these suites run on a LOCAL model.
-// The REMOTE guard itself is tested in summary-consent.cs1a.test.ts and quarantined-summary-d12.test.ts.
+// Rule ① (CS-1a): batching, budgets and merge are locality-independent. A REMOTE call needs a real consent token, and a token covers
+// at most the ten items per source a question may count, so a source of more than ten items (split into several calls) can never be
+// REMOTE; these suites run on a LOCAL model. Multi-call REMOTE (several sources, a byte budget, a refusal at dispatch) with real
+// tokens is tested in summary-consent.cs1a-round2.test.ts; the guard itself in summary-consent.cs1a.test.ts and quarantined-summary-d12.test.ts.
 
 // ADR-0121 remote batch (owner 2026-11-03 answer 3) with the owner's 2026-11-16 caps (split M2 calls count; M2 6, model 8, input
 // 120k bytes, wall 60 s): one sealed call per source, at most AGENT_M2_MAX_ITEMS items each, split calls run in parallel and
