@@ -14,9 +14,9 @@
  *   compare-and-set from `answering` on the same version, that it is still fresh (W2, 600 s), unused and not voided, and
  *   marks it `used`. A turn that arrives while the step is `answering` cancels it, so the in-flight answer's bind fails and
  *   nothing is sent. The kill switch voids every open or answering step; a restart drops the in-memory store.
- * - **Nothing REMOTE can bind yet.** The rule-① confirm slice (which opens a summary consent from the grant basis and runs the
- *   bound summary) is not built, and the A2 topic consent is not built either. No module outside `consent-answer/` imports
- *   this file (pinned by `consent-answer.boundary.test.ts`), so no live path can open or bind a consent step today.
+ * - **Nothing REMOTE can bind yet.** CS-1a (the rule-① confirm slice, ask half) opens a summary consent from `AgentRunService`
+ *   (the one allowlisted importer, pinned by `consent-answer.boundary.test.ts`); nothing answers or binds it until CS-2 (the
+ *   runtime gate), and the continuation that sends is CS-1b. The A2 topic consent is not built.
  *
  * Pure, in-memory, no I/O, no clock of its own (every time is the caller's `atMs`), no provider or platform branch.
  */
@@ -49,11 +49,22 @@ interface ConsentPendingCommon {
   readonly reasked: boolean;
 }
 
+/** One source of a rule-① summary consent and the ids of its items. */
+export interface SummaryConsentPendingSource {
+  readonly source: ConsentSource;
+  readonly itemIds: readonly string[];
+}
+
 /** The rule-① remote-summary consent: exactly these listed items of these sources, once (W3, W5). No `origin` (AM-1). */
 export interface SummaryConsentPending extends ConsentPendingCommon {
   readonly kind: 'summary-consent';
-  readonly itemIds: readonly string[];
-  readonly sources: readonly ConsentSource[];
+  /**
+   * Per source (R1 item 5, CS-1a): the closed source and the ids of exactly the items the question counted (1..10, distinct).
+   * Ids only, never content.
+   */
+  readonly sources: readonly SummaryConsentPendingSource[];
+  /** An opaque id (the shared id utility) of the run whose continuation record this step belongs to; it survives the re-ask. */
+  readonly runRef: string;
   readonly [SUMMARY_CONSENT_BRAND]: true;
 }
 
@@ -82,7 +93,7 @@ export interface BoundConsent {
 }
 
 /** Closed reasons a producer refuses its input (value-free). */
-export type ConsentPendingInvalid = 'scope' | 'language' | 'time' | 'recipient' | 'items' | 'sources' | 'topic';
+export type ConsentPendingInvalid = 'scope' | 'language' | 'time' | 'recipient' | 'items' | 'sources' | 'topic' | 'run';
 
 export class ConsentPendingInvalidError extends Error {
   constructor(readonly code: ConsentPendingInvalid) {
@@ -125,25 +136,29 @@ function mint<P extends ConsentPending>(value: Omit<P, typeof SUMMARY_CONSENT_BR
   return frozen;
 }
 
-/** The rule-① summary consent producer (its only caller will be the rule-① confirm slice; not built). */
+/** The most item ids one source of a summary consent may hold (the item cap of a summary read). */
+export const SUMMARY_CONSENT_MAX_ITEMS_PER_SOURCE = 10;
+
+/** The rule-① summary consent producer (its caller is `AgentRunService`, CS-1a; the continuation is CS-1b). */
 export function summaryConsentPending(input: {
   readonly scope: ConsentScope;
   readonly language: ConsentLanguage;
   readonly createdAtMs: number;
   readonly recipient: string;
-  readonly itemIds: readonly string[];
-  readonly sources: readonly ConsentSource[];
+  readonly sources: readonly SummaryConsentPendingSource[];
+  readonly runRef: string;
 }): SummaryConsentPending {
   const common = commonOf(input);
-  if (!distinctNonEmpty(input.itemIds)) throw new ConsentPendingInvalidError('items');
-  if (!distinctNonEmpty(input.sources) || !input.sources.every(isConsentSource)) throw new ConsentPendingInvalidError('sources');
-  return mint<SummaryConsentPending>({
-    kind: 'summary-consent',
-    ...common,
-    reasked: false,
-    itemIds: Object.freeze([...input.itemIds]),
-    sources: Object.freeze([...input.sources]),
+  if (!nonEmpty(input.runRef)) throw new ConsentPendingInvalidError('run');
+  const sources: unknown = input.sources;
+  if (!Array.isArray(sources) || sources.length === 0) throw new ConsentPendingInvalidError('sources');
+  const names = (sources as readonly { readonly source?: unknown }[]).map((entry) => entry?.source);
+  if (!distinctNonEmpty(names) || !names.every(isConsentSource)) throw new ConsentPendingInvalidError('sources');
+  const checked = (sources as readonly SummaryConsentPendingSource[]).map((entry) => {
+    if (!distinctNonEmpty(entry.itemIds) || entry.itemIds.length > SUMMARY_CONSENT_MAX_ITEMS_PER_SOURCE) throw new ConsentPendingInvalidError('items');
+    return Object.freeze({ source: entry.source, itemIds: Object.freeze([...entry.itemIds]) });
   });
+  return mint<SummaryConsentPending>({ kind: 'summary-consent', ...common, reasked: false, sources: Object.freeze(checked), runRef: input.runRef });
 }
 
 /** The A2 topic consent producer (its only caller will be the A2 answer slice; not built). */
@@ -159,7 +174,7 @@ export function topicConsentPending(input: {
   return mint<TopicConsentPending>({ kind: 'topic-consent', ...common, reasked: false, topic: input.topic });
 }
 
-/** A6.3 step 4: the fixed re-ask replaces the step with the same items (or topic) and the same recipient, and restarts W2. */
+/** A6.3 step 4: the fixed re-ask replaces the step with the same items (or topic), the same recipient and the same `runRef`, and restarts W2. */
 function reaskedCopy(pending: ConsentPending, atMs: number): ConsentPending {
   return pending.kind === 'summary-consent'
     ? mint<SummaryConsentPending>({ ...pending, createdAtMs: atMs, reasked: true })

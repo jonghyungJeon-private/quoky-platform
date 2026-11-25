@@ -3,6 +3,10 @@ import { Capability } from '../../domain';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 remote batch, review round 2 (CA P3): a call refused by the FINAL prompt credential check while another call of the
 // step succeeds sets the closed flag `credentialWithheld`, which the executor passes on and the assembler renders as one fixed

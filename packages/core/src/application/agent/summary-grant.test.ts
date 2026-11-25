@@ -12,6 +12,10 @@ import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest } from './
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import type { AgentSourceDocument, QuarantinedSummarizerRoute } from './quarantined-summary';
 import { hasUntrustedSpanMarker, isSingleLineOwnerText, ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type OwnerText, type SummaryGrantBasis } from './summary-grant';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 S2 wiring slice: the summary grant producer (P3-3b owner answer 2). Core derives the grant per summarize step and per
 // source from the owner's own words (quoted and pasted text excluded) with the approved summary vocabulary; never a caller flag

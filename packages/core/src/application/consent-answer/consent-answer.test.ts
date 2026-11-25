@@ -33,8 +33,9 @@ const on = (label: unknown): ConsentClassifierSwitch & { classify: ReturnType<ty
   return { mode: 'on', classify };
 };
 
-function summary(overrides: Partial<Parameters<typeof summaryConsentPending>[0]> = {}): ConsentPending {
-  return summaryConsentPending({ scope: DM, language: 'ko', createdAtMs: T0, recipient: 'Claude', itemIds: ['msg-1', 'msg-2'], sources: ['mail'], ...overrides });
+function summary(overrides: Partial<Parameters<typeof summaryConsentPending>[0]> & { readonly itemIds?: readonly string[] } = {}): ConsentPending {
+  const { itemIds, ...rest } = overrides;
+  return summaryConsentPending({ scope: DM, language: 'ko', createdAtMs: T0, recipient: 'Claude', sources: [{ source: 'mail', itemIds: itemIds ?? ['msg-1', 'msg-2'] }], runRef: 'run-1', ...rest });
 }
 function topic(): ConsentPending {
   return topicConsentPending({ scope: DM, language: 'ko', createdAtMs: T0, recipient: 'Claude', topic: 'AI Agent 1차 면접' });
@@ -56,13 +57,18 @@ describe('A6-S1 branded pending types and producers', () => {
     const p = summary();
     expect(isConsentPending(p)).toBe(true);
     expect(Object.isFrozen(p)).toBe(true);
-    expect(Object.keys(p).sort()).toEqual(['createdAtMs', 'itemIds', 'kind', 'language', 'reasked', 'recipient', 'scope', 'sources']);
+    expect(Object.keys(p).sort()).toEqual(['createdAtMs', 'kind', 'language', 'reasked', 'recipient', 'runRef', 'scope', 'sources']);
     expect('origin' in p).toBe(false);
     expect(Object.keys(topic()).sort()).toEqual(['createdAtMs', 'kind', 'language', 'reasked', 'recipient', 'scope', 'topic']);
     for (const [bad, code] of [
       [{ itemIds: [] }, 'items'],
       [{ itemIds: ['a', 'a'] }, 'items'],
+      [{ itemIds: Array.from({ length: 11 }, (_, i) => `m${i}`) }, 'items'],
       [{ sources: [] }, 'sources'],
+      [{ sources: [{ source: 'mail', itemIds: ['a'] }, { source: 'mail', itemIds: ['b'] }] }, 'sources'],
+      [{ sources: [{ source: 'notes', itemIds: ['a'] }] }, 'sources'],
+      [{ sources: [{ source: 'mail', itemIds: [] }] }, 'items'],
+      [{ runRef: ' ' }, 'run'],
       [{ recipient: ' ' }, 'recipient'],
       [{ createdAtMs: Number.NaN }, 'time'],
       [{ scope: { actorId: '', conversationKey: 'x' } }, 'scope'],
@@ -368,7 +374,7 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
     const first = await answer(store, turn('음…'), on('maybe'));
     expect(first).toMatchObject({ kind: 'reask', audit: ['classifier-unclear', 'reask'], question: '보낼까요? (응/아니)', next: 'consumed' });
     const reasked = first.kind === 'reask' ? first.pending : undefined;
-    expect(reasked).toMatchObject({ kind: 'summary-consent', itemIds: p.kind === 'summary-consent' ? p.itemIds : [], recipient: p.recipient, reasked: true, createdAtMs: T0 + 30_000 });
+    expect(reasked).toMatchObject({ kind: 'summary-consent', sources: p.kind === 'summary-consent' ? p.sources : [], runRef: p.kind === 'summary-consent' ? p.runRef : '', recipient: p.recipient, reasked: true, createdAtMs: T0 + 30_000 });
     expect(isConsentPending(reasked)).toBe(true);
     // W2 restarted at the re-ask.
     expect(store.stateOf(DM)).toBe('open');

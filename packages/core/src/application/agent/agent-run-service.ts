@@ -3,8 +3,10 @@ import { CATALOG_FLOW_LABEL, OWNER_TEXT_FLOW_LABEL, PREVIOUS_SELECTION_FLOW_LABE
 import type { AiExecutionLocality, AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
 import type { ProviderSelector } from '../../ports/provider-selector.port';
+import { newId } from '../../util/id';
 import { callUsageLogFields, type CallUsageLogFields } from '../call-usage-log-fields';
 import { containsCredentialMaterial } from '../credential-guard';
+import { summaryConsentPending, type ConsentPendingStore } from '../consent-answer/consent-pending';
 import { NlActionSwitch, parseActionSwitchPhrase, readActionSwitch, type NlActionSwitchState } from '../nl-routing/action-switch';
 import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { nlSameEgress } from '../nl-routing/selection-egress';
@@ -14,14 +16,15 @@ import type { AgentCrossWriteContext } from './cross-write';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf, type AgentWorkSummarySource } from './flow-policy';
 import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
-import { AgentPlanExecutor, type AgentReadPorts } from './plan-executor';
+import { AgentPlanExecutor, type AgentReadPorts, type AgentRunResult } from './plan-executor';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan } from './plan-schema';
 import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext } from './plan-validator';
 import { agentReadWriteProbeClauses } from './read-write-probe';
 import { assembleAgentReply, type AssembledAgentReply } from './reply-assembler';
 import { a6InPlanGuidance, type AgentStepsPlan } from './reply-notes';
 import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues } from './run-bounds';
-import { summaryGrantBasis } from './summary-grant';
+import { summaryGrantBasis, type SummaryGrantBasis } from './summary-grant';
+import { renderSummaryConsentQuestion } from './summary-consent-question';
 
 /**
  * ADR-0121 D1 / D7 (stage S2 P1): `AgentRunService`, the bounded read agent behind the `AgentProfile` id
@@ -134,6 +137,16 @@ export interface AgentActiveTurn {
   readonly direct: boolean;
   /** The conversation session: M2's base selection context (the owner's session-scoped policy), data only. */
   readonly sessionId?: Id;
+  /**
+   * Rule ① (CS-1a): the conversation the question is asked in (`platform|spaceId|channelId|threadId`), the second half of the
+   * pending step's scope. Absent: no question can be opened, so a step that would ask stays listing-only.
+   */
+  readonly conversationKey?: string;
+  /**
+   * Rule ① (CS-1a, W2): an approval, scope clarification, override, connector-write step or channel grant is pending for this
+   * owner. Set by the runtime. `true`: a step that would ask stays listing-only (`consent-owner-step-open`).
+   */
+  readonly ownerStepPending?: boolean;
 }
 
 /**
@@ -193,7 +206,40 @@ export interface AgentRunServiceDeps {
    * (the default): A7 is off and an A7 plan is refused. Even when set, a validated A7 plan is not runnable (A7-S4 builds the card).
    */
   readonly crossWrite?: AgentCrossWriteContext;
+  /**
+   * `active` only, rule ① (CS-1a, `QUOKY_SUMMARY_CONSENT=on`): the one process-wide store of pending consent steps. Present: a
+   * summarize step that would send items to a `REMOTE` model asks first (the question, then a pending step in this store).
+   * Absent (the default): no question and no step, and `REMOTE` is never allowed (the unconditional guard in `quarantined-summary.ts`).
+   */
+  readonly consentStore?: ConsentPendingStore;
+  /**
+   * `active` only, rule ① (CS-1a): the recipient's display name of a `REMOTE` provider (`QuarantinedSummarizerRoute.recipientLabel`),
+   * a closed map over the provider family built in `apps/quoky`. Absent: no `REMOTE` provider has a name, so none can be asked about.
+   */
+  readonly recipientLabel?: (provider: AiProvider) => string | undefined;
 }
+
+/** CS-1a: the continuation records are in memory only, at most this many, each for W2's 600 s. */
+export const AGENT_SUMMARY_CONTINUATION_MAX_RECORDS = 64;
+export const AGENT_SUMMARY_CONTINUATION_TTL_MS = 600_000;
+
+/**
+ * What the continuation (CS-1b) needs to re-run one asked summary step after the owner's yes: the same validated plan object
+ * (so the grant basis still matches it), the gated reads and their reference ancestors plus the summarize step, and the run's
+ * owner and session. Structure and owner-grounded literals only: no item content and no document.
+ */
+export interface AgentSummaryContinuation {
+  readonly plan: ValidatedRunPlan;
+  readonly basis: SummaryGrantBasis;
+  readonly summaryStep: number;
+  /** Step numbers, ascending: the summarize step, the reads it covers and their reference ancestors. */
+  readonly steps: readonly number[];
+  readonly sessionId?: Id;
+  readonly actorId: Id;
+  readonly createdAtMs: number;
+}
+
+type ValidatedRunPlan = Parameters<AgentPlanExecutor['execute']>[0];
 
 type ShadowOutcome = 'planned' | 'handoff' | 'cross-write' | 'clarify' | 'ask' | 'none' | 'refused' | 'malformed' | 'skipped' | 'unavailable' | 'dropped' | 'stopped' | 'timeout';
 
@@ -218,6 +264,8 @@ export class AgentRunService {
   private readonly modelCalls = new Map<Id, Array<{ readonly at: number; count: number }>>();
   /** `active`: the actors with a run in flight (one at a time per actor, as shadow keeps one job in flight). */
   private readonly activeInFlight = new Set<Id>();
+  /** Rule ① (CS-1a): `runRef` to the continuation record of an asked step. In memory only; dropped on use, expiry and `voidAllSummaryConsents`. */
+  private readonly continuations = new Map<string, AgentSummaryContinuation>();
 
   constructor(private readonly deps: AgentRunServiceDeps) {
     // The release gate is at startup (`agent-config.ts`, until the D11 gates and stage S2 P5). Here, the second layer: `active`
@@ -494,17 +542,23 @@ export class AgentRunService {
         selector,
         selectionContext: { ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}), actorId: turn.actor.id },
         ...(this.deps.workSummarySources !== undefined && this.deps.workSummarySources.length > 0 ? { workSummarySources: this.deps.workSummarySources } : {}),
+        ...(this.deps.recipientLabel !== undefined ? { recipientLabel: this.deps.recipientLabel } : {}),
+        ...(this.deps.consentStore !== undefined ? { askSummaryConsent: true } : {}),
       },
     });
-    const result = await executor.execute(validated, {
+    // Core's producer: the owner's own words (quoted and pasted text excluded) decide each summary step's grant per source.
+    const basis = summaryGrantBasis(validated, prepared);
+    const executed = await executor.execute(validated, {
       budget,
-      // Core's producer: the owner's own words (quoted and pasted text excluded) decide each summary step's grant per source.
-      grants: summaryGrantBasis(validated, prepared),
+      grants: basis,
       stillRunning: () => this.liveSwitchRunning(turn.actor.id),
       // Shutdown cuts the run: no later step starts and the calls in flight are aborted (review round 1 item 5).
       signal: this.background.signal,
     });
-    const reply = assembleAgentReply({ plan: validated, result, language: languageOf(turn.text), destinationIsOwnerDm: turn.direct, logger: this.deps.logger });
+    const language = languageOf(turn.text);
+    // Rule ① (CS-1a): a step that asks opens its pending step first (or is downgraded to the listing, with the reason).
+    const result = this.openSummaryConsent(turn, validated, basis, executed, language);
+    const reply = assembleAgentReply({ plan: validated, result, language, destinationIsOwnerDm: turn.direct, logger: this.deps.logger });
     this.log('info', AGENT_ACTIVE_LOG_EVENT, {
       mode: 'active',
       outcome: 'reply',
@@ -527,6 +581,91 @@ export class AgentRunService {
       ...(result.breach !== undefined ? { breach: result.breach } : {}),
       ...(result.stopped === true ? { stopped: true as const } : {}),
     };
+  }
+
+  /**
+   * Rule ① (CS-1a, W2): opens the pending summary consent of the one step that asks, and keeps its continuation record. Only with
+   * a `consentStore`, in the owner's DM, with a conversation key and no other owner step pending; otherwise (or when the step
+   * cannot be minted or the question cannot be rendered) the step is downgraded to `listing-only` (`consent-owner-step-open`) and
+   * no question is shown. The step holds ids only, never content. Total: never throws.
+   */
+  private openSummaryConsent(turn: AgentActiveTurn, plan: ValidatedRunPlan, basis: SummaryGrantBasis, result: AgentRunResult, language: 'ko' | 'en'): AgentRunResult {
+    const asked = result.steps.find((step) => step.kind === 'summarize' && step.status === 'consent-needed');
+    if (asked === undefined || asked.kind !== 'summarize' || asked.status !== 'consent-needed') return result;
+    const downgrade = (reason: string): AgentRunResult => {
+      this.log('info', 'agent_run.consent', { outcome: 'declined', reason, sources: asked.sources.length });
+      return {
+        ...result,
+        steps: result.steps.map((step) =>
+          step === asked ? { step: asked.step, kind: 'summarize' as const, status: 'listing-only' as const, from: asked.from, schema: asked.schema, reason: 'consent-owner-step-open' as const } : step,
+        ),
+      };
+    };
+    try {
+      const store = this.deps.consentStore;
+      if (store === undefined) return downgrade('no-store');
+      if (!turn.direct) return downgrade('not-dm');
+      if (turn.ownerStepPending === true) return downgrade('owner-step-open');
+      const conversationKey = turn.conversationKey;
+      if (typeof conversationKey !== 'string' || conversationKey.trim().length === 0) return downgrade('no-conversation');
+      const sources = asked.sources.map(({ source, itemIds }) => ({ source, itemIds }));
+      if (renderSummaryConsentQuestion({ language, recipient: asked.recipient, sources: sources.map((entry) => ({ source: entry.source, count: entry.itemIds.length })) }) === '') return downgrade('question');
+      const clock = this.deps.elapsed ?? Date.now;
+      const createdAtMs = safeClock(clock);
+      const runRef = newId();
+      const pending = summaryConsentPending({
+        scope: { actorId: turn.actor.id, conversationKey },
+        language,
+        createdAtMs,
+        recipient: asked.recipient,
+        sources,
+        runRef,
+      });
+      this.rememberContinuation(runRef, {
+        plan,
+        basis,
+        summaryStep: asked.step,
+        steps: continuationSteps(plan, asked.step, asked.from),
+        ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}),
+        actorId: turn.actor.id,
+        createdAtMs,
+      });
+      store.open(pending);
+      this.log('info', 'agent_run.consent', {
+        outcome: 'asked',
+        sources: sources.length,
+        items: sources.reduce((sum, entry) => sum + entry.itemIds.length, 0),
+      });
+      return result;
+    } catch {
+      return downgrade('failed');
+    }
+  }
+
+  private rememberContinuation(runRef: string, record: AgentSummaryContinuation): void {
+    for (const [key, held] of this.continuations) if (record.createdAtMs - held.createdAtMs >= AGENT_SUMMARY_CONTINUATION_TTL_MS) this.continuations.delete(key);
+    while (this.continuations.size >= AGENT_SUMMARY_CONTINUATION_MAX_RECORDS) {
+      const oldest = this.continuations.keys().next();
+      if (oldest.done === true) break;
+      this.continuations.delete(oldest.value);
+    }
+    this.continuations.set(runRef, Object.freeze(record));
+  }
+
+  /**
+   * The continuation record of an asked step, taken once (single use): `undefined` when it is unknown, already taken, dropped or
+   * older than W2's 600 s. CS-1b's continuation calls it with the bound consent's `runRef`; nothing calls it in CS-1a.
+   */
+  takeSummaryContinuation(runRef: string, atMs: number): AgentSummaryContinuation | undefined {
+    const record = this.continuations.get(runRef);
+    this.continuations.delete(runRef);
+    return record !== undefined && Number.isFinite(atMs) && atMs >= record.createdAtMs && atMs - record.createdAtMs < AGENT_SUMMARY_CONTINUATION_TTL_MS ? record : undefined;
+  }
+
+  /** The kill switch (CS-2 calls it on every save of `stopped`): every pending summary consent is voided and every continuation record dropped. */
+  voidAllSummaryConsents(): void {
+    this.continuations.clear();
+    this.deps.consentStore?.voidAll();
   }
 
   /** The persisted kill switch on the live actor: `true` only when it reads `running` (a throw or no actor is a stop). */
@@ -950,6 +1089,19 @@ function safeModelCalls(budget: AgentRunBudget): number {
   } catch {
     return 0;
   }
+}
+
+/** The step numbers a continuation re-runs: the summarize step, the reads it covers and, transitively, the reads their references name. */
+function continuationSteps(plan: ValidatedRunPlan, summaryStep: number, from: readonly number[]): readonly number[] {
+  const keep = new Set<number>([summaryStep, ...from]);
+  for (const number of [...keep].sort((a, b) => b - a)) {
+    let current = plan.steps[number - 1];
+    while (current !== undefined && current.kind === 'read' && current.ref !== undefined && !keep.has(current.ref.step)) {
+      keep.add(current.ref.step);
+      current = plan.steps[current.ref.step - 1];
+    }
+  }
+  return Object.freeze([...keep].sort((a, b) => a - b));
 }
 
 function languageOf(text: string): 'ko' | 'en' {

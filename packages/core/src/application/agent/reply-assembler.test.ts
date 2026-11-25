@@ -18,6 +18,10 @@ import {
 } from './quarantined-summary';
 import { assembleAgentReply } from './reply-assembler';
 import type { AgentStepsPlan } from './reply-notes';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 D3/D4 (stage S2 P3-3b): the deterministic reply assembler. Summaries come through the real path (the executor and the
 // summariser, with the grant test seam on) or, to bypass the summariser's own guards, through the sealing test seam.

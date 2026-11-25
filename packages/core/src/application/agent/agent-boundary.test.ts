@@ -38,6 +38,11 @@ function allowedSpecifier(specifier: string): boolean {
   // ADR-0121 D12: the one shared locality-constraint reader (pure; it imports port types only).
   if (specifier === '../execution-locality-constraint') return true;
   if (specifier === '../call-usage-log-fields') return true;
+  // Rule ① (CS-1a): the shared opaque id utility (`runRef` of a pending summary consent). Pure, no I/O.
+  if (specifier === '../../util/id') return true;
+  // ADR-0121 rule ① (CS-1a): the pending summary-consent producer and store type, imported by `agent-run-service.ts` (and its
+  // dependency pin) only: `consent-answer.boundary.test.ts` pins the exact importer list. Pure, in-memory, no I/O.
+  if (specifier === '../consent-answer/consent-pending') return true;
   // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
   if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;
   // The document action-claim guard (pure: its only import is a type), run on every model-derived summary line.
@@ -62,7 +67,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'held-receipt.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'held-receipt.ts', 'help-split.ts', 'index.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-consent-question.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
     // The claim guard the summaries pass through is pure: its only import is a type (erased).

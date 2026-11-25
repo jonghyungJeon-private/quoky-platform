@@ -39102,3 +39102,83 @@ entries gain a validated numeric count. Implemented as data plus one parameter, 
 - **Open (owner).** (1) The brief expected the count to be grounded in the owner's own words; no `limit` arg has such a rule
   (a pasted "3개" the selector copies would pass), so this change does not add one. Adding it is a validator change for every
   `limit` entry. (2) Version ids were not bumped for the prompt byte change (see above).
+
+### Rule-① confirm slice CS-1a implementation note (2026-11-25)
+
+Slice CS-1a "guard-and-ask" of the rule-① confirm slice (design: SR-1 rule ① and W1 to W5; the slice split CS-1a, CS-1b,
+CS-2, CS-3). Built and unit-tested, dormant: `QUOKY_AGENT_MODE=active` is still refused at startup and the agent read ports
+are empty, so no live turn reaches it. No model call, no eval, no prompt, catalog or gold change (no D12 gate: the question and
+the notes are fixed reply text, as A5-S2). Scope: the REMOTE guard, the question, the ask mode, the pending step and the
+continuation record. NOT in this slice: the continuation that sends (CS-1b), the runtime gate that answers and the composition
+of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
+
+- **The guard (unconditional, not behind the flag).** `deriveM2Localities` replaces the A5-S3 `workSource: boolean` stopgap with a
+  required `consent: SummaryConsentToken | undefined` (plus the `consentScope` it must cover). `REMOTE` stays in the set only
+  with a branded token (module-private `WeakMap`, as `mintGrant`) that names this run, this summarize step, every covered
+  source and, once known, only item ids the owner was asked about; for every egress label ("EVERY remote summary"). It is a
+  no-op for `REMOTE_OK` in practice (no summary readout carries it). `dispatchLocality` re-checks the same token synchronously at
+  selection, before each call and again immediately before `execute`, and reads `route.recipientLabel(provider)` again: a
+  `REMOTE` provider whose label is not the token's recipient is not called. Nothing mints a token in CS-1a (CS-1b does, from a
+  bound A6-S1 consent), so after this slice no agent path can reach `REMOTE`. With `QUOKY_SUMMARY_CONSENT=off` this guard is the
+  only behaviour change, and the agent path is dormant (`active` refused), so no live turn changes.
+- **The route.** `QuarantinedSummarizerRoute` gains `recipientLabel(provider)` (a closed map over the provider family, built in
+  `apps/quoky/src/agent/summary-recipient-label.ts`: `claude-cli` Claude, `codex-cli` Codex, `openai-api` OpenAI, `gemini-api`
+  Gemini; keyed by `family ?? id`; anything else `undefined`, which excludes `REMOTE`) and `askSummaryConsent`. Core never
+  branches on an id. The two keys and their types are pinned in `agent-contract-check.ts`.
+- **The question.** `core/agent/summary-consent-question.ts`: KO `{noun} {n}건을 {remote}에 보내 요약할게요. 보낼까요? (응/아니)`, several
+  sources joined with `과 `; EN `I'll send {n} {noun} to {remote} to summarise them. Shall I send them? (yes/no)`, singular `it`
+  for one item, a closed noun table. `{ countPlaceholder: true }` writes `{개수}` / `{count}` (plural EN). The A6-S2
+  `consentClassifierQuestion` now renders through this same function, so the classifier judges exactly the question the owner
+  read (its old template, "할까요? ... item(s)", is replaced; its tests are updated, the classifier prompt and version are
+  unchanged).
+- **Ask mode (`QUOKY_SUMMARY_CONSENT=on`, default `off`, exact, `SUMMARY_CONSENT_INVALID`; `.env.example`, preflight hint).** In
+  `summaryReadinessDetailed`, with the flag and no token the selector is asked under the full locality set: a LOCAL pick is ready
+  (W4, no question); a REMOTE pick is `consent-needed` with the recipient (no label is `no-model`). The executor treats it as a
+  denial (no `withDocuments`, no field mask, the read itself runs), records `askedIds` = positions 1..asked of the projection
+  (an unusable slot is skipped and never shifts), and `runSummary` returns `status: 'consent-needed'` with `recipient` and
+  `sources: [{ source, entryId, itemIds }]`, no M2 call. W5 mixed: a switched-off or listing-only source keeps its reason and
+  never joins the question. A second asking step is `consent-one-pending` (W2), sources that pick different recipients are
+  `consent-recipient-split`, a missing grant stays `no-summary-grant`. A step with one asking source and another LOCAL-ready one
+  asks as a whole (one selection serves a step); the LOCAL documents are dropped, not summarised. The assembler adds the
+  `consent` part as the last part and no "not read" note.
+- **The pending step.** `SummaryConsentPending` is now `sources: { source, itemIds }[]` plus `runRef` (C2 below); the producer
+  keeps the per-source validation (1..10 distinct ids), `reaskedCopy` carries `runRef`. `AgentRunService.runPlanned` opens it
+  (after the executor, before the assembler, so the assembled reply already shows the downgrade when it fails) only with a
+  `consentStore`, a direct turn, a `conversationKey` and no `ownerStepPending`; otherwise, or when the producer or the question
+  fails, the step becomes `listing-only` with `consent-owner-step-open` and no question. It holds ids, recipient, language and
+  scope only, never content. The continuation record map (in memory, at most 64, 600 s, dropped on use and on
+  `voidAllSummaryConsents`) keeps the same validated plan object, the grant basis, the step numbers (summarize step, covered
+  reads, reference ancestors), the actor and the session. One content-free `agent_run.consent` line (`asked` or `declined`).
+- **Import boundary.** `consent-answer.boundary.test.ts` now allows exactly two non-test importers of `consent-pending`
+  (`agent-run-service.ts`, and the type-only dependency pin `agent-contract-check.ts`), both limited to that one file; the
+  answer function and the classifier stay unreachable from outside, and `conversation-runtime.ts` stays refused (CS-2 changes
+  that). `agent-boundary.test.ts` allows `../consent-answer/consent-pending` and `../../util/id`.
+- **Conflicts, read as follows (no stop).** C1: ARCHITECTURE.md:421 (§10 LOW row) can read as every owner-requested remote mail
+  or Drive summary; the ratified texts limit rule ① to the agent's M2 step ("Before EVERY remote summary (an M2 call to a REMOTE
+  provider)"; GML-1 chat path "unchanged"; A5.4 "Not amended: ADR-0100 D8, A6 R2, ADR-0118 D7"), so the live non-agent
+  summaries stay as built (OQ-1). C2: the built A6-S1 type (flat `itemIds`, `sources: string[]`) is aligned to the ratified R1
+  item 5 (`{ source, itemIds }` per source plus `runRef`). C3: a continuation that re-reads has no rule-①-specific sentence in
+  ARCHITECTURE.md §8; it will follow the ratified A2 continuation shape (no M1 or M1', re-executes the declared READ); no
+  architecture text change proposed. C4: the A5-S3 stopgap said "the confirm slice replaces this guard"; the token check does,
+  and is stricter (every label, mail and Drive included).
+- **Class-A precedent choices (the owner may veto).** One asking step per plan (W2); `{remote}` is the product name ("Claude",
+  the owner's own example); silent cancel on the ordinary path (ADR-0120 D7); the fixed expired line (ADR-0112 lapsed step);
+  flag default off (A5-S1 / A6-S1 / A4 flags); the rerun as a separate delivered turn (AM-2 "a new turn"). The last three are for
+  CS-1b and CS-2 and are recorded here with the others.
+- **Open owner question OQ-1 (class B, does not block).** Should rule ① also cover the live non-agent remote summaries (ADR-0118
+  D7 mail and Drive item and thread summaries, A6 R2 `item.summarize`, the ADR-0100 D8 work lookup)? Today they send one item to
+  a REMOTE chat tier with no question. Recommended: yes, as its own slice after CS-2, reusing the gate (mirrors the owner's
+  answer for D8, A5.10 q7, A5-S6).
+- **Tests.** The token guard (every label, every source, forged and foreign tokens, the dispatch re-check including a label
+  that flips); LOCAL with no question; flag off never REMOTE; ask without `withDocuments` and without an M2 call; the first
+  `asked` usable slots; W5 mixed; mail plus Drive in one question; one asking step; owner step open; recipient split; the exact
+  KO/EN strings, `과`, singular and the placeholder form; `runRef` through the re-ask; the 64 and 600 s bounds. The suites that
+  predate the rule use a test-only allow-all seam (`setSummaryConsentAllowAllForTest`, throws outside the test runner); the
+  rule's own suite leaves it off. Core agent and consent-answer folders, `apps/quoky` agent, config and preflight tests pass;
+  build and typecheck pass.
+- **Open points for CS-1b and CS-2.** CS-1b: mint the token from a `BoundConsent` (keyed to the run and `record.summaryStep`),
+  the executor `continuation` option, the W3 id filter, the recipient re-check against `bound.pending.recipient`, single use,
+  `continueSummaryConsent` and the assembler's continuation mode. CS-2: the gate in `ConversationRuntime`, the one shared
+  store composed in `apps/quoky` (the Core index does not export `consent-pending`, so the store cannot be built there yet; the
+  flag parses but `on` composes nothing until then), `ownerStepPending` and `conversationKey` supplied by the runtime, the
+  kill-switch `voidAllSummaryConsents`, and the clock for `createdAtMs` (CS-1a uses the service clock, `Date.now` in production).

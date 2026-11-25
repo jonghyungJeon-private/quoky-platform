@@ -21,6 +21,10 @@ import {
   type QuarantinedSummarizerRoute,
 } from './quarantined-summary';
 import { WORK_SUMMARY_FIELDS, projectWorkSummaryDocuments } from './work-summary-projection';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 A5-S1: the summary-readout label and shapes of calendar, Jira, Slack, Confluence and GitHub, the A5.2 field
 // projection from the listing response, the A5.3 provider constraints, and the per-source switch (default off). With every
@@ -277,18 +281,24 @@ describe('switch on', () => {
     for (const entryId of WORK_ENTRIES) expect(await ready(entryId, [model('LOCAL')], false), entryId).toBe('no-summary-grant');
   });
 
-  it('A5.3 + rule ① guard: a work source is LOCAL-only in Core until the confirm slice (a REMOTE provider, declared or not, is never selected); LOCAL needs no declaration', async () => {
+  it('A5.3 + rule ① guard: a work source is LOCAL-only in Core without a bound consent token (a REMOTE provider, declared or not, is never selected); LOCAL needs no declaration', async () => {
+    setSummaryConsentAllowAllForTest(false);
+    try {
     for (const entryId of WORK_ENTRIES) {
       expect(await ready(entryId, [model('REMOTE')]), `${entryId} remote, no declaration`).toBe('no-model');
       // The no-training constraint stays on the context (next test); the guard excludes REMOTE before it matters.
       expect(await ready(entryId, [model('REMOTE', 'no-training')]), `${entryId} remote, no-training`).toBe('no-model');
       expect(await ready(entryId, [model('LOCAL')]), `${entryId} local`).toBeUndefined();
     }
-    // Mail keeps the pre-A5 rule: a remote provider with no declaration is fine.
-    expect(await ready('mail.list', [model('REMOTE')])).toBeUndefined();
+    // Rule ① (CS-1a): the guard is the same for mail and Drive: no token, no REMOTE, whatever the label.
+    expect(await ready('mail.list', [model('REMOTE')])).toBe('no-model');
+    } finally {
+      setSummaryConsentAllowAllForTest(true);
+    }
   });
 
   it('a REMOTE provider that does not declare it is never picked over a declaring one, and the work-text constraint is on the selection context', async () => {
+    setSummaryConsentAllowAllForTest(false);
     const contexts: unknown[] = [];
     const declared = model('REMOTE', 'no-training');
     const undeclared = model('REMOTE');
@@ -303,6 +313,7 @@ describe('switch on', () => {
     expect(undeclared.requests).toHaveLength(0);
     expect(declared.requests).toHaveLength(0);
     expect(contexts[0]).toMatchObject({ workText: true, requiredDataUse: 'no-training', allowedExecutionLocalities: ['LOCAL'] });
+    setSummaryConsentAllowAllForTest(true);
   });
 
   it('a switch is per source: only the switched-on source runs', async () => {

@@ -10,6 +10,10 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest, type AgentReadResponse } from './plan-executor';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import { setSummaryGrantsForTest, summaryEntriesForAssembler, type AgentSourceDocument, type QuarantinedSummarizerRoute } from './quarantined-summary';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 D3/D4/D7 (stage S2 P3-3b): the executor's summarize step goes through the quarantined summariser, charged on the
 // run bounds; a refusal or a breach is a partial result, never an error. Mail is the readable source. Nothing in production

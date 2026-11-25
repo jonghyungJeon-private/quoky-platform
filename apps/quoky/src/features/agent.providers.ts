@@ -2,6 +2,7 @@ import type { Provider } from '@nestjs/common';
 import { AgentRunService, CapabilityRouter, STORAGE_PROVIDER, type AgentReadPorts, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import type { AgentConfig } from '../agent/agent-config';
+import { summaryRecipientLabel } from '../agent/summary-recipient-label';
 
 /**
  * ADR-0121 stage S2 (P1) — the bounded read agent, feature composition. Binds `AGENT_RUNS` to the Core `AgentRunService`
@@ -63,6 +64,8 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
             ? {
                 readers: createAgentReadPorts(),
                 summarizer: router,
+                // ADR-0121 rule ① (CS-1a): the closed recipient-name map; the pending store and the gate are composed by CS-2.
+                recipientLabel: summaryRecipientLabel,
                 // ADR-0121 A5-S1: the per-source summary switches (default off); an empty list leaves the key out.
                 ...(config.agent.summarySources.length > 0 ? { workSummarySources: config.agent.summarySources } : {}),
               }

@@ -38,7 +38,22 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     const files = ROOTS.flatMap(sourceFiles);
     expect(files.length).toBeGreaterThan(500);
     const importers = files.filter((file) => !file.startsWith(HERE) && importsOf(file).some((specifier) => intoConsentAnswer(file, specifier)));
-    expect(importers.map((file) => relative(REPO, file))).toEqual([]);
+    // CS-1a (rule ① confirm slice): `AgentRunService` opens the pending summary consent, so it imports the producer and the store
+    // type; `agent-contract-check.ts` pins its dependency type (types only, no value). Neither imports the answer function (the
+    // next test pins that). The runtime gate allowlist is CS-2's.
+    expect(importers.map((file) => relative(REPO, file)).sort()).toEqual([
+      'packages/core/src/application/agent/agent-contract-check.ts',
+      'packages/core/src/application/agent/agent-run-service.ts',
+    ]);
+  });
+
+  it('the two allowed importers reach only consent-pending (never the answer function or the classifier)', () => {
+    for (const path of ['application/agent/agent-run-service.ts', 'application/agent/agent-contract-check.ts']) {
+      const file = join(CORE_SRC, path);
+      const specifiers = importsOf(file).filter((specifier) => intoConsentAnswer(file, specifier));
+      expect(specifiers.length, path).toBeGreaterThan(0);
+      for (const specifier of specifiers) expect(specifier, path).toBe('../consent-answer/consent-pending');
+    }
   });
 
   it('the Core package and application indexes do not export it', () => {
@@ -79,7 +94,7 @@ declare const undoConfirm: Extract<PendingQuestion, { kind: 'action-undo-confirm
 declare const handoff: ValidatedAgentHandoff;
 declare const requestList: Extract<PendingQuestion, { kind: 'entry' }>;
 const scope = { actorId: 'a', conversationKey: 'c' };
-const summary = summaryConsentPending({ scope, language: 'ko', createdAtMs: 0, recipient: 'r', itemIds: ['i'], sources: ['mail'] });
+const summary = summaryConsentPending({ scope, language: 'ko', createdAtMs: 0, recipient: 'r', sources: [{ source: 'mail', itemIds: ['i'] }], runRef: 'run-1' });
 const topic = topicConsentPending({ scope, language: 'ko', createdAtMs: 0, recipient: 'r', topic: 't' });
 store.open(summary);
 store.open(topic);
@@ -96,7 +111,7 @@ store.open(handoff);
 // @ts-expect-error EXPECT the request-list (numbered entry) pending step is no consent step
 store.open(requestList);
 // @ts-expect-error EXPECT a structurally identical literal without the producer's brand is refused
-store.open({ kind: 'summary-consent', scope, language: 'ko', createdAtMs: 0, recipient: 'r', reasked: false, itemIds: ['i'], sources: ['mail'] });
+store.open({ kind: 'summary-consent', scope, language: 'ko', createdAtMs: 0, recipient: 'r', reasked: false, sources: [{ source: 'mail', itemIds: ['i'] }], runRef: 'run-1' });
 // @ts-expect-error EXPECT no origin field (AM-1, R10)
 void summary.origin;
 // @ts-expect-error EXPECT a claim is made only by the store

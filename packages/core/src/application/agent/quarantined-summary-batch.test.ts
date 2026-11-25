@@ -23,6 +23,10 @@ import {
   type QuarantinedSummarizerRoute,
 } from './quarantined-summary';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 remote batch (owner 2026-11-03 answer 3) with the owner's 2026-11-16 caps (split M2 calls count; M2 6, model 8, input
 // 120k bytes, wall 60 s): one sealed call per source, at most AGENT_M2_MAX_ITEMS items each, split calls run in parallel and

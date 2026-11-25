@@ -3,6 +3,7 @@ import type { AiProvider } from '../../ports/ai-provider.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { AiExecutionLocality } from '../../ports/ai-provider.port';
 import { nlSameEgress } from '../nl-routing/selection-egress';
+import { renderSummaryConsentQuestion, SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER } from '../agent/summary-consent-question';
 import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentAnswerLabel, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
 import type { ConsentPending } from './consent-pending';
 
@@ -36,7 +37,7 @@ function effectiveTimeoutMs(override: number | undefined): number {
 const RECIPIENT_SHAPE = /[\p{L}\p{N}]/u;
 
 /** The placeholders that stand for item-derived values (A6.4). */
-export const CONSENT_COUNT_PLACEHOLDER = '{개수}';
+export const CONSENT_COUNT_PLACEHOLDER = SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER;
 export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
 
 /**
@@ -44,7 +45,7 @@ export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
  * placeholders. Pure. (The owner-facing question text of the rule-① confirm slice must render the same template with the
  * real values; A6-S4 judges the request, A6.9.)
  */
-export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
+export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly { readonly source: ConsentSource }[] }): string {
   // Input-shape rule: the recipient display name (provider-derived) must contain a letter or digit, or no question is rendered.
   if (!RECIPIENT_SHAPE.test(promptText(pending.recipient))) return '';
   const rendered = renderQuestion(pending);
@@ -52,19 +53,17 @@ export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' |
   return rendered !== '' && promptText(rendered) === rendered ? rendered : '';
 }
 
-function renderQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
+function renderQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly { readonly source: ConsentSource }[] }): string {
   const ko = pending.language === 'ko';
   if (pending.kind === 'topic-consent') {
     return ko
       ? `${CONSENT_TOPIC_PLACEHOLDER} 주제로 ${pending.recipient}에게 요청을 보낼까요? (응/아니)`
       : `Shall I send a request about ${CONSENT_TOPIC_PLACEHOLDER} to ${pending.recipient}? (yes/no)`;
   }
-  // A closed set (`CONSENT_SOURCES`): a value outside it never becomes question text (the producer refuses it; this is the second guard).
-  const noun = (pending.sources ?? []).filter(isConsentSource).join(', ');
-  if (noun === '') return '';
-  return ko
-    ? `${noun} ${CONSENT_COUNT_PLACEHOLDER}건을 ${pending.recipient}에 보내 요약할까요? (응/아니)`
-    : `Shall I send ${CONSENT_COUNT_PLACEHOLDER} ${noun} item(s) to ${pending.recipient} to summarise them? (yes/no)`;
+  // The rule-① question is the one the owner read (`summary-consent-question.ts`), with every count a fixed placeholder. A closed
+  // set (`CONSENT_SOURCES`): a value outside it never becomes question text (the producer refuses it; this is the second guard).
+  const sources = (pending.sources ?? []).flatMap((entry) => (isConsentSource(entry?.source) ? [{ source: entry.source, count: 1 }] : []));
+  return renderSummaryConsentQuestion({ language: pending.language, recipient: pending.recipient, sources }, { countPlaceholder: true });
 }
 
 /** A6.4: the whole classifier request. Holds exactly the fixed question with placeholders and the reply. Pure. */

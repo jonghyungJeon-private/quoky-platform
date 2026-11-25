@@ -34,6 +34,7 @@ export {
   parseQuarantinedOutput,
   renderQuarantinedPrompt,
   summaryReadiness,
+  summaryReadinessDetailed,
   validateSourceDocuments,
 } from './quarantined-summary';
 export type {
@@ -47,8 +48,12 @@ export type {
   QuarantinedOutputFailure,
   QuarantinedSummary,
   QuarantinedSummarizerRoute,
+  SummaryConsentScope,
+  SummaryConsentToken,
   SummaryEgressGrant,
   SummaryEntry,
   SummaryReadinessInput,
+  SummaryReadinessReason,
 } from './quarantined-summary';
 export * from './reply-assembler';
+export * from './summary-consent-question';

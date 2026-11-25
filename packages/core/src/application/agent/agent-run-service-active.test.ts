@@ -15,6 +15,10 @@ import type { AgentReadPort, AgentReadPorts, AgentReadRequest, AgentReadResponse
 import type { AgentRunBoundValues } from './run-bounds';
 import type { AgentWorkSummarySource } from './flow-policy';
 import { setSummaryGrantsForTest } from './quarantined-summary';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 S2 wiring slice: `active` end to end with fake ports and no model. The planner (M1) is charged on the run budget
 // before step 1, the re-plan (M1') is reserved explicitly, the executor reads through the injected ports, the summary grant

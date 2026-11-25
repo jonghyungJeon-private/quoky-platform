@@ -24,6 +24,10 @@ import type { AgentStepsPlan } from './reply-notes';
 import { AGENT_RUN_BOUNDS, type AgentRunUsage } from './run-bounds';
 import { isProjectedId } from './structure-projector';
 import { ownerSummaryRequests, summaryGrantBasis } from './summary-grant';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 S2 read red-team corpus (owner decision 3 of 2026-11-02; grant rule ① of 2026-11-17). Data only: there is no
 // runner and the confirm slice is not built. This test pins the corpus shape (docs/plans/agent-redteam-s2-read-schema.md),

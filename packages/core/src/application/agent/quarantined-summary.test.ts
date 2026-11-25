@@ -27,6 +27,10 @@ import {
   type QuarantinedSummary,
   type SummaryEgressGrant,
 } from './quarantined-summary';
+import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+
+// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
+setSummaryConsentAllowAllForTest(true);
 
 // ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2): a sealed request, a schema-bound output, labels, egress.
 // Mail is the readable source here: Jira, Slack and calendar are listing-only, and no production code makes a summary grant, so

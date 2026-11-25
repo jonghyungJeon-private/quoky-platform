@@ -23,6 +23,20 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   The D12 gate (action, read-regression, r2) must run before deploy. No model call was made.
 - **Gold.** No `expect` changed; no row added (`agent-plan.v1.json` is byte-pinned).
 
+## Unreleased — Rule-① confirm slice CS-1a guard-and-ask (2026-11-25; dormant, `QUOKY_SUMMARY_CONSENT` default off)
+
+- **Changed (guard).** `deriveM2Localities` takes a required consent token instead of the A5-S3 `workSource` flag: an agent
+  summary reaches a `REMOTE` model only with a matching bound token (every egress label, mail and Drive included), re-checked at
+  dispatch together with the recipient label. Nothing mints a token yet, so the agent path is `LOCAL` or listing-only. The agent
+  path is dormant (`active` refused), so no live turn changes.
+- **Added.** The question renderer `agent/summary-consent-question.ts` (KO/EN, one or several sources, placeholder form shared
+  with the A6-S2 classifier question); the ask mode behind `QUOKY_SUMMARY_CONSENT=off|on` (`consent-needed` status, new reasons
+  `consent-one-pending`, `consent-owner-step-open`, `consent-recipient-split`, assembler `consent` part); the pending step
+  (per-source `SummaryConsentPending` plus `runRef`) opened by `AgentRunService` with an in-memory continuation record (64, 600 s);
+  `recipientLabel` from `apps/quoky` (closed provider-family map).
+- **Not in this slice.** The continuation that sends (CS-1b), the runtime gate and the shared store composition (CS-2), the gold
+  harness (CS-3). No prompt, catalog or gold change; no model call. See DECISIONS "Rule-① confirm slice CS-1a implementation note".
+
 ## Unreleased — ADR-0121 A6-S2 consent-classifier (2026-11-25; dormant, switch default off, `on` still refused)
 
 - **Added.** Core `consent-answer/consent-classifier.ts`: prompt `consent-answer.v1` (five closed labels, no example), the pure
