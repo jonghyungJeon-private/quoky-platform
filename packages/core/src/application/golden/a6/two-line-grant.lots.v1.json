@@ -576,6 +576,106 @@
     "expect": {
      "grant": []
     }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 ③\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-57",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일③\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-58",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 ③ 개\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-59",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 ²\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-60",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 ³",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-61",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 Ⅲ\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-62",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 -3개\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-63",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 -3 개\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-64",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 −3개\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-65",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 －3개\n요약해줘",
+    "note": "review round 2: non-Nd numeral or signed count is not a unit",
+    "id": "a-66",
+    "expect": {
+     "grant": []
+    }
    }
   ]
  },
@@ -947,6 +1047,42 @@
     "expect": {
      "grant": []
     }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 3개\n요약해줘",
+    "note": "review round 2 control: a plain count unit still grants",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-21"
+   },
+   {
+    "lang": "en",
+    "plan": "mail-3",
+    "text": "3 mails\nsummarize",
+    "note": "review round 2 control: a plain count unit still grants",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-22"
+   },
+   {
+    "lang": "ko",
+    "plan": "drive-5",
+    "text": "드라이브 5건\n요약",
+    "note": "review round 2 control: a plain count unit still grants",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "p-23"
    }
   ]
  }

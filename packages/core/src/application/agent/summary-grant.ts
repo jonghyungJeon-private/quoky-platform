@@ -232,8 +232,8 @@ function countUnits(step: Extract<ValidatedAgentStep, { readonly kind: 'read' }>
   return step.entry.args.flatMap((spec) => {
     const value = step.args[spec.name];
     if (spec.kind !== 'limit' || spec.transient === true || typeof value !== 'number' || !Number.isInteger(value)) return [];
-    const counted: (readonly [string, RegExp])[] = [[`${value}개`, new RegExp(`(?<![0-9])${value}\\s*(?:개|건)`, 'u')]];
-    if (sourceNames.length > 0) counted.push([`${value} ${sourceNames[0]} (count)`, new RegExp(`(?<![a-z0-9])${value}\\s+(?:${sourceNames.join('|')})(?:s|['’]s)?(?![a-z0-9])`, 'u')]);
+    const counted: (readonly [string, RegExp])[] = [[`${value}개`, new RegExp(`(?<![0-9.,+\\-\u2212\uFF0D\uFF0B])${value}\\s*(?:개|건)`, 'u')]];
+    if (sourceNames.length > 0) counted.push([`${value} ${sourceNames[0]} (count)`, new RegExp(`(?<![a-z0-9.,+\\-\u2212\uFF0D\uFF0B])${value}\\s+(?:${sourceNames.join('|')})(?:s|['’]s)?(?![a-z0-9])`, 'u')]);
     return counted;
   });
 }
@@ -253,7 +253,8 @@ function isConsumedLine(line: string, units: readonly RegExp[]): boolean {
   // removed (the plan's own validated count with its counter is the only numeric unit, AM-3) is a number the plan does not carry.
   let rest = text;
   for (const unit of units) rest = rest.replace(new RegExp(unit.source, `${unit.flags.replace(/[gy]/gu, '')}g`), ' ');
-  return !/\p{Nd}/u.test(rest);
+  // Review round 2: any numeral (`\p{N}`: circled, superscript, roman, fullwidth) left over fails; a signed count (`-3개`) is not a unit.
+  return !/\p{N}/u.test(rest);
 }
 
 /**

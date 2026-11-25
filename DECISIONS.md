@@ -39583,6 +39583,7 @@ and `QUOKY_CONSENT_ANSWER_CLASSIFIER` is still default `off` (`on` refused). Cor
   covers `460` and `461` with the rest. Nothing else is pending here; AM-3 needs no catalog decision any more.
 - **Verification.** `pnpm build`, `pnpm typecheck`, `pnpm exec tsc --noEmit -p packages/core/tsconfig.json`; targeted vitest only (summary-grant,
   the three SR-1 corpus tests, the agent run service and executor, the agent boundary, golden). No full suite, no model call.
+- **Review round 2: any `\p{N}` numeral left fails; signed counts are not units.** (circled, superscript, roman numerals and a `-3개` / `−3개` / `－3개` sign before the count no longer grant; lot (a) a-57..a-66, controls p-21..p-23.)
 - **Fix round 1 (Codex + Chief Architect review of ee6890ca, all reproduced).**
   1. *P1, numbers the plan does not carry are residue.* The shared guard treats a bare numeral as grammar and a lone `개` / `건` as closed, so
      "메일 3 개", "메일 13 건" (limit 3), "show 3 mails" (no count), "show 5 mails" (`{}` or limit 3), "show 500 mails" (limit 5), "메일 3", "메일 010 1234
