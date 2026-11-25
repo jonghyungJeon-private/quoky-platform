@@ -656,7 +656,9 @@ export type QuarantinedListingOnlyReason =
   /** Rule ① (CS-1a): the covered reads of one source list more than one question may count ({@link AGENT_M2_MAX_ITEMS}). */
   | 'consent-too-many-items'
   /** Rule ① (CS-1a): the sources of one step would send to different recipients, so no single question names them. */
-  | 'consent-recipient-split';
+  | 'consent-recipient-split'
+  /** Rule ① (CS-1b): after the owner's yes no item of the asked set was left to summarise (all gone, changed or withheld); no M2 call. */
+  | 'consent-nothing-left';
 
 /** What readiness answers: a listing-only reason, or `consent-needed` (a `REMOTE` provider was picked and the owner has not said yes). */
 export type SummaryReadinessReason = QuarantinedListingOnlyReason | 'consent-needed';
@@ -677,6 +679,7 @@ export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyRe
   'consent-unavailable',
   'consent-too-many-items',
   'consent-recipient-split',
+  'consent-nothing-left',
 ]);
 
 function sourceRefusal(

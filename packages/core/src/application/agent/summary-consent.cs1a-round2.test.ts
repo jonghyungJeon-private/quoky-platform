@@ -91,8 +91,14 @@ describe('round 2 (finding 1): a consent token needs the owner\'s yes, recorded 
     open(other);
     const real = yesBound(other, scope);
     const forged = Object.freeze({ pending: real.pending, boundAtMs: 2 }) as BoundConsent;
-    store.bind = () => forged;
+    let bindCalled = 0;
+    store.bind = () => {
+      bindCalled += 1;
+      return forged;
+    };
     void answerConsentTurn(store, { scope, ownerDm: true, text: '응', atMs: 1 }, { mode: 'off' }, () => 2);
+    // The pipeline really went through the replaced bind (the test would otherwise pass for the wrong reason).
+    expect(bindCalled).toBe(1);
     expect(isOwnerYes(forged)).toBe(false);
     expect(mint(forged)).toBeUndefined();
   });
@@ -100,6 +106,7 @@ describe('round 2 (finding 1): a consent token needs the owner\'s yes, recorded 
   it('only consent-answer.ts records a yes: one import and exactly one call site, inside bindOrLost (AST)', () => {
     const users = ROOTS_SOURCES().filter((file) => /\brecordOwnerYes\b/u.test(readFileSync(file, 'utf8')) && !file.endsWith('consent-yes.ts') && !file.endsWith('.test.ts'));
     expect(users.map((file) => relative(REPO, file))).toEqual(['packages/core/src/application/consent-answer/consent-answer.ts']);
+    expect(users).toHaveLength(1);
     const source = ts.createSourceFile('consent-answer.ts', readFileSync(users[0] as string, 'utf8'), ts.ScriptTarget.Latest, true);
     let imports = 0;
     const callers: string[] = [];

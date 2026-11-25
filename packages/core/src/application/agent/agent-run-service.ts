@@ -6,7 +6,7 @@ import type { ProviderSelector } from '../../ports/provider-selector.port';
 import { newId } from '../../util/id';
 import { callUsageLogFields, type CallUsageLogFields } from '../call-usage-log-fields';
 import { containsCredentialMaterial } from '../credential-guard';
-import { summaryConsentPending, type ConsentPendingStore } from '../consent-answer/consent-pending';
+import { summaryConsentPending, type BoundConsent, type ConsentPendingStore } from '../consent-answer/consent-pending';
 import { NlActionSwitch, parseActionSwitchPhrase, readActionSwitch, type NlActionSwitchState } from '../nl-routing/action-switch';
 import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry, type NlCatalogEntryId, type NlWave1EntryId } from '../nl-routing/catalog';
 import { nlSameEgress } from '../nl-routing/selection-egress';
@@ -24,6 +24,7 @@ import { assembleAgentReply, type AssembledAgentReply } from './reply-assembler'
 import { a6InPlanGuidance, type AgentStepsPlan } from './reply-notes';
 import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues } from './run-bounds';
 import { summaryGrantBasis, type SummaryGrantBasis } from './summary-grant';
+import { mintSummaryConsentToken, newSummaryRunToken } from './quarantined-summary';
 import { renderSummaryConsentQuestion } from './summary-consent-question';
 
 /**
@@ -234,10 +235,36 @@ export interface AgentSummaryContinuation {
   readonly summaryStep: number;
   /** Step numbers, ascending: the summarize step, the reads it covers and their reference ancestors. */
   readonly steps: readonly number[];
+  /** The covered reads of the asked step, each with the ids the owner was asked about (CS-1b: what the token and the W3 filter are scoped by). Ids only. */
+  readonly reads: readonly { readonly step: number; readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
   readonly sessionId?: Id;
   readonly actorId: Id;
   readonly createdAtMs: number;
 }
+
+/** CS-1b: the owner's turn that carries a bound yes: who it is and whether it came in the owner's DM (a continuation is DM-only, like a run). */
+export interface AgentContinuationTurn {
+  readonly actor: Actor;
+  readonly direct: boolean;
+}
+
+/**
+ * What the continuation of a bound yes came to (closed values only): `reply` is the assembler's continuation reply (the summary, the
+ * omitted note and the REMOTE disclosure of that one step; no listing and no question); `declined` sends nothing and carries the
+ * one fixed line to show (`expired` when the step's record is gone, otherwise the fixed "not sent" line). Never throws.
+ */
+export type AgentContinuationOutcome =
+  | { readonly kind: 'reply'; readonly reply: AssembledAgentReply; readonly outcome: 'complete' | 'partial'; readonly breach?: AgentBoundKind; readonly stopped?: true }
+  | { readonly kind: 'declined'; readonly reason: string; readonly text: string };
+
+/** The fixed lines of a declined continuation (fixed reply text, no model). */
+const CONTINUATION_LINE = {
+  ko: { expired: '요약 확인 시간이 지났어요. 다시 요청해 주세요.', unavailable: '지금은 요약을 보낼 수 없어서 아무것도 보내지 않았어요. 다시 요청해 주세요.' },
+  en: { expired: 'The summary confirmation has expired. Please ask again.', unavailable: "I can't send the summary right now, so nothing was sent. Please ask again." },
+} as const;
+
+/** The bound yes consents a continuation already ran for (single use: a second run of the same bound yes is refused). */
+const SPENT_CONSENTS = new WeakSet<object>();
 
 type ValidatedRunPlan = Parameters<AgentPlanExecutor['execute']>[0];
 
@@ -389,29 +416,9 @@ export class AgentRunService {
       const readers = this.deps.readers;
       const selector = this.deps.summarizer;
       if (readers === undefined || selector === undefined) return declined('unwired');
-      // One run in flight per actor (review round 1 item 3): a concurrent turn never adds a second run's model calls.
-      if (this.activeInFlight.has(turn.actor.id)) return declined('in-flight');
-      // D7 per-actor caps (a run counts when it is admitted; the same rolling windows as shadow).
-      const starts = (this.starts.get(turn.actor.id) ?? []).filter((at) => startedMs - at < DAY_MS);
-      this.starts.set(turn.actor.id, starts);
-      const perHour = this.deps.caps?.perHour ?? AGENT_SHADOW_MAX_PER_HOUR;
-      const perDay = this.deps.caps?.perDay ?? AGENT_SHADOW_MAX_PER_DAY;
-      if (starts.filter((at) => startedMs - at < HOUR_MS).length >= perHour) return declined('hourly-cap');
-      if (starts.length >= perDay) return declined('daily-cap');
-      // S2 plan Q7: what the rolling hour has left of 60 agent model calls. A run needs its planner call AND the re-plan slot
-      // reserved before step 1 (review round 1 item 2): with fewer than 2 left it is declined here, never started.
-      const calls = (this.modelCalls.get(turn.actor.id) ?? []).filter((entry) => startedMs - entry.at < HOUR_MS);
-      this.modelCalls.set(turn.actor.id, calls);
-      const hourLeft = AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR - calls.reduce((sum, entry) => sum + entry.count, 0);
-      if (hourLeft < AGENT_ACTIVE_MIN_MODEL_CALLS) return declined('model-hourly-cap');
-      const bounds = clampedBounds(this.deps.bounds);
-      const maxModelCalls = Math.min(bounds.maxModelCalls, hourLeft);
-      // Admission charges the run's whole model-call bound at once, synchronously with the checks above (review round 1 item
-      // 3); `finally` trues it down to the calls the run actually reserved.
-      starts.push(startedMs);
-      const charged = { at: startedMs, count: maxModelCalls };
-      calls.push(charged);
-      this.activeInFlight.add(turn.actor.id);
+      const admission = this.admitRun(turn.actor.id, startedMs, AGENT_ACTIVE_MIN_MODEL_CALLS);
+      if (!admission.ok) return declined(admission.reason);
+      const { bounds, maxModelCalls, charged } = admission;
       let budget: AgentRunBudget | undefined;
       try {
         budget = new AgentRunBudget(clock, { ...bounds, maxModelCalls });
@@ -424,6 +431,44 @@ export class AgentRunService {
       this.log('warn', 'agent_run.active_failed', { errorName: error instanceof Error ? error.name : typeof error });
       return { kind: 'declined', reason: 'failed' };
     }
+  }
+
+  /**
+   * The admission every `active` run shares (rule ① continuation included): one run in flight per actor (review round 1 item 3),
+   * the D7 per-actor caps and S2 plan Q7 (what the rolling hour has left of 60 agent model calls, at least `minCalls`). On
+   * success the run is charged in full and in flight, synchronously with the checks; the caller trues `charged` down and removes
+   * the actor from `activeInFlight` when it ends.
+   */
+  private admitRun(
+    actorId: Id,
+    startedMs: number,
+    minCalls: number,
+  ):
+    | { readonly ok: true; readonly bounds: AgentRunBoundValues; readonly maxModelCalls: number; readonly charged: { at: number; count: number } }
+    | { readonly ok: false; readonly reason: string } {
+    if (this.activeInFlight.has(actorId)) return { ok: false, reason: 'in-flight' };
+    // D7 per-actor caps (a run counts when it is admitted; the same rolling windows as shadow).
+    const starts = (this.starts.get(actorId) ?? []).filter((at) => startedMs - at < DAY_MS);
+    this.starts.set(actorId, starts);
+    const perHour = this.deps.caps?.perHour ?? AGENT_SHADOW_MAX_PER_HOUR;
+    const perDay = this.deps.caps?.perDay ?? AGENT_SHADOW_MAX_PER_DAY;
+    if (starts.filter((at) => startedMs - at < HOUR_MS).length >= perHour) return { ok: false, reason: 'hourly-cap' };
+    if (starts.length >= perDay) return { ok: false, reason: 'daily-cap' };
+    // S2 plan Q7: what the rolling hour has left of 60 agent model calls. A planned run needs its planner call AND the re-plan slot
+    // reserved before step 1 (review round 1 item 2): with fewer than `minCalls` left it is declined here, never started.
+    const calls = (this.modelCalls.get(actorId) ?? []).filter((entry) => startedMs - entry.at < HOUR_MS);
+    this.modelCalls.set(actorId, calls);
+    const hourLeft = AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR - calls.reduce((sum, entry) => sum + entry.count, 0);
+    if (hourLeft < minCalls) return { ok: false, reason: 'model-hourly-cap' };
+    const bounds = clampedBounds(this.deps.bounds);
+    const maxModelCalls = Math.min(bounds.maxModelCalls, hourLeft);
+    // Admission charges the run's whole model-call bound at once, synchronously with the checks above (review round 1 item
+    // 3); the caller trues it down to the calls the run actually reserved.
+    starts.push(startedMs);
+    const charged = { at: startedMs, count: maxModelCalls };
+    calls.push(charged);
+    this.activeInFlight.add(actorId);
+    return { ok: true, bounds, maxModelCalls, charged };
   }
 
   /** {@link runActive} once admitted (the run is charged and in flight; the caller trues the charge down). */
@@ -629,6 +674,7 @@ export class AgentRunService {
         basis,
         summaryStep: asked.step,
         steps: continuationSteps(plan, asked.step, asked.from),
+        reads: Object.freeze(asked.sources.flatMap((entry) => entry.reads.map((read) => Object.freeze({ step: read.step, entryId: read.entryId, itemIds: Object.freeze([...read.itemIds]) })))),
         ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}),
         actorId: turn.actor.id,
         createdAtMs,
@@ -666,6 +712,105 @@ export class AgentRunService {
     const record = this.continuations.get(runRef);
     this.continuations.delete(runRef);
     return record !== undefined && Number.isFinite(atMs) && atMs >= record.createdAtMs && atMs - record.createdAtMs < AGENT_SUMMARY_CONTINUATION_TTL_MS ? record : undefined;
+  }
+
+  /**
+   * Rule ① (CS-1b): the continuation of the owner's bound yes: re-runs the ONE asked summarize step and sends it (REMOTE only to the
+   * recipient the owner was asked about). Total: never throws or rejects. No planner call (no M1, no M1': the ARCHITECTURE.md A2
+   * continuation shape); no production caller until CS-2 wires the gate.
+   *
+   * 1. The record is taken once by the bound consent's `runRef`; a bound yes already used, or a missing, expired or foreign record,
+   *    declines with the fixed expired line and sends nothing.
+   * 2. Admission as {@link runActive} minus the planner: mode `active`, the owner's DM, no shutdown, one run in flight, the per-actor
+   *    caps and at least one model call left; then the live kill switch (fail closed).
+   * 3. The token is minted from the bound consent with the run token made here and the step and reads of the RECORD, never from a
+   *    caller's parameters (CS-1a review round 2).
+   * 4. The executor runs the record's plan with the `continuation` option: only the covered reads re-run, the W3 filter keeps the
+   *    asked ids, and one M2 step runs under the token.
+   * 5. The assembler's continuation mode renders the reply.
+   *
+   * One content-free `agent_run.consent` line (`continued` or `declined`, a closed reason, source and item counts).
+   */
+  async continueSummaryConsent(bound: BoundConsent, turn: AgentContinuationTurn): Promise<AgentContinuationOutcome> {
+    const clock = this.deps.elapsed ?? Date.now;
+    const startedMs = safeClock(clock);
+    let language: 'ko' | 'en' = 'ko';
+    let counts: { readonly sources: number; readonly items: number } = { sources: 0, items: 0 };
+    const decline = (reason: string, line: 'expired' | 'unavailable' = 'unavailable'): AgentContinuationOutcome => {
+      this.log('info', 'agent_run.consent', { outcome: 'declined', reason, ...counts });
+      return { kind: 'declined', reason, text: CONTINUATION_LINE[language][line] };
+    };
+    try {
+      const pending = (bound as { readonly pending?: BoundConsent['pending'] } | null | undefined)?.pending;
+      if (pending === undefined || pending === null || pending.kind !== 'summary-consent') return decline('not-summary', 'expired');
+      language = pending.language === 'en' ? 'en' : 'ko';
+      counts = { sources: pending.sources.length, items: pending.sources.reduce((sum, entry) => sum + entry.itemIds.length, 0) };
+      // Single use twice over: a bound yes runs once, and the record is dropped by the take below.
+      if (SPENT_CONSENTS.has(bound)) return decline('spent', 'expired');
+      SPENT_CONSENTS.add(bound);
+      const record = this.takeSummaryContinuation(pending.runRef, startedMs);
+      if (record === undefined) return decline('expired', 'expired');
+      if (record.actorId !== turn.actor.id) return decline('actor');
+      // Only a `run` plan opens a pending step (CS-1a); anything else is not a continuation.
+      const plan = record.plan;
+      if (plan.kind !== 'run') return decline('plan');
+      if (this.mode !== 'active') return decline('not-active');
+      if (!turn.direct) return decline('not-dm');
+      if (this.background.signal.aborted) return decline('shutdown');
+      const readers = this.deps.readers;
+      const selector = this.deps.summarizer;
+      if (readers === undefined || selector === undefined) return decline('unwired');
+      // No planner and no re-plan: at least one model call (M2) must be left.
+      const admission = this.admitRun(turn.actor.id, startedMs, 1);
+      if (!admission.ok) return decline(admission.reason);
+      const { bounds, maxModelCalls, charged } = admission;
+      let budget: AgentRunBudget | undefined;
+      try {
+        budget = new AgentRunBudget(clock, { ...bounds, maxModelCalls });
+        const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
+        if (running.kind === 'wall') return decline('bound');
+        if (running.kind !== 'ok') return decline(running.kind);
+        if (!running.value) return decline('kill-switch');
+        // The run token is made here and the token is keyed to the RECORD's step and reads (never a caller's).
+        const run = newSummaryRunToken();
+        const consent = mintSummaryConsentToken({ bound, runRef: pending.runRef, run, step: record.summaryStep, reads: record.reads });
+        if (consent === undefined) return decline('no-consent');
+        const executor = new AgentPlanExecutor({
+          readers,
+          logger: this.deps.logger,
+          summarizer: {
+            selector,
+            selectionContext: { ...(record.sessionId !== undefined ? { sessionId: record.sessionId } : {}), actorId: record.actorId },
+            ...(this.deps.workSummarySources !== undefined && this.deps.workSummarySources.length > 0 ? { workSummarySources: this.deps.workSummarySources } : {}),
+            ...(this.deps.recipientLabel !== undefined ? { recipientLabel: this.deps.recipientLabel } : {}),
+            ...(this.deps.consentStore !== undefined ? { askSummaryConsent: true } : {}),
+          },
+        });
+        const result = await executor.execute(plan, {
+          budget,
+          grants: record.basis,
+          stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+          signal: this.background.signal,
+          continuation: { steps: record.steps, summaryStep: record.summaryStep, run, consent, reads: record.reads },
+        });
+        const reply = assembleAgentReply({ plan, result, language, destinationIsOwnerDm: turn.direct, mode: 'continuation', summaryStep: record.summaryStep, logger: this.deps.logger });
+        const summary = result.steps.find((step) => step.kind === 'summarize' && step.step === record.summaryStep);
+        this.log('info', 'agent_run.consent', { outcome: 'continued', reason: summary?.status ?? 'none', ...counts });
+        return {
+          kind: 'reply',
+          reply,
+          outcome: result.outcome,
+          ...(result.breach !== undefined ? { breach: result.breach } : {}),
+          ...(result.stopped === true ? { stopped: true as const } : {}),
+        };
+      } finally {
+        this.activeInFlight.delete(turn.actor.id);
+        charged.count = budget === undefined ? 0 : safeModelCalls(budget);
+      }
+    } catch (error) {
+      this.log('warn', 'agent_run.consent_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return decline('failed');
+    }
   }
 
   /** The kill switch (CS-2 calls it on every save of `stopped`): every pending summary consent is voided and every continuation record dropped. */

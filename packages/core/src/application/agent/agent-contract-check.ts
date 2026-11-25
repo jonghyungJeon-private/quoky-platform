@@ -1,6 +1,6 @@
 import type { ConsentPendingStore } from '../consent-answer/consent-pending';
 import type { AgentRunServiceDeps } from './agent-run-service';
-import type { AgentPlanExecutorDeps, AgentReadBudget, AgentReadPort, AgentReadRequest, AgentReadResponse, AgentSummarizerDeps } from './plan-executor';
+import type { AgentExecuteOptions, AgentPlanExecutorDeps, AgentReadBudget, AgentReadPort, AgentReadRequest, AgentReadResponse, AgentSummarizerDeps } from './plan-executor';
 import type { AgentWorkSummarySource } from './flow-policy';
 import type { AgentCalendarSummaryItem, AgentExcerptSummaryItem, AgentSlackSummaryItem } from './work-summary-projection';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
@@ -19,6 +19,12 @@ type Assert<T extends true> = T;
 
 /** Executor: narrow read ports, the logger, the summariser's route (the existing selector) and two test overrides. No writer, runner, fetch or repository. */
 export type AgentExecutorDepsPinned = Assert<KeysEqual<AgentPlanExecutorDeps, 'readers' | 'logger' | 'summarizer' | 'elapsed' | 'bounds'>>;
+/**
+ * Rule ① (CS-1b): the executor's run options gain exactly one key, the continuation of a bound yes, whose shape is closed: the step
+ * numbers that run, the one summarize step, the run token and consent token, and the recorded reads (ids only).
+ */
+export type AgentExecuteOptionsPinned = Assert<KeysEqual<AgentExecuteOptions, 'budget' | 'grants' | 'stillRunning' | 'signal' | 'continuation'>>;
+export type AgentExecuteContinuationPinned = Assert<KeysEqual<NonNullable<AgentExecuteOptions['continuation']>, 'steps' | 'summaryStep' | 'run' | 'consent' | 'reads'>>;
 /**
  * ADR-0121 D12 (amended 2026-11-16): M2's route is the EXISTING selection contract — the `ProviderSelector` port and its
  * `ProviderSelectionContext` — and nothing else: no model list, no new model-execution port or token.
