@@ -68,6 +68,10 @@ export class QuokyCore {
    * best-effort feedback capture after delivery, which never changes or delays the reply itself.
    */
   async handleInboundMessage(message: InboundMessage): Promise<void> {
+    await this.deliverTurn(message, 0);
+  }
+
+  private async deliverTurn(message: InboundMessage, rerunDepth: number): Promise<void> {
     await this.deps.platform.sendTyping(message.context).catch(() => undefined);
     const startedAt = this.clock();
     let result: TurnResult;
@@ -122,6 +126,9 @@ export class QuokyCore {
       startedAt,
       deliveredAt,
     });
+    // Rule ① confirm slice (CS-2, AM-2): the rest of a `yes-and-more` answer runs ONCE as a new ordinary turn after the first reply was
+    // delivered (depth 1: a rerun turn's own `rerun` is never honoured). It is a separate inbound turn with its own run.
+    if (result.rerun !== undefined && rerunDepth === 0) await this.deliverTurn(result.rerun, 1);
   }
 
   /**

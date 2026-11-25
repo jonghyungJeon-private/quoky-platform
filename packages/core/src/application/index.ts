@@ -189,6 +189,11 @@ export * from './surface-grants';
 export * from './actor-metadata-store';
 // ADR-0121 stage S2 (P1): the bounded read agent (off / shadow; the planner, the plan validator, the flow policy).
 export * from './agent';
+// ADR-0121 SR-1 rule ① confirm slice (CS-2): the composition root builds the one shared pending store and the runtime gate. Only these
+// names leave `consent-answer/` (the answer function, the classifier and the producers stay unreachable; pinned by the boundary test).
+export { ConsentPendingStore } from './consent-answer/consent-pending';
+export { ConsentTurnGate } from './consent-answer/consent-turn-gate';
+export type { ConsentContinuation, ConsentGateOutcome, ConsentGateTurn, ConsentTurnGateDeps } from './consent-answer/consent-turn-gate';
 // ADR-0092 amendment (runtime switching): the owner's model-selection command grammar (provider-free).
 export * from './model-selection';
 // ADR-0106 memory management commands (MEM-1).

@@ -14,9 +14,9 @@
  *   compare-and-set from `answering` on the same version, that it is still fresh (W2, 600 s), unused and not voided, and
  *   marks it `used`. A turn that arrives while the step is `answering` cancels it, so the in-flight answer's bind fails and
  *   nothing is sent. The kill switch voids every open or answering step; a restart drops the in-memory store.
- * - **Nothing REMOTE can bind yet.** CS-1a (the rule-① confirm slice, ask half) opens a summary consent from `AgentRunService`
- *   (the one allowlisted importer, pinned by `consent-answer.boundary.test.ts`); nothing answers or binds it until CS-2 (the
- *   runtime gate), and the continuation that sends is CS-1b. The A2 topic consent is not built.
+ * - **Who answers.** CS-1a (the rule-① confirm slice, ask half) opens a summary consent from `AgentRunService` (an allowlisted importer,
+ *   pinned by `consent-answer.boundary.test.ts`); CS-2 composes the one shared store and `ConsentTurnGate` answers it on the owner's next DM
+ *   turn; the continuation that sends is CS-1b. The A2 topic consent is not built.
  *
  * Pure, in-memory, no I/O, no clock of its own (every time is the caller's `atMs`), no provider or platform branch.
  */
@@ -234,6 +234,11 @@ export class ConsentPendingStore {
     this.records.set(scopeKey(pending.scope), { pending, state: 'open', version: this.nextVersion() });
   }
 
+  /** The language of the step in `scope` (inspection only, for the fixed lines of the gate; never an answer), or `undefined`. */
+  languageOf(scope: ConsentScope): ConsentLanguage | undefined {
+    return this.records.get(scopeKey(scope))?.pending.language;
+  }
+
   /** The state of the step in `scope`, or `undefined` (inspection only; never an answer). */
   stateOf(scope: ConsentScope): ConsentPendingState | undefined {
     return this.records.get(scopeKey(scope))?.state;
@@ -265,10 +270,10 @@ export class ConsentPendingStore {
 
   /**
    * An owner turn that cannot be judged (e.g. the clock failed before the claim) still consumes the chance to answer, like `claim`
-   * on a late or answering step: the record is dropped, so an in-flight bind for an earlier turn can no longer match.
+   * on a late or answering step: the record is dropped (returns whether one was held), so an in-flight bind for an earlier turn can no longer match.
    */
-  forfeit(scope: ConsentScope): void {
-    this.records.delete(scopeKey(scope));
+  forfeit(scope: ConsentScope): boolean {
+    return this.records.delete(scopeKey(scope));
   }
 
   /** Whether the claim still holds its step in `answering` (inspection only; used for the audit). */

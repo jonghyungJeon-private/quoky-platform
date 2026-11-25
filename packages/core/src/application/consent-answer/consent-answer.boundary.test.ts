@@ -41,11 +41,15 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     // CS-1a (rule ① confirm slice): `AgentRunService` opens the pending summary consent, so it imports the producer and the store
     // type; `agent-contract-check.ts` pins its dependency type (types only, no value); `quarantined-summary.ts` imports the brand
     // check and the `BoundConsent` type for `mintSummaryConsentToken`, the only maker of a consent token. Neither imports the answer function (the
-    // next test pins that). The runtime gate allowlist is CS-2's.
+    // next test pins that). CS-2 (the runtime gate) adds exactly three, each pinned by imported name below: the runtime base class
+    // (the gate, by name), the runtime types (the gate type), and the application index (the store and the gate, never the answer function).
     expect(importers.map((file) => relative(REPO, file)).sort()).toEqual([
       'packages/core/src/application/agent/agent-contract-check.ts',
       'packages/core/src/application/agent/agent-run-service.ts',
       'packages/core/src/application/agent/quarantined-summary.ts',
+      'packages/core/src/application/conversation-runtime/runtime-base.ts',
+      'packages/core/src/application/conversation-runtime/types.ts',
+      'packages/core/src/application/index.ts',
     ]);
   });
 
@@ -87,8 +91,49 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     expect(imported.sort()).toEqual(['../consent-answer/consent-pending#BoundConsent:type', '../consent-answer/consent-yes#isOwnerYes']);
   });
 
-  it('the Core package and application indexes do not export it', () => {
-    for (const index of ['index.ts', 'application/index.ts']) expect(readFileSync(join(CORE_SRC, index), 'utf8'), index).not.toMatch(/consent-answer|consent-pending/u);
+  it('CS-2: the runtime reaches consent-answer/ only through the gate, by name (never the answer function, the classifier or the store)', () => {
+    const named = (path: string): string[] => {
+      const file = join(CORE_SRC, path);
+      const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+      const imported: string[] = [];
+      for (const node of source.statements) {
+        if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier) || !node.moduleSpecifier.text.includes('consent-answer')) continue;
+        const bindings = node.importClause?.namedBindings;
+        expect(node.importClause?.name, 'no default import').toBeUndefined();
+        expect(bindings !== undefined && ts.isNamedImports(bindings), `${path}: named imports only`).toBe(true);
+        if (bindings !== undefined && ts.isNamedImports(bindings)) {
+          for (const element of bindings.elements) imported.push(`${node.moduleSpecifier.text}#${element.propertyName?.text ?? element.name.text}${node.importClause?.isTypeOnly || element.isTypeOnly ? ':type' : ''}`);
+        }
+      }
+      return imported.sort();
+    };
+    expect(named('application/conversation-runtime/runtime-base.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentTurnGate']);
+    expect(named('application/conversation-runtime/types.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentTurnGate:type']);
+  });
+
+  it('the Core package index exports nothing of it; the application index exports exactly the store and the gate (and the gate types), by name', () => {
+    expect(readFileSync(join(CORE_SRC, 'index.ts'), 'utf8')).not.toMatch(/consent-answer|consent-pending/u);
+    const file = join(CORE_SRC, 'application/index.ts');
+    const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const exported: string[] = [];
+    for (const node of source.statements) {
+      if (!ts.isExportDeclaration(node) || node.moduleSpecifier === undefined || !ts.isStringLiteral(node.moduleSpecifier)) continue;
+      if (!/consent-answer|consent-pending/u.test(node.moduleSpecifier.text)) continue;
+      const clause = node.exportClause;
+      expect(clause !== undefined && ts.isNamedExports(clause), 'no star re-export of consent-answer').toBe(true);
+      if (clause !== undefined && ts.isNamedExports(clause)) for (const element of clause.elements) exported.push(`${node.moduleSpecifier.text}#${element.propertyName?.text ?? element.name.text}`);
+    }
+    expect(exported.sort()).toEqual([
+      './consent-answer/consent-pending#ConsentPendingStore',
+      './consent-answer/consent-turn-gate#ConsentContinuation',
+      './consent-answer/consent-turn-gate#ConsentGateOutcome',
+      './consent-answer/consent-turn-gate#ConsentGateTurn',
+      './consent-answer/consent-turn-gate#ConsentTurnGate',
+      './consent-answer/consent-turn-gate#ConsentTurnGateDeps',
+    ]);
+    // The answer function has one non-test caller: the gate.
+    const callers = sourceFiles(CORE_SRC).filter((path) => /\banswerConsentTurn\s*\(/u.test(readFileSync(path, 'utf8')) && !path.endsWith('consent-answer.ts'));
+    expect(callers.map((path) => relative(REPO, path))).toEqual(['packages/core/src/application/consent-answer/consent-turn-gate.ts']);
   });
 
   it.each([
@@ -101,7 +146,8 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     ['destination pick (A7)', 'application/agent/cross-write.ts'],
     ['channel grant', 'application/surface-grants/surface-grant-service.ts'],
     ['channel grant', 'application/surface-grants/surface-grant-phrases.ts'],
-    ['the live runtime (switch off is byte-identical: not wired)', 'application/conversation-runtime.ts'],
+    ['the live runtime entry (the gate is reached through the runtime base class, by name)', 'application/conversation-runtime.ts'],
+    ['the platform facade (it only delivers `TurnResult.rerun`)', 'application/orchestrator.ts'],
   ])('the %s module %s exists and does not import it', (_role, path) => {
     const file = join(CORE_SRC, path);
     expect(existsSync(file)).toBe(true);

@@ -292,6 +292,8 @@ export class AgentRunService {
   private readonly modelCalls = new Map<Id, Array<{ readonly at: number; count: number }>>();
   /** `active`: the actors with a run in flight (one at a time per actor, as shadow keeps one job in flight). */
   private readonly activeInFlight = new Set<Id>();
+  /** The model-call charge of each actor's run in flight (rule ① CS-2: the asking run's own calls are read from its budget, not its admission charge). */
+  private readonly inFlightCharge = new Map<Id, { readonly at: number; count: number }>();
   /** Rule ① (CS-1a): `runRef` to the continuation record of an asked step. In memory only; dropped on use, expiry and `voidAllSummaryConsents`. */
   private readonly continuations = new Map<string, AgentSummaryContinuation>();
 
@@ -426,6 +428,7 @@ export class AgentRunService {
         return await this.admitted(turn, resolveChat, budget, readers, selector, declined, latency);
       } finally {
         this.activeInFlight.delete(turn.actor.id);
+        this.inFlightCharge.delete(turn.actor.id);
         charged.count = budget === undefined ? 0 : safeModelCalls(budget);
       }
     } catch (error) {
@@ -469,6 +472,7 @@ export class AgentRunService {
     const charged = { at: startedMs, count: maxModelCalls };
     calls.push(charged);
     this.activeInFlight.add(actorId);
+    this.inFlightCharge.set(actorId, charged);
     return { ok: true, bounds, maxModelCalls, charged };
   }
 
@@ -655,6 +659,10 @@ export class AgentRunService {
       if (store === undefined) return downgrade('no-store');
       if (!turn.direct) return downgrade('not-dm');
       if (turn.ownerStepPending === true) return downgrade('owner-step-open');
+      // CS-2 (CA advice, CS-1b review): a decline of the bound yes for a transient cause SPENDS it (no re-open), so a step is not opened
+      // when the actor could not run its continuation: fewer than ONE model call (M2) left in the rolling hour after this run, or the
+      // per-actor run caps already reached.
+      if (!this.continuationAdmissible(turn.actor.id, safeClock(this.deps.elapsed ?? Date.now), result.usage.modelCalls)) return downgrade('no-call-left');
       const conversationKey = turn.conversationKey;
       if (typeof conversationKey !== 'string' || conversationKey.trim().length === 0) return downgrade('no-conversation');
       const sources = asked.sources.map(({ source, itemIds }) => ({ source, itemIds }));
@@ -695,6 +703,18 @@ export class AgentRunService {
       if (stored !== undefined) this.continuations.delete(stored);
       return downgrade('failed');
     }
+  }
+
+  /** Whether a continuation (one run, one model call, no planner) would still be admitted for `actorId` after the asking run that made `thisRunCalls` calls. */
+  private continuationAdmissible(actorId: Id, nowMs: number, thisRunCalls: number): boolean {
+    const own = this.inFlightCharge.get(actorId);
+    const calls = (this.modelCalls.get(actorId) ?? []).filter((entry) => nowMs - entry.at < HOUR_MS);
+    const used = calls.reduce((sum, entry) => sum + (entry === own ? thisRunCalls : entry.count), 0);
+    if (AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR - used < 1) return false;
+    const starts = (this.starts.get(actorId) ?? []).filter((at) => nowMs - at < DAY_MS);
+    const perHour = this.deps.caps?.perHour ?? AGENT_SHADOW_MAX_PER_HOUR;
+    const perDay = this.deps.caps?.perDay ?? AGENT_SHADOW_MAX_PER_DAY;
+    return starts.filter((at) => nowMs - at < HOUR_MS).length < perHour && starts.length < perDay;
   }
 
   private rememberContinuation(runRef: string, record: AgentSummaryContinuation): void {
@@ -811,6 +831,7 @@ export class AgentRunService {
         };
       } finally {
         this.activeInFlight.delete(turn.actor.id);
+        this.inFlightCharge.delete(turn.actor.id);
         charged.count = budget === undefined ? 0 : safeModelCalls(budget);
       }
     } catch (error) {

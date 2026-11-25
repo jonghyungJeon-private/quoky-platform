@@ -39299,3 +39299,93 @@ all new text is fixed reply text).
   fewer than one model call left in the rolling hour after the asking run.
 
 **Review round 2 (P3).** The continuation re-run steps now come from `record.reads` (plus reference ancestors), not every covered read, so an unrecorded read makes no listing call and adds nothing to the omitted count; the boundary test pins the run service's `consent-answer/` imports by name (`isOwnerYes` plus its `consent-pending` names); a mixed mail-asked/Drive-unasked test pins no Drive body and no `withDocuments`.
+
+
+### Rule-① confirm slice CS-2 implementation note (2026-11-25)
+
+Slice CS-2 "gate" of the rule-① confirm slice (design: SR-1 rule ① and W1 to W5; CS-1a and CS-1b above). Built and unit-tested.
+The gate is composed only with `QUOKY_SUMMARY_CONSENT=on`; absent, the runtime is byte-identical (the whole existing runtime, agent and
+orchestrator test folders pass unchanged, and a runtime test pins the same routing with and without the gate when no step is pending).
+**The live effect remains none:** agent mode `active` is still refused at startup, `runActive` has no runtime dispatch and the read ports are
+empty, so even with the flag on no pending step can open and the gate only ever finds `no-pending`. No model call, no eval, no prompt,
+catalog, gold or CS-3 harness change (no D12 gate: all new text is fixed reply text).
+
+- **`ConsentTurnGate`** (`consent-answer/consent-turn-gate.ts`). Deps: the one shared store, the classifier switch (always
+  `{ mode: 'off' }`; `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` is still refused), `continueSummary(bound, { actor, direct })`, an optional
+  `voidContinuations`, `now`, a logger. One turn: (1) a channel turn leaves the step open and routes; (2) another owner step or a control
+  phrase `forfeit`s the step with NO claim and routes; (3) otherwise `answerConsentTurn` on the RAW text with the gate's `now`, then the
+  decision map: late closed token after `claim-lost` is the fixed expired line (consumed); `bound` runs `continueSummary` (a `declined`
+  result shows its fixed line and the yes stays spent, no re-open; a throw is the fixed unavailable line; a topic consent has no
+  continuation yet: the expired line); `bound` + `rerun` also returns the rerun text; `cancelled` + `consumed` is the fixed cancel line;
+  `cancelled` + `ordinary` is a silent cancel and normal routing; `reask` is the question. Any throw forfeits the step and routes (fail
+  closed). It logs one content-free `consent_gate.turn {outcome, reason}` line (closed audit codes only).
+- **Runtime** (`ConversationRuntime.handleInner`, helpers in `runtime-base.ts`). Position: after the approval expiry and override block and
+  before the kill-switch phrase, only for a composed gate. The runtime decides the two inputs the gate must not own: `control`, with the
+  EXISTING pure parsers only (`detectConversationControl`, `parseActionSwitchPhrase`, `nearMissActionSwitchPhrase`,
+  `parseSurfaceGrantPhrase`, `parseSurfaceGrantConfirm`; no word list, no regex phrase), and `ownerStepPending` (a pending approval, scope
+  clarification, enforced credential override, connector-write step or lapsed one, a channel grant pending at turn start, an open selection
+  question taken this turn, an approval expiry answered this turn). A consumed turn records the owner's turn, then the history keeps only the
+  gate's fixed note (`(확인한 항목의 요약을 전달했어요.)` / EN; never the summary); fixed lines are recorded as shown.
+- **`TurnResult.rerun`** (new optional field). A `yes-and-more` answer returns the first reply and a message `{ ...message, id: id + ':rerun',
+  text: rerunText }` without attachments, quoted ranges, formatting or reply reference (r-01 whole text; r-02 the lines after a closed yes, cut by
+  `consentRerunText`, never the classifier). `QuokyCore.handleInboundMessage` delivers the first reply, records the turn, then handles the
+  rerun ONCE as a fresh inbound turn (depth 1: a rerun turn's own `rerun` is ignored). The rerun message is marked in a runtime `WeakSet`
+  and never reaches the gate again; the step is `used`, so it cannot be answered, widened or revived (AM-2).
+- **Kill switch.** Every handled stop phrase (the A6 actions path, the agent path, the channel-grant path) calls `gate.voidAll()`: the
+  store's `voidAll` plus `AgentRunService.voidAllSummaryConsents` (the continuation records). The call is on the recognised phrase, also
+  when the save reported "unchanged" or failed, because the owner asked to stop (fail closed, a voided consent costs one re-ask). The
+  gate's control forfeit already consumes the step on the same turn.
+- **Run service.** `AgentRunService` does not open a pending step when the actor could not run its continuation: fewer than one model call
+  left in the rolling hour after the asking run (the asking run counts what its budget used, not its admission charge), or the per-actor
+  hour or day run cap already reached by the asking run (new closed reason `no-call-left`, the `consent-unavailable` line, no record, no
+  question). A decline for a transient cause after a yes still spends it (CS-1b review round 1).
+- **Composition** (`apps/quoky`). Only with `QUOKY_SUMMARY_CONSENT=on`: one `ConsentPendingStore` (provider `SUMMARY_CONSENT_STORE`), given to
+  `AgentRunService` as `consentStore` (with `recipientLabel`; both in the `active` block as before) and to the gate (provider
+  `CONSENT_TURN_GATE`, injected optionally into the runtime factory and passed as the new runtime OPTION `consentTurnGate`, not a deps key,
+  so the 38-key deps baseline is unchanged). Core index exports exactly `ConsentPendingStore`, `ConsentTurnGate` and four gate types.
+  Same clock domain: the gate's `now` and the run service's `createdAtMs` clock (`elapsed`, default) are both `Date.now`.
+- **Import boundary.** `consent-answer.boundary.test.ts`: the importers of `consent-answer/` are the three CS-1 files plus
+  `conversation-runtime/runtime-base.ts` (imports exactly `ConsentTurnGate`), `conversation-runtime/types.ts` (the type only) and
+  `application/index.ts` (named exports of the store, the gate and its types, never a star export, the answer function or the classifier);
+  `conversation-runtime.ts` and `orchestrator.ts` import nothing from it; `answerConsentTurn` has one non-test caller, the gate.
+- **Deviations (reasoned).** (a) The runtime-facing code lives in `runtime-base.ts` and `types.ts` (the gate is reached through the base
+  class), so `conversation-runtime.ts` itself stays import-free; the allowlist is by those files. (b) The gate is an option, not a deps key
+  (baseline 38). (c) `ConsentPendingStore.languageOf(scope)` (inspection only) is new, so the fixed cancel and expired lines follow the
+  step's language; without a held step the language of the reply's script (Hangul or not) is used, a structural check, not a word list.
+  (d) `ownerStepPending` also counts an open selection question and an expiry answered this turn (conservative: they consume the
+  chance), and not the long-lived apply-preview anchor. (e) The kill switch voids on the recognised stop phrase, not only on a confirmed
+  save. (f) `agentConsentFacts(message, ownerStepPending)` (conversation key and flag for `AgentActiveTurn`) exists on the runtime and is
+  tested, but has no caller until the S2 P5 dispatch builds the turn.
+- **Tests.** `consent-turn-gate.test.ts` (17, real store and answer pipeline: yes, no, `ㅇㅇ`/`ok`/`보내줘`, the 462 floor, over-caps, late
+  token, channel and other DM, forfeits, kill switch, declined and throwing continuation, non-finite clock, stub classifier
+  `yes-and-more` r-01 and r-02, `unclear` re-ask, content-free logs); `conversation-runtime-consent-gate.test.ts` (12, the real runtime and
+  `QuokyCore`: routing with and without the gate, fixed history note, control and selection-question forfeit, the stop phrase voiding,
+  rerun delivered once); orchestrator rerun tests (depth 1); the run-service `no-call-left` tests; the composition tests in
+  `agent.providers.test.ts`; the boundary test. Core `application/` runtime, consent-answer and agent folders, orchestrator tests,
+  `apps/quoky` agent, config, features and preflight tests pass; build and typecheck pass. One CS-1b test changed: the per-actor cap
+  case now reaches the cap AFTER the ask (an asking run that used the last run of the hour opens no step).
+- **Open points.** CS-3 (gold: the SR-1 corpus harness over the real service, store and gate). The A2 topic slice adds
+  `topicConsentPending` opening and `continueTopic` to the same gate. S2 P5 dispatch must build `AgentActiveTurn` with
+  `agentConsentFacts` and call `runActive` (nothing does today). The classifier switch stays off until A6-S2/A6-S4.
+
+**Review round 1 (Chief Architect P2, P3).** `isConsentControlTurn` now also ORs the existing `isExplicitTurnHandlerCommand` (model selection `모델 변경: codex` / `/model`, memory, learning, work-chat, reminder grammars), so a provider-choice or memory command forfeits the step without a claim and never reaches the classifier; a consumed turn sets `nlReplyKinds` (`question` for a re-ask, else `note`) so `quoky.lastTurn` agrees with `lastReply`; the owner-step flag is computed once per message in `consentOwnerStepPending` (a `WeakMap`) and `agentConsentFacts(message)` reads it (no recomputation for the S2 P5 caller); `ConsentPendingStore.forfeit` returns whether it dropped a step and the gate logs `forfeit` only then; tests cover the kill-switch void on the `nlSelection` and enforced `surfaceService` paths.
+
+**Review round 2 (Codex P2).** `isConsentControlTurn` also treats any `detectWorkChatCommand` hit, including the `usage` form (`할 일 추가`) that `isExplicitTurnHandlerCommand` deliberately skips, as a control turn, so it forfeits without a claim and never reaches the classifier; `isExplicitTurnHandlerCommand` itself is unchanged.
+
+**Review round 3 (Codex P2, recorded residual, not chased).** With a stub classifier that answers `yes` to everything, other
+owner requests (`브랜치 만들어줘 feat/test`, `오늘 메일 보여줘`, `오늘 일정 보여줘`; Codex also listed `피드백 요약`, which is a
+`stage = 'control'` handler and arguably a control command under A6.2) reach the classifier and a `yes`
+would continue the summary. This family hit the fix-loop cap (rounds 1–3: control phrases, explicit handler grammars, work-chat
+usage), and adding every registered grammar would turn the gate into a growing command list. The structural line stays where
+A6.2 and ARCHITECTURE.md section 12 draw it: lifecycle and control commands never reach the classifier; any other owner turn is
+an ordinary reply that the classifier must label `other` (A6.3 step 3: "a new or changed request"). Why this is not fail-open
+today: the classifier is off twice over (the composition root hard-wires `{ mode: 'off' }` and
+`QUOKY_CONSENT_ANSWER_CLASSIFIER=on` is refused at preflight), so such a turn is `classifier-off` (silent
+cancel, normal routing). Before the switch may turn on, the A6-S4 gate must show 0 non-answers captured as yes (r-03 ③); the
+A6-S4 corpus must therefore include, as non-answer cases, owner requests in every registered turn-handler grammar and ordinary
+new requests over every source (mail, Drive, calendar, branch, feedback, to-do, reminder), in both languages.
+The corpus is not the only defence: the slice that wires the classifier (before the switch may turn on) adds one structural
+rule, placed after the closed-token fast path and before the classifier call (never in `isConsentControlTurn`, which forfeits
+before the fast path and would break a closed yes a listing handler also claims): a turn that a registered handler's pure
+`surfaceClaim` claims (`chat-layer.ts` `nlHandlerClaims`) is `other`, passed into `answerConsentTurn` as a turn fact. It needs a
+gold rerun, and changes no live turn today, so it is not built here.
