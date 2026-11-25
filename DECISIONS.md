@@ -39855,7 +39855,7 @@ no evaluation was run.
   1. The card bound is 3500 characters of one message body (A7 sets none; the ADR-0112 payload text bound of 1400 stays). Platform message limits
      are not known to Core; an adapter that splits long messages may cut a card differently. Owner: confirm or choose another bound.
   2. The banner's item labels are the closed-format id and the date when the read gave one. The A5 work-source documents carry no date, so a Slack or
-     Jira item is named by its id only ("날짜 없음 <id>"); the channel is not a field of the documents. Adding date and channel to the work-source
+     Jira item is named by its id only (no date is printed); the channel is not a field of the documents. Adding date and channel to the work-source
      projection needs an A5.2 field-table change and is left to A7-S4b or later.
   3. `payload-too-large` also covers a card over the bound after the banner is added. The refusal is told with one fixed line.
   4. The proposal service closes a card whose anchor does not match the request (defence in depth, `cancelled`); it cannot normally happen.
@@ -39872,3 +39872,28 @@ no evaluation was run.
   automatic trip and the "대상이 잘못됐었나요?" question (after `active`), Slack and calendar destinations (A7-S6, A7-S7), the re-draft (A7-S9), the
   REMOTE continuation above, the real read ports for `slack.search` and `jira.*` (`createAgentReadPorts` is still empty on purpose), and the
   A7-S5 gates (CW-1 corpus, red team, drafter eval: Strict, owner notice and one yes per run).
+
+- **Review round 1 (CA and Codex, 2026-11-25).** Findings, fixes and what is recorded instead. All of it stays dormant (agent mode `active` and write proposals `active` are still refused at preflight).
+  1. *Consent not bound to the destination (Codex P2).* The `ask` outcome now carries `destination {operation, target}` and `resume` must carry it back; `runA7ProposeStep` refuses
+     `consent-mismatch` (no read, no model call, no card) when the plan's destination differs (`a7-propose.ts` right after `const key`). Test: ask for BE-123, resume with a BE-124 plan.
+  2. *Banner and count rebuilt instead of what was sent (CA P1, Codex P2).* `quarantinedDraft` returns `placed` (the ids put in the prompt, `quarantined-summary.ts` draft outcome); the banner, the
+     "[Quoky 요약] 출처: … N건" count and `sent` are built from it (`a7-propose.ts`, "Which items the draft was made from"). Tests: position gap (1,3,4) and a middle drop (empty and credential readout).
+  3. *Dropped wording (CA P2).* `AgentWriteProposalBanner.dropped` is now only the a7-06 drift (recorded ids no longer in the listing, "N건은 그 사이 바뀌어 뺐어요"); the new `omitted` carries the other cuts
+     (cap, host-only, credential, empty, budget, validation) as "N건은 초안에 넣지 않았어요" (`connector-write-copy.ts`). Audit has both counts.
+  4. *Ambiguous reply re-prompt (CA P2).* The anchor keeps the content-free card fields (`agentCard`: banner, named count, non-target tokens; the payload is the anchor's own); the pending reminder re-shows the
+     full A7 card through `composeAgentProposalPending` when `agentProposal` is set (`turn-handler-layer.ts` ambiguous branch). Non-A7 anchors take the unchanged path (a test pins no marker).
+  5. *Kill switch runtime tests (CA P2).* `conversation-runtime-connector-writes.test.ts`: `에이전트 중지` closes an open card; approve and execute are refused while stopped; control: running, one send.
+  6. *Expired cards block proposals (CA P3, Codex P2).* `openCardOf(actorId, now)`; `AgentWriteProposalService.openAnchors` skips an approval that is gone or past the 30-minute lifetime and a lapsed grant or choice, in every
+     session (also for the W2 ordinary-approval check). Test: card in session 1, 60 minutes later a BE-124 proposal in session 2 is carded.
+  7. *Stop race (CA P3).* The request carries `stillRunning`; after `flow.prepare` the service re-checks it and closes the card (`stopped`), returning `refused stopped` (`agent-write-proposal.ts`).
+  8. *Length check mismatch (CA P3).* The card as it will be shown (its own remaining time and execution phrase) is re-measured; over the bound: closed (`cancelled`) and `payload-too-large`.
+  9. *W2 and the pending rule-① consent step (CA P3).* `A7ProposeInput.ownerStepPending` (the runtime's `AgentActiveTurn.ownerStepPending`, which already includes the pending consent store) refuses `owner-step-open`
+     before any read. RECORDED for S4b: `AgentRunService.runCrossWrite` does not pass it yet; S4b's wiring MUST pass `turn.ownerStepPending` (and, for the continuation turn, the value after its own bound yes is used).
+  10. *Duplicated refusal strings (CA P3).* `renderAgentProposalRefusal` deleted; the lines live in `a7-propose.ts`.
+  11. *`askConsent` (CA P3).* Doc comment on `AgentRunServiceDeps.writeProposal`: the composition root must never set it until the S4b continuation exists; the existing pin that it is absent stays.
+  12. *Discord chunking (CA open point 1).* Chosen: lower the card bound to 1700 characters (`AGENT_PROPOSAL_CARD_MAX_CHARS`), under Discord's 1900 single-message limit with headroom for escaping of the query, so a
+      card is never chunked. Why not the other option: Discord's fence-aware chunker adds a closing and a reopening fence and a line break at a cut inside the quoted block (the payload would not be byte for byte
+      what is sent), and changing it touches every Discord reply. `adapter-discord/src/delivery.test.ts` pins that a maximal card (worst-case query, 10 items) renders as one chunk with the payload verbatim. The cost:
+      payloads over about 1000 characters are refused as "cannot be shown whole" (dormant); revisit with the real A7-S5 data. Owner FYI: the 3500 interpretation in residual 1 is superseded by 1700.
+  13. *Items without a date (CA open point 2).* The date is omitted; "날짜 없음" is no longer printed.
+- **CA rule note (not applied).** A7.7 (the `ARCHITECTURE.md` text) is ratified but NOT applied in `ARCHITECTURE.md`; it must be applied before any A7 path is reachable or the agent mode moves `off` to `shadow`.

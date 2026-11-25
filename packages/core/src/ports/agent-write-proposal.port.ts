@@ -30,10 +30,19 @@ export interface AgentWriteProposalBanner {
     readonly query?: string;
   };
   readonly items: readonly AgentWriteProposalBannerItem[];
-  /** Items that changed between the read and the draft and were left out (a7-06). */
+  /** Items the owner was asked about (or that were listed) that changed or left between the read and the draft (a7-06): left out. */
   readonly dropped: number;
+  /** Other items left out of the draft (the item cap, host-only or empty readouts, a credential-shaped item, the input budget): NOT drift. */
+  readonly omitted: number;
   /** Where the drafter ran: `LOCAL` (this computer) or `REMOTE` with the recipient's display name. */
   readonly drafter: { readonly locality: 'LOCAL' | 'REMOTE'; readonly operator?: string };
+}
+
+/** The content-free fields of a card besides the payload text and the destination (kept on the anchor for the re-shown card). */
+export interface AgentProposalCardFields {
+  readonly banner: AgentWriteProposalBanner;
+  readonly named: number;
+  readonly nonTargets: readonly string[];
 }
 
 export interface AgentWriteProposalRequest {
@@ -51,6 +60,11 @@ export interface AgentWriteProposalRequest {
   /** Destination-shaped tokens inside the payload that are not the destination (see {@link destinationShapedKeys}). */
   readonly nonTargets: readonly string[];
   readonly now: IsoTimestamp;
+  /**
+   * The persisted kill switch, re-read after the card is prepared (review round 1, CA P3): a stop that lands between the last check and
+   * the card closes the card ('stopped'). Absent: not checked here.
+   */
+  readonly stillRunning?: () => Promise<boolean>;
 }
 
 /** Why no card was made (closed values; the owner is told with a fixed line, nothing was sent). */
@@ -66,6 +80,8 @@ export type AgentWriteProposalRefusal =
   | 'too-many-lines'
   /** Another owner step (an ordinary connector-write approval) is open (W2): nothing is carded. */
   | 'owner-step-open'
+  /** The kill switch was stopped while the card was being made: it was closed. */
+  | 'stopped'
   | 'unavailable';
 
 export type AgentWriteProposalResult =
@@ -75,8 +91,8 @@ export type AgentWriteProposalResult =
   | { readonly kind: 'wait-open-card'; readonly openTarget: string };
 
 export interface AgentWriteProposalPort {
-  /** The destination of this owner's open A7 card, if one is open (checked BEFORE anything is read or drafted). */
-  openCardOf(actorId: Id): Promise<{ readonly cardId: Id; readonly target: string } | undefined>;
+  /** The destination of this owner's open A7 card, if one is open (checked BEFORE anything is read or drafted). A card whose approval or grant has lapsed at `now` is not open. */
+  openCardOf(actorId: Id, now: IsoTimestamp): Promise<{ readonly cardId: Id; readonly target: string } | undefined>;
   propose(request: AgentWriteProposalRequest): Promise<AgentWriteProposalResult>;
 }
 

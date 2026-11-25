@@ -35,6 +35,8 @@ export type A7ProposeRefusalReason =
   | 'stopped'
   | 'bound'
   | 'read-failed'
+  /** A resumed consent was asked for another destination than this plan's: nothing was read or sent. */
+  | 'consent-mismatch'
   | AgentWriteProposalRefusal
   | QuarantinedListingOnlyReason
   /** The draft was refused (`schema`, `credential`, `participants`, `link`, `size`, `spoof`) or the model failed. */
@@ -44,11 +46,25 @@ export type A7ProposeOutcome =
   /** The card (the port made the ADR-0112 anchor): show it to the owner. */
   | { readonly kind: 'carded'; readonly card: MessageBody; readonly cardId: Id }
   /** Rule ①: the question to show; nothing was fetched, drafted or carded. */
-  | { readonly kind: 'ask'; readonly question: string; readonly run: SummaryRunToken; readonly itemIds: readonly string[]; readonly recipient: string }
+  | {
+      readonly kind: 'ask';
+      readonly question: string;
+      readonly run: SummaryRunToken;
+      readonly itemIds: readonly string[];
+      readonly recipient: string;
+      /** The destination the question named: the consent is bound to it (review round 1, Codex P2). */
+      readonly destination: A7ConsentDestination;
+    }
   /** A7.4c item 3: another A7 card is open; nothing was read or drafted. `text` is the fixed wait line. */
   | { readonly kind: 'wait'; readonly text: string }
   /** No card: the closed reason and the fixed line to show. */
   | { readonly kind: 'refused'; readonly reason: A7ProposeRefusalReason; readonly text: string };
+
+/** What a rule-① consent of an A7 draft is bound to besides the run, the step and the items: the operation and the target it named. */
+export interface A7ConsentDestination {
+  readonly operation: 'jira-comment';
+  readonly target: string;
+}
 
 export interface A7ProposeDeps {
   readonly proposal: AgentWriteProposalPort;
@@ -70,7 +86,20 @@ export interface A7ProposeInput {
   /** The persisted kill switch; re-read before the read and again right before the card. */
   readonly stillRunning?: () => Promise<boolean>;
   /** A rule-① re-run after the owner's yes: the run token, the consent token and the ids the owner was asked about. */
-  readonly resume?: { readonly run: SummaryRunToken; readonly consent: SummaryConsentToken; readonly recorded: readonly string[]; readonly recipient: string };
+  readonly resume?: {
+    readonly run: SummaryRunToken;
+    readonly consent: SummaryConsentToken;
+    readonly recorded: readonly string[];
+    readonly recipient: string;
+    /** The destination of the `ask` outcome this consent answers; a plan with another destination refuses (no read, no call). */
+    readonly destination: A7ConsentDestination;
+  };
+  /**
+   * Whether another owner step (an approval, a pending consent step of the rule-① store) is open for this owner (W2; the runtime's
+   * `AgentActiveTurn.ownerStepPending`). True: no card is made. The S4b continuation must pass the value for the turn AFTER its own
+   * bound yes was used.
+   */
+  readonly ownerStepPending?: boolean;
 }
 
 /** The step number of the synthetic draft step a consent token and a grant are bound to. */
@@ -127,9 +156,15 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     }
     const key = destination.issueKey;
     audit.sourceEntry = read.entry.id;
+    // Review round 1 (Codex P2): a consent is for the destination the owner was asked about. A different one: nothing is read or sent.
+    if (input.resume !== undefined && (input.resume.destination.operation !== 'jira-comment' || input.resume.destination.target !== key)) {
+      return refuse('consent-mismatch', NOT_MADE[language], { consent: 'mismatch' });
+    }
+    // W2: another owner step (including a pending rule-① consent step) is open: no card, nothing read.
+    if (input.ownerStepPending === true) return refuse('owner-step-open', OWNER_STEP[language], { consent: 'not-asked' });
 
     // A7.4c item 3: one open A7 card per owner. Nothing is read or drafted while one is open.
-    const open = await deps.proposal.openCardOf(input.actorId);
+    const open = await deps.proposal.openCardOf(input.actorId, input.now);
     if (open !== undefined) return done({ kind: 'wait', text: renderA7WaitLine(language, open.target, key) }, 'wait-open-card', { consent: 'not-asked' });
 
     // The owner's summary request, judged by the SAME producer as every summary, over the synthetic plan [read, draft] this step is
@@ -145,7 +180,7 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     if (sourced.kind === 'consent-needed') {
       const question = renderDraftConsentQuestion({ language, recipient: sourced.recipient, source: sourced.source, count: sourced.itemIds.length, destination: key });
       if (question === '') return refuse('no-model', NOT_MADE[language], { consent: 'unavailable' });
-      return done({ kind: 'ask', question, run: sourced.run, itemIds: sourced.itemIds, recipient: sourced.recipient }, 'consent-asked', { consent: 'asked', items: sourced.itemIds.length });
+      return done({ kind: 'ask', question, run: sourced.run, itemIds: sourced.itemIds, recipient: sourced.recipient, destination: { operation: 'jira-comment', target: key } }, 'consent-asked', { consent: 'asked', items: sourced.itemIds.length });
     }
     if (sourced.kind === 'not-run') return refuse(sourced.reason === 'stopped' ? 'stopped' : 'bound', sourced.reason === 'stopped' ? STOPPED[language] : NOT_MADE[language], { consent: 'not-asked' });
     if (sourced.kind === 'failed') return refuse('read-failed', NOT_MADE[language], { consent: 'not-asked' });
@@ -170,12 +205,13 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     if (outcome.kind === 'bound') return refuse('bound', NOT_MADE[language], { consent });
     if (outcome.kind === 'failed') return refuse('draft-refused', NOT_MADE[language], { consent, draftFailure: outcome.reason });
 
-    // Which items the draft was made from (structure only): the admitted documents minus those the budget fit dropped from the end.
-    const cap = Math.min(source.asked ?? source.documents.length, source.documents.length);
-    const admitted = source.documents.filter((document) => document.position <= cap);
-    const lost = Math.max(0, outcome.omitted - (source.dropped ?? 0) - (source.documents.length - admitted.length));
-    const sent = admitted.slice(0, Math.max(0, admitted.length - lost));
+    // Which items the draft was made from: exactly the ids the drafter placed in its prompt (structure only), never rebuilt here.
+    const placedIds = new Set(outcome.placed);
+    const sent = source.documents.filter((document) => placedIds.has(document.id));
     if (sent.length === 0) return refuse('no-documents', NOT_MADE[language], { consent });
+    // The a7-06 drift: items the owner was asked about (recorded) that are no longer in the listing. Not the other cuts.
+    const present = new Set(source.documents.map((document) => document.id));
+    const drift = input.resume !== undefined ? input.resume.recorded.filter((id) => !present.has(id)).length : 0;
     const draft = outcome.draft;
 
     // The exact payload (A7.5 step 6): the fixed provenance line, then the drafter's final lines. The hash covers these bytes only.
@@ -184,11 +220,13 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     const banner: AgentWriteProposalBanner = {
       source: { entryId: source.entryId, ...(query !== undefined ? { query } : {}) },
       items: sent.map((document) => ({ id: document.id, ...(dateOf(document.date) !== undefined ? { date: dateOf(document.date) as string } : {}) })),
-      dropped: outcome.omitted,
+      dropped: drift,
+      omitted: outcome.omitted,
       drafter: draft.locality === 'LOCAL' ? { locality: 'LOCAL' } : { locality: 'REMOTE', ...(input.resume !== undefined ? { operator: input.resume.recipient } : {}) },
     };
     audit.items = sent.length;
-    audit.dropped = outcome.omitted;
+    audit.dropped = drift;
+    audit.omitted = outcome.omitted;
     audit.drafterLocality = draft.locality;
     audit.consent = consent;
 
@@ -207,10 +245,18 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       named: draft.named,
       nonTargets: destinationShapedKeys(payloadText, key),
       now: input.now,
+      ...(input.stillRunning !== undefined ? { stillRunning: input.stillRunning } : {}),
     });
     if (result.kind === 'wait-open-card') return done({ kind: 'wait', text: renderA7WaitLine(language, result.openTarget, key) }, 'wait-open-card');
     if (result.kind === 'refused') {
-      const text = result.reason === 'payload-too-large' || result.reason === 'too-many-lines' ? TOO_LONG[language] : result.reason === 'owner-step-open' ? OWNER_STEP[language] : NOT_MADE[language];
+      const text =
+        result.reason === 'payload-too-large' || result.reason === 'too-many-lines'
+          ? TOO_LONG[language]
+          : result.reason === 'owner-step-open'
+            ? OWNER_STEP[language]
+            : result.reason === 'stopped'
+              ? STOPPED[language]
+              : NOT_MADE[language];
       return refuse(result.reason, text);
     }
     return done({ kind: 'carded', card: result.card, cardId: result.cardId }, 'carded');

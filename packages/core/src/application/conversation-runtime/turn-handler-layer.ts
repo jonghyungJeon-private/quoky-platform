@@ -1005,12 +1005,19 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
           return this.respondActionStoppedAnchor(message, session, actor, view);
         }
         if (decision === 'ambiguous') {
-          const reply = this.deps.composer.composeConnectorWritePending(
-            message.context,
-            anchor.preview,
-            this.remainingMs(approval),
-            phrase,
-          );
+          // ADR-0121 A7 (review round 1): an agent proposal re-shows its own card (marker, banner, non-target lines), never the plain preview.
+          const reply =
+            anchor.agentProposal === true && anchor.agentCard !== undefined && anchor.preview.operation === 'ISSUE_COMMENT'
+              ? this.deps.composer.composeAgentProposalPending(message.context, {
+                  issueKey: anchor.preview.issueKey,
+                  text: anchor.preview.text,
+                  banner: anchor.agentCard.banner,
+                  named: anchor.agentCard.named,
+                  nonTargets: anchor.agentCard.nonTargets,
+                  remainingMs: this.remainingMs(approval),
+                  executionPhrase: phrase,
+                })
+              : this.deps.composer.composeConnectorWritePending(message.context, anchor.preview, this.remainingMs(approval), phrase);
           const reminded = await this.respondConnectorWrite(message, session, reply, 'AWAITING_APPROVAL', history);
           // ADR-0113 D7: the reference line rides the reminder only while the operations UI is on (history unchanged).
           return {

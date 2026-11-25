@@ -27,6 +27,7 @@ const BANNER: AgentWriteProposalBanner = {
   source: { entryId: 'slack.search', query: '릴리즈' },
   items: [{ id: 'C0AA.111', date: '2026-11-20' }, { id: 'C0AA.222' }],
   dropped: 1,
+  omitted: 0,
   drafter: { locality: 'LOCAL' },
 };
 
@@ -183,7 +184,9 @@ describe('the A7 card (A7.5 step 7), over the real ADR-0112 flow', () => {
     expect(card).toContain('검색어 ');
     expect(card).toContain('릴리즈');
     expect(card).toContain('1) 2026-11-20 C0AA.111');
-    expect(card).toContain('2) 날짜 없음 C0AA.222');
+    expect(card).toContain('2) C0AA.222');
+    expect(card).not.toContain('날짜 없음');
+    expect(card).not.toContain('초안에 넣지 않았어요');
     expect(card).toContain('1건은 그 사이 바뀌어 뺐어요');
     expect(card).toContain('초안 작성: 이 컴퓨터의 모델');
     expect(card).toContain('초안에 실제 이름 1명이 들어 있어요');
@@ -236,14 +239,14 @@ describe('the A7 card (A7.5 step 7), over the real ADR-0112 flow', () => {
     const h = harness();
     const first = await h.service.propose(h.request());
     expect(first).toMatchObject({ kind: 'carded' });
-    expect(await h.service.openCardOf(OWNER.id)).toMatchObject({ target: KEY });
+    expect(await h.service.openCardOf(OWNER.id, T0)).toMatchObject({ target: KEY });
     expect(await h.service.propose(h.request({ target: { issueKey: 'BE-124' } }))).toEqual({ kind: 'wait-open-card', openTarget: KEY });
     expect(await h.service.propose(h.request())).toEqual({ kind: 'wait-open-card', openTarget: KEY });
     expect(await h.service.propose(h.request({ sessionId: 'sess-2', target: { issueKey: 'BE-124' } }))).toEqual({ kind: 'wait-open-card', openTarget: KEY });
     // A decline closes it; the next proposal cards.
     const view = await h.flow.find(h.session());
     await h.flow.close(h.session(), view as NonNullable<typeof view>, 'denied', T0);
-    expect(await h.service.openCardOf(OWNER.id)).toBeUndefined();
+    expect(await h.service.openCardOf(OWNER.id, T0)).toBeUndefined();
     expect((await h.service.propose(h.request({ target: { issueKey: 'BE-124' } }))).kind).toBe('carded');
   });
 
@@ -286,6 +289,65 @@ describe('the A7 card (A7.5 step 7), over the real ADR-0112 flow', () => {
     const view = await h.flow.find(h.session());
     expect(view?.anchor.agentProposal).toBeUndefined();
     expect(isActionSwitchGoverned(view?.anchor as NonNullable<typeof view>['anchor'])).toBe(false);
+  });
+});
+
+describe('review round 1: expiry, stop race, shown length, re-shown card', () => {
+  const LATER = '2026-11-25T02:00:00.000Z'; // 60 minutes after T0, past the 30-minute lifetime
+
+  it('an expired card of another session does not block the next proposal (the lapsed card is not open)', async () => {
+    const h = harness();
+    expect((await h.service.propose(h.request())).kind).toBe('carded');
+    // Still inside the lifetime: it blocks.
+    expect(await h.service.openCardOf(OWNER.id, T0)).toMatchObject({ target: KEY });
+    // Past the lifetime: no open card, and a proposal for another destination in another session is carded.
+    expect(await h.service.openCardOf(OWNER.id, LATER)).toBeUndefined();
+    const next = await h.service.propose(h.request({ sessionId: 'sess-2', target: { issueKey: 'BE-124' }, now: LATER }));
+    expect(next.kind).toBe('carded');
+  });
+
+  it('an expired ordinary approval does not count as an open owner step either', async () => {
+    const h = harness();
+    await h.flow.prepare({ session: h.session(), actor: OWNER, now: T0, draft: { kind: 'issue-comment', issueKey: KEY, text: '직접 쓴 댓글' } });
+    expect(await h.service.propose(h.request({ sessionId: 'sess-2' }))).toEqual({ kind: 'refused', reason: 'owner-step-open' });
+    expect((await h.service.propose(h.request({ sessionId: 'sess-2', now: LATER }))).kind).toBe('carded');
+  });
+
+  it('a stop that lands after the card is prepared closes the card (stopped) and returns a closed result', async () => {
+    const h = harness();
+    const result = await h.service.propose(h.request({ stillRunning: async () => false }));
+    expect(result).toEqual({ kind: 'refused', reason: 'stopped' });
+    const view = await h.flow.find(h.session());
+    expect(view === null || view.anchor.status === 'CLOSED' || view.anchor.closedReason === 'stopped').toBe(true);
+    expect(await h.service.openCardOf(OWNER.id, T0)).toBeUndefined();
+    expect(h.sent).toHaveLength(0);
+  });
+
+  it('the bound applies to the card as shown: an over-long banner is refused and no approval is left open', async () => {
+    const h = harness();
+    const wide: AgentWriteProposalBanner = { ...BANNER, items: Array.from({ length: 10 }, (_, index) => ({ id: `C0AA.${String(index).padStart(120, '9')}` })) };
+    const result = await h.service.propose(h.request({ banner: wide, payloadText: '가'.repeat(500) }));
+    expect(result).toEqual({ kind: 'refused', reason: 'payload-too-large' });
+    expect(await h.service.openCardOf(OWNER.id, T0)).toBeUndefined();
+  });
+
+  it('keeps the content-free card fields on the anchor, and a card shown within the bound stays within it', async () => {
+    const h = harness();
+    const request = h.request();
+    const result = await h.service.propose(request);
+    if (result.kind !== 'carded') throw new Error('no card');
+    const anchor = (await h.flow.find(h.session()))?.anchor;
+    expect(anchor?.agentCard).toEqual({ banner: request.banner, named: request.named, nonTargets: request.nonTargets });
+    expect(Array.from(textOf(result.card)).length).toBeLessThanOrEqual(1700);
+  });
+
+  it('shows other cuts neutrally, separate from the drift line', async () => {
+    const h = harness();
+    const result = await h.service.propose(h.request({ banner: { ...BANNER, dropped: 0, omitted: 3 } }));
+    if (result.kind !== 'carded') throw new Error('no card');
+    const card = textOf(result.card);
+    expect(card).toContain('3건은 초안에 넣지 않았어요');
+    expect(card).not.toContain('그 사이 바뀌어');
   });
 });
 

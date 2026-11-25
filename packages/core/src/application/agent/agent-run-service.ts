@@ -224,6 +224,8 @@ export interface AgentRunServiceDeps {
    * connector writes enabled. Absent (the default): a validated A7 plan stays `cross-write-off`, exactly as before. `askConsent`
    * lets a draft that would go to a `REMOTE` model ask its rule-① question; the pending-step continuation of an A7 draft is A7-S4b,
    * so without it a `REMOTE` draft is never allowed (LOCAL only).
+   * The composition root must NEVER set `askConsent` until that S4b continuation exists (a question with no way to answer it would leave
+   * a dead pending step); a test pins that it is absent.
    */
   readonly writeProposal?: { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly askConsent?: boolean };
   /**

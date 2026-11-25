@@ -1,4 +1,4 @@
-import type { Actor, Id, Session } from '../../domain';
+import type { Actor, Id, IsoTimestamp, Session } from '../../domain';
 import { SessionStatus } from '../../domain';
 import {
   AGENT_WRITE_PROPOSAL_MAX_LINES,
@@ -12,7 +12,7 @@ import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import { plainTextOf } from '../message-rendering';
 import { AGENT_PROPOSAL_CARD_MAX_CHARS, renderAgentProposalCard } from './connector-write-copy';
 import { CONNECTOR_WRITE_ISSUE_KEY } from './connector-write-draft';
-import { connectorWriteExecutionGate, type ConnectorWriteFlow, type ConnectorWriteRefusal } from './connector-write-flow';
+import { connectorWriteExecutionGate, isConnectorWriteAnchorLapsed, type ConnectorWriteFlow, type ConnectorWriteRefusal } from './connector-write-flow';
 import { documentedExecutionPhrase } from '../execution-command-guard';
 
 /**
@@ -41,8 +41,8 @@ const OPEN_STATUSES = new Set(['AWAITING_CHOICE', 'APPROVAL_PENDING', 'APPROVED'
 export class AgentWriteProposalService implements AgentWriteProposalPort {
   constructor(private readonly deps: AgentWriteProposalServiceDeps) {}
 
-  async openCardOf(actorId: Id): Promise<{ readonly cardId: Id; readonly target: string } | undefined> {
-    const open = await this.openAnchors(actorId);
+  async openCardOf(actorId: Id, now: IsoTimestamp): Promise<{ readonly cardId: Id; readonly target: string } | undefined> {
+    const open = await this.openAnchors(actorId, now);
     return open.card;
   }
 
@@ -54,7 +54,7 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
     }
   }
 
-  private async openAnchors(actorId: Id): Promise<{ card?: { cardId: Id; target: string }; otherOpen: boolean }> {
+  private async openAnchors(actorId: Id, now: IsoTimestamp): Promise<{ card?: { cardId: Id; target: string }; otherOpen: boolean }> {
     const flow = this.deps.flow;
     if (flow.openAnchorsOf === undefined) return { otherOpen: true };
     let card: { cardId: Id; target: string } | undefined;
@@ -62,6 +62,10 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
     for (const { view } of await flow.openAnchorsOf(actorId)) {
       const anchor = view.anchor;
       if (!OPEN_STATUSES.has(anchor.status)) continue;
+      // Review round 1 (CA P3, Codex P2): a card whose approval has lapsed or is gone, or a grant past its lifetime, is not open
+      // (in any session): it must not block the next proposal.
+      if (anchor.status === 'APPROVAL_PENDING' && (view.approval === null || approvalLapsed(anchor.createdAt, now))) continue;
+      if (isConnectorWriteAnchorLapsed(anchor, now)) continue;
       if (anchor.agentProposal === true && anchor.approvalId !== undefined && anchor.target !== undefined) card ??= { cardId: anchor.approvalId, target: anchor.target };
       else otherOpen = true;
     }
@@ -78,7 +82,7 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
     // The writer sends one paragraph per line (a plain ADF text node each): a rendered line is a payload line, nothing more.
     if (text.split('\n').length > AGENT_WRITE_PROPOSAL_MAX_LINES) return refused('too-many-lines');
 
-    const open = await this.openAnchors(request.actorId);
+    const open = await this.openAnchors(request.actorId, request.now);
     if (open.card !== undefined) return { kind: 'wait-open-card', openTarget: open.card.target };
     if (open.otherOpen) return refused('owner-step-open');
 
@@ -93,8 +97,9 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
     const cardInput = { issueKey: key, text, banner: request.banner, named: request.named, nonTargets: request.nonTargets, executionPhrase };
     const probe = plainTextOf(renderAgentProposalCard({ ...cardInput, remainingMs: PENDING_APPROVAL_TTL_MS }));
     if (Array.from(probe).length > AGENT_PROPOSAL_CARD_MAX_CHARS) return refused('payload-too-large');
+    const cardFields = { banner: request.banner, named: request.named, nonTargets: request.nonTargets };
 
-    const step = await this.deps.flow.prepare({ session, actor, now: request.now, agentProposal: true, draft });
+    const step = await this.deps.flow.prepare({ session, actor, now: request.now, agentProposal: true, agentCard: cardFields, draft });
     if (step.kind === 'writes-off') return refused('writes-off');
     if (step.kind === 'refused') return refused(refusalOf(step.reason));
     if (step.kind !== 'preview') return refused('unavailable');
@@ -119,6 +124,16 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
       return refused('unavailable');
     }
     const card = renderAgentProposalCard({ ...cardInput, remainingMs: step.remainingMs, executionPhrase: step.executionPhrase });
+    // The kill switch, once more, now that the card exists (review round 1, CA P3): a stop that landed meanwhile closes the card.
+    if (request.stillRunning !== undefined && !(await request.stillRunning().catch(() => false))) {
+      await this.deps.flow.close(live, view, 'stopped', request.now).catch(() => undefined);
+      return refused('stopped');
+    }
+    // The card as it will be SHOWN (its own remaining time and execution phrase) must fit whole too (review round 1, CA P3).
+    if (Array.from(plainTextOf(card)).length > AGENT_PROPOSAL_CARD_MAX_CHARS) {
+      await this.deps.flow.close(live, view, 'cancelled', request.now).catch(() => undefined);
+      return refused('payload-too-large');
+    }
     this.log('a7_card.carded', { operation: 'ISSUE_COMMENT', approvalId: step.approval.id });
     return { kind: 'carded', cardId: step.approval.id, card, payloadSha256: anchor.payloadSha256 };
   }
@@ -130,6 +145,11 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
       // best-effort
     }
   }
+}
+
+function approvalLapsed(since: IsoTimestamp, now: IsoTimestamp): boolean {
+  const start = Date.parse(since);
+  return !Number.isFinite(start) || Date.parse(now) - start >= PENDING_APPROVAL_TTL_MS;
 }
 
 function refusalOf(reason: ConnectorWriteRefusal): AgentWriteProposalRefusal {

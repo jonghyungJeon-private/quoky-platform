@@ -10,7 +10,8 @@ import {
   wrapDiffPart,
   type PreviewSenders,
 } from './delivery';
-import { buildCanonicalDiff, type PreviewArtifact } from '@quoky/core';
+import { AGENT_PROPOSAL_CARD_MAX_CHARS, buildCanonicalDiff, plainTextOf, renderAgentProposalCard, type PreviewArtifact } from '@quoky/core';
+import { renderDiscordContent } from './rendering';
 
 describe('chunkText', () => {
   it('returns [] for empty and a single chunk for short text', () => {
@@ -446,5 +447,25 @@ describe('wrapDiffPart (F5-C)', () => {
   it('single part → no [n/m] prefix; multi part → [n/m]; always a valid fenced block', () => {
     expect(wrapDiffPart('+a\n', 1, 1)).toBe('```diff\n+a\n```');
     expect(wrapDiffPart('+a\n', 2, 3)).toBe('[2/3]\n```diff\n+a\n```');
+  });
+});
+
+describe('A7 agent proposal card (ADR-0121 A7-S4a, review round 1): one message, never chunked', () => {
+  it('a card at the Core bound, with the worst-case escaped query and a full item list, renders as ONE Discord chunk with the payload byte for byte', () => {
+    const query = '*_~|>[]`@<'.repeat(8);
+    const items = Array.from({ length: 10 }, (_, index) => ({ id: `C0AA.${String(index).padStart(15, '9')}`, date: '2026-11-20' }));
+    const banner = { source: { entryId: 'slack.search', query }, items, dropped: 1, omitted: 1, drafter: { locality: 'REMOTE' as const, operator: 'Remote Co' } };
+    // The longest payload whose card still fits the bound: grow the last line until the plain card is at the bound.
+    let tail = 0;
+    const card = (n: number) => renderAgentProposalCard({ issueKey: 'BE-123', text: ['[Quoky 요약] 출처: Slack 메시지 10건', '가'.repeat(n)].join('\n'), banner, named: 2, nonTargets: ['BE-999', 'BE-998'], remainingMs: 1_800_000, executionPhrase: '댓글 실행' });
+    while (Array.from(plainTextOf(card(tail + 1))).length <= AGENT_PROPOSAL_CARD_MAX_CHARS) tail += 1;
+    const body = card(tail);
+    const text = ['[Quoky 요약] 출처: Slack 메시지 10건', '가'.repeat(tail)].join('\n');
+    const rendered = renderDiscordContent(body);
+    expect(Array.from(plainTextOf(body)).length).toBeLessThanOrEqual(AGENT_PROPOSAL_CARD_MAX_CHARS);
+    expect(rendered.length).toBeLessThanOrEqual(DISCORD_SAFE_LIMIT);
+    const chunks = chunkText(rendered);
+    expect(chunks).toEqual([rendered]);
+    expect(chunks[0]).toContain(`\`\`\`\n${text}\n\`\`\``);
   });
 });
