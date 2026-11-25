@@ -99,9 +99,11 @@ export abstract class ConversationRuntimeBase {
   protected readonly nlShownItems = new BoundedShownItems();
   /** A6 R5a: who and where each turn is (and its SHORT_TERM user record), for `quoky.lastTurn`. */
   protected readonly nlTurnFacts = new WeakMap<InboundMessage, { readonly sessionId: Id; readonly actorId: Id; readonly memoryId?: Id }>();
-  /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
+  /** CS-2: an explicit turn-handler command (model choice, memory, learning, reminder, work chat) never answers a consent step. */
   protected abstract isExplicitTurnHandlerCommand(text: string): boolean;
+  /** CS-2: whether another owner step is open for this turn, computed once and read by the gate and `agentConsentFacts`. */
   protected readonly consentOwnerSteps = new WeakMap<InboundMessage, boolean>();
+  /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
   protected readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
   /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
   protected readonly nlDeicticPrefix = new WeakMap<InboundMessage, string>();
