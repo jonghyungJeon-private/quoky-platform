@@ -27,6 +27,11 @@ export const CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION = 'consent-answer.v1';
 /** The bound of the call (A6.3 step 4, as the D4 help-scope classifier). */
 export const CONSENT_CLASSIFIER_TIMEOUT_MS = 10_000;
 
+/** A `timeoutMs` override may only shorten the bound: min(override, 10 s); a non-finite, zero or negative one falls back to 10 s. */
+function effectiveTimeoutMs(override: number | undefined): number {
+  return override !== undefined && Number.isFinite(override) && override > 0 ? Math.min(override, CONSENT_CLASSIFIER_TIMEOUT_MS) : CONSENT_CLASSIFIER_TIMEOUT_MS;
+}
+
 /** The placeholders that stand for item-derived values (A6.4). */
 export const CONSENT_COUNT_PLACEHOLDER = '{개수}';
 export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
@@ -45,6 +50,7 @@ export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' |
   }
   // A closed set (`CONSENT_SOURCES`): a value outside it never becomes question text (the producer refuses it; this is the second guard).
   const noun = (pending.sources ?? []).filter(isConsentSource).join(', ');
+  if (noun === '') return '';
   return ko
     ? `${noun} ${CONSENT_COUNT_PLACEHOLDER}건을 ${pending.recipient}에 보내 요약할까요? (응/아니)`
     : `Shall I send ${CONSENT_COUNT_PLACEHOLDER} ${noun} item(s) to ${pending.recipient} to summarise them? (yes/no)`;
@@ -127,12 +133,14 @@ export interface ConsentClassifierDeps {
  * malformed output) is `unclear`; nothing here can return `yes` except a clean `{"label":"yes"}`. It never logs or returns the reply.
  */
 export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Classifier {
-  const timeoutMs = deps.timeoutMs ?? CONSENT_CLASSIFIER_TIMEOUT_MS;
+  const timeoutMs = effectiveTimeoutMs(deps.timeoutMs);
   return async (request) => {
     // Nothing credential-shaped leaves the process, as the reply the prompt quotes (tags blanked) and as received.
     const prompt = buildConsentClassifierPrompt(request);
     if (containsCredentialMaterial(request.reply) || containsCredentialMaterial(prompt)) return 'unclear';
     if (deps.chatProviderId === undefined) return 'unclear';
+    // No valid source left after filtering: the question would be malformed, so nothing is sent.
+    if (request.question === '') return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     // The bound starts before provider selection and covers it, then the call (a stalled select is `unclear` too).

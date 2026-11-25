@@ -1,3 +1,5 @@
+import { AGENT_WORK_SUMMARY_SOURCES } from '../agent/flow-policy';
+
 /**
  * ADR-0121 A6: the closed vocabulary shared by the answer pipeline (`consent-answer.ts`), the pending steps
  * (`consent-pending.ts`) and the classifier (`consent-classifier.ts`), kept apart so none of them imports another in a cycle.
@@ -12,7 +14,7 @@ export type ConsentAnswerLabel = (typeof CONSENT_ANSWER_LABELS)[number];
  * whose content a summary can be granted for (`REMOTE_ON_SUMMARY_REQUEST`: mail, Drive; the five work sources, A5-S3). Anything
  * else is refused when the pending step is minted, so no free text reaches the classifier question.
  */
-export const CONSENT_SOURCES = ['mail', 'drive', 'calendar', 'jira', 'slack', 'confluence', 'github'] as const;
+export const CONSENT_SOURCES = ['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES] as const;
 export type ConsentSource = (typeof CONSENT_SOURCES)[number];
 
 export function isConsentSource(value: unknown): value is ConsentSource {

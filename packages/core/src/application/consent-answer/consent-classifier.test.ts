@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Capability } from '../../domain';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
-import { CONSENT_ANSWER_LABELS } from './consent-labels';
+import { AGENT_WORK_SUMMARY_SOURCES } from '../agent/flow-policy';
+import { CONSENT_ANSWER_LABELS, CONSENT_SOURCES } from './consent-labels';
 import {
   CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION,
   CONSENT_CLASSIFIER_TIMEOUT_MS,
@@ -186,5 +187,43 @@ describe('A6-S2 adapter', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a timeoutMs override above 10 s is capped: a provider answering at 10.5 s is unclear', async () => {
+    vi.useFakeTimers();
+    try {
+      const slow = provider(() => new Promise((resolve) => setTimeout(() => resolve({ text: '{"label":"yes"}' }), 10_500)));
+      const pending = classifierOf(async () => slow, { timeoutMs: 11_000 })(request);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(await pending).toBe('unclear');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('a bad override %s falls back to the 10 s bound', async (bad) => {
+    vi.useFakeTimers();
+    try {
+      const slow = provider(() => new Promise((resolve) => setTimeout(() => resolve({ text: '{"label":"yes"}' }), 10_500)));
+      const pending = classifierOf(async () => slow, { timeoutMs: bad })(request);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(await pending).toBe('unclear');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an empty filtered source list is unclear without a call', async () => {
+    const execute = vi.fn(async (_request: AiRequest) => ({ text: '{"label":"yes"}' }));
+    const bad = { ...summary(), sources: ['bogus'] } as unknown as ReturnType<typeof summary>;
+    const req = buildConsentClassifierRequest(bad, 'ok');
+    expect(await classifierOf(async () => provider(execute))(req)).toBe('unclear');
+    expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('A6-S2 closed sources', () => {
+  it('CONSENT_SOURCES is mail, drive and exactly AGENT_WORK_SUMMARY_SOURCES', () => {
+    expect([...CONSENT_SOURCES]).toEqual(['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES]);
   });
 });
