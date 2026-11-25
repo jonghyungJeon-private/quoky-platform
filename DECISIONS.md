@@ -39297,3 +39297,5 @@ all new text is fixed reply text).
 - **For CS-2 (CA advice).** A decline for a transient cause (cap, not-active, kill switch) still SPENDS the yes: fail closed, no
   re-open, because a second answer window would break W2/W3 "once". Instead CS-2 must NOT open the pending step when the actor has
   fewer than one model call left in the rolling hour after the asking run.
+
+**Review round 2 (P3).** The continuation re-run steps now come from `record.reads` (plus reference ancestors), not every covered read, so an unrecorded read makes no listing call and adds nothing to the omitted count; the boundary test pins the run service's `consent-answer/` imports by name (`isOwnerYes` plus its `consent-pending` names); a mixed mail-asked/Drive-unasked test pins no Drive body and no `withDocuments`.

@@ -365,6 +365,10 @@ function remoteProvider(id = 'remote-a'): AiProvider & { readonly requests: AiRe
     execute: async (request) => (requests.push(request), { text: '{"items":[{"n":1,"summary":"A short summary."},{"n":2,"summary":"Another."}]}' }),
   };
 }
+function oneItemProvider(): AiProvider & { readonly requests: AiRequest[] } {
+  const provider = remoteProvider();
+  return Object.assign(provider, { execute: async (request: AiRequest) => (provider.requests.push(request), { text: '{"items":[{"n":1,"summary":"A short summary."}]}' }) });
+}
 function listingPort(entry: 'mail' | 'drive', ids: readonly string[]): AgentReadPort & { readonly requests: AgentReadRequest[] } {
   const requests: AgentReadRequest[] = [];
   return {
@@ -388,7 +392,7 @@ describe('CS-1b executor continuation: REMOTE end to end through the executor (r
   it('only the continuation steps run; the rest is not-run (continuation); mail and Drive go REMOTE in parallel under the token', async () => {
     setSummaryGrantsForTest(() => true);
     try {
-      const provider = remoteProvider();
+      const provider = oneItemProvider();
       const mail = listingPort('mail', ['m1', 'm2']);
       const drive = listingPort('drive', ['file-aaaa1']);
       const other = listingPort('mail', ['x1']);
@@ -484,6 +488,45 @@ describe('CS-1b review round 1: summary inputs come only from the recorded reads
       expect(provider.requests).toHaveLength(0);
       expect(drive.requests[0]?.withDocuments).not.toBe(true);
       expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'listing-only', reason: 'consent-nothing-left' });
+    } finally {
+      setSummaryGrantsForTest();
+    }
+  });
+
+  it('asked mail item still present + unasked Drive read ready: M2 prompt has no Drive body and Drive gets no withDocuments', async () => {
+    setSummaryGrantsForTest(() => true);
+    try {
+      const provider = oneItemProvider();
+      const mail = listingPort('mail', ['m1']);
+      const drive = listingPort('drive', ['file-aaaa1']);
+      const p = plan([wideRead('mail.list', 1), wideRead('drive.files', 1), summarize([1, 2])]);
+      const result = await runWith(p, { 'mail.list': mail, 'drive.files': drive }, [{ step: 1, entryId: 'mail.list', itemIds: ['m1'] }], 3, provider);
+      const prompt = provider.requests.map((request) => request.prompt).join('\n');
+      expect(prompt).toContain('mail body m1');
+      expect(prompt).not.toContain('drive body');
+      expect(drive.requests.every((request) => request.withDocuments !== true)).toBe(true);
+      expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'ok' });
+    } finally {
+      setSummaryGrantsForTest();
+    }
+  });
+
+  it('review round 2: the steps built from the recorded reads leave an unrecorded read unrun (no call) and the omitted note counts recorded reads only', async () => {
+    setSummaryGrantsForTest(() => true);
+    try {
+      const provider = oneItemProvider();
+      const mail = listingPort('mail', ['m1']);
+      const drive = listingPort('drive', ['file-aaaa1', 'file-aaaa2', 'file-aaaa3']);
+      const p = plan([wideRead('mail.list', 1), wideRead('drive.files', 3), summarize([1, 2])]);
+      const run = newSummaryRunToken();
+      const reads = [{ step: 1, entryId: 'mail.list' as const, itemIds: ['m1', 'm2'] }];
+      const consent = consentTokenFor(run, 3, { recipient: 'Claude', reads });
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail, 'drive.files': drive } as never, summarizer: route(provider) }).execute(p, {
+        continuation: { steps: [1, 3], summaryStep: 3, run, consent, reads },
+      });
+      expect(drive.requests).toHaveLength(0);
+      const reply = assembleAgentReply({ plan: p as never, result, language: 'en', destinationIsOwnerDm: true, mode: 'continuation', summaryStep: 3 });
+      expect(reply.text).toContain('1 item was left out of the summary.');
     } finally {
       setSummaryGrantsForTest();
     }

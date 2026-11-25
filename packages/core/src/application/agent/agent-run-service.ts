@@ -670,12 +670,14 @@ export class AgentRunService {
         sources,
         runRef,
       });
+      const recordedReads = Object.freeze(asked.sources.flatMap((entry) => entry.reads.map((read) => Object.freeze({ step: read.step, entryId: read.entryId, itemIds: Object.freeze([...read.itemIds]) }))));
       this.rememberContinuation(runRef, {
         plan,
         basis,
         summaryStep: asked.step,
-        steps: continuationSteps(plan, asked.step, asked.from),
-        reads: Object.freeze(asked.sources.flatMap((entry) => entry.reads.map((read) => Object.freeze({ step: read.step, entryId: read.entryId, itemIds: Object.freeze([...read.itemIds]) })))),
+        // Review round 2: only the RECORDED reads (plus their reference ancestors) re-run; an unrecorded covered read makes no call.
+        steps: continuationSteps(plan, asked.step, recordedReads.map((read) => read.step)),
+        reads: recordedReads,
         ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}),
         actorId: turn.actor.id,
         createdAtMs,
