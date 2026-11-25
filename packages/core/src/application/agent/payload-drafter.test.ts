@@ -394,3 +394,63 @@ describe('review round 2: the label token rule', () => {
     expect(out).toEqual({ ok: true, lines: ['Dana Example', 'Dana Example', 'Lee Sample'], named: 2 });
   });
 });
+
+describe('review round 3: HTML character references', () => {
+  it.each([
+    'https&#58;&#47;&#47;evil&#46;com/x',
+    'www&#46;evil&#46;com',
+    'http&colon;&sol;&sol;134744072',
+    'a&#64;evil&#46;com',
+    'https&amp;#58;//evil.com',
+    'https&#x3a;&#x2f;&#x2f;evil&#x2e;com',
+    'https&#58&#47&#47evil&#46com',
+    'https&#38;#58;&#38;#47;&#38;#47;evil.com',
+    '＆#58;//x',
+  ])('never leaves a live or decodable form: %j', (line) => {
+    const result = assemblePayloadDraft(answer(line), PEOPLE);
+    if (result.ok) {
+      for (const out of result.draft.lines) {
+        expect(out).not.toMatch(/&#|&[A-Za-z]/u);
+        expect(out.replace(/\[[@.:/]\]/gu, '')).not.toMatch(/:\/\/|@|\.(?=[a-z])/u);
+        expect(containsLiveLinkForm(out)).toBe(false);
+      }
+    }
+  });
+
+  it('decodes numeric references before every pass (the link is defanged, not passed)', () => {
+    expect(assemblePayloadDraft(answer('see https&#58;&#47;&#47;evil&#46;com/x now'), PEOPLE)).toMatchObject({ ok: true, draft: { lines: ['see https[:]/[/]evil[.]com/x now'] } });
+    expect(assemblePayloadDraft(answer('mail a&#64;evil&#46;com'), PEOPLE)).toMatchObject({ ok: true, draft: { lines: ['mail a[@]evil[.]com'] } });
+    expect(assemblePayloadDraft(answer('x&#x3a;y&#38;#58;z'), PEOPLE)).toMatchObject({ ok: true });
+  });
+
+  it.each(['http&colon;&sol;&sol;134744072', 'a&amp;#58;b', 'x &lt;b&gt; y', 'Q&A tips'])('refuses any named reference shape (fail closed): %j', (line) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: false, reason: 'link' });
+  });
+
+  it('the re-check flags a raw reference and an undecodable one', () => {
+    expect(containsLiveLinkForm('a &#58; b')).toBe(true);
+    expect(containsLiveLinkForm('a &#99999999999; b')).toBe(true);
+    expect(containsLiveLinkForm('a &colon; b')).toBe(true);
+    expect(defangLinks('a &#99999999999; b')).toBeUndefined();
+    expect(defangLinks('R & D, 5 &6')).toBe('R & D, 5 &6');
+  });
+});
+
+describe('review round 3: label trailing punctuation', () => {
+  it.each([
+    ['(참여자 A).', '(Dana Example).'],
+    ['참여자 A”', 'Dana Example”'],
+    ['참여자 A…', 'Dana Example…'],
+    ['참여자 A!?', 'Dana Example!?'],
+  ])('maps %j', (line, expected) => {
+    expect(remapParticipantLabels([line], PEOPLE)).toMatchObject({ ok: true, lines: [expected] });
+  });
+
+  it.each(['참여자 A’s', '참여자 A 3건', '참여자 A’s 말'])('still refuses (recorded fail-closed cost): %j', (line) => {
+    expect(remapParticipantLabels([line], PEOPLE)).toEqual({ ok: false, reason: 'participants' });
+  });
+
+  it('maps the NFKC modifier letter `참여자 ᴬ` to A (recorded for A7-S5)', () => {
+    expect(remapParticipantLabels(['참여자 ᴬ'], PEOPLE)).toMatchObject({ ok: true, lines: ['Dana Example'] });
+  });
+});

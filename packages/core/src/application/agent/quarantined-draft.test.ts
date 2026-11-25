@@ -302,3 +302,26 @@ describe('the input guards and the run bounds', () => {
     expect(local.requests).toHaveLength(0);
   });
 });
+
+describe('review round 3: a real name before JSON encoding', () => {
+  const cases: Array<[string, string, Partial<AgentSourceDocument>]> = [
+    ['홍 길동', '홍\n길동', { body: '홍\n길동' }],
+    ['홍길동', '홍 길동', { body: '홍 길동' }],
+    ['Dana Kim', 'Dana\r\nKim', { body: 'Dana\r\nKim' }],
+    ['Dana Kim', 'Dana\tKim', { body: 'Dana\tKim' }],
+    ['Dana Kim', 'Dana​Kim', { body: 'Dana​Kim' }],
+    ['Dana​ Kim', 'dana kim', { body: 'dana kim' }],
+    ['Da­na Kim', 'Dana Kim', { body: 'Dana Kim' }],
+    ['O"Brien', 'O"Brien', { body: 'O"Brien' }],
+    ['Back\\slash', 'Back\\slash', { body: 'Back\\slash' }],
+    ['Dana Kim', 'Dana Kim', { title: 'Dana\nKim' }],
+    ['Dana Kim', 'Dana Kim', { author: 'DANA  KIM' }],
+  ];
+  it.each(cases)('name %j vs %j: refuses with zero provider calls', async (name, _label, fields) => {
+    const local = spy('local-a', 'LOCAL');
+    const document: AgentSourceDocument = { ...doc(1), ...fields };
+    const outcome = await quarantinedDraft(request(mailSource([document]), { selector: selectorOf(local) }, { participants: [{ label: '참여자 A', name }] }));
+    expect(outcome).toEqual({ kind: 'failed', reason: 'participants' });
+    expect(local.requests).toHaveLength(0);
+  });
+});

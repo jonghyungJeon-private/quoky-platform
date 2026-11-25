@@ -124,12 +124,12 @@ function validParticipants(participants: readonly DraftParticipant[]): ReadonlyM
 }
 
 const LABEL_WORD = '참여자';
-const TRAILING_PUNCT = /^[\p{Po}\p{Pe}]$/u;
+const TRAILING_PUNCT_RUN = /[\p{Po}\p{Pe}\p{Pf}]+$/u;
 
 /**
  * The label token after `참여자` (structural, a7-08 round 2): NFC text; a combining mark right after `참여자` refuses; then optional
  * whitespace, then the maximal run of characters that are neither whitespace nor Hangul. An empty run is ordinary text (`참여자 수`,
- * `참여자의`). Otherwise the run, minus at most one trailing sentence punctuation (`\p{Po}`/`\p{Pe}`) that is followed by whitespace or the
+ * `참여자의`). Otherwise the run, minus a trailing run of punctuation (`\p{Po}`/`\p{Pe}`/`\p{Pf}`) that is followed by whitespace or the
  * end, must equal a map label exactly (after NFKC) and be written as `참여자` + one space + label, else the line refuses (a lone
  * punctuation run, `참여자.`, refuses too: fail closed). A mapped label followed (after whitespace) by a digit run (`참여자 A 2`) refuses.
  */
@@ -141,14 +141,14 @@ function remapLine(line: string, map: ReadonlyMap<string, string>, used: Set<str
     const at = text.indexOf(LABEL_WORD, pos);
     if (at < 0) return out + text.slice(pos);
     out += text.slice(pos, at);
-    let index = at + LABEL_WORD.length;
+    const index = at + LABEL_WORD.length;
     if (/^\p{M}/u.test(text.slice(index))) return undefined;
     const spacing = /^\s*/u.exec(text.slice(index))?.[0] ?? '';
     const run = /^[^\s\p{Script=Hangul}]*/u.exec(text.slice(index + spacing.length))?.[0] ?? '';
     const end = index + spacing.length + run.length;
-    const last = Array.from(run).pop() ?? '';
     const next = text.slice(end, end + 1);
-    const trailing = TRAILING_PUNCT.test(last) && (next === '' || /^\s$/u.test(next)) ? last : '';
+    // A run of closing/sentence punctuation after the label (`(참여자 A).`, `참여자 A”`, `참여자 A…`), only before whitespace or the end.
+    const trailing = next === '' || /^\s$/u.test(next) ? (TRAILING_PUNCT_RUN.exec(run)?.[0] ?? '') : '';
     const core = run.slice(0, run.length - trailing.length);
     if (run.length === 0) {
       out += LABEL_WORD;
@@ -162,7 +162,19 @@ function remapLine(line: string, map: ReadonlyMap<string, string>, used: Set<str
     used.add(label);
     out += name + trailing;
     pos = end;
-    index = end;
+  }
+}
+
+/**
+ * The comparison key for "does this real name appear in this text" (a7-08 defence in depth): normalised like the map names, NFKC,
+ * lower-cased, then ALL whitespace and format characters removed, so `홍 길동`, `홍\n길동` and `홍길동` match. Cost: a short name
+ * matches more often inside unrelated text (a higher false-refusal rate, fail closed). Pure and total.
+ */
+export function participantNameKey(text: string): string {
+  try {
+    return normalizeUntrustedText(typeof text === 'string' ? text : '').normalize('NFKC').toLowerCase().replace(/[\s\p{Cf}]/gu, '');
+  } catch {
+    return '';
   }
 }
 
@@ -196,12 +208,37 @@ export function remapParticipantLabels(
 // ── the mention neutraliser and the link defanger (A7.5 step 6) ────────────────────────────────────────────────────────
 
 const FORMAT_CHARACTERS = /\p{Cf}/gu;
-const normalise = (text: string): string => text.replace(FORMAT_CHARACTERS, '').normalize('NFKC');
+/** An HTML numeric character reference, `&#NN;` or `&#xHH;`, the trailing `;` optional as HTML allows. */
+const NUMERIC_REFERENCE = /&#(?:[xX]([0-9a-fA-F]+)|([0-9]+));?/gu;
+/** Any named character reference shape (no entity table: every one refuses, fail closed). */
+const NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;?/u;
+function decodeNumericReferences(text: string): string {
+  return text.replace(NUMERIC_REFERENCE, (all, hex: string | undefined, dec: string | undefined) => {
+    const code = hex !== undefined ? Number.parseInt(hex, 16) : Number.parseInt(dec ?? '', 10);
+    if (!Number.isInteger(code) || code < 1 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return all;
+    const char = String.fromCodePoint(code);
+    return /[\p{Cc}\n\v\f\r\u0085\u2028\u2029]/u.test(char) ? ' ' : char;
+  });
+}
+/**
+ * Strips format characters, NFKC and decodes HTML numeric character references, repeatedly until the text no longer changes, so every
+ * later pass and the re-check see the real characters (`https&#58;&#47;&#47;evil&#46;com`, `&#38;#58;`, fullwidth `＆#58;`). A reference
+ * that does not decode (out of range) stays and is refused by the invariants (`&#`).
+ */
+function normalise(text: string): string {
+  let current = text;
+  for (let round = 0; round < 64; round += 1) {
+    const next = decodeNumericReferences(current.replace(FORMAT_CHARACTERS, '').normalize('NFKC'));
+    if (next === current) return next;
+    current = next;
+  }
+  return current;
+}
 
 /**
  * One left-to-right pass over the syntax characters, by exact tokens (no lookbehind, so no character can borrow a neighbour's
- * escape): an escape unit (`\\`, `\[`, `\]`, `\(`) is kept; our own marker (`[@]`, `[.]`, `[:]`, never followed by `(`) is kept; any
- * other `[`, `]` or `\` gets a backslash; a bare `@` becomes `[@]`. A marker followed by `(` is sealed (`[@]\(`), so no marker can
+ * escape): an escape unit (`\\`, `\[`, `\]`, `\(`) is kept; our own marker (`[@]`, `[.]`, `[:]`, `[/]`, never followed by `(`) is kept; any
+ * other `[`, `]` or `\` gets a backslash; a bare `@` becomes `[@]`. A marker, or any `]`, followed by `(` is sealed (`[@]\(`, `]\(`), so no marker can
  * ever open a markdown link. The result is a fixed point of this function (idempotent).
  */
 const SYNTAX = /\\[\\[\](]|\[(?:@|\.|:|\/)\](?!\()|[[\]\\]|@/gu;
@@ -232,9 +269,9 @@ function markupNeutral(text: string): string {
   return inertSyntax(slashed).replace(SCHEME_WORD_COLON, '$1[:]');
 }
 
-/** The explicit invariants of the final text: no `]:`, no `](`, no `//` (also across `\\\\`), no scheme-shaped `word:` glued to text. */
+/** The explicit invariants of the final text: no `]:`, no `](`, no `//` (also across `\\\\`), no scheme-shaped `word:` glued to text, no `&#`, no named-reference shape. */
 function markupInvariantsHold(text: string): boolean {
-  return !/\]:/u.test(text) && !/\]\(/u.test(text) && !/(?:\/|\\\\)\//u.test(text) && !new RegExp(SCHEME_WORD_COLON.source, 'iu').test(text);
+  return !text.includes('&#') && !NAMED_REFERENCE.test(text) && !/\]:/u.test(text) && !/\]\(/u.test(text) && !/(?:\/|\\\\)\//u.test(text) && !new RegExp(SCHEME_WORD_COLON.source, 'iu').test(text);
 }
 
 /** Applies `fn` to the parts of a token outside our exact markers. */
@@ -294,6 +331,7 @@ function defangToken(token: string): string {
 export function containsLiveLinkForm(text: string): boolean {
   try {
     const view = normalise(text);
+    if (!markupInvariantsHold(text)) return true;
     if (containsLink(view, 'display') || /:[/\\]/.test(view) || /[<>]/.test(view)) return true;
     if (new RegExp(IPV4.source).test(view) || new RegExp(IPV6.source, 'iu').test(view)) return true;
     if (new RegExp(IDN_DOT.source, 'u').test(view)) return true;
@@ -312,7 +350,10 @@ export function containsLiveLinkForm(text: string): boolean {
  */
 export function defangLinks(text: string): string | undefined {
   try {
-    const prepared = neutraliseMentions(normalise(typeof text === 'string' ? text : ''));
+    const decoded = normalise(typeof text === 'string' ? text : '');
+    // A named character reference (`&colon;`, `&sol;`, `&amp;`) is never decoded here (no entity table): the whole draft refuses.
+    if (NAMED_REFERENCE.test(decoded)) return undefined;
+    const prepared = neutraliseMentions(decoded);
     const result = prepared
       .split(/(\s+)/u)
       .map((part) => (/^\s+$/u.test(part) ? part : defangToken(part)))

@@ -39722,3 +39722,24 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
      multi-space name does not slip. False-refusal cost: a very short name (one or two letters) found inside any word of the prompt refuses the draft;
      the check is substring, not word, based (fail closed, owner FYI).
   4. *A7-S5 rows (unverified live, not defanged by an extra rule):* `tel:`, `javascript:` and `data:` with no slash (no autolink known in the ratified destinations).
+
+- **Review round 3 (structural; 2026-11-25; Codex and Chief Architect, reproduced; `payload-draft-prompt.v1` unchanged, order, consent, egress and dormancy untouched).**
+  1. *HTML character references.* `https&#58;&#47;&#47;evil&#46;com/x`, `www&#46;evil&#46;com`, `http&colon;&sol;&sol;134744072` and `a&#64;evil&#46;com` passed
+     unchanged, and the Google Calendar writer sends `description` raw (it renders HTML). Rule: `normalise()` now strips format characters, applies NFKC
+     and decodes numeric references (`&#NN;`, `&#xHH;`, the `;` optional) repeatedly until the text stops changing (so `&#38;#58;` and fullwidth
+     `＆#58;` decode too), and every pass and the re-check see the real characters (a decoded control character or line break becomes a space). Any
+     remaining named-reference shape `&[A-Za-z][A-Za-z0-9]*;?` refuses the whole draft (`link`; no entity table; `&amp;#58;` refuses). The explicit
+     re-check invariants add: no `&#` and no named-reference shape. Cost: `Q&A`, `R&D`, `AT&T` and `&amp;` in a draft refuse it (fail closed, owner FYI).
+  2. *Real name before JSON encoding.* The check ran on the JSON-escaped prompt, so `홍\n길동`, `Dana\r\nKim`, `O"Brien`, `Back\slash` and zero-width or
+     soft-hyphen names slipped. It now compares each readout text field (title, author, date, body of every placed item) BEFORE encoding, and the
+     final prompt too, after `normalizeUntrustedText`, NFKC and lower-casing, with ALL whitespace and `\p{Cf}` removed on both sides
+     (`participantNameKey`): `홍 길동`, `홍\n길동`, `홍길동` all match. Cost: a higher false-refusal rate for short names (substring on a
+     whitespace-free text, fail closed). Zero provider calls on refusal (tests).
+  3. *Label trailing punctuation.* A run of `[\p{Po}\p{Pe}\p{Pf}]+` after the label before whitespace or the end is allowed (the core still equals the label
+     exactly): `(참여자 A).`, `참여자 A”`, `참여자 A…` map. `참여자 A’s` and `참여자 A 3건` still refuse (fail-closed costs). `참여자 ᴬ` maps to `A` after NFKC
+     (A7-S5 row).
+  4. *Jira `\\` (forced line break).* A doubled backslash renders as a line break in Jira wiki markup. Escaping is unchanged here. A7-S5 row, and A7-S4's
+     Jira writer must count RENDERED lines (a `\\` is one more), not the draft's line count.
+  5. *Cleanup.* The dead store `index = end` is removed and the stale comments now list `[/]` and the `]`-then-`(` sealing.
+  6. *Owner FYI.* The link-syntax family reached the fix-loop cap. The structural rules (exact markers, explicit invariants, numeric-reference decoding,
+     named-reference refusal) are the chosen design; remaining destination-specific rendering checks move to A7-S4 (writers) and A7-S5 (smuggling rows).
