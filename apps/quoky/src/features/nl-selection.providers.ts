@@ -8,6 +8,7 @@ import {
   type NlDeicticTextReader,
   type ReminderRepository,
   NlSelectionService,
+  logHeldReceiptShadow,
   STORAGE_PROVIDER,
   SessionManager,
   type Logger,
@@ -42,6 +43,8 @@ export interface NlSelectionFeatureConfig {
   readonly nlSelection: NlSelectionConfig;
   /** `QUOKY_TIMEZONE`: symbolic periods are placed in this zone. */
   readonly timeZone: string;
+  /** ADR-0121 A7-S2: absent or `off` changes nothing; `shadow` adds the log-only held-receipt line. */
+  readonly writeProposals?: { readonly mode: 'off' | 'shadow' };
 }
 
 export interface NlSelectionCompositionOptions {
@@ -79,6 +82,7 @@ export function createNlSelectionProviders(
           grammarYield: config.nlSelection.grammarYield,
           phase: config.nlSelection.phase,
           timeoutMs: config.nlSelection.timeoutMs,
+          ...(config.writeProposals?.mode === 'shadow' ? { heldReceiptShadow: (event: { readonly source: string; readonly items: number }) => logHeldReceiptShadow(logger, { kind: 'listing', ...event }) } : {}),
           // D4 (owner decision of 2026-11-02, "sonnet low로 켜서 배포"): the help-scope classifier is on; its one request asks for
           // the provider's stronger selection model (Claude CLI: sonnet, effort low), the selector stays on haiku.
           helpScopeClassifier: true,

@@ -346,6 +346,11 @@ export interface NlSelectionServiceDeps {
    * worded reply to the help-scope question is routed as usual, exactly as before D4.
    */
   readonly helpScopeClassifier?: boolean;
+  /**
+   * ADR-0121 A7-S2 (`QUOKY_AGENT_WRITE_PROPOSALS=shadow`): called after a non-empty listing was written, with the closed
+   * listing source and the item COUNT only. Log-only; absent (the default) nothing changes. Never throws into a turn.
+   */
+  readonly heldReceiptShadow?: (event: { readonly source: string; readonly items: number }) => void;
   /** Tests only: monotonic milliseconds for latency (default `Date.now`). */
   readonly elapsed?: () => number;
   /**
@@ -2386,7 +2391,16 @@ export class NlSelectionService implements TurnDeliveryObserver {
     if (listing !== undefined) {
       // An empty listing removes the slot: an older list of that source is never picked from after it.
       await write(LAST_LISTING_METADATA_KEY, (current) => withLabelledListing(current, actor.id, listing.source, listing.items, now, 'listing', message.id, listing.filtered === true));
-      if (listing.items.length > 0) listed = listing.source;
+      if (listing.items.length > 0) {
+        listed = listing.source;
+        if (this.deps.heldReceiptShadow !== undefined) {
+          try {
+            this.deps.heldReceiptShadow({ source: listing.source, items: listing.items.length });
+          } catch {
+            // log-only, best-effort
+          }
+        }
+      }
     }
     if (action !== undefined && (action.source === 'todo' || action.source === 'reminder')) {
       const source = action.source;

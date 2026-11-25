@@ -65,6 +65,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
   (next): the question text, `pending.sources` and the bound-yes re-run (A6-S1, rule-① confirm slice), A5-S4 WS-1, A5-S5
   gates (D12 modes needed: catalog data changed). See DECISIONS "ADR-0121 A5-S3 implementation note (2026-11-24)".
 
+### ADR-0121 A7-S2 held-receipt implemented, shadow only (2026-11-25, branch `claude/v5-a7-s2-held-receipt`)
+
+- Core `agent/held-receipt.ts`: content-free receipt, binding, re-execution and digest check, `yes-and-more` re-run rule, card
+  carry-over (pure; not wired to a write path). Flag `QUOKY_AGENT_WRITE_PROPOSALS=off|shadow` (default off; `active` refused at
+  startup; `shadow` needs agent mode shadow) logs only `a7_held_receipt.shadow` (source, count, closed outcome).
+- Not done (next): A7-S3 drafter, A7-S4 card and pick (stores the receipt in `Session.metadata`), A7-S5 gates. See DECISIONS
+  "ADR-0121 A7-S2 implementation note (2026-11-25)".
+
 ### ADR-0121 A7-S1 plan-form implemented, dormant (2026-11-24, branch `claude/v5-a7-s1-plan-form`)
 
 - Core: the plan schema takes the `propose` step and `payload-draft.v1`; the validator's rule 9 grounds the destination in the

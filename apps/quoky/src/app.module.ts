@@ -937,7 +937,7 @@ const features: Provider[] = [
     ...(longItems.provider !== undefined ? { longItemKey: longItems.provider.id } : {}),
   }),
   // ADR-0120: natural-language capability selection over the turn handlers' catalog (QUOKY_NL_INTENT_MODE, default off).
-  ...createNlSelectionProviders(() => ({ nlSelection: config.nlSelection, timeZone: config.reminders.timeZone })),
+  ...createNlSelectionProviders(() => ({ nlSelection: config.nlSelection, timeZone: config.reminders.timeZone, writeProposals: config.writeProposals })),
   // ADR-0122 (A9 P1): the surface gate and grant service; QUOKY_CHANNEL_GRANTS (P1 default `off`) and the deploy seed.
   ...createSurfaceGrantsProviders(() => ({
     channelGrants: config.channelGrants,
