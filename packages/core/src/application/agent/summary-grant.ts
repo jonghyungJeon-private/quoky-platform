@@ -168,7 +168,9 @@ const PLURAL_DEICTIC_COMPLETION: readonly string[] = ['them', 'these', 'those'];
 /** The two non-empty lines of the RAW owner text, or `undefined` when it is not the two-line form (A6.5 item 1). Pure. */
 function rawTwoLines(raw: string): readonly string[] | undefined {
   if (NON_LF_SEPARATOR.test(raw)) return undefined;
-  const lines = raw.split('\n').filter((line) => line.trim().length > 0);
+  // A6.5 item 1: "blank lines between them do not count". Only an empty or ASCII space/tab line is blank; a line of any other
+  // whitespace (NBSP, U+3000, ...) is invisible content A6.5 does not name as blank, so it counts as a line and fails closed.
+  const lines = raw.split('\n').filter((line) => !/^[ \t]*$/u.test(line));
   return lines.length === 2 ? lines : undefined;
 }
 
@@ -195,7 +197,10 @@ function recognisedUnits(plan: StepsPlan): RegExp[] {
       names.add(normalizeForMatch(name));
     }
     for (const language of ['ko', 'en'] as const) labels.add(normalizeForMatch(step.entry.describe?.(step.args, step.range, language) ?? '').trim());
-    for (const value of nlClauseStringValues(step.args)) units.add(value);
+    // Fix round 1 (P2): a validated string value that itself holds an approved summary word is NOT a unit (a pasted line "김대리가
+    // 요약해달라고" the selector kept as a keyword must not consume the line); string values are set aside before the summary-word
+    // check, the same rule as `withClauseGroundedFlags` in plan-validator.ts. The single-line form is unchanged (recorded residual).
+    for (const value of nlClauseStringValues(step.args)) if (!NL_MODE_SUMMARY_WORDS.some((word) => groundingWordIn(value, normalizeForMatch(word)))) units.add(value);
   }
   // A `describe` label is a WHOLE PHRASE, never split word by word: "안 읽은 메일" must not make "안" and "읽은" units.
   const gap = names.size === 0 ? '' : `(?:\\s+(?:${[...names].filter((n) => n.length > 0).sort((x, y) => y.length - x.length).map(escapeRegExp).join('|')}))*`;
@@ -243,7 +248,12 @@ function isConsumedLine(line: string, units: readonly RegExp[]): boolean {
   if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text)) return false;
   const text = normalizeForMatch(prepared.groundingText);
   if (!units.some((unit) => unit.test(text))) return false;
-  return unexpressedContentWords(text, units).every((word) => PLURAL_DEICTIC_COMPLETION.includes(word));
+  if (!unexpressedContentWords(text, units).every((word) => PLURAL_DEICTIC_COMPLETION.includes(word))) return false;
+  // Fix round 1 (P1): the shared guard treats a bare numeral as grammar. In the two-line form a digit that no recognised unit
+  // removed (the plan's own validated count with its counter is the only numeric unit, AM-3) is a number the plan does not carry.
+  let rest = text;
+  for (const unit of units) rest = rest.replace(new RegExp(unit.source, `${unit.flags.replace(/[gy]/gu, '')}g`), ' ');
+  return !/\p{Nd}/u.test(rest);
 }
 
 /**

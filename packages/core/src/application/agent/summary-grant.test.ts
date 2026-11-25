@@ -141,11 +141,23 @@ describe('ownerSummaryRequests: the owner\'s own words, per step and per source'
   it.each([
     ['emoji-with-variation-selector divider line', '❤️❤️❤️\n메일 요약해줘'],
     ['IPv6 address line', '2001:db8::1\n메일 요약해줘'],
-    ['a multi-line owner request (fail-closed residual)', '메일 3개\n요약해줘'],
     ['a line separator', '메일 보여줘\u2028메일 요약해줘'],
   ])('multi-line, no grant: %s', (_label, input) => {
     expect(isSingleLineOwnerText(grounding(input).text)).toBe(false);
     expect(granted(MAIL(), input)).toEqual([]);
+  });
+
+  // Fix round 1 (P3): the former round-4 row "메일 3개 / 요약해줘" passed only because `rawText` was absent while `read()` defaults
+  // limit 3. It is now explicit. R3's "no round-4 input changes" was conditional on no validated arg carrying 3 (DECISIONS, A6-S3
+  // note): with a plan that carries limit 3 and the raw text, AM-3 / R6 make the owner's own count a recognised unit.
+  const withRaw = (text: string): OwnerText => ({ ...grounding(text), rawText: text });
+  const noCount = (): RunPlan => plan([{ ...read('mail.list'), args: {} }, summarize([1])]);
+  it('the round-4 row "메일 3개 / 요약해줘": no grant when the plan carries no count, a grant when it carries limit 3 (AM-3)', () => {
+    const asked = (p: RunPlan, text: string, prepared: OwnerText): string[] => ownerSummaryRequests(p, prepared).map((r) => `${r.step}:${r.entryId}`);
+    expect(asked(noCount(), '메일 3개\n요약해줘', grounding('메일 3개\n요약해줘'))).toEqual([]);
+    expect(asked(noCount(), '메일 3개\n요약해줘', withRaw('메일 3개\n요약해줘'))).toEqual([]);
+    expect(asked(MAIL(), '메일 3개\n요약해줘', grounding('메일 3개\n요약해줘'))).toEqual([]);
+    expect(asked(MAIL(), '메일 3개\n요약해줘', withRaw('메일 3개\n요약해줘'))).toEqual(['2:mail.list']);
   });
 
   it('a mention-prefixed speaker at the line start is a label (the @ widening of the line-start rule)', () => {

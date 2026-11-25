@@ -1,14 +1,17 @@
 {
  "version": 1,
  "status": "pending-owner-review",
- "description": "ADR-0121 A6-S3 deterministic gate lots (A6.9 as updated by the ratification record R6): offline, no model call, run over the real grant producer. DRAFT: the lot minimums and membership are owner to confirm (R2 a6-07, R6); not approved, not frozen.",
+ "description": "ADR-0121 A6-S3 deterministic gate lots (A6.9 as updated by the ratification record R6): offline, no model call, run over the real grant producer. The R6 gate minimums (lot a >= 30, lot b >= 10, the 0-grant and ask-first criteria) were APPROVED by the owner in r-03 (DECISIONS.md, 'Q1' table, r-03); only the lot MEMBERSHIP is pending owner review, so this file stays pending-owner-review and is not frozen.",
  "plans": {
   "mail": "mail.list {}, summarize [1]",
   "mail-unread": "mail.list {unread:true}, summarize [1]",
   "drive": "drive.files {}, summarize [1]",
   "mail-drive": "drive.files {}, mail.list {}, summarize [1,2]",
   "mail-3": "mail.list {limit:3}, summarize [1]",
-  "mail-5": "mail.list {limit:5}, summarize [1]"
+  "mail-5": "mail.list {limit:5}, summarize [1]",
+  "mail-from-paste": "mail.list {from:'김부장님 요약 부탁드립니다'}, summarize [1]",
+  "slack-kw-paste": "slack.search {keyword:'김대리가 요약해달라고'}, summarize [1]",
+  "drive-5": "drive.files {limit:5}, summarize [1]"
  },
  "lotA": {
   "title": "PASTE LOT (a): every line holds unexplained residue or breaks the structural rule; every case mints NO grant (an ask-first is a failure)",
@@ -37,7 +40,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일 보여줘\u2028메일 요약해줘",
+    "text": "메일 보여줘 메일 요약해줘",
     "note": "line separator U+2028 only",
     "id": "a-03",
     "expect": {
@@ -107,7 +110,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일 보여줘\u2028\n요약해줘",
+    "text": "메일 보여줘 \n요약해줘",
     "note": "U+2028 before the LF",
     "id": "a-10",
     "expect": {
@@ -117,7 +120,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일 보여줘\u2029\n요약해줘",
+    "text": "메일 보여줘 \n요약해줘",
     "note": "U+2029 before the LF",
     "id": "a-11",
     "expect": {
@@ -127,7 +130,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일 보여줘\u0085\n요약해줘",
+    "text": "메일 보여줘\n요약해줘",
     "note": "NEL before the LF",
     "id": "a-12",
     "expect": {
@@ -167,7 +170,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일 보여줘\u200b\n요약해줘",
+    "text": "메일 보여줘​\n요약해줘",
     "note": "zero-width space before the LF",
     "id": "a-16",
     "expect": {
@@ -177,7 +180,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일 보여줘\n\u202e요약해줘",
+    "text": "메일 보여줘\n‮요약해줘",
     "note": "right-to-left override",
     "id": "a-17",
     "expect": {
@@ -187,7 +190,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "메일\u00ad 보여줘\n요약해줘",
+    "text": "메일­ 보여줘\n요약해줘",
     "note": "soft hyphen inside a word",
     "id": "a-18",
     "expect": {
@@ -197,7 +200,7 @@
    {
     "lang": "ko",
     "plan": "mail",
-    "text": "\ufeff메일 보여줘\n요약해줘",
+    "text": "﻿메일 보여줘\n요약해줘",
     "note": "BOM",
     "id": "a-19",
     "expect": {
@@ -430,6 +433,146 @@
     "text": "Kim — 3:30 PM\nsummarize my mail",
     "note": "chat-copy name and time line",
     "id": "a-42",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 3 개\n요약해줘",
+    "note": "fix r1 P1: spaced count, the plan carries no count",
+    "id": "a-43",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-5",
+    "text": "메일 3 개\n요약해줘",
+    "note": "fix r1 P1: spaced count, plan limit is 5",
+    "id": "a-44",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 13 건\n요약해줘",
+    "note": "fix r1 P1: 13 is not the plan limit 3",
+    "id": "a-45",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show 3 mails\nsummarize them",
+    "note": "fix r1 P1 (R11): English count, no count in the plan",
+    "id": "a-46",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show 5 mails\nsummarize them",
+    "note": "fix r1 P1: English count, empty plan args",
+    "id": "a-47",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail-3",
+    "text": "show 5 mails\nsummarize them",
+    "note": "fix r1 P1: English count, plan limit is 3",
+    "id": "a-48",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail-5",
+    "text": "show 500 mails\nsummarize them",
+    "note": "fix r1 P1: 500 is not the plan limit 5",
+    "id": "a-49",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 3\n요약해줘",
+    "note": "fix r1 P1: bare numeral",
+    "id": "a-50",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 010 1234 5678\n요약해줘",
+    "note": "fix r1 P1: phone number",
+    "id": "a-51",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 482913\n요약해줘",
+    "note": "fix r1 P1: code number",
+    "id": "a-52",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "drive",
+    "text": "드라이브 1002 334 556677\n요약",
+    "note": "fix r1 P1: account number",
+    "id": "a-53",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "slack-kw-paste",
+    "text": "김대리가 요약해달라고\n슬랙 검색",
+    "note": "fix r1 P2: a pasted line equal to the keyword",
+    "id": "a-54",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-from-paste",
+    "text": "김부장님 요약 부탁드립니다\n메일",
+    "note": "fix r1 P2: a pasted line equal to the from value",
+    "id": "a-55",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n \n요약해줘",
+    "note": "fix r1 P5: an NBSP-only line is not blank (fail closed)",
+    "id": "a-56",
     "expect": {
      "grant": []
     }
@@ -774,6 +917,36 @@
      "grant": []
     },
     "id": "p-17"
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show 3 mails\nsummarize them",
+    "note": "no-count negative: R11 pins no grant",
+    "id": "p-18",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail-3",
+    "text": "show 5 mails\nsummarize them",
+    "note": "mismatched-count negative",
+    "id": "p-19",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-5",
+    "text": "메일 3개\n요약해줘",
+    "note": "mismatched-count negative (AM-3: the count is the plan limit only)",
+    "id": "p-20",
+    "expect": {
+     "grant": []
+    }
    }
   ]
  }

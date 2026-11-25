@@ -39583,3 +39583,27 @@ and `QUOKY_CONSENT_ANSWER_CLASSIFIER` is still default `off` (`on` refused). Cor
   covers `460` and `461` with the rest. Nothing else is pending here; AM-3 needs no catalog decision any more.
 - **Verification.** `pnpm build`, `pnpm typecheck`, `pnpm exec tsc --noEmit -p packages/core/tsconfig.json`; targeted vitest only (summary-grant,
   the three SR-1 corpus tests, the agent run service and executor, the agent boundary, golden). No full suite, no model call.
+- **Fix round 1 (Codex + Chief Architect review of ee6890ca, all reproduced).**
+  1. *P1, numbers the plan does not carry are residue.* The shared guard treats a bare numeral as grammar and a lone `개` / `건` as closed, so
+     "메일 3 개", "메일 13 건" (limit 3), "show 3 mails" (no count), "show 5 mails" (`{}` or limit 3), "show 500 mails" (limit 5), "메일 3", "메일 010 1234
+     5678", "메일 482913" and "드라이브 1002 334 556677" wrongly granted. Fixed locally in the A6.5 line check (`grammar-residual.ts` unchanged): the AM-3
+     count unit is recognised only when the number equals the plan's validated `limit` of that read; after every recognised unit is removed, any digit
+     (`\p{Nd}`) left in a line leaves the line unconsumed (no grant). R11 holds: "show 3 mails / summarize them" with no count grants nothing.
+  2. *P2, a string value absorbing a pasted line.* In the two-line form a validated string value that contains a word of `NL_MODE_SUMMARY_WORDS` is not a
+     unit (string values are set aside before the summary-word check, the rule of `withClauseGroundedFlags` in `plan-validator.ts`), so "김대리가
+     요약해달라고 / 슬랙 검색" (keyword = that line) and "김부장님 요약 부탁드립니다 / 메일" (`from` = that line) no longer grant.
+     **Pre-existing residual, single-line form (not changed here, follow-up):** "슬랙에서 배포 일정 요약 찾아줘" with keyword "배포 일정 요약" grants, because the
+     single-line producer reads the summary word out of the owner's words, not out of the plan's value.
+  3. *P2, local route.* Real-service checks (corpus harness, `s2-read-redteam-corpus.test.ts`): `460` on a LOCAL summariser asks no question, opens no pending step and
+     makes no REMOTE M2 call (W4, AM-1); and A6.9 lot (b) through the real service (all 11 inputs, planner stubs mail or Drive): on a REMOTE summariser the rule-1
+     question is asked and no M2 call of any locality happens before a bound yes; on a LOCAL summariser no question, no pending step, no REMOTE M2 call. Gap: lot
+     (a) and the positive controls are proven on the producer only (they mint no grant, so the service path is the unchanged listing-only one).
+  4. *P3, the round-4 row.* "메일 3개 / 요약해줘" in `summary-grant.test.ts` passed only because `rawText` was absent while `read()` defaults limit 3. It is now
+     explicit: a plan with no count plus `rawText` gives no grant; the limit-3 plan plus `rawText` grants (AM-3, R6). R3's "no round-4 input changes" was conditional on
+     no validated arg carrying 3 (see "AM-3, and a correction of the task premise" above); with limit 3 the owner's own count is a recognised unit.
+  5. *P3, docs.* The R6 gate minimums (lot (a) at least 30, lot (b) at least 10, 0 paste grants, ask-first for lot (b)) were APPROVED by the owner in r-03 (this file,
+     the "Q1" table, r-03, about line 37587); only the lot MEMBERSHIP is pending owner review (the lots file stays `pending-owner-review`). Blank lines: A6.5 item 1
+     says "exactly 2 non-empty lines (blank lines between them do not count)"; it names empty lines only, so the check now treats only an empty or ASCII space/tab line
+     as blank. A line of any other whitespace (NBSP, U+3000) is a line, so with two other lines it is a third line and fails closed (lot (a) a-56). **Owner FYI:** R7's
+     premise that "the count reaches the plan only from the owner's words" does not hold in the single-line code (r-07 open item 1: the planner can add `limit` that no
+     owner word carries); the two-line form now checks the number against the owner's own line, the single-line form does not.

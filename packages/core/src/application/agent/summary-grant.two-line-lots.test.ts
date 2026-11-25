@@ -7,8 +7,8 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import { ownerSummaryRequests } from './summary-grant';
 
 // ADR-0121 A6-S3 deterministic gate (A6.9 as updated by the ratification record R6): offline, no model call, over the REAL grant
-// producer. The lots live in `golden/a6/two-line-grant.lots.v1.json`, a DRAFT marked `pending-owner-review` (the minimums and the
-// membership are owner to confirm, R2 a6-07 and R6): this gate runs on the draft but does not approve or freeze it.
+// producer. The lots live in `golden/a6/two-line-grant.lots.v1.json`, a DRAFT marked `pending-owner-review` (the R6 minimums were approved
+// in r-03; only the lot membership is owner to confirm, R2 a6-07 and R6): this gate runs on the draft but does not approve or freeze it.
 // What it can prove offline is the producer half: lot (a) mints no grant, lot (b) mints the grant the ordinary single-line
 // question needs (the question, its answer by the A6.3 pipeline and the LOCAL no-question rule are the confirm slice's and the
 // classifier's, with no `origin` that could differ: AM-1), and the positive controls grant exactly their source.
@@ -33,6 +33,9 @@ const PLANS: Readonly<Record<string, () => RunPlan>> = {
   'mail-drive': () => run([read('drive.files'), read('mail.list'), summarize([1, 2])]),
   'mail-3': () => run([read('mail.list', { limit: 3 }), summarize([1])]),
   'mail-5': () => run([read('mail.list', { limit: 5 }), summarize([1])]),
+  'drive-5': () => run([read('drive.files', { limit: 5 }), summarize([1])]),
+  'mail-from-paste': () => run([read('mail.list', { from: '김부장님 요약 부탁드립니다' }), summarize([1])]),
+  'slack-kw-paste': () => run([read('slack.search', { keyword: '김대리가 요약해달라고' }), summarize([1])]),
 };
 const grantOf = (c: LotCase): string[] => {
   const prepared = prepareSelectionInput(c.text);

@@ -1519,6 +1519,50 @@ describe('agent-redteam.s2-read.v1.json: the REMOTE summariser must declare no-t
   });
 });
 
+describe('A6-S3 fix round 1: the two-line grant through the real service, on a REMOTE and a LOCAL summariser (A6.9 lot (b), W4, AM-1)', () => {
+  interface LotB { readonly lotB: { readonly cases: readonly { readonly id: string; readonly lang: 'ko' | 'en'; readonly plan: string; readonly text: string }[] } }
+  const LOT_B = (JSON.parse(readFileSync(new URL('../golden/a6/two-line-grant.lots.v1.json', import.meta.url), 'utf8')) as LotB).lotB.cases;
+  const PLANNERS: Readonly<Record<string, SrCase['planner']>> = {
+    mail: [{ entryId: 'mail.list', args: {} }, { summarize: [1], schema: 'digest.v1' }],
+    drive: [{ entryId: 'drive.files', args: {} }, { summarize: [1], schema: 'digest.v1' }],
+  };
+  const derive = (lot: (typeof LOT_B)[number], summariser: 'remote-only' | 'local-only'): SrCase => {
+    const base = CASES.find((x) => x.id === 'rt-s2r-460') as SrCase;
+    const entry = lot.plan === 'drive' ? 'drive.files' : 'mail.list';
+    const granted = [`2:${entry}`];
+    return { ...base, id: `${lot.id}-${summariser}`, lang: lot.lang, text: lot.text, planner: PLANNERS[lot.plan], summariser, expect: { ...base.expect, stubReads: [entry], allowedReads: [entry], grant: granted, consentSources: [lot.plan === 'drive' ? 'drive' : 'mail'] } };
+  };
+
+  it('lot (b) on a REMOTE summariser: the rule-1 question is asked and NO M2 call (of any locality) happens before a bound yes', async () => {
+    expect(LOT_B.length).toBeGreaterThanOrEqual(10);
+    for (const lot of LOT_B) {
+      const o = await rawRun(derive(lot, 'remote-only'));
+      expect(o.askedSources?.length, `${lot.id}: a pending question is open`).toBeGreaterThan(0);
+      expect(o.m2, `${lot.id}: no M2 call before a bound yes`).toEqual([]);
+      expect(o.reply, `${lot.id}: the question`).toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+    }
+  });
+
+  it('lot (b) on a LOCAL summariser: no question (W4), no pending step, no REMOTE M2 call; the summary runs on the local route', async () => {
+    for (const lot of LOT_B) {
+      const o = await rawRun(derive(lot, 'local-only'));
+      expect(o.askedSources ?? [], `${lot.id}: no pending step`).toEqual([]);
+      expect(o.reply, `${lot.id}: no question`).not.toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+      expect(o.m2.filter((call) => call.locality === 'REMOTE'), `${lot.id}: no REMOTE M2 call`).toEqual([]);
+      expect(o.m2.length, `${lot.id}: summarised locally`).toBeGreaterThan(0);
+    }
+  });
+
+  it('a two-line grant on a LOCAL summariser (the rt-s2r-460 request) runs with no question and no REMOTE M2 call', async () => {
+    const base = CASES.find((x) => x.id === 'rt-s2r-460') as SrCase;
+    const o = await rawRun({ ...base, id: 'rt-s2r-460-local', summariser: 'local-only' });
+    expect(o.askedSources ?? []).toEqual([]);
+    expect(o.reply).not.toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+    expect(o.m2.filter((call) => call.locality === 'REMOTE')).toEqual([]);
+    expect(o.m2.length).toBeGreaterThan(0);
+  });
+});
+
 describe('agent-redteam.s2-read.v1.json: totals and quotas (enforced)', () => {
   const quota = CORPUS.quota;
 
