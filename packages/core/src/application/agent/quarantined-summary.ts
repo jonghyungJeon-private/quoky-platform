@@ -20,7 +20,7 @@ import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, readOutputLabel, summar
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
-import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, nameKey, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
+import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, nameKey, nameKeyRaw, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
 
 /**
  * ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2). Core, offline, unwired: no composition root builds it and
@@ -1448,7 +1448,11 @@ export async function quarantinedDraft(request: PayloadDraftRequest): Promise<Pa
     const nameKeys = request.participants.map((participant) => nameKey(participant.name));
     if (nameKeys.some((key) => key.length === 0)) return { kind: 'failed', reason: 'participants' };
     const placed = source.documents.filter((document) => items.some((item) => item.position === document.position));
-    const fieldKeys = placed.flatMap((document) => [document.title, document.author, document.date, document.body].map((field) => nameKey(typeof field === 'string' ? field : '')));
+    // Each untrusted field AND the concatenation of all of them in prompt order (a name split across fields), each with both keys
+    // (tags stripped, and raw so attribute/comment/CDATA text stays).
+    const fields = placed.flatMap((document) => [document.title, document.author, document.date, document.body].map((field) => (typeof field === 'string' ? field : '')));
+    const texts = [...fields, fields.join('')];
+    const fieldKeys = texts.flatMap((text) => [nameKey(text), nameKeyRaw(text)]);
     if (nameKeys.some((key) => fieldKeys.some((field) => field.includes(key)))) return { kind: 'failed', reason: 'participants' };
 
     let assembled: ReturnType<typeof assemblePayloadDraft> | undefined;

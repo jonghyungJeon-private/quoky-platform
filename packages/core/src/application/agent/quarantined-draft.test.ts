@@ -341,6 +341,10 @@ describe('review round 4: one shared name key (encoded, reordered punctuation, t
     ['홍길동', { body: '홍.길동' }],
     ['Dana Kim', { body: 'Dana <b>Kim</b>' }],
     ['Dana Kim', { title: 'Dana&#32;Kim' }],
+    ['Alice Smith', { body: '<a title="Alice Smith">note</a>' }],
+    ['Alice Smith', { body: '<!-- Alice Smith -->note' }],
+    ['Alice Smith', { body: '<![CDATA[Alice Smith]]>note' }],
+    ['Alice Smith', { title: 'Alice', author: '', body: 'Smith' }],
   ];
   it.each(cases)('name %j vs %j: refuses with zero provider calls', async (name, fields) => {
     const local = spy('local-a', 'LOCAL');

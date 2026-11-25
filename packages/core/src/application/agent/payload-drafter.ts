@@ -232,9 +232,19 @@ const HTML_TAG = /<[^>]*>/gu;
  * `dana.kim@x` and `Dana <b>Kim</b>` all key like `alicesmith` / `danakim`. Pure and total (an empty key means "cannot be checked").
  */
 export function nameKey(text: string): string {
+  return keyOf(text, true);
+}
+
+/** The same key WITHOUT tag stripping: attribute values, comments and CDATA text stay (`<a title="Alice Smith">`, `<!-- Alice Smith -->`). */
+export function nameKeyRaw(text: string): string {
+  return keyOf(text, false);
+}
+
+function keyOf(text: string, stripTags: boolean): string {
   try {
     const decoded = normalise(typeof text === 'string' ? text : '');
-    return normalizeUntrustedText(decoded.replace(NAMED_REFERENCES_GLOBAL, '').replace(HTML_TAG, ''))
+    const named = decoded.replace(NAMED_REFERENCES_GLOBAL, '');
+    return normalizeUntrustedText(stripTags ? named.replace(HTML_TAG, '') : named)
       .normalize('NFKC')
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]/gu, '');

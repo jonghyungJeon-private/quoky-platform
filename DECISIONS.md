@@ -39761,3 +39761,9 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   4. *A7-S5 rows (recorded, not applied here).* Accented named references (`Ren&eacute;e` keys as `rene`, not `renée`), reordered names (`Kim, Dana`),
      look-alike letters (Cyrillic or Greek homoglyphs of a name), and the `Q&A` / `R&D` refusal of the link side, with the Chief Architect's suggested
      safe relaxation: always refuse `&name;`; without the `;` refuse only names starting `amp`, `lt`, `gt` or `quot`.
+- **Review round 5 (2026-11-25; Codex, reproduced; `payload-draft-prompt.v1`, order, consent, egress, dormancy and the link side untouched).** Two gaps in the
+  real-name check: (1) `nameKey` strips tags, so a name inside markup vanished (`<a title="Alice Smith">`, `<!-- Alice Smith -->`, `<![CDATA[Alice Smith]]>`);
+  (2) fields were checked independently (title `Alice`, body `Smith`). Fix: a second key `nameKeyRaw` (same pipeline, no tag stripping), and each
+  untrusted field plus the concatenation, in prompt order, of all untrusted fields of all placed items (joined with nothing) is checked with both keys.
+  Cost: the concatenated check raises false refusals for short names (a name can now match across a field boundary). A7-S5 row, recorded not applied:
+  reversed order across fields (`Smith` ... `Alice`) is still not caught.
