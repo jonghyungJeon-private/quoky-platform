@@ -549,17 +549,8 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
 
   /** Whether a registered turn handler's pure `surfaceClaim` claims `span` sent alone in a DM (and `accept` takes it). */
   private nlHandlerClaims(span: string, accept: (claim: SurfaceClaim) => boolean): boolean {
-    const now = this.clock();
-    const message: InboundMessage = { id: 'quote-check', text: span, context: { platform: 'quote-check', channelId: 'quote-check', userId: 'quote-check', direct: true }, receivedAt: now };
-    return this.turnHandlerRegistry.some((handler) => {
-      if (typeof handler.surfaceClaim !== 'function') return false;
-      try {
-        const claim = handler.surfaceClaim({ message, now });
-        return claim !== null && accept(claim);
-      } catch {
-        return false;
-      }
-    });
+    const message: InboundMessage = { id: 'quote-check', text: span, context: { platform: 'quote-check', channelId: 'quote-check', userId: 'quote-check', direct: true }, receivedAt: this.clock() };
+    return this.turnHandlerClaims(message, accept);
   }
 
   /**

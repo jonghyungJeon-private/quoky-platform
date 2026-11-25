@@ -372,6 +372,11 @@ export abstract class ConversationRuntimeNlDispatchLayer extends ConversationRun
     return probe;
   }
 
+  /** A6 classifier wiring: the consent classifier's chat facts are the same ones the NL selection uses (the GENERAL_CHAT provider). */
+  protected override consentChatFacts(session: Session, actor: Actor): Promise<{ readonly id: string; readonly locality: AiExecutionLocality } | undefined> {
+    return this.nlChatProvider({ capability: Capability.GENERAL_CHAT } as Intent, session, actor);
+  }
+
   /**
    * ADR-0120 D6/D8: the id of the provider this chat turn would reach — the same resolution the chat path makes (the
    * turn's capability with the session's selection context). `undefined` when it cannot be known (the routed Stage 2A

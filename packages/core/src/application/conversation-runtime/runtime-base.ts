@@ -5,7 +5,7 @@ import { imageUnderstandingPolicyOf, type ImageUnderstandingLocalitiesResolver, 
 import { isDirectConversation, outboundMessage } from '../message-rendering';
 import { detectConversationControl } from '../conversation-commands';
 import { parseSurfaceGrantConfirm, parseSurfaceGrantPhrase } from '../surface-grants/surface-grant-phrases';
-import { ConsentTurnGate } from '../consent-answer/consent-turn-gate';
+import { ConsentTurnGate, type ConsentChatFacts } from '../consent-answer/consent-turn-gate';
 import { isPendingCancelUtterance } from '../approval-decision';
 import { ApprovalDecisionService, type ApprovalDecisionInput, type ApprovalDecisionReply, type PendingApprovalLookup } from '../approval-decision-service';
 import { safeRequestId, toSafeError } from '../safe-error';
@@ -743,6 +743,28 @@ export abstract class ConversationRuntimeBase {
     );
   }
 
+  /** The chat provider facts of the turn for the consent classifier's no-new-egress rule; `undefined` here, resolved by the NL layer. */
+  protected async consentChatFacts(_session: Session, _actor: Actor): Promise<ConsentChatFacts | undefined> {
+    return undefined;
+  }
+
+  /**
+   * Whether a registered turn handler's pure `surfaceClaim` claims `message` (and `accept` takes the claim). Synchronous, pure, never
+   * throws: a handler that throws claims nothing. The one registry walk shared by the chat layer's quote check and the consent gate.
+   */
+  protected turnHandlerClaims(message: InboundMessage, accept: (claim: SurfaceClaim) => boolean): boolean {
+    const now = this.clock();
+    return this.turnHandlerRegistry.some((handler) => {
+      if (typeof handler.surfaceClaim !== 'function') return false;
+      try {
+        const claim = handler.surfaceClaim({ message, now });
+        return claim !== null && accept(claim);
+      } catch {
+        return false;
+      }
+    });
+  }
+
   /**
    * Rule ① confirm slice (CS-2): the consent gate for one owner turn. `undefined`: route the turn as usual (no gate, a channel turn,
    * not an answer, an ordinary cancel, or a rerun of a bound yes). Otherwise the turn is consumed here: the owner's turn is
@@ -761,6 +783,13 @@ export abstract class ConversationRuntimeBase {
       ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
       ownerStepPending,
       control: control || this.isConsentControlTurn(message),
+      // Lazy (evaluated only on the enabled classifier path): the claim walk reads the message WITHOUT its `replyTo` (the reply-to of the
+      // consent question is the answer channel, not a handler anchor), and the chat facts resolve only when a classifier call is made.
+      handlerClaimed: () => {
+        const { replyTo: _replyTo, ...withoutReplyTo } = message;
+        return this.turnHandlerClaims(withoutReplyTo, () => true);
+      },
+      chat: () => this.consentChatFacts(session, actor),
     });
     if (outcome.kind === 'route') return undefined;
     // The consumed turn is a fixed note or the question, never chat: `quoky.lastTurn` must agree with `lastReply`.

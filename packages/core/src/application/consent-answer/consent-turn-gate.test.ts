@@ -31,6 +31,7 @@ function rig(options: { classifier?: ConsentClassifierSwitch; continuation?: Con
   const gate = new ConsentTurnGate({
     store,
     classifier: options.classifier ?? { mode: 'off' },
+    chargeModelCall: () => true,
     continueSummary: async (bound) => {
       continued.push(bound);
       if (typeof options.continuation === 'function') return options.continuation();
@@ -216,5 +217,90 @@ describe('ConsentTurnGate (CS-2)', () => {
   it('conversationKeyOf is platform|space|channel|thread', () => {
     expect(ConsentTurnGate.conversationKeyOf({ platform: 'discord', channelId: 'c' })).toBe('discord||c|');
     expect(ConsentTurnGate.conversationKeyOf({ platform: 'discord', spaceId: 's', channelId: 'c', threadId: 't' })).toBe('discord|s|c|t');
+  });
+});
+
+describe('ConsentTurnGate: the classifier charges the per-actor model-call cap through the gate (A6 classifier wiring)', () => {
+  // The stub plays the adapter: it charges through the per-call context immediately before its (counted) provider call.
+  const withCharge = (charge: (() => boolean) | undefined, onCall: () => void = () => undefined) => {
+    const store = new ConsentPendingStore();
+    const charges: string[] = [];
+    const seen: Array<{ readonly chat: unknown }> = [];
+    const gate = new ConsentTurnGate({
+      store,
+      classifier: {
+        mode: 'on',
+        classify: async (_request, context) => {
+          seen.push({ chat: context?.chat ?? (await context?.resolveChat?.()) });
+          if (context?.charge?.() !== true) return 'unclear';
+          onCall();
+          return 'yes';
+        },
+      },
+      ...(charge !== undefined ? { chargeModelCall: (actor: Actor) => (charges.push(actor.id), charge()) } : {}),
+      continueSummary: async () => ({ kind: 'reply', reply: { text: 'SUMMARY-BODY-TEXT' } }),
+      now: () => T0,
+    });
+    store.open(summaryConsentPending({ scope: SCOPE, language: 'ko', createdAtMs: T0, recipient: 'Claude', sources: [{ source: 'mail', itemIds: ['m1'] }], runRef: 'run-1' }));
+    const turn = (text: string, extra: Partial<ConsentGateTurn> = {}): ConsentGateTurn => ({ actor: OWNER, conversationKey: KEY, direct: true, text, attachmentCount: 0, ownerStepPending: false, control: false, ...extra });
+    return { gate, store, charges, seen, turn };
+  };
+
+  it('a call is charged by the adapter at its provider call, for the owner, and then runs', async () => {
+    let called = 0;
+    const r = withCharge(() => true, () => (called += 1));
+    const out = await r.gate.handle(r.turn('그래 보내줘'));
+    expect(r.charges).toEqual(['owner']);
+    expect(called).toBe(1);
+    expect(out).toMatchObject({ kind: 'reply' });
+  });
+
+  it('a spent cap: the provider is not called, the label is `unclear` (the fixed re-ask, nothing sent), never a yes', async () => {
+    let called = 0;
+    const r = withCharge(() => false, () => (called += 1));
+    const out = await r.gate.handle(r.turn('그래 보내줘'));
+    expect(called).toBe(0);
+    expect(out).toMatchObject({ kind: 'reply', replyKind: 'question', text: '보낼까요? (응/아니)' });
+    // The second unclear cancels.
+    const again = await r.gate.handle(r.turn('그래 보내줘'));
+    expect(called).toBe(0);
+    expect(again).toMatchObject({ kind: 'reply', replyKind: 'note' });
+  });
+
+  it('no charging function (or one that throws) is a spent cap, never an uncharged call', async () => {
+    let called = 0;
+    const none = withCharge(undefined, () => (called += 1));
+    expect(await none.gate.handle(none.turn('그래 보내줘'))).toMatchObject({ replyKind: 'question' });
+    const throwing = withCharge(() => { throw new Error('boom'); }, () => (called += 1));
+    expect(await throwing.gate.handle(throwing.turn('그래 보내줘'))).toMatchObject({ replyKind: 'question' });
+    expect(called).toBe(0);
+  });
+
+  it('a closed token never charges (no classifier call)', async () => {
+    const r = withCharge(() => true);
+    await r.gate.handle(r.turn('응'));
+    expect(r.charges).toEqual([]);
+  });
+
+  it('the turn chat facts and the handler claim are lazy: read only on the enabled classifier path, and the chat facts reach the call', async () => {
+    const reads: string[] = [];
+    const facts = { id: 'claude-cli', locality: 'REMOTE' as const };
+    const turnFacts = { handlerClaimed: () => (reads.push('claim'), false), chat: async () => (reads.push('chat'), facts) };
+    const r = withCharge(() => true);
+    await r.gate.handle(r.turn('응', turnFacts));
+    expect(reads).toEqual([]);
+    const w = withCharge(() => true);
+    await w.gate.handle(w.turn('그래 보내줘', turnFacts));
+    expect(reads).toEqual(['claim', 'chat']);
+    expect(w.seen).toEqual([{ chat: facts }]);
+  });
+
+  it('a claimed turn reads no chat facts and charges nothing', async () => {
+    const reads: string[] = [];
+    const r = withCharge(() => true);
+    await r.gate.handle(r.turn('오늘 메일 보여줘', { handlerClaimed: () => true, chat: async () => (reads.push('chat'), undefined) }));
+    expect(reads).toEqual([]);
+    expect(r.charges).toEqual([]);
+    expect(r.seen).toEqual([]);
   });
 });

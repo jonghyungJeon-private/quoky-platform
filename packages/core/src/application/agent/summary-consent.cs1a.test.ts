@@ -368,7 +368,7 @@ interface Service {
   readonly reads: AgentReadRequest[];
   readonly logs: Array<{ event: string; fields?: LogFields }>;
 }
-function service(options: { readonly locality?: AiExecutionLocality; readonly withStore?: boolean; readonly withLabel?: boolean; readonly caps?: { readonly perHour: number; readonly perDay: number } } = {}): Service {
+function service(options: { readonly locality?: AiExecutionLocality; readonly withStore?: boolean; readonly withLabel?: boolean; readonly caps?: { readonly perHour: number; readonly perDay: number }; readonly consentClassifierOn?: boolean } = {}): Service {
   const m2: AiRequest[] = [];
   const reads: AgentReadRequest[] = [];
   const logs: Array<{ event: string; fields?: LogFields }> = [];
@@ -416,6 +416,7 @@ function service(options: { readonly locality?: AiExecutionLocality; readonly wi
       ...(options.caps !== undefined ? { caps: options.caps } : {}),
       ...(options.withStore !== false ? { consentStore: store } : {}),
       ...(options.withLabel !== false ? { recipientLabel: label } : {}),
+      ...(options.consentClassifierOn === true ? { consentClassifierOn: true } : {}),
     }),
     store,
     actors,
@@ -568,6 +569,30 @@ describe('CS-1a: AgentRunService opens the pending step and keeps the continuati
     // An older entry outside the rolling hour does not count.
     internal.modelCalls.set('owner', [{ at: now - 3_700_000, count: 59 }, own]);
     expect(internal.continuationAdmissible('owner', now, 42)).toBe(true);
+  });
+
+  it('A6 classifier wiring: with the classifier switch on a step needs 1 + 2 calls left (59/60 used: none; 57/60: opens); with it off the rule is unchanged', () => {
+    const internalOf = (on: boolean) =>
+      service(on ? { consentClassifierOn: true } : {}).service as unknown as {
+        modelCalls: Map<string, Array<{ at: number; count: number }>>;
+        continuationAdmissible(actorId: string, nowMs: number, thisRunCalls: number): boolean;
+      };
+    const now = Date.now();
+    const admissible = (on: boolean, used: number): boolean => {
+      const internal = internalOf(on);
+      internal.modelCalls.set('owner', [{ at: now - 1_000, count: used }]);
+      return internal.continuationAdmissible('owner', now, 0);
+    };
+    expect([admissible(true, 59), admissible(true, 58), admissible(true, 57)]).toEqual([false, false, true]);
+    expect([admissible(false, 59), admissible(false, 60)]).toEqual([true, false]);
+  });
+
+  it('A6 classifier wiring: a classifier call never takes the last call (57 used: 2 calls fit, the third would starve the continuation)', () => {
+    const { service: svc } = service({ consentClassifierOn: true });
+    const internal = svc as unknown as { modelCalls: Map<string, Array<{ at: number; count: number }>> };
+    internal.modelCalls.set('owner', [{ at: Date.now() - 1_000, count: 57 }]);
+    const at = Date.now();
+    expect([svc.chargeClassifierCall('owner', at), svc.chargeClassifierCall('owner', at), svc.chargeClassifierCall('owner', at)]).toEqual([true, true, false]);
   });
 
   it('voidAllSummaryConsents drops the records and voids the open step', async () => {

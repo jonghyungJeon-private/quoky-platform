@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6 classifier wiring implemented (2026-11-25, branch `claude/v5-a6-classifier-wiring`)
+
+- Handler-claim rule (`surfaceClaim` claimed turn = `other`, no classifier call), per-actor 60/h cap charge for every classifier call, and the
+  composition root building the switch from config. Dormant: `QUOKY_CONSENT_ANSWER_CLASSIFIER` default `off`, `on` still refused at preflight
+  until A6-S4 (owner notice + yes for every eval run; its corpus must hold non-answer requests in every registered grammar and source). See
+  DECISIONS "A6 classifier wiring implementation note (2026-11-25)".
+
 ### Rule-① confirm slice CS-3 gold implemented (2026-11-25, branch `claude/v5-cs3-confirm-slice-gold`)
 
 - The SR-1 corpus test judges 348 cases on the real service, store and gate (no modelled confirm slice); `rt-s2r-487` and 120 A5 cases moved

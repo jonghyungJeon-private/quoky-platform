@@ -1,14 +1,13 @@
 import { Capability } from '../../domain';
 import type { AiProvider } from '../../ports/ai-provider.port';
 import { containsCredentialMaterial } from '../credential-guard';
-import type { AiExecutionLocality } from '../../ports/ai-provider.port';
 import { nlSameEgress } from '../nl-routing/selection-egress';
 import { renderSummaryConsentQuestion, SUMMARY_CONSENT_EN_COUNT_PLACEHOLDER, SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER } from '../agent/summary-consent-question';
-import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentAnswerLabel, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
+import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentAnswerLabel, type ConsentClassifierContext, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
 import type { ConsentPending } from './consent-pending';
 
 /** The classifier call as {@link answerConsentTurn} takes it (structurally `ConsentAnswerClassifier`; declared here to keep imports one-way). */
-type Classifier = (request: ConsentClassifierRequest) => Promise<ConsentAnswerLabel>;
+type Classifier = (request: ConsentClassifierRequest, context?: ConsentClassifierContext) => Promise<ConsentAnswerLabel>;
 
 /**
  * ADR-0121 amendment A6, slice A6-S2 "consent-classifier": the one bounded model call that reads a worded reply to a pending
@@ -136,13 +135,6 @@ export function parseConsentClassifierOutput(raw: string): ConsentAnswerLabel {
 export interface ConsentClassifierDeps {
   /** Resolves the provider for `Capability.INTENT_SELECTION` (the composition root's router; pinned to the Claude CLI, ADR-0120 D2). */
   readonly select: () => Promise<AiProvider>;
-  /**
-   * No-new-egress (ADR-0120 D6/D8, as the help-scope classifier): the chat provider id and declared locality this turn's chat
-   * reaches. The call goes only to a provider of the same family and locality; a missing id or any other provider is `unclear`
-   * without a call.
-   */
-  readonly chatProviderId?: string;
-  readonly chatProviderLocality?: AiExecutionLocality;
   readonly timeoutMs?: number;
   /** The clock (same domain as the pipeline's `now`); lateness is decided by it, not by the timer. Default `Date.now`. */
   readonly now?: () => number;
@@ -156,11 +148,14 @@ export interface ConsentClassifierDeps {
 export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Classifier {
   const timeoutMs = effectiveTimeoutMs(deps.timeoutMs);
   const now = deps.now ?? Date.now;
-  return async (request) => {
+  // No-new-egress (ADR-0120 D6/D8, as the help-scope classifier): the turn's chat facts arrive per call in `context.chat`. The call goes
+  // only to a provider of the same family and locality; missing facts or any other provider is `unclear` without a call.
+  return async (request, context) => {
     // Nothing credential-shaped leaves the process, as the reply the prompt quotes (tags blanked) and as received.
     const prompt = buildConsentClassifierPrompt(request);
     if (containsCredentialMaterial(request.reply) || containsCredentialMaterial(prompt)) return 'unclear';
-    if (deps.chatProviderId === undefined) return 'unclear';
+    if (typeof context?.charge !== 'function') return 'unclear';
+    if (context.chat === undefined && typeof context.resolveChat !== 'function') return 'unclear';
     // An empty question (no valid source or recipient) or one the prompt sanitiser would change is malformed: nothing is sent.
     if (request.question === '' || promptText(request.question) !== request.question) return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -172,6 +167,15 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     } catch {
       return 'unclear';
     }
+    // Lateness by the injected clock, never the timer alone; a throwing or non-finite read is late (fail closed).
+    const pastDeadline = (): boolean => {
+      try {
+        const t = now();
+        return !(Number.isFinite(t) && t < deadlineAtMs);
+      } catch {
+        return true;
+      }
+    };
     const controller = new AbortController();
     // The bound starts before provider selection and covers it, then the call (a stalled select is `unclear` too).
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -183,12 +187,26 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     });
     timeout.catch(() => undefined);
     try {
+      let chat = context.chat;
+      // A lazy chat fact is resolved only now (every no-call check has passed), inside the deadline fixed above.
+      if (chat === undefined && context.resolveChat !== undefined) {
+        const resolving = context.resolveChat();
+        resolving.catch(() => undefined);
+        chat = await Promise.race([resolving, timeout]);
+      }
+      if (chat === undefined) return 'unclear';
+      // A resolver that settled after the deadline never reaches the charge or the call.
+      if (pastDeadline()) return 'unclear';
       const selecting = deps.select();
       selecting.catch(() => undefined);
       const provider = await Promise.race([selecting, timeout]);
-      if (nlSameEgress(provider, deps.chatProviderId, deps.chatProviderLocality) !== 'same') return 'unclear';
+      if (nlSameEgress(provider, chat.id, chat.locality) !== 'same') return 'unclear';
       // A6.4: a provider that does not declare the stronger tier is `unclear`, never run on its plain selection model.
       if (provider.supportsStrongerIntentSelection !== true) return 'unclear';
+      // The cap charge is made here, immediately before the provider is actually called: every earlier `unclear` is free.
+      if (pastDeadline()) return 'unclear';
+      if (context.charge() !== true) return 'unclear';
+      if (pastDeadline()) return 'unclear';
       const call = provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal: controller.signal, intentSelectionTier: 'stronger' });
       call.catch(() => undefined);
       const result = await Promise.race([call, timeout]);

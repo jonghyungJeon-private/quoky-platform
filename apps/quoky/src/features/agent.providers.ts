@@ -2,6 +2,8 @@ import type { Provider } from '@nestjs/common';
 import { AgentRunService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import type { AgentConfig } from '../agent/agent-config';
+import { buildConsentClassifierSwitch } from '../agent/consent-answer-classifier-wiring';
+import type { ConsentAnswerClassifierMode } from '../agent/consent-answer-config';
 import { summaryRecipientLabel } from '../agent/summary-recipient-label';
 
 /**
@@ -52,6 +54,8 @@ export interface AgentFeatureConfig {
   readonly timeZone: string;
   /** `QUOKY_SUMMARY_CONSENT` (rule ① confirm slice). Absent or `off`: no store, no gate, the runtime is byte-identical. */
   readonly summaryConsent?: 'off' | 'on';
+  /** `QUOKY_CONSENT_ANSWER_CLASSIFIER`: `off` (default); `on` stays refused at startup until A6-S4, so the classifier is only built for a test. */
+  readonly consentAnswerClassifier?: ConsentAnswerClassifierMode;
 }
 
 export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, options: { readonly logger?: Logger } = {}): Provider[] {
@@ -71,6 +75,8 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
           timeZone: config.timeZone,
           timeoutMs: config.timeoutMs,
           logger,
+          // A6 classifier wiring: with the switch on a consent step also needs the classifier's calls (`on` is refused at startup until A6-S4).
+          ...(config.consentAnswerClassifier === 'on' ? { consentClassifierOn: true } : {}),
           // `released` is never set here before stage S2 P5: an `active` service is refused at construction (second layer).
           ...(config.agent.mode === 'active'
             ? {
@@ -94,19 +100,20 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
     },
     {
       provide: CONSENT_TURN_GATE,
-      // The classifier stays `{ mode: 'off' }`: `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` is still refused at startup (A6-S2/A6-S4).
-      useFactory: (agentRuns: AgentRunService, consentStore?: ConsentPendingStore): ConsentTurnGate | undefined =>
+      // The classifier switch is built from `QUOKY_CONSENT_ANSWER_CLASSIFIER` (default `off`; `on` is still refused at startup until A6-S4).
+      useFactory: (agentRuns: AgentRunService, consentStore: ConsentPendingStore | undefined, router: CapabilityRouter): ConsentTurnGate | undefined =>
         consentStore === undefined
           ? undefined
           : new ConsentTurnGate({
               store: consentStore,
-              classifier: { mode: 'off' },
+              classifier: buildConsentClassifierSwitch(resolveConfig().consentAnswerClassifier, router, summaryConsentClock),
+              chargeModelCall: (actor, atMs) => agentRuns.chargeClassifierCall(actor.id, atMs),
               continueSummary: (bound, turn) => agentRuns.continueSummaryConsent(bound, turn),
               voidContinuations: () => agentRuns.voidAllSummaryConsents(),
               now: summaryConsentClock,
               logger,
             }),
-      inject: [AGENT_RUNS, { token: SUMMARY_CONSENT_STORE, optional: true }],
+      inject: [AGENT_RUNS, { token: SUMMARY_CONSENT_STORE, optional: true }, CapabilityRouter],
     },
   ];
 }

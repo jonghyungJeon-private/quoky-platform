@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Capability, IntentType, MemoryType, RiskLevel, SessionStatus, TaskStatus } from '../domain';
 import type { Actor, ApprovalRequest, ConversationContext, InboundMessage, Intent, MemoryRecord, OutboundMessage, Session, Task, TaskRun, WorkItem } from '../domain';
 import type { AiProvider, Logger, PlatformAdapter, StorageProvider } from '../ports';
@@ -18,6 +18,15 @@ import { SessionManager } from './session-manager';
 import { StatelessApprovalFlow } from './stateless-approval-flow';
 import { ConsentPendingStore, summaryConsentPending } from './consent-answer/consent-pending';
 import { ConsentTurnGate } from './consent-answer/consent-turn-gate';
+import type { ConversationTurnHandler } from '../ports';
+import { MailTurnHandler } from './mail/mail-turn-handler';
+import { CalendarTurnHandler } from './calendar/calendar-turn-handler';
+import { DriveTurnHandler } from './drive/drive-turn-handler';
+import { GitBranchTurnHandler } from './code-work/git-branch-command';
+import { FeedbackSummaryTurnHandler } from './feedback/feedback-summary-turn-handler';
+import { ReminderTurnHandler } from './reminders/reminder-turn-handler';
+import { HelpIntentTurnHandler } from './help-intent/help-intent-turn-handler';
+import { WorkChatTurnHandler } from './work-chat/work-chat-turn-handler';
 import type { ConsentClassifierSwitch } from './consent-answer/consent-answer';
 
 // CS-2: the consent gate on a REAL ConversationRuntime (and QuokyCore for the rerun). Only storage, the provider, the Task bookkeeping and
@@ -39,6 +48,9 @@ const bad = (name: string) => () => {
 interface Options {
   readonly gate?: boolean;
   readonly classifier?: ConsentClassifierSwitch;
+  readonly turnHandlers?: ConversationRuntimeDeps['turnHandlers'];
+  /** A6 classifier wiring: the per-actor model-call charge (default: always available). */
+  readonly chargeModelCall?: (actor: Actor, atMs: number) => boolean;
   readonly selectionQuestionOpen?: boolean;
   /** The kill-switch phrase is handled by this path instead of the agent seam (`agentRuns` stays unhandled). */
   readonly stopPath?: 'nlSelection' | 'surface';
@@ -103,6 +115,7 @@ function harness(opts: Options = {}) {
   const gate = new ConsentTurnGate({
     store,
     classifier: opts.classifier ?? { mode: 'off' },
+    chargeModelCall: opts.chargeModelCall ?? (() => true),
     continueSummary: async () => {
       calls.continued += 1;
       return { kind: 'reply', reply: { text: SUMMARY_TEXT } };
@@ -163,7 +176,7 @@ function harness(opts: Options = {}) {
     codeProposals: { get: bad('codeProposals.get') },
     workspaceWrite: { apply: bad('workspaceWrite.apply') },
     git: { status: bad('git.status'), diff: bad('git.diff'), commitFiles: bad('git.commitFiles'), info: bad('git.info'), pushApprovedCommit: bad('git.pushApprovedCommit'), syncMain: bad('git.syncMain'), deleteMergedLocalBranch: bad('git.deleteMergedLocalBranch') },
-    turnHandlers: [],
+    turnHandlers: opts.turnHandlers ?? [],
     // The agent kill-switch seam: only the stop phrase is handled (the A6 actions are absent), exactly the production shape in `shadow`.
     agentRuns: {
       mode: 'shadow',
@@ -381,5 +394,139 @@ describe('the consent gate on the real runtime (CS-2)', () => {
       expect(h.calls.continued).toBe(1);
       expect(h.calls.classify).toBe(1);
     });
+  });
+});
+
+// A6 classifier wiring (CS-2 residual): a turn a registered handler's pure `surfaceClaim` claims is `other` before the classifier call.
+const noDeps = new Proxy({}, { get: () => undefined }) as never;
+/** The REAL handler's pure `surfaceClaim`, with a `handle` that declines so the turn falls through to chat (nothing else is exercised). */
+function claimOnly(handler: ConversationTurnHandler): ConversationTurnHandler {
+  return { id: handler.id, stage: handler.stage, order: handler.order, helpLines: handler.helpLines, surfaceClaim: (ctx) => handler.surfaceClaim?.(ctx) ?? null, handle: async () => null } as unknown as ConversationTurnHandler;
+}
+const realHandlers = (): ConversationTurnHandler[] =>
+  [
+    new MailTurnHandler(noDeps),
+    new CalendarTurnHandler(noDeps),
+    new DriveTurnHandler(noDeps),
+    new GitBranchTurnHandler(noDeps),
+    new FeedbackSummaryTurnHandler(noDeps),
+    new ReminderTurnHandler(noDeps),
+    new HelpIntentTurnHandler(noDeps),
+    new WorkChatTurnHandler({ mode: 'lookup' } as never),
+    new WorkChatTurnHandler({ mode: 'mutation' } as never),
+  ].map(claimOnly);
+
+const CLAIMED_REQUESTS: ReadonlyArray<readonly [handler: string, text: string, path?: 'control']> = [
+  ['mail', '오늘 메일 보여줘'],
+  ['mail', 'show my unread mail from today'],
+  ['calendar', '오늘 일정 보여줘'],
+  ['calendar', 'what is on my calendar today'],
+  ['git-branch', '브랜치 만들어줘 feat/test'],
+  ['git-branch', 'create branch feat/test'],
+  ['feedback-summary', '피드백 요약'],
+  ['drive', '드라이브에서 보고서 찾아줘'],
+  ['drive', 'find the report in my drive'],
+  ['reminder', '내일 9시에 알려줘 약 먹기', 'control'],
+  ['reminder', 'remind me tomorrow at 9am to take my medicine', 'control'],
+  ['work-chat lookup', '내 지라 이슈 보여줘', 'control'],
+  ['work-chat lookup', 'show my jira issues', 'control'],
+  ['work-chat usage', '할 일 추가', 'control'],
+];
+
+describe('the consent gate: a turn a registered handler claims is `other` before the classifier (A6 classifier wiring)', () => {
+  it.each(CLAIMED_REQUESTS)('%s: %j reaches the gate with a classifier that always says yes: silent cancel, normal routing, the classifier is never called', async (_handler, text, path) => {
+    let classified = 0;
+    const h = harness({ turnHandlers: realHandlers(), classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    const claimed = (h.runtime as unknown as { turnHandlerClaims(m: InboundMessage, a: () => boolean): boolean }).turnHandlerClaims(h.messageOf(text), () => true);
+    expect(claimed, `${text} must be claimed by a registered handler`).toBe(true);
+    h.open();
+    const result = await h.send(text);
+    expect(classified).toBe(0);
+    expect(h.calls.continued).toBe(0);
+    // `control`: an explicit command grammar forfeits without a claim before the gate (A6.2); the others reach the gate and cancel as `other`.
+    expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: keyOf(DM) })).toBe(path === 'control' ? undefined : 'cancelled');
+    expect(JSON.stringify(result)).not.toContain(SUMMARY_TEXT);
+    expect(h.calls.prompts).toBe(1);
+  });
+
+  it('a closed yes a listing handler also claims still binds through the fast path', async () => {
+    const claimAll = { id: 'claim-all', stage: 'pre-classify', order: 1, helpLines: [], surfaceClaim: () => ({ groups: ['help'], onDeny: 'reply' }), handle: async () => null } as unknown as ConversationTurnHandler;
+    let classified = 0;
+    const h = harness({ turnHandlers: [claimAll], classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    h.open();
+    const result = await h.send('응');
+    expect(h.calls.continued).toBe(1);
+    expect(classified).toBe(0);
+    expect(JSON.stringify(result)).toContain(SUMMARY_TEXT);
+  });
+
+  it('an unclaimed worded reply still reaches the classifier (the rule is the claim, not a phrase list)', async () => {
+    let classified = 0;
+    const h = harness({ turnHandlers: realHandlers(), classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    h.open();
+    await h.send('그래 보내줘');
+    expect(classified).toBe(1);
+    expect(h.calls.continued).toBe(1);
+  });
+
+  it('switch off: a claimed turn is the plain classifier-off cancel, as before', async () => {
+    const h = harness({ turnHandlers: realHandlers() });
+    h.open();
+    await h.send('오늘 메일 보여줘');
+    expect(h.calls.continued).toBe(0);
+    expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: keyOf(DM) })).toBe('cancelled');
+  });
+
+  it('cap: a spent hourly model-call cap means the provider is not called; the reply is `unclear` (re-ask), never a yes', async () => {
+    let called = 0;
+    // The stub plays the adapter: the charge is made through the per-call context, right before its (counted) provider call.
+    const h = harness({ chargeModelCall: () => false, classifier: { mode: 'on', classify: async (_request, context) => (context?.charge?.() === true ? (called += 1, 'yes') : 'unclear') } });
+    h.open();
+    const result = await h.send('그래 보내줘');
+    expect(called).toBe(0);
+    expect(h.calls.continued).toBe(0);
+    expect(JSON.stringify(result)).toContain('보낼까요?');
+  });
+
+  it('the turn chat facts (the GENERAL_CHAT provider) reach the classifier call; a charged call happens once', async () => {
+    const seen: unknown[] = [];
+    let charged = 0;
+    const h = harness({ chargeModelCall: () => (charged += 1, true), classifier: { mode: 'on', classify: async (_request, context) => (seen.push(context?.chat ?? (await context?.resolveChat?.())), context?.charge?.(), 'yes') } });
+    h.open();
+    await h.send('그래 보내줘');
+    expect(seen).toEqual([{ id: 'fake-chat', locality: 'REMOTE' }]);
+    expect(charged).toBe(1);
+    expect(h.calls.continued).toBe(1);
+  });
+
+  it('dormant path: with the switch off, a closed token, no open step or a channel turn, neither the claim walk nor the chat facts run', async () => {
+    const run = async (opts: Parameters<typeof harness>[0], text: string, opened: boolean, context: ConversationContext = DM) => {
+      const h = harness({ turnHandlers: realHandlers(), ...opts });
+      const claims = vi.spyOn(h.runtime as unknown as { turnHandlerClaims: () => boolean }, 'turnHandlerClaims');
+      const chatFacts = vi.spyOn(h.runtime as unknown as { consentChatFacts: () => Promise<undefined> }, 'consentChatFacts');
+      if (opened) h.open();
+      await h.send(text, context);
+      return { claims, chatFacts };
+    };
+    const on = { classifier: { mode: 'on' as const, classify: async (_request: unknown, context?: { resolveChat?: () => Promise<unknown> }) => (await context?.resolveChat?.(), 'unclear' as const) } };
+    for (const spied of [await run({}, '오늘 메일 보여줘', true), await run(on, '응', true), await run(on, '아니', true), await run(on, '오늘 메일 보여줘', false), await run(on, '그래 보내줘', true, CHANNEL)]) {
+      expect(spied.claims).not.toHaveBeenCalled();
+      expect(spied.chatFacts).not.toHaveBeenCalled();
+    }
+    const enabled = await run(on, '그래 보내줘', true);
+    expect(enabled.claims).toHaveBeenCalledTimes(1);
+    expect(enabled.chatFacts).toHaveBeenCalledTimes(1);
+  });
+
+  it('a platform reply on the question is not claimed through its reply-to anchor: a worded yes still reaches the classifier', async () => {
+    const replyBound = { id: 'reply-bound', stage: 'pre-classify', order: 1, helpLines: [], surfaceClaim: (ctx: { message: InboundMessage }) => (ctx.message.replyTo !== undefined ? { groups: ['help'], onDeny: 'reply' } : null), handle: async () => null } as unknown as ConversationTurnHandler;
+    let classified = 0;
+    const h = harness({ turnHandlers: [replyBound], classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    h.open();
+    expect((h.runtime as unknown as { turnHandlerClaims(m: InboundMessage, a: () => boolean): boolean }).turnHandlerClaims({ ...h.messageOf('그래 보내줘'), replyTo: { messageId: 'q-1' } }, () => true)).toBe(true);
+    const result = await h.runtime.handle({ ...h.messageOf('그래 보내줘'), replyTo: { messageId: 'q-1' } });
+    expect(classified).toBe(1);
+    expect(h.calls.continued).toBe(1);
+    expect(JSON.stringify(result)).toContain(SUMMARY_TEXT);
   });
 });
