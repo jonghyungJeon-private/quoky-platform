@@ -193,6 +193,9 @@ export * from './agent';
 // names leave `consent-answer/` (the answer function, the classifier and the producers stay unreachable; pinned by the boundary test).
 export { ConsentPendingStore } from './consent-answer/consent-pending';
 export { ConsentTurnGate } from './consent-answer/consent-turn-gate';
+// A6 classifier wiring: the composition root builds the classifier adapter (the answer function stays unreachable).
+export { createConsentAnswerClassifier } from './consent-answer/consent-classifier';
+export type { ConsentClassifierDeps } from './consent-answer/consent-classifier';
 export type { ConsentContinuation, ConsentGateOutcome, ConsentGateTurn, ConsentTurnGateDeps } from './consent-answer/consent-turn-gate';
 // ADR-0092 amendment (runtime switching): the owner's model-selection command grammar (provider-free).
 export * from './model-selection';

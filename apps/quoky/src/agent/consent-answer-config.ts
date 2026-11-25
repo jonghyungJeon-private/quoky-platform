@@ -12,7 +12,8 @@
  * - Anything else is `CONSENT_ANSWER_CLASSIFIER_INVALID`.
  */
 
-export type ConsentAnswerClassifierMode = 'off';
+/** `on` is a type-level value only: `parseConsentAnswerConfig` never returns it (refused until A6-S4). */
+export type ConsentAnswerClassifierMode = 'off' | 'on';
 
 export interface ConsentAnswerConfig {
   readonly classifier: ConsentAnswerClassifierMode;

@@ -17,6 +17,8 @@ import type { BoundConsent, ConsentLanguage, ConsentPendingStore, ConsentScope }
  *   rerun a message once as a new ordinary turn (AM-2).
  * - **Clock.** `now` is the one clock of the step: the same domain as the service's `createdAtMs` (`AgentRunService` deps
  *   `elapsed`, default `Date.now`). The composition root passes the same function to both.
+ * - **Cap (A6 classifier wiring).** With the switch on, every classifier call is charged through `chargeModelCall` first; a spent cap is
+ *   `unclear` (re-ask, then cancel), never a yes. A turn a registered handler claims is `other` before any call (`handlerClaimed`).
  * - **No content.** The gate logs closed codes and counts only, never the reply text, an id or an item. History keeps only the
  *   fixed notes below (never the summary).
  *
@@ -45,12 +47,17 @@ export type ConsentContinuation =
 
 export interface ConsentTurnGateDeps {
   readonly store: ConsentPendingStore;
-  /** Always `{ mode: 'off' }` while `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` is refused. */
+  /** `{ mode: 'off' }` unless the composition root built the adapter; `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` stays refused (A6-S4). */
   readonly classifier: ConsentClassifierSwitch;
   /** Runs the bound summary yes (`AgentRunService.continueSummaryConsent`). Total: it never throws. */
   readonly continueSummary: (bound: BoundConsent, turn: { readonly actor: Actor; readonly direct: boolean }) => Promise<ConsentContinuation>;
   /** Drops the continuation records (`AgentRunService.voidAllSummaryConsents`); the store is voided by the gate itself. */
   readonly voidContinuations?: () => void;
+  /**
+   * A6 classifier wiring: charges ONE model call to the actor's per-actor hourly cap (the run service's 60/h) and answers whether it
+   * was available. Every classifier call goes through it; absent or `false` the classifier is not called (`unclear`, fail closed).
+   */
+  readonly chargeModelCall?: (actor: Actor, atMs: number) => boolean;
   /** The one clock of the step (ms): the same function the run service uses for `createdAtMs`. */
   readonly now: () => number;
   readonly logger?: Logger;
@@ -69,6 +76,8 @@ export interface ConsentGateTurn {
   readonly ownerStepPending: boolean;
   /** The text is a control phrase (existing parsers, in the runtime). */
   readonly control: boolean;
+  /** A registered turn handler's pure `surfaceClaim` claims the text (decided by the runtime; A6 classifier wiring). */
+  readonly handlerClaimed?: boolean;
 }
 
 export type ConsentGateOutcome =
@@ -119,8 +128,16 @@ export class ConsentTurnGate {
       const language = store.languageOf(scope);
       const decision = await answerConsentTurn(
         store,
-        { scope, ownerDm: true, text: turn.text, atMs: this.deps.now(), attachmentCount: turn.attachmentCount, ...(turn.quotedRanges !== undefined ? { quotedRanges: turn.quotedRanges } : {}) },
-        this.deps.classifier,
+        {
+          scope,
+          ownerDm: true,
+          text: turn.text,
+          atMs: this.deps.now(),
+          attachmentCount: turn.attachmentCount,
+          ...(turn.quotedRanges !== undefined ? { quotedRanges: turn.quotedRanges } : {}),
+          ...(turn.handlerClaimed === true ? { handlerClaimed: true } : {}),
+        },
+        this.capped(turn.actor),
         this.deps.now,
       );
       const lines = LINES[language ?? languageOfReply(turn.text)];
@@ -156,6 +173,25 @@ export class ConsentTurnGate {
       this.log('failed', error instanceof Error ? error.name : 'unknown');
       return ROUTE;
     }
+  }
+
+  /** The classifier switch with every call charged to the actor's hourly model-call cap; an uncharged call is `unclear` (never a yes). */
+  private capped(actor: Actor): ConsentClassifierSwitch {
+    const { classifier, chargeModelCall } = this.deps;
+    if (classifier.mode !== 'on') return classifier;
+    const classify = classifier.classify;
+    return {
+      mode: 'on',
+      classify: async (request) => {
+        let charged = false;
+        try {
+          charged = chargeModelCall?.(actor, this.deps.now()) === true;
+        } catch {
+          charged = false;
+        }
+        return charged ? classify(request) : 'unclear';
+      },
+    };
   }
 
   private async continueBound(bound: BoundConsent, turn: ConsentGateTurn, lines: (typeof LINES)[ConsentLanguage]): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly replyKind: 'note' }> {

@@ -481,3 +481,36 @@ describe('A6-S1 review round 2: non-finite times and generations', () => {
     expect(a.bind(claimed.claim, T0 + 2_000)).toBeDefined();
   });
 });
+
+describe('A6 classifier wiring: a turn a registered handler claims (turn fact) is `other` before the classifier', () => {
+  it('switch on: handlerClaimed cancels as classifier-other, the classifier is never called, the step is cancelled (single line routes, multi-line is consumed)', async () => {
+    const stub = on('yes');
+    const store = opened();
+    const single = await answer(store, turn('오늘 메일 보여줘', { handlerClaimed: true }), stub);
+    expect(single).toMatchObject({ kind: 'cancelled', audit: ['classifier-other'], next: 'ordinary' });
+    expect(stub.classify).not.toHaveBeenCalled();
+    const multi = await answer(opened(), turn('오늘 메일 보여줘\n그리고 일정도', { handlerClaimed: true }), stub);
+    expect(multi).toMatchObject({ kind: 'cancelled', audit: ['classifier-other'], next: 'consumed' });
+    expect(stub.classify).not.toHaveBeenCalled();
+  });
+
+  it('a closed yes still binds when the turn is also claimed (the fast path runs first)', async () => {
+    const stub = on('no');
+    const decision = await answer(opened(), turn('응', { handlerClaimed: true }), stub);
+    expect(decision).toMatchObject({ kind: 'bound', audit: ['closed-yes'] });
+    expect(stub.classify).not.toHaveBeenCalled();
+  });
+
+  it('switch off: a claimed turn is the plain classifier-off cancel, byte-identical to an unclaimed one', async () => {
+    const a = await answer(opened(), turn('오늘 메일 보여줘', { handlerClaimed: true }), OFF);
+    const b = await answer(opened(), turn('오늘 메일 보여줘'), OFF);
+    expect(a).toEqual(b);
+    expect(a).toMatchObject({ audit: ['classifier-off'] });
+  });
+
+  it('an unclaimed turn still reaches the classifier', async () => {
+    const stub = on('yes');
+    expect(await answer(opened(), turn('그래 보내줘'), stub)).toMatchObject({ kind: 'bound', audit: ['classifier-yes'] });
+    expect(stub.classify).toHaveBeenCalledTimes(1);
+  });
+});

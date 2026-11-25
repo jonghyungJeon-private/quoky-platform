@@ -91,4 +91,13 @@ describe('createAgentProviders: the rule-① consent composition (CS-2)', () => 
     const service = find(list, AGENT_RUNS).useFactory(router, storage, store) as AgentRunService;
     expect(service.mode).toBe('off');
   });
+
+  it('the consent gate: the classifier switch follows QUOKY_CONSENT_ANSWER_CLASSIFIER (off, the default, builds none) and every call is charged to the run service', () => {
+    const providers = createAgentProviders(() => ({ agent: { mode: 'off', summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul', summaryConsent: 'on' }), { logger: silent });
+    const gateProvider = providers.find((p) => (p as { provide: symbol }).provide === CONSENT_TURN_GATE) as { useFactory: (runs: AgentRunService, store: ConsentPendingStore | undefined, router: CapabilityRouter) => ConsentTurnGate | undefined };
+    const runs = { continueSummaryConsent: async () => ({ kind: 'declined', reason: 'x', text: 'x' }), voidAllSummaryConsents: () => undefined, chargeClassifierCall: () => true } as unknown as AgentRunService;
+    const router = { select: async () => { throw new Error('router must not be used with the switch off'); } } as unknown as CapabilityRouter;
+    expect(gateProvider.useFactory(runs, undefined, router)).toBeUndefined();
+    expect(gateProvider.useFactory(runs, new ConsentPendingStore(), router)).toBeInstanceOf(ConsentTurnGate);
+  });
 });

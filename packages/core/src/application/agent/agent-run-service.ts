@@ -705,6 +705,28 @@ export class AgentRunService {
     }
   }
 
+  /**
+   * A6 classifier wiring: charges ONE model call (the consent-answer classifier) to `actorId`'s rolling-hour cap of
+   * {@link AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR}, the same ledger the active runs charge. `false` when the hour has no call left (the
+   * caller must not make the call) or the clock cannot be read. It counts no run and takes no in-flight slot. Synchronous and total.
+   */
+  chargeClassifierCall(actorId: Id, atMs: number): boolean {
+    try {
+      if (!Number.isFinite(atMs)) return false;
+      const calls = (this.modelCalls.get(actorId) ?? []).filter((entry) => atMs - entry.at < HOUR_MS);
+      const used = calls.reduce((sum, entry) => sum + entry.count, 0);
+      if (used >= AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR) {
+        this.modelCalls.set(actorId, calls);
+        return false;
+      }
+      calls.push({ at: atMs, count: 1 });
+      this.modelCalls.set(actorId, calls);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Whether a continuation (one run, one model call, no planner) would still be admitted for `actorId` after the asking run that made `thisRunCalls` calls. */
   private continuationAdmissible(actorId: Id, nowMs: number, thisRunCalls: number): boolean {
     const own = this.inFlightCharge.get(actorId);

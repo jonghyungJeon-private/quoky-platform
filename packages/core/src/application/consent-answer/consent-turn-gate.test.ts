@@ -31,6 +31,7 @@ function rig(options: { classifier?: ConsentClassifierSwitch; continuation?: Con
   const gate = new ConsentTurnGate({
     store,
     classifier: options.classifier ?? { mode: 'off' },
+    chargeModelCall: () => true,
     continueSummary: async (bound) => {
       continued.push(bound);
       if (typeof options.continuation === 'function') return options.continuation();
@@ -216,5 +217,58 @@ describe('ConsentTurnGate (CS-2)', () => {
   it('conversationKeyOf is platform|space|channel|thread', () => {
     expect(ConsentTurnGate.conversationKeyOf({ platform: 'discord', channelId: 'c' })).toBe('discord||c|');
     expect(ConsentTurnGate.conversationKeyOf({ platform: 'discord', spaceId: 's', channelId: 'c', threadId: 't' })).toBe('discord|s|c|t');
+  });
+});
+
+describe('ConsentTurnGate: every classifier call is charged to the per-actor model-call cap (A6 classifier wiring)', () => {
+  const withCharge = (charge: (() => boolean) | undefined, classify: () => Promise<unknown>) => {
+    const store = new ConsentPendingStore();
+    const charges: string[] = [];
+    const gate = new ConsentTurnGate({
+      store,
+      classifier: { mode: 'on', classify },
+      ...(charge !== undefined ? { chargeModelCall: (actor: Actor) => (charges.push(actor.id), charge()) } : {}),
+      continueSummary: async () => ({ kind: 'reply', reply: { text: 'SUMMARY-BODY-TEXT' } }),
+      now: () => T0,
+    });
+    store.open(summaryConsentPending({ scope: SCOPE, language: 'ko', createdAtMs: T0, recipient: 'Claude', sources: [{ source: 'mail', itemIds: ['m1'] }], runRef: 'run-1' }));
+    const turn = (text: string): ConsentGateTurn => ({ actor: OWNER, conversationKey: KEY, direct: true, text, attachmentCount: 0, ownerStepPending: false, control: false });
+    return { gate, store, charges, turn };
+  };
+
+  it('a call is charged first, for the owner, and then runs', async () => {
+    let called = 0;
+    const r = withCharge(() => true, async () => (called += 1, 'yes'));
+    const out = await r.gate.handle(r.turn('그래 보내줘'));
+    expect(r.charges).toEqual(['owner']);
+    expect(called).toBe(1);
+    expect(out).toMatchObject({ kind: 'reply' });
+  });
+
+  it('a spent cap: the classifier is not called, the label is `unclear` (the fixed re-ask, nothing sent), never a yes', async () => {
+    let called = 0;
+    const r = withCharge(() => false, async () => (called += 1, 'yes'));
+    const out = await r.gate.handle(r.turn('그래 보내줘'));
+    expect(called).toBe(0);
+    expect(out).toMatchObject({ kind: 'reply', replyKind: 'question', text: '보낼까요? (응/아니)' });
+    // The second unclear cancels.
+    const again = await r.gate.handle(r.turn('그래 보내줘'));
+    expect(called).toBe(0);
+    expect(again).toMatchObject({ kind: 'reply', replyKind: 'note' });
+  });
+
+  it('no charging function (or one that throws) is a spent cap, never an uncharged call', async () => {
+    let called = 0;
+    const none = withCharge(undefined, async () => (called += 1, 'yes'));
+    expect(await none.gate.handle(none.turn('그래 보내줘'))).toMatchObject({ replyKind: 'question' });
+    const throwing = withCharge(() => { throw new Error('boom'); }, async () => (called += 1, 'yes'));
+    expect(await throwing.gate.handle(throwing.turn('그래 보내줘'))).toMatchObject({ replyKind: 'question' });
+    expect(called).toBe(0);
+  });
+
+  it('a closed token never charges (no classifier call)', async () => {
+    const r = withCharge(() => true, async () => 'no');
+    await r.gate.handle(r.turn('응'));
+    expect(r.charges).toEqual([]);
   });
 });

@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6 classifier wiring (2026-11-25; dormant: `QUOKY_CONSENT_ANSWER_CLASSIFIER` default off, `on` still refused)
+
+- **Added.** The structural rule of the CS-2 residual: with the switch on, a turn a registered handler's pure `surfaceClaim` claims is `other`
+  (turn fact `handlerClaimed`), after the closed-token fast path and before the classifier call; the classifier is not called. Every classifier
+  call is charged to the per-actor 60/h model-call cap (`AgentRunService.chargeClassifierCall`, `ConsentTurnGateDeps.chargeModelCall`); a spent
+  cap is `unclear`. The composition root builds the switch from config (`consent-answer-classifier-wiring.ts`) instead of `{ mode: 'off' }`.
+- **Unchanged.** `off` is byte-identical; `on` stays refused at startup until A6-S4; no prompt, catalog or gold change, no model call or eval.
+  See DECISIONS "A6 classifier wiring implementation note (2026-11-25)".
+
 ## Unreleased — Rule-① confirm slice CS-3 gold (2026-11-25; tests and gold data only, no production change)
 
 - **Changed (test + gold).** The SR-1 corpus test (`s2-read-redteam-corpus.test.ts`) no longer models the confirm slice: every case that

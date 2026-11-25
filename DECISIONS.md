@@ -39467,3 +39467,36 @@ complete and dormant: agent mode `active` is still refused at startup and the re
 - **Open points.** A6-S2/A6-S4 (classifier and its gate) move the eight classifier cases and the A6-S3 pair; A4-S5 moves the request-list
   cases; the `repo` alias (a catalog change with its own D12 gate) moves `244` and `250`; the S2 P5 dispatch replaces the probe stand-in
   and adds the live arm; the `ConsentTurnGate` stays inert until `active` is released.
+
+### A6 classifier wiring implementation note (2026-11-25)
+
+Slice "A6 classifier wiring" of ADR-0121 amendment A6 (after A6-S2 and the rule-① confirm slice CS-1a to CS-3). Dormant: the switch
+`QUOKY_CONSENT_ANSWER_CLASSIFIER` stays default `off`, `on` stays refused at startup (`CONSENT_ANSWER_CLASSIFIER_NOT_RELEASED`), no prompt
+text or version change (`consent-answer.v1`), no NL catalog change, no model call, no eval. With `off` the runtime is byte-identical.
+
+- **Structural rule (the CS-2 residual, "Review round 3").** `answerConsentTurn` takes a turn fact `handlerClaimed`. With the switch on, after
+  the closed-token fast path and before the classifier call, a turn a registered handler's pure `surfaceClaim` claims is `other`: the step is
+  cancelled (`classifier-other`; a single line routes normally, a multi-line reply is consumed, as any `other`), the classifier is not called and
+  no cap is charged. The runtime decides the fact (`ConversationRuntimeBase.turnHandlerClaims`, the one registry walk, now also used by the chat
+  layer's `nlHandlerClaims`); Core does not recompute it from platform types. It is NOT in `isConsentControlTurn`: a closed yes that a listing
+  handler also claims still binds through the fast path. No word list or regex phrase list: the registered `surfaceClaim` parsers decide. With
+  the switch off the order is unchanged (`classifier-off`).
+- **Composition.** `apps/quoky/src/agent/consent-answer-classifier-wiring.ts` builds the switch from config instead of the hard-wired
+  `{ mode: 'off' }`: `off` builds nothing; `on` (test-only while refused) builds `createConsentAnswerClassifier` over the router's
+  `INTENT_SELECTION` route (now exported by name from the application index; the boundary test pins the two new names). The chat provider of a
+  turn is not a composition-time fact, so the adapter is given none and answers `unclear` without a call until A6-S4 supplies it per turn.
+- **Cap accounting.** The adapter does not count (A6-S2). `ConsentTurnGate` charges every classifier call through
+  `ConsentTurnGateDeps.chargeModelCall` before it, wired to `AgentRunService.chargeClassifierCall`: ONE call on the same rolling-hour ledger as
+  the active runs (60 per actor per hour, `AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR`); it counts no run and takes no in-flight slot. A spent
+  cap, a missing or throwing charge function, or a bad clock is `unclear` (A6.3 re-ask, then cancel): fail closed, never a yes.
+- **Harness stubs.** Every stub standing in for the classifier provider already models the Claude CLI with
+  `supportsStrongerIntentSelection: true` (`consent-classifier.test.ts`, `s2-read-redteam-a6-target.test.ts`); none lacks it.
+- **Tests.** `conversation-runtime-consent-gate.test.ts`: each registered handler grammar in KO and EN (mail, calendar, drive, git-branch,
+  feedback summary; the reminder, work-chat lookup and usage grammars are command grammars that forfeit as control turns even earlier, both
+  paths asserted) reaches the real runtime gate with a stub classifier that answers `yes`: silent cancel, normal routing, stub never called; a
+  closed `응` still binds when a handler claims everything; an unclaimed worded reply still reaches the classifier; a spent cap re-asks.
+  Plus `consent-answer.test.ts`, `consent-turn-gate.test.ts`, `agent-run-service.test.ts` (the 60/h ledger), the app wiring tests.
+- **The switch stays refused until A6-S4** (owner notice + yes for every eval run, the gate of A6.9/a6-12). A6-S4's corpus must include
+  non-answer requests in every registered grammar and source (mail, Drive, calendar, branch, feedback, to-do, reminder, both languages) as
+  the CS-2 residual requires; the structural rule is a second defence, not a replacement for the 0-non-answers-captured-as-yes gate (r-03 ③).
+  A6-S4 must also supply the turn's chat provider facts to the adapter and a gold rerun after the rule (the CS-2 residual says it needs one).

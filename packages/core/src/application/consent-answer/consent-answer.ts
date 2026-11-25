@@ -22,7 +22,9 @@ import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, Conse
  * 4. **The fast path.** NFKC, then NFC, trim and one trailing `.` `!` `~` `?` removed, then the ratified closed tokens (A2
  *    answer 2, SR-1 W1): yes `응` `네` `예` `yes`, no `아니` `아니요` `아니오` `아뇨` `취소` `no`. NFKC folds compatibility forms
  *    only (fullwidth `ｙｅｓ`); a cross-script look-alike stays no token. A closed yes binds, a closed no cancels.
- * 5. **Switch off** (the default): any other reply cancels, exactly as W1 as built.
+ * 5. **Handler claim** (switch on only): a turn a registered handler's `surfaceClaim` claims (turn fact `handlerClaimed`) is `other`;
+ *    the classifier is not called.
+ *    **Switch off** (the default): any other reply cancels, exactly as W1 as built.
  *    **Switch on**: the classifier's closed label (`yes`, `yes-and-more`, `no`, `other`, `unclear`; anything else, a throw
  *    included, is `unclear`). It sees only the fixed question with placeholders and the reply (A6-S2): no item, topic, count or history.
  * 6. **Bind** ({@link ConsentPendingStore.bind}): compare-and-set from `answering`; a failed bind sends nothing.
@@ -75,6 +77,11 @@ export interface ConsentReplyTurn {
   readonly atMs: number;
   readonly attachmentCount?: number;
   readonly quotedRanges?: readonly InboundQuotedRange[];
+  /**
+   * A6 classifier wiring (CS-2 residual): a registered turn handler's pure `surfaceClaim` claims this turn, decided by the runtime
+   * (never recomputed here from platform types). With the switch on, such a turn is `other` and the classifier is not called.
+   */
+  readonly handlerClaimed?: boolean;
 }
 
 /** What the caller does with the turn after the answer pipeline. */
@@ -233,6 +240,12 @@ async function decideClaimed(
   if (classifier.mode !== 'on') {
     store.cancel(claim);
     return { kind: 'cancelled', audit: ['classifier-off'], next: afterCancel(shape.lines) };
+  }
+  // The structural rule (A6 classifier wiring): after the closed-token fast path (a closed yes a listing handler also claims has bound
+  // above) and before the model call, a turn a registered handler claims is a new request: `other`, no call, no cap charge.
+  if (turn.handlerClaimed === true) {
+    store.cancel(claim);
+    return { kind: 'cancelled', audit: ['classifier-other'], next: afterCancel(shape.lines) };
   }
   const label = await classifyStrict(classifier.classify, buildConsentClassifierRequest(claim.pending, turn.text));
   // Freshness is judged on a fresh clock read after the classifier, never on the arrival time of the message.
