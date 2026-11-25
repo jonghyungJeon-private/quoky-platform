@@ -38801,6 +38801,59 @@ stay as written; this record is the exact change and supersedes them for this on
   owner's approval card showing the real destination and payload. Revisit in the slice that activates A7 (A7-S2+), where
   the router can run on the raw owner text before the A6 normalizer.
 
+## ADR-0121 A7-S2 implementation note (2026-11-25)
+
+Status: implemented (branch `claude/v5-a7-s2-held-receipt`). Slice A7-S2 "held-receipt" of ADR-0121 amendment A7 (A7.10 row).
+Append-only: no amendment text or ratification record changes. Shadow logging only: nothing is read, drafted or carded, the
+default (`off`) leaves every turn byte-identical, and no model was called and no evaluation was run.
+
+- **Built (`agent/held-receipt.ts`, pure).**
+  - *The receipt* (A7.4): `{ conversation, actorId, turnId, entryId, validatedArgs, itemIds (1..10, delivered order),
+    itemDigests, kind: listing|answer|card, egress, at, carried? }`. `buildHeldReceipt` is the only constructor; it refuses
+    with a closed code (`empty`, `too-many`, `shape`, `duplicate`, `handoff-built`, `host-only`, `source-off`,
+    `destination-listing`) and `parseHeldReceipt` re-validates through it, so a stored value with any unknown key (parse rejects them, it does not strip) or a non-strict timestamp is
+    absent; `at` and `now` must be strict UTC ISO `...Z` (anything else is expired, fail closed). `kind: 'card'` is built only by
+    `carryOverReceipt` (`buildHeldReceipt` refuses it; a stored card needs `carried: true` and nothing else may have it). The receipt type has no text field at all.
+  - *Digest* (A7.4 P3): `digestHeldItemFields(fields, sha256Hex)` is SHA-256 over the canonical JSON (sorted keys, NFC). The
+    hasher is injected because the agent module may import no `node:*` (agent-boundary.test.ts, settled).
+  - *Binding* (`bindHeldReceipt`): same actor, same DM conversation, the receipt's turn is the owner turn right before this one
+    (a7-05: the immediately previous answer only), within 10 minutes of `at` (20 minutes for a `card` or carried receipt, from
+    the ORIGINAL `at`), source on, not HOST_ONLY, non-empty, kill switch not set. Closed unbound reasons are returned. It never
+    reads the owner's words: the source-name check and the plan form are A7-S1's.
+  - *Re-execution and digest check* (`reexecuteHeldReceipt`, `verifyHeldItems`): the held read runs once through a port with the
+    held entry and held args; only ids in the receipt with an equal digest are kept, in receipt order; changed or missing items
+    are dropped and counted (a7-06: drop and tell, "1건은 그 사이 바뀌어 뺐어요"; the banner text is A7-S4's); nothing is added.
+  - *`yes-and-more` re-run* (A7.4c item 1): `isYesAndMoreRerun` is true only for an `answer` receipt whose `turnId` is this very
+    message id with the A6 re-run marker; `bindHeldReceipt` takes the re-run facts (`rerun: { messageId, marker }`) and calls `isYesAndMoreRerun` itself, so a caller cannot assert it; it counts the re-run as the next turn for that
+    receipt only.
+  - *Card carry-over* (A7.4c item 4): `carryOverReceipt` hands the frozen items on as `kind: 'card'` with the original `at`; the
+    kill switch and the automatic trip hand nothing on; at most one carry-over.
+- **Flag** `QUOKY_AGENT_WRITE_PROPOSALS=off|shadow|active` (`apps/quoky/src/agent/write-proposals-config.ts`, `QuokyConfig.writeProposals`):
+  exact, default `off`; `active` fails startup `AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED`; anything else `AGENT_WRITE_PROPOSALS_INVALID`;
+  `shadow` needs `QUOKY_AGENT_MODE=shadow` (`AGENT_WRITE_PROPOSALS_REQUIRES_AGENT_MODE`). `QUOKY_AGENT_PROPOSE_TARGETS` is not added
+  (no target can run before A7-S3/S4).
+- **Shadow log.** With `shadow`, `NlSelectionService` calls an optional `heldReceiptShadow` dep after a non-empty listing was written;
+  the composition root logs one `a7_held_receipt.shadow` line: `{ mode, kind: 'listing', source (closed listing source), items (count),
+  outcome: count-ok | empty | too-many | shape }` (`count-ok` is count-only: it says nothing about DM-only, handoff, source-on or HOST_ONLY); an unknown source is logged as `other` (closed list of Core listing sources). No id, digest, title, argument or text. Absent dep (the default), nothing
+  changes; a throwing hook never reaches the turn. Shadow plan roles are not logged here: the planner emits no A7 form (prompt
+  `agent-plan.v11` unchanged), so A7-S1's `cross-write` shadow line remains the only plan-role log.
+- **Interpretations (fail closed).**
+  1. More than 10 delivered items: NO receipt (`too-many`), not a truncated one, because a silently cut scope would be a different
+     scope than the owner saw. A7.4 says "<= 10" without saying which.
+  2. A failed or throwing re-read keeps nothing (`unverified`); a duplicate id in the re-read counts as a change.
+  3. A receipt dated after `now` is expired.
+  4. A `card` receipt's `turnId` is the turn that closed the card; for a closure with no owner turn (expiry) the A7-S4 caller sets it
+     at the next owner turn. The 20-minute limit is checked from the original `at` in every case.
+  5. `WRITE_PROPOSALS=shadow` requires agent mode `shadow` (A7.10: "work only under agent mode"; `active` mode is unreleased).
+- **A7.4b frozen check.** The two-window check on a frozen card's own items (A7.4b) is an A7-S4 item; no frozen receipt exists in this slice.
+- **Owner FYI (not changed here).** A7.10 says the flags work only under agent mode `active`; this slice requires `shadow` while `active`
+  is refused. This is to be settled before `active` is released.
+- **Residuals / not done.** The receipt is not yet stored in `Session.metadata` or written by the answer path: answer and card
+  receipts and the digests need the item fields of the delivering turn, which exist with the drafter (A7-S3) and the card (A7-S4);
+  the `yes-and-more` re-run needs the A6 rule-① confirm slice. A7-S2 delivers the contract, the tests and the shadow count line; the
+  live write path and the metadata key `quoky.heldReceipt` (`HELD_RECEIPT_METADATA_KEY`) are wired in A7-S4. The BOM-in-token residual of A7-S1
+  review 5 is untouched (the router is still not wired). Gold for the receipt-dependent A7.9 shares (follow-up, expired, drift) comes with A7-S4/S5.
+
 ## ADR-0121 A6-S1 implementation note (2026-11-24)
 
 Status: implemented (branch `claude/v5-a6-s1-answer-checks`). Slice A6-S1 "answer-checks" of ADR-0121 amendment A6 (the R10

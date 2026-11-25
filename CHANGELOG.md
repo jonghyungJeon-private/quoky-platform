@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A7-S2 held receipt, shadow only (2026-11-25)
+
+- **Added.** `agent/held-receipt.ts`: the content-free held receipt (listing, answer, card kinds), its binding (same owner and DM,
+  next turn, 10 minutes; 20 for card or carried), the re-execution and digest check (changed or missing items dropped), the
+  `yes-and-more` re-run rule and the closed-card carry-over. Pure and not wired into a live write path.
+- **Flag.** `QUOKY_AGENT_WRITE_PROPOSALS=off|shadow|active` (exact, default `off`); `active` fails startup
+  (`AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED`); `shadow` needs `QUOKY_AGENT_MODE=shadow` and only logs `a7_held_receipt.shadow`
+  (closed source, item count, closed outcome). Default behaviour is byte-identical. No model call.
+
 ## Unreleased — r-07 mail and Drive numeric limit (2026-11-24; catalog change, D12 gate pending)
 
 - **Changed.** `mail.list` and `drive.files` declare the shared numeric `limit` arg (integer 1..10), like `jira.issues` and

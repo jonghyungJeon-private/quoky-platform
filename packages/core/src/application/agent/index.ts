@@ -2,6 +2,7 @@
 export * from './handoff-slots';
 export * from './cross-write';
 export * from './cross-write-validator';
+export * from './held-receipt';
 export * from './plan-schema';
 export * from './plan-validator';
 export * from './plan-prompt';
