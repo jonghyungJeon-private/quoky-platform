@@ -17,7 +17,7 @@ import type { NlSelectionConfig } from './nl-selection/nl-selection-config';
 import { EgressConfigErrorCode, parseEgressConfig } from './security/egress-config';
 import { ChannelGrantsConfigErrorCode, parseChannelGrantsConfig, type ChannelGrantsConfig } from './surface-grants/channel-grants-config';
 import { AgentConfigErrorCode, parseAgentConfig, type AgentConfig } from './agent/agent-config';
-import { WriteProposalsConfigErrorCode, parseWriteProposalsConfig, type WriteProposalsConfig } from './agent/write-proposals-config';
+import { WriteProposalsConfigErrorCode, parseProposeTargets, parseWriteProposalsConfig, type ProposeTarget, type WriteProposalsConfig } from './agent/write-proposals-config';
 import { ConsentAnswerConfigErrorCode, parseConsentAnswerConfig, type ConsentAnswerConfig } from './agent/consent-answer-config';
 import { SummaryConsentConfigErrorCode, parseSummaryConsentConfig, type SummaryConsentConfig } from './agent/summary-consent-config';
 import { ChunkItemsConfigErrorCode, parseChunkItemsConfig, type ChunkItemsConfig } from './item-summary/chunk-items-config';
@@ -162,6 +162,11 @@ export interface QuokyConfig {
    * logged with closed codes only; `active` is refused at startup, AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED).
    */
   writeProposals: WriteProposalsConfig;
+  /**
+   * ADR-0121 amendment A7 (A7-S4a): `QUOKY_AGENT_PROPOSE_TARGETS`, the closed list of destinations a proposal may card (default
+   * empty). It takes effect only under agent mode `active` and `QUOKY_AGENT_WRITE_PROPOSALS=active`, both refused at startup.
+   */
+  proposeTargets: readonly ProposeTarget[];
   /**
    * ADR-0124 Part L: `QUOKY_CHUNK_ITEMS` (`off` | `shadow` | `on`, default `off`; anything else is refused at startup), and
    * (slice 2) the long-item model `QUOKY_CHUNK_ITEMS_MODEL` with its required pin `QUOKY_CHUNK_ITEMS_MODEL_DIGEST` (`on`
@@ -636,6 +641,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const consentAnswer = parseConsentAnswerConfig(env);
   const summaryConsent = parseSummaryConsentConfig(env);
   const writeProposals = parseWriteProposalsConfig(env);
+  const proposeTargets = parseProposeTargets(env);
   const chunkItems = parseChunkItemsConfig(env);
   const discordGuildId = env.DISCORD_GUILD_ID;
   const discordChannelIds = parseDiscordIdList(env.QUOKY_DISCORD_CHANNEL_IDS, QuokyConfigErrorCode.DISCORD_CHANNEL_IDS_INVALID);
@@ -692,6 +698,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     consentAnswer,
     summaryConsent,
     writeProposals,
+    proposeTargets,
     chunkItems,
     embedding: {
       enabled: parseExactBoolean(env.QUOKY_EMBEDDING_ENABLED, false, QuokyConfigErrorCode.EMBEDDING_ENABLED_INVALID),

@@ -129,6 +129,19 @@ function participantsOf(items: readonly unknown[]): WorkItemParticipant[] {
   return handles.map((handle, index) => ({ handle, label: pseudonymLabel(index) }));
 }
 
+/**
+ * ADR-0121 A7 (A7-S4a, a7-08): the host-only map of one listing's pseudonyms back to the names the listing itself carried, for the
+ * drafter's remap. The same participants (same handles, same order, same labels) the documents were pseudonymised with. Never in a
+ * prompt, a log or an audit record. Total.
+ */
+export function workSummaryParticipants(items: unknown): readonly { readonly label: string; readonly name: string }[] {
+  try {
+    return Array.isArray(items) ? participantsOf(items).map((participant) => ({ label: participant.label, name: participant.handle })) : [];
+  } catch {
+    return [];
+  }
+}
+
 function clip(text: string, max: number): string {
   const characters = Array.from(text);
   return characters.length <= max ? text : `${characters.slice(0, max - 1).join('').trimEnd()}…`;

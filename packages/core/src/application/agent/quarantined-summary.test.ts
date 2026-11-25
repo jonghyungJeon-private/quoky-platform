@@ -786,7 +786,7 @@ describe('quarantined summariser: structural pins', () => {
 
   it('only the executor, the assembler and the run service import the summariser; no planner-side file does (M1 never sees M2)', () => {
     const importers = sources.filter((source) => /from '\.\/quarantined-summary'/.test(source.text)).map((source) => source.name);
-    expect(importers.sort()).toEqual(['agent-run-service.ts', 'index.ts', 'plan-executor.ts', 'reply-assembler.ts']);
+    expect(importers.sort()).toEqual(['a7-propose.ts', 'agent-run-service.ts', 'index.ts', 'plan-executor.ts', 'reply-assembler.ts']);
     for (const name of ['plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'flow-policy.ts', 'help-split.ts']) expect(importers).not.toContain(name);
     // Rule ① (CS-1b): the run service reaches the summariser by exactly two names, the run token and the consent maker (the continuation).
     const service = sources.find((source) => source.name === 'agent-run-service.ts')?.text ?? '';

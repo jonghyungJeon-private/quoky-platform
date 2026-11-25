@@ -58,3 +58,6 @@ export const CHANNEL_MESSAGE_WRITER = Symbol('ChannelMessageWriter');
 export const CHANNEL_MESSAGE_DELETE_WRITER = Symbol('ChannelMessageDeleteWriter');
 export const CALENDAR_EVENT_WRITER = Symbol('CalendarEventWriter');
 export const CONNECTOR_WRITE_RECEIPT_REPOSITORY = Symbol('ConnectorWriteReceiptRepository');
+// ADR-0121 amendment A7 (A7-S4a): the narrow proposal port of the bounded agent's cross-source write. Implemented outside the
+// agent module over the ADR-0112 connector-write flow and bound only in the composition root (dormant until A7 is `active`).
+export const AGENT_WRITE_PROPOSAL_PORT = Symbol('AgentWriteProposalPort');

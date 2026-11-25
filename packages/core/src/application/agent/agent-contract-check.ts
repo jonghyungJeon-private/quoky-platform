@@ -5,6 +5,7 @@ import type { AgentWorkSummarySource } from './flow-policy';
 import type { AgentCalendarSummaryItem, AgentExcerptSummaryItem, AgentSlackSummaryItem } from './work-summary-projection';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
 import type { AiProvider } from '../../ports/ai-provider.port';
+import type { AgentWriteProposalPort } from '../../ports/agent-write-proposal.port';
 import type { ProviderSelector } from '../../ports/provider-selector.port';
 
 /**
@@ -68,8 +69,16 @@ export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQu
  * closed data context `crossWrite` (allowlists and switches by value, no port, no model list); it reaches the plan validator only.
  */
 export type AgentServiceDepsPinned = Assert<
-  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite' | 'consentStore' | 'recipientLabel' | 'consentClassifierOn'>
+  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite' | 'writeProposal' | 'consentStore' | 'recipientLabel' | 'consentClassifierOn'>
 >;
+/**
+ * ADR-0121 A7 (A7-S4a): the one proposal dep is the narrow port (an interface of Core's ports, implemented outside the agent module over
+ * `connectorWriteFlow`), the closed destination list and one boolean. No writer, no flow, no storage.
+ */
+export type AgentServiceWriteProposalPinned = Assert<KeysEqual<NonNullable<AgentRunServiceDeps['writeProposal']>, 'port' | 'targets' | 'askConsent'>>;
+export type AgentServiceWriteProposalPortPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['writeProposal']>['port'], AgentWriteProposalPort>>;
+/** The port itself: the open-card probe and one proposal in, one closed result out. */
+export type AgentWriteProposalPortPinned = Assert<KeysEqual<AgentWriteProposalPort, 'openCardOf' | 'propose'>>;
 /** Rule ① (CS-1a): the service's two additions are the process-wide pending-step store and the recipient-name map (data), no port. */
 export type AgentServiceConsentStorePinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['consentStore']>, ConsentPendingStore>>;
 export type AgentServiceRecipientPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['recipientLabel']>, (provider: AiProvider) => string | undefined>>;

@@ -950,7 +950,7 @@ const features: Provider[] = [
     telegramOwnerIds: config.telegram?.ownerIds ?? [],
   })),
   // ADR-0121 S2 (P1): the bounded read agent (QUOKY_AGENT_MODE, default off; `active` refused until the D11 gates).
-  ...createAgentProviders(() => ({ agent: config.agent, timeoutMs: config.nlSelection.timeoutMs, timeZone: config.reminders.timeZone, summaryConsent: config.summaryConsent.mode, consentAnswerClassifier: config.consentAnswer.classifier })),
+  ...createAgentProviders(() => ({ agent: config.agent, timeoutMs: config.nlSelection.timeoutMs, timeZone: config.reminders.timeZone, summaryConsent: config.summaryConsent.mode, consentAnswerClassifier: config.consentAnswer.classifier, writeProposals: { mode: config.writeProposals.mode, targets: config.proposeTargets } })),
   turnHandlersProvider,
 ];
 

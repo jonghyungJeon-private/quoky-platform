@@ -11,6 +11,7 @@ import { endsWithBatchim, withObjectParticle, withTopicParticle } from '../korea
 import { conversationRefOf, joinBody, joinMessage, messageBody, messageLink, untrustedText } from '../message-rendering';
 import type { MessagePart } from '../message-rendering';
 import { toZonedDateTime } from '../reminders/zoned-time';
+import type { AgentWriteProposalBanner } from '../../ports/agent-write-proposal.port';
 import type { ConnectorWriteUsageTopic } from './connector-write-draft';
 import type { ExternalUndoFamily } from '../nl-routing/last-action';
 import type {
@@ -282,6 +283,80 @@ export function renderConnectorWritePreview(
     `"승인"이라고 답한 뒤 "${executionPhrase}"이라고 보내야 실제로 실행돼요. 그만두려면 "거절"이라고 답해 주세요.`,
     `남은 시간: 약 ${minutesOf(remainingMs)}분 (지나면 자동으로 거절돼요)`,
   ]);
+}
+
+// ── ADR-0121 amendment A7 (A7-S4a): the card of a bounded agent's write proposal (A7.5 step 7) ────────────────────────────────────
+
+/** A7.5 step 7: the marker over the quoted payload. Fixed text. */
+export const AGENT_PROPOSAL_MARKER = '모델 작성 초안 — 아래 글자 그대로 올라갑니다';
+
+/**
+ * Interpretation (open point): one card is one message body. A card whose whole text is longer than this is refused, never cut
+ * ("a payload that cannot be shown whole is not carded"). The ADR-0112 payload bound (1400 characters) plus the banner fits in it.
+ */
+export const AGENT_PROPOSAL_CARD_MAX_CHARS = 3500;
+
+const AGENT_PROPOSAL_SOURCE_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  'slack.search': 'Slack 메시지 검색',
+  'jira.issues': 'Jira 이슈 목록',
+  'jira.release': 'Jira 릴리즈 이슈',
+});
+
+export interface AgentProposalCardInput {
+  readonly issueKey: string;
+  /** The exact payload text (what the hash covers and the writer sends). */
+  readonly text: string;
+  readonly banner: AgentWriteProposalBanner;
+  readonly named: number;
+  /** Destination-shaped tokens of the payload that are not the destination. */
+  readonly nonTargets: readonly string[];
+  readonly remainingMs: number;
+  readonly executionPhrase: string;
+}
+
+/**
+ * The A7 card for a Jira comment: operation and destination ("대상은 보내신 문장에서"), the marker, the FULL payload in a quoted
+ * block, the content-free provenance banner, the fixed named-people line, one non-target line per destination-shaped token, and the
+ * execution phrase unchanged. Pure; nothing is truncated here (the caller refuses a card that does not fit whole).
+ */
+export function renderAgentProposalCard(input: AgentProposalCardInput): MessageBody {
+  const { banner } = input;
+  const source = AGENT_PROPOSAL_SOURCE_LABEL[banner.source.entryId] ?? banner.source.entryId;
+  const labels = banner.items.map((item, index) => `${index + 1}) ${item.date ?? '날짜 없음'} ${item.id}`);
+  const drafter = banner.drafter.locality === 'LOCAL' ? '이 컴퓨터의 모델' : (banner.drafter.operator ?? '외부 모델');
+  return joinBody([
+    `${connectorWriteLabel('ISSUE_COMMENT')} 제안 카드예요. ${notDoneByThisRequest(false, true)}`,
+    `대상: Jira ${input.issueKey} (대상은 보내신 문장에서 가져왔어요)`,
+    AGENT_PROPOSAL_MARKER,
+    fenced(input.text),
+    messageBody(`출처: ${source}`, ...(banner.source.query !== undefined ? [' · 검색어 ', inline(banner.source.query)] : []), ` · ${banner.items.length}건`),
+    ...(labels.length > 0 ? [`가져온 항목: ${labels.join(', ')}`] : []),
+    ...(banner.dropped > 0 ? [`${banner.dropped}건은 그 사이 바뀌어 뺐어요`] : []),
+    `초안 작성: ${drafter}`,
+    input.named > 0 ? `초안에 실제 이름 ${input.named}명이 들어 있어요. 승인하면 그 이름이 그대로 올라가요.` : '초안에 사람 이름은 들어 있지 않아요.',
+    ...input.nonTargets.map((key) => `초안 안의 ${key} 표기는 대상이 아니에요. ${key}에는 아무것도 보내지 않아요`),
+    '',
+    '위험도: CRITICAL · 이 내용 그대로 한 번만 실행하는 승인이에요. 실패하거나 결과가 불확실해도 자동으로 다시 시도하지 않아요.',
+    `"승인"이라고 답한 뒤 "${input.executionPhrase}"이라고 보내야 실제로 실행돼요. 그만두려면 "거절"이라고 답해 주세요.`,
+    `남은 시간: 약 ${minutesOf(input.remainingMs)}분 (지나면 자동으로 거절돼요)`,
+  ]);
+}
+
+/** The fixed lines of a refused A7 proposal (nothing was sent, no card was made). */
+export function renderAgentProposalRefusal(reason: string): string {
+  switch (reason) {
+    case 'payload-too-large':
+    case 'too-many-lines':
+      return '초안이 한 장의 카드에 통째로 보여 드릴 수 없는 길이라서 카드를 만들지 않았어요. 아무것도 보내지 않았어요.';
+    case 'target-not-allowed':
+      return '이 대상은 쓰기가 허용된 곳이 아니라서 카드를 만들지 않았어요. 아무것도 보내지 않았어요.';
+    case 'owner-step-open':
+      return '먼저 열려 있는 승인 요청을 승인하거나 거절해 주세요. 지금은 카드를 만들지 않았어요. 아무것도 보내지 않았어요.';
+    case 'writes-off':
+      return '지금은 쓰기가 꺼져 있어서 카드를 만들지 않았어요. 아무것도 보내지 않았어요.';
+    default:
+      return '초안으로 카드를 만들 수 없어서 만들지 않았어요. 아무것도 보내지 않았어요.';
+  }
 }
 
 /**

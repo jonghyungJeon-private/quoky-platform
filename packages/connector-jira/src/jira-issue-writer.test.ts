@@ -355,6 +355,21 @@ describe('JiraIssueTransitionWriter (ADR-0112 D2/D5: the approved transition id 
       ],
     });
   });
+
+  // ADR-0121 A7-S4a (A7-S3 note, review round 3 item 4): the comment is sent as plain ADF text nodes, one paragraph per `\n` line. ADF is
+  // a structured document: no wiki markup is parsed out of a text node, so a doubled backslash (a forced line break in Jira WIKI markup),
+  // `{code}`, `[x|y]`, `*bold*` or `!img!` stay inert characters inside ONE paragraph. The rendered line count of a comment is
+  // therefore exactly the payload's line count (the proposal port bounds it at 9), not one more per `\\`.
+  it('plainTextDocument renders exactly one paragraph per payload line: a backslash pair or wiki markup adds no line and no markup', () => {
+    const payload = ['[Quoky 요약] 출처: Slack 메시지 2건', 'a \\\\ b', '{code}x{code} *b* !img.png! [a|b] h1. t', '\\\\'].join('\n');
+    const document = plainTextDocument(payload) as { content: Array<{ type: string; content: Array<{ type: string; text: string; marks?: unknown }> }> };
+    expect(document.content).toHaveLength(payload.split('\n').length);
+    expect(document.content.map((paragraph) => paragraph.type)).toEqual(['paragraph', 'paragraph', 'paragraph', 'paragraph']);
+    expect(document.content.map((paragraph) => paragraph.content.map((node) => node.text).join(''))).toEqual(payload.split('\n'));
+    // Every node is a bare text node: no mark, no link, no mention, no hard break.
+    for (const paragraph of document.content) for (const node of paragraph.content) expect(Object.keys(node).sort()).toEqual(['text', 'type']);
+    expect(JSON.stringify(document)).not.toMatch(/hardBreak|"marks"|inlineCard|mention/u);
+  });
 });
 
 // ── ADR-0112 amendment 3: O4 comment delete undo, O5 transition revert ─────────────────────────────────────────────

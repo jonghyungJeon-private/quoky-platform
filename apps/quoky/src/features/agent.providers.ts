@@ -1,6 +1,7 @@
 import type { Provider } from '@nestjs/common';
-import { AgentRunService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type Logger, type StorageProvider } from '@quoky/core';
+import { AGENT_WRITE_PROPOSAL_PORT, AgentRunService, AgentWriteProposalService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type AgentWriteProposalPort, type ConnectorWriteFlow, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
+import { CONNECTOR_WRITE_FLOW } from './connector-writes.providers';
 import type { AgentConfig } from '../agent/agent-config';
 import { buildConsentClassifierSwitch } from '../agent/consent-answer-classifier-wiring';
 import type { ConsentAnswerClassifierMode } from '../agent/consent-answer-config';
@@ -56,6 +57,22 @@ export interface AgentFeatureConfig {
   readonly summaryConsent?: 'off' | 'on';
   /** `QUOKY_CONSENT_ANSWER_CLASSIFIER`: `off` (default); `on` stays refused at startup until A6-S4, so the classifier is only built for a test. */
   readonly consentAnswerClassifier?: ConsentAnswerClassifierMode;
+  /**
+   * ADR-0121 amendment A7 (A7-S4a, DORMANT): `QUOKY_AGENT_WRITE_PROPOSALS` and `QUOKY_AGENT_PROPOSE_TARGETS`. The mode type is wider than
+   * the parser's (`active` is refused at startup), so nothing reaches `active` from the environment; absent, every A7 plan stays
+   * `cross-write-off`, byte for byte.
+   */
+  readonly writeProposals?: { readonly mode: 'off' | 'shadow' | 'active'; readonly targets: readonly string[] };
+}
+
+/**
+ * The agent service's `writeProposal` dep (A7-S4a): only for agent mode `active` AND `QUOKY_AGENT_WRITE_PROPOSALS=active` AND
+ * `jira-comment` in `QUOKY_AGENT_PROPOSE_TARGETS` AND a bound proposal port (which exists only when `QUOKY_CONNECTOR_WRITES_ENABLED`
+ * built a writer). Anything else: none (the refusal of every A7 plan is unchanged).
+ */
+export function agentWriteProposalDep(config: AgentFeatureConfig, port: AgentWriteProposalPort | null | undefined): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[] } | undefined {
+  if (config.agent.mode !== 'active' || config.writeProposals?.mode !== 'active' || port === null || port === undefined) return undefined;
+  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'] } : undefined;
 }
 
 export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, options: { readonly logger?: Logger } = {}): Provider[] {
@@ -63,7 +80,7 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
   return [
     {
       provide: AGENT_RUNS,
-      useFactory: (router: CapabilityRouter, storage: StorageProvider, consentStore?: ConsentPendingStore): AgentRunService => {
+      useFactory: (router: CapabilityRouter, storage: StorageProvider, consentStore?: ConsentPendingStore, proposalPort?: AgentWriteProposalPort | null): AgentRunService => {
         const config = resolveConfig();
         return new AgentRunService({
           mode: config.agent.mode,
@@ -88,11 +105,13 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
                 ...(consentStore !== undefined ? { consentStore } : {}),
                 // ADR-0121 A5-S1: the per-source summary switches (default off); an empty list leaves the key out.
                 ...(config.agent.summarySources.length > 0 ? { workSummarySources: config.agent.summarySources } : {}),
+                // ADR-0121 A7 (A7-S4a, dormant): the proposal port, only with every switch on (see `agentWriteProposalDep`).
+                ...(agentWriteProposalDep(config, proposalPort) !== undefined ? { writeProposal: agentWriteProposalDep(config, proposalPort) } : {}),
               }
             : {}),
         });
       },
-      inject: [CapabilityRouter, STORAGE_PROVIDER, { token: SUMMARY_CONSENT_STORE, optional: true }],
+      inject: [CapabilityRouter, STORAGE_PROVIDER, { token: SUMMARY_CONSENT_STORE, optional: true }, { token: AGENT_WRITE_PROPOSAL_PORT, optional: true }],
     },
     {
       provide: SUMMARY_CONSENT_STORE,
@@ -114,6 +133,22 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
               logger,
             }),
       inject: [AGENT_RUNS, { token: SUMMARY_CONSENT_STORE, optional: true }, CapabilityRouter],
+    },
+    {
+      // ADR-0121 amendment A7 (A7-S4a): the proposal port, the ADR-0112 flow seen through the narrow interface of Core's ports. It is built
+      // here, outside the agent module, and handed to the agent service only through `agentWriteProposalDep` (agent mode `active` and
+      // `QUOKY_AGENT_WRITE_PROPOSALS=active`, both refused at startup), so it is dormant. `null` when no writer was built (no flow).
+      provide: AGENT_WRITE_PROPOSAL_PORT,
+      useFactory: (storage: StorageProvider, flow: ConnectorWriteFlow | null): AgentWriteProposalPort | null =>
+        flow === null
+          ? null
+          : new AgentWriteProposalService({
+              flow,
+              sessions: { get: (id) => storage.sessions.get(id) },
+              actors: { get: (id) => storage.actors.get(id) },
+              logger,
+            }),
+      inject: [STORAGE_PROVIDER, CONNECTOR_WRITE_FLOW],
     },
   ];
 }

@@ -33,6 +33,9 @@ function allowedSpecifier(specifier: string): boolean {
   if (specifier === '../../ports/ai-provider.port' || specifier === '../../ports/logger.port') return true;
   // ADR-0121 D12 (amended 2026-11-16): M2 routes through the EXISTING selection contract; both ports are types only.
   if (specifier === '../../ports/provider-selector.port' || specifier === '../../ports/provider-selection-policy.port') return true;
+  // ADR-0121 A7 (A7-S4a): the proposal port, declared in Core's ports and implemented OUTSIDE this module (`connector-writes/agent-write-proposal.ts`,
+  // wired by the composition root). It is the ONLY route from the agent to a card; the direction is pinned by the A7-S4a test below.
+  if (specifier === '../../ports/agent-write-proposal.port') return true;
   if (specifier === '../credential-guard') return true;
   // ADR-0121 A7-S3: the card-spoof closed-set matcher (ADR-0120 A6 R2 D11), pure, run on every assembled draft line by `payload-drafter.ts`.
   if (specifier === '../card-spoof') return true;
@@ -55,7 +58,7 @@ function allowedSpecifier(specifier: string): boolean {
   // ADR-0121 A1-E1: the frozen ADR-0104 help grammar (a pure module with no imports) for the help split.
   if (specifier === '../help-intent/help-intent') return true;
   if (ALLOWED_NL_ROUTING.some((name) => specifier === `../nl-routing/${name}`)) return true;
-  return /^\.\/[a-z-]+$/.test(specifier);
+  return /^\.\/[a-z0-9-]+$/.test(specifier);
 }
 
 /** Every static specifier: `import … from`, `export … from` and a side-effect `import '…'`. */
@@ -72,7 +75,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'held-receipt.ts', 'help-split.ts', 'index.ts', 'payload-drafter.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-consent-question.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['a7-propose.ts', 'agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'draft-consent-question.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'held-receipt.ts', 'help-split.ts', 'index.ts', 'payload-drafter.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-consent-question.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
     // The claim guard the summaries pass through is pure: its only import is a type (erased).
@@ -203,6 +206,46 @@ describe('application/agent boundary (ADR-0121 D5)', () => {
       const specifiers = specifiersOf((source as { text: string }).text);
       for (const specifier of specifiers) expect(allowedSpecifier(specifier), `${name}: ${specifier}`).toBe(true);
     }
+  });
+});
+
+// ADR-0121 amendment A7, slice A7-S4a: the proposal port's import direction, pinned. The agent module may name the port (an interface
+// plus two pure helpers); the port names no application code; the implementation lives in `connector-writes/` and imports the port, never
+// the agent module; no agent file imports `connector-writes`, a flow or a writer (the chain test above reaches nothing of them).
+describe('the A7 proposal port direction (A7-S4a)', () => {
+  const PORT = new URL('../../ports/agent-write-proposal.port.ts', DIR);
+  const IMPL = new URL('../connector-writes/agent-write-proposal.ts', DIR);
+
+  it('the port imports the domain only (no application, adapter or other port code)', () => {
+    expect(specifiersOf(readFileSync(PORT, 'utf8'))).toEqual(['../domain']);
+  });
+
+  it('the agent module reaches the card only through the port: no agent file names connector-writes, the flow or the implementation', () => {
+    const importers = SOURCES.filter((source) => specifiersOf(source.text).includes('../../ports/agent-write-proposal.port')).map((source) => source.name).sort();
+    expect(importers).toEqual(['a7-propose.ts', 'agent-contract-check.ts', 'agent-run-service.ts']);
+    for (const source of SOURCES) {
+      const code = codeOf(source.text);
+      for (const specifier of specifiersOf(source.text)) expect(specifier, `${source.name}: ${specifier}`).not.toMatch(/connector-writes|agent-write-proposal(?!\.port)/);
+      expect(code, source.name).not.toMatch(/\b(?:ConnectorWriteFlow|StatelessConnectorWriteFlow|AgentWriteProposalService|connectorWriteFlow)\b/);
+    }
+  });
+
+  it('the implementation imports the port and nothing of the agent module; the composition root binds it', () => {
+    const impl = readFileSync(IMPL, 'utf8');
+    const specifiers = specifiersOf(impl);
+    expect(specifiers).toContain('../../ports/agent-write-proposal.port');
+    for (const specifier of specifiers) expect(specifier, specifier).not.toMatch(/(?:^|\/)agent(?:\/|$)/);
+    const writes = new URL('../connector-writes/', DIR);
+    for (const name of readdirSync(writes).filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))) {
+      for (const specifier of specifiersOf(readFileSync(new URL(name, writes), 'utf8'))) expect(specifier, `${name}: ${specifier}`).not.toMatch(/(?:^|\/)agent(?:\/|$)/);
+    }
+  });
+
+  it('the key grammar copied into the port is the A1-D4 grammar of the catalog (one source of truth)', () => {
+    const catalog = readFileSync(new URL('../nl-routing/action-entries.ts', DIR), 'utf8');
+    const grammar = /export const NL_REF_JIRA_KEY = \/\^(.*)\$\/;/.exec(catalog)?.[1];
+    expect(grammar).toBeDefined();
+    expect(readFileSync(PORT, 'utf8')).toContain(`'${grammar}'`);
   });
 });
 
