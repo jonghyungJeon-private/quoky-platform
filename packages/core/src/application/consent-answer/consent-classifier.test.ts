@@ -213,6 +213,37 @@ describe('A6-S2 adapter', () => {
     }
   });
 
+  it('lateness is decided by the injected clock against a deadline fixed before selection', async () => {
+    const run = async (settledAt: number) => {
+      const reads = [1_000, settledAt];
+      let i = 0;
+      const execute = vi.fn(async (_r: AiRequest) => ({ text: '{"label":"yes"}' }));
+      return createConsentAnswerClassifier({ select: async () => provider(execute), ...CHAT, now: () => reads[Math.min(i++, 1)] as number })(request);
+    };
+    expect(await run(1_000 + 9_999)).toBe('yes');
+    expect(await run(1_000 + 10_000)).toBe('unclear');
+    expect(await run(1_000 + 10_050)).toBe('unclear');
+  });
+
+  it('a throwing or non-finite clock is unclear', async () => {
+    const execute = vi.fn(async (_r: AiRequest) => ({ text: '{"label":"yes"}' }));
+    const mk = (now: () => number) => createConsentAnswerClassifier({ select: async () => provider(execute), ...CHAT, now })(request);
+    expect(await mk(() => { throw new Error('clock'); })).toBe('unclear');
+    expect(await mk(() => Number.NaN)).toBe('unclear');
+    let n = 0;
+    expect(await mk(() => { if (n++ > 0) throw new Error('clock'); return 0; })).toBe('unclear');
+  });
+
+  it.each([' ', '\t\n', '...', '— !?', '\u200b\u200d', '\u200b '])('a recipient without a letter or digit (%j) renders no question and makes no call', async (recipient) => {
+    const execute = vi.fn(async (_r: AiRequest) => ({ text: '{"label":"yes"}' }));
+    for (const pending of [{ ...summary(), recipient }, { ...topic(), recipient }]) {
+      const req = buildConsentClassifierRequest(pending, 'ok');
+      expect(req.question).toBe('');
+      expect(await classifierOf(async () => provider(execute))(req)).toBe('unclear');
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('an empty filtered source list is unclear without a call', async () => {
     const execute = vi.fn(async (_request: AiRequest) => ({ text: '{"label":"yes"}' }));
     const bad = { ...summary(), sources: ['bogus'] } as unknown as ReturnType<typeof summary>;

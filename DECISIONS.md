@@ -39022,6 +39022,13 @@ live caller. No model call, eval, gold, catalog, selection prompt or flag defaul
     twice per step; the rule-① confirm slice MUST count each classifier call against that cap when it wires the adapter (not
     wired here).
 - **Review follow-ups (P2/P3).** `timeoutMs` is clamped to min(override, 10 s) and a non-finite, zero or negative override falls back to 10 s (an override can only shorten the A6.3 bound); an empty filtered source list is `unclear` without a call; `CONSENT_SOURCES` derives from `AGENT_WORK_SUMMARY_SOURCES` (`['mail','drive', ...]`), pinned by a test.
+- **Structural rules after the fix-loop cap (Review 2).** (1) Lateness is decided by the injected clock (`deps.now`, the pipeline's
+  clock domain, default `Date.now`) against `deadlineAtMs = now() + effectiveTimeout` fixed BEFORE `select()`; after the call
+  settles the label is returned only if `now() < deadlineAtMs` (exactly at the deadline is late), else `unclear`; a throwing or
+  non-finite clock is `unclear`. The timer/abort only stops the waiting (a blocked event loop can resolve the call before the timer
+  fires, reproduced at 10,050 ms). (2) Inputs are validated, not the rendered string: a question is rendered only if at least one
+  source is in the closed set (rule ①) and the recipient display name has a letter or digit after trim (`/[\p{L}\p{N}]/u`, a shape
+  check, not a word list; also for A2 topic questions); otherwise `''` and no call (`unclear`).
 - **Note for the A6-S3/confirm slice.** Stub providers in `apps/quoky/src/a6-r2-harness.ts` must declare `supportsStrongerIntentSelection: true` when the adapter is wired; otherwise every classification is silently `unclear`.
 - **Fixed question text is a stand-in.** The single-line rule-① and A2 owner-facing question wording is not built yet (the
   rule-① confirm slice and the A2 answer slice own it). `consentClassifierQuestion` defines the classifier's view of it;

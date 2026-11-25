@@ -32,6 +32,9 @@ function effectiveTimeoutMs(override: number | undefined): number {
   return override !== undefined && Number.isFinite(override) && override > 0 ? Math.min(override, CONSENT_CLASSIFIER_TIMEOUT_MS) : CONSENT_CLASSIFIER_TIMEOUT_MS;
 }
 
+/** A shape check, not a word list: a recipient name with no letter or digit (blank, punctuation-only, zero-width-only) renders no question. */
+const RECIPIENT_SHAPE = /[\p{L}\p{N}]/u;
+
 /** The placeholders that stand for item-derived values (A6.4). */
 export const CONSENT_COUNT_PLACEHOLDER = '{개수}';
 export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
@@ -43,6 +46,8 @@ export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
  */
 export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
   const ko = pending.language === 'ko';
+  // Input-shape rule: the recipient display name (provider-derived) must contain a letter or digit, or no question is rendered.
+  if (!RECIPIENT_SHAPE.test(pending.recipient.trim())) return '';
   if (pending.kind === 'topic-consent') {
     return ko
       ? `${CONSENT_TOPIC_PLACEHOLDER} 주제로 ${pending.recipient}에게 요청을 보낼까요? (응/아니)`
@@ -125,6 +130,8 @@ export interface ConsentClassifierDeps {
   readonly chatProviderId?: string;
   readonly chatProviderLocality?: AiExecutionLocality;
   readonly timeoutMs?: number;
+  /** The clock (same domain as the pipeline's `now`); lateness is decided by it, not by the timer. Default `Date.now`. */
+  readonly now?: () => number;
 }
 
 /**
@@ -134,6 +141,7 @@ export interface ConsentClassifierDeps {
  */
 export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Classifier {
   const timeoutMs = effectiveTimeoutMs(deps.timeoutMs);
+  const now = deps.now ?? Date.now;
   return async (request) => {
     // Nothing credential-shaped leaves the process, as the reply the prompt quotes (tags blanked) and as received.
     const prompt = buildConsentClassifierPrompt(request);
@@ -142,6 +150,14 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     // No valid source left after filtering: the question would be malformed, so nothing is sent.
     if (request.question === '') return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let deadlineAtMs: number;
+    try {
+      // Fixed BEFORE selection: lateness is decided by the injected clock against this, the timer only stops the waiting.
+      deadlineAtMs = now() + timeoutMs;
+      if (!Number.isFinite(deadlineAtMs)) return 'unclear';
+    } catch {
+      return 'unclear';
+    }
     const controller = new AbortController();
     // The bound starts before provider selection and covers it, then the call (a stalled select is `unclear` too).
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -162,7 +178,10 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
       const call = provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal: controller.signal, intentSelectionTier: 'stronger' });
       call.catch(() => undefined);
       const result = await Promise.race([call, timeout]);
-      return parseConsentClassifierOutput(result.text);
+      const label = parseConsentClassifierOutput(result.text);
+      // A result at or after the deadline is late however the timer was scheduled (a blocked event loop); a bad clock read fails closed.
+      const settledAtMs = now();
+      return Number.isFinite(settledAtMs) && settledAtMs < deadlineAtMs ? label : 'unclear';
     } catch {
       return 'unclear';
     } finally {
