@@ -38811,8 +38811,9 @@ default (`off`) leaves every turn byte-identical, and no model was called and no
   - *The receipt* (A7.4): `{ conversation, actorId, turnId, entryId, validatedArgs, itemIds (1..10, delivered order),
     itemDigests, kind: listing|answer|card, egress, at, carried? }`. `buildHeldReceipt` is the only constructor; it refuses
     with a closed code (`empty`, `too-many`, `shape`, `duplicate`, `handoff-built`, `host-only`, `source-off`,
-    `destination-listing`) and `parseHeldReceipt` re-validates through it, so a stored value with any extra text field is
-    absent. The receipt type has no text field at all.
+    `destination-listing`) and `parseHeldReceipt` re-validates through it, so a stored value with any unknown key (parse rejects them, it does not strip) or a non-strict timestamp is
+    absent; `at` and `now` must be strict UTC ISO `...Z` (anything else is expired, fail closed). `kind: 'card'` is built only by
+    `carryOverReceipt` (`buildHeldReceipt` refuses it; a stored card needs `carried: true` and nothing else may have it). The receipt type has no text field at all.
   - *Digest* (A7.4 P3): `digestHeldItemFields(fields, sha256Hex)` is SHA-256 over the canonical JSON (sorted keys, NFC). The
     hasher is injected because the agent module may import no `node:*` (agent-boundary.test.ts, settled).
   - *Binding* (`bindHeldReceipt`): same actor, same DM conversation, the receipt's turn is the owner turn right before this one
@@ -38823,7 +38824,7 @@ default (`off`) leaves every turn byte-identical, and no model was called and no
     held entry and held args; only ids in the receipt with an equal digest are kept, in receipt order; changed or missing items
     are dropped and counted (a7-06: drop and tell, "1건은 그 사이 바뀌어 뺐어요"; the banner text is A7-S4's); nothing is added.
   - *`yes-and-more` re-run* (A7.4c item 1): `isYesAndMoreRerun` is true only for an `answer` receipt whose `turnId` is this very
-    message id with the A6 re-run marker; `bindHeldReceipt(..., rerunOfOwnYes)` then counts the re-run as the next turn for that
+    message id with the A6 re-run marker; `bindHeldReceipt` takes the re-run facts (`rerun: { messageId, marker }`) and calls `isYesAndMoreRerun` itself, so a caller cannot assert it; it counts the re-run as the next turn for that
     receipt only.
   - *Card carry-over* (A7.4c item 4): `carryOverReceipt` hands the frozen items on as `kind: 'card'` with the original `at`; the
     kill switch and the automatic trip hand nothing on; at most one carry-over.
@@ -38833,7 +38834,7 @@ default (`off`) leaves every turn byte-identical, and no model was called and no
   (no target can run before A7-S3/S4).
 - **Shadow log.** With `shadow`, `NlSelectionService` calls an optional `heldReceiptShadow` dep after a non-empty listing was written;
   the composition root logs one `a7_held_receipt.shadow` line: `{ mode, kind: 'listing', source (closed listing source), items (count),
-  outcome: would-hold | empty | too-many | shape }`. No id, digest, title, argument or text. Absent dep (the default), nothing
+  outcome: count-ok | empty | too-many | shape }` (`count-ok` is count-only: it says nothing about DM-only, handoff, source-on or HOST_ONLY); an unknown source is logged as `other` (closed list of Core listing sources). No id, digest, title, argument or text. Absent dep (the default), nothing
   changes; a throwing hook never reaches the turn. Shadow plan roles are not logged here: the planner emits no A7 form (prompt
   `agent-plan.v11` unchanged), so A7-S1's `cross-write` shadow line remains the only plan-role log.
 - **Interpretations (fail closed).**
@@ -38844,6 +38845,9 @@ default (`off`) leaves every turn byte-identical, and no model was called and no
   4. A `card` receipt's `turnId` is the turn that closed the card; for a closure with no owner turn (expiry) the A7-S4 caller sets it
      at the next owner turn. The 20-minute limit is checked from the original `at` in every case.
   5. `WRITE_PROPOSALS=shadow` requires agent mode `shadow` (A7.10: "work only under agent mode"; `active` mode is unreleased).
+- **A7.4b frozen check.** The two-window check on a frozen card's own items (A7.4b) is an A7-S4 item; no frozen receipt exists in this slice.
+- **Owner FYI (not changed here).** A7.10 says the flags work only under agent mode `active`; this slice requires `shadow` while `active`
+  is refused. This is to be settled before `active` is released.
 - **Residuals / not done.** The receipt is not yet stored in `Session.metadata` or written by the answer path: answer and card
   receipts and the digests need the item fields of the delivering turn, which exist with the drafter (A7-S3) and the card (A7-S4);
   the `yes-and-more` re-run needs the A6 rule-① confirm slice. A7-S2 delivers the contract, the tests and the shadow count line; the

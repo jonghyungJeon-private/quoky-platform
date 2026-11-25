@@ -14,7 +14,10 @@ import type { LogFields, Logger } from '../../ports/logger.port';
 export const HELD_RECEIPT_METADATA_KEY = 'quoky.heldReceipt';
 /** A7.4 / A6.5a: the next owner turn within 10 minutes of the held turn (a7-05: the immediately previous answer only). */
 export const HELD_RECEIPT_TTL_MS = 10 * 60_000;
-/** A7.4b / A7.4c: a frozen or carried receipt expires 20 minutes after its original `at`, whatever else happened. */
+/**
+ * A7.4b / A7.4c: a carried (closed-card) receipt expires 20 minutes after its original `at`, whatever else happened. The
+ * A7.4b two-window check on a frozen card's own items is an A7-S4 item; no frozen receipt exists in this slice.
+ */
 export const HELD_RECEIPT_FROZEN_TTL_MS = 20 * 60_000;
 export const HELD_RECEIPT_MAX_ITEMS = 10;
 export const HELD_RECEIPT_MAX_ARGS = 12;
@@ -42,7 +45,7 @@ export interface HeldReceipt {
   readonly itemDigests: readonly string[];
   readonly kind: HeldReceiptKind;
   readonly egress: HeldReceiptEgress;
-  /** When the held turn delivered. A carried or frozen receipt keeps the ORIGINAL `at` (A7.4b, A7.4c). */
+  /** When the held turn delivered. A carried receipt keeps the ORIGINAL `at` (A7.4b, A7.4c). */
   readonly at: string;
   /** A card receipt built from a carried receipt hands nothing on when it closes (A7.4c: at most one carry-over). */
   readonly carried?: boolean;
@@ -94,8 +97,13 @@ export interface HeldReceiptInput {
   readonly destinationListing?: boolean;
 }
 
-function isoMs(value: string): number {
-  return Date.parse(value);
+const STRICT_UTC_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+/** Epoch ms of a strict UTC ISO `YYYY-MM-DDTHH:mm:ss[.SSS]Z` value; NaN for any other shape or an impossible date (fail closed). */
+function isoMs(value: unknown): number {
+  if (typeof value !== 'string' || !STRICT_UTC_ISO.test(value)) return Number.NaN;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 19) === value.slice(0, 19) ? ms : Number.NaN;
 }
 
 function validArgs(args: HeldReceiptArgs): boolean {
@@ -116,6 +124,12 @@ function nonEmpty(value: unknown, max = MAX_ID_CHARS): value is string {
  * items is NOT truncated, because a silently cut scope is a different scope; an unshaped input holds nothing).
  */
 export function buildHeldReceipt(input: HeldReceiptInput): { readonly receipt: HeldReceipt } | { readonly refused: HeldReceiptRefusal } {
+  // A `card` receipt exists only through `carryOverReceipt` (it must carry `carried: true`, A7.4c at most one carry-over).
+  if (input.kind === 'card') return { refused: 'shape' };
+  return buildReceipt(input);
+}
+
+function buildReceipt(input: HeldReceiptInput): { readonly receipt: HeldReceipt } | { readonly refused: HeldReceiptRefusal } {
   if (input.destinationListing === true) return { refused: 'destination-listing' };
   if (input.handoffBuilt === true) return { refused: 'handoff-built' };
   if (!input.sourceOn) return { refused: 'source-off' };
@@ -151,10 +165,13 @@ export function buildHeldReceipt(input: HeldReceiptInput): { readonly receipt: H
   };
 }
 
-/** Strict parse of a stored value; anything malformed counts as absent (and carries no text either way). */
+const RECEIPT_KEYS: ReadonlySet<string> = new Set(['conversation', 'actorId', 'turnId', 'entryId', 'validatedArgs', 'itemIds', 'itemDigests', 'kind', 'egress', 'at', 'carried']);
+
+/** Strict parse of a stored value; anything malformed or with an unknown key counts as absent (and carries no text either way). */
 export function parseHeldReceipt(raw: unknown): HeldReceipt | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !RECEIPT_KEYS.has(key))) return undefined;
   const { itemIds, itemDigests, validatedArgs } = record;
   if (!Array.isArray(itemIds) || !Array.isArray(itemDigests) || typeof validatedArgs !== 'object' || validatedArgs === null || Array.isArray(validatedArgs)) return undefined;
   const items = itemIds.map((id, index) => ({ id: id as string, digest: itemDigests[index] as string }));
@@ -163,7 +180,9 @@ export function parseHeldReceipt(raw: unknown): HeldReceipt | undefined {
   if (record.egress !== 'LOCAL' && record.egress !== 'REMOTE') return undefined;
   if (typeof record.at !== 'string') return undefined;
   if (record.carried !== undefined && typeof record.carried !== 'boolean') return undefined;
-  const built = buildHeldReceipt({
+  // A card receipt is always a carry-over and nothing else is: `carried === true` iff `kind === 'card'`.
+  if ((record.kind === 'card') !== (record.carried === true)) return undefined;
+  const built = buildReceipt({
     conversation: record.conversation as string,
     actorId: record.actorId as string,
     turnId: record.turnId as string,
@@ -206,8 +225,8 @@ export interface HeldReceiptBindContext {
   readonly hostOnly?: boolean;
   /** The kill switch (`에이전트 중지`) is set: it voids every receipt. */
   readonly killSwitch?: boolean;
-  /** `yes-and-more` re-run of this very message (A7.4c item 1), see {@link isYesAndMoreRerun}. */
-  readonly rerunOfOwnYes?: boolean;
+  /** The A6 re-run facts of this message (A7.4c item 1); {@link isYesAndMoreRerun} decides, the caller cannot assert it. */
+  readonly rerun?: { readonly messageId: string; readonly marker: boolean };
 }
 
 /**
@@ -225,7 +244,7 @@ export function bindHeldReceipt(receipt: HeldReceipt | undefined, context: HeldR
   if (!Number.isFinite(age) || age < 0 || age >= ttl) return { bound: false, reason: 'expired' };
   // The yes-part of a `yes-and-more` message wrote this receipt in the same message: it counts as the next owner turn for
   // that receipt only. Every other case needs the receipt's turn to be the one right before this one.
-  const next = context.rerunOfOwnYes === true || (context.previousTurnId !== undefined && context.previousTurnId === receipt.turnId);
+  const next = isYesAndMoreRerun(receipt, context.rerun) || (context.previousTurnId !== undefined && context.previousTurnId === receipt.turnId);
   if (!next) return { bound: false, reason: 'not-next-turn' };
   if (!context.sourceOn) return { bound: false, reason: 'source-off' };
   if (context.hostOnly === true) return { bound: false, reason: 'host-only' };
@@ -240,8 +259,8 @@ export function bindHeldReceipt(receipt: HeldReceipt | undefined, context: HeldR
  * receipt; the whole message then runs again as a new ordinary turn. That re-run counts as the next owner turn for the
  * receipt its own yes-part wrote, and for no other receipt. Structural: the same message id and the A6 re-run marker.
  */
-export function isYesAndMoreRerun(receipt: HeldReceipt | undefined, rerun: { readonly messageId: string; readonly marker: boolean }): boolean {
-  return receipt !== undefined && rerun.marker && receipt.kind === 'answer' && receipt.turnId === rerun.messageId;
+export function isYesAndMoreRerun(receipt: HeldReceipt | undefined, rerun: { readonly messageId: string; readonly marker: boolean } | undefined): boolean {
+  return receipt !== undefined && rerun !== undefined && rerun.marker && receipt.kind === 'answer' && receipt.turnId === rerun.messageId;
 }
 
 // ── re-execution and digest check (A7.4 "what it binds to") ───────────────────────────────────────────────────────
@@ -304,7 +323,7 @@ export function carryOverReceipt(
   closure: { readonly by: HeldCardClosure; readonly turnId: string; readonly cardBuiltFromCarried: boolean },
 ): { readonly receipt: HeldReceipt } | { readonly refused: HeldReceiptRefusal } {
   if (closure.by === 'kill-switch' || closure.by === 'trip') return { refused: 'closed-by-stop' };
-  if (closure.cardBuiltFromCarried || frozen.carried === true) return { refused: 'carried-twice' };
+  if (closure.cardBuiltFromCarried || frozen.carried === true || frozen.kind === 'card') return { refused: 'carried-twice' };
   return { receipt: { ...frozen, kind: 'card', turnId: closure.turnId, carried: true } };
 }
 
@@ -312,18 +331,24 @@ export function carryOverReceipt(
 
 export const A7_HELD_RECEIPT_SHADOW_LOG_EVENT = 'a7_held_receipt.shadow';
 
+/** The finite closed set of Core listing sources (`ListingSource` in `last-listing.ts`; a test pins the two together). */
+export const HELD_RECEIPT_SHADOW_SOURCES = ['mail', 'drive', 'todo', 'reminder', 'jira', 'slack'] as const;
+
 export interface HeldReceiptShadowEvent {
   readonly kind: HeldReceiptKind;
-  /** A closed listing source or entry id (never an item). */
+  /** A Core listing source; anything outside {@link HELD_RECEIPT_SHADOW_SOURCES} is logged as `other`. */
   readonly source: string;
   readonly items: number;
 }
 
-/** The closed outcome a receipt would have had, from the delivered item count only (shadow holds no digests). */
-export function heldReceiptShadowOutcome(items: number): 'would-hold' | HeldReceiptRefusal {
+/**
+ * The closed outcome from the delivered item COUNT only (shadow holds no digests): `count-ok` means the count is within 1..10
+ * and says nothing about DM-only, handoff, source-on or HOST_ONLY, which the count cannot see.
+ */
+export function heldReceiptShadowOutcome(items: number): 'count-ok' | HeldReceiptRefusal {
   if (!Number.isSafeInteger(items) || items < 0) return 'shape';
   if (items === 0) return 'empty';
-  return items > HELD_RECEIPT_MAX_ITEMS ? 'too-many' : 'would-hold';
+  return items > HELD_RECEIPT_MAX_ITEMS ? 'too-many' : 'count-ok';
 }
 
 /**
@@ -331,7 +356,7 @@ export function heldReceiptShadowOutcome(items: number): 'would-hold' | HeldRece
  * argument. Best-effort: a failing logger never changes a turn.
  */
 export function logHeldReceiptShadow(logger: Logger, event: HeldReceiptShadowEvent): void {
-  const fields: LogFields = { mode: 'shadow', kind: event.kind, source: /^[a-z][a-z0-9._-]{0,31}$/.test(event.source) ? event.source : 'other', items: event.items, outcome: heldReceiptShadowOutcome(event.items) };
+  const fields: LogFields = { mode: 'shadow', kind: event.kind, source: (HELD_RECEIPT_SHADOW_SOURCES as readonly string[]).includes(event.source) ? event.source : 'other', items: event.items, outcome: heldReceiptShadowOutcome(event.items) };
   try {
     logger.info(A7_HELD_RECEIPT_SHADOW_LOG_EVENT, fields);
   } catch {

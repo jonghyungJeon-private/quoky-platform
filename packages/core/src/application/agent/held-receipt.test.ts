@@ -1,9 +1,11 @@
+import { isListingSource } from '../last-listing';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { Logger } from '../../ports/logger.port';
 import {
   A7_HELD_RECEIPT_SHADOW_LOG_EVENT,
   HELD_RECEIPT_FROZEN_TTL_MS,
+  HELD_RECEIPT_SHADOW_SOURCES,
   HELD_RECEIPT_TTL_MS,
   bindHeldReceipt,
   buildHeldReceipt,
@@ -69,6 +71,11 @@ describe('buildHeldReceipt', () => {
     ['duplicate', { items: [{ id: 'I-1', digest: d(1) }, { id: 'I-1', digest: d(2) }] }],
     ['shape', { items: [{ id: 'I-1', digest: 'not-a-digest' }] }],
     ['shape', { at: 'yesterday' }],
+    ['shape', { at: '2026-11-25' }],
+    ['shape', { at: '2026-11-25 10:00:00Z' }],
+    ['shape', { at: '2026-11-25T10:00:00+09:00' }],
+    ['shape', { at: '2026-02-30T10:00:00.000Z' }],
+    ['shape', { kind: 'card' }],
     ['shape', { validatedArgs: { x: 'y'.repeat(201) } }],
   ] as const)('refuses with %s', (code, over) => {
     expect(buildHeldReceipt(input(over as Partial<HeldReceiptInput>))).toEqual({ refused: code });
@@ -81,6 +88,10 @@ describe('buildHeldReceipt', () => {
     expect(parseHeldReceipt(JSON.parse(JSON.stringify(receipt)))).toEqual(receipt);
     expect(parseHeldReceipt({ ...receipt, itemDigests: ['x'] })).toBeUndefined();
     expect(parseHeldReceipt({ ...receipt, kind: 'text' })).toBeUndefined();
+    expect(parseHeldReceipt({ ...receipt, title: 'secret' })).toBeUndefined();
+    expect(parseHeldReceipt({ ...receipt, kind: 'card' })).toBeUndefined();
+    expect(parseHeldReceipt({ ...receipt, carried: true })).toBeUndefined();
+    expect(parseHeldReceipt({ ...receipt, at: 'Nov 25 2026' })).toBeUndefined();
     expect(parseHeldReceipt(null)).toBeUndefined();
     expect(parseHeldReceipt('nope')).toBeUndefined();
   });
@@ -115,7 +126,7 @@ describe('yes-and-more re-run (A7.4c)', () => {
   const answer = held({ kind: 'answer', turnId: 'msg-9' });
   it('counts as the next turn only for the receipt its own yes-part wrote', () => {
     expect(isYesAndMoreRerun(answer, { messageId: 'msg-9', marker: true })).toBe(true);
-    expect(bindHeldReceipt(answer, ctx({ previousTurnId: 'older', rerunOfOwnYes: true }))).toEqual({ bound: true });
+    expect(bindHeldReceipt(answer, ctx({ previousTurnId: 'older', rerun: { messageId: 'msg-9', marker: true } }))).toEqual({ bound: true });
   });
   it.each([
     ['another message', answer, { messageId: 'msg-10', marker: true }],
@@ -124,6 +135,20 @@ describe('yes-and-more re-run (A7.4c)', () => {
     ['no receipt', undefined, { messageId: 'msg-9', marker: true }],
   ] as const)('is not a re-run for %s', (_name, receipt, rerun) => {
     expect(isYesAndMoreRerun(receipt as HeldReceipt | undefined, rerun)).toBe(false);
+  });
+});
+
+describe('forged re-run flag (A7.4c: for no other receipt)', () => {
+  it('a listing or an unmarked re-run never binds as the next turn, whatever the caller passes', () => {
+    const listing = held({ turnId: 'msg-9' });
+    expect(bindHeldReceipt(listing, ctx({ previousTurnId: 'older', rerun: { messageId: 'msg-9', marker: true } }))).toEqual({ bound: false, reason: 'not-next-turn' });
+    const answer = held({ kind: 'answer', turnId: 'msg-9' });
+    expect(bindHeldReceipt(answer, ctx({ previousTurnId: 'older', rerun: { messageId: 'msg-9', marker: false } }))).toEqual({ bound: false, reason: 'not-next-turn' });
+    expect(bindHeldReceipt(answer, ctx({ previousTurnId: 'older', rerunOfOwnYes: true }))).toEqual({ bound: false, reason: 'not-next-turn' });
+  });
+  it('an unparseable now or at is expired (fail closed)', () => {
+    expect(bindHeldReceipt(held(), ctx({ now: 'Nov 25 2026 10:01' }))).toEqual({ bound: false, reason: 'expired' });
+    expect(bindHeldReceipt({ ...held(), at: '2026-11-25' }, ctx())).toEqual({ bound: false, reason: 'expired' });
   });
 });
 
@@ -168,6 +193,9 @@ describe('carry-over of a closed card (A7.4c item 4)', () => {
   it.each(['kill-switch', 'trip'] as const)('hands nothing on after %s', (by) => {
     expect(carryOverReceipt(frozen, { by, turnId: 't', cardBuiltFromCarried: false })).toEqual({ refused: 'closed-by-stop' });
   });
+  it('a card receipt is never carried again, with or without the carried flag', () => {
+    expect(carryOverReceipt({ ...frozen, kind: 'card' }, { by: 'sent', turnId: 't', cardBuiltFromCarried: false })).toEqual({ refused: 'carried-twice' });
+  });
   it('at most one carry-over', () => {
     expect(carryOverReceipt(frozen, { by: 'sent', turnId: 't', cardBuiltFromCarried: true })).toEqual({ refused: 'carried-twice' });
     const carried = carryOverReceipt(frozen, { by: 'sent', turnId: 't', cardBuiltFromCarried: false });
@@ -181,10 +209,14 @@ describe('shadow logging', () => {
     const logger = { info: (event: string, fields: unknown) => lines.push([event, fields]), warn: () => undefined, error: () => undefined, debug: () => undefined } as unknown as Logger;
     logHeldReceiptShadow(logger, { kind: 'listing', source: 'jira', items: 3 });
     logHeldReceiptShadow(logger, { kind: 'listing', source: 'Title: secret text', items: 12 });
-    expect(lines).toEqual([
-      [A7_HELD_RECEIPT_SHADOW_LOG_EVENT, { mode: 'shadow', kind: 'listing', source: 'jira', items: 3, outcome: 'would-hold' }],
+    expect(lines.slice(0, 2)).toEqual([
+      [A7_HELD_RECEIPT_SHADOW_LOG_EVENT, { mode: 'shadow', kind: 'listing', source: 'jira', items: 3, outcome: 'count-ok' }],
       [A7_HELD_RECEIPT_SHADOW_LOG_EVENT, { mode: 'shadow', kind: 'listing', source: 'other', items: 12, outcome: 'too-many' }],
     ]);
+    logHeldReceiptShadow(logger, { kind: 'listing', source: 'canary-token-shaped-text', items: 1 });
+    expect(lines[2]).toEqual([A7_HELD_RECEIPT_SHADOW_LOG_EVENT, { mode: 'shadow', kind: 'listing', source: 'other', items: 1, outcome: 'count-ok' }]);
+    expect([...HELD_RECEIPT_SHADOW_SOURCES].every((source) => isListingSource(source))).toBe(true);
+    expect(HELD_RECEIPT_SHADOW_SOURCES).toHaveLength(6);
     expect([heldReceiptShadowOutcome(0), heldReceiptShadowOutcome(-1)]).toEqual(['empty', 'shape']);
   });
   it('a throwing logger never throws', () => {
