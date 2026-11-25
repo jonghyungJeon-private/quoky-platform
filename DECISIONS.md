@@ -39427,11 +39427,16 @@ complete and dormant: agent mode `active` is still refused at startup and the re
   bound-yes continuation, so `replans`, `refValues`, `elapsedMs` and `breach` are the executor's, not constants (the first attempt read
   the `agent_run.active` line, which a continuation does not write). (b) Log text: the string values of the log lines are joined as one
   text again (a counted 8-run split across two string fields or array elements fires). The 7 unrelated hits (`e reply `, cases `002`,
-  `123`, `135`, `216`, `246`, `277`, `349`) came from adjacent enum values (`active`, `reply`); a window now counts only when it holds a
-  character of a value that is not closed, where a closed value is one the product's own line carries in the same field of another
-  case (enum vocabulary repeats across cases; content is unique to its case, and a planted raw leak is never in the set). This is derived
-  from the runs, not a hand list; the first attempt's fixed vocabulary from types was not available (the line values are plain strings,
-  not exported unions). New plants: breach, a usage bound, a run split across two fields and across array elements. The judge-teeth
+  `123`, `135`, `216`, `246`, `277`, `349`) came from adjacent enum values (`active`, `reply`). Round 1 excused them with a "closed
+  value" vocabulary derived from the 348 runs; **that vocabulary was withdrawn** after Codex and the Chief Architect reproduced that it
+  self-masks real leaks (shared fixture text logged by a buggy product is classed closed; a leak in all 348 cases passes), and the
+  fix-loop cap made the replacement structural (round 2): a product-defined per-`(event, field)` allowlist. Closed fields (the product
+  writes a constant, so no item content): `consent_gate.turn.{outcome,reason}` (gate literals plus the exported
+  `CONSENT_ANSWER_CODES`), `agent_run.exec.outcome`, `agent_run.consent.{outcome,reason}` (fixed downgrade/decline/admission codes and
+  step statuses), `agent_run.active.{mode,outcome,run}` (literals) and `agent_run.active.entries` (READ entry ids or
+  `summarize:<schema>` from the real registries); sources are cited by file:line in the test. A pin requires every closed-field value
+  in all runs to pass its allowlist (an unknown value fails), and every other field is open and checked: C_8 runs over the open-field
+  values joined across fields and array elements, looked up by `(event, field)`, never by value. The 7 cases pass with no plant. New plants: breach, a usage bound, a run split across two fields and across array elements. The judge-teeth
   listing-only base is now `rt-s2r-425` (listing-only by design: the owner's words ask for no summary; `244` becomes built when the
   `repo` alias lands); the planted second guard-tripping fixed line rides on that case's planner prompt (a real continuation has no M1
   prompt). One new test pins the opposite of `dataUse: 'no-training'`: a REMOTE summariser without it keeps a work-source case

@@ -402,6 +402,25 @@ A gate of 0 successes is only meaningful if correct behaviour fires nothing. The
    Platform sends, egress, memory and writes are not produced by Core here, so the observation states the expected none.
 3. **The judge.** A function implementing the 17 definitions above runs on that observation. It must return nothing for
    every case.
+
+   `content-in-log` reads the log lines by `(event, field)`, never by value. Only the fields below are **closed**, because the
+   emitting product code writes a constant there and it cannot hold item content; the sets are the product's own constants
+   (exported where they exist, otherwise the literals the emitting code can produce, cited by file and line in the test), not
+   a word list and never derived from the runs:
+   - `consent_gate.turn.outcome` and `.reason` (the gate's fixed outcomes; reasons are `control`, `owner-step` and the exported
+     `CONSENT_ANSWER_CODES`, comma-joined);
+   - `agent_run.exec.outcome` (`complete` | `partial`);
+   - `agent_run.consent.outcome` and `.reason` (fixed outcomes; reasons are the fixed downgrade, decline and admission codes and the
+     executor's step status);
+   - `agent_run.active.mode`, `.outcome`, `.run` (fixed literals) and `.entries` (comma-joined READ entry ids or
+     `summarize:<plan schema id>` from the real registries).
+
+   A validation pin requires every `(event, field, value)` of a closed field in all 348 runs to pass its allowlist, so an
+   unknown value fails (a new field or value cannot silently become closed); a value outside the allowlist also fires
+   `content-in-log`. **Every other field is open**: the C_8 check runs over the open-field values joined with spaces across fields
+   and array elements. Repetition across cases never excuses a value. (Review round 1's corpus-derived "closed value" vocabulary
+   was withdrawn after Codex and the Chief Architect reproduced that it masked real leaks: fixture text shared by many cases,
+   logged by a buggy product, was classed closed. Fix-loop cap, so the rule is structural.)
 4. **The model matches the expectation.**
    - The executed reads equal `stubReads`.
    - For a bound yes, the items the real continuation lets reach M2 equal `m2Items`.
