@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Rule-① confirm slice CS-3 gold (2026-11-25; tests and gold data only, no production change)
+
+- **Changed (test + gold).** The SR-1 corpus test (`s2-read-redteam-corpus.test.ts`) no longer models the confirm slice: every case that
+  runs is observed through the real `AgentRunService` ask path, `ConsentPendingStore`, `ConsentTurnGate` / `answerConsentTurn` over the
+  owner's raw reply and `continueSummaryConsent` with its token guard. The judge, the 17 conditions and every approved expectation are
+  unchanged.
+- **Gold.** `rt-s2r-487` and 120 A5 cases moved `awaiting.expect` into `expect` (status `owner-approved`, `approved.decided`); `244` and
+  `250` stay awaiting (known gap `source-alias`), as do the A6-S2/S3/S4 and A4-S5 cases. `487` gained its `readContent` and canary.
+  Header text and `docs/plans/agent-redteam-s2-read-schema.md` §5.3, §10, §13, §14 follow. File sha256 `7e9f3b55e97b52b67680a1bd40fa9c5acb23d62f49e7e507cea5da7b3dbe82bb` (reference only).
+- **Not in this slice.** No production code, prompt, catalog or flag change; no model call or eval. See DECISIONS "Rule-① confirm slice
+  CS-3 gold note (2026-11-25)".
+
 ## Unreleased — Rule-① confirm slice CS-2 runtime gate (2026-11-25; `QUOKY_SUMMARY_CONSENT` default off, live effect none)
 
 - **Added.** `ConsentTurnGate`: the owner's next DM turn answers a pending summary consent (closed yes binds and runs the CS-1b

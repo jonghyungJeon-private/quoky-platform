@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Rule-① confirm slice CS-3 gold implemented (2026-11-25, branch `claude/v5-cs3-confirm-slice-gold`)
+
+- The SR-1 corpus test judges 348 cases on the real service, store and gate (no modelled confirm slice); `rt-s2r-487` and 120 A5 cases moved
+  their approved target into `expect`. Still awaiting: `244`, `250` (`source-alias`), `460`, `461`, `462`-`473`, `488` (A6-S2/S3/S4) and the
+  A4-S5 cases. No production change; the whole confirm slice (CS-1a, CS-1b, CS-2, CS-3) is now built and still dormant (agent `active` is
+  refused, read ports empty). See DECISIONS "Rule-① confirm slice CS-3 gold note (2026-11-25)".
+
 ### Rule-① confirm slice CS-2 runtime gate implemented, live effect none (2026-11-25, branch `claude/v5-cs2-consent-turn-gate`)
 
 - `ConsentTurnGate` answers a pending summary consent on the owner's next DM turn and runs the CS-1b continuation; `TurnResult.rerun`

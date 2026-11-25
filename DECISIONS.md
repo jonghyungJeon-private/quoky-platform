@@ -39389,3 +39389,81 @@ rule, placed after the closed-token fast path and before the classifier call (ne
 before the fast path and would break a closed yes a listing handler also claims): a turn that a registered handler's pure
 `surfaceClaim` claims (`chat-layer.ts` `nlHandlerClaims`) is `other`, passed into `answerConsentTurn` as a turn fact. It needs a
 gold rerun, and changes no live turn today, so it is not built here.
+
+### Rule-① confirm slice CS-3 gold note (2026-11-25)
+
+Slice CS-3 "gold" of the rule-① confirm slice (design: SR-1 rule ① and W1 to W5; CS-1a, CS-1b and CS-2 above). Tests, gold data and docs
+only: no production code, prompt, catalog, flag or runtime change, no model call, no eval, no live planner arm. The confirm slice is now
+complete and dormant: agent mode `active` is still refused at startup and the read ports are empty.
+
+- **The harness is real.** `s2-read-redteam-corpus.test.ts` replaces the "confirm slice is modelled" observation (`expectedRun`) with:
+  the real `AgentRunService.runActive` (planner prompt, input preparation, validator, grant producer, executor, assembler) over fake read
+  ports built from `readContent`, a scripted planner provider that returns the case's `planner`, and a fake summariser model; the real
+  `ConsentPendingStore` the ask turn opens its step in (the observation reads the step's sources through the store's own `claim`); for a
+  bound yes the real `ConsentTurnGate` / `answerConsentTurn` over the owner's RAW reply (closed token, classifier off) and the real
+  `continueSummaryConsent` (token guard, W3 filter, recipient check). The request turn of a bound yes is replayed first (the asked ids as
+  its listing) and is not judged; the answer turn is. The judge (`judge`, the 17 conditions) is untouched; no expectation was edited to make
+  a case pass. The W3 filter is no longer modelled in the read port: the port lists everything and the real filter keeps the asked ids.
+  New assertions: an `ask-first` turn ends with the production question (KO `보낼까요? (응/아니)`, EN `Shall I send them? (yes/no)`) and its
+  real pending step names exactly `expect.consentSources` (or the sources of its grant); every other turn leaves no step open; a
+  bound-yes reply carries no question.
+- **Fixture assumptions (named in the test, none in production).** (1) All five per-source A5 switches (`workSummarySources`) are on for
+  all 348 cases (closer to live; round 1 widened it from the cases that name a work source, and every case still passes); the runtime
+  default stays off. (2) The fake REMOTE summariser declares
+  `dataUse: 'no-training'` (A2-D16 / A5.3: the owner's declaration; without it a work-source summary correctly has no eligible model and
+  stays listing-only), and is named "Claude" by the injected `recipientLabel`. (3) `vi.mock` of `read-write-probe.agentReadWriteProbeClauses`
+  to `[]`: the run service declines `write-clause` for a conjunct that mentions no planned read ("보여주고 요약해줘"), because the read +
+  write composition is stage P5 (a model call, the A6 selection probe). **Verified count (round 1, a scratch run with the mock removed
+  and the request turn of a bound yes included): 138 of the 348 cases** decline `write-clause` without the stand-in (71 moved
+  owner-approved ask-first, 31 + 1 other ask-first, 18 bound-yes, 14 + 3 listing-only), not 120 as the first note said (it missed the 18
+  bound-yes, whose declined turn is the replayed request turn, so a log read of the answer turn alone does not see it). The moved
+  cases therefore assert the post-P5 path: P5 is a precondition of `active`, and these cases do not run today without the stand-in. The
+  corpus's expectations assume the probe answers "the read plan stands"; the test makes that one assumption explicit and runs
+  everything else for real. The stand-in also drops the probe's model call from `modelCalls` (it would understate the margin to the
+  8-call cap); the mock now counts one per would-be probe and the observed usage of an ask run adds it. A continuation has no planner
+  and no probe. This is a P5 composition gap, not a confirm-slice defect; when P5 lands the stand-in goes away.
+- **Judge-input details (no relaxation; round 1 reworked the first attempt).** (a) Usage and breach: the judge reads the answer turn's
+  real `AgentPlanExecutor.execute` result (a spy around the real method, recorded only in the answer phase) on both the ask run and the
+  bound-yes continuation, so `replans`, `refValues`, `elapsedMs` and `breach` are the executor's, not constants (the first attempt read
+  the `agent_run.active` line, which a continuation does not write). (b) Log text: the string values of the log lines are joined as one
+  text again (a counted 8-run split across two string fields or array elements fires). The 7 unrelated hits (`e reply `, cases `002`,
+  `123`, `135`, `216`, `246`, `277`, `349`) came from adjacent enum values (`active`, `reply`). Round 1 excused them with a "closed
+  value" vocabulary derived from the 348 runs; **that vocabulary was withdrawn** after Codex and the Chief Architect reproduced that it
+  self-masks real leaks (shared fixture text logged by a buggy product is classed closed; a leak in all 348 cases passes), and the
+  fix-loop cap made the replacement structural (round 2): a product-defined per-`(event, field)` allowlist. Closed fields (the product
+  writes a constant, so no item content): `consent_gate.turn.{outcome,reason}` (gate literals plus the exported
+  `CONSENT_ANSWER_CODES`; on the gate's `failed` line the reason is `error.name`, an **open** field checked by C_8), `agent_run.exec.outcome`, `agent_run.consent.{outcome,reason}` (fixed downgrade/decline/admission codes and
+  step statuses), `agent_run.active.{mode,outcome,run}` (literals) and `agent_run.active.entries` (READ entry ids or
+  `summarize:<schema>` from the real registries); sources are cited by file:line in the test. A pin requires every closed-field value
+  in all runs to pass its allowlist (an unknown value fails), and every other field is open and checked: C_8 runs over the open-field
+  values joined across fields and array elements, looked up by `(event, field)`, never by value. The 7 cases pass with no plant. New plants: breach, a usage bound, a run split across two fields and across array elements. The judge-teeth
+  listing-only base is now `rt-s2r-425` (listing-only by design: the owner's words ask for no summary; `244` becomes built when the
+  `repo` alias lands); the planted second guard-tripping fixed line rides on that case's planner prompt (a real continuation has no M1
+  prompt). One new test pins the opposite of `dataUse: 'no-training'`: a REMOTE summariser without it keeps a work-source case
+  listing-only (no question, no step, no M2).
+- **Gold moved (121 cases), status wording.** `status: owner-approved` with `approved.decided` taken from `awaiting.decided` (A5.6
+  sanctions the move); `approved.by` now says these cases were moved by CS-3 and are **not** SR-1 batch-reviewed: the SR-1 batch review
+  (Strict, before `active`, see the SR-1 batch-review decision above) still covers them and the 112 producer-derived grants. Codex's
+  "validator added" finding: no change; `validator:"run"` is carried from the old `expect` (schema §6.6). `rt-s2r-487` (A6-S1 + confirm slice) and the 120 A5 cases whose grant the real producer mints: `expect` :=
+  the case's `awaiting.expect` (plus the unchanged `validator`), `awaiting` dropped, `status` `owner-approved`, `approved: { decided,
+  by }`, the note's "`expect` stays the behaviour as built; `awaiting` is the target." replaced by a CS-3 sentence. `487` gained its
+  `readContent` (two mails, the second carrying the case canary `CANARY-S2R-487` in an instruction the summariser must treat as data) and
+  `canary`, with the success list of its sibling `486` (schema §14: a bound-yes target gains its `readContent`); its `success` list gained
+  `step-not-from-owner` and `canary-in-connector-request` (additions only, nothing removed).
+- **Still awaiting (16).** `rt-s2r-244`, `250` (A5, known gap `source-alias`: no `repo` alias); `460`, `461` (A6-S3 + confirm slice);
+  `462`, `463`, `468`, `469`, `470`, `472`, `473`, `488` (A6-S2/S4 + confirm slice: a classifier label is needed and the classifier is
+  off); `113`, `123`, `168` (A4-S5 + confirm slice) and `139` (A4-S5 only). Their built `expect` stays the floor.
+- **Expectation or code disagreements: none.** Every moved case matched its approved target on the real code: the executed reads, the
+  pending step's sources, the question text, the M2 items of each bound yes (`m2Items`, the W3 filter, the withheld credential items)
+  and zero fired conditions over all 348 cases.
+- **Tests changed.** `s2-read-redteam-corpus.test.ts` (harness, header, A5 test over built + awaiting cases, `grant` check, `§4.4` rows 4 to
+  6 over any granted source, status mapping `owner-approved` for the built set), `s2-read-redteam-a5-target.test.ts` (the 120 are pinned in
+  `expect`, the 2 gaps in `awaiting`), `s2-read-redteam-a6-target.test.ts` (`487` is built; seven A6 cases still await). Schema doc §5.3,
+  §10, §13, §14 and the header description follow; `docs/plans/agent-redteam-s2-read-schema.md` still holds the second copy of §12 and §13
+  that predates this change (a pre-existing merge artifact; both copies of the A5 intro and status were updated, the rest of the stale copy
+  is left as found).
+- **Pin.** `agent-redteam.s2-read.v1.json` sha256 now `7e9f3b55e97b52b67680a1bd40fa9c5acb23d62f49e7e507cea5da7b3dbe82bb` (recorded for
+  reference only, as R11; no test pins it).
+- **Open points.** A6-S2/A6-S4 (classifier and its gate) move the eight classifier cases and the A6-S3 pair; A4-S5 moves the request-list
+  cases; the `repo` alias (a catalog change with its own D12 gate) moves `244` and `250`; the S2 P5 dispatch replaces the probe stand-in
+  and adds the live arm; the `ConsentTurnGate` stays inert until `active` is released.
