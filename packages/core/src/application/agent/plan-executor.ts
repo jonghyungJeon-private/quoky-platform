@@ -192,9 +192,10 @@ export type AgentStepResult =
     }
   /**
    * Rule ① (CS-1a, `QUOKY_SUMMARY_CONSENT=on`): the step would send the covered items to a `REMOTE` model, so it asks first: no
-   * body was fetched and no M2 call was made. `sources` are the covered reads that need the owner's yes, each with the ids of
-   * exactly the items the question counts (the first `asked` usable listing slots); a read that is switched off or listing-only
-   * is not in it and stays listing-only (W5). Ids only, never content.
+   * body was fetched and no M2 call was made. `sources` are the sources of the covered reads that need the owner's yes, grouped
+   * by source in plan order (two reads of one source share one entry), each with the ids of exactly the items the question counts
+   * (the first `asked` usable listing slots of each of its reads, merged, distinct, at most {@link AGENT_M2_MAX_ITEMS}) and the
+   * `reads` they came from; a read that is switched off or listing-only is not in it and stays listing-only (W5). Ids only, never content.
    */
   | {
       readonly step: number;
@@ -204,7 +205,12 @@ export type AgentStepResult =
       readonly schema: string;
       /** The recipient's display name (`QuarantinedSummarizerRoute.recipientLabel`). */
       readonly recipient: string;
-      readonly sources: readonly { readonly source: SummaryConsentSourceName; readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
+      readonly sources: readonly {
+        readonly source: SummaryConsentSourceName;
+        readonly itemIds: readonly string[];
+        /** The covered reads of this source, in plan order, each with the ids it contributed (what a consent token is scoped by). */
+        readonly reads: readonly { readonly step: number; readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
+      }[];
     }
   /** D4: no model satisfied the inputs' egress label (or the content has no readout shape, or no budget was left): no call was sent. */
   | { readonly step: number; readonly kind: 'summarize'; readonly status: 'listing-only'; readonly from: readonly number[]; readonly schema: string; readonly reason: QuarantinedListingOnlyReason }
@@ -269,11 +275,17 @@ interface RunState {
   readonly shutdown?: AbortSignal;
   /** Rule ① (CS-1a): `<summarize step>:<read step>` to the covered read that needs the owner's yes, and its recipient. */
   readonly consentNeeded: Map<string, { readonly entryId: NlWave1EntryId; readonly recipient: string }>;
+  /** Rule ① (CS-1a): the entry of each read step of the plan, so readiness can be decided for every covered read up front. */
+  readonly readEntries: Map<number, NlWave1EntryId>;
+  /** Rule ① (CS-1a): the readiness verdict of each (summarize step, covered read), decided once and shared by every read of that step. */
+  readonly verdicts: Map<string, Verdict | 'wall'>;
   /** Rule ① (CS-1a): the same keys to the ids the question counts (the first `asked` usable slots of that read's projection). */
   readonly askedIds: Map<string, readonly string[]>;
   /** Rule ① (CS-1a): the one summarize step of this run that asks (W2: one pending step at a time). */
   asking?: number;
 }
+
+type Verdict = Awaited<ReturnType<typeof summaryReadinessDetailed>>;
 
 type ReadStep = Extract<ValidatedAgentStep, { kind: 'read' }>;
 type RunPlan = Extract<ValidatedAgentPlan, { steps: readonly ValidatedAgentStep[] }>;
@@ -300,6 +312,8 @@ export class AgentPlanExecutor {
       listed: new Map(),
       requested: new Map(),
       consentNeeded: new Map(),
+      readEntries: new Map(),
+      verdicts: new Map(),
       askedIds: new Map(),
       run: newSummaryRunToken(),
       ...(options.grants !== undefined ? { owner: { basis: options.grants, plan } } : {}),
@@ -307,6 +321,7 @@ export class AgentPlanExecutor {
     };
     // Which later summarize steps cover which read.
     for (const [index, step] of plan.steps.entries()) {
+      if (step.kind === 'read') state.readEntries.set(index + 1, step.entry.id as NlWave1EntryId);
       if (step.kind === 'read') state.requested.set(index + 1, Math.min(AGENT_M2_MAX_ITEMS, Math.max(1, nlLimitArg(step.args) ?? AGENT_M2_MAX_ITEMS)));
       if (step.kind !== 'summarize') continue;
       for (const from of step.from) {
@@ -419,28 +434,25 @@ export class AgentPlanExecutor {
     const asking: string[] = [];
     if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
-        // The readiness `select` awaits the router's readiness probe: it is bounded by the run's wall like a port call, and a
-        // spent wall (or any breach) after it ends the step `not-run` (bound) before the port is called (CA review round 1).
-        if (!budget.checkWall()) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
-        const verdict = await readinessWithinWall(
-          {
-            entryId,
-            schema: cover.schema,
-            summaryStep: cover.step,
-            grant: summaryGrantFor(cover.step, entryId, state.run, state.owner),
-            run: state.run,
-            askedItems: askedAcross(state, cover.from),
-            route,
-          },
-          budget,
-        );
-        if (verdict === 'wall' || !budget.checkWall()) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
-        const refusal: SummaryReadinessReason | undefined = verdict.reason;
-        if (refusal === 'consent-needed' && verdict.recipient !== undefined) {
+        // Rule ① (CS-1a): the readiness of EVERY covered read of the step is decided before any of them fetches a body. If any
+        // one of them would ask, the whole step asks, so no read of it requests `withDocuments` (a LOCAL-ready read that ran
+        // first would otherwise fetch bodies the question then drops). The verdicts are cached per (step, read): no extra probe.
+        let stepAsks = false;
+        let own: Verdict | 'wall' | undefined;
+        for (const from of [...new Set([...cover.from, number])].sort((x, y) => x - y)) {
+          if (state.readEntries.get(from) === undefined) continue;
+          const verdict = await this.readinessOf(state, budget, route, cover, from);
+          if (verdict === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+          if (verdict.reason === 'consent-needed' && verdict.recipient !== undefined) stepAsks = true;
+          if (from === number) own = verdict;
+        }
+        if (own === undefined || own === 'wall') continue;
+        const refusal: SummaryReadinessReason | undefined = own.reason;
+        if (refusal === 'consent-needed' && own.recipient !== undefined) {
           // No `withDocuments` and no field mask: no body is fetched. The read itself runs, so the owner sees the listing.
-          state.consentNeeded.set(`${cover.step}:${number}`, { entryId, recipient: verdict.recipient });
+          state.consentNeeded.set(`${cover.step}:${number}`, { entryId, recipient: own.recipient });
           asking.push(`${cover.step}:${number}`);
-        } else if (refusal === undefined) {
+        } else if (refusal === undefined && !stepAsks) {
           readyToSummarize = true;
           // A5.2: the five work sources are summarised from the listing response itself and NEVER get `withDocuments` (no body
           // fetch, no further request). Jira, Slack, Confluence and GitHub send the request exactly as without a summary; the
@@ -448,7 +460,7 @@ export class AgentPlanExecutor {
           const mode = summaryReadModeOf(entryId);
           if (mode === 'documents') withDocuments = true;
           else if (mode === 'listing-mask') fieldMask = true;
-        } else state.denials.set(`${cover.step}:${number}`, refusal === 'consent-needed' ? 'no-model' : refusal);
+        } else if (refusal !== undefined) state.denials.set(`${cover.step}:${number}`, refusal === 'consent-needed' ? 'no-model' : refusal);
       }
     }
     const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}), ...(fieldMask ? { agentSummaryFieldMask: true as const } : {}) }, budget, state.shutdown);
@@ -482,6 +494,38 @@ export class AgentPlanExecutor {
     return { step: number, kind: 'read', entryId, status: 'ok', projection, hasMore: response.hasMore === true, truncated: response.truncated === true, refValues };
   }
 
+  /** The cached readiness verdict of one covered read of one summarize step (bounded by the run's wall, like a port call). */
+  private async readinessOf(
+    state: RunState,
+    budget: AgentRunBudget,
+    route: QuarantinedSummarizerRoute,
+    cover: { readonly step: number; readonly schema: AgentSummarySchemaId; readonly from: readonly number[] },
+    read: number,
+  ): Promise<Verdict | 'wall'> {
+    const key = `${cover.step}:${read}`;
+    const held = state.verdicts.get(key);
+    if (held !== undefined) return held;
+    const entryId = state.readEntries.get(read) as NlWave1EntryId;
+    // The readiness `select` awaits the router's readiness probe: it is bounded by the run's wall like a port call, and a
+    // spent wall (or any breach) after it ends the step `not-run` (bound) before the port is called (CA review round 1).
+    if (!budget.checkWall()) return 'wall';
+    const verdict = await readinessWithinWall(
+      {
+        entryId,
+        schema: cover.schema,
+        summaryStep: cover.step,
+        grant: summaryGrantFor(cover.step, entryId, state.run, state.owner),
+        run: state.run,
+        askedItems: askedAcross(state, cover.from),
+        route,
+      },
+      budget,
+    );
+    const settled = verdict === 'wall' || !budget.checkWall() ? 'wall' : verdict;
+    state.verdicts.set(key, settled);
+    return settled;
+  }
+
   /**
    * One `summarize` step (D3/D4): its M2 calls (planned within what the run has left, run in parallel), each reserved on the run's
    * budget right before it is made. Total: a refusal, a model error or a bad output is a closed status, never a throw and never a
@@ -498,21 +542,30 @@ export class AgentPlanExecutor {
     if (summarizer === undefined) return { ...base, status: 'deferred' };
     // Rule ① (CS-1a): a covered read that needs the owner's yes makes the whole step ask: no M2 call, no body. A read that is
     // switched off or listing-only never joins the question (W5: it keeps its own reason and stays listing-only).
-    const asked: { source: SummaryConsentSourceName; entryId: NlWave1EntryId; itemIds: readonly string[]; recipient: string }[] = [];
-    for (const from of step.from) {
+    const groups = new Map<SummaryConsentSourceName, { ids: string[]; reads: { step: number; entryId: NlWave1EntryId; itemIds: readonly string[] }[] }>();
+    const recipients = new Set<string>();
+    for (const from of [...step.from].sort((x, y) => x - y)) {
       const need = state.consentNeeded.get(`${number}:${from}`);
       const ids = state.askedIds.get(`${number}:${from}`) ?? [];
       const source = need === undefined ? undefined : AGENT_READ_SOURCES[need.entryId]?.source;
       if (need === undefined || ids.length === 0 || !(SUMMARY_CONSENT_SOURCE_NAMES as readonly string[]).includes(source as string)) continue;
-      if (asked.some((entry) => entry.entryId === need.entryId)) continue;
-      asked.push({ source: source as SummaryConsentSourceName, entryId: need.entryId, itemIds: ids, recipient: need.recipient });
+      recipients.add(need.recipient);
+      const group = groups.get(source as SummaryConsentSourceName) ?? { ids: [], reads: [] };
+      for (const id of ids) if (!group.ids.includes(id)) group.ids.push(id);
+      group.reads.push({ step: from, entryId: need.entryId, itemIds: ids });
+      groups.set(source as SummaryConsentSourceName, group);
     }
-    if (asked.length > 0) {
+    if (groups.size > 0) {
       if (state.asking !== undefined) return { ...base, status: 'listing-only', reason: 'consent-one-pending' };
-      const recipient = (asked[0] as { recipient: string }).recipient;
-      if (asked.some((entry) => entry.recipient !== recipient)) return { ...base, status: 'listing-only', reason: 'consent-recipient-split' };
+      if (recipients.size > 1) return { ...base, status: 'listing-only', reason: 'consent-recipient-split' };
+      if ([...groups.values()].some((group) => group.ids.length > AGENT_M2_MAX_ITEMS)) return { ...base, status: 'listing-only', reason: 'consent-too-many-items' };
       state.asking = number;
-      return { ...base, status: 'consent-needed', recipient, sources: asked.map(({ source, entryId, itemIds }) => ({ source, entryId, itemIds })) };
+      return {
+        ...base,
+        status: 'consent-needed',
+        recipient: [...recipients][0] as string,
+        sources: [...groups].map(([source, group]) => ({ source, itemIds: Object.freeze(group.ids), reads: Object.freeze(group.reads) })),
+      };
     }
     // Source entries come from the executed read steps (a failed or skipped read has no documents).
     const sources: AgentSummarySource[] = [];

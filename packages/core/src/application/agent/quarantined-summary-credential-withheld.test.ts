@@ -3,10 +3,9 @@ import { Capability } from '../../domain';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
-import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
 
-// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
-setSummaryConsentAllowAllForTest(true);
+// Rule ① (CS-1a): no REMOTE call can run without a real consent token and the executor carries none until CS-1b, so this suite runs
+// on a LOCAL model; the REMOTE guard is tested in summary-consent.cs1a.test.ts and quarantined-summary-d12.test.ts.
 
 // ADR-0121 remote batch, review round 2 (CA P3): a call refused by the FINAL prompt credential check while another call of the
 // step succeeds sets the closed flag `credentialWithheld`, which the executor passes on and the assembler renders as one fixed
@@ -45,7 +44,7 @@ describe('remote batch: a call refused by the final prompt credential check (rev
     const requests: AiRequest[] = [];
     const provider: AiProvider = {
       id: 'p-remote',
-      executionLocality: 'REMOTE',
+      executionLocality: 'LOCAL',
       capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
       isAvailable: async () => true,
       execute: async (request) => (requests.push(request), { text: '{"items":[{"n":1,"summary":"About the first mail."},{"n":2,"summary":"About the second mail."}]}' }),
@@ -64,7 +63,7 @@ describe('remote batch: a call refused by the final prompt credential check (rev
     expect(result.usage.inputTokens).toBe(new TextEncoder().encode(requests[0]?.prompt ?? '').length);
     expect(result.breach).toBeUndefined();
     // The step is ok, carries the flag, and the two Drive items are omitted.
-    expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'ok', omitted: 2, credentialWithheld: true, audits: [{ locality: 'REMOTE' }] });
+    expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'ok', omitted: 2, credentialWithheld: true, audits: [{ locality: 'LOCAL' }] });
 
     const reply = assembleAgentReply({ plan: p as AgentStepsPlan, result, language: 'en', destinationIsOwnerDm: true });
     expect(reply.parts.filter((part) => part.text === 'Items that looked sensitive were left out of the summary.')).toHaveLength(1);

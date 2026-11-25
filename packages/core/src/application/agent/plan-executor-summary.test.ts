@@ -10,10 +10,9 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest, type AgentReadResponse } from './plan-executor';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import { setSummaryGrantsForTest, summaryEntriesForAssembler, type AgentSourceDocument, type QuarantinedSummarizerRoute } from './quarantined-summary';
-import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
 
-// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
-setSummaryConsentAllowAllForTest(true);
+// Rule ① (CS-1a): no REMOTE call can run without a real consent token and the executor carries none until CS-1b, so this suite runs
+// on a LOCAL model; the REMOTE guard is tested in summary-consent.cs1a.test.ts and quarantined-summary-d12.test.ts.
 
 // ADR-0121 D3/D4/D7 (stage S2 P3-3b): the executor's summarize step goes through the quarantined summariser, charged on the
 // run bounds; a refusal or a breach is a partial result, never an error. Mail is the readable source. Nothing in production
@@ -50,7 +49,7 @@ function port(itemIds: readonly string[], documents?: readonly unknown[]): SpyPo
  * `SUMMARIZATION` providers ranked in list order, so the locality constraint below is the router's real intersection.
  */
 interface TestModel {
-  readonly executionLocality?: 'LOCAL' | 'REMOTE';
+  readonly executionLocality?: 'LOCAL';
   readonly auditId: string;
   run(request: AiRequest): Promise<{ readonly text: string }>;
 }
@@ -60,7 +59,7 @@ function asProvider(m: TestModel, priority: number): AiProvider {
       return m.auditId;
     },
     capabilities: [{ capability: Capability.SUMMARIZATION, priority }],
-    get executionLocality(): 'LOCAL' | 'REMOTE' | undefined {
+    get executionLocality(): 'LOCAL' | undefined {
       return m.executionLocality;
     },
     isAvailable: async () => true,
@@ -73,7 +72,7 @@ function via(...models: TestModel[]): QuarantinedSummarizerRoute {
   return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index))), policy) };
 }
 
-function model(locality: 'LOCAL' | 'REMOTE', answer = '{"items":[{"n":1,"summary":"CANARY-SUMMARY-91 text"}]}'): TestModel & { requests: AiRequest[] } {
+function model(locality: 'LOCAL', answer = '{"items":[{"n":1,"summary":"CANARY-SUMMARY-91 text"}]}'): TestModel & { requests: AiRequest[] } {
   const requests: AiRequest[] = [];
   return { requests, executionLocality: locality, auditId: `audit-${locality}`, run: async (request) => (requests.push(request), { text: answer }) };
 }
@@ -114,7 +113,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     beforeEach(grantAll);
 
     it('runs one M2 call over the covered read, charges it on the run bounds and records the audit', async () => {
-      const fake = model('REMOTE');
+      const fake = model('LOCAL');
       const mail = port(['m1'], docs('quarterly body'));
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: via(fake) }).execute(MAIL_PLAN());
       expect(result.outcome).toBe('complete');
@@ -123,7 +122,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       expect(result.usage).toMatchObject({ m2Calls: 1, modelCalls: 1 });
       expect(result.usage.inputTokens).toBeGreaterThan(0);
       const step = result.steps[1];
-      expect(step).toMatchObject({ kind: 'summarize', status: 'ok', omitted: 0, audits: [{ locality: 'REMOTE', auditId: 'audit-REMOTE' }] });
+      expect(step).toMatchObject({ kind: 'summarize', status: 'ok', omitted: 0, audits: [{ locality: 'LOCAL', auditId: 'audit-LOCAL' }] });
       if (step?.kind !== 'summarize' || step.status !== 'ok') throw new Error('not ok');
       expect(step.audits).toHaveLength(1);
       expect(step.audits[0]?.estimatedTokens).toBe(result.usage.inputTokens);
@@ -161,9 +160,9 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     });
 
     it('a granted batch may go to a remote model in one sealed call; without the grant it is listing-only', async () => {
-      const remote = model('REMOTE');
+      const remote = model('LOCAL');
       const batch = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2'], docs('a', 'b')) }, summarizer: via(remote) }).execute(MAIL_PLAN());
-      expect(batch.steps[1]).toMatchObject({ status: 'ok', omitted: 1, audits: [{ locality: 'REMOTE' }] });
+      expect(batch.steps[1]).toMatchObject({ status: 'ok', omitted: 1, audits: [{ locality: 'LOCAL' }] });
       expect(remote.requests).toHaveLength(1);
       setSummaryGrantsForTest();
       const ungranted = port(['m1', 'm2'], docs('a', 'b'));
@@ -200,13 +199,13 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     });
 
     it('S3: a summary over two granted reads (mail and Drive) is one sealed call per source, both REMOTE, merged in source order', async () => {
-      const remote = model('REMOTE', '{"items":[{"n":1,"summary":"one item"}]}');
+      const remote = model('LOCAL', '{"items":[{"n":1,"summary":"one item"}]}');
       const mail = port(['m1'], docs('a'));
       const drive = port(['d123456'], [{ id: 'd123456', position: 1, title: 't', author: 'a', date: '', body: 'b' }]);
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail, 'drive.files': drive }, summarizer: via(remote) }).execute(plan([read('mail.list'), read('drive.files'), summarize([1, 2])]));
       expect(mail.requests[0]?.withDocuments).toBe(true);
       expect(drive.requests[0]?.withDocuments).toBe(true);
-      expect(result.steps[2]).toMatchObject({ status: 'ok', omitted: 0, audits: [{ locality: 'REMOTE' }, { locality: 'REMOTE' }] });
+      expect(result.steps[2]).toMatchObject({ status: 'ok', omitted: 0, audits: [{ locality: 'LOCAL' }, { locality: 'LOCAL' }] });
       expect(remote.requests).toHaveLength(2);
       expect(result.usage).toMatchObject({ m2Calls: 2, modelCalls: 2 });
       const step = result.steps[2];
@@ -222,7 +221,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     });
 
     it('an unstated limit counts as the item cap: with a grant a REMOTE-only route fetches the body and summarises it', async () => {
-      const remote = model('REMOTE');
+      const remote = model('LOCAL');
       const mail = port(['m1'], docs('a'));
       const unstated: ValidatedAgentStep = { kind: 'read', entry: NL_WAVE1_ENTRIES['mail.list' as keyof typeof NL_WAVE1_ENTRIES], args: {}, provenance: {} };
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: via(remote) }).execute(plan([unstated, summarize([1])]));
@@ -247,7 +246,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
 
     it('a model whose audit id getter throws is never called and the step is listing-only', async () => {
       const calls: number[] = [];
-      const bad: TestModel = { executionLocality: 'REMOTE', get auditId(): string { throw new Error('audit'); }, run: async () => (calls.push(1), { text: '{}' }) };
+      const bad: TestModel = { executionLocality: 'LOCAL', get auditId(): string { throw new Error('audit'); }, run: async () => (calls.push(1), { text: '{}' }) };
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('a')) }, summarizer: via(bad) }).execute(MAIL_PLAN());
       expect(calls).toEqual([]);
       expect(result.steps[1]).toMatchObject({ status: 'listing-only' });
@@ -385,20 +384,20 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     const wide = (id: NlWave1EntryId, limit: number): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[id as keyof typeof NL_WAVE1_ENTRIES], args: { limit }, provenance: {} });
 
     it('N1: a REMOTE call the wall cuts off after it started still reports its audit', async () => {
-      const hung: TestModel = { executionLocality: 'REMOTE', auditId: 'audit-hung', run: () => new Promise(() => undefined) };
+      const hung: TestModel = { executionLocality: 'LOCAL', auditId: 'audit-hung', run: () => new Promise(() => undefined) };
       const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(hung), bounds: { wallMs: 30 } }).execute(MAIL_PLAN());
-      expect(result.steps[1]).toMatchObject({ status: 'not-run', audits: [{ locality: 'REMOTE', auditId: 'audit-hung' }] });
+      expect(result.steps[1]).toMatchObject({ status: 'not-run', audits: [{ locality: 'LOCAL', auditId: 'audit-hung' }] });
     });
 
     it('N1: a REMOTE call whose answer fails the schema reports its audit', async () => {
-      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(model('REMOTE', 'not json')) }).execute(MAIL_PLAN());
-      expect(result.steps[1]).toMatchObject({ status: 'failed', errorCode: 'SCHEMA', audits: [{ locality: 'REMOTE' }] });
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(model('LOCAL', 'not json')) }).execute(MAIL_PLAN());
+      expect(result.steps[1]).toMatchObject({ status: 'failed', errorCode: 'SCHEMA', audits: [{ locality: 'LOCAL' }] });
     });
 
     it('a clock that starts throwing after a REMOTE call started is a wall breach that keeps the audit (Codex)', async () => {
       let called = false;
       const remote: TestModel = {
-        executionLocality: 'REMOTE',
+        executionLocality: 'LOCAL',
         auditId: 'audit-clock',
         run: async () => {
           called = true;
@@ -415,11 +414,11 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
       }).execute(MAIL_PLAN());
       expect(called).toBe(true);
       expect(result.outcome).toBe('partial');
-      expect(result.steps[1]).toMatchObject({ status: 'not-run', audits: [{ locality: 'REMOTE', auditId: 'audit-clock' }] });
+      expect(result.steps[1]).toMatchObject({ status: 'not-run', audits: [{ locality: 'LOCAL', auditId: 'audit-clock' }] });
     });
 
     it('N1: a step refused before any call carries no audit', async () => {
-      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(model('REMOTE')), bounds: { maxModelCalls: 0 } }).execute(MAIL_PLAN());
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1'], docs('b')) }, summarizer: via(model('LOCAL')), bounds: { maxModelCalls: 0 } }).execute(MAIL_PLAN());
       expect(result.steps[1]).toMatchObject({ status: 'listing-only', reason: 'budget' });
       expect(result.steps[1]).not.toHaveProperty('audits');
     });
@@ -440,7 +439,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     });
 
     it('N3: with a grant, a multi-item read and a one-item read both fetch bodies for REMOTE-only models (remote batch)', async () => {
-      const remote = model('REMOTE');
+      const remote = model('LOCAL');
       const many = port(ids(5), docs('a', 'b', 'c', 'd', 'e'));
       const listed = await new AgentPlanExecutor({ readers: { 'mail.list': many }, summarizer: via(remote) }).execute(plan([wide('mail.list', 5), summarize([1])]));
       expect(many.requests[0]?.withDocuments).toBe(true);
@@ -470,7 +469,7 @@ describe('AgentPlanExecutor: summaries (P3-3b)', () => {
     it('mail is listing-only (no-summary-grant): the body is never fetched, no model is called, even with a local one', async () => {
       const fake = model('LOCAL');
       const mail = port(['m1'], docs('hello'));
-      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: via(fake, model('REMOTE')) }).execute(MAIL_PLAN());
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: via(fake, model('LOCAL')) }).execute(MAIL_PLAN());
       expect(result.steps[1]).toMatchObject({ status: 'listing-only', reason: 'no-summary-grant' });
       expect(mail.requests[0]?.withDocuments).toBeUndefined();
       expect(fake.requests).toHaveLength(0);

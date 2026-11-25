@@ -9,7 +9,6 @@ import { CapabilityRouter } from '../capability-router';
 import {
   deriveM2Localities,
   m2SelectionContext,
-  mintSummaryConsentTokenForTest,
   mintSummaryEgressGrantForTest,
   newSummaryRunToken,
   quarantinedSummarize,
@@ -17,10 +16,9 @@ import {
   type AgentSummarySource,
   type SummaryEgressGrant,
 } from './quarantined-summary';
-import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+import { consentTokenFor } from './summary-consent.test-support';
 
-// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
-setSummaryConsentAllowAllForTest(true);
+// Rule ① (CS-1a): a REMOTE call needs a real consent token (a bound consent from a store, minted by `mintSummaryConsentToken`); the rule itself is tested in summary-consent.cs1a.test.ts.
 
 // ADR-0121 D12 (amended, ratified 2026-11-16): M2 routes through the existing ProviderSelector / AiProvider. Core derives the
 // allowed localities (labels, a valid grant, the asked-for count) and passes them as `allowedExecutionLocalities`; candidates
@@ -30,8 +28,10 @@ setSummaryConsentAllowAllForTest(true);
 const RUN = newSummaryRunToken();
 const doc = (position: number): AgentSourceDocument => ({ id: `m${position}`, position, title: `t${position}`, author: 'a', date: '', body: `body ${position}` });
 const mail = (grant: SummaryEgressGrant | undefined, ...documents: AgentSourceDocument[]): AgentSummarySource => ({ entryId: 'mail.list', documents, ...(grant !== undefined ? { grant } : {}) });
-const SCOPE = { run: RUN, step: 1, covered: [{ entryId: 'mail.list' as const }] };
-const CONSENT = mintSummaryConsentTokenForTest({ run: RUN, step: 1, recipient: 'Test', sources: [{ entryId: 'mail.list', itemIds: [] }] });
+const SCOPE = { run: RUN, step: 1, covered: [{ entryId: 'mail.list' as const, itemIds: ['m1'] }] };
+const CONSENT = consentTokenFor(RUN, 1, { recipient: 'Test', reads: [{ entryId: 'mail.list', itemIds: ['m1', 'm2'] }] });
+/** Every REMOTE dispatch here names its recipient ('Test') and carries the real token above. */
+const TEST_RECIPIENT = { recipientLabel: (): string => 'Test' };
 const GRANT = (): SummaryEgressGrant => mintSummaryEgressGrantForTest(1, 'mail.list', RUN);
 const ANSWER = '{"items":[{"n":1,"summary":"A short summary."}]}';
 /** An owner policy that prefers nothing and answers explicitly at dispatch (D12 needs an explicit verdict). */
@@ -139,10 +139,10 @@ describe('D12: the selector is asked under the derived constraint, and its answe
   it('one granted item and a granted batch: the selector gets SUMMARIZATION with LOCAL and REMOTE', async () => {
     const local = spy('p-local', 'LOCAL', 1);
     const one = recording(local);
-    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: one.selector, selectionContext: { sessionId: 's', actorId: 'a' } } });
+    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: one.selector, ...TEST_RECIPIENT, selectionContext: { sessionId: 's', actorId: 'a' } } });
     expect(one.selects).toEqual([{ sessionId: 's', actorId: 'a', allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }]);
     const batch = recording(local);
-    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: batch.selector } });
+    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], consent: CONSENT, route: { selector: batch.selector, ...TEST_RECIPIENT } });
     expect(batch.selects).toEqual([{ allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }]);
     // The selection-time verdict and both dispatch re-checks (before the reservation, and right before execute) run on the
     // SAME constrained context.
@@ -180,7 +180,7 @@ describe('D12: the selector is asked under the derived constraint, and its answe
 
   it('the request is sealed and the audit names the provider id with its snapshot locality', async () => {
     const remote = spy('p-remote', 'REMOTE', 1);
-    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: recording(remote) });
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { ...recording(remote), ...TEST_RECIPIENT } });
     expect(outcome).toMatchObject({ kind: 'summary', audits: [{ locality: 'REMOTE', auditId: 'p-remote' }] });
     expect(Object.keys(remote.requests[0] as AiRequest).sort()).toEqual(['capability', 'prompt']);
     expect((remote.requests[0] as AiRequest).capability).toBe(Capability.SUMMARIZATION);
@@ -265,7 +265,7 @@ describe('D12: a sent request is never re-sent', () => {
     const first = spy('p-first', 'REMOTE', 90, async () => ({ text: 'not json' }));
     const second = spy('p-second', 'LOCAL', 10);
     const router = new CapabilityRouter(new AiProviderManager([first, second]), PERMISSIVE);
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ kind: 'failed', reason: 'schema' });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: router, ...TEST_RECIPIENT } })).toMatchObject({ kind: 'failed', reason: 'schema' });
     expect([first.requests.length, second.requests.length]).toEqual([1, 0]);
   });
 });
@@ -286,9 +286,9 @@ describe('D12: workText interplay', () => {
     const router = new CapabilityRouter(new AiProviderManager([vendor, local]), policy);
 
     // Without workText, one granted item may go to the remote vendor (the owner's listed first choice).
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ audits: [{ auditId: 'p-vendor' }] });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: router, ...TEST_RECIPIENT } })).toMatchObject({ audits: [{ auditId: 'p-vendor' }] });
     // With workText the vendor is out by policy even though REMOTE is allowed: the local one serves.
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router, selectionContext: { workText: true } } })).toMatchObject({ audits: [{ auditId: 'p-local' }] });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: router, ...TEST_RECIPIENT, selectionContext: { workText: true } } })).toMatchObject({ audits: [{ auditId: 'p-local' }] });
     expect(seen.at(-1)).toEqual({ workText: true, allowedExecutionLocalities: ['LOCAL', 'REMOTE'] });
 
     // workText and a LOCAL-only constraint with no local provider registered: nothing is eligible, listing-only, no call.

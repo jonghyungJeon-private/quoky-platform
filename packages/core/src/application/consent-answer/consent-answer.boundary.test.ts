@@ -39,16 +39,18 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     expect(files.length).toBeGreaterThan(500);
     const importers = files.filter((file) => !file.startsWith(HERE) && importsOf(file).some((specifier) => intoConsentAnswer(file, specifier)));
     // CS-1a (rule ① confirm slice): `AgentRunService` opens the pending summary consent, so it imports the producer and the store
-    // type; `agent-contract-check.ts` pins its dependency type (types only, no value). Neither imports the answer function (the
+    // type; `agent-contract-check.ts` pins its dependency type (types only, no value); `quarantined-summary.ts` imports the brand
+    // check and the `BoundConsent` type for `mintSummaryConsentToken`, the only maker of a consent token. Neither imports the answer function (the
     // next test pins that). The runtime gate allowlist is CS-2's.
     expect(importers.map((file) => relative(REPO, file)).sort()).toEqual([
       'packages/core/src/application/agent/agent-contract-check.ts',
       'packages/core/src/application/agent/agent-run-service.ts',
+      'packages/core/src/application/agent/quarantined-summary.ts',
     ]);
   });
 
-  it('the two allowed importers reach only consent-pending (never the answer function or the classifier)', () => {
-    for (const path of ['application/agent/agent-run-service.ts', 'application/agent/agent-contract-check.ts']) {
+  it('the three allowed importers reach only consent-pending (never the answer function or the classifier)', () => {
+    for (const path of ['application/agent/agent-run-service.ts', 'application/agent/agent-contract-check.ts', 'application/agent/quarantined-summary.ts']) {
       const file = join(CORE_SRC, path);
       const specifiers = importsOf(file).filter((specifier) => intoConsentAnswer(file, specifier));
       expect(specifiers.length, path).toBeGreaterThan(0);

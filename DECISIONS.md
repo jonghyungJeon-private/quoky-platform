@@ -39118,8 +39118,8 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   source and, once known, only item ids the owner was asked about; for every egress label ("EVERY remote summary"). It is a
   no-op for `REMOTE_OK` in practice (no summary readout carries it). `dispatchLocality` re-checks the same token synchronously at
   selection, before each call and again immediately before `execute`, and reads `route.recipientLabel(provider)` again: a
-  `REMOTE` provider whose label is not the token's recipient is not called. Nothing mints a token in CS-1a (CS-1b does, from a
-  bound A6-S1 consent), so after this slice no agent path can reach `REMOTE`. With `QUOKY_SUMMARY_CONSENT=off` this guard is the
+  `REMOTE` provider whose label is not the token's recipient is not called. The one maker is `mintSummaryConsentToken` (review
+  round 1, below); it has no production caller in CS-1a (CS-1b is the first), so after this slice no agent path can reach `REMOTE`. With `QUOKY_SUMMARY_CONSENT=off` this guard is the
   only behaviour change, and the agent path is dormant (`active` refused), so no live turn changes.
 - **The route.** `QuarantinedSummarizerRoute` gains `recipientLabel(provider)` (a closed map over the provider family, built in
   `apps/quoky/src/agent/summary-recipient-label.ts`: `claude-cli` Claude, `codex-cli` Codex, `openai-api` OpenAI, `gemini-api`
@@ -39133,10 +39133,11 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   unchanged).
 - **Ask mode (`QUOKY_SUMMARY_CONSENT=on`, default `off`, exact, `SUMMARY_CONSENT_INVALID`; `.env.example`, preflight hint).** In
   `summaryReadinessDetailed`, with the flag and no token the selector is asked under the full locality set: a LOCAL pick is ready
-  (W4, no question); a REMOTE pick is `consent-needed` with the recipient (no label is `no-model`). The executor treats it as a
+  (W4, no question); a REMOTE pick is `consent-needed` with the recipient (a REMOTE provider with no name falls through to the guarded,
+  LOCAL-only selection, so the flag never loses a LOCAL summary the flag-off behaviour would give). The executor treats it as a
   denial (no `withDocuments`, no field mask, the read itself runs), records `askedIds` = positions 1..asked of the projection
   (an unusable slot is skipped and never shifts), and `runSummary` returns `status: 'consent-needed'` with `recipient` and
-  `sources: [{ source, entryId, itemIds }]`, no M2 call. W5 mixed: a switched-off or listing-only source keeps its reason and
+  `sources: [{ source, itemIds, reads: [{ step, entryId, itemIds }] }]`, grouped by source in plan order, no M2 call. W5 mixed: a switched-off or listing-only source keeps its reason and
   never joins the question. A second asking step is `consent-one-pending` (W2), sources that pick different recipients are
   `consent-recipient-split`, a missing grant stays `no-summary-grant`. A step with one asking source and another LOCAL-ready one
   asks as a whole (one selection serves a step); the LOCAL documents are dropped, not summarised. The assembler adds the
@@ -39145,7 +39146,8 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   keeps the per-source validation (1..10 distinct ids), `reaskedCopy` carries `runRef`. `AgentRunService.runPlanned` opens it
   (after the executor, before the assembler, so the assembled reply already shows the downgrade when it fails) only with a
   `consentStore`, a direct turn, a `conversationKey` and no `ownerStepPending`; otherwise, or when the producer or the question
-  fails, the step becomes `listing-only` with `consent-owner-step-open` and no question. It holds ids, recipient, language and
+  fails, the step becomes `listing-only` and no question is shown: `consent-owner-step-open` only when another owner step is
+  pending (W2), `consent-unavailable` (its own fixed KO/EN line) for every other cause (review round 1). It holds ids, recipient, language and
   scope only, never content. The continuation record map (in memory, at most 64, 600 s, dropped on use and on
   `voidAllSummaryConsents`) keeps the same validated plan object, the grant basis, the step numbers (summarize step, covered
   reads, reference ancestors), the actor and the session. One content-free `agent_run.consent` line (`asked` or `declined`).
@@ -39173,10 +39175,35 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   that flips); LOCAL with no question; flag off never REMOTE; ask without `withDocuments` and without an M2 call; the first
   `asked` usable slots; W5 mixed; mail plus Drive in one question; one asking step; owner step open; recipient split; the exact
   KO/EN strings, `과`, singular and the placeholder form; `runRef` through the re-ask; the 64 and 600 s bounds. The suites that
-  predate the rule use a test-only allow-all seam (`setSummaryConsentAllowAllForTest`, throws outside the test runner); the
-  rule's own suite leaves it off. Core agent and consent-answer folders, `apps/quoky` agent, config and preflight tests pass;
+  predate the rule have no allow-all seam any more (review round 1): REMOTE-incidental suites run on a LOCAL model, the
+  REMOTE-specific ones carry a real token from `summary-consent.test-support.ts` (store, open, claim, bind, mint). Core agent and consent-answer folders, `apps/quoky` agent, config and preflight tests pass;
   build and typecheck pass.
-- **Open points for CS-1b and CS-2.** CS-1b: mint the token from a `BoundConsent` (keyed to the run and `record.summaryStep`),
+- **Review round 1 (Codex and Chief Architect), fixes.**
+  1. *Production bypass removed.* The env-only seam `setSummaryConsentAllowAllForTest` (and `mintSummaryConsentTokenForTest`)
+     trusted `VITEST=true`, so plain Node with that variable admitted REMOTE without consent. Both are deleted, and a pin test
+     fails on any mention. The structural replacement is `mintSummaryConsentToken({ bound, runRef, run, step, reads })` in
+     `quarantined-summary.ts`: it accepts only a genuine `BoundConsent` (a module-private `WeakSet` filled by
+     `ConsentPendingStore.bind`; a copy, claim or open step is refused), of a `summary-consent` step, once per bound yes, with the
+     step's own `runRef`, and only when the per-source union of the reads' ids equals EXACTLY the recorded ids (every recorded
+     source covered, no other source, no other id). The token carries the step's recipient, re-checked at every dispatch. It has
+     no production caller (CS-1b). `quarantined-summary.ts` is the third allowed importer of `consent-pending` (the brand check).
+     Tests obtain tokens the real way (`summary-consent.test-support.ts`). Executor-level suites cannot carry a token until
+     CS-1b, and a token covers at most 10 items per source, so suites about batching, budgets and disclosure moved to a LOCAL
+     model (the assembler's disclosure tests mark the audits REMOTE after the run).
+     Pre-existing, NOT changed here: `setSummaryGrantsForTest`, `mintSummaryEgressGrantForTest` and
+     `sealQuarantinedSummaryForTest` have the same env-only barrier (`assertTestRuntime`, `VITEST=true`); they grant or seal, they
+     do not skip the consent. A structural replacement is a separate item.
+  2. *No body before the question.* Readiness is decided for every covered read of a summarize step (cached per step and read)
+     before any of them requests `withDocuments`; if any would ask, none fetches a body.
+  3. *Grouped by source.* Reads of one source (`jira.issues` and `jira.release`; two `mail.list` reads) make one question entry
+     with merged distinct ids in plan order and the contributing `reads`; past 10 ids the step is `listing-only`
+     `consent-too-many-items`; the recipient split considers every read.
+  4. *Wording.* `consent-unavailable` is new; `consent-owner-step-open` stays for W2 only. Also `consent-too-many-items`.
+  5. *Minor.* An unnamed REMOTE provider falls back to the guarded LOCAL selection; the continuation record is deleted if the
+     step does not open; `{개수}` and `{count}` are both exported (`CONSENT_COUNT_PLACEHOLDER_KO`, `_EN`); the question carries
+     `SUMMARY_CONSENT_QUESTION_VERSION` (`summary-consent-question.v1`; any wording change bumps it, and the A6-S4 plan digest
+     binds it, a6-12); the `sources` doc of the question input says plan order.
+- **Open points for CS-1b and CS-2.** CS-1b: call `mintSummaryConsentToken` with the `BoundConsent` (keyed to the run and `record.summaryStep`),
   the executor `continuation` option, the W3 id filter, the recipient re-check against `bound.pending.recipient`, single use,
   `continueSummaryConsent` and the assembler's continuation mode. CS-2: the gate in `ConversationRuntime`, the one shared
   store composed in `apps/quoky` (the Core index does not export `consent-pending`, so the store cannot be built there yet; the

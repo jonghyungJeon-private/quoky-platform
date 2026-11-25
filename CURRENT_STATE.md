@@ -15,7 +15,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 ### Rule-① confirm slice CS-1a guard-and-ask implemented, dormant (2026-11-25, branch `claude/v5-cs1a-summary-consent-ask`)
 
 - The REMOTE guard is unconditional: an agent summary reaches a REMOTE model only with a bound consent token (re-checked at
-  dispatch with the recipient label); nothing mints one yet, so the agent path is LOCAL or listing-only. Ask mode
+  dispatch with the recipient label); only `mintSummaryConsentToken` (a genuine bound consent, exact scope, once; no caller until CS-1b) makes one, so the agent path is LOCAL or listing-only. Ask mode
   (`QUOKY_SUMMARY_CONSENT=on`, default off) adds the question, the `consent-needed` status and the pending step in the run service.
 - Dormant: `active` is still refused and the read ports are empty. Next: CS-1b (continuation), CS-2 (runtime gate, store
   composition), CS-3 (gold). See DECISIONS "Rule-① confirm slice CS-1a implementation note (2026-11-25)".

@@ -27,11 +27,11 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 - **Changed (guard).** `deriveM2Localities` takes a required consent token instead of the A5-S3 `workSource` flag: an agent
   summary reaches a `REMOTE` model only with a matching bound token (every egress label, mail and Drive included), re-checked at
-  dispatch together with the recipient label. Nothing mints a token yet, so the agent path is `LOCAL` or listing-only. The agent
+  dispatch together with the recipient label. The one maker is `mintSummaryConsentToken` (only from a genuine bound consent, for exactly its scope, once; no production caller yet), so the agent path is `LOCAL` or listing-only; there is no test or allow-all seam. The agent
   path is dormant (`active` refused), so no live turn changes.
 - **Added.** The question renderer `agent/summary-consent-question.ts` (KO/EN, one or several sources, placeholder form shared
   with the A6-S2 classifier question); the ask mode behind `QUOKY_SUMMARY_CONSENT=off|on` (`consent-needed` status, new reasons
-  `consent-one-pending`, `consent-owner-step-open`, `consent-recipient-split`, assembler `consent` part); the pending step
+  `consent-one-pending`, `consent-owner-step-open`, `consent-unavailable`, `consent-too-many-items`, `consent-recipient-split`, assembler `consent` part); the pending step
   (per-source `SummaryConsentPending` plus `runRef`) opened by `AgentRunService` with an in-memory continuation record (64, 600 s);
   `recipientLabel` from `apps/quoky` (closed provider-family map).
 - **Not in this slice.** The continuation that sends (CS-1b), the runtime gate and the shared store composition (CS-2), the gold

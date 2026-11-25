@@ -586,21 +586,24 @@ export class AgentRunService {
   /**
    * Rule ① (CS-1a, W2): opens the pending summary consent of the one step that asks, and keeps its continuation record. Only with
    * a `consentStore`, in the owner's DM, with a conversation key and no other owner step pending; otherwise (or when the step
-   * cannot be minted or the question cannot be rendered) the step is downgraded to `listing-only` (`consent-owner-step-open`) and
-   * no question is shown. The step holds ids only, never content. Total: never throws.
+   * cannot be minted or the question cannot be rendered) the step is downgraded to `listing-only` and no question is shown:
+   * `consent-owner-step-open` only when another owner step is pending (W2), `consent-unavailable` for every other cause. The step holds ids only, never content. Total: never throws.
    */
   private openSummaryConsent(turn: AgentActiveTurn, plan: ValidatedRunPlan, basis: SummaryGrantBasis, result: AgentRunResult, language: 'ko' | 'en'): AgentRunResult {
     const asked = result.steps.find((step) => step.kind === 'summarize' && step.status === 'consent-needed');
     if (asked === undefined || asked.kind !== 'summarize' || asked.status !== 'consent-needed') return result;
     const downgrade = (reason: string): AgentRunResult => {
       this.log('info', 'agent_run.consent', { outcome: 'declined', reason, sources: asked.sources.length });
+      // The owner-facing line is the true one: "another step is waiting" only when one is (W2); every other cause is "cannot ask".
+      const line = reason === 'owner-step-open' ? ('consent-owner-step-open' as const) : ('consent-unavailable' as const);
       return {
         ...result,
         steps: result.steps.map((step) =>
-          step === asked ? { step: asked.step, kind: 'summarize' as const, status: 'listing-only' as const, from: asked.from, schema: asked.schema, reason: 'consent-owner-step-open' as const } : step,
+          step === asked ? { step: asked.step, kind: 'summarize' as const, status: 'listing-only' as const, from: asked.from, schema: asked.schema, reason: line } : step,
         ),
       };
     };
+    let stored: string | undefined;
     try {
       const store = this.deps.consentStore;
       if (store === undefined) return downgrade('no-store');
@@ -630,6 +633,7 @@ export class AgentRunService {
         actorId: turn.actor.id,
         createdAtMs,
       });
+      stored = runRef;
       store.open(pending);
       this.log('info', 'agent_run.consent', {
         outcome: 'asked',
@@ -638,6 +642,8 @@ export class AgentRunService {
       });
       return result;
     } catch {
+      // A record is never left behind for a step that did not open (it could only be taken by a runRef nobody holds).
+      if (stored !== undefined) this.continuations.delete(stored);
       return downgrade('failed');
     }
   }

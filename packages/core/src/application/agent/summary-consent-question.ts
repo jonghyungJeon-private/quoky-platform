@@ -20,9 +20,16 @@ export interface SummaryConsentQuestionInput {
   readonly language: 'ko' | 'en';
   /** The recipient's display name, from `QuarantinedSummarizerRoute.recipientLabel` (provider data). */
   readonly recipient: string;
-  /** In source order (mail, Drive, then the work sources); one part each. `count` is the number of item ids recorded. */
+  /** In the order given (callers pass the plan order of the covered reads, a source at its first read); one part each. `count` is the number of item ids recorded. */
   readonly sources: readonly { readonly source: SummaryConsentSourceName; readonly count: number }[];
 }
+
+/**
+ * Names the bytes of the question template (both languages, the noun table, the joins and the placeholders). Any wording change,
+ * however small, bumps it. The A6-S4 plan digest binds it with the classifier prompt version (a6-12), so a reworded question can
+ * never be judged by a digest made for the old one.
+ */
+export const SUMMARY_CONSENT_QUESTION_VERSION = 'summary-consent-question.v1';
 
 /** The KO placeholder for an item count (the A6.4 classifier template). */
 export const SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER = '{개수}';

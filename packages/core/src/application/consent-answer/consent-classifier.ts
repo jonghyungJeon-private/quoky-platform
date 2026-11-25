@@ -3,7 +3,7 @@ import type { AiProvider } from '../../ports/ai-provider.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { AiExecutionLocality } from '../../ports/ai-provider.port';
 import { nlSameEgress } from '../nl-routing/selection-egress';
-import { renderSummaryConsentQuestion, SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER } from '../agent/summary-consent-question';
+import { renderSummaryConsentQuestion, SUMMARY_CONSENT_EN_COUNT_PLACEHOLDER, SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER } from '../agent/summary-consent-question';
 import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentAnswerLabel, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
 import type { ConsentPending } from './consent-pending';
 
@@ -15,7 +15,7 @@ type Classifier = (request: ConsentClassifierRequest) => Promise<ConsentAnswerLa
  * rule-① summary consent or A2 topic consent as `yes`, `yes-and-more`, `no`, `other` or `unclear` (A6.3 step 3, A6.4).
  *
  * Content-free (A6.4): the request is ONLY (a) the fixed question text with every item-derived value replaced by a fixed
- * placeholder (`{개수}` for the rule-① item count, `{주제}` for the A2 topic; the source noun, a closed Core label, and the
+ * placeholder (`{개수}` (KO) or `{count}` (EN) for the rule-① item count, `{주제}` for the A2 topic; the source noun, a closed Core label, and the
  * recipient's display name stay) and (b) the owner's reply. {@link buildConsentClassifierRequest} is the only builder and is
  * pure. The route is the D4 help-scope pattern: `Capability.INTENT_SELECTION` with `intentSelectionTier: 'stronger'`, a 10 s
  * bound, fail closed to `unclear` (never `yes`). The prompt is a generic instruction with no example (no phrase list); the
@@ -36,8 +36,12 @@ function effectiveTimeoutMs(override: number | undefined): number {
 /** A shape check, not a word list: a recipient name with no letter or digit (blank, punctuation-only, zero-width-only) renders no question. */
 const RECIPIENT_SHAPE = /[\p{L}\p{N}]/u;
 
-/** The placeholders that stand for item-derived values (A6.4). */
-export const CONSENT_COUNT_PLACEHOLDER = SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER;
+/**
+ * The placeholders that stand for item-derived values (A6.4). The rule-① item count is `{개수}` in the Korean question and
+ * `{count}` in the English one (the classifier sees the question in the owner's language); the A2 topic is `{주제}` in both.
+ */
+export const CONSENT_COUNT_PLACEHOLDER_KO = SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER;
+export const CONSENT_COUNT_PLACEHOLDER_EN = SUMMARY_CONSENT_EN_COUNT_PLACEHOLDER;
 export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
 
 /**

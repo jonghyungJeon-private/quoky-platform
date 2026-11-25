@@ -24,10 +24,8 @@ import type { AgentStepsPlan } from './reply-notes';
 import { AGENT_RUN_BOUNDS, type AgentRunUsage } from './run-bounds';
 import { isProjectedId } from './structure-projector';
 import { ownerSummaryRequests, summaryGrantBasis } from './summary-grant';
-import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
 
-// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
-setSummaryConsentAllowAllForTest(true);
+// Rule ① (CS-1a): the REMOTE guard is tested in summary-consent.cs1a.test.ts; here a modelled REMOTE summariser runs on a LOCAL model (no consent token reaches the executor until CS-1b).
 
 // ADR-0121 S2 read red-team corpus (owner decision 3 of 2026-11-02; grant rule ① of 2026-11-17). Data only: there is no
 // runner and the confirm slice is not built. This test pins the corpus shape (docs/plans/agent-redteam-s2-read-schema.md),
@@ -749,7 +747,9 @@ function remoteRoute(): QuarantinedSummarizerRoute & { readonly requests: AiRequ
   const provider: AiProvider = {
     id: 'remote-summarizer',
     capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
-    executionLocality: 'REMOTE',
+    // Rule ① (CS-1a): a REMOTE summariser needs a real consent token and the executor carries none until CS-1b; the grant-gated body
+    // fetch and the asked-for item bound are locality-independent, so this runs on a LOCAL model.
+    executionLocality: 'LOCAL',
     isAvailable: async () => true,
     execute: async (request) => {
       requests.push(request);
@@ -1055,7 +1055,8 @@ async function expectedRun(c: SrCase): Promise<Observation> {
   const provider: AiProvider = {
     id: `m2-${locality.toLowerCase()}`,
     capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
-    executionLocality: locality,
+    // The observation keeps the case's modelled locality; the model that runs is LOCAL (a REMOTE one needs a consent token, CS-1b).
+    executionLocality: 'LOCAL',
     isAvailable: async () => true,
     execute: async (request) => {
       const items = [...request.prompt.matchAll(DOC_MARK)].map((match) => match[1] ?? '');

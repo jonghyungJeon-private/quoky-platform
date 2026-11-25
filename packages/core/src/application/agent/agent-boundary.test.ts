@@ -15,7 +15,7 @@ import type { ConversationRuntimeDeps } from '../conversation-runtime';
 
 const DIR = new URL('./', import.meta.url);
 const SOURCES = readdirSync(DIR)
-  .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+  .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts') && !name.includes('.test-support.'))
   .map((name) => ({ name, text: readFileSync(new URL(name, DIR), 'utf8') }));
 
 /** The named pure `nl-routing` files the agent may import (never the selection service or the barrel). */
@@ -41,7 +41,7 @@ function allowedSpecifier(specifier: string): boolean {
   // Rule ① (CS-1a): the shared opaque id utility (`runRef` of a pending summary consent). Pure, no I/O.
   if (specifier === '../../util/id') return true;
   // ADR-0121 rule ① (CS-1a): the pending summary-consent producer and store type, imported by `agent-run-service.ts` (and its
-  // dependency pin) only: `consent-answer.boundary.test.ts` pins the exact importer list. Pure, in-memory, no I/O.
+  // dependency pin) and, for the brand check of the one consent-token maker, `quarantined-summary.ts` only: `consent-answer.boundary.test.ts` pins the exact importer list. Pure, in-memory, no I/O.
   if (specifier === '../consent-answer/consent-pending') return true;
   // ADR-0121 D3 (P3-3b): the link neutralizer and the untrusted-document readout (the untrusted span), both pure.
   if (specifier === '../link-neutralizer' || specifier === '../untrusted-document-readout') return true;

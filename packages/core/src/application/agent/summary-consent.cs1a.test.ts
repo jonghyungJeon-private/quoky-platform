@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Capability, type Actor } from '../../domain';
 import type { AiExecutionLocality, AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import type { ProviderSelector } from '../../ports/provider-selector.port';
 import type { ProviderSelectionPolicy } from '../../ports/provider-selection-policy.port';
 import { AiProviderManager } from '../ai-provider-manager';
 import { CapabilityRouter } from '../capability-router';
-import { ConsentPendingStore } from '../consent-answer/consent-pending';
+import { CONSENT_COUNT_PLACEHOLDER_EN, CONSENT_COUNT_PLACEHOLDER_KO, consentClassifierQuestion } from '../consent-answer/consent-classifier';
+import { ConsentPendingStore, topicConsentPending } from '../consent-answer/consent-pending';
 import { NL_CATALOG_ENTRY_IDS, type NlCatalogEntry, type NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentRunService, type AgentActiveTurn } from './agent-run-service';
@@ -13,7 +15,7 @@ import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest, type Agen
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import {
   deriveM2Localities,
-  mintSummaryConsentTokenForTest,
+  mintSummaryConsentToken,
   mintSummaryEgressGrantForTest,
   newSummaryRunToken,
   quarantinedSummarize,
@@ -22,12 +24,15 @@ import {
   type AgentSourceDocument,
   type QuarantinedSummarizerRoute,
   type SummaryConsentScope,
+  type SummaryRunToken,
 } from './quarantined-summary';
 import { assembleAgentReply } from './reply-assembler';
+import { boundConsentFor, consentTokenFor } from './summary-consent.test-support';
+import { renderSummaryConsentQuestion, SUMMARY_CONSENT_QUESTION_VERSION } from './summary-consent-question';
 
 // ADR-0121 SR-1 rule ① (confirm slice CS-1a, guard and ask): REMOTE only with a bound consent token (every egress label, with the
 // dispatch re-check); the ask mode (`consent-needed`) behind the route flag; the pending step and the continuation record in the
-// run service. The allow-all test seam stays OFF in this file: no suite here may reach REMOTE without a real token.
+// run service. There is no allow-all seam: no suite here may reach REMOTE without a real token (a bound consent from a store, minted by `mintSummaryConsentToken`).
 
 const RUN = newSummaryRunToken();
 const PERMISSIVE: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
@@ -59,8 +64,9 @@ const label = (provider: AiProvider): string | undefined => LABELS[provider.id];
 const doc = (position: number): AgentSourceDocument => ({ id: `m${position}`, position, title: `t${position}`, author: 'a', date: '', body: `body ${position}` });
 const mailSource = (...documents: AgentSourceDocument[]) => ({ entryId: 'mail.list' as const, documents, asked: documents.length, grant: mintSummaryEgressGrantForTest(1, 'mail.list', RUN) });
 const base = { schema: 'digest.v1' as const, summaryStep: 1, run: RUN, reserve: () => true };
-const tokenFor = (recipient: string, ids = ['m1'], extra: Partial<Parameters<typeof mintSummaryConsentTokenForTest>[0]> = {}) =>
-  mintSummaryConsentTokenForTest({ run: RUN, step: 1, recipient, sources: [{ entryId: 'mail.list', itemIds: ids }], ...extra });
+// A token the real way: a bound consent from a store, minted by `mintSummaryConsentToken` (no test-only maker exists).
+const tokenFor = (recipient: string, ids = ['m1'], extra: { run?: SummaryRunToken; step?: number; entryId?: NlWave1EntryId } = {}) =>
+  consentTokenFor(extra.run ?? RUN, extra.step ?? 1, { recipient, reads: [{ entryId: extra.entryId ?? 'mail.list', itemIds: ids }] });
 const SCOPE: SummaryConsentScope = { run: RUN, step: 1, covered: [{ entryId: 'mail.list', itemIds: ['m1'] }] };
 
 afterEach(() => setSummaryGrantsForTest());
@@ -84,7 +90,7 @@ describe('CS-1a guard: REMOTE only with a bound consent token, for every egress 
     // Another run, another step, another source, an id the owner was not asked about.
     expect(derive(tokenFor('Claude', ['m1'], { run: newSummaryRunToken() }))).toMatchObject({ localities: ['LOCAL'] });
     expect(derive(tokenFor('Claude', ['m1'], { step: 2 }))).toMatchObject({ localities: ['LOCAL'] });
-    expect(derive(tokenFor('Claude', ['m1'], { sources: [{ entryId: 'drive.files', itemIds: ['m1'] }] }))).toMatchObject({ localities: ['LOCAL'] });
+    expect(derive(tokenFor('Claude', ['m1'], { entryId: 'drive.files' }))).toMatchObject({ localities: ['LOCAL'] });
     expect(derive(tokenFor('Claude', ['m2']))).toMatchObject({ localities: ['LOCAL'] });
     expect(derive(tokenFor('Claude', ['m1']), { ...SCOPE, covered: [{ entryId: 'mail.list', itemIds: ['m1', 'm2'] }] })).toMatchObject({ localities: ['LOCAL'] });
     expect(derive(tokenFor('Claude', ['m1']), { ...SCOPE, covered: [{ entryId: 'mail.list' }, { entryId: 'drive.files' }] })).toMatchObject({ localities: ['LOCAL'] });
@@ -139,7 +145,7 @@ describe('CS-1a guard through the summariser: selection and the dispatch re-chec
     for (const consent of [
       tokenFor('Claude', ['m1'], { run: newSummaryRunToken() }),
       tokenFor('Claude', ['m1'], { step: 2 }),
-      tokenFor('Claude', ['m1'], { sources: [{ entryId: 'drive.files', itemIds: ['m1'] }] }),
+      tokenFor('Claude', ['m1'], { entryId: 'drive.files' }),
       tokenFor('Claude', ['m9']),
     ]) {
       const remote = fake('remote-a', 'REMOTE');
@@ -166,7 +172,7 @@ describe('CS-1a guard through the summariser: selection and the dispatch re-chec
       const schema = 'digest.v1' as const;
       expect(await quarantinedSummarize({ ...base, schema, sources: [work], route: r }), entryId).toEqual({ kind: 'listing-only', reason: 'no-model' });
       expect(remote.requests, entryId).toHaveLength(0);
-      const token = mintSummaryConsentTokenForTest({ run: RUN, step: 1, recipient: 'Claude', sources: [{ entryId, itemIds: ['x1'] }] });
+      const token = tokenFor('Claude', ['x1'], { entryId });
       expect((await quarantinedSummarize({ ...base, schema, sources: [work], route: r, consent: token })).kind, entryId).toBe('summary');
       expect(remote.requests, entryId).toHaveLength(1);
     }
@@ -209,7 +215,7 @@ describe('CS-1a ask mode: consent-needed in the executor', () => {
     expect(result.usage.m2Calls).toBe(0);
     expect(result.steps[0]).toMatchObject({ kind: 'read', status: 'ok' });
     // Positions 1..3: the unusable slot 2 is skipped and never shifts m4 in.
-    expect(result.steps[1]).toEqual({ step: 2, kind: 'summarize', status: 'consent-needed', from: [1], schema: 'digest.v1', recipient: 'Claude', sources: [{ source: 'mail', entryId: 'mail.list', itemIds: ['m1', 'm3'] }] });
+    expect(result.steps[1]).toEqual({ step: 2, kind: 'summarize', status: 'consent-needed', from: [1], schema: 'digest.v1', recipient: 'Claude', sources: [{ source: 'mail', itemIds: ['m1', 'm3'], reads: [{ step: 1, entryId: 'mail.list', itemIds: ['m1', 'm3'] }] }] });
     expect(result.outcome).toBe('partial');
     expect(JSON.stringify(result)).not.toContain('RAW-BODY-CANARY');
   });
@@ -289,7 +295,7 @@ describe('CS-1a ask mode: consent-needed in the executor', () => {
     const result = await new AgentPlanExecutor({ readers: { 'calendar.events': calendar, 'jira.issues': jira }, summarizer: ask([remote], { workSummarySources: ['calendar', 'jira'] }) }).execute(
       plan([wideRead('calendar.events', 2), summarize([1], 'meeting-digest.v1')]),
     );
-    expect(result.steps[1]).toMatchObject({ status: 'consent-needed', sources: [{ source: 'calendar', entryId: 'calendar.events', itemIds: ['e1', 'e2'] }] });
+    expect(result.steps[1]).toMatchObject({ status: 'consent-needed', sources: [{ source: 'calendar', itemIds: ['e1', 'e2'], reads: [{ step: 1, entryId: 'calendar.events', itemIds: ['e1', 'e2'] }] }] });
     expect(calendar.requests[0]?.agentSummaryFieldMask).toBeUndefined();
     expect(calendar.requests[0]?.withDocuments).toBeUndefined();
     const second = await new AgentPlanExecutor({ readers: { 'jira.issues': jira }, summarizer: ask([remote], { workSummarySources: ['jira'] }) }).execute(plan([wideRead('jira.issues', 1), summarize([1])]));
@@ -500,13 +506,15 @@ describe('CS-1a: AgentRunService opens the pending step and keeps the continuati
   });
 
   it.each([
-    ['another owner step is pending (W2)', { ownerStepPending: true }, 'owner-step-open'],
-    ['the turn has no conversation key', { conversationKey: undefined }, 'no-conversation'],
-  ])('%s: the step is listing-only with the fixed note, no question, no pending step', async (_name, overrides, reason) => {
+    ['another owner step is pending (W2)', { ownerStepPending: true }, 'owner-step-open', '먼저 답해 주실 일이 남아 있어서'],
+    ['the turn has no conversation key', { conversationKey: undefined }, 'no-conversation', '여쭤볼 수 없어서'],
+  ])('%s: the step is listing-only with the true fixed note, no question, no pending step', async (_name, overrides, reason, line) => {
     const s = service();
     const reply = replyOf(await s.service.runActive(turn(s, overrides as Partial<AgentActiveTurn>), async () => CHAT));
     expect(reply.parts.some((part) => part.kind === 'consent')).toBe(false);
-    expect(reply.text).toContain('먼저 답해 주실 일이 남아 있어서');
+    expect(reply.text).toContain(line);
+    // The "another step is waiting" line is shown only when one is.
+    expect(reply.text.includes('먼저 답해 주실 일이 남아 있어서')).toBe(reason === 'owner-step-open');
     expect(s.store.stateOf(OWNER_SCOPE)).toBeUndefined();
     expect(s.m2).toHaveLength(0);
     expect(s.logs.find((log) => log.event === 'agent_run.consent')?.fields).toMatchObject({ outcome: 'declined', reason });
@@ -538,5 +546,232 @@ describe('CS-1a: AgentRunService opens the pending step and keeps the continuati
     s.service.voidAllSummaryConsents();
     expect(internal.continuations.size).toBe(0);
     expect(s.store.stateOf(OWNER_SCOPE)).toBe('voided');
+  });
+});
+
+// ── review round 1 fixes ────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** A selector that answers the given providers in call order (the readiness of the covered reads is asked once per read, in plan order). */
+function inOrder(...providers: AiProvider[]): ProviderSelector {
+  let calls = 0;
+  return { select: async () => providers[Math.min(calls++, providers.length - 1)] as AiProvider, isStillEligible: () => true };
+}
+const askWith = (selector: ProviderSelector, extra: Partial<QuarantinedSummarizerRoute> = {}): QuarantinedSummarizerRoute => ({ selector, recipientLabel: label, askSummaryConsent: true, ...extra });
+
+describe('review fix: the consent token has one maker and it takes only a genuine bound consent for exactly its scope', () => {
+  const fixture = { recipient: 'Claude', reads: [{ entryId: 'mail.list' as const, itemIds: ['m1', 'm2'] }] };
+  const mint = (overrides: Partial<Parameters<typeof mintSummaryConsentToken>[0]> = {}, bound = boundConsentFor(fixture)) =>
+    mintSummaryConsentToken({ bound: bound.bound, runRef: bound.runRef, run: RUN, step: 1, reads: fixture.reads, ...overrides });
+  const SC: SummaryConsentScope = { run: RUN, step: 1, covered: [{ entryId: 'mail.list', itemIds: ['m1', 'm2'] }] };
+  const label1 = { egress: 'REMOTE_ON_SUMMARY_REQUEST' as const, needsGrant: true, granted: true, askedItems: 2 };
+
+  it('a bound yes of the store mints a token that admits REMOTE for exactly that run, step and ids', () => {
+    const token = mint();
+    expect(token).toBeDefined();
+    expect(deriveM2Localities({ ...label1, consent: token, consentScope: SC })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    expect(deriveM2Localities({ ...label1, consent: token, consentScope: { ...SC, step: 2 } })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ ...label1, consent: token, consentScope: { ...SC, run: newSummaryRunToken() } })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ ...label1, consent: token, consentScope: { ...SC, covered: [{ entryId: 'mail.list', itemIds: ['m1', 'm2', 'm3'] }] } })).toEqual({ ok: true, localities: ['LOCAL'] });
+  });
+
+  it('a forged or copied bound consent, a claim, an open step and a non-bound value mint nothing', () => {
+    const real = boundConsentFor(fixture);
+    expect(mint({}, { bound: { ...real.bound }, runRef: real.runRef })).toBeUndefined();
+    expect(mint({}, { bound: { pending: real.bound.pending, boundAtMs: 1 } as never, runRef: real.runRef })).toBeUndefined();
+    expect(mint({}, { bound: real.bound.pending as never, runRef: real.runRef })).toBeUndefined();
+    for (const bound of [undefined, null, 'yes', {}] as const) expect(mint({}, { bound: bound as never, runRef: real.runRef })).toBeUndefined();
+  });
+
+  it('single use: the same bound consent mints once', () => {
+    const bound = boundConsentFor(fixture);
+    expect(mint({}, bound)).toBeDefined();
+    expect(mint({}, bound)).toBeUndefined();
+  });
+
+  it('a topic consent mints nothing', () => {
+    const store = new ConsentPendingStore();
+    const scope = { actorId: 'a', conversationKey: 'c' };
+    store.open(topicConsentPending({ scope, language: 'en', createdAtMs: 0, recipient: 'Claude', topic: 'x' }));
+    const claimed = store.claim(scope, 1);
+    if (!claimed.ok) throw new Error('claim');
+    const bound = store.bind(claimed.claim, 2);
+    expect(mint({}, { bound: bound as never, runRef: 'x' })).toBeUndefined();
+  });
+
+  it('the scope must be exactly what was asked: another runRef, a missing, extra or unknown id, a missing or extra source, a bad step', () => {
+    expect(mint({ runRef: 'other-run' })).toBeUndefined();
+    expect(mint({ reads: [{ entryId: 'mail.list', itemIds: ['m1'] }] })).toBeUndefined();
+    expect(mint({ reads: [{ entryId: 'mail.list', itemIds: ['m1', 'm2', 'm3'] }] })).toBeUndefined();
+    expect(mint({ reads: [{ entryId: 'mail.list', itemIds: ['m1', 'm9'] }] })).toBeUndefined();
+    expect(mint({ reads: [{ entryId: 'drive.files', itemIds: ['m1', 'm2'] }] })).toBeUndefined();
+    expect(mint({ reads: [...fixture.reads, { entryId: 'drive.files', itemIds: ['f1'] }] })).toBeUndefined();
+    expect(mint({ reads: [] })).toBeUndefined();
+    expect(mint({ step: 0 })).toBeUndefined();
+  });
+
+  it('two reads of one source union to the recorded ids (jira.issues and jira.release share the source jira)', () => {
+    const jira = { recipient: 'Claude', reads: [{ entryId: 'jira.issues' as const, itemIds: ['AB-1', 'AB-2'] }, { entryId: 'jira.release' as const, itemIds: ['AB-2', 'AB-3'] }] };
+    const bound = boundConsentFor(jira);
+    expect(mintSummaryConsentToken({ bound: bound.bound, runRef: bound.runRef, run: RUN, step: 1, reads: [jira.reads[0] as (typeof jira.reads)[number]] })).toBeUndefined();
+    const again = boundConsentFor(jira);
+    expect(mintSummaryConsentToken({ bound: again.bound, runRef: again.runRef, run: RUN, step: 1, reads: jira.reads })).toBeDefined();
+  });
+
+  it('the recipient is re-checked at dispatch: a token of the asked recipient does not send to another one', async () => {
+    const remote = fake('remote-b', 'REMOTE');
+    const outcome = await quarantinedSummarize({ ...base, sources: [mailSource(doc(1))], route: route([remote], { recipientLabel: label }), consent: tokenFor('Claude') });
+    expect(outcome).toEqual({ kind: 'listing-only', reason: 'no-model' });
+    expect(remote.requests).toHaveLength(0);
+  });
+
+  it('no allow-all or test-only token maker exists: the module exports neither', async () => {
+    const exported = await import('./quarantined-summary');
+    expect(Object.keys(exported).filter((name) => /AllowAll|ConsentTokenForTest/u.test(name))).toEqual([]);
+    expect(typeof exported.mintSummaryConsentToken).toBe('function');
+  });
+});
+
+describe('review fix: no body is fetched before the question when any covered read of the step asks', () => {
+  const local = (): Fake => fake('local-a', 'LOCAL', 20);
+  const remote = (): Fake => fake('remote-a', 'REMOTE', 10);
+  const plan2 = () => plan([wideRead('mail.list', 2), wideRead('drive.files', 2), summarize([1, 2])]);
+
+  it.each([
+    ['a LOCAL-ready read first, then a REMOTE one', () => inOrder(local(), remote())],
+    ['a REMOTE read first, then a LOCAL-ready one', () => inOrder(remote(), local())],
+  ])('%s: neither read requests withDocuments, no M2 call, and the question counts only the asking read', async (_name, selector) => {
+    setSummaryGrantsForTest(() => true);
+    const mail = port(['m1', 'm2']);
+    const drive = port(['file-aaaa1', 'file-aaaa2']);
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail, 'drive.files': drive }, summarizer: askWith(selector()) }).execute(plan2());
+    expect(mail.requests[0]?.withDocuments).toBeUndefined();
+    expect(drive.requests[0]?.withDocuments).toBeUndefined();
+    expect(result.usage.m2Calls).toBe(0);
+    const step = result.steps[2];
+    expect(step).toMatchObject({ status: 'consent-needed', recipient: 'Claude' });
+    if (step?.kind !== 'summarize' || step.status !== 'consent-needed') throw new Error('status');
+    expect(step.sources).toHaveLength(1);
+  });
+
+  it('a step whose reads all resolve LOCAL still fetches bodies (flag on loses no LOCAL summary)', async () => {
+    setSummaryGrantsForTest(() => true);
+    const mail = port(['m1', 'm2']);
+    const drive = port(['file-aaaa1', 'file-aaaa2']);
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail, 'drive.files': drive }, summarizer: askWith(inOrder(local())) }).execute(plan2());
+    expect(mail.requests[0]?.withDocuments).toBe(true);
+    expect(drive.requests[0]?.withDocuments).toBe(true);
+    expect(result.steps[2]?.status).not.toBe('consent-needed');
+  });
+});
+
+describe('review fix: reads are grouped by source, not by entry', () => {
+  const remote = (): Fake => fake('remote-a', 'REMOTE', 10, { dataUse: 'no-training' });
+
+  it('jira.issues and jira.release (one source) make one question with the merged ids in plan order, and keep the reads', async () => {
+    setSummaryGrantsForTest(() => true);
+    const issues = port(['AB-1', 'AB-2']);
+    const release = port(['AB-2', 'AB-3']);
+    const result = await new AgentPlanExecutor({ readers: { 'jira.issues': issues, 'jira.release': release }, summarizer: askWith(inOrder(remote()), { workSummarySources: ['jira'] }) }).execute(
+      plan([wideRead('jira.issues', 2), wideRead('jira.release', 2), summarize([1, 2])]),
+    );
+    expect(result.steps[2]).toEqual({
+      step: 3,
+      kind: 'summarize',
+      status: 'consent-needed',
+      from: [1, 2],
+      schema: 'digest.v1',
+      recipient: 'Claude',
+      sources: [
+        {
+          source: 'jira',
+          itemIds: ['AB-1', 'AB-2', 'AB-3'],
+          reads: [
+            { step: 1, entryId: 'jira.issues', itemIds: ['AB-1', 'AB-2'] },
+            { step: 2, entryId: 'jira.release', itemIds: ['AB-2', 'AB-3'] },
+          ],
+        },
+      ],
+    });
+    expect(issues.requests[0]?.withDocuments).toBeUndefined();
+    expect(release.requests[0]?.withDocuments).toBeUndefined();
+  });
+
+  it('a second mail.list read is not dropped: the question counts both reads', async () => {
+    setSummaryGrantsForTest(() => true);
+    const first = port(['m1', 'm2']);
+    const second = port(['m3', 'm4', 'm5']);
+    let call = 0;
+    const router: Partial<Record<NlWave1EntryId, AgentReadPort>> = { 'mail.list': { read: async (request) => (call++ === 0 ? first : second).read(request) } };
+    const result = await new AgentPlanExecutor({ readers: router, summarizer: askWith(inOrder(fake('remote-a', 'REMOTE'))) }).execute(
+      plan([wideRead('mail.list', 2), wideRead('mail.list', 3), summarize([1, 2])]),
+    );
+    const step = result.steps[2];
+    if (step?.kind !== 'summarize' || step.status !== 'consent-needed') throw new Error(`status ${JSON.stringify(step)}`);
+    expect(step.sources).toEqual([
+      { source: 'mail', itemIds: ['m1', 'm2', 'm3', 'm4', 'm5'], reads: [{ step: 1, entryId: 'mail.list', itemIds: ['m1', 'm2'] }, { step: 2, entryId: 'mail.list', itemIds: ['m3', 'm4', 'm5'] }] },
+    ]);
+    expect(renderSummaryConsentQuestion({ language: 'ko', recipient: step.recipient, sources: step.sources.map((entry) => ({ source: entry.source, count: entry.itemIds.length })) })).toContain('메일 5건');
+  });
+
+  it('past the item cap of one question the step is listing-only with its own reason, nothing fetched', async () => {
+    setSummaryGrantsForTest(() => true);
+    const ids = (from: number) => Array.from({ length: 10 }, (_, i) => `m${from + i}`);
+    let call = 0;
+    const ports = [port(ids(1)), port(ids(11))];
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': { read: async (request) => (ports[call++] as SpyPort).read(request) } }, summarizer: askWith(inOrder(fake('remote-a', 'REMOTE'))) }).execute(
+      plan([wideRead('mail.list', 10), wideRead('mail.list', 10), summarize([1, 2])]),
+    );
+    expect(result.steps[2]).toMatchObject({ status: 'listing-only', reason: 'consent-too-many-items' });
+    for (const spyPort of ports) expect(spyPort.requests[0]?.withDocuments).toBeUndefined();
+  });
+
+  it('the recipient split considers every read, also a second read of the same source', async () => {
+    setSummaryGrantsForTest(() => true);
+    let call = 0;
+    const ports = [port(['m1']), port(['m2'])];
+    const result = await new AgentPlanExecutor({
+      readers: { 'mail.list': { read: async (request) => (ports[call++] as SpyPort).read(request) } },
+      summarizer: askWith(inOrder(fake('remote-a', 'REMOTE'), fake('remote-b', 'REMOTE'))),
+    }).execute(plan([wideRead('mail.list', 1), wideRead('mail.list', 1), summarize([1, 2])]));
+    expect(result.steps[2]).toMatchObject({ status: 'listing-only', reason: 'consent-recipient-split' });
+  });
+});
+
+describe('review fix: a REMOTE provider with no recipient name falls back to the guarded LOCAL selection', () => {
+  it('ask mode keeps the LOCAL summary the switch-off behaviour would give', async () => {
+    setSummaryGrantsForTest(() => true);
+    const unnamed = fake('remote-x', 'REMOTE', 30);
+    const local = fake('local-a', 'LOCAL', 10);
+    const mail = port(['m1']);
+    const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: ask([unnamed, local]) }).execute(plan([wideRead('mail.list', 1), summarize([1])]));
+    expect(mail.requests[0]?.withDocuments).toBe(true);
+    expect(result.steps[1]).toMatchObject({ status: 'ok', audits: [{ locality: 'LOCAL' }] });
+    expect(unnamed.requests).toHaveLength(0);
+    expect(local.requests).toHaveLength(1);
+  });
+});
+
+describe('review fix: the continuation record never outlives a step that did not open', () => {
+  it('a store that throws on open: listing-only (consent-unavailable), no record, no question', async () => {
+    const s = service();
+    s.store.open = () => {
+      throw new Error('store');
+    };
+    const reply = replyOf(await s.service.runActive(turn(s), async () => CHAT));
+    expect(reply.parts.some((part) => part.kind === 'consent')).toBe(false);
+    expect(reply.text).toContain('여쭤볼 수 없어서');
+    expect((s.service as unknown as { continuations: Map<string, unknown> }).continuations.size).toBe(0);
+    expect(s.logs.find((log) => log.event === 'agent_run.consent')?.fields).toMatchObject({ outcome: 'declined', reason: 'failed' });
+  });
+});
+
+describe('review fix: the question version and the classifier placeholders', () => {
+  it('the question carries a version (bumped by any wording change; A6-S4 binds it) and both count placeholders are exported', () => {
+    expect(SUMMARY_CONSENT_QUESTION_VERSION).toBe('summary-consent-question.v1');
+    expect(CONSENT_COUNT_PLACEHOLDER_KO).toBe('{개수}');
+    expect(CONSENT_COUNT_PLACEHOLDER_EN).toBe('{count}');
+    const sources = [{ source: 'mail' as const }];
+    expect(consentClassifierQuestion({ kind: 'summary-consent', language: 'ko', recipient: 'Claude', sources })).toContain(CONSENT_COUNT_PLACEHOLDER_KO);
+    expect(consentClassifierQuestion({ kind: 'summary-consent', language: 'en', recipient: 'Claude', sources })).toContain(CONSENT_COUNT_PLACEHOLDER_EN);
   });
 });

@@ -27,10 +27,9 @@ import {
   type QuarantinedSummary,
   type SummaryEgressGrant,
 } from './quarantined-summary';
-import { setSummaryConsentAllowAllForTest } from './quarantined-summary';
+import { consentTokenFor } from './summary-consent.test-support';
 
-// Rule ① (CS-1a): this suite predates the consent guard and exercises the REMOTE path itself; the rule is tested in summary-consent.cs1a.test.ts.
-setSummaryConsentAllowAllForTest(true);
+// Rule ① (CS-1a): a REMOTE call here carries a real consent token (a bound consent from a store, minted by `mintSummaryConsentToken`) and the route names its recipient; the rule itself is tested in summary-consent.cs1a.test.ts.
 
 // ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2): a sealed request, a schema-bound output, labels, egress.
 // Mail is the readable source here: Jira, Slack and calendar are listing-only, and no production code makes a summary grant, so
@@ -78,7 +77,7 @@ function asProvider(m: TestModel, priority: number): AiProvider {
 function via(...models: TestModel[]): QuarantinedSummarizerRoute {
   // The owner's policy answers explicitly at dispatch (ADR-0121 D12: no verdict is no dispatch); it prefers nothing.
   const policy: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
-  return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index))), policy) };
+  return { selector: new CapabilityRouter(new AiProviderManager(models.map((m, index) => asProvider(m, 100 - index))), policy), recipientLabel: () => 'Test' };
 }
 
 interface FakeModel extends TestModel {
@@ -98,7 +97,10 @@ function model(locality: 'LOCAL' | 'REMOTE' | undefined, answer: string | ((requ
 }
 
 const allow = (): boolean => true;
-const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: allow, run: RUN };
+/** One real token over the ten items a question may count of mail and Drive (m1..m10). */
+const TEN = Array.from({ length: 10 }, (_, index) => `m${index + 1}`);
+const CONSENT = consentTokenFor(RUN, 1, { recipient: 'Test', reads: [{ entryId: 'mail.list', itemIds: TEN }, { entryId: 'drive.files', itemIds: TEN }] });
+const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: allow, run: RUN, consent: CONSENT };
 /** The items in a prompt (`ITEM n` lines). */
 const itemCount = (prompt: string): number => (prompt.match(/^ITEM \d+$/gm) ?? []).length;
 /** A model answer with one entry per item of the prompt it got, each naming its body. */
@@ -453,7 +455,7 @@ describe('quarantined summariser: provider selection obeys the strictest egress 
   // Mail and Drive are the readable sources and both are `REMOTE_ON_SUMMARY_REQUEST`; the other egress values belong to sources
   // that `sourceRefusal` stops first (calendar `LOCAL_MODEL_ONLY`, Jira and Slack work text), asserted below.
   const readyOf = async (entryId: NlWave1EntryId, g: SummaryEgressGrant | undefined, count: number, models: TestModel[], schema: 'digest.v1' | 'meeting-digest.v1' = 'digest.v1'): Promise<string> =>
-    (await summaryReadiness({ entryId, schema, summaryStep: 1, grant: g, run: RUN, askedItems: count, route: via(...models) })) ?? 'ok';
+    (await summaryReadiness({ entryId, schema, summaryStep: 1, grant: g, run: RUN, askedItems: count, route: via(...models), consent: CONSENT })) ?? 'ok';
   const ready = (g: SummaryEgressGrant | undefined, count: number, models: TestModel[]): Promise<string> => readyOf('mail.list', g, count, models);
 
   it('without a grant there is no model, local or not: no fallback to a local one', async () => {
@@ -746,12 +748,12 @@ describe('quarantined summariser: structural pins', () => {
   const ROOT = new URL('../../../../../', import.meta.url);
   const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   const sources = readdirSync(DIR)
-    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts') && !name.includes('.test-support.'))
     .map((name) => ({ name, text: strip(readFileSync(new URL(name, DIR), 'utf8')) }));
 
   /** Every non-test script and source of every package and app (`<root>/{packages,apps}/<name>/src/**`) and the repo-level `tools/` and `scripts/`. */
   const CODE = /\.(?:ts|tsx|js|cjs|mjs)$/;
-  const TESTFILE = /\.(?:test|spec)\.[a-z]+$/;
+  const TESTFILE = /\.(?:test|spec|test-support)\.[a-z]+$/;
   function allSources(): { path: string; text: string }[] {
     const found: { path: string; text: string }[] = [];
     const walk = (dir: URL, relative: string): void => {
@@ -800,6 +802,10 @@ describe('quarantined summariser: structural pins', () => {
     const files = allSources();
     const seam = /\b(?:sealQuarantinedSummaryForTest|setSummaryGrantsForTest|mintSummaryEgressGrantForTest)\b/;
     expect(files.filter((file) => seam.test(file.text)).map((file) => file.path)).toEqual(['packages/core/src/application/agent/quarantined-summary.ts']);
+    // Rule ① (CS-1a): there is no test-only or allow-all way to a consent token or to REMOTE; the one maker is named only in its own module
+    // (no production caller yet: CS-1b's continuation is the first), and nothing anywhere names a retired seam.
+    expect(files.filter((file) => /\bmintSummaryConsentToken\b/.test(file.text)).map((file) => file.path)).toEqual(['packages/core/src/application/agent/quarantined-summary.ts']);
+    expect(files.filter((file) => /ConsentAllowAll|mintSummaryConsentTokenForTest/.test(file.text))).toEqual([]);
     // Nothing in production code calls the grant producer either: `summaryGrantFor` has one caller, the executor.
     expect(files.filter((file) => /\bsummaryGrantFor\b/.test(file.text)).map((file) => file.path).sort()).toEqual(['packages/core/src/application/agent/plan-executor.ts', 'packages/core/src/application/agent/quarantined-summary.ts']);
     const index = strip(readFileSync(new URL('index.ts', DIR), 'utf8'));

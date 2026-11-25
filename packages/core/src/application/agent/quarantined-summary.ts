@@ -14,7 +14,8 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
+import { isBoundConsent, type BoundConsent } from '../consent-answer/consent-pending';
+import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
@@ -300,8 +301,8 @@ declare const CONSENT_BRAND: unique symbol;
  * module-private `WeakMap`, like {@link SummaryEgressGrant}: it names the run, the step, the recipient the owner was asked about
  * and, per source, exactly the item ids the question counted. Without it `REMOTE` is never in the locality set of an M2 call,
  * for any egress label ({@link deriveM2Localities}), and the dispatch re-check refuses a `REMOTE` provider whose label is not the
- * recipient. CS-1a mints none (the continuation, CS-1b, mints it from a bound A6-S1 consent), so after CS-1a no agent path can
- * reach `REMOTE`.
+ * recipient. The only maker is {@link mintSummaryConsentToken}, from a genuine bound A6-S1 consent; CS-1a has no production caller
+ * (the continuation, CS-1b, is the first), so after CS-1a no agent path can reach `REMOTE`.
  */
 export interface SummaryConsentToken {
   readonly [CONSENT_BRAND]: true;
@@ -316,21 +317,62 @@ interface ConsentTokenFacts {
 
 const CONSENTS = new WeakMap<object, ConsentTokenFacts>();
 
-function mintConsentToken(facts: { readonly run: SummaryRunToken; readonly step: number; readonly recipient: string; readonly sources: readonly { readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[] }): SummaryConsentToken {
-  const token = Object.freeze({}) as SummaryConsentToken;
-  CONSENTS.set(token, { run: facts.run, step: facts.step, recipient: facts.recipient, sources: new Map(facts.sources.map((source) => [source.entryId, new Set(source.itemIds)] as const)) });
-  return token;
-}
+const CONSENT_SOURCE_OF = (entryId: NlWave1EntryId): string | undefined => AGENT_READ_SOURCES[entryId]?.source;
 
-/** TEST SEAM ONLY (throws outside the test runner): a consent token for one step of one run (production mints it in CS-1b only). */
-export function mintSummaryConsentTokenForTest(facts: {
+/** The bound consents a token was already made from: one bound yes makes at most one token (single use, W3). */
+const MINTED_FROM = new WeakSet<object>();
+
+/**
+ * The ONLY maker of a {@link SummaryConsentToken} (rule ①; CS-1b's continuation is its first caller, none exists in CS-1a). It
+ * accepts only a genuine {@link BoundConsent} (the run-time brand of the store's own `bind`: a structural copy, a claim or an
+ * open step is refused), of a `summary-consent` step, once, and only for exactly the scope the owner was asked about:
+ * - `runRef` is the step's own `runRef`; `run` and `step` are the run token and the summarize step the continuation re-runs;
+ * - `reads` (the covered reads, each its `entryId` and the ids it lists) must, per source (Core's closed source of the entry),
+ *   union to EXACTLY the ids the step recorded: every recorded source is covered, no other source and no other id is;
+ * - the token's recipient is the step's recipient, compared again at every dispatch (`dispatchLocality`).
+ * Anything else is `undefined` (no token, so no `REMOTE`). Total: never throws. There is no test-only way to make a token: tests
+ * build a {@link ConsentPendingStore}, open a step, claim, bind a closed yes and mint through here.
+ */
+export function mintSummaryConsentToken(input: {
+  readonly bound: BoundConsent;
+  readonly runRef: string;
   readonly run: SummaryRunToken;
   readonly step: number;
-  readonly recipient: string;
-  readonly sources: readonly { readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
-}): SummaryConsentToken {
-  assertTestRuntime();
-  return mintConsentToken(facts);
+  readonly reads: readonly { readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
+}): SummaryConsentToken | undefined {
+  try {
+    const { bound, reads } = input;
+    if (!isBoundConsent(bound) || MINTED_FROM.has(bound)) return undefined;
+    const pending = bound.pending;
+    if (pending.kind !== 'summary-consent' || pending.runRef !== input.runRef) return undefined;
+    if (typeof input.run !== 'object' || input.run === null || !Number.isInteger(input.step) || input.step < 1) return undefined;
+    if (!Array.isArray(reads) || reads.length === 0) return undefined;
+    const perSource = new Map<string, Set<string>>();
+    const entries = new Map<NlWave1EntryId, Set<string>>();
+    for (const read of reads) {
+      const source = CONSENT_SOURCE_OF(read.entryId);
+      if (source === undefined || !Array.isArray(read.itemIds) || read.itemIds.length === 0 || !read.itemIds.every((id: string) => typeof id === 'string' && id.length > 0)) return undefined;
+      const union = perSource.get(source) ?? new Set<string>();
+      const own = entries.get(read.entryId) ?? new Set<string>();
+      for (const id of read.itemIds) {
+        union.add(id);
+        own.add(id);
+      }
+      perSource.set(source, union);
+      entries.set(read.entryId, own);
+    }
+    if (perSource.size !== pending.sources.length) return undefined;
+    for (const recorded of pending.sources) {
+      const union = perSource.get(recorded.source);
+      if (union === undefined || union.size !== recorded.itemIds.length || !recorded.itemIds.every((id) => union.has(id))) return undefined;
+    }
+    MINTED_FROM.add(bound);
+    const token = Object.freeze({}) as SummaryConsentToken;
+    CONSENTS.set(token, { run: input.run, step: input.step, recipient: pending.recipient, sources: entries });
+    return token;
+  } catch {
+    return undefined;
+  }
 }
 
 /** What a consent token must cover: this run, this summarize step and these sources (with the ids, when they are known). */
@@ -341,21 +383,8 @@ export interface SummaryConsentScope {
   readonly covered: readonly { readonly entryId: NlWave1EntryId; readonly itemIds?: readonly string[] }[];
 }
 
-let consentAllowAllForTest = false;
-
-/**
- * TEST SEAM ONLY (throws outside the test runner): while `on`, every scope counts as consented and no recipient is compared, so
- * the suites that predate rule ① (batching, budgets, disclosure) keep exercising a `REMOTE` call as before. Suites about the
- * rule itself leave it off and use real tokens ({@link mintSummaryConsentTokenForTest}).
- */
-export function setSummaryConsentAllowAllForTest(on: boolean): void {
-  assertTestRuntime();
-  consentAllowAllForTest = on;
-}
-
 function consentFacts(token: SummaryConsentToken | undefined, scope: SummaryConsentScope): ConsentTokenFacts | undefined {
   try {
-    if (consentAllowAllForTest) return { run: scope.run, step: scope.step, recipient: '', sources: new Map() };
     if (token === undefined || typeof token !== 'object' || token === null) return undefined;
     const known = CONSENTS.get(token);
     if (known === undefined || known.run !== scope.run || known.step !== scope.step || scope.covered.length === 0) return undefined;
@@ -590,7 +619,7 @@ function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSe
     // sending anything; every other caller sends.
     if (after === 'REMOTE' && gate.probe !== true) {
       const facts = consentFacts(gate.token, gate.scope);
-      if (facts === undefined || (!consentAllowAllForTest && recipientOf(route, selected.provider) !== facts.recipient)) return undefined;
+      if (facts === undefined || recipientOf(route, selected.provider) !== facts.recipient) return undefined;
     }
     return dataUseAllows(context, selected.provider, after) ? after : undefined;
   } catch {
@@ -621,6 +650,10 @@ export type QuarantinedListingOnlyReason =
   | 'consent-one-pending'
   /** Rule ① (CS-1a): another owner step (approval, scope clarification, override, connector write, channel grant) is open (W2). */
   | 'consent-owner-step-open'
+  /** Rule ① (CS-1a): a question could not be asked at all (not the owner's DM, no conversation, no store, unrenderable, or the step could not be opened). */
+  | 'consent-unavailable'
+  /** Rule ① (CS-1a): the covered reads of one source list more than one question may count ({@link AGENT_M2_MAX_ITEMS}). */
+  | 'consent-too-many-items'
   /** Rule ① (CS-1a): the sources of one step would send to different recipients, so no single question names them. */
   | 'consent-recipient-split';
 
@@ -640,6 +673,8 @@ export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyRe
   'budget',
   'consent-one-pending',
   'consent-owner-step-open',
+  'consent-unavailable',
+  'consent-too-many-items',
   'consent-recipient-split',
 ]);
 
@@ -706,7 +741,9 @@ export async function summaryReadinessDetailed(input: SummaryReadinessInput): Pr
       if (probed === undefined) return { reason: 'no-model' };
       if (probed.locality !== 'REMOTE') return { reason: undefined };
       const recipient = recipientOf(input.route, probed.provider);
-      return recipient === undefined ? { reason: 'no-model' } : { reason: 'consent-needed', recipient };
+      // A `REMOTE` provider with no display name cannot be asked about: fall through to the guarded selection (`LOCAL` only),
+      // so the ask mode never loses a `LOCAL` summary the switch-off behaviour would give.
+      if (recipient !== undefined) return { reason: 'consent-needed', recipient };
     }
   }
   const context = m2SelectionContext(input.route.selectionContext, derived.localities, [input.entryId]);
