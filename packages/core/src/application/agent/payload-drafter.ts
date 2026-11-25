@@ -240,17 +240,31 @@ export function nameKeyRaw(text: string): string {
   return keyOf(text, false);
 }
 
-function keyOf(text: string, stripTags: boolean): string {
+/**
+ * The parts of a participant name for the order- and position-free check: the same pipeline as `nameKey`, but split on every run of
+ * non-`\p{L}\p{N}` characters before the keys are taken (empty parts dropped). `Alice Smith` and `Smith, Alice` both give `alice`, `smith`.
+ */
+export function nameKeyParts(text: string): string[] {
+  const folded = foldedText(text, true);
+  return folded
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((part) => part.length > 0);
+}
+
+function foldedText(text: string, stripTags: boolean): string {
   try {
     const decoded = normalise(typeof text === 'string' ? text : '');
     const named = decoded.replace(NAMED_REFERENCES_GLOBAL, '');
     return normalizeUntrustedText(stripTags ? named.replace(HTML_TAG, '') : named)
       .normalize('NFKC')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]/gu, '');
+      .toLowerCase();
   } catch {
     return '';
   }
+}
+
+function keyOf(text: string, stripTags: boolean): string {
+  return foldedText(text, stripTags).replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 /**

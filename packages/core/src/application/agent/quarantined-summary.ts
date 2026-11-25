@@ -20,7 +20,7 @@ import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, readOutputLabel, summar
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
-import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, nameKey, nameKeyRaw, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
+import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, nameKey, nameKeyParts, nameKeyRaw, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
 
 /**
  * ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2). Core, offline, unwired: no composition root builds it and
@@ -1453,7 +1453,16 @@ export async function quarantinedDraft(request: PayloadDraftRequest): Promise<Pa
     const fields = placed.flatMap((document) => [document.title, document.author, document.date, document.body].map((field) => (typeof field === 'string' ? field : '')));
     const texts = [...fields, fields.join('')];
     const fieldKeys = texts.flatMap((text) => [nameKey(text), nameKeyRaw(text)]);
-    if (nameKeys.some((key) => fieldKeys.some((field) => field.includes(key)))) return { kind: 'failed', reason: 'participants' };
+    // Order- and position-free (review round 6): a hit is the whole-name key inside any field key, OR every part of the name (split on
+    // non-letter/digit runs, each as a key) found somewhere in the pool of all keys, in any field, order or form (stripped or raw).
+    const pool = fieldKeys.join('|');
+    const named = request.participants.some((participant, index) => {
+      const whole = nameKeys[index] ?? '';
+      if (fieldKeys.some((field) => field.includes(whole))) return true;
+      const parts = nameKeyParts(participant.name).map((part) => nameKey(part)).filter((part) => part.length > 0);
+      return parts.length > 0 && parts.every((part) => pool.includes(part));
+    });
+    if (named) return { kind: 'failed', reason: 'participants' };
 
     let assembled: ReturnType<typeof assemblePayloadDraft> | undefined;
     const call: PlannedCall = { items, first: 1, prompt };

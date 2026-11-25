@@ -39767,3 +39767,14 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   untrusted field plus the concatenation, in prompt order, of all untrusted fields of all placed items (joined with nothing) is checked with both keys.
   Cost: the concatenated check raises false refusals for short names (a name can now match across a field boundary). A7-S5 row, recorded not applied:
   reversed order across fields (`Smith` ... `Alice`) is still not caught. Residual (defence in depth only; the upstream pseudonymiser is the primary control): a name split across non-adjacent fields with other text between them (e.g. title `Alice`, a non-empty author, body `Smith`) is not caught by the concatenated check; recorded as an A7-S5 row together with the reversed-order case.
+- **Review round 6 (structural; 2026-11-25; Codex, reproduced `<a first="Alice" last="Smith">`; fix-loop cap passed, so the rule is replaced, not patched; prompt, order, consent, egress, dormancy and the link side untouched).**
+  The substring-of-the-whole-name rule is replaced by an order- and position-free rule. Name parts: the participant name through the `nameKey` pipeline (numeric
+  references, named-reference shapes, tags, `normalizeUntrustedText`, NFKC, lower-case), split on every run of non-`\p{L}\p{N}` characters, each part keyed, empty
+  parts dropped; no part left means refuse (as before). Text pool: for every untrusted field of every placed item, the tag-stripped key and the raw key, plus the
+  concatenation of the fields. Hit (refuse `participants`, no provider call): the whole-name key is a substring of any pool key, OR every part key is a substring of
+  the pool (stripped or raw, any field, any order). Single-part names behave as before. Covered now: attribute-split names, reversed order (`Smith` ... `Alice`),
+  `Smith, Alice`, and a split with other fields between them; so the reversed-order and split-field items are REMOVED from the A7-S5 residual list (rounds 4 and 5).
+  Still A7-S5 rows: look-alike letters (Cyrillic or Greek homoglyphs) and accented named references (`Ren&eacute;e`).
+  Cost (accepted, defence in depth only; the upstream pseudonymiser is the primary control): a given name and a family name that both appear anywhere in the placed
+  items refuse the draft even if unrelated (e.g. `Kim` in a title and `Dana` in a body for participant `Dana Kim`); single-letter or very common parts raise it further.
+  The 13 short names (Anne, Eve, Leo ...) still pass on a body-free draft.

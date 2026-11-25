@@ -345,6 +345,11 @@ describe('review round 4: one shared name key (encoded, reordered punctuation, t
     ['Alice Smith', { body: '<!-- Alice Smith -->note' }],
     ['Alice Smith', { body: '<![CDATA[Alice Smith]]>note' }],
     ['Alice Smith', { title: 'Alice', author: '', body: 'Smith' }],
+    ['Alice Smith', { body: '<a first="Alice" last="Smith">note</a>' }],
+    ['Alice Smith', { title: 'Smith', body: 'Alice' }],
+    ['Alice Smith', { title: 'Alice', author: 'Someone Else', body: 'Smith' }],
+    ['Smith, Alice', { body: 'Alice Smith' }],
+    ['Alice Smith', { body: 'Smith, Alice' }],
   ];
   it.each(cases)('name %j vs %j: refuses with zero provider calls', async (name, fields) => {
     const local = spy('local-a', 'LOCAL');
@@ -359,6 +364,13 @@ describe('review round 4: one shared name key (encoded, reordered punctuation, t
     const outcome = await quarantinedDraft(request(mailSource([{ ...doc(1), body: 'plain note' }]), { selector: selectorOf(local) }, { participants: [{ label: '참여자 A', name }] }));
     expect(outcome.kind).toBe('draft');
     expect(local.requests).toHaveLength(1);
+  });
+
+  it('records the false-refusal cost: a given name and a family name anywhere in the items refuse (no call)', async () => {
+    const local = spy('local-a', 'LOCAL');
+    const outcome = await quarantinedDraft(request(mailSource([{ ...doc(1), title: 'Kim', body: 'Dana from the other team' }]), { selector: selectorOf(local) }, { participants: [{ label: '참여자 A', name: 'Dana Kim' }] }));
+    expect(outcome).toEqual({ kind: 'failed', reason: 'participants' });
+    expect(local.requests).toHaveLength(0);
   });
 
   it.each(['!!!', '&#32;', '<b></b>'])('a name with an empty key (%j) cannot be checked: refuses with no call', async (name) => {
