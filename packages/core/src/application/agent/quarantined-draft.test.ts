@@ -72,7 +72,7 @@ describe('the LOCAL path', () => {
     const outcome = await quarantinedDraft(request(mailSource([doc(1), doc(2)]), { selector: selectorOf(local) }));
     expect(outcome.kind).toBe('draft');
     if (outcome.kind !== 'draft') return;
-    expect(outcome.draft.lines).toEqual(['Dana Example가 배포 완료를 알렸다', '자세한 내용은 https[:]//example[.]test/a 참고']);
+    expect(outcome.draft.lines).toEqual(['Dana Example가 배포 완료를 알렸다', '자세한 내용은 https[:]/[/]example[.]test/a 참고']);
     expect(outcome.draft.named).toBe(1);
     expect(outcome.draft.locality).toBe('LOCAL');
     expect(outcome.draft.promptVersion).toBe(PAYLOAD_DRAFT_PROMPT_VERSION);
@@ -252,6 +252,13 @@ describe('the input guards and the run bounds', () => {
   it('refuses with no call when a real name appears in the final prompt text (defence in depth)', async () => {
     const local = spy('local-a', 'LOCAL');
     const leaky: AgentSourceDocument = { ...doc(1), body: 'dana EXAMPLE wrote the note' };
+    expect(await quarantinedDraft(request(mailSource([leaky]), { selector: selectorOf(local) }))).toEqual({ kind: 'failed', reason: 'participants' });
+    expect(local.requests).toHaveLength(0);
+  });
+
+  it.each(['dana   example wrote it', 'DANA  EXAMPLE wrote it'])('collapses whitespace on both sides of the real-name check: %j', async (body) => {
+    const local = spy('local-a', 'LOCAL');
+    const leaky: AgentSourceDocument = { ...doc(1), body };
     expect(await quarantinedDraft(request(mailSource([leaky]), { selector: selectorOf(local) }))).toEqual({ kind: 'failed', reason: 'participants' });
     expect(local.requests).toHaveLength(0);
   });

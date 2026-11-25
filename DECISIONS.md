@@ -39686,8 +39686,9 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
      backslash is doubled so it cannot escape a marker. `containsLiveLinkForm` is now "the text is a fixed point of that pass".
   2. *Markdown link through a marker.* A marker followed by `(` is sealed (`[@]\(`), and `[.](u)` typed by the model has its brackets escaped, so no
      marker opens a link. Any `:` followed by `/` or `\` (any case, any number of slashes) becomes `[:]`; a dotted hex or octal host after a scheme
-     colon has its dots defanged; an all-digit host is inert behind its defanged scheme. `mailto:`, `tel:` and `javascript:` (no slash) are not
-     detected by the shared detector either and are not defanged; the destinations do not autolink them (owner FYI, A7-S5 row).
+     colon has its dots defanged; an all-digit host is inert behind its defanged scheme. `tel:`, `javascript:` and `data:` (no slash) are not
+     detected by the shared detector either; the destinations' autolink of them is unverified live (A7-S5 rows). `mailto:` is neutralised by the
+     `@` and domain defang (`a[@]b[.]test`), not left live (corrected in round 2).
   3. *Altered pseudonym labels.* After `참여자`, any separator or punctuation then a non-Hangul letter (Greek and Cyrillic look-alikes, UTS #39) or a
      digit is label-like and must equal a map label exactly, else the draft is refused (`참여자 Α`, `참여자 А`, `참여자 1`, `참여자-A`). A Hangul word after
      it (`참여자 수`) is not. Cost: `참여자 3명` or `참여자 and` in a draft refuse it (fail closed).
@@ -39700,3 +39701,24 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   7. *Open points recorded.* (a) The 600-character assembled-line bound is a fail-closed implementation interpretation (A7 sets none). (b) Escaping every
      `[` and `]` (backslashes visible, `\[BE-123\]`, and doubled backslashes) is an owner FYI usability cost, chosen over parsing which forms are links.
      (c) `@` to `[@]` follows A7.5 step 6.
+
+- **Review round 2 (structural; 2026-11-25; Codex and Chief Architect, reproduced; fix-loop cap reached for the link-syntax and label families; `payload-draft-prompt.v1` unchanged).**
+  The round-1 fixed point proved idempotence, not markup safety: `{"lines":["[.]: //2130706433","[@][.]"]}` passed (CommonMark reads a link
+  reference definition, every marker then links to it), as did `//134744072` (protocol-relative), `!//134744072/x.png!` (Jira image) and `http:134744072`.
+  Fixed by rules, not lists (Unicode categories and the shared scheme detector only):
+  1. *Markup-neutral output.* New exact marker `[/]` (marker set `[@] [.] [:] [/]`, also in the fixed-point pass). (a) every `:` right after a `]`
+     (our marker or an escaped bracket) becomes `[:]`, so no `[x]: dest` and no marker can be a link label; every `]` followed by `(` is sealed
+     (`]\(`). (b) every `/` after the first of a run of slashes (also across escaped backslashes) becomes `[/]` (`https[:]/[/]host`); (c) a
+     scheme-shaped word (the shape the shared detector flags: letter, then up to 15 of letters, digits, `+ . -`) glued to a colon that is followed by a
+     non-space becomes `word[:]` (`http:134744072`). Cost: `a:b` without a space reads `a[:]b`; `12:30` and `결론: 승인` are untouched. The re-check
+     (`containsLiveLinkForm`) now asserts the invariants explicitly (no `]:`, no `](`, no `//` also across `\\`, no glued `scheme:`) in addition to the fixed point.
+     Tests: every input above, `[.]: //x`, `![x](y)`, `<//x>`.
+  2. *Label token.* After `참여자` (NFC): a combining mark (`\p{M}`) refuses; otherwise optional whitespace, then the maximal run of non-whitespace
+     non-Hangul characters. An empty run is ordinary text (`참여자 수`). A non-empty run, minus at most one trailing `\p{Po}`/`\p{Pe}` that is followed by
+     whitespace or the end, must equal a map label exactly after NFKC, written with one ASCII space, else the whole draft refuses (`참여자 A-2`, `A_2`,
+     `A.2`, `A 2` (digit run after the label), `참여자́ B`, a lone `참여자.`). `참여자 A가` and sentence-final `참여자 A.` map. Cost: a lone
+     `참여자,` or `참여자 3명` refuses (fail closed). NFKC forms `Ⓐ`, `𝐀` read as `A` and `A²` as `A2`; A7-S5 rows to record.
+  3. *Name check.* `\s+` is collapsed to one space in both the participant names (after NFC and NFKC) and the prompt view before the comparison, so a
+     multi-space name does not slip. False-refusal cost: a very short name (one or two letters) found inside any word of the prompt refuses the draft;
+     the check is substring, not word, based (fail closed, owner FYI).
+  4. *A7-S5 rows (unverified live, not defanged by an extra rule):* `tel:`, `javascript:` and `data:` with no slash (no autolink known in the ratified destinations).

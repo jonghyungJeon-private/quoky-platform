@@ -108,13 +108,6 @@ export interface DraftParticipant {
 
 /** The pseudonym grammar of `pseudonymLabel`: `참여자 ` + one capital letter + optional digits. */
 const CANONICAL_LABEL = /^참여자 [A-Z][0-9]*$/u;
-/**
- * Any written form that is meant as a pseudonym, canonical or altered: `참여자`, then any separator or punctuation, then a
- * non-Hangul letter (Latin, Greek, Cyrillic look-alikes included, UTS #39) or a digit, then the non-Hangul letters and digits glued
- * to it. A Hangul particle after the label (`참여자 A가`) ends the form. Only the exact canonical labels of the map pass (a7-08).
- */
-const LABEL_LIKE = /참여자[\s\p{P}\p{S}\p{Z}]*(?:(?![\p{Script=Hangul}])\p{L}|\p{N})(?:(?![\p{Script=Hangul}])\p{L}|\p{N})*/gu;
-
 function validParticipants(participants: readonly DraftParticipant[]): ReadonlyMap<string, string> | undefined {
   if (!Array.isArray(participants)) return undefined;
   const map = new Map<string, string>();
@@ -128,6 +121,49 @@ function validParticipants(participants: readonly DraftParticipant[]): ReadonlyM
     map.set(label, name);
   }
   return map;
+}
+
+const LABEL_WORD = '참여자';
+const TRAILING_PUNCT = /^[\p{Po}\p{Pe}]$/u;
+
+/**
+ * The label token after `참여자` (structural, a7-08 round 2): NFC text; a combining mark right after `참여자` refuses; then optional
+ * whitespace, then the maximal run of characters that are neither whitespace nor Hangul. An empty run is ordinary text (`참여자 수`,
+ * `참여자의`). Otherwise the run, minus at most one trailing sentence punctuation (`\p{Po}`/`\p{Pe}`) that is followed by whitespace or the
+ * end, must equal a map label exactly (after NFKC) and be written as `참여자` + one space + label, else the line refuses (a lone
+ * punctuation run, `참여자.`, refuses too: fail closed). A mapped label followed (after whitespace) by a digit run (`참여자 A 2`) refuses.
+ */
+function remapLine(line: string, map: ReadonlyMap<string, string>, used: Set<string>): string | undefined {
+  const text = line.normalize('NFC');
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const at = text.indexOf(LABEL_WORD, pos);
+    if (at < 0) return out + text.slice(pos);
+    out += text.slice(pos, at);
+    let index = at + LABEL_WORD.length;
+    if (/^\p{M}/u.test(text.slice(index))) return undefined;
+    const spacing = /^\s*/u.exec(text.slice(index))?.[0] ?? '';
+    const run = /^[^\s\p{Script=Hangul}]*/u.exec(text.slice(index + spacing.length))?.[0] ?? '';
+    const end = index + spacing.length + run.length;
+    const last = Array.from(run).pop() ?? '';
+    const next = text.slice(end, end + 1);
+    const trailing = TRAILING_PUNCT.test(last) && (next === '' || /^\s$/u.test(next)) ? last : '';
+    const core = run.slice(0, run.length - trailing.length);
+    if (run.length === 0) {
+      out += LABEL_WORD;
+      pos = at + LABEL_WORD.length;
+      continue;
+    }
+    const label = `${LABEL_WORD} ${core.normalize('NFKC')}`;
+    const name = map.get(label);
+    if (name === undefined || spacing !== ' ') return undefined;
+    if (trailing === '' && /^\s+\p{N}/u.test(text.slice(end))) return undefined;
+    used.add(label);
+    out += name + trailing;
+    pos = end;
+    index = end;
+  }
 }
 
 /**
@@ -147,17 +183,8 @@ export function remapParticipantLabels(
     const used = new Set<string>();
     const out: string[] = [];
     for (const line of lines) {
-      let refused = false;
-      const replaced = line.replace(LABEL_LIKE, (form) => {
-        const name = CANONICAL_LABEL.test(form) ? map.get(form) : undefined;
-        if (name === undefined) {
-          refused = true;
-          return form;
-        }
-        used.add(form);
-        return name;
-      });
-      if (refused) return { ok: false, reason: 'participants' };
+      const replaced = remapLine(line, map, used);
+      if (replaced === undefined) return { ok: false, reason: 'participants' };
       out.push(replaced);
     }
     return { ok: true, lines: out, named: used.size };
@@ -177,12 +204,37 @@ const normalise = (text: string): string => text.replace(FORMAT_CHARACTERS, '').
  * other `[`, `]` or `\` gets a backslash; a bare `@` becomes `[@]`. A marker followed by `(` is sealed (`[@]\(`), so no marker can
  * ever open a markdown link. The result is a fixed point of this function (idempotent).
  */
-const SYNTAX = /\\[\\[\](]|\[(?:@|\.|:)\](?!\()|[[\]\\]|@/gu;
-const MARKER_PAREN = /(\[(?:@|\.|:)\])\(/gu;
-const MARKER_SPLIT = /(\[(?:@|\.|:)\])/u;
+const SYNTAX = /\\[\\[\](]|\[(?:@|\.|:|\/)\](?!\()|[[\]\\]|@/gu;
+/** A closing bracket (ours or escaped) followed by `(` is sealed: no `](dest)` can ever form. */
+const MARKER_PAREN = /(\])\(/gu;
+const MARKER_SPLIT = /(\[(?:@|\.|:|\/)\])/u;
+/** A colon after a bracket: `[x]: dest` (reference definition) and `[@]:` are made impossible, every colon becomes our `[:]`. */
+const COLON_AFTER_BRACKET = /\](:+)/gu;
+/** A run of slashes and escaped backslashes (`//`, `/\\\\/`): every slash after the first token becomes `[/]`. */
+const SLASH_RUN = /(?:\/|\\\\)+/gu;
+/** A scheme-shaped word (the shared detector's `scheme:` form) glued to a colon that is followed by a non-space (`http:134744072`). */
+const SCHEME_WORD_COLON = /([a-z][a-z0-9+.-]{0,15}):(?=\S)/giu;
 
 function inertSyntax(text: string): string {
-  return text.replace(SYNTAX, (match) => (match === '@' ? '[@]' : match.length === 1 ? `\\${match}` : match)).replace(MARKER_PAREN, '$1\\(');
+  return text
+    .replace(SYNTAX, (match) => (match === '@' ? '[@]' : match.length === 1 ? `\\${match}` : match))
+    .replace(MARKER_PAREN, '$1\\(')
+    .replace(COLON_AFTER_BRACKET, (_all, colons: string) => `]${'[:]'.repeat(colons.length)}`);
+}
+
+/** The markup-neutral pass (round 2): no `//` (each later slash is `[/]`), no scheme-shaped `word:` glued to text. */
+function markupNeutral(text: string): string {
+  const slashed = text.replace(SLASH_RUN, (run) => {
+    if (!run.includes('/')) return run;
+    const tokens = run.match(/\/|\\\\/gu) ?? [];
+    return tokens.map((token, index) => (index > 0 && token === '/' ? '[/]' : token)).join('');
+  });
+  return inertSyntax(slashed).replace(SCHEME_WORD_COLON, '$1[:]');
+}
+
+/** The explicit invariants of the final text: no `]:`, no `](`, no `//` (also across `\\\\`), no scheme-shaped `word:` glued to text. */
+function markupInvariantsHold(text: string): boolean {
+  return !/\]:/u.test(text) && !/\]\(/u.test(text) && !/(?:\/|\\\\)\//u.test(text) && !new RegExp(SCHEME_WORD_COLON.source, 'iu').test(text);
 }
 
 /** Applies `fn` to the parts of a token outside our exact markers. */
@@ -246,7 +298,7 @@ export function containsLiveLinkForm(text: string): boolean {
     if (new RegExp(IPV4.source).test(view) || new RegExp(IPV6.source, 'iu').test(view)) return true;
     if (new RegExp(IDN_DOT.source, 'u').test(view)) return true;
     // Fixed point of the syntax pass: no bare `@`, bracket or backslash, no marker that could open a link.
-    return inertSyntax(view) !== view;
+    return inertSyntax(view) !== view || markupNeutral(view) !== view || !markupInvariantsHold(view);
   } catch {
     return true;
   }
@@ -265,7 +317,7 @@ export function defangLinks(text: string): string | undefined {
       .split(/(\s+)/u)
       .map((part) => (/^\s+$/u.test(part) ? part : defangToken(part)))
       .join('');
-    const sealed = result.replace(MARKER_PAREN, '$1\\(');
+    const sealed = markupNeutral(result);
     return containsLiveLinkForm(sealed) ? undefined : sealed;
   } catch {
     return undefined;
