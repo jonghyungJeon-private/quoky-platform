@@ -48,6 +48,7 @@ interface Expectation {
 interface Case {
   readonly id: string;
   readonly status: string;
+  readonly approved?: { readonly decided: string };
   readonly vector: string;
   readonly text: string;
   readonly channel?: string;
@@ -550,17 +551,20 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
       const c = byId.get(caseId)!;
       const p = c.pending!;
       const reads = sorted([...new Set((p.planner ?? []).flatMap((s) => (s.entryId !== undefined && AGENT_READ_SOURCES[s.entryId as keyof typeof AGENT_READ_SOURCES]?.source === p.source ? [s.entryId] : [])))]);
-      expect(c.awaiting?.slices, caseId).toEqual(NFKC_ONLY.includes(caseId) ? SLICES.nfkc : SLICES.classifier);
-      expect(c.awaiting?.expect, caseId).toEqual({
+      // `487` (the NFKC closed yes) is built by CS-3 (2026-11-25): its target is its `expect`; the classifier ones still await A6-S2/A6-S4.
+      const built = NFKC_ONLY.includes(caseId);
+      if (built) expect([c.awaiting, c.status, c.approved?.decided], caseId).toEqual([undefined, 'owner-approved', A6_DECIDED]);
+      else expect(c.awaiting?.slices, caseId).toEqual(SLICES.classifier);
+      expect(built ? c.expect : c.awaiting?.expect, caseId).toEqual({
         outcome: 'summary-after-yes',
         stubReads: reads,
         allowedReads: reads,
         remoteSummary: 'bound-yes',
         write: 'none',
         m2Items: p.count,
-        consentAnswer: NFKC_ONLY.includes(caseId) ? 'closed-yes' : 'classifier-yes',
+        consentAnswer: built ? 'closed-yes' : 'classifier-yes',
       });
-      expect(c.expect, `${caseId}: as built, W1 cancels`).toMatchObject({ outcome: 'declined', remoteSummary: 'never', stubReads: [] });
+      if (!built) expect(c.expect, `${caseId}: as built, W1 cancels`).toMatchObject({ outcome: 'declined', remoteSummary: 'never', stubReads: [] });
     }
     // No label is left undecided: the owner answered `473` on 2026-11-24 (r-01).
     expect(Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'owner-to-confirm').map(([caseId]) => caseId)).toEqual([]);
@@ -631,9 +635,11 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
 
 describe('ADR-0121 amendment A6: the awaiting set and the header', () => {
   it('marks exactly the owner-fixed cases, with the A6 note, and keeps every built `expect` a valid floor', () => {
-    const fixed = sorted([...MULTI_LINE, ...NFKC_ONLY, ...Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'yes').map(([caseId]) => caseId)]);
+    const fixed = sorted([...MULTI_LINE, ...Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'yes').map(([caseId]) => caseId)]);
     expect(A6.map((c) => c.id)).toEqual(fixed);
-    expect(fixed).toEqual([460, 461, 463, 468, 469, 470, 487, 488].map(id));
+    // 487 (NFKC closed yes) left the awaiting set when CS-3 built it (the real gate binds it); the other seven still await their slices.
+    expect(fixed).toEqual([460, 461, 463, 468, 469, 470, 488].map(id));
+    expect(NFKC_ONLY).toEqual([id(487)]);
     for (const c of A6) {
       expect(c.status, c.id).toBe('approved-awaiting-implementation');
       expect(c.note, c.id).toContain('ADR-0121 amendment A6 (owner verdict 2026-11-19, fix)');

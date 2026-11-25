@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
  * ADR-0121 amendment A5 (owner decision 2026-11-18, ratified 2026-11-23): an owner-requested summary of calendar, Jira, Slack,
  * Confluence and GitHub items follows rule ① like mail and Drive. Since A5-S3 the REAL grant producer reads the summary-readout
  * label (no mock here): this test pins that the corpus marks exactly the cases whose grant gains a work-source pair
- * `approved-awaiting-implementation` with the grant the producer mints, and nothing else.
+ * `approved-awaiting-implementation` with the grant the producer mints, and nothing else. Rule ① confirm slice CS-3 (2026-11-25)
+ * built the 120 derived and closed-gap cases: their `awaiting.expect` is now their `expect` (status `owner-approved`); only the two
+ * open `source-alias` gaps (`244`, `250`) still carry an `awaiting` target.
  */
 const A5_SOURCES = ['calendar', 'jira', 'slack', 'confluence', 'github'];
 
@@ -31,7 +33,8 @@ interface Case {
   readonly text: string;
   readonly channel?: string;
   readonly planner?: readonly PlannerStep[];
-  readonly expect: { readonly grant?: readonly string[] };
+  readonly approved?: { readonly decided: string };
+  readonly expect: { readonly grant?: readonly string[]; readonly consentSources?: readonly string[] };
   readonly awaiting?: { readonly decided: string; readonly knownGap?: { readonly kind: string; readonly closedBy: string }; readonly expect: { readonly grant?: readonly string[]; readonly consentSources?: readonly string[] } };
 }
 
@@ -84,15 +87,17 @@ function a5Grant(c: Case): string[] {
 const isWork = (pair: string): boolean => A5_SOURCES.includes(AGENT_READ_SOURCES[pair.split(':')[1] as keyof typeof AGENT_READ_SOURCES]?.source ?? '');
 
 describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision changes', () => {
-  it('are exactly the 120 cases whose grant gains a work-source pair (plus the 2 open gaps, which carry their target by hand)', () => {
-    const inCorpus = CORPUS.cases.map((c) => c.id).filter((id) => A5_ALL.has(id));
+  it('are exactly the 120 cases whose grant gains a work-source pair (built by CS-3, in `expect`), plus the 2 open gaps, which still carry their target by hand', () => {
+    const built = CORPUS.cases.map((c) => c.id).filter((id) => A5_ALL.has(id));
     expect(A5_ALL.size).toBe(120);
-    expect(CORPUS.cases.filter((c) => a5Grant(c).some(isWork)).map((c) => c.id)).toEqual(inCorpus);
-    expect(CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18').map((c) => c.id)).toEqual([...A5_ALL, ...Object.keys(OPEN_GAPS)].sort((a, b) => CORPUS.cases.findIndex((c) => c.id === a) - CORPUS.cases.findIndex((c) => c.id === b)));
+    expect(CORPUS.cases.filter((c) => a5Grant(c).some(isWork)).map((c) => c.id)).toEqual(built);
+    expect(CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18').map((c) => c.id)).toEqual(Object.keys(OPEN_GAPS));
+    expect(CORPUS.cases.filter((c) => c.expect.consentSources !== undefined).map((c) => c.id)).toEqual(built);
     for (const c of CORPUS.cases.filter((x) => A5_ALL.has(x.id))) {
-      expect(c.status, c.id).toBe('approved-awaiting-implementation');
-      expect(c.awaiting?.expect.grant, c.id).toEqual(a5Grant(c));
+      expect([c.status, c.approved?.decided, c.awaiting], c.id).toEqual(['owner-approved', '2026-11-18', undefined]);
+      expect(c.expect.grant, c.id).toEqual(a5Grant(c));
     }
+    for (const c of CORPUS.cases.filter((x) => OPEN_GAPS[x.id] !== undefined)) expect(c.status, c.id).toBe('approved-awaiting-implementation');
   });
 
   it('A5-S3 closed 8 known gaps (each now mints its covered work-source reads); the 2 "my repo" cases stay open known gaps', () => {
@@ -105,12 +110,12 @@ describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision
     }
     for (const id of CLOSED_GAPS) {
       const c = CORPUS.cases.find((x) => x.id === id)!;
-      expect(c.awaiting?.decided, id).toBe('2026-11-18');
+      expect(c.approved?.decided, id).toBe('2026-11-18');
       expect(a5Grant(c).some(isWork), id).toBe(true);
       const planner = c.planner ?? [];
       const step = planner.findIndex((s) => s.summarize !== undefined) + 1;
       const covered = (planner[step - 1]?.summarize ?? []).map((from) => `${step}:${planner[from - 1]?.entryId ?? ''}`).filter(isWork);
-      expect(c.awaiting?.expect.grant, id).toEqual([...new Set(covered)].sort());
+      expect(c.expect.grant, id).toEqual([...new Set(covered)].sort());
     }
   });
 
@@ -132,7 +137,7 @@ describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision
       });
       if (!result.ok || result.plan.kind !== 'run') throw new Error(`${c.id}: plan did not validate`);
       const named = [...new Set(ownerSummaryConsentSources(result.plan, prepared).flatMap((entry) => entry.sources))].sort();
-      expect(named, c.id).toEqual(c.awaiting?.expect.consentSources);
+      expect(named, c.id).toEqual(c.expect.consentSources);
     }
   });
 
@@ -141,11 +146,15 @@ describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision
     expect(validator).not.toMatch(/readOutputLabel|summaryReadoutLabel|from '\.\/(?:structure-projector|quarantined-summary|summary-grant)'/u);
   });
 
-  it('the built floor is untouched: every case\'s `expect` still holds the pre-A5 listing-only behaviour for the work-source part', () => {
+  it('the grant is the producer\'s: a built case holds mail, Drive and work-source pairs, an open gap holds no work-source pair', () => {
     for (const c of CORPUS.cases.filter((x) => A5_ALL.has(x.id))) {
-      const built = c.expect.grant ?? [];
-      expect(built.filter(isWork), c.id).toEqual([]);
-      expect(a5Grant(c).filter((pair) => !isWork(pair)), c.id).toEqual(built);
+      expect(c.expect.grant ?? [], c.id).toEqual(a5Grant(c));
+      expect((c.expect.grant ?? []).some(isWork), c.id).toBe(true);
+    }
+    for (const c of CORPUS.cases.filter((x) => OPEN_GAPS[x.id] !== undefined)) {
+      // The built floor stays pinned for what is still awaiting: today the work-source part is listing-only.
+      expect((c.expect.grant ?? []).filter(isWork), c.id).toEqual([]);
+      expect(a5Grant(c).filter((pair) => !isWork(pair)), c.id).toEqual(c.expect.grant ?? []);
     }
   });
 });
