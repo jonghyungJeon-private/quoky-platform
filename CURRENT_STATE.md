@@ -12,6 +12,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - Catalog change: prompt digests re-pinned, version ids unchanged; the D12 gate is still to run. No gold `expect` changed. Version ids stay (selection-prompt.ts:15: bumped when instruction text changes; r-07 changes catalog data); the D12 gate binds the full prompt digest of the gated head; rollback revs render the live catalog.
   See DECISIONS "r-07 implementation note (ADR-0120 catalog, AM-3)".
 
+### ADR-0121 A6-S2 consent-classifier implemented, dormant (2026-11-25, branch `claude/v5-a6-s2-consent-classifier`)
+
+- Prompt `consent-answer.v1`, content-free request builder (fixed question with placeholders + reply), strict JSON parser and the
+  adapter (stronger-tier `INTENT_SELECTION`, 10 s, fail closed to `unclear`) in Core `consent-answer/consent-classifier.ts`.
+- Switch still `off` by default and `on` still refused; no live caller (the import-boundary pin holds). Next: A6-S3, A6-S4 gate,
+  rule-① confirm slice (wires the adapter). See DECISIONS "ADR-0121 A6-S2 implementation note (2026-11-25)".
+
 ### ADR-0121 A6-S1 answer-checks implemented, dormant (2026-11-24, branch `claude/v5-a6-s1-answer-checks`)
 
 - Core `consent-answer/`: branded summary and topic consent steps (no `origin`), the atomic claim and compare-and-set bind,

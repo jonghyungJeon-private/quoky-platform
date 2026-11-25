@@ -332,12 +332,12 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
     }
   });
 
-  it('on: the classifier sees only the consent kind, the language and the reply (content-free, A6.4)', async () => {
+  it('on: the classifier sees only the fixed question with placeholders and the reply (content-free, A6.4)', async () => {
     const classifier = on('yes');
     await answer(opened(summary({ language: 'en' })), turn('ok'), classifier);
     await answer(opened(topic()), turn('ㅇㅇ'), classifier);
-    expect(classifier.classify.mock.calls).toEqual([[{ consent: 'summary-consent', language: 'en', reply: 'ok' }], [{ consent: 'topic-consent', language: 'ko', reply: 'ㅇㅇ' }]]);
-    for (const [request] of classifier.classify.mock.calls) expect(Object.keys(request as object).sort()).toEqual(['consent', 'language', 'reply']);
+    for (const [request] of classifier.classify.mock.calls) expect(Object.keys(request as object).sort()).toEqual(['question', 'reply']);
+    expect(classifier.classify.mock.calls.map(([request]) => (request as { reply: string }).reply)).toEqual(['ok', 'ㅇㅇ']);
   });
 
   it('on: yes binds; no is consumed; a single-line other takes the normal path; a multi-line other is consumed', async () => {

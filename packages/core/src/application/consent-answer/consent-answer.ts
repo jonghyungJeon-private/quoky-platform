@@ -1,6 +1,8 @@
 import type { InboundQuotedRange } from '../../domain';
 import { hasUntrustedSpanMarker } from '../agent/summary-grant';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
+import { buildConsentClassifierRequest } from './consent-classifier';
+import { CONSENT_ANSWER_LABELS, type ConsentAnswerLabel, type ConsentClassifierRequest } from './consent-labels';
 import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, ConsentPendingStore, ConsentScope } from './consent-pending';
 
 /**
@@ -8,7 +10,7 @@ import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, Conse
  * "answer-checks": the owner's answer to a pending rule-① summary consent or A2 topic consent (A6.3 as amended by R3).
  *
  * Order, every step deterministic except the classifier, which is behind `QUOKY_CONSENT_ANSWER_CLASSIFIER` (default
- * `off`) and is not built in this slice (A6-S2):
+ * `off`) (built in A6-S2, `consent-classifier.ts`; no live path calls it yet):
  * 1. **Claim** ({@link ConsentPendingStore.claim}): the next owner turn of the same owner DM within W2 claims the step
  *    atomically (`open` → `answering`). A lost claim is not an answer: the turn takes the normal path.
  * 2. **Caps (a6-05, R5).** More than 3 non-empty lines or 60 characters is not an answer: the consent is cancelled and the
@@ -21,7 +23,7 @@ import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, Conse
  *    only (fullwidth `ｙｅｓ`); a cross-script look-alike stays no token. A closed yes binds, a closed no cancels.
  * 5. **Switch off** (the default): any other reply cancels, exactly as W1 as built.
  *    **Switch on**: the classifier's closed label (`yes`, `yes-and-more`, `no`, `other`, `unclear`; anything else, a throw
- *    included, is `unclear`). It sees only the consent kind, the language and the reply: no item, topic, count or history.
+ *    included, is `unclear`). It sees only the fixed question with placeholders and the reply (A6-S2): no item, topic, count or history.
  * 6. **Bind** ({@link ConsentPendingStore.bind}): compare-and-set from `answering`; a failed bind sends nothing.
  *    `yes-and-more` (AM-2) binds the same way and then the message runs again as a NEW ordinary turn (the step is `used`,
  *    so that turn can never answer, widen or revive it): the whole message (r-01), or, when the reply has more than one
@@ -50,20 +52,12 @@ export const CONSENT_ANSWER_CODES = [
 ] as const;
 export type ConsentAnswerCode = (typeof CONSENT_ANSWER_CODES)[number];
 
-/** The classifier's closed labels (A6.3 step 3 as amended by AM-2). */
-export const CONSENT_ANSWER_LABELS = ['yes', 'yes-and-more', 'no', 'other', 'unclear'] as const;
-export type ConsentAnswerLabel = (typeof CONSENT_ANSWER_LABELS)[number];
+export { CONSENT_ANSWER_LABELS };
+export type { ConsentAnswerLabel, ConsentClassifierRequest };
 
 /** a6-05 (R5): a reply to a pending consent holds at most 3 non-empty lines and 60 characters. */
 export const CONSENT_REPLY_MAX_LINES = 3;
 export const CONSENT_REPLY_MAX_CHARS = 60;
-
-/** The content-free classifier request (A6.4): never an item, a topic, a count, a source content or the history. */
-export interface ConsentClassifierRequest {
-  readonly consent: ConsentPending['kind'];
-  readonly language: ConsentLanguage;
-  readonly reply: string;
-}
 
 /** The classifier call (A6-S2). Its result is read strictly: only a closed label string counts. */
 export type ConsentAnswerClassifier = (request: ConsentClassifierRequest) => Promise<unknown>;
@@ -237,7 +231,7 @@ async function decideClaimed(
     store.cancel(claim);
     return { kind: 'cancelled', audit: ['classifier-off'], next: afterCancel(shape.lines) };
   }
-  const label = await classifyStrict(classifier.classify, { consent: claim.pending.kind, language: claim.pending.language, reply: turn.text });
+  const label = await classifyStrict(classifier.classify, buildConsentClassifierRequest(claim.pending, turn.text));
   // Freshness is judged on a fresh clock read after the classifier, never on the arrival time of the message.
   const atMs = now();
   switch (label) {

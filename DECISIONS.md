@@ -38982,6 +38982,78 @@ always consumes the chance to answer, whether or not it can be judged.**
   claim-read throw; a later turn whose clock throws cancels an in-flight answer and the earlier label does not bind.
 - **CA P3 (test).** Added the r-02 case for a leading blank line before a closed yes: nothing is cut, the whole message reruns.
 
+### ADR-0121 A6-S2 implementation note (2026-11-25)
+
+Slice A6-S2 "consent-classifier" (R10): the classifier behind `QUOKY_CONSENT_ANSWER_CLASSIFIER`, built and unit-tested, with no
+live caller. No model call, eval, gold, catalog, selection prompt or flag default changed.
+
+- **Prompt asset (owner FYI).** A6.4 words the prompt as a `prompts/` asset; the repo instead keeps runtime prompts as versioned
+  TypeScript modules (the help-scope classifier: `nl-routing/help-scope-classifier.ts`, `help-scope.v2`), so this is a recorded
+  deviation from that wording, following the precedent: `consent-answer.v1` is
+  `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION` in `packages/core/src/application/consent-answer/consent-classifier.ts`
+  (`buildConsentClassifierPrompt`). Generic instruction, the five closed labels (`yes`, `yes-and-more`, `no`, `other`, `unclear`,
+  AM-2), no example at all, question and reply as delimited data (delimiter tags blanked to a fixed point). Output is one JSON
+  object `{"label":"<label>"}`, read as text: an extra or duplicate key, an unknown label, prose around it or non-JSON is `unclear`.
+- **Content-free request (A6.4).** `ConsentClassifierRequest` is now `{ question, reply }` (was kind, language, reply).
+  `buildConsentClassifierRequest(pending, reply)` is pure and the only builder. `question` is the per-kind, per-language fixed
+  question with `{개수}` (rule ①) or `{주제}` (A2); the source noun (`pending.sources`, closed labels) and the recipient display name
+  stay. Item ids, topic, count, requestText and history are never read. A test fails if any item id, the topic or the count
+  appears in the request or the prompt (this is what A6-S4 `classifier-sees-content` will judge).
+- **Adapter.** `createConsentAnswerClassifier({ select, chatProviderId, chatProviderLocality, timeoutMs? })`: one
+  `Capability.INTENT_SELECTION` call with `intentSelectionTier: 'stronger'` (Claude CLI, ADR-0120 D2, picked by the router the
+  caller passes as `select`), bound 10 s (`CONSENT_CLASSIFIER_TIMEOUT_MS`) started BEFORE `select()` and covering both the
+  selection and the call, with an abort signal. Every failure is `unclear`; only a clean `{"label":"yes"}` can be `yes`. It
+  returns and logs only the label, never the reply.
+  - **No new egress (review P1).** As the help-scope classifier (`nlSameEgress`, ADR-0120 D6/D8): a missing `chatProviderId`, a
+    different provider family or a different locality is `unclear` without a call.
+  - **Stronger tier verified (review P2; A6.4 "a provider without the tier is `unclear`").** The hint alone is ignored by a
+    provider without a stronger model (help-scope accepts that fallback; this classifier must not). Choice: a minimal additive
+    port declaration `AiProvider.supportsStrongerIntentSelection?: boolean` (data, like `executionLocality` and `dataUse`; Core
+    reads only an explicit `true`, no provider id or platform branch). `ClaudeCliProvider` declares `true` (it maps the hint to
+    the stronger model and effort). Any other provider, or an absent declaration, is `unclear` without a call. Rejected: inferring
+    support from the provider id (a provider branch in Core), and trusting the hint (reproduced: a provider ignoring it returned yes).
+  - **Strict output (review P2).** Exactly one object `{"label":"<closed label>"}` with optional ASCII JSON whitespace (space, tab,
+    CR, LF); a code fence, NBSP, BOM, zero-width or other format character, line separator or trailing text is `unclear`.
+  - **Closed source noun (review P2).** `ConsentSource` (`consent-labels.ts`: mail, drive, calendar, jira, slack, confluence,
+    github, the sources a summary can be granted for) is the only type of `SummaryConsentPending.sources`; `summaryConsentPending`
+    refuses any other value (`ConsentPendingInvalidError('sources')`) and the question builder filters to the set again.
+  - **Calls and the model-call cap (review P2).** The adapter does NOT count against the per-actor 60/h model-call cap (enforced
+    only in `agent-run-service.ts`). The pipeline calls it at most once per turn and a step is re-asked at most once, so at most
+    twice per step; the rule-① confirm slice MUST count each classifier call against that cap when it wires the adapter (not
+    wired here).
+- **Review follow-ups (P2/P3).** `timeoutMs` is clamped to min(override, 10 s) and a non-finite, zero or negative override falls back to 10 s (an override can only shorten the A6.3 bound); an empty filtered source list is `unclear` without a call; `CONSENT_SOURCES` derives from `AGENT_WORK_SUMMARY_SOURCES` (`['mail','drive', ...]`), pinned by a test.
+- **Structural rules after the fix-loop cap (Review 2).** (1) Lateness is decided by the injected clock (`deps.now`, the pipeline's
+  clock domain, default `Date.now`) against `deadlineAtMs = now() + effectiveTimeout` fixed BEFORE `select()`; after the call
+  settles the label is returned only if `now() < deadlineAtMs` (exactly at the deadline is late), else `unclear`; a throwing or
+  non-finite clock is `unclear`. The timer/abort only stops the waiting (a blocked event loop can resolve the call before the timer
+  fires, reproduced at 10,050 ms). (2) Inputs are validated, not the rendered string: a question is rendered only if at least one
+  source is in the closed set (rule ①) and the recipient display name, sanitised by `promptText`, has a letter or digit (`/[\p{L}\p{N}]/u`, a shape
+  check, not a word list; also for A2 topic questions); otherwise `''` and no call (`unclear`).
+- **Identity invariant (Review 3, replaces further input checks).** The classifier sees exactly the question Quoky rendered:
+  the prompt's sanitisation (`promptText`: delimiter tags blanked to a fixed point, then trim) must be the identity on the rendered
+  question (and the recipient must still hold a letter or digit after it), otherwise no question is rendered or the adapter makes no
+  call (`unclear`). The reply is not refused when altered (its tags are blanked, as before).
+- **Note for the A6-S3/confirm slice.** Stub providers in `apps/quoky/src/a6-r2-harness.ts` must declare `supportsStrongerIntentSelection: true` when the adapter is wired; otherwise every classification is silently `unclear`.
+- **Fixed question text is a stand-in.** The single-line rule-① and A2 owner-facing question wording is not built yet (the
+  rule-① confirm slice and the A2 answer slice own it). `consentClassifierQuestion` defines the classifier's view of it;
+  those slices must render their owner-facing text from the same template (or move it) so A6-S4 judges what is really asked.
+- **Switch and wiring.** Default stays `off` and `on` stays refused with `CONSENT_ANSWER_CLASSIFIER_NOT_RELEASED` (A6-S4 gate
+  and the rule-① confirm slice are not done). The A6-S1 import-boundary pin allows no importer of `consent-answer/` outside
+  it, so the adapter is not imported by the composition root here; the composition root builds it as
+  `createConsentAnswerClassifier({ select: () => router.select(Capability.INTENT_SELECTION) })` in the confirm slice together
+  with lifting the refusal. No live path calls it.
+- **`two-line-grant` (A6.3 step 3).** AM-1 (R2) dropped `origin`, so no pending step carries it and every step is answered
+  alike; the type-level pin (`origin` does not exist) and the A6 target pin (`consentAnswerJudging` has no `two-line-grant`)
+  stay and still hold. Nothing in this slice routes a step by how its grant was minted.
+- **Tests.** `consent-classifier.test.ts` (40, exact request equality for the four kind x language cases with recipient and source canaries, parser fence/NBSP/BOM/zero-width cases, egress, tier declaration, stalled select): request content-free and pure, placeholders, prompt delimiters and labels, strict
+  output, adapter route/tier/bound, fail closed (no provider, throw, malformed, unknown label, extra key), timeout abort,
+  credential-shaped reply never sent. Targeted runs of consent-answer, the A6 target and the app agent config pass; build and typecheck pass.
+- **Module layout (review P3).** The labels, the closed source set and the request type live in `consent-labels.ts`, so `consent-answer.ts`
+  and `consent-classifier.ts` no longer import each other.
+- **Open points.** (1) A6-S3 (count/unit), A6-S4 (corpus, eval, both arms, `classifier-sees-content`). (2) The confirm and A2
+  answer slices render the owner-facing question from the shared template and wire the adapter. (3) Any change of the prompt
+  bytes, model, effort or tier needs the A6-S4 gate again (a6-12).
+
 ### r-07 implementation note (ADR-0120 catalog, AM-3) (2026-11-24)
 
 The owner's r-07 decision (R2 AM-3 and the recorded fact that `mail.list` had no count arg): the mail and Drive listing

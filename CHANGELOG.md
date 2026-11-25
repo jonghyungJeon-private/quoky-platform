@@ -23,6 +23,15 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   The D12 gate (action, read-regression, r2) must run before deploy. No model call was made.
 - **Gold.** No `expect` changed; no row added (`agent-plan.v1.json` is byte-pinned).
 
+## Unreleased — ADR-0121 A6-S2 consent-classifier (2026-11-25; dormant, switch default off, `on` still refused)
+
+- **Added.** Core `consent-answer/consent-classifier.ts`: prompt `consent-answer.v1` (five closed labels, no example), the pure
+  content-free request builder (`{ question with {개수}/{주제} placeholders, reply }`), strict `{"label":...}` parser, and the
+  adapter (`INTENT_SELECTION`, stronger tier, 10 s bound, fail closed to `unclear`). `ConsentClassifierRequest` is now
+  `{ question, reply }`.
+- **Unchanged.** Switch default `off`, `on` refused; no live caller; no prompt, catalog, gold or flag change; no model call.
+- **Tests.** `consent-classifier.test.ts` (24) with fakes; consent-answer, A6 target and config tests pass; build and typecheck pass.
+
 ## Unreleased — ADR-0121 A6-S1 answer-checks (2026-11-24; dormant, switch default off)
 
 - **Added.** Core `consent-answer/`: the branded `SummaryConsentPending` (no `origin`) and `TopicConsentPending` with their

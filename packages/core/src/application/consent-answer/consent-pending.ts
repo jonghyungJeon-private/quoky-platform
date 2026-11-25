@@ -20,6 +20,7 @@
  *
  * Pure, in-memory, no I/O, no clock of its own (every time is the caller's `atMs`), no provider or platform branch.
  */
+import { isConsentSource, type ConsentSource } from './consent-labels';
 
 declare const SUMMARY_CONSENT_BRAND: unique symbol;
 declare const TOPIC_CONSENT_BRAND: unique symbol;
@@ -52,7 +53,7 @@ interface ConsentPendingCommon {
 export interface SummaryConsentPending extends ConsentPendingCommon {
   readonly kind: 'summary-consent';
   readonly itemIds: readonly string[];
-  readonly sources: readonly string[];
+  readonly sources: readonly ConsentSource[];
   readonly [SUMMARY_CONSENT_BRAND]: true;
 }
 
@@ -131,11 +132,11 @@ export function summaryConsentPending(input: {
   readonly createdAtMs: number;
   readonly recipient: string;
   readonly itemIds: readonly string[];
-  readonly sources: readonly string[];
+  readonly sources: readonly ConsentSource[];
 }): SummaryConsentPending {
   const common = commonOf(input);
   if (!distinctNonEmpty(input.itemIds)) throw new ConsentPendingInvalidError('items');
-  if (!distinctNonEmpty(input.sources)) throw new ConsentPendingInvalidError('sources');
+  if (!distinctNonEmpty(input.sources) || !input.sources.every(isConsentSource)) throw new ConsentPendingInvalidError('sources');
   return mint<SummaryConsentPending>({
     kind: 'summary-consent',
     ...common,
