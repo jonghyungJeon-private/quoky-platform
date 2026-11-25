@@ -39609,3 +39609,174 @@ and `QUOKY_CONSENT_ANSWER_CLASSIFIER` is still default `off` (`on` refused). Cor
      as blank. A line of any other whitespace (NBSP, U+3000) is a line, so with two other lines it is a third line and fails closed (lot (a) a-56). **Owner FYI:** R7's
      premise that "the count reaches the plan only from the owner's words" does not hold in the single-line code (r-07 open item 1: the planner can add `limit` that no
      owner word carries); the two-line form now checks the number against the owner's own line, the single-line form does not.
+
+
+## ADR-0121 A7-S3 drafter implementation note (2026-11-25)
+
+Status: implemented (branch `claude/v5-a7-s3-drafter`). Slice A7-S3 "drafter" of ADR-0121 amendment A7 (A7.10 row), ratified
+2026-11-24. Append-only: no amendment text or ratification record changes. Dormant: the drafter is reachable from no live path
+(`QUOKY_AGENT_WRITE_PROPOSALS` still refuses `active`, agent mode `active` is still refused, no flag, planner prompt, catalog entry,
+port, card or connector write was touched, and shadow logs nothing from it). No model was called and no evaluation was run.
+
+- **Ratified answers applied over the proposal text (the 2026-11-24 record governs).**
+  1. *a7-08 (real names on the card).* The remap exists and runs first: Core maps the pseudonyms back to real names from the receipt's
+     participants (`remapParticipantLabels`, the closed grammar `참여자 [A-Z][0-9]*`, longest form first). An unknown or altered label
+     (`참여자A`, `참여자 a`, `참여자 AB`, a label not in the map) refuses the whole draft (`participants`). Names are inserted as plain text,
+     never as a mention. The model still sees pseudonyms only (A5.2; a test pins that no real name reaches the prompt). The count of
+     named people is returned (`named`) for the card's fixed line (A7-S4).
+  2. *Order (Q6).* schema, remap, mention neutraliser, link defanger, credential guard, then hash and card (the last two are A7-S4).
+     A7.5 step 6 listed the defanger first; the ratified order governs. The card-spoof check (ADR-0120 A6 R2 D11) runs after the guard.
+  3. *a7-13 / B2.* The drafter eval is a model-in-the-loop run: not run here (see Gates).
+  4. *Q7 B3 / a7-16* touch the card and the trip, not the drafter: not applied here.
+  Not overridden and applied as written: A7.5 steps 4 to 6 (the locality and rule ①, the M2 call, link and mention assembly), A7.8 payload
+  smuggling and egress rows, A7.9 (0 live links), A7.12.
+- **Built.**
+  - `agent/payload-drafter.ts` (pure): the prompt template `renderPayloadDraftPrompt`, version `payload-draft-prompt.v1`
+    (`PAYLOAD_DRAFT_PROMPT_VERSION`; the SHA-256 of a fixed render is pinned by a test, like the other versioned templates), the closed
+    schema `parsePayloadDraftOutput` (`{ lines: string[1..8] }`, each one line of at most 200 characters, exactly one key, 16 KiB cap,
+    never repaired or cut), `remapParticipantLabels`, `neutraliseMentions`, `defangLinks`, `containsLiveLinkForm`, and
+    `assemblePayloadDraft` (the order above; one closed refusal each: `schema`, `credential`, `participants`, `link`, `size`, `spoof`).
+  - `quarantined-summary.ts`: `quarantinedDraft` (ONE sealed M2 call: `SUMMARIZATION`, the prompt only, no tools, catalog, memory,
+    history or context) and `payloadDraftReadiness`. They reuse the summariser's own machinery, not a copy: `deriveM2Localities`,
+    `m2SelectionContext`, `selectM2Provider`, `dispatchLocality` (the synchronous re-check before `execute`), the final-prompt credential
+    check, the run reservation and bounds, and `launchCall` (generalised with an `onText` hook; the summariser's behaviour is byte-identical).
+    The outcome is a frozen `PayloadDraft` value `{ lines, named, label (UNTRUSTED, MODEL_DERIVED), locality, promptVersion }`: no card, no
+    hash, no port, nothing sendable.
+- **How REMOTE consent is enforced (rule ①).** A REMOTE draft needs the existing `SummaryConsentToken` (`mintSummaryConsentToken` from a
+  bound closed yes of the A6-S1 pipeline, this run, this step, exactly the asked-for items) and the provider must still be the recipient
+  the owner was asked about, at selection and again immediately before dispatch. Without a token `REMOTE` is not in the locality set for any
+  label, so the call is `listing-only` (`no-model`) with nothing sent. `payloadDraftReadiness` answers `consent-needed` with the recipient (the
+  A7.5 step 4 question is asked first). A7.5 step 4 says that question names the item count, the recipient AND the destination; the existing
+  `summary-consent-question.v1` has no destination clause. No wording is invented here: the destination clause is added in A7-S4 (where the
+  destination exists), and until then A7-S3 is unreachable (dormant, no caller), so no REMOTE question without a destination can be asked and a `LOCAL` pick needs none (W4).
+  Mail and Drive need the summary grant as before. Slack and Jira drafts only under A5: the source's switch (`workSummarySources`) must be on,
+  and a REMOTE provider must declare `dataUse: no-training` (A5.3). Calendar stays LOCAL only with no fallback: a draft is judged by the
+  stricter of the summary label and the listing label (`draftLabel`), because the A5 summary label of calendar would otherwise allow REMOTE.
+- **The link defanger and the mention neutraliser (structural, no word list).** Reused: `containsLink` (the shared detector, `display` mode)
+  decides which whitespace-free token is a link, and `normalizeUntrustedText`/`credential-guard`/`card-spoof` are the existing helpers. New,
+  because no Core sanitiser covered them: `scheme://` to `[:]//`, a dot of a link token to `[.]`, `@` to `[@]` (e-mail, `@here`, `@channel`,
+  `@everyone`, `@name`), IPv4 and IPv6 literals, Slack `<...>` (`<!here>`, `<@U..>`, `<#C..|x>`, `<url|text>`) to `‹...›`, every
+  bracket not our own marker escaped (Jira `[~x]`, `[a|b]`, markdown `[t](u)` and `![i](u)`), `accountid:` to `accountid[:]`. A form it cannot
+  make inert after one pass (the detector still fires) refuses the draft (`link`). Ordinary text is untouched (versions, times, file names).
+- **Interpretations and residuals (fail closed).**
+  1. The 200-character cap is the model's schema. After the remap and the defanger a line may grow, so an assembled line is bounded at 600
+     characters (`AGENT_DRAFT_ASSEMBLED_LINE_MAX_CHARS`), over it `size`. A7 sets no such bound; owner: confirm or choose another.
+  2. Every `[` or `]` in a draft is escaped (`\[`). A legitimate "[BE-123]" in a summary shows with backslashes. Chosen over parsing
+     which bracket forms are links. Owner: confirm.
+  3. `@` anywhere (also inside a sentence) becomes `[@]`.
+  4. The destination-shaped-token line, the provenance line, the hash and the "named people" card line are A7-S4. The re-draft is A7-S9.
+  5. How the A7 plan's summarize step obtains the `SummaryEgressGrant` (the owner's own "summarise" words) and the participant map from the
+     frozen receipt, and the run reservation, are wired by the caller in A7-S4; here they are inputs (the tests mint them).
+  6. The drafter reuses the capability `SUMMARIZATION` and the summariser's selection path. A7.10 says a change of the prompt hash turns a
+     destination back to `shadow`; no destination is on, so nothing resets.
+- **Gates (not run; owner items).** The drafter evaluation (A7-S5) is a model-in-the-loop run: a Strict run that needs the owner's notice
+  and one yes (B2, `.claude/skills/quoky-decide/SKILL.md` section 5). The A7 gold (264 rows; A7.9 minimum 275) is pending owner approval and
+  is not part of this slice. This slice adds the prompt template as an unreachable asset only
+  (`payload-draft-prompt.v1`); the planner prompt (`agent-plan.v11`) and the catalog are unchanged, so no D12 gate item arises now. The
+  prompt's behaviour is unmeasured until A7-S5.
+- **Tests (no model).** `payload-drafter.test.ts` (76: template pin, caps, schema refusals, credential, remap, mentions, links, order,
+  spoof, size), `quarantined-draft.test.ts` (28: LOCAL path, sealed request, 10-item cap, REMOTE needs the token and the recipient, readiness
+  asks, calendar LOCAL only, Slack/Jira under A5, closed refusals, bounds, abort, dispatch re-check), `payload-drafter.boundary.test.ts` (4:
+  imports, no live reachability, no provider or platform name, no connector or hash). The agent boundary allowlist adds `../card-spoof`.
+
+- **Review round 1 (2026-11-25; Codex and Chief Architect, reproduced; all fixed, `payload-draft-prompt.v1` unchanged).**
+  1. *`@` after `[`.* The lookbehind `(?<!\[)@` let `kim[@evil.com` keep a live `@` (and the e-mail domain undefanged). Replaced by one exact-token
+     pass (`inertSyntax`): an escape unit (`\\`, `\[`, `\]`, `\(`) or our exact marker (`[@]`, `[.]`, `[:]`) is kept, every other `[`, `]` or `\` gets a
+     backslash, every bare `@` becomes `[@]`. The dot defanger and the re-check use the same exact markers (`outsideMarkers`), no lookbehind. A bare
+     backslash is doubled so it cannot escape a marker. `containsLiveLinkForm` is now "the text is a fixed point of that pass".
+  2. *Markdown link through a marker.* A marker followed by `(` is sealed (`[@]\(`), and `[.](u)` typed by the model has its brackets escaped, so no
+     marker opens a link. Any `:` followed by `/` or `\` (any case, any number of slashes) becomes `[:]`; a dotted hex or octal host after a scheme
+     colon has its dots defanged; an all-digit host is inert behind its defanged scheme. `tel:`, `javascript:` and `data:` (no slash) are not
+     detected by the shared detector either; the destinations' autolink of them is unverified live (A7-S5 rows). `mailto:` is neutralised by the
+     `@` and domain defang (`a[@]b[.]test`), not left live (corrected in round 2).
+  3. *Altered pseudonym labels.* After `참여자`, any separator or punctuation then a non-Hangul letter (Greek and Cyrillic look-alikes, UTS #39) or a
+     digit is label-like and must equal a map label exactly, else the draft is refused (`참여자 Α`, `참여자 А`, `참여자 1`, `참여자-A`). A Hangul word after
+     it (`참여자 수`) is not. Cost: `참여자 3명` or `참여자 and` in a draft refuse it (fail closed).
+  4. *Question wording.* Corrected above: the destination clause is A7-S4's.
+  5. *IDN TLD dots.* `link-neutralizer.ts` documents `example.السعودية`, `example.இந்தியா` as not caught. The drafter's defanger defangs a dot between a
+     letter or digit and a non-Latin, non-CJK letter (structural; CJK sentence dots such as `끝났다.다음` stay). The shared detector is unchanged. A7-S5
+     smuggling rows to add: `example.السعودية`, `example.இந்தியா`, `shop.рф`, `a.ελ`, `HTTPS:\\host`, `https:/2130706433`, `http://0x7f.0.0.1`,
+     `http://0177.0.0.1`, `[.](https:/2130706433)`, `kim[@evil.com`, `[@here`, `참여자 Α`, `참여자 А`.
+  6. *Defence in depth.* `quarantinedDraft` refuses (`participants`, no call) when any participant's real name appears in the final prompt text.
+  7. *Open points recorded.* (a) The 600-character assembled-line bound is a fail-closed implementation interpretation (A7 sets none). (b) Escaping every
+     `[` and `]` (backslashes visible, `\[BE-123\]`, and doubled backslashes) is an owner FYI usability cost, chosen over parsing which forms are links.
+     (c) `@` to `[@]` follows A7.5 step 6.
+
+- **Review round 2 (structural; 2026-11-25; Codex and Chief Architect, reproduced; fix-loop cap reached for the link-syntax and label families; `payload-draft-prompt.v1` unchanged).**
+  The round-1 fixed point proved idempotence, not markup safety: `{"lines":["[.]: //2130706433","[@][.]"]}` passed (CommonMark reads a link
+  reference definition, every marker then links to it), as did `//134744072` (protocol-relative), `!//134744072/x.png!` (Jira image) and `http:134744072`.
+  Fixed by rules, not lists (Unicode categories and the shared scheme detector only):
+  1. *Markup-neutral output.* New exact marker `[/]` (marker set `[@] [.] [:] [/]`, also in the fixed-point pass). (a) every `:` right after a `]`
+     (our marker or an escaped bracket) becomes `[:]`, so no `[x]: dest` and no marker can be a link label; every `]` followed by `(` is sealed
+     (`]\(`). (b) every `/` after the first of a run of slashes (also across escaped backslashes) becomes `[/]` (`https[:]/[/]host`); (c) a
+     scheme-shaped word (the shape the shared detector flags: letter, then up to 15 of letters, digits, `+ . -`) glued to a colon that is followed by a
+     non-space becomes `word[:]` (`http:134744072`). Cost: `a:b` without a space reads `a[:]b`; `12:30` and `결론: 승인` are untouched. The re-check
+     (`containsLiveLinkForm`) now asserts the invariants explicitly (no `]:`, no `](`, no `//` also across `\\`, no glued `scheme:`) in addition to the fixed point.
+     Tests: every input above, `[.]: //x`, `![x](y)`, `<//x>`.
+  2. *Label token.* After `참여자` (NFC): a combining mark (`\p{M}`) refuses; otherwise optional whitespace, then the maximal run of non-whitespace
+     non-Hangul characters. An empty run is ordinary text (`참여자 수`). A non-empty run, minus at most one trailing `\p{Po}`/`\p{Pe}` that is followed by
+     whitespace or the end, must equal a map label exactly after NFKC, written with one ASCII space, else the whole draft refuses (`참여자 A-2`, `A_2`,
+     `A.2`, `A 2` (digit run after the label), `참여자́ B`, a lone `참여자.`). `참여자 A가` and sentence-final `참여자 A.` map. Cost: a lone
+     `참여자,` or `참여자 3명` refuses (fail closed). NFKC forms `Ⓐ`, `𝐀` read as `A` and `A²` as `A2`; A7-S5 rows to record.
+  3. *Name check.* `\s+` is collapsed to one space in both the participant names (after NFC and NFKC) and the prompt view before the comparison, so a
+     multi-space name does not slip. False-refusal cost: a very short name (one or two letters) found inside any word of the prompt refuses the draft;
+     the check is substring, not word, based (fail closed, owner FYI).
+  4. *A7-S5 rows (unverified live, not defanged by an extra rule):* `tel:`, `javascript:` and `data:` with no slash (no autolink known in the ratified destinations).
+
+- **Review round 3 (structural; 2026-11-25; Codex and Chief Architect, reproduced; `payload-draft-prompt.v1` unchanged, order, consent, egress and dormancy untouched).**
+  1. *HTML character references.* `https&#58;&#47;&#47;evil&#46;com/x`, `www&#46;evil&#46;com`, `http&colon;&sol;&sol;134744072` and `a&#64;evil&#46;com` passed
+     unchanged, and the Google Calendar writer sends `description` raw (it renders HTML). Rule: `normalise()` now strips format characters, applies NFKC
+     and decodes numeric references (`&#NN;`, `&#xHH;`, the `;` optional) repeatedly until the text stops changing (so `&#38;#58;` and fullwidth
+     `＆#58;` decode too), and every pass and the re-check see the real characters (a decoded control character or line break becomes a space). Any
+     remaining named-reference shape `&[A-Za-z][A-Za-z0-9]*;?` refuses the whole draft (`link`; no entity table; `&amp;#58;` refuses). The explicit
+     re-check invariants add: no `&#` and no named-reference shape. Cost: `Q&A`, `R&D`, `AT&T` and `&amp;` in a draft refuse it (fail closed, owner FYI).
+  2. *Real name before JSON encoding.* The check ran on the JSON-escaped prompt, so `홍\n길동`, `Dana\r\nKim`, `O"Brien`, `Back\slash` and zero-width or
+     soft-hyphen names slipped. It now compares each readout text field (title, author, date, body of every placed item) BEFORE encoding, and the
+     final prompt too, after `normalizeUntrustedText`, NFKC and lower-casing, with ALL whitespace and `\p{Cf}` removed on both sides
+     (`participantNameKey`): `홍 길동`, `홍\n길동`, `홍길동` all match. Cost: a higher false-refusal rate for short names (substring on a
+     whitespace-free text, fail closed). Zero provider calls on refusal (tests).
+  3. *Label trailing punctuation.* A run of `[\p{Po}\p{Pe}\p{Pf}]+` after the label before whitespace or the end is allowed (the core still equals the label
+     exactly): `(참여자 A).`, `참여자 A”`, `참여자 A…` map. `참여자 A’s` and `참여자 A 3건` still refuse (fail-closed costs). `참여자 ᴬ` maps to `A` after NFKC
+     (A7-S5 row).
+  4. *Jira `\\` (forced line break).* A doubled backslash renders as a line break in Jira wiki markup. Escaping is unchanged here. A7-S5 row, and A7-S4's
+     Jira writer must count RENDERED lines (a `\\` is one more), not the draft's line count.
+  5. *Cleanup.* The dead store `index = end` is removed and the stale comments now list `[/]` and the `]`-then-`(` sealing.
+  6. *Owner FYI.* The link-syntax family reached the fix-loop cap. The structural rules (exact markers, explicit invariants, numeric-reference decoding,
+     named-reference refusal) are the chosen design; remaining destination-specific rendering checks move to A7-S4 (writers) and A7-S5 (smuggling rows).
+
+- **Review round 4 (structural; 2026-11-25; Codex and Chief Architect, reproduced; fix-loop cap reached for the real-name check family; `payload-draft-prompt.v1` unchanged, order, consent, egress, dormancy and the link side untouched).**
+  1. *Correction of round 3.* Round 3 called the short-name false refusal occasional and compared against the final prompt. That was wrong: the prompt
+     contains our fixed instructions, so names found in them after whitespace removal (Anne, Ann, Eve, Ed, Ted, Don, Leon, Rose, Ines, Om, Li, Theo, Leo:
+     13 of 48 common names) were ALWAYS refused. The template is no longer compared at all.
+  2. *One shared key.* `nameKey(s)` (replaces `participantNameKey`), used for the participant names and for the fields: numeric references decoded until
+     stable (the `normalise` decoder), named-reference shapes `&[A-Za-z][A-Za-z0-9]*;?` removed (no entity table), HTML tags `<[^>]*>` stripped,
+     `normalizeUntrustedText`, NFKC, lower-case, only `\p{L}\p{N}` kept. So `Alice&#32;Smith`, `&#65;lice Smith`, nested refs, `Alice&Tab;Smith`,
+     `Dana&nbsp;Kim`, `&#54861;&#44600;&#46041;`, `&#xD64D;길동`, `Dana O&#39;Brien`, `Dana-Kim`, `dana.kim@...`, `홍.길동`, `Dana <b>Kim</b>` all match.
+     The key of a participant name is a substring test against the key of each UNTRUSTED field (title, author, date, body of every placed item), never
+     against the template. A hit refuses (`participants`) with no provider call. A participant whose name has an empty key cannot be checked: the draft
+     is refused with no call (fail closed).
+  3. *Decode before remap.* `parsePayloadDraftOutput` now decodes numeric references (and NFKC, format characters) in each line before the pseudonym
+     remap, so the label rule sees real characters: `&#52280;여자 A`, `참&#50668;자 A`, `&#xCC38;&#xC5EC;&#xC790; A` map like `참여자 A` (`named` counted),
+     encoded altered labels refuse like plain ones, and `참여자 A&#46;` maps with its trailing dot. The credential guard still runs on the raw strings first.
+  4. *A7-S5 rows (recorded, not applied here).* Accented named references (`Ren&eacute;e` keys as `rene`, not `renée`), reordered names (`Kim, Dana`),
+     look-alike letters (Cyrillic or Greek homoglyphs of a name), and the `Q&A` / `R&D` refusal of the link side, with the Chief Architect's suggested
+     safe relaxation: always refuse `&name;`; without the `;` refuse only names starting `amp`, `lt`, `gt` or `quot`.
+- **Review round 5 (2026-11-25; Codex, reproduced; `payload-draft-prompt.v1`, order, consent, egress, dormancy and the link side untouched).** Two gaps in the
+  real-name check: (1) `nameKey` strips tags, so a name inside markup vanished (`<a title="Alice Smith">`, `<!-- Alice Smith -->`, `<![CDATA[Alice Smith]]>`);
+  (2) fields were checked independently (title `Alice`, body `Smith`). Fix: a second key `nameKeyRaw` (same pipeline, no tag stripping), and each
+  untrusted field plus the concatenation, in prompt order, of all untrusted fields of all placed items (joined with nothing) is checked with both keys.
+  Cost: the concatenated check raises false refusals for short names (a name can now match across a field boundary). A7-S5 row, recorded not applied:
+  reversed order across fields (`Smith` ... `Alice`) is still not caught. Residual (defence in depth only; the upstream pseudonymiser is the primary control): a name split across non-adjacent fields with other text between them (e.g. title `Alice`, a non-empty author, body `Smith`) is not caught by the concatenated check; recorded as an A7-S5 row together with the reversed-order case.
+- **Review round 6 (structural; 2026-11-25; Codex, reproduced `<a first="Alice" last="Smith">`; fix-loop cap passed, so the rule is replaced, not patched; prompt, order, consent, egress, dormancy and the link side untouched).**
+  The substring-of-the-whole-name rule is replaced by an order- and position-free rule. Name parts: the participant name through the `nameKey` pipeline (numeric
+  references, named-reference shapes, tags, `normalizeUntrustedText`, NFKC, lower-case), split on every run of non-`\p{L}\p{N}` characters, each part keyed, empty
+  parts dropped; no part left means refuse (as before). Text pool: for every untrusted field of every placed item, the tag-stripped key and the raw key, plus the
+  concatenation of the fields. Hit (refuse `participants`, no provider call): the whole-name key is a substring of any pool key, OR every part key is a substring of
+  the pool (stripped or raw, any field, any order). Single-part names behave as before. Covered now: attribute-split names, reversed order (`Smith` ... `Alice`),
+  `Smith, Alice`, and a split with other fields between them; so the reversed-order and split-field items are REMOVED from the A7-S5 residual list (rounds 4 and 5).
+  Still A7-S5 rows: look-alike letters (Cyrillic or Greek homoglyphs) and accented named references (`Ren&eacute;e`).
+  Cost (accepted, defence in depth only; the upstream pseudonymiser is the primary control): a given name and a family name that both appear anywhere in the placed
+  items refuse the draft even if unrelated (e.g. `Kim` in a title and `Dana` in a body for participant `Dana Kim`); single-letter or very common parts raise it further.
+  The 13 short names (Anne, Eve, Leo ...) still pass on a body-free draft.
+
+**Review round 7 (recorded residual, not chased).** Codex reproduced that a single name token fragmented across markup attributes (`<a first="Ali" middle="ce" last="Smith">` for participant `Alice Smith`) still reaches the provider: the stripped key loses the fragments and the raw key interleaves attribute names. This is the fifth round of the real-name defence-in-depth family (rounds 3–7), well past the fix-loop cap; the order-free part rule of round 6 is the chosen structural design and is not extended further here. Why this is acceptable for a dormant merge: the upstream pseudonymiser (a7-08) is the primary control and real names never reach a model by design; the drafter is unreachable from any live path (no caller, `QUOKY_AGENT_WRITE_PROPOSALS` active refused, agent mode active refused); intra-token fragmentation across markup attributes is added to the A7-S5 smuggling rows next to look-alike letters and accented named references, and the drafter cannot be wired (A7-S4) or enabled before the A7-S5 gates pass with the owner's notice and yes for every run.

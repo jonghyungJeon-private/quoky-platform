@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A7-S3 drafter (2026-11-25; dormant: nothing reaches it, `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused)
+
+- **Added.** `agent/payload-drafter.ts` (prompt template `payload-draft-prompt.v1`, the `payload-draft.v1` schema caps, the a7-08 pseudonym remap,
+  mention neutraliser, link defanger, credential guard and card-spoof check in the ratified order) and `quarantinedDraft` / `payloadDraftReadiness` in
+  `quarantined-summary.ts`: one sealed M2 call through the existing selector, locality derivation, rule-① consent token and dispatch re-check. REMOTE
+  needs the bound consent; calendar is LOCAL only; Slack and Jira only under A5.
+- **Changed.** `launchCall` takes an `onText` hook (the summariser's behaviour is unchanged). The agent import allowlist adds `../card-spoof`.
+- **Tests.** Pure, call and boundary tests with stub providers (no model call, no eval).
+- **Unchanged.** No planner prompt, catalog, flag, port, card or connector write. The drafter eval (A7-S5) needs the owner's notice and yes; the A7 gold is
+  pending owner approval. See DECISIONS "A7-S3 drafter implementation note (2026-11-25)".
+
 ## Unreleased — A6-S3 two-line grant (2026-11-25; dormant: agent mode `active` still refused)
 
 - **Added.** The A6.5 rule in the summary grant producer: the owner's own two-line request (raw text with only an LF between exactly two non-empty
