@@ -293,12 +293,12 @@ export const AGENT_PROPOSAL_MARKER = '모델 작성 초안 — 아래 글자 그
 /**
  * Interpretation (open point): one card is one message body, and it must reach the owner as ONE message. A card whose whole text is
  * longer than this is refused, never cut ("a payload that cannot be shown whole is not carded"). Review round 1 (CA open point 1):
- * the bound is the smallest live adapter's single-message limit (Discord, `DISCORD_SAFE_LIMIT` 1900) less headroom (200 units) for the platform's
+ * the bound is the smallest live chat adapter's single-message limit (1900 UTF-16 units) less headroom (200 units) for the platform's
  * escaping of the one untrusted span (the query) and of a long list, so the card is never chunked (the unit is UTF-16, as the chunker counts; the re-shown card may gain the ~75-unit operations-screen
  * confirmation line, and the first card's own UNC-1 warning is inside the measured card) and the fenced payload is never
- * split or given an injected fence closer. `adapter-discord/src/delivery.test.ts` pins that a maximal card renders as one chunk.
+ * split or given an injected fence closer. That adapter's delivery test pins that a maximal card renders as one chunk.
  * Chosen over making the chunker lossless for a 3500-character card: a chunk boundary inside the quoted block would add a line break
- * the payload does not have, and the change would touch every Discord reply.
+ * the payload does not have, and the change would touch every reply of that adapter.
  */
 export const AGENT_PROPOSAL_CARD_MAX_CHARS = 1700;
 

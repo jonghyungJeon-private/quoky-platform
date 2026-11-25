@@ -95,7 +95,7 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
     // The card must show the payload whole BEFORE anything is prepared: a card that does not fit is never made (and no approval is left behind).
     const executionPhrase = documentedExecutionPhrase(connectorWriteExecutionGate('ISSUE_COMMENT'));
     const cardInput = { issueKey: key, text, banner: request.banner, named: request.named, nonTargets: request.nonTargets, executionPhrase };
-    // Measured in UTF-16 units (`.length`), the unit the Discord chunker counts against 1900 (review round 2): a code-point count under-counts emoji.
+    // Measured in UTF-16 units (`.length`), the unit the smallest live chat adapter's chunker counts against its single-message limit (review round 2): a code-point count under-counts emoji.
     const probe = plainTextOf(renderAgentProposalCard({ ...cardInput, remainingMs: PENDING_APPROVAL_TTL_MS }));
     if (probe.length > AGENT_PROPOSAL_CARD_MAX_CHARS) return refused('payload-too-large');
     const cardFields = { banner: request.banner, named: request.named, nonTargets: request.nonTargets };
