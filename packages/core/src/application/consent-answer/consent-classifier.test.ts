@@ -359,3 +359,34 @@ describe('A6 classifier wiring review round 2: required charge and the lazy chat
     for (const r of [hung, thrown, syncThrown]) expect(r.execute).not.toHaveBeenCalled();
   });
 });
+
+describe('A6 classifier wiring review round 3: the deadline is re-checked after chat resolution, before charge and before execute', () => {
+  const FACTS = { id: 'claude-cli', locality: 'REMOTE' as const };
+  const request = buildConsentClassifierRequest(summary(), 'ok');
+
+  it('a resolver that settles after the deadline: unclear, no charge, no provider call', async () => {
+    let clock = 0;
+    const charge = vi.fn(() => true);
+    const execute = vi.fn(async () => ({ text: '{"label":"yes"}' }));
+    const classify = createConsentAnswerClassifier({ select: async () => provider(execute), timeoutMs: 10, now: () => clock });
+    const label = await classify(request, { resolveChat: async () => { clock = 40; return FACTS; }, charge });
+    expect(label).toBe('unclear');
+    expect(charge).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('the order is resolve, deadline check, charge, deadline check, execute; a deadline passed during the charge means no call', async () => {
+    for (const lateInCharge of [false, true]) {
+      let clock = 0;
+      const order: string[] = [];
+      const execute = vi.fn(async () => { order.push('execute'); return { text: '{"label":"yes"}' }; });
+      const classify = createConsentAnswerClassifier({ select: async () => provider(execute), timeoutMs: 10, now: () => clock });
+      const label = await classify(request, {
+        resolveChat: async () => { order.push('resolve'); clock = 5; return FACTS; },
+        charge: () => { order.push('charge'); if (lateInCharge) clock = 10; return true; },
+      });
+      expect(order).toEqual(lateInCharge ? ['resolve', 'charge'] : ['resolve', 'charge', 'execute']);
+      expect(label).toBe(lateInCharge ? 'unclear' : 'yes');
+    }
+  });
+});

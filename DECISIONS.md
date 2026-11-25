@@ -39516,6 +39516,7 @@ text or version change (`consent-answer.v1`), no NL catalog change, no model cal
   (2) The chat fact travels as a thunk (`context.resolveChat`, with `chat` kept as the eager form for tests): `classifyStrict` no longer
   awaits it; the adapter resolves it only after the credential and malformed-question checks, inside the deadline fixed before
   `select()` (a late, throwing or never-settling resolution is `unclear`, with no charge and no call). Prompt and `on`-refusal unchanged.
+- **Review round 3 (Codex, 2026-11-25).** Deadline re-checked after chat resolution, before charge and before execute (injected clock; a late resolver no longer charges or calls).
 - **Recorded residual for the A6-S4 corpus (Chief Architect note).** "응 그리고 할 일 보여줘", "네 그리고 내 지라 이슈 보여줘", "yes and show my
   jira issues" lose yes-and-more: `detectWorkChatCommand` makes them control turns that forfeit the step before the gate (pre-existing, CS-2
   round 2). The corpus must record the expected outcome (forfeit, not yes-and-more) rather than count it as a miss.

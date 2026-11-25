@@ -167,6 +167,15 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     } catch {
       return 'unclear';
     }
+    // Lateness by the injected clock, never the timer alone; a throwing or non-finite read is late (fail closed).
+    const pastDeadline = (): boolean => {
+      try {
+        const t = now();
+        return !(Number.isFinite(t) && t < deadlineAtMs);
+      } catch {
+        return true;
+      }
+    };
     const controller = new AbortController();
     // The bound starts before provider selection and covers it, then the call (a stalled select is `unclear` too).
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -186,6 +195,8 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
         chat = await Promise.race([resolving, timeout]);
       }
       if (chat === undefined) return 'unclear';
+      // A resolver that settled after the deadline never reaches the charge or the call.
+      if (pastDeadline()) return 'unclear';
       const selecting = deps.select();
       selecting.catch(() => undefined);
       const provider = await Promise.race([selecting, timeout]);
@@ -193,7 +204,9 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
       // A6.4: a provider that does not declare the stronger tier is `unclear`, never run on its plain selection model.
       if (provider.supportsStrongerIntentSelection !== true) return 'unclear';
       // The cap charge is made here, immediately before the provider is actually called: every earlier `unclear` is free.
+      if (pastDeadline()) return 'unclear';
       if (context.charge() !== true) return 'unclear';
+      if (pastDeadline()) return 'unclear';
       const call = provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal: controller.signal, intentSelectionTier: 'stronger' });
       call.catch(() => undefined);
       const result = await Promise.race([call, timeout]);
