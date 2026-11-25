@@ -41,5 +41,11 @@ export interface ConsentChatFacts {
  */
 export interface ConsentClassifierContext {
   readonly chat?: ConsentChatFacts;
-  readonly charge?: () => boolean;
+  /**
+   * The lazy form of `chat`: resolved by the adapter only when a call is about to be made (after its no-call checks) and inside its
+   * deadline, so a late, throwing or never-settling resolution is `unclear`.
+   */
+  readonly resolveChat?: () => Promise<ConsentChatFacts | undefined>;
+  /** Required: a missing, non-function, throwing or not-exactly-`true` charge is refused (`unclear`, no provider call). */
+  readonly charge: () => boolean;
 }

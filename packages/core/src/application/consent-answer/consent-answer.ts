@@ -169,8 +169,8 @@ export function consentRerunText(reply: string): string {
 
 async function classifyStrict(classify: ConsentAnswerClassifier, request: ConsentClassifierRequest, turn: ConsentReplyTurn): Promise<ConsentAnswerLabel> {
   try {
-    const chat = turn.chat === undefined ? undefined : await turn.chat();
-    const context: ConsentClassifierContext = { ...(chat !== undefined ? { chat } : {}), ...(turn.charge !== undefined ? { charge: turn.charge } : {}) };
+    // The chat fact stays a thunk: the adapter resolves it after its no-call checks and inside its deadline.
+    const context: ConsentClassifierContext = { ...(turn.chat !== undefined ? { resolveChat: turn.chat } : {}), charge: turn.charge ?? (() => false) };
     return consentAnswerLabel(await classify(request, context));
   } catch {
     return 'unclear';

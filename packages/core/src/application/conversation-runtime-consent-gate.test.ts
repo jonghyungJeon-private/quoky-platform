@@ -491,7 +491,7 @@ describe('the consent gate: a turn a registered handler claims is `other` before
   it('the turn chat facts (the GENERAL_CHAT provider) reach the classifier call; a charged call happens once', async () => {
     const seen: unknown[] = [];
     let charged = 0;
-    const h = harness({ chargeModelCall: () => (charged += 1, true), classifier: { mode: 'on', classify: async (_request, context) => (seen.push(context?.chat), context?.charge?.(), 'yes') } });
+    const h = harness({ chargeModelCall: () => (charged += 1, true), classifier: { mode: 'on', classify: async (_request, context) => (seen.push(context?.chat ?? (await context?.resolveChat?.())), context?.charge?.(), 'yes') } });
     h.open();
     await h.send('그래 보내줘');
     expect(seen).toEqual([{ id: 'fake-chat', locality: 'REMOTE' }]);
@@ -508,7 +508,7 @@ describe('the consent gate: a turn a registered handler claims is `other` before
       await h.send(text, context);
       return { claims, chatFacts };
     };
-    const on = { classifier: { mode: 'on' as const, classify: async () => 'unclear' as const } };
+    const on = { classifier: { mode: 'on' as const, classify: async (_request: unknown, context?: { resolveChat?: () => Promise<unknown> }) => (await context?.resolveChat?.(), 'unclear' as const) } };
     for (const spied of [await run({}, '오늘 메일 보여줘', true), await run(on, '응', true), await run(on, '아니', true), await run(on, '오늘 메일 보여줘', false), await run(on, '그래 보내줘', true, CHANNEL)]) {
       expect(spied.claims).not.toHaveBeenCalled();
       expect(spied.chatFacts).not.toHaveBeenCalled();

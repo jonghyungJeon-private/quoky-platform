@@ -790,7 +790,6 @@ export abstract class ConversationRuntimeBase {
         return this.turnHandlerClaims(withoutReplyTo, () => true);
       },
       chat: () => this.consentChatFacts(session, actor),
-
     });
     if (outcome.kind === 'route') return undefined;
     // The consumed turn is a fixed note or the question, never chat: `quoky.lastTurn` must agree with `lastReply`.

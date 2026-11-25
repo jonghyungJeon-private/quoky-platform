@@ -154,8 +154,8 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     // Nothing credential-shaped leaves the process, as the reply the prompt quotes (tags blanked) and as received.
     const prompt = buildConsentClassifierPrompt(request);
     if (containsCredentialMaterial(request.reply) || containsCredentialMaterial(prompt)) return 'unclear';
-    const chat = context?.chat;
-    if (chat === undefined) return 'unclear';
+    if (typeof context?.charge !== 'function') return 'unclear';
+    if (context.chat === undefined && typeof context.resolveChat !== 'function') return 'unclear';
     // An empty question (no valid source or recipient) or one the prompt sanitiser would change is malformed: nothing is sent.
     if (request.question === '' || promptText(request.question) !== request.question) return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -178,6 +178,14 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     });
     timeout.catch(() => undefined);
     try {
+      let chat = context.chat;
+      // A lazy chat fact is resolved only now (every no-call check has passed), inside the deadline fixed above.
+      if (chat === undefined && context.resolveChat !== undefined) {
+        const resolving = context.resolveChat();
+        resolving.catch(() => undefined);
+        chat = await Promise.race([resolving, timeout]);
+      }
+      if (chat === undefined) return 'unclear';
       const selecting = deps.select();
       selecting.catch(() => undefined);
       const provider = await Promise.race([selecting, timeout]);
@@ -185,7 +193,7 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
       // A6.4: a provider that does not declare the stronger tier is `unclear`, never run on its plain selection model.
       if (provider.supportsStrongerIntentSelection !== true) return 'unclear';
       // The cap charge is made here, immediately before the provider is actually called: every earlier `unclear` is free.
-      if (context?.charge !== undefined && context.charge() !== true) return 'unclear';
+      if (context.charge() !== true) return 'unclear';
       const call = provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal: controller.signal, intentSelectionTier: 'stronger' });
       call.catch(() => undefined);
       const result = await Promise.race([call, timeout]);

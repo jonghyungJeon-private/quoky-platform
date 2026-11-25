@@ -231,7 +231,7 @@ describe('ConsentTurnGate: the classifier charges the per-actor model-call cap t
       classifier: {
         mode: 'on',
         classify: async (_request, context) => {
-          seen.push({ chat: context?.chat });
+          seen.push({ chat: context?.chat ?? (await context?.resolveChat?.()) });
           if (context?.charge?.() !== true) return 'unclear';
           onCall();
           return 'yes';
