@@ -188,6 +188,13 @@ export interface AiProvider {
    * never branches on a provider id.
    */
   readonly dataUse?: 'no-training';
+  /**
+   * ADR-0121 A6.4 (optional, additive): the provider declares that it honours `AiRequest.intentSelectionTier: 'stronger'`
+   * with a stronger selection model for an `INTENT_SELECTION` request (the hint alone is ignored by a provider without one).
+   * Only an explicit `true` counts; absent means no. A caller that must not run on the plain model (the consent-answer
+   * classifier) reads it as data and fails closed; Core never branches on a provider id.
+   */
+  readonly supportsStrongerIntentSelection?: boolean;
 
   /**
    * Health/auth probe. Ollama may be down; Claude/Codex may be unauthed. A probe that cannot reach a definitive answer

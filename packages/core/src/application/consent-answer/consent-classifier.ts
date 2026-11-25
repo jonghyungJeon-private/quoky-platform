@@ -1,9 +1,13 @@
 import { Capability } from '../../domain';
 import type { AiProvider } from '../../ports/ai-provider.port';
 import { containsCredentialMaterial } from '../credential-guard';
-import type { ConsentAnswerClassifier, ConsentAnswerLabel, ConsentClassifierRequest } from './consent-answer';
-import { CONSENT_ANSWER_LABELS } from './consent-answer';
+import type { AiExecutionLocality } from '../../ports/ai-provider.port';
+import { nlSameEgress } from '../nl-routing/selection-egress';
+import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentAnswerLabel, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
 import type { ConsentPending } from './consent-pending';
+
+/** The classifier call as {@link answerConsentTurn} takes it (structurally `ConsentAnswerClassifier`; declared here to keep imports one-way). */
+type Classifier = (request: ConsentClassifierRequest) => Promise<ConsentAnswerLabel>;
 
 /**
  * ADR-0121 amendment A6, slice A6-S2 "consent-classifier": the one bounded model call that reads a worded reply to a pending
@@ -32,14 +36,15 @@ export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
  * placeholders. Pure. (The owner-facing question text of the rule-① confirm slice must render the same template with the
  * real values; A6-S4 judges the request, A6.9.)
  */
-export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly string[] }): string {
+export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
   const ko = pending.language === 'ko';
   if (pending.kind === 'topic-consent') {
     return ko
       ? `${CONSENT_TOPIC_PLACEHOLDER} 주제로 ${pending.recipient}에게 요청을 보낼까요? (응/아니)`
       : `Shall I send a request about ${CONSENT_TOPIC_PLACEHOLDER} to ${pending.recipient}? (yes/no)`;
   }
-  const noun = (pending.sources ?? []).join(', ');
+  // A closed set (`CONSENT_SOURCES`): a value outside it never becomes question text (the producer refuses it; this is the second guard).
+  const noun = (pending.sources ?? []).filter(isConsentSource).join(', ');
   return ko
     ? `${noun} ${CONSENT_COUNT_PLACEHOLDER}건을 ${pending.recipient}에 보내 요약할까요? (응/아니)`
     : `Shall I send ${CONSENT_COUNT_PLACEHOLDER} ${noun} item(s) to ${pending.recipient} to summarise them? (yes/no)`;
@@ -93,21 +98,26 @@ export function buildConsentClassifierPrompt(request: ConsentClassifierRequest):
 }
 
 /**
- * Strict: exactly `{"label": "<closed label>"}` (whitespace between tokens, surrounding whitespace and one ```json fence
- * allowed), matched as text so a duplicate key, an extra key or an unknown label is `unclear`.
+ * Strict: exactly one JSON object `{"label": "<closed label>"}`, optionally surrounded by ASCII JSON whitespace (space, tab,
+ * CR, LF; also allowed between tokens), matched as text so a duplicate key, an extra key, an unknown label, a code fence,
+ * any other whitespace (NBSP), a BOM, a format character or trailing text is `unclear`.
  */
+const STRICT_OUTPUT = /^[ \t\r\n]*\{[ \t\r\n]*"label"[ \t\r\n]*:[ \t\r\n]*"([a-z-]+)"[ \t\r\n]*\}[ \t\r\n]*$/;
 export function parseConsentClassifierOutput(raw: string): ConsentAnswerLabel {
-  let text = raw.trim();
-  const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/iu.exec(text);
-  if (fenced !== null) text = (fenced[1] as string).trim();
-  const match = /^\{\s*"label"\s*:\s*"([a-z-]+)"\s*\}$/u.exec(text);
-  const label = match?.[1];
+  const label = STRICT_OUTPUT.exec(raw)?.[1];
   return label !== undefined && (CONSENT_ANSWER_LABELS as readonly string[]).includes(label) ? (label as ConsentAnswerLabel) : 'unclear';
 }
 
 export interface ConsentClassifierDeps {
   /** Resolves the provider for `Capability.INTENT_SELECTION` (the composition root's router; pinned to the Claude CLI, ADR-0120 D2). */
   readonly select: () => Promise<AiProvider>;
+  /**
+   * No-new-egress (ADR-0120 D6/D8, as the help-scope classifier): the chat provider id and declared locality this turn's chat
+   * reaches. The call goes only to a provider of the same family and locality; a missing id or any other provider is `unclear`
+   * without a call.
+   */
+  readonly chatProviderId?: string;
+  readonly chatProviderLocality?: AiExecutionLocality;
   readonly timeoutMs?: number;
 }
 
@@ -116,23 +126,31 @@ export interface ConsentClassifierDeps {
  * {@link CONSENT_CLASSIFIER_TIMEOUT_MS}. Every failure (no provider, a throw, a timeout, a credential-shaped reply,
  * malformed output) is `unclear`; nothing here can return `yes` except a clean `{"label":"yes"}`. It never logs or returns the reply.
  */
-export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): ConsentAnswerClassifier {
+export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Classifier {
   const timeoutMs = deps.timeoutMs ?? CONSENT_CLASSIFIER_TIMEOUT_MS;
   return async (request) => {
     // Nothing credential-shaped leaves the process, as the reply the prompt quotes (tags blanked) and as received.
     const prompt = buildConsentClassifierPrompt(request);
     if (containsCredentialMaterial(request.reply) || containsCredentialMaterial(prompt)) return 'unclear';
+    if (deps.chatProviderId === undefined) return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
+    // The bound starts before provider selection and covers it, then the call (a stalled select is `unclear` too).
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error('consent classifier timeout'));
+      }, timeoutMs);
+      timer.unref();
+    });
+    timeout.catch(() => undefined);
     try {
-      const provider = await deps.select();
-      const timeout = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new Error('consent classifier timeout'));
-        }, timeoutMs);
-        timer.unref();
-      });
+      const selecting = deps.select();
+      selecting.catch(() => undefined);
+      const provider = await Promise.race([selecting, timeout]);
+      if (nlSameEgress(provider, deps.chatProviderId, deps.chatProviderLocality) !== 'same') return 'unclear';
+      // A6.4: a provider that does not declare the stronger tier is `unclear`, never run on its plain selection model.
+      if (provider.supportsStrongerIntentSelection !== true) return 'unclear';
       const call = provider.execute({ capability: Capability.INTENT_SELECTION, prompt, timeoutMs, signal: controller.signal, intentSelectionTier: 'stronger' });
       call.catch(() => undefined);
       const result = await Promise.race([call, timeout]);

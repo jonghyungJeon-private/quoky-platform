@@ -228,6 +228,11 @@ describe('ClaudeCliProvider', () => {
     };
     const BASE = ['--strict-mcp-config', '--no-session-persistence', '--setting-sources', '', '--output-format', 'json'];
 
+    it('declares the stronger tier (ADR-0121 A6.4); Codex does not', () => {
+      expect(new ClaudeCliProvider('claude').supportsStrongerIntentSelection).toBe(true);
+      expect((new CodexCliProvider('codex') as { supportsStrongerIntentSelection?: boolean }).supportsStrongerIntentSelection).toBeUndefined();
+    });
+
     it('INTENT_SELECTION with the tier runs on sonnet at effort low; the label names the model used', async () => {
       const calls: Array<{ args: string[] }> = [];
       const claude = new ClaudeCliProvider('claude', { runner: okRunner(calls) });

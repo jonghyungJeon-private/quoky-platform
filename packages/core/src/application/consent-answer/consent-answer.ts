@@ -2,6 +2,7 @@ import type { InboundQuotedRange } from '../../domain';
 import { hasUntrustedSpanMarker } from '../agent/summary-grant';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { buildConsentClassifierRequest } from './consent-classifier';
+import { CONSENT_ANSWER_LABELS, type ConsentAnswerLabel, type ConsentClassifierRequest } from './consent-labels';
 import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, ConsentPendingStore, ConsentScope } from './consent-pending';
 
 /**
@@ -51,20 +52,12 @@ export const CONSENT_ANSWER_CODES = [
 ] as const;
 export type ConsentAnswerCode = (typeof CONSENT_ANSWER_CODES)[number];
 
-/** The classifier's closed labels (A6.3 step 3 as amended by AM-2). */
-export const CONSENT_ANSWER_LABELS = ['yes', 'yes-and-more', 'no', 'other', 'unclear'] as const;
-export type ConsentAnswerLabel = (typeof CONSENT_ANSWER_LABELS)[number];
+export { CONSENT_ANSWER_LABELS };
+export type { ConsentAnswerLabel, ConsentClassifierRequest };
 
 /** a6-05 (R5): a reply to a pending consent holds at most 3 non-empty lines and 60 characters. */
 export const CONSENT_REPLY_MAX_LINES = 3;
 export const CONSENT_REPLY_MAX_CHARS = 60;
-
-/** The content-free classifier request (A6.4): never an item, a topic, a count, a source content or the history. */
-export interface ConsentClassifierRequest {
-  /** The fixed question text with the item count / topic as placeholders (A6-S2, `buildConsentClassifierRequest`). */
-  readonly question: string;
-  readonly reply: string;
-}
 
 /** The classifier call (A6-S2). Its result is read strictly: only a closed label string counts. */
 export type ConsentAnswerClassifier = (request: ConsentClassifierRequest) => Promise<unknown>;

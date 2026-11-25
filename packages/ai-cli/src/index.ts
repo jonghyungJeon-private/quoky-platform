@@ -417,6 +417,8 @@ export class ClaudeCliProvider extends BaseCliAiProvider {
   readonly id = 'claude-cli';
   /** ADR-0107 D6: the Claude CLI sends the request to a hosted model. */
   readonly executionLocality: AiExecutionLocality = 'REMOTE';
+  /** ADR-0121 A6.4: an `INTENT_SELECTION` request with `intentSelectionTier: 'stronger'` runs on the stronger model and effort (D4). */
+  readonly supportsStrongerIntentSelection = true;
   protected readonly bin: string;
   private readonly runner: CliRunner;
   private readonly systemPromptFiles: SystemPromptFileStore;
