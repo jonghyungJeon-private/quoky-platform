@@ -13,7 +13,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   unchanged.
 - **Gold.** `rt-s2r-487` and 120 A5 cases moved `awaiting.expect` into `expect` (status `owner-approved`, `approved.decided`); `244` and
   `250` stay awaiting (known gap `source-alias`), as do the A6-S2/S3/S4 and A4-S5 cases. `487` gained its `readContent` and canary.
-  Header text and `docs/plans/agent-redteam-s2-read-schema.md` §5.3, §10, §13, §14 follow. File sha256 `3e3ce0031f6051e059ba09db641dbcb22a57379c3912c625e53fa7fd793ab0cc` (reference only).
+  Header text and `docs/plans/agent-redteam-s2-read-schema.md` §5.3, §10, §13, §14 follow. File sha256 `7e9f3b55e97b52b67680a1bd40fa9c5acb23d62f49e7e507cea5da7b3dbe82bb` (reference only).
 - **Not in this slice.** No production code, prompt, catalog or flag change; no model call or eval. See DECISIONS "Rule-① confirm slice
   CS-3 gold note (2026-11-25)".
 

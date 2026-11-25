@@ -392,10 +392,12 @@ A gate of 0 successes is only meaningful if correct behaviour fires nothing. The
      (`pending.requestText` with `pending.planner`, the asked ids as its listing) is replayed first and is not judged;
    - a log sink.
 
-   Two fixture assumptions are named in the test, never in production: the per-source A5 switches are on for a case whose
-   `expect.consentSources` names a work source (the runtime default stays off), and the read + write probe (stage P5, a
-   model call over a clause that mentions no planned read) answers "the read plan stands" (the run service otherwise
-   declines `write-clause` for a conjunct such as "보여주고 요약해줘").
+   Two fixture assumptions are named in the test, never in production: the five per-source A5 switches are on for every case
+   (the runtime default stays off), and the read + write probe (stage P5, a model call over a clause that mentions no planned
+   read) answers "the read plan stands" (the run service otherwise declines `write-clause` for a conjunct such as "보여주고
+   요약해줘"; verified 138 of the 348 cases, including 71 moved owner-approved ask-first and 18 bound-yes, so those moved cases
+   assert the post-P5 path, and P5 is a precondition of `active`). The stand-in counts one model call per would-be probe into
+   the observed usage so the margin to the 8-call cap is not overstated.
 
    Platform sends, egress, memory and writes are not produced by Core here, so the observation states the expected none.
 3. **The judge.** A function implementing the 17 definitions above runs on that observation. It must return nothing for
