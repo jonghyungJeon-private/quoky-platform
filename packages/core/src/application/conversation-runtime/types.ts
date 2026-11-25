@@ -3,6 +3,7 @@ import { type ConnectorWriteFlow } from '../connector-writes/connector-write-flo
 import { type IntentClassifyContext } from '../intent-classifier';
 import { type NlSelectionService } from '../nl-routing/nl-selection-service';
 import { type AgentRunService } from '../agent/agent-run-service';
+import { type ConsentTurnGate } from '../consent-answer/consent-turn-gate';
 import { type SurfaceGate } from '../surface-grants/surface-gate';
 import { type SurfaceGrantService } from '../surface-grants/surface-grant-service';
 import { type ChunkItemsMode } from '../item-summary/s3-item-summary';
@@ -98,6 +99,11 @@ export interface TurnResult {
    * only by the work path. Transient — never persisted on Session; `QuokyCore` hands it to feedback capture.
    */
   workFacts?: TurnWorkFacts;
+  /**
+   * Rule ① confirm slice (CS-2, AM-2): a message the facade runs ONCE as a new ordinary turn after delivering this reply (depth 1;
+   * the rerun turn never carries one). Set only by the consent gate for a `yes-and-more` answer; absent otherwise. Transient.
+   */
+  rerun?: InboundMessage;
 }
 
 /** How the runtime interprets a user message while a pending approval exists (ADR-0032 §6). */
@@ -932,6 +938,12 @@ export interface ConversationRuntimeOptions {
    * deps key: the ConversationRuntimeDeps baseline is unchanged.
    */
   readonly longItemSummary?: LongItemSummaryOptions;
+  /**
+   * ADR-0121 SR-1 rule ① confirm slice (CS-2): the runtime gate that lets the owner's next DM turn answer a pending summary
+   * consent. Composed only with `QUOKY_SUMMARY_CONSENT=on`; absent (the default) keeps every turn byte-identical. An option, not
+   * a deps key: the ConversationRuntimeDeps baseline (38) is unchanged.
+   */
+  readonly consentTurnGate?: ConsentTurnGate;
 }
 
 /** ADR-0124 Part L C5a-2: how the runtime runs S3 (see {@link ConversationRuntimeOptions.longItemSummary}). */

@@ -7,8 +7,8 @@
  *   this switch: an agent summary never reaches a `REMOTE` model without the owner's bound yes, so with `off` the agent path
  *   is `LOCAL` or listing-only.
  * - Exactly `on`: a summarize step whose selector would pick a `REMOTE` model asks first (the question and a pending consent
- *   step). It is inert while `QUOKY_AGENT_MODE=active` is refused at startup and the agent read ports are empty. The composition
- *   of the shared pending store and the runtime gate that answers it are the CS-2 slice.
+ *   step). It also composes the one shared pending store and the runtime gate that answers it (CS-2, `features/agent.providers.ts`). It is
+ *   inert while `QUOKY_AGENT_MODE=active` is refused at startup and the agent read ports are empty.
  * - Anything else is `SUMMARY_CONSENT_INVALID`.
  */
 

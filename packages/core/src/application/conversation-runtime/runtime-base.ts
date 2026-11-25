@@ -1,7 +1,10 @@
 import { helpTopicOfLines } from '../help-intent/help-intent-turn-handler';
 import { noticeLanguage } from '../chat-policy/internal-action-vocabulary';
 import { imageUnderstandingPolicyOf, type ImageUnderstandingLocalitiesResolver, type ImageUnderstandingPolicy } from '../image-understanding';
-import { outboundMessage } from '../message-rendering';
+import { isDirectConversation, outboundMessage } from '../message-rendering';
+import { detectConversationControl } from '../conversation-commands';
+import { parseSurfaceGrantConfirm, parseSurfaceGrantPhrase } from '../surface-grants/surface-grant-phrases';
+import { ConsentTurnGate } from '../consent-answer/consent-turn-gate';
 import { isPendingCancelUtterance } from '../approval-decision';
 import { ApprovalDecisionService, type ApprovalDecisionInput, type ApprovalDecisionReply, type PendingApprovalLookup } from '../approval-decision-service';
 import { safeRequestId, toSafeError } from '../safe-error';
@@ -61,6 +64,10 @@ export abstract class ConversationRuntimeBase {
   protected readonly gitMergeEnabled: boolean;
   /** ADR-0124 Part L C5a-2: the S3 options (absent = every summary on today's path). */
   protected readonly longItemSummary: LongItemSummaryOptions | undefined;
+  /** Rule ① confirm slice (CS-2): the consent gate (absent = every turn is routed exactly as before). */
+  protected readonly consentGate: ConsentTurnGate | undefined;
+  /** The rerun messages the gate made (by identity): a rerun is a new ordinary turn that never reaches the gate or reruns again (depth 1). */
+  protected readonly consentReruns = new WeakSet<InboundMessage>();
   /**
    * ADR-0111 amendment A2: which declared provider localities may receive image bytes (default `LOCAL` only) — fixed
    * at composition, or resolved per image turn from the effective selection (runtime switching).
@@ -127,6 +134,7 @@ export abstract class ConversationRuntimeBase {
     this.gitRemoteEnabled = options.gitRemoteEnabled ?? false;
     this.gitMergeEnabled = options.gitMergeEnabled ?? false;
     this.longItemSummary = options.longItemSummary;
+    this.consentGate = options.consentTurnGate;
     const localities = options.imageUnderstandingLocalities;
     this.imagePolicy = typeof localities === 'function' ? localities : imageUnderstandingPolicyOf(localities);
     this.approvalDecisions = new ApprovalDecisionService(
@@ -692,6 +700,75 @@ export abstract class ConversationRuntimeBase {
     if (wanted === undefined) return reply;
     const language = languageOf(text);
     return reply === renderAgentSwitchReply(wanted, language) ? `${reply}\n${renderSurfaceSwitchSuffix(wanted, language)}` : reply;
+  }
+
+  /**
+   * Rule ① confirm slice (CS-2): the facts an `active` agent turn needs to open a consent question (`AgentActiveTurn`): the
+   * conversation the question is asked in and whether another owner step is pending (W2). The runtime supplies them; the run
+   * service never derives them.
+   */
+  protected agentConsentFacts(message: InboundMessage, ownerStepPending: boolean): { readonly conversationKey: string; readonly ownerStepPending: boolean } {
+    return { conversationKey: ConsentTurnGate.conversationKeyOf(message.context), ownerStepPending };
+  }
+
+  /**
+   * Whether the turn is a control command the consent gate must never read as an answer (A6.2, ARCHITECTURE.md section 12): the
+   * conversation control, the kill-switch phrase and its near miss, and the channel-grant phrase and confirmation. Only the
+   * existing pure parsers decide; no word list lives here.
+   */
+  protected isConsentControlTurn(message: InboundMessage): boolean {
+    return (
+      detectConversationControl(message.text) !== null ||
+      parseActionSwitchPhrase(message.text) !== undefined ||
+      nearMissActionSwitchPhrase(message.text) !== undefined ||
+      parseSurfaceGrantPhrase(message) !== undefined ||
+      parseSurfaceGrantConfirm(message)
+    );
+  }
+
+  /**
+   * Rule ① confirm slice (CS-2): the consent gate for one owner turn. `undefined`: route the turn as usual (no gate, a channel turn,
+   * not an answer, an ordinary cancel, or a rerun of a bound yes). Otherwise the turn is consumed here: the owner's turn is
+   * recorded, the history keeps only the gate's fixed note (never the summary), and a `yes-and-more` rerun rides on the result
+   * for the facade to deliver once after the reply.
+   */
+  protected async handleConsentGate(message: InboundMessage, session: Session, actor: Actor, ownerStepPending: boolean, control: boolean): Promise<TurnResult | undefined> {
+    const gate = this.consentGate;
+    if (gate === undefined || this.consentReruns.has(message)) return undefined;
+    const outcome = await gate.handle({
+      actor,
+      conversationKey: ConsentTurnGate.conversationKeyOf(message.context),
+      direct: isDirectConversation(message.context),
+      text: message.text,
+      attachmentCount: message.attachments?.length ?? 0,
+      ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+      ownerStepPending,
+      control: control || this.isConsentControlTurn(message),
+    });
+    if (outcome.kind === 'route') return undefined;
+    const userMemory = await this.deps.memory.recordShortTerm(message, session.id);
+    this.nlTurnFacts.set(message, { sessionId: session.id, actorId: actor.id, memoryId: userMemory.id });
+    await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
+    const result = this.responded(session, outboundMessage(message.context, outcome.text));
+    if (outcome.rerunText === undefined) return result;
+    // AM-2: the rest of a `yes-and-more` reply is a NEW ordinary turn (its own run); the bound step is already used.
+    const { attachments: _attachments, quotedRanges: _quoted, formatting: _formatting, replyTo: _replyTo, ...rest } = message;
+    const rerun: InboundMessage = { ...rest, id: `${message.id}:rerun`, text: outcome.rerunText };
+    this.consentReruns.add(rerun);
+    return { ...result, rerun };
+  }
+
+  /**
+   * The kill switch: a handled stop phrase voids every pending consent and drops the continuation records (fail closed: also when
+   * the save itself reported nothing, since the owner asked to stop). No gate, nothing to void.
+   */
+  protected voidConsentsOnStop(text: string): void {
+    if (this.consentGate === undefined || parseActionSwitchPhrase(text) !== 'stopped') return;
+    try {
+      this.consentGate.voidAll();
+    } catch {
+      // The gate is fail closed on its own; a stop turn is never broken by it.
+    }
   }
 
   protected responded(session: Session, reply: OutboundMessage, workFacts?: TurnWorkFacts): TurnResult {

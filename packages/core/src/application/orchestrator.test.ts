@@ -115,4 +115,31 @@ describe('QuokyCore.handleInboundMessage — F7-D backstop', () => {
     // No error path taken.
     expect(rec.logs.some((l) => l.level === 'error')).toBe(false);
   });
+  it('CS-2 rerun: the first reply is delivered, then the rerun message is handled once as a new turn; a rerun carried by the rerun result is never honoured (depth 1)', async () => {
+    const { platform, rec } = makePlatform();
+    const rerun2 = { ...messageOf('세 번째'), id: 'm-3' };
+    const rerun1 = { ...messageOf('두 번째'), id: 'm-2' };
+    const seen: string[] = [];
+    const runtime = makeRuntime(async (message) => {
+      seen.push(message.id);
+      const reply: OutboundMessage = { context: CTX, text: `답: ${message.text}` };
+      if (message.id === 'm-9151') return { status: 'RESPONDED', reply, sessionId: 's', rerun: rerun1 };
+      return { status: 'RESPONDED', reply, sessionId: 's', rerun: rerun2 };
+    });
+    const core = new QuokyCore({ runtime, platform, logger: makeLogger(rec) });
+    await core.handleInboundMessage(messageOf('첫 번째'));
+    expect(seen).toEqual(['m-9151', 'm-2']);
+    expect(rec.sends.map((m) => m.text)).toEqual(['답: 첫 번째', '답: 두 번째']);
+  });
+
+  it('CS-2 rerun: no rerun field, no second turn', async () => {
+    const { platform, rec } = makePlatform();
+    const calls: string[] = [];
+    const runtime = makeRuntime(async (message) => {
+      calls.push(message.id);
+      return { status: 'RESPONDED', reply: { context: CTX, text: 'x' }, sessionId: 's' };
+    });
+    await new QuokyCore({ runtime, platform, logger: makeLogger(rec) }).handleInboundMessage(messageOf('a'));
+    expect(calls).toEqual(['m-9151']);
+  });
 });

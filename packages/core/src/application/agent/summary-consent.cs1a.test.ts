@@ -368,7 +368,7 @@ interface Service {
   readonly reads: AgentReadRequest[];
   readonly logs: Array<{ event: string; fields?: LogFields }>;
 }
-function service(options: { readonly locality?: AiExecutionLocality; readonly withStore?: boolean; readonly withLabel?: boolean } = {}): Service {
+function service(options: { readonly locality?: AiExecutionLocality; readonly withStore?: boolean; readonly withLabel?: boolean; readonly caps?: { readonly perHour: number; readonly perDay: number } } = {}): Service {
   const m2: AiRequest[] = [];
   const reads: AgentReadRequest[] = [];
   const logs: Array<{ event: string; fields?: LogFields }> = [];
@@ -413,6 +413,7 @@ function service(options: { readonly locality?: AiExecutionLocality; readonly wi
       readers: { 'mail.list': mail },
       summarizer: new CapabilityRouter(new AiProviderManager([summarizer]), PERMISSIVE),
       released: true,
+      ...(options.caps !== undefined ? { caps: options.caps } : {}),
       ...(options.withStore !== false ? { consentStore: store } : {}),
       ...(options.withLabel !== false ? { recipientLabel: label } : {}),
     }),
@@ -535,6 +536,38 @@ describe('CS-1a: AgentRunService opens the pending step and keeps the continuati
     internal.rememberContinuation('stale', record(5_000_000));
     expect(s.service.takeSummaryContinuation('stale', 5_000_000 + 600_000)).toBeUndefined();
     expect(s.service.takeSummaryContinuation('stale', 5_000_000)).toBeUndefined();
+  });
+
+  it('CS-2: no step opens when the continuation could not be admitted (per-actor run cap reached by the asking run), and the yes is never spent on it', async () => {
+    const s = service({ caps: { perHour: 1, perDay: 10 } });
+    const reply = replyOf(await s.service.runActive(turn(s), async () => CHAT));
+    expect(reply.parts.some((part) => part.kind === 'consent')).toBe(false);
+    expect(s.store.stateOf(OWNER_SCOPE)).toBeUndefined();
+    expect((s.service as unknown as { continuations: Map<string, unknown> }).continuations.size).toBe(0);
+    expect(s.logs.find((log) => log.event === 'agent_run.consent')?.fields).toMatchObject({ outcome: 'declined', reason: 'no-call-left' });
+    // With room for one more run the same turn asks.
+    const roomy = service({ caps: { perHour: 2, perDay: 10 } });
+    expect(replyOf(await roomy.service.runActive(turn(roomy), async () => CHAT)).parts.some((part) => part.kind === 'consent')).toBe(true);
+  });
+
+  it('CS-2: fewer than one model call left in the rolling hour after the asking run is not admissible; exactly one is (the asking run counts what it used, not its admission charge)', () => {
+    const s = service();
+    const internal = s.service as unknown as {
+      modelCalls: Map<string, Array<{ at: number; count: number }>>;
+      inFlightCharge: Map<string, { at: number; count: number }>;
+      continuationAdmissible(actorId: string, nowMs: number, thisRunCalls: number): boolean;
+    };
+    const now = Date.now();
+    const own = { at: now, count: 40 };
+    internal.modelCalls.set('owner', [{ at: now - 1_000, count: 18 }, own]);
+    internal.inFlightCharge.set('owner', own);
+    // 18 earlier calls plus the asking run's 41 actually used = 59 of 60: one call left.
+    expect(internal.continuationAdmissible('owner', now, 41)).toBe(true);
+    // 18 plus 42 = 60: none left. The 40 charged at admission is not what counts.
+    expect(internal.continuationAdmissible('owner', now, 42)).toBe(false);
+    // An older entry outside the rolling hour does not count.
+    internal.modelCalls.set('owner', [{ at: now - 3_700_000, count: 59 }, own]);
+    expect(internal.continuationAdmissible('owner', now, 42)).toBe(true);
   });
 
   it('voidAllSummaryConsents drops the records and voids the open step', async () => {

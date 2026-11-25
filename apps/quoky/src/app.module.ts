@@ -73,6 +73,7 @@ import type {
   ConnectorWriteFlow,
   NlSelectionService,
   AgentRunService,
+  ConsentTurnGate,
   AiProvider,
   CommandRunner,
   ConnectorProvider,
@@ -140,7 +141,7 @@ import { MAIL_DELIVERY_OBSERVERS, createMailProviders } from './features/mail.pr
 import { createMemoryProviders } from './features/memory.providers';
 import { NL_SELECTION, createNlSelectionProviders } from './features/nl-selection.providers';
 import { SURFACE_GRANTS, createSurfaceGrantsProviders, type SurfaceGrantsComposition } from './features/surface-grants.providers';
-import { AGENT_RUNS, createAgentProviders } from './features/agent.providers';
+import { AGENT_RUNS, CONSENT_TURN_GATE, createAgentProviders } from './features/agent.providers';
 import { remindersProviders, withReminderChannelDelivery } from './features/reminders.providers';
 import { turnHandlersProvider } from './features/turn-handlers.providers';
 import { workChatProviders } from './features/work-chat.providers';
@@ -721,6 +722,7 @@ const application: Provider[] = [
       nlSelection: NlSelectionService | undefined,
       surfaceGrants: SurfaceGrantsComposition | undefined,
       agentRuns: AgentRunService | undefined,
+      consentTurnGate: ConsentTurnGate | undefined,
       platform: PlatformAdapter,
     ) => {
       // ADR-0124 Part L C5a-2: the S3 option (absent while QUOKY_CHUNK_ITEMS is off). Clause PN: its one progress notice
@@ -817,6 +819,8 @@ const application: Provider[] = [
         // operations-UI default → configuration) is the cloud (Claude) image provider — resolved per image turn.
         imageUnderstandingLocalities: (context) => providerSelection.imageLocalities(context),
         ...(longItemSummary !== undefined ? { longItemSummary } : {}),
+        // ADR-0121 rule ① (CS-2): the consent gate, only with QUOKY_SUMMARY_CONSENT=on; absent, every turn is routed exactly as before.
+        ...(consentTurnGate !== undefined ? { consentTurnGate } : {}),
       });
     },
     inject: [
@@ -850,6 +854,7 @@ const application: Provider[] = [
       { token: NL_SELECTION, optional: true },
       { token: SURFACE_GRANTS, optional: true },
       { token: AGENT_RUNS, optional: true },
+      { token: CONSENT_TURN_GATE, optional: true },
       PLATFORM_ADAPTER,
     ],
   },
@@ -945,7 +950,7 @@ const features: Provider[] = [
     telegramOwnerIds: config.telegram?.ownerIds ?? [],
   })),
   // ADR-0121 S2 (P1): the bounded read agent (QUOKY_AGENT_MODE, default off; `active` refused until the D11 gates).
-  ...createAgentProviders(() => ({ agent: config.agent, timeoutMs: config.nlSelection.timeoutMs, timeZone: config.reminders.timeZone })),
+  ...createAgentProviders(() => ({ agent: config.agent, timeoutMs: config.nlSelection.timeoutMs, timeZone: config.reminders.timeZone, summaryConsent: config.summaryConsent.mode })),
   turnHandlersProvider,
 ];
 

@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### Rule-① confirm slice CS-2 runtime gate implemented, live effect none (2026-11-25, branch `claude/v5-cs2-consent-turn-gate`)
+
+- `ConsentTurnGate` answers a pending summary consent on the owner's next DM turn and runs the CS-1b continuation; `TurnResult.rerun`
+  is delivered once by `QuokyCore`; stop phrases void the pending steps. Composed only with `QUOKY_SUMMARY_CONSENT=on` (one shared store,
+  classifier off); absent, the runtime is byte-identical. Still inert: agent mode `active` is refused, `runActive` has no dispatch and the
+  read ports are empty. Next: CS-3 (gold). See DECISIONS "Rule-① confirm slice CS-2 implementation note (2026-11-25)".
+
 ### r-07 mail and Drive numeric limit implemented (2026-11-24, branch `claude/v5-r07-list-count`)
 
 - `mail.list` and `drive.files` take the shared `limit` arg (1..10); the handlers pass it to the existing reader bound, the

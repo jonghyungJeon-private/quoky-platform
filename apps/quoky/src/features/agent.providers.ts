@@ -1,5 +1,5 @@
 import type { Provider } from '@nestjs/common';
-import { AgentRunService, CapabilityRouter, STORAGE_PROVIDER, type AgentReadPorts, type Logger, type StorageProvider } from '@quoky/core';
+import { AgentRunService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import type { AgentConfig } from '../agent/agent-config';
 import { summaryRecipientLabel } from '../agent/summary-recipient-label';
@@ -33,6 +33,16 @@ export function createAgentReadPorts(): AgentReadPorts {
 }
 
 export const AGENT_RUNS = Symbol('AgentRuns');
+/** ADR-0121 rule ① (CS-2): the one process-wide store of pending consent steps; `undefined` unless `QUOKY_SUMMARY_CONSENT=on`. */
+export const SUMMARY_CONSENT_STORE = Symbol('SummaryConsentStore');
+/** ADR-0121 rule ① (CS-2): the runtime gate that answers a pending consent; `undefined` unless `QUOKY_SUMMARY_CONSENT=on`. */
+export const CONSENT_TURN_GATE = Symbol('ConsentTurnGate');
+
+/**
+ * The one clock of a consent step: the gate's `now` and the run service's `createdAtMs` clock (its default, `Date.now`) are the same
+ * domain, so the 600 s window and the continuation record's `atMs >= createdAtMs` check cannot drift (CS-1b open point).
+ */
+const summaryConsentClock = (): number => Date.now();
 
 export interface AgentFeatureConfig {
   readonly agent: AgentConfig;
@@ -40,6 +50,8 @@ export interface AgentFeatureConfig {
   readonly timeoutMs: number;
   /** `QUOKY_TIMEZONE`. */
   readonly timeZone: string;
+  /** `QUOKY_SUMMARY_CONSENT` (rule ① confirm slice). Absent or `off`: no store, no gate, the runtime is byte-identical. */
+  readonly summaryConsent?: 'off' | 'on';
 }
 
 export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, options: { readonly logger?: Logger } = {}): Provider[] {
@@ -47,7 +59,7 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
   return [
     {
       provide: AGENT_RUNS,
-      useFactory: (router: CapabilityRouter, storage: StorageProvider): AgentRunService => {
+      useFactory: (router: CapabilityRouter, storage: StorageProvider, consentStore?: ConsentPendingStore): AgentRunService => {
         const config = resolveConfig();
         return new AgentRunService({
           mode: config.agent.mode,
@@ -66,13 +78,35 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
                 summarizer: router,
                 // ADR-0121 rule ① (CS-1a): the closed recipient-name map; the pending store and the gate are composed by CS-2.
                 recipientLabel: summaryRecipientLabel,
+                // CS-2: the shared pending store (only with QUOKY_SUMMARY_CONSENT=on); absent, a REMOTE summary is never asked and never sent.
+                ...(consentStore !== undefined ? { consentStore } : {}),
                 // ADR-0121 A5-S1: the per-source summary switches (default off); an empty list leaves the key out.
                 ...(config.agent.summarySources.length > 0 ? { workSummarySources: config.agent.summarySources } : {}),
               }
             : {}),
         });
       },
-      inject: [CapabilityRouter, STORAGE_PROVIDER],
+      inject: [CapabilityRouter, STORAGE_PROVIDER, { token: SUMMARY_CONSENT_STORE, optional: true }],
+    },
+    {
+      provide: SUMMARY_CONSENT_STORE,
+      useFactory: (): ConsentPendingStore | undefined => (resolveConfig().summaryConsent === 'on' ? new ConsentPendingStore() : undefined),
+    },
+    {
+      provide: CONSENT_TURN_GATE,
+      // The classifier stays `{ mode: 'off' }`: `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` is still refused at startup (A6-S2/A6-S4).
+      useFactory: (agentRuns: AgentRunService, consentStore?: ConsentPendingStore): ConsentTurnGate | undefined =>
+        consentStore === undefined
+          ? undefined
+          : new ConsentTurnGate({
+              store: consentStore,
+              classifier: { mode: 'off' },
+              continueSummary: (bound, turn) => agentRuns.continueSummaryConsent(bound, turn),
+              voidContinuations: () => agentRuns.voidAllSummaryConsents(),
+              now: summaryConsentClock,
+              logger,
+            }),
+      inject: [AGENT_RUNS, { token: SUMMARY_CONSENT_STORE, optional: true }],
     },
   ];
 }

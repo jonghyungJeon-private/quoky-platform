@@ -312,9 +312,11 @@ describe('CS-1b single use, expiry, admission and the kill switch', () => {
   });
 
   it('the per-actor caps are checked: a capped actor sends nothing', async () => {
-    const h = harness({ caps: { perHour: 1 } });
+    // CS-2: an asking run that already used the actor's last run of the hour opens no step at all (see the CS-1a suite); so the cap is
+    // reached AFTER the ask: another run of the hour (here a recorded start) takes the last slot before the yes arrives.
+    const h = harness({ caps: { perHour: 2 } });
     const bound = await askAndYes(h);
-    // The asking run used the one run of the hour.
+    (h.service as unknown as { starts: Map<string, number[]> }).starts.get('owner')?.push(Date.now());
     expect(await h.service.continueSummaryConsent(bound, owner(h))).toMatchObject({ kind: 'declined', reason: 'hourly-cap' });
     expect(h.remoteRequests).toHaveLength(0);
   });

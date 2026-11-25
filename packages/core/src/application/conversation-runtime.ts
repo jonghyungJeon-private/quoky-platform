@@ -272,6 +272,31 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
     ) {
       this.nlYield.add(message);
     }
+    // ADR-0121 SR-1 rule ① confirm slice (CS-2): the owner's next DM turn answers a pending summary consent (W2). Only with the gate
+    // composed (`QUOKY_SUMMARY_CONSENT=on`); absent, nothing runs here. Control phrases forfeit the step without a claim, and any other
+    // open owner step (an approval, a scope question, an override, a connector write, a channel grant, a selection question, an
+    // expiry answered this turn) forfeits it too. Before the kill-switch phrase, so a control turn also consumes the chance.
+    if (this.consentGate !== undefined) {
+      const consent = await this.handleConsentGate(
+        message,
+        session,
+        actor,
+        Boolean(
+          lookup.pending ||
+            lookup.planPending ||
+            lookup.pendingScope ||
+            lookup.connectorWrite ||
+            lookup.override?.state === 'awaiting-decision' ||
+            lookup.override?.state === 'ready' ||
+            grantPendingSeen !== undefined ||
+            (nlPending !== undefined && nlPending !== null) ||
+            lapsedWrite ||
+            expiryNotice,
+        ),
+        control !== null,
+      );
+      if (consent !== undefined) return consent;
+    }
     // ADR-0120 amendment A6-D3: the owner's kill-switch phrase (`에이전트 중지` / `에이전트 재개`, Class A, owner DM, every
     // state). Recognized only while QUOKY_NL_ACTIONS is not `off` (with `off` the text is routed exactly as before).
     if (this.deps.nlSelection?.handleSwitchPhrase !== undefined && isDirectConversation(message.context) && !expiryNotice) {
@@ -280,6 +305,7 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
         const reply = this.withAgentSwitchSuffix(message.text, switched, this.withSurfaceSwitchSuffix(message.text, switched));
         // A6-D3 amendment (2026-11-03): a saved stop also closes the owner's open approvals of the governed kinds and lists them.
         const stopped = parseActionSwitchPhrase(message.text) === 'stopped' && switched === renderActionSwitchReply('stopped', languageOf(message.text));
+        this.voidConsentsOnStop(message.text);
         const notice = stopped ? await this.stopOpenGovernedApprovals(actor, message.text) : undefined;
         return this.responded(session, outboundMessage(message.context, notice === undefined ? reply : joinBody([reply, notice])));
       }
@@ -288,6 +314,7 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
     // A6 actions are off; it saves the same `quoky.actionSwitch` record. With `off` (or absent) the text routes as before.
     if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode !== 'off' && isDirectConversation(message.context) && !expiryNotice) {
       const switched = await this.deps.agentRuns.handleSwitchPhrase(actor, message.text, this.clock());
+      if (switched !== undefined) this.voidConsentsOnStop(message.text);
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSurfaceSuffix(message.text, switched)));
     }
     // Live DM test 2026-10-20: a near miss of the switch phrase ("에이ㄴ트 재개", "에이전트 재") while the exact phrase is
@@ -308,6 +335,7 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
     }
     if (surfaceService !== undefined && !expiryNotice) {
       const switched = await surfaceService.handleSwitchPhrase(actor, message, this.clock());
+      if (switched !== undefined) this.voidConsentsOnStop(message.text);
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, switched));
       // D4.2 (P2): `허용 실행` saves a pending grant of this channel; any other message ends it and routes as before.
       if (surfaceService.handleGrantPending !== undefined) {

@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — Rule-① confirm slice CS-2 runtime gate (2026-11-25; `QUOKY_SUMMARY_CONSENT` default off, live effect none)
+
+- **Added.** `ConsentTurnGate`: the owner's next DM turn answers a pending summary consent (closed yes binds and runs the CS-1b
+  continuation; a closed no is consumed with the fixed cancel line; anything else cancels silently and routes; a late closed token gets the
+  fixed expired line; a channel turn leaves the step; another owner step or a control phrase forfeits it without a claim). In
+  `ConversationRuntime.handleInner` before the kill-switch phrase; `TurnResult.rerun` (a `yes-and-more` rerun) delivered once by
+  `QuokyCore`, depth 1; every handled stop phrase voids the pending steps and the continuation records. History keeps only a fixed note.
+- **Composition.** With `QUOKY_SUMMARY_CONSENT=on` only: one shared `ConsentPendingStore`, the gate (classifier stays off), `consentStore`
+  into `AgentRunService`. Absent the flag the runtime is byte-identical. Still inert: `active` is refused and the read ports are empty.
+- **Changed.** The run service does not open a step when the actor could not run its continuation (no model call or run cap left).
+- **Not in this slice.** Gold and the CS-3 harness; no prompt, catalog or gold change, no model call. See DECISIONS "Rule-① confirm slice
+  CS-2 implementation note".
+
 ## Unreleased — ADR-0121 A7-S2 held receipt, shadow only (2026-11-25)
 
 - **Added.** `agent/held-receipt.ts`: the content-free held receipt (listing, answer, card kinds), its binding (same owner and DM,
