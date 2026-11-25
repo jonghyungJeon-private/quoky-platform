@@ -39282,3 +39282,18 @@ all new text is fixed reply text).
   runtime: both must be the same clock or the 600 s window and `takeSummaryContinuation`'s `atMs >= createdAtMs` check drift);
   composing `recipientLabel` and the continuation's DM check from the same turn; deciding whether a `declined` continuation for a
   transient cause (cap, not-active) should re-open the step instead of spending the yes (CS-1b spends it, the safer reading of single use).
+
+**Review round 1 (Codex and Chief Architect, same root).**
+- **Rule: the summary inputs of a continuation come ONLY from the reads recorded in `record.reads`.** Every other covered read of the
+  summarize step (a sibling that listed nothing when asked, an unasked Drive read in a mixed step) gets no readiness probe, no
+  `withDocuments`, no field mask and adds nothing to `state.documents`; it is listing-only. Reference ancestors run only for
+  resolution. If every asked item is gone the step is `consent-nothing-left` and no M2 call is made. (Before: "no recorded ids" meant
+  "no filter", so an unrecorded read's new items reached M2.)
+- **A continuation never asks.** The continuation executor no longer sets `askSummaryConsent`; the token covers exactly the recorded
+  reads. In continuation mode any summarize outcome that adds no line (e.g. `consent-needed`, `not-run`) maps to the fixed
+  `continuationNotSent` line, so a spent yes never produces a blank reply.
+- **Brand before record.** `continueSummaryConsent` checks `isOwnerYes` (and the shape checks) BEFORE it takes the record or
+  admits a run, so a bound without the brand that reuses a real `pending` destroys nothing and spends no admission.
+- **For CS-2 (CA advice).** A decline for a transient cause (cap, not-active, kill switch) still SPENDS the yes: fail closed, no
+  re-open, because a second answer window would break W2/W3 "once". Instead CS-2 must NOT open the pending step when the actor has
+  fewer than one model call left in the rolling hour after the asking run.

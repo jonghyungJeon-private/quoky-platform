@@ -25,6 +25,7 @@ import { a6InPlanGuidance, type AgentStepsPlan } from './reply-notes';
 import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues } from './run-bounds';
 import { summaryGrantBasis, type SummaryGrantBasis } from './summary-grant';
 import { mintSummaryConsentToken, newSummaryRunToken } from './quarantined-summary';
+import { isOwnerYes } from '../consent-answer/consent-yes';
 import { renderSummaryConsentQuestion } from './summary-consent-question';
 
 /**
@@ -745,6 +746,9 @@ export class AgentRunService {
       if (pending === undefined || pending === null || pending.kind !== 'summary-consent') return decline('not-summary', 'expired');
       language = pending.language === 'en' ? 'en' : 'ko';
       counts = { sources: pending.sources.length, items: pending.sources.reduce((sum, entry) => sum + entry.itemIds.length, 0) };
+      // Review round 1 (P3): the owner-yes brand is checked BEFORE the record is taken or a run is admitted, so a bound without
+      // it that reuses a real `pending` destroys nothing and spends no admission.
+      if (!isOwnerYes(bound)) return decline('no-consent', 'expired');
       // Single use twice over: a bound yes runs once, and the record is dropped by the take below.
       if (SPENT_CONSENTS.has(bound)) return decline('spent', 'expired');
       SPENT_CONSENTS.add(bound);
@@ -783,7 +787,7 @@ export class AgentRunService {
             selectionContext: { ...(record.sessionId !== undefined ? { sessionId: record.sessionId } : {}), actorId: record.actorId },
             ...(this.deps.workSummarySources !== undefined && this.deps.workSummarySources.length > 0 ? { workSummarySources: this.deps.workSummarySources } : {}),
             ...(this.deps.recipientLabel !== undefined ? { recipientLabel: this.deps.recipientLabel } : {}),
-            ...(this.deps.consentStore !== undefined ? { askSummaryConsent: true } : {}),
+            // A continuation never asks (review round 1, P2): the yes is spent and the token covers exactly the recorded reads.
           },
         });
         const result = await executor.execute(plan, {

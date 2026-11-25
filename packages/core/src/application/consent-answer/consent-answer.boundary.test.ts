@@ -49,12 +49,14 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     ]);
   });
 
-  it('the two pending-only importers reach only consent-pending (never the answer function or the classifier)', () => {
+  it('the two pending-only importers reach only consent-pending, and the run service also the brand check (never the answer function or the classifier)', () => {
     for (const path of ['application/agent/agent-run-service.ts', 'application/agent/agent-contract-check.ts']) {
       const file = join(CORE_SRC, path);
       const specifiers = importsOf(file).filter((specifier) => intoConsentAnswer(file, specifier));
       expect(specifiers.length, path).toBeGreaterThan(0);
-      for (const specifier of specifiers) expect(specifier, path).toBe('../consent-answer/consent-pending');
+      // CS-1b review round 1: the run service checks the owner-yes brand before it takes the record (consent-yes, pure).
+      const allowed = path.endsWith('agent-run-service.ts') ? ['../consent-answer/consent-pending', '../consent-answer/consent-yes'] : ['../consent-answer/consent-pending'];
+      for (const specifier of specifiers) expect(allowed, path).toContain(specifier);
     }
   });
 

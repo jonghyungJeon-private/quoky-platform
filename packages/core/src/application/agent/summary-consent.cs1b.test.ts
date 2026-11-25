@@ -286,6 +286,8 @@ describe('CS-1b single use, expiry, admission and the kill switch', () => {
     const outcome = await h.service.continueSummaryConsent(bound, owner(h));
     expect(outcome).toMatchObject({ kind: 'declined', reason: 'no-consent' });
     expect(h.remoteRequests).toHaveLength(0);
+    // Review round 1 (P3): the brand is checked before the record is taken, so the real pending's record is still there.
+    expect(h.service.takeSummaryContinuation(bound.pending.runRef, Date.now())).toBeDefined();
   });
 
   it('a value that is not a bound summary consent is refused without throwing', async () => {
@@ -429,6 +431,77 @@ describe('CS-1b executor continuation: REMOTE end to end through the executor (r
       expect(provider.requests).toHaveLength(0);
       // The wrong step's token is no consent for step 2: the step asks again, and nothing is sent.
       expect(result.steps[1]).toMatchObject({ status: 'consent-needed' });
+    } finally {
+      setSummaryGrantsForTest();
+    }
+  });
+});
+
+describe('CS-1b review round 1: summary inputs come only from the recorded reads', () => {
+  const runWith = async (p: RunPlan, readers: Record<string, AgentReadPort>, reads: { step: number; entryId: 'mail.list' | 'drive.files'; itemIds: string[] }[], summaryStep: number, provider: AiProvider) => {
+    const run = newSummaryRunToken();
+    const consent = consentTokenFor(run, summaryStep, { recipient: 'Claude', reads });
+    return new AgentPlanExecutor({ readers: readers as never, summarizer: route(provider) }).execute(p, {
+      continuation: { steps: p.steps.map((_, index) => index + 1), summaryStep, run, consent, reads },
+    });
+  };
+
+  it('a sibling read that was empty when asked and is populated now adds nothing: no withDocuments, not in the prompt', async () => {
+    setSummaryGrantsForTest(() => true);
+    try {
+      const provider = remoteProvider();
+      let calls = 0;
+      const requests: AgentReadRequest[] = [];
+      const mail: AgentReadPort = {
+        read: async (request) => {
+          requests.push(request);
+          calls += 1;
+          const ids = calls === 1 ? ['m1', 'm2'] : ['n1'];
+          const documents: AgentSourceDocument[] = ids.map((id, index) => ({ id, position: index + 1, title: 't', author: 'a', date: '', body: `BODY-${id}` }));
+          return { ok: true, items: ids.map((id) => ({ id })), ...(request.withDocuments === true ? { documents } : {}) };
+        },
+      };
+      const p = plan([wideRead('mail.list', 2), wideRead('mail.list', 1), summarize([1, 2])]);
+      const result = await runWith(p, { 'mail.list': mail }, [{ step: 1, entryId: 'mail.list', itemIds: ['m1', 'm2'] }], 3, provider);
+      expect(requests[1]?.withDocuments).not.toBe(true);
+      const prompt = provider.requests.map((request) => request.prompt).join('\n');
+      expect(prompt).toContain('BODY-m1');
+      expect(prompt).not.toContain('BODY-n1');
+      expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'ok' });
+    } finally {
+      setSummaryGrantsForTest();
+    }
+  });
+
+  it('mail asked + Drive unasked, every asked mail item gone: no M2 call, nothing summarised, Drive fetches no body', async () => {
+    setSummaryGrantsForTest(() => true);
+    try {
+      const provider = remoteProvider();
+      const mail = listingPort('mail', ['m9']);
+      const drive = listingPort('drive', ['file-aaaa1']);
+      const p = plan([wideRead('mail.list', 1), wideRead('drive.files', 1), summarize([1, 2])]);
+      const result = await runWith(p, { 'mail.list': mail, 'drive.files': drive }, [{ step: 1, entryId: 'mail.list', itemIds: ['m1'] }], 3, provider);
+      expect(provider.requests).toHaveLength(0);
+      expect(drive.requests[0]?.withDocuments).not.toBe(true);
+      expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'listing-only', reason: 'consent-nothing-left' });
+    } finally {
+      setSummaryGrantsForTest();
+    }
+  });
+
+  it('a continuation reply is never blank: a consent-needed summary maps to the fixed not-sent line', async () => {
+    setSummaryGrantsForTest(() => true);
+    try {
+      const provider = remoteProvider();
+      const mail = listingPort('mail', ['m1']);
+      const p = plan([wideRead('mail.list', 1), summarize([1])]);
+      const run = newSummaryRunToken();
+      const reads = [{ step: 1, entryId: 'mail.list' as const, itemIds: ['m1'] }];
+      const wrongStep = consentTokenFor(run, 1, { recipient: 'Claude', reads });
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: route(provider) }).execute(p, { continuation: { steps: [1, 2], summaryStep: 2, run, consent: wrongStep, reads } });
+      expect(result.steps[1]).toMatchObject({ status: 'consent-needed' });
+      const reply = assembleAgentReply({ plan: p as never, result, language: 'en', destinationIsOwnerDm: true, mode: 'continuation', summaryStep: 2 });
+      expect(reply.text).toBe('A summary could not be made, so nothing was sent.');
     } finally {
       setSummaryGrantsForTest();
     }

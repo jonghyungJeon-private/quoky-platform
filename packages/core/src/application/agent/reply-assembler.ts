@@ -264,6 +264,8 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   if (result.breach !== undefined) parts.push({ kind: 'status', text: t.boundStopped });
   // The owner's kill switch stopped the run before a step (S2 wiring slice): one fixed line, after any bound line.
   if (result.stopped === true) parts.push({ kind: 'status', text: t.agentStopped });
+  // A continuation's reply is never blank: a summary status that added no line (consent-needed, not-run, deferred...) gets the fixed not-sent line.
+  if (continuation && !parts.some((part) => part.kind === 'summary' || part.kind === 'status')) parts.push({ kind: 'status', text: t.continuationNotSent });
   // Rule ① (CS-1a): the question is the last part, after the listing and every note. No "not read" note for that step: the
   // question itself says nothing was sent yet.
   for (const step of continuation ? [] : result.steps) {

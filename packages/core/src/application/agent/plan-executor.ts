@@ -465,6 +465,10 @@ export class AgentPlanExecutor {
     const asking: string[] = [];
     if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
+        // Rule ① (CS-1b, review round 1): in a continuation the summary inputs are ONLY the reads recorded with the question. Any
+        // other covered read (a sibling that listed nothing when asked, an unasked Drive read) is listing-only: no readiness probe,
+        // no `withDocuments`, no mask, nothing added to `state.documents`.
+        if (state.continuation !== undefined && !(cover.step === state.continuation.summaryStep && state.continuation.reads.some((entry) => entry.step === number))) continue;
         // Rule ① (CS-1a): the readiness of EVERY covered read of the step is decided before any of them fetches a body. If any
         // one of them would ask, the whole step asks, so no read of it requests `withDocuments` (a LOCAL-ready read that ran
         // first would otherwise fetch bodies the question then drops). The verdicts are cached per (step, read): no extra probe.
@@ -472,6 +476,8 @@ export class AgentPlanExecutor {
         let own: Verdict | 'wall' | undefined;
         for (const from of [...new Set([...cover.from, number])].sort((x, y) => x - y)) {
           if (state.readEntries.get(from) === undefined) continue;
+          // A continuation judges only the recorded reads (review round 1): an unrecorded sibling must not make the step ask.
+          if (state.continuation !== undefined && !state.continuation.reads.some((entry) => entry.step === from)) continue;
           const verdict = await this.readinessOf(state, budget, route, cover, from);
           if (verdict === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
           if (verdict.reason === 'consent-needed' && verdict.recipient !== undefined) stepAsks = true;
