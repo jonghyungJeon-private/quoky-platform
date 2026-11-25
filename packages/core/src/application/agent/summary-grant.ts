@@ -220,6 +220,9 @@ function recognisedUnits(plan: StepsPlan): RegExp[] {
   return all.sort((a, b) => b[0].length - a[0].length).map(([, pattern]) => pattern);
 }
 
+/** The AM-3 count patterns: a line may carry at most one count token (`3개 3개` is two counts). */
+const COUNT_UNITS = new WeakSet<RegExp>();
+
 /**
  * AM-3 (ratified 2026-11-23): a validated numeric count of a read step is a recognised unit, written with its count word: the
  * numeral with a Korean counter (`개`, `건`) or, in English, the numeral directly before a recognised source name ("3 mails").
@@ -232,8 +235,12 @@ function countUnits(step: Extract<ValidatedAgentStep, { readonly kind: 'read' }>
   return step.entry.args.flatMap((spec) => {
     const value = step.args[spec.name];
     if (spec.kind !== 'limit' || spec.transient === true || typeof value !== 'number' || !Number.isInteger(value)) return [];
-    const counted: (readonly [string, RegExp])[] = [[`${value}개`, new RegExp(`(?<![0-9.,+\\-\u2212\uFF0D\uFF0B])${value}\\s*(?:개|건)`, 'u')]];
-    if (sourceNames.length > 0) counted.push([`${value} ${sourceNames[0]} (count)`, new RegExp(`(?<![a-z0-9.,+\\-\u2212\uFF0D\uFF0B])${value}\\s+(?:${sourceNames.join('|')})(?:s|['’]s)?(?![a-z0-9])`, 'u')]);
+    // Review round 3 (structural, replaces the round-2 prefix list): a count is recognised only as a WHOLE whitespace-delimited token,
+    // preceded by start-of-line or whitespace and followed by end-of-line or whitespace. Anything else is not a unit, so its digits stay
+    // as `\p{N}` residue and the line is not consumed. Fail-closed residual: "메일3개", "3개," and "3개를" no longer count.
+    const counted: (readonly [string, RegExp])[] = [[`${value}개`, new RegExp(`(?<=^|\\s)${value}\\s*(?:개|건)(?=$|\\s)`, 'u')]];
+    if (sourceNames.length > 0) counted.push([`${value} ${sourceNames[0]} (count)`, new RegExp(`(?<=^|\\s)${value}\\s+(?:${sourceNames.join('|')})(?:s|['’]s)?(?=$|\\s)`, 'u')]);
+    for (const [, pattern] of counted) COUNT_UNITS.add(pattern);
     return counted;
   });
 }
@@ -251,6 +258,7 @@ function isConsumedLine(line: string, units: readonly RegExp[]): boolean {
   if (!unexpressedContentWords(text, units).every((word) => PLURAL_DEICTIC_COMPLETION.includes(word))) return false;
   // Fix round 1 (P1): the shared guard treats a bare numeral as grammar. In the two-line form a digit that no recognised unit
   // removed (the plan's own validated count with its counter is the only numeric unit, AM-3) is a number the plan does not carry.
+  for (const unit of units) if (COUNT_UNITS.has(unit) && (text.match(new RegExp(unit.source, `${unit.flags.replace(/[gy]/gu, '')}g`))?.length ?? 0) > 1) return false;
   let rest = text;
   for (const unit of units) rest = rest.replace(new RegExp(unit.source, `${unit.flags.replace(/[gy]/gu, '')}g`), ' ');
   // Review round 2: any numeral (`\p{N}`: circled, superscript, roman, fullwidth) left over fails; a signed count (`-3개`) is not a unit.

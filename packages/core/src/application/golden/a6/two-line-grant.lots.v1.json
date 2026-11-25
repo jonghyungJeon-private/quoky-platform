@@ -676,6 +676,76 @@
     "expect": {
      "grant": []
     }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 –3개 보여줘\n그리고 요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (en dash)",
+    "id": "a-67",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 ‐3개 보여줘\n그리고 요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (hyphen U+2010)",
+    "id": "a-68",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 ‑3개 보여줘\n그리고 요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (non-breaking hyphen)",
+    "id": "a-69",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 —3개 보여줘\n그리고 요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (em dash)",
+    "id": "a-70",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 ~3개 보여줘\n그리고 요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (tilde)",
+    "id": "a-71",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 #3개 보여줘\n그리고 요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (hash)",
+    "id": "a-72",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 3개 3개\n요약해줘",
+    "note": "review round 3: count only as a whole whitespace-delimited token (two counts)",
+    "id": "a-73",
+    "expect": {
+     "grant": []
+    }
    }
   ]
  },
