@@ -3,6 +3,7 @@ import { hasUntrustedSpanMarker } from '../agent/summary-grant';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { buildConsentClassifierRequest } from './consent-classifier';
 import { CONSENT_ANSWER_LABELS, type ConsentAnswerLabel, type ConsentClassifierRequest } from './consent-labels';
+import { recordOwnerYes } from './consent-yes';
 import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, ConsentPendingStore, ConsentScope } from './consent-pending';
 
 /**
@@ -169,6 +170,8 @@ function bindOrLost(
   const bound = store.bind(claim, atMs);
   // A failed compare-and-set (cancelled by a newer turn, voided, superseded or late): the answer is discarded, nothing is sent.
   if (bound === undefined) return { kind: 'cancelled', audit: [code, 'claim-lost'], next: 'consumed' };
+  // The only place a yes is recorded: every caller of bindOrLost is a yes path.
+  recordOwnerYes(bound);
   return rerunText === undefined ? { kind: 'bound', audit: [code], bound, next: 'consumed' } : { kind: 'bound', audit: [code], bound, next: 'rerun', rerunText };
 }
 

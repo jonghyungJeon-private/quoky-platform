@@ -16,6 +16,9 @@ import type { AgentRunBoundValues } from './run-bounds';
 import type { AgentWorkSummarySource } from './flow-policy';
 import { setSummaryGrantsForTest } from './quarantined-summary';
 
+// Rule ① (CS-1a): no REMOTE call can run without a real consent token and the executor carries none until CS-1b, so this suite runs
+// on a LOCAL model; the REMOTE guard is tested in summary-consent.cs1a.test.ts and quarantined-summary-d12.test.ts.
+
 // ADR-0121 S2 wiring slice: `active` end to end with fake ports and no model. The planner (M1) is charged on the run budget
 // before step 1, the re-plan (M1') is reserved explicitly, the executor reads through the injected ports, the summary grant
 // comes from the owner's own words only, and the deterministic assembler answers; the kill switch is re-read before every step;
@@ -55,7 +58,7 @@ interface Options {
   readonly released?: boolean;
   /** ADR-0121 A5-S1: the per-source summary switches handed to the service (default: none, every work source off). */
   readonly workSummarySources?: readonly AgentWorkSummarySource[];
-  /** The M2 provider's locality (default REMOTE). */
+  /** The M2 provider's locality (default LOCAL). */
   readonly summarizerLocality?: AiExecutionLocality;
   /** ADR-0121 A7-S1: the closed cross-source write context handed to the plan validator (default: absent, A7 off). */
   readonly crossWrite?: AgentCrossWriteContext;
@@ -91,7 +94,7 @@ function harness(options: Options = {}): Harness {
   const summarizer: AiProvider = {
     id: 'fake-summarizer',
     capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
-    executionLocality: options.summarizerLocality ?? 'REMOTE',
+    executionLocality: options.summarizerLocality ?? 'LOCAL',
     isAvailable: async () => true,
     async execute(request) {
       m2Calls.push(request);
@@ -187,7 +190,7 @@ describe('AgentRunService.runActive — ADR-0121 A5-S1 per-source switch', () =>
 
   it('a REMOTE provider that does not declare dataUse no-training gets nothing, even with the switch on', async () => {
     setSummaryGrantsForTest(() => true);
-    const h = harness({ script: [JIRA_SUMMARY_PLAN], workSummarySources: ['jira'], ports: { 'jira.issues': async (request) => jiraItems(request) } });
+    const h = harness({ script: [JIRA_SUMMARY_PLAN], summarizerLocality: 'REMOTE', workSummarySources: ['jira'], ports: { 'jira.issues': async (request) => jiraItems(request) } });
     replyOf(await h.service.runActive(turn(h, '지라 이슈 요약해줘'), async () => CHAT));
     expect(h.m2Calls).toEqual([]);
   });
@@ -204,7 +207,8 @@ describe('AgentRunService.runActive — end to end with fake ports', () => {
     expect(h.reads[0]).toMatchObject({ entryId: 'mail.list', withDocuments: true });
     expect(h.m2Calls).toHaveLength(1);
     expect(outcome.reply.parts.filter((part) => part.kind === 'summary')).toHaveLength(3);
-    expect(outcome.reply.text).toContain('외부 모델');
+    // A LOCAL model: no disclosure line (a REMOTE one cannot run here without a consent token, CS-1b).
+    expect(outcome.reply.text).not.toContain('외부 모델');
     // The planner (1), the explicit re-plan reservation (1) and the one M2 call are on one budget; the input is both prompts.
     const line = activeLines(h).at(-1) ?? {};
     expect(line).toMatchObject({ outcome: 'reply', run: 'complete', modelCalls: 3, m2Calls: 1, connectorQueries: 1 });

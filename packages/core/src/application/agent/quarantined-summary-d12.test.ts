@@ -16,6 +16,9 @@ import {
   type AgentSummarySource,
   type SummaryEgressGrant,
 } from './quarantined-summary';
+import { consentTokenFor } from './summary-consent.test-support';
+
+// Rule ① (CS-1a): a REMOTE call needs a real consent token (a bound consent from a store, minted by `mintSummaryConsentToken`); the rule itself is tested in summary-consent.cs1a.test.ts.
 
 // ADR-0121 D12 (amended, ratified 2026-11-16): M2 routes through the existing ProviderSelector / AiProvider. Core derives the
 // allowed localities (labels, a valid grant, the asked-for count) and passes them as `allowedExecutionLocalities`; candidates
@@ -25,6 +28,10 @@ import {
 const RUN = newSummaryRunToken();
 const doc = (position: number): AgentSourceDocument => ({ id: `m${position}`, position, title: `t${position}`, author: 'a', date: '', body: `body ${position}` });
 const mail = (grant: SummaryEgressGrant | undefined, ...documents: AgentSourceDocument[]): AgentSummarySource => ({ entryId: 'mail.list', documents, ...(grant !== undefined ? { grant } : {}) });
+const SCOPE = { run: RUN, step: 1, covered: [{ entryId: 'mail.list' as const, itemIds: ['m1'] }] };
+const CONSENT = consentTokenFor(RUN, 1, { recipient: 'Test', reads: [{ entryId: 'mail.list', itemIds: ['m1', 'm2'] }] });
+/** Every REMOTE dispatch here names its recipient ('Test') and carries the real token above. */
+const TEST_RECIPIENT = { recipientLabel: (): string => 'Test' };
 const GRANT = (): SummaryEgressGrant => mintSummaryEgressGrantForTest(1, 'mail.list', RUN);
 const ANSWER = '{"items":[{"n":1,"summary":"A short summary."}]}';
 /** An owner policy that prefers nothing and answers explicitly at dispatch (D12 needs an explicit verdict). */
@@ -63,32 +70,32 @@ const base = { schema: 'digest.v1' as const, summaryStep: 1, reserve: (): boolea
 
 describe('D12: the derived localities (pure)', () => {
   it('derives from the label, the grant and the asked-for count', () => {
-    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: false, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'host-only' });
+    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: false, granted: false, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'host-only' });
     // HOST_ONLY gets no model even with a grant and a local provider in sight (P3-3b #5).
-    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'host-only' });
-    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 5, workSource: false })).toEqual({ ok: true, localities: ['LOCAL'] });
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems: 1, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'host-only' });
+    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 5, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: true, localities: ['LOCAL'] });
+    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
     // A granted batch may go REMOTE too (owner 2026-11-03 answer 3, built 2026-11-16; supersedes the single-item rule).
     for (const askedItems of [2, 10, 20]) {
-      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
-      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
-      expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems, workSource: false })).toEqual({ ok: false, reason: 'host-only' });
-      expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems, workSource: false })).toEqual({ ok: true, localities: ['LOCAL'] });
+      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: true, askedItems, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+      expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: true, granted: false, askedItems, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'no-summary-grant' });
+      expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'host-only' });
+      expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: true, localities: ['LOCAL'] });
     }
-    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 3, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
+    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 3, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
   });
 
   it('a grant-needing input without its grant is listing-only even when the joined label is stricter (no local fallback, P3-3b #4)', () => {
-    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: true, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: true, granted: false, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'no-summary-grant' });
   });
 
   it('an unverifiable input admits nothing: an unknown label, a count that is not a positive integer, a RoSR label with no grant need', () => {
-    expect(deriveM2Localities({ egress: 'SOMETHING' as never, needsGrant: false, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-model' });
+    expect(deriveM2Localities({ egress: 'SOMETHING' as never, needsGrant: false, granted: false, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'no-model' });
     for (const askedItems of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems, workSource: false }), String(askedItems)).toEqual({ ok: false, reason: 'no-model' });
+      expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems, consent: CONSENT, consentScope: SCOPE }), String(askedItems)).toEqual({ ok: false, reason: 'no-model' });
     }
-    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: false, granted: true, askedItems: 1, workSource: false })).toEqual({ ok: false, reason: 'no-summary-grant' });
+    expect(deriveM2Localities({ egress: 'REMOTE_ON_SUMMARY_REQUEST', needsGrant: false, granted: true, askedItems: 1, consent: CONSENT, consentScope: SCOPE })).toEqual({ ok: false, reason: 'no-summary-grant' });
   });
 
   it('the selection context keeps the base, narrows by a base constraint, and keeps or sets workText', () => {
@@ -132,10 +139,10 @@ describe('D12: the selector is asked under the derived constraint, and its answe
   it('one granted item and a granted batch: the selector gets SUMMARIZATION with LOCAL and REMOTE', async () => {
     const local = spy('p-local', 'LOCAL', 1);
     const one = recording(local);
-    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: one.selector, selectionContext: { sessionId: 's', actorId: 'a' } } });
+    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: one.selector, ...TEST_RECIPIENT, selectionContext: { sessionId: 's', actorId: 'a' } } });
     expect(one.selects).toEqual([{ sessionId: 's', actorId: 'a', allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }]);
     const batch = recording(local);
-    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], route: { selector: batch.selector } });
+    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1), doc(2))], consent: CONSENT, route: { selector: batch.selector, ...TEST_RECIPIENT } });
     expect(batch.selects).toEqual([{ allowedExecutionLocalities: ['LOCAL', 'REMOTE'] }]);
     // The selection-time verdict and both dispatch re-checks (before the reservation, and right before execute) run on the
     // SAME constrained context.
@@ -173,7 +180,7 @@ describe('D12: the selector is asked under the derived constraint, and its answe
 
   it('the request is sealed and the audit names the provider id with its snapshot locality', async () => {
     const remote = spy('p-remote', 'REMOTE', 1);
-    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: recording(remote) });
+    const outcome = await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { ...recording(remote), ...TEST_RECIPIENT } });
     expect(outcome).toMatchObject({ kind: 'summary', audits: [{ locality: 'REMOTE', auditId: 'p-remote' }] });
     expect(Object.keys(remote.requests[0] as AiRequest).sort()).toEqual(['capability', 'prompt']);
     expect((remote.requests[0] as AiRequest).capability).toBe(Capability.SUMMARIZATION);
@@ -258,7 +265,7 @@ describe('D12: a sent request is never re-sent', () => {
     const first = spy('p-first', 'REMOTE', 90, async () => ({ text: 'not json' }));
     const second = spy('p-second', 'LOCAL', 10);
     const router = new CapabilityRouter(new AiProviderManager([first, second]), PERMISSIVE);
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ kind: 'failed', reason: 'schema' });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: router, ...TEST_RECIPIENT } })).toMatchObject({ kind: 'failed', reason: 'schema' });
     expect([first.requests.length, second.requests.length]).toEqual([1, 0]);
   });
 });
@@ -279,9 +286,9 @@ describe('D12: workText interplay', () => {
     const router = new CapabilityRouter(new AiProviderManager([vendor, local]), policy);
 
     // Without workText, one granted item may go to the remote vendor (the owner's listed first choice).
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router } })).toMatchObject({ audits: [{ auditId: 'p-vendor' }] });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: router, ...TEST_RECIPIENT } })).toMatchObject({ audits: [{ auditId: 'p-vendor' }] });
     // With workText the vendor is out by policy even though REMOTE is allowed: the local one serves.
-    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: router, selectionContext: { workText: true } } })).toMatchObject({ audits: [{ auditId: 'p-local' }] });
+    expect(await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], consent: CONSENT, route: { selector: router, ...TEST_RECIPIENT, selectionContext: { workText: true } } })).toMatchObject({ audits: [{ auditId: 'p-local' }] });
     expect(seen.at(-1)).toEqual({ workText: true, allowedExecutionLocalities: ['LOCAL', 'REMOTE'] });
 
     // workText and a LOCAL-only constraint with no local provider registered: nothing is eligible, listing-only, no call.
@@ -407,57 +414,5 @@ describe('D12 review round 1 (Chief Architect and Codex)', () => {
   });
 });
 
-// A5-S3 review round 1, rule ①: until the rule-① confirm slice lands there is no bound consent token, so a summary over one of
-// the five work sources never gets a REMOTE locality, grant or not. The confirm slice replaces this guard with the token check.
-describe('D12 / A5-S3: work sources are LOCAL-only in Core until the rule-① confirm slice', () => {
-  const work = (entryId: 'calendar.events' | 'jira.issues' | 'slack.search' | 'confluence.search' | 'github.items', grant: SummaryEgressGrant | undefined, ...documents: AgentSourceDocument[]): AgentSummarySource => ({
-    entryId,
-    documents,
-    ...(grant !== undefined ? { grant } : {}),
-  });
-
-  it('pure: a granted work-source label derives LOCAL only; mail and Drive (no work source) still derive LOCAL and REMOTE', () => {
-    const granted = { egress: 'REMOTE_ON_SUMMARY_REQUEST' as const, needsGrant: true, granted: true, askedItems: 1, workSource: false };
-    expect(deriveM2Localities({ ...granted, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
-    expect(deriveM2Localities({ ...granted, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
-    expect(deriveM2Localities(granted)).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
-    // The guard only narrows: no grant is still no grant, and the other labels are untouched.
-    expect(deriveM2Localities({ ...granted, granted: false, workSource: true })).toEqual({ ok: false, reason: 'no-summary-grant' });
-    expect(deriveM2Localities({ egress: 'HOST_ONLY', needsGrant: true, granted: true, askedItems: 1, workSource: true })).toEqual({ ok: false, reason: 'host-only' });
-    expect(deriveM2Localities({ egress: 'LOCAL_MODEL_ONLY', needsGrant: false, granted: false, askedItems: 1, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
-    // The guard is independent of the egress label: a work source with any label that would allow REMOTE still yields no REMOTE.
-    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 1, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
-    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: true, granted: true, askedItems: 3, workSource: true })).toEqual({ ok: true, localities: ['LOCAL'] });
-    expect(deriveM2Localities({ egress: 'REMOTE_OK', needsGrant: false, granted: false, askedItems: 1, workSource: false })).toEqual({ ok: true, localities: ['LOCAL', 'REMOTE'] });
-  });
-
-  it.each(['calendar.events', 'jira.issues', 'slack.search', 'confluence.search', 'github.items'] as const)(
-    '%s: grant + switch on + no consent: the selector is asked for LOCAL only; a remote-only provider is never selected or called',
-    async (entryId) => {
-      const remote = spy('p-remote', 'REMOTE', 1);
-      const { selector, selects } = recording(remote);
-      const grant = mintSummaryEgressGrantForTest(1, entryId, RUN);
-      const schema = entryId === 'calendar.events' ? ('meeting-digest.v1' as const) : ('digest.v1' as const);
-      await quarantinedSummarize({ ...base, schema, sources: [work(entryId, grant, doc(1))], route: { selector, workSummarySources: ['calendar', 'jira', 'slack', 'confluence', 'github'] } });
-      expect(selects.length, entryId).toBeGreaterThan(0);
-      for (const context of selects) expect(context.allowedExecutionLocalities, entryId).toEqual(['LOCAL']);
-      expect(remote.requests, entryId).toHaveLength(0);
-    },
-  );
-
-  it('a work source mixed with mail narrows the whole step to LOCAL; mail alone keeps LOCAL and REMOTE', async () => {
-    const local = spy('p-local', 'LOCAL', 1);
-    const mixed = recording(local);
-    await quarantinedSummarize({
-      ...base,
-      sources: [mail(GRANT(), doc(1)), work('github.items', mintSummaryEgressGrantForTest(1, 'github.items', RUN), { ...doc(2), id: 'm2' })],
-      route: { selector: mixed.selector, workSummarySources: ['github'] },
-    });
-    expect(mixed.selects.length).toBeGreaterThan(0);
-    for (const context of mixed.selects) expect(context.allowedExecutionLocalities).toEqual(['LOCAL']);
-    const alone = recording(local);
-    await quarantinedSummarize({ ...base, sources: [mail(GRANT(), doc(1))], route: { selector: alone.selector } });
-    expect(alone.selects.length).toBeGreaterThan(0);
-    for (const context of alone.selects) expect(context.allowedExecutionLocalities).toEqual(['LOCAL', 'REMOTE']);
-  });
-});
+// The A5-S3 work-source stopgap tests that stood here are superseded by the rule-① token guard (CS-1a): see
+// `summary-consent.cs1a.test.ts` (every egress label, every source, the dispatch re-check).

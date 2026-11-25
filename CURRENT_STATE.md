@@ -12,6 +12,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - Catalog change: prompt digests re-pinned, version ids unchanged; the D12 gate is still to run. No gold `expect` changed. Version ids stay (selection-prompt.ts:15: bumped when instruction text changes; r-07 changes catalog data); the D12 gate binds the full prompt digest of the gated head; rollback revs render the live catalog.
   See DECISIONS "r-07 implementation note (ADR-0120 catalog, AM-3)".
 
+### Rule-① confirm slice CS-1a guard-and-ask implemented, dormant (2026-11-25, branch `claude/v5-cs1a-summary-consent-ask`)
+
+- The REMOTE guard is unconditional: an agent summary reaches a REMOTE model only with a bound consent token (re-checked at
+  dispatch with the recipient label); only `mintSummaryConsentToken` (a genuine bound consent, exact scope, once; no caller until CS-1b) makes one, so the agent path is LOCAL or listing-only. Ask mode
+  (`QUOKY_SUMMARY_CONSENT=on`, default off) adds the question, the `consent-needed` status and the pending step in the run service.
+- Dormant: `active` is still refused and the read ports are empty. Next: CS-1b (continuation), CS-2 (runtime gate, store
+  composition), CS-3 (gold). See DECISIONS "Rule-① confirm slice CS-1a implementation note (2026-11-25)".
+
 ### ADR-0121 A6-S2 consent-classifier implemented, dormant (2026-11-25, branch `claude/v5-a6-s2-consent-classifier`)
 
 - Prompt `consent-answer.v1`, content-free request builder (fixed question with placeholders + reply), strict JSON parser and the

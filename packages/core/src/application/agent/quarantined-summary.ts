@@ -14,7 +14,9 @@ import {
   renderUntrustedDocumentForPrompt,
   type UntrustedDocumentSource,
 } from '../untrusted-document-readout';
-import { AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
+import type { BoundConsent } from '../consent-answer/consent-pending';
+import { isOwnerYes } from '../consent-answer/consent-yes';
+import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
@@ -294,6 +296,132 @@ function grantMatches(grant: SummaryEgressGrant | undefined, step: number, entry
   return known !== undefined && known.step === step && known.entryId === entryId && known.run === run;
 }
 
+declare const CONSENT_BRAND: unique symbol;
+/**
+ * ADR-0121 rule ① (the confirm slice): the owner's bound yes for ONE summarize step of ONE run. An opaque branded value from a
+ * module-private `WeakMap`, like {@link SummaryEgressGrant}: it names the run, the step, the recipient the owner was asked about
+ * and, per source, exactly the item ids the question counted. Without it `REMOTE` is never in the locality set of an M2 call,
+ * for any egress label ({@link deriveM2Localities}), and the dispatch re-check refuses a `REMOTE` provider whose label is not the
+ * recipient. The only maker is {@link mintSummaryConsentToken}, from a bound A6-S1 consent that `answerConsentTurn` alone recorded as the owner's yes (the owner-yes brand); CS-1a has no production caller
+ * (the continuation, CS-1b, is the first), so after CS-1a no agent path can reach `REMOTE`.
+ */
+export interface SummaryConsentToken {
+  readonly [CONSENT_BRAND]: true;
+}
+
+interface ConsentTokenFacts {
+  readonly run: SummaryRunToken;
+  readonly step: number;
+  readonly recipient: string;
+  readonly sources: ReadonlyMap<NlWave1EntryId, ReadonlySet<string>>;
+}
+
+const CONSENTS = new WeakMap<object, ConsentTokenFacts>();
+
+const CONSENT_SOURCE_OF = (entryId: NlWave1EntryId): string | undefined => AGENT_READ_SOURCES[entryId]?.source;
+
+/** The bound consents a token was already made from: one bound yes makes at most one token (single use, W3). */
+const MINTED_FROM = new WeakSet<object>();
+
+/**
+ * The ONLY maker of a {@link SummaryConsentToken} (rule ①; CS-1b's continuation is its first caller, none exists in CS-1a). It
+ * accepts only a {@link BoundConsent} carrying the owner-yes brand (recorded only by `answerConsentTurn`, on a bound that
+ * the store's own `bind` made: a structural copy, a claim, an open step or a bound that was merely bound is refused), of a `summary-consent` step, once, and only for exactly the scope the owner was asked about:
+ * - `runRef` is the step's own `runRef`; `run` and `step` are the run token and the summarize step the continuation re-runs;
+ * - `reads` (the covered reads, each its `entryId` and the ids it lists) must, per source (Core's closed source of the entry),
+ *   union to EXACTLY the ids the step recorded: every recorded source is covered, no other source and no other id is;
+ * - the token's recipient is the step's recipient, compared again at every dispatch (`dispatchLocality`).
+ * Anything else is `undefined` (no token, so no `REMOTE`). Total: never throws. There is no test-only way to make a token: tests
+ * build a {@link ConsentPendingStore}, open a step, answer a closed yes through `answerConsentTurn` and mint through here.
+ */
+export function mintSummaryConsentToken(input: {
+  readonly bound: BoundConsent;
+  readonly runRef: string;
+  readonly run: SummaryRunToken;
+  readonly step: number;
+  readonly reads: readonly { readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
+}): SummaryConsentToken | undefined {
+  try {
+    const { bound, reads } = input;
+    if (!isOwnerYes(bound) || MINTED_FROM.has(bound)) return undefined;
+    const pending = bound.pending;
+    if (pending.kind !== 'summary-consent' || pending.runRef !== input.runRef) return undefined;
+    if (typeof input.run !== 'object' || input.run === null || !Number.isInteger(input.step) || input.step < 1) return undefined;
+    if (!Array.isArray(reads) || reads.length === 0) return undefined;
+    const perSource = new Map<string, Set<string>>();
+    const entries = new Map<NlWave1EntryId, Set<string>>();
+    for (const read of reads) {
+      const source = CONSENT_SOURCE_OF(read.entryId);
+      if (source === undefined || !Array.isArray(read.itemIds) || read.itemIds.length === 0 || !read.itemIds.every((id: string) => typeof id === 'string' && id.length > 0)) return undefined;
+      const union = perSource.get(source) ?? new Set<string>();
+      const own = entries.get(read.entryId) ?? new Set<string>();
+      for (const id of read.itemIds) {
+        union.add(id);
+        own.add(id);
+      }
+      perSource.set(source, union);
+      entries.set(read.entryId, own);
+    }
+    if (perSource.size !== pending.sources.length) return undefined;
+    for (const recorded of pending.sources) {
+      const union = perSource.get(recorded.source);
+      if (union === undefined || union.size !== recorded.itemIds.length || !recorded.itemIds.every((id) => union.has(id))) return undefined;
+    }
+    MINTED_FROM.add(bound);
+    const token = Object.freeze({}) as SummaryConsentToken;
+    CONSENTS.set(token, { run: input.run, step: input.step, recipient: pending.recipient, sources: entries });
+    return token;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What a consent token must cover: this run, this summarize step and these sources (with the ids, when they are known). */
+export interface SummaryConsentScope {
+  readonly run: SummaryRunToken;
+  readonly step: number;
+  /** `itemIds` absent: the ids are not known yet (readiness, before the read); present: every id must be one the token names. */
+  readonly covered: readonly { readonly entryId: NlWave1EntryId; readonly itemIds?: readonly string[] }[];
+}
+
+function consentFacts(token: SummaryConsentToken | undefined, scope: SummaryConsentScope): ConsentTokenFacts | undefined {
+  try {
+    if (token === undefined || typeof token !== 'object' || token === null) return undefined;
+    const known = CONSENTS.get(token);
+    if (known === undefined || known.run !== scope.run || known.step !== scope.step || scope.covered.length === 0) return undefined;
+    for (const source of scope.covered) {
+      const ids = known.sources.get(source.entryId);
+      if (ids === undefined) return undefined;
+      if (source.itemIds !== undefined && !source.itemIds.every((id) => ids.has(id))) return undefined;
+    }
+    return known;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `token` is this run's, this step's and covers every listed source (and its ids, when given). */
+function consentMatches(token: SummaryConsentToken | undefined, scope: SummaryConsentScope): boolean {
+  return consentFacts(token, scope) !== undefined;
+}
+
+/** The consent a dispatch checks. `probe` is the readiness probe only: it may name a `REMOTE` provider but never dispatches. */
+interface ConsentGate {
+  readonly token: SummaryConsentToken | undefined;
+  readonly scope: SummaryConsentScope;
+  readonly probe?: true;
+}
+
+/** The recipient's display name the route gives a provider (provider data), or `undefined`: never throws. */
+function recipientOf(route: QuarantinedSummarizerRoute, provider: AiProvider): string | undefined {
+  try {
+    const label = route.recipientLabel?.(provider);
+    return typeof label === 'string' && label.trim().length > 0 ? label : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── provider selection (D4 through D12) ────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -310,6 +438,17 @@ export interface QuarantinedSummarizerRoute {
    * as before A5. Data from the composition root; Core never reads an environment.
    */
   readonly workSummarySources?: readonly AgentWorkSummarySource[];
+  /**
+   * Rule ① (CS-1a): the display name of the recipient a `REMOTE` provider is (the question's `{remote}`), a closed map over the
+   * provider family injected by `apps/quoky`, which may know families. `undefined` for a provider: no name, so no question can
+   * be asked and `REMOTE` is excluded (fail closed). Core never branches on a provider id. Absent: every `REMOTE` is excluded.
+   */
+  readonly recipientLabel?: (provider: AiProvider) => string | undefined;
+  /**
+   * Rule ① (CS-1a, `QUOKY_SUMMARY_CONSENT=on`): a step whose selector would pick `REMOTE` answers `consent-needed` (the question
+   * is asked) instead of being refused. Absent or `false`: `REMOTE` is simply dropped (the selector then picks `LOCAL` or none).
+   */
+  readonly askSummaryConsent?: boolean;
 }
 
 export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-grant';
@@ -325,46 +464,55 @@ export type QuarantinedModelRefusal = 'host-only' | 'no-model' | 'no-summary-gra
  *   2026-11-03 answer 3 supersedes the earlier single-item rule; the grant still covers exactly the asked-for items).
  * - `REMOTE_OK`: `LOCAL` and `REMOTE`.
  * - An unknown label or an asked-for count that is not a positive integer is unverifiable: none (`no-model`).
+ * - **Rule ① guard (CS-1a, replaces the A5-S3 work-source stopgap), whatever the label:** `REMOTE` stays in the set only with a
+ *   {@link SummaryConsentToken} that matches this run, this step, every covered source and its item ids. It is unconditional
+ *   (never behind a flag) and applies to every egress label ("EVERY remote summary"); for `REMOTE_OK` it is a no-op in practice,
+ *   because no summary readout carries that label (A5-S1). Required, so a caller can never forget the guard.
  */
 export function deriveM2Localities(input: {
   readonly egress: FlowEgress;
   readonly needsGrant: boolean;
   readonly granted: boolean;
   readonly askedItems: number;
-  /**
-   * A5-S3 review round 1 (rule ①): true when any covered source is one of the five A5 work sources (calendar, Jira, Slack,
-   * Confluence, GitHub). Until the rule-① confirm slice lands there is no bound consent token, so a work source never gets
-   * `REMOTE`, grant or not: `LOCAL` only. The confirm slice replaces this guard with the token check. Mail and Drive pass
-   * `false` explicitly, and are unchanged. Required, so a caller can never forget the guard. The guard is independent of the
-   * egress label: it drops `REMOTE` from whatever the label derived.
-   */
-  readonly workSource: boolean;
+  readonly consent: SummaryConsentToken | undefined;
+  /** What the token must cover (this run, this summarize step, the covered sources and their ids). */
+  readonly consentScope: SummaryConsentScope;
+}):
+  | { readonly ok: true; readonly localities: readonly AiExecutionLocality[] }
+  | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
+  const base = deriveLocalitiesBeforeConsent(input);
+  if (!base.ok) return base;
+  const localities = consentMatches(input.consent, input.consentScope) ? base.localities : base.localities.filter((locality) => locality !== 'REMOTE');
+  return { ok: true, localities: Object.freeze([...localities]) };
+}
+
+/**
+ * The same derivation without the rule-① guard: the set the egress label, grant and count would allow if the owner said yes. Used
+ * only to ask the question (the readiness probe); nothing is ever dispatched under it.
+ */
+function deriveLocalitiesBeforeConsent(input: {
+  readonly egress: FlowEgress;
+  readonly needsGrant: boolean;
+  readonly granted: boolean;
+  readonly askedItems: number;
 }):
   | { readonly ok: true; readonly localities: readonly AiExecutionLocality[] }
   | { readonly ok: false; readonly reason: QuarantinedModelRefusal } {
   const { egress, needsGrant, granted, askedItems } = input;
-  const { workSource } = input;
   if (egress === 'HOST_ONLY') return { ok: false, reason: 'host-only' };
   if (needsGrant && granted !== true) return { ok: false, reason: 'no-summary-grant' };
   if (typeof askedItems !== 'number' || !Number.isInteger(askedItems) || askedItems < 1) return { ok: false, reason: 'no-model' };
-  let localities: readonly AiExecutionLocality[];
   switch (egress) {
     case 'LOCAL_MODEL_ONLY':
-      localities = ['LOCAL'];
-      break;
+      return { ok: true, localities: ['LOCAL'] };
     case 'REMOTE_ON_SUMMARY_REQUEST':
       if (!needsGrant || granted !== true) return { ok: false, reason: 'no-summary-grant' };
-      localities = ['LOCAL', 'REMOTE'];
-      break;
+      return { ok: true, localities: ['LOCAL', 'REMOTE'] };
     case 'REMOTE_OK':
-      localities = ['LOCAL', 'REMOTE'];
-      break;
+      return { ok: true, localities: ['LOCAL', 'REMOTE'] };
     default:
       return { ok: false, reason: 'no-model' };
   }
-  // Rule ① guard, whatever the egress label: a work source never gets REMOTE until the bound consent token exists.
-  if (workSource) localities = localities.filter((locality) => locality !== 'REMOTE');
-  return { ok: true, localities: Object.freeze([...localities]) };
 }
 
 /**
@@ -417,7 +565,7 @@ function allowedBy(context: ProviderSelectionContext): ReadonlySet<AiExecutionLo
  * throws, or answers a provider whose locality, id or capability cannot be read, that does not advertise `SUMMARIZATION`, or
  * whose declared locality is outside the derived set (the port's answer is re-read, never trusted). Never calls the provider.
  */
-async function selectM2Provider(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext): Promise<SelectedProvider | undefined> {
+async function selectM2Provider(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext, gate: ConsentGate): Promise<SelectedProvider | undefined> {
   try {
     const selector = route.selector;
     if (typeof selector?.select !== 'function' || typeof selector.isStillEligible !== 'function') return undefined;
@@ -430,7 +578,7 @@ async function selectM2Provider(route: QuarantinedSummarizerRoute, context: Prov
     const selected: SelectedProvider = { provider, locality, auditId: typeof id === 'string' ? id : '' };
     // The policy verdict is asked once already here, so a route that can never pass the dispatch check (no explicit policy
     // verdict, CapabilityRouter under `allowedExecutionLocalities`) is refused before any body is fetched.
-    return dispatchLocality(route, context, selected) === undefined ? undefined : selected;
+    return dispatchLocality(route, context, selected, gate) === undefined ? undefined : selected;
   } catch {
     return undefined;
   }
@@ -456,7 +604,7 @@ function dataUseAllows(context: ProviderSelectionContext, provider: AiProvider, 
  * must still find it eligible under the same constrained context (the owner's live policy). Answers the locality that is
  * dispatched (the audit records exactly it), or `undefined` on any doubt: no call.
  */
-function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext, selected: SelectedProvider): AiExecutionLocality | undefined {
+function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSelectionContext, selected: SelectedProvider, gate: ConsentGate): AiExecutionLocality | undefined {
   try {
     const now = declaredExecutionLocality(selected.provider);
     if (now === undefined || now !== selected.locality || !allowedBy(context).has(now)) return undefined;
@@ -467,6 +615,13 @@ function dispatchLocality(route: QuarantinedSummarizerRoute, context: ProviderSe
     // switches the provider's declared locality cannot carry a stale (cached) answer into the dispatch or the audit.
     const after = declaredExecutionLocality(selected.provider);
     if (after !== now || !allowedBy(context).has(after)) return undefined;
+    // Rule ① (CS-1a): a `REMOTE` dispatch needs this run's and step's consent token, and the provider must still be the recipient
+    // the owner was asked about (read from the route now, never cached). The readiness probe names a `REMOTE` provider without
+    // sending anything; every other caller sends.
+    if (after === 'REMOTE' && gate.probe !== true) {
+      const facts = consentFacts(gate.token, gate.scope);
+      if (facts === undefined || recipientOf(route, selected.provider) !== facts.recipient) return undefined;
+    }
     return dataUseAllows(context, selected.provider, after) ? after : undefined;
   } catch {
     return undefined;
@@ -478,10 +633,9 @@ function grantState(
   sources: readonly { readonly entryId: NlWave1EntryId; readonly grant?: SummaryEgressGrant | undefined }[],
   step: number,
   run: SummaryRunToken,
-): { readonly needsGrant: boolean; readonly granted: boolean; readonly workSource: boolean } {
-  const workSource = sources.some((source) => workSummarySourceOf(source.entryId) !== undefined);
+): { readonly needsGrant: boolean; readonly granted: boolean } {
   const needing = sources.filter((source) => summaryReadoutLabel(source.entryId).egress === 'REMOTE_ON_SUMMARY_REQUEST');
-  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)), workSource };
+  return { needsGrant: needing.length > 0, granted: needing.length > 0 && needing.every((source) => grantMatches(source.grant, step, source.entryId, run)) };
 }
 
 export type QuarantinedListingOnlyReason =
@@ -492,7 +646,20 @@ export type QuarantinedListingOnlyReason =
   | 'credential-in-prompt'
   | 'dispatch-refused'
   /** The run had no M2 call, model call or input bytes left for even one item: nothing reserved, no breach (review round 1). */
-  | 'budget';
+  | 'budget'
+  /** Rule ① (CS-1a): another summarize step of this plan already asks (W2 allows one pending step at a time). */
+  | 'consent-one-pending'
+  /** Rule ① (CS-1a): another owner step (approval, scope clarification, override, connector write, channel grant) is open (W2). */
+  | 'consent-owner-step-open'
+  /** Rule ① (CS-1a): a question could not be asked at all (not the owner's DM, no conversation, no store, unrenderable, or the step could not be opened). */
+  | 'consent-unavailable'
+  /** Rule ① (CS-1a): the covered reads of one source list more than one question may count ({@link AGENT_M2_MAX_ITEMS}). */
+  | 'consent-too-many-items'
+  /** Rule ① (CS-1a): the sources of one step would send to different recipients, so no single question names them. */
+  | 'consent-recipient-split';
+
+/** What readiness answers: a listing-only reason, or `consent-needed` (a `REMOTE` provider was picked and the owner has not said yes). */
+export type SummaryReadinessReason = QuarantinedListingOnlyReason | 'consent-needed';
 
 /** The closed reasons, for exhaustive renderers. */
 export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyReason[] = Object.freeze([
@@ -505,6 +672,11 @@ export const QUARANTINED_LISTING_ONLY_REASONS: readonly QuarantinedListingOnlyRe
   'credential-in-prompt',
   'dispatch-refused',
   'budget',
+  'consent-one-pending',
+  'consent-owner-step-open',
+  'consent-unavailable',
+  'consent-too-many-items',
+  'consent-recipient-split',
 ]);
 
 function sourceRefusal(
@@ -532,6 +704,8 @@ export interface SummaryReadinessInput {
   /** The items the run asked for over the summary's reads. */
   readonly askedItems: number;
   readonly route: QuarantinedSummarizerRoute;
+  /** The owner's bound yes for this step (CS-1b); absent: `REMOTE` is not allowed (rule ①). */
+  readonly consent?: SummaryConsentToken;
 }
 
 /**
@@ -540,17 +714,42 @@ export interface SummaryReadinessInput {
  * constraint. `undefined` means it can; a reason means the read must not fetch documents. Never calls a provider.
  */
 export async function summaryReadiness(input: SummaryReadinessInput): Promise<QuarantinedListingOnlyReason | undefined> {
+  const verdict = await summaryReadinessDetailed(input);
+  // The legacy answer has no question: a step that would ask is not ready (no body is fetched).
+  return verdict.reason === 'consent-needed' ? 'no-model' : verdict.reason;
+}
+
+/**
+ * {@link summaryReadiness} with the rule-① ask (CS-1a). With `route.askSummaryConsent` and no token, the selector is asked under
+ * the full locality set (the set the label and grant allow, `REMOTE` included): a `LOCAL` pick is ready (W4, no question); a
+ * `REMOTE` pick answers `consent-needed` with the recipient's display name (`route.recipientLabel`; none is `no-model`), and no
+ * body is fetched. Without the ask mode, or with a token, only the guarded set is used ({@link deriveM2Localities}): `REMOTE`
+ * is dropped, or kept only for a matching token. Never calls a provider.
+ */
+export async function summaryReadinessDetailed(input: SummaryReadinessInput): Promise<{ readonly reason: SummaryReadinessReason | undefined; readonly recipient?: string }> {
   const refusal = sourceRefusal(input.entryId, input.schema, input.route);
-  if (refusal !== undefined) return refusal;
-  const derived = deriveM2Localities({
-    egress: summaryReadoutLabel(input.entryId).egress,
-    ...grantState([{ entryId: input.entryId, grant: input.grant }], input.summaryStep, input.run),
-    askedItems: input.askedItems,
-  });
-  if (!derived.ok) return derived.reason;
+  if (refusal !== undefined) return { reason: refusal };
+  const grants = grantState([{ entryId: input.entryId, grant: input.grant }], input.summaryStep, input.run);
+  const egress = summaryReadoutLabel(input.entryId).egress;
+  const scope: SummaryConsentScope = { run: input.run, step: input.summaryStep, covered: [{ entryId: input.entryId }] };
+  const derived = deriveM2Localities({ egress, ...grants, askedItems: input.askedItems, consent: input.consent, consentScope: scope });
+  if (!derived.ok) return { reason: derived.reason };
+  const gate: ConsentGate = { token: input.consent, scope };
+  if (input.route.askSummaryConsent === true && !consentMatches(input.consent, scope)) {
+    const full = deriveLocalitiesBeforeConsent({ egress, ...grants, askedItems: input.askedItems });
+    if (full.ok && full.localities.includes('REMOTE')) {
+      const probed = await selectM2Provider(input.route, m2SelectionContext(input.route.selectionContext, full.localities, [input.entryId]), { ...gate, probe: true });
+      if (probed === undefined) return { reason: 'no-model' };
+      if (probed.locality !== 'REMOTE') return { reason: undefined };
+      const recipient = recipientOf(input.route, probed.provider);
+      // A `REMOTE` provider with no display name cannot be asked about: fall through to the guarded selection (`LOCAL` only),
+      // so the ask mode never loses a `LOCAL` summary the switch-off behaviour would give.
+      if (recipient !== undefined) return { reason: 'consent-needed', recipient };
+    }
+  }
   const context = m2SelectionContext(input.route.selectionContext, derived.localities, [input.entryId]);
-  const selected = await selectM2Provider(input.route, context);
-  return selected === undefined ? 'no-model' : undefined;
+  const selected = await selectM2Provider(input.route, context, gate);
+  return { reason: selected === undefined ? 'no-model' : undefined };
 }
 
 /**
@@ -734,6 +933,8 @@ export interface QuarantinedSummaryRequest {
   readonly remainingCalls?: number;
   /** The grants of this request belong to this run (see {@link newSummaryRunToken}); a grant of another run never matches. */
   readonly run: SummaryRunToken;
+  /** The owner's bound yes for this step (rule ①, minted by the continuation in CS-1b); absent: `REMOTE` is never allowed. */
+  readonly consent?: SummaryConsentToken;
   /**
    * The items the run ASKED for across the covered reads (the count summary readiness used). The derivation needs it to be a
    * positive integer (the larger of this and the covered items the sources hold): the count is what was asked for, not what fit.
@@ -900,10 +1101,16 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   // label needs a summary grant must hold a valid one for THIS step and THIS source (D12: the derived localities). One
   // derivation, one context and one selection for the whole step; every call re-checks it right before its own dispatch.
   const joined = joinFlowLabels(...request.sources.map((source) => summaryReadoutLabel(source.entryId)));
-  const derived = deriveM2Localities({ egress: joined.egress, ...grantState(request.sources, request.summaryStep, request.run), askedItems: asked });
+  const scope: SummaryConsentScope = {
+    run: request.run,
+    step: request.summaryStep,
+    covered: request.sources.map((source) => ({ entryId: source.entryId, itemIds: source.documents.map((document) => document.id) })),
+  };
+  const gate: ConsentGate = { token: request.consent, scope };
+  const derived = deriveM2Localities({ egress: joined.egress, ...grantState(request.sources, request.summaryStep, request.run), askedItems: asked, consent: request.consent, consentScope: scope });
   if (!derived.ok) return { kind: 'listing-only', reason: derived.reason };
   const context = m2SelectionContext(request.route.selectionContext, derived.localities, request.sources.map((source) => source.entryId));
-  const picked = await selectM2Provider(request.route, context);
+  const picked = await selectM2Provider(request.route, context, gate);
   if (picked === undefined) return { kind: 'listing-only', reason: 'no-model' };
 
   // Plan the calls against what the run has left (N2 and the owner's 2026-11-16 caps): planned up front, so no call over-reserves.
@@ -920,7 +1127,7 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
 
   const now = request.now ?? Date.now;
   // Every call is launched in this synchronous loop: from each call's first dispatch check to its `execute` nothing is awaited.
-  const runs = plan.calls.map((call) => launchCall(request, context, picked, call, now));
+  const runs = plan.calls.map((call) => launchCall(request, context, picked, call, now, gate));
   const outcomes = await Promise.all(runs);
 
   const audits = outcomes.flatMap((outcome) => ('audit' in outcome && outcome.audit !== undefined ? [outcome.audit] : []));
@@ -967,6 +1174,7 @@ function launchCall(
   picked: SelectedProvider,
   call: PlannedCall,
   now: () => number,
+  gate: ConsentGate,
 ): Promise<CallOutcome> {
   const prompt = call.prompt;
   // Both credential detectors on the FINAL prompt, instructions and span together (never redacted: no call).
@@ -976,7 +1184,7 @@ function launchCall(
   // The dispatch check runs first (so a refusal charges nothing), then the budget reservation and the audit start (caller
   // callbacks), and then the check runs AGAIN inside the call, immediately before `provider.execute`, so nothing a callback does
   // can change what is sent (Codex review round 1). The audited locality is the one that final check verified.
-  if (dispatchLocality(request.route, context, picked) === undefined) return Promise.resolve({ kind: 'listing-only', reason: 'dispatch-refused' });
+  if (dispatchLocality(request.route, context, picked, gate) === undefined) return Promise.resolve({ kind: 'listing-only', reason: 'dispatch-refused' });
   let reserved = false;
   try {
     reserved = request.reserve(estimatedTokens) === true;
@@ -1003,7 +1211,7 @@ function launchCall(
     // A reporting callback never changes the call.
   }
   return callModel(picked.provider, aiRequest, request.signal, () => {
-    const verified = dispatchLocality(request.route, context, picked);
+    const verified = dispatchLocality(request.route, context, picked, gate);
     if (verified !== undefined) dispatched = verified;
     else refused = true;
     return verified !== undefined;

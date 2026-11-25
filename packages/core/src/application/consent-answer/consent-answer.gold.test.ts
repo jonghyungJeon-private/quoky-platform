@@ -53,7 +53,7 @@ async function runSr1(c: Sr1Case, classifier: ConsentClassifierSwitch): Promise<
   const p = c.pending!;
   const store = new ConsentPendingStore();
   const age = (p.ageSeconds ?? 0) * 1000;
-  store.open(summaryConsentPending({ scope: DM, language: 'ko', createdAtMs: NOW - age, recipient: 'Claude', itemIds: p.itemIds ?? ['item'], sources: [p.source ?? 'mail'] }));
+  store.open(summaryConsentPending({ scope: DM, language: 'ko', createdAtMs: NOW - age, recipient: 'Claude', sources: [{ source: (p.source ?? 'mail') as 'mail', itemIds: p.itemIds ?? ['item'] }], runRef: 'run-gold' }));
   if (p.state === 'superseded') await answer(store, { scope: DM, ownerDm: true, text: '다른 얘기', atMs: NOW - 1_000 }, OFF);
   if (p.state === 'consumed') await answer(store, { scope: DM, ownerDm: true, text: '응', atMs: NOW - 1_000 }, OFF);
   if (p.state === 'voided') store.voidAll();
@@ -77,7 +77,7 @@ describe('A6-S1 over SR-1 (the summary consent)', () => {
       if (d.kind === 'bound') {
         expect(d.audit, c.id).toEqual(['closed-yes']);
         expect(d.next, c.id).toBe('consumed');
-        expect(d.bound.pending.kind === 'summary-consent' && d.bound.pending.itemIds, c.id).toEqual(c.pending!.itemIds);
+        expect(d.bound.pending.kind === 'summary-consent' && d.bound.pending.sources.flatMap((entry) => entry.itemIds), c.id).toEqual(c.pending!.itemIds);
       }
       // A case whose built expect plans a new request (472, 473) takes the normal path; nothing is consumed there.
       if (c.planner !== undefined) expect([d.kind, d.next], c.id).toEqual(['cancelled', 'ordinary']);

@@ -19,6 +19,7 @@ import { ChannelGrantsConfigErrorCode, parseChannelGrantsConfig, type ChannelGra
 import { AgentConfigErrorCode, parseAgentConfig, type AgentConfig } from './agent/agent-config';
 import { WriteProposalsConfigErrorCode, parseWriteProposalsConfig, type WriteProposalsConfig } from './agent/write-proposals-config';
 import { ConsentAnswerConfigErrorCode, parseConsentAnswerConfig, type ConsentAnswerConfig } from './agent/consent-answer-config';
+import { SummaryConsentConfigErrorCode, parseSummaryConsentConfig, type SummaryConsentConfig } from './agent/summary-consent-config';
 import { ChunkItemsConfigErrorCode, parseChunkItemsConfig, type ChunkItemsConfig } from './item-summary/chunk-items-config';
 import type { EgressGuardConfig } from './security/egress-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
@@ -151,6 +152,11 @@ export interface QuokyConfig {
    * until A6-S2, the A6-S4 gate and the rule-① confirm slice). See `agent/consent-answer-config.ts`.
    */
   consentAnswer: ConsentAnswerConfig;
+  /**
+   * ADR-0121 SR-1 rule ① (confirm slice CS-1a): `QUOKY_SUMMARY_CONSENT` (`off`, the default, or `on`; anything else is
+   * refused at startup, SUMMARY_CONSENT_INVALID). `on` makes a remote agent summary ask first. See `agent/summary-consent-config.ts`.
+   */
+  summaryConsent: SummaryConsentConfig;
   /**
    * ADR-0121 amendment A7 (slice A7-S2): `QUOKY_AGENT_WRITE_PROPOSALS` (`off`, the default, or `shadow`: the held receipt is
    * logged with closed codes only; `active` is refused at startup, AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED).
@@ -357,6 +363,7 @@ export const QuokyConfigErrorCode = {
   ...ChannelGrantsConfigErrorCode,
   ...AgentConfigErrorCode,
   ...ConsentAnswerConfigErrorCode,
+  ...SummaryConsentConfigErrorCode,
   ...WriteProposalsConfigErrorCode,
   ...ChunkItemsConfigErrorCode,
   CONTEXT_MAX_TOKENS_INVALID: 'CONTEXT_MAX_TOKENS_INVALID',
@@ -627,6 +634,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const egress = parseEgressConfig(env);
   const agent = parseAgentConfig(env);
   const consentAnswer = parseConsentAnswerConfig(env);
+  const summaryConsent = parseSummaryConsentConfig(env);
   const writeProposals = parseWriteProposalsConfig(env);
   const chunkItems = parseChunkItemsConfig(env);
   const discordGuildId = env.DISCORD_GUILD_ID;
@@ -682,6 +690,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     channelGrants,
     agent,
     consentAnswer,
+    summaryConsent,
     writeProposals,
     chunkItems,
     embedding: {

@@ -13,6 +13,9 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import type { AgentSourceDocument, QuarantinedSummarizerRoute } from './quarantined-summary';
 import { hasUntrustedSpanMarker, isSingleLineOwnerText, ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type OwnerText, type SummaryGrantBasis } from './summary-grant';
 
+// Rule ① (CS-1a): no REMOTE call can run without a real consent token and the executor carries none until CS-1b, so this suite runs
+// on a LOCAL model; the REMOTE guard is tested in summary-consent.cs1a.test.ts and quarantined-summary-d12.test.ts.
+
 // ADR-0121 S2 wiring slice: the summary grant producer (P3-3b owner answer 2). Core derives the grant per summarize step and per
 // source from the owner's own words (quoted and pasted text excluded) with the approved summary vocabulary; never a caller flag
 // and never the planner's step. Without it a REMOTE_ON_SUMMARY_REQUEST summary stays listing-only with no body fetched.
@@ -243,7 +246,7 @@ function remoteRoute(): QuarantinedSummarizerRoute & { readonly requests: AiRequ
   const provider: AiProvider = {
     id: 'remote-summarizer',
     capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
-    executionLocality: 'REMOTE',
+    executionLocality: 'LOCAL',
     isAvailable: async () => true,
     execute: async (request) => {
       requests.push(request);
@@ -271,7 +274,7 @@ describe('AgentPlanExecutor with the producer (no test seam)', () => {
     const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: route }).execute(p, { grants: summaryGrantBasis(p, grounding('메일 3개 요약해줘')) });
     expect(mail.requests[0]?.withDocuments).toBe(true);
     expect(route.requests).toHaveLength(1);
-    expect(result.steps[1]).toMatchObject({ kind: 'summarize', status: 'ok', audits: [{ locality: 'REMOTE' }] });
+    expect(result.steps[1]).toMatchObject({ kind: 'summarize', status: 'ok', audits: [{ locality: 'LOCAL' }] });
   });
 
   it('a basis from words without a summary request, or derived for another plan, grants nothing', async () => {
@@ -320,7 +323,7 @@ describe('AgentPlanExecutor and the shutdown signal (S2 wiring review round 2)',
     const provider: AiProvider = {
       id: 'hung-summarizer',
       capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
-      executionLocality: 'REMOTE',
+      executionLocality: 'LOCAL',
       isAvailable: async () => true,
       execute: async () => {
         shutdown.abort();

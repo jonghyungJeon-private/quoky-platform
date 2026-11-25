@@ -9,6 +9,7 @@ import type { AgentRunResult } from './plan-executor';
 import { agentReplyNotes, type AgentNoteLanguage, type AgentStepCount, type AgentStepsPlan } from './reply-notes';
 import { AGENT_SUMMARY_READOUT_SOURCE, summaryEntriesForAssembler, type QuarantinedListingOnlyReason } from './quarantined-summary';
 import type { StructureProjection } from './structure-projector';
+import { renderSummaryConsentQuestion } from './summary-consent-question';
 
 /**
  * ADR-0121 D3/D4 (stage S2 P3-3b): the deterministic reply assembler. Core, offline, unwired. Pure: the same run result
@@ -34,7 +35,7 @@ import type { StructureProjection } from './structure-projector';
 
 export const AGENT_ASSEMBLE_LOG_EVENT = 'agent_run.assemble';
 
-export type AgentReplyPartKind = 'fact' | 'note' | 'summary' | 'status';
+export type AgentReplyPartKind = 'fact' | 'note' | 'summary' | 'status' | 'consent';
 
 export interface AgentReplyPart {
   readonly kind: AgentReplyPartKind;
@@ -107,6 +108,11 @@ const T = {
       'credential-in-prompt': '요약할 자료에 민감한 정보가 있는 것 같아서 목록만 보여드려요.',
       'dispatch-refused': '요약하기 직전에 모델 설정이 바뀌어서 요약하지 않고 목록만 보여드려요.',
       budget: '이번 요청의 처리 한도가 남지 않아서 요약하지 않고 목록만 보여드려요.',
+      'consent-one-pending': '먼저 확인드릴 요약이 하나 더 있어서, 이 요약은 보내지 않고 목록만 보여드려요.',
+      'consent-owner-step-open': '먼저 답해 주실 일이 남아 있어서, 요약은 보내지 않고 목록만 보여드려요.',
+      'consent-unavailable': '지금은 요약을 보내도 되는지 여쭤볼 수 없어서, 요약은 보내지 않고 목록만 보여드려요.',
+      'consent-too-many-items': '한 번에 여쭤볼 수 있는 개수를 넘어서, 요약은 보내지 않고 목록만 보여드려요.',
+      'consent-recipient-split': '이 자료들은 같은 곳으로 보낼 수 없어서, 요약은 보내지 않고 목록만 보여드려요.',
     } satisfies Record<QuarantinedListingOnlyReason, string>,
     summaryUnavailable: '요약을 보여드릴 수 없었어요.',
     credentialWithheld: '민감한 정보가 있는 것 같은 항목은 요약에서 뺐어요.',
@@ -136,6 +142,11 @@ const T = {
       'credential-in-prompt': 'The material to summarize looked sensitive, so this is the listing only.',
       'dispatch-refused': 'The model setting changed right before the summary, so nothing was sent; this is the listing only.',
       budget: 'This request had no limit left for a summary, so nothing was sent; this is the listing only.',
+      'consent-one-pending': 'Another summary is waiting for your yes first, so nothing was sent for this one; this is the listing only.',
+      'consent-owner-step-open': 'Something else is waiting for your answer first, so nothing was sent for a summary; this is the listing only.',
+      'consent-unavailable': "I can't ask about sending a summary right now, so nothing was sent; this is the listing only.",
+      'consent-too-many-items': 'There are more items than one question can cover, so nothing was sent; this is the listing only.',
+      'consent-recipient-split': 'These materials would go to different recipients, so nothing was sent; this is the listing only.',
     } satisfies Record<QuarantinedListingOnlyReason, string>,
     summaryUnavailable: 'A summary could not be shown.',
     credentialWithheld: 'Items that looked sensitive were left out of the summary.',
@@ -238,6 +249,13 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   if (result.breach !== undefined) parts.push({ kind: 'status', text: t.boundStopped });
   // The owner's kill switch stopped the run before a step (S2 wiring slice): one fixed line, after any bound line.
   if (result.stopped === true) parts.push({ kind: 'status', text: t.agentStopped });
+  // Rule ① (CS-1a): the question is the last part, after the listing and every note. No "not read" note for that step: the
+  // question itself says nothing was sent yet.
+  for (const step of result.steps) {
+    if (step.kind !== 'summarize' || step.status !== 'consent-needed') continue;
+    const question = renderSummaryConsentQuestion({ language, recipient: step.recipient, sources: step.sources.map((entry) => ({ source: entry.source, count: entry.itemIds.length })) });
+    if (question !== '') parts.push({ kind: 'consent', text: question });
+  }
   return finish(input, parts, label, summaryLines, droppedLines);
 }
 

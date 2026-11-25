@@ -3,6 +3,7 @@ import type { AiProvider } from '../../ports/ai-provider.port';
 import { containsCredentialMaterial } from '../credential-guard';
 import type { AiExecutionLocality } from '../../ports/ai-provider.port';
 import { nlSameEgress } from '../nl-routing/selection-egress';
+import { renderSummaryConsentQuestion, SUMMARY_CONSENT_EN_COUNT_PLACEHOLDER, SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER } from '../agent/summary-consent-question';
 import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentAnswerLabel, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
 import type { ConsentPending } from './consent-pending';
 
@@ -14,7 +15,7 @@ type Classifier = (request: ConsentClassifierRequest) => Promise<ConsentAnswerLa
  * rule-① summary consent or A2 topic consent as `yes`, `yes-and-more`, `no`, `other` or `unclear` (A6.3 step 3, A6.4).
  *
  * Content-free (A6.4): the request is ONLY (a) the fixed question text with every item-derived value replaced by a fixed
- * placeholder (`{개수}` for the rule-① item count, `{주제}` for the A2 topic; the source noun, a closed Core label, and the
+ * placeholder (`{개수}` (KO) or `{count}` (EN) for the rule-① item count, `{주제}` for the A2 topic; the source noun, a closed Core label, and the
  * recipient's display name stay) and (b) the owner's reply. {@link buildConsentClassifierRequest} is the only builder and is
  * pure. The route is the D4 help-scope pattern: `Capability.INTENT_SELECTION` with `intentSelectionTier: 'stronger'`, a 10 s
  * bound, fail closed to `unclear` (never `yes`). The prompt is a generic instruction with no example (no phrase list); the
@@ -35,8 +36,12 @@ function effectiveTimeoutMs(override: number | undefined): number {
 /** A shape check, not a word list: a recipient name with no letter or digit (blank, punctuation-only, zero-width-only) renders no question. */
 const RECIPIENT_SHAPE = /[\p{L}\p{N}]/u;
 
-/** The placeholders that stand for item-derived values (A6.4). */
-export const CONSENT_COUNT_PLACEHOLDER = '{개수}';
+/**
+ * The placeholders that stand for item-derived values (A6.4). The rule-① item count is `{개수}` in the Korean question and
+ * `{count}` in the English one (the classifier sees the question in the owner's language); the A2 topic is `{주제}` in both.
+ */
+export const CONSENT_COUNT_PLACEHOLDER_KO = SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER;
+export const CONSENT_COUNT_PLACEHOLDER_EN = SUMMARY_CONSENT_EN_COUNT_PLACEHOLDER;
 export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
 
 /**
@@ -44,7 +49,7 @@ export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
  * placeholders. Pure. (The owner-facing question text of the rule-① confirm slice must render the same template with the
  * real values; A6-S4 judges the request, A6.9.)
  */
-export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
+export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly { readonly source: ConsentSource }[] }): string {
   // Input-shape rule: the recipient display name (provider-derived) must contain a letter or digit, or no question is rendered.
   if (!RECIPIENT_SHAPE.test(promptText(pending.recipient))) return '';
   const rendered = renderQuestion(pending);
@@ -52,19 +57,17 @@ export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' |
   return rendered !== '' && promptText(rendered) === rendered ? rendered : '';
 }
 
-function renderQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
+function renderQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly { readonly source: ConsentSource }[] }): string {
   const ko = pending.language === 'ko';
   if (pending.kind === 'topic-consent') {
     return ko
       ? `${CONSENT_TOPIC_PLACEHOLDER} 주제로 ${pending.recipient}에게 요청을 보낼까요? (응/아니)`
       : `Shall I send a request about ${CONSENT_TOPIC_PLACEHOLDER} to ${pending.recipient}? (yes/no)`;
   }
-  // A closed set (`CONSENT_SOURCES`): a value outside it never becomes question text (the producer refuses it; this is the second guard).
-  const noun = (pending.sources ?? []).filter(isConsentSource).join(', ');
-  if (noun === '') return '';
-  return ko
-    ? `${noun} ${CONSENT_COUNT_PLACEHOLDER}건을 ${pending.recipient}에 보내 요약할까요? (응/아니)`
-    : `Shall I send ${CONSENT_COUNT_PLACEHOLDER} ${noun} item(s) to ${pending.recipient} to summarise them? (yes/no)`;
+  // The rule-① question is the one the owner read (`summary-consent-question.ts`), with every count a fixed placeholder. A closed
+  // set (`CONSENT_SOURCES`): a value outside it never becomes question text (the producer refuses it; this is the second guard).
+  const sources = (pending.sources ?? []).flatMap((entry) => (isConsentSource(entry?.source) ? [{ source: entry.source, count: 1 }] : []));
+  return renderSummaryConsentQuestion({ language: pending.language, recipient: pending.recipient, sources }, { countPlaceholder: true });
 }
 
 /** A6.4: the whole classifier request. Holds exactly the fixed question with placeholders and the reply. Pure. */

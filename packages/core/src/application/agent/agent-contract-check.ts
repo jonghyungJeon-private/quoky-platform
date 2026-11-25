@@ -1,8 +1,10 @@
+import type { ConsentPendingStore } from '../consent-answer/consent-pending';
 import type { AgentRunServiceDeps } from './agent-run-service';
 import type { AgentPlanExecutorDeps, AgentReadBudget, AgentReadPort, AgentReadRequest, AgentReadResponse, AgentSummarizerDeps } from './plan-executor';
 import type { AgentWorkSummarySource } from './flow-policy';
 import type { AgentCalendarSummaryItem, AgentExcerptSummaryItem, AgentSlackSummaryItem } from './work-summary-projection';
 import type { ProviderSelectionContext } from '../../ports/provider-selection-policy.port';
+import type { AiProvider } from '../../ports/ai-provider.port';
 import type { ProviderSelector } from '../../ports/provider-selector.port';
 
 /**
@@ -21,7 +23,13 @@ export type AgentExecutorDepsPinned = Assert<KeysEqual<AgentPlanExecutorDeps, 'r
  * ADR-0121 D12 (amended 2026-11-16): M2's route is the EXISTING selection contract — the `ProviderSelector` port and its
  * `ProviderSelectionContext` — and nothing else: no model list, no new model-execution port or token.
  */
-export type AgentSummarizerDepsPinned = Assert<KeysEqual<AgentSummarizerDeps, 'selector' | 'selectionContext' | 'workSummarySources'>>;
+export type AgentSummarizerDepsPinned = Assert<KeysEqual<AgentSummarizerDeps, 'selector' | 'selectionContext' | 'workSummarySources' | 'recipientLabel' | 'askSummaryConsent'>>;
+/**
+ * Rule ① (CS-1a): the route gains two data fields and still no port or model list: the recipient's display name of a provider
+ * (a pure closed map over the provider family, injected by `apps/quoky`; `undefined` excludes `REMOTE`) and the ask-mode flag.
+ */
+export type AgentSummarizerRecipientPinned = Assert<TypesEqual<NonNullable<AgentSummarizerDeps['recipientLabel']>, (provider: AiProvider) => string | undefined>>;
+export type AgentSummarizerAskPinned = Assert<TypesEqual<NonNullable<AgentSummarizerDeps['askSummaryConsent']>, boolean>>;
 /** ADR-0121 A5-S1: the one data field the route gains is the per-source switch (a list of source names), never a port or a model list. */
 export type AgentSummarizerSwitchPinned = Assert<TypesEqual<NonNullable<AgentSummarizerDeps['workSummarySources']>, readonly AgentWorkSummarySource[]>>;
 export type AgentSummarizerSelectorPinned = Assert<TypesEqual<AgentSummarizerDeps['selector'], ProviderSelector>>;
@@ -54,8 +62,11 @@ export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQu
  * closed data context `crossWrite` (allowlists and switches by value, no port, no model list); it reaches the plan validator only.
  */
 export type AgentServiceDepsPinned = Assert<
-  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite'>
+  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite' | 'consentStore' | 'recipientLabel'>
 >;
+/** Rule ① (CS-1a): the service's two additions are the process-wide pending-step store and the recipient-name map (data), no port. */
+export type AgentServiceConsentStorePinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['consentStore']>, ConsentPendingStore>>;
+export type AgentServiceRecipientPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['recipientLabel']>, (provider: AiProvider) => string | undefined>>;
 export type AgentServiceReleasedPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['released']>, boolean>>;
 export type AgentServiceReadersPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['readers']>, AgentPlanExecutorDeps['readers']>>;
 export type AgentServiceSummarizerPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['summarizer']>, ProviderSelector>>;

@@ -19,6 +19,9 @@ import {
 import { assembleAgentReply } from './reply-assembler';
 import type { AgentStepsPlan } from './reply-notes';
 
+// Rule ① (CS-1a): no REMOTE call can run without a real consent token (the executor has no way to carry one until CS-1b), so the
+// disclosure tests run the executor on a LOCAL model and mark the audits REMOTE afterwards (the assembler reads only the audits).
+
 // ADR-0121 D3/D4 (stage S2 P3-3b): the deterministic reply assembler. Summaries come through the real path (the executor and the
 // summariser, with the grant test seam on) or, to bypass the summariser's own guards, through the sealing test seam.
 
@@ -53,6 +56,12 @@ async function run(steps: ValidatedAgentStep[], readers: Partial<Record<NlWave1E
   const p = plan(steps);
   const result = await new AgentPlanExecutor({ readers, ...(answer !== undefined ? { summarizer: model(locality, answer) } : {}), bounds }).execute(p);
   return { plan: p, result };
+}
+
+/** The same result with every audit marked REMOTE (the assembler's disclosure rule reads the audit's locality only). */
+function asRemote(r: { plan: RunPlan; result: AgentRunResult }): { plan: RunPlan; result: AgentRunResult } {
+  const steps = r.result.steps.map((step): AgentStepResult => (step.kind === 'summarize' && 'audits' in step && step.audits !== undefined ? { ...step, audits: step.audits.map((audit) => ({ ...audit, locality: 'REMOTE' as const })) } : step));
+  return { plan: r.plan, result: { ...r.result, steps } };
 }
 
 const ONE = '{"items":[{"n":1,"summary":"Only item."}]}';
@@ -241,7 +250,7 @@ describe('reply assembler', () => {
   });
 
   it('a summary made by a REMOTE model carries the fixed disclosure line; a LOCAL one does not', async () => {
-    const remote = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, ONE, {}, 'REMOTE');
+    const remote = asRemote(await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, ONE));
     const withRemote = reply(remote, 'en');
     expect(withRemote.parts.at(-1)).toEqual({ kind: 'status', text: 'Part of the original text was sent to an outside model to make this summary.' });
     expect(reply(remote, 'ko').parts.at(-1)?.text).toContain('외부 모델');
@@ -258,7 +267,7 @@ describe('reply assembler', () => {
   });
 
   it('N1: a REMOTE call is disclosed even when it failed or was cut off', async () => {
-    const failed = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json', {}, 'REMOTE');
+    const failed = asRemote(await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json'));
     expect(failed.result.steps[1]).toMatchObject({ status: 'failed', audits: [{ locality: 'REMOTE' }] });
     expect(reply(failed, 'en').parts.map((part) => part.text)).toContain('Part of the original text was sent to an outside model to make this summary.');
     const local = await run([read('mail.list'), summarize([1])], { 'mail.list': port(['m1'], [doc(1)]) }, 'not json', {}, 'LOCAL');
@@ -281,7 +290,7 @@ describe('reply assembler', () => {
     let calls = 0;
     const provider: AiProvider = {
       id: 'p-remote',
-      executionLocality: 'REMOTE',
+      executionLocality: 'LOCAL',
       capabilities: [{ capability: Capability.SUMMARIZATION, priority: 1 }],
       isAvailable: async () => true,
       execute: async () => ({ text: 'not json' }),
@@ -291,7 +300,7 @@ describe('reply assembler', () => {
     const route: QuarantinedSummarizerRoute = { selector: { select: async () => provider, isStillEligible: () => (calls += 1) !== 4 } };
     const p = plan([wide('mail.list', 2), wide('drive.files', 1), summarize([1, 2])]);
     const drive: AgentSourceDocument = { id: 'f00001', position: 1, title: 't', author: 'a', date: '', body: 'b' };
-    const result = await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2'], [doc(1), doc(2)]), 'drive.files': port(['f00001'], [drive]) }, summarizer: route }).execute(p);
+    const { result } = asRemote({ plan: p, result: await new AgentPlanExecutor({ readers: { 'mail.list': port(['m1', 'm2'], [doc(1), doc(2)]), 'drive.files': port(['f00001'], [drive]) }, summarizer: route }).execute(p) });
     expect(result.steps[2]).toMatchObject({ status: 'failed', errorCode: 'SCHEMA', audits: [{ locality: 'REMOTE', auditId: 'p-remote' }] });
     const out = reply({ plan: p, result }, 'en');
     expect(out.text).toContain('A summary could not be made');

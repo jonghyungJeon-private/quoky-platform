@@ -22,6 +22,8 @@ import {
 } from './quarantined-summary';
 import { WORK_SUMMARY_FIELDS, projectWorkSummaryDocuments } from './work-summary-projection';
 
+// Rule ① (CS-1a): no REMOTE provider is reachable here without a real consent token; the rule is tested in summary-consent.cs1a.test.ts.
+
 // ADR-0121 A5-S1: the summary-readout label and shapes of calendar, Jira, Slack, Confluence and GitHub, the A5.2 field
 // projection from the listing response, the A5.3 provider constraints, and the per-source switch (default off). With every
 // switch off the behaviour is the pre-A5 one, byte for byte (pinned below against a run with no summarizer at all).
@@ -277,15 +279,15 @@ describe('switch on', () => {
     for (const entryId of WORK_ENTRIES) expect(await ready(entryId, [model('LOCAL')], false), entryId).toBe('no-summary-grant');
   });
 
-  it('A5.3 + rule ① guard: a work source is LOCAL-only in Core until the confirm slice (a REMOTE provider, declared or not, is never selected); LOCAL needs no declaration', async () => {
+  it('A5.3 + rule ① guard: a work source is LOCAL-only in Core without a bound consent token (a REMOTE provider, declared or not, is never selected); LOCAL needs no declaration', async () => {
     for (const entryId of WORK_ENTRIES) {
       expect(await ready(entryId, [model('REMOTE')]), `${entryId} remote, no declaration`).toBe('no-model');
       // The no-training constraint stays on the context (next test); the guard excludes REMOTE before it matters.
       expect(await ready(entryId, [model('REMOTE', 'no-training')]), `${entryId} remote, no-training`).toBe('no-model');
       expect(await ready(entryId, [model('LOCAL')]), `${entryId} local`).toBeUndefined();
     }
-    // Mail keeps the pre-A5 rule: a remote provider with no declaration is fine.
-    expect(await ready('mail.list', [model('REMOTE')])).toBeUndefined();
+    // Rule ① (CS-1a): the guard is the same for mail and Drive: no token, no REMOTE, whatever the label.
+    expect(await ready('mail.list', [model('REMOTE')])).toBe('no-model');
   });
 
   it('a REMOTE provider that does not declare it is never picked over a declaring one, and the work-text constraint is on the selection context', async () => {
