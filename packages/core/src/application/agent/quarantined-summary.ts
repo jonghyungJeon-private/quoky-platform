@@ -302,7 +302,7 @@ declare const CONSENT_BRAND: unique symbol;
  * module-private `WeakMap`, like {@link SummaryEgressGrant}: it names the run, the step, the recipient the owner was asked about
  * and, per source, exactly the item ids the question counted. Without it `REMOTE` is never in the locality set of an M2 call,
  * for any egress label ({@link deriveM2Localities}), and the dispatch re-check refuses a `REMOTE` provider whose label is not the
- * recipient. The only maker is {@link mintSummaryConsentToken}, from a genuine bound A6-S1 consent; CS-1a has no production caller
+ * recipient. The only maker is {@link mintSummaryConsentToken}, from a bound A6-S1 consent that `answerConsentTurn` alone recorded as the owner's yes (the owner-yes brand); CS-1a has no production caller
  * (the continuation, CS-1b, is the first), so after CS-1a no agent path can reach `REMOTE`.
  */
 export interface SummaryConsentToken {
@@ -325,14 +325,14 @@ const MINTED_FROM = new WeakSet<object>();
 
 /**
  * The ONLY maker of a {@link SummaryConsentToken} (rule ①; CS-1b's continuation is its first caller, none exists in CS-1a). It
- * accepts only a genuine {@link BoundConsent} (the run-time brand of the store's own `bind`: a structural copy, a claim or an
- * open step is refused), of a `summary-consent` step, once, and only for exactly the scope the owner was asked about:
+ * accepts only a {@link BoundConsent} carrying the owner-yes brand (recorded only by `answerConsentTurn`, on a bound that
+ * the store's own `bind` made: a structural copy, a claim, an open step or a bound that was merely bound is refused), of a `summary-consent` step, once, and only for exactly the scope the owner was asked about:
  * - `runRef` is the step's own `runRef`; `run` and `step` are the run token and the summarize step the continuation re-runs;
  * - `reads` (the covered reads, each its `entryId` and the ids it lists) must, per source (Core's closed source of the entry),
  *   union to EXACTLY the ids the step recorded: every recorded source is covered, no other source and no other id is;
  * - the token's recipient is the step's recipient, compared again at every dispatch (`dispatchLocality`).
  * Anything else is `undefined` (no token, so no `REMOTE`). Total: never throws. There is no test-only way to make a token: tests
- * build a {@link ConsentPendingStore}, open a step, claim, bind a closed yes and mint through here.
+ * build a {@link ConsentPendingStore}, open a step, answer a closed yes through `answerConsentTurn` and mint through here.
  */
 export function mintSummaryConsentToken(input: {
   readonly bound: BoundConsent;

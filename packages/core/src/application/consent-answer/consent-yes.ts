@@ -1,4 +1,4 @@
-import type { BoundConsent } from './consent-pending';
+import { isStoreBound, type BoundConsent } from './consent-pending';
 
 /**
  * The owner-yes brand (CS-1a review round 2). A {@link BoundConsent} only says a step was claimed and bound; `bind` does not know
@@ -8,8 +8,12 @@ import type { BoundConsent } from './consent-pending';
  */
 const YES = new WeakSet<object>();
 
-/** Record that the bound consent came from a yes answer. Called by the answer pipeline only (boundary-pinned). */
+/**
+ * Record that the bound consent came from a yes answer. Called by the answer pipeline only (boundary-pinned). Refuses (no brand)
+ * a value the real `ConsentPendingStore.prototype.bind` did not make (a replaced or overridden `bind` cannot forge one).
+ */
 export function recordOwnerYes(bound: BoundConsent): void {
+  if (!isStoreBound(bound)) return;
   YES.add(bound);
 }
 

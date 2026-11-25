@@ -104,6 +104,20 @@ export class ConsentPendingInvalidError extends Error {
 
 const MINTED = new WeakSet<object>();
 
+/** Bound consents made by the real {@link ConsentPendingStore.prototype.bind} (via {@link sealBound}); not reachable by an instance override. */
+const SEALED_BOUND = new WeakSet<object>();
+
+function sealBound(pending: ConsentPending, boundAtMs: number): BoundConsent {
+  const bound = Object.freeze({ pending, boundAtMs }) as BoundConsent;
+  SEALED_BOUND.add(bound);
+  return bound;
+}
+
+/** Whether `value` is a bound consent the real store `bind` made over a minted pending step (provenance, not a yes). */
+export function isStoreBound(value: unknown): value is BoundConsent {
+  return typeof value === 'object' && value !== null && SEALED_BOUND.has(value) && isConsentPending((value as BoundConsent).pending);
+}
+
 /** Whether `value` was made by one of this module's producers (the run-time half of the brand). */
 export function isConsentPending(value: unknown): value is ConsentPending {
   return typeof value === 'object' && value !== null && MINTED.has(value);
@@ -272,8 +286,7 @@ export class ConsentPendingStore {
       return undefined;
     }
     record.state = 'used';
-    const bound = Object.freeze({ pending: record.pending, boundAtMs: atMs }) as BoundConsent;
-    return bound;
+    return sealBound(record.pending, atMs);
   }
 
   /** Cancel a claimed step (a no, an `other`, a structural failure, the caps). A lost claim is already not answerable. */

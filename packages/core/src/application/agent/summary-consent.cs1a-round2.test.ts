@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Capability } from '../../domain';
 import type { AiExecutionLocality, AiProvider, AiRequest } from '../../ports/ai-provider.port';
@@ -9,6 +10,7 @@ import type { ProviderSelectionPolicy } from '../../ports/provider-selection-pol
 import { AiProviderManager } from '../ai-provider-manager';
 import { CapabilityRouter } from '../capability-router';
 import { answerConsentTurn } from '../consent-answer/consent-answer';
+import { isOwnerYes } from '../consent-answer/consent-yes';
 import { ConsentPendingStore, summaryConsentPending, type BoundConsent } from '../consent-answer/consent-pending';
 import {
   estimateInputTokens,
@@ -82,10 +84,34 @@ describe('round 2 (finding 1): a consent token needs the owner\'s yes, recorded 
     expect(mint(bound)).toBeDefined();
   });
 
-  it('only consent-answer.ts records a yes (pin by imported name)', () => {
-    const files = ROOTS_SOURCES();
-    const users = files.filter((file) => /\brecordOwnerYes\b/u.test(readFileSync(file, 'utf8')) && !file.endsWith('consent-yes.ts'));
+  it('an instance with a replaced bind that returns a forged bound consent gets no brand and no token', () => {
+    const store = new ConsentPendingStore();
+    open(store);
+    const other = new ConsentPendingStore();
+    open(other);
+    const real = yesBound(other, scope);
+    const forged = Object.freeze({ pending: real.pending, boundAtMs: 2 }) as BoundConsent;
+    store.bind = () => forged;
+    void answerConsentTurn(store, { scope, ownerDm: true, text: '응', atMs: 1 }, { mode: 'off' }, () => 2);
+    expect(isOwnerYes(forged)).toBe(false);
+    expect(mint(forged)).toBeUndefined();
+  });
+
+  it('only consent-answer.ts records a yes: one import and exactly one call site, inside bindOrLost (AST)', () => {
+    const users = ROOTS_SOURCES().filter((file) => /\brecordOwnerYes\b/u.test(readFileSync(file, 'utf8')) && !file.endsWith('consent-yes.ts') && !file.endsWith('.test.ts'));
     expect(users.map((file) => relative(REPO, file))).toEqual(['packages/core/src/application/consent-answer/consent-answer.ts']);
+    const source = ts.createSourceFile('consent-answer.ts', readFileSync(users[0] as string, 'utf8'), ts.ScriptTarget.Latest, true);
+    let imports = 0;
+    const callers: string[] = [];
+    const visit = (node: ts.Node, fn: string): void => {
+      if (ts.isImportSpecifier(node) && node.name.text === 'recordOwnerYes') imports += 1;
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'recordOwnerYes') callers.push(fn);
+      const next = ts.isFunctionDeclaration(node) && node.name !== undefined ? node.name.text : fn;
+      ts.forEachChild(node, (child) => visit(child, next));
+    };
+    visit(source, '<top>');
+    expect(imports).toBe(1);
+    expect(callers).toEqual(['bindOrLost']);
   });
 });
 
@@ -159,8 +185,10 @@ describe('round 2 (finding 3): REMOTE calls of one step, each with a real token 
 
   it('one call sent, the next refused at dispatch because the recipient changed: the sent call stays disclosed as REMOTE', async () => {
     const provider = remote();
+    // The label is read this many times before the first call is sent (consent check and dispatch re-check); later reads flip it.
+    const LABEL_READS_BEFORE_FLIP = 3;
     let reads = 0;
-    const flipping = route(provider, { recipientLabel: () => (++reads <= 3 ? 'Claude' : 'Other') });
+    const flipping = route(provider, { recipientLabel: () => (++reads <= LABEL_READS_BEFORE_FLIP ? 'Claude' : 'Other') });
     const outcome = await quarantinedSummarize({ ...base, sources: [mail('m1'), drive('f1')], route: flipping, consent: token() });
     // The first call was sent; the second was refused at dispatch (recipient changed): nothing was sent for it.
     expect(provider.requests).toHaveLength(1);

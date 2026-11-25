@@ -39212,7 +39212,7 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
      parameters of the mint (only `runRef` is checked against the record); CS-1b MUST derive run and step from the continuation
      record (`record.summaryStep`), never from caller parameters.
   2. *Import guard.* A pin test fails if any non-test source imports a `*.test-support` module.
-  3. *REMOTE multi-call coverage.* Real-token cases: mail plus Drive in parallel, a byte budget that fits one of two calls, one call
+  3. *REMOTE multi-call coverage.* Real-token cases: mail plus Drive in parallel, an input-token budget that fits one of two calls, one call
      sent and the next refused at dispatch (recipient changed); all audits stay REMOTE.
   4. *Narrow importer.* `quarantined-summary.ts` imports from `consent-answer/` exactly `BoundConsent` (type) and `isOwnerYes`, pinned by name.
   5. *Accuracy.* The question-template hash is pinned (above). Pre-existing, NOT fixed here: `sealQuarantinedSummaryForTest` (and the
