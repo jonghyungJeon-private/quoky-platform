@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A7-S4a card (2026-11-25; dormant: `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused at startup)
+
+- **Added.** The proposal port (`ports/agent-write-proposal.port.ts`, token `AGENT_WRITE_PROPOSAL_PORT`) and its implementation over the ADR-0112
+  `connectorWriteFlow` outside the agent module (`connector-writes/agent-write-proposal.ts`): the A7 card (operation and destination "대상은 보내신
+  문장에서", the "모델 작성 초안" marker, the full payload, the content-free provenance banner, the named-people line, one line per non-target key, the
+  unchanged execution phrase), one open A7 card per owner with the fixed wait line, and the rule-① question `draft-consent-question.v1` with the
+  destination clause. The propose step (`agent/a7-propose.ts`, `AgentPlanExecutor.readDraftSource`) and the `writeProposal` dep of `AgentRunService`.
+  `QUOKY_AGENT_PROPOSE_TARGETS` (closed list, default empty).
+- **Changed.** An optional `agentProposal` mark on the connector-write anchor puts an A7 card under the kill switch (`isActionSwitchGoverned`); no
+  other anchor changes. The agent boundary test pins the port's import direction. `summary-consent-question.v1` is unchanged.
+- **Proved.** The Jira writer renders one ADF paragraph per payload line, so a `\\` adds no line and no markup (test).
+
 ## Unreleased — A7-S3 drafter (2026-11-25; dormant: nothing reaches it, `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused)
 
 - **Added.** `agent/payload-drafter.ts` (prompt template `payload-draft-prompt.v1`, the `payload-draft.v1` schema caps, the a7-08 pseudonym remap,
