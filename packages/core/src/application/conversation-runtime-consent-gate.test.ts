@@ -40,6 +40,8 @@ interface Options {
   readonly gate?: boolean;
   readonly classifier?: ConsentClassifierSwitch;
   readonly selectionQuestionOpen?: boolean;
+  /** The kill-switch phrase is handled by this path instead of the agent seam (`agentRuns` stays unhandled). */
+  readonly stopPath?: 'nlSelection' | 'surface';
 }
 
 function harness(opts: Options = {}) {
@@ -167,11 +169,22 @@ function harness(opts: Options = {}) {
       mode: 'shadow',
       shadowAdmits: () => false,
       runShadow: bad('runShadow'),
-      handleSwitchPhrase: async (_actor: Actor, text: string) => (text.trim() === '에이전트 중지' ? ((stopHandled += 1), '에이전트를 멈췄어요.') : undefined),
+      handleSwitchPhrase: async (_actor: Actor, text: string) => (opts.stopPath === undefined && text.trim() === '에이전트 중지' ? ((stopHandled += 1), '에이전트를 멈췄어요.') : undefined),
       switchSuffix: () => undefined,
     } as unknown as ConversationRuntimeDeps['agentRuns'],
     ...(opts.selectionQuestionOpen === true
       ? { nlSelection: { mode: 'off', takePending: async () => ({ kind: 'entry' }) } as unknown as ConversationRuntimeDeps['nlSelection'] }
+      : {}),
+    ...(opts.stopPath === 'nlSelection'
+      ? { nlSelection: { mode: 'off', handleSwitchPhrase: async (_actor: Actor, text: string) => (text.trim() === '에이전트 중지' ? ((stopHandled += 1), '멈춤(선택)') : undefined) } as unknown as ConversationRuntimeDeps['nlSelection'] }
+      : {}),
+    ...(opts.stopPath === 'surface'
+      ? {
+          surfaceGrants: {
+            gate: { enforced: true },
+            service: { handleSwitchPhrase: async (_actor: Actor, message: InboundMessage) => (message.text.trim() === '에이전트 중지' ? ((stopHandled += 1), '멈춤(채널)') : undefined) },
+          } as unknown as ConversationRuntimeDeps['surfaceGrants'],
+        }
       : {}),
     logger,
   };
@@ -272,6 +285,37 @@ describe('the consent gate on the real runtime (CS-2)', () => {
     expect(h.calls.continued).toBe(0);
   });
 
+  it.each(['nlSelection', 'surface'] as const)('the kill-switch phrase handled by the %s path also voids every pending step and the continuation records', async (stopPath) => {
+    const h = harness({ stopPath });
+    h.open(DM2);
+    h.open(DM);
+    const stopped = await h.send('에이전트 중지');
+    expect(stopped.reply.text).toContain('멈춤');
+    expect(h.stopHandled()).toBe(1);
+    expect(h.calls.voided).toBe(1);
+    expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: keyOf(DM2) })).toBe('voided');
+    expect(h.calls.continued).toBe(0);
+  });
+
+  it.each(['모델 변경: codex', '/model', '기억해: 내일 비 온다'])('a provider-choice / memory command (%s) forfeits the step with no claim and never reaches the classifier', async (text) => {
+    let classified = 0;
+    const h = harness({ classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    h.open();
+    await h.send(text);
+    expect(classified).toBe(0);
+    expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: keyOf(DM) })).toBeUndefined();
+    expect(h.calls.continued).toBe(0);
+  });
+
+  it('a consumed turn records its reply kind: the fixed note is a note, the cancel line is a note, so lastTurn never says chat', async () => {
+    const h = harness();
+    h.open();
+    const message = h.messageOf('응');
+    await h.runtime.handle(message);
+    const kinds = (h.runtime as unknown as { nlReplyKinds: WeakMap<InboundMessage, { kind: string }> }).nlReplyKinds;
+    expect(kinds.get(message)).toEqual({ kind: 'note' });
+  });
+
   it('the resume phrase does not void', async () => {
     const h = harness();
     h.open(DM2);
@@ -282,8 +326,14 @@ describe('the consent gate on the real runtime (CS-2)', () => {
 
   it('agent consent facts: the runtime supplies the conversation key and the owner-step flag', () => {
     const h = harness();
-    const facts = (h.runtime as unknown as { agentConsentFacts(message: InboundMessage, pending: boolean): unknown }).agentConsentFacts(h.messageOf('x', DM), true);
-    expect(facts).toEqual({ conversationKey: keyOf(DM), ownerStepPending: true });
+    const internals = h.runtime as unknown as { agentConsentFacts(message: InboundMessage): unknown; consentOwnerStepPending(message: InboundMessage, pending: readonly unknown[]): boolean };
+    const message = h.messageOf('x', DM);
+    expect(internals.agentConsentFacts(message)).toEqual({ conversationKey: keyOf(DM), ownerStepPending: false });
+    // The one named computation stores the flag per message; the facts read it (no second computation).
+    expect(internals.consentOwnerStepPending(message, [null, undefined, { open: true }])).toBe(true);
+    expect(internals.agentConsentFacts(message)).toEqual({ conversationKey: keyOf(DM), ownerStepPending: true });
+    expect(internals.consentOwnerStepPending(message, [null, false, undefined])).toBe(false);
+    expect(internals.agentConsentFacts(message)).toMatchObject({ ownerStepPending: false });
   });
 
   describe('yes-and-more (classifier stub on, unit only)', () => {

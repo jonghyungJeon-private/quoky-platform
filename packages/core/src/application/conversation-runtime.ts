@@ -281,18 +281,18 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
         message,
         session,
         actor,
-        Boolean(
-          lookup.pending ||
-            lookup.planPending ||
-            lookup.pendingScope ||
-            lookup.connectorWrite ||
-            lookup.override?.state === 'awaiting-decision' ||
-            lookup.override?.state === 'ready' ||
-            grantPendingSeen !== undefined ||
-            (nlPending !== undefined && nlPending !== null) ||
-            lapsedWrite ||
-            expiryNotice,
-        ),
+        this.consentOwnerStepPending(message, [
+          lookup.pending,
+          lookup.planPending,
+          lookup.pendingScope,
+          lookup.connectorWrite,
+          lookup.override?.state === 'awaiting-decision',
+          lookup.override?.state === 'ready',
+          grantPendingSeen !== undefined,
+          nlPending !== undefined && nlPending !== null,
+          lapsedWrite,
+          expiryNotice,
+        ]),
         control !== null,
       );
       if (consent !== undefined) return consent;

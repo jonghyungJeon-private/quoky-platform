@@ -75,7 +75,7 @@ export type ConsentGateOutcome =
   /** Not an answer, or a cancel that takes the normal path: route the turn as usual. */
   | { readonly kind: 'route' }
   /** The turn is consumed: show `text`; the history keeps `historyNote` (fixed, never the summary); `rerun` runs once as a new turn. */
-  | { readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly rerunText?: string };
+  | { readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly rerunText?: string; readonly replyKind: 'question' | 'note' };
 
 const ROUTE: ConsentGateOutcome = Object.freeze({ kind: 'route' });
 
@@ -112,8 +112,8 @@ export class ConsentTurnGate {
     if (!turn.direct) return ROUTE;
     try {
       if (turn.ownerStepPending || turn.control) {
-        store.forfeit(scope);
-        this.log('forfeit', turn.control ? 'control' : 'owner-step');
+        // Logged only when a step was actually dropped: most approval/control/selection DM turns hold none.
+        if (store.forfeit(scope)) this.log('forfeit', turn.control ? 'control' : 'owner-step');
         return ROUTE;
       }
       const language = store.languageOf(scope);
@@ -129,17 +129,17 @@ export class ConsentTurnGate {
           // ADR-0112 lapsed-step precedent: a late closed yes/no for a step that is gone is told so, never read as chat.
           if (decision.audit.includes('claim-lost') && closedConsentToken(turn.text) !== undefined) {
             this.log('late', 'claim-lost');
-            return { kind: 'reply', text: lines.expired, historyNote: lines.expired };
+            return { kind: 'reply', text: lines.expired, historyNote: lines.expired, replyKind: 'note' };
           }
           return ROUTE;
         case 'cancelled':
           this.log('cancelled', decision.audit.join(','));
           if (decision.next === 'ordinary') return ROUTE;
           // A late label whose step was lost mid-answer is "expired", a real no is the cancel line.
-          return decision.audit.includes('claim-lost') ? { kind: 'reply', text: lines.expired, historyNote: lines.expired } : { kind: 'reply', text: lines.cancelled, historyNote: lines.cancelled };
+          return decision.audit.includes('claim-lost') ? { kind: 'reply', text: lines.expired, historyNote: lines.expired, replyKind: 'note' } : { kind: 'reply', text: lines.cancelled, historyNote: lines.cancelled, replyKind: 'note' };
         case 'reask':
           this.log('reask', decision.audit.join(','));
-          return { kind: 'reply', text: decision.question, historyNote: decision.question };
+          return { kind: 'reply', text: decision.question, historyNote: decision.question, replyKind: 'question' };
         case 'bound': {
           this.log('bound', decision.audit.join(','));
           const continued = await this.continueBound(decision.bound, turn, lines);
@@ -158,20 +158,20 @@ export class ConsentTurnGate {
     }
   }
 
-  private async continueBound(bound: BoundConsent, turn: ConsentGateTurn, lines: (typeof LINES)[ConsentLanguage]): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string }> {
+  private async continueBound(bound: BoundConsent, turn: ConsentGateTurn, lines: (typeof LINES)[ConsentLanguage]): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly replyKind: 'note' }> {
     // Only the rule-① summary consent has a continuation here (the A2 topic slice adds `continueTopic`): another kind is spent, nothing runs.
-    if (bound.pending.kind !== 'summary-consent') return { kind: 'reply', text: lines.expired, historyNote: lines.expired };
+    if (bound.pending.kind !== 'summary-consent') return { kind: 'reply', text: lines.expired, historyNote: lines.expired, replyKind: 'note' };
     let outcome: ConsentContinuation;
     try {
       outcome = await this.deps.continueSummary(bound, { actor: turn.actor, direct: true });
     } catch {
       // A declined continuation spends the yes: no re-open (CS-1b review round 1).
-      return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable };
+      return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable, replyKind: 'note' };
     }
     // The summary is the reply; the history keeps the fixed structural note only (ADR-0118 rule, N5).
-    if (outcome.kind === 'reply' && typeof outcome.reply?.text === 'string' && outcome.reply.text.length > 0) return { kind: 'reply', text: outcome.reply.text, historyNote: lines.note };
-    if (outcome.kind === 'declined' && typeof outcome.text === 'string' && outcome.text.length > 0) return { kind: 'reply', text: outcome.text, historyNote: outcome.text };
-    return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable };
+    if (outcome.kind === 'reply' && typeof outcome.reply?.text === 'string' && outcome.reply.text.length > 0) return { kind: 'reply', text: outcome.reply.text, historyNote: lines.note, replyKind: 'note' };
+    if (outcome.kind === 'declined' && typeof outcome.text === 'string' && outcome.text.length > 0) return { kind: 'reply', text: outcome.text, historyNote: outcome.text, replyKind: 'note' };
+    return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable, replyKind: 'note' };
   }
 
   /** One content-free line: a closed outcome and closed audit codes, never the text, an id or an item. */

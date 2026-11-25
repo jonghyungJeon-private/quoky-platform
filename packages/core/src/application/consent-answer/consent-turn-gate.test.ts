@@ -138,6 +138,16 @@ describe('ConsentTurnGate (CS-2)', () => {
     expect(await control.gate.handle(control.turn('응'))).toEqual({ kind: 'route' });
   });
 
+  it('forfeit is logged only when a step was actually dropped', async () => {
+    const none = rig();
+    expect(await none.gate.handle(none.turn('응', { ownerStepPending: true }))).toEqual({ kind: 'route' });
+    expect(none.logs.filter((l) => (l.fields as { outcome?: string } | undefined)?.outcome === 'forfeit')).toHaveLength(0);
+    const held = rig();
+    held.open();
+    await held.gate.handle(held.turn('도움말', { control: true }));
+    expect(held.logs.filter((l) => (l.fields as { outcome?: string } | undefined)?.outcome === 'forfeit')).toHaveLength(1);
+  });
+
   it('the kill switch voids the store and the continuation records; a later yes runs nothing', async () => {
     const r = rig();
     r.open();

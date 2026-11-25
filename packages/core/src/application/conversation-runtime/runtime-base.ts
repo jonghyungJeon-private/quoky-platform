@@ -100,6 +100,8 @@ export abstract class ConversationRuntimeBase {
   /** A6 R5a: who and where each turn is (and its SHORT_TERM user record), for `quoky.lastTurn`. */
   protected readonly nlTurnFacts = new WeakMap<InboundMessage, { readonly sessionId: Id; readonly actorId: Id; readonly memoryId?: Id }>();
   /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
+  protected abstract isExplicitTurnHandlerCommand(text: string): boolean;
+  protected readonly consentOwnerSteps = new WeakMap<InboundMessage, boolean>();
   protected readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
   /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
   protected readonly nlDeicticPrefix = new WeakMap<InboundMessage, string>();
@@ -707,8 +709,15 @@ export abstract class ConversationRuntimeBase {
    * conversation the question is asked in and whether another owner step is pending (W2). The runtime supplies them; the run
    * service never derives them.
    */
-  protected agentConsentFacts(message: InboundMessage, ownerStepPending: boolean): { readonly conversationKey: string; readonly ownerStepPending: boolean } {
-    return { conversationKey: ConsentTurnGate.conversationKeyOf(message.context), ownerStepPending };
+  protected agentConsentFacts(message: InboundMessage): { readonly conversationKey: string; readonly ownerStepPending: boolean } {
+    return { conversationKey: ConsentTurnGate.conversationKeyOf(message.context), ownerStepPending: this.consentOwnerSteps.get(message) ?? false };
+  }
+
+  /** Whether another owner step is pending for this turn (W2), decided once per message; the gate and `agentConsentFacts` both read it. */
+  protected consentOwnerStepPending(message: InboundMessage, pending: readonly unknown[]): boolean {
+    const value = pending.some(Boolean);
+    this.consentOwnerSteps.set(message, value);
+    return value;
   }
 
   /**
@@ -722,7 +731,10 @@ export abstract class ConversationRuntimeBase {
       parseActionSwitchPhrase(message.text) !== undefined ||
       nearMissActionSwitchPhrase(message.text) !== undefined ||
       parseSurfaceGrantPhrase(message) !== undefined ||
-      parseSurfaceGrantConfirm(message)
+      parseSurfaceGrantConfirm(message) ||
+      // Lifecycle states A6.2 never covers: provider choice (`모델 변경: codex`, `/model`, via `parseModelSelectionCommand` inside `isExplicitTurnHandlerCommand`) and the explicit memory, learning and
+      // reminder grammars are commands, not answers; the existing parsers decide.
+      this.isExplicitTurnHandlerCommand(message.text)
     );
   }
 
@@ -746,6 +758,8 @@ export abstract class ConversationRuntimeBase {
       control: control || this.isConsentControlTurn(message),
     });
     if (outcome.kind === 'route') return undefined;
+    // The consumed turn is a fixed note or the question, never chat: `quoky.lastTurn` must agree with `lastReply`.
+    this.nlReplyKinds.set(message, { kind: outcome.replyKind });
     const userMemory = await this.deps.memory.recordShortTerm(message, session.id);
     this.nlTurnFacts.set(message, { sessionId: session.id, actorId: actor.id, memoryId: userMemory.id });
     await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
