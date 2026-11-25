@@ -246,6 +246,8 @@ export type AgentDraftSourceOutcome =
       readonly run: SummaryRunToken;
       /** Items the read's projection listed. */
       readonly listed: number;
+      /** Review round 2: the ids the listing itself named (its projection slots), validated or not: the a7-06 drift is measured against these. */
+      readonly listedIds?: readonly string[];
       /** The host-only pseudonym map (a7-08) of this listing: never sent to a model, logged or audited. */
       readonly participants: readonly { readonly label: string; readonly name: string }[];
     }
@@ -530,7 +532,7 @@ export class AgentPlanExecutor {
       if (source === undefined || source.documents.length === 0) return { kind: 'listing-only', reason: 'no-documents' };
       // The draft step (step 2 of the synthetic plan) holds the owner's grant for this source, bound to this run, or none.
       const grant = summaryGrantFor(2, entryId, state.run, state.owner);
-      return { kind: 'ok', source: { ...source, asked, ...(grant !== undefined ? { grant } : {}) }, run: state.run, listed: result.projection.itemCount, participants: state.draft?.participants ?? [] };
+      return { kind: 'ok', source: { ...source, asked, ...(grant !== undefined ? { grant } : {}) }, run: state.run, listed: result.projection.itemCount, listedIds: result.projection.slots.filter((id): id is string => id !== undefined), participants: state.draft?.participants ?? [] };
     } catch {
       return { kind: 'failed', errorCode: 'UNKNOWN' };
     }

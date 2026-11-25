@@ -210,7 +210,9 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     const sent = source.documents.filter((document) => placedIds.has(document.id));
     if (sent.length === 0) return refuse('no-documents', NOT_MADE[language], { consent });
     // The a7-06 drift: items the owner was asked about (recorded) that are no longer in the listing. Not the other cuts.
-    const present = new Set(source.documents.map((document) => document.id));
+    // Review round 2 (CA P3): measured against the ids the listing named, not the validated documents, so an item still listed but dropped by
+    // validation or kept host-only is counted once (in `omitted`), never also as drift.
+    const present = new Set(sourced.listedIds ?? source.documents.map((document) => document.id));
     const drift = input.resume !== undefined ? input.resume.recorded.filter((id) => !present.has(id)).length : 0;
     const draft = outcome.draft;
 

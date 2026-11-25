@@ -2687,6 +2687,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       reason: connectorWriteApprovalReason(operation, target, payloadSha256),
       requestedBy: input.actor.id,
     });
+    const unconfirmedEarlier: ConnectorWriteUnconfirmedEarlier | undefined = unresolved
+      ? { status: unresolved.status === 'PREPARED' ? ('EXECUTING' as const) : ('UNCERTAIN' as const), at: unresolved.updatedAt, timeZone: this.deps.timeZone }
+      : undefined;
     const anchor: ConnectorWriteAnchor = {
       kind: CONNECTOR_WRITE_ANCHOR_KIND,
       status: 'APPROVAL_PENDING',
@@ -2704,7 +2707,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       updatedAt: input.now,
       ...(previous ? { previousActiveTaskId: previous } : {}),
       ...(undoOf ? { undoOf } : {}),
-      ...(input.agentProposal === true ? { agentProposal: true as const, ...(input.agentCard !== undefined ? { agentCard: input.agentCard } : {}) } : {}),
+      ...(input.agentProposal === true ? { agentProposal: true as const, ...(input.agentCard !== undefined ? { agentCard: { ...input.agentCard, ...(unconfirmedEarlier !== undefined ? { unconfirmedEarlier } : {}) } } : {}) } : {}),
     };
     try {
       await this.createAnchor(input.session, anchor, input.now, input.held);
@@ -2722,15 +2725,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       approval,
       remainingMs: PENDING_APPROVAL_TTL_MS,
       executionPhrase: documentedExecutionPhrase(connectorWriteExecutionGate(operation)),
-      ...(unresolved
-        ? {
-            unconfirmedEarlier: {
-              status: unresolved.status === 'PREPARED' ? ('EXECUTING' as const) : ('UNCERTAIN' as const),
-              at: unresolved.updatedAt,
-              timeZone: this.deps.timeZone,
-            },
-          }
-        : {}),
+      ...(unconfirmedEarlier !== undefined ? { unconfirmedEarlier } : {}),
     };
   }
 

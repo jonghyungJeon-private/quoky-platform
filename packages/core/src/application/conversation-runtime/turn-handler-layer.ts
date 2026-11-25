@@ -1014,6 +1014,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
                   banner: anchor.agentCard.banner,
                   named: anchor.agentCard.named,
                   nonTargets: anchor.agentCard.nonTargets,
+                  ...(anchor.agentCard.unconfirmedEarlier !== undefined ? { unconfirmedEarlier: anchor.agentCard.unconfirmedEarlier } : {}),
                   remainingMs: this.remainingMs(approval),
                   executionPhrase: phrase,
                 })

@@ -13,7 +13,7 @@ import {
 import { NL_REF_JIRA_KEY } from '../nl-routing/action-entries';
 import { plainTextOf } from '../message-rendering';
 import { AgentWriteProposalService } from './agent-write-proposal';
-import { AGENT_PROPOSAL_MARKER } from './connector-write-copy';
+import { AGENT_PROPOSAL_MARKER, AGENT_PROPOSAL_CARD_MAX_CHARS, renderAgentProposalCard } from './connector-write-copy';
 import { StatelessConnectorWriteFlow, isActionSwitchGoverned } from './connector-write-flow';
 import { connectorWritePayloadSha256 } from './connector-write-payload';
 
@@ -338,7 +338,7 @@ describe('review round 1: expiry, stop race, shown length, re-shown card', () =>
     if (result.kind !== 'carded') throw new Error('no card');
     const anchor = (await h.flow.find(h.session()))?.anchor;
     expect(anchor?.agentCard).toEqual({ banner: request.banner, named: request.named, nonTargets: request.nonTargets });
-    expect(Array.from(textOf(result.card)).length).toBeLessThanOrEqual(1700);
+    expect(textOf(result.card).length).toBeLessThanOrEqual(1700);
   });
 
   it('shows other cuts neutrally, separate from the drift line', async () => {
@@ -348,6 +348,68 @@ describe('review round 1: expiry, stop race, shown length, re-shown card', () =>
     const card = textOf(result.card);
     expect(card).toContain('3건은 초안에 넣지 않았어요');
     expect(card).not.toContain('그 사이 바뀌어');
+  });
+});
+
+describe('review round 2: UTF-16 length units, shown-card re-check, UNC-1', () => {
+  it('measures the card in UTF-16 units (the chunker\'s unit): an emoji draft under the bound in code points but over it in units is refused, nothing left open', async () => {
+    const h = harness();
+    const base = h.request();
+    const card = (lines: string) => textOf(renderAgentProposalCard({ issueKey: KEY, text: lines, banner: base.banner, named: base.named, nonTargets: [], remainingMs: 1_800_000, executionPhrase: '댓글 실행' }));
+    const lines = (n: number) => Array.from({ length: 5 }, () => '😀'.repeat(n)).join('\n');
+    let n = 1;
+    while (card(lines(n + 1)).length <= AGENT_PROPOSAL_CARD_MAX_CHARS) n += 1;
+    const over = lines(n + 1);
+    expect(Array.from(card(over)).length).toBeLessThanOrEqual(AGENT_PROPOSAL_CARD_MAX_CHARS); // the old code-point count would have passed it
+    expect(card(over).length).toBeGreaterThan(AGENT_PROPOSAL_CARD_MAX_CHARS);
+    expect(over.length).toBeLessThanOrEqual(1400); // not the ADR-0112 payload bound: only the card bound refuses it
+    expect(await h.service.propose(h.request({ payloadText: over, nonTargets: [] }))).toEqual({ kind: 'refused', reason: 'payload-too-large' });
+    expect(h.approvals.size).toBe(0);
+    expect((await h.service.propose(h.request({ payloadText: lines(n), nonTargets: [] }))).kind).toBe('carded');
+  });
+
+  it('re-checks the card as SHOWN after prepare (its own execution phrase and remaining time): over the bound it is closed as cancelled and refused', async () => {
+    const h = harness();
+    const deps = (h.service as unknown as { deps: ConstructorParameters<typeof AgentWriteProposalService>[0] }).deps;
+    const flow = new Proxy(h.flow, {
+      get(target, key) {
+        if (key === 'prepare') {
+          return async (input: Parameters<typeof target.prepare>[0]) => {
+            const step = await target.prepare(input);
+            return step.kind === 'preview' ? { ...step, executionPhrase: '길게'.repeat(900) } : step;
+          };
+        }
+        const value = Reflect.get(target, key) as unknown;
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const service = new AgentWriteProposalService({ ...deps, flow });
+    const result = await service.propose(h.request());
+    expect(result).toEqual({ kind: 'refused', reason: 'payload-too-large' });
+    const view = await h.flow.find(h.session());
+    expect(view === null || view.anchor.status === 'CLOSED').toBe(true);
+    if (view !== null) expect(view.anchor.closedReason).toBe('cancelled');
+    expect(await service.openCardOf(OWNER.id, T0)).toBeUndefined();
+    expect(h.sent).toHaveLength(0);
+  });
+
+  it('UNC-1: an unresolved earlier send of the same payload leads the first card and the re-shown card with the existing warning', async () => {
+    const h = harness();
+    h.receipts.findLatestUnresolved = async () => ({ status: 'UNCERTAIN', updatedAt: T0 }) as never;
+    const request = h.request();
+    const result = await h.service.propose(request);
+    if (result.kind !== 'carded') throw new Error('no card');
+    expect(textOf(result.card).startsWith('주의: 같은 내용의 이전 요청은 결과를 확인하지 못했어요')).toBe(true);
+    const fields = (await h.flow.find(h.session()))?.anchor.agentCard;
+    expect(fields?.unconfirmedEarlier).toMatchObject({ status: 'UNCERTAIN', at: T0 });
+    const reshown = renderAgentProposalCard({ issueKey: KEY, text: request.payloadText, ...(fields as NonNullable<typeof fields>), remainingMs: 1_000_000, executionPhrase: '댓글 실행' });
+    expect(textOf(reshown)).toContain('주의: 같은 내용의 이전 요청은 결과를 확인하지 못했어요');
+    // No unresolved earlier send: no warning, and nothing extra on the anchor (the control).
+    const clean = harness();
+    const plain = await clean.service.propose(clean.request());
+    if (plain.kind !== 'carded') throw new Error('no card');
+    expect(textOf(plain.card)).not.toContain('주의:');
+    expect((await clean.flow.find(clean.session()))?.anchor.agentCard).not.toHaveProperty('unconfirmedEarlier');
   });
 });
 

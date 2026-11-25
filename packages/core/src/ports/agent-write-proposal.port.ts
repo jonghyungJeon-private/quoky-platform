@@ -43,6 +43,11 @@ export interface AgentProposalCardFields {
   readonly banner: AgentWriteProposalBanner;
   readonly named: number;
   readonly nonTargets: readonly string[];
+  /**
+   * UNC-1 (review round 2): an earlier write of the same payload to the same target is unresolved. Set by the flow itself when it prepares
+   * the card (never by the agent), so the first and the re-shown card carry the same existing warning.
+   */
+  readonly unconfirmedEarlier?: { readonly status: 'UNCERTAIN' | 'EXECUTING'; readonly at: IsoTimestamp; readonly timeZone: string };
 }
 
 export interface AgentWriteProposalRequest {

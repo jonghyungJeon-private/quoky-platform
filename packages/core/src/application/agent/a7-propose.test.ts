@@ -320,6 +320,22 @@ describe('A7-S4a rule ①: the destination clause (A7.5 step 4)', () => {
     expect(p.requests[0]?.banner).toMatchObject({ dropped: 1, omitted: 0 });
   });
 
+  it('review round 2 (CA P3): an item still in the listing but dropped by validation is counted once (omitted), never also as drift', async () => {
+    const full = [1, 2, 3].map((n) => ({ id: `C0AA.${n}`, text: `message number ${n}`, author: AUTHORS[n === 2 ? 1 : 0] }));
+    const p = partsWith(full as never);
+    const remote = spy('remote-a', 'REMOTE');
+    const route = localRoute(remote, recipient());
+    const asked = await run(p, route);
+    if (asked.kind !== 'ask') throw new Error('not asked');
+    const consent = consentTokenFor(asked.run, A7_DRAFT_STEP, { recipient: 'Remote Co', reads: [{ entryId: 'slack.search', itemIds: [...asked.itemIds] }] });
+    // The same three ids are listed on the re-read, but the second row is credential-shaped now: the projection withholds it (it is not a validated document).
+    const p2 = partsWith([full[0], { id: 'C0AA.2', text: `key ${'sk-' + 'c'.repeat(30)}`, author: AUTHORS[1] }, full[2]] as never);
+    const out = await run(p2, route, { resume: { run: asked.run, consent, recorded: asked.itemIds, recipient: 'Remote Co', destination: asked.destination } });
+    expect(JSON.stringify(out)).toContain('carded');
+    expect(p2.requests[0]?.banner.items.map((item) => item.id)).toEqual(['C0AA.1', 'C0AA.3']);
+    expect(p2.requests[0]?.banner).toMatchObject({ dropped: 0, omitted: 1 });
+  });
+
   it('review round 1 (W2): another open owner step (a pending consent step, an approval) means no card and no read', async () => {
     const p = parts();
     const local = spy('local-a', 'LOCAL');

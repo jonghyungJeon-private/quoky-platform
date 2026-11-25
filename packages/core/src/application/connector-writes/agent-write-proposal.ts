@@ -95,8 +95,9 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
     // The card must show the payload whole BEFORE anything is prepared: a card that does not fit is never made (and no approval is left behind).
     const executionPhrase = documentedExecutionPhrase(connectorWriteExecutionGate('ISSUE_COMMENT'));
     const cardInput = { issueKey: key, text, banner: request.banner, named: request.named, nonTargets: request.nonTargets, executionPhrase };
+    // Measured in UTF-16 units (`.length`), the unit the Discord chunker counts against 1900 (review round 2): a code-point count under-counts emoji.
     const probe = plainTextOf(renderAgentProposalCard({ ...cardInput, remainingMs: PENDING_APPROVAL_TTL_MS }));
-    if (Array.from(probe).length > AGENT_PROPOSAL_CARD_MAX_CHARS) return refused('payload-too-large');
+    if (probe.length > AGENT_PROPOSAL_CARD_MAX_CHARS) return refused('payload-too-large');
     const cardFields = { banner: request.banner, named: request.named, nonTargets: request.nonTargets };
 
     const step = await this.deps.flow.prepare({ session, actor, now: request.now, agentProposal: true, agentCard: cardFields, draft });
@@ -123,14 +124,14 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
       if (view !== null && view.anchor.approvalId === step.approval.id) await this.deps.flow.close(live, view, 'cancelled', request.now).catch(() => undefined);
       return refused('unavailable');
     }
-    const card = renderAgentProposalCard({ ...cardInput, remainingMs: step.remainingMs, executionPhrase: step.executionPhrase });
+    const card = renderAgentProposalCard({ ...cardInput, remainingMs: step.remainingMs, executionPhrase: step.executionPhrase, ...(step.unconfirmedEarlier !== undefined ? { unconfirmedEarlier: step.unconfirmedEarlier } : {}) });
     // The kill switch, once more, now that the card exists (review round 1, CA P3): a stop that landed meanwhile closes the card.
     if (request.stillRunning !== undefined && !(await request.stillRunning().catch(() => false))) {
       await this.deps.flow.close(live, view, 'stopped', request.now).catch(() => undefined);
       return refused('stopped');
     }
     // The card as it will be SHOWN (its own remaining time and execution phrase) must fit whole too (review round 1, CA P3).
-    if (Array.from(plainTextOf(card)).length > AGENT_PROPOSAL_CARD_MAX_CHARS) {
+    if (plainTextOf(card).length > AGENT_PROPOSAL_CARD_MAX_CHARS) {
       await this.deps.flow.close(live, view, 'cancelled', request.now).catch(() => undefined);
       return refused('payload-too-large');
     }
