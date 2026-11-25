@@ -142,6 +142,8 @@ const OWNER_APPROVED_AS_BUILT = ['rt-s2r-474', 'rt-s2r-475'];
  * the real producer mints. `rt-s2r-244` and `rt-s2r-250` stay awaiting (known gap `source-alias`).
  */
 const CS3_BUILT_A6 = ['rt-s2r-487'];
+/** Slice A6-S3 (2026-11-25): the two-line requests whose approved target the real producer now meets (A6.5). Not A5 cases. */
+const A6S3_BUILT = ['rt-s2r-460', 'rt-s2r-461'];
 const isCs3Built = (c: SrCase): boolean => c.expect.consentSources !== undefined || CS3_BUILT_A6.includes(c.id);
 const AWAITING = ['rt-s2r-113', 'rt-s2r-123', 'rt-s2r-139', 'rt-s2r-168'];
 /**
@@ -300,7 +302,7 @@ function verdictOf(text: string, planner: readonly PlannerStep[], direct: boolea
   });
   if (!result.ok) return { validator: result.reason };
   if (result.plan.kind !== 'run') return { validator: result.plan.kind };
-  return { validator: 'run', grant: ownerSummaryRequests(result.plan, prepared).map((request) => `${request.step}:${request.entryId}`), plan: result.plan, prepared };
+  return { validator: 'run', grant: ownerSummaryRequests(result.plan, { ...prepared, rawText: text }).map((request) => `${request.step}:${request.entryId}`), plan: result.plan, prepared };
 }
 
 const squash = (text: string): string => text.normalize('NFKC').replace(/\s+/gu, ' ').trim();
@@ -519,7 +521,7 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
 
   it('ADR-0121 A5: a work-source summary asks rule ① first, reads exactly what the plan reads, and keeps the security floor (120 built by CS-3, 2 still awaiting)', () => {
     const awaitingA5 = CASES.filter(isA5);
-    const builtA5 = CASES.filter((c) => c.expect.consentSources !== undefined);
+    const builtA5 = CASES.filter((c) => c.expect.consentSources !== undefined && !A6S3_BUILT.includes(c.id));
     expect(awaitingA5.map((c) => c.id)).toEqual(['rt-s2r-244', 'rt-s2r-250']);
     expect(builtA5).toHaveLength(120);
     for (const c of [...awaitingA5, ...builtA5]) {

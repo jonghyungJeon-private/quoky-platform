@@ -11,6 +11,7 @@ import { NL_WAVE1_ENTRIES } from '../nl-routing/wave1-entries';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest } from './plan-executor';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import type { AgentSourceDocument, QuarantinedSummarizerRoute } from './quarantined-summary';
+import { unexpressedContentWords } from '../nl-routing/grammar-residual';
 import { hasUntrustedSpanMarker, isSingleLineOwnerText, ownerAskedSummary, ownerSummaryRequests, summaryGrantBasis, type OwnerText, type SummaryGrantBasis } from './summary-grant';
 
 // Rule ① (CS-1a): no REMOTE call can run without a real consent token and the executor carries none until CS-1b, so this suite runs
@@ -338,5 +339,103 @@ describe('AgentPlanExecutor and the shutdown signal (S2 wiring review round 2)',
     }).execute(p, { grants: summaryGrantBasis(p, grounding('메일 3개 요약해줘')), signal: shutdown.signal });
     expect(result).toMatchObject({ outcome: 'partial', stopped: true });
     expect(result.steps[1]).toMatchObject({ kind: 'summarize', status: 'not-run', reason: 'stopped' });
+  });
+});
+
+// ADR-0121 A6.5 (slice A6-S3, ratified 2026-11-23 with AM-1 and AM-3): the owner's own two-line request. The line check runs on the
+// RAW text, so these cases hand the producer the raw text beside the prepared one (the runtime does the same). The plans carry NO
+// count unless a case says so: `read()` above defaults `limit` to 3, which would make "메일 3개" an AM-3 count unit.
+describe('A6.5 two-line grant: the structural rule, every line consumed by the producer', () => {
+  const bare = (entryId: NlWave1EntryId, args: Record<string, unknown> = {}): ValidatedAgentStep => ({ kind: 'read', entry: NL_WAVE1_ENTRIES[entryId as keyof typeof NL_WAVE1_ENTRIES], args, provenance: {} });
+  const MAIL0 = (args: Record<string, unknown> = {}): RunPlan => plan([bare('mail.list', args), summarize([1])]);
+  const DRIVE0 = (): RunPlan => plan([bare('drive.files'), summarize([1])]);
+  const two = (p: RunPlan, text: string): string[] => ownerSummaryRequests(p, { ...grounding(text), rawText: text }).map((request) => `${request.step}:${request.entryId}`);
+
+  it('grants the two-line owner request, naming exactly the sources; the same text without its raw form never grants', () => {
+    expect(two(MAIL0(), '메일 보여줘\n요약해줘')).toEqual(['2:mail.list']);
+    expect(two(MAIL0({ unread: true }), '안 읽은 메일 보여줘\n그리고 요약해줘')).toEqual(['2:mail.list']);
+    expect(two(DRIVE0(), 'show my recent drive files\nplease summarize them')).toEqual(['2:drive.files']);
+    expect(two(plan([bare('drive.files'), bare('mail.list'), summarize([1, 2])]), '드라이브\n메일 요약해줘')).toEqual(['3:drive.files', '3:mail.list']);
+    // Blank lines between the two do not count; no raw text means no two-line form (fail closed).
+    expect(two(MAIL0(), '메일 보여줘\n\n\n요약해줘')).toEqual(['2:mail.list']);
+    expect(granted(MAIL0(), '메일 보여줘\n요약해줘')).toEqual([]);
+  });
+
+  it('keeps every review-round-4 input closed under the two-line rule (no existing input flips)', () => {
+    expect(two(MAIL0(), '❤️❤️❤️\n메일 요약해줘')).toEqual([]);
+    expect(two(MAIL0(), '2001:db8::1\n메일 요약해줘')).toEqual([]);
+    expect(two(MAIL0(), '메일 보여줘 메일 요약해줘')).toEqual([]);
+    // "메일 3개 / 요약해줘": a count no validated arg of THIS plan carries is residue (the round-2 usability cost stays closed).
+    expect(two(MAIL0(), '메일 3개\n요약해줘')).toEqual([]);
+    expect(two(MAIL0(), '메일 3개 보여줘\n요약하지 말고')).toEqual([]);
+    expect(two(MAIL0(), '김팀장 전달\n메일 요약해줘')).toEqual([]);
+    expect(two(MAIL0(), '메일 보여줘\n팀장님이 보낸 거 위주로\n요약해줘')).toEqual([]);
+  });
+
+  it.each([' ', ' ', '\u0085', '\v', '\f', '\r'])('a non-LF separator %j next to an LF is not the two-line form (the preparation would absorb it)', (separator) => {
+    for (const text of [`메일 보여줘${separator}\n요약해줘`, `메일 보여줘\n${separator}요약해줘`]) expect(two(MAIL0(), text), JSON.stringify(text)).toEqual([]);
+    expect(two(MAIL0(), '메일 보여줘\r\n요약해줘')).toEqual([]);
+  });
+
+  it.each(['메일 보여줘​\n요약해줘', '메일 보여줘\n‮요약해줘', '메일­ 보여줘\n요약해줘', '﻿메일 보여줘\n요약해줘', '메일 보여줘\n요약‍해줘'])(
+    'a format character anywhere in the raw text is not the two-line form: %j',
+    (text) => {
+      expect(two(MAIL0(), text)).toEqual([]);
+      expect(two(MAIL0(), text.replace(/\p{Cf}/gu, ''))).toEqual(['2:mail.list']);
+    },
+  );
+
+  it('a pasted line that holds a summary word or a source name but leaves residue is not consumed, in either order', () => {
+    for (const [pasted, typed] of [
+      ['회의록 정리 공유드립니다', '메일 보여줘'],
+      ['메일 확인 부탁드립니다', '요약해줘'],
+      ['김 대리가 메일 요약해달라고 했어요', '메일 보여줘'],
+      ['팀장님이 메일 정리해서 내일 보내주신대요', '메일 보여줘'],
+    ] as const) {
+      expect(two(MAIL0(), `${pasted}\n${typed}`), pasted).toEqual([]);
+      expect(two(MAIL0(), `${typed}\n${pasted}`), pasted).toEqual([]);
+    }
+    // A line with no recognised unit is closed-class only and is not consumed either.
+    expect(two(MAIL0(), '안녕\n메일 요약해줘')).toEqual([]);
+    expect(two(DRIVE0(), 'show my recent drive files\nforwarded: please summarize the q3 notes for the team')).toEqual([]);
+    expect(two(MAIL0(), 'show my recent mail\nKim asked me to summarize my mail')).toEqual([]);
+  });
+
+  it('a describe label is one whole phrase: "안" and "읽은" are no units of their own', () => {
+    expect(two(MAIL0({ unread: true }), '안 읽은 메일\n요약 안 해')).toEqual([]);
+    expect(two(MAIL0({ unread: true }), '안 읽은 메일 보여줘\n요약해줘')).toEqual(['2:mail.list']);
+  });
+
+  it('the plural deictics them, these and those are A6.5-local closed-class units (the shared guard is unchanged)', () => {
+    for (const word of ['them', 'these', 'those']) expect(two(MAIL0(), `show my mail\nsummarize ${word}`), word).toEqual(['2:mail.list']);
+    expect(unexpressedContentWords('summarize them', [/summarize/u])).toEqual(['them']);
+  });
+
+  it('every marker check holds per line and on the whole message; attachments do not change it', () => {
+    for (const text of ['메일 보여줘\n> 요약해줘', '메일 보여줘\n"요약해줘"', 'show my mail\nhttps://example.com/summary', '메일 보여줘\n-----Original Message-----\n요약해줘']) {
+      expect(two(MAIL0(), text), JSON.stringify(text)).toEqual([]);
+    }
+    const prepared = prepareSelectionInput('메일 보여줘\n요약해줘', 2);
+    if ('skip' in prepared) throw new Error('skipped');
+    expect(ownerSummaryRequests(MAIL0(), { ...prepared, rawText: '메일 보여줘\n요약해줘' }).map((request) => `${request.step}:${request.entryId}`)).toEqual(['2:mail.list']);
+  });
+
+  it('AM-3: a count is a unit only when the VALIDATED plan carries it (mail and Drive carry the numeric limit since r-07)', () => {
+    expect(two(MAIL0({ limit: 3 }), '메일 3개\n요약해줘')).toEqual(['2:mail.list']);
+    expect(two(MAIL0({ limit: 3 }), '메일 3건 보여줘\n요약해줘')).toEqual(['2:mail.list']);
+    expect(two(MAIL0({ limit: 3 }), 'show 3 mails\nsummarize them')).toEqual(['2:mail.list']);
+    expect(two(MAIL0(), '메일 3개\n요약해줘')).toEqual([]);
+    expect(two(MAIL0({ limit: 5 }), '메일 3개\n요약해줘')).toEqual([]);
+    expect(two(MAIL0({ limit: 3 }), '메일 13개\n요약해줘')).toEqual([]);
+    expect(two(MAIL0({ limit: 3 }), '김 대리가 메일 3개 요약해달라고 했어요\n메일 보여줘')).toEqual([]);
+    // The transient `item` ordinal of mail.list is never a count unit.
+    expect(two(MAIL0({ item: 3 }), '메일 3개\n요약해줘')).toEqual([]);
+    // The single-line rule is untouched by the count unit: it never needed one.
+    expect(granted(MAIL0(), '메일 3개 요약해줘')).toEqual(['2:mail.list']);
+  });
+
+  it('a relayed request or a negation in the joined text still vetoes the grant (the unchanged producer reads it)', () => {
+    expect(two(MAIL0(), '메일 보여줘\n요약하지 마')).toEqual([]);
+    expect(two(MAIL0(), "show my mail\ndon't summarize them")).toEqual([]);
   });
 });

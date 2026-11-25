@@ -81,7 +81,7 @@ function a5Grant(c: Case): string[] {
     direct: (c.channel ?? 'owner-dm') === 'owner-dm',
   });
   if (!result.ok || result.plan.kind !== 'run') return [];
-  return ownerSummaryRequests(result.plan, prepared).map((request) => `${request.step}:${request.entryId}`);
+  return ownerSummaryRequests(result.plan, { ...prepared, rawText: c.text }).map((request) => `${request.step}:${request.entryId}`);
 }
 
 const isWork = (pair: string): boolean => A5_SOURCES.includes(AGENT_READ_SOURCES[pair.split(':')[1] as keyof typeof AGENT_READ_SOURCES]?.source ?? '');
@@ -92,7 +92,8 @@ describe('ADR-0121 amendment A5: the SR-1 cases the work-source summary decision
     expect(A5_ALL.size).toBe(120);
     expect(CORPUS.cases.filter((c) => a5Grant(c).some(isWork)).map((c) => c.id)).toEqual(built);
     expect(CORPUS.cases.filter((c) => c.awaiting?.decided === '2026-11-18').map((c) => c.id)).toEqual(Object.keys(OPEN_GAPS));
-    expect(CORPUS.cases.filter((c) => c.expect.consentSources !== undefined).map((c) => c.id)).toEqual(built);
+    // The two A6-S3 two-line cases (460, 461) carry a consentSources too: they are A6, not A5.
+    expect(CORPUS.cases.filter((c) => c.expect.consentSources !== undefined && !['rt-s2r-460', 'rt-s2r-461'].includes(c.id)).map((c) => c.id)).toEqual(built);
     for (const c of CORPUS.cases.filter((x) => A5_ALL.has(x.id))) {
       expect([c.status, c.approved?.decided, c.awaiting], c.id).toEqual(['owner-approved', '2026-11-18', undefined]);
       expect(c.expect.grant, c.id).toEqual(a5Grant(c));

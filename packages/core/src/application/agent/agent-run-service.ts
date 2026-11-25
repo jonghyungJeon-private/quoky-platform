@@ -606,7 +606,7 @@ export class AgentRunService {
       },
     });
     // Core's producer: the owner's own words (quoted and pasted text excluded) decide each summary step's grant per source.
-    const basis = summaryGrantBasis(validated, prepared);
+    const basis = summaryGrantBasis(validated, { ...prepared, rawText: turn.text });
     const executed = await executor.execute(validated, {
       budget,
       grants: basis,

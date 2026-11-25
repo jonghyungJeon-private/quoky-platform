@@ -5,6 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6-S3 two-line grant implemented (2026-11-25, branch `claude/v5-a6-s3-two-line-grant`)
+
+- The A6.5 two-line rule is in the grant producer (raw text check, per-line markers, residue-consumed lines, whole-phrase labels, AM-3 count unit,
+  plural-deictic completion), through the ordinary rule-① consent path. SR-1 `460` and `461` are built (`owner-approved`, moved by A6-S3, not
+  SR-1 batch-reviewed). Dormant: agent mode `active` still refused, classifier switch `off`. The gate lots are a draft pending owner review
+  (`golden/a6/two-line-grant.lots.v1.json`). AM-3 already works for mail and Drive since r-07 (`852cf482`). See DECISIONS "A6-S3 two-line grant
+  implementation note (2026-11-25)".
+
 ### A6 classifier wiring implemented (2026-11-25, branch `claude/v5-a6-classifier-wiring`)
 
 - Handler-claim rule (`surfaceClaim` claimed turn = `other`, no classifier call), per-actor 60/h cap charge for every classifier call, and the

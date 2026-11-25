@@ -39524,3 +39524,62 @@ text or version change (`consent-answer.v1`), no NL catalog change, no model cal
   non-answer requests in every registered grammar and source (mail, Drive, calendar, branch, feedback, to-do, reminder, both languages) as
   the CS-2 residual requires; the structural rule is a second defence, not a replacement for the 0-non-answers-captured-as-yes gate (r-03 ③).
   A6-S4 must also supply the turn's chat provider facts to the adapter and a gold rerun after the rule (the CS-2 residual says it needs one).
+
+### A6-S3 two-line grant implementation note (2026-11-25)
+
+Slice A6-S3 of ADR-0121 amendment A6 (A6.5, the ratification record R2 AM-1 and AM-3, R6, R10; SR-1 `460`, `461`), built after the rule-① confirm
+slice CS-1a to CS-3 and the A6 classifier wiring. Production change in the grant producer only; no NL selector or planner prompt, no catalog, no
+flag, no port, no classifier change, no model call, no eval. Agent mode `active` is still refused at startup, the read ports are still empty,
+and `QUOKY_CONSENT_ANSWER_CLASSIFIER` is still default `off` (`on` refused). Core boundary unchanged.
+
+- **Ratified text that overrides the original A6.5 / A6.9 / A6.10 text (applied).** (1) AM-1: no `origin: 'two-line-grant'` field, no
+  closed-token-only answer, no forced question on a LOCAL route (W4 applies), and the ordinary rule-① wording on a REMOTE route (the "응이라고만
+  답해 주세요" / "reply exactly yes" wording is not built). A two-line grant is an ordinary grant: the same pending step, store, gate and
+  continuation; nothing in the code reads how the grant was minted. (2) AM-3: a validated numeric count of a read step with its count word is a
+  recognised unit (below). (3) R6: lot (b) expects the ordinary single-line behaviour, not an expected cancel. (4) R10: the slice table row
+  "the A6.5 rule with the AM-3 count unit, the ordinary consent path, the lot (a) and lot (b) gates as updated (R6)" replaces the A6.10 row.
+- **What was built (`summary-grant.ts`).** `OwnerText` gains an optional `rawText` (the owner's RAW message). When the prepared text is not a
+  single line, `ownerSummaryRequests` accepts exactly one shape: `rawText` holds no separator but LF (a CR so CRLF too, U+2028, U+2029, NEL, VT,
+  FF) and no format character `\p{Cf}`, and has exactly 2 non-empty LF lines (the prepared text agrees); the whole message passes every marker
+  check (`hasUntrustedSpanMarker`) and each line passes it again on its own; each line is CONSUMED: it holds at least one recognised unit and,
+  with every recognised unit removed, `unexpressedContentWords` (the shared guard, unchanged) leaves nothing but the A6.5-local plural deictics
+  `them`, `these`, `those`. The recognised units are the plan's read-source names (`aliases`, `sourceNames`), the whole-phrase `entry.describe` label of
+  each validated read step in both languages (only a recognised source name may sit between its words; its head noun is a unit; "안", "읽은" are
+  not), the step's validated string values, the AM-3 count and the `NL_MODE_SUMMARY_WORDS`. Only then is the (space-joined) grounding text read by
+  the unchanged producer (summary words, clauses, back-reference, relayed-request veto, `withoutStructures`, negation). No `rawText` means no
+  two-line form (fail closed). `AgentRunService.runPlanned` passes `rawText: turn.text`. No phrase list and no new vocabulary: the units are the
+  producer's own, the closed classes are the guard's. `agent-boundary.test.ts` allows the one new import (`nl-routing/grammar-residual`, pure text).
+- **AM-3, and a correction of the task premise.** The ratification record said AM-3 would work for mail and Drive only after a separate catalog change
+  (a numeric `limit`, D12 gate). That change already landed: commit `852cf482` (r-07, "mail.list and drive.files take the validated numeric
+  limit", ADR-0120 catalog, AM-3), which the A6 target test already cites. So the count unit takes effect for mail and Drive today with no catalog
+  change in this slice. The unit is an arg of kind `limit` that is not transient (never the `item` ordinal of `mail.list`) holding an integer the VALIDATED
+  plan carries: the numeral with 개 or 건 ("메일 3개 / 요약해줘" with count 3 grants), or in English the numeral directly before a source name ("show 3
+  mails / summarize them"). A plan without the count, another number ("5"), or "13개" leaves residue and no grant. **Open point.** The existing
+  round-4 fixture helper of `summary-grant.test.ts` (`read()`) defaults `limit: 3` for every entry, so its input "메일 3개 / 요약해줘" would
+  grant under AM-3 if that helper passed `rawText`. It does not (those tests are untouched and still pass); the same input is pinned in the new A6.5
+  tests with a plan that carries NO count (no grant), and with count 3 (grant), as R6 and R11 state. No ratified expectation flips: the ratified
+  outcome is count-conditional.
+- **Tests.** `summary-grant.test.ts` gains the A6.5 block (positive controls, round-4 inputs closed, every non-LF separator and format character,
+  the four round-2 pasted lines in both orders, the whole-phrase label, the plural deictics, markers per line and attachment, AM-3 count and non-count,
+  negation). The new `summary-grant.two-line-lots.test.ts` runs the gate lots over the real producer. `s2-read-redteam-a6-target.test.ts` now
+  asks the REAL producer (the model of the rule stays as a cross-check of its units); the corpus, A5 target and A6 target tests pass `rawText`.
+  No round-4 test input flipped; the pasted-line and the A6 marker families are unchanged. The producer changes exactly `460` and `461` across SR-1.
+- **Lots and gate (draft).** `golden/a6/two-line-grant.lots.v1.json`, `status: "pending-owner-review"`, not approved and not frozen: lot (a),
+  the paste lot (42 cases, KO and EN, the round-4 classes, the non-LF separators and format characters, the four pasted lines in both orders, English
+  edge residue, third line, chat-copy framing): every case mints no grant; lot (b), the pinned residual lot (11 cases, the A6.9 list): every case
+  mints exactly its grant; the positive controls (17, "드라이브 / 메일 요약해줘" among them, plus the AM-3 count controls). All pass on the real
+  producer. What an offline test can prove is the producer half. The question, its answer through the A6.3 pipeline (so "ㅇㅇ" reaches the classifier) and
+  W4 on a LOCAL route are the unchanged ordinary path (there is no `origin` that could differ), covered end to end for `460` and `461` by the CS-3 harness.
+  The lot minimums (30, 10, 10) and the membership are the R2 a6-07 / R6 items marked "owner to confirm": **owner-batch item**.
+- **SR-1 `460`, `461` moved.** The real code now meets the approved target exactly (the listing, then the rule-① question over exactly the listed items,
+  `consentSources`, no M2 call before a bound yes), judged on the real service, store and gate by the corpus harness with no expectation or judge change:
+  `awaiting.expect` is the `expect` (plus the carried `validator: "run"`), `status` `owner-approved`, `approved.decided` `2026-11-19` from `awaiting.decided`, `approved.by`
+  says they were moved by A6-S3 and are not SR-1 batch-reviewed (the SR-1 batch review, Strict, before `active`, still covers them). The old `expect`
+  (listing only) is gone with the moved target; the pre-A6-S3 rule is still shown by the tests (no `rawText`, no grant).
+- **Recorded usability residuals (fail closed, never an egress).** A separated phrasal summary word ("sum them up") is not consumed in a two-line
+  request (its words are residue); a count the plan does not carry, a listing the plan does not name, and a pasted third party stay listing-only.
+  The two-line form accepts no third line and no CRLF. The `462` rerun still mints no Drive summary grant (its line "응" holds no unit).
+- **Owner-batch items.** (1) Confirm the lot (a), (b) and positive-control membership and minimums (draft file above). (2) The SR-1 batch review
+  covers `460` and `461` with the rest. Nothing else is pending here; AM-3 needs no catalog decision any more.
+- **Verification.** `pnpm build`, `pnpm typecheck`, `pnpm exec tsc --noEmit -p packages/core/tsconfig.json`; targeted vitest only (summary-grant,
+  the three SR-1 corpus tests, the agent run service and executor, the agent boundary, golden). No full suite, no model call.

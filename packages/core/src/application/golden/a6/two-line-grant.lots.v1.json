@@ -1,0 +1,780 @@
+{
+ "version": 1,
+ "status": "pending-owner-review",
+ "description": "ADR-0121 A6-S3 deterministic gate lots (A6.9 as updated by the ratification record R6): offline, no model call, run over the real grant producer. DRAFT: the lot minimums and membership are owner to confirm (R2 a6-07, R6); not approved, not frozen.",
+ "plans": {
+  "mail": "mail.list {}, summarize [1]",
+  "mail-unread": "mail.list {unread:true}, summarize [1]",
+  "drive": "drive.files {}, summarize [1]",
+  "mail-drive": "drive.files {}, mail.list {}, summarize [1,2]",
+  "mail-3": "mail.list {limit:3}, summarize [1]",
+  "mail-5": "mail.list {limit:5}, summarize [1]"
+ },
+ "lotA": {
+  "title": "PASTE LOT (a): every line holds unexplained residue or breaks the structural rule; every case mints NO grant (an ask-first is a failure)",
+  "minimum": 30,
+  "cases": [
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "❤️❤️❤️\n메일 요약해줘",
+    "note": "divider line (emoji with variation selector)",
+    "id": "a-01",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "2001:db8::1\n메일 요약해줘",
+    "note": "address line (IPv6)",
+    "id": "a-02",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\u2028메일 요약해줘",
+    "note": "line separator U+2028 only",
+    "id": "a-03",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "@김팀장 전달\n메일 요약해줘",
+    "note": "mention line without a colon",
+    "id": "a-04",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "김팀장 전달\n메일 요약해줘",
+    "note": "leftover line, a pasted name",
+    "id": "a-05",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n팀장님이 보낸 거 위주로\n요약해줘",
+    "note": "third line (a leftover line between)",
+    "id": "a-06",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 3개 보여줘\n요약하지 말고",
+    "note": "negated summary on a plan with no count",
+    "id": "a-07",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "안 읽은 메일\n요약 안 해",
+    "note": "negation as residue",
+    "id": "a-08",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\r\n요약해줘",
+    "note": "CR before the LF",
+    "id": "a-09",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\u2028\n요약해줘",
+    "note": "U+2028 before the LF",
+    "id": "a-10",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\u2029\n요약해줘",
+    "note": "U+2029 before the LF",
+    "id": "a-11",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\u0085\n요약해줘",
+    "note": "NEL before the LF",
+    "id": "a-12",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\u000b\n요약해줘",
+    "note": "VT before the LF",
+    "id": "a-13",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\f\n요약해줘",
+    "note": "FF before the LF",
+    "id": "a-14",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\r\n요약해줘",
+    "note": "CRLF",
+    "id": "a-15",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\u200b\n요약해줘",
+    "note": "zero-width space before the LF",
+    "id": "a-16",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n\u202e요약해줘",
+    "note": "right-to-left override",
+    "id": "a-17",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일\u00ad 보여줘\n요약해줘",
+    "note": "soft hyphen inside a word",
+    "id": "a-18",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "\ufeff메일 보여줘\n요약해줘",
+    "note": "BOM",
+    "id": "a-19",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "회의록 정리 공유드립니다\n메일 보여줘",
+    "note": "pasted line first: 회의록 정리 공유드립니다",
+    "id": "a-20",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n회의록 정리 공유드립니다",
+    "note": "pasted line last: 회의록 정리 공유드립니다",
+    "id": "a-21",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 확인 부탁드립니다\n요약해줘",
+    "note": "pasted line first: 메일 확인 부탁드립니다",
+    "id": "a-22",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "요약해줘\n메일 확인 부탁드립니다",
+    "note": "pasted line last: 메일 확인 부탁드립니다",
+    "id": "a-23",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "김 대리가 메일 요약해달라고 했어요\n메일 보여줘",
+    "note": "pasted line first: 김 대리가 메일 요약해달라고 했어요",
+    "id": "a-24",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n김 대리가 메일 요약해달라고 했어요",
+    "note": "pasted line last: 김 대리가 메일 요약해달라고 했어요",
+    "id": "a-25",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "팀장님이 메일 정리해서 내일 보내주신대요\n메일 보여줘",
+    "note": "pasted line first: 팀장님이 메일 정리해서 내일 보내주신대요",
+    "id": "a-26",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n팀장님이 메일 정리해서 내일 보내주신대요",
+    "note": "pasted line last: 팀장님이 메일 정리해서 내일 보내주신대요",
+    "id": "a-27",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\nforwarded: please summarize the q3 notes for the team",
+    "note": "English edge residue, forwarded header",
+    "id": "a-28",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my recent mail\nKim asked me to summarize my mail",
+    "note": "English edge residue, reported request",
+    "id": "a-29",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\nplease summarize the budget thread",
+    "note": "English line with a topic the plan does not carry",
+    "id": "a-30",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my drive files\nsummarize them for Kim",
+    "note": "English third party",
+    "id": "a-31",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\nKim wants a summary of the mail",
+    "note": "English third-party request",
+    "id": "a-32",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\n——— pasted ———",
+    "note": "English pasted divider line",
+    "id": "a-33",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\nhttps://example.com/summary",
+    "note": "URL line",
+    "id": "a-34",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\n> please summarize them",
+    "note": "quoted line",
+    "id": "a-35",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n> 요약해줘",
+    "note": "quoted line (ko)",
+    "id": "a-36",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n\"요약해줘\"",
+    "note": "quoted yes-like line",
+    "id": "a-37",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n요약해줘\n감사합니다 팀장님",
+    "note": "three lines, a pasted closing",
+    "id": "a-38",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my drive files\nplease summarize them\nthanks Kim",
+    "note": "three lines, English",
+    "id": "a-39",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n\n요약해줘\n메일 요약해줘",
+    "note": "three non-empty lines with a blank between",
+    "id": "a-40",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "[김팀장] [오후 3:30] 메일 보여줘\n요약해줘",
+    "note": "chat-copy speaker and time brackets",
+    "id": "a-41",
+    "expect": {
+     "grant": []
+    }
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "Kim — 3:30 PM\nsummarize my mail",
+    "note": "chat-copy name and time line",
+    "id": "a-42",
+    "expect": {
+     "grant": []
+    }
+   }
+  ]
+ },
+ "lotB": {
+  "title": "PINNED RESIDUAL LOT (b): lines of recognised units and closed-class words only; consumed by A6.5; expected the ordinary single-line behaviour (REMOTE: read-and-ask-consent / ask-first with the ordinary question, answered by the A6.3 pipeline; LOCAL: no question, W4)",
+  "minimum": 10,
+  "cases": [
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n메일 요약해 주세요",
+    "note": "recognised units and closed-class words only",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "b-01"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n메일 요약 좀 해주세요",
+    "note": "politeness",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "b-02"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n메일 정리 확인해 주세요",
+    "note": "summary noun with a request verb",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "b-03"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\nI will summarize the files",
+    "note": "a statement about a summary",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "b-04"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\nwe have a summary of the files",
+    "note": "a statement about a summary",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "b-05"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\ncan you summarize the drive files?",
+    "note": "a question form",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "b-06"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\nsummary of my files from you",
+    "note": "noun phrase",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "b-07"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\ndid you summarize them?",
+    "note": "owner question about a summary",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "b-08"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\nwhat do you summarize?",
+    "note": "owner question about a summary",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "b-09"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n메일 요약",
+    "note": "bare noun form",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "b-10"
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\nyou summarize my mail",
+    "note": "a statement",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "b-11"
+   }
+  ]
+ },
+ "positive": {
+  "title": "POSITIVE CONTROLS: owner-typed two-line requests, each granting exactly its source, plus the AM-3 count controls",
+  "minimum": 10,
+  "cases": [
+   {
+    "lang": "ko",
+    "plan": "mail-drive",
+    "text": "드라이브\n메일 요약해줘",
+    "note": "owner-typed, both sources",
+    "expect": {
+     "grant": [
+      "3:drive.files",
+      "3:mail.list"
+     ]
+    },
+    "id": "p-01"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n요약해줘",
+    "note": "the 460 shape without the unread label",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-02"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-unread",
+    "text": "안 읽은 메일 보여줘\n그리고 요약해줘",
+    "note": "case 460",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-03"
+   },
+   {
+    "lang": "en",
+    "plan": "drive",
+    "text": "show my recent drive files\nplease summarize them",
+    "note": "case 461",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "p-04"
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\nsummarize them",
+    "note": "plural deictic back-reference",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-05"
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "show my mail\nplease summarize these",
+    "note": "plural deictic back-reference",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-06"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 보여줘\n\n\n요약해줘",
+    "note": "blank lines between do not count",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-07"
+   },
+   {
+    "lang": "ko",
+    "plan": "drive",
+    "text": "드라이브 파일 보여줘\n요약해줘",
+    "note": "Drive",
+    "expect": {
+     "grant": [
+      "2:drive.files"
+     ]
+    },
+    "id": "p-08"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 목록\n요약해줘",
+    "note": "listing noun",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-09"
+   },
+   {
+    "lang": "en",
+    "plan": "mail",
+    "text": "list my mail\nsummarize them",
+    "note": "English list and summarize-them back-reference",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-10"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 3개\n요약해줘",
+    "note": "AM-3, plan carries 3",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-11"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 3건 보여줘\n요약해줘",
+    "note": "AM-3, 건",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-12"
+   },
+   {
+    "lang": "en",
+    "plan": "mail-3",
+    "text": "show 3 mails\nsummarize them",
+    "note": "AM-3, English",
+    "expect": {
+     "grant": [
+      "2:mail.list"
+     ]
+    },
+    "id": "p-13"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail",
+    "text": "메일 3개\n요약해줘",
+    "note": "AM-3, plan carries no count: stays listing-only",
+    "expect": {
+     "grant": []
+    },
+    "id": "p-14"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-5",
+    "text": "메일 3개\n요약해줘",
+    "note": "AM-3, plan carries another number",
+    "expect": {
+     "grant": []
+    },
+    "id": "p-15"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "메일 13개\n요약해줘",
+    "note": "AM-3, 13 is not 3",
+    "expect": {
+     "grant": []
+    },
+    "id": "p-16"
+   },
+   {
+    "lang": "ko",
+    "plan": "mail-3",
+    "text": "김 대리가 메일 3개 요약해달라고 했어요\n메일 보여줘",
+    "note": "AM-3, a pasted line with the count keeps its residue",
+    "expect": {
+     "grant": []
+    },
+    "id": "p-17"
+   }
+  ]
+ }
+}

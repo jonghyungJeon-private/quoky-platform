@@ -14,8 +14,8 @@ import { hasUntrustedSpanMarker, isSingleLineOwnerText, ownerSummaryRequests } f
  * ADR-0121 amendment A6 (owner verdicts of 2026-11-19; RATIFIED 2026-11-23 with the owner's amendments AM-1, AM-2 and AM-3,
  * DECISIONS "ADR-0121 amendments A5 and A6 ratification record"): the owner's consent answer is read in context
  * (deterministic structural checks first, then a consent-answer classifier against the exact pending question), and the
- * owner's own two-line request may carry a summary request. This test MODELS the ratified rules (no product code has them
- * yet: every target here is "target, pending slice A6-S1..S4") and pins which SR-1 cases the owner's verdicts change, their
+ * owner's own two-line request may carry a summary request. This test MODELS the ratified rules (A6-S3 built the two-line rule
+ * in the real producer, 2026-11-25, and 460/461 are built; the classifier targets here are still "target, pending slice A6-S4") and pins which SR-1 cases the owner's verdicts change, their
  * targets, and that every other case keeps its built expectation. The classifier's label is not modelled: for the replies
  * that reach it, the label is the owner's verdict (`CLASSIFIER_ROUTE`), the gold its eval inherits.
  * Review round 2: the two-line check runs on the RAW text (P2-2) and a line is consumed only when its residue after the
@@ -246,21 +246,16 @@ function lineConsumed(line: string, plan: ValidatedPlan): boolean {
 }
 
 /**
- * The grant pairs the real producer mints for `text` with `planner`; `asOneLine` models the A6.5 two-line rule.
+ * The grant pairs the real producer mints for `text` with `planner`; `asTwoLine` passes the raw text (the A6.5 rule, built by A6-S3).
  */
-function grantOf(c: Pick<Case, 'text' | 'planner' | 'channel'>, asOneLine: boolean): string[] {
+function grantOf(c: Pick<Case, 'text' | 'planner' | 'channel'>, asTwoLine: boolean): string[] {
   const prepared = prepareSelectionInput(c.text);
   if ('skip' in prepared) return [];
   const validated = validatedPlan(c, prepared.groundingText);
   if (validated === undefined) return [];
-  const plan = validated;
-  if (!asOneLine) return ownerSummaryRequests(plan, prepared).map((request) => `${request.step}:${request.entryId}`);
-  // The line check runs on the RAW text (P2-2); the whole message keeps every marker check; each raw line must be consumed.
-  const lines = rawTwoLines(c.text);
-  if (lines === undefined || isSingleLineOwnerText(prepared.text) || hasUntrustedSpanMarker(prepared.text)) return [];
-  if (!lines.every((line) => lineConsumed(line, plan))) return [];
-  const text = lines.map((line) => line.trim()).join(' ');
-  return ownerSummaryRequests(plan, { text, groundingText: prepared.groundingText }).map((request) => `${request.step}:${request.entryId}`);
+  // Slice A6-S3 (2026-11-25) built the A6.5 rule in the REAL producer: the raw text rides beside the prepared one, exactly as the
+  // runtime hands it. Without it (`asTwoLine` false) the producer is the pre-A6-S3 single-line rule, kept to show what changed.
+  return ownerSummaryRequests(validated, asTwoLine ? { ...prepared, rawText: c.text } : prepared).map((request) => `${request.step}:${request.entryId}`);
 }
 
 /** The ratified closed tokens (A2 ratification answer 2, SR-1 W1 as built); A6 adds only the NFKC fold in front of them. */
@@ -487,8 +482,9 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
       const c = byId.get(caseId)!;
       const grant = grantOf(c, true);
       expect(c.vector, caseId).toBe('multi-line');
-      expect(c.awaiting?.slices, caseId).toEqual(SLICES.multi);
-      expect(c.awaiting?.expect, caseId).toEqual({
+      // Slice A6-S3 (2026-11-25) built them: the approved target is their `expect` (judged on the real service, store and gate).
+      expect([c.awaiting, c.status, c.approved?.decided], caseId).toEqual([undefined, 'owner-approved', A6_DECIDED]);
+      expect(c.expect, caseId).toEqual({
         outcome: 'read-and-ask-consent',
         stubReads: c.expect.stubReads,
         allowedReads: c.expect.allowedReads,
@@ -496,11 +492,12 @@ describe('ADR-0121 amendment A6: the multi-line owner request (A6.5)', () => {
         write: 'none',
         grant,
         consentSources: sorted(grant.map((pair) => AGENT_READ_SOURCES[pair.split(':')[1] as keyof typeof AGENT_READ_SOURCES].source)),
+        validator: 'run',
       });
       // The summary covers the step that listed the items (the same items the listing showed), never another read.
       const step = (c.planner ?? []).findIndex((s) => s.summarize !== undefined);
       expect(c.planner?.[step]?.summarize, caseId).toEqual([1]);
-      expect(c.expect, `${caseId}: as built, a multi-line message never grants`).toMatchObject({ outcome: 'read-listing', remoteSummary: 'listing-only', validator: 'run', grant: [] });
+      expect(grantOf(c, false), `${caseId}: without the raw text (the pre-A6-S3 rule) a multi-line message never grants`).toEqual([]);
     }
   });
 });
@@ -635,10 +632,11 @@ describe('ADR-0121 amendment A6: the consent answer by context (A6.3)', () => {
 
 describe('ADR-0121 amendment A6: the awaiting set and the header', () => {
   it('marks exactly the owner-fixed cases, with the A6 note, and keeps every built `expect` a valid floor', () => {
-    const fixed = sorted([...MULTI_LINE, ...Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'yes').map(([caseId]) => caseId)]);
+    const fixed = sorted(Object.entries(CLASSIFIER_ROUTE).filter(([, label]) => label === 'yes').map(([caseId]) => caseId));
     expect(A6.map((c) => c.id)).toEqual(fixed);
-    // 487 (NFKC closed yes) left the awaiting set when CS-3 built it (the real gate binds it); the other seven still await their slices.
-    expect(fixed).toEqual([460, 461, 463, 468, 469, 470, 488].map(id));
+    // 487 (NFKC closed yes) left the awaiting set when CS-3 built it, and 460 and 461 (the two-line requests) when A6-S3 built them;
+    // the other five still await their slices (the classifier).
+    expect(fixed).toEqual([463, 468, 469, 470, 488].map(id));
     expect(NFKC_ONLY).toEqual([id(487)]);
     for (const c of A6) {
       expect(c.status, c.id).toBe('approved-awaiting-implementation');
