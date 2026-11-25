@@ -193,6 +193,11 @@ export interface AgentRunServiceDeps {
    */
   readonly workSummarySources?: readonly AgentWorkSummarySource[];
   /**
+   * A6 classifier wiring: the consent-answer classifier switch is on (`QUOKY_CONSENT_ANSWER_CLASSIFIER`; `on` stays refused at startup until
+   * A6-S4). A consent step is then opened only when 1 (the continuation) + 2 (the classifier, one re-ask included) model calls are left.
+   */
+  readonly consentClassifierOn?: boolean;
+  /**
    * Tests only: tighter run-bound values. Each is clamped to the ratified {@link AGENT_RUN_BOUNDS} value (`min`), so a
    * caller can only lower a bound, never raise one (review round 1 item 5).
    */
@@ -277,6 +282,10 @@ class ShadowTimeout extends Error {
     this.name = 'ShadowTimeout';
   }
 }
+
+/** The continuation of a bound summary yes runs one M2 call; the classifier takes at most two (the answer and one re-ask). */
+const CONTINUATION_MODEL_CALLS = 1;
+const CLASSIFIER_MODEL_CALLS_PER_STEP = 2;
 
 export class AgentRunService {
   readonly mode: AgentMode;
@@ -707,15 +716,16 @@ export class AgentRunService {
 
   /**
    * A6 classifier wiring: charges ONE model call (the consent-answer classifier) to `actorId`'s rolling-hour cap of
-   * {@link AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR}, the same ledger the active runs charge. `false` when the hour has no call left (the
-   * caller must not make the call) or the clock cannot be read. It counts no run and takes no in-flight slot. Synchronous and total.
+   * {@link AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR}, the same ledger the active runs charge. `false` when charging would leave fewer than
+   * one call for the continuation of a yes (the caller must not make the call) or the clock cannot be read. It counts no run and takes no in-flight slot. Synchronous and total.
    */
   chargeClassifierCall(actorId: Id, atMs: number): boolean {
     try {
       if (!Number.isFinite(atMs)) return false;
       const calls = (this.modelCalls.get(actorId) ?? []).filter((entry) => atMs - entry.at < HOUR_MS);
       const used = calls.reduce((sum, entry) => sum + entry.count, 0);
-      if (used >= AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR) {
+      // The classifier never takes the last call: the bound yes it may produce still needs ONE model call for its continuation.
+      if (used + 1 + CONTINUATION_MODEL_CALLS > AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR) {
         this.modelCalls.set(actorId, calls);
         return false;
       }
@@ -732,7 +742,9 @@ export class AgentRunService {
     const own = this.inFlightCharge.get(actorId);
     const calls = (this.modelCalls.get(actorId) ?? []).filter((entry) => nowMs - entry.at < HOUR_MS);
     const used = calls.reduce((sum, entry) => sum + (entry === own ? thisRunCalls : entry.count), 0);
-    if (AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR - used < 1) return false;
+    // With the classifier switch on the step also needs its own calls (the answer and one re-ask), or a worded yes could spend the last one.
+    const needed = CONTINUATION_MODEL_CALLS + (this.deps.consentClassifierOn === true ? CLASSIFIER_MODEL_CALLS_PER_STEP : 0);
+    if (AGENT_ACTIVE_MAX_MODEL_CALLS_PER_HOUR - used < needed) return false;
     const starts = (this.starts.get(actorId) ?? []).filter((at) => nowMs - at < DAY_MS);
     const perHour = this.deps.caps?.perHour ?? AGENT_SHADOW_MAX_PER_HOUR;
     const perDay = this.deps.caps?.perDay ?? AGENT_SHADOW_MAX_PER_DAY;

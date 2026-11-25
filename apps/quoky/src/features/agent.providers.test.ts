@@ -92,12 +92,30 @@ describe('createAgentProviders: the rule-① consent composition (CS-2)', () => 
     expect(service.mode).toBe('off');
   });
 
-  it('the consent gate: the classifier switch follows QUOKY_CONSENT_ANSWER_CLASSIFIER (off, the default, builds none) and every call is charged to the run service', () => {
-    const providers = createAgentProviders(() => ({ agent: { mode: 'off', summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul', summaryConsent: 'on' }), { logger: silent });
-    const gateProvider = providers.find((p) => (p as { provide: symbol }).provide === CONSENT_TURN_GATE) as { useFactory: (runs: AgentRunService, store: ConsentPendingStore | undefined, router: CapabilityRouter) => ConsentTurnGate | undefined };
-    const runs = { continueSummaryConsent: async () => ({ kind: 'declined', reason: 'x', text: 'x' }), voidAllSummaryConsents: () => undefined, chargeClassifierCall: () => true } as unknown as AgentRunService;
+  it('the consent gate: the classifier switch follows QUOKY_CONSENT_ANSWER_CLASSIFIER (off, the default, builds none) and a call is charged to the run service', async () => {
+    const make = (consentAnswerClassifier?: 'off' | 'on') =>
+      createAgentProviders(() => ({ agent: { mode: 'off', summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul', summaryConsent: 'on', ...(consentAnswerClassifier !== undefined ? { consentAnswerClassifier } : {}) }), { logger: silent }).find((p) => (p as { provide: symbol }).provide === CONSENT_TURN_GATE) as {
+        useFactory: (runs: AgentRunService, store: ConsentPendingStore | undefined, router: CapabilityRouter) => ConsentTurnGate | undefined;
+      };
+    const charges: Array<[string, number]> = [];
+    const runs = { continueSummaryConsent: async () => ({ kind: 'declined', reason: 'x', text: 'x' }), voidAllSummaryConsents: () => undefined, chargeClassifierCall: (id: string, at: number) => (charges.push([id, at]), true) } as unknown as AgentRunService;
     const router = { select: async () => { throw new Error('router must not be used with the switch off'); } } as unknown as CapabilityRouter;
-    expect(gateProvider.useFactory(runs, undefined, router)).toBeUndefined();
-    expect(gateProvider.useFactory(runs, new ConsentPendingStore(), router)).toBeInstanceOf(ConsentTurnGate);
+    expect(make().useFactory(runs, undefined, router)).toBeUndefined();
+    expect(make().useFactory(runs, new ConsentPendingStore(), router)).toBeInstanceOf(ConsentTurnGate);
+    // With the switch on the gate's `chargeModelCall` reaches the run service's ledger: the stub provider is stronger-tier, same egress.
+    const gate = make('on').useFactory(runs, new ConsentPendingStore(), { select: async () => ({ id: 'claude-cli', executionLocality: 'REMOTE', supportsStrongerIntentSelection: true, execute: async () => ({ text: '{"label":"yes"}' }) }) } as unknown as CapabilityRouter) as unknown as { deps: { chargeModelCall: (actor: { id: string }, atMs: number) => boolean; classifier: { mode: string } } };
+    expect(gate.deps.classifier.mode).toBe('on');
+    expect(gate.deps.chargeModelCall({ id: 'owner' }, 42)).toBe(true);
+    expect(charges).toEqual([['owner', 42]]);
+  });
+
+  it('the run service learns the classifier switch (consentClassifierOn) only with QUOKY_CONSENT_ANSWER_CLASSIFIER=on', () => {
+    const service = (consentAnswerClassifier?: 'off' | 'on') => {
+      const provider = createAgentProviders(() => ({ agent: { mode: 'off', summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul', ...(consentAnswerClassifier !== undefined ? { consentAnswerClassifier } : {}) }), { logger: silent })[0] as { useFactory: (router: CapabilityRouter, storage: StorageProvider) => AgentRunService };
+      return provider.useFactory({} as CapabilityRouter, storage) as unknown as { deps: { consentClassifierOn?: boolean } };
+    };
+    expect(service().deps.consentClassifierOn).toBeUndefined();
+    expect(service('off').deps.consentClassifierOn).toBeUndefined();
+    expect(service('on').deps.consentClassifierOn).toBe(true);
   });
 });

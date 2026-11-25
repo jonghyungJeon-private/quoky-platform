@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Capability, IntentType, MemoryType, RiskLevel, SessionStatus, TaskStatus } from '../domain';
 import type { Actor, ApprovalRequest, ConversationContext, InboundMessage, Intent, MemoryRecord, OutboundMessage, Session, Task, TaskRun, WorkItem } from '../domain';
 import type { AiProvider, Logger, PlatformAdapter, StorageProvider } from '../ports';
@@ -477,13 +477,56 @@ describe('the consent gate: a turn a registered handler claims is `other` before
     expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: keyOf(DM) })).toBe('cancelled');
   });
 
-  it('cap: a spent hourly model-call cap means the classifier is not called; the reply is `unclear` (re-ask), never a yes', async () => {
-    let classified = 0;
-    const h = harness({ chargeModelCall: () => false, classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+  it('cap: a spent hourly model-call cap means the provider is not called; the reply is `unclear` (re-ask), never a yes', async () => {
+    let called = 0;
+    // The stub plays the adapter: the charge is made through the per-call context, right before its (counted) provider call.
+    const h = harness({ chargeModelCall: () => false, classifier: { mode: 'on', classify: async (_request, context) => (context?.charge?.() === true ? (called += 1, 'yes') : 'unclear') } });
     h.open();
     const result = await h.send('그래 보내줘');
-    expect(classified).toBe(0);
+    expect(called).toBe(0);
     expect(h.calls.continued).toBe(0);
     expect(JSON.stringify(result)).toContain('보낼까요?');
+  });
+
+  it('the turn chat facts (the GENERAL_CHAT provider) reach the classifier call; a charged call happens once', async () => {
+    const seen: unknown[] = [];
+    let charged = 0;
+    const h = harness({ chargeModelCall: () => (charged += 1, true), classifier: { mode: 'on', classify: async (_request, context) => (seen.push(context?.chat), context?.charge?.(), 'yes') } });
+    h.open();
+    await h.send('그래 보내줘');
+    expect(seen).toEqual([{ id: 'fake-chat', locality: 'REMOTE' }]);
+    expect(charged).toBe(1);
+    expect(h.calls.continued).toBe(1);
+  });
+
+  it('dormant path: with the switch off, a closed token, no open step or a channel turn, neither the claim walk nor the chat facts run', async () => {
+    const run = async (opts: Parameters<typeof harness>[0], text: string, opened: boolean, context: ConversationContext = DM) => {
+      const h = harness({ turnHandlers: realHandlers(), ...opts });
+      const claims = vi.spyOn(h.runtime as unknown as { turnHandlerClaims: () => boolean }, 'turnHandlerClaims');
+      const chatFacts = vi.spyOn(h.runtime as unknown as { consentChatFacts: () => Promise<undefined> }, 'consentChatFacts');
+      if (opened) h.open();
+      await h.send(text, context);
+      return { claims, chatFacts };
+    };
+    const on = { classifier: { mode: 'on' as const, classify: async () => 'unclear' as const } };
+    for (const spied of [await run({}, '오늘 메일 보여줘', true), await run(on, '응', true), await run(on, '아니', true), await run(on, '오늘 메일 보여줘', false), await run(on, '그래 보내줘', true, CHANNEL)]) {
+      expect(spied.claims).not.toHaveBeenCalled();
+      expect(spied.chatFacts).not.toHaveBeenCalled();
+    }
+    const enabled = await run(on, '그래 보내줘', true);
+    expect(enabled.claims).toHaveBeenCalledTimes(1);
+    expect(enabled.chatFacts).toHaveBeenCalledTimes(1);
+  });
+
+  it('a platform reply on the question is not claimed through its reply-to anchor: a worded yes still reaches the classifier', async () => {
+    const replyBound = { id: 'reply-bound', stage: 'pre-classify', order: 1, helpLines: [], surfaceClaim: (ctx: { message: InboundMessage }) => (ctx.message.replyTo !== undefined ? { groups: ['help'], onDeny: 'reply' } : null), handle: async () => null } as unknown as ConversationTurnHandler;
+    let classified = 0;
+    const h = harness({ turnHandlers: [replyBound], classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    h.open();
+    expect((h.runtime as unknown as { turnHandlerClaims(m: InboundMessage, a: () => boolean): boolean }).turnHandlerClaims({ ...h.messageOf('그래 보내줘'), replyTo: { messageId: 'q-1' } }, () => true)).toBe(true);
+    const result = await h.runtime.handle({ ...h.messageOf('그래 보내줘'), replyTo: { messageId: 'q-1' } });
+    expect(classified).toBe(1);
+    expect(h.calls.continued).toBe(1);
+    expect(JSON.stringify(result)).toContain(SUMMARY_TEXT);
   });
 });

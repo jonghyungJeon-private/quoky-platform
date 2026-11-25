@@ -68,11 +68,13 @@ export type AgentReadBudgetPinned = Assert<KeysEqual<AgentReadBudget, 'reserveQu
  * closed data context `crossWrite` (allowlists and switches by value, no port, no model list); it reaches the plan validator only.
  */
 export type AgentServiceDepsPinned = Assert<
-  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite' | 'consentStore' | 'recipientLabel'>
+  KeysEqual<AgentRunServiceDeps, 'mode' | 'router' | 'actors' | 'logger' | 'timeZone' | 'timeoutMs' | 'elapsed' | 'caps' | 'readers' | 'summarizer' | 'workSummarySources' | 'bounds' | 'released' | 'crossWrite' | 'consentStore' | 'recipientLabel' | 'consentClassifierOn'>
 >;
 /** Rule ① (CS-1a): the service's two additions are the process-wide pending-step store and the recipient-name map (data), no port. */
 export type AgentServiceConsentStorePinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['consentStore']>, ConsentPendingStore>>;
 export type AgentServiceRecipientPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['recipientLabel']>, (provider: AiProvider) => string | undefined>>;
+/** A6 classifier wiring: the one added key is a boolean (the classifier switch is on), data, no port. */
+export type AgentServiceConsentClassifierOnPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['consentClassifierOn']>, boolean>>;
 export type AgentServiceReleasedPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['released']>, boolean>>;
 export type AgentServiceReadersPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['readers']>, AgentPlanExecutorDeps['readers']>>;
 export type AgentServiceSummarizerPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['summarizer']>, ProviderSelector>>;

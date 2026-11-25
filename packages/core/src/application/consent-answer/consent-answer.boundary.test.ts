@@ -107,7 +107,7 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
       }
       return imported.sort();
     };
-    expect(named('application/conversation-runtime/runtime-base.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentTurnGate']);
+    expect(named('application/conversation-runtime/runtime-base.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentChatFacts:type', '../consent-answer/consent-turn-gate#ConsentTurnGate']);
     expect(named('application/conversation-runtime/types.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentTurnGate:type']);
   });
 

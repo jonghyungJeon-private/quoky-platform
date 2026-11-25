@@ -498,10 +498,10 @@ describe('AgentRunService shadow: ADR-0121 A7-S1 cross-source write plan (plan f
 });
 
 describe('chargeClassifierCall (A6 classifier wiring): the consent classifier shares the 60/h per-actor model-call cap', () => {
-  it('charges one call each, refuses the 61st in the rolling hour, frees a call as it ages out, and keeps actors apart', () => {
+  it('charges one call each, never the last one (the continuation keeps it), frees a call as it ages out, and keeps actors apart', () => {
     const { service } = harness({ mode: 'off', script: [] });
     const t0 = 1_800_000_000_000;
-    for (let i = 0; i < 60; i += 1) expect(service.chargeClassifierCall('owner', t0 + i)).toBe(true);
+    for (let i = 0; i < 59; i += 1) expect(service.chargeClassifierCall('owner', t0 + i)).toBe(true);
     expect(service.chargeClassifierCall('owner', t0 + 100)).toBe(false);
     expect(service.chargeClassifierCall('other-owner', t0 + 100)).toBe(true);
     // The first call (at t0) leaves the rolling hour; one slot is free again.

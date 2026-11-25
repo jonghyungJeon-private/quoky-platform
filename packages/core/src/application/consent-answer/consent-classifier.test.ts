@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Capability } from '../../domain';
 import type { AiProvider, AiRequest } from '../../ports/ai-provider.port';
 import { AGENT_WORK_SUMMARY_SOURCES } from '../agent/flow-policy';
-import { CONSENT_ANSWER_LABELS, CONSENT_SOURCES } from './consent-labels';
+import { CONSENT_ANSWER_LABELS, CONSENT_SOURCES, type ConsentClassifierContext, type ConsentClassifierRequest } from './consent-labels';
 import {
   CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION,
   CONSENT_CLASSIFIER_TIMEOUT_MS,
@@ -24,8 +24,10 @@ const topic = (language: 'ko' | 'en' = 'ko') => topicConsentPending({ scope, lan
 function provider(execute: (request: AiRequest) => Promise<{ text: string }>): AiProvider {
   return { id: 'claude-cli', executionLocality: 'REMOTE', supportsStrongerIntentSelection: true, capabilities: [], isAvailable: async () => true, execute } as unknown as AiProvider;
 }
-const CHAT = { chatProviderId: 'claude-cli', chatProviderLocality: 'REMOTE' as const };
-const classifierOf = (select: () => Promise<AiProvider>, extra: { timeoutMs?: number } = {}) => createConsentAnswerClassifier({ select, ...CHAT, ...extra });
+const CHAT = { chat: { id: 'claude-cli', locality: 'REMOTE' as const } };
+// The turn's chat facts arrive per call (A6 classifier wiring); by default the same egress as the provider under test.
+const withChat = (classify: ReturnType<typeof createConsentAnswerClassifier>) => (request: ConsentClassifierRequest, context: ConsentClassifierContext = CHAT) => classify(request, context);
+const classifierOf = (select: () => Promise<AiProvider>, extra: { timeoutMs?: number } = {}) => withChat(createConsentAnswerClassifier({ select, ...extra }));
 
 describe('A6-S2 content-free request (A6.4)', () => {
   it('holds exactly the fixed question with placeholders and the reply', () => {
@@ -162,10 +164,12 @@ describe('A6-S2 adapter', () => {
   it('refuses without a call when the chat provider is unknown, the provider family or the locality differs', async () => {
     const execute = vi.fn(async () => ({ text: '{"label":"yes"}' }));
     const select = async () => provider(execute);
-    expect(await createConsentAnswerClassifier({ select })(request)).toBe('unclear');
-    expect(await createConsentAnswerClassifier({ select, chatProviderId: 'other-cli', chatProviderLocality: 'REMOTE' })(request)).toBe('unclear');
-    expect(await createConsentAnswerClassifier({ select, chatProviderId: 'claude-cli', chatProviderLocality: 'LOCAL' })(request)).toBe('unclear');
-    expect(await createConsentAnswerClassifier({ select, chatProviderId: 'claude-cli' })(request)).toBe('yes');
+    const classify = createConsentAnswerClassifier({ select });
+    expect(await classify(request)).toBe('unclear');
+    expect(await classify(request, {})).toBe('unclear');
+    expect(await classify(request, { chat: { id: 'other-cli', locality: 'REMOTE' } })).toBe('unclear');
+    expect(await classify(request, { chat: { id: 'claude-cli', locality: 'LOCAL' } })).toBe('unclear');
+    expect(await classify(request, { chat: { id: 'claude-cli', locality: 'REMOTE' } })).toBe('yes');
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
@@ -218,7 +222,7 @@ describe('A6-S2 adapter', () => {
       const reads = [1_000, settledAt];
       let i = 0;
       const execute = vi.fn(async (_r: AiRequest) => ({ text: '{"label":"yes"}' }));
-      return createConsentAnswerClassifier({ select: async () => provider(execute), ...CHAT, now: () => reads[Math.min(i++, 1)] as number })(request);
+      return withChat(createConsentAnswerClassifier({ select: async () => provider(execute), now: () => reads[Math.min(i++, 1)] as number }))(request);
     };
     expect(await run(1_000 + 9_999)).toBe('yes');
     expect(await run(1_000 + 10_000)).toBe('unclear');
@@ -227,7 +231,7 @@ describe('A6-S2 adapter', () => {
 
   it('a throwing or non-finite clock is unclear', async () => {
     const execute = vi.fn(async (_r: AiRequest) => ({ text: '{"label":"yes"}' }));
-    const mk = (now: () => number) => createConsentAnswerClassifier({ select: async () => provider(execute), ...CHAT, now })(request);
+    const mk = (now: () => number) => withChat(createConsentAnswerClassifier({ select: async () => provider(execute), now }))(request);
     expect(await mk(() => { throw new Error('clock'); })).toBe('unclear');
     expect(await mk(() => Number.NaN)).toBe('unclear');
     let n = 0;
@@ -278,5 +282,36 @@ describe('A6-S2 the classifier sees exactly the question rendered (sanitisation 
     const execute = vi.fn(async () => ({ text: '{"label":"yes"}' }));
     expect(await classifierOf(async () => provider(execute))(buildConsentClassifierRequest(withRecipient('Recipient One'), 'yes'))).toBe('yes');
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('A6 classifier wiring: the cap charge is made immediately before the provider call', () => {
+  const request = buildConsentClassifierRequest(summary(), 'ok');
+  it('same egress and the stronger tier: charged exactly once, then the provider is called once', async () => {
+    const order: string[] = [];
+    const execute = vi.fn(async () => (order.push('call'), { text: '{"label":"yes"}' }));
+    const charge = vi.fn(() => (order.push('charge'), true));
+    expect(await createConsentAnswerClassifier({ select: async () => provider(execute) })(request, { ...CHAT, charge })).toBe('yes');
+    expect(order).toEqual(['charge', 'call']);
+  });
+
+  it('no chat facts, a different egress, a locality mismatch, no stronger tier or a credential-shaped reply: no call and no charge', async () => {
+    const execute = vi.fn(async () => ({ text: '{"label":"yes"}' }));
+    const charge = vi.fn(() => true);
+    const classify = createConsentAnswerClassifier({ select: async () => provider(execute) });
+    expect(await classify(request, { charge })).toBe('unclear');
+    expect(await classify(request, { chat: { id: 'other-cli', locality: 'REMOTE' }, charge })).toBe('unclear');
+    expect(await classify(request, { chat: { id: 'claude-cli', locality: 'LOCAL' }, charge })).toBe('unclear');
+    const weak = { ...provider(execute), supportsStrongerIntentSelection: false } as AiProvider;
+    expect(await createConsentAnswerClassifier({ select: async () => weak })(request, { ...CHAT, charge })).toBe('unclear');
+    expect(await classify({ question: 'q', reply: ['sk', 'ant', 'api03', 'abcdefghijklmnopqrstuvwxyz0123456789'].join('-') }, { ...CHAT, charge })).toBe('unclear');
+    expect(charge).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('a refused charge is `unclear` without a provider call', async () => {
+    const execute = vi.fn(async () => ({ text: '{"label":"yes"}' }));
+    expect(await createConsentAnswerClassifier({ select: async () => provider(execute) })(request, { ...CHAT, charge: () => false })).toBe('unclear');
+    expect(execute).not.toHaveBeenCalled();
   });
 });

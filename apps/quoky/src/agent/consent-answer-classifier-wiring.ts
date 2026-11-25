@@ -8,9 +8,9 @@ import type { ConsentAnswerClassifierMode } from './consent-answer-config';
  * - `off` (the default): exactly `{ mode: 'off' }`, as before; nothing is built and no router is touched.
  * - `on`: the A6-S2 adapter over the router's `INTENT_SELECTION` route. `on` is still refused at startup (`config.ts`,
  *   CONSENT_ANSWER_CLASSIFIER_NOT_RELEASED) until the A6-S4 gate passes, so this branch is reachable from tests only. The adapter does
- *   not count calls: the gate charges every call to the actor's hourly model-call cap before it (`ConsentTurnGateDeps.chargeModelCall`).
- *   The chat provider of the turn is not a composition-time fact, so the adapter gets none and answers `unclear` without a call until
- *   the A6-S4 slice supplies it per turn (fail closed).
+ *   not count calls itself: the gate hands each call a per-turn context (the turn's chat provider facts and a cap charge), and the adapter
+ *   charges the actor's hourly model-call cap (`ConsentTurnGateDeps.chargeModelCall`) immediately before the provider is called. With no
+ *   chat facts, a different egress or no stronger tier it answers `unclear` without a call and without a charge (fail closed).
  */
 export type ConsentClassifierSwitchBuilt = { readonly mode: 'off' } | { readonly mode: 'on'; readonly classify: ReturnType<typeof createConsentAnswerClassifier> };
 

@@ -429,6 +429,7 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
     const replies: Array<[string, ConsentClassifierSwitch]> = [
       ['응', OFF], ['아니', OFF], ['ㅇㅇ', OFF], ['> 응', OFF], ['응\n응\n응\n응', OFF], ['ㅇㅇ', on('yes')], ['ㅇㅇ', on('yes-and-more')], ['ㅇㅇ', on('no')], ['ㅇㅇ', on('other')], ['ㅇㅇ', on('unclear')],
     ];
+    for (const code of (await answer(opened(), turn('오늘 메일 보여줘', { handlerClaimed: () => true }), on('yes'))).audit) seen.add(code);
     for (const [text, sw] of replies) for (const code of (await answer(opened(), turn(text), sw)).audit) seen.add(code);
     const store = opened();
     store.voidAll();
@@ -483,29 +484,43 @@ describe('A6-S1 review round 2: non-finite times and generations', () => {
 });
 
 describe('A6 classifier wiring: a turn a registered handler claims (turn fact) is `other` before the classifier', () => {
-  it('switch on: handlerClaimed cancels as classifier-other, the classifier is never called, the step is cancelled (single line routes, multi-line is consumed)', async () => {
+  it('switch on: handlerClaimed cancels as handler-claimed, the classifier is never called, the step is cancelled (single line routes, multi-line is consumed)', async () => {
     const stub = on('yes');
     const store = opened();
-    const single = await answer(store, turn('오늘 메일 보여줘', { handlerClaimed: true }), stub);
-    expect(single).toMatchObject({ kind: 'cancelled', audit: ['classifier-other'], next: 'ordinary' });
+    const single = await answer(store, turn('오늘 메일 보여줘', { handlerClaimed: () => true }), stub);
+    expect(single).toMatchObject({ kind: 'cancelled', audit: ['handler-claimed'], next: 'ordinary' });
     expect(stub.classify).not.toHaveBeenCalled();
-    const multi = await answer(opened(), turn('오늘 메일 보여줘\n그리고 일정도', { handlerClaimed: true }), stub);
-    expect(multi).toMatchObject({ kind: 'cancelled', audit: ['classifier-other'], next: 'consumed' });
+    const multi = await answer(opened(), turn('오늘 메일 보여줘\n그리고 일정도', { handlerClaimed: () => true }), stub);
+    expect(multi).toMatchObject({ kind: 'cancelled', audit: ['handler-claimed'], next: 'consumed' });
     expect(stub.classify).not.toHaveBeenCalled();
   });
 
   it('a closed yes still binds when the turn is also claimed (the fast path runs first)', async () => {
     const stub = on('no');
-    const decision = await answer(opened(), turn('응', { handlerClaimed: true }), stub);
+    const decision = await answer(opened(), turn('응', { handlerClaimed: () => true }), stub);
     expect(decision).toMatchObject({ kind: 'bound', audit: ['closed-yes'] });
     expect(stub.classify).not.toHaveBeenCalled();
   });
 
   it('switch off: a claimed turn is the plain classifier-off cancel, byte-identical to an unclaimed one', async () => {
-    const a = await answer(opened(), turn('오늘 메일 보여줘', { handlerClaimed: true }), OFF);
+    const a = await answer(opened(), turn('오늘 메일 보여줘', { handlerClaimed: () => true }), OFF);
     const b = await answer(opened(), turn('오늘 메일 보여줘'), OFF);
     expect(a).toEqual(b);
     expect(a).toMatchObject({ audit: ['classifier-off'] });
+  });
+
+  it('the lazy facts are never read with the switch off or on the closed-token fast path', async () => {
+    const claim = vi.fn(() => true);
+    const chat = vi.fn(async () => undefined);
+    await answer(opened(), turn('오늘 메일 보여줘', { handlerClaimed: claim, chat }), OFF);
+    await answer(opened(), turn('응', { handlerClaimed: claim, chat }), on('no'));
+    expect(claim).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('a throwing claim thunk claims nothing (the classifier is reached)', async () => {
+    const stub = on('yes');
+    expect(await answer(opened(), turn('그래 보내줘', { handlerClaimed: () => { throw new Error('clock'); } }), stub)).toMatchObject({ kind: 'bound' });
   });
 
   it('an unclaimed turn still reaches the classifier', async () => {

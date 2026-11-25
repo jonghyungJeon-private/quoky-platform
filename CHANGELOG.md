@@ -10,7 +10,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added.** The structural rule of the CS-2 residual: with the switch on, a turn a registered handler's pure `surfaceClaim` claims is `other`
   (turn fact `handlerClaimed`), after the closed-token fast path and before the classifier call; the classifier is not called. Every classifier
   call is charged to the per-actor 60/h model-call cap (`AgentRunService.chargeClassifierCall`, `ConsentTurnGateDeps.chargeModelCall`); a spent
-  cap is `unclear`. The composition root builds the switch from config (`consent-answer-classifier-wiring.ts`) instead of `{ mode: 'off' }`.
+  cap is `unclear`; the adapter charges right before its provider call and never takes the last call (the continuation keeps one; with the switch on a step needs 3 calls left); chat facts and the handler claim are lazy per turn; a claimed turn is audited `handler-claimed`. The composition root builds the switch from config (`consent-answer-classifier-wiring.ts`) instead of `{ mode: 'off' }`.
 - **Unchanged.** `off` is byte-identical; `on` stays refused at startup until A6-S4; no prompt, catalog or gold change, no model call or eval.
   See DECISIONS "A6 classifier wiring implementation note (2026-11-25)".
 

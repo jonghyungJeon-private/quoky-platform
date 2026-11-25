@@ -1,6 +1,7 @@
 import type { Actor, InboundQuotedRange } from '../../domain';
 import type { Logger } from '../../ports';
 import { answerConsentTurn, closedConsentToken, type ConsentClassifierSwitch } from './consent-answer';
+import type { ConsentChatFacts } from './consent-labels';
 import type { BoundConsent, ConsentLanguage, ConsentPendingStore, ConsentScope } from './consent-pending';
 
 /**
@@ -17,8 +18,8 @@ import type { BoundConsent, ConsentLanguage, ConsentPendingStore, ConsentScope }
  *   rerun a message once as a new ordinary turn (AM-2).
  * - **Clock.** `now` is the one clock of the step: the same domain as the service's `createdAtMs` (`AgentRunService` deps
  *   `elapsed`, default `Date.now`). The composition root passes the same function to both.
- * - **Cap (A6 classifier wiring).** With the switch on, every classifier call is charged through `chargeModelCall` first; a spent cap is
- *   `unclear` (re-ask, then cancel), never a yes. A turn a registered handler claims is `other` before any call (`handlerClaimed`).
+ * - **Cap (A6 classifier wiring).** With the switch on, the adapter charges `chargeModelCall` immediately before each provider call; a spent cap is
+ *   `unclear` (re-ask, then cancel), never a yes. A turn a registered handler claims is `other` (`handler-claimed`) before any call.
  * - **No content.** The gate logs closed codes and counts only, never the reply text, an id or an item. History keeps only the
  *   fixed notes below (never the summary).
  *
@@ -45,6 +46,8 @@ export type ConsentContinuation =
   | { readonly kind: 'reply'; readonly reply: { readonly text: string } }
   | { readonly kind: 'declined'; readonly reason: string; readonly text: string };
 
+export type { ConsentChatFacts };
+
 export interface ConsentTurnGateDeps {
   readonly store: ConsentPendingStore;
   /** `{ mode: 'off' }` unless the composition root built the adapter; `QUOKY_CONSENT_ANSWER_CLASSIFIER=on` stays refused (A6-S4). */
@@ -54,8 +57,9 @@ export interface ConsentTurnGateDeps {
   /** Drops the continuation records (`AgentRunService.voidAllSummaryConsents`); the store is voided by the gate itself. */
   readonly voidContinuations?: () => void;
   /**
-   * A6 classifier wiring: charges ONE model call to the actor's per-actor hourly cap (the run service's 60/h) and answers whether it
-   * was available. Every classifier call goes through it; absent or `false` the classifier is not called (`unclear`, fail closed).
+   * A6 classifier wiring: charges ONE model call to the actor's per-actor hourly cap (the run service's 60/h), keeping one call for the
+   * continuation, and answers whether it was available. The classifier adapter calls it immediately before the provider is called
+   * (no charge when the adapter answers `unclear` without a call); absent or `false` there is no call (`unclear`, fail closed).
    */
   readonly chargeModelCall?: (actor: Actor, atMs: number) => boolean;
   /** The one clock of the step (ms): the same function the run service uses for `createdAtMs`. */
@@ -76,8 +80,10 @@ export interface ConsentGateTurn {
   readonly ownerStepPending: boolean;
   /** The text is a control phrase (existing parsers, in the runtime). */
   readonly control: boolean;
-  /** A registered turn handler's pure `surfaceClaim` claims the text (decided by the runtime; A6 classifier wiring). */
-  readonly handlerClaimed?: boolean;
+  /** Lazy: a registered turn handler's pure `surfaceClaim` claims the text (decided by the runtime; evaluated only on the enabled classifier path). */
+  readonly handlerClaimed?: () => boolean;
+  /** Lazy: the chat provider facts of this turn (decided by the runtime, resolved only when a classifier call is about to be made). */
+  readonly chat?: () => Promise<ConsentChatFacts | undefined>;
 }
 
 export type ConsentGateOutcome =
@@ -135,9 +141,11 @@ export class ConsentTurnGate {
           atMs: this.deps.now(),
           attachmentCount: turn.attachmentCount,
           ...(turn.quotedRanges !== undefined ? { quotedRanges: turn.quotedRanges } : {}),
-          ...(turn.handlerClaimed === true ? { handlerClaimed: true } : {}),
+          ...(turn.handlerClaimed !== undefined ? { handlerClaimed: turn.handlerClaimed } : {}),
+          ...(turn.chat !== undefined ? { chat: turn.chat } : {}),
+          charge: () => this.charge(turn.actor),
         },
-        this.capped(turn.actor),
+        this.deps.classifier,
         this.deps.now,
       );
       const lines = LINES[language ?? languageOfReply(turn.text)];
@@ -175,23 +183,13 @@ export class ConsentTurnGate {
     }
   }
 
-  /** The classifier switch with every call charged to the actor's hourly model-call cap; an uncharged call is `unclear` (never a yes). */
-  private capped(actor: Actor): ConsentClassifierSwitch {
-    const { classifier, chargeModelCall } = this.deps;
-    if (classifier.mode !== 'on') return classifier;
-    const classify = classifier.classify;
-    return {
-      mode: 'on',
-      classify: async (request) => {
-        let charged = false;
-        try {
-          charged = chargeModelCall?.(actor, this.deps.now()) === true;
-        } catch {
-          charged = false;
-        }
-        return charged ? classify(request) : 'unclear';
-      },
-    };
+  /** One model call charged to the actor's hourly cap (leaving the continuation its call); unavailable, absent or a throw is `false`: no call. */
+  private charge(actor: Actor): boolean {
+    try {
+      return this.deps.chargeModelCall?.(actor, this.deps.now()) === true;
+    } catch {
+      return false;
+    }
   }
 
   private async continueBound(bound: BoundConsent, turn: ConsentGateTurn, lines: (typeof LINES)[ConsentLanguage]): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly replyKind: 'note' }> {

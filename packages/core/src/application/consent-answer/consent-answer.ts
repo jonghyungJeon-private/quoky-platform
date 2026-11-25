@@ -2,7 +2,7 @@ import type { InboundQuotedRange } from '../../domain';
 import { hasUntrustedSpanMarker } from '../agent/summary-grant';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
 import { buildConsentClassifierRequest } from './consent-classifier';
-import { CONSENT_ANSWER_LABELS, type ConsentAnswerLabel, type ConsentClassifierRequest } from './consent-labels';
+import { CONSENT_ANSWER_LABELS, type ConsentAnswerLabel, type ConsentChatFacts, type ConsentClassifierContext, type ConsentClassifierRequest } from './consent-labels';
 import { recordOwnerYes } from './consent-yes';
 import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, ConsentPendingStore, ConsentScope } from './consent-pending';
 
@@ -22,8 +22,8 @@ import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, Conse
  * 4. **The fast path.** NFKC, then NFC, trim and one trailing `.` `!` `~` `?` removed, then the ratified closed tokens (A2
  *    answer 2, SR-1 W1): yes `응` `네` `예` `yes`, no `아니` `아니요` `아니오` `아뇨` `취소` `no`. NFKC folds compatibility forms
  *    only (fullwidth `ｙｅｓ`); a cross-script look-alike stays no token. A closed yes binds, a closed no cancels.
- * 5. **Handler claim** (switch on only): a turn a registered handler's `surfaceClaim` claims (turn fact `handlerClaimed`) is `other`;
- *    the classifier is not called.
+ * 5. **Handler claim** (switch on only): a turn a registered handler's `surfaceClaim` claims (lazy turn fact `handlerClaimed`, read only here)
+ *    is `other` (audit `handler-claimed`); the classifier is not called.
  *    **Switch off** (the default): any other reply cancels, exactly as W1 as built.
  *    **Switch on**: the classifier's closed label (`yes`, `yes-and-more`, `no`, `other`, `unclear`; anything else, a throw
  *    included, is `unclear`). It sees only the fixed question with placeholders and the reply (A6-S2): no item, topic, count or history.
@@ -48,6 +48,7 @@ export const CONSENT_ANSWER_CODES = [
   'classifier-other',
   'classifier-unclear',
   'classifier-off',
+  'handler-claimed',
   'structural-fail',
   'over-caps',
   'claim-lost',
@@ -63,7 +64,7 @@ export const CONSENT_REPLY_MAX_LINES = 3;
 export const CONSENT_REPLY_MAX_CHARS = 60;
 
 /** The classifier call (A6-S2). Its result is read strictly: only a closed label string counts. */
-export type ConsentAnswerClassifier = (request: ConsentClassifierRequest) => Promise<unknown>;
+export type ConsentAnswerClassifier = (request: ConsentClassifierRequest, context?: ConsentClassifierContext) => Promise<unknown>;
 
 /** `QUOKY_CONSENT_ANSWER_CLASSIFIER`, as the composition root read it. `off` is the default. */
 export type ConsentClassifierSwitch = { readonly mode: 'off' } | { readonly mode: 'on'; readonly classify: ConsentAnswerClassifier };
@@ -81,7 +82,14 @@ export interface ConsentReplyTurn {
    * A6 classifier wiring (CS-2 residual): a registered turn handler's pure `surfaceClaim` claims this turn, decided by the runtime
    * (never recomputed here from platform types). With the switch on, such a turn is `other` and the classifier is not called.
    */
-  readonly handlerClaimed?: boolean;
+  readonly handlerClaimed?: () => boolean;
+  /**
+   * The chat provider facts of this turn, resolved lazily by the runtime. Called only on the enabled classifier path (after the fast path
+   * and the handler claim, switch on, a step open, owner DM), once per turn, and only when a classifier call is about to be made.
+   */
+  readonly chat?: () => Promise<ConsentChatFacts | undefined>;
+  /** Charges ONE model call to the actor's hourly cap, leaving the continuation its call; `false`: no call (A6 classifier wiring). */
+  readonly charge?: () => boolean;
 }
 
 /** What the caller does with the turn after the answer pipeline. */
@@ -159,9 +167,11 @@ export function consentRerunText(reply: string): string {
   return rest.trim().length > 0 ? rest : reply;
 }
 
-async function classifyStrict(classify: ConsentAnswerClassifier, request: ConsentClassifierRequest): Promise<ConsentAnswerLabel> {
+async function classifyStrict(classify: ConsentAnswerClassifier, request: ConsentClassifierRequest, turn: ConsentReplyTurn): Promise<ConsentAnswerLabel> {
   try {
-    return consentAnswerLabel(await classify(request));
+    const chat = turn.chat === undefined ? undefined : await turn.chat();
+    const context: ConsentClassifierContext = { ...(chat !== undefined ? { chat } : {}), ...(turn.charge !== undefined ? { charge: turn.charge } : {}) };
+    return consentAnswerLabel(await classify(request, context));
   } catch {
     return 'unclear';
   }
@@ -243,11 +253,11 @@ async function decideClaimed(
   }
   // The structural rule (A6 classifier wiring): after the closed-token fast path (a closed yes a listing handler also claims has bound
   // above) and before the model call, a turn a registered handler claims is a new request: `other`, no call, no cap charge.
-  if (turn.handlerClaimed === true) {
+  if (claimedByHandler(turn)) {
     store.cancel(claim);
-    return { kind: 'cancelled', audit: ['classifier-other'], next: afterCancel(shape.lines) };
+    return { kind: 'cancelled', audit: ['handler-claimed'], next: afterCancel(shape.lines) };
   }
-  const label = await classifyStrict(classifier.classify, buildConsentClassifierRequest(claim.pending, turn.text));
+  const label = await classifyStrict(classifier.classify, buildConsentClassifierRequest(claim.pending, turn.text), turn);
   // Freshness is judged on a fresh clock read after the classifier, never on the arrival time of the message.
   const atMs = now();
   switch (label) {
@@ -272,5 +282,14 @@ async function decideClaimed(
       if (pending === undefined) return { kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' };
       return { kind: 'reask', audit: ['classifier-unclear', 'reask'], pending, question: consentReaskQuestion(pending.language), next: 'consumed' };
     }
+  }
+}
+
+/** The lazy handler-claim fact, read only on the enabled classifier path; a throw claims nothing (the registry walk is pure and total). */
+function claimedByHandler(turn: ConsentReplyTurn): boolean {
+  try {
+    return turn.handlerClaimed?.() === true;
+  } catch {
+    return false;
   }
 }

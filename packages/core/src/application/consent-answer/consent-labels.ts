@@ -1,3 +1,4 @@
+import type { AiExecutionLocality } from '../../ports/ai-provider.port';
 import { AGENT_WORK_SUMMARY_SOURCES } from '../agent/flow-policy';
 
 /**
@@ -26,4 +27,19 @@ export interface ConsentClassifierRequest {
   /** The fixed question text with the item count / topic as placeholders (A6-S2, `buildConsentClassifierRequest`). */
   readonly question: string;
   readonly reply: string;
+}
+
+/** The port-level facts of the provider this turn's chat would reach (the same two facts `nlSameEgress` reads); no platform or provider type. */
+export interface ConsentChatFacts {
+  readonly id: string;
+  readonly locality: AiExecutionLocality;
+}
+
+/**
+ * What the pipeline hands one classifier call besides the content-free request (A6 classifier wiring): the turn's chat facts (the
+ * no-new-egress rule) and the cap charge the adapter makes immediately before the provider is actually called (`false`: no call).
+ */
+export interface ConsentClassifierContext {
+  readonly chat?: ConsentChatFacts;
+  readonly charge?: () => boolean;
 }
