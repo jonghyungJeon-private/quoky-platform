@@ -45,7 +45,7 @@ interface Harness {
   readonly onRead: { current: (() => Promise<void>) | undefined };
 }
 
-function harness(options: { readonly caps?: { perHour?: number } } = {}): Harness {
+function harness(options: { readonly caps?: { perHour?: number }; readonly planText?: string; readonly drive?: AgentReadPort } = {}): Harness {
   const remoteRequests: AiRequest[] = [];
   const localRequests: AiRequest[] = [];
   const plannerCalls = { count: 0 };
@@ -63,7 +63,7 @@ function harness(options: { readonly caps?: { perHour?: number } } = {}): Harnes
     isAvailable: async () => true,
     async execute() {
       plannerCalls.count += 1;
-      return { text: MAIL_SUMMARY_PLAN, artifacts: [] };
+      return { text: options.planText ?? MAIL_SUMMARY_PLAN, artifacts: [] };
     },
   };
   const answer = (request: AiRequest, sink: AiRequest[]) => {
@@ -105,7 +105,7 @@ function harness(options: { readonly caps?: { perHour?: number } } = {}): Harnes
       logger,
       timeZone: 'Asia/Seoul',
       timeoutMs: 6_000,
-      readers: { 'mail.list': mail },
+      readers: { 'mail.list': mail, ...(options.drive !== undefined ? { 'drive.files': options.drive } : {}) },
       summarizer: new CapabilityRouter(new AiProviderManager([remote, local], { uncached: () => true }), PERMISSIVE),
       released: true,
       consentStore: store,
@@ -551,6 +551,48 @@ describe('CS-1b review round 1: summary inputs come only from the recorded reads
   });
 });
 
+describe('CS-1b review round 3: an unrecorded reference ancestor', () => {
+  it('re-runs to resolve the reference but adds nothing to the summary or the omitted note', async () => {
+    setSummaryGrantsForTest(() => true);
+    try {
+      const provider = oneItemProvider();
+      const requests: AgentReadRequest[] = [];
+      const mail: AgentReadPort = {
+        read: async (request) => {
+          requests.push(request);
+          const ids = request.keys ?? ['a1', 'a2'];
+          const documents: AgentSourceDocument[] = ids.map((id, index) => ({ id, position: index + 1, title: 't', author: 'a', date: '', body: `BODY-${id}` }));
+          return { ok: true, items: ids.map((id) => ({ id })), ...(request.withDocuments === true ? { documents } : {}) };
+        },
+      };
+      const ref: ValidatedAgentStep = {
+        ...wideRead('mail.list', 1),
+        ref: { step: 1, field: 'messageIds', take: 1, provenance: { kind: 'reference', step: 1, entryId: 'mail.list', origin: 'mail:owner' } },
+      } as ValidatedAgentStep;
+      const p = plan([wideRead('mail.list', 2), ref, summarize([2])]);
+      const run = newSummaryRunToken();
+      const reads = [{ step: 2, entryId: 'mail.list' as const, itemIds: ['a1'] }];
+      const consent = consentTokenFor(run, 3, { recipient: 'Claude', reads });
+      const result = await new AgentPlanExecutor({ readers: { 'mail.list': mail }, summarizer: route(provider) }).execute(p, {
+        continuation: { steps: [1, 2, 3], summaryStep: 3, run, consent, reads },
+      });
+      // The ancestor ran (the reference needed it) but fetched no body; the referencing read fetched the asked item only.
+      expect(requests).toHaveLength(2);
+      expect(requests[0]?.withDocuments).not.toBe(true);
+      expect(requests[1]?.keys).toEqual(['a1']);
+      expect(requests[1]?.withDocuments).toBe(true);
+      const prompt = provider.requests.map((request) => request.prompt).join('\n');
+      expect(prompt).toContain('BODY-a1');
+      expect(prompt).not.toContain('BODY-a2');
+      expect(result.steps[2]).toMatchObject({ kind: 'summarize', status: 'ok' });
+      const reply = assembleAgentReply({ plan: p as never, result, language: 'en', destinationIsOwnerDm: true, mode: 'continuation', summaryStep: 3 });
+      expect(reply.text).not.toContain('left out of the summary');
+    } finally {
+      setSummaryGrantsForTest();
+    }
+  });
+});
+
 describe('CS-1b assembler continuation mode', () => {
   it('shows only the step summary, the omitted note and the REMOTE disclosure: no listing, no notes, no question', async () => {
     setSummaryGrantsForTest(() => true);
@@ -576,5 +618,31 @@ describe('CS-1b assembler continuation mode', () => {
     } finally {
       setSummaryGrantsForTest();
     }
+  });
+});
+
+describe('CS-1b review round 3: the service stores only the recorded reads (and their reference ancestors)', () => {
+  it('mail asked + Drive empty at ask time and populated at the yes: the continuation makes no Drive call and sends no Drive body', async () => {
+    const driveCalls: AgentReadRequest[] = [];
+    const driveIds: { current: string[] } = { current: [] };
+    const drive: AgentReadPort = {
+      read: async (request) => {
+        driveCalls.push(request);
+        const documents = driveIds.current.map((id, index) => ({ id, position: index + 1, title: 'd', author: 'a', date: '', body: `DRIVE-BODY-${id}` }));
+        return { ok: true, items: driveIds.current.map((id) => ({ id })), ...(request.withDocuments === true ? { documents } : {}) };
+      },
+    };
+    const planText = JSON.stringify({ steps: [{ entryId: 'mail.list', args: {} }, { entryId: 'drive.files', args: {} }, { summarize: [1, 2], schema: 'digest.v1' }], ambiguity: 'CLEAR' });
+    const h = harness({ planText, drive });
+    const bound = await askAndYes(h);
+    const driveCallsAtAsk = driveCalls.length;
+    driveIds.current = ['file-aaaa1'];
+    const outcome = await h.service.continueSummaryConsent(bound, owner(h));
+    const reply = replyOf(outcome);
+    expect(driveCalls.length).toBe(driveCallsAtAsk);
+    expect(driveCalls.every((request) => request.withDocuments !== true)).toBe(true);
+    expect(h.remoteRequests).toHaveLength(1);
+    expect(h.remoteRequests[0]?.prompt).not.toContain('DRIVE-BODY');
+    expect(reply.text).not.toContain('DRIVE-BODY');
   });
 });
