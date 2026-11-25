@@ -249,6 +249,13 @@ describe('the input guards and the run bounds', () => {
     expect(local.requests).toHaveLength(0);
   });
 
+  it('refuses with no call when a real name appears in the final prompt text (defence in depth)', async () => {
+    const local = spy('local-a', 'LOCAL');
+    const leaky: AgentSourceDocument = { ...doc(1), body: 'dana EXAMPLE wrote the note' };
+    expect(await quarantinedDraft(request(mailSource([leaky]), { selector: selectorOf(local) }))).toEqual({ kind: 'failed', reason: 'participants' });
+    expect(local.requests).toHaveLength(0);
+  });
+
   it('the call is charged to the run once, with its input tokens; a refusal means no call', async () => {
     const local = spy('local-a', 'LOCAL');
     const charged: number[] = [];

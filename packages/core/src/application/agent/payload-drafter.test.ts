@@ -254,3 +254,79 @@ describe('assembly order and refusals', () => {
     for (const line of result.draft.lines) expect(containsLiveLinkForm(line), line).toBe(false);
   });
 });
+
+describe('review round 1 (marker exactness, link forms, altered labels, IDN dots)', () => {
+  it.each([
+    'mail kim[@evil.com now',
+    '[@here',
+    '[@channel]',
+    'x [@everyone',
+    'a@[@]b',
+    '\\[@here',
+    '\\\\[@here',
+  ])('a marker bracket never lends its @ a safe look: %j', (input) => {
+    const out = defangLinks(input) as string;
+    expect(out).toBeDefined();
+    expect(containsLiveLinkForm(out), out).toBe(false);
+    // Every @ is inside an exact [@] marker.
+    expect(out.replace(/\[@\]/g, '')).not.toContain('@');
+    expect(defangLinks(out)).toBe(out);
+  });
+
+  it('defangs the e-mail domain behind an open bracket', () => {
+    expect(defangLinks('mail kim[@evil.com now')).toBe('mail kim\\[[@]evil[.]com now');
+  });
+
+  it.each([
+    '[.](https:/2130706433)',
+    '[.](https:///127.0.0.1)',
+    '[@](https:/evil.test)',
+    '[:](x)',
+    'a@(https://evil.test)',
+    '[.][ref]',
+  ])('our own markers never open a markdown link: %j', (input) => {
+    const out = defangLinks(input) as string;
+    expect(out).toBeDefined();
+    expect(out).not.toMatch(/(?<!\\)\]\(/);
+    expect(containsLiveLinkForm(out)).toBe(false);
+  });
+
+  it.each([
+    ['https:/2130706433', 'https[:]/2130706433'],
+    ['HTTPS:\\evil.test', 'HTTPS[:]\\\\evil[.]test'],
+    ['HtTp:////evil.test', 'HtTp[:]////evil[.]test'],
+    ['http://0x7f.0.0.1/', 'http[:]//0x7f[.]0[.]0[.]1/'],
+    ['http://0177.0.0.1/', 'http[:]//0177[.]0[.]0[.]1/'],
+    ['http://2130706433/', 'http[:]//2130706433/'],
+  ])('defangs the scheme and numeric host of %j', (input, expected) => {
+    expect(defangLinks(input)).toBe(expected);
+  });
+
+  it('keeps a backslash from escaping our own marker', () => {
+    expect(defangLinks('\\@here')).toBe('\\\\[@]here');
+  });
+
+  it.each(['참여자 Α', '참여자 А', '참여자 1', '참여자-A', '참여자 _A', '참여자: 2', '참여자Α'])('an altered or look-alike label refuses the draft: %j', (line) => {
+    expect(remapParticipantLabels([line], PEOPLE)).toEqual({ ok: false, reason: 'participants' });
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: false, reason: 'participants' });
+  });
+
+  it('a Hangul particle or word after 참여자 is not label-like', () => {
+    expect(remapParticipantLabels(['참여자 수가 늘었다', '참여자들은 동의했다', '참여자 A가 했다'], PEOPLE)).toEqual({
+      ok: true,
+      lines: ['참여자 수가 늘었다', '참여자들은 동의했다', 'Dana Example가 했다'],
+      named: 1,
+    });
+  });
+
+  it.each(['example.السعودية', 'example.இந்தியா', 'shop.рф', 'a.ελ'])('defangs the dot of a non-Latin TLD: %j', (input) => {
+    const out = defangLinks(input) as string;
+    expect(out).toContain('[.]');
+    expect(out.replace(/\[\.\]/g, '')).not.toContain('.');
+    expect(containsLiveLinkForm(out)).toBe(false);
+  });
+
+  it('leaves CJK sentence dots alone', () => {
+    for (const text of ['끝났다.다음', '完了.次へ', 'v1.2']) expect(defangLinks(text), text).toBe(text);
+  });
+});

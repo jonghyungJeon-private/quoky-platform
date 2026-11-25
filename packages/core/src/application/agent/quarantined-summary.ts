@@ -1442,6 +1442,11 @@ export async function quarantinedDraft(request: PayloadDraftRequest): Promise<Pa
       prompt = renderPayloadDraftPrompt(items.map((item) => item.rendered));
     }
     if (items.length === 0) return { kind: 'listing-only', reason: 'budget' };
+    // Defence in depth (a7-08): the model saw pseudonyms only. A real name in the final prompt text refuses the draft, no call.
+    const promptView = prompt.normalize('NFKC').toLowerCase();
+    if (request.participants.some((participant) => promptView.includes(participant.name.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase()))) {
+      return { kind: 'failed', reason: 'participants' };
+    }
 
     let assembled: ReturnType<typeof assemblePayloadDraft> | undefined;
     const call: PlannedCall = { items, first: 1, prompt };

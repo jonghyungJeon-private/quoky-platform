@@ -108,8 +108,12 @@ export interface DraftParticipant {
 
 /** The pseudonym grammar of `pseudonymLabel`: `참여자 ` + one capital letter + optional digits. */
 const CANONICAL_LABEL = /^참여자 [A-Z][0-9]*$/u;
-/** Any written form that is meant as a pseudonym, canonical or altered (whitespace, case, glued letters). */
-const LABEL_LIKE = /참여자\s*[A-Za-z][A-Za-z0-9]*/gu;
+/**
+ * Any written form that is meant as a pseudonym, canonical or altered: `참여자`, then any separator or punctuation, then a
+ * non-Hangul letter (Latin, Greek, Cyrillic look-alikes included, UTS #39) or a digit, then the non-Hangul letters and digits glued
+ * to it. A Hangul particle after the label (`참여자 A가`) ends the form. Only the exact canonical labels of the map pass (a7-08).
+ */
+const LABEL_LIKE = /참여자[\s\p{P}\p{S}\p{Z}]*(?:(?![\p{Script=Hangul}])\p{L}|\p{N})(?:(?![\p{Script=Hangul}])\p{L}|\p{N})*/gu;
 
 function validParticipants(participants: readonly DraftParticipant[]): ReadonlyMap<string, string> | undefined {
   if (!Array.isArray(participants)) return undefined;
@@ -167,13 +171,26 @@ export function remapParticipantLabels(
 const FORMAT_CHARACTERS = /\p{Cf}/gu;
 const normalise = (text: string): string => text.replace(FORMAT_CHARACTERS, '').normalize('NFKC');
 
-/** Our own inert markers: `[@]`, `[.]`, `[:]`. A bracket that is part of one is never escaped. */
-const OPEN_BRACKET = /(?<!\\)\[(?!(?:@|\.|:)\])/g;
-const CLOSE_BRACKET = /(?<!\\)(?<!\[(?:@|\.|:))\]/g;
+/**
+ * One left-to-right pass over the syntax characters, by exact tokens (no lookbehind, so no character can borrow a neighbour's
+ * escape): an escape unit (`\\`, `\[`, `\]`, `\(`) is kept; our own marker (`[@]`, `[.]`, `[:]`, never followed by `(`) is kept; any
+ * other `[`, `]` or `\` gets a backslash; a bare `@` becomes `[@]`. A marker followed by `(` is sealed (`[@]\(`), so no marker can
+ * ever open a markdown link. The result is a fixed point of this function (idempotent).
+ */
+const SYNTAX = /\\[\\[\](]|\[(?:@|\.|:)\](?!\()|[[\]\\]|@/gu;
+const MARKER_PAREN = /(\[(?:@|\.|:)\])\(/gu;
+const MARKER_SPLIT = /(\[(?:@|\.|:)\])/u;
 
-/** Every bracket that is not one of our inert markers gets a backslash (Jira smart-link `[x|y]`, `[~user]`, markdown `[t](u)`). */
-function escapeBrackets(text: string): string {
-  return text.replace(OPEN_BRACKET, '\\[').replace(CLOSE_BRACKET, '\\]');
+function inertSyntax(text: string): string {
+  return text.replace(SYNTAX, (match) => (match === '@' ? '[@]' : match.length === 1 ? `\\${match}` : match)).replace(MARKER_PAREN, '$1\\(');
+}
+
+/** Applies `fn` to the parts of a token outside our exact markers. */
+function outsideMarkers(token: string, fn: (part: string) => string): string {
+  return token
+    .split(MARKER_SPLIT)
+    .map((part, index) => (index % 2 === 1 ? part : fn(part)))
+    .join('');
 }
 
 /**
@@ -186,25 +203,35 @@ export function neutraliseMentions(text: string): string {
   try {
     let result = normalise(typeof text === 'string' ? text : '');
     result = result.replace(/</g, '‹').replace(/>/g, '›');
-    result = escapeBrackets(result);
-    result = result.replace(/(?<!\[)@(?!\])/g, '[@]');
+    result = inertSyntax(result);
     return result.replace(/accountid:/giu, (match) => `${match.slice(0, -1)}[:]`);
   } catch {
     return '';
   }
 }
 
-const DOT_VARIANTS = /(?<!\[)[.。．｡](?!\])/gu;
+const DOT_VARIANTS = /[.。．｡]/gu;
+/** A letter of a script that is not Latin and not a CJK sentence script: the dot before it is an IDN TLD dot (`example.السعودية`). */
+const NON_LATIN_LETTER = '(?![\\p{Script=Latin}\\p{Script=Hangul}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}])\\p{L}';
+const IDN_DOT = new RegExp(`(?<=[\\p{L}\\p{N}-])[.。．｡](?=${NON_LATIN_LETTER})`, 'gu');
+/** A colon that follows a scheme: any run of slashes or backslashes after it (`https:/x`, `HTTPS:\\x`). */
+const SCHEME_COLON = /:(?=[/\\])/g;
+/** A dotted host in hex or octal form after a scheme colon (`0x7f.0.0.1`, `0177.0.0.1`). */
+const NUMERIC_HOST = /(:[/\\]+)((?:0x[0-9a-f]+|\d+)(?:[.。．｡](?:0x[0-9a-f]+|\d+))+)/giu;
 const IPV4 = /\d{1,3}(?:\.\d{1,3}){3}/g;
 const IPV6 = /(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?/giu;
 
 /** One whitespace-free token: IP literals, scheme `://` and every dot of a token the shared link detector flags. */
 function defangToken(token: string): string {
-  let result = token.replace(IPV4, (ip) => ip.replace(/\./g, '[.]')).replace(IPV6, (ip) => ip.replace(/:/g, '[:]'));
-  if (containsLink(result, 'display') || result.includes('://')) {
-    result = result.replace(/:\/\//g, '[:]//').replace(DOT_VARIANTS, '[.]');
-  }
-  return result;
+  const withIps = outsideMarkers(token, (part) => part.replace(IPV4, (ip) => ip.replace(/\./g, '[.]')).replace(IPV6, (ip) => ip.replace(/:/g, '[:]')));
+  const linkish = containsLink(withIps, 'display') || /:[/\\]/.test(withIps);
+  return outsideMarkers(withIps, (part) => {
+    // Dots first, once (a dot is never defanged twice): every dot of a link-shaped token; otherwise a numeric host and an IDN TLD dot.
+    const dotted = linkish
+      ? part.replace(DOT_VARIANTS, '[.]')
+      : part.replace(NUMERIC_HOST, (_all, head: string, host: string) => head + host.replace(DOT_VARIANTS, '[.]')).replace(IDN_DOT, '[.]');
+    return dotted.replace(SCHEME_COLON, '[:]');
+  });
 }
 
 /**
@@ -215,10 +242,11 @@ function defangToken(token: string): string {
 export function containsLiveLinkForm(text: string): boolean {
   try {
     const view = normalise(text);
-    if (containsLink(view, 'display') || view.includes('://') || /[<>]/.test(view)) return true;
+    if (containsLink(view, 'display') || /:[/\\]/.test(view) || /[<>]/.test(view)) return true;
     if (new RegExp(IPV4.source).test(view) || new RegExp(IPV6.source, 'iu').test(view)) return true;
-    if (/(?<!\[)@(?!\])/.test(view)) return true;
-    return /(?<!\\)\[(?!(?:@|\.|:)\])/.test(view) || /(?<!\\)(?<!\[(?:@|\.|:))\]/.test(view);
+    if (new RegExp(IDN_DOT.source, 'u').test(view)) return true;
+    // Fixed point of the syntax pass: no bare `@`, bracket or backslash, no marker that could open a link.
+    return inertSyntax(view) !== view;
   } catch {
     return true;
   }
@@ -232,12 +260,13 @@ export function containsLiveLinkForm(text: string): boolean {
  */
 export function defangLinks(text: string): string | undefined {
   try {
-    const prepared = escapeBrackets(neutraliseMentions(normalise(typeof text === 'string' ? text : '')));
+    const prepared = neutraliseMentions(normalise(typeof text === 'string' ? text : ''));
     const result = prepared
       .split(/(\s+)/u)
       .map((part) => (/^\s+$/u.test(part) ? part : defangToken(part)))
       .join('');
-    return containsLiveLinkForm(result) ? undefined : result;
+    const sealed = result.replace(MARKER_PAREN, '$1\\(');
+    return containsLiveLinkForm(sealed) ? undefined : sealed;
   } catch {
     return undefined;
   }

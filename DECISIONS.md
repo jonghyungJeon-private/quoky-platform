@@ -39646,7 +39646,9 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   bound closed yes of the A6-S1 pipeline, this run, this step, exactly the asked-for items) and the provider must still be the recipient
   the owner was asked about, at selection and again immediately before dispatch. Without a token `REMOTE` is not in the locality set for any
   label, so the call is `listing-only` (`no-model`) with nothing sent. `payloadDraftReadiness` answers `consent-needed` with the recipient (the
-  A7.5 step 4 question is asked first; the text is the existing `summary-consent-question.v1`, no new wording) and a `LOCAL` pick needs none (W4).
+  A7.5 step 4 question is asked first). A7.5 step 4 says that question names the item count, the recipient AND the destination; the existing
+  `summary-consent-question.v1` has no destination clause. No wording is invented here: the destination clause is added in A7-S4 (where the
+  destination exists), and until then A7-S3 is unreachable (dormant, no caller), so no REMOTE question without a destination can be asked and a `LOCAL` pick needs none (W4).
   Mail and Drive need the summary grant as before. Slack and Jira drafts only under A5: the source's switch (`workSummarySources`) must be on,
   and a REMOTE provider must declare `dataUse: no-training` (A5.3). Calendar stays LOCAL only with no fallback: a draft is judged by the
   stricter of the summary label and the listing label (`draftLabel`), because the A5 summary label of calendar would otherwise allow REMOTE.
@@ -39676,3 +39678,25 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   spoof, size), `quarantined-draft.test.ts` (28: LOCAL path, sealed request, 10-item cap, REMOTE needs the token and the recipient, readiness
   asks, calendar LOCAL only, Slack/Jira under A5, closed refusals, bounds, abort, dispatch re-check), `payload-drafter.boundary.test.ts` (4:
   imports, no live reachability, no provider or platform name, no connector or hash). The agent boundary allowlist adds `../card-spoof`.
+
+- **Review round 1 (2026-11-25; Codex and Chief Architect, reproduced; all fixed, `payload-draft-prompt.v1` unchanged).**
+  1. *`@` after `[`.* The lookbehind `(?<!\[)@` let `kim[@evil.com` keep a live `@` (and the e-mail domain undefanged). Replaced by one exact-token
+     pass (`inertSyntax`): an escape unit (`\\`, `\[`, `\]`, `\(`) or our exact marker (`[@]`, `[.]`, `[:]`) is kept, every other `[`, `]` or `\` gets a
+     backslash, every bare `@` becomes `[@]`. The dot defanger and the re-check use the same exact markers (`outsideMarkers`), no lookbehind. A bare
+     backslash is doubled so it cannot escape a marker. `containsLiveLinkForm` is now "the text is a fixed point of that pass".
+  2. *Markdown link through a marker.* A marker followed by `(` is sealed (`[@]\(`), and `[.](u)` typed by the model has its brackets escaped, so no
+     marker opens a link. Any `:` followed by `/` or `\` (any case, any number of slashes) becomes `[:]`; a dotted hex or octal host after a scheme
+     colon has its dots defanged; an all-digit host is inert behind its defanged scheme. `mailto:`, `tel:` and `javascript:` (no slash) are not
+     detected by the shared detector either and are not defanged; the destinations do not autolink them (owner FYI, A7-S5 row).
+  3. *Altered pseudonym labels.* After `참여자`, any separator or punctuation then a non-Hangul letter (Greek and Cyrillic look-alikes, UTS #39) or a
+     digit is label-like and must equal a map label exactly, else the draft is refused (`참여자 Α`, `참여자 А`, `참여자 1`, `참여자-A`). A Hangul word after
+     it (`참여자 수`) is not. Cost: `참여자 3명` or `참여자 and` in a draft refuse it (fail closed).
+  4. *Question wording.* Corrected above: the destination clause is A7-S4's.
+  5. *IDN TLD dots.* `link-neutralizer.ts` documents `example.السعودية`, `example.இந்தியா` as not caught. The drafter's defanger defangs a dot between a
+     letter or digit and a non-Latin, non-CJK letter (structural; CJK sentence dots such as `끝났다.다음` stay). The shared detector is unchanged. A7-S5
+     smuggling rows to add: `example.السعودية`, `example.இந்தியா`, `shop.рф`, `a.ελ`, `HTTPS:\\host`, `https:/2130706433`, `http://0x7f.0.0.1`,
+     `http://0177.0.0.1`, `[.](https:/2130706433)`, `kim[@evil.com`, `[@here`, `참여자 Α`, `참여자 А`.
+  6. *Defence in depth.* `quarantinedDraft` refuses (`participants`, no call) when any participant's real name appears in the final prompt text.
+  7. *Open points recorded.* (a) The 600-character assembled-line bound is a fail-closed implementation interpretation (A7 sets none). (b) Escaping every
+     `[` and `]` (backslashes visible, `\[BE-123\]`, and doubled backslashes) is an owner FYI usability cost, chosen over parsing which forms are links.
+     (c) `@` to `[@]` follows A7.5 step 6.
