@@ -39766,4 +39766,4 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   (2) fields were checked independently (title `Alice`, body `Smith`). Fix: a second key `nameKeyRaw` (same pipeline, no tag stripping), and each
   untrusted field plus the concatenation, in prompt order, of all untrusted fields of all placed items (joined with nothing) is checked with both keys.
   Cost: the concatenated check raises false refusals for short names (a name can now match across a field boundary). A7-S5 row, recorded not applied:
-  reversed order across fields (`Smith` ... `Alice`) is still not caught.
+  reversed order across fields (`Smith` ... `Alice`) is still not caught. Residual (defence in depth only; the upstream pseudonymiser is the primary control): a name split across non-adjacent fields with other text between them (e.g. title `Alice`, a non-empty author, body `Smith`) is not caught by the concatenated check; recorded as an A7-S5 row together with the reversed-order case.
