@@ -16,10 +16,11 @@ import {
 } from '../untrusted-document-readout';
 import type { BoundConsent } from '../consent-answer/consent-pending';
 import { isOwnerYes } from '../consent-answer/consent-yes';
-import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
+import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, readOutputLabel, summaryReadoutLabel, workSummarySourceOf, type AgentWorkSummarySource } from './flow-policy';
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
+import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
 
 /**
  * ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2). Core, offline, unwired: no composition root builds it and
@@ -709,6 +710,16 @@ export interface SummaryReadinessInput {
   readonly route: QuarantinedSummarizerRoute;
   /** The owner's bound yes for this step (CS-1b); absent: `REMOTE` is not allowed (rule ①). */
   readonly consent?: SummaryConsentToken;
+  /**
+   * A7-S3 (the drafter): judge the egress with the source's listing label too, so a source whose LISTING label is stricter than its
+   * summary-readout label (calendar: `LOCAL_MODEL_ONLY`) stays `LOCAL` only (A7.5 step 4). Absent: the summariser's own label.
+   */
+  readonly strictLabel?: true;
+}
+
+/** The label a draft is judged by: the stricter of the summary-readout label and the listing label (calendar stays LOCAL only, A7.5 step 4). */
+function draftLabel(entryId: NlWave1EntryId): FlowLabel {
+  return joinFlowLabels(summaryReadoutLabel(entryId), readOutputLabel(entryId));
 }
 
 /**
@@ -733,7 +744,7 @@ export async function summaryReadinessDetailed(input: SummaryReadinessInput): Pr
   const refusal = sourceRefusal(input.entryId, input.schema, input.route);
   if (refusal !== undefined) return { reason: refusal };
   const grants = grantState([{ entryId: input.entryId, grant: input.grant }], input.summaryStep, input.run);
-  const egress = summaryReadoutLabel(input.entryId).egress;
+  const egress = (input.strictLabel === true ? draftLabel(input.entryId) : summaryReadoutLabel(input.entryId)).egress;
   const scope: SummaryConsentScope = { run: input.run, step: input.summaryStep, covered: [{ entryId: input.entryId }] };
   const derived = deriveM2Localities({ egress, ...grants, askedItems: input.askedItems, consent: input.consent, consentScope: scope });
   if (!derived.ok) return { reason: derived.reason };
@@ -1130,7 +1141,17 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
 
   const now = request.now ?? Date.now;
   // Every call is launched in this synchronous loop: from each call's first dispatch check to its `execute` nothing is awaited.
-  const runs = plan.calls.map((call) => launchCall(request, context, picked, call, now, gate));
+  const runs = plan.calls.map((call) =>
+    launchCall(request, context, picked, call, now, gate, (text, audit): CallOutcome => {
+      const numbered = call.items.map((item, index) => ({ n: index + 1, entryId: item.entryId, position: item.position }));
+      const parsed = parseQuarantinedOutput(request.schema, text, numbered);
+      if (!parsed.ok) return { kind: 'failed', reason: parsed.reason, audit: audit() };
+      // Each call numbers its own items from 1; the merge uses the global number across the step's calls.
+      const entries = parsed.entries.map((entry) => ({ ...entry, n: call.first + entry.n - 1 }));
+      // Every item of this call the summary does not carry (the model skipped it, or a claim guard dropped it) is omitted.
+      return { kind: 'summary', entries, left: call.items.length - entries.length, audit: audit() };
+    }),
+  );
   const outcomes = await Promise.all(runs);
 
   const audits = outcomes.flatMap((outcome) => ('audit' in outcome && outcome.audit !== undefined ? [outcome.audit] : []));
@@ -1166,18 +1187,22 @@ export async function quarantinedSummarize(request: QuarantinedSummaryRequest): 
   return { kind: 'summary', summary: sealSummary(request.schema, label, entries), omitted, audits: Object.freeze(audits), ...(withheld ? { credentialWithheld: true as const } : {}) };
 }
 
+/** What one sealed call needs of its request (the summariser's and the A7 drafter's share it). */
+type CallEnv = Pick<QuarantinedSummaryRequest, 'route' | 'reserve' | 'signal' | 'onCallStart'>;
+
 /**
  * One planned call: the credential check on its final prompt, the abort check, the dispatch check (a refusal charges nothing),
  * its own reservation, its audit start, and the final dispatch check immediately before `provider.execute`, all in one
  * synchronous stretch. Never re-sent. Never rejects.
  */
 function launchCall(
-  request: QuarantinedSummaryRequest,
+  request: CallEnv,
   context: ProviderSelectionContext,
   picked: SelectedProvider,
   call: PlannedCall,
   now: () => number,
   gate: ConsentGate,
+  onText: (text: string, audit: () => QuarantinedCallAudit) => CallOutcome,
 ): Promise<CallOutcome> {
   const prompt = call.prompt;
   // Both credential detectors on the FINAL prompt, instructions and span together (never redacted: no call).
@@ -1219,15 +1244,7 @@ function launchCall(
     else refused = true;
     return verified !== undefined;
   }).then(
-    (text): CallOutcome => {
-      const numbered = call.items.map((item, index) => ({ n: index + 1, entryId: item.entryId, position: item.position }));
-      const parsed = parseQuarantinedOutput(request.schema, text, numbered);
-      if (!parsed.ok) return { kind: 'failed', reason: parsed.reason, audit: audit() };
-      // Each call numbers its own items from 1; the merge uses the global number across the step's calls.
-      const entries = parsed.entries.map((entry) => ({ ...entry, n: call.first + entry.n - 1 }));
-      // Every item of this call the summary does not carry (the model skipped it, or a claim guard dropped it) is omitted.
-      return { kind: 'summary', entries, left: call.items.length - entries.length, audit: audit() };
-    },
+    (text): CallOutcome => onText(text, audit),
     (error: unknown): CallOutcome => {
       // A final check that refused: nothing was sent (the model call was charged; the bound stays conservative).
       if (error === DISPATCH_REFUSED) {
@@ -1303,4 +1320,153 @@ function callModel(provider: AiProvider, request: AiRequest, signal: AbortSignal
       },
     );
   });
+}
+
+
+// ── the A7 drafter (A7-S3): the M2 path for `payload-draft.v1` ────────────────────────────────────────────────────────
+
+/**
+ * ADR-0121 amendment A7, slice A7-S3: the readiness probe of a draft, before any body is fetched. The same answer as
+ * {@link summaryReadinessDetailed}: with `route.askSummaryConsent` a step whose selector would pick `REMOTE` answers
+ * `consent-needed` with the recipient's display name (the rule-① question of A7.5 step 4 is asked, and nothing is fetched); a
+ * `LOCAL` pick is ready; without the ask mode `REMOTE` is simply not allowed. Never calls a provider.
+ */
+export function payloadDraftReadiness(input: Omit<SummaryReadinessInput, 'schema'>): Promise<{ readonly reason: SummaryReadinessReason | undefined; readonly recipient?: string }> {
+  return summaryReadinessDetailed({ ...input, schema: 'digest.v1', strictLabel: true });
+}
+
+/** The value of a draft: exactly the lines Core assembled, the label that cannot be dropped, and how it was made. It is NOT sendable. */
+export interface PayloadDraft {
+  /** The assembled lines (A7.5 step 6 order: schema, remap, mention neutraliser, link defanger, credential guard, card-spoof). */
+  readonly lines: readonly string[];
+  /** The distinct people the remap named (the card's fixed line, A7-S4). */
+  readonly named: number;
+  readonly label: ModelDerivedLabel;
+  /** The locality the drafting call was dispatched on (the banner names it). */
+  readonly locality: AiExecutionLocality;
+  /** {@link PAYLOAD_DRAFT_PROMPT_VERSION} at the time of the call. */
+  readonly promptVersion: string;
+}
+
+export interface PayloadDraftRequest {
+  /** Exactly ONE source entry (A7.5 step 1: one READ step), at most {@link AGENT_M2_MAX_ITEMS} items. */
+  readonly source: AgentSummarySource;
+  /** The receipt's participants: pseudonym label and real name (a7-08). Host-only; never in the prompt. */
+  readonly participants: readonly DraftParticipant[];
+  /** The draft step's number in the plan (a grant and a consent token are bound to it). */
+  readonly summaryStep: number;
+  readonly route: QuarantinedSummarizerRoute;
+  readonly reserve: (inputTokens: number) => boolean;
+  readonly remainingInputTokens?: number;
+  readonly remainingCalls?: number;
+  readonly run: SummaryRunToken;
+  /** The owner's bound yes for this step (rule ①). Absent: `REMOTE` is never allowed, for any label. */
+  readonly consent?: SummaryConsentToken;
+  readonly askedItems?: number;
+  readonly onCallStart?: (audit: () => QuarantinedCallAudit | undefined) => void;
+  readonly signal?: AbortSignal;
+  readonly now?: () => number;
+}
+
+export type PayloadDraftOutcome =
+  | { readonly kind: 'draft'; readonly draft: PayloadDraft; readonly omitted: number; readonly audit: QuarantinedCallAudit }
+  /** No model call was sent. */
+  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
+  | { readonly kind: 'bound' }
+  /** `audit` is present when a call was sent (a refusal after the answer came back still spent the call). */
+  | { readonly kind: 'failed'; readonly reason: PayloadDraftFailure | 'model'; readonly audit?: QuarantinedCallAudit };
+
+/**
+ * A7.5 step 5: ONE M2 call (SUMMARIZATION, a sealed prompt: no tools, no catalog, no memory, no history), over the one source
+ * entry's items, its answer checked against `payload-draft.v1` and assembled by {@link assemblePayloadDraft}. It shares every
+ * guard of {@link quarantinedSummarize}: the egress label and grant derive the localities, `REMOTE` only with a matching
+ * {@link SummaryConsentToken} (rule ①, unconditional) and the work-source `no-training` constraint (A5.3), `LOCAL` only for
+ * calendar (the stricter listing label, {@link draftLabel}), `HOST_ONLY` never; the final prompt goes through both credential detectors before the bound is charged; the
+ * dispatch check runs immediately before `execute`; the call counts against the run's M2 and model-call bounds (`reserve`); it is
+ * never retried or re-sent to another provider. Output is a draft value only: no card, no hash, no connector write, no port.
+ * Total: never throws; logs nothing.
+ */
+export async function quarantinedDraft(request: PayloadDraftRequest): Promise<PayloadDraftOutcome> {
+  try {
+    const source = request.source;
+    const refusal = sourceRefusal(source.entryId, 'digest.v1', request.route);
+    if (refusal !== undefined) return { kind: 'listing-only', reason: refusal };
+    // The participants are checked before anything is sent: an unusable map spends no call (a7-08).
+    if (!remapParticipantLabels([], request.participants).ok) return { kind: 'failed', reason: 'participants' };
+    const readoutSource = AGENT_SUMMARY_READOUT_SOURCE[source.entryId] as UntrustedDocumentSource;
+    let omitted = source.dropped ?? 0;
+    const held = source.documents.length + (source.dropped ?? 0);
+    const cap = Math.min(askedOf(source.asked), AGENT_M2_MAX_ITEMS);
+    const admitted = new Set<number>();
+    const items: PreparedItem[] = [];
+    for (const document of source.documents) {
+      const position = document.position;
+      if (!Number.isInteger(position) || position < 1 || position > cap || admitted.has(position) || admitted.size >= cap) {
+        omitted += 1;
+        continue;
+      }
+      admitted.add(position);
+      const built = buildUntrustedDocumentReadout({
+        source: readoutSource,
+        title: document.title,
+        author: document.author,
+        date: document.date,
+        body: document.body,
+        ...(document.truncated === true ? { sourceTruncated: true } : {}),
+      });
+      if (!built.ok) {
+        omitted += 1;
+        continue;
+      }
+      items.push({ entryId: source.entryId, position, rendered: renderUntrustedDocumentForPrompt(built.readout) });
+    }
+    if (items.length === 0) return { kind: 'listing-only', reason: 'no-documents' };
+    const asked = Math.max(request.askedItems ?? 0, held);
+
+    const joined = draftLabel(source.entryId);
+    const scope: SummaryConsentScope = { run: request.run, step: request.summaryStep, covered: [{ entryId: source.entryId, itemIds: source.documents.map((document) => document.id) }] };
+    const gate: ConsentGate = { token: request.consent, scope };
+    const derived = deriveM2Localities({ egress: joined.egress, ...grantState([source], request.summaryStep, request.run), askedItems: asked, consent: request.consent, consentScope: scope });
+    if (!derived.ok) return { kind: 'listing-only', reason: derived.reason };
+    const context = m2SelectionContext(request.route.selectionContext, derived.localities, [source.entryId]);
+    const picked = await selectM2Provider(request.route, context, gate);
+    if (picked === undefined) return { kind: 'listing-only', reason: 'no-model' };
+
+    // One call, planned against what the run has left: items that do not fit are dropped from the end (a prefix), never a breach.
+    if (limitOr(request.remainingCalls, AGENT_RUN_BOUNDS.maxM2Calls) < 1) return { kind: 'listing-only', reason: 'budget' };
+    const maxBytes = limitOr(request.remainingInputTokens, AGENT_RUN_BOUNDS.maxInputTokens);
+    let prompt = renderPayloadDraftPrompt(items.map((item) => item.rendered));
+    while (items.length > 0 && estimateInputTokens(prompt) > maxBytes) {
+      items.pop();
+      omitted += 1;
+      prompt = renderPayloadDraftPrompt(items.map((item) => item.rendered));
+    }
+    if (items.length === 0) return { kind: 'listing-only', reason: 'budget' };
+
+    let assembled: ReturnType<typeof assemblePayloadDraft> | undefined;
+    const call: PlannedCall = { items, first: 1, prompt };
+    const outcome = await launchCall(request, context, picked, call, request.now ?? Date.now, gate, (text, audit): CallOutcome => {
+      assembled = assemblePayloadDraft(text, request.participants);
+      // The success and the refusal travel in `assembled`; the call outcome only carries the audit.
+      return assembled.ok ? { kind: 'summary', entries: [], left: 0, audit: audit() } : { kind: 'failed', reason: 'schema', audit: audit() };
+    });
+    if (outcome.kind === 'listing-only') return { kind: 'listing-only', reason: outcome.reason };
+    if (outcome.kind === 'bound') return { kind: 'bound' };
+    if (outcome.kind === 'failed') {
+      const reason = assembled !== undefined && !assembled.ok ? assembled.reason : 'model';
+      return { kind: 'failed', reason, ...(outcome.audit !== undefined ? { audit: outcome.audit } : {}) };
+    }
+    if (assembled === undefined || !assembled.ok) return { kind: 'failed', reason: 'schema', audit: outcome.audit };
+    const label: ModelDerivedLabel = { ...joined, trust: 'UNTRUSTED', derivation: 'MODEL_DERIVED' };
+    const draft: PayloadDraft = Object.freeze({
+      lines: assembled.draft.lines,
+      named: assembled.draft.named,
+      label,
+      locality: outcome.audit.locality,
+      promptVersion: PAYLOAD_DRAFT_PROMPT_VERSION,
+    });
+    return { kind: 'draft', draft, omitted, audit: outcome.audit };
+  } catch {
+    return { kind: 'failed', reason: 'model' };
+  }
 }

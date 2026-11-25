@@ -5,6 +5,15 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A7-S3 drafter implemented, live effect none (2026-11-25, branch `claude/v5-a7-s3-drafter`)
+
+- The M2 drafter path for `payload-draft.v1`: prompt template `payload-draft-prompt.v1` (hash pinned), the closed schema (1 to 8 lines, 200
+  characters), the ratified a7-08 remap, mention neutraliser, link defanger, credential guard and card-spoof check, and one sealed `quarantinedDraft`
+  call that reuses the summariser's guards (REMOTE only with the bound consent token and recipient, calendar LOCAL only, Slack/Jira under A5).
+  Output is a frozen draft value: no card, hash, port or write. Dormant: nothing calls it, `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode
+  still refuse `active`. The drafter eval (A7-S5) is a Strict model-in-the-loop run needing the owner's notice and one yes; the A7 gold is pending
+  owner approval. See DECISIONS "A7-S3 drafter implementation note (2026-11-25)".
+
 ### A6-S3 two-line grant implemented (2026-11-25, branch `claude/v5-a6-s3-two-line-grant`)
 
 - The A6.5 two-line rule is in the grant producer (raw text check, per-line markers, residue-consumed lines, whole-phrase labels, AM-3 count unit,

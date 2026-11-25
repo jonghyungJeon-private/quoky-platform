@@ -39609,3 +39609,70 @@ and `QUOKY_CONSENT_ANSWER_CLASSIFIER` is still default `off` (`on` refused). Cor
      as blank. A line of any other whitespace (NBSP, U+3000) is a line, so with two other lines it is a third line and fails closed (lot (a) a-56). **Owner FYI:** R7's
      premise that "the count reaches the plan only from the owner's words" does not hold in the single-line code (r-07 open item 1: the planner can add `limit` that no
      owner word carries); the two-line form now checks the number against the owner's own line, the single-line form does not.
+
+
+## ADR-0121 A7-S3 drafter implementation note (2026-11-25)
+
+Status: implemented (branch `claude/v5-a7-s3-drafter`). Slice A7-S3 "drafter" of ADR-0121 amendment A7 (A7.10 row), ratified
+2026-11-24. Append-only: no amendment text or ratification record changes. Dormant: the drafter is reachable from no live path
+(`QUOKY_AGENT_WRITE_PROPOSALS` still refuses `active`, agent mode `active` is still refused, no flag, planner prompt, catalog entry,
+port, card or connector write was touched, and shadow logs nothing from it). No model was called and no evaluation was run.
+
+- **Ratified answers applied over the proposal text (the 2026-11-24 record governs).**
+  1. *a7-08 (real names on the card).* The remap exists and runs first: Core maps the pseudonyms back to real names from the receipt's
+     participants (`remapParticipantLabels`, the closed grammar `참여자 [A-Z][0-9]*`, longest form first). An unknown or altered label
+     (`참여자A`, `참여자 a`, `참여자 AB`, a label not in the map) refuses the whole draft (`participants`). Names are inserted as plain text,
+     never as a mention. The model still sees pseudonyms only (A5.2; a test pins that no real name reaches the prompt). The count of
+     named people is returned (`named`) for the card's fixed line (A7-S4).
+  2. *Order (Q6).* schema, remap, mention neutraliser, link defanger, credential guard, then hash and card (the last two are A7-S4).
+     A7.5 step 6 listed the defanger first; the ratified order governs. The card-spoof check (ADR-0120 A6 R2 D11) runs after the guard.
+  3. *a7-13 / B2.* The drafter eval is a model-in-the-loop run: not run here (see Gates).
+  4. *Q7 B3 / a7-16* touch the card and the trip, not the drafter: not applied here.
+  Not overridden and applied as written: A7.5 steps 4 to 6 (the locality and rule ①, the M2 call, link and mention assembly), A7.8 payload
+  smuggling and egress rows, A7.9 (0 live links), A7.12.
+- **Built.**
+  - `agent/payload-drafter.ts` (pure): the prompt template `renderPayloadDraftPrompt`, version `payload-draft-prompt.v1`
+    (`PAYLOAD_DRAFT_PROMPT_VERSION`; the SHA-256 of a fixed render is pinned by a test, like the other versioned templates), the closed
+    schema `parsePayloadDraftOutput` (`{ lines: string[1..8] }`, each one line of at most 200 characters, exactly one key, 16 KiB cap,
+    never repaired or cut), `remapParticipantLabels`, `neutraliseMentions`, `defangLinks`, `containsLiveLinkForm`, and
+    `assemblePayloadDraft` (the order above; one closed refusal each: `schema`, `credential`, `participants`, `link`, `size`, `spoof`).
+  - `quarantined-summary.ts`: `quarantinedDraft` (ONE sealed M2 call: `SUMMARIZATION`, the prompt only, no tools, catalog, memory,
+    history or context) and `payloadDraftReadiness`. They reuse the summariser's own machinery, not a copy: `deriveM2Localities`,
+    `m2SelectionContext`, `selectM2Provider`, `dispatchLocality` (the synchronous re-check before `execute`), the final-prompt credential
+    check, the run reservation and bounds, and `launchCall` (generalised with an `onText` hook; the summariser's behaviour is byte-identical).
+    The outcome is a frozen `PayloadDraft` value `{ lines, named, label (UNTRUSTED, MODEL_DERIVED), locality, promptVersion }`: no card, no
+    hash, no port, nothing sendable.
+- **How REMOTE consent is enforced (rule ①).** A REMOTE draft needs the existing `SummaryConsentToken` (`mintSummaryConsentToken` from a
+  bound closed yes of the A6-S1 pipeline, this run, this step, exactly the asked-for items) and the provider must still be the recipient
+  the owner was asked about, at selection and again immediately before dispatch. Without a token `REMOTE` is not in the locality set for any
+  label, so the call is `listing-only` (`no-model`) with nothing sent. `payloadDraftReadiness` answers `consent-needed` with the recipient (the
+  A7.5 step 4 question is asked first; the text is the existing `summary-consent-question.v1`, no new wording) and a `LOCAL` pick needs none (W4).
+  Mail and Drive need the summary grant as before. Slack and Jira drafts only under A5: the source's switch (`workSummarySources`) must be on,
+  and a REMOTE provider must declare `dataUse: no-training` (A5.3). Calendar stays LOCAL only with no fallback: a draft is judged by the
+  stricter of the summary label and the listing label (`draftLabel`), because the A5 summary label of calendar would otherwise allow REMOTE.
+- **The link defanger and the mention neutraliser (structural, no word list).** Reused: `containsLink` (the shared detector, `display` mode)
+  decides which whitespace-free token is a link, and `normalizeUntrustedText`/`credential-guard`/`card-spoof` are the existing helpers. New,
+  because no Core sanitiser covered them: `scheme://` to `[:]//`, a dot of a link token to `[.]`, `@` to `[@]` (e-mail, `@here`, `@channel`,
+  `@everyone`, `@name`), IPv4 and IPv6 literals, Slack `<...>` (`<!here>`, `<@U..>`, `<#C..|x>`, `<url|text>`) to `‹...›`, every
+  bracket not our own marker escaped (Jira `[~x]`, `[a|b]`, markdown `[t](u)` and `![i](u)`), `accountid:` to `accountid[:]`. A form it cannot
+  make inert after one pass (the detector still fires) refuses the draft (`link`). Ordinary text is untouched (versions, times, file names).
+- **Interpretations and residuals (fail closed).**
+  1. The 200-character cap is the model's schema. After the remap and the defanger a line may grow, so an assembled line is bounded at 600
+     characters (`AGENT_DRAFT_ASSEMBLED_LINE_MAX_CHARS`), over it `size`. A7 sets no such bound; owner: confirm or choose another.
+  2. Every `[` or `]` in a draft is escaped (`\[`). A legitimate "[BE-123]" in a summary shows with backslashes. Chosen over parsing
+     which bracket forms are links. Owner: confirm.
+  3. `@` anywhere (also inside a sentence) becomes `[@]`.
+  4. The destination-shaped-token line, the provenance line, the hash and the "named people" card line are A7-S4. The re-draft is A7-S9.
+  5. How the A7 plan's summarize step obtains the `SummaryEgressGrant` (the owner's own "summarise" words) and the participant map from the
+     frozen receipt, and the run reservation, are wired by the caller in A7-S4; here they are inputs (the tests mint them).
+  6. The drafter reuses the capability `SUMMARIZATION` and the summariser's selection path. A7.10 says a change of the prompt hash turns a
+     destination back to `shadow`; no destination is on, so nothing resets.
+- **Gates (not run; owner items).** The drafter evaluation (A7-S5) is a model-in-the-loop run: a Strict run that needs the owner's notice
+  and one yes (B2, `.claude/skills/quoky-decide/SKILL.md` section 5). The A7 gold (264 rows; A7.9 minimum 275) is pending owner approval and
+  is not part of this slice. This slice adds the prompt template as an unreachable asset only
+  (`payload-draft-prompt.v1`); the planner prompt (`agent-plan.v11`) and the catalog are unchanged, so no D12 gate item arises now. The
+  prompt's behaviour is unmeasured until A7-S5.
+- **Tests (no model).** `payload-drafter.test.ts` (76: template pin, caps, schema refusals, credential, remap, mentions, links, order,
+  spoof, size), `quarantined-draft.test.ts` (28: LOCAL path, sealed request, 10-item cap, REMOTE needs the token and the recipient, readiness
+  asks, calendar LOCAL only, Slack/Jira under A5, closed refusals, bounds, abort, dispatch re-check), `payload-drafter.boundary.test.ts` (4:
+  imports, no live reachability, no provider or platform name, no connector or hash). The agent boundary allowlist adds `../card-spoof`.
