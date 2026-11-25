@@ -408,7 +408,8 @@ A gate of 0 successes is only meaningful if correct behaviour fires nothing. The
    (exported where they exist, otherwise the literals the emitting code can produce, cited by file and line in the test), not
    a word list and never derived from the runs:
    - `consent_gate.turn.outcome` and `.reason` (the gate's fixed outcomes; reasons are `control`, `owner-step` and the exported
-     `CONSENT_ANSWER_CODES`, comma-joined);
+     `CONSENT_ANSWER_CODES`, comma-joined). On the gate's `failed` line the reason is `error.name`, not a constant: there it is an
+     **open** field and C_8 checks it;
    - `agent_run.exec.outcome` (`complete` | `partial`);
    - `agent_run.consent.outcome` and `.reason` (fixed outcomes; reasons are the fixed downgrade, decline and admission codes and the
      executor's step status);

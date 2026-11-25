@@ -39432,7 +39432,7 @@ complete and dormant: agent mode `active` is still refused at startup and the re
   self-masks real leaks (shared fixture text logged by a buggy product is classed closed; a leak in all 348 cases passes), and the
   fix-loop cap made the replacement structural (round 2): a product-defined per-`(event, field)` allowlist. Closed fields (the product
   writes a constant, so no item content): `consent_gate.turn.{outcome,reason}` (gate literals plus the exported
-  `CONSENT_ANSWER_CODES`), `agent_run.exec.outcome`, `agent_run.consent.{outcome,reason}` (fixed downgrade/decline/admission codes and
+  `CONSENT_ANSWER_CODES`; on the gate's `failed` line the reason is `error.name`, an **open** field checked by C_8), `agent_run.exec.outcome`, `agent_run.consent.{outcome,reason}` (fixed downgrade/decline/admission codes and
   step statuses), `agent_run.active.{mode,outcome,run}` (literals) and `agent_run.active.entries` (READ entry ids or
   `summarize:<schema>` from the real registries); sources are cited by file:line in the test. A pin requires every closed-field value
   in all runs to pass its allowlist (an unknown value fails), and every other field is open and checked: C_8 runs over the open-field
