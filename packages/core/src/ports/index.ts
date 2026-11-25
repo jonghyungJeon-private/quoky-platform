@@ -42,3 +42,5 @@ export * from './continuation-routing-audit';
 export * from './continuation-containment-audit';
 export * from './continuation-containment-evidence-sink.port';
 export * from './current-unavailability-observation-producer.port';
+// ADR-0121 amendment A7 (A7-S4a): the proposal port (an interface; implemented in `application/connector-writes`).
+export * from './agent-write-proposal.port';

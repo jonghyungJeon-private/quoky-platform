@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A7-S4a card implemented, live effect none (2026-11-25, branch `claude/v5-a7-s4-card`)
+
+- The proposal port (a Core interface), its implementation over `connectorWriteFlow` outside the agent module, the A7 card (full payload, marker,
+  provenance banner, named-people line, non-target lines, unchanged execution phrase), the one-open-card rule, the kill switch over an A7 card (an
+  `agentProposal` anchor mark), the A7 draft question (`draft-consent-question.v1`, destination clause) and the dormant propose step. Dormant:
+  `QUOKY_AGENT_WRITE_PROPOSALS=active` and agent mode `active` are still refused at startup; with the defaults nothing new runs. The Jira writer
+  renders one paragraph per line, so `\\` adds no line (test). Open for A7-S4b: the destination pick and `OWNER_PICKED_DESTINATION`, the frozen
+  receipt and form b, card carry-over, the REMOTE continuation of an A7 draft, Slack and calendar destinations. See DECISIONS "A7-S4a card
+  implementation note (2026-11-25)".
+
 ### A7-S3 drafter implemented, live effect none (2026-11-25, branch `claude/v5-a7-s3-drafter`)
 
 - The M2 drafter path for `payload-draft.v1`: prompt template `payload-draft-prompt.v1` (hash pinned), the closed schema (1 to 8 lines, 200

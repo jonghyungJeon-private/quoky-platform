@@ -2,7 +2,7 @@ import type { Logger } from '../../ports/logger.port';
 import { nlLimitArg, type NlArgs, type NlWave1EntryId } from '../nl-routing/catalog';
 import { AGENT_READ_SOURCES, summaryReadModeOf } from './flow-policy';
 import { SUMMARY_CONSENT_SOURCE_NAMES, type SummaryConsentSourceName } from './summary-consent-question';
-import { projectWorkSummaryDocuments } from './work-summary-projection';
+import { projectWorkSummaryDocuments, workSummaryParticipants } from './work-summary-projection';
 import { AGENT_PLAN_MAX_REF_VALUES, type ValidatedAgentPlan, type ValidatedAgentStep } from './plan-validator';
 import { AGENT_RUN_BOUNDS, AgentRunBudget, type AgentBoundKind, type AgentRunBoundValues, type AgentRunUsage } from './run-bounds';
 import {
@@ -220,6 +220,52 @@ export type AgentStepResult =
   | { readonly step: number; readonly kind: 'summarize'; readonly status: 'listing-only'; readonly from: readonly number[]; readonly schema: string; readonly reason: QuarantinedListingOnlyReason }
   | { readonly step: number; readonly kind: 'summarize'; readonly status: 'failed'; readonly from: readonly number[]; readonly schema: string; readonly errorCode: 'SCHEMA' | 'CREDENTIAL' | 'MODEL'; readonly audits?: readonly QuarantinedCallAudit[] };
 
+/** ADR-0121 A7 (A7-S4a): what {@link AgentPlanExecutor.readDraftSource} may be given. All optional. */
+export interface AgentDraftReadOptions {
+  readonly budget?: AgentRunBudget;
+  readonly signal?: AbortSignal;
+  /** The persisted kill switch, re-read before the read. */
+  readonly stillRunning?: () => Promise<boolean>;
+  /** The run token a rule-① consent token was minted for (a re-run after the owner's yes). Absent: a fresh one. */
+  readonly run?: SummaryRunToken;
+  /** The owner's bound yes for this draft (rule ①). Absent: `REMOTE` is never allowed. */
+  readonly consent?: SummaryConsentToken;
+  /** The ids the owner was asked about: after the re-read, only these remain (W3). */
+  readonly recorded?: readonly string[];
+  /**
+   * The owner's own summary request for the synthetic read + draft plan ({@link summaryGrantBasis} of exactly `plan`, derived from the
+   * owner's own words only). A source that needs a summary grant (A5: Slack and Jira too) has none without it: listing-only.
+   */
+  readonly grants?: { readonly basis: SummaryGrantBasis | undefined; readonly plan: object };
+}
+
+export type AgentDraftSourceOutcome =
+  | {
+      readonly kind: 'ok';
+      readonly source: AgentSummarySource;
+      readonly run: SummaryRunToken;
+      /** Items the read's projection listed. */
+      readonly listed: number;
+      /** Review round 2: the ids the listing itself named (its projection slots), validated or not: the a7-06 drift is measured against these. */
+      readonly listedIds?: readonly string[];
+      /** The host-only pseudonym map (a7-08) of this listing: never sent to a model, logged or audited. */
+      readonly participants: readonly { readonly label: string; readonly name: string }[];
+    }
+  /** The draft would go to a `REMOTE` model: the question comes first, and no body was fetched. Ids only. */
+  | { readonly kind: 'consent-needed'; readonly recipient: string; readonly source: SummaryConsentSourceName; readonly itemIds: readonly string[]; readonly run: SummaryRunToken }
+  | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
+  | { readonly kind: 'not-run'; readonly reason: AgentStepNotRunReason }
+  | { readonly kind: 'failed'; readonly errorCode: AgentReadErrorCode };
+
+const WORK_SOURCE_NAME: Readonly<Partial<Record<NlWave1EntryId, SummaryConsentSourceName>>> = Object.freeze({
+  'jira.issues': 'jira',
+  'jira.release': 'jira',
+  'slack.search': 'slack',
+});
+function workSummarySourceName(entryId: NlWave1EntryId): SummaryConsentSourceName | undefined {
+  return WORK_SOURCE_NAME[entryId];
+}
+
 export interface AgentRunResult {
   /** `complete`: every read answered and no bound breached. Anything else is `partial`: the reply shows what exists. */
   readonly outcome: 'complete' | 'partial';
@@ -293,7 +339,7 @@ interface RunState {
   /** This run's token: a summary grant of another run never matches. */
   readonly run: SummaryRunToken;
   /** The owner's summary requests and the plan they were derived for (absent: no grant). */
-  readonly owner?: { readonly basis: SummaryGrantBasis; readonly plan: object };
+  readonly owner?: { readonly basis: SummaryGrantBasis | undefined; readonly plan: object };
   /** The shutdown signal (absent: none). */
   readonly shutdown?: AbortSignal;
   /** Rule ① (CS-1a): `<summarize step>:<read step>` to the covered read that needs the owner's yes, and its recipient. */
@@ -308,6 +354,12 @@ interface RunState {
   asking?: number;
   /** Rule ① (CS-1b): the continuation this run is (one summarize step after the owner's yes), or absent. */
   readonly continuation?: AgentExecuteOptions['continuation'];
+  /**
+   * ADR-0121 A7 (A7-S4a): this state serves {@link AgentPlanExecutor.readDraftSource}: the one read is covered by a synthetic
+   * `payload-draft.v1` draft (readiness judged by the stricter draft label), `consent` is the owner's bound yes for the draft, and
+   * `recorded` the ids the owner was asked about (a later item is not added, W3).
+   */
+  readonly draft?: { readonly consent?: SummaryConsentToken; readonly recorded?: readonly string[]; participants?: readonly { readonly label: string; readonly name: string }[] };
 }
 
 type Verdict = Awaited<ReturnType<typeof summaryReadinessDetailed>>;
@@ -428,6 +480,64 @@ export class AgentPlanExecutor {
     return { outcome, ...(breach !== undefined ? { breach } : {}), ...(stopped ? { stopped: true as const } : {}), steps: results, usage };
   }
 
+  /**
+   * ADR-0121 amendment A7 (A7-S4a), form a: the ONE source read of a cross-source write, executed exactly as a read step a summary
+   * covers (the same read port, the same budget, the same projection and the same readiness check), but covered by a synthetic
+   * `payload-draft.v1` draft, so the readiness is judged by the stricter DRAFT label (A7.5 step 4). It returns the validated documents
+   * for {@link quarantinedDraft}, or why there are none: the rule-① question must be asked first (`consent-needed`, nothing fetched),
+   * or no model may see them (`listing-only`). Total: never throws. No model call is made here.
+   */
+  async readDraftSource(step: ReadStep, options: AgentDraftReadOptions = {}): Promise<AgentDraftSourceOutcome> {
+    try {
+      const budget = options.budget ?? new AgentRunBudget(this.deps.elapsed ?? Date.now, this.deps.bounds);
+      const entryId = step.entry.id as NlWave1EntryId;
+      const aborted = (): boolean => options.signal?.aborted === true;
+      if (aborted()) return { kind: 'not-run', reason: 'stopped' };
+      if (options.stillRunning !== undefined && !budget.checkWall()) return { kind: 'not-run', reason: 'bound' };
+      if (options.stillRunning !== undefined) {
+        const probe = await stillRunningWithinWall(options.stillRunning, budget);
+        if (probe === 'wall') return { kind: 'not-run', reason: 'bound' };
+        if (probe === 'stopped' || aborted()) return { kind: 'not-run', reason: 'stopped' };
+      }
+      if (step.ref !== undefined || !budget.reserveStep()) return { kind: 'not-run', reason: 'bound' };
+      const asked = Math.min(AGENT_M2_MAX_ITEMS, Math.max(1, nlLimitArg(step.args) ?? AGENT_M2_MAX_ITEMS));
+      const state: RunState = {
+        documents: new Map(),
+        denials: new Map(),
+        coverage: new Map([[1, [{ step: 2, schema: 'digest.v1' as const, from: [1] }]]]),
+        listed: new Map(),
+        requested: new Map([[1, asked]]),
+        consentNeeded: new Map(),
+        readEntries: new Map([[1, entryId]]),
+        verdicts: new Map(),
+        askedIds: new Map(),
+        run: options.run ?? newSummaryRunToken(),
+        ...(options.grants !== undefined ? { owner: options.grants } : {}),
+        draft: { ...(options.consent !== undefined ? { consent: options.consent } : {}), ...(options.recorded !== undefined ? { recorded: options.recorded } : {}) },
+        ...(options.signal !== undefined ? { shutdown: options.signal } : {}),
+      };
+      const result = await this.runRead(step, 1, budget, [], new Map(), state);
+      if (result.kind !== 'read') return { kind: 'not-run', reason: 'bound' };
+      if (result.status === 'failed') return { kind: 'failed', errorCode: result.errorCode };
+      if (result.status === 'not-run') return { kind: 'not-run', reason: result.reason };
+      const asking = state.consentNeeded.get('2:1');
+      if (asking !== undefined) {
+        const source = workSummarySourceName(entryId);
+        if (source === undefined) return { kind: 'listing-only', reason: 'no-model' };
+        return { kind: 'consent-needed', recipient: asking.recipient, source, itemIds: Object.freeze([...(state.askedIds.get('2:1') ?? [])]), run: state.run };
+      }
+      const denial = state.denials.get('2:1');
+      if (denial !== undefined) return { kind: 'listing-only', reason: denial };
+      const source = state.documents.get(1);
+      if (source === undefined || source.documents.length === 0) return { kind: 'listing-only', reason: 'no-documents' };
+      // The draft step (step 2 of the synthetic plan) holds the owner's grant for this source, bound to this run, or none.
+      const grant = summaryGrantFor(2, entryId, state.run, state.owner);
+      return { kind: 'ok', source: { ...source, asked, ...(grant !== undefined ? { grant } : {}) }, run: state.run, listed: result.projection.itemCount, listedIds: result.projection.slots.filter((id): id is string => id !== undefined), participants: state.draft?.participants ?? [] };
+    } catch {
+      return { kind: 'failed', errorCode: 'UNKNOWN' };
+    }
+  }
+
   private async runRead(
     step: ReadStep,
     number: number,
@@ -524,6 +634,7 @@ export class AgentPlanExecutor {
     if (readyToSummarize && summaryReadModeOf(entryId) !== 'documents') {
       // The listing's own items, through the closed A5.2 field table; whatever `documents` a port returned is ignored.
       const projected = projectWorkSummaryDocuments(entryId, response.items);
+      if (state.draft !== undefined) state.draft.participants = workSummaryParticipants(response.items);
       const checked = validateSourceDocuments(projected.documents, projection.slots);
       state.documents.set(number, { entryId, documents: keepRecorded(checked.documents, recorded), dropped: checked.dropped + projected.withheld });
     } else if (withDocuments && response.documents !== undefined) {
@@ -558,6 +669,7 @@ export class AgentPlanExecutor {
         askedItems: askedAcross(state, cover.from),
         route,
         ...(state.continuation !== undefined && cover.step === state.continuation.summaryStep ? { consent: state.continuation.consent } : {}),
+        ...(state.draft !== undefined ? { strictLabel: true as const, ...(state.draft.consent !== undefined ? { consent: state.draft.consent } : {}) } : {}),
       },
       budget,
     );
@@ -844,6 +956,7 @@ async function stillRunningWithinWall(probe: () => Promise<boolean>, budget: Age
 
 /** Rule ① (CS-1b): the ids the owner was asked about for this read (a continuation only), or `undefined` (an ordinary run, or an uncovered read). */
 function recordedIds(state: RunState, read: number): ReadonlySet<string> | undefined {
+  if (state.draft?.recorded !== undefined) return state.draft.recorded.length === 0 ? undefined : new Set(state.draft.recorded);
   const ids = state.continuation?.reads.filter((entry) => entry.step === read).flatMap((entry) => entry.itemIds);
   return ids === undefined || ids.length === 0 ? undefined : new Set(ids);
 }

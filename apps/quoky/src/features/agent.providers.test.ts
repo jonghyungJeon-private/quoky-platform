@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AgentModeError, AgentRunService, ConsentPendingStore, ConsentTurnGate, type Capability, type CapabilityRouter, type StorageProvider } from '@quoky/core';
-import { AGENT_RUNS, CONSENT_TURN_GATE, SUMMARY_CONSENT_STORE, createAgentProviders, createAgentReadPorts, type AgentFeatureConfig } from './agent.providers';
+import { AGENT_WRITE_PROPOSAL_PORT, AgentModeError, AgentRunService, ConsentPendingStore, ConsentTurnGate, type Capability, type CapabilityRouter, type StorageProvider } from '@quoky/core';
+import { AGENT_RUNS, CONSENT_TURN_GATE, SUMMARY_CONSENT_STORE, agentWriteProposalDep, createAgentProviders, createAgentReadPorts, type AgentFeatureConfig } from './agent.providers';
 
 // ADR-0121 S2 wiring slice: the composition root builds the agent from the real collaborators. `off` and `shadow` are built as
 // before (no read port, no M2 route); `active` (never reached from the environment while the release gate stands) gets the
@@ -117,5 +117,30 @@ describe('createAgentProviders: the rule-① consent composition (CS-2)', () => 
     expect(service().deps.consentClassifierOn).toBeUndefined();
     expect(service('off').deps.consentClassifierOn).toBeUndefined();
     expect(service('on').deps.consentClassifierOn).toBe(true);
+  });
+});
+
+// ADR-0121 amendment A7 (A7-S4a): the proposal port reaches the agent service only with EVERY switch on; the defaults hand it nothing.
+describe('agentWriteProposalDep (A7-S4a, dormant)', () => {
+  const port = { openCardOf: async () => undefined, propose: async () => ({ kind: 'refused', reason: 'unavailable' }) } as unknown as Parameters<typeof agentWriteProposalDep>[1];
+  const base = (over: Partial<AgentFeatureConfig> = {}): AgentFeatureConfig => ({ agent: { mode: 'active', summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul', ...over });
+  const on = { mode: 'active' as const, targets: ['jira-comment'] };
+
+  it('is built only for agent mode active, proposals active, jira-comment switched on and a bound port', () => {
+    expect(agentWriteProposalDep(base({ writeProposals: on }), port)).toEqual({ port, targets: ['jira-comment'] });
+    expect(agentWriteProposalDep(base(), port)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ writeProposals: { mode: 'off', targets: ['jira-comment'] } }), port)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ writeProposals: { mode: 'shadow', targets: ['jira-comment'] } }), port)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ writeProposals: { mode: 'active', targets: [] } }), port)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ writeProposals: { mode: 'active', targets: ['slack-post', 'calendar-description'] } }), port)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ writeProposals: on }), null)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ writeProposals: on }), undefined)).toBeUndefined();
+    expect(agentWriteProposalDep(base({ agent: { mode: 'shadow', summarySources: [] }, writeProposals: on }), port)).toBeUndefined();
+  });
+
+  it('the port provider is null without a connector-write flow and a service with one; the service gets it only through the dep', () => {
+    const provider = createAgentProviders(() => base({ agent: { mode: 'off', summarySources: [] } }), { logger: silent }).find((entry) => (entry as { provide: symbol }).provide === AGENT_WRITE_PROPOSAL_PORT) as { useFactory: (storage: unknown, flow: unknown) => unknown };
+    expect(provider.useFactory({}, null)).toBeNull();
+    expect(provider.useFactory({ sessions: {}, actors: {} }, { supports: () => true })).toMatchObject({ propose: expect.any(Function), openCardOf: expect.any(Function) });
   });
 });

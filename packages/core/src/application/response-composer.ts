@@ -44,6 +44,8 @@ import {
   renderConnectorWriteBareExecution,
   renderConnectorWriteLatestRequest,
   renderConnectorWritePending,
+  renderAgentProposalCard,
+  type AgentProposalCardInput,
   renderConnectorWriteRevokeTooLate,
   renderConnectorWriteStep,
   renderNoApprovedConnectorWrite,
@@ -1346,6 +1348,14 @@ export class ResponseComposer {
     executionPhrase: string,
   ): OutboundMessage {
     return outboundMessage(context, renderConnectorWritePending(preview, remainingMs, executionPhrase));
+  }
+
+  /**
+   * ADR-0121 A7 (review round 1): the re-shown card of an agent write proposal while its approval is pending (an ambiguous reply).
+   * The same renderer as the first card, from the fields kept on the anchor, so the owner sees the card again, never the plain preview.
+   */
+  composeAgentProposalPending(context: ConversationContext, card: AgentProposalCardInput): OutboundMessage {
+    return outboundMessage(context, renderAgentProposalCard(card));
   }
 
   /** A bare "승인" after the connector-write approval was already recorded: nothing runs until the exact phrase. */

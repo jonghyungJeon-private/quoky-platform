@@ -1369,7 +1369,14 @@ export interface PayloadDraftRequest {
 }
 
 export type PayloadDraftOutcome =
-  | { readonly kind: 'draft'; readonly draft: PayloadDraft; readonly omitted: number; readonly audit: QuarantinedCallAudit }
+  | {
+      readonly kind: 'draft';
+      readonly draft: PayloadDraft;
+      readonly omitted: number;
+      /** The ids of the items actually placed in the prompt, in listing order (review round 1: the banner and the count are built from these, never rebuilt). */
+      readonly placed: readonly string[];
+      readonly audit: QuarantinedCallAudit;
+    }
   /** No model call was sent. */
   | { readonly kind: 'listing-only'; readonly reason: QuarantinedListingOnlyReason }
   | { readonly kind: 'bound' }
@@ -1486,7 +1493,7 @@ export async function quarantinedDraft(request: PayloadDraftRequest): Promise<Pa
       locality: outcome.audit.locality,
       promptVersion: PAYLOAD_DRAFT_PROMPT_VERSION,
     });
-    return { kind: 'draft', draft, omitted, audit: outcome.audit };
+    return { kind: 'draft', draft, omitted, placed: Object.freeze(placed.map((document) => document.id)), audit: outcome.audit };
   } catch {
     return { kind: 'failed', reason: 'model' };
   }

@@ -28,15 +28,19 @@ describe('A7-S3 drafter boundary', () => {
     expect(specifiers).toEqual(['../card-spoof', '../credential-guard', '../link-neutralizer', '../untrusted-document-readout']);
   });
 
-  it('is reachable from no live path: only quarantined-summary.ts imports it, and no runtime, app or index calls the draft functions', () => {
+  it('is reachable from no live path: only quarantined-summary.ts imports it, and only the dormant A7 propose step (a7-propose.ts, A7-S4a) calls the draft functions', () => {
     const files = [...sourceFiles(join(ROOT, 'packages')), ...sourceFiles(join(ROOT, 'apps'))];
     const importers = files.filter((file) => /from\s+['"][^'"]*payload-drafter['"]/.test(readFileSync(file, 'utf8'))).map((file) => relative(ROOT, file));
     expect(importers).toEqual(['packages/core/src/application/agent/quarantined-summary.ts']);
     const callers = files
       .filter((file) => /\b(?:quarantinedDraft|payloadDraftReadiness)\b/.test(codeOf(readFileSync(file, 'utf8'))))
       .map((file) => relative(ROOT, file));
-    expect(callers).toEqual(['packages/core/src/application/agent/quarantined-summary.ts']);
+    expect(callers).toEqual(['packages/core/src/application/agent/a7-propose.ts', 'packages/core/src/application/agent/quarantined-summary.ts']);
     expect(readFileSync(join(HERE, 'index.ts'), 'utf8')).not.toMatch(/payload-drafter|quarantinedDraft|payloadDraftReadiness/);
+    // A7-S4a: the propose step is itself reached only by the run service (behind the `writeProposal` dep, which the environment cannot
+    // build while `active` is refused at startup), and by the index and the tests; no app, runtime or port imports it.
+    const proposers = files.filter((file) => /from\s+['"][^'"]*a7-propose['"]/.test(readFileSync(file, 'utf8'))).map((file) => relative(ROOT, file));
+    expect(proposers.filter((file) => !file.endsWith('.test.ts'))).toEqual(['packages/core/src/application/agent/agent-run-service.ts', 'packages/core/src/application/agent/index.ts']);
   });
 
   it('names no provider family and no platform, storage or framework in code', () => {

@@ -26,6 +26,7 @@ import {
 } from '../../ports/connector-write.port';
 import type { ConnectorWriteReceipt, ConnectorWriteReceiptRepository } from '../../ports/connector-write-receipt.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import type { AgentProposalCardFields } from '../../ports/agent-write-proposal.port';
 import { PENDING_APPROVAL_TTL_MS } from '../conversation-commands';
 import { containsCredentialMaterial } from '../credential-guard';
 import {
@@ -355,6 +356,17 @@ export interface ConnectorWriteAnchor {
   };
   readonly closedReason?: ConnectorWriteCloseReason;
   /**
+   * ADR-0121 amendment A7 (A7-S4a): set when this card is a bounded agent's cross-source write proposal (A7.5 step 7). Such a card
+   * carries the kill switch (`에이전트 중지` closes it, A7.10), exactly as an undo does; nothing else about the flow changes.
+   */
+  readonly agentProposal?: true;
+  /**
+   * ADR-0121 A7 (A7-S4a, review round 1): the content-free card fields of an agent proposal (banner structure, the named-people count,
+   * the destination-shaped tokens), kept so a re-shown card (an ambiguous reply while it is pending) equals the card first shown.
+   * The payload text itself is the anchor's `payload`; nothing else about the card is stored.
+   */
+  readonly agentCard?: AgentProposalCardFields;
+  /**
    * ADR-0112 amendment 3: set when this write is the undo of an earlier SENT write of this actor (its entry and receipt id).
    * The runtime then records the outcome as a non-undoable `action.undo`, so an undo is never undone again.
    */
@@ -381,8 +393,9 @@ export interface ConnectorWriteAnchor {
  * write) is governed. A write the owner asked for with an anchored Class A command carries no switch (A6-D3: "Anchored
  * Class A commands carry no condition"), so it is not.
  */
-export function isActionSwitchGoverned(anchor: Pick<ConnectorWriteAnchor, 'undoOf'>): boolean {
-  return anchor.undoOf !== undefined;
+export function isActionSwitchGoverned(anchor: Pick<ConnectorWriteAnchor, 'undoOf' | 'agentProposal'>): boolean {
+  // ADR-0121 A7 (A7.10): the kill switch also closes an open agent write proposal (a card the bounded agent made).
+  return anchor.undoOf !== undefined || anchor.agentProposal === true;
 }
 
 /** What `releaseExpired` released: the lapsed anchor's state and the session pointer after the release. */
@@ -784,6 +797,10 @@ export interface FlowInput {
   readonly replyToMessageId?: string;
   /** The owner's own message text of this turn (an undo card quotes it, bounded; it never selects a target). */
   readonly ownerText?: string;
+  /** ADR-0121 A7 (A7-S4a): this prepare is a bounded agent's proposal; its anchor is marked so the kill switch governs it. */
+  readonly agentProposal?: true;
+  /** The content-free card fields of that proposal (kept on the anchor for the re-shown card). */
+  readonly agentCard?: AgentProposalCardFields;
 }
 
 /**
@@ -2670,6 +2687,9 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       reason: connectorWriteApprovalReason(operation, target, payloadSha256),
       requestedBy: input.actor.id,
     });
+    const unconfirmedEarlier: ConnectorWriteUnconfirmedEarlier | undefined = unresolved
+      ? { status: unresolved.status === 'PREPARED' ? ('EXECUTING' as const) : ('UNCERTAIN' as const), at: unresolved.updatedAt, timeZone: this.deps.timeZone }
+      : undefined;
     const anchor: ConnectorWriteAnchor = {
       kind: CONNECTOR_WRITE_ANCHOR_KIND,
       status: 'APPROVAL_PENDING',
@@ -2687,6 +2707,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       updatedAt: input.now,
       ...(previous ? { previousActiveTaskId: previous } : {}),
       ...(undoOf ? { undoOf } : {}),
+      ...(input.agentProposal === true ? { agentProposal: true as const, ...(input.agentCard !== undefined ? { agentCard: { ...input.agentCard, ...(unconfirmedEarlier !== undefined ? { unconfirmedEarlier } : {}) } } : {}) } : {}),
     };
     try {
       await this.createAnchor(input.session, anchor, input.now, input.held);
@@ -2704,15 +2725,7 @@ export class StatelessConnectorWriteFlow implements ConnectorWriteFlow {
       approval,
       remainingMs: PENDING_APPROVAL_TTL_MS,
       executionPhrase: documentedExecutionPhrase(connectorWriteExecutionGate(operation)),
-      ...(unresolved
-        ? {
-            unconfirmedEarlier: {
-              status: unresolved.status === 'PREPARED' ? ('EXECUTING' as const) : ('UNCERTAIN' as const),
-              at: unresolved.updatedAt,
-              timeZone: this.deps.timeZone,
-            },
-          }
-        : {}),
+      ...(unconfirmedEarlier !== undefined ? { unconfirmedEarlier } : {}),
     };
   }
 

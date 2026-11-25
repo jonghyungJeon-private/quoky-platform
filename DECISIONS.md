@@ -39780,3 +39780,128 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   The 13 short names (Anne, Eve, Leo ...) still pass on a body-free draft.
 
 **Review round 7 (recorded residual, not chased).** Codex reproduced that a single name token fragmented across markup attributes (`<a first="Ali" middle="ce" last="Smith">` for participant `Alice Smith`) still reaches the provider: the stripped key loses the fragments and the raw key interleaves attribute names. This is the fifth round of the real-name defence-in-depth family (rounds 3–7), well past the fix-loop cap; the order-free part rule of round 6 is the chosen structural design and is not extended further here. Why this is acceptable for a dormant merge: the upstream pseudonymiser (a7-08) is the primary control and real names never reach a model by design; the drafter is unreachable from any live path (no caller, `QUOKY_AGENT_WRITE_PROPOSALS` active refused, agent mode active refused); intra-token fragmentation across markup attributes is added to the A7-S5 smuggling rows next to look-alike letters and accented named references, and the drafter cannot be wired (A7-S4) or enabled before the A7-S5 gates pass with the owner's notice and yes for every run.
+
+
+## ADR-0121 A7-S4a card implementation note (2026-11-25)
+
+Status: implemented (branch `claude/v5-a7-s4-card`). Slice A7-S4a "card", the first half of the A7-S4 row of A7.10, ratified 2026-11-24.
+Append-only: no amendment text or ratification record changes. DORMANT: `QUOKY_AGENT_WRITE_PROPOSALS=active` and agent mode `active` are still
+refused at startup (unchanged), `AgentRunService` gets the new `writeProposal` dep only from a composition-root helper that needs both of them, so
+with the defaults zero behaviour changes (a spy test pins that the new read, step and port code never run on a live turn). No model was called and
+no evaluation was run.
+
+- **Design.**
+  - *The proposal port (Core ports).* `ports/agent-write-proposal.port.ts`, DI token `AGENT_WRITE_PROPOSAL_PORT`: `openCardOf(actorId)` and
+    `propose({operation: 'jira-comment', target: {issueKey}, payloadText, actorId, sessionId, grounding: 'owner-text', banner, named, nonTargets, now})`
+    returning a closed result: `carded` (card id, the card as a `MessageBody`, the payload SHA-256), `refused` (closed reason) or `wait-open-card`.
+    The signature holds closed values, strings and counts only. The port imports the domain only; the two pure helpers it carries (the fixed
+    provenance line, `destinationShapedKeys` over the A1-D4 key grammar) are pinned to the catalog's `NL_REF_JIRA_KEY` by a test.
+  - *The implementation (outside the agent module).* `connector-writes/agent-write-proposal.ts` (`AgentWriteProposalService`) over the existing
+    `connectorWriteFlow.prepare` with an `issue-comment` draft: the card is an ordinary ADR-0112 plan-less CRITICAL anchor (actor, session, target,
+    operation, payload SHA-256), so the closed approval words (ADR-0095), the TTL (ADR-0093), the grant consumed before exactly one send, the
+    never-retried `UNCERTAIN`, the target-drift `NOT_SENT` and the allowlist check at the card and at execution are the flow's, unchanged. Wired in
+    `apps/quoky/src/features/agent.providers.ts` (`AGENT_WRITE_PROPOSAL_PORT`, `null` when no writer was built). The import direction is pinned in
+    `agent-boundary.test.ts`: the agent module imports the port (three files) and nothing of `connector-writes`, the flow or the implementation; the
+    port imports the domain only; no `connector-writes` file imports the agent module; the existing runtime import-chain scan stays true.
+  - *One additive change to `connectorWriteFlow` (no change to its behaviour).* An optional `agentProposal: true` on `FlowInput` and on the
+    anchor, set only by the proposal service, and `isActionSwitchGoverned` is now `undoOf !== undefined || agentProposal === true`. That is what
+    A7.10 requires ("`에이전트 중지` closes open A7 cards"): the existing kill-switch withdrawal and the execution-time `actionSwitchStopsAnchor`
+    check then govern the card. No existing anchor carries the field, so an ordinary write is governed exactly as before.
+  - *The card (A7.5 step 7, a7-08, Q7 = provenance line yes).* `renderAgentProposalCard` in `connector-write-copy.ts`: the operation and
+    "대상: Jira BE-123 (대상은 보내신 문장에서 가져왔어요)"; the marker "모델 작성 초안 — 아래 글자 그대로 올라갑니다"; the FULL payload in the
+    fenced block (never truncated); the content-free banner (the source entry and the owner's query literal as inert text, each item by its
+    closed-format id and date, "N건은 그 사이 바뀌어 뺐어요", the drafter's locality: "이 컴퓨터의 모델" or the named operator); the fixed named-people
+    line ("초안에 실제 이름 N명이 들어 있어요. 승인하면 그 이름이 그대로 올라가요." or "초안에 사람 이름은 들어 있지 않아요."); one line per
+    destination-shaped token that is not the destination ("초안 안의 BE-999 표기는 대상이 아니에요. BE-999에는 아무것도 보내지 않아요"); and the
+    unchanged execution phrase ("승인", then "댓글 실행"). The payload is the fixed provenance line "[Quoky 요약] 출처: Slack 메시지 N건" plus the
+    drafter's final lines; the hash covers exactly those bytes, the card shows them and the writer sends them (a test sends and compares). A
+    payload that cannot be shown whole (the ADR-0112 1400-character text bound, more than 9 lines, or a card over 3500 characters) is refused
+    BEFORE anything is prepared, with the fixed line, so no approval is left behind.
+  - *Jira rendered lines (the A7-S3 note, round 3 item 4).* The Jira comment writer sends `plainTextDocument`: one ADF paragraph per `\n` line,
+    each a bare text node. ADF is structured; no wiki markup is parsed out of a text node, so `\\`, `{code}`, `[a|b]`, `*b*` and `!img!` stay
+    inert characters in ONE paragraph. A `\\` therefore cannot render as an extra line. Proved by a test over `plainTextDocument` (paragraphs ==
+    payload lines, only `text` and `type` keys, no mark, link, mention or hard break); the port still bounds the payload at 9 lines (the provenance
+    line plus 8). The writers are unchanged.
+  - *One open A7 card per owner (A7.4c item 3).* Read from the persisted anchors (`openAnchorsOf`, the `agentProposal` mark), not from memory, so
+    it survives a restart. The propose step asks `openCardOf` BEFORE the read: a second A7 propose while a card is open reads and drafts nothing
+    and answers the fixed line "BE-123 카드를 먼저 승인하거나 취소해 주세요. 그다음 'BE-124에도 달아줘'라고 하시면 같은 내용으로 새 초안을 만들게요"
+    with the real keys (the same destination gets the same line until A7-S9). An open ORDINARY connector-write approval is refused
+    `owner-step-open` (W2): no A7 card beside it. The kill switch closes an A7 card through the governed anchors above.
+  - *The rule-① question (A7.5 step 4).* A new fixed version `draft-consent-question.v1` (`agent/draft-consent-question.ts`): "Slack 메시지 3건을
+    {remote}에 보내 BE-123 댓글 초안을 만들게요. 보낼까요? (응/아니)" (and an English form), the destination checked against the key grammar.
+    `summary-consent-question.v1` is unchanged for every existing caller (pinned).
+  - *The propose step (dormant).* `agent/a7-propose.ts` `runA7ProposeStep` (form a, named Jira destination): the open-card check, then
+    `AgentPlanExecutor.readDraftSource` (the one source read executed like a covered read step, readiness judged by the stricter DRAFT label, the
+    owner's summary grant derived by the same producer over a synthetic `[read, draft]` plan, so Slack and Jira run only where the owner's own words
+    ask for a summary), the rule-① question when the draft would go to a `REMOTE` model (nothing fetched), `quarantinedDraft`, the exact payload,
+    the kill switch re-read right before the card, and ONE port call. `AgentRunService.runActive` returns the new outcome `proposal` only with the
+    `writeProposal` dep (the port, the closed target list `jira-comment`, `askConsent`); without it a validated A7 plan stays
+    `cross-write-off` as before. The destination is the plan's own validated literal; nothing in the draft is parsed as a step, a target or an argument.
+  - *Config.* `QUOKY_AGENT_PROPOSE_TARGETS` (closed list `jira-comment`, `slack-post`, `calendar-description`, default empty, exact, no repeats;
+    `AGENT_PROPOSE_TARGETS_INVALID`, value-free) is parsed into `QuokyConfig.proposeTargets`. `agentWriteProposalDep` hands the port to the service
+    only for agent mode `active` AND proposals `active` AND `jira-comment` listed AND a bound port (a writer was built); `active` stays refused at
+    preflight for both flags, so no environment can build it.
+  - *Audit.* One content-free `agent_run.a7` record per propose step (the D9 agent-run log family; no separate `quoky.agentRun` store exists):
+    plan kind, form, source entry, item count, dropped count, drafter locality, consent outcome (`not-needed`, `asked`, `granted`, `not-asked`),
+    card id, decision (`pending` at card time), outcome. No destination key, no payload, no name. History gets only fixed structural notes (none
+    is written here: the card and the refusal lines are reply text, not history).
+- **Files.** New: `ports/agent-write-proposal.port.ts`, `connector-writes/agent-write-proposal.ts` (+ test), `agent/a7-propose.ts` (+ test),
+  `agent/draft-consent-question.ts`. Changed: `ports/{index,tokens}.ts`, `connector-writes/{connector-write-flow,connector-write-copy,index}.ts`,
+  `agent/{plan-executor,agent-run-service,agent-contract-check,work-summary-projection,index}.ts`, `apps/quoky/src/{config,bootstrap-preflight,app.module}.ts`,
+  `agent/write-proposals-config.ts`, `features/agent.providers.ts`. Tests changed: `agent-boundary.test.ts` (allowlist, file list, new direction pins),
+  `payload-drafter.boundary.test.ts` and `quarantined-summary.test.ts` (their importer and caller pins list `a7-propose.ts`, the first caller),
+  `jira-issue-writer.test.ts` (rendered lines), `write-proposals-config.test.ts`, `agent.providers.test.ts`.
+- **Interpretations and residuals (fail closed; owner FYI).**
+  1. The card bound is 3500 characters of one message body (A7 sets none; the ADR-0112 payload text bound of 1400 stays). Platform message limits
+     are not known to Core; an adapter that splits long messages may cut a card differently. Owner: confirm or choose another bound.
+  2. The banner's item labels are the closed-format id and the date when the read gave one. The A5 work-source documents carry no date, so a Slack or
+     Jira item is named by its id only (no date is printed); the channel is not a field of the documents. Adding date and channel to the work-source
+     projection needs an A5.2 field-table change and is left to A7-S4b or later.
+  3. `payload-too-large` also covers a card over the bound after the banner is added. The refusal is told with one fixed line.
+  4. The proposal service closes a card whose anchor does not match the request (defence in depth, `cancelled`); it cannot normally happen.
+  5. Items "the draft was made from" are the admitted documents minus those the call budget dropped from the end; a drop in the middle is
+     counted in `dropped` but the banner then lists a prefix of the admitted set (same rule as the drafter's prefix fit).
+  6. The pending-step continuation of an A7 DRAFT (opening the rule-① pending step, the owner's bound yes, the re-run through
+     `runA7ProposeStep({resume})`) is NOT wired here: the question text, the `ask` outcome and the resume path of the step exist and are tested, but
+     `AgentRunService` neither stores a continuation for an A7 draft nor passes `askConsent` by itself, so a REMOTE draft is never sent today
+     (LOCAL only). The classifier template of the A7 question (`countPlaceholder`) is part of that wiring.
+  7. The kill-switch closure is proved at the predicate and the flow level (`isActionSwitchGoverned`, the anchor mark); the full
+     `에이전트 중지` turn over an A7 card needs the runtime harness and is an A7-S5 live-UAT row.
+- **Not in this PR; open for A7-S4b and later.** The destination listing and pick with `OWNER_PICKED_DESTINATION` (A7.4b), the a7-09 project-first
+  flow, the frozen receipt, storing receipts in `Session.metadata` (`quoky.heldReceipt`) and form b, the closed-card carry-over (A7.4c item 4), the
+  automatic trip and the "대상이 잘못됐었나요?" question (after `active`), Slack and calendar destinations (A7-S6, A7-S7), the re-draft (A7-S9), the
+  REMOTE continuation above, the real read ports for `slack.search` and `jira.*` (`createAgentReadPorts` is still empty on purpose), and the
+  A7-S5 gates (CW-1 corpus, red team, drafter eval: Strict, owner notice and one yes per run).
+
+- **Review round 1 (CA and Codex, 2026-11-25).** Findings, fixes and what is recorded instead. All of it stays dormant (agent mode `active` and write proposals `active` are still refused at preflight).
+  1. *Consent not bound to the destination (Codex P2).* The `ask` outcome now carries `destination {operation, target}` and `resume` must carry it back; `runA7ProposeStep` refuses
+     `consent-mismatch` (no read, no model call, no card) when the plan's destination differs (`a7-propose.ts` right after `const key`). Test: ask for BE-123, resume with a BE-124 plan.
+  2. *Banner and count rebuilt instead of what was sent (CA P1, Codex P2).* `quarantinedDraft` returns `placed` (the ids put in the prompt, `quarantined-summary.ts` draft outcome); the banner, the
+     "[Quoky 요약] 출처: … N건" count and `sent` are built from it (`a7-propose.ts`, "Which items the draft was made from"). Tests: position gap (1,3,4) and a middle drop (empty and credential readout).
+  3. *Dropped wording (CA P2).* `AgentWriteProposalBanner.dropped` is now only the a7-06 drift (recorded ids no longer in the listing, "N건은 그 사이 바뀌어 뺐어요"); the new `omitted` carries the other cuts
+     (cap, host-only, credential, empty, budget, validation) as "N건은 초안에 넣지 않았어요" (`connector-write-copy.ts`). Audit has both counts.
+  4. *Ambiguous reply re-prompt (CA P2).* The anchor keeps the content-free card fields (`agentCard`: banner, named count, non-target tokens; the payload is the anchor's own); the pending reminder re-shows the
+     full A7 card through `composeAgentProposalPending` when `agentProposal` is set (`turn-handler-layer.ts` ambiguous branch). Non-A7 anchors take the unchanged path (a test pins no marker).
+  5. *Kill switch runtime tests (CA P2).* `conversation-runtime-connector-writes.test.ts`: `에이전트 중지` closes an open card; approve and execute are refused while stopped; control: running, one send.
+  6. *Expired cards block proposals (CA P3, Codex P2).* `openCardOf(actorId, now)`; `AgentWriteProposalService.openAnchors` skips an approval that is gone or past the 30-minute lifetime and a lapsed grant or choice, in every
+     session (also for the W2 ordinary-approval check). Test: card in session 1, 60 minutes later a BE-124 proposal in session 2 is carded.
+  7. *Stop race (CA P3).* The request carries `stillRunning`; after `flow.prepare` the service re-checks it and closes the card (`stopped`), returning `refused stopped` (`agent-write-proposal.ts`).
+  8. *Length check mismatch (CA P3).* The card as it will be shown (its own remaining time and execution phrase) is re-measured; over the bound: closed (`cancelled`) and `payload-too-large`.
+  9. *W2 and the pending rule-① consent step (CA P3).* `A7ProposeInput.ownerStepPending` (the runtime's `AgentActiveTurn.ownerStepPending`, which already includes the pending consent store) refuses `owner-step-open`
+     before any read. RECORDED for S4b: `AgentRunService.runCrossWrite` does not pass it yet; S4b's wiring MUST pass `turn.ownerStepPending` (and, for the continuation turn, the value after its own bound yes is used).
+  10. *Duplicated refusal strings (CA P3).* `renderAgentProposalRefusal` deleted; the lines live in `a7-propose.ts`.
+  11. *`askConsent` (CA P3).* Doc comment on `AgentRunServiceDeps.writeProposal`: the composition root must never set it until the S4b continuation exists; the existing pin that it is absent stays.
+  12. *Discord chunking (CA open point 1).* Chosen: lower the card bound to 1700 characters (`AGENT_PROPOSAL_CARD_MAX_CHARS`), under Discord's 1900 single-message limit with headroom for escaping of the query, so a
+      card is never chunked. Why not the other option: Discord's fence-aware chunker adds a closing and a reopening fence and a line break at a cut inside the quoted block (the payload would not be byte for byte
+      what is sent), and changing it touches every Discord reply. `adapter-discord/src/delivery.test.ts` pins that a maximal card (worst-case query, 10 items) renders as one chunk with the payload verbatim. The cost:
+      payloads over about 1000 characters are refused as "cannot be shown whole" (dormant); revisit with the real A7-S5 data. Owner FYI: the 3500 interpretation in residual 1 is superseded by 1700.
+  13. *Items without a date (CA open point 2).* The date is omitted; "날짜 없음" is no longer printed.
+- **Review round 2 (CA and Codex, 2026-11-25).** Still dormant. Findings and fixes:
+  1. *Length units (Codex P2, CA P2).* Both guards counted code points while Discord's `chunkText` counts UTF-16 units against 1900: five lines of 180 emoji are 1306 code points but 2206 units and would split (fences injected into the payload). Both guards in `agent-write-proposal.ts` (the probe and the shown-card re-check) now use `.length` (UTF-16, the stricter count). Tests: `delivery.test.ts` (an emoji card at the bound is one chunk, payload verbatim) and `agent-write-proposal.test.ts` (an emoji draft under the bound in code points, over it in units, is refused with no approval left).
+  2. *Double count (CA P3).* The a7-06 drift is now measured against the ids the listing named (`readDraftSource` returns `listedIds`, the projection slots), not the validated documents: an item still listed but withheld by validation is counted once, in `omitted` (`a7-propose.ts`). Test: a credential-shaped row on the resume read.
+  3. *Final re-check unreached (CA P3).* A test stubs the flow's `executionPhrase` so the shown card exceeds the bound after `prepare`: the card is closed `cancelled` and refused `payload-too-large`.
+  4. *Headroom (CA P3).* The bound 1700 leaves 200 UTF-16 units under 1900; the re-shown card may gain the ~75-unit operations-screen confirmation line (`turn-handler-layer.ts`). `delivery.test.ts` adds that line to the maximal card (still one chunk); the `AGENT_PROPOSAL_CARD_MAX_CHARS` comment states the headroom. The UNC-1 warning is part of the first card (inside the measured card).
+  5. *Comment (CA P3).* "CA open point 2" corrected to open point 1 in `connector-write-copy.ts`.
+  6. *UNC-1 (CA P3).* The first A7 card and the re-shown card now lead with the same existing `renderConnectorWriteDuplicateRisk` warning an ordinary card shows: `renderAgentProposalCard` takes `unconfirmedEarlier`; the flow stores it (status, time, zone; content-free) on the anchor's `agentCard` when it prepares, so the re-shown card equals the first. Test: first card, anchor field, re-shown render, and a control without it.
+  - *Residuals updated.* Residual 5 (the banner lists a prefix) is SUPERSEDED by round 1 `placed` (the banner names exactly the placed ids). Residual 7 (kill switch only by live UAT) is PARTLY superseded: the `에이전트 중지` turn over an A7 card is now covered by the round 1 runtime tests; the live-channel row stays an A7-S5 live-UAT item.
+- **CA rule note (not applied).** A7.7 (the `ARCHITECTURE.md` text) is ratified but NOT applied in `ARCHITECTURE.md`; it must be applied before any A7 path is reachable or the agent mode moves `off` to `shadow`.

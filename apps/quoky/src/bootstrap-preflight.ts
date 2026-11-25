@@ -157,6 +157,7 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
   [QuokyConfigErrorCode.AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED]:
     'QUOKY_AGENT_WRITE_PROPOSALS=active is not released yet (ADR-0121 A7: the drafter and the card slices come first); use "shadow" or "off".',
   [QuokyConfigErrorCode.AGENT_WRITE_PROPOSALS_REQUIRES_AGENT_MODE]: 'QUOKY_AGENT_WRITE_PROPOSALS=shadow needs QUOKY_AGENT_MODE=shadow.',
+  [QuokyConfigErrorCode.AGENT_PROPOSE_TARGETS_INVALID]: 'QUOKY_AGENT_PROPOSE_TARGETS must be unset or a comma-separated list of jira-comment, slack-post, calendar-description (exactly, lowercase, no repeats).',
   // ADR-0124 Part L C5a. Names and shapes only, never a value.
   [QuokyConfigErrorCode.CHUNK_ITEMS_INVALID]: 'QUOKY_CHUNK_ITEMS must be unset, "off", "shadow", or "on".',
   [QuokyConfigErrorCode.CHUNK_ITEMS_MODEL_INVALID]:

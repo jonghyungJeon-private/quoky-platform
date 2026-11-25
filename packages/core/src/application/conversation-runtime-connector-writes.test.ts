@@ -72,6 +72,8 @@ import { createWorkChatTurnHandlers } from './work-chat/work-chat-turn-handler';
 import { ReminderTurnHandler } from './reminders/reminder-turn-handler';
 import { TaskManager } from './task-manager';
 import { setExternalUndoCapabilitiesForTest } from './nl-routing/last-action';
+import { renderActionSwitchReply } from './nl-routing/action-switch';
+import { AGENT_PROPOSAL_MARKER, renderAgentProposalCard } from './connector-writes/connector-write-copy';
 import { PLAIN_TEXT_MARKUP, outboundBody, plainTextOf, renderMessageContent } from './message-rendering';
 
 /** PLT-0: link and conversation-reference spans of a reply made visible (the platform adapter renders them). */
@@ -2827,5 +2829,104 @@ describe('live DM 2026-11-16: a command the chat reply offers is never stripped 
     const refused = await h.send(COMMAND);
     expect(refused.reply.text).toContain(WRITES_OFF);
     expect(h.approvals.size).toBe(0);
+  });
+});
+
+describe('connector writes — an agent proposal card (ADR-0121 A7): kill switch and re-shown card (review round 1)', () => {
+  const DM: ConversationContext = { ...CTX, direct: true };
+  const BANNER = { source: { entryId: 'slack.search', query: '릴리즈' }, items: [{ id: 'C0AA.111', date: '2026-10-05' }, { id: 'C0AA.222' }], dropped: 0, omitted: 1, drafter: { locality: 'LOCAL' as const } };
+  const FIELDS = { banner: BANNER, named: 0, nonTargets: ['PROJ-99'] };
+  const TEXT = ['[Quoky 요약] 출처: Slack 메시지 2건', '릴리즈 일정이 하루 밀렸어요. PROJ-99 표기가 있어요.'].join('\n');
+
+  function a7() {
+    const state = { stopped: false };
+    const nlSelection = {
+      mode: 'active',
+      decide: async () => ({ kind: 'skip', reason: 'disabled' }),
+      actionsActing: () => !state.stopped,
+      actionsStillActing: async () => !state.stopped,
+      whileActionsActing: async (_actor: unknown, work: () => Promise<unknown>) => ({ acted: true as const, value: await work() }),
+      logActionUnserved: () => undefined,
+      recordActionReceipt: async () => undefined,
+      handleSwitchPhrase: async (_actor: unknown, text: string) => {
+        if (text !== '에이전트 중지') return undefined;
+        state.stopped = true;
+        return renderActionSwitchReply('stopped', 'ko');
+      },
+    } as unknown as ConversationRuntimeDeps['nlSelection'];
+    const h = harness({ nlSelection });
+    const card = async () => {
+      const step = await (h.flow as NonNullable<typeof h.flow>).prepare({
+        session: h.sessions.get('sess-1') as Session,
+        actor: OWNER,
+        now: new Date().toISOString(),
+        agentProposal: true,
+        agentCard: FIELDS,
+        draft: { kind: 'issue-comment', issueKey: 'PROJ-12', text: TEXT },
+      });
+      if (step.kind !== 'preview') throw new Error('no card');
+      return step;
+    };
+    return { h, state, card };
+  }
+
+  it('"에이전트 중지" closes an open agent card and sends nothing', async () => {
+    const { h, card } = a7();
+    const step = await card();
+    const reply = await h.sendIn(DM, '에이전트 중지');
+    expect(reply.reply.text).toContain('에이전트');
+    const view = await (h.flow as NonNullable<typeof h.flow>).find(h.sessions.get('sess-1') as Session);
+    expect(view === null || view.anchor.status === 'CLOSED').toBe(true);
+    expect(view?.anchor.closedReason ?? 'stopped').toBe('stopped');
+    expect(h.approvals.get(step.approval.id)?.status).not.toBe(ApprovalStatus.APPROVED);
+    expect(h.writes.addComment).toHaveLength(0);
+  });
+
+  it('while stopped (a stop an earlier step missed) the approval is refused and the card is closed, nothing is sent', async () => {
+    const { h, state, card } = a7();
+    const step = await card();
+    state.stopped = true;
+    await h.sendIn(DM, '승인');
+    expect(h.approvals.get(step.approval.id)?.status).not.toBe(ApprovalStatus.APPROVED);
+    expect(h.writes.addComment).toHaveLength(0);
+    const view = await (h.flow as NonNullable<typeof h.flow>).find(h.sessions.get('sess-1') as Session);
+    expect(view === null || view.anchor.status === 'CLOSED').toBe(true);
+  });
+
+  it('an approved card is not executed once the switch is stopped (the execution phrase is refused)', async () => {
+    const { h, state, card } = a7();
+    await card();
+    await h.sendIn(DM, '승인');
+    state.stopped = true;
+    await h.sendIn(DM, '댓글 실행');
+    expect(h.writes.addComment).toHaveLength(0);
+    expect(h.receipts.rows.size).toBe(0);
+  });
+
+  it('control: running, the same card is approved and executed exactly once', async () => {
+    const { h, card } = a7();
+    await card();
+    await h.sendIn(DM, '승인');
+    await h.sendIn(DM, '댓글 실행');
+    expect(h.writes.addComment).toEqual([expect.objectContaining({ issueKey: 'PROJ-12', text: TEXT })]);
+  });
+
+  it('an ambiguous reply re-shows the whole agent card (marker, banner, non-target line), equal to the first card but for the time', async () => {
+    const { h, card } = a7();
+    const step = await card();
+    const first = plainTextOf(renderAgentProposalCard({ issueKey: 'PROJ-12', text: TEXT, ...FIELDS, remainingMs: step.remainingMs, executionPhrase: step.executionPhrase }));
+    const reply = await h.sendIn(DM, '이게 뭐였지?');
+    const shown = probe(reply.reply);
+    expect(shown).toContain(AGENT_PROPOSAL_MARKER);
+    expect(shown).toContain('1건은 초안에 넣지 않았어요');
+    expect(shown).toContain('초안 안의 PROJ-99 표기는 대상이 아니에요');
+    expect(shown.replace(/남은 시간: 약 \d+분/u, '')).toBe(first.replace(/남은 시간: 약 \d+분/u, ''));
+  });
+
+  it('an ordinary comment request keeps the plain pending reminder (no agent card text)', async () => {
+    const h = harness();
+    await h.send('PROJ-12에 댓글 달아줘 "내용입니다"');
+    const reply = await h.send('이게 뭐였지?');
+    expect(probe(reply.reply)).not.toContain(AGENT_PROPOSAL_MARKER);
   });
 });

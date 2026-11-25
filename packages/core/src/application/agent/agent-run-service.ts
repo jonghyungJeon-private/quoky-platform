@@ -2,6 +2,7 @@ import { Capability, type Actor, type Id, type InboundQuotedRange, type IsoTimes
 import { CATALOG_FLOW_LABEL, OWNER_TEXT_FLOW_LABEL, PREVIOUS_SELECTION_FLOW_LABEL } from '../../domain/flow-label';
 import type { AiExecutionLocality, AiProvider } from '../../ports/ai-provider.port';
 import type { LogFields, Logger } from '../../ports/logger.port';
+import type { AgentWriteProposalPort } from '../../ports/agent-write-proposal.port';
 import type { ProviderSelector } from '../../ports/provider-selector.port';
 import { newId } from '../../util/id';
 import { callUsageLogFields, type CallUsageLogFields } from '../call-usage-log-fields';
@@ -12,7 +13,9 @@ import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry,
 import { nlSameEgress } from '../nl-routing/selection-egress';
 import { nlSelectionMeaning } from '../nl-routing/selection-meaning';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
+import { runA7ProposeStep, type A7ProposeOutcome } from './a7-propose';
 import type { AgentCrossWriteContext } from './cross-write';
+import type { ValidatedCrossWritePlan } from './cross-write-validator';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf, type AgentWorkSummarySource } from './flow-policy';
 import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
@@ -162,6 +165,8 @@ export interface AgentActiveTurn {
 export type AgentActiveOutcome =
   | { readonly kind: 'reply'; readonly reply: AssembledAgentReply; readonly outcome: 'complete' | 'partial'; readonly breach?: AgentBoundKind; readonly stopped?: true }
   | { readonly kind: 'one-step'; readonly plan: AgentStepsPlan }
+  /** ADR-0121 A7 (A7-S4a, dormant): a cross-source write proposal came to a card, a question, a wait line or a fixed refusal. */
+  | { readonly kind: 'proposal'; readonly outcome: A7ProposeOutcome }
   | { readonly kind: 'declined'; readonly reason: string };
 
 export interface AgentRunServiceDeps {
@@ -213,6 +218,16 @@ export interface AgentRunServiceDeps {
    * (the default): A7 is off and an A7 plan is refused. Even when set, a validated A7 plan is not runnable (A7-S4 builds the card).
    */
   readonly crossWrite?: AgentCrossWriteContext;
+  /**
+   * ADR-0121 A7 (A7-S4a, DORMANT): the proposal port and the destinations switched on (`QUOKY_AGENT_PROPOSE_TARGETS`). Built by the
+   * composition root only for agent mode `active` and `QUOKY_AGENT_WRITE_PROPOSALS=active` (both refused at startup) with the
+   * connector writes enabled. Absent (the default): a validated A7 plan stays `cross-write-off`, exactly as before. `askConsent`
+   * lets a draft that would go to a `REMOTE` model ask its rule-① question; the pending-step continuation of an A7 draft is A7-S4b,
+   * so without it a `REMOTE` draft is never allowed (LOCAL only).
+   * The composition root must NEVER set `askConsent` until that S4b continuation exists (a question with no way to answer it would leave
+   * a dead pending step); a test pins that it is absent.
+   */
+  readonly writeProposal?: { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly askConsent?: boolean };
   /**
    * `active` only, rule ① (CS-1a, `QUOKY_SUMMARY_CONSENT=on`): the one process-wide store of pending consent steps. Present: a
    * summarize step that would send items to a `REMOTE` model asks first (the question, then a pending step in this store).
@@ -582,7 +597,11 @@ export class AgentRunService {
     // ADR-0121 A4 (A4-S1): a validated handoff is not runnable until A4-S2 and its flag `QUOKY_AGENT_HANDOFF` (off): fail closed.
     if (validated.kind === 'handoff') return declined('handoff-off', callFields);
     // ADR-0121 A7 (A7-S1): a validated cross-source write plan is not runnable (no read, draft, card or send is built): fail closed.
-    if (validated.kind === 'cross-write') return declined('cross-write-off', callFields);
+    if (validated.kind === 'cross-write') {
+      const proposal = this.deps.writeProposal;
+      if (proposal === undefined || !proposal.targets.includes('jira-comment') || validated.target !== 'jira.comment.propose') return declined('cross-write-off', callFields);
+      return await this.runCrossWrite(turn, validated, prepared, budget, readers, selector, proposal, callFields, latency);
+    }
     // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the
     // read + write composition is stage P5, so the run never drops it silently.
     if (agentReadWriteProbeClauses(validated, prepared.groundingText).length > 0) return declined('write-clause', callFields);
@@ -640,6 +659,53 @@ export class AgentRunService {
       ...(result.breach !== undefined ? { breach: result.breach } : {}),
       ...(result.stopped === true ? { stopped: true as const } : {}),
     };
+  }
+
+  /**
+   * ADR-0121 A7 (A7-S4a, dormant): the propose step of a validated form-a cross-source write: READ, rule ①, the quarantined draft and
+   * the one proposal-port call ({@link runA7ProposeStep}). It runs in the same admitted run, charged on the same budget (the planner
+   * call is already counted; the draft is one M2 call within the D7 caps), under the kill switch and the shutdown signal. Nothing
+   * here holds a writer: the card is made by the port's implementation outside the agent module.
+   */
+  private async runCrossWrite(
+    turn: AgentActiveTurn,
+    plan: ValidatedCrossWritePlan,
+    prepared: { readonly text: string; readonly groundingText: string },
+    budget: AgentRunBudget,
+    readers: AgentReadPorts,
+    selector: ProviderSelector,
+    proposal: NonNullable<AgentRunServiceDeps['writeProposal']>,
+    callFields: LogFields,
+    latency: () => number,
+  ): Promise<AgentActiveOutcome> {
+    if (turn.sessionId === undefined) {
+      this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'declined', reason: 'no-session', ...callFields, latencyMs: latency() });
+      return { kind: 'declined', reason: 'no-session' };
+    }
+    const route = {
+      selector,
+      selectionContext: { sessionId: turn.sessionId, actorId: turn.actor.id },
+      ...(this.deps.workSummarySources !== undefined && this.deps.workSummarySources.length > 0 ? { workSummarySources: this.deps.workSummarySources } : {}),
+      ...(this.deps.recipientLabel !== undefined ? { recipientLabel: this.deps.recipientLabel } : {}),
+      ...(proposal.askConsent === true ? { askSummaryConsent: true } : {}),
+    };
+    const executor = new AgentPlanExecutor({ readers, logger: this.deps.logger, summarizer: route });
+    const outcome = await runA7ProposeStep(
+      { proposal: proposal.port, readSource: (step, options) => executor.readDraftSource(step, options), route, logger: this.deps.logger },
+      {
+        plan,
+        actorId: turn.actor.id,
+        sessionId: turn.sessionId,
+        language: languageOf(turn.text),
+        ownerText: { ...prepared, rawText: turn.text },
+        now: turn.now,
+        budget,
+        signal: this.background.signal,
+        stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+      },
+    );
+    this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'proposal', result: outcome.kind, ...callFields, latencyMs: latency() });
+    return { kind: 'proposal', outcome };
   }
 
   /**
