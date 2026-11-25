@@ -307,6 +307,16 @@ describe('the consent gate on the real runtime (CS-2)', () => {
     expect(h.calls.continued).toBe(0);
   });
 
+  it('a work-chat usage-form command (할 일 추가) forfeits the step with no claim, never reaches the classifier and runs no continuation', async () => {
+    let classified = 0;
+    const h = harness({ classifier: { mode: 'on', classify: async () => { classified += 1; return 'yes'; } } });
+    h.open();
+    await h.send('할 일 추가');
+    expect(classified).toBe(0);
+    expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: keyOf(DM) })).toBeUndefined();
+    expect(h.calls.continued).toBe(0);
+  });
+
   it('a consumed turn records its reply kind: the fixed note is a note, the cancel line is a note, so lastTurn never says chat', async () => {
     const h = harness();
     h.open();

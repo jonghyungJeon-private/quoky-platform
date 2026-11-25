@@ -1,3 +1,4 @@
+import { detectWorkChatCommand } from '../work-chat/work-chat-command';
 import { helpTopicOfLines } from '../help-intent/help-intent-turn-handler';
 import { noticeLanguage } from '../chat-policy/internal-action-vocabulary';
 import { imageUnderstandingPolicyOf, type ImageUnderstandingLocalitiesResolver, type ImageUnderstandingPolicy } from '../image-understanding';
@@ -736,7 +737,9 @@ export abstract class ConversationRuntimeBase {
       parseSurfaceGrantConfirm(message) ||
       // Lifecycle states A6.2 never covers: provider choice (`모델 변경: codex`, `/model`, via `parseModelSelectionCommand` inside `isExplicitTurnHandlerCommand`) and the explicit memory, learning and
       // reminder grammars are commands, not answers; the existing parsers decide.
-      this.isExplicitTurnHandlerCommand(message.text)
+      this.isExplicitTurnHandlerCommand(message.text) ||
+      // `isExplicitTurnHandlerCommand` deliberately skips work-chat `usage` forms (`할 일 추가`); they are still command shapes, never answers.
+      detectWorkChatCommand(message.text) !== null
     );
   }
 
