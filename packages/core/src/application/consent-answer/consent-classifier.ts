@@ -45,9 +45,15 @@ export const CONSENT_TOPIC_PLACEHOLDER = '{주제}';
  * real values; A6-S4 judges the request, A6.9.)
  */
 export function consentClassifierQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
-  const ko = pending.language === 'ko';
   // Input-shape rule: the recipient display name (provider-derived) must contain a letter or digit, or no question is rendered.
-  if (!RECIPIENT_SHAPE.test(pending.recipient.trim())) return '';
+  if (!RECIPIENT_SHAPE.test(promptText(pending.recipient))) return '';
+  const rendered = renderQuestion(pending);
+  // Invariant: the classifier sees exactly the question rendered, so the prompt's sanitisation must be the identity on it.
+  return rendered !== '' && promptText(rendered) === rendered ? rendered : '';
+}
+
+function renderQuestion(pending: Pick<ConsentPending, 'kind' | 'language' | 'recipient'> & { readonly sources?: readonly ConsentSource[] }): string {
+  const ko = pending.language === 'ko';
   if (pending.kind === 'topic-consent') {
     return ko
       ? `${CONSENT_TOPIC_PLACEHOLDER} 주제로 ${pending.recipient}에게 요청을 보낼까요? (응/아니)`
@@ -81,6 +87,11 @@ function withoutDelimiterTags(text: string): string {
   }
 }
 
+/** The one sanitisation the prompt applies to the question and the reply (also the identity check on the rendered question). */
+function promptText(text: string): string {
+  return withoutDelimiterTags(text).trim();
+}
+
 /** The prompt (`consent-answer.v1`). Generic instruction, no example; the question and the reply are data. */
 export function buildConsentClassifierPrompt(request: ConsentClassifierRequest): string {
   return [
@@ -100,10 +111,10 @@ export function buildConsentClassifierPrompt(request: ConsentClassifierRequest):
     'Output exactly one JSON object and nothing else, with a single key: {"label":"<one label>"}.',
     '',
     '<question>',
-    withoutDelimiterTags(request.question).trim(),
+    promptText(request.question),
     '</question>',
     '<reply>',
-    withoutDelimiterTags(request.reply).trim(),
+    promptText(request.reply),
     '</reply>',
   ].join('\n');
 }
@@ -148,7 +159,7 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     if (containsCredentialMaterial(request.reply) || containsCredentialMaterial(prompt)) return 'unclear';
     if (deps.chatProviderId === undefined) return 'unclear';
     // No valid source left after filtering: the question would be malformed, so nothing is sent.
-    if (request.question === '') return 'unclear';
+    if (request.question === '' || promptText(request.question) !== request.question) return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
     let deadlineAtMs: number;
     try {

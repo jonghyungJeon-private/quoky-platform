@@ -39029,6 +39029,10 @@ live caller. No model call, eval, gold, catalog, selection prompt or flag defaul
   fires, reproduced at 10,050 ms). (2) Inputs are validated, not the rendered string: a question is rendered only if at least one
   source is in the closed set (rule ①) and the recipient display name has a letter or digit after trim (`/[\p{L}\p{N}]/u`, a shape
   check, not a word list; also for A2 topic questions); otherwise `''` and no call (`unclear`).
+- **Identity invariant (Review 3, replaces further input checks).** The classifier sees exactly the question Quoky rendered:
+  the prompt's sanitisation (`promptText`: delimiter tags blanked to a fixed point, then trim) must be the identity on the rendered
+  question (and the recipient must still hold a letter or digit after it), otherwise no question is rendered or the adapter makes no
+  call (`unclear`). The reply is not refused when altered (its tags are blanked, as before).
 - **Note for the A6-S3/confirm slice.** Stub providers in `apps/quoky/src/a6-r2-harness.ts` must declare `supportsStrongerIntentSelection: true` when the adapter is wired; otherwise every classification is silently `unclear`.
 - **Fixed question text is a stand-in.** The single-line rule-① and A2 owner-facing question wording is not built yet (the
   rule-① confirm slice and the A2 answer slice own it). `consentClassifierQuestion` defines the classifier's view of it;
