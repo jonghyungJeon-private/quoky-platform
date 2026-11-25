@@ -20,7 +20,7 @@ import { AGENT_READ_SOURCES, AGENT_WORK_SUMMARY_SOURCES, readOutputLabel, summar
 import { AGENT_RUN_BOUNDS } from './run-bounds';
 import { ownerAskedSummary, type SummaryGrantBasis } from './summary-grant';
 import type { AGENT_PLAN_SUMMARY_SCHEMAS } from './plan-validator';
-import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, participantNameKey, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
+import { PAYLOAD_DRAFT_PROMPT_VERSION, assemblePayloadDraft, nameKey, remapParticipantLabels, renderPayloadDraftPrompt, type DraftParticipant, type PayloadDraftFailure } from './payload-drafter';
 
 /**
  * ADR-0121 D3/D4 (stage S2 P3-3b): the quarantined summariser (M2). Core, offline, unwired: no composition root builds it and
@@ -1442,13 +1442,14 @@ export async function quarantinedDraft(request: PayloadDraftRequest): Promise<Pa
       prompt = renderPayloadDraftPrompt(items.map((item) => item.rendered));
     }
     if (items.length === 0) return { kind: 'listing-only', reason: 'budget' };
-    // Defence in depth (a7-08): the model saw pseudonyms only. A real name in any readout text field BEFORE JSON encoding (title, author,
-    // date, body), compared whitespace- and format-insensitively, refuses the draft with no call.
-    const nameKeys = request.participants.map((participant) => participantNameKey(participant.name));
+    // Defence in depth (a7-08): the model saw pseudonyms only. A real name in any UNTRUSTED field of a placed item (title, author, date, body;
+    // never our fixed template), compared by the shared `nameKey` on both sides, refuses the draft with no call. A name whose key is empty
+    // cannot be checked: fail closed.
+    const nameKeys = request.participants.map((participant) => nameKey(participant.name));
+    if (nameKeys.some((key) => key.length === 0)) return { kind: 'failed', reason: 'participants' };
     const placed = source.documents.filter((document) => items.some((item) => item.position === document.position));
-    const fieldKeys = placed.flatMap((document) => [document.title, document.author, document.date, document.body].map((field) => participantNameKey(typeof field === 'string' ? field : '')));
-    const promptKey = participantNameKey(prompt);
-    if (nameKeys.some((key) => fieldKeys.some((field) => field.includes(key)) || promptKey.includes(key))) return { kind: 'failed', reason: 'participants' };
+    const fieldKeys = placed.flatMap((document) => [document.title, document.author, document.date, document.body].map((field) => nameKey(typeof field === 'string' ? field : '')));
+    if (nameKeys.some((key) => fieldKeys.some((field) => field.includes(key)))) return { kind: 'failed', reason: 'participants' };
 
     let assembled: ReturnType<typeof assemblePayloadDraft> | undefined;
     const call: PlannedCall = { items, first: 1, prompt };

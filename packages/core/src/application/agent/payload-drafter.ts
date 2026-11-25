@@ -88,7 +88,8 @@ export function parsePayloadDraftOutput(text: string): { readonly ok: true; read
     const lines: string[] = [];
     for (const line of raw as string[]) {
       if (LINE_BREAK.test(line)) return { ok: false, reason: 'schema' };
-      const clean = normalizeUntrustedText(line).replace(/\s+/g, ' ').trim();
+      // Numeric references are decoded BEFORE the pseudonym remap, so the label rule sees the real characters.
+      const clean = normalizeUntrustedText(normalise(line)).replace(/\s+/g, ' ').trim();
       if (clean.length === 0 || Array.from(clean).length > AGENT_DRAFT_LINE_MAX_CHARS) return { ok: false, reason: 'schema' };
       lines.push(clean);
     }
@@ -166,19 +167,6 @@ function remapLine(line: string, map: ReadonlyMap<string, string>, used: Set<str
 }
 
 /**
- * The comparison key for "does this real name appear in this text" (a7-08 defence in depth): normalised like the map names, NFKC,
- * lower-cased, then ALL whitespace and format characters removed, so `홍 길동`, `홍\n길동` and `홍길동` match. Cost: a short name
- * matches more often inside unrelated text (a higher false-refusal rate, fail closed). Pure and total.
- */
-export function participantNameKey(text: string): string {
-  try {
-    return normalizeUntrustedText(typeof text === 'string' ? text : '').normalize('NFKC').toLowerCase().replace(/[\s\p{Cf}]/gu, '');
-  } catch {
-    return '';
-  }
-}
-
-/**
  * ADR-0121 a7-08 (owner, 2026-11-24; Q6 design): the model saw pseudonyms only (A5.2); Core maps them back to real names locally
  * when it builds the payload, from the receipt's participants only. Scans each line with the closed grammar `참여자 [A-Z][0-9]*`
  * (longest written form first, one pass). A label-like form that is altered (`참여자A`, `참여자 a`, `참여자 AB`) or not in the map
@@ -233,6 +221,26 @@ function normalise(text: string): string {
     current = next;
   }
   return current;
+}
+
+const NAMED_REFERENCES_GLOBAL = /&[A-Za-z][A-Za-z0-9]*;?/gu;
+const HTML_TAG = /<[^>]*>/gu;
+/**
+ * The ONE comparison key for "does this real name appear in this text" (a7-08 defence in depth), used for both sides: numeric character
+ * references decoded until stable, named-reference shapes removed (no entity table), HTML tags stripped, `normalizeUntrustedText`, NFKC,
+ * lower-cased, then only letters and digits kept. So `Alice&#32;Smith`, `&#65;lice Smith`, `Alice&Tab;Smith`, `홍.길동`, `Dana-Kim`,
+ * `dana.kim@x` and `Dana <b>Kim</b>` all key like `alicesmith` / `danakim`. Pure and total (an empty key means "cannot be checked").
+ */
+export function nameKey(text: string): string {
+  try {
+    const decoded = normalise(typeof text === 'string' ? text : '');
+    return normalizeUntrustedText(decoded.replace(NAMED_REFERENCES_GLOBAL, '').replace(HTML_TAG, ''))
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]/gu, '');
+  } catch {
+    return '';
+  }
 }
 
 /**

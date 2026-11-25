@@ -39743,3 +39743,21 @@ port, card or connector write was touched, and shadow logs nothing from it). No 
   5. *Cleanup.* The dead store `index = end` is removed and the stale comments now list `[/]` and the `]`-then-`(` sealing.
   6. *Owner FYI.* The link-syntax family reached the fix-loop cap. The structural rules (exact markers, explicit invariants, numeric-reference decoding,
      named-reference refusal) are the chosen design; remaining destination-specific rendering checks move to A7-S4 (writers) and A7-S5 (smuggling rows).
+
+- **Review round 4 (structural; 2026-11-25; Codex and Chief Architect, reproduced; fix-loop cap reached for the real-name check family; `payload-draft-prompt.v1` unchanged, order, consent, egress, dormancy and the link side untouched).**
+  1. *Correction of round 3.* Round 3 called the short-name false refusal occasional and compared against the final prompt. That was wrong: the prompt
+     contains our fixed instructions, so names found in them after whitespace removal (Anne, Ann, Eve, Ed, Ted, Don, Leon, Rose, Ines, Om, Li, Theo, Leo:
+     13 of 48 common names) were ALWAYS refused. The template is no longer compared at all.
+  2. *One shared key.* `nameKey(s)` (replaces `participantNameKey`), used for the participant names and for the fields: numeric references decoded until
+     stable (the `normalise` decoder), named-reference shapes `&[A-Za-z][A-Za-z0-9]*;?` removed (no entity table), HTML tags `<[^>]*>` stripped,
+     `normalizeUntrustedText`, NFKC, lower-case, only `\p{L}\p{N}` kept. So `Alice&#32;Smith`, `&#65;lice Smith`, nested refs, `Alice&Tab;Smith`,
+     `Dana&nbsp;Kim`, `&#54861;&#44600;&#46041;`, `&#xD64D;길동`, `Dana O&#39;Brien`, `Dana-Kim`, `dana.kim@...`, `홍.길동`, `Dana <b>Kim</b>` all match.
+     The key of a participant name is a substring test against the key of each UNTRUSTED field (title, author, date, body of every placed item), never
+     against the template. A hit refuses (`participants`) with no provider call. A participant whose name has an empty key cannot be checked: the draft
+     is refused with no call (fail closed).
+  3. *Decode before remap.* `parsePayloadDraftOutput` now decodes numeric references (and NFKC, format characters) in each line before the pseudonym
+     remap, so the label rule sees real characters: `&#52280;여자 A`, `참&#50668;자 A`, `&#xCC38;&#xC5EC;&#xC790; A` map like `참여자 A` (`named` counted),
+     encoded altered labels refuse like plain ones, and `참여자 A&#46;` maps with its trailing dot. The credential guard still runs on the raw strings first.
+  4. *A7-S5 rows (recorded, not applied here).* Accented named references (`Ren&eacute;e` keys as `rene`, not `renée`), reordered names (`Kim, Dana`),
+     look-alike letters (Cyrillic or Greek homoglyphs of a name), and the `Q&A` / `R&D` refusal of the link side, with the Chief Architect's suggested
+     safe relaxation: always refuse `&name;`; without the `;` refuse only names starting `amp`, `lt`, `gt` or `quot`.

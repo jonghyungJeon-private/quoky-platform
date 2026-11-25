@@ -325,3 +325,42 @@ describe('review round 3: a real name before JSON encoding', () => {
     expect(local.requests).toHaveLength(0);
   });
 });
+
+describe('review round 4: one shared name key (encoded, reordered punctuation, template self-match)', () => {
+  const cases: Array<[string, Partial<AgentSourceDocument>]> = [
+    ['Alice Smith', { body: 'Alice&#32;Smith' }],
+    ['Alice Smith', { body: '&#65;lice Smith' }],
+    ['Alice Smith', { body: 'Alice&#38;#32;Smith' }],
+    ['Alice Smith', { body: 'Alice&Tab;Smith' }],
+    ['Dana Kim', { body: 'Dana&nbsp;Kim' }],
+    ['홍길동', { body: '&#54861;&#44600;&#46041;' }],
+    ['홍길동', { body: '&#xD64D;길동' }],
+    ["Dana O'Brien", { body: 'Dana O&#39;Brien' }],
+    ['Dana Kim', { body: 'Dana-Kim' }],
+    ['Dana Kim', { body: 'mail dana.kim@example.test' }],
+    ['홍길동', { body: '홍.길동' }],
+    ['Dana Kim', { body: 'Dana <b>Kim</b>' }],
+    ['Dana Kim', { title: 'Dana&#32;Kim' }],
+  ];
+  it.each(cases)('name %j vs %j: refuses with zero provider calls', async (name, fields) => {
+    const local = spy('local-a', 'LOCAL');
+    const document: AgentSourceDocument = { ...doc(1), ...fields };
+    const outcome = await quarantinedDraft(request(mailSource([document]), { selector: selectorOf(local) }, { participants: [{ label: '참여자 A', name }] }));
+    expect(outcome).toEqual({ kind: 'failed', reason: 'participants' });
+    expect(local.requests).toHaveLength(0);
+  });
+
+  it.each(['Anne', 'Ann', 'Eve', 'Ed', 'Ted', 'Don', 'Leon', 'Rose', 'Ines', 'Om', 'Li', 'Theo', 'Leo'])('the name %s no longer self-matches our template', async (name) => {
+    const local = spy('local-a', 'LOCAL');
+    const outcome = await quarantinedDraft(request(mailSource([{ ...doc(1), body: 'plain note' }]), { selector: selectorOf(local) }, { participants: [{ label: '참여자 A', name }] }));
+    expect(outcome.kind).toBe('draft');
+    expect(local.requests).toHaveLength(1);
+  });
+
+  it.each(['!!!', '&#32;', '<b></b>'])('a name with an empty key (%j) cannot be checked: refuses with no call', async (name) => {
+    const local = spy('local-a', 'LOCAL');
+    const outcome = await quarantinedDraft(request(mailSource([doc(1)]), { selector: selectorOf(local) }, { participants: [{ label: '참여자 A', name }] }));
+    expect(outcome).toEqual({ kind: 'failed', reason: 'participants' });
+    expect(local.requests).toHaveLength(0);
+  });
+});

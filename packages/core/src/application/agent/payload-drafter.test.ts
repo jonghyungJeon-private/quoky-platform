@@ -454,3 +454,20 @@ describe('review round 3: label trailing punctuation', () => {
     expect(remapParticipantLabels(['참여자 ᴬ'], PEOPLE)).toMatchObject({ ok: true, lines: ['Dana Example'] });
   });
 });
+
+describe('review round 4: numeric references are decoded before the pseudonym remap', () => {
+  it.each(['&#52280;여자 A', '참&#50668;자 A', '&#xCC38;&#xC5EC;&#xC790; A'])('the encoded label %j maps exactly like the plain label', (line) => {
+    const encoded = assemblePayloadDraft(answer(`${line} 확인`), PEOPLE);
+    const plain = assemblePayloadDraft(answer('참여자 A 확인'), PEOPLE);
+    expect(encoded).toEqual(plain);
+    expect(encoded).toMatchObject({ ok: true, draft: { named: 1 } });
+  });
+  it('an encoded altered label refuses like the plain altered label', () => {
+    expect(assemblePayloadDraft(answer('&#xCC38;&#xC5EC;&#xC790; AB'), PEOPLE)).toEqual({ ok: false, reason: 'participants' });
+    expect(assemblePayloadDraft(answer('&#52280;여자A'), PEOPLE)).toEqual({ ok: false, reason: 'participants' });
+  });
+  it('an encoded trailing dot after the label maps', () => {
+    expect(assemblePayloadDraft(answer('참여자 A&#46;'), PEOPLE)).toEqual(assemblePayloadDraft(answer('참여자 A.'), PEOPLE));
+    expect(assemblePayloadDraft(answer('참여자 A&#46;'), PEOPLE)).toMatchObject({ ok: true });
+  });
+});
