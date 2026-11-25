@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6-S3 two-line grant (2026-11-25; dormant: agent mode `active` still refused)
+
+- **Added.** The A6.5 rule in the summary grant producer: the owner's own two-line request (raw text with only an LF between exactly two non-empty
+  lines, no format character, every marker check per line and whole, each line consumed: a recognised unit and no residue beyond the closed classes
+  and the local plural deictics) mints the summary grant like a single-line request, with the AM-3 count unit (a count the validated plan carries). It
+  goes through the ordinary rule-① question (no `origin`, no LOCAL question, the ordinary wording). `AgentRunService` passes the raw text.
+- **Gold and tests.** SR-1 `460` and `461` moved to `expect` (built). New A6.5 tests and the draft gate lots (`golden/a6/two-line-grant.lots.v1.json`,
+  pending owner review). The agent boundary allows `nl-routing/grammar-residual`.
+- **Unchanged.** No prompt, catalog, flag, port or classifier change; no model call or eval. See DECISIONS "A6-S3 two-line grant implementation note (2026-11-25)".
+
 ## Unreleased — A6 classifier wiring (2026-11-25; dormant: `QUOKY_CONSENT_ANSWER_CLASSIFIER` default off, `on` still refused)
 
 - **Added.** The structural rule of the CS-2 residual: with the switch on, a turn a registered handler's pure `surfaceClaim` claims is `other`

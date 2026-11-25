@@ -25,7 +25,8 @@ const SOURCES = readdirSync(DIR)
 // with the one-step selection path; pure.
 // `action-entries` (owner decision of 2026-10-26, the position reference): the A6 catalog data (`item.summarize`'s source
 // enum, the item-summary sources) and the A6-D2 index grounding (`nlIndexWording`); pure data and grammar, no I/O.
-const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause', 'action-entries', 'request-shape', 'garbled-action', 'conjuncts', 'clause-flags'];
+// `grammar-residual` (ADR-0121 A6.5, slice A6-S3): the shared closed-class residue guard the two-line rule names (pure text, unchanged).
+const ALLOWED_NL_ROUTING = ['catalog', 'selection-input', 'selection-output', 'selection-prompt', 'selection-validator', 'selection-meaning', 'selection-egress', 'symbolic-time', 'action-switch', 'read-statement', 'statement-guard', 'write-clause', 'action-entries', 'request-shape', 'garbled-action', 'conjuncts', 'clause-flags', 'grammar-residual'];
 
 function allowedSpecifier(specifier: string): boolean {
   if (/^\.\.\/\.\.\/domain(?:\/[a-z-]+)?$/.test(specifier)) return true;

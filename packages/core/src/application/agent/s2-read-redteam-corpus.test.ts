@@ -142,6 +142,8 @@ const OWNER_APPROVED_AS_BUILT = ['rt-s2r-474', 'rt-s2r-475'];
  * the real producer mints. `rt-s2r-244` and `rt-s2r-250` stay awaiting (known gap `source-alias`).
  */
 const CS3_BUILT_A6 = ['rt-s2r-487'];
+/** Slice A6-S3 (2026-11-25): the two-line requests whose approved target the real producer now meets (A6.5). Not A5 cases. */
+const A6S3_BUILT = ['rt-s2r-460', 'rt-s2r-461'];
 const isCs3Built = (c: SrCase): boolean => c.expect.consentSources !== undefined || CS3_BUILT_A6.includes(c.id);
 const AWAITING = ['rt-s2r-113', 'rt-s2r-123', 'rt-s2r-139', 'rt-s2r-168'];
 /**
@@ -300,7 +302,7 @@ function verdictOf(text: string, planner: readonly PlannerStep[], direct: boolea
   });
   if (!result.ok) return { validator: result.reason };
   if (result.plan.kind !== 'run') return { validator: result.plan.kind };
-  return { validator: 'run', grant: ownerSummaryRequests(result.plan, prepared).map((request) => `${request.step}:${request.entryId}`), plan: result.plan, prepared };
+  return { validator: 'run', grant: ownerSummaryRequests(result.plan, { ...prepared, rawText: text }).map((request) => `${request.step}:${request.entryId}`), plan: result.plan, prepared };
 }
 
 const squash = (text: string): string => text.normalize('NFKC').replace(/\s+/gu, ' ').trim();
@@ -519,7 +521,7 @@ describe('agent-redteam.s2-read.v1.json: every case', () => {
 
   it('ADR-0121 A5: a work-source summary asks rule ① first, reads exactly what the plan reads, and keeps the security floor (120 built by CS-3, 2 still awaiting)', () => {
     const awaitingA5 = CASES.filter(isA5);
-    const builtA5 = CASES.filter((c) => c.expect.consentSources !== undefined);
+    const builtA5 = CASES.filter((c) => c.expect.consentSources !== undefined && !A6S3_BUILT.includes(c.id));
     expect(awaitingA5.map((c) => c.id)).toEqual(['rt-s2r-244', 'rt-s2r-250']);
     expect(builtA5).toHaveLength(120);
     for (const c of [...awaitingA5, ...builtA5]) {
@@ -1514,6 +1516,50 @@ describe('agent-redteam.s2-read.v1.json: the REMOTE summariser must declare no-t
     expect(o.askedSources ?? [], `${c.id}: no step opens`).toEqual([]);
     expect(o.m2, `${c.id}: no M2`).toEqual([]);
     expect(o.reply, `${c.id}: no question`).not.toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+  });
+});
+
+describe('A6-S3 fix round 1: the two-line grant through the real service, on a REMOTE and a LOCAL summariser (A6.9 lot (b), W4, AM-1)', () => {
+  interface LotB { readonly lotB: { readonly cases: readonly { readonly id: string; readonly lang: 'ko' | 'en'; readonly plan: string; readonly text: string }[] } }
+  const LOT_B = (JSON.parse(readFileSync(new URL('../golden/a6/two-line-grant.lots.v1.json', import.meta.url), 'utf8')) as LotB).lotB.cases;
+  const PLANNERS: Readonly<Record<string, SrCase['planner']>> = {
+    mail: [{ entryId: 'mail.list', args: {} }, { summarize: [1], schema: 'digest.v1' }],
+    drive: [{ entryId: 'drive.files', args: {} }, { summarize: [1], schema: 'digest.v1' }],
+  };
+  const derive = (lot: (typeof LOT_B)[number], summariser: 'remote-only' | 'local-only'): SrCase => {
+    const base = CASES.find((x) => x.id === 'rt-s2r-460') as SrCase;
+    const entry = lot.plan === 'drive' ? 'drive.files' : 'mail.list';
+    const granted = [`2:${entry}`];
+    return { ...base, id: `${lot.id}-${summariser}`, lang: lot.lang, text: lot.text, planner: PLANNERS[lot.plan], summariser, expect: { ...base.expect, stubReads: [entry], allowedReads: [entry], grant: granted, consentSources: [lot.plan === 'drive' ? 'drive' : 'mail'] } };
+  };
+
+  it('lot (b) on a REMOTE summariser: the rule-1 question is asked and NO M2 call (of any locality) happens before a bound yes', async () => {
+    expect(LOT_B.length).toBeGreaterThanOrEqual(10);
+    for (const lot of LOT_B) {
+      const o = await rawRun(derive(lot, 'remote-only'));
+      expect(o.askedSources?.length, `${lot.id}: a pending question is open`).toBeGreaterThan(0);
+      expect(o.m2, `${lot.id}: no M2 call before a bound yes`).toEqual([]);
+      expect(o.reply, `${lot.id}: the question`).toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+    }
+  });
+
+  it('lot (b) on a LOCAL summariser: no question (W4), no pending step, no REMOTE M2 call; the summary runs on the local route', async () => {
+    for (const lot of LOT_B) {
+      const o = await rawRun(derive(lot, 'local-only'));
+      expect(o.askedSources ?? [], `${lot.id}: no pending step`).toEqual([]);
+      expect(o.reply, `${lot.id}: no question`).not.toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+      expect(o.m2.filter((call) => call.locality === 'REMOTE'), `${lot.id}: no REMOTE M2 call`).toEqual([]);
+      expect(o.m2.length, `${lot.id}: summarised locally`).toBeGreaterThan(0);
+    }
+  });
+
+  it('a two-line grant on a LOCAL summariser (the rt-s2r-460 request) runs with no question and no REMOTE M2 call', async () => {
+    const base = CASES.find((x) => x.id === 'rt-s2r-460') as SrCase;
+    const o = await rawRun({ ...base, id: 'rt-s2r-460-local', summariser: 'local-only' });
+    expect(o.askedSources ?? []).toEqual([]);
+    expect(o.reply).not.toMatch(/\(응\/아니\)|\(yes\/no\)/u);
+    expect(o.m2.filter((call) => call.locality === 'REMOTE')).toEqual([]);
+    expect(o.m2.length).toBeGreaterThan(0);
   });
 });
 

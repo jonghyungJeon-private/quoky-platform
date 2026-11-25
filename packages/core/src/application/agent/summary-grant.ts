@@ -1,8 +1,9 @@
 import type { NlCatalogEntry, NlWave1EntryId } from '../nl-routing/catalog';
 import { NL_MODE_SUMMARY_WORDS, withoutStructures } from '../nl-routing/action-entries';
-import { nlClauseNamesEntry, nlClauses, type NlClause } from '../nl-routing/clause-flags';
+import { nlClauseNamesEntry, nlClauseStringValues, nlClauses, type NlClause } from '../nl-routing/clause-flags';
+import { unexpressedContentWords } from '../nl-routing/grammar-residual';
 import { nlHasExclusionOrNegation } from '../nl-routing/request-shape';
-import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, nlPreparedWithoutFilesLine, normalizeForMatch, type PreparedSelectionInput } from '../nl-routing/selection-input';
+import { NL_FENCED_PLACEHOLDER, NL_QUOTED_PLACEHOLDER, nlPreparedWithoutFilesLine, normalizeForMatch, prepareSelectionInput, type PreparedSelectionInput } from '../nl-routing/selection-input';
 import { groundingWordIn, nlItemReadVeto } from '../nl-routing/selection-validator';
 import { AGENT_READ_SOURCES, summaryReadoutLabel } from './flow-policy';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
@@ -38,7 +39,14 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
  */
 
 /** The owner's text as `prepareSelectionInput` prepared it: `text` (line breaks and placeholders kept) and `groundingText`. */
-export type OwnerText = Pick<PreparedSelectionInput, 'text' | 'groundingText'>;
+export type OwnerText = Pick<PreparedSelectionInput, 'text' | 'groundingText'> & {
+  /**
+   * ADR-0121 A6.5 (A6-S3): the owner's RAW message text, before `prepareSelectionInput`. Only the two-line rule reads it (its
+   * separator and format-character check must see what the preparation's whitespace collapse would absorb). Absent: the
+   * two-line form is never recognised (fail closed), a single-line message is unaffected.
+   */
+  readonly rawText?: string;
+};
 
 /**
  * Review rounds 2 and 3 (fail closed): the closed structural classes that mark a span the owner may not have written as a
@@ -141,6 +149,136 @@ function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
+/**
+ * ADR-0121 A6.5 (A6-S3, ratified 2026-11-23 with AM-1 and AM-3): only a bare LF separates the two lines of an owner request.
+ * Any other line or paragraph separator ANYWHERE in the RAW text (CR, so CRLF too; U+2028; U+2029; NEL U+0085; VT; FF) and any
+ * format character (`\p{Cf}`: zero-width, bidi override, soft hyphen, BOM) means it is not the two-line form. It is checked on
+ * the raw text because the preparation's whitespace collapse around an LF would absorb all of them but NEL.
+ */
+const NON_LF_SEPARATOR = /[\r\u2028\u2029\u0085\v\f\p{Cf}]/u;
+
+/**
+ * A6.5 (review round 3, P3 c): the A6.5-LOCAL closed-class completion. The shared residue guard (`grammar-residual.ts`, also used
+ * by calendar-question.ts and work-chat-command.ts) is NOT changed; its English function class holds the singular deictic
+ * pronouns but not the plural ones, which the producer's back-reference ("please summarize them") needs. No request word, no
+ * source, no topic.
+ */
+const PLURAL_DEICTIC_COMPLETION: readonly string[] = ['them', 'these', 'those'];
+
+/** The two non-empty lines of the RAW owner text, or `undefined` when it is not the two-line form (A6.5 item 1). Pure. */
+function rawTwoLines(raw: string): readonly string[] | undefined {
+  if (NON_LF_SEPARATOR.test(raw)) return undefined;
+  // A6.5 item 1: "blank lines between them do not count". Only an empty or ASCII space/tab line is blank; a line of any other
+  // whitespace (NBSP, U+3000, ...) is invisible content A6.5 does not name as blank, so it counts as a line and fails closed.
+  const lines = raw.split('\n').filter((line) => !/^[ \t]*$/u.test(line));
+  return lines.length === 2 ? lines : undefined;
+}
+
+/** A unit as the residue guard removes it: a Latin unit as a whole word (plural or possessive allowed), a Korean one inside a token. */
+const unitPattern = (unit: string): RegExp =>
+  /^[a-z0-9 ;.-]+$/u.test(unit) ? new RegExp(`(?<![a-z0-9])${escapeRegExp(unit)}(?:s|['’]s)?(?![a-z0-9])`, 'u') : new RegExp(escapeRegExp(unit), 'u');
+
+/**
+ * A6.5 item 3: the spans the producer RECOGNISES as the request for one validated plan, and nothing else: the names of its read
+ * sources (`aliases`, `sourceNames`, as `nlClauseNamesEntry` reads them); the scope of each validated read step (Core's own label,
+ * `entry.describe` of its validated args in both languages, matched as ONE WHOLE PHRASE with only a recognised source name allowed
+ * between its words, plus the label's head noun, plus the step's validated string values); the validated count of a read step
+ * (AM-3); and the approved summary words (`NL_MODE_SUMMARY_WORDS`). Listing verbs, particles, politeness endings and function
+ * words are NOT units: they are the closed classes of the residue guard.
+ */
+function recognisedUnits(plan: StepsPlan): RegExp[] {
+  const reads = plan.steps.flatMap((step) => (step.kind === 'read' ? [step] : []));
+  const units = new Set<string>(NL_MODE_SUMMARY_WORDS.map((word) => normalizeForMatch(word)));
+  const names = new Set<string>();
+  const labels = new Set<string>();
+  for (const step of reads) {
+    for (const name of [...step.entry.aliases, ...(step.entry.sourceNames ?? [])]) {
+      units.add(normalizeForMatch(name));
+      names.add(normalizeForMatch(name));
+    }
+    for (const language of ['ko', 'en'] as const) labels.add(normalizeForMatch(step.entry.describe?.(step.args, step.range, language) ?? '').trim());
+    // Fix round 1 (P2): a validated string value that itself holds an approved summary word is NOT a unit (a pasted line "김대리가
+    // 요약해달라고" the selector kept as a keyword must not consume the line); string values are set aside before the summary-word
+    // check, the same rule as `withClauseGroundedFlags` in plan-validator.ts. The single-line form is unchanged (recorded residual).
+    for (const value of nlClauseStringValues(step.args)) if (!NL_MODE_SUMMARY_WORDS.some((word) => groundingWordIn(value, normalizeForMatch(word)))) units.add(value);
+  }
+  // A `describe` label is a WHOLE PHRASE, never split word by word: "안 읽은 메일" must not make "안" and "읽은" units.
+  const gap = names.size === 0 ? '' : `(?:\\s+(?:${[...names].filter((n) => n.length > 0).sort((x, y) => y.length - x.length).map(escapeRegExp).join('|')}))*`;
+  const phrase = (label: string): RegExp => {
+    const words = label.split(/\s+/u).filter((w) => w.length > 0).map(escapeRegExp);
+    const latin = /^[a-z0-9 ;.-]+$/u.test(label);
+    return new RegExp(latin ? `(?<![a-z0-9])${words.join(`${gap}\\s+`)}(?:s|['’]s)?(?![a-z0-9])` : words.join(`${gap}\\s+`), 'u');
+  };
+  // The label's HEAD NOUN (its last word) is a unit of its own; its modifiers are not.
+  for (const label of labels) {
+    const head = label.split(/\s+/u).filter((w) => w.length > 0).at(-1);
+    if (head !== undefined && label.includes(' ')) units.add(head);
+  }
+  const all = [...units].filter((unit) => unit.length > 0).map((unit) => [unit, unitPattern(unit)] as const);
+  for (const label of labels) if (label.length > 0) all.push([label, phrase(label)] as const);
+  for (const step of reads) all.push(...countUnits(step, names));
+  return all.sort((a, b) => b[0].length - a[0].length).map(([, pattern]) => pattern);
+}
+
+/** The AM-3 count patterns: a line may carry at most one count token (`3개 3개` is two counts). */
+const COUNT_UNITS = new WeakSet<RegExp>();
+
+/**
+ * AM-3 (ratified 2026-11-23): a validated numeric count of a read step is a recognised unit, written with its count word: the
+ * numeral with a Korean counter (`개`, `건`) or, in English, the numeral directly before a recognised source name ("3 mails").
+ * Only a value the VALIDATED plan carries counts: an arg of kind `limit` that is not transient (the "at most N results" bound,
+ * never the `item` ordinal of `mail.list`). A numeral the plan does not carry stays residue. Which entries carry such an arg is
+ * the catalog's own business (this adds none).
+ */
+function countUnits(step: Extract<ValidatedAgentStep, { readonly kind: 'read' }>, names: ReadonlySet<string>): (readonly [string, RegExp])[] {
+  const sourceNames = [...names].filter((name) => /^[a-z0-9 .-]+$/u.test(name)).sort((x, y) => y.length - x.length).map(escapeRegExp);
+  return step.entry.args.flatMap((spec) => {
+    const value = step.args[spec.name];
+    if (spec.kind !== 'limit' || spec.transient === true || typeof value !== 'number' || !Number.isInteger(value)) return [];
+    // Review round 3 (structural, replaces the round-2 prefix list): a count is recognised only as a WHOLE whitespace-delimited token,
+    // preceded by start-of-line or whitespace and followed by end-of-line or whitespace. Anything else is not a unit, so its digits stay
+    // as `\p{N}` residue and the line is not consumed. Fail-closed residual: "메일3개", "3개," and "3개를" no longer count.
+    const counted: (readonly [string, RegExp])[] = [[`${value}개`, new RegExp(`(?<=^|\\s)${value}\\s*(?:개|건)(?=$|\\s)`, 'u')]];
+    if (sourceNames.length > 0) counted.push([`${value} ${sourceNames[0]} (count)`, new RegExp(`(?<=^|\\s)${value}\\s+(?:${sourceNames.join('|')})(?:s|['’]s)?(?=$|\\s)`, 'u')]);
+    for (const [, pattern] of counted) COUNT_UNITS.add(pattern);
+    return counted;
+  });
+}
+
+/**
+ * A6.5 items 2 and 3: a line is CONSUMED by the producer only when it passes every single-line marker check on its own, holds at
+ * least one recognised unit, and after every recognised unit is removed the RESIDUE is empty or closed-class only
+ * (`unexpressedContentWords`, plus the A6.5-local plural deictics). Any unexplained residue leaves the line unconsumed.
+ */
+function isConsumedLine(line: string, units: readonly RegExp[]): boolean {
+  const prepared = prepareSelectionInput(line);
+  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text)) return false;
+  const text = normalizeForMatch(prepared.groundingText);
+  if (!units.some((unit) => unit.test(text))) return false;
+  if (!unexpressedContentWords(text, units).every((word) => PLURAL_DEICTIC_COMPLETION.includes(word))) return false;
+  // Fix round 1 (P1): the shared guard treats a bare numeral as grammar. In the two-line form a digit that no recognised unit
+  // removed (the plan's own validated count with its counter is the only numeric unit, AM-3) is a number the plan does not carry.
+  for (const unit of units) if (COUNT_UNITS.has(unit) && (text.match(new RegExp(unit.source, `${unit.flags.replace(/[gy]/gu, '')}g`))?.length ?? 0) > 1) return false;
+  let rest = text;
+  for (const unit of units) rest = rest.replace(new RegExp(unit.source, `${unit.flags.replace(/[gy]/gu, '')}g`), ' ');
+  // Review round 2: any numeral (`\p{N}`: circled, superscript, roman, fullwidth) left over fails; a signed count (`-3개`) is not a unit.
+  return !/\p{N}/u.test(rest);
+}
+
+/**
+ * ADR-0121 A6.5 (A6-S3): whether the owner's message is the two-line form and BOTH lines are consumed by this producer for this
+ * validated plan. The raw text must be exactly two non-empty LF lines with no other separator and no format character; the
+ * prepared text must agree (two lines). Every other multi-line shape is not (fail closed). Pure.
+ */
+function isConsumedTwoLineRequest(plan: StepsPlan, prepared: OwnerText): boolean {
+  if (prepared.rawText === undefined) return false;
+  const lines = rawTwoLines(prepared.rawText);
+  if (lines === undefined) return false;
+  if (nlPreparedWithoutFilesLine(prepared.text).trim().split(LINE_BREAK).filter((line) => line.trim().length > 0).length !== 2) return false;
+  const units = recognisedUnits(plan);
+  return lines.every((line) => isConsumedLine(line, units));
+}
+
 declare const BASIS_BRAND: unique symbol;
 /** The owner's summary requests for ONE validated plan. Opaque: only {@link summaryGrantBasis} makes one. */
 export interface SummaryGrantBasis {
@@ -168,9 +306,12 @@ export function ownerSummaryRequests(plan: ValidatedAgentPlan, prepared: OwnerTe
   if (plan.kind !== 'run') return [];
   let owner: string;
   try {
-    // Review round 4: a multi-line message never grants (the whole multi-line paste family, structurally); review round 2:
-    // any untrusted-span marker anywhere in a single-line message, and it grants nothing either (fail closed).
-    if (!isSingleLineOwnerText(prepared.text) || hasUntrustedSpanMarker(prepared.text)) return [];
+    // Review round 4: a multi-line message never grants (the whole multi-line paste family, structurally), except the A6.5
+    // two-line form below; review round 2: any untrusted-span marker anywhere in the message, and it grants nothing (fail closed).
+    if (hasUntrustedSpanMarker(prepared.text)) return [];
+    // A6.5 (A6-S3, AM-1): the one narrowed multi-line shape, exactly two LF lines each consumed by this producer. Anything else
+    // that is not a single line keeps the whole message fail-closed.
+    if (!isSingleLineOwnerText(prepared.text) && !isConsumedTwoLineRequest(plan, prepared)) return [];
     const groundingText = prepared.groundingText;
     // A relayed request is never the owner's own (the existing A6 R2 veto of a reported summary request).
     if (nlItemReadVeto(groundingText) !== undefined) return [];

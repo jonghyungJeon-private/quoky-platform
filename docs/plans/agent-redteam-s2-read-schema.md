@@ -889,7 +889,7 @@ ratification record states (DECISIONS.md "ADR-0121 amendments A5 and A6 ratifica
   one. The grant then takes the single-line consent path (AM-1): on a REMOTE route the ordinary rule-① question, answered
   by the pipeline above; on a LOCAL route no question (W4). The summary covers exactly the items the request listed.
 - **Status.** 10 cases were `approved-awaiting-implementation`; CS-3 (2026-11-25) built `487` (its `awaiting.expect` is now its `expect`, `status` `owner-approved` with `approved.decided: "2026-11-19"`, and it gained its `readContent` and canary), so 9 still wait:
-  - `460`, `461` (two-line request, `decided: "2026-11-19"`): `slices` `["A6-S3", "confirm-slice"]`, target
+  - `460`, `461` (two-line request, `decided: "2026-11-19"`; BUILT by A6-S3, 2026-11-25: their target is now their `expect`, `status` `owner-approved`, not SR-1 batch-reviewed): was `slices` `["A6-S3", "confirm-slice"]`, target
     `read-and-ask-consent` / `ask-first` with the grant the real producer mints under the modelled rule and
     `consentSources`;
   - `463` ("응" twice), `468` ("ㅇㅇ"), `469` ("ok"), `470` ("보내" to a send question), `488` ("응!!") (`decided:
