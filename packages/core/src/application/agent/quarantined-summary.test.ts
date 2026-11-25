@@ -784,10 +784,14 @@ describe('quarantined summariser: structural pins', () => {
     return found;
   }
 
-  it('only the executor and the assembler import the summariser; no planner-side file does (M1 never sees M2)', () => {
+  it('only the executor, the assembler and the run service import the summariser; no planner-side file does (M1 never sees M2)', () => {
     const importers = sources.filter((source) => /from '\.\/quarantined-summary'/.test(source.text)).map((source) => source.name);
-    expect(importers.sort()).toEqual(['index.ts', 'plan-executor.ts', 'reply-assembler.ts']);
-    for (const name of ['plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'agent-run-service.ts', 'flow-policy.ts', 'help-split.ts']) expect(importers).not.toContain(name);
+    expect(importers.sort()).toEqual(['agent-run-service.ts', 'index.ts', 'plan-executor.ts', 'reply-assembler.ts']);
+    for (const name of ['plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'flow-policy.ts', 'help-split.ts']) expect(importers).not.toContain(name);
+    // Rule ① (CS-1b): the run service reaches the summariser by exactly two names, the run token and the consent maker (the continuation).
+    const service = sources.find((source) => source.name === 'agent-run-service.ts')?.text ?? '';
+    const imported = /import \{([^}]*)\} from '\.\/quarantined-summary';/.exec(service)?.[1]?.split(',').map((name) => name.trim()).sort();
+    expect(imported).toEqual(['mintSummaryConsentToken', 'newSummaryRunToken']);
   });
 
   it('only the assembler reads a summary: the accessor is named nowhere else in packages/** or apps/** (the scan is not vacuous)', () => {
@@ -803,8 +807,8 @@ describe('quarantined summariser: structural pins', () => {
     const seam = /\b(?:sealQuarantinedSummaryForTest|setSummaryGrantsForTest|mintSummaryEgressGrantForTest)\b/;
     expect(files.filter((file) => seam.test(file.text)).map((file) => file.path)).toEqual(['packages/core/src/application/agent/quarantined-summary.ts']);
     // Rule ① (CS-1a): there is no test-only or allow-all way to a consent token or to REMOTE; the one maker is named only in its own module
-    // (no production caller yet: CS-1b's continuation is the first), and nothing anywhere names a retired seam.
-    expect(files.filter((file) => /\bmintSummaryConsentToken\b/.test(file.text)).map((file) => file.path)).toEqual(['packages/core/src/application/agent/quarantined-summary.ts']);
+    // (CS-1b: its one production caller is the run service's continuation), and nothing anywhere names a retired seam.
+    expect(files.filter((file) => /\bmintSummaryConsentToken\b/.test(file.text)).map((file) => file.path).sort()).toEqual(['packages/core/src/application/agent/agent-run-service.ts', 'packages/core/src/application/agent/quarantined-summary.ts']);
     expect(files.filter((file) => /ConsentAllowAll|mintSummaryConsentTokenForTest/.test(file.text))).toEqual([]);
     // Nothing in production code calls the grant producer either: `summaryGrantFor` has one caller, the executor.
     expect(files.filter((file) => /\bsummaryGrantFor\b/.test(file.text)).map((file) => file.path).sort()).toEqual(['packages/core/src/application/agent/plan-executor.ts', 'packages/core/src/application/agent/quarantined-summary.ts']);

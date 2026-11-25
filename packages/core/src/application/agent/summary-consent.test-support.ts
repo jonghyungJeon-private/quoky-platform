@@ -25,14 +25,14 @@ export interface ConsentFixture {
 const SCOPE_NOTE = 'closed yes through answerConsentTurn';
 
 /** Run a closed yes through the real pipeline over `store` and return the bound consent it produced (synchronously bound). */
-export function yesBound(store: ConsentPendingStore, scope: { actorId: string; conversationKey: string }, text = '응'): BoundConsent {
+export function yesBound(store: ConsentPendingStore, scope: { actorId: string; conversationKey: string }, text = '응', atMs = 1): BoundConsent {
   let captured: BoundConsent | undefined;
   const realBind = store.bind.bind(store);
-  store.bind = (claim, atMs) => {
-    captured = realBind(claim, atMs);
+  store.bind = (claim, at) => {
+    captured = realBind(claim, at);
     return captured;
   };
-  void answerConsentTurn(store, { scope, ownerDm: true, text, atMs: 1 }, { mode: 'off' }, () => 2);
+  void answerConsentTurn(store, { scope, ownerDm: true, text, atMs }, { mode: 'off' }, () => atMs + 1);
   if (captured === undefined) throw new Error(`test consent not bound by ${SCOPE_NOTE}`);
   return captured;
 }

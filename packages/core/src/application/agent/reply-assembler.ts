@@ -49,6 +49,13 @@ export interface AssembleAgentReplyInput {
   /** The reply goes to the owner's DM (agent runs happen there only; D5). */
   readonly destinationIsOwnerDm: boolean;
   readonly logger?: Logger;
+  /**
+   * Rule ① (CS-1b): `continuation` renders the reply of the owner's bound yes: only the summarize step `summaryStep` (its
+   * summary, the omitted note, the credential note, the REMOTE disclosure and its fixed status lines). No listing facts, no notes
+   * and no question (the owner already saw the listing in the asking turn). Absent: the ordinary reply.
+   */
+  readonly mode?: 'continuation';
+  readonly summaryStep?: number;
 }
 
 export interface AssembledAgentReply {
@@ -113,7 +120,9 @@ const T = {
       'consent-unavailable': '지금은 요약을 보내도 되는지 여쭤볼 수 없어서, 요약은 보내지 않고 목록만 보여드려요.',
       'consent-too-many-items': '한 번에 여쭤볼 수 있는 개수를 넘어서, 요약은 보내지 않고 목록만 보여드려요.',
       'consent-recipient-split': '이 자료들은 같은 곳으로 보낼 수 없어서, 요약은 보내지 않고 목록만 보여드려요.',
+      'consent-nothing-left': '그 사이 목록이 바뀌어서 요약할 항목이 남지 않았어요. 아무것도 보내지 않았어요.',
     } satisfies Record<QuarantinedListingOnlyReason, string>,
+    continuationNotSent: '요약을 만들지 못해서 아무것도 보내지 않았어요.',
     summaryUnavailable: '요약을 보여드릴 수 없었어요.',
     credentialWithheld: '민감한 정보가 있는 것 같은 항목은 요약에서 뺐어요.',
     remoteDisclosure: '이 요약을 만들려고 원문 일부를 외부 모델로 보냈어요.',
@@ -147,7 +156,9 @@ const T = {
       'consent-unavailable': "I can't ask about sending a summary right now, so nothing was sent; this is the listing only.",
       'consent-too-many-items': 'There are more items than one question can cover, so nothing was sent; this is the listing only.',
       'consent-recipient-split': 'These materials would go to different recipients, so nothing was sent; this is the listing only.',
+      'consent-nothing-left': 'Nothing was left to summarise after the list changed, so nothing was sent.',
     } satisfies Record<QuarantinedListingOnlyReason, string>,
+    continuationNotSent: 'A summary could not be made, so nothing was sent.',
     summaryUnavailable: 'A summary could not be shown.',
     credentialWithheld: 'Items that looked sensitive were left out of the summary.',
     remoteDisclosure: 'Part of the original text was sent to an outside model to make this summary.',
@@ -164,13 +175,16 @@ const T = {
 export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAgentReply {
   const { result, language } = input;
   const t = T[language];
+  // Rule ① (CS-1b): a continuation shows only its own summarize step; everything of the asking turn's reply is not repeated.
+  const continuation = input.mode === 'continuation';
+  const shown = continuation ? result.steps.filter((step) => step.kind === 'summarize' && step.step === input.summaryStep) : result.steps;
   const readLabels = result.steps.flatMap((step) => (step.kind === 'read' && step.status === 'ok' ? [step.projection.label] : []));
   const parts: AgentReplyPart[] = [];
   let summaryLines = 0;
   let droppedLines = 0;
 
   // A summary with no stored content (a forged instance) is not a summary: it is ignored, label and all.
-  const summaries = result.steps.flatMap((step) => (step.kind === 'summarize' && step.status === 'ok' && summaryEntriesForAssembler(step.summary) !== undefined ? [step] : []));
+  const summaries = shown.flatMap((step) => (step.kind === 'summarize' && step.status === 'ok' && summaryEntriesForAssembler(step.summary) !== undefined ? [step] : []));
   const label = joinFlowLabels(...readLabels, ...summaries.map((step) => step.summary.label));
 
   // Agent runs are owner-DM only (D5): any other destination gets the fixed refusal, whatever the label says.
@@ -181,7 +195,7 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
 
   // 1. Core's facts, in step order.
   const counts = new Map<number, AgentStepCount>();
-  for (const step of result.steps) {
+  for (const step of continuation ? [] : result.steps) {
     if (step.kind !== 'read') continue;
     const noun = NOUN[step.entryId][language];
     if (step.status === 'ok') {
@@ -193,7 +207,7 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   }
 
   // 2. The fixed notes (detail cap, relation).
-  for (const note of agentReplyNotes(input.plan, counts, language)) parts.push({ kind: 'note', text: note });
+  for (const note of continuation ? [] : agentReplyNotes(input.plan, counts, language)) parts.push({ kind: 'note', text: note });
 
   // 3. The model's summaries, after every fact.
   let unavailable = false;
@@ -227,7 +241,7 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   // A5-S2: a REMOTE call that carried work-source items is disclosed once per source (naming it); a REMOTE call with no work
   // source (mail, Drive) keeps the one fixed line.
   const remoteWork = new Set<AgentWorkSummarySource>();
-  for (const step of result.steps) {
+  for (const step of shown) {
     if (step.kind !== 'summarize' || !('audits' in step)) continue;
     for (const audit of step.audits ?? []) {
       if (audit.locality !== 'REMOTE') continue;
@@ -239,19 +253,22 @@ export function assembleAgentReply(input: AssembleAgentReplyInput): AssembledAge
   for (const name of AGENT_WORK_SUMMARY_SOURCES) if (remoteWork.has(name)) parts.push({ kind: 'status', text: t.workRemoteDisclosure(WORK_SOURCE_NAME[name][language]) });
 
   // 4. Fixed status lines: no model call was made, a call failed, a bound stopped the run.
-  const sum = result.steps.filter((step) => step.kind === 'summarize');
+  const sum = shown.filter((step) => step.kind === 'summarize');
   const reasons: QuarantinedListingOnlyReason[] = [];
   for (const step of sum) if (step.status === 'listing-only' && !reasons.includes(step.reason)) reasons.push(step.reason);
-  for (const reason of reasons) parts.push({ kind: 'status', text: t.listingOnly[reason] });
+  // A continuation shows no listing, so "this is the listing only" is never said: its own fixed lines instead.
+  for (const reason of reasons) parts.push({ kind: 'status', text: continuation && reason !== 'consent-nothing-left' ? t.continuationNotSent : t.listingOnly[reason] });
   // An ok summary with every line dropped, or a step that was deferred: the fixed "cannot be shown" line, never a blank.
   if (unavailable || sum.some((step) => step.status === 'deferred')) parts.push({ kind: 'status', text: t.summaryUnavailable });
   if (sum.some((step) => step.status === 'failed')) parts.push({ kind: 'status', text: t.summaryFailed });
   if (result.breach !== undefined) parts.push({ kind: 'status', text: t.boundStopped });
   // The owner's kill switch stopped the run before a step (S2 wiring slice): one fixed line, after any bound line.
   if (result.stopped === true) parts.push({ kind: 'status', text: t.agentStopped });
+  // A continuation's reply is never blank: a summary status that added no line (consent-needed, not-run, deferred...) gets the fixed not-sent line.
+  if (continuation && !parts.some((part) => part.kind === 'summary' || part.kind === 'status')) parts.push({ kind: 'status', text: t.continuationNotSent });
   // Rule ① (CS-1a): the question is the last part, after the listing and every note. No "not read" note for that step: the
   // question itself says nothing was sent yet.
-  for (const step of result.steps) {
+  for (const step of continuation ? [] : result.steps) {
     if (step.kind !== 'summarize' || step.status !== 'consent-needed') continue;
     const question = renderSummaryConsentQuestion({ language, recipient: step.recipient, sources: step.sources.map((entry) => ({ source: entry.source, count: entry.itemIds.length })) });
     if (question !== '') parts.push({ kind: 'consent', text: question });

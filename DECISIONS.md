@@ -39224,3 +39224,78 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   store composed in `apps/quoky` (the Core index does not export `consent-pending`, so the store cannot be built there yet; the
   flag parses but `on` composes nothing until then), `ownerStepPending` and `conversationKey` supplied by the runtime, the
   kill-switch `voidAllSummaryConsents`, and the clock for `createdAtMs` (CS-1a uses the service clock, `Date.now` in production).
+
+
+### Rule-① confirm slice CS-1b implementation note (2026-11-25)
+
+Slice CS-1b "continuation" of the rule-① confirm slice (design: SR-1 rule ① and W1 to W5; CS-1a above). Built and unit-tested,
+dormant: `active` is still refused at startup and the read ports are empty. **There is still no production caller of
+`continueSummaryConsent`: CS-2 (the runtime gate) wires it.** No model call, no eval, no prompt, catalog or gold change (no D12 gate:
+all new text is fixed reply text).
+
+- **`continueSummaryConsent(bound, turn)`.** Total (never throws or rejects). `turn` is `{ actor, direct }`. Order: (1) a value that
+  is not a bound `summary-consent` is the fixed expired line; a `WeakSet` of spent bounds refuses a second run of the same bound
+  yes (`spent`); the record is taken by `bound.pending.runRef` through `takeSummaryContinuation` (single use, 600 s); a missing
+  record is `expired`; a record of another actor is `actor`. (2) Admission as `runActive` minus the planner: mode `active`, DM,
+  no shutdown, wired, then the shared `admitRun` (one run in flight, the per-actor hour and day caps, at least ONE model call left
+  in the rolling hour instead of two), then the live kill switch (fail closed). Every decline returns `{ kind: 'declined', reason,
+  text }` with a fixed KO/EN line, reads nothing and sends nothing; the bound yes is spent either way. (3) The run token is made
+  here and the consent token is minted by `mintSummaryConsentToken` from the bound yes with the run, **`record.summaryStep` and
+  `record.reads`** (the covered reads with the ids the question counted, new in the record), never from caller parameters (CS-1a
+  round 2 requirement); a bound without the owner-yes brand mints nothing (`no-consent`). (4) `executor.execute(record.plan, ...,
+  continuation)`. (5) The assembler in `mode: 'continuation'`.
+- **Executor `continuation` option** (`{ steps, summaryStep, run, consent, reads }`, key set pinned in `agent-contract-check.ts`).
+  Steps outside `continuation.steps` are `not-run` with the new reason `continuation` (no switch probe for them); the covered
+  reads re-run (their readiness gets the token, so no second question); the executor uses `continuation.run` as its run token so the
+  grants and the consent match. **W3 filter** after `validateSourceDocuments` (mail and Drive documents and the A5.2 work-source
+  listing documents alike): keep only documents whose id is in that read's recorded ids, in listing order; an item that left is not
+  replaced, a new item is not added; credential-bearing and unusable items are still dropped or withheld by the existing guards;
+  `omitted` counts against the recorded ids, not the new listing. Zero kept over every source: no M2 call and the new listing-only
+  reason `consent-nothing-left` (fixed KO/EN line). M2 runs once for the record's summarize step under the token (at most 6 calls
+  within the caps); a REMOTE provider whose recipient label differs from the asked recipient is refused at selection and at
+  dispatch (CS-1a `dispatchLocality`); a LOCAL provider is allowed (W4).
+- **Assembler `mode: 'continuation'`** (+ `summaryStep`): only that step's summary, omitted note, credential note, REMOTE disclosure
+  and fixed status lines; no listing facts, no notes, no question. A listing-only step reads "nothing was sent" instead of "this is the
+  listing only" (the listing is not repeated), except the nothing-left line. The history keeps only the fixed structural note: that is
+  the runtime's job and lands with the gate (CS-2); nothing here writes history.
+- **Log.** `agent_run.consent {outcome: 'continued'|'declined', reason, sources, items}`: closed reason (the step's status, or the
+  decline reason) and counts only; no ids, no content.
+- **Deviations (reasoned).** (a) The W3 filter keeps the ids of each READ (the token's per-entry sets), a subset of the design's "that
+  source's itemIds", because the token checks per entry: a source-level filter could let an id of another read of the same source
+  reach the token check and fail the whole step. Same owner-visible behaviour for the usual one-read source. (b) `asked` (the item
+  cap per source and the locality count) keeps the read's own limit instead of `kept.length`: an item that moved down the listing
+  but is still within the limit is still summarised. (c) The run token is created by the service and passed in the `continuation`
+  option (the executor otherwise creates it inside `execute`, so the token could not be minted before the run). (d) `admitRun` is
+  extracted from `runActive` (same order and values) and shared.
+- **Tests.** `summary-consent.cs1b.test.ts` (19): the happy path (REMOTE once, no listing or question, no planner call, content-free
+  log), drift (removed and added items, order, nothing left, credential item withheld), recipient changed (REMOTE refused, LOCAL
+  allowed), single use, expired record, a bound without the yes brand, junk values, another actor or not the DM, the cap, the kill
+  switch before and during the run, the one-signature check, and REMOTE end to end through the executor continuation option
+  (mail plus Drive in parallel, not-run steps, a wrong-step token) and the assembler mode. Two CS-1a test notes tightened: the
+  forged-bind test asserts the replaced `bind` was called; the AST sole-caller test asserts exactly one file matched. The
+  summariser import pin now allows the run service by exactly two names (`mintSummaryConsentToken`, `newSummaryRunToken`) and names it
+  as the one production caller of the maker. Core agent and consent-answer folders, `apps/quoky` agent, config and features tests pass; build and typecheck pass.
+- **Open points for CS-2.** The gate in `ConversationRuntime` (calls `continueSummaryConsent(bound, { actor, direct })` and shows the
+  fixed `declined.text` or the reply; it should treat `declined` as consumed); the one shared store composed in `apps/quoky`;
+  `ownerStepPending` and `conversationKey` supplied by the runtime; `voidAllSummaryConsents` on every saved `stopped`; the history
+  note; the clock for `createdAtMs` (CS-1a and CS-1b use the service clock, `Date.now` in production, while the gate's `atMs` comes from the
+  runtime: both must be the same clock or the 600 s window and `takeSummaryContinuation`'s `atMs >= createdAtMs` check drift);
+  composing `recipientLabel` and the continuation's DM check from the same turn; deciding whether a `declined` continuation for a
+  transient cause (cap, not-active) should re-open the step instead of spending the yes (CS-1b spends it, the safer reading of single use).
+
+**Review round 1 (Codex and Chief Architect, same root).**
+- **Rule: the summary inputs of a continuation come ONLY from the reads recorded in `record.reads`.** Every other covered read of the
+  summarize step (a sibling that listed nothing when asked, an unasked Drive read in a mixed step) gets no readiness probe, no
+  `withDocuments`, no field mask and adds nothing to `state.documents`; it is listing-only. Reference ancestors run only for
+  resolution. If every asked item is gone the step is `consent-nothing-left` and no M2 call is made. (Before: "no recorded ids" meant
+  "no filter", so an unrecorded read's new items reached M2.)
+- **A continuation never asks.** The continuation executor no longer sets `askSummaryConsent`; the token covers exactly the recorded
+  reads. In continuation mode any summarize outcome that adds no line (e.g. `consent-needed`, `not-run`) maps to the fixed
+  `continuationNotSent` line, so a spent yes never produces a blank reply.
+- **Brand before record.** `continueSummaryConsent` checks `isOwnerYes` (and the shape checks) BEFORE it takes the record or
+  admits a run, so a bound without the brand that reuses a real `pending` destroys nothing and spends no admission.
+- **For CS-2 (CA advice).** A decline for a transient cause (cap, not-active, kill switch) still SPENDS the yes: fail closed, no
+  re-open, because a second answer window would break W2/W3 "once". Instead CS-2 must NOT open the pending step when the actor has
+  fewer than one model call left in the rolling hour after the asking run.
+
+**Review round 2 (P3).** The continuation re-run steps now come from `record.reads` (plus reference ancestors), not every covered read, so an unrecorded read makes no listing call and adds nothing to the omitted count; the boundary test pins the run service's `consent-answer/` imports by name (`isOwnerYes` plus its `consent-pending` names); a mixed mail-asked/Drive-unasked test pins no Drive body and no `withDocuments`.

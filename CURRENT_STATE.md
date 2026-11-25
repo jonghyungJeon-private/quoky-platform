@@ -12,6 +12,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 - Catalog change: prompt digests re-pinned, version ids unchanged; the D12 gate is still to run. No gold `expect` changed. Version ids stay (selection-prompt.ts:15: bumped when instruction text changes; r-07 changes catalog data); the D12 gate binds the full prompt digest of the gated head; rollback revs render the live catalog.
   See DECISIONS "r-07 implementation note (ADR-0120 catalog, AM-3)".
 
+### Rule-① confirm slice CS-1b continuation implemented, dormant (2026-11-25, branch `claude/v5-cs1b-summary-consent-continue`)
+
+- `AgentRunService.continueSummaryConsent` re-runs the one asked summarize step after a bound yes (single use, no planner, live kill
+  switch, token from the continuation record, W3 id filter, REMOTE only to the asked recipient). No production caller until CS-2
+  wires the gate. Next: CS-2 (runtime gate, store composition), CS-3 (gold). See DECISIONS "Rule-① confirm slice CS-1b
+  implementation note (2026-11-25)".
+
 ### Rule-① confirm slice CS-1a guard-and-ask implemented, dormant (2026-11-25, branch `claude/v5-cs1a-summary-consent-ask`)
 
 - The REMOTE guard is unconditional: an agent summary reaches a REMOTE model only with a bound consent token (re-checked at

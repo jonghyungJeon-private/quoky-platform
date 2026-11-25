@@ -23,6 +23,20 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   The D12 gate (action, read-regression, r2) must run before deploy. No model call was made.
 - **Gold.** No `expect` changed; no row added (`agent-plan.v1.json` is byte-pinned).
 
+## Unreleased — Rule-① confirm slice CS-1b continuation (2026-11-25; dormant, no production caller until CS-2)
+
+- **Added.** `AgentRunService.continueSummaryConsent(bound, turn)`: total, single use (record taken by `runRef`, a spent-bound
+  `WeakSet`, the fixed expired line), admission as `runActive` minus the planner, the live kill switch, then one executor run with
+  the new `continuation` option (only the asked summarize step and its covered reads run; every other step is `not-run`
+  `continuation`). The consent token is minted from the bound yes with the step and reads of the continuation RECORD, never from
+  caller parameters. W3: after the re-read only the documents of the asked ids are kept, in listing order (nothing replaced or
+  added; zero kept: no M2 call and the fixed "nothing left" note). REMOTE only to the asked recipient (selection and dispatch);
+  LOCAL allowed. The assembler's `mode: 'continuation'` shows only that step's summary, omitted note and REMOTE disclosure.
+  One content-free `agent_run.consent` line (`continued` or `declined`).
+- **Tests.** REMOTE end-to-end executor coverage restored through the `continuation` option; two CS-1a test notes tightened.
+- **Not in this slice.** The runtime gate and store composition (CS-2), the gold harness (CS-3); no prompt, catalog or gold
+  change, no model call. See DECISIONS "Rule-① confirm slice CS-1b implementation note".
+
 ## Unreleased — Rule-① confirm slice CS-1a guard-and-ask (2026-11-25; dormant, `QUOKY_SUMMARY_CONSENT` default off)
 
 - **Changed (guard).** `deriveM2Localities` takes a required consent token instead of the A5-S3 `workSource` flag: an agent

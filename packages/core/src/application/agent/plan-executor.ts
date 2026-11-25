@@ -20,6 +20,7 @@ import {
   type QuarantinedSummarizerRoute,
   type QuarantinedSummaryOutcome,
   type SummaryReadinessInput,
+  type SummaryConsentToken,
   type SummaryReadinessReason,
   type QuarantinedSummary,
   type SummaryRunToken,
@@ -144,7 +145,7 @@ export interface AgentPlanExecutorDeps {
  */
 export type AgentSummarizerDeps = QuarantinedSummarizerRoute;
 
-export type AgentStepNotRunReason = 'bound' | 'stopped' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-unusable' | 'ref-too-many';
+export type AgentStepNotRunReason = 'bound' | 'stopped' | 'source-failed' | 'no-reader' | 'ref-cross-source' | 'ref-field' | 'ref-forward' | 'ref-empty' | 'ref-unusable' | 'ref-too-many' | 'continuation';
 
 export type AgentStepResult =
   | {
@@ -172,8 +173,11 @@ export type AgentStepResult =
       readonly status: 'not-run';
       readonly from: readonly number[];
       readonly schema: string;
-      /** `stopped`: the kill switch or shutdown cut it (review round 2 item 4); absent: a bound. */
-      readonly reason?: 'stopped';
+      /**
+       * `stopped`: the kill switch or shutdown cut it (review round 2 item 4); `continuation`: a rule-① continuation re-runs one
+       * summarize step and this step is not part of it (CS-1b); absent: a bound.
+       */
+      readonly reason?: 'stopped' | 'continuation';
       readonly audits?: readonly QuarantinedCallAudit[];
     }
   | {
@@ -253,6 +257,25 @@ export interface AgentExecuteOptions {
    * M2 call in flight is aborted and not waited for.
    */
   readonly signal?: AbortSignal;
+  /**
+   * Rule ① (CS-1b): re-run exactly ONE asked summarize step after the owner's bound yes, and nothing else of the plan. Built only by
+   * `AgentRunService.continueSummaryConsent` from the continuation record and a token minted from the bound consent:
+   * - `steps`: the step numbers that run (the summarize step, the reads it covers and their reference ancestors); every other
+   *   step is `not-run` with the reason `continuation`;
+   * - `summaryStep`: the one summarize step; `run`: the run token the consent token was minted for (this run's token, so the
+   *   grants and the consent match);
+   * - `consent`: the owner's yes for that step, passed to readiness and to the M2 request only (never anywhere else);
+   * - `reads`: what the owner was asked about, per covered read: after the re-read, a document whose id is not one of that read's
+   *   recorded ids is dropped (W3: an item that left is not replaced, a new item is not added), in listing order.
+   * Absent: an ordinary run.
+   */
+  readonly continuation?: {
+    readonly steps: readonly number[];
+    readonly summaryStep: number;
+    readonly run: SummaryRunToken;
+    readonly consent: SummaryConsentToken;
+    readonly reads: readonly { readonly step: number; readonly entryId: NlWave1EntryId; readonly itemIds: readonly string[] }[];
+  };
 }
 
 /** What one `execute` call keeps in memory: never in the result. */
@@ -283,6 +306,8 @@ interface RunState {
   readonly askedIds: Map<string, readonly string[]>;
   /** Rule ① (CS-1a): the one summarize step of this run that asks (W2: one pending step at a time). */
   asking?: number;
+  /** Rule ① (CS-1b): the continuation this run is (one summarize step after the owner's yes), or absent. */
+  readonly continuation?: AgentExecuteOptions['continuation'];
 }
 
 type Verdict = Awaited<ReturnType<typeof summaryReadinessDetailed>>;
@@ -315,7 +340,8 @@ export class AgentPlanExecutor {
       readEntries: new Map(),
       verdicts: new Map(),
       askedIds: new Map(),
-      run: newSummaryRunToken(),
+      run: options.continuation?.run ?? newSummaryRunToken(),
+      ...(options.continuation !== undefined ? { continuation: options.continuation } : {}),
       ...(options.grants !== undefined ? { owner: { basis: options.grants, plan } } : {}),
       ...(options.signal !== undefined ? { shutdown: options.signal } : {}),
     };
@@ -336,6 +362,11 @@ export class AgentPlanExecutor {
     let stopped = false;
     for (const [index, step] of plan.steps.entries()) {
       const number = index + 1;
+      // Rule ① (CS-1b): a continuation runs only its own steps; the rest of the plan is not re-run (no switch probe either).
+      if (state.continuation !== undefined && !state.continuation.steps.includes(number)) {
+        results.push(notRun(step, number, 'continuation'));
+        continue;
+      }
       // Shutdown, then the kill switch re-read before each step: a stop blocks the next step at once (D7; A6-D3 amendment). The
       // switch read cannot outlive the wall (review round 1 item 4): a read the wall wins is a wall breach, and the step and
       // every later one are `not-run` (`bound`).
@@ -434,6 +465,10 @@ export class AgentPlanExecutor {
     const asking: string[] = [];
     if (route !== undefined) {
       for (const cover of state.coverage.get(number) ?? []) {
+        // Rule ① (CS-1b, review round 1): in a continuation the summary inputs are ONLY the reads recorded with the question. Any
+        // other covered read (a sibling that listed nothing when asked, an unasked Drive read) is listing-only: no readiness probe,
+        // no `withDocuments`, no mask, nothing added to `state.documents`.
+        if (state.continuation !== undefined && !(cover.step === state.continuation.summaryStep && state.continuation.reads.some((entry) => entry.step === number))) continue;
         // Rule ① (CS-1a): the readiness of EVERY covered read of the step is decided before any of them fetches a body. If any
         // one of them would ask, the whole step asks, so no read of it requests `withDocuments` (a LOCAL-ready read that ran
         // first would otherwise fetch bodies the question then drops). The verdicts are cached per (step, read): no extra probe.
@@ -441,6 +476,8 @@ export class AgentPlanExecutor {
         let own: Verdict | 'wall' | undefined;
         for (const from of [...new Set([...cover.from, number])].sort((x, y) => x - y)) {
           if (state.readEntries.get(from) === undefined) continue;
+          // A continuation judges only the recorded reads (review round 1): an unrecorded sibling must not make the step ask.
+          if (state.continuation !== undefined && !state.continuation.reads.some((entry) => entry.step === from)) continue;
           const verdict = await this.readinessOf(state, budget, route, cover, from);
           if (verdict === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
           if (verdict.reason === 'consent-needed' && verdict.recipient !== undefined) stepAsks = true;
@@ -475,7 +512,9 @@ export class AgentPlanExecutor {
     }
     const projection = projectStructure(entryId, response.items);
     projections.set(number, projection);
-    state.listed.set(number, projection.itemCount);
+    // Rule ① (CS-1b): what the owner was asked about is the recorded ids of this read, not what the listing holds now.
+    const recorded = recordedIds(state, number);
+    state.listed.set(number, recorded === undefined ? projection.itemCount : recorded.size);
     if (asking.length > 0) {
       // The ids the question counts: positions 1..asked of the listing; an unusable slot is skipped and never shifts the others.
       const asked = state.requested.get(number) ?? AGENT_M2_MAX_ITEMS;
@@ -486,10 +525,10 @@ export class AgentPlanExecutor {
       // The listing's own items, through the closed A5.2 field table; whatever `documents` a port returned is ignored.
       const projected = projectWorkSummaryDocuments(entryId, response.items);
       const checked = validateSourceDocuments(projected.documents, projection.slots);
-      state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped + projected.withheld });
+      state.documents.set(number, { entryId, documents: keepRecorded(checked.documents, recorded), dropped: checked.dropped + projected.withheld });
     } else if (withDocuments && response.documents !== undefined) {
       const checked = validateSourceDocuments(response.documents, projection.slots);
-      state.documents.set(number, { entryId, documents: checked.documents, dropped: checked.dropped });
+      state.documents.set(number, { entryId, documents: keepRecorded(checked.documents, recorded), dropped: checked.dropped });
     }
     return { step: number, kind: 'read', entryId, status: 'ok', projection, hasMore: response.hasMore === true, truncated: response.truncated === true, refValues };
   }
@@ -518,6 +557,7 @@ export class AgentPlanExecutor {
         run: state.run,
         askedItems: askedAcross(state, cover.from),
         route,
+        ...(state.continuation !== undefined && cover.step === state.continuation.summaryStep ? { consent: state.continuation.consent } : {}),
       },
       budget,
     );
@@ -583,6 +623,9 @@ export class AgentPlanExecutor {
       return { ...base, status: 'listing-only', reason: denied ?? 'no-documents' };
     }
 
+    // Rule ① (CS-1b, W3): after the yes, a step whose asked items are all gone, changed or withheld sends nothing.
+    if (state.continuation !== undefined && sources.every((source) => source.documents.length === 0)) return { ...base, status: 'listing-only', reason: 'consent-nothing-left' };
+
     // Omitted is everything listed over the covered reads that the summary does not carry: a missing document, a denied read, a
     // dropped one, one cut by the cap or the fit, or left out by the model.
     const listedItems = step.from.reduce((sum, from) => sum + (state.listed.get(from) ?? 0), 0);
@@ -611,6 +654,7 @@ export class AgentPlanExecutor {
         signal: controller.signal,
         run: state.run,
         askedItems: askedAcross(state, step.from),
+        ...(state.continuation !== undefined ? { consent: state.continuation.consent } : {}),
         remainingInputTokens: budget.remainingInputTokens(),
         remainingCalls: budget.remainingM2Calls(),
         reserve: (tokens) => budget.reserveModelCall('m2') && budget.reserveInputTokens(tokens),
@@ -748,7 +792,7 @@ function resolveReference(
 }
 
 function notRun(step: ValidatedAgentStep, number: number, reason: AgentStepNotRunReason): AgentStepResult {
-  if (step.kind === 'summarize') return { step: number, kind: 'summarize', status: 'not-run', from: step.from, schema: step.schema, ...(reason === 'stopped' ? { reason } : {}) };
+  if (step.kind === 'summarize') return { step: number, kind: 'summarize', status: 'not-run', from: step.from, schema: step.schema, ...(reason === 'stopped' || reason === 'continuation' ? { reason } : {}) };
   return { step: number, kind: 'read', entryId: step.entry.id as NlWave1EntryId, status: 'not-run', reason };
 }
 
@@ -796,6 +840,17 @@ async function stillRunningWithinWall(probe: () => Promise<boolean>, budget: Age
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/** Rule ① (CS-1b): the ids the owner was asked about for this read (a continuation only), or `undefined` (an ordinary run, or an uncovered read). */
+function recordedIds(state: RunState, read: number): ReadonlySet<string> | undefined {
+  const ids = state.continuation?.reads.filter((entry) => entry.step === read).flatMap((entry) => entry.itemIds);
+  return ids === undefined || ids.length === 0 ? undefined : new Set(ids);
+}
+
+/** W3: only the documents of the recorded ids, in listing order (removed items are not replaced, new ones are not added). `recorded` absent: all. */
+function keepRecorded(documents: readonly AgentSourceDocument[], recorded: ReadonlySet<string> | undefined): readonly AgentSourceDocument[] {
+  return recorded === undefined ? documents : documents.filter((document) => recorded.has(document.id)).sort((a, b) => a.position - b.position);
 }
 
 /** Abort `controller` when `shutdown` aborts (at once when it already has); returns the unlink. */
