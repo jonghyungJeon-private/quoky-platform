@@ -158,7 +158,7 @@ export function createConsentAnswerClassifier(deps: ConsentClassifierDeps): Clas
     const prompt = buildConsentClassifierPrompt(request);
     if (containsCredentialMaterial(request.reply) || containsCredentialMaterial(prompt)) return 'unclear';
     if (deps.chatProviderId === undefined) return 'unclear';
-    // No valid source left after filtering: the question would be malformed, so nothing is sent.
+    // An empty question (no valid source or recipient) or one the prompt sanitiser would change is malformed: nothing is sent.
     if (request.question === '' || promptText(request.question) !== request.question) return 'unclear';
     let timer: ReturnType<typeof setTimeout> | undefined;
     let deadlineAtMs: number;

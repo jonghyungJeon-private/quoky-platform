@@ -39027,7 +39027,7 @@ live caller. No model call, eval, gold, catalog, selection prompt or flag defaul
   settles the label is returned only if `now() < deadlineAtMs` (exactly at the deadline is late), else `unclear`; a throwing or
   non-finite clock is `unclear`. The timer/abort only stops the waiting (a blocked event loop can resolve the call before the timer
   fires, reproduced at 10,050 ms). (2) Inputs are validated, not the rendered string: a question is rendered only if at least one
-  source is in the closed set (rule ①) and the recipient display name has a letter or digit after trim (`/[\p{L}\p{N}]/u`, a shape
+  source is in the closed set (rule ①) and the recipient display name has a letter or digit after sanitising (see the identity invariant below) (`/[\p{L}\p{N}]/u`, a shape
   check, not a word list; also for A2 topic questions); otherwise `''` and no call (`unclear`).
 - **Identity invariant (Review 3, replaces further input checks).** The classifier sees exactly the question Quoky rendered:
   the prompt's sanitisation (`promptText`: delimiter tags blanked to a fixed point, then trim) must be the identity on the rendered
