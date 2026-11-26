@@ -40235,3 +40235,33 @@ open-card read, each source read, `quarantinedDraft`, the proposal port) and imm
 proposed. It replaces the ad-hoc `stillRunning` on A7 paths; the non-A7 plan run and the consent continuation are unchanged. Tests (`a7-pick-flow.test.ts`): one stop-then-resume
 per boundary (planner; the running check before the GET; the source read before the draft, ordinary and pick; the ordinary cross-write open-card read), each asserting `stopped`
 and exact zero counts of later GETs, reads, drafts and proposals; the budget test now asserts decline reason `bound` with exactly one destination check and zero source reads.
+
+### A7-S4b review round 5 (2026-11-26; CA round-4 delta, Codex same race family; corrects inaccurate round-4 claims)
+
+Append-only under the round-4 note. Still DORMANT. Orchestrator ruling: the stop-then-resume race finding reached its 2-round fix cap after round 4; round 5 fixes the CA
+regression and the test gaps; any further finding in this family is recorded as residual, not chased.
+
+Corrections to round 4 (the claims were inaccurate):
+
+- "Called immediately after every await" was wrong. The checked boundaries are exactly: in `runA7ProposeStep` before the open-card read, after it, before the source read
+  (inside `readDraftSource`: at entry, then again after the provider-readiness awaits and right before the port read), after the source read (round 5: BEFORE any outcome of
+  it, the REMOTE consent question included), after the draft, and before the proposal port. Round 5 removed the pre-draft check as redundant: nothing awaits between the
+  post-read check and the draft dispatch. In the service: at turn entry (capture), after the planner, and before the A7 cross-write branch; in the pick path before the GET and
+  after the source steps.
+- "The non-A7 plan run is unchanged" was wrong: the round-4 post-planner check declined EVERY plan kind when the A7 facts and the proposal dep were set (a read plan, a one-step
+  plan). Round 5: a false `alive` there skips only the A7 binding (no receipt bound, no card state touched); the turn itself is declined only by the A7 cross-write branch (and
+  by any non-A7 gate it already had). The epoch guard is now captured only when `turn.a7` and the proposal dep are present, so a turn without A7 facts makes no extra actor read
+  (as before round 4). An A7 cross-write whose capture FAILED (a boot id is wired but the guard is missing) declines `stopped`.
+- "Tests discriminate" was wrong for two tests: the open-card stop-then-resume test passed without the fix (it now counts the source-read port hook and asserts zero), and the
+  draft-stage probe threshold stopped after `openCardOf`, not after the draft (it now counts probes, stops right after the draft and asserts exactly one draft, zero proposals).
+  New tests: REMOTE consent path stop-then-resume during the source read (`stopped`, no ask), a stop during the readiness await (no port read), a read plan surviving a
+  stop-then-resume during the planner (runs as before), and no extra actor read for a turn without A7 facts.
+
+Residuals, recorded and not chased (A7-S5 wiring gate rows):
+
+- `quarantinedDraft` awaits provider selection internally before model dispatch. Its only pre-dispatch hooks (`reserve`, `onCallStart`, the dispatch locality re-check) are
+  synchronous by contract ("one synchronous stretch"), so an async `alive()` cannot be chained without changing the sealed drafter; it is not changed. Accepted residual: at most
+  ONE draft call after a stop-then-resume inside provider selection; the post-draft check then declines `stopped`, no card, no write; the A7 card is also closed by stop via
+  `isActionSwitchGoverned`.
+- `epochRunning` with a missing guard is running-only (no boot id wired: the dormant default, and the `bootId: null` test relies on it). A7-S5 gate: fail closed on a missing guard
+  once the runtime is wired.

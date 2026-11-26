@@ -610,7 +610,7 @@ export class AgentRunService {
     const cut = (ended: 'wall' | 'shutdown' | 'failed'): AgentActiveOutcome =>
       ended === 'wall' ? declined('bound', { breach: budget.breach ?? 'wall-time' }) : declined(ended);
     // Review round 4: the A7 epoch is captured ONCE, here, before ANY await of the turn (the read is started synchronously), and never again.
-    const a7Capture = this.deps.writeProposal !== undefined ? this.a7Guard(turn.actor.id) : undefined;
+    const a7Capture = turn.a7 !== undefined && this.deps.writeProposal !== undefined ? this.a7Guard(turn.actor.id) : undefined;
     // The kill switch on the live actor (never the turn's snapshot); unreadable = declined (fail closed).
     const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
     if (running.kind !== 'ok') return cut(running.kind);
@@ -688,10 +688,11 @@ export class AgentRunService {
     const offered = new Map(turn.entries.filter((entry) => entry.risk === 'READ').map((entry) => [entry.id, entry] as const));
     // A7-S4b (dormant): the receipt bound to this owner turn, only with the proposal dep and the A7 facts; otherwise the static context, as before.
     // Review round 4: the A7 guard was captured at turn entry (`admitted`), before the planner; it is never re-read here. A stop then a resume
-    // during the planner moved the switch `at`, so the turn is void before any receipt bound or card state is touched.
+    // during the planner moved the switch `at`. Review round 5: that voids only the A7 binding (no receipt, no card state touched), never the
+    // turn itself: a read plan or a one-step plan still runs as before, and an A7 cross-write is declined below.
     const alive = (): Promise<boolean> => this.epochRunning(turn.actor.id, guard);
-    if (turn.a7 !== undefined && this.deps.writeProposal !== undefined && !(await alive())) return declined('stopped', callFields);
-    const a7Receipt = await this.boundA7Receipt(turn, turn.a7 !== undefined ? guard : undefined);
+    const bindA7 = turn.a7 !== undefined && this.deps.writeProposal !== undefined ? await alive() : true;
+    const a7Receipt = bindA7 ? await this.boundA7Receipt(turn, turn.a7 !== undefined ? guard : undefined) : undefined;
     if (a7Receipt?.fromCard === true) carry.voided = await this.stateWithoutCard(turn, turn.a7 !== undefined ? guard : undefined);
     const crossWriteContext =
       this.deps.crossWrite !== undefined && a7Receipt !== undefined
@@ -717,7 +718,11 @@ export class AgentRunService {
       const proposal = this.deps.writeProposal;
       if (proposal === undefined || !proposal.targets.includes('jira-comment') || validated.target !== 'jira.comment.propose') return declined('cross-write-off', callFields);
       // Review round 4: the planner and the receipt binding are awaited above; the epoch is checked once more before the first A7 effect.
-      if (!(await alive())) return declined('stopped', callFields);
+      // Review round 5: an A7 turn whose epoch capture FAILED (a boot id is wired but the guard is missing: the actor read threw or the actor
+      // is gone) fails closed here. No boot id at all (the composition root did not inject one) keeps the running-only check (A7-S5 gate row).
+      const bootId = proposal.bootId;
+      if (turn.a7 !== undefined && guard === undefined && typeof bootId === 'string' && bootId.length > 0) return declined('stopped', callFields);
+      if (!bindA7 || !(await alive())) return declined('stopped', callFields);
       return await this.runCrossWrite(turn, validated, prepared, budget, readers, selector, proposal, callFields, latency, a7Receipt, guard);
     }
     // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the

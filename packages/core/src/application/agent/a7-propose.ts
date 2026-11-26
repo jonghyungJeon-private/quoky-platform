@@ -252,6 +252,8 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
           ? { recorded: receipt.receipt.itemIds }
           : {}),
     });
+    // Review round 5: a stop then a resume during the source read voids the step before ANY outcome of it (the consent question included).
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     if (sourced.kind === 'consent-needed') {
       const question = renderDraftConsentQuestion({ language, recipient: sourced.recipient, source: sourced.source, count: sourced.itemIds.length, destination: key });
       if (question === '') return refuse('no-model', A7_NOT_MADE_LINE[language], { consent: 'unavailable' });
@@ -279,8 +281,7 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       source = { ...source, documents: source.documents.filter((document) => kept.has(document.id)) };
       if (source.documents.length === 0) return refuse('no-documents', A7_NOT_MADE_LINE[language], { consent, dropped: receiptDrift });
     }
-    // Review round 4: right before the draft (the model call).
-    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
+    // Review round 5: nothing awaits between the post-read check above and the draft dispatch, so no further check sits here.
     const outcome = await quarantinedDraft({
       source,
       participants: sourced.participants,

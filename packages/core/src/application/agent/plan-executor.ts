@@ -352,6 +352,8 @@ interface RunState {
   readonly askedIds: Map<string, readonly string[]>;
   /** Rule ① (CS-1a): the one summarize step of this run that asks (W2: one pending step at a time). */
   asking?: number;
+  /** A7-S4b review round 5: set only by `readDraftSource`: probed after the readiness awaits, right before the port read (a stop/resume voids it). */
+  readonly aliveBeforeRead?: () => Promise<boolean>;
   /** Rule ① (CS-1b): the continuation this run is (one summarize step after the owner's yes), or absent. */
   readonly continuation?: AgentExecuteOptions['continuation'];
   /**
@@ -515,6 +517,7 @@ export class AgentPlanExecutor {
         ...(options.grants !== undefined ? { owner: options.grants } : {}),
         draft: { ...(options.consent !== undefined ? { consent: options.consent } : {}), ...(options.recorded !== undefined ? { recorded: options.recorded } : {}) },
         ...(options.signal !== undefined ? { shutdown: options.signal } : {}),
+        ...(options.stillRunning !== undefined ? { aliveBeforeRead: options.stillRunning } : {}),
       };
       const result = await this.runRead(step, 1, budget, [], new Map(), state);
       if (result.kind !== 'read') return { kind: 'not-run', reason: 'bound' };
@@ -652,6 +655,11 @@ export class AgentPlanExecutor {
           else if (mode === 'listing-mask') fieldMask = true;
         } else if (refusal !== undefined) state.denials.set(`${cover.step}:${number}`, refusal === 'consent-needed' ? 'no-model' : refusal);
       }
+    }
+    if (state.aliveBeforeRead !== undefined) {
+      const probe = await stillRunningWithinWall(state.aliveBeforeRead, budget);
+      if (probe === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'bound' };
+      if (probe === 'stopped' || state.shutdown?.aborted === true) return { step: number, kind: 'read', entryId, status: 'not-run', reason: 'stopped' };
     }
     const response = await this.callPort(reader, { entryId, args: step.args, ...(keys !== undefined ? { keys } : {}), ...(withDocuments ? { withDocuments: true as const } : {}), ...(fieldMask ? { agentSummaryFieldMask: true as const } : {}) }, budget, state.shutdown);
     if (response === 'wall') return { step: number, kind: 'read', entryId, status: 'not-run', reason: state.shutdown?.aborted === true ? 'stopped' : 'bound' };

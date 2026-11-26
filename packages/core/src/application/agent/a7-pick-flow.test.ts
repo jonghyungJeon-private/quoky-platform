@@ -836,8 +836,12 @@ describe('review round 4: the epoch is captured once at turn entry and checked a
 
   it('ordinary: stop then resume during the open-card read (a cross-write effect) refuses stopped with no read, draft or proposal', async () => {
     const h = harness({ script: [FORM_A_NAMED_PLAN] });
+    let sourceReached = 0;
     h.state.hooks.openCard = () => stopThenResume(h);
+    h.state.hooks.sourceRead = () => void (sourceReached += 1);
     expect(await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'stopped' } });
+    // Discriminating: the source read port was never reached (the hook fires inside the port), not merely no draft.
+    expect(sourceReached).toBe(0);
     nothingAfter(h, 0);
   });
 
@@ -846,6 +850,33 @@ describe('review round 4: the epoch is captured once at turn entry and checked a
     h.state.hooks.sourceRead = () => stopThenResume(h);
     expect(await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'stopped' } });
     nothingAfter(h, 1);
+  });
+
+  it('round 5: a read plan is NOT declined by a stop then resume during the planner (only the A7 binding is skipped); it runs as before', async () => {
+    const READ_PLAN = JSON.stringify({ steps: [{ entryId: 'slack.search', args: { keyword: '릴리즈' } }], ambiguity: 'CLEAR' });
+    const READ_TEXT = '슬랙에서 릴리즈 검색해줘';
+    const control = harness({ script: [READ_PLAN] });
+    const baseline = await control.svc.runActive(control.turn(READ_TEXT, facts('m1')), async () => CHAT);
+    const h = harness({ script: [READ_PLAN] });
+    h.state.hooks.planner = () => stopThenResume(h);
+    const outcome = await h.svc.runActive(h.turn(READ_TEXT, facts('m1')), async () => CHAT);
+    expect(baseline).not.toMatchObject({ kind: 'declined' });
+    expect(outcome.kind).toBe(baseline.kind);
+    expect(outcome).not.toMatchObject({ kind: 'declined', reason: 'stopped' });
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(control.reads.filter((read) => read.entry === 'slack.search').length);
+    expect(h.drafter.requests).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+  });
+
+  it('round 5: a turn without A7 facts reads the actor no extra time for the epoch guard', async () => {
+    const a = harness({ script: [FORM_A_NAMED_PLAN] });
+    const b = harness({ script: [FORM_A_NAMED_PLAN] });
+    const noFacts = b.turn(FORM_A_NAMED_TEXT, facts('m1')) as { a7?: unknown };
+    const plain = { ...noFacts };
+    delete plain.a7;
+    await a.svc.runActive(a.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT);
+    await b.svc.runActive(plain as never, async () => CHAT);
+    expect(b.state.actorGets).toBeLessThan(a.state.actorGets);
   });
 
   it('pick: stop then resume during the running-only check before the destination GET declines stopped with zero GETs', async () => {

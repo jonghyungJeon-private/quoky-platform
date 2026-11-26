@@ -187,9 +187,38 @@ describe('A7-S4a propose step, form a, LOCAL drafter', () => {
 
     const during = parts();
     let probes = 0;
-    const out = await run(during, localRoute(local), { alive: async () => (probes += 1) < 2 });
+    // Probes of a full LOCAL run: open-card (2), before the read (1), the read's own (2: entry and after readiness), after the read (1), then
+    // after the draft (1): the threshold stops exactly after the draft, so one draft was made and no proposal.
+    const out = await run(during, localRoute(local), { alive: async () => (probes += 1) < 7 });
     expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(probes).toBe(7);
+    expect(local.requests).toHaveLength(1);
     expect(during.requests).toHaveLength(0);
+  });
+
+  it('review round 5: stop then resume during the source read refuses stopped before the REMOTE consent question (no ask)', async () => {
+    const p = parts();
+    const remote = spy('remote-a', 'REMOTE');
+    let probes = 0;
+    // Probes 1-5 (open-card x2, before the read, the read's two) run; the sixth (right after the read) is the one that sees the epoch gone.
+    const out = await run(p, localRoute(remote, { askSummaryConsent: true, recipientLabel: () => 'Remote Co' }), { alive: async () => (probes += 1) < 6 });
+    expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(out.kind).not.toBe('ask');
+    expect(probes).toBe(6);
+    expect(remote.requests).toHaveLength(0);
+    expect(p.requests).toHaveLength(0);
+  });
+
+  it('review round 5: a stop during the provider readiness await refuses stopped before the port read', async () => {
+    const p = parts();
+    const local = spy('local-a', 'LOCAL');
+    let probes = 0;
+    // The fifth probe is the one right after the readiness await, before the port read.
+    const out = await run(p, localRoute(local), { alive: async () => (probes += 1) < 5 });
+    expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(p.reads).toHaveLength(0);
+    expect(local.requests).toHaveLength(0);
+    expect(p.requests).toHaveLength(0);
   });
 
   it('a refused draft (schema, credential, participants, link) makes no card; the owner gets the fixed not-made line', async () => {
