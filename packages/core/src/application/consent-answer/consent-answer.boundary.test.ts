@@ -111,7 +111,7 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     expect(named('application/conversation-runtime/types.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentTurnGate:type']);
   });
 
-  it('the Core package index exports nothing of it; the application index exports exactly the store, the gate (and the gate types) and the A8 item consent, by name', () => {
+  it('the Core package index exports nothing of it; the application index exports exactly the store, the gate (and the gate types), the A8 item consent, the classifier adapter and (A6-S4) the pure prompt builder and output parser, the prompt version and the bound, by name', () => {
     expect(readFileSync(join(CORE_SRC, 'index.ts'), 'utf8')).not.toMatch(/consent-answer|consent-pending/u);
     const file = join(CORE_SRC, 'application/index.ts');
     const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
@@ -124,8 +124,12 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
       if (clause !== undefined && ts.isNamedExports(clause)) for (const element of clause.elements) exported.push(`${node.moduleSpecifier.text}#${element.propertyName?.text ?? element.name.text}`);
     }
     expect(exported.sort()).toEqual([
+      './consent-answer/consent-classifier#CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION',
+      './consent-answer/consent-classifier#CONSENT_CLASSIFIER_TIMEOUT_MS',
       './consent-answer/consent-classifier#ConsentClassifierDeps',
+      './consent-answer/consent-classifier#buildConsentClassifierPrompt',
       './consent-answer/consent-classifier#createConsentAnswerClassifier',
+      './consent-answer/consent-classifier#parseConsentClassifierOutput',
       './consent-answer/consent-pending#ConsentPendingStore',
       './consent-answer/consent-turn-gate#ConsentContinuation',
       './consent-answer/consent-turn-gate#ConsentGateOutcome',
