@@ -6,16 +6,15 @@
  *
  * Each classifier-stage case makes ONE call through the REAL adapter (`createConsentAnswerClassifier`: the `consent-answer.v1`
  * prompt, the strict JSON parse, the 10 s bound, fail closed to `unclear`) with exactly `{ question, reply }`. The structural,
- * fast-path and control-forfeit cases never reach the classifier; their stage is pinned offline by `consent-answer.corpus.test.ts`
- * and they make no call here. Every request the provider receives is checked by `classifier-sees-content` (A6.10). No LLM judge.
+ * fast-path, control-forfeit and handler-claimed cases never reach the classifier; their stage is pinned offline on the real
+ * runtime by `consent-answer.corpus.test.ts` and they make no call here. Every request the provider receives is checked by `classifier-sees-content` (A6.10). No LLM judge.
  * Pure except for the injected provider: the plan, the digest, the content check and the scoring are deterministic and tested
  * offline; only a Strict run spawns anything, and only after the digest check and the corpus approval check in the CLI.
  *
  * The gate (R6; every run, 3 runs, per arm): 0 wrong captures (gold neither `yes` nor `yes-and-more` labelled `yes` or
  * `yes-and-more`), recall >= 95 % on real yes (either binding label), recall >= 95 % on real no, 0 `classifier-sees-content`
- * firings, 0 harness errors and p95 latency within the 10 s bound. The `yes-and-more` recall bar (95 %) is R6's recommendation
- * that the owner has not confirmed: it is computed and printed, never gating, until the owner decides (then this constant changes
- * and every plan digest with it).
+ * firings, 0 harness errors, p95 latency within the 10 s bound (a timed-out call counts as over the bound), and recall >= 95 % on
+ * real `yes-and-more` (gold `yes-and-more` labelled `yes-and-more`; owner r-03 (1), 2026-11-24: measured separately and gating).
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -41,11 +40,11 @@ export const CONSENT_LOCAL_DIGEST12 = '500a1f067a9f';
 
 export const CONSENT_ANSWER_LABEL_SET = ['yes', 'yes-and-more', 'no', 'other', 'unclear'] as const;
 export type ConsentEvalLabel = (typeof CONSENT_ANSWER_LABEL_SET)[number];
-export const CONSENT_EVAL_STAGES = ['classifier', 'structural-fail', 'fast-path', 'control-forfeit'] as const;
+export const CONSENT_EVAL_STAGES = ['classifier', 'structural-fail', 'fast-path', 'control-forfeit', 'handler-claimed'] as const;
 export type ConsentEvalStage = (typeof CONSENT_EVAL_STAGES)[number];
 export type ConsentEvalArm = 'remote' | 'local';
 
-/** R6, set before any run. `yesAndMoreRecall` is printed, not gating (R6: recommended, owner to confirm). */
+/** R6 with the owner's r-03 (2026-11-24), set before any run. `yesAndMoreRecall` gates (r-03 (1)). */
 export const NL_CONSENT_ANSWER_EVAL_GATE = Object.freeze({
   runs: 3,
   wrongCaptures: 0,
@@ -54,7 +53,7 @@ export const NL_CONSENT_ANSWER_EVAL_GATE = Object.freeze({
   classifierSeesContent: 0,
   harnessErrors: 0,
   p95LatencyMs: CONSENT_CLASSIFIER_TIMEOUT_MS,
-  yesAndMoreRecall: Object.freeze({ bar: 0.95, gating: false, status: 'R6 recommendation, owner to confirm' }),
+  yesAndMoreRecall: Object.freeze({ bar: 0.95, gating: true, status: 'owner r-03 (1), 2026-11-24' }),
 });
 
 export interface ConsentEvalCase {
@@ -144,7 +143,7 @@ export interface NlConsentAnswerPlan {
   readonly callTimeoutMs: number;
   /** The classifier-stage cases (one call each per run). */
   readonly caseIds: readonly string[];
-  /** Cases pinned offline (structural-fail, fast-path, control-forfeit): no call. */
+  /** Cases pinned offline (structural-fail, fast-path, control-forfeit, handler-claimed): no call. */
   readonly deterministicCases: number;
   readonly calls: number;
   readonly gate: typeof NL_CONSENT_ANSWER_EVAL_GATE;
@@ -237,6 +236,13 @@ export interface ConsentEvalRecord {
   readonly raw?: string;
 }
 
+/**
+ * The latency a timed-out call records: over any bound (A6-S4 review round 1, CA P2). A call cut at the 10 s deadline measures about
+ * 10 000 ms, so the p95 check would pass or fail on timer jitter; recorded as `Infinity` it is always over the p95 bound (in the JSON
+ * report it is written as `null`).
+ */
+export const TIMED_OUT_LATENCY_MS = Number.POSITIVE_INFINITY;
+
 const CLEAN_UNCLEAR = /^[ \t\r\n]*\{[ \t\r\n]*"label"[ \t\r\n]*:[ \t\r\n]*"unclear"[ \t\r\n]*\}[ \t\r\n]*$/u;
 
 /** One case through the real adapter, with the provider wrapped to capture and check the request. */
@@ -249,8 +255,14 @@ async function classifyOne(provider: AiProvider, golden: ConsentEvalCase, plan: 
     ...(provider.family !== undefined ? { family: provider.family } : {}),
     ...(provider.executionLocality !== undefined ? { executionLocality: provider.executionLocality } : {}),
     capabilities: provider.capabilities,
-    // The remote arm is the stronger tier (the Claude CLI declares it); the local arm measures the local model as the classifier.
-    supportsStrongerIntentSelection: true,
+    // Remote: exactly what the real provider declares (production refuses a provider without the stronger tier: no call, a harness
+    // error here). Local: the local model is measured AS the classifier, so the tier is declared for it (a6-12: production would need an
+    // adapter or routing change and a new gate run before using it).
+    ...(plan.arm === 'local'
+      ? { supportsStrongerIntentSelection: true }
+      : provider.supportsStrongerIntentSelection !== undefined
+        ? { supportsStrongerIntentSelection: provider.supportsStrongerIntentSelection }
+        : {}),
     isAvailable: () => provider.isAvailable(),
     execute: async (sent) => {
       request = sent;
@@ -271,13 +283,13 @@ async function classifyOne(provider: AiProvider, golden: ConsentEvalCase, plan: 
     { question: golden.question, reply: golden.reply },
     { chat: { id: capturing.family ?? capturing.id, locality: executionLocalityOf(capturing) }, charge: () => true },
   );
-  const latencyMs = clock() - started;
+  const measuredMs = clock() - started;
   const contentFired = request === undefined ? [] : classifierSeesContent(request, golden);
-  const base = { run, id: golden.id, gold: golden.gold, label: label as ConsentEvalLabel, latencyMs, contentFired };
+  const base = { run, id: golden.id, gold: golden.gold, label: label as ConsentEvalLabel, latencyMs: measuredMs, contentFired };
   if (request === undefined) return { ...base, outcome: 'no-call' };
-  if (failure !== undefined) return { ...base, outcome: failure.kind, ...(failure.kind === 'error' ? { error: failure.name } : {}) };
+  if (failure !== undefined) return { ...base, outcome: failure.kind, ...(failure.kind === 'error' ? { error: failure.name } : { latencyMs: TIMED_OUT_LATENCY_MS }) };
   // The adapter gave up (its 10 s bound) before the provider settled, or the answer came at or after the deadline.
-  if (raw === undefined || (label === 'unclear' && parseConsentClassifierOutput(raw) !== 'unclear')) return { ...base, outcome: 'timeout' };
+  if (raw === undefined || (label === 'unclear' && parseConsentClassifierOutput(raw) !== 'unclear')) return { ...base, outcome: 'timeout', latencyMs: TIMED_OUT_LATENCY_MS };
   if (label === 'unclear' && !CLEAN_UNCLEAR.test(raw)) return { ...base, outcome: 'malformed', raw: raw.slice(0, 200) };
   return { ...base, outcome: 'answered' };
 }
@@ -317,7 +329,7 @@ export interface ConsentEvalSummary {
   /** Gold `yes` labelled `yes` or `yes-and-more` (both bind). */
   readonly yesRecall: ConsentEvalRate;
   readonly noRecall: ConsentEvalRate;
-  /** Gold `yes-and-more` labelled `yes-and-more` (R6 recommended bar, not gating). */
+  /** Gold `yes-and-more` labelled `yes-and-more` (gating, owner r-03 (1)). */
   readonly yesAndMoreRecall: ConsentEvalRate;
   /** Gold `yes-and-more` labelled `yes`: the extra request is silently dropped (reported). */
   readonly yesAndMoreReadAsYes: number;
@@ -355,6 +367,7 @@ export function summarizeConsentAnswer(records: readonly ConsentEvalRecord[]): C
   const wrong = records.filter((record) => !binds(record.gold) && binds(record.label));
   const yesRecall = rate(gold('yes'), (record) => binds(record.label));
   const noRecall = rate(gold('no'), (record) => record.label === 'no');
+  const yesAndMoreRecall = rate(gold('yes-and-more'), (record) => record.label === 'yes-and-more');
   const latencies = records.map((record) => record.latencyMs);
   const p95 = percentile(latencies, 0.95);
   const contentFirings = records.filter((record) => record.contentFired.length > 0).length;
@@ -366,7 +379,7 @@ export function summarizeConsentAnswer(records: readonly ConsentEvalRecord[]): C
     wrongCaptureIds: [...new Set(wrong.map((record) => record.id))].sort(),
     yesRecall,
     noRecall,
-    yesAndMoreRecall: rate(gold('yes-and-more'), (record) => record.label === 'yes-and-more'),
+    yesAndMoreRecall,
     yesAndMoreReadAsYes: gold('yes-and-more').filter((record) => record.label === 'yes').length,
     yesReadAsYesAndMore: gold('yes').filter((record) => record.label === 'yes-and-more').length,
     yesReadAsUnclear: gold('yes').filter((record) => record.label === 'unclear').length,
@@ -381,6 +394,7 @@ export function summarizeConsentAnswer(records: readonly ConsentEvalRecord[]): C
       wrong.length <= gate.wrongCaptures &&
       yesRecall.rate >= gate.yesRecall &&
       noRecall.rate >= gate.noRecall &&
+      (!gate.yesAndMoreRecall.gating || yesAndMoreRecall.rate >= gate.yesAndMoreRecall.bar) &&
       contentFirings <= gate.classifierSeesContent &&
       harnessErrors <= gate.harnessErrors &&
       p95 <= gate.p95LatencyMs,
@@ -408,7 +422,7 @@ export function formatConsentAnswerSummary(summary: ConsentEvalSummary): string 
     `wrong captures ${summary.wrongCaptures}${summary.wrongCaptureIds.length > 0 ? ` [${summary.wrongCaptureIds.join(', ')}]` : ''}`,
     `yes recall ${pct(summary.yesRecall)}`,
     `no recall ${pct(summary.noRecall)}`,
-    `yes-and-more recall ${pct(summary.yesAndMoreRecall)} (not gating)`,
+    `yes-and-more recall ${pct(summary.yesAndMoreRecall)}`,
     `yes-and-more read as yes ${summary.yesAndMoreReadAsYes}`,
     `yes read as yes-and-more ${summary.yesReadAsYesAndMore}`,
     `yes read as unclear ${summary.yesReadAsUnclear}`,

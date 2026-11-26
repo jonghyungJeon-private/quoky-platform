@@ -194,9 +194,10 @@ common_args() {
     # not reach it; the gate measures the production default (sonnet / low) unless GATES_HELP_SCOPE_MODEL is set.
     help-scope) printf -- '--runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_HELP_SCOPE_MODEL:-}" ] && printf -- ' --model %s' "$GATES_HELP_SCOPE_MODEL" ;;
     # A6-S4: the remote arm measures the production stronger tier (sonnet / low) unless GATES_CONSENT_MODEL is set; the local arm is
-    # qwen3:8b pinned by digest and takes no --model.
+    # qwen3:8b pinned by digest, takes no --model and runs one call at a time (one local model on one daemon: concurrent calls would
+    # queue and their latency would measure the queue, not the classifier; A6-S4 review round 1).
     consent-answer) printf -- '--arm remote --runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_CONSENT_MODEL:-}" ] && printf -- ' --model %s' "$GATES_CONSENT_MODEL" ;;
-    consent-answer-local) printf -- '--arm local --runs %s --concurrency %s' "$RUNS" "$CONC" ;;
+    consent-answer-local) printf -- '--arm local --runs %s --concurrency 1' "$RUNS" ;;
     *) printf -- '--model %s --runs %s --concurrency %s' "$MODEL" "$RUNS" "$CONC"
       # Prompt revision (owner decision 2026-11-04): GATES_PROMPT_REV (v73|v74) / GATES_PLAN_REV (v10|v11), identical in plan and run; unset = the ACTIVE revision of the mode (read v74, action/r2 v73 text, planner v11).
       case "$1" in
@@ -349,11 +350,12 @@ mode_env_model() {
   esac
 }
 
-# Per-call rate (% of the 5 h window) for a model name. An unknown / unparseable model has NO rate (prints UNKNOWN, returns 1)
-# unless GATES_RATE_PCT_PER_CALL is set: the estimate guard blocks it (owner-ok may allow it).
-rate_for() {
-  # A local Ollama model (the A6-S4 local arm, qwen3:8b) never uses the Claude 5 h window: rate 0, whatever the overrides say.
-  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in qwen*) echo 0; return 0 ;; esac
+# Per-call rate (% of the 5 h window) for a model name (and the mode). An unknown / unparseable model has NO rate (prints UNKNOWN,
+# returns 1) unless GATES_RATE_PCT_PER_CALL is set: the estimate guard blocks it (owner-ok may allow it).
+rate_for() { # model [mode]
+  # The local arm MODE (A6-S4 consent-answer-local: the pinned model on the loopback Ollama daemon) never uses the Claude 5 h window:
+  # rate 0, whatever the overrides say. Keyed on the mode, never on a model name (A6-S4 review round 1).
+  [ "${2:-}" = consent-answer-local ] && { echo 0; return 0; }
   if [ -n "${GATES_RATE_PCT_PER_CALL:-}" ]; then echo "$GATES_RATE_PCT_PER_CALL"; return 0; fi
   case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
     *haiku*) echo "$RATE_HAIKU" ;;
@@ -406,7 +408,7 @@ estimate_guard() {
       continue
     fi
     calls=${parsed%% *}; src=$(echo "$parsed" | awk '{print $2}'); model=$(echo "$parsed" | awk '{print $3}')
-    rate=$(rate_for "$model") || { unkmodel="$unkmodel $m($model)"; rate=$RATE_OPUS; echo "mode=$m model=$model has no known rate (UNKNOWN MODEL); the opus rate is shown only to size the estimate" >> "$f"; }
+    rate=$(rate_for "$model" "$m") || { unkmodel="$unkmodel $m($model)"; rate=$RATE_OPUS; echo "mode=$m model=$model has no known rate (UNKNOWN MODEL); the opus rate is shown only to size the estimate" >> "$f"; }
     pct=$(awk -v c="$calls" -v r="$rate" 'BEGIN { printf "%.1f", c * r }')
     total=$(awk -v a="$total" -v b="$pct" 'BEGIN { printf "%.1f", a + b }')
     echo "mode=$m model=$model calls=$calls rate_pct_per_call=$rate est_pct_5h=$pct cap_source=$src" >> "$f"

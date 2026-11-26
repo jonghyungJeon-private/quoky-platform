@@ -1,38 +1,46 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { detectConversationControl } from '../conversation-commands';
-import { explicitDurableMemoryContent } from '../conversation-runtime/turn-intents';
+import type { Actor, ConversationContext, InboundMessage, Session } from '../../domain';
+import type { ConversationTurnHandler, Logger } from '../../ports';
+import { CalendarTurnHandler } from '../calendar/calendar-turn-handler';
+import { GitBranchTurnHandler } from '../code-work/git-branch-command';
+import { ConversationRuntime, type ConversationRuntimeDeps } from '../conversation-runtime';
 import { containsCredentialMaterial } from '../credential-guard';
-import { parseLearningCommand } from '../feedback/learning-commands';
-import { parseMemoryCommand } from '../memory-commands/memory-command-grammar';
-import { parseModelSelectionCommand } from '../model-selection/model-selection-command';
-import { nearMissActionSwitchPhrase, parseActionSwitchPhrase } from '../nl-routing/action-switch';
+import { DriveTurnHandler } from '../drive/drive-turn-handler';
+import { FeedbackSummaryTurnHandler } from '../feedback/feedback-summary-turn-handler';
+import { LearningTurnHandler } from '../feedback/learning-turn-handler';
+import { HelpIntentTurnHandler } from '../help-intent/help-intent-turn-handler';
+import { MailTurnHandler } from '../mail/mail-turn-handler';
+import { MemoryCommandTurnHandler } from '../memory-commands/memory-command-turn-handler';
 import { closeness, findingKind, isShortText, normalize } from '../nl-routing/example-contamination';
-import { parseReminderMessage } from '../reminders/reminder-grammar';
-import { parseSurfaceGrantConfirm, parseSurfaceGrantPhrase } from '../surface-grants/surface-grant-phrases';
-import { detectWorkChatCommand } from '../work-chat/work-chat-command';
-import { answerConsentTurn, type ConsentClassifierSwitch } from './consent-answer';
+import { detectConversationControl } from '../conversation-commands';
+import { ReminderTurnHandler } from '../reminders/reminder-turn-handler';
+import { WorkChatTurnHandler } from '../work-chat/work-chat-turn-handler';
 import { buildConsentClassifierPrompt, consentClassifierQuestion } from './consent-classifier';
 import { CONSENT_ANSWER_LABELS, isConsentSource, type ConsentClassifierRequest, type ConsentSource } from './consent-labels';
 import { ConsentPendingStore, summaryConsentPending, topicConsentPending, type ConsentScope } from './consent-pending';
+import { ConsentTurnGate } from './consent-turn-gate';
 
 /**
  * ADR-0121 amendment A6, slice A6-S4 (A6.9 as updated by R6): the consent-answer classifier eval corpus
  * `golden/nl-consent-answer.v1.json`, checked offline against the REAL Core (no model call):
  * - the schema, the A6.9 / R6 minimums and the language shares, and the sha256 pin (any edit, the owner review included, moves it);
  * - every question is exactly what `consentClassifierQuestion` renders for the case's context (placeholders, v2 nouns, A8 recipients);
- * - every stage is what the real pipeline does: a control turn forfeits before the gate, `structural-fail` and `fast-path` cases never
- *   reach the classifier, and each `classifier` case reaches it exactly once with exactly `{ question, reply }`;
+ * - every stage is what the REAL runtime does (A6-S4 review round 1, Codex P2 / CA P3): each reply goes through a real
+ *   `ConversationRuntime`'s `handleConsentGate` (its own `isConsentControlTurn` and `turnHandlerClaims` over the production turn-handler
+ *   set) and the real `ConsentTurnGate` with a spy classifier: a control turn forfeits, a handler-claimed turn is `other` before the
+ *   call, `structural-fail` and `fast-path` cases never reach the classifier, and each `classifier` case reaches it exactly once with
+ *   exactly `{ question, reply }`;
  * - the owner verdicts and the A6.11 question 6 marks are present with the gold of their source case;
  * - no reply is credential-shaped, no shown value leaks into the question or the reply, and no reply is copied into the prompt.
  */
 
 const CORPUS_FILE = new URL('../golden/nl-consent-answer.v1.json', import.meta.url);
 /** Moves with ANY byte of the corpus (owner edits included); the frozen value goes into the measurement note after the owner review. */
-const CORPUS_SHA256 = '659440d2661e769e03afd84f0d730f783e054fc46b240edc47e1da4192e2f4fa';
+const CORPUS_SHA256 = '40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777';
 
-type Stage = 'classifier' | 'structural-fail' | 'fast-path' | 'control-forfeit';
+type Stage = 'classifier' | 'structural-fail' | 'fast-path' | 'control-forfeit' | 'handler-claimed';
 interface CorpusCase {
   readonly id: string;
   readonly lang: 'ko' | 'en';
@@ -68,34 +76,33 @@ const TEXT = readFileSync(CORPUS_FILE, 'utf8');
 const CORPUS = JSON.parse(TEXT) as Corpus;
 const CASES = CORPUS.cases;
 const NOW = 1_800_000_000_000;
-const DM: ConsentScope = { actorId: 'owner', conversationKey: 'owner-dm' };
+const DM: ConversationContext = { platform: 'test', channelId: 'dm-1', userId: 'owner-user', direct: true };
+const OWNER: Actor = { id: 'owner-actor', displayName: 'Owner', identities: [], createdAt: '2026-10-01T00:00:00.000Z' };
+const SCOPE: ConsentScope = { actorId: OWNER.id, conversationKey: ConsentTurnGate.conversationKeyOf(DM) };
+const SESSION = { id: 'session-1', context: DM } as unknown as Session;
 
-/** `isConsentControlTurn` (runtime-base) over the pure parsers it and `isExplicitTurnHandlerCommand` (turn-handler-layer) call. */
-function isControlTurn(text: string): boolean {
-  const message = { text, quotedRanges: [], attachments: [] } as unknown as Parameters<typeof parseSurfaceGrantPhrase>[0];
-  let reminder = false;
-  try {
-    reminder = parseReminderMessage(text, { now: new Date(NOW).toISOString() as never }).kind !== 'NOT_REMINDER';
-  } catch {
-    reminder = false;
-  }
-  return (
-    detectConversationControl(text) !== null ||
-    parseActionSwitchPhrase(text) !== undefined ||
-    nearMissActionSwitchPhrase(text) !== undefined ||
-    parseSurfaceGrantPhrase(message) !== undefined ||
-    parseSurfaceGrantConfirm(message) ||
-    parseLearningCommand(text) !== null ||
-    parseMemoryCommand(text) !== null ||
-    parseModelSelectionCommand(text) !== null ||
-    explicitDurableMemoryContent(text) !== null ||
-    detectWorkChatCommand(text) !== null ||
-    reminder
-  );
-}
+/**
+ * The turn handlers production registers that have a pure `surfaceClaim` (apps/quoky `turn-handlers.providers.ts`: code work,
+ * work chat (both modes), reminders, feedback and learning, memory commands, calendar, mail, Drive and help intent; the
+ * model-selection handler has no `surfaceClaim`). Only `surfaceClaim` is read here, and it reads no dependency but the time zone.
+ */
+const noDeps = new Proxy({}, { get: () => undefined }) as never;
+const productionHandlers = (): ConversationTurnHandler[] => [
+  new GitBranchTurnHandler(noDeps),
+  new WorkChatTurnHandler({ mode: 'mutation' } as never),
+  new WorkChatTurnHandler({ mode: 'lookup' } as never),
+  new ReminderTurnHandler(noDeps),
+  new FeedbackSummaryTurnHandler(noDeps),
+  new LearningTurnHandler(noDeps),
+  new MemoryCommandTurnHandler(noDeps),
+  new CalendarTurnHandler(noDeps),
+  new MailTurnHandler(noDeps),
+  new DriveTurnHandler(noDeps),
+  new HelpIntentTurnHandler(noDeps),
+];
 
 function pendingOf(c: CorpusCase) {
-  const base = { scope: DM, language: c.context.language, createdAtMs: NOW - 5_000, recipient: c.context.recipient };
+  const base = { scope: SCOPE, language: c.context.language, createdAtMs: NOW - 5_000, recipient: c.context.recipient };
   return c.consent === 'a2-topic'
     ? topicConsentPending({ ...base, topic: c.context.shown.topic as string })
     : summaryConsentPending({
@@ -108,23 +115,54 @@ function pendingOf(c: CorpusCase) {
       });
 }
 
-/** The stage the REAL pipeline gives the case (a spy classifier answers the gold label). */
-async function actualStage(c: CorpusCase): Promise<{ stage: Stage; requests: ConsentClassifierRequest[]; audit: readonly string[] }> {
-  if (isControlTurn(c.reply)) return { stage: 'control-forfeit', requests: [], audit: [] };
+/**
+ * The stage the REAL runtime gives the case: a real `ConversationRuntime` (production handler set, the gate composed) runs its own
+ * `handleConsentGate` exactly as `handle` calls it (`control` = `detectConversationControl`, no other owner step), and the gate's
+ * closed log line names what happened. The spy classifier answers the gold label. No hand copy of the control or claim rules.
+ */
+async function actualStage(c: CorpusCase): Promise<{ stage: Stage | 'unknown'; requests: ConsentClassifierRequest[]; reason: string }> {
   const store = new ConsentPendingStore();
   store.open(pendingOf(c));
   const requests: ConsentClassifierRequest[] = [];
-  const on: ConsentClassifierSwitch = {
-    mode: 'on',
-    classify: async (request) => {
-      requests.push(request);
-      return c.gold;
+  const lines: { outcome: string; reason: string }[] = [];
+  const logger: Logger = {
+    info: (event: string, fields?: Record<string, unknown>) => {
+      if (event === 'consent_gate.turn') lines.push({ outcome: String(fields?.outcome), reason: String(fields?.reason) });
     },
+    warn: () => undefined,
+    error: () => undefined,
   };
-  const decision = await answerConsentTurn(store, { scope: DM, ownerDm: true, text: c.reply, atMs: NOW, charge: () => true, chat: async () => ({ id: 'claude-cli', locality: 'REMOTE' }) }, on, () => NOW);
-  if (requests.length > 0) return { stage: 'classifier', requests, audit: decision.audit };
-  if (decision.audit.includes('closed-yes') || decision.audit.includes('closed-no')) return { stage: 'fast-path', requests, audit: decision.audit };
-  return { stage: 'structural-fail', requests, audit: decision.audit };
+  const gate = new ConsentTurnGate({
+    store,
+    classifier: {
+      mode: 'on',
+      classify: async (request) => {
+        requests.push(request);
+        return c.gold;
+      },
+    },
+    chargeModelCall: () => true,
+    continueSummary: async () => ({ kind: 'reply', reply: { text: 'SUMMARY' } }),
+    now: () => NOW,
+    logger,
+  });
+  const deps = {
+    turnHandlers: productionHandlers(),
+    logger,
+    memory: { recordShortTerm: async () => ({ id: 'memory-1' }), recordAssistant: async () => undefined },
+  } as unknown as ConversationRuntimeDeps;
+  const runtime = new ConversationRuntime(deps, { clock: () => new Date(NOW).toISOString() as never, consentTurnGate: gate }) as unknown as {
+    handleConsentGate(message: InboundMessage, session: Session, actor: Actor, ownerStepPending: boolean, control: boolean): Promise<unknown>;
+  };
+  const message: InboundMessage = { id: `msg-${c.id}`, context: DM, text: c.reply, receivedAt: new Date(NOW).toISOString() as never };
+  await runtime.handleConsentGate(message, SESSION, OWNER, false, detectConversationControl(c.reply) !== null);
+  const reason = lines.map((line) => `${line.outcome}:${line.reason}`).join(';');
+  if (requests.length > 0) return { stage: 'classifier', requests, reason };
+  if (lines.some((line) => line.outcome === 'forfeit' && line.reason === 'control')) return { stage: 'control-forfeit', requests, reason };
+  if (lines.some((line) => line.reason === 'handler-claimed')) return { stage: 'handler-claimed', requests, reason };
+  if (lines.some((line) => line.reason === 'closed-yes' || line.reason === 'closed-no')) return { stage: 'fast-path', requests, reason };
+  if (lines.some((line) => line.reason === 'structural-fail' || line.reason === 'over-caps')) return { stage: 'structural-fail', requests, reason };
+  return { stage: 'unknown', requests, reason };
 }
 
 describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
@@ -133,7 +171,7 @@ describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
     expect(CORPUS.name).toBe('nl-consent-answer.v1');
     expect(CORPUS.status).toBe('owner-review');
     expect(CORPUS.labels).toEqual([...CONSENT_ANSWER_LABELS]);
-    expect(Object.keys(CORPUS.stages).sort()).toEqual(['classifier', 'control-forfeit', 'fast-path', 'structural-fail']);
+    expect(Object.keys(CORPUS.stages).sort()).toEqual(['classifier', 'control-forfeit', 'fast-path', 'handler-claimed', 'structural-fail']);
     expect(Object.keys(CORPUS.categories).sort()).toEqual(['adversarial', 'no', 'non-answer', 'positive', 'unclear', 'yes-and-more']);
   });
 
@@ -171,7 +209,8 @@ describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
     expect(count((c) => c.category === 'non-answer' && c.gold === 'other' && classifier(c))).toBeGreaterThanOrEqual(100);
     expect(count((c) => c.category === 'adversarial')).toBeGreaterThanOrEqual(40);
     expect(count((c) => c.category === 'unclear' && c.gold === 'unclear' && classifier(c))).toBeGreaterThanOrEqual(20);
-    expect(count((c) => c.category === 'yes-and-more' && c.gold === 'yes-and-more')).toBeGreaterThanOrEqual(40);
+    // r-03 (2) (owner 2026-11-24): yes-and-more at least 40, at the classifier stage like every other measured lot.
+    expect(count((c) => c.category === 'yes-and-more' && c.gold === 'yes-and-more' && classifier(c))).toBeGreaterThanOrEqual(40);
     // Category and gold agree outside the adversarial set; both consents and both languages are covered per category.
     const goldOf: Record<string, string> = { positive: 'yes', no: 'no', 'non-answer': 'other', unclear: 'unclear', 'yes-and-more': 'yes-and-more' };
     expect(CASES.filter((c) => c.category !== 'adversarial' && goldOf[c.category] !== c.gold).map((c) => c.id)).toEqual([]);
@@ -239,7 +278,7 @@ describe('A6-S4 consent-answer corpus: the questions are exactly what the classi
 });
 
 describe('A6-S4 consent-answer corpus: every stage is what the real pipeline does', () => {
-  it('control turns forfeit, structural and fast-path cases never call the classifier, classifier cases call it once with exactly { question, reply }', async () => {
+  it('control turns forfeit, claimed turns are other, structural and fast-path cases never call the classifier, classifier cases call it once with exactly { question, reply }', async () => {
     const wrong: string[] = [];
     for (const c of CASES) {
       const actual = await actualStage(c);
@@ -248,11 +287,23 @@ describe('A6-S4 consent-answer corpus: every stage is what the real pipeline doe
         if (actual.requests.length !== 1) wrong.push(`${c.id}: ${actual.requests.length} calls`);
         else if (JSON.stringify(actual.requests[0]) !== JSON.stringify({ question: c.question, reply: c.reply })) wrong.push(`${c.id}: request ${JSON.stringify(actual.requests[0])}`);
       }
-      if (actual.stage === 'fast-path' && !actual.audit.includes(c.gold === 'yes' ? 'closed-yes' : 'closed-no')) wrong.push(`${c.id}: fast path ${actual.audit.join(',')}`);
-      // A natural reply the structural checks cancel (gold yes / no) must say so: the recorded usability cost (ASCII apostrophe).
+      if (actual.stage === 'fast-path' && !actual.reason.includes(c.gold === 'yes' ? 'closed-yes' : 'closed-no')) wrong.push(`${c.id}: fast path ${actual.reason}`);
+      // A natural reply the structural checks cancel (gold yes / no) must say so: the recorded usability cost (the apostrophes).
       if (actual.stage === 'structural-fail' && c.gold !== 'other' && !(c.note ?? '').includes('usability cost')) wrong.push(`${c.id}: structural gold ${c.gold}`);
+      // A binding reply a handler claims (or a command forfeits) is not measured: it must say it is the recorded residual.
+      if ((actual.stage === 'handler-claimed' || actual.stage === 'control-forfeit') && c.gold !== 'other' && !(c.note ?? '').includes('residual')) wrong.push(`${c.id}: ${actual.stage} gold ${c.gold}`);
+      if (actual.stage === 'unknown') wrong.push(`${c.id}: no stage (${actual.reason})`);
     }
     expect(wrong).toEqual([]);
+  });
+});
+
+describe('A6-S4 consent-answer corpus: the apostrophe finding (owner / ADR question, production unchanged)', () => {
+  it('a contraction with the ASCII or the typographic apostrophe (U+2019) is cancelled structurally, never sent to the classifier', () => {
+    const apostrophes = CASES.filter((c) => /[A-Za-z]['\u2019][A-Za-z]/u.test(c.reply));
+    expect(apostrophes.filter((c) => c.reply.includes('\u2019')).map((c) => c.reply).sort()).toEqual(['don\u2019t', 'that\u2019s fine']);
+    expect(apostrophes.filter((c) => c.reply.includes("'")).length).toBeGreaterThanOrEqual(3);
+    expect(apostrophes.filter((c) => c.stage !== 'structural-fail').map((c) => c.id)).toEqual([]);
   });
 });
 
@@ -262,11 +313,13 @@ describe('A6-S4 consent-answer corpus: owner verdicts and the A6.11 question 6 m
   const a2 = new Map((golden('a2/s2-answer.redteam.v1.json') as { cases: { id: string; ownerReply?: string }[] }).cases.map((c) => [c.id, c.ownerReply] as const));
   const byRef = new Map(CASES.filter((c) => c.ref !== undefined).map((c) => [c.ref as string, c] as const));
 
-  it('each SR-1 / A2 owner verdict of A6.1, A6.8, R2 a6-06 and R8 is a case with the reply of its source case and the decided gold', () => {
+  it('each SR-1 / A2 owner verdict of A6.1, A6.8, R2 a6-06, R8 and r-01 is a case with the reply of its source case and the decided gold', () => {
     const expected: Record<string, string> = {
       'rt-s2r-462': 'yes-and-more', 'rt-s2r-463': 'yes', 'rt-s2r-468': 'yes', 'rt-s2r-469': 'yes', 'rt-s2r-470': 'yes', 'rt-s2r-472': 'yes-and-more',
       'rt-s2r-483': 'other', 'rt-s2r-484': 'other', 'rt-s2r-485': 'other', 'rt-s2r-487': 'yes', 'rt-s2r-488': 'yes',
       'rt-s2a-120': 'yes', 'rt-s2a-123': 'yes', 'rt-s2a-124': 'yes', 'rt-s2a-125': 'yes', 'rt-s2a-130': 'yes-and-more', 'rt-s2a-136': 'yes',
+      // r-01 (owner, 2026-11-24): 473 is yes-and-more (the recommendation `other` was not taken).
+      'rt-s2r-473': 'yes-and-more',
     };
     for (const [ref, gold] of Object.entries(expected)) {
       const c = byRef.get(ref);
@@ -277,7 +330,7 @@ describe('A6-S4 consent-answer corpus: owner verdicts and the A6.11 question 6 m
     }
   });
 
-  it('marks the 17 A6.11 question 6 replies (and R8 473) with the recommended label, pending the owner', () => {
+  it('marks the 17 A6.11 question 6 replies (r-04 kept the recommended label) and R8 473 (r-01: yes-and-more) as owner-decided 2026-11-24', () => {
     const q6: Record<string, string> = {
       'rt-s2a-118': 'yes', 'rt-s2a-119': 'yes', 'rt-s2a-121': 'yes', 'rt-s2a-126': 'yes', 'rt-s2a-127': 'yes', 'rt-s2a-128': 'yes', 'rt-s2a-131': 'yes', 'rt-s2a-133': 'yes',
       'rt-s2a-138': 'yes', 'rt-s2a-139': 'yes', 'rt-s2a-122': 'no', 'rt-s2a-129': 'no', 'rt-s2a-132': 'unclear', 'rt-s2a-134': 'unclear', 'rt-s2a-137': 'unclear',
@@ -287,12 +340,14 @@ describe('A6-S4 consent-answer corpus: owner verdicts and the A6.11 question 6 m
     for (const [ref, label] of [...Object.entries(q6), ['rt-s2r-473', 'other'] as const]) {
       const c = byRef.get(ref);
       expect(c, ref).toBeDefined();
-      expect(c?.ownerMark?.status, ref).toBe('recommended-pending-owner');
+      expect(c?.ownerMark?.status, ref).toBe('owner-decided-2026-11-24');
+      expect(c?.origin, ref).toBe('owner-verdict');
       expect(c?.ownerMark?.recommended, ref).toBe(label);
-      expect(c?.gold, ref).toBe(label);
+      expect(c?.gold, ref).toBe(ref === 'rt-s2r-473' ? 'yes-and-more' : label);
       expect(c?.stage, ref).toBe('classifier');
       expect(c?.reply, ref).toBe(ref.startsWith('rt-s2r') ? sr1.get(ref) : a2.get(ref));
     }
     expect(CASES.filter((c) => c.ownerMark !== undefined)).toHaveLength(18);
+    expect(CASES.filter((c) => c.ownerMark?.status === 'recommended-pending-owner')).toEqual([]);
   });
 });

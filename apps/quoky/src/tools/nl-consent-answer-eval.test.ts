@@ -4,6 +4,7 @@ import {
   CONSENT_LOCAL_DIGEST12,
   CONSENT_LOCAL_MODEL,
   NL_CONSENT_ANSWER_EVAL_GATE,
+  TIMED_OUT_LATENCY_MS,
   buildConsentAnswerPlan,
   classifierSeesContent,
   computeConsentAnswerPlanDigest,
@@ -240,7 +241,7 @@ describe('the R6 gate on synthetic results', () => {
     }
   });
 
-  it('yes recall and no recall need 95 %; yes-and-more recall is printed, not gating', () => {
+  it('yes recall, no recall and yes-and-more recall each need 95 % (yes-and-more gates: owner r-03 (1), 2026-11-24)', () => {
     const lowYes = clean();
     lowYes[0] = record('yes', 'other', {}, 'y0');
     lowYes[1] = record('yes', 'no', {}, 'y1');
@@ -254,7 +255,13 @@ describe('the R6 gate on synthetic results', () => {
     const summary = summarizeConsentAnswer(yamAsYes);
     expect(summary.yesAndMoreRecall.rate).toBe(0);
     expect(summary.yesAndMoreReadAsYes).toBe(5);
-    expect(summary.gatePassed).toBe(!NL_CONSENT_ANSWER_EVAL_GATE.yesAndMoreRecall.gating);
+    expect(NL_CONSENT_ANSWER_EVAL_GATE.yesAndMoreRecall).toMatchObject({ bar: 0.95, gating: true });
+    expect(summary.gatePassed).toBe(false);
+    // At the bar: 19 of 20 yes-and-more read right passes; 18 of 20 fails.
+    const yam = (misses: number) => [...clean().filter((r) => r.gold !== 'yes-and-more'), ...Array.from({ length: 20 }, (_, i) => record('yes-and-more', i < misses ? 'yes' : 'yes-and-more', {}, `m${i}`))];
+    expect(summarizeConsentAnswer(yam(1)).yesAndMoreRecall.rate).toBe(0.95);
+    expect(passes(yam(1))).toBe(true);
+    expect(passes(yam(2))).toBe(false);
   });
 
   it('a content firing, a harness error or a p95 over the 10 s bound fails the run', () => {
@@ -270,6 +277,19 @@ describe('the R6 gate on synthetic results', () => {
     const slow = clean().map((r, i) => (i < 10 ? { ...r, latencyMs: 10_001 } : r));
     expect(summarizeConsentAnswer(slow).latency.p95).toBe(10_001);
     expect(passes(slow)).toBe(false);
+  });
+
+  it('a timed-out call counts as over the p95 bound, whatever its measured time (CA P2: no pass or fail on timer jitter)', () => {
+    expect(TIMED_OUT_LATENCY_MS).toBe(Number.POSITIVE_INFINITY);
+    // 10 of 70 calls cut at the deadline: measured ~10 000 ms would sit at the bound; recorded as Infinity they are over it.
+    const timedOut = clean().map((r, i) => (i < 10 ? { ...r, label: 'unclear' as const, outcome: 'timeout' as const, latencyMs: TIMED_OUT_LATENCY_MS } : r));
+    const summary = summarizeConsentAnswer(timedOut);
+    expect(summary.latency.p95).toBe(Number.POSITIVE_INFINITY);
+    expect(summary.timeouts).toBe(10);
+    expect(summary.gatePassed).toBe(false);
+    // A few timeouts below the 5 % tail leave p95 finite (they still count as timeouts).
+    const rare = clean().map((r, i) => (i === 25 ? { ...r, label: 'unclear' as const, outcome: 'timeout' as const, latencyMs: TIMED_OUT_LATENCY_MS } : r));
+    expect(summarizeConsentAnswer(rare).latency.p95).toBe(1_000);
   });
 
   it('the verdict: PASSED needs 3 passing runs; an outage without a hard failure is INVALID; a hard failure is FAILED even under an outage', () => {
@@ -332,8 +352,32 @@ describe('classifier-sees-content (A6.10) and the content-free payload', () => {
     expect(malformed[0]).toMatchObject({ label: 'unclear', outcome: 'malformed', raw: 'yes' });
     let t = 0;
     const late = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: one, provider: scriptedProvider(() => { t += 20_000; return '{"label":"yes"}'; }), clock: () => t });
-    expect(late[0]).toMatchObject({ label: 'unclear', outcome: 'timeout' });
+    expect(late[0]).toMatchObject({ label: 'unclear', outcome: 'timeout', latencyMs: Number.POSITIVE_INFINITY });
+    const deadline = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: one, provider: scriptedProvider(() => new AiProviderError(AiFailureKind.TIMEOUT, 'late')) });
+    expect(deadline[0]).toMatchObject({ label: 'unclear', outcome: 'timeout', latencyMs: Number.POSITIVE_INFINITY });
     const failed = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: one, provider: scriptedProvider(() => new Error('boom')) });
     expect(failed[0]).toMatchObject({ label: 'unclear', outcome: 'error' });
+    expect(Number.isFinite(failed[0]?.latencyMs)).toBe(true);
+  });
+
+  it('the remote arm copies the real provider\'s stronger-tier declaration; the local arm declares it for the measured model (CA P3)', async () => {
+    const remote = buildConsentAnswerPlan(corpus, sha256, { arm: 'remote', model: 'sonnet', effort: 'low', runs: 1, concurrency: 1 });
+    const local = buildConsentAnswerPlan(corpus, sha256, { arm: 'local', model: CONSENT_LOCAL_MODEL, runs: 1, concurrency: 1 });
+    const withoutTier = (): AiProvider & { calls: AiRequest[] } => {
+      const { supportsStrongerIntentSelection: _tier, ...rest } = scriptedProvider();
+      return rest as AiProvider & { calls: AiRequest[] };
+    };
+    const remoteNoTier = withoutTier();
+    const refused = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...remote, caseIds: [rule1.id], calls: 1 }, provider: remoteNoTier });
+    // Production refuses a provider without the stronger tier: no call, a harness error (never a silent upgrade).
+    expect(refused[0]).toMatchObject({ label: 'unclear', outcome: 'no-call' });
+    expect(remoteNoTier.calls).toHaveLength(0);
+    expect(summarizeConsentAnswer(refused).harnessErrors).toBe(1);
+    const declared = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...remote, caseIds: [rule1.id], calls: 1 }, provider: scriptedProvider() });
+    expect(declared[0]).toMatchObject({ outcome: 'answered', label: rule1.gold });
+    const localNoTier = withoutTier();
+    const measured = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...local, caseIds: [rule1.id], calls: 1 }, provider: localNoTier });
+    expect(measured[0]).toMatchObject({ outcome: 'answered', label: rule1.gold });
+    expect(localNoTier.calls).toHaveLength(1);
   });
 });

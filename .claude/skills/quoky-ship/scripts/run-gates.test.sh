@@ -268,7 +268,14 @@ has "local arm planned with --arm local" "$T/e18.args" "consent-answer --mode co
 has "remote arm at the sonnet rate" "$T/arch/e18/estimate.txt" "mode=consent-answer model=sonnet calls=300 rate_pct_per_call=0.06 est_pct_5h=18.0"
 has "local arm at rate 0" "$T/arch/e18/estimate.txt" "mode=consent-answer-local model=qwen3:8b calls=300 rate_pct_per_call=0 est_pct_5h=0.0"
 check "local arm takes no --model" "$(grep -c -- '--arm local.*--model' "$T/e18.args")" 0
+has "local arm runs one call at a time" "$T/e18.args" "consent-answer --mode consent-answer --arm local --runs 3 --concurrency 1"
+check "remote arm keeps GATES_CONCURRENCY" "$(grep -c -- '--arm remote --runs 3 --concurrency 4' "$T/e18.args")" 1
 has "both arms ran" "$T/arch/e18/DONE" "consent-answer-local exit=0"
+
+# 19. A6-S4 review round 1: the zero rate is keyed on the local-arm MODE, not on a model name: a qwen model on the remote arm (or any
+#     other mode) has no known rate and the estimate guard blocks it
+rc=$(GATES_CONSENT_MODEL=qwen3:8b FAKE_CALLS=300 gates e19 consent-answer); check "qwen on the remote arm blocked exit 2" "$rc" 2
+has "qwen on the remote arm has no rate" "$T/arch/e19/estimate.txt" "mode=consent-answer model=qwen3:8b has no known rate (UNKNOWN MODEL)"
 
 echo; echo "passed $pass, failed $failn"
 [ "$failn" -eq 0 ]

@@ -63,6 +63,11 @@ describe('guardEvalProvider (unit)', () => {
     await expect(guard.provider.execute(request)).rejects.toBeInstanceOf(ProviderOutageAbort);
   });
 
+  it('is transparent for the stronger-tier declaration (A6-S4 review round 1: the consent-answer remote arm reads it)', () => {
+    expect(guardEvalProvider({ ...scripted(() => undefined), supportsStrongerIntentSelection: true }).provider.supportsStrongerIntentSelection).toBe(true);
+    expect('supportsStrongerIntentSelection' in guardEvalProvider(scripted(() => undefined)).provider).toBe(false);
+  });
+
   it('trips on the failure share (> 5%) once 40 calls and 3 failures were seen, even without a streak', async () => {
     const inner = scripted((call) => (call % 5 === 0 ? new AiProviderError(AiFailureKind.UNAVAILABLE, 'flaky') : undefined));
     const guard = guardEvalProvider(inner);

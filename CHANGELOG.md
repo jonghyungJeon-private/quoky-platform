@@ -18,6 +18,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed.** The Core application index also exports the pure `buildConsentClassifierPrompt`, `parseConsentClassifierOutput`,
   `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION` and `CONSENT_CLASSIFIER_TIMEOUT_MS` (boundary pin updated; the answer function stays unreachable).
 - **Not changed.** No runtime behaviour, prompt or catalog; `QUOKY_CONSENT_ANSWER_CLASSIFIER` stays off and `on` refused. No model call was made.
+- **Fixed (review round 1).** The `yes-and-more` recall bar (95 %) gates (owner r-03); `473` (ca-015) is `yes-and-more` (r-01); the 17 A6.11 q6 marks
+  are owner-decided (r-04). Stages are derived on a real `ConversationRuntime` (its own control and handler-claim checks): 16 handler-claimed cases
+  restaged (new stage `handler-claimed`, no call), replenished with 10 unclaimed classifier cases; two typographic-apostrophe cases added (structural,
+  owner question). A timed-out call records `Infinity` latency (always over the p95 bound); the remote arm keeps the real provider's stronger-tier
+  declaration (the eval guard passes it through); run-gates' local arm runs at `--concurrency 1` and its zero rate is keyed on the mode. Now 414
+  cases, 334 at the classifier stage, 1,002 planned calls per arm.
 
 ## Unreleased — ADR-0121 A8 OQ1-5: deterministic red-team lot for the item summary consent (2026-11-26; tests and docs only)
 

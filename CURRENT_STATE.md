@@ -7,9 +7,9 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### A6-S4 consent-answer corpus and eval plumbing, built offline, not run (2026-11-26, branch `claude/v5-a6-s4-corpus`)
 
-- `golden/nl-consent-answer.v1.json` (402 cases, 340 reach the classifier) awaits the owner's Strict review (`status: "owner-review"`); `eval:nl --mode
-  consent-answer --arm remote|local` plans offline and refuses a run until the corpus is approved. Planned: 1,020 calls per arm (remote about 61 % of the
-  5 h window; local qwen3:8b 0 %). Owner questions in `docs/eval/a6-s4-corpus-summary.md`. Switch still off. See DECISIONS "ADR-0121 A6-S4 implementation
+- `golden/nl-consent-answer.v1.json` (414 cases after review round 1, 334 reach the classifier) awaits the owner's Strict review (`status: "owner-review"`); `eval:nl --mode
+  consent-answer --arm remote|local` plans offline and refuses a run until the corpus is approved. Planned: 1,002 calls per arm (remote about 60 % of the
+  5 h window; local qwen3:8b 0 %). The yes-and-more recall bar gates (owner r-03). Owner questions in `docs/eval/a6-s4-corpus-summary.md`. Switch still off. See DECISIONS "ADR-0121 A6-S4 implementation
   note (corpus built, not run)".
 
 ### A8 OQ1-5 red-team lot, tests and docs only (2026-11-26, branch `claude/v5-oq1-5-gold`)

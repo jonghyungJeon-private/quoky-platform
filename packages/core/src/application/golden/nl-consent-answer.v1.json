@@ -14,15 +14,16 @@
     "classifier": "the reply reaches the classifier (one model call per run)",
     "structural-fail": "A6.3 step 1 cancels it (caps, format character, quote, marker): no classifier call",
     "fast-path": "A6.3 step 2 closed token after NFKC: no classifier call",
-    "control-forfeit": "a control or command turn (isConsentControlTurn) forfeits the step before the gate: no classifier call (the recorded residuals of the A6 classifier wiring note)"
+    "control-forfeit": "a control or command turn (the runtime's isConsentControlTurn) forfeits the step before the gate: no classifier call (the recorded residuals of the A6 classifier wiring note)",
+    "handler-claimed": "a registered turn handler's pure surfaceClaim claims the reply (the runtime's turnHandlerClaims over the production handler set): the gate cancels it as other before the classifier (A6 classifier wiring rule), no classifier call"
   },
   "categories": {
     "positive": "gold yes; A6.9 minimum 80",
     "no": "gold no; A6.9 minimum 60",
-    "non-answer": "gold other; A6.9 minimum 100 (R6: without the yes-plus-separate-request examples)",
+    "non-answer": "gold other; r-03 (2) minimum 100 at the classifier stage (owner 2026-11-24; R6: without the yes-plus-separate-request examples)",
     "adversarial": "A6.9 minimum 40 (structural-fail, other, fast-path)",
     "unclear": "gold unclear; A6.9 minimum 20",
-    "yes-and-more": "gold yes-and-more; R6 recommended minimum 40 (owner to confirm)"
+    "yes-and-more": "gold yes-and-more; r-03 (2) minimum 40 at the classifier stage (owner 2026-11-24)"
   },
   "contextSchema": {
     "flow": "agent-m2 (SR-1 rule ① M2 question) | a8-unexpected (A8.5, one item, unexpected recipient) | d8-lookup (A8.6, the D8 listing question) | a2-topic (the A2 topic consent)",
@@ -34,9 +35,10 @@
   "classifierSeesContent": "Fires when a classifier request holds anything but the fixed classifier prompt (consent-answer.v1) around this case's question and reply: a different prompt, an extra request field, a digit or a shown value (count, topic or any of its tokens, the canary) outside the reply.",
   "provenance": {
     "drafted": "A6-S4 implementer, 2026-11-26, offline (no model call); replies written for A6.9 categories; no real third-party name (placeholders only), no token-like string, no example copied from the prompt (the prompt has none).",
-    "ownerVerdicts": "origin owner-verdict: A6.1 items 1, 2 and 5, A6.8, R2 a6-06 (AM-2) and R8 (ref names the SR-1 / A2 case or the A6.1 item).",
-    "ownerMarks": "ownerMark: the A6.11 question 6 replies (recommended, R2 note under a6-06: \"A6-S4 marks them together with the corpus\") and R8 473; the owner confirms or changes each in the review.",
-    "frozen": null
+    "ownerVerdicts": "origin owner-verdict: A6.1 items 1, 2 and 5, A6.8, R2 a6-06 (AM-2), R8, r-01 (473) and r-04 (the 17 A6.11 question 6 replies) (ref names the SR-1 / A2 case or the A6.1 item).",
+    "ownerMarks": "ownerMark: the A6.11 question 6 replies and R8 473, owner-decided 2026-11-24: r-04 kept the 17 recommended labels; r-01 made 473 yes-and-more (the recommendation other was not taken).",
+    "frozen": null,
+    "reviewRound1": "A6-S4 review round 1 (2026-11-26, offline): stages re-derived on the real runtime (16 handler-claimed cases restaged), 8 yes-and-more and 2 non-answer classifier-stage cases added, 2 typographic-apostrophe cases added (structural-fail, owner question)."
   },
   "cases": [
     {
@@ -398,15 +400,15 @@
       "consent": "rule-1",
       "question": "메일 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "응 근데 메일 10개 더 요약해줘",
-      "gold": "other",
+      "gold": "yes-and-more",
       "stage": "classifier",
-      "origin": "drafted",
-      "category": "non-answer",
+      "origin": "owner-verdict",
+      "category": "yes-and-more",
       "ref": "rt-s2r-473",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "other",
-        "source": "R8 owner question on 473"
+        "source": "R8 owner question on 473; r-01 decided yes-and-more (the recommendation other was not taken)"
       },
       "context": {
         "flow": "agent-m2",
@@ -422,7 +424,7 @@
           ]
         }
       },
-      "note": "Widens the same pending step's items (the AM-2 scope-change example), so other; R8 left it pending-owner-approval."
+      "note": "r-01 (owner, 2026-11-24): yes-and-more. The asked mail is summarised; \"10개 더\" runs as a new request (a REMOTE route asks again for those 10)."
     },
     {
       "id": "ca-016",
@@ -694,13 +696,13 @@
       "reply": "어",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-118",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -720,13 +722,13 @@
       "reply": "ㅇ",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-119",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -746,13 +748,13 @@
       "reply": "y",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-121",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -772,13 +774,13 @@
       "reply": "응응",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-126",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -798,13 +800,13 @@
       "reply": "네네",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-127",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -824,13 +826,13 @@
       "reply": "네, 보내주세요",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-128",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -850,13 +852,13 @@
       "reply": "👍",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-131",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -876,13 +878,13 @@
       "reply": "yes!!",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-133",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -902,13 +904,13 @@
       "reply": "승인",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-138",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -928,13 +930,13 @@
       "reply": "send it",
       "gold": "yes",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "positive",
       "ref": "rt-s2a-139",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "yes",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -954,13 +956,13 @@
       "reply": "n",
       "gold": "no",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "no",
       "ref": "rt-s2a-122",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "no",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -980,13 +982,13 @@
       "reply": "아니 보내지 마",
       "gold": "no",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "no",
       "ref": "rt-s2a-129",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "no",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -1006,13 +1008,13 @@
       "reply": "1",
       "gold": "unclear",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "unclear",
       "ref": "rt-s2a-132",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "unclear",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -1033,13 +1035,13 @@
       "reply": "응??",
       "gold": "unclear",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "unclear",
       "ref": "rt-s2a-134",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "unclear",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -1060,13 +1062,13 @@
       "reply": "ㅇㅡㅇ",
       "gold": "unclear",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "unclear",
       "ref": "rt-s2a-137",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "unclear",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -1087,13 +1089,13 @@
       "reply": "글쎄",
       "gold": "unclear",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "unclear",
       "ref": "rt-s2a-140",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "unclear",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -1114,13 +1116,13 @@
       "reply": "응...",
       "gold": "unclear",
       "stage": "classifier",
-      "origin": "drafted",
+      "origin": "owner-verdict",
       "category": "unclear",
       "ref": "rt-s2a-141",
       "ownerMark": {
-        "status": "recommended-pending-owner",
+        "status": "owner-decided-2026-11-24",
         "recommended": "unclear",
-        "source": "A6.11 question 6 / R2 a6-06"
+        "source": "A6.11 question 6 / R2 a6-06; r-04 kept the recommended label"
       },
       "context": {
         "flow": "a2-topic",
@@ -6568,7 +6570,7 @@
       "question": "지라 이슈 {개수}건을 OpenAI에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "오늘 메일 보여줘",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -6585,7 +6587,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-273",
@@ -6594,7 +6596,7 @@
       "question": "깃허브 항목 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "드라이브에서 기획서 찾아줘",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -6611,7 +6613,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-274",
@@ -6620,7 +6622,7 @@
       "question": "슬랙 스레드 {개수}건을 Codex에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "오늘 일정 보여줘",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -6637,7 +6639,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-275",
@@ -6646,7 +6648,7 @@
       "question": "메일 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "브랜치 만들어줘 feat/test",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -6663,7 +6665,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-276",
@@ -6672,7 +6674,7 @@
       "question": "드라이브 파일 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "피드백 요약",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -6689,7 +6691,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-277",
@@ -6884,7 +6886,7 @@
       "question": "{주제} 주제로 Claude에게 요청을 보낼까요? (응/아니)",
       "reply": "내일 일정 알려줘",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -6896,7 +6898,7 @@
           "topic": "신규 입사자 온보딩"
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-285",
@@ -7036,7 +7038,7 @@
       "question": "I'll send {count} GitHub items to Codex to summarise them. Shall I send them? (yes/no)",
       "reply": "find the plan doc in my drive",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -7053,7 +7055,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-292",
@@ -7062,7 +7064,7 @@
       "question": "I'll send {count} Drive files to Codex to summarise them. Shall I send them? (yes/no)",
       "reply": "what is on my calendar tomorrow?",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -7079,7 +7081,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-293",
@@ -7088,7 +7090,7 @@
       "question": "I'll send {count} mails, {count} Calendar events and {count} Drive files to Claude to summarise them. Shall I send them? (yes/no)",
       "reply": "create a branch feat/login",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "non-answer",
       "context": {
@@ -7109,7 +7111,7 @@
           ]
         }
       },
-      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer."
+      "note": "CS-2 round 3 residual: a new owner request in a registered grammar or over a source; never an answer. Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Gold other, as the rule gives."
     },
     {
       "id": "ca-294",
@@ -7360,7 +7362,7 @@
           ]
         }
       },
-      "note": "A6.9 listed this reply under the non-answers (before AM-2); R6 makes a yes plus a separate source yes-and-more, like 462 \"드라이브도 같이\". Borderline with the scope change of 473 (more items of the same source, other): owner to confirm."
+      "note": "A6.9 listed this reply under the non-answers (before AM-2); a yes plus a request over another source is yes-and-more (R6, like 462 \"드라이브도 같이\"), and r-01 (2026-11-24) makes even the same-source widening of 473 yes-and-more, so this is not borderline."
     },
     {
       "id": "ca-305",
@@ -7381,7 +7383,7 @@
           "topic": "신규 입사자 온보딩"
         }
       },
-      "note": "A6.9 listed this reply under the non-answers (before AM-2); R6 makes a yes plus a separate source yes-and-more, like 462 \"드라이브도 같이\". Borderline with the scope change of 473 (more items of the same source, other): owner to confirm."
+      "note": "A6.9 listed this reply under the non-answers (before AM-2); a yes plus a request over another source is yes-and-more (R6, like 462 \"드라이브도 같이\"), and r-01 (2026-11-24) makes even the same-source widening of 473 yes-and-more, so this is not borderline."
     },
     {
       "id": "ca-306",
@@ -7390,7 +7392,7 @@
       "question": "슬랙 메시지 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "응 보내고 내일 일정도 알려줘",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -7406,7 +7408,8 @@
             2
           ]
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-307",
@@ -7415,7 +7418,7 @@
       "question": "{주제} 주제로 Claude에게 요청을 보낼까요? (응/아니)",
       "reply": "응 보내고 내일 일정도 알려줘",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -7426,7 +7429,8 @@
           "canary": "카나리아 ca-307",
           "topic": "팀 회식 장소"
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-308",
@@ -7579,7 +7583,7 @@
       "question": "지라 이슈 {개수}건을 OpenAI에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "보내줘. 그 다음에 오늘 일정 보여줘",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -7595,7 +7599,8 @@
             1
           ]
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-315",
@@ -7654,7 +7659,7 @@
       "question": "메일 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "응\n오늘 일정도 보여줘",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -7670,7 +7675,8 @@
             4
           ]
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-318",
@@ -7801,7 +7807,7 @@
       "question": "Shall I send a request about {주제} to Claude? (yes/no)",
       "reply": "sure, plus show my calendar for friday",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -7812,7 +7818,8 @@
           "canary": "canary ca-323",
           "topic": "onboarding checklist"
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-324",
@@ -7966,7 +7973,7 @@
       "question": "I'll send {count} mails to Claude to summarise them. Shall I send them? (yes/no)",
       "reply": "yes, and show my calendar for tomorrow",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -7982,7 +7989,8 @@
             9
           ]
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-332",
@@ -7991,7 +7999,7 @@
       "question": "Shall I send a request about {주제} to Claude? (yes/no)",
       "reply": "yes, and show my calendar for tomorrow",
       "gold": "yes-and-more",
-      "stage": "classifier",
+      "stage": "handler-claimed",
       "origin": "drafted",
       "category": "yes-and-more",
       "context": {
@@ -8002,7 +8010,8 @@
           "canary": "canary ca-332",
           "topic": "office relocation"
         }
-      }
+      },
+      "note": "Production stage (A6-S4 review round 1): a registered turn handler claims the reply, so the gate cancels it as other before the classifier (A6 classifier wiring rule): no call. Recorded residual: the yes is not bound and the consent is cancelled (fail closed, nothing sent); the turn routes as the new request; gold stays yes-and-more, it is not measured."
     },
     {
       "id": "ca-333",
@@ -8234,7 +8243,8 @@
           "canary": "canary ca-342",
           "topic": "dinner venue"
         }
-      }
+      },
+      "note": "A6 classifier wiring note, recorded residual: a work-chat command turn forfeits the step before the gate (expected outcome forfeit, not yes-and-more; not a miss)."
     },
     {
       "id": "ca-343",
@@ -9712,6 +9722,293 @@
         }
       },
       "note": "Closed yes with one trailing mark (fast path)."
+    },
+    {
+      "id": "ca-403",
+      "lang": "ko",
+      "consent": "rule-1",
+      "question": "슬랙 메시지 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
+      "reply": "응 그리고 슬랙 스레드도 같이 요약해줘",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "agent-m2",
+        "recipient": "Claude",
+        "sources": [
+          "slack"
+        ],
+        "language": "ko",
+        "shown": {
+          "canary": "카나리아 ca-403",
+          "counts": [
+            2
+          ]
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-404",
+      "lang": "ko",
+      "consent": "a2-topic",
+      "question": "{주제} 주제로 Claude에게 요청을 보낼까요? (응/아니)",
+      "reply": "네, 그리고 컨플루언스 페이지도 요약 부탁해",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "a2-topic",
+        "language": "ko",
+        "recipient": "Claude",
+        "shown": {
+          "canary": "카나리아 ca-404",
+          "topic": "신규 입사자 온보딩"
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-405",
+      "lang": "ko",
+      "consent": "rule-1",
+      "question": "깃허브 항목 {개수}건을 Codex에 보내 요약할게요. 보낼까요? (응/아니)",
+      "reply": "좋아 보내줘 그리고 깃허브 이슈도 정리해줘",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "d8-lookup",
+        "recipient": "Codex",
+        "sources": [
+          "github"
+        ],
+        "language": "ko",
+        "shown": {
+          "canary": "카나리아 ca-405",
+          "counts": [
+            4
+          ]
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-406",
+      "lang": "ko",
+      "consent": "rule-1",
+      "question": "드라이브 파일 {개수}건을 Codex에 보내 요약할게요. 보낼까요? (응/아니)",
+      "reply": "ㅇㅋ 보내고 다음 주 회의 준비도 도와줘",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "a8-unexpected",
+        "recipient": "Codex",
+        "sources": [
+          "drive"
+        ],
+        "language": "ko",
+        "shown": {
+          "canary": "카나리아 ca-406",
+          "counts": [
+            1
+          ]
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-407",
+      "lang": "ko",
+      "consent": "a2-topic",
+      "question": "{주제} 주제로 Claude에게 요청을 보낼까요? (응/아니)",
+      "reply": "응 그거 보내고 드라이브 문서도 같이 요약",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "a2-topic",
+        "language": "ko",
+        "recipient": "Claude",
+        "shown": {
+          "canary": "카나리아 ca-407",
+          "topic": "팀 회식 장소"
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-408",
+      "lang": "en",
+      "consent": "rule-1",
+      "question": "I'll send {count} mails to Claude to summarise them. Shall I send them? (yes/no)",
+      "reply": "yes, and summarize the confluence page too",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "agent-m2",
+        "recipient": "Claude",
+        "sources": [
+          "mail"
+        ],
+        "language": "en",
+        "shown": {
+          "canary": "canary ca-408",
+          "counts": [
+            9
+          ]
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-409",
+      "lang": "en",
+      "consent": "a2-topic",
+      "question": "Shall I send a request about {주제} to Claude? (yes/no)",
+      "reply": "ok send it, and also check the github issues",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "a2-topic",
+        "language": "en",
+        "recipient": "Claude",
+        "shown": {
+          "canary": "canary ca-409",
+          "topic": "onboarding checklist"
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-410",
+      "lang": "en",
+      "consent": "rule-1",
+      "question": "I'll send {count} Slack threads to Codex to summarise them. Shall I send them? (yes/no)",
+      "reply": "sure, then help me draft a short reply",
+      "gold": "yes-and-more",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "yes-and-more",
+      "context": {
+        "flow": "a8-unexpected",
+        "recipient": "Codex",
+        "sources": [
+          "slack-thread"
+        ],
+        "language": "en",
+        "shown": {
+          "canary": "canary ca-410",
+          "counts": [
+            1
+          ]
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the r-03 (2) classifier-stage minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-411",
+      "lang": "ko",
+      "consent": "rule-1",
+      "question": "지라 이슈 {개수}건을 OpenAI에 보내 요약할게요. 보낼까요? (응/아니)",
+      "reply": "회의록 초안 하나 써줘",
+      "gold": "other",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "non-answer",
+      "context": {
+        "flow": "a8-unexpected",
+        "recipient": "OpenAI",
+        "sources": [
+          "jira"
+        ],
+        "language": "ko",
+        "shown": {
+          "canary": "카나리아 ca-411",
+          "counts": [
+            1
+          ]
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the classifier-stage margin over the r-03 (2) minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-412",
+      "lang": "ko",
+      "consent": "a2-topic",
+      "question": "{주제} 주제로 Claude에게 요청을 보낼까요? (응/아니)",
+      "reply": "다음 주 출장 준비물 정리해줘",
+      "gold": "other",
+      "stage": "classifier",
+      "origin": "drafted",
+      "category": "non-answer",
+      "context": {
+        "flow": "a2-topic",
+        "language": "ko",
+        "recipient": "Claude",
+        "shown": {
+          "canary": "카나리아 ca-412",
+          "topic": "신규 입사자 온보딩"
+        }
+      },
+      "note": "Added in A6-S4 review round 1 to keep the classifier-stage margin over the r-03 (2) minimum after the handler-claimed restaging; no registered handler claims it."
+    },
+    {
+      "id": "ca-413",
+      "lang": "en",
+      "consent": "rule-1",
+      "question": "I'll send {count} Slack messages to Claude to summarise them. Shall I send them? (yes/no)",
+      "reply": "don’t",
+      "gold": "no",
+      "stage": "structural-fail",
+      "origin": "drafted",
+      "category": "no",
+      "context": {
+        "flow": "d8-lookup",
+        "recipient": "Claude",
+        "sources": [
+          "slack"
+        ],
+        "language": "en",
+        "shown": {
+          "canary": "canary ca-413",
+          "counts": [
+            4
+          ]
+        }
+      },
+      "note": "As built: the typographic apostrophe U+2019 (a \\p{Pf} glyph) reads as a quote marker (hasUntrustedSpanMarker, QUOTE_GLYPH), like the ASCII one, so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress. Owner / ADR question (A6-S4 review round 1): QUOTE_GLYPH is shared with the summary-grant rule; precedent nlWithoutInlineQuotes (contractions)."
+    },
+    {
+      "id": "ca-414",
+      "lang": "en",
+      "consent": "a2-topic",
+      "question": "Shall I send a request about {주제} to Claude? (yes/no)",
+      "reply": "that’s fine",
+      "gold": "yes",
+      "stage": "structural-fail",
+      "origin": "drafted",
+      "category": "positive",
+      "context": {
+        "flow": "a2-topic",
+        "language": "en",
+        "recipient": "Claude",
+        "shown": {
+          "canary": "canary ca-414",
+          "topic": "vendor shortlist"
+        }
+      },
+      "note": "As built: the typographic apostrophe U+2019 (a \\p{Pf} glyph) reads as a quote marker (hasUntrustedSpanMarker, QUOTE_GLYPH), like the ASCII one, so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress. Owner / ADR question (A6-S4 review round 1): QUOTE_GLYPH is shared with the summary-grant rule; precedent nlWithoutInlineQuotes (contractions)."
     }
   ]
 }

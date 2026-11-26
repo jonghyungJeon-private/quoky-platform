@@ -40651,13 +40651,14 @@ then notify"): the corpus and the eval plumbing are built; no model-in-the-loop 
 stays off and `on` stays refused.
 
 - **Corpus.** `packages/core/src/application/golden/nl-consent-answer.v1.json`, `status: "owner-review"` (not frozen; sha256 at build
-  `659440d2661e769e03afd84f0d730f783e054fc46b240edc47e1da4192e2f4fa`, pinned by `consent-answer.corpus.test.ts` and moving with any owner edit). 402 cases
+  `659440d2661e769e03afd84f0d730f783e054fc46b240edc47e1da4192e2f4fa`, pinned by `consent-answer.corpus.test.ts` and moving with any owner edit; after
+  review round 1 below: `40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777`, 414 cases). 402 cases at build
   (KO 244, EN 158; rule-① 252, A2 topic 150): positive 87, no 74, non-answer 129, yes-and-more 45, unclear 24, adversarial 43. A6.9 schema plus `category`,
   `ref`, `ownerMark` and a `context` (flow, question language, recipient, sources, and the `shown` values the classifier must never see). Labels follow R6
   (`yes-and-more` added). Flows: SR-1 rule-① M2, A8.5 unexpected recipient (Codex / OpenAI / Gemini; 46 cases with the v2 nouns `mail-thread` / `slack-thread`),
   A8.6 D8 lookup and the A2 topic consent; the A8.4 recipient line pasted or asked about is among the non-answers. Each owner verdict of A6.1, A6.8, R2 a6-06
-  and R8 is a case (`origin: "owner-verdict"`, 24). The 17 A6.11 question 6 replies and R8 `473` carry `ownerMark: recommended-pending-owner` (R2 note under
-  a6-06). The CS-2 round 3 residual (non-answer requests in every registered grammar and source, both languages) and the A6 classifier wiring residual
+  and R8 is a case (`origin: "owner-verdict"`, 24). The 17 A6.11 question 6 replies and R8 `473` carry an `ownerMark`: owner-decided 2026-11-24
+  (r-04 kept the 17 recommended labels; r-01 made `473` (ca-015) `yes-and-more`; corrected in review round 1, the build marked them pending). The CS-2 round 3 residual (non-answer requests in every registered grammar and source, both languages) and the A6 classifier wiring residual
   (work-chat yes-plus-request turns forfeit, not yes-and-more) are included with their real stage.
 - **Stages.** `classifier` 340, `structural-fail` 29, `fast-path` 15, `control-forfeit` 18 (a fourth stage, for the recorded forfeit residual). The corpus test
   derives each stage from the real pipeline (`answerConsentTurn` with a spy classifier; the pure parsers `isConsentControlTurn` and
@@ -40671,10 +40672,11 @@ stays off and `on` stays refused.
   request checked by `classifier-sees-content` (an exact-prompt check plus no digit, canary, topic or topic token before the reply block, no extra
   request field). Remote: the stronger tier through the Claude CLI (sonnet / low by default). Local: `qwen3:8b` through `OllamaCliProvider` with the
   local-weights pin `500a1f067a9f`, reasoning off. A Strict run is refused (exit 3) while the corpus is not `approved`.
-- **Gate (R6 literally).** Per run: 0 wrong captures (gold neither `yes` nor `yes-and-more` labelled either), yes recall >= 95 % (either binding label), no
-  recall >= 95 %, 0 `classifier-sees-content`, 0 harness errors, p95 <= 10 s; PASSED only when all 3 runs pass (fewer passing runs: NON-GATING, exit 4);
-  INVALID (exit 5) on an outage unless a hard failure (wrong capture or content firing) was observed. The R6 `yes-and-more` recall bar (95 %) is printed,
-  not gating, because R6 left it to the owner; confirming it changes the gate constant and every plan digest.
+- **Gate (R6 with the owner's r-03, 2026-11-24).** Per run: 0 wrong captures (gold neither `yes` nor `yes-and-more` labelled either), yes recall >= 95 %
+  (either binding label), no recall >= 95 %, `yes-and-more` recall >= 95 % (r-03 (1): measured separately, gating), 0 `classifier-sees-content`, 0
+  harness errors, p95 <= 10 s (a timed-out call counts as over the bound); PASSED only when all 3 runs pass (fewer passing runs: NON-GATING, exit 4);
+  INVALID (exit 5) on an outage unless a hard failure (wrong capture or content firing) was observed. (The build printed the `yes-and-more` bar as not
+  gating; review round 1 corrected it.)
 - **Core export.** The application index also exports the pure `buildConsentClassifierPrompt`, `parseConsentClassifierOutput`,
   `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION` and `CONSENT_CLASSIFIER_TIMEOUT_MS` (the eval checks requests against the exact prompt); the boundary test's
   export pin lists them; the answer function and the producers stay unreachable.
@@ -40682,7 +40684,50 @@ stays off and `on` stays refused.
   window), on request only; the script test covers both.
 - **Planned runs (not started).** 1,020 calls per arm (340 x 3). Remote: about 61.2 % of the 5 h window at the measured sonnet rate (over the 30 %
   estimate guard, so `GATES_OWNER_OK` would be needed); local: 0 %. a6-02 order: local first; remote only if local fails.
-- **Open points (owner).** The corpus review (Strict) and the marks; the unconfirmed R6 items (yes-and-more recall bar, the yes read as yes-and-more
-  count, the 40 yes-and-more minimum, the other minimums); "응 근데 드라이브도" as yes-and-more (borderline with `473`); the apostrophe finding; a local
-  arm in production needs an adapter or routing change (the A6-S2 adapter refuses a provider without the stronger tier) and a new gate run (a6-12).
-  Summary: `docs/eval/a6-s4-corpus-summary.md`.
+- **Open points (owner).** The corpus review (Strict); the apostrophe finding (ASCII and typographic, see review round 1 item 9); a local arm in
+  production needs an adapter or routing change (the A6-S2 adapter refuses a provider without the stronger tier) and a new gate run (a6-12). Settled
+  by the owner on 2026-11-24 and no longer open: the `yes-and-more` bar (r-03 (1)), the minimums (r-03 (2)), the 17 marks (r-04), `473` (r-01), and with
+  r-01 "응 근데 드라이브도" (ca-304/305) is `yes-and-more`, not borderline. Summary: `docs/eval/a6-s4-corpus-summary.md`.
+
+### A6-S4 review round 1 (2026-11-26, offline)
+
+Status: fixed on branch `claude/v5-a6-s4-corpus` (from 07622471); append-only. No model call, no eval run, no probe. No production code changed
+except the eval harness (`apps/quoky/src/tools`) and `run-gates.sh`; Core runtime, prompts, catalog and flags are unchanged. Reviews: Chief Architect
+(CA) and Codex of 07622471.
+
+1. *P1 (CA), the `yes-and-more` gate.* Owner r-03 (1) (2026-11-24, the "Q1" table above, about line 37595) approved the 95 % bar, measured
+   separately. `NL_CONSENT_ANSWER_EVAL_GATE.yesAndMoreRecall` is `gating: true` and `summarizeConsentAnswer` adds it to `gatePassed`; the printed line,
+   the CLI help, the test (19 of 20 passes, 18 of 20 fails), the implementation note above and the summary say so. Every plan digest changed.
+2. *P1 (CA), `473`.* ca-015 ("응 근데 메일 10개 더 요약해줘", SR-1 `473`) is gold `yes-and-more`, category `yes-and-more`, `origin: owner-verdict` (r-01;
+   the recommendation `other` was not taken). The corpus test checks it with the other owner verdicts.
+3. *P2 (Codex), the handler claim.* The stage derivation omitted production's `handlerClaimed` check (A6 classifier wiring: a turn a registered
+   handler's `surfaceClaim` claims is `other` before the call). On the real runtime 16 classifier-labelled cases are claimed: ca-272 to ca-276, ca-284,
+   ca-291 to ca-293 (gold `other`) and seven `yes-and-more` (ca-306, ca-307, ca-314, ca-317, ca-323, ca-331, ca-332). They are restaged to a fifth stage
+   `handler-claimed` (no call); the seven `yes-and-more` keep their gold and are marked as the recorded residual (the yes is not bound, nothing is sent,
+   the turn routes as the new request), like the `control-forfeit` ones. Replenished with new unclaimed classifier cases: 8 `yes-and-more` (ca-403 to
+   ca-410) and 2 non-answers (ca-411, ca-412, margin). The `yes-and-more` minimum is now counted at the classifier stage like the others.
+4. *P3 (CA), no hand copy.* The corpus test no longer copies `isConsentControlTurn`: each case runs through a real `ConversationRuntime`'s own
+   `handleConsentGate` (its `isConsentControlTurn` and `turnHandlerClaims` over the production turn-handler set: code work, work chat in both modes,
+   reminders, feedback, learning, memory commands, calendar, mail, Drive, help intent) and the real `ConsentTurnGate` with a spy classifier; the
+   stage is read from the gate's closed log line. Every other stage came out as recorded.
+5. *P2 (CA), status cleanup.* The 17 A6.11 question 6 marks are `owner-decided-2026-11-24` (r-04 kept the recommended labels) with `origin:
+   owner-verdict`; ca-304/305 are no longer borderline (r-01); the minimums are r-03 (2). Removed from the open points here and in the summary.
+6. *P2 (CA), p95 and timeouts.* A timed-out call records `TIMED_OUT_LATENCY_MS` (`Infinity`; `null` in the JSON report), so it is always over the p95
+   bound instead of measuring about 10 000 ms and passing or failing on timer jitter. Tested (adapter deadline and provider `TIMEOUT`).
+7. *P3 (CA), run-gates.* `consent-answer-local` passes `--concurrency 1`; the zero 5 h rate is keyed on the `consent-answer-local` mode, not on a
+   `qwen*` model name (a qwen model on the remote arm has no rate and is blocked). `run-gates.test.sh` covers both.
+8. *P3 (CA), the stronger tier.* The remote arm copies the real provider's `supportsStrongerIntentSelection` (a provider without it is refused by the
+   adapter: no call, a harness error); the local arm declares it for the measured model. The eval provider guard now passes the declaration through
+   (it dropped it). Tested.
+9. *CA note, the typographic apostrophe.* Two cases with U+2019 ("don’t" ca-413, "that’s fine" ca-414) are staged `structural-fail` like the ASCII
+   ones (ca-106, ca-155, ca-156): `QUOTE_GLYPH` matches `\p{Pf}`, so the reply is cancelled before the classifier (fail closed, no egress, a usability
+   cost). **Owner / ADR question**, production not changed: `QUOTE_GLYPH` is shared with the summary-grant rule, so allowing a contraction changes
+   that rule too; precedent `nlWithoutInlineQuotes({ contractions: true })` (handoff grounding).
+
+**Counts after the round.** 414 cases (KO 251, EN 163; rule-① 259, A2 topic 155): positive 88, no 75, non-answer 130, yes-and-more 54, unclear 24,
+adversarial 43. Stages: classifier 334, structural-fail 31, control-forfeit 18, handler-claimed 16, fast-path 15. Classifier stage per category:
+positive 86 (min 80), no 64 (60), non-answer 106 (100), yes-and-more 43 (40), unclear 24 (20); adversarial 43 overall (40). Corpus sha256
+`40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777`. Plans (zero calls): 1,002 calls per arm (334 x 3, plus up to 4 canary calls);
+remote digest `977c8ea678ecd47ff734fbd1fc5b544e5815f07f40cff65627ee3c5a9da6d567` (sonnet / low, concurrency 4), about 60.1 % of the 5 h window at
+0.06 % per call (over the 30 % guard: `GATES_OWNER_OK` needed); local digest `6c50d4a0ee7843f79a0af5f39d918125b8602a7cf9d4afd502107baebd4c65a9`
+(concurrency 1, as run-gates passes it), 0 % of the Claude window.

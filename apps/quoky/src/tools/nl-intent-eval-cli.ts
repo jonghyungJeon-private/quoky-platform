@@ -215,8 +215,8 @@ ${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL} / ${DEFAULT_CLAUDE_STRONGER_IN
 Without --approved-plan-digest it is offline (schema check, plan, digest, call count). With it, a Strict run, refused while the corpus
 status is not "approved" (the owner's review comes first). Only the classifier-stage cases make a call (one each per run).
 Consent-answer gate per run: ${NL_CONSENT_ANSWER_EVAL_GATE.wrongCaptures} wrong captures, yes recall >= ${NL_CONSENT_ANSWER_EVAL_GATE.yesRecall * 100}% (yes or yes-and-more), no recall >= ${NL_CONSENT_ANSWER_EVAL_GATE.noRecall * 100}%,
-         ${NL_CONSENT_ANSWER_EVAL_GATE.classifierSeesContent} classifier-sees-content firings, ${NL_CONSENT_ANSWER_EVAL_GATE.harnessErrors} harness errors, p95 <= ${NL_CONSENT_ANSWER_EVAL_GATE.p95LatencyMs / 1000} s; PASSED needs every one
-         of ${NL_CONSENT_ANSWER_EVAL_GATE.runs} runs (fewer passing runs: NON-GATING, exit 4). yes-and-more recall is printed, not gating (R6 recommendation).
+         yes-and-more recall >= ${NL_CONSENT_ANSWER_EVAL_GATE.yesAndMoreRecall.bar * 100}% (owner r-03), ${NL_CONSENT_ANSWER_EVAL_GATE.classifierSeesContent} classifier-sees-content firings, ${NL_CONSENT_ANSWER_EVAL_GATE.harnessErrors} harness errors,
+         p95 <= ${NL_CONSENT_ANSWER_EVAL_GATE.p95LatencyMs / 1000} s (a timed-out call counts as over the bound); PASSED needs every one of ${NL_CONSENT_ANSWER_EVAL_GATE.runs} runs (fewer passing runs: NON-GATING, exit 4).
 
 ADR-0121 S2 plan exactness (the agent planner prompt over agent-plan.v1.json plus every case above as one-step gold) has
 its own CLI: pnpm eval:agent-plan -- --mode plan|run [...] (see agent-plan-eval-cli.ts).
@@ -791,7 +791,7 @@ async function runConsentAnswerCli(options: Readonly<Record<string, string>>, de
   const byStage = (stage: string) => corpus.cases.filter((golden) => golden.stage === stage).length;
   deps.stdout(
     `consent-answer corpus: ${corpus.cases.length} cases (classifier ${byStage('classifier')}, structural-fail ${byStage('structural-fail')}, fast-path ${byStage('fast-path')}, ` +
-      `control-forfeit ${byStage('control-forfeit')}); status ${corpus.status}; schema problems: ${problems.length}`,
+      `control-forfeit ${byStage('control-forfeit')}, handler-claimed ${byStage('handler-claimed')}); status ${corpus.status}; schema problems: ${problems.length}`,
   );
   for (const problem of problems.slice(0, 50)) deps.stdout(`  ${problem}`);
   if (problems.length > 0 || corpus.cases.length === 0) return EXIT_GATE_FAILED;
@@ -809,7 +809,7 @@ async function runConsentAnswerCli(options: Readonly<Record<string, string>>, de
     deps.stdout(CANARY_PLAN_LINE);
     deps.stdout(
       `model calls this plan authorises: at most ${plan.calls} (${plan.caseIds.length} cases x ${plan.runs} run(s), one classifier call each; ` +
-        `the ${plan.deterministicCases} structural, fast-path and control cases make none)`,
+        `the ${plan.deterministicCases} structural, fast-path, control and handler-claimed cases make none)`,
     );
     if (arm === 'local') deps.stdout(`local arm: ${plan.model} pinned ${plan.localDigest12} through the loopback Ollama daemon; no call uses the Claude 5 h window`);
     if (corpus.status !== 'approved') deps.stdout(`corpus status ${corpus.status}: a run is refused until the owner approves the corpus`);
