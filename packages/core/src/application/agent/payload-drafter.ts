@@ -198,8 +198,12 @@ export function remapParticipantLabels(
 const FORMAT_CHARACTERS = /\p{Cf}/gu;
 /** An HTML numeric character reference, `&#NN;` or `&#xHH;`, the trailing `;` optional as HTML allows. */
 const NUMERIC_REFERENCE = /&#(?:[xX]([0-9a-fA-F]+)|([0-9]+));?/gu;
-/** Any named character reference shape (no entity table: every one refuses, fail closed). */
-const NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;?/u;
+/**
+ * A named character reference that refuses the draft (no entity table; owner relaxation 2026-11-26 of the Chief Architect's recorded
+ * rule): ANY `&name;` with the `;`, and without the `;` only a name that STARTS with `amp`, `lt`, `gt` or `quot` (any case), the
+ * legacy forms a destination decodes to `&`, `<`, `>` and `"`. So `Q&A`, `R&D` and `AT&T` pass; `&amp`, `&lt`, `&quot`, `&colon;` refuse.
+ */
+const NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;|&(?:amp|lt|gt|quot)/iu;
 function decodeNumericReferences(text: string): string {
   return text.replace(NUMERIC_REFERENCE, (all, hex: string | undefined, dec: string | undefined) => {
     const code = hex !== undefined ? Number.parseInt(hex, 16) : Number.parseInt(dec ?? '', 10);
@@ -268,12 +272,20 @@ function keyOf(text: string, stripTags: boolean): string {
 }
 
 /**
+ * The inert bracket pair (owner relaxation 2026-11-26): `[` + an inner of 1 to 32 characters that are only letters, digits, hyphens and
+ * single spaces, starting and ending with a letter or digit, + `]`, NOT followed by `(`, `:` or `[`. Its inner has none of `: / . @ ~ ! | ^ \`,
+ * so it is no scheme, host, mention, Jira `[~user]` or `[text|url]` and no marker; the lookahead removes `[x](dest)`, `[x]: dest` and
+ * `[x][ref]`. The preceding character is checked in `inertSyntax` (`!` and `]` refuse: `![x]`, `[a][x]`).
+ */
+const INERT_BRACKET_PAIR = String.raw`\[[\p{L}\p{N}](?:[\p{L}\p{N} -]{0,30}[\p{L}\p{N}])?\](?![(:[])`;
+const INERT_PAIR_ONLY = new RegExp(`^${INERT_BRACKET_PAIR}$`, 'u');
+/**
  * One left-to-right pass over the syntax characters, by exact tokens (no lookbehind, so no character can borrow a neighbour's
  * escape): an escape unit (`\\`, `\[`, `\]`, `\(`) is kept; our own marker (`[@]`, `[.]`, `[:]`, `[/]`, never followed by `(`) is kept; any
- * other `[`, `]` or `\` gets a backslash; a bare `@` becomes `[@]`. A marker, or any `]`, followed by `(` is sealed (`[@]\(`, `]\(`), so no marker can
+ * other `[`, `]` or `\` gets a backslash (except an inert pair, above); a bare `@` becomes `[@]`. A marker, or any `]`, followed by `(` is sealed (`[@]\(`, `]\(`), so no marker can
  * ever open a markdown link. The result is a fixed point of this function (idempotent).
  */
-const SYNTAX = /\\[\\[\](]|\[(?:@|\.|:|\/)\](?!\()|[[\]\\]|@/gu;
+const SYNTAX = new RegExp(String.raw`\\[\\[\](]|\[(?:@|\.|:|\/)\](?!\()|${INERT_BRACKET_PAIR}|[[\]\\]|@`, 'gu');
 /** A closing bracket (ours or escaped) followed by `(` is sealed: no `](dest)` can ever form. */
 const MARKER_PAREN = /(\])\(/gu;
 const MARKER_SPLIT = /(\[(?:@|\.|:|\/)\])/u;
@@ -286,7 +298,13 @@ const SCHEME_WORD_COLON = /([a-z][a-z0-9+.-]{0,15}):(?=\S)/giu;
 
 function inertSyntax(text: string): string {
   return text
-    .replace(SYNTAX, (match) => (match === '@' ? '[@]' : match.length === 1 ? `\\${match}` : match))
+    .replace(SYNTAX, (match, offset: number, whole: string) => {
+      if (match === '@') return '[@]';
+      if (match.length === 1) return `\\${match}`;
+      // An inert bracket pair stays only when it cannot be a link label or image: not right after `!` or `]` (`![x]`, `[a][x]`).
+      if (INERT_PAIR_ONLY.test(match)) return offset > 0 && /[!\]]/u.test(whole.charAt(offset - 1)) ? match.replace(/[[\]]/gu, '\\$&') : match;
+      return match;
+    })
     .replace(MARKER_PAREN, '$1\\(')
     .replace(COLON_AFTER_BRACKET, (_all, colons: string) => `]${'[:]'.repeat(colons.length)}`);
 }

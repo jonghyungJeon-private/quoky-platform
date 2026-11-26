@@ -5,6 +5,11 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A7-S3 sanitiser relaxed, live effect none (2026-11-26, branch `claude/v5-a7-draft-relax`)
+
+- Owner decision: `Q&A`/`R&D`/`AT&T` pass (refuse only `&name;` and, without `;`, `amp`/`lt`/`gt`/`quot` prefixes); inert bracket pairs such as `[BE-123]` are
+  not escaped (closed shape, no `( : [` after, no `! ]` before). Dormant, prompt unchanged, no model call; the A7-S5 drafter eval still needs the owner's notice and yes.
+
 ### A7.7 addendum and owner batch answers (2026-11-26, branch `claude/v5-a7-arch-text`)
 
 - A7.7 addendum (d) ratified and applied; wiki ADR-0121 row updated; owner batch answers recorded in `DECISIONS.md` (A7 gold still `pending-owner-approval`; A6-S3 two-line lots now `approved`). Docs only; flags unchanged.
