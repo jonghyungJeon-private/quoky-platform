@@ -5,8 +5,9 @@
 #   run-gates.sh run    <worktree> <name> [modes...]   the same in the foreground (what the tmux session executes)
 #   run-gates.sh status [<name>]                       summary of an archive (no name: the 10 most recent archives)
 #
-# Modes: intent action read-regression r2 help-scope (eval:nl), agent-plan (eval:agent-plan), r2-redteam (eval:r2-redteam).
-# Default modes: action read-regression r2 (help-scope, the D4 classifier gate, is run on request).
+# Modes: intent action read-regression r2 help-scope consent-answer consent-answer-local (eval:nl), agent-plan (eval:agent-plan), r2-redteam (eval:r2-redteam).
+# Default modes: action read-regression r2 (help-scope, the D4 classifier gate, and consent-answer / consent-answer-local, the A6-S4
+# classifier gate's remote and local arms, are run on request; the local arm's calls go to the loopback Ollama model, rate 0).
 #
 # Archive: ~/Library/Application Support/Quoky/eval-archive/<name>/ holds head.txt, build.log, usage.log, run.log,
 # digests.txt, <mode>.plan.log, <mode>.log, <mode>.report.json (copied from the worktree's data/eval), RUNNING while it
@@ -43,7 +44,7 @@
 #     last known value is kept, nothing is stopped for an unreadable meter (the failure count is logged to usage.log).
 #
 # Environment: GATES_MODEL (haiku), GATES_RUNS (3), GATES_CONCURRENCY (4), GATES_REDTEAM_MODEL (unset: the Claude CLI
-# default summariser), GATES_HELP_SCOPE_MODEL (unset: the classifier's production stronger tier), QUOKY_USAGE_LIMIT_USD (218), GATES_USAGE_PCT (95), GATES_RETRY_WAIT_SEC (900, used when no
+# default summariser), GATES_HELP_SCOPE_MODEL (unset: the classifier's production stronger tier), GATES_CONSENT_MODEL (unset: the A6-S4 remote arm's production stronger tier), QUOKY_USAGE_LIMIT_USD (218), GATES_USAGE_PCT (95), GATES_RETRY_WAIT_SEC (900, used when no
 # active usage block is reported), GATES_RESET_MARGIN_SEC (60, slack after a block end), GATES_NO_RETRY,
 # QUOKY_EVAL_ARCHIVE (archive root), GATES_PROMPT_REV (v73|v74|v77, unset = the mode's active prompt), GATES_PLAN_REV, GATES_CASES (id,id,...: eval:nl --cases),
 # GATES_MAX_EST_PCT (30), GATES_OWNER_OK, GATES_RATE_PCT_PER_CALL (overrides every rate) /
@@ -85,7 +86,7 @@ CHILD_PID=""
 CHILD_PGID=""
 CHILD_LSTART=""
 WATCH_PID=""
-ALL_MODES="intent action read-regression r2 help-scope agent-plan r2-redteam"
+ALL_MODES="intent action read-regression r2 help-scope consent-answer consent-answer-local agent-plan r2-redteam"
 
 usage() {
   sed -n '2,8p' "$SELF" | sed 's/^# \{0,1\}//'
@@ -178,7 +179,7 @@ wait_block_reset() {
 
 cli_of() {
   case "$1" in
-    intent|action|read-regression|r2|help-scope) echo eval:nl ;;
+    intent|action|read-regression|r2|help-scope|consent-answer|consent-answer-local) echo eval:nl ;;
     agent-plan) echo eval:agent-plan ;;
     r2-redteam) echo eval:r2-redteam ;;
     *) return 1 ;;
@@ -192,6 +193,10 @@ common_args() {
     # help-scope: --model / --effort override the classifier's STRONGER tier, so GATES_MODEL (the selector's haiku) must
     # not reach it; the gate measures the production default (sonnet / low) unless GATES_HELP_SCOPE_MODEL is set.
     help-scope) printf -- '--runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_HELP_SCOPE_MODEL:-}" ] && printf -- ' --model %s' "$GATES_HELP_SCOPE_MODEL" ;;
+    # A6-S4: the remote arm measures the production stronger tier (sonnet / low) unless GATES_CONSENT_MODEL is set; the local arm is
+    # qwen3:8b pinned by digest and takes no --model.
+    consent-answer) printf -- '--arm remote --runs %s --concurrency %s' "$RUNS" "$CONC"; [ -n "${GATES_CONSENT_MODEL:-}" ] && printf -- ' --model %s' "$GATES_CONSENT_MODEL" ;;
+    consent-answer-local) printf -- '--arm local --runs %s --concurrency %s' "$RUNS" "$CONC" ;;
     *) printf -- '--model %s --runs %s --concurrency %s' "$MODEL" "$RUNS" "$CONC"
       # Prompt revision (owner decision 2026-11-04): GATES_PROMPT_REV (v73|v74) / GATES_PLAN_REV (v10|v11), identical in plan and run; unset = the ACTIVE revision of the mode (read v74, action/r2 v73 text, planner v11).
       case "$1" in
@@ -203,8 +208,8 @@ common_args() {
   esac
   return 0
 }
-plan_mode() { case "$1" in intent|agent-plan|r2-redteam) echo plan ;; *) echo "$1" ;; esac; }
-run_mode_name() { case "$1" in intent|agent-plan|r2-redteam) echo run ;; *) echo "$1" ;; esac; }
+plan_mode() { case "$1" in intent|agent-plan|r2-redteam) echo plan ;; consent-answer-local) echo consent-answer ;; *) echo "$1" ;; esac; }
+run_mode_name() { case "$1" in intent|agent-plan|r2-redteam) echo run ;; consent-answer-local) echo consent-answer ;; *) echo "$1" ;; esac; }
 
 # --- Quota guards -----------------------------------------------------------------------------------------------------------
 
@@ -338,6 +343,8 @@ mode_env_model() {
   case "$1" in
     r2-redteam) echo "${GATES_REDTEAM_MODEL:-sonnet}" ;;
     help-scope) echo "${GATES_HELP_SCOPE_MODEL:-sonnet}" ;;
+    consent-answer) echo "${GATES_CONSENT_MODEL:-sonnet}" ;;
+    consent-answer-local) echo "qwen3:8b" ;;
     *) echo "$MODEL" ;;
   esac
 }
@@ -345,6 +352,8 @@ mode_env_model() {
 # Per-call rate (% of the 5 h window) for a model name. An unknown / unparseable model has NO rate (prints UNKNOWN, returns 1)
 # unless GATES_RATE_PCT_PER_CALL is set: the estimate guard blocks it (owner-ok may allow it).
 rate_for() {
+  # A local Ollama model (the A6-S4 local arm, qwen3:8b) never uses the Claude 5 h window: rate 0, whatever the overrides say.
+  case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in qwen*) echo 0; return 0 ;; esac
   if [ -n "${GATES_RATE_PCT_PER_CALL:-}" ]; then echo "$GATES_RATE_PCT_PER_CALL"; return 0; fi
   case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
     *haiku*) echo "$RATE_HAIKU" ;;
@@ -774,7 +783,7 @@ for line in read("digests.txt").splitlines():
     if parts and parts[0] not in order:
         order.append(parts[0])
 for name in sorted(os.listdir(A)):
-    m = re.match(r"^(intent|action|read-regression|r2|help-scope|agent-plan|r2-redteam)\.log$", name)
+    m = re.match(r"^(intent|action|read-regression|r2|help-scope|consent-answer-local|consent-answer|agent-plan|r2-redteam)\.log$", name)
     if m and m.group(1) not in order:
         order.append(m.group(1))
 

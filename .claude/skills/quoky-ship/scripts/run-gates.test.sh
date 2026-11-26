@@ -259,5 +259,16 @@ has "TMUX_SESSION reaches the child" "$T/e17.env" "TMUX_SESSION=gates-e17"
 check "value with spaces, quotes, \$, backtick, backslash, ; & # round-trips" "$(cat "$T/e17.owner" 2>/dev/null)" "$WEIRD"
 rm -f "$STUB/tmux"
 
+# 18. A6-S4: consent-answer (remote arm, sonnet rate) and consent-answer-local (qwen3:8b, rate 0: off the Claude window) plan and
+#     run as `eval:nl --mode consent-answer` with their arm
+: > "$T/e18.args"
+rc=$(FAKE_ARGS_LOG="$T/e18.args" FAKE_CALLS=300 gates e18 consent-answer consent-answer-local); check "consent-answer arms exit 0" "$rc" 0
+has "remote arm planned with --arm remote" "$T/e18.args" "consent-answer --mode consent-answer --arm remote --runs"
+has "local arm planned with --arm local" "$T/e18.args" "consent-answer --mode consent-answer --arm local --runs"
+has "remote arm at the sonnet rate" "$T/arch/e18/estimate.txt" "mode=consent-answer model=sonnet calls=300 rate_pct_per_call=0.06 est_pct_5h=18.0"
+has "local arm at rate 0" "$T/arch/e18/estimate.txt" "mode=consent-answer-local model=qwen3:8b calls=300 rate_pct_per_call=0 est_pct_5h=0.0"
+check "local arm takes no --model" "$(grep -c -- '--arm local.*--model' "$T/e18.args")" 0
+has "both arms ran" "$T/arch/e18/DONE" "consent-answer-local exit=0"
+
 echo; echo "passed $pass, failed $failn"
 [ "$failn" -eq 0 ]
