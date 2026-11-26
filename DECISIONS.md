@@ -40502,7 +40502,7 @@ ADR-0100 D8 item 8 (A8.7 item 4). No prompt, catalog or question text changed.
   recipient's label) and renders the unchanged `summary-consent-question.v2` with the source noun and the ref count ("지라 이슈 2건을 Claude에 보내 요약할게요.
   보낼까요? (응/아니)"). The question names the recipient and the count; the listing directly above it names the items. *Corrected by review round 1
   item 3:* that held only when the summary readout was not fitted to the prompt budget; the question is now asked only when the
-  listing's rows (`listed`, pre-fit) equal the descriptor refs, otherwise the listing plus the fixed not-sent line. It requires the turn-entry void epoch.
+  rows the listing displays (`listed`, as its renderer reports them; review round 2) equal the descriptor refs, otherwise the listing plus the fixed not-sent line. It requires the turn-entry void epoch.
 - **Token binds a SET.** `take` checks the bound step names exactly the record's refs (same order) and mints a token with `kind: 'work-lookup'` and item key
   `workLookupRefsKey(refs)` = the canonical JSON of the distinct sorted refs (exact, collision-free, no hashing). `allowsContinuation` additionally requires
   the use's `kind` to equal the token's: an item token never admits a lookup use, nor the reverse. Everything else is the OQ1-3 token (actor, conversation,
@@ -40564,3 +40564,31 @@ Record-only open points (no change in this round): (a) the "changed" line is sin
 a copy change is a later slice. (b) The question follows the descriptor language and the recipient / not-sent lines the language of the
 owner's text, as on the OQ1-3 item path. (c) The D8 history keeps the summary text as built (D8 is not an ADR-0118 D7 path). (d) The
 OQ1-2 interim D8 test rewrite (listing plus the fixed line without a descriptor) is correct for the slice and stays.
+
+#### OQ1-4 review round 2 (2026-11-26)
+
+Review of `609feb59` (Codex R2 P2, reproduced). Flag off stays byte-identical (the listing text is unchanged; the dormancy pins pass).
+
+1. **The question could count rows the listing does not display (Codex R2 P2).** Round 1 took `listedRefs` from `readout.items`,
+   but the listing is fitted to its own reply budget (`fitLines`: droppable rows go from the end on the delivered rendering). Ten
+   items with long URLs all fit the prompt (the prompt carries no URL) while the listing displays about four rows; the question
+   asked for ten and a yes would send six items the owner never saw.
+2. **Rendered-rows rule.** The set the owner is asked about is derived from what the listing renderer itself reports it displays,
+   never from the readout. `externalWorkList` (both `renderNumberedExternalWorkList` and the new `renderExternalWorkListRows`) returns,
+   with its unchanged body, `shownRefs` (ids only): the refs of the leading rows its own fit keeps on any platform
+   (`certainlyRenderedRows`, the same count the A6 R2 numbered labels already use; worst-case rendering, so it may report fewer rows
+   than a platform shows, never one the budget may drop). `WorkChatService` carries `shownRefs` as `listedRefs` (round 1's
+   readout-derived list is removed), the handler puts them on the descriptor as `listed`, and `namesReadoutRefs` asks only when
+   `listed` equals the descriptor refs (which equal the fitted prompt readout's) in the same order; otherwise the listing plus the
+   fixed not-sent line, nothing sent. No length heuristic is added in the consent path. A count question (`listOnly`, the count
+   preview cut) is never a summarize outcome and never asks.
+3. **Tests.** Renderer: `shownRefs` is a prefix of the readout refs, equal for a short list, fewer for ten long-URL rows, and the body
+   is deep-equal to `renderExternalWorkList`'s. Runtime: the reproduction (ten long-URL items fit the prompt, the listing displays
+   fewer) gives the listing plus the not-sent line, no step, zero calls; the count preview never asks; ten short rows all displayed
+   still ask "10건" and a yes sends exactly those refs; flag off with the long-URL items is byte-identical with or without
+   `QUOKY_SUMMARY_CONSENT` alone.
+4. **Fix-round budget.** This finding (the question's set vs what the listing shows: CA P2 in round 1, Codex R2 P2 here) has now used
+   its two fix rounds. A further gap on it is recorded for the owner, not fixed in another round.
+
+Record-only open point: because `shownRefs` is the renderer's worst-case count, a ten-row listing with long titles or URLs may not
+ask even when the platform shows every row (fail closed: listing plus the not-sent line); the owner can narrow the lookup.

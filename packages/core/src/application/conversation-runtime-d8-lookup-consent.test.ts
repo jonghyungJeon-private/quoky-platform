@@ -126,6 +126,7 @@ function harness(opts: HarnessOptions = {}) {
     stage: 'pre-classify',
     order: 1,
     async handle(ctx) {
+      if (ctx.message.text === '선택한 지라 개수') return lookupHandler.handleSelected({ ...SELECTED, args: { count: true } }, ctx);
       return ctx.message.text === '선택한 지라 조회' ? lookupHandler.handleSelected(SELECTED, ctx) : null;
     },
   };
@@ -641,5 +642,91 @@ describe('OQ1-4 review round 1', () => {
     expect(h.events.filter((event) => event === 'execute')).toHaveLength(1);
     expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
     noContentInLogs(h);
+  });
+});
+
+describe('OQ1-4 review round 2: the question counts exactly the rows the listing displays', () => {
+  /** A long URL: the prompt never carries URLs, so ten such items all fit the prompt while the listing's own budget drops rows. */
+  const longUrlItem = (id: string): ConnectorItem => ({ ...item(id), url: `https://example.atlassian.net/browse/${id}/${'segment/'.repeat(30)}end` });
+  const longItems = () => Array.from({ length: 10 }, (_, index) => longUrlItem(`A-${index + 1}`));
+
+  it('reproduction: ten items fit the prompt but the listing displays fewer rows: no question, the not-sent line, zero calls', async () => {
+    const items = longItems();
+    // Precondition (the finding): the summary readout carries all ten; the listing's renderer reports fewer displayed rows.
+    const desk = new WorkChatService(
+      {
+        workSurface: { forActor: async () => ({ status: 'COMPLETE', items: [], sources: [] }) },
+        connectors: { list: () => [{ source: 'jira', readOnly: true, isAvailable: async () => true, query: async () => ({ source: 'jira', items }) }] },
+        work: {} as WorkChatServiceDeps['work'],
+      },
+      { summaryEnabled: true },
+    );
+    const outcome = await desk.handle({ kind: 'lookup', source: 'jira', query: 'my-items' }, OWNER);
+    expect(outcome.kind).toBe('summarize');
+    if (outcome.kind !== 'summarize') return;
+    expect(outcome.readout.items).toHaveLength(10);
+    expect(outcome.listedRefs?.length).toBeGreaterThan(0);
+    expect(outcome.listedRefs?.length).toBeLessThan(10);
+    const listing = await listingOf(items);
+    expect(listing).not.toContain('[jira:A-10]');
+
+    const h = harness({ expectedKey: 'fake-other' });
+    h.state.items = items;
+    const result = await h.send(ASK);
+    expect(result.reply.text).toBe(`${listing}\n${renderItemSummaryNotSentLine('ko')}`);
+    expect(result.reply.text).not.toContain('보낼까요');
+    expect(h.store.stateOf(SCOPE)).toBeUndefined();
+    expect(h.executed).toEqual([]);
+    expect(h.events).toEqual([]);
+    // A later yes sends no item: there is no question to answer (it is an ordinary chat turn, no lookup re-run).
+    await h.send('응');
+    expect(h.counts.queries).toBe(1);
+    expect(h.executed.filter((entry) => entry.request.capability === Capability.SUMMARIZATION)).toEqual([]);
+    expect(JSON.stringify(h.executed)).not.toContain('jira:A-');
+    noContentInLogs(h);
+  });
+
+  it('the count preview (a cut list of a count question) never asks: zero calls, no step', async () => {
+    const h = harness({ expectedKey: 'fake-other', selectionProbe: true });
+    h.state.items = Array.from({ length: 8 }, (_, index) => item(`A-${index + 1}`));
+    const result = await h.send('선택한 지라 개수');
+    expect(result.reply.text).toContain('[jira:A-1]');
+    expect(result.reply.text).not.toContain('[jira:A-8]');
+    expect(result.reply.text).not.toContain('보낼까요');
+    expect(result.reply.text).not.toContain(renderItemSummaryNotSentLine('ko'));
+    expect(h.store.stateOf(SCOPE)).toBeUndefined();
+    expect(h.executed).toEqual([]);
+    expect(h.events).toEqual([]);
+  });
+
+  it('the normal case: the listing displays every asked ref, so it asks, and a yes sends exactly those refs', async () => {
+    const h = harness({ expectedKey: 'fake-other' });
+    h.state.items = Array.from({ length: 10 }, (_, index) => item(`A-${index + 1}`));
+    const listing = await listingOf(h.state.items);
+    expect(listing).toContain('[jira:A-10]');
+    const question = await h.send(ASK);
+    expect(question.reply.text).toBe(`${listing}\n지라 이슈 10건을 Remote에 보내 요약할게요. 보낼까요? (응/아니)`);
+    expect(h.executed).toEqual([]);
+    const yes = await h.send('응');
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+    const prompt = h.executed[0]?.request.prompt ?? '';
+    for (let n = 1; n <= 10; n += 1) expect(prompt).toContain(`[jira:A-${n}]`);
+    noContentInLogs(h);
+  });
+
+  it('flag off: the long-URL lookup is byte-identical with or without QUOKY_SUMMARY_CONSENT alone (summarised as built, no question)', async () => {
+    const results = [];
+    for (const consent of ['absent', 'gate'] as const) {
+      const h = harness({ consent });
+      h.state.items = longItems();
+      const result = await h.send(ASK);
+      results.push({ reply: view(result), requests: h.executed.map((entry) => entry.request), history: h.recordAssistant, runs: h.runs });
+      expect(result.reply.text).toContain(SUMMARY);
+      expect(result.reply.text).not.toContain('보낼까요');
+      expect(h.counts.expected).toBe(0);
+    }
+    expect(results[1]).toEqual(results[0]);
+    expect(results[0]?.requests).toHaveLength(1);
   });
 });

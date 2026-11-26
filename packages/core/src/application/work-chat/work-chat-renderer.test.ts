@@ -11,6 +11,8 @@ import {
   WORK_CHAT_REPLY_MAX_CHARS,
   WORK_CHAT_TODO_HELP_LINES,
   renderExternalWorkList as renderExternalWorkListBody,
+  renderExternalWorkListRows,
+  renderNumberedExternalWorkList,
   renderExternalWriteRefusal,
   renderLookupFailure,
   renderLookupUnsupported,
@@ -254,5 +256,35 @@ describe('lookup copy', () => {
       })),
     });
     expect(renderExternalWorkList(readout).length).toBeLessThanOrEqual(WORK_CHAT_REPLY_MAX_CHARS);
+  });
+
+  it('OQ1-4 review round 2: shownRefs are the rows the list displays (its own fit), and the body is unchanged', () => {
+    const longUrl = (id: string) => `https://example.atlassian.net/browse/${id}/${'segment/'.repeat(30)}end`;
+    const short = buildExternalWorkReadout({ source: 'jira', query: 'my-items', items: [{ id: 'A-1', title: '일 하나', url: longUrl('A-1') }, { id: 'A-2', title: '일 둘' }] });
+    const long = buildExternalWorkReadout({
+      source: 'jira',
+      query: 'my-items',
+      items: Array.from({ length: 10 }, (_v, index) => ({ id: `A-${index + 1}`, title: `일 ${index + 1}`, url: longUrl(`A-${index + 1}`) })),
+    });
+    for (const readout of [short, long]) {
+      const rows = renderExternalWorkListRows(readout);
+      // The text is byte-identical to the as-built list; only the ids are new.
+      expect(rows.body).toEqual(renderExternalWorkListBody(readout));
+      expect(rows.labelled).toBe(0);
+      const numbered = renderNumberedExternalWorkList(readout);
+      expect(numbered.shownRefs).toEqual(rows.shownRefs);
+      expect(numbered.labelled).toBe(numbered.shownRefs.length);
+      // Always a prefix of the readout's refs, in order.
+      expect(rows.shownRefs).toEqual(readout.items.slice(0, rows.shownRefs.length).map((item) => item.ref));
+    }
+    expect(renderExternalWorkListRows(short).shownRefs).toEqual(['jira:A-1', 'jira:A-2']);
+    const shown = renderExternalWorkListRows(long).shownRefs;
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(10);
+    // Every displayed ref is in the delivered text; a row beyond it may be dropped by the fit.
+    const text = renderExternalWorkList(long);
+    for (const ref of shown) expect(text).toContain(`[${ref}]`);
+    expect(text).not.toContain('[jira:A-10]');
+    expect(renderExternalWorkListRows(buildExternalWorkReadout({ source: 'jira', query: 'my-items', items: [] })).shownRefs).toEqual([]);
   });
 });

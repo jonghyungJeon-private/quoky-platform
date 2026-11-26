@@ -97,8 +97,9 @@ const isWorkLookupTaken = (taken: TakenContinuation): taken is WorkLookupTaken =
 
 /**
  * OQ1-4: whether the descriptor names exactly the readout's items, in order (the handler builds both from the same readout), AND
- * (review round 1) exactly the rows the listing shows: a readout fitted to the prompt budget carries fewer items than the listing,
- * and then the question would count fewer items than the owner sees, so it is not asked.
+ * exactly the rows the listing DISPLAYS (`listed`, the listing renderer's own output; review rounds 1 and 2): the prompt may carry
+ * fewer items than the listing (budget fit), or the listing may display fewer rows than the prompt carries (its own reply budget);
+ * either way the question would not count exactly what the owner sees, so it is not asked.
  */
 function namesReadoutRefs(lookup: { readonly refs: readonly string[]; readonly listed?: readonly string[] }, readout: ExternalWorkReadout): boolean {
   const { refs, listed } = lookup;

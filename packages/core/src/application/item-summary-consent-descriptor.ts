@@ -69,9 +69,10 @@ export interface WorkLookupConsentDescriptor {
   readonly query: WorkChatLookupQuery;
   readonly refs: readonly string[];
   /**
-   * OQ1-4 review round 1: the refs of every row the deterministic listing shows (before the summary readout is fitted to the
-   * prompt budget), in listing order. The question may be asked only when these equal `refs` (the listing above the question
-   * then names exactly the items the question counts). Absent: nothing may be asked.
+   * OQ1-4 review round 1, corrected in round 2: the refs of the rows the deterministic listing DISPLAYS, in listing order, as its
+   * renderer reports them (a row the listing's own reply budget may drop is not listed; never derived from the readout). The
+   * question may be asked only when these equal `refs` (the listing above the question then names exactly the items the
+   * question counts and a yes sends). Absent: nothing may be asked.
    */
   readonly listed?: readonly string[];
   readonly language: 'ko' | 'en';

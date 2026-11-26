@@ -45,7 +45,7 @@ import type {
   WorkChatTarget,
 } from './work-chat-command';
 import {
-  renderExternalWorkList,
+  renderExternalWorkListRows,
   renderNumberedExternalWorkList,
   renderExternalWriteRefusal,
   renderLookupFailure,
@@ -133,8 +133,9 @@ export type WorkChatOutcome =
        */
       readonly numbered?: { readonly summary: NlListingReceipt; readonly fallback: NlListingReceipt };
       /**
-       * ADR-0121 A8.6 (OQ1-4 review round 1): the refs of every row `fallbackText` lists, in order, before `readout` was fitted to
-       * the prompt budget (ids only). The consent question may count only items the listing shows and the prompt carries.
+       * ADR-0121 A8.6 (OQ1-4 review round 1, corrected in round 2): the refs of the rows `fallbackText` DISPLAYS, in order, as
+       * its renderer reports them (`shownRefs`: a row the reply budget may drop is not one), ids only. The consent question may
+       * count only items the listing shows and the prompt carries.
        */
       readonly listedRefs?: readonly string[];
     };
@@ -1068,13 +1069,14 @@ export class WorkChatService implements WorkDesk {
     const readout = previewed ? { ...complete, items: complete.items.slice(0, WORK_CHAT_COUNT_PREVIEW_ITEMS), truncated: true } : complete;
     // A6 R2 (D1): while QUOKY_NL_ITEM_R2 is not `off`, a Jira / Slack list is numbered and its delivered rows are labels.
     const numbered = this.numberedLists && (source === 'jira' || source === 'slack');
-    const list = numbered ? renderNumberedExternalWorkList(readout) : { body: renderExternalWorkList(readout), labelled: 0 };
+    const list = numbered ? renderNumberedExternalWorkList(readout) : renderExternalWorkListRows(readout);
     const fallbackText = list.body;
     const fallbackListing = this.workListingReceipt(source, readout.items, list.labelled);
     if (this.summaryEnabled && readout.items.length > 0 && options.listOnly !== true) {
       // A6 R2 (D1): a numbered list's prompt asks for one referenced line per item, so Quoky can number the body itself.
       const summaryReadout = fitExternalWorkReadoutToPrompt(numbered && fallbackListing !== undefined ? { ...readout, numbered: true } : readout);
-      const listedRefs = Object.freeze(readout.items.map((item) => item.ref));
+      // OQ1-4 review round 2: the rows the listing itself DISPLAYS (the renderer's own output), never the readout's items.
+      const listedRefs = list.shownRefs;
       if (numbered && fallbackListing !== undefined) {
         const index = renderExternalWorkIndexFooter(summaryReadout);
         const summaryListing = this.workListingReceipt(source, summaryReadout.items, index.labelled) ?? { source: source as 'jira' | 'slack', items: [] };

@@ -469,11 +469,31 @@ export function renderExternalWorkList(readout: ExternalWorkReadout): MessageBod
  * counted at twice its plain length (the worst escaping) against the budget minus a reserve for the fixed lines, as the
  * to-do receipts do. A row beyond `labelled` may still be shown, but its number is never recorded as a label.
  */
-export function renderNumberedExternalWorkList(readout: ExternalWorkReadout): { readonly body: MessageBody; readonly labelled: number } {
+export function renderNumberedExternalWorkList(readout: ExternalWorkReadout): ExternalWorkListRendering {
   return externalWorkList(readout, true);
 }
 
-function externalWorkList(readout: ExternalWorkReadout, numbered: boolean): { readonly body: MessageBody; readonly labelled: number } {
+/**
+ * The unnumbered list exactly as `renderExternalWorkList` renders it (the same `body`), plus `shownRefs` (ADR-0121 A8.6, OQ1-4
+ * review round 2). `labelled` is 0 (no row is labelled when unnumbered).
+ */
+export function renderExternalWorkListRows(readout: ExternalWorkReadout): ExternalWorkListRendering {
+  const list = externalWorkList(readout, false);
+  return { ...list, labelled: 0 };
+}
+
+/**
+ * A rendered lookup list. `shownRefs` (ADR-0121 A8.6, OQ1-4 review round 2; ids only): the refs of the item rows this list
+ * DISPLAYS, in order: the rows the renderer's own fit keeps on any platform (`certainlyRenderedRows`, the same count the
+ * numbered labels use), never a row the reply budget may drop. Plain data; the body does not depend on it.
+ */
+export interface ExternalWorkListRendering {
+  readonly body: MessageBody;
+  readonly labelled: number;
+  readonly shownRefs: readonly string[];
+}
+
+function externalWorkList(readout: ExternalWorkReadout, numbered: boolean): ExternalWorkListRendering {
   const { source, query, text } = readout.request;
   const label = sourceLabel(source);
   const subject =
@@ -514,7 +534,12 @@ function externalWorkList(readout: ExternalWorkReadout, numbered: boolean): { re
   if (readout.omittedSensitive > 0) {
     lines.push({ text: `민감정보가 있는 ${readout.omittedSensitive}건은 제외했어요.` });
   }
-  return { body: fit(lines), labelled: numbered ? certainlyRenderedRows(lines) : 0 };
+  const shown = readout.items.length > 0 ? certainlyRenderedRows(lines) : 0;
+  return {
+    body: fit(lines),
+    labelled: numbered ? shown : 0,
+    shownRefs: Object.freeze(readout.items.slice(0, shown).map((item) => item.ref)),
+  };
 }
 
 /**
