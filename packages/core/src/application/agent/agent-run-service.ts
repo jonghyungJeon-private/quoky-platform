@@ -610,7 +610,8 @@ export class AgentRunService {
     const cut = (ended: 'wall' | 'shutdown' | 'failed'): AgentActiveOutcome =>
       ended === 'wall' ? declined('bound', { breach: budget.breach ?? 'wall-time' }) : declined(ended);
     // Review round 4: the A7 epoch is captured ONCE, here, before ANY await of the turn (the read is started synchronously), and never again.
-    const a7Capture = turn.a7 !== undefined && this.deps.writeProposal !== undefined ? this.a7Guard(turn.actor.id) : undefined;
+    // Review round 6: captured whenever the proposal dep is wired, with or without A7 facts (a form-a cross-write turn has none yet reaches the proposal port).
+    const a7Capture = this.deps.writeProposal !== undefined ? this.a7Guard(turn.actor.id) : undefined;
     // The kill switch on the live actor (never the turn's snapshot); unreadable = declined (fail closed).
     const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
     if (running.kind !== 'ok') return cut(running.kind);
@@ -718,10 +719,10 @@ export class AgentRunService {
       const proposal = this.deps.writeProposal;
       if (proposal === undefined || !proposal.targets.includes('jira-comment') || validated.target !== 'jira.comment.propose') return declined('cross-write-off', callFields);
       // Review round 4: the planner and the receipt binding are awaited above; the epoch is checked once more before the first A7 effect.
-      // Review round 5: an A7 turn whose epoch capture FAILED (a boot id is wired but the guard is missing: the actor read threw or the actor
+      // Review round 5/6: ANY cross-write turn (with or without A7 facts) whose epoch capture FAILED (a boot id is wired but the guard is missing: the actor read threw or the actor
       // is gone) fails closed here. No boot id at all (the composition root did not inject one) keeps the running-only check (A7-S5 gate row).
       const bootId = proposal.bootId;
-      if (turn.a7 !== undefined && guard === undefined && typeof bootId === 'string' && bootId.length > 0) return declined('stopped', callFields);
+      if (guard === undefined && typeof bootId === 'string' && bootId.length > 0) return declined('stopped', callFields);
       if (!bindA7 || !(await alive())) return declined('stopped', callFields);
       return await this.runCrossWrite(turn, validated, prepared, budget, readers, selector, proposal, callFields, latency, a7Receipt, guard);
     }

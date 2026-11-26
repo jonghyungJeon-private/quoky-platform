@@ -90,6 +90,8 @@ interface Options {
   /** Injected run bounds (the object is read at every admission, so a test may change it after the asking turn). */
   readonly bounds?: { -readonly [K in keyof import('./run-bounds').AgentRunBoundValues]?: number };
   readonly bootId?: string | null;
+  /** Omit the proposal dep entirely (the epoch guard is then never captured). */
+  readonly noProposal?: boolean;
   /** The summariser's locality (default `LOCAL`); `REMOTE` with `askConsent` asks the rule-① question. */
   readonly drafterLocality?: AiExecutionLocality;
 }
@@ -163,7 +165,7 @@ function harness(options: Options = {}) {
     summarizer: new CapabilityRouter(new AiProviderManager([drafter]), policy),
     workSummarySources: ['slack', 'jira'],
     crossWrite: ctx(options.jiraProjects),
-    writeProposal: {
+    ...(options.noProposal === true ? {} : { writeProposal: {
       port,
       targets: ['jira-comment'],
       ...(options.bootId === null ? {} : { bootId: options.bootId ?? 'boot-1' }),
@@ -172,7 +174,7 @@ function harness(options: Options = {}) {
         : { destinationCheck: { jiraIssueExists: async (key: string) => (state.checks.push(key), state.exists(key)), slackChannelIsPublic: async () => true } }),
       ...(options.withHasher === false ? {} : { sha256Hex }),
       ...(options.drafterLocality === 'REMOTE' ? { askConsent: true } : {}),
-    },
+    } }),
     ...(options.drafterLocality === 'REMOTE' ? { recipientLabel: () => 'Remote AI' } : {}),
   });
   const turn = (text: string, facts: A7TurnFacts, now = T0, over: Partial<AgentActiveTurn> = {}): AgentActiveTurn => ({
@@ -868,15 +870,37 @@ describe('review round 4: the epoch is captured once at turn entry and checked a
     expect(h.proposals).toHaveLength(0);
   });
 
-  it('round 5: a turn without A7 facts reads the actor no extra time for the epoch guard', async () => {
-    const a = harness({ script: [FORM_A_NAMED_PLAN] });
-    const b = harness({ script: [FORM_A_NAMED_PLAN] });
-    const noFacts = b.turn(FORM_A_NAMED_TEXT, facts('m1')) as { a7?: unknown };
-    const plain = { ...noFacts };
+  const withoutFacts = (h: ReturnType<typeof harness>, text: string) => {
+    const plain = { ...(h.turn(text, facts('m1')) as { a7?: unknown }) };
     delete plain.a7;
-    await a.svc.runActive(a.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT);
-    await b.svc.runActive(plain as never, async () => CHAT);
-    expect(b.state.actorGets).toBeLessThan(a.state.actorGets);
+    return plain as never;
+  };
+
+  it('round 6: a turn without A7 facts makes exactly one extra actor read (the epoch capture) with the proposal dep wired', async () => {
+    const READ_PLAN = JSON.stringify({ steps: [{ entryId: 'slack.search', args: { keyword: '릴리즈' } }], ambiguity: 'CLEAR' });
+    const READ_TEXT = '슬랙에서 릴리즈 검색해줘';
+    const wired = harness({ script: [READ_PLAN] });
+    const bare = harness({ script: [READ_PLAN], noProposal: true });
+    await wired.svc.runActive(withoutFacts(wired, READ_TEXT), async () => CHAT);
+    await bare.svc.runActive(withoutFacts(bare, READ_TEXT), async () => CHAT);
+    expect(wired.state.actorGets - bare.state.actorGets).toBe(1);
+  });
+
+  it('round 6: a read plan without A7 facts survives a stop then resume during the planner and still runs', async () => {
+    const READ_PLAN = JSON.stringify({ steps: [{ entryId: 'slack.search', args: { keyword: '릴리즈' } }], ambiguity: 'CLEAR' });
+    const READ_TEXT = '슬랙에서 릴리즈 검색해줘';
+    const h = harness({ script: [READ_PLAN] });
+    h.state.hooks.planner = () => stopThenResume(h);
+    const outcome = await h.svc.runActive(withoutFacts(h, READ_TEXT), async () => CHAT);
+    expect(outcome).not.toMatchObject({ kind: 'declined' });
+    expect(h.proposals).toHaveLength(0);
+  });
+
+  it('round 6: a form-a cross-write turn WITHOUT A7 facts declines stopped after a stop then resume during the planner (0 proposals, 0 drafts)', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN] });
+    h.state.hooks.planner = () => stopThenResume(h);
+    expect(await h.svc.runActive(withoutFacts(h, FORM_A_NAMED_TEXT), async () => CHAT)).toMatchObject({ kind: 'declined', reason: 'stopped' });
+    nothingAfter(h, 0);
   });
 
   it('pick: stop then resume during the running-only check before the destination GET declines stopped with zero GETs', async () => {

@@ -40265,3 +40265,17 @@ Residuals, recorded and not chased (A7-S5 wiring gate rows):
   `isActionSwitchGoverned`.
 - `epochRunning` with a missing guard is running-only (no boot id wired: the dormant default, and the `bootId: null` test relies on it). A7-S5 gate: fail closed on a missing guard
   once the runtime is wired.
+
+### A7-S4b review round 6 (2026-11-26; both round-5 reviewers: a form-a cross-write turn re-opened a fail-open)
+
+Append-only under the round-5 note. Still DORMANT. Orchestrator decision: round 5 captured the epoch guard only when `turn.a7` AND the proposal dep were present. A form-a
+cross-write turn (a named destination) carries no A7 facts, yet with the proposal dep wired it reaches the proposal port and the open-card read; with no guard it got only the
+running-only check, so a stop then resume during the planner let it propose. Fix: the guard is captured at turn entry whenever the proposal dep is wired (the round-4 scope),
+facts or not. Every A7 cross-write path (form a and form b, the open-card read, the source read, the port) uses the epoch check, and a cross-write turn whose capture failed
+while a boot id is wired declines `stopped` (fail closed). A7 state is still read and written only when `turn.a7` exists, and the post-planner `alive=false` still skips only
+the A7 binding, so a read plan or a one-step plan is never declined. Accepted cost: one extra actor read for a turn without A7 facts when the proposal dep is wired (round 5
+removed it; reinstated on purpose). Tests: a form-a turn without A7 facts under stop-then-resume during the planner declines `stopped` with 0 proposals and 0 drafts (it fails on
+76078a9d: no guard, so the running-only check passed); the extra read is asserted exactly (+1 versus no proposal dep); a read plan without A7 facts still runs.
+
+Correction to the round-5 residual row: a missing boot id is NOT the dormant default. The composition root (`apps/quoky/src/features/agent.providers.ts`) always wires
+`bootId: randomUUID()`; the missing case occurs only in the `bootId: null` test, which keeps the running-only check. A7-S5 gate: make `bootId` REQUIRED in the proposal dep type.
