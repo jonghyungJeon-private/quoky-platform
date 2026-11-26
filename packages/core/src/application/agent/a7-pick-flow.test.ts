@@ -765,3 +765,37 @@ describe('review round 2: the destination check is charged and raced (P2)', () =
     expect(h.proposals).toHaveLength(0);
   });
 });
+
+describe('review round 3: the switch epoch and the destination reservation', () => {
+  const asked = async (h: ReturnType<typeof harness>) => jsonRoundTrip(((await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown }).a7State);
+
+  it('P2-1 (Codex): stop then resume while the destination GET is awaited voids the pick: nothing read, drafted or proposed', async () => {
+    let hold: ((value: boolean) => void) | undefined;
+    let reached: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => (reached = resolve));
+    const h = harness({ script: [FORM_A_PLAN], destinationExists: () => new Promise<boolean>((resolve) => { hold = resolve; reached?.(); }) });
+    const state = await asked(h);
+    const pending = h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)));
+    await gate;
+    h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'stopped', at: at(2) } } });
+    h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'running', at: at(3) } } });
+    hold?.(true);
+    expect(await pending).toMatchObject({ kind: 'declined', reason: 'stopped' });
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    expect(h.drafter.requests).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+  });
+
+  it('P2-2 (Codex): the destination GET reserves a connector query and an HTTP slot; with limits 1/1 the source read is refused by the bound', async () => {
+    const bounds = {} as { maxConnectorQueries?: number; maxHttpRequests?: number };
+    const h = harness({ script: [FORM_A_PLAN], bounds });
+    const state = await asked(h);
+    bounds.maxConnectorQueries = 1;
+    bounds.maxHttpRequests = 1;
+    const outcome = await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)));
+    expect(h.state.checks.length + h.reads.filter((read) => read.entry === 'slack.search').length).toBeLessThanOrEqual(1);
+    expect(h.drafter.requests).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+    expect(outcome).not.toMatchObject({ outcome: { kind: 'carded' } });
+  });
+});

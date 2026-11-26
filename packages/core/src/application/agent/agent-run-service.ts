@@ -845,7 +845,7 @@ export class AgentRunService {
             now: turn.now,
             budget,
             signal: this.background.signal,
-            stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+            stillRunning: () => this.epochRunning(turn.actor.id, guard),
             ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
             sessionId: turn.sessionId,
             summaryAsked,
@@ -876,7 +876,7 @@ export class AgentRunService {
             now: turn.now,
             budget,
             signal: this.background.signal,
-            stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+            stillRunning: () => this.epochRunning(turn.actor.id, guard),
             ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
             ...(receipt !== undefined ? { receipt } : {}),
             ...(hasher !== undefined ? { hasher } : {}),
@@ -1103,7 +1103,7 @@ export class AgentRunService {
           ...(wp.askConsent === true ? { askSummaryConsent: true } : {}),
         };
         const executor = new AgentPlanExecutor({ readers, logger: this.deps.logger, summarizer: route });
-        const stillRunning = (): Promise<boolean> => this.liveSwitchRunning(turn.actor.id);
+        const stillRunning = (): Promise<boolean> => this.epochRunning(turn.actor.id, guard);
         const jiraProjects = cw.jiraProjects.map((key) => key.toUpperCase());
 
         if (resolution.kind === 'project') {
@@ -1141,12 +1141,15 @@ export class AgentRunService {
         // P2-5 (A7.5 step 2): a fresh existence check of the picked issue BEFORE any source read or draft. The port is required: absent, the issue
         // missing or inaccessible, or a failed check all refuse, with nothing read and nothing drafted.
         if (wp.destinationCheck === undefined) return declined('no-destination-check');
-        // Review round 2 (P2): charged as one connector call (refused: fail closed, no GET) and raced against the wall and shutdown.
+        // Review round 3 (P2-2): the destination GET RESERVES one connector query and one HTTP request BEFORE it is made (refused: fail closed, no
+        // GET), so a run bounded to one connector read cannot make this GET and the source read both. It is raced against the wall and shutdown.
         const destinationPort = wp.destinationCheck;
-        if (!budget.mayReadConnector()) return declined('bound');
+        if (!budget.reserveQuery() || !budget.reserveHttp()) return declined('bound');
         const checked = await withinRun(() => checkCrossWriteDestination({ kind: 'jira', issueKey: picked.issueKey, project: picked.project }, destinationPort), budget, this.background.signal);
         if (checked.kind === 'wall') return declined('bound');
         if (checked.kind !== 'ok') return declined(checked.kind === 'shutdown' ? 'shutdown' : 'destination-unchecked');
+        // Round 3 (P2-1): the switch epoch is re-read after the awaited GET (stop then resume voids; nothing is read or drafted).
+        if (!(await stillRunning().catch(() => false))) return declined('stopped');
         const exists = checked.value;
         if (!exists.ok) {
           this.log('info', AGENT_A7_AUDIT_EVENT, { planKind: 'cross-write', form: pending.form, stage: pending.stage, decision: 'pending', outcome: 'destination-gone', reason: exists.reason });
@@ -1442,6 +1445,20 @@ export class AgentRunService {
   }
 
   /** The persisted kill switch on the live actor: `true` only when it reads `running` (a throw or no actor is a stop). */
+  /**
+   * Round 3 (P2-1): running AND still the switch epoch this A7 turn started under (the record's `at` equals the guard's `switchAt`).
+   * A stop then a resume moves `at`, so it voids the in-flight work (A7.4, A7.4b); a throw or a missing actor is false (fail closed).
+   */
+  private async epochRunning(actorId: Id, guard: A7StateGuard | undefined): Promise<boolean> {
+    try {
+      const live = await this.deps.actors.get(actorId);
+      if (live === null || this.switchState(live) !== 'running') return false;
+      return guard === undefined || readActionSwitch(live).at === guard.switchAt;
+    } catch {
+      return false;
+    }
+  }
+
   private async liveSwitchRunning(actorId: Id): Promise<boolean> {
     try {
       const live = await this.deps.actors.get(actorId);

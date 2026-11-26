@@ -40221,3 +40221,7 @@ and runs inside `withinRun` against the wall and shutdown, so a hung GET is cut 
 turn (raced in `runPlanned`, by the timeout and shutdown in `continueA7Pick`) and passed to the receipt bind, the card void and the cross-write step;
 `consumePickedA7Destination` also refuses a non-finite expiry and checks the stored conversation and listing turn (`pickBinding` on the propose input);
 `withA7State` reads other actors' records by boot only (each actor's own read applies its own kill switch); `agentWriteProposalDep` is called once (one boot id).
+
+### A7-S4b review round 3 (2026-11-26; Codex delta, 2 P2, plus the CA J3 note)
+
+Append-only under the round-2 note. Still DORMANT. P2-1: the A7 turn captures the kill-switch epoch (`at`) with its guard; `stillRunning` for the pick continuation and the ordinary A7 cross-write step is now `epochRunning` (running AND the record's `at` equals the guard's `switchAt`), so a stop then resume voids in-flight work (A7.4, A7.4b). It is re-read after the awaited destination GET (declined `stopped`) and, through `stillRunning`, before the source read and before the card. P2-2: the destination GET reserves one connector query and one HTTP request (`reserveQuery` and `reserveHttp`) before it is made; a refused reservation declines `bound` with no GET, so a run bounded to one connector read cannot make the GET and the source read both. The round-2 "charged" comment was corrected.
