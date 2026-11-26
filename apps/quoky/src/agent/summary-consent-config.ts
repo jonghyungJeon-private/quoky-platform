@@ -20,6 +20,8 @@ export interface SummaryConsentConfig {
 
 export const SummaryConsentConfigErrorCode = {
   SUMMARY_CONSENT_INVALID: 'SUMMARY_CONSENT_INVALID',
+  ITEM_SUMMARY_CONSENT_INVALID: 'ITEM_SUMMARY_CONSENT_INVALID',
+  ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT: 'ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT',
 } as const;
 export type SummaryConsentConfigErrorCode = (typeof SummaryConsentConfigErrorCode)[keyof typeof SummaryConsentConfigErrorCode];
 
@@ -35,4 +37,29 @@ export function parseSummaryConsentConfig(env: NodeJS.ProcessEnv): SummaryConsen
   if (raw === undefined || raw === 'off') return { mode: 'off' };
   if (raw === 'on') return { mode: 'on' };
   throw new SummaryConsentConfigError(SummaryConsentConfigErrorCode.SUMMARY_CONSENT_INVALID);
+}
+
+/**
+ * ADR-0121 amendment A8 (OQ1-2): `QUOKY_ITEM_SUMMARY_CONSENT`, rule ① for the live item summaries (mail item and thread, Drive
+ * file, Jira issue, Slack message and thread) and the D8 lookup summary.
+ *
+ * - Unset or exactly `off` (the default): the live summaries are as built, byte for byte (no pre-resolve, no guard, no question,
+ *   no recipient line; CS-1a C1).
+ * - Exactly `on`, which needs `QUOKY_SUMMARY_CONSENT=on` (the shared pending store and the gate; otherwise
+ *   `ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT`, precedent `NL_ITEM_R2_REQUIRES_ACTIONS`): an expected REMOTE recipient is
+ *   summarised and the reply ends with the recipient line; an unexpected one is asked in the owner DM (nothing sent until the yes;
+ *   the yes is unavailable until OQ1-3); a D8 lookup with a REMOTE recipient shows the listing only (until OQ1-4). Enabling it in a
+ *   runtime is a separate Strict step (A8.10).
+ * - Anything else is `ITEM_SUMMARY_CONSENT_INVALID`.
+ */
+export interface ItemSummaryConsentConfig {
+  readonly mode: SummaryConsentMode;
+}
+
+export function parseItemSummaryConsentConfig(env: NodeJS.ProcessEnv, summaryConsent: SummaryConsentConfig): ItemSummaryConsentConfig {
+  const raw = env.QUOKY_ITEM_SUMMARY_CONSENT;
+  if (raw === undefined || raw === 'off') return { mode: 'off' };
+  if (raw !== 'on') throw new SummaryConsentConfigError(SummaryConsentConfigErrorCode.ITEM_SUMMARY_CONSENT_INVALID);
+  if (summaryConsent.mode !== 'on') throw new SummaryConsentConfigError(SummaryConsentConfigErrorCode.ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT);
+  return { mode: 'on' };
 }

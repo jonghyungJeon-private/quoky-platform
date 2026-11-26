@@ -3,6 +3,7 @@ import type { Logger } from '../../ports';
 import { answerConsentTurn, closedConsentToken, type ConsentClassifierSwitch } from './consent-answer';
 import type { ConsentChatFacts } from './consent-labels';
 import type { BoundConsent, ConsentLanguage, ConsentPendingStore, ConsentScope } from './consent-pending';
+import type { ItemSummaryConsent } from './item-summary-consent';
 
 /**
  * ADR-0121 SR-1 rule ① confirm slice, CS-2 "gate": the one runtime gate that gives every owner DM turn its chance to answer a
@@ -62,6 +63,12 @@ export interface ConsentTurnGateDeps {
    * (no charge when the adapter answers `unclear` without a call); absent or `false` there is no call (`unclear`, fail closed).
    */
   readonly chargeModelCall?: (actor: Actor, atMs: number) => boolean;
+  /**
+   * ADR-0121 amendment A8 (OQ1-2): the live item-summary consent, composed only with `QUOKY_ITEM_SUMMARY_CONSENT=on` (which needs
+   * `QUOKY_SUMMARY_CONSENT=on`). The runtime reaches it through {@link ConsentTurnGate.items}; absent, nothing of A8 runs. A yes to
+   * one of its questions gets the fixed "unavailable" line until the continuation lands (OQ1-3); the kill switch voids it.
+   */
+  readonly items?: ItemSummaryConsent;
   /** The one clock of the step (ms): the same function the run service uses for `createdAtMs`. */
   readonly now: () => number;
   readonly logger?: Logger;
@@ -107,6 +114,11 @@ export class ConsentTurnGate {
     return [context.platform, context.spaceId ?? '', context.channelId, context.threadId ?? ''].join('|');
   }
 
+  /** ADR-0121 amendment A8 (OQ1-2): the live item-summary consent, or `undefined` (`QUOKY_ITEM_SUMMARY_CONSENT` off: nothing of A8 runs). */
+  get items(): ItemSummaryConsent | undefined {
+    return this.deps.items;
+  }
+
   /** The kill switch: every pending consent is voided and every continuation record is dropped. */
   voidAll(): void {
     try {
@@ -116,6 +128,11 @@ export class ConsentTurnGate {
         this.deps.voidContinuations?.();
       } catch {
         // Fail closed already (the store is voided); a throw here must not break the stop turn.
+      }
+      try {
+        this.deps.items?.voidAll();
+      } catch {
+        // Same: the store is voided; the item records die with their window.
       }
     }
   }
@@ -195,6 +212,19 @@ export class ConsentTurnGate {
   private async continueBound(bound: BoundConsent, turn: ConsentGateTurn, lines: (typeof LINES)[ConsentLanguage]): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly replyKind: 'note' }> {
     // Only the rule-① summary consent has a continuation here (the A2 topic slice adds `continueTopic`): another kind is spent, nothing runs.
     if (bound.pending.kind !== 'summary-consent') return { kind: 'reply', text: lines.expired, historyNote: lines.expired, replyKind: 'note' };
+    // A8 (OQ1-2): a yes to a live item-summary question is dispatched by `runRef` (AM-1). Its continuation is OQ1-3: until then the
+    // record is taken (single use) and its token retired at once, and the reply is the fixed unavailable line. Nothing is sent.
+    const items = this.deps.items;
+    if (items !== undefined && items.owns(bound.pending.runRef)) {
+      try {
+        const taken = items.take(bound, { actor: turn.actor, conversationKey: turn.conversationKey, direct: turn.direct });
+        if (taken !== undefined) items.spend(taken.token);
+      } catch {
+        // Fail closed: nothing is sent either way.
+      }
+      this.log('item-unavailable', 'oq1-3-pending');
+      return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable, replyKind: 'note' };
+    }
     let outcome: ConsentContinuation;
     try {
       outcome = await this.deps.continueSummary(bound, { actor: turn.actor, direct: true });

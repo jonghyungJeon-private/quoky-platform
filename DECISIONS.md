@@ -40024,6 +40024,7 @@ d. Example: the ADR-0120 amendment A6 R2 D6 work-text vendor exclusion pushes a 
 Every reply that carries a model summary of a live item and went to a `REMOTE` recipient ends with one fixed line naming who summarised it, built from the
 provider's display label only, for example "· Claude로 요약" / "· summarised by Claude" (KO/EN by the owner's language). It holds no content, ids or
 model output. It appears on a regenerated summary too, and never on a deterministic fallback (no model call happened) or a `LOCAL` summary.
+(Clarified 2026-11-26, "ADR-0121 A8 — OQ1-2 review round 1" item 3: a fallback shown after a REMOTE call already completed carries the line, because the content left the host.)
 
 **A8.4a Scoped exception to "never surface the selected provider".** `AGENTS.md` line 23 and `ARCHITECTURE.md` §12 keep the default (the selected provider
 is audit information, not shown). Two separate things: (a) a consent question names its recipient under SR-1 rule ①, A5, A8.5 and A8.6, with no flag
@@ -40314,3 +40315,58 @@ Chief Architect J1 review of OQ1-1, all fixed (still dormant):
 - **Slack thread descriptor** now carries `parts.threadMessages`, the count of message sections in the same read (no new read); tests cover the Slack thread case.
 - **Re-ask** tests pin the 600 s window after the re-ask (yes at ~1150 s mints; more than 600 s after the re-ask is refused). The inline `=== 'LOCAL'` in
   `recipientVerdict` is commented as mirroring `executionLocalityOf` (inlined for the item-summary invariants test).
+
+### ADR-0121 A8 — OQ1-2 implementation note (2026-11-26)
+
+OQ1-2 (the egress guard, the recipient line and the ask for an unexpected recipient) is implemented behind `QUOKY_ITEM_SUMMARY_CONSENT` (`off|on`, exact, default
+`off`). Enabling it in a runtime is still the separate Strict step of A8.10. The A8 text is not edited.
+
+- **Flag and composition.** `apps/quoky/src/agent/summary-consent-config.ts` `parseItemSummaryConsentConfig`; startup refusals `ITEM_SUMMARY_CONSENT_INVALID` and
+  `ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT` (`on` without `QUOKY_SUMMARY_CONSENT=on`; precedent `NL_ITEM_R2_REQUIRES_ACTIONS`); `.env.example` entry. Only with
+  both switches on does `features/agent.providers.ts` build an `ItemSummaryConsent` (the shared pending store, the consent clock, `summaryRecipientLabel`) and hand it
+  to the gate as `items`. The runtime reaches it only through `consentGate.items` (no new `ConversationRuntimeDeps` key, no runtime option). `ItemSummaryConsent` is
+  now exported from the application index (the consent-answer export pin lists it). `ItemSummaryConsentDeps` gains an optional `recipientLabel` (absent: every
+  REMOTE verdict is `unnamed`); `ask` also returns the fixed rule-① question (v2 nouns, one item), rendered before the step is opened.
+- **Pre-resolve.** After the readout check and the LOCAL long-item path, `handleDocumentSummary` resolves the provider with the work path's own helpers
+  (`workSelectionContext`, `resolveWorkProvider`, extracted from `handleWorkTurn` with no behaviour change) and computes `recipientVerdict` with the router's
+  `expectedRecipientKey` (added, optional, to the runtime router type) and the composition root's label function. `local` and `expected` proceed under a per-turn
+  `SummaryRecipientGuard`; `unexpected` in the owner DM with the handler's descriptor and no other owner step pending (`consentOwnerSteps`; an undecided fact counts
+  as pending, fail closed) is asked: the reply is the question only, the history keeps the question, the readout is dropped, no Task and no execute call; any
+  other `unexpected` and every `unnamed` gets the handler's fallback plus one fixed line ("받는 쪽을 확인하지 못해 요약을 보내지 않았어요."), nothing sent. A pre-resolve
+  that throws (no provider) is the plain fallback, as today. A yes to an item question gets the gate's fixed "unavailable" line: the record is taken and its token
+  retired at once (single use); the continuation is OQ1-3.
+- **Guard (A8.3c).** `item-summary/summary-recipient-guard.ts`. `handleWorkTurn` takes it as a new optional trailing parameter. Hook 1 runs after
+  `dispatchCommit.commit` and immediately before `provider.execute`, synchronously; hook 2 runs inside the regeneration closure after the retry prompt is rendered and
+  immediately before its execute. Each checks `isStillEligible` (missing: refused), the live verdict (same kind, key and label as the snapshot), and admits the call
+  once and the regeneration once, only after the call; `unexpected` needs `allowsUnexpected` (the OQ1-3 token; absent here). A refusal throws
+  `RecipientRecheckRefused`; `documentSummaryWithOneRegeneration` re-throws it (never the claim-notice catch); `handleWorkTurn` fails the run with
+  `SUMMARY_RECIPIENT_RECHECK_REFUSED` and `deterministicReply: 'summary-consent-refused'`, returns `FAILED`, and the caller shows the handler fallback.
+- **Recipient line (A8.4, ruling (d)).** Appended as the last line of the footer passed to the reply builders (`documentSummaryReply`, `documentSummaryReplyBody`), so
+  it stays last and inside the reply budget, only when the guard admitted a REMOTE call and the work path returned `RESPONDED`: on the summary, on the regenerated
+  summary and on the fixed notices after a completed call (claim, too-long, card-spoof, credential-withheld). Never on the fallback or a LOCAL summary.
+- **D8 (until OQ1-4).** With the flag on, the lookup summary resolves first: a `LOCAL` recipient is summarised as built under a LOCAL-only guard; any REMOTE recipient
+  (expected or not) and an unresolved selection get the listing only (the handler's `fallbackText`), no call, no question.
+- **Dormancy.** Flag off (also with `QUOKY_SUMMARY_CONSENT=on`): no pre-resolve, no extra selection or readiness probe, no guard, `expectedRecipientKey` never
+  called, the footer is the same object; `handleWorkTurn` is called with its old six arguments. Pinned per path P1, P2, P4, P6 and P7 (gate absent vs gate without
+  items: same reply, prompts, history and runs; zero expected-key reads and zero guard calls).
+- **Residuals (owner FYI).** (1) P3/P5 (the NL `item.summarize` selection) reach the same summarize outcome as P1/P4 and pass through the same code; the dormancy pin
+  drives P1, P2, P4, P6 and P7 end to end, not the NL selection itself. (2) Flag on, the pre-resolve is one extra provider resolution (readiness probe) per item
+  summary. (3) The owner-step-pending branch is covered by the fail-closed rule, not by a runtime test that opens another owner step. (4) Logs carry the closed
+  outcome codes and message ids only.
+
+### ADR-0121 A8 — OQ1-2 review round 1 (2026-11-26)
+
+Codex PASS and Chief Architect J1 PASS with P3s. Fixed, flag off byte-identical (the dormancy pins pass unchanged):
+
+1. **Usage of a completed call on a failed run.** When the regeneration is refused after call 1 already completed under a guard, the failed run now records call 1's
+   `usage` (`TaskManager.failRun` gains an optional `usage`), so the audit shows the call that left the host. Guarded turns only.
+2. **Routed seam.** The GENERAL_CHAT `runtimeProviderRouting` branch has no recipient re-check, so a guarded call there is refused in one line before any execute
+   (`SUMMARY_RECIPIENT_RECHECK_REFUSED`, content-free).
+3. **Ruling (orchestrator, class A).** A8.4 "never on a deterministic fallback" is read as "no model call happened". When a REMOTE call already COMPLETED and the owner
+   then gets the handler fallback (regeneration refused at hook 2, or the handler path failed after call 1 completed), the fallback carries the recipient line naming
+   that call's recipient (content left the host, transparency replaces the question). The fallback after no completed REMOTE call (hook 1 refusal, LOCAL, a failed
+   first call, pre-resolve throw, unexpected/unnamed paths) still carries no line. A provider failure of the regeneration itself stays the fixed notice of the
+   claim check, which already carries the line.
+
+A8.10 enabling blockers still open: (a) D8 REMOTE is "listing only" as an interim until OQ1-4; (b) the P3/P5 NL-selection paths are not driven end to end in the
+dormancy and flag-on tests (OQ1-5 red-team lot); (c) "another owner step pending" is covered only by the fail-closed rule, not a runtime test.

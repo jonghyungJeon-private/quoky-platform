@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A8 OQ1-2: item-summary egress guard, recipient line and the ask (2026-11-26; flag default off)
+
+- **Added.** `QUOKY_ITEM_SUMMARY_CONSENT` (`off|on`, needs `QUOKY_SUMMARY_CONSENT=on`; startup codes `ITEM_SUMMARY_CONSENT_INVALID`, `ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT`); the per-turn `SummaryRecipientGuard` re-checked right before the summary call and its one regeneration; the recipient line ("· Claude로 요약") on replies of a completed REMOTE call; the rule-① question for an unexpected recipient in the DM (a yes is "unavailable" until OQ1-3); D8 lookups to a REMOTE recipient show the listing only (until OQ1-4).
+- **Changed.** `handleWorkTurn` takes an optional trailing guard; its selection context and resolve are shared helpers; `ItemSummaryConsent` takes the label function and is exported; the gate holds it as `items` and the kill switch voids it.
+- **Dormant.** Flag off (default, also with `QUOKY_SUMMARY_CONSENT=on`): byte-identical (pinned for P1, P2, P4, P6, P7). Enabling is the A8.10 Strict step.
+
 ## Unreleased — ADR-0121 A8 OQ1-1: item-summary consent core and expected-recipient resolver (2026-11-26; dormant)
 
 - **Added.** `ItemSummaryConsent` (single-use token bound to the recipient key and label, 64 records), `recipientVerdict`, the optional `expectedRecipientKey` on the provider-selection policy and selector ports (router delegates), `ProviderSelectionService.expectedRecipientKey` (first owner-set layer; the derived default only while it is the Claude CLI; fail closed), the thread nouns `mail-thread` and `slack-thread`, the ids-only `consent` descriptor on the summarize outcome (mail, Drive, Jira, Slack), and `renderItemSummaryRecipientLine`.

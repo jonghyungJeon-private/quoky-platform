@@ -152,6 +152,8 @@ const CONFIG_ERROR_HINTS: Readonly<Record<QuokyConfigErrorCode, string>> = {
     'QUOKY_CONSENT_ANSWER_CLASSIFIER=on is not released yet (ADR-0121 A6: the classifier, its A6-S4 gate and the rule-① confirm slice come first); use "off".',
   // ADR-0121 SR-1 rule ① (CS-1a). Names and shapes only, never a value.
   [QuokyConfigErrorCode.SUMMARY_CONSENT_INVALID]: 'QUOKY_SUMMARY_CONSENT must be unset (off), "off" or "on" (exactly, lowercase).',
+  [QuokyConfigErrorCode.ITEM_SUMMARY_CONSENT_INVALID]: 'QUOKY_ITEM_SUMMARY_CONSENT must be unset (off), "off" or "on" (exactly, lowercase).',
+  [QuokyConfigErrorCode.ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT]: 'QUOKY_ITEM_SUMMARY_CONSENT=on needs QUOKY_SUMMARY_CONSENT=on.',
   // ADR-0121 amendment A7 (A7-S2). Names and shapes only, never a value.
   [QuokyConfigErrorCode.AGENT_WRITE_PROPOSALS_INVALID]: 'QUOKY_AGENT_WRITE_PROPOSALS must be unset (off), "off" or "shadow" (exactly, lowercase).',
   [QuokyConfigErrorCode.AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED]:

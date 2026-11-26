@@ -89,7 +89,7 @@ describe('itemSummaryConsentDescriptor (ids only)', () => {
 });
 
 describe('boundary: the new Core files name no provider id or family', () => {
-  const FILES = ['item-summary-consent-descriptor.ts', 'item-summary/expected-recipient.ts', 'item-summary/recipient-line.ts', 'consent-answer/item-summary-consent.ts'];
+  const FILES = ['item-summary-consent-descriptor.ts', 'item-summary/expected-recipient.ts', 'item-summary/recipient-line.ts', 'item-summary/summary-recipient-guard.ts', 'consent-answer/item-summary-consent.ts'];
   it('no provider id or family literal, and no string comparison with a provider id', () => {
     for (const file of FILES) {
       const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');

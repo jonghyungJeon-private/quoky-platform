@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A8 OQ1-2 implemented, flag default off (2026-11-26, branch `claude/v5-oq1-2-guard`)
+
+- `QUOKY_ITEM_SUMMARY_CONSENT` (needs `QUOKY_SUMMARY_CONSENT=on`): pre-resolve, the A8.3c guard at both execute calls, the recipient line, the DM question for an unexpected recipient (the yes is "unavailable" until OQ1-3), fallback plus a fixed line otherwise, D8 listing only for a REMOTE recipient (until OQ1-4). Flag off: byte-identical. Next: OQ1-3 continuation, OQ1-4 D8. See DECISIONS "ADR-0121 A8 — OQ1-2 implementation note".
+
 ### A8 OQ1-1 implemented, live effect none (2026-11-26, branch `claude/v5-oq1-1-core`)
 
 - Item-summary consent core (`ItemSummaryConsent`, key-and-label token), `recipientVerdict`, `expectedRecipientKey` (apps resolver plus the optional port methods and router delegation), thread nouns and `summary-consent-question.v2`, the ids-only `consent` descriptor on summarize outcomes, the recipient-line renderer. Nothing calls it; `QUOKY_ITEM_SUMMARY_CONSENT` does not exist yet (OQ1-2). Rulings (b)(c)(d) are in the `DECISIONS.md` OQ1-1 note.
