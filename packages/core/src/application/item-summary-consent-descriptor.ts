@@ -68,8 +68,24 @@ export interface WorkLookupConsentDescriptor {
   readonly source: WorkChatSource;
   readonly query: WorkChatLookupQuery;
   readonly refs: readonly string[];
+  /**
+   * OQ1-4 review round 1: the refs of every row the deterministic listing shows (before the summary readout is fitted to the
+   * prompt budget), in listing order. The question may be asked only when these equal `refs` (the listing above the question
+   * then names exactly the items the question counts). Absent: nothing may be asked.
+   */
+  readonly listed?: readonly string[];
   readonly language: 'ko' | 'en';
   readonly redo: { readonly handlerId: string; readonly selection?: NlSelectedCommand; readonly grammarYield?: true };
+}
+
+/**
+ * OQ1-4 review round 1: ids-only fact a lookup handler attaches to a SUCCESSFUL lookup that found no item (a plain reply, no
+ * summary). The D8 continuation reads it to tell "every asked item is gone" (the fixed "changed" line) from a failed re-read.
+ */
+export interface WorkLookupEmptyFact {
+  readonly handlerId: string;
+  readonly source: WorkChatSource;
+  readonly query: WorkChatLookupQuery;
 }
 
 /** The most refs one D8 question may name (the readout bound and the pending step's per-source bound). */
@@ -91,6 +107,7 @@ export function workLookupConsentDescriptor(input: {
   readonly source: WorkChatSource;
   readonly query: WorkChatLookupQuery;
   readonly refs: readonly string[];
+  readonly listedRefs?: readonly string[];
   readonly language: 'ko' | 'en';
   readonly selection?: NlSelectedCommand;
   readonly grammarYield?: boolean;
@@ -101,6 +118,7 @@ export function workLookupConsentDescriptor(input: {
     source: input.source,
     query: input.query,
     refs: Object.freeze([...input.refs]),
+    ...(Array.isArray(input.listedRefs) && input.listedRefs.every((ref) => typeof ref === 'string') ? { listed: Object.freeze([...input.listedRefs]) } : {}),
     language: input.language,
     redo: {
       handlerId: input.handlerId,

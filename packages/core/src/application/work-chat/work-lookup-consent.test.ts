@@ -43,4 +43,10 @@ describe('keepAskedWorkLookupRefs (OQ1-4)', () => {
     expect(keepAskedWorkLookupRefs(ASKED, null).kind).toBe('refused');
     expect(keepAskedWorkLookupRefs(ASKED, { reply: { context: { platform: 't', channelId: 'c' }, text: 'LIST' } }).kind).toBe('refused');
   });
+
+  it('review round 1: every asked ref gone (a successful empty lookup, marked lookupEmpty): changed, never refused', () => {
+    const empty: TurnHandlerOutcome = { reply: { context: { platform: 't', channelId: 'c' }, text: 'NONE' }, lookupEmpty: { handlerId: 'work-chat.lookup', source: 'jira', query: 'my-items' } };
+    expect(keepAskedWorkLookupRefs(ASKED, empty).kind).toBe('changed');
+    expect(keepAskedWorkLookupRefs(ASKED, { ...empty, kind: 'reply' }).kind).toBe('changed');
+  });
 });

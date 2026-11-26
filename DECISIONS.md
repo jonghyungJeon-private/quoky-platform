@@ -40496,11 +40496,13 @@ ADR-0100 D8 item 8 (A8.7 item 4). No prompt, catalog or question text changed.
   'work-lookup'`, the closed lookup `source` and `query`, `refs` (the `source:externalId` refs of exactly the readout items the summary prompt would carry,
   in readout order; 1..10, distinct, non-empty, else no descriptor), `language` (the selection's, else the notice language of the owner's text), and
   `redo` (`handlerId`; the handler's own validated `selection` when the lookup came through NL selection, else the grammar path with `grammarYield` when the
-  turn had it). A selection `keyword` arg is owner words: it is held in memory with the record exactly like the A8.8 request text (≤ 600 s, never logged or
-  rendered). The work-chat lookup handler fills it on every summarize outcome (no runtime effect with the flag off).
+  turn had it). A selection `keyword` arg is owner words: it is held in memory with the record exactly like the A8.8 request text (never logged or
+  rendered; dropped no later than the record's lifetime, the answer window plus one re-ask; review round 1 item 1). The work-chat lookup handler fills it on every summarize outcome (no runtime effect with the flag off).
 - **Question.** `ItemSummaryConsent.askWorkLookup` opens the same rule-① pending step (`summaryConsentPending`, one source, the refs as `itemIds`, the
   recipient's label) and renders the unchanged `summary-consent-question.v2` with the source noun and the ref count ("지라 이슈 2건을 Claude에 보내 요약할게요.
-  보낼까요? (응/아니)"). The question names the recipient and the count; the listing directly above it names the items. It requires the turn-entry void epoch.
+  보낼까요? (응/아니)"). The question names the recipient and the count; the listing directly above it names the items. *Corrected by review round 1
+  item 3:* that held only when the summary readout was not fitted to the prompt budget; the question is now asked only when the
+  listing's rows (`listed`, pre-fit) equal the descriptor refs, otherwise the listing plus the fixed not-sent line. It requires the turn-entry void epoch.
 - **Token binds a SET.** `take` checks the bound step names exactly the record's refs (same order) and mints a token with `kind: 'work-lookup'` and item key
   `workLookupRefsKey(refs)` = the canonical JSON of the distinct sorted refs (exact, collision-free, no hashing). `allowsContinuation` additionally requires
   the use's `kind` to equal the token's: an item token never admits a lookup use, nor the reverse. Everything else is the OQ1-3 token (actor, conversation,
@@ -40534,3 +40536,31 @@ ADR-0100 D8 item 8 (A8.7 item 4). No prompt, catalog or question text changed.
 - **Residuals (owner FYI).** (1) The "changed" line text says "the item changed" (singular) for a set; reused unchanged (no new copy). (2) The recipient
   line and the not-sent line follow the language of the owner's text; the question follows the descriptor language (they agree unless a selection's
   language differs from the text). (3) A8.10 blocker (a) of OQ1-2 is closed by this slice; (b) and (c) still stand (OQ1-5).
+
+#### OQ1-4 review round 1 (2026-11-26)
+
+Reviews of `eff18db0` (Codex P2 ×2, Chief Architect P2 + P3 ×2). Flag off stays byte-identical (the dormancy pins are unchanged and pass).
+
+1. **Retention bounded by time (Codex P2).** A record (its request text, and for D8 the redo selection whose `keyword` may hold owner
+   words) was purged only by another ask or a void, so it outlived 600 s (reproduced at 3600 s). Now every `ItemSummaryConsent` entry
+   point (`ask`, `askWorkLookup`, `owns`, `take`, `allowsContinuation`, `epoch`, `isCurrent`) purges expired records on the shared clock
+   first, and one unref'd sweep timer, due at the oldest record's lifetime (the answer window plus one re-ask, as defined), drops it even
+   when no call comes. Applies to OQ1-3 item records and OQ1-4 lookup records. Test-only `retainedRecordCount()` pins both.
+2. **All asked refs gone (Codex P2).** A successful re-read with no item came back as a plain reply and was the "unavailable" line. The
+   lookup handler now marks a successful empty lookup with the ids-only `lookupEmpty` fact (`TurnHandlerReply`), and
+   `keepAskedWorkLookupRefs` returns `changed`: the fixed "changed" line, nothing sent.
+3. **The question could count fewer items than the listing shows (CA P2).** `WorkChatService` fits the summary readout to the prompt
+   budget (`fitExternalWorkReadoutToPrompt`) while the listing shows every row. The service now exposes `listedRefs` (ids only, pre-fit),
+   the handler puts them on the descriptor as `listed`, and the runtime asks only when `listed` equals the descriptor refs (which equal
+   the fitted readout's); otherwise the listing plus the fixed not-sent line, nothing sent. Runtime test with ten items overflowing the
+   budget. The design note's "the listing directly above it names the items" claim is corrected in place.
+4. **Quoted text on the re-run (CA P3).** The D8 re-run dropped `quotedRanges`/`formatting`, so a grounding read (e.g. `jira.release`)
+   could take quoted text as owner words. The asking message's quoted ranges and formatting flags (offsets and flags only) are now kept
+   with the request text in the record and set on the re-run message (never the yes message's own). Test.
+5. **Expected recipient end to end (CA P3).** Runtime test: the expected `REMOTE` recipient is asked, a yes makes exactly one call, and
+   the reply ends with the A8.4 recipient line.
+
+Record-only open points (no change in this round): (a) the "changed" line is singular ("the item changed") for a set in EN as in KO;
+a copy change is a later slice. (b) The question follows the descriptor language and the recipient / not-sent lines the language of the
+owner's text, as on the OQ1-3 item path. (c) The D8 history keeps the summary text as built (D8 is not an ADR-0118 D7 path). (d) The
+OQ1-2 interim D8 test rewrite (listing plus the fixed line without a descriptor) is correct for the slice and stays.

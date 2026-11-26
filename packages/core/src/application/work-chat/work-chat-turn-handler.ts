@@ -398,6 +398,11 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         ...(outcome.confirm !== undefined ? { nlConfirm: { selection: outcome.confirm, language } } : {}),
         // P9: the listing actually shown (a release value read as a visible project key) becomes `lastSelection`.
         ...(outcome.resolved !== undefined ? { nlSelection: outcome.resolved } : {}),
+        // ADR-0121 A8.6 (OQ1-4 review round 1): a lookup that succeeded and found nothing says so (ids only), so a D8 consent
+        // re-run can tell "every asked item is gone" from a failed read. Read nowhere else.
+        ...(command.kind === 'lookup' && this.deps.mode === 'lookup' && outcome.listed?.count === 0
+          ? { lookupEmpty: { handlerId: this.id, source: command.source, query: command.query } }
+          : {}),
       };
       return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
     }
@@ -414,6 +419,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
             source: outcome.readout.request.source,
             query: outcome.readout.request.query,
             refs: outcome.readout.items.map((item) => item.ref),
+            ...(outcome.listedRefs !== undefined ? { listedRefs: outcome.listedRefs } : {}),
             language: selected?.language ?? noticeLanguage(undefined, ctx.message.text),
             ...(selected !== undefined ? { selection: selected } : {}),
             ...(ctx.grammarYield === true ? { grammarYield: true } : {}),

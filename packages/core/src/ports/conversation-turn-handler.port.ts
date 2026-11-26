@@ -24,7 +24,7 @@ import type { SurfaceGroupId } from '../application/surface-grants/surface-group
 import type { SurfacePermit } from '../application/surface-grants/surface-permit';
 // Type-only, like the readouts above: the whole prepared item for the ADR-0124 Part L S3 summary (plain data).
 import type { LongItemSummaryInput } from '../application/item-summary/long-item';
-import type { ItemSummaryConsentDescriptor, WorkLookupConsentDescriptor } from '../application/item-summary-consent-descriptor';
+import type { ItemSummaryConsentDescriptor, WorkLookupConsentDescriptor, WorkLookupEmptyFact } from '../application/item-summary-consent-descriptor';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -132,6 +132,11 @@ export interface TurnHandlerReply {
    * closed entry id and canonical args. Ignored unless natural-language selection is `active`.
    */
   readonly nlConfirm?: { readonly selection: NlGrammarSelection; readonly language: 'ko' | 'en' };
+  /**
+   * ADR-0121 A8.6 (OQ1-4 review round 1): ids only. Set by the D8 lookup handler on a lookup that succeeded and found no item, so
+   * the consent continuation can tell "every asked item is gone" from a failed re-read. The runtime reads it nowhere else.
+   */
+  readonly lookupEmpty?: WorkLookupEmptyFact;
 }
 
 /**

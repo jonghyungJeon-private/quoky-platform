@@ -9,6 +9,9 @@ import { isSummarizableExternalWorkReadout } from './work-chat-turn-handler';
  * dropped). Orchestrator ruling (strict, A8.5 "a changed item sends nothing"): when ANY asked ref is missing from the re-read,
  * or the re-read is another lookup (handler, source or query), the verdict is `changed` and nothing is sent. Plain data: refs are
  * compared as opaque ids; no title, excerpt or owner text is read here.
+ *
+ * OQ1-4 review round 1: a re-read of the same lookup that SUCCEEDED and found no item at all (every asked ref is gone) is
+ * `changed` too, never `refused`: the handler marks it with its ids-only `lookupEmpty` fact.
  */
 export type WorkLookupRereadVerdict =
   | { readonly kind: 'same'; readonly summary: TurnHandlerSummarizeReply; readonly readout: ExternalWorkReadout }
@@ -17,6 +20,10 @@ export type WorkLookupRereadVerdict =
 
 export function keepAskedWorkLookupRefs(asked: WorkLookupConsentDescriptor, reread: TurnHandlerOutcome | null): WorkLookupRereadVerdict {
   try {
+    if (reread !== null && (reread.kind === undefined || reread.kind === 'reply') && reread.lookupEmpty !== undefined) {
+      // A successful read of a lookup with no item: every asked ref is gone (the same lookup) or it is another lookup. Both: changed.
+      return { kind: 'changed' };
+    }
     if (reread === null || reread.kind !== 'summarize' || !isSummarizableExternalWorkReadout(reread.readout)) return { kind: 'refused' };
     const readout = reread.readout;
     const facts = reread.lookupConsent;

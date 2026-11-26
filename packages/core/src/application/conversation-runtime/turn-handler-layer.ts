@@ -95,9 +95,15 @@ type WorkLookupTaken = Extract<TakenContinuation, { readonly lookup: unknown }>;
 type ItemTaken = Exclude<TakenContinuation, WorkLookupTaken>;
 const isWorkLookupTaken = (taken: TakenContinuation): taken is WorkLookupTaken => (taken as { readonly lookup?: unknown }).lookup !== undefined;
 
-/** OQ1-4: whether the descriptor names exactly the readout's items, in order (the handler builds both from the same readout). */
-function namesReadoutRefs(refs: readonly string[], readout: ExternalWorkReadout): boolean {
-  return refs.length === readout.items.length && readout.items.every((item, index) => item.ref === refs[index]);
+/**
+ * OQ1-4: whether the descriptor names exactly the readout's items, in order (the handler builds both from the same readout), AND
+ * (review round 1) exactly the rows the listing shows: a readout fitted to the prompt budget carries fewer items than the listing,
+ * and then the question would count fewer items than the owner sees, so it is not asked.
+ */
+function namesReadoutRefs(lookup: { readonly refs: readonly string[]; readonly listed?: readonly string[] }, readout: ExternalWorkReadout): boolean {
+  const { refs, listed } = lookup;
+  if (refs.length !== readout.items.length || !readout.items.every((item, index) => item.ref === refs[index])) return false;
+  return listed !== undefined && listed.length === refs.length && listed.every((ref, index) => ref === refs[index]);
 }
 
 /**
@@ -616,12 +622,17 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     // Fail closed: a turn whose owner-step fact was never decided counts as having one pending.
     const ownerStepPending = this.consentOwnerSteps.get(message) !== false;
     const lookup = summary.lookupConsent;
-    if (lookup === undefined || ownerStepPending || !namesReadoutRefs(lookup.refs, readout)) return listingOnly('remote-not-asked', notSent);
+    if (lookup === undefined || ownerStepPending || !namesReadoutRefs(lookup, readout)) return listingOnly('remote-not-asked', notSent);
     const asked = items.askWorkLookup({
       scope: { actorId: actor.id, conversationKey: this.agentConsentFacts(message).conversationKey },
       lookup,
       recipient: { key: verdict.key, label: verdict.label },
       requestText: message.text,
+      // Review round 1: the re-run reads the request text with this message's quoted ranges and formatting (offsets/flags only).
+      requestMarks: {
+        ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+        ...(message.formatting !== undefined ? { formatting: message.formatting } : {}),
+      },
       epoch: this.itemConsentEpochs.get(message) ?? Number.NaN,
     });
     if (asked === undefined) return listingOnly('remote-ask-refused', notSent);
@@ -978,8 +989,9 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
    * and minted the token bound to the asked ref set; the runtime base retires the token afterwards).
    *
    * 1. Re-checks: the owner DM and the handler still registered (by id).
-   * 2. The lookup is re-run fresh through the same handler on a SEPARATE message (the stored owner request text, id suffix `:consent`,
-   *    no attachments, quotes, formatting or reply-to): `handleSelected(redo selection)` when it came through selection, otherwise the
+   * 2. The lookup is re-run fresh through the same handler on a SEPARATE message (the stored owner request text with the asking
+   *    message's quoted ranges and formatting flags (review round 1: quoted text stays data), id suffix `:consent`, no attachments
+   *    or reply-to): `handleSelected(redo selection)` when it came through selection, otherwise the
    *    handler's own grammar `handle` (with the turn's grammar-yield fact). It never reaches the gate, the selector or the classifier
    *    (no second selection or cap charge) and writes no `lastSelection`.
    * 3. W3: only the asked refs are kept (`keepAskedWorkLookupRefs`). Any asked ref missing, or another lookup: the fixed "changed" line,
@@ -1007,7 +1019,15 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     const serveSelected = handler?.handleSelected;
     if (handler === undefined || (selection !== undefined && typeof serveSelected !== 'function')) return stop(outcome.unavailable, 'handler-gone');
     const { attachments: _attachments, quotedRanges: _quoted, formatting: _formatting, replyTo: _replyTo, ...rest } = message;
-    const redo: InboundMessage = { ...rest, id: `${message.id}:consent`, text: continuation.requestText };
+    // Review round 1: the marks are the ASKING message's (they index the stored request text), never this yes message's.
+    const marks = continuation.requestMarks;
+    const redo: InboundMessage = {
+      ...rest,
+      id: `${message.id}:consent`,
+      text: continuation.requestText,
+      ...(marks.quotedRanges !== undefined ? { quotedRanges: marks.quotedRanges } : {}),
+      ...(marks.formatting !== undefined ? { formatting: marks.formatting } : {}),
+    };
     this.consentReruns.add(redo);
     const base = this.turnHandlerContext(redo, session, actor, null);
     const ctx: TurnHandlerContext = lookup.redo.grammarYield === true ? Object.freeze({ ...base, grammarYield: true }) : base;

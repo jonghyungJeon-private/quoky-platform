@@ -65,6 +65,8 @@ function harness(opts: HarnessOptions = {}) {
   const logs: { level: string; message: string; fields?: LogFields }[] = [];
   const runs: { kind: 'complete' | 'fail'; summary?: string }[] = [];
   const counts = { select: 0, expected: 0, queries: 0, handleSelected: 0 };
+  /** The message each `handleSelected` call saw (review round 1: the re-run keeps the asking message's marks). */
+  const selectedMessages: InboundMessage[] = [];
   const state = {
     selected: opts.selected ?? 'remote',
     expectedKey: 'expectedKey' in opts ? opts.expectedKey : 'fake-remote',
@@ -115,6 +117,7 @@ function harness(opts: HarnessOptions = {}) {
   const realSelected = lookupHandler.handleSelected.bind(lookupHandler);
   lookupHandler.handleSelected = async (selected, ctx) => {
     counts.handleSelected += 1;
+    selectedMessages.push(ctx.message);
     return realSelected(selected, ctx);
   };
   const SELECTED: NlSelectedCommand = { entryId: 'jira.issues', args: {}, language: 'ko' };
@@ -296,8 +299,9 @@ function harness(opts: HarnessOptions = {}) {
         });
   const runtime = new ConversationRuntime(deps, { clock: () => T0, ...(gate !== undefined ? { consentTurnGate: gate } : {}) });
   let seq = 0;
-  const send = (text: string, context: ConversationContext = DM) => runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0 } satisfies InboundMessage);
-  return { send, state, hooks, events, executed, recordAssistant, logs, runs, counts, items, store, gate, clock, labels, lookupHandler };
+  const send = (text: string, context: ConversationContext = DM, marks: Pick<InboundMessage, 'quotedRanges' | 'formatting'> = {}) =>
+    runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0, ...marks } satisfies InboundMessage);
+  return { send, state, hooks, events, executed, recordAssistant, logs, runs, counts, items, store, gate, clock, labels, lookupHandler, selectedMessages };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -574,5 +578,68 @@ describe('OQ1-4 continuation: the owner says yes to the D8 question (A8.6)', () 
     expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
     expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
     expect(h.lookupHandler.id).toBe(WORK_CHAT_LOOKUP_TURN_HANDLER_ID);
+  });
+});
+
+describe('OQ1-4 review round 1', () => {
+  async function asked(opts: HarnessOptions = {}, text = ASK, marks: Pick<InboundMessage, 'quotedRanges' | 'formatting'> = {}) {
+    const h = harness({ expectedKey: 'fake-other', ...opts });
+    const question = await h.send(text, DM, marks);
+    expect(question.reply.text.endsWith(QUESTION)).toBe(true);
+    expect(h.executed).toEqual([]);
+    return h;
+  }
+
+  it('item 2: every asked item gone on the re-run (a successful empty lookup): the fixed "changed" line, nothing sent', async () => {
+    const h = await asked();
+    h.state.items = [];
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(renderItemSummaryChangedLine('ko'));
+    expect(yes.reply.text).not.toBe(UNAVAILABLE);
+    expect(h.counts.queries).toBe(2);
+    expect(h.executed).toEqual([]);
+    expect(h.events).toEqual([]);
+  });
+
+  it('item 3: items overflowing the prompt budget: the listing shows more rows than the prompt carries, so no question; the listing plus the fixed not-sent line, nothing sent', async () => {
+    const long = (id: string): ConnectorItem => ({ ...item(id), title: `${'긴 제목 '.repeat(30)}${id}`, summary: `${'본문 내용 '.repeat(70)}${id}` });
+    const h = harness({ expectedKey: 'fake-other' });
+    h.state.items = Array.from({ length: 10 }, (_, index) => long(`A-${index + 1}`));
+    const listing = await listingOf(h.state.items);
+    // The listing names all ten rows; the prompt budget fits fewer (the precondition of the finding).
+    expect(listing).toContain('browse/A-10');
+    const result = await h.send(ASK);
+    expect(result.reply.text).toBe(`${listing}\n${renderItemSummaryNotSentLine('ko')}`);
+    expect(result.reply.text).not.toContain('보낼까요');
+    expect(h.store.stateOf(SCOPE)).toBeUndefined();
+    expect(h.executed).toEqual([]);
+    expect(h.events).toEqual([]);
+    noContentInLogs(h);
+  });
+
+  it('item 4: the re-run keeps the ASKING message\'s quoted ranges and formatting (offsets and flags only), stored with the request text', async () => {
+    const marks = { quotedRanges: [{ start: 0, end: 2 }], formatting: { code: true as const } };
+    const h = await asked({ selectionProbe: true }, '선택한 지라 조회', marks);
+    // The yes itself carries no marks: the marks the re-run reads are the ones stored with the request text.
+    const yes = await h.send('응');
+    expect(h.counts.handleSelected).toBe(2);
+    const rerun = h.selectedMessages[1];
+    expect(rerun?.id.endsWith(':consent')).toBe(true);
+    expect(rerun?.text).toBe('선택한 지라 조회');
+    expect(rerun?.quotedRanges).toEqual(marks.quotedRanges);
+    expect(rerun?.formatting).toEqual(marks.formatting);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+  });
+
+  it('item 5: the EXPECTED REMOTE recipient: asked, yes, exactly one call, the reply ends with the A8.4 recipient line', async () => {
+    const h = await asked({ expectedKey: 'fake-remote' });
+    const yes = await h.send('응');
+    expect(yes.status).toBe('RESPONDED');
+    expect(yes.reply.text).toContain(SUMMARY);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+    expect(h.events.filter((event) => event === 'execute')).toHaveLength(1);
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    noContentInLogs(h);
   });
 });

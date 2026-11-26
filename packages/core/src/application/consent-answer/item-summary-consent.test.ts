@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Actor } from '../../domain';
 import { itemSummaryConsentDescriptor, workLookupConsentDescriptor, workLookupRefsKey, type ItemSummaryConsentDescriptor, type WorkLookupConsentDescriptor } from '../item-summary-consent-descriptor';
 import type { RecipientVerdict } from '../item-summary/expected-recipient';
 import { yesBound } from '../agent/summary-consent.test-support';
 import { ITEM_SUMMARY_CONSENT_MAX_RECORDS, ITEM_SUMMARY_TOKEN_TTL_MS, ItemSummaryConsent, isWorkLookupContinuation, type ItemSummaryConsentToken, type ItemSummaryUse } from './item-summary-consent';
-import { ConsentPendingStore, type BoundConsent } from './consent-pending';
+import { CONSENT_ANSWER_WINDOW_MS, ConsentPendingStore, type BoundConsent } from './consent-pending';
 
 // A8 OQ1-1: the item-summary continuation and its token, over a REAL store and the REAL answer pipeline (the owner-yes mark).
 
@@ -351,5 +351,67 @@ describe('ItemSummaryConsent D8 lookup (A8.6, OQ1-4)', () => {
     expect(r.items.take(r.yes(), { ...direct, direct: false })).toBeUndefined();
     expect(JSON.stringify(r.logs)).not.toContain('jira:A-');
     expect(JSON.stringify(r.logs)).not.toContain('내 지라 일 요약');
+  });
+});
+
+describe('ItemSummaryConsent retention is bounded by time (OQ1-4 review round 1)', () => {
+  const LIFETIME = 2 * CONSENT_ANSWER_WINDOW_MS;
+  const LOOKUP = workLookupConsentDescriptor({ handlerId: 'work-chat.lookup', source: 'jira', query: 'my-items', refs: ['jira:A-1'], language: 'ko', selection: { entryId: 'jira.issues', args: { keyword: 'owner-keyword' }, language: 'ko' } }) as WorkLookupConsentDescriptor;
+  const askLookup = (r: ReturnType<typeof rig>) =>
+    r.items.askWorkLookup({ scope: SCOPE, lookup: LOOKUP, recipient: RECIPIENT, requestText: '내 지라 일 요약', requestMarks: { quotedRanges: [{ start: 0, end: 2 }], formatting: { code: true } }, epoch: r.items.epoch() });
+  const both = [
+    ['an OQ1-3 item record', (r: ReturnType<typeof rig>) => r.ask()],
+    ['an OQ1-4 lookup record (its redo keyword and request text)', askLookup],
+  ] as const;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(both)('%s: dropped by the sweep timer at its lifetime even when no other call comes (reproduced at 3600 s before)', (_name, open) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const r = rig();
+    expect(open(r)).toBeDefined();
+    expect(r.items.retainedRecordCount()).toBe(1);
+    r.clock.now = T0 + LIFETIME - 1;
+    vi.advanceTimersByTime(LIFETIME - 1);
+    expect(r.items.retainedRecordCount()).toBe(1);
+    r.clock.now = T0 + LIFETIME;
+    vi.advanceTimersByTime(1_000);
+    expect(r.items.retainedRecordCount()).toBe(0);
+    // At 3600 s nothing (no record, no request text, no redo selection) is held.
+    r.clock.now = T0 + 3_600_000;
+    vi.advanceTimersByTime(3_600_000);
+    expect(r.items.retainedRecordCount()).toBe(0);
+  });
+
+  const entries: readonly (readonly [string, (r: ReturnType<typeof rig>) => unknown])[] = [
+    ['owns', (r) => r.items.owns('other-run')],
+    ['take', (r) => r.items.take(r.yes(T0 + 1), direct)],
+    ['allowsContinuation', (r) => r.items.allowsContinuation(undefined, unexpected(), use('call'))],
+    ['epoch', (r) => r.items.epoch()],
+    ['isCurrent', (r) => r.items.isCurrent(0)],
+    ['ask', (r) => r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: RECIPIENT, requestText: 'x', epoch: Number.NaN })],
+    ['askWorkLookup', (r) => r.items.askWorkLookup({ scope: SCOPE, lookup: LOOKUP, recipient: RECIPIENT, requestText: 'x', epoch: Number.NaN })],
+  ];
+
+  for (const [entry, call] of entries) {
+    it.each(both)(`every entry point purges on the shared clock: ${entry} after the lifetime, %s`, (_name, open) => {
+      const r = rig();
+      expect(open(r)).toBeDefined();
+      r.clock.now = T0 + 3_600_000;
+      call(r);
+      expect(r.items.retainedRecordCount()).toBe(0);
+    });
+  }
+
+  it('a live record survives the purge; the request marks (offsets and flags only) come back with the lookup continuation', () => {
+    const r = rig();
+    askLookup(r);
+    r.clock.now = T0 + 1;
+    expect(r.items.retainedRecordCount()).toBe(1);
+    const taken = r.items.take(r.yes(T0 + 1), direct);
+    expect(taken !== undefined && isWorkLookupContinuation(taken) ? taken.requestMarks : undefined).toEqual({ quotedRanges: [{ start: 0, end: 2 }], formatting: { code: true } });
+    expect(r.items.retainedRecordCount()).toBe(0);
   });
 });
