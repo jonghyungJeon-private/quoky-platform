@@ -5,6 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A7.7 addendum and owner batch answers (2026-11-26, branch `claude/v5-a7-arch-text`)
+
+- A7.7 addendum (d) ratified and applied; wiki ADR-0121 row updated; owner batch answers recorded in `DECISIONS.md` (A7 gold still `pending-owner-approval`; A6-S3 two-line lots now `approved`). Docs only; flags unchanged.
+
+### ADR-0121 A7.7 applied to ARCHITECTURE.md (2026-11-26, branch `claude/v5-a7-arch-text`)
+
+- The ratified A7.7 text is now in `ARCHITECTURE.md` (§8 items 3 and 4, §10, §12, §13). Docs only; A7 flags and agent mode are unchanged (dormant). The A7.7 calendar sentence stays as is (A7.11 question 4 was not answered yes).
+
 ### A7-S4a card implemented, live effect none (2026-11-25, branch `claude/v5-a7-s4-card`)
 
 - The proposal port (a Core interface), its implementation over `connectorWriteFlow` outside the agent module, the A7 card (full payload, marker,
