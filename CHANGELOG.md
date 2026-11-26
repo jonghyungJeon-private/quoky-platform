@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6-S4 consent-answer corpus approved by the owner (2026-11-26)
+
+- **Changed.** `golden/nl-consent-answer.v1.json` is `status: "approved"` (owner, summary-based approval; sha256 `50799580e3bf...`); corpus and eval tests follow, the
+  refusal test now uses an owner-review copy. No eval was run; local arm runs first, remote only if it fails and after a new notice.
+
 ## Unreleased — ADR-0121 A6-S4: the consent-answer classifier corpus and eval plumbing (2026-11-26; built offline, not run)
 
 - **Added.** `golden/nl-consent-answer.v1.json` (402 cases, `status: "owner-review"`, not frozen): the A6.9 corpus as updated by R6 (labels with

@@ -1,11 +1,11 @@
-# A6-S4 consent-answer 코퍼스 요약 (owner review 전, 실행 안 함)
+# A6-S4 consent-answer 코퍼스 요약 (소유자 승인 2026-11-26, 실행 안 함)
 
 ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-11-24)로 갱신), A6.10 A6-S4 행, a6-02. 2026-11-26 오프라인으로
-만들고 같은 날 리뷰 1차 수정을 반영했다. 모델 호출 0회. 코퍼스는 아직 `status: "owner-review"`다. 소유자가 검토하고 승인하기 전에는
-`eval:nl --mode consent-answer`의 run이 거부된다(exit 3). 승인 뒤에도 run마다 소유자 알림과 yes가 따로 필요하다.
+만들고 같은 날 리뷰 1차 수정을 반영했다. 모델 호출 0회. 소유자가 2026-11-26에 이 요약 기준으로 코퍼스를 승인했다(`status: "approved"`, 초안 372건은 eval 실패가 가리킬 때만
+다시 본다). 이후 코퍼스를 고치면 sha256이 바뀌고 새 승인이 필요하다. 승인 뒤에도 run마다 소유자 알림과 yes가 따로 필요하다.
 
 - 코퍼스: `packages/core/src/application/golden/nl-consent-answer.v1.json`
-  (sha256 `40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777`, 검토 중 수정하면 바뀐다)
+  (sha256 `50799580e3bf45847276fc5711d64cf311940d320b65e95e4ee4223ec0e74238`, 수정하면 바뀌고 새 승인이 필요하다)
 - 결정적 검사(실제 Core 사용, 모델 없음): `packages/core/src/application/consent-answer/consent-answer.corpus.test.ts`.
   단계는 손으로 옮긴 규칙이 아니라 실제 `ConversationRuntime`의 `handleConsentGate`(그 안의 `isConsentControlTurn`,
   production turn handler 묶음에 대한 `turnHandlerClaims`)와 실제 `ConsentTurnGate`로 정한다.
@@ -64,8 +64,8 @@ gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
 | remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 334건 × 3 run = **1,002** (+ 장애 시 canary 최대 4) | 1,002 × 0.06 % = **약 60.1 %** |
 | local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 334건 × 3 run = **1,002** | **0 %** (loopback Ollama, Claude 창 미사용) |
 
-- plan digest(현재 코퍼스 기준): remote `977c8ea678ecd47ff734fbd1fc5b544e5815f07f40cff65627ee3c5a9da6d567`,
-  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `6c50d4a0ee7843f79a0af5f39d918125b8602a7cf9d4afd502107baebd4c65a9`.
+- plan digest(승인된 코퍼스 기준, 이전 owner-review 값 remote `977c8ea678ec`, local `6c50d4a0ee78`): remote `556a1337b8e0494b524b6022a37545b93b3c8eb33e5cf60313aad8a6f248ae13`,
+  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `533f20362a2d31f7ee733d49c5057909faba802104a3c75e8a4f23f3823ee187`.
   코퍼스나 옵션을 바꾸면 둘 다 바뀐다.
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
 - remote 60.1 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
@@ -87,13 +87,14 @@ remote arm은 실제 provider가 선언한 stronger tier(`supportsStrongerIntent
 
 ## 소유자 질문
 
-1. **코퍼스 승인(Strict).** 414건을 승인하면 `status`를 `approved`로 바꾸고 sha256을 측정 기록에 고정한다.
+1. **코퍼스 승인(Strict). 결정됨(2026-11-26, "요약 기준 승인").** 414건 승인, `status: "approved"`, sha256을 위에 고정했다.
 2. **apostrophe가 인용 표시로 읽히는 문제(발견 사항, owner / ADR 질문).** ASCII `'`와 typographic `’`(U+2019) 모두
    `hasUntrustedSpanMarker`의 `QUOTE_GLYPH`에 걸린다. 그래서 "don't", "that's fine", "don’t", "that’s fine"은 구조 검사에서 취소되고
    분류기까지 가지 않는다(ca-106, ca-155, ca-156, ca-413, ca-414). 송출이 없는 fail-closed 동작이지만 영어 축약형 답을 쓸 수 없다.
    `QUOTE_GLYPH`는 summary-grant 규칙과 공유하므로 고치면 그 규칙도 바뀐다. 선례는 `nlWithoutInlineQuotes({ contractions: true })`다.
    이번 수정에서는 운영 코드를 바꾸지 않았다.
+   **결정됨(2026-11-26): 소유자가 축약형을 고치는 별도 slice로 진행하기로 했다. 이번에는 하지 않았고 대기 중이다.**
 3. **local arm의 production 배선.** 현재 A6-S2 adapter는 stronger tier를 선언하지 않은 provider에 대해 `unclear`를 반환한다.
    eval은 local 모델을 분류기로 측정하지만, local arm이 통과해 채택되면 adapter와 라우팅 변경이 별도로 필요하다(a6-12 재게이트 포함).
-4. **비용 순서.** local arm(0 %)을 먼저 돌릴지, 두 arm을 같은 승인 묶음으로 돌릴지 정해야 한다. remote를 돌리려면 60 %에 대한
-   `GATES_OWNER_OK`가 필요하다.
+4. **비용 순서. 결정됨(2026-11-26).** local arm(0 %)을 먼저 돌린다. remote는 local이 실패할 때만, 새 소유자 알림 뒤에 돌린다
+   (60 %에 대한 `GATES_OWNER_OK` 필요).

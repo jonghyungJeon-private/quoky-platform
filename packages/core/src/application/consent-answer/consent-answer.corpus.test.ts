@@ -38,7 +38,7 @@ import { ConsentTurnGate } from './consent-turn-gate';
 
 const CORPUS_FILE = new URL('../golden/nl-consent-answer.v1.json', import.meta.url);
 /** Moves with ANY byte of the corpus (owner edits included); the frozen value goes into the measurement note after the owner review. */
-const CORPUS_SHA256 = '40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777';
+const CORPUS_SHA256 = '50799580e3bf45847276fc5711d64cf311940d320b65e95e4ee4223ec0e74238';
 
 type Stage = 'classifier' | 'structural-fail' | 'fast-path' | 'control-forfeit' | 'handler-claimed';
 interface CorpusCase {
@@ -166,10 +166,10 @@ async function actualStage(c: CorpusCase): Promise<{ stage: Stage | 'unknown'; r
 }
 
 describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
-  it('has the header, the closed vocabularies and the owner-review status (not frozen)', () => {
+  it('has the header, the closed vocabularies and the approved status (owner approval 2026-11-26)', () => {
     expect(CORPUS.version).toBe(1);
     expect(CORPUS.name).toBe('nl-consent-answer.v1');
-    expect(CORPUS.status).toBe('owner-review');
+    expect(CORPUS.status).toBe('approved');
     expect(CORPUS.labels).toEqual([...CONSENT_ANSWER_LABELS]);
     expect(Object.keys(CORPUS.stages).sort()).toEqual(['classifier', 'control-forfeit', 'fast-path', 'handler-claimed', 'structural-fail']);
     expect(Object.keys(CORPUS.categories).sort()).toEqual(['adversarial', 'no', 'non-answer', 'positive', 'unclear', 'yes-and-more']);
@@ -220,7 +220,7 @@ describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
     }
   });
 
-  it('is pinned by sha256 (an edit, the owner review included, must update this pin and the summary)', () => {
+  it('is pinned by sha256 (an edit must update this pin and the summary, and needs a new owner approval)', () => {
     expect(createHash('sha256').update(TEXT).digest('hex')).toBe(CORPUS_SHA256);
   });
 });

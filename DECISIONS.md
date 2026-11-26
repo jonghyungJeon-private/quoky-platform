@@ -40731,3 +40731,17 @@ positive 86 (min 80), no 64 (60), non-answer 106 (100), yes-and-more 43 (40), un
 remote digest `977c8ea678ecd47ff734fbd1fc5b544e5815f07f40cff65627ee3c5a9da6d567` (sonnet / low, concurrency 4), about 60.1 % of the 5 h window at
 0.06 % per call (over the 30 % guard: `GATES_OWNER_OK` needed); local digest `6c50d4a0ee7843f79a0af5f39d918125b8602a7cf9d4afd502107baebd4c65a9`
 (concurrency 1, as run-gates passes it), 0 % of the Claude window.
+
+### A6-S4 owner approval (2026-11-26)
+
+Status: recorded; append-only. No model call, no eval run. Product Owner Strict decision 2026-11-26 ("요약 기준 승인"): the corpus is approved as
+summarised in `docs/eval/a6-s4-corpus-summary.md` (414 cases); the 372 drafted cases are revisited only when an eval failure points at them.
+`golden/nl-consent-answer.v1.json` is now `status: "approved"` (description and status only; no label or case changed). Any later edit changes the
+sha256 and needs a new owner approval.
+
+- Corpus sha256 `50799580e3bf45847276fc5711d64cf311940d320b65e95e4ee4223ec0e74238` (was `40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777` while in owner review).
+- Plan digests (zero calls): remote `556a1337b8e0494b524b6022a37545b93b3c8eb33e5cf60313aad8a6f248ae13` (was `977c8ea678ecd47ff734fbd1fc5b544e5815f07f40cff65627ee3c5a9da6d567`), local, `--concurrency 1`, `533f20362a2d31f7ee733d49c5057909faba802104a3c75e8a4f23f3823ee187` (was `6c50d4a0ee7843f79a0af5f39d918125b8602a7cf9d4afd502107baebd4c65a9`).
+- Run order (owner): the local arm first (qwen3:8b, 0 % of the Claude window); the remote arm (about 60 %) only if the local arm fails, and only
+  after a new owner notice. Each run still needs its own notice and yes.
+- The apostrophe question (ca-106, ca-155, ca-156, ca-413, ca-414): the owner chose a separate slice to fix contractions; not done here, pending.
+- Local-arm production wiring (summary question 3) is unchanged.

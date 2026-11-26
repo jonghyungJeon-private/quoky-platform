@@ -1,8 +1,8 @@
 {
   "version": 1,
   "name": "nl-consent-answer.v1",
-  "status": "owner-review",
-  "description": "ADR-0121 amendment A6 §A6.9 (as updated by the ratification record R6): the consent-answer classifier eval corpus. One case = one owner reply to one pending consent question, the question exactly as the classifier sees it (every item-derived value a placeholder). Built offline in A6-S4 (2026-11-26) with no model call; NOT frozen: the owner reviews it (Strict) before its sha256 is recorded in a measurement note. eval:nl --mode consent-answer refuses a run while status is not \"approved\".",
+  "status": "approved",
+  "description": "ADR-0121 amendment A6 §A6.9 (as updated by the ratification record R6): the consent-answer classifier eval corpus. One case = one owner reply to one pending consent question, the question exactly as the classifier sees it (every item-derived value a placeholder). Built offline in A6-S4 (2026-11-26) with no model call; Approved by the owner on 2026-11-26 (summary-based approval of docs/eval/a6-s4-corpus-summary.md; the drafted cases are revisited only when an eval failure points at them). Any later edit changes the sha256 and needs a new owner approval. eval:nl --mode consent-answer refuses a run while status is not \"approved\".",
   "labels": [
     "yes",
     "yes-and-more",
