@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A8 OQ1-5: deterministic red-team lot for the item summary consent (2026-11-26; tests and docs only)
+
+- **Added.** `conversation-runtime-a8-redteam.test.ts` (159 offline cases, no model): P3/P5 end to end through the real NL selection path, a genuinely pending owner step, a
+  P1-P7 matrix with the flag on (recipient flips at every boundary, stops, a second request, a yes from another actor/channel/after 600 s/twice/quoted, item or set changed;
+  each with the exact REMOTE call count and content-free logs), and the OQ1-3 R3 and OQ1-4 residuals pinned. The OQ1-2/OQ1-4 harnesses moved into shared `*.test-support.ts`
+  files.
+- **Not changed.** No production code, prompt or catalog; flag default off, flag off byte-identical. A8.10 blockers (b) and (c) closed.
+
 ## Unreleased — ADR-0121 A8 OQ1-4: rule ① for the ADR-0100 D8 work-lookup summary (A8.6 = A5-S6) (2026-11-26; flag default off)
 
 - **Added.** With `QUOKY_ITEM_SUMMARY_CONSENT=on`, a D8 lookup whose summary would go to a `REMOTE` recipient (expected or not, per A8.6) shows the listing and then

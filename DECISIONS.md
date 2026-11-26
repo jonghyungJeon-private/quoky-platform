@@ -40612,3 +40612,34 @@ Review of `c5c88e0d` (Codex R3 P2, reproduced). Flag off stays byte-identical (t
 Residual for the A8.10 review: the rule fails closed and may skip the question for long listings even when the platform displays every
 row; the owner then sees the listing and the not-sent line and can narrow the lookup. A precise "displayed" set needs a platform-exact
 renderer report, not a heuristic, and is not part of this slice.
+
+### ADR-0121 A8 — OQ1-5 red-team lot (2026-11-26)
+
+OQ1-5 is a deterministic, offline red-team lot for `QUOKY_ITEM_SUMMARY_CONSENT` (flag on). Tests and docs only: no model call, no prompt or catalog change, no
+runtime behaviour change (the OQ1-2..OQ1-4 suites pass unchanged; flag off stays byte-identical). It found no production bug. Enabling is still the A8.10 Strict step.
+
+- **Where.** `conversation-runtime-a8-redteam.test.ts` (159 cases) over the real ConversationRuntime, the real mail / Drive / work-chat handlers and the real consent gate.
+  The two OQ1-2/OQ1-4 harnesses moved unchanged into `item-summary-consent.test-support.ts` and `d8-lookup-consent.test-support.ts` (a few optional knobs added: an active
+  fake NL selector, an open selection question, an actor switch, quoted marks, a history-write gate); the existing suites import them (118 cases, unchanged).
+- **Blocker (b), P3/P5 end to end (12 cases).** Mail and Drive `item.summarize` driven through a deterministic ACTIVE fake selector, the real `handleNlSelection`
+  dispatch and the real handlers: LOCAL (no line, one call), expected REMOTE (one call plus the line), unexpected REMOTE in the DM (question only, zero calls, history keeps
+  the question), the yes (exactly one call, to exactly the consented recipient, the selector and receipts not reached again, a second yes sends nothing), another recipient
+  becoming expected before the yes (zero calls), flag off (no gate vs `QUOKY_SUMMARY_CONSENT=on` alone, expected and unexpected key: byte-identical reply, prompts,
+  history, runs; no pre-resolve, no guard).
+- **Blocker (c), another owner step pending (5 cases).** An open selection question (`takePending`) with an unexpected recipient on the Jira item and on a mail item: the
+  handler fallback plus the fixed not-sent line, no question, no step, zero calls, the selection service touched only by its own `takePending`; an expected recipient is
+  unaffected (one call and the line); a pending channel grant in the session (the grant record unchanged) for the Jira item and for D8 (the listing plus the fixed line).
+- **Matrix, P1-P7 (P7 = the real D8 path) with the flag on (134 cases).** Per path: baseline; recipient flips between the ask and the yes (another REMOTE not expected /
+  expected / unnamed: 0 calls); between the continuation pre-resolve and hook 1 (0); before the ask resolves (0); between hook 1 and hook 2 (exactly 1, the regeneration
+  refused; the six single-item paths); the consented recipient gets at most its call and one regeneration (2); a stop during the ask pre-resolve, between the question
+  and the yes, and during the continuation pre-resolve (0 each); a second request before the yes (the first question is closed, the second is answered once: 1);
+  another turn instead of the yes (0); a yes from a channel, another DM conversation or another actor (not an answer, the real yes still works once: 1); a yes after
+  600 s (0, no second chance); a yes twice (1); yes-and-more (1, the rest rides as a new turn); a yes inside quoted ranges (0 from it); and, where the path has an item
+  identity, the item changed (thread grew, another Jira item, lookup set changed: the fixed changed line, 0). Every case also asserts that no item content, summary or
+  owner text reached a log line. A "REMOTE execute" counts provider calls whose prompt carries the item.
+- **Recorded residuals, pinned (8 cases).** OQ1-3 R3: a stop landing during the question's history write leaves one display-only question (the owner sees it; its record is
+  void), and the yes is refused with zero calls, on all seven paths. OQ1-4: a long D8 listing whose rows the renderer may clip gets the listing plus the not-sent line,
+  no question, zero calls. Any later change to either behaviour now fails a test.
+- **A8.10 enabling blockers.** (b) closed (P3/P5 driven end to end with the flag on and off). (c) closed (a genuinely open owner step is a runtime test, not only the
+  fail-closed rule). (a) was closed by OQ1-4. The recorded residuals above stay as owner-visible, fail-closed behaviour. Still open before the flag may be enabled: the
+  A6-S4 corpus run and the Strict, attended enabling step with its Live UAT (owner approval, outside this slice).

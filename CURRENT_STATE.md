@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A8 OQ1-5 red-team lot, tests and docs only (2026-11-26, branch `claude/v5-oq1-5-gold`)
+
+- Deterministic offline red-team lot for `QUOKY_ITEM_SUMMARY_CONSENT` (159 cases): P3/P5 driven through the real NL selection path, a real pending owner step, a P1-P7 matrix
+  (flips, stops, second request, yes from another actor/channel/after 600 s/twice/quoted, item or set changed) with exact REMOTE call counts, and the two recorded residuals pinned.
+  No runtime change; flag default off. A8.10 blockers (b) and (c) are closed; still open: the A6-S4 corpus run and the Strict enabling step. See DECISIONS "ADR-0121 A8 — OQ1-5
+  red-team lot".
+
 ### A8 OQ1-4 implemented, flag default off (2026-11-26, branch `claude/v5-oq1-4-d8`)
 
 - D8 work lookup (A8.6 = A5-S6): with the flag on, a `REMOTE` recipient (expected or not) gets the listing plus one rule-① question in the DM (listing only in a
