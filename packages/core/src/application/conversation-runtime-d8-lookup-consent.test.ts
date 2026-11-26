@@ -47,6 +47,8 @@ const item = (id: string): ConnectorItem => ({ id, title: `일 ${id} ${CANARY}`,
 type ProviderName = 'remote' | 'other' | 'local' | 'anon';
 
 interface HarnessOptions {
+  /** Numbered Jira / Slack listings (the A6 R2 desk option). */
+  readonly numbered?: boolean;
   /** `absent`: no gate; `gate`: QUOKY_SUMMARY_CONSENT=on only; `items`: both switches on (QUOKY_ITEM_SUMMARY_CONSENT=on). */
   readonly consent?: 'absent' | 'gate' | 'items';
   readonly selected?: ProviderName;
@@ -111,7 +113,7 @@ function harness(opts: HarnessOptions = {}) {
   };
   const desk = new WorkChatService(
     { workSurface: { forActor: async () => ({ status: 'COMPLETE', items: [], sources: [] }) }, connectors: { list: () => [jira] }, work: {} as WorkChatServiceDeps['work'] },
-    { summaryEnabled: true },
+    { summaryEnabled: true, ...(opts.numbered === true ? { numberedLists: true } : {}) },
   );
   const [todoHandler, lookupHandler] = createWorkChatTurnHandlers({ desk, summaryEnabled: true, logger });
   const realSelected = lookupHandler.handleSelected.bind(lookupHandler);
@@ -665,8 +667,7 @@ describe('OQ1-4 review round 2: the question counts exactly the rows the listing
     expect(outcome.kind).toBe('summarize');
     if (outcome.kind !== 'summarize') return;
     expect(outcome.readout.items).toHaveLength(10);
-    expect(outcome.listedRefs?.length).toBeGreaterThan(0);
-    expect(outcome.listedRefs?.length).toBeLessThan(10);
+    expect(outcome.listedRefs).toEqual([]); // round 3: any clipping gives no listed refs
     const listing = await listingOf(items);
     expect(listing).not.toContain('[jira:A-10]');
 
@@ -728,5 +729,49 @@ describe('OQ1-4 review round 2: the question counts exactly the rows the listing
     }
     expect(results[1]).toEqual(results[0]);
     expect(results[0]?.requests).toHaveLength(1);
+  });
+});
+
+describe('OQ1-4 review round 3: ask only when the listing is unclipped', () => {
+  // Codex R3 reproduction: numbered Jira listing, 10 items, 10-char titles, 200-char summaries, short-ish URLs.
+  const r3Items = () =>
+    Array.from({ length: 10 }, (_, index): ConnectorItem => ({
+      id: `A-${index + 1}`,
+      title: 'tttttttttt',
+      summary: 's'.repeat(200),
+      url: `https://example.test/${'a'.repeat(50)}`,
+      status: 'To Do',
+    }));
+
+  it('the service passes no listed refs unless the displayed rows equal the whole readout (any clipping fails closed)', async () => {
+    const run = async (items: ConnectorItem[], numbered: boolean) => {
+      const desk = new WorkChatService(
+        {
+          workSurface: { forActor: async () => ({ status: 'COMPLETE', items: [], sources: [] }) },
+          connectors: { list: () => [{ source: 'jira', readOnly: true, isAvailable: async () => true, query: async () => ({ source: 'jira', items }) }] },
+          work: {} as WorkChatServiceDeps['work'],
+        },
+        { summaryEnabled: true, ...(numbered ? { numberedLists: true } : {}) },
+      );
+      return desk.handle({ kind: 'lookup', source: 'jira', query: 'my-items' }, OWNER);
+    };
+    const clipped = await run(r3Items(), true);
+    expect(clipped.kind).toBe('summarize');
+    if (clipped.kind === 'summarize') expect(clipped.listedRefs).toEqual([]);
+    const short = await run(Array.from({ length: 10 }, (_, index) => item(`A-${index + 1}`)), false);
+    expect(short.kind === 'summarize' && short.listedRefs?.length).toBe(10);
+  });
+
+  it('Codex R3 reproduction: no question, the not-sent line, zero calls', async () => {
+    const items = r3Items();
+    const h = harness({ expectedKey: 'fake-other', numbered: true });
+    h.state.items = items;
+    const result = await h.send(ASK);
+    expect(result.reply.text).not.toContain('보낼까요');
+    expect(result.reply.text.endsWith(renderItemSummaryNotSentLine('ko'))).toBe(true);
+    expect(h.store.stateOf(SCOPE)).toBeUndefined();
+    expect(h.executed).toEqual([]);
+    expect(h.events).toEqual([]);
+    noContentInLogs(h);
   });
 });

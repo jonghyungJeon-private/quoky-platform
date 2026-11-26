@@ -1075,8 +1075,10 @@ export class WorkChatService implements WorkDesk {
     if (this.summaryEnabled && readout.items.length > 0 && options.listOnly !== true) {
       // A6 R2 (D1): a numbered list's prompt asks for one referenced line per item, so Quoky can number the body itself.
       const summaryReadout = fitExternalWorkReadoutToPrompt(numbered && fallbackListing !== undefined ? { ...readout, numbered: true } : readout);
-      // OQ1-4 review round 2: the rows the listing itself DISPLAYS (the renderer's own output), never the readout's items.
-      const listedRefs = list.shownRefs;
+      // OQ1-4 review round 3 (scope narrowing): the consent question needs NO clipping of any kind. The renderer's displayed rows
+      // (`shownRefs`) must equal the full readout row set, in order; any difference gives an empty list (the question is not asked).
+      const allRefs = readout.items.map((entry) => entry.ref);
+      const listedRefs = list.shownRefs.length === allRefs.length && list.shownRefs.every((ref, index) => ref === allRefs[index]) ? list.shownRefs : [];
       if (numbered && fallbackListing !== undefined) {
         const index = renderExternalWorkIndexFooter(summaryReadout);
         const summaryListing = this.workListingReceipt(source, summaryReadout.items, index.labelled) ?? { source: source as 'jira' | 'slack', items: [] };

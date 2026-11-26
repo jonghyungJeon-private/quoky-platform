@@ -40592,3 +40592,23 @@ Review of `609feb59` (Codex R2 P2, reproduced). Flag off stays byte-identical (t
 
 Record-only open point: because `shownRefs` is the renderer's worst-case count, a ten-row listing with long titles or URLs may not
 ask even when the platform shows every row (fail closed: listing plus the not-sent line); the owner can narrow the lookup.
+
+#### OQ1-4 review round 3: scope narrowing (2026-11-26)
+
+Review of `c5c88e0d` (Codex R3 P2, reproduced). Flag off stays byte-identical (the listing text is unchanged; the dormancy pins pass).
+
+1. **Finding.** `shownRefs` is the renderer's worst-case lower bound (`certainlyRenderedRows`). A numbered Jira listing of ten items with
+   10-character titles, 200-character summaries and URLs `https://example.test/` + 50 x `a` shows ten rows on Discord, but `shownRefs`
+   and the fitted prompt hold nine; the equality passed and the question asked about nine under ten displayed rows (which nine was
+   ambiguous). The finding had used its two fix rounds, so this round narrows the scope instead of adding another heuristic.
+2. **No-clipping rule.** The question is asked only when nothing was clipped anywhere: the full readout row set (all rows the listing
+   would show, before any trim), the renderer's `shownRefs`, and the descriptor refs (prompt-fitted) are exactly equal, in the same
+   order. `WorkChatService` computes the first equality and carries `listedRefs` (= `shownRefs`) only when it holds, else an empty list;
+   the runtime's existing `namesReadoutRefs` equality then covers the prompt fit. Any difference gives the listing plus the fixed
+   not-sent line, nothing sent (fail closed).
+3. **Tests.** The R3 reproduction gives no question, the not-sent line, zero calls; the round-1 long-URL reproduction still gives no
+   question; ten short rows still ask "10건" and a yes sends exactly those refs; the flag-off pins are unchanged.
+
+Residual for the A8.10 review: the rule fails closed and may skip the question for long listings even when the platform displays every
+row; the owner then sees the listing and the not-sent line and can narrow the lookup. A precise "displayed" set needs a platform-exact
+renderer report, not a heuristic, and is not part of this slice.
