@@ -40094,3 +40094,79 @@ a yes (A5-S6) does NOT add an A5 no-training requirement: D8 is not an A5 source
 
 Setting `QUOKY_ITEM_SUMMARY_CONSENT=on` (with `QUOKY_SUMMARY_CONSENT=on`) in a runtime is a separate Strict step needing the owner's exact-scope approval
 after OQ1-1..OQ1-5 are merged and verified. Nothing in A8 enables it. Until then D7, ADR-0120 amendment A6 R2 and D8 stay as built.
+
+## ADR-0121 A7-S4b pick implementation note (2026-11-26)
+
+Status: implemented (branch `claude/v5-a7-s4b-pick`). Slice A7-S4b "pick", the second half of the A7-S4 row of A7.10. Append-only: no amendment text or
+ratification record changes. DORMANT: `QUOKY_AGENT_WRITE_PROPOSALS=active` and agent mode `active` are still refused at startup; everything below is
+reached only through `AgentRunService` with the `writeProposal` dep (both flags on) and, for state, the runtime's `AgentActiveTurn.a7` facts. With the
+defaults a spy test pins that the listing read, the closure check, the pick and the state code never run. No model was called and no evaluation was run.
+`ARCHITECTURE.md` is not touched.
+
+- **Design.**
+  - *The pick (A7.4b), `agent/a7-pick.ts` and `agent/a7-destination.ts`.* A kind-only destination ("지라 티켓에 달아줘") is a plan the validator already
+    marks `pick-ticket` (or `pick-project`, a7-09). `runCrossWrite` then asks for the pick instead of the propose step: the owner-scoped listing is ONE
+    plain READ (`AgentPlanExecutor.listDestinationRows`: the same read port, budget, bounds and structure projection as any read, covered by no summary
+    and no draft: no body, no model call) of the existing `jira.issues` entry with its own filters (`role: assignee, status: open`, nothing from the
+    owner's words or from content). Rows are closed-format keys of the one project, distinct, ordered by issue key numerically descending (project key as
+    the tie-break; no update time), at most 5, never pre-selected, with the fixed header "올릴 곳을 번호로 골라 주세요" and a fixed footer. A title is
+    untrusted readout rendered inert (links neutralised, markup and control characters removed, bounded, one line) and is not shown at all when it is a
+    card-spoof line or credential-shaped. The source items of the card never contribute a row (a different read). a7-09: with two or more allowlisted
+    projects the first listing is the allowlist (no read), then the ticket listing of the picked project; the frozen receipt and its original `at` carry
+    through both steps.
+  - *`OWNER_PICKED_DESTINATION`.* `PickedA7Destination` is made only by `resolveA7Pick` from a row of this listing (a registry check, `isPickedA7Destination`,
+    refuses a forged, spread or JSON-copied value). `runA7ProposeStep` accepts it only for a plan whose destination is a pick state of the same project,
+    uses it as that one step's destination, and the port request carries `grounding: 'owner-picked'`; the card says "직접 고르신 대상: Jira BE-77" (the
+    re-shown pending card says the same, from the anchor's `agentCard.grounding`). It is never `OWNER_CONFIRMED`, never a planner input, a READ argument,
+    a payload byte, or stored beyond the card's anchor.
+  - *The pick turn.* `AgentRunService.continueA7Pick(turn)`: no M1 call. The pick is a bare number ("2", "2번", "2."; digits, the closed counter and one
+    closing mark; never a key, a title or a sentence), the very next owner turn of the same actor and conversation, within 10 minutes of the listing; a
+    form-b frozen receipt adds the second window (at most 20 minutes after its original `at`). Any other reply cancels (single use): the pending pick
+    and a frozen receipt with it are gone from the state it returns; a number off the list and an expiry get a fixed line, any other reply gets none and
+    the caller routes it as an ordinary turn. A picked project gives the ticket listing (a new pending pick). A picked ticket resumes the frozen plan: only
+    the destination slot is filled, and the step-2 checks run again before any read (the A7 switch and writer for Jira, the target list, the source entry
+    still offered, still an A7 source and still on, every frozen arg still an arg of the entry with the right scalar type, the allowlist). Admission as the
+    rule-① continuation (no planner, one model call left, the live kill switch).
+  - *Frozen receipt and form b.* Form b is now a real propose path: `runA7ProposeStep` takes the bound or frozen receipt and the read step rebuilt from
+    its entry and held args, reads once with the recorded ids as the W3 filter, and keeps only the items whose A5.2 digest (`digestSourceDocument`,
+    title, author, date, body) still matches (`verifyHeldItems`); a changed or missing item is dropped and named in the banner (`dropped`), nothing is
+    added. The destination listing of form b writes no receipt: it freezes the bound receipt inside the pending pick (A7.4b).
+  - *State in `Session.metadata['quoky.heldReceipt']` (`agent/held-receipt-store.ts`).* `{ byActor: { [actorId]: { held?, pick?, card? } } }`, pure
+    `readA7State` / `withA7State` in the style of `quoky.lastRead` (strict parse, unknown keys and broken invariants count as absent, other actors pruned
+    when past every window, at most 64). No new `ConversationRuntimeDeps` key, no port, no migration. The agent reads the stored value from
+    `AgentActiveTurn.a7` (and `AgentA7PickTurn.a7`) and returns the next value as `a7State` on the outcome; the runtime saves it.
+  - *Closed-card carry-over (A7.4c item 4).* A card that is made leaves a `card` record (card id, task id, session id, its frozen items with the original
+    `at`, whether it was built from a carried receipt, and the owner's words). The proposal port gains an optional `closureOf` (closed values read from the
+    persisted anchor by its task: `open`, `sent`, `declined`, `expired`, `owner-void`, `kill-switch`, `unknown`; the flow's `NOT_SENT`, `UNCERTAIN` and
+    `inconsistent` are `unknown`). At the next A7 turn a card that closed as `sent`, `declined`, `expired` or `owner-void` becomes the receipt through
+    `carryOverReceipt`, with its original `at` (20-minute expiry, whatever the closure time); the kill switch and anything unknown hand nothing on; a card
+    built from a carried receipt hands nothing on.
+  - *`turn.ownerStepPending`.* `runCrossWrite` and the pick turn now pass it to the propose step and to the listing (W2): nothing is read while another
+    owner step is open. Closes review round 1 item 9 of A7-S4a.
+  - *Injected hash.* The agent module imports no `node:*`, so the SHA-256 is `writeProposal.sha256Hex`, built in `apps/quoky` (`agentWriteProposalDep`).
+    Without it form b, the frozen receipt and the carry-over do not run (fail closed); a form-a card still works.
+- **Files.** New: `agent/a7-pick.ts`, `agent/a7-destination.ts`, `agent/held-receipt-store.ts` (+ tests `a7-pick.test.ts`, `a7-pick-flow.test.ts`). Changed:
+  `agent/{a7-propose,agent-run-service,plan-executor,held-receipt,agent-contract-check,index}.ts`, `ports/agent-write-proposal.port.ts` (`grounding`
+  `owner-picked`, `carded.taskId`, optional `closureOf`), `connector-writes/{agent-write-proposal,connector-write-copy}.ts`,
+  `conversation-runtime/turn-handler-layer.ts` (re-shown card grounding), `apps/quoky/src/features/agent.providers.ts`. Tests changed: the agent boundary and
+  drafter-boundary pins (file list, importers), `a7-propose.test.ts` (audit grounding), `agent-write-proposal.test.ts`, `agent.providers.test.ts`.
+- **Interpretations and residuals (fail closed; owner FYI).**
+  1. *The summary grant of a deferred read.* The grant that lets Slack or Jira content reach the drafter is derived from the owner's own words (A5). The
+     pick reply ("2") and a bare follow-up ("BE-124에도 달아줘") make no summary request. So the pending pick freezes the ASKING turn's words (bounded owner
+     text, TRUSTED) and the pick turn derives the grant from them; a card record freezes the words of the turn that asked, and a carried receipt is granted
+     by those. A held receipt of kind `listing` or `answer` bound to a bare follow-up still has no request and is refused (`no-summary-grant`) until its
+     writer exists. Owner: confirm that freezing the owner's own words in `Session.metadata` for at most the pick and card windows is acceptable.
+  2. *Carry-over turn.* "The next owner turn" for a closed card is read as the first A7-capable turn after the closure is observable; the carried receipt's
+     `turnId` is the owner turn before it, and the 20-minute cap from the original `at` bounds it. Other turns in between do not consume it. Owner: confirm,
+     or require the carry-over to be consumed by the very next turn (needs a per-turn runtime hook).
+  3. *No receipt writer on ordinary turns.* The `held` record is only read here: the listing and answer turns still only shadow-log (A7-S2), because
+     writing a receipt needs the A5.2 digests of the delivered items, which exist only on the A7 read path. A7-S5 or a later slice wires that writer.
+  4. *No runtime caller.* `runActive` and `continueA7Pick` have no production caller (stage P5 is not wired); the runtime's saving of `a7State` and its
+     routing of a pending pick before ordinary routing are part of that wiring. The pick turn is the caller's first look at every owner DM turn.
+  5. *Consent asked before the digest check.* A REMOTE draft asks its rule-① question on the listing (no body fetched), so the question counts recorded
+     ids that are digest-checked only after the yes. The check still drops changed items before the draft, and the banner names them.
+  6. *No destination existence GET.* A picked key is a row of an owner-scoped read of an allowlisted project, so it exists by construction; the existence
+     check port (`checkCrossWriteDestination`) is still unwired. The allowlist is checked at the card and at execution as before.
+  7. *Not built.* The automatic trip and "대상이 잘못됐었나요?" (after `active`), Slack and calendar destinations (A7-S6, A7-S7), the re-draft (A7-S9), the
+     REMOTE continuation of an A7 draft, the real read ports for `slack.search` and `jira.*`, and the A7-S5 gates (CW-1 corpus, red team, drafter eval: Strict,
+     owner notice and one yes per run).
