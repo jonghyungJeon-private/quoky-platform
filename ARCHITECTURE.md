@@ -437,7 +437,8 @@ fixed; the implementations are not.
 | LOW | bounded agent **read** run over READ catalog entries (ADR-0121) | auto, within caps |
 | LOW | owner-confirmed handoff into a READ (ADR-0121 A1, A4) | the exact values shown; an owner pick when several or free text in one item; one batched yes for each-item free text; never a write |
 | LOW | owner-confirmed minimal topic to the chat-tier model (ADR-0121 A2) | owner yes on the exact displayed string and recipient; one call; never a write |
-| LOW | owner-requested remote summary (mail, Drive; ADR-0121 A5: calendar, Jira, Slack, Confluence, GitHub) | the owner's explicit request is the consent when the recipient is the owner's chosen chat model, and the reply ends with a fixed recipient line; a fixed consent question naming the recipient, the owner's yes on the next DM turn, only for an unexpected recipient (ADR-0121 A8); the listed fields only; never a write |
+| LOW | owner-requested remote summary (mail, Drive; ADR-0121 A5: calendar, Jira, Slack, Confluence, GitHub) | a fixed consent question naming the recipient, the owner's yes on the next DM turn; the listed fields only; never a write |
+| LOW | live non-agent item summary (ADR-0121 A8: mail item/thread, Drive file, Jira issue, Slack message/thread; the ADR-0100 D8 automatic lookup summary) | behind `QUOKY_ITEM_SUMMARY_CONSENT` (default off, A8.10); flag off: as built (no question, no recipient line; CS-1a C1). On: for a `REMOTE` recipient only, the owner's explicit request is the consent when the recipient is the owner's chosen chat model and the reply ends with a fixed recipient line; the consent question naming the recipient and the owner's yes on the next DM turn, only for an unexpected `REMOTE` recipient; D8 when `REMOTE`: the listing, then the question (channel: listing only); `LOCAL` never asks; the listed fields only; never a write |
 | HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner; ADR-0121 A7 cards are CRITICAL) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
@@ -451,13 +452,13 @@ Every cross-destination flow is HIGH (A7 cards: CRITICAL), except the ADR-0121 A
 
 HIGH stays for every content-derived write. A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4), or, as a model-drafted summary on a CRITICAL card, into a Jira comment, a Slack post or a primary-calendar event description (ADR-0121 A7).
 
-For a live item summary (ADR-0121 A8) the owner's own request is the consent when the recipient is the chat model the owner chose; any other recipient needs that consent question, and the ADR-0100 D8 automatic summary lists first and then asks.
+For a live item summary (ADR-0121 A8, behind `QUOKY_ITEM_SUMMARY_CONSENT`, default off; flag off: as built, no question, no recipient line) the owner's own request is the consent when a `REMOTE` recipient is the chat model the owner chose; any other `REMOTE` recipient needs that consent question, `LOCAL` never asks, and the ADR-0100 D8 automatic summary, when `REMOTE`, lists first and then asks. The agent M2 calls for calendar, Jira, Slack, Confluence and GitHub keep the consent question (ADR-0121 A5, ADR-0110 D4 untouched).
 
 The ADR-0121 A2 topic consent is likewise a consent step, not an approval card: it never uses approval wording, it
 authorizes one model call with one displayed string, and it never authorizes a write or a connector call.
 
 The summary consent (rule ①) is likewise a consent step, not an approval card: it authorizes the M2 calls of one
-summarize step over the asked items, and never a write or a connector call (ADR-0121 A5).
+summarize step over the asked items, or the A8.5/A8.6 non-agent summary call and its one regeneration, and never a write or a connector call (ADR-0121 A5).
 
 The rule-① summary consent and the A2 topic consent may take the owner's answer in context (ADR-0121 A6): an atomic
 claim and structural checks first (the next owner DM turn, the pending step fresh and unused, no quoted or marked text,
@@ -496,7 +497,7 @@ planning. Approval requests and decisions are persisted as governance records.
 - ❌ Branching on a provider `id` anywhere in Core.
 - ❌ Letting any platform/storage/driver type cross a port boundary.
 - ❌ Pinning an AI provider to a Session/Task/Actor. (Exception, owner-approved 2026-10-07: an owner's explicit session-scoped chat-tier/image **preference** set by an owner command — ADR-0092 amendment — is a routing preference, not a pin: capability routing, readiness probes and the Claude fallback still apply, and it never affects code/review/policy capabilities.)
-- ❌ Surfacing the selected provider to the user as a normal behavior. (Explicit owner requests — `모델 상태`, the operations UI providers panel — may show the effective selection; ordinary replies never do. An owner-confirmed egress prompt (ADR-0121 A2) names the operator that will receive the displayed string, because consent needs the recipient.)
+- ❌ Surfacing the selected provider to the user as a normal behavior. (Explicit owner requests — `모델 상태`, the operations UI providers panel — may show the effective selection; ordinary replies never do. An owner-confirmed egress prompt (ADR-0121 A2) names the operator that will receive the displayed string, because consent needs the recipient. Scoped exception, owner-approved 2026-11-26 (ADR-0121 A8, behind `QUOKY_ITEM_SUMMARY_CONSENT`): the fixed recipient line on a live item summary reply and the rule-① consent question, which names the recipient; nothing else.)
 - ❌ Storing context/memory **snapshots** on Session (rebuild per run).
 - ❌ Merging `Resource` (input) and `Artifact` (output).
 - ❌ Auto-commit / auto-push / auto-delete / force-push / external write without

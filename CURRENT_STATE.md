@@ -7,7 +7,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### ADR-0121 A8 ratified (2026-11-26, branch `claude/v5-oq1-a8-text`)
 
-- Owner: a live item summary request is itself the consent for the chosen chat model (fixed recipient line); the rule-① question only for an unexpected recipient; D8 = listing plus question (A5-S6). Recorded in `DECISIONS.md`, `ARCHITECTURE.md` §10 applied. Docs only; flag default off, enabling is a later Strict step.
+- Owner: a live item summary request is itself the consent for the chosen chat model (fixed recipient line); the rule-① question only for an unexpected recipient; D8 = listing plus question (A5-S6). Recorded in `DECISIONS.md`, `ARCHITECTURE.md` §10 (separate A8 row), §12 and `AGENTS.md` line 23 (recipient-line exception) applied; review round 1 fixed scope, flag state and the fail-closed expected recipient (identity plus label). Docs only; flag default off, enabling is a later Strict step.
 
 ### A7-S3 sanitiser relaxed, live effect none (2026-11-26, branch `claude/v5-a7-draft-relax`)
 

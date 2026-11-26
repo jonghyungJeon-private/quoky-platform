@@ -7,7 +7,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — ADR-0121 amendment A8 ratified (2026-11-26; docs only)
 
-- **Changed.** `DECISIONS.md` records A8 (rule ① for live item summaries: the owner's request is the consent for the chosen chat model, with a fixed recipient line; the question only for an unexpected recipient; D8 listing plus question via A5-S6); `ARCHITECTURE.md` §10 LOW row and one sentence updated. Flag `QUOKY_ITEM_SUMMARY_CONSENT` stays off; no code.
+- **Changed.** `DECISIONS.md` records A8 (rule ① for live item summaries: the owner's request is the consent for the chosen chat model, with a fixed recipient line; the question only for an unexpected recipient; D8 listing plus question via A5-S6); `ARCHITECTURE.md` §10 gets a separate A8 LOW row (the A5 row is unchanged) and one sentence, §12 and `AGENTS.md` line 23 a scoped exception for the recipient line and the rule-① question. Review round 1: the A8 behaviour is behind `QUOKY_ITEM_SUMMARY_CONSENT` (default off, as built until then); the expected recipient is compared by provider identity plus label, re-checked before the call and the regeneration. Flag stays off; no code.
 
 ## Unreleased — A7.7 addendum, wiki row, owner batch answers (2026-11-26; docs and one gold status)
 
