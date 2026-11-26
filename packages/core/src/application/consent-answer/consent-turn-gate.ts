@@ -3,7 +3,7 @@ import type { Logger } from '../../ports';
 import { answerConsentTurn, closedConsentToken, type ConsentClassifierSwitch } from './consent-answer';
 import type { ConsentChatFacts } from './consent-labels';
 import type { BoundConsent, ConsentLanguage, ConsentPendingStore, ConsentScope } from './consent-pending';
-import type { ItemSummaryConsent, ItemSummaryContinuation } from './item-summary-consent';
+import type { ItemSummaryConsent, ItemSummaryContinuation, WorkLookupContinuation } from './item-summary-consent';
 
 /**
  * ADR-0121 SR-1 rule ① confirm slice, CS-2 "gate": the one runtime gate that gives every owner DM turn its chance to answer a
@@ -103,11 +103,11 @@ export type ConsentGateOutcome =
    * ADR-0121 amendment A8.5 (OQ1-3): the owner's yes to a live item-summary question, taken (the record is consumed, the token
    * minted). The runtime runs the continuation (re-read, re-checks, one summary call with the token) and owns the reply and its
    * history note; `rerun` runs once afterwards as a new turn (AM-2). `unavailable` is the gate's fixed line for a continuation the
-   * runtime cannot run at all.
+   * runtime cannot run at all. OQ1-4 (A8.6): the same outcome carries a yes to a D8 lookup question (a `WorkLookupContinuation`).
    */
   | {
       readonly kind: 'continue-item';
-      readonly continuation: ItemSummaryContinuation;
+      readonly continuation: ItemSummaryContinuation | WorkLookupContinuation;
       readonly language: ConsentLanguage;
       readonly unavailable: string;
       readonly rerunText?: string;
@@ -236,7 +236,7 @@ export class ConsentTurnGate {
     // not a DM, a replay) is the fixed unavailable line, and nothing is sent.
     const items = this.deps.items;
     if (items !== undefined && items.owns(bound.pending.runRef)) {
-      let taken: ItemSummaryContinuation | undefined;
+      let taken: ItemSummaryContinuation | WorkLookupContinuation | undefined;
       try {
         taken = items.take(bound, { actor: turn.actor, conversationKey: turn.conversationKey, direct: turn.direct });
       } catch {

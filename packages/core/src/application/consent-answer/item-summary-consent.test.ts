@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Actor } from '../../domain';
-import { itemSummaryConsentDescriptor, type ItemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
+import { itemSummaryConsentDescriptor, workLookupConsentDescriptor, workLookupRefsKey, type ItemSummaryConsentDescriptor, type WorkLookupConsentDescriptor } from '../item-summary-consent-descriptor';
 import type { RecipientVerdict } from '../item-summary/expected-recipient';
 import { yesBound } from '../agent/summary-consent.test-support';
-import { ITEM_SUMMARY_CONSENT_MAX_RECORDS, ITEM_SUMMARY_TOKEN_TTL_MS, ItemSummaryConsent, type ItemSummaryConsentToken, type ItemSummaryUse } from './item-summary-consent';
+import { ITEM_SUMMARY_CONSENT_MAX_RECORDS, ITEM_SUMMARY_TOKEN_TTL_MS, ItemSummaryConsent, isWorkLookupContinuation, type ItemSummaryConsentToken, type ItemSummaryUse } from './item-summary-consent';
 import { ConsentPendingStore, type BoundConsent } from './consent-pending';
 
 // A8 OQ1-1: the item-summary continuation and its token, over a REAL store and the REAL answer pipeline (the owner-yes mark).
@@ -42,7 +42,7 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
     const r = rig();
     r.ask();
     const taken = r.items.take(r.yes(), direct);
-    expect(taken?.descriptor).toBe(DESCRIPTOR);
+    expect(taken !== undefined && 'descriptor' in taken ? taken.descriptor : undefined).toBe(DESCRIPTOR);
     expect(taken?.requestText).toBe('summarise item 1');
     expect(taken?.recipient).toEqual(RECIPIENT);
     expect(r.items.allowsContinuation(taken?.token, unexpected(), use('call'))).toBe(true);
@@ -266,5 +266,90 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
     const r = rig();
     r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: { key: '', label: '' }, requestText: 'SECRET-TEXT', epoch: r.items.epoch() });
     expect(JSON.stringify(r.logs)).not.toContain('SECRET-TEXT');
+  });
+});
+
+describe('ItemSummaryConsent D8 lookup (A8.6, OQ1-4)', () => {
+  const REFS = ['jira:A-1', 'jira:A-2', 'jira:A-3'];
+  const LOOKUP = workLookupConsentDescriptor({ handlerId: 'work-chat.lookup', source: 'jira', query: 'my-items', refs: REFS, language: 'ko' }) as WorkLookupConsentDescriptor;
+  const SET = workLookupRefsKey(REFS);
+  const lookupUse = (phase: ItemSummaryUse['phase'] = 'call', over: Partial<ItemSummaryUse> = {}): ItemSummaryUse => ({ phase, actorId: OWNER.id, conversationKey: KEY, source: 'jira', itemId: SET, kind: 'work-lookup', ...over });
+  const askLookup = (r: ReturnType<typeof rig>, lookup: WorkLookupConsentDescriptor = LOOKUP) => r.items.askWorkLookup({ scope: SCOPE, lookup, recipient: RECIPIENT, requestText: '내 지라 일 요약', epoch: r.items.epoch() });
+
+  it('the descriptor: 1..10 distinct refs or nothing; the set key is order-free and exact', () => {
+    const make = (refs: readonly string[]) => workLookupConsentDescriptor({ handlerId: 'h', source: 'jira', query: 'my-items', refs, language: 'ko' });
+    expect(make([])).toBeUndefined();
+    expect(make(['jira:A-1', 'jira:A-1'])).toBeUndefined();
+    expect(make(['jira:A-1', ' '])).toBeUndefined();
+    expect(make(Array.from({ length: 11 }, (_, i) => `jira:A-${i}`))).toBeUndefined();
+    expect(make(Array.from({ length: 10 }, (_, i) => `jira:A-${i}`))?.refs).toHaveLength(10);
+    expect(workLookupRefsKey(['b', 'a'])).toBe(workLookupRefsKey(['a', 'b']));
+    expect(workLookupRefsKey(['a', 'b'])).not.toBe(workLookupRefsKey(['a']));
+    expect(workLookupRefsKey(['a,b'])).not.toBe(workLookupRefsKey(['a', 'b']));
+  });
+
+  it('askWorkLookup opens ONE step with the refs as item ids and the fixed question (source noun, count, recipient)', () => {
+    const r = rig();
+    const asked = askLookup(r);
+    expect(asked?.question).toBe('지라 이슈 3건을 Rcpt에 보내 요약할게요. 보낼까요? (응/아니)');
+    expect(r.items.owns(asked!.runRef)).toBe(true);
+    expect(r.store.stateOf(SCOPE)).toBe('open');
+    const en = askLookup(rig(), { ...LOOKUP, language: 'en' });
+    expect(en?.question).toBe("I'll send 3 Jira issues to Rcpt to summarise them. Shall I send them? (yes/no)");
+  });
+
+  it('askWorkLookup refuses a stale epoch, a bad ref list, an empty recipient and a non-consent source; opens nothing', () => {
+    const r = rig();
+    const stale = r.items.epoch();
+    r.items.voidAll();
+    expect(r.items.askWorkLookup({ scope: SCOPE, lookup: LOOKUP, recipient: RECIPIENT, requestText: 'x', epoch: stale })).toBeUndefined();
+    expect(askLookup(r, { ...LOOKUP, refs: [] })).toBeUndefined();
+    expect(askLookup(r, { ...LOOKUP, refs: ['a', 'a'] })).toBeUndefined();
+    expect(askLookup(r, { ...LOOKUP, source: 'todo' as unknown as WorkLookupConsentDescriptor['source'] })).toBeUndefined();
+    expect(r.items.askWorkLookup({ scope: SCOPE, lookup: LOOKUP, recipient: { key: 'k', label: '' }, requestText: 'x', epoch: r.items.epoch() })).toBeUndefined();
+    expect(r.store.stateOf(SCOPE)).not.toBe('open');
+  });
+
+  it('a yes takes a lookup continuation once; its token admits exactly the asked set, recipient and kind, one call', () => {
+    const r = rig();
+    askLookup(r);
+    const taken = r.items.take(r.yes(), direct);
+    expect(taken !== undefined && isWorkLookupContinuation(taken)).toBe(true);
+    if (taken === undefined || !isWorkLookupContinuation(taken)) return;
+    expect(taken.lookup.refs).toEqual(REFS);
+    expect(taken.requestText).toBe('내 지라 일 요약');
+    expect(taken.recipient).toEqual(RECIPIENT);
+    // Another set, a subset, the item kind, another source or another recipient: refused, nothing consumed.
+    expect(r.items.allowsContinuation(taken.token, unexpected(), lookupUse('call', { itemId: workLookupRefsKey(REFS.slice(0, 2)) }))).toBe(false);
+    expect(r.items.allowsContinuation(taken.token, unexpected(), lookupUse('call', { kind: undefined }))).toBe(false);
+    expect(r.items.allowsContinuation(taken.token, unexpected(), lookupUse('call', { source: 'slack' }))).toBe(false);
+    expect(r.items.allowsContinuation(taken.token, unexpected('k-other'), lookupUse('call'))).toBe(false);
+    expect(r.items.allowsContinuation(taken.token, { kind: 'expected', key: RECIPIENT.key, label: RECIPIENT.label }, lookupUse('call', { itemId: workLookupRefsKey([...REFS].reverse()) }))).toBe(true);
+    expect(r.items.allowsContinuation(taken.token, unexpected(), lookupUse('call'))).toBe(false);
+  });
+
+  it('an item token never admits a lookup use; the token dies after its TTL and on voidAll', () => {
+    const r = rig();
+    r.ask();
+    const item = r.items.take(r.yes(), direct);
+    expect(r.items.allowsContinuation(item?.token, unexpected(), use('call', { kind: 'work-lookup' }))).toBe(false);
+    const late = rig();
+    askLookup(late);
+    const t1 = late.items.take(late.yes(), direct);
+    late.clock.now = T0 + ITEM_SUMMARY_TOKEN_TTL_MS;
+    expect(late.items.allowsContinuation(t1?.token, unexpected(), lookupUse('call'))).toBe(false);
+    const voided = rig();
+    askLookup(voided);
+    const t2 = voided.items.take(voided.yes(), direct);
+    voided.items.voidAll();
+    expect(voided.items.allowsContinuation(t2?.token, unexpected(), lookupUse('call'))).toBe(false);
+  });
+
+  it('a step whose ids differ from the record (a forged or reordered set) mints nothing; logs never carry refs or the request text', () => {
+    const r = rig();
+    askLookup(r);
+    expect(r.items.take(r.yes(), { ...direct, direct: false })).toBeUndefined();
+    expect(JSON.stringify(r.logs)).not.toContain('jira:A-');
+    expect(JSON.stringify(r.logs)).not.toContain('내 지라 일 요약');
   });
 });

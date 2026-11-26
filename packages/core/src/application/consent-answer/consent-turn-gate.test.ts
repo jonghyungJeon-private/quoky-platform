@@ -339,7 +339,7 @@ describe('ConsentTurnGate: an item-owned yes (ADR-0121 A8.5, OQ1-3)', () => {
     const outcome = await r.gate.handle(r.turn('응'));
     expect(outcome.kind).toBe('continue-item');
     if (outcome.kind !== 'continue-item') return;
-    expect(outcome.continuation.descriptor.itemId).toBe('m-1');
+    expect('descriptor' in outcome.continuation ? outcome.continuation.descriptor.itemId : undefined).toBe('m-1');
     expect(outcome.continuation.requestText).toBe('OWNER-REQUEST-TEXT');
     expect(outcome.continuation.recipient).toEqual({ key: 'remote-x', label: 'Remote' });
     expect(outcome.language).toBe('ko');

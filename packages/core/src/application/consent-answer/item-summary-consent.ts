@@ -3,7 +3,7 @@ import type { Logger } from '../../ports';
 import type { AiProvider } from '../../ports/ai-provider.port';
 import { renderSummaryConsentQuestion } from '../agent/summary-consent-question';
 import { newId } from '../../util/id';
-import type { ItemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
+import { isWorkLookupConsentRefs, workLookupRefsKey, type ItemSummaryConsentDescriptor, type WorkLookupConsentDescriptor } from '../item-summary-consent-descriptor';
 import { recipientVerdict, type RecipientVerdict } from '../item-summary/expected-recipient';
 import { isConsentSource, type ConsentSource } from './consent-labels';
 import { CONSENT_ANSWER_WINDOW_MS, summaryConsentPending, type BoundConsent, type ConsentLanguage, type ConsentPendingStore, type ConsentScope } from './consent-pending';
@@ -28,6 +28,9 @@ import { isOwnerYes } from './consent-yes';
  *   `voidAll` voids every record and token and starts a new void epoch.
  * - OQ1-3 review round 2: `epoch()` is the void epoch a turn captures at its entry; `ask` refuses (opens nothing) when a stop
  *   voided consents after that capture, so a turn already in flight at the stop can never open a fresh question.
+ * - OQ1-4 (A8.6, = A5-S6): `askWorkLookup` opens the same rule-① step for the refs of ONE ADR-0100 D8 lookup (one source, 1..10
+ *   refs as the step's item ids); `take` turns a yes to it into a {@link WorkLookupContinuation} whose token is bound to that ref
+ *   SET (`kind: 'work-lookup'`, item key {@link workLookupRefsKey}). An item token never admits a lookup use, nor the reverse.
  *
  * Core compares keys and labels as opaque strings and never names a provider.
  */
@@ -53,8 +56,14 @@ export interface ItemSummaryUse {
   readonly actorId: string;
   readonly conversationKey: string;
   readonly source: ConsentSource;
+  /** One item's id, or for a D8 lookup the ref-set key ({@link workLookupRefsKey}) of the asked refs. */
   readonly itemId: string;
+  /** OQ1-4: `'work-lookup'` for a D8 lookup use; absent: a single item. Must equal the token's kind. */
+  readonly kind?: 'work-lookup';
 }
+
+/** What a record and its token are for: one live item (A8.5) or the asked refs of one D8 lookup (A8.6). */
+type ConsentRecordKind = 'item' | 'work-lookup';
 
 interface TokenFacts {
   readonly owner: ItemSummaryConsent;
@@ -62,6 +71,7 @@ interface TokenFacts {
   readonly actorId: string;
   readonly conversationKey: string;
   readonly source: ConsentSource;
+  readonly kind: ConsentRecordKind;
   readonly itemId: string;
   readonly key: string;
   readonly label: string;
@@ -76,18 +86,20 @@ const TOKENS = new WeakMap<object, TokenFacts>();
 /** The bound consents a token was already made from: one yes makes at most one token. */
 const MINTED_FROM = new WeakSet<object>();
 
-interface ContinuationRecord {
+interface ContinuationRecordBase {
   readonly runRef: string;
   readonly scope: ConsentScope;
   readonly language: ConsentLanguage;
   readonly source: ConsentSource;
-  readonly itemId: string;
-  readonly descriptor: ItemSummaryConsentDescriptor;
   readonly recipientKey: string;
   readonly recipientLabel: string;
   readonly requestText: string;
   readonly createdAtMs: number;
 }
+
+type ContinuationRecord =
+  | (ContinuationRecordBase & { readonly kind: 'item'; readonly itemId: string; readonly descriptor: ItemSummaryConsentDescriptor })
+  | (ContinuationRecordBase & { readonly kind: 'work-lookup'; readonly lookup: WorkLookupConsentDescriptor });
 
 export interface ItemSummaryConsentDeps {
   readonly store: ConsentPendingStore;
@@ -120,6 +132,28 @@ export interface ItemSummaryContinuation {
   readonly descriptor: ItemSummaryConsentDescriptor;
   readonly requestText: string;
   readonly recipient: { readonly key: string; readonly label: string };
+}
+
+/** OQ1-4 (A8.6): the input of the D8 lookup question. As {@link ItemSummaryConsentAsk}, with the lookup's ids-only descriptor. */
+export interface WorkLookupConsentAsk {
+  readonly scope: ConsentScope;
+  readonly lookup: WorkLookupConsentDescriptor;
+  readonly recipient: { readonly key: string; readonly label: string };
+  readonly requestText: string;
+  readonly epoch: number;
+}
+
+/** OQ1-4 (A8.6): what `take` returns for a yes to a D8 lookup question: the asked refs, the request text and the set-bound token. */
+export interface WorkLookupContinuation {
+  readonly token: ItemSummaryConsentToken;
+  readonly lookup: WorkLookupConsentDescriptor;
+  readonly requestText: string;
+  readonly recipient: { readonly key: string; readonly label: string };
+}
+
+/** OQ1-4: whether a taken continuation is a D8 lookup's (it carries `lookup`, never `descriptor`). */
+export function isWorkLookupContinuation(taken: ItemSummaryContinuation | WorkLookupContinuation): taken is WorkLookupContinuation {
+  return (taken as Partial<WorkLookupContinuation>).lookup !== undefined;
 }
 
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -182,18 +216,66 @@ export class ItemSummaryConsent {
         runRef,
       });
       this.deps.store.open(pending);
-      while (this.records.size >= ITEM_SUMMARY_CONSENT_MAX_RECORDS) {
-        const oldest = this.records.keys().next();
-        if (oldest.done === true) break;
-        this.records.delete(oldest.value);
-      }
+      this.makeRoom();
       this.records.set(runRef, {
+        kind: 'item',
         runRef,
         scope: pending.scope,
         language: descriptor.language,
         source: descriptor.source,
         itemId: descriptor.itemId,
         descriptor,
+        recipientKey: recipient.key,
+        recipientLabel: recipient.label,
+        requestText: input.requestText,
+        createdAtMs: nowMs,
+      });
+      return { runRef, question };
+    } catch {
+      this.deps.logger?.warn('item_summary_consent.ask_refused', {});
+      return undefined;
+    }
+  }
+
+  /**
+   * OQ1-4 (A8.6): opens the rule-① step for the asked refs of ONE D8 lookup (one source, its 1..10 refs as the step's item ids) and
+   * records the continuation; returns the run ref and the fixed question (the source noun and the count, the recipient's label;
+   * the listing above it shows the items). `undefined`: invalid input, a stale epoch or no question renders (nothing opened).
+   */
+  askWorkLookup(input: WorkLookupConsentAsk): { readonly runRef: string; readonly question: string } | undefined {
+    try {
+      const { scope, lookup, recipient } = input;
+      if (lookup?.kind !== 'work-lookup' || !isConsentSource(lookup.source) || !isWorkLookupConsentRefs(lookup.refs)) return undefined;
+      if (!nonEmpty(lookup.redo?.handlerId) || !nonEmpty(recipient?.key) || !nonEmpty(recipient.label) || typeof input.requestText !== 'string') return undefined;
+      if (lookup.language !== 'ko' && lookup.language !== 'en') return undefined;
+      if (!this.isCurrent(input.epoch)) {
+        this.deps.logger?.info('item_summary_consent.ask_stale', {});
+        return undefined;
+      }
+      const refs = [...lookup.refs];
+      const question = renderSummaryConsentQuestion({ language: lookup.language, recipient: recipient.label, sources: [{ source: lookup.source, count: refs.length }] });
+      if (question === '') return undefined;
+      const nowMs = this.deps.now();
+      if (!Number.isFinite(nowMs)) return undefined;
+      this.purge(nowMs);
+      const runRef = newId();
+      const pending = summaryConsentPending({
+        scope,
+        language: lookup.language,
+        createdAtMs: nowMs,
+        recipient: recipient.label,
+        sources: [{ source: lookup.source, itemIds: refs }],
+        runRef,
+      });
+      this.deps.store.open(pending);
+      this.makeRoom();
+      this.records.set(runRef, {
+        kind: 'work-lookup',
+        runRef,
+        scope: pending.scope,
+        language: lookup.language,
+        source: lookup.source,
+        lookup: { ...lookup, refs: Object.freeze(refs) },
         recipientKey: recipient.key,
         recipientLabel: recipient.label,
         requestText: input.requestText,
@@ -220,7 +302,10 @@ export class ItemSummaryConsent {
    * The owner's yes to the question of a run: the continuation and a single-use token, or `undefined` (nothing may be sent). The
    * record is consumed by the first attempt that reaches it with a genuine yes, so a retry or a replay finds nothing.
    */
-  take(bound: BoundConsent, turn: { readonly actor: Pick<Actor, 'id'>; readonly conversationKey: string; readonly direct: boolean }): ItemSummaryContinuation | undefined {
+  take(
+    bound: BoundConsent,
+    turn: { readonly actor: Pick<Actor, 'id'>; readonly conversationKey: string; readonly direct: boolean },
+  ): ItemSummaryContinuation | WorkLookupContinuation | undefined {
     try {
       if (!isOwnerYes(bound) || MINTED_FROM.has(bound)) return undefined;
       const pending = bound.pending;
@@ -234,7 +319,10 @@ export class ItemSummaryConsent {
       if (turn.direct !== true || turn.actor.id !== record.scope.actorId || turn.conversationKey !== record.scope.conversationKey) return undefined;
       if (pending.scope.actorId !== record.scope.actorId || pending.scope.conversationKey !== record.scope.conversationKey) return undefined;
       const only = pending.sources.length === 1 ? pending.sources[0] : undefined;
-      if (only === undefined || only.source !== record.source || only.itemIds.length !== 1 || only.itemIds[0] !== record.itemId) return undefined;
+      if (only === undefined || only.source !== record.source) return undefined;
+      // An item record names exactly its one item; a D8 record exactly its asked refs, in the order they were asked.
+      const askedIds = record.kind === 'item' ? [record.itemId] : record.lookup.refs;
+      if (only.itemIds.length !== askedIds.length || only.itemIds.some((id, index) => id !== askedIds[index])) return undefined;
       if (pending.recipient !== record.recipientLabel) return undefined;
       const token = Object.freeze({ kind: 'item-summary-consent-token' }) as ItemSummaryConsentToken;
       TOKENS.set(token, {
@@ -243,7 +331,8 @@ export class ItemSummaryConsent {
         actorId: record.scope.actorId,
         conversationKey: record.scope.conversationKey,
         source: record.source,
-        itemId: record.itemId,
+        kind: record.kind,
+        itemId: record.kind === 'item' ? record.itemId : workLookupRefsKey(record.lookup.refs),
         key: record.recipientKey,
         label: record.recipientLabel,
         mintedAtMs: nowMs,
@@ -251,7 +340,9 @@ export class ItemSummaryConsent {
         regenerationUsed: false,
         spent: false,
       });
-      return { token, descriptor: record.descriptor, requestText: record.requestText, recipient: { key: record.recipientKey, label: record.recipientLabel } };
+      const recipient = { key: record.recipientKey, label: record.recipientLabel };
+      if (record.kind === 'work-lookup') return { token, lookup: record.lookup, requestText: record.requestText, recipient };
+      return { token, descriptor: record.descriptor, requestText: record.requestText, recipient };
     } catch {
       return undefined;
     }
@@ -281,6 +372,7 @@ export class ItemSummaryConsent {
       const nowMs = this.deps.now();
       if (!Number.isFinite(nowMs) || nowMs - facts.mintedAtMs >= ITEM_SUMMARY_TOKEN_TTL_MS) return false;
       if (use.actorId !== facts.actorId || use.conversationKey !== facts.conversationKey || use.source !== facts.source || use.itemId !== facts.itemId) return false;
+      if ((use.kind === 'work-lookup' ? 'work-lookup' : 'item') !== facts.kind) return false;
       if (facts.key !== verdict.key || facts.label !== verdict.label) return false;
       if (use.phase === 'call') {
         if (facts.callUsed) return false;
@@ -305,6 +397,15 @@ export class ItemSummaryConsent {
   voidAll(): void {
     this.records.clear();
     this.generation += 1;
+  }
+
+  /** At most {@link ITEM_SUMMARY_CONSENT_MAX_RECORDS} records: the oldest is dropped first. */
+  private makeRoom(): void {
+    while (this.records.size >= ITEM_SUMMARY_CONSENT_MAX_RECORDS) {
+      const oldest = this.records.keys().next();
+      if (oldest.done === true) break;
+      this.records.delete(oldest.value);
+    }
   }
 
   private purge(nowMs: number): void {

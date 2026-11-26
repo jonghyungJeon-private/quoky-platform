@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A8 OQ1-4: rule ① for the ADR-0100 D8 work-lookup summary (A8.6 = A5-S6) (2026-11-26; flag default off)
+
+- **Added.** With `QUOKY_ITEM_SUMMARY_CONSENT=on`, a D8 lookup whose summary would go to a `REMOTE` recipient (expected or not, per A8.6) shows the listing and then
+  one rule-① question in the owner DM (the source noun, the ref count, the recipient); a channel gets the listing only. A yes re-runs the lookup directly through the
+  handler (no selector, no second cap charge), keeps only the asked refs (W3), makes one summary call through a token bound to the asked ref set, and ends the reply with
+  the recipient line. A missing asked ref is the fixed "changed" line; a recipient flip, expiry, a stop or a refused re-run sends nothing. The ids-only
+  `WorkLookupConsentDescriptor` (`lookupConsent` on the summarize outcome), `ItemSummaryConsent.askWorkLookup`, `workLookupRefsKey`, `keepAskedWorkLookupRefs`.
+- **Changed.** The gate's `continue-item` continuation may be a `WorkLookupContinuation`; `allowsContinuation` also matches the use kind; `appendWorkSummaryFooter`
+  takes an optional last line. The OQ1-2 interim "D8 REMOTE: listing only" is replaced.
+- **Dormant.** Flag off (default, also with `QUOKY_SUMMARY_CONSENT=on`): byte-identical (pinned). Enabling is the A8.10 Strict step.
+
 ## Unreleased — ADR-0121 A8 OQ1-3: the continuation after a yes for an unexpected recipient (2026-11-26; flag default off)
 
 - **Added.** The owner's yes to the rule-① question for an unexpected recipient now runs the summary: the gate dispatches the yes by `runRef` and returns `continue-item` (the record is taken, the single-use token minted); the runtime re-checks the DM, the handler, and for Jira / Slack the A6 R2 level and the kill switch, re-reads the item on a separate `:consent` message with the stored request text, requires the same item (and the same thread message count), then makes the one summary call (and its one regeneration) only through the token at both hooks. The reply ends with the recipient line; a recipient flip after the yes sends nothing; a changed item gets the fixed "changed" line. Pure helpers `sameItemAsConfirmed` and `renderItemSummaryChangedLine`.

@@ -602,12 +602,16 @@ describe('OQ1-2 flag on: the recipient decides', () => {
     expect(h.executed).toEqual([]);
   });
 
-  it('D8 lookup with a REMOTE recipient (expected or not): the listing only, no summary call', async () => {
+  it('D8 lookup with a REMOTE recipient (expected or not) and no lookup descriptor: the listing plus the fixed line, no summary call (OQ1-4)', async () => {
     for (const expectedKey of ['fake-remote', 'fake-other']) {
       const h = harness({ expectedKey });
       const result = await runPath(h, PATHS[4]!);
-      expect(result.reply.text).toBe('LOOKUP LISTING');
+      expect(result.reply.text).toBe(`LOOKUP LISTING\n${renderItemSummaryNotSentLine('ko')}`);
       expect(h.executed).toEqual([]);
+      // In a channel the listing only (OQ1-4, W2).
+      const c = harness({ expectedKey });
+      expect((await runPath(c, PATHS[4]!, CHANNEL)).reply.text).toBe('LOOKUP LISTING');
+      expect(c.executed).toEqual([]);
     }
   });
 

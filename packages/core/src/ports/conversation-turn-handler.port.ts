@@ -24,7 +24,7 @@ import type { SurfaceGroupId } from '../application/surface-grants/surface-group
 import type { SurfacePermit } from '../application/surface-grants/surface-permit';
 // Type-only, like the readouts above: the whole prepared item for the ADR-0124 Part L S3 summary (plain data).
 import type { LongItemSummaryInput } from '../application/item-summary/long-item';
-import type { ItemSummaryConsentDescriptor } from '../application/item-summary-consent-descriptor';
+import type { ItemSummaryConsentDescriptor, WorkLookupConsentDescriptor } from '../application/item-summary-consent-descriptor';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -188,6 +188,12 @@ export interface TurnHandlerSummarizeReply {
    * read it yet (OQ1-2), so it has no effect. No item text, title, owner words or readout.
    */
   readonly consent?: ItemSummaryConsentDescriptor;
+  /**
+   * ADR-0121 amendment A8.6 (OQ1-4): ids only. The D8 lookup handler fills it for a lookup it wants summarised (the refs of exactly
+   * the readout items the summary prompt would carry, at most 10); the runtime reads it only with `QUOKY_ITEM_SUMMARY_CONSENT=on`,
+   * to name those items in the rule-① question and re-run the same read after the owner's yes. No item text, title or readout.
+   */
+  readonly lookupConsent?: WorkLookupConsentDescriptor;
 }
 
 /**
