@@ -5,6 +5,13 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A8 OQ1-4 implemented, flag default off (2026-11-26, branch `claude/v5-oq1-4-d8`)
+
+- D8 work lookup (A8.6 = A5-S6): with the flag on, a `REMOTE` recipient (expected or not) gets the listing plus one rule-① question in the DM (listing only in a
+  channel); a yes re-runs the lookup, keeps only the asked refs, makes one call through a ref-set-bound token and adds the recipient line; a missing asked ref is the
+  "changed" line, nothing sent. Flag off: byte-identical. Open: OQ1-5 (gold and live), the A8.10 Strict enabling step. See DECISIONS "ADR-0121 A8 — OQ1-4
+  design and implementation note".
+
 ### A8 OQ1-3 implemented, flag default off (2026-11-26, branch `claude/v5-oq1-3-continue`)
 
 - A yes to the question for an unexpected recipient runs the continuation: re-checks, a fresh re-read of the same item, one summary call (plus its one regeneration) through the single-use token, the recipient line on the reply. A recipient flip, a changed item or thread, a refused re-read, expiry, restart or the kill switch sends nothing. Flag off: byte-identical. Next: OQ1-4 D8 (A5-S6), OQ1-5 gold. See DECISIONS "ADR-0121 A8 — OQ1-3 implementation note".

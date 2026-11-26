@@ -205,7 +205,37 @@ describe('WorkChatTurnHandler — lookup mode (order 300)', () => {
     const { desk } = fakeDesk(() => outcome);
     const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
     const out = await handler.handle(ctxOf('내 Jira 이슈 보여줘'));
-    expect(out).toEqual({ kind: 'summarize', readout: READOUT, fallbackText: 'LIST', footer: outcome.kind === 'summarize' ? outcome.footer : '', nlSelection: { entryId: 'jira.issues', args: {} } });
+    expect(out).toEqual({
+      kind: 'summarize',
+      readout: READOUT,
+      fallbackText: 'LIST',
+      footer: outcome.kind === 'summarize' ? outcome.footer : '',
+      nlSelection: { entryId: 'jira.issues', args: {} },
+      // ADR-0121 A8.6 (OQ1-4): the ids-only descriptor: the readout's refs, the grammar redo (no selection).
+      lookupConsent: { kind: 'work-lookup', source: 'jira', query: 'my-items', refs: ['jira:OPS-1', 'jira:OPS-2'], language: 'ko', redo: { handlerId: 'work-chat.lookup' } },
+    });
+  });
+
+  it('OQ1-4: a selected lookup carries the selection as its redo; a grammar-yield turn keeps the fact; refs are ids only', async () => {
+    const outcome = summarizeOutcome();
+    const { desk } = fakeDesk(() => outcome);
+    const handler = new WorkChatTurnHandler({ desk, mode: 'lookup', summaryEnabled: true, logger });
+    const selected = { entryId: 'jira.issues', args: {}, language: 'en' } as const;
+    const viaSelection = await handler.handleSelected(selected, ctxOf('show my jira issues'));
+    expect(viaSelection?.kind === 'summarize' ? viaSelection.lookupConsent : undefined).toEqual({
+      kind: 'work-lookup',
+      source: 'jira',
+      query: 'my-items',
+      refs: ['jira:OPS-1', 'jira:OPS-2'],
+      language: 'en',
+      redo: { handlerId: 'work-chat.lookup', selection: selected },
+    });
+    const yielded = await handler.handle({ ...ctxOf('내 Jira 이슈 보여줘'), grammarYield: true });
+    expect(yielded?.kind).toBe('summarize');
+    expect(yielded?.kind === 'summarize' ? yielded.lookupConsent?.redo : undefined).toEqual({ handlerId: 'work-chat.lookup', grammarYield: true });
+    const text = JSON.stringify(viaSelection?.kind === 'summarize' ? viaSelection.lookupConsent : null);
+    expect(text).not.toContain('Rotate certificates');
+    expect(text).not.toContain('Write runbook');
   });
 
   it('with QUOKY_WORK_SUMMARY_ENABLED=false returns the deterministic list even if the desk asks to summarize', async () => {

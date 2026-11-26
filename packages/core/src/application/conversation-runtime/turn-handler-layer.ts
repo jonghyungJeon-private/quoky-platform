@@ -29,6 +29,9 @@ import { runS3ItemSummary, type S3ItemSummaryOutcome } from '../item-summary/s3-
 import { SummaryRecipientGuard, renderItemSummaryNotSentLine, type SummaryRecipientPhase } from '../item-summary/summary-recipient-guard';
 import type { RecipientVerdict } from '../item-summary/expected-recipient';
 import { renderItemSummaryChangedLine, sameItemAsConfirmed } from '../item-summary/item-summary-continuation';
+import { workLookupRefsKey } from '../item-summary-consent-descriptor';
+import { keepAskedWorkLookupRefs } from '../work-chat/work-lookup-consent';
+import type { ExternalWorkReadout } from '../work-chat/external-work-readout';
 import { itemR2Acts } from '../nl-routing/nl-selection-service';
 import {
   LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
@@ -85,6 +88,24 @@ import type { NlChatFacts, RecentConnectorWrite } from './internal-types';
 import { connectorWriteChoiceIndex, explicitDurableMemoryContent, interpretDecision, nlReplyKindOf } from './turn-intents';
 import type { ApplyPreviewAnchor, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
 import type { ItemSummaryContinueOutcome } from './runtime-base';
+
+/** A8.5 / A8.6: what the gate took for a yes: one item's continuation (OQ1-3) or a D8 lookup's (OQ1-4, it carries `lookup`). */
+type TakenContinuation = ItemSummaryContinueOutcome['continuation'];
+type WorkLookupTaken = Extract<TakenContinuation, { readonly lookup: unknown }>;
+type ItemTaken = Exclude<TakenContinuation, WorkLookupTaken>;
+const isWorkLookupTaken = (taken: TakenContinuation): taken is WorkLookupTaken => (taken as { readonly lookup?: unknown }).lookup !== undefined;
+
+/**
+ * OQ1-4: whether the descriptor names exactly the readout's items, in order (the handler builds both from the same readout), AND
+ * exactly the rows the listing DISPLAYS (`listed`, the listing renderer's own output; review rounds 1 and 2): the prompt may carry
+ * fewer items than the listing (budget fit), or the listing may display fewer rows than the prompt carries (its own reply budget);
+ * either way the question would not count exactly what the owner sees, so it is not asked.
+ */
+function namesReadoutRefs(lookup: { readonly refs: readonly string[]; readonly listed?: readonly string[] }, readout: ExternalWorkReadout): boolean {
+  const { refs, listed } = lookup;
+  if (refs.length !== readout.items.length || !readout.items.every((item, index) => item.ref === refs[index])) return false;
+  return listed !== undefined && listed.length === refs.length && listed.every((ref, index) => ref === refs[index]);
+}
 
 /**
  * ADR-0121 amendment A8.4 (OQ1-2): the footer of a summary reply with the recipient line as its last line (the footer's own
@@ -457,6 +478,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     actor: Actor,
     userMemoryId: Id,
     summary: TurnHandlerSummarizeReply,
+    consented?: WorkLookupTaken,
   ): Promise<TurnResult> {
     // A6 R2 (D1): a numbered list records the labels of the form that was delivered (the index or the fallback list).
     const numbered = summary.numbered;
@@ -497,17 +519,17 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
         reasonCode: 'WORK_SUMMARY_REQUEST_CREDENTIAL_MATERIAL',
       });
     }
-    // ADR-0121 A8.6 until OQ1-4 (flag on only): the D8 lookup summary is never sent to a REMOTE recipient, expected or not; the
-    // reply is the listing (no question yet). A LOCAL recipient is summarised as built, held to LOCAL by the guard.
+    // ADR-0121 A8.6 (OQ1-4, flag on only): a LOCAL recipient is summarised as built, held to LOCAL by the guard; a REMOTE one,
+    // expected or not, gets the listing plus the rule-① question in the owner DM (the listing only elsewhere), and is called only
+    // after the owner's yes, through the continuation's set-bound token.
     let guard: SummaryRecipientGuard | undefined;
     if (this.consentGate?.items !== undefined) {
-      const pre = await this.preResolveSummaryRecipient(session, actor, readout, undefined, () => this.itemConsentEpochCurrent(message));
-      // OQ1-3 review round 2: a stop that voided consents while this turn was in flight: the listing only, nothing is sent.
-      if (pre?.guard === undefined || pre.verdict.kind !== 'local' || !this.itemConsentEpochCurrent(message)) {
-        this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome: 'listing-only' });
-        return fallback();
-      }
-      guard = pre.guard;
+      const decided =
+        consented === undefined
+          ? await this.workLookupRecipientStep(message, session, actor, summary, readout, fallback, recordListing)
+          : await this.consentedRecipientStep(message, session, actor, readout, fallback, consented);
+      if (decided.kind === 'replied') return decided.result;
+      guard = decided.guard;
     }
     const intent: Intent = {
       type: IntentType.SUMMARIZE,
@@ -529,15 +551,99 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
         sessionId: session.id,
         errorName: err instanceof Error ? err.name : typeof err,
       });
-      return fallback();
+      // OQ1-4: the fallback after a REMOTE call that already completed carries the recipient line (no guard: `undefined`, as before).
+      return fallback(this.completedCallLine(guard, message));
     }
-    if (result.status !== 'RESPONDED') return fallback();
-    if (numbered === undefined) return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
-    // A6 R2 (D1, live test 3): the model's own list numbering is never a label. Quoky numbers the body's item lines in
-    // reading order, renders the index footer in that same order, and records exactly those labels.
-    const shown = numberExternalWorkSummary(result.reply.text, readout);
-    await recordListing({ source: numbered.summary.source, items: shown.labels.map((id, index) => ({ label: index + 1, id })) });
-    return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(shown.text, shown.footer)) };
+    if (result.status !== 'RESPONDED') return fallback(this.completedCallLine(guard, message));
+    if (guard === undefined) {
+      if (numbered === undefined) return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer)) };
+      // A6 R2 (D1, live test 3): the model's own list numbering is never a label. Quoky numbers the body's item lines in
+      // reading order, renders the index footer in that same order, and records exactly those labels.
+      const shown = numberExternalWorkSummary(result.reply.text, readout);
+      await recordListing({ source: numbered.summary.source, items: shown.labels.map((id, index) => ({ label: index + 1, id })) });
+      return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(shown.text, shown.footer)) };
+    }
+    // ADR-0121 A8.4 (OQ1-4, flag on): after a completed REMOTE call the recipient line is the reply's last line (LOCAL: none). A
+    // throw while the reply is built is the listing plus the line, without a second history note (the work path recorded it).
+    const line = guard.recipientLine(noticeLanguage(undefined, message.text));
+    try {
+      if (numbered === undefined) return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(result.reply.text, summary.footer, line)) };
+      const shown = numberExternalWorkSummary(result.reply.text, readout);
+      await recordListing({ source: numbered.summary.source, items: shown.labels.map((id, index) => ({ label: index + 1, id })) });
+      return { ...result, reply: withOutboundBody(result.reply, appendWorkSummaryFooter(shown.text, shown.footer, line)) };
+    } catch (err) {
+      this.deps.logger.warn('work summary reply build threw', { messageId: message.id, sessionId: session.id, errorName: err instanceof Error ? err.name : typeof err });
+      const completed = this.completedCallLine(guard, message);
+      return { ...result, reply: withOutboundBody(result.reply, completed === undefined ? summary.fallbackText : joinBody([summary.fallbackText, completed])) };
+    }
+  }
+
+  /**
+   * ADR-0121 amendment A8.6 (OQ1-4, = A5-S6; flag on only): what the ADR-0100 D8 lookup summary does with its recipient. The owner
+   * did not ask for this summary, so every `REMOTE` recipient, expected or not, needs the question (the question is the consent).
+   *
+   * - `local`: the call proceeds under the returned LOCAL guard, as built (no question, no line).
+   * - `REMOTE` (expected or unexpected) in the owner DM, with the handler's ids-only descriptor naming exactly the readout's refs and
+   *   no other owner step pending: the listing (no model output) and then the ONE fixed rule-① question (the source noun, the count
+   *   and the recipient's label; the step holds the refs as its item ids). No call, no Task. The history keeps the listing and the
+   *   question; the listing's receipt is recorded as on the listing reply.
+   * - a channel: the listing only, never a question (W2). A stop that voided consents during the turn, or nothing resolved: the
+   *   listing only. `unnamed`, no descriptor, another owner step pending or a refused ask: the listing plus the fixed not-sent line.
+   */
+  protected async workLookupRecipientStep(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    summary: TurnHandlerSummarizeReply,
+    readout: ExternalWorkReadout,
+    fallback: (extra?: string) => Promise<TurnResult>,
+    recordListing: (listing: NlListingReceipt | undefined) => Promise<void>,
+  ): Promise<{ readonly kind: 'replied'; readonly result: TurnResult } | { readonly kind: 'call'; readonly guard: SummaryRecipientGuard }> {
+    const language = noticeLanguage(undefined, message.text);
+    const listingOnly = async (outcome: string, extra?: string) => {
+      this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome });
+      return { kind: 'replied' as const, result: await fallback(extra) };
+    };
+    const items = this.consentGate?.items;
+    if (items === undefined) return listingOnly('no-consent');
+    const pre = await this.preResolveSummaryRecipient(session, actor, readout, undefined, () => this.itemConsentEpochCurrent(message));
+    // OQ1-3 review round 2: a stop that voided consents while this turn was in flight: the listing only, no question, nothing sent.
+    if (!this.itemConsentEpochCurrent(message)) return listingOnly('stopped');
+    if (pre === undefined) return listingOnly('unresolved');
+    const verdict = pre.verdict;
+    if (verdict.kind === 'local') {
+      if (pre.guard === undefined) return listingOnly('unresolved');
+      this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome: 'local' });
+      return { kind: 'call', guard: pre.guard };
+    }
+    // A8.6 / SR-1 W2: in a channel Quoky never asks; the listing is the whole reply.
+    if (!isDirectConversation(message.context)) return listingOnly('channel');
+    const notSent = renderItemSummaryNotSentLine(language);
+    if (verdict.kind === 'unnamed') return listingOnly('unnamed', notSent);
+    // Fail closed: a turn whose owner-step fact was never decided counts as having one pending.
+    const ownerStepPending = this.consentOwnerSteps.get(message) !== false;
+    const lookup = summary.lookupConsent;
+    if (lookup === undefined || ownerStepPending || !namesReadoutRefs(lookup, readout)) return listingOnly('remote-not-asked', notSent);
+    const asked = items.askWorkLookup({
+      scope: { actorId: actor.id, conversationKey: this.agentConsentFacts(message).conversationKey },
+      lookup,
+      recipient: { key: verdict.key, label: verdict.label },
+      requestText: message.text,
+      // Review round 1: the re-run reads the request text with this message's quoted ranges and formatting (offsets/flags only).
+      requestMarks: {
+        ...(message.quotedRanges !== undefined ? { quotedRanges: message.quotedRanges } : {}),
+        ...(message.formatting !== undefined ? { formatting: message.formatting } : {}),
+      },
+      epoch: this.itemConsentEpochs.get(message) ?? Number.NaN,
+    });
+    if (asked === undefined) return listingOnly('remote-ask-refused', notSent);
+    this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome: 'asked' });
+    await recordListing(summary.numbered?.fallback);
+    this.nlReplyKinds.set(message, { kind: 'question' });
+    const body = joinBody([summary.fallbackText, asked.question]);
+    const history = summary.history?.assistant;
+    await this.deps.memory.recordAssistant(history === undefined ? plainTextOf(body) : `${history}\n${asked.question}`, message.context, session.id);
+    return { kind: 'replied', result: { status: 'RESPONDED', reply: outboundMessage(message.context, body), sessionId: session.id } };
   }
 
   /**
@@ -556,7 +662,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     summary: TurnHandlerSummarizeReply,
     readout: UntrustedDocumentReadout,
     fallback: (extra?: string) => Promise<TurnResult>,
-    consented?: ItemSummaryContinueOutcome['continuation'],
+    consented?: ItemTaken,
   ): Promise<TurnResult> {
     if (!isSummarizableDocumentReadout(readout)) {
       this.deps.logger.warn('document summary readout rejected', { messageId: message.id, sessionId: session.id });
@@ -788,9 +894,9 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     message: InboundMessage,
     session: Session,
     actor: Actor,
-    readout: UntrustedDocumentReadout,
+    readout: TurnHandlerSummarizeReply['readout'],
     fallback: (extra?: string) => Promise<TurnResult>,
-    consented: ItemSummaryContinueOutcome['continuation'],
+    consented: TakenContinuation,
   ): Promise<{ readonly kind: 'replied'; readonly result: TurnResult } | { readonly kind: 'call'; readonly guard: SummaryRecipientGuard }> {
     const language = noticeLanguage(undefined, message.text);
     const decided = (outcome: string): void => this.deps.logger.info('item summary continuation recipient', { messageId: message.id, outcome });
@@ -799,11 +905,15 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       decided('no-consent');
       return { kind: 'replied', result: await fallback(renderItemSummaryNotSentLine(language)) };
     }
-    const { token, descriptor, recipient } = consented;
+    const { token, recipient } = consented;
     const conversationKey = this.agentConsentFacts(message).conversationKey;
+    // OQ1-4: a D8 lookup's token is bound to the asked ref SET (its canonical key), an item's to the one item id.
+    const use = isWorkLookupTaken(consented)
+      ? { source: consented.lookup.source, itemId: workLookupRefsKey(consented.lookup.refs), kind: 'work-lookup' as const }
+      : { source: consented.descriptor.source, itemId: consented.descriptor.itemId };
     const pre = await this.preResolveSummaryRecipient(session, actor, readout, {
       recipient,
-      allows: (verdict, phase) => items.allowsContinuation(token, verdict, { phase, actorId: actor.id, conversationKey, source: descriptor.source, itemId: descriptor.itemId }),
+      allows: (verdict, phase) => items.allowsContinuation(token, verdict, { phase, actorId: actor.id, conversationKey, ...use }),
     });
     if (pre === undefined) {
       decided('unresolved');
@@ -836,6 +946,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
    */
   protected override async continueItemSummary(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult> {
     const { continuation } = outcome;
+    // OQ1-4: a yes to a D8 lookup question has its own continuation (re-run the lookup, keep the asked refs, one call).
+    if (isWorkLookupTaken(continuation)) return this.continueWorkLookupSummary(message, session, actor, outcome, continuation);
     const descriptor = continuation.descriptor;
     const language = descriptor.language;
     const stop = async (text: string, reason: string): Promise<TurnResult> => {
@@ -871,6 +983,68 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     this.deps.logger.info('item summary continuation', { messageId: message.id, outcome: 'reread-same' });
     const memoryId = this.nlTurnFacts.get(message)?.memoryId ?? message.id;
     return this.handleDocumentSummary(redo, session, actor, memoryId, summary, readout, fallback, continuation);
+  }
+
+  /**
+   * ADR-0121 amendment A8.6 (OQ1-4, = A5-S6): the continuation of the owner's yes to the D8 lookup question (the gate took the record
+   * and minted the token bound to the asked ref set; the runtime base retires the token afterwards).
+   *
+   * 1. Re-checks: the owner DM and the handler still registered (by id).
+   * 2. The lookup is re-run fresh through the same handler on a SEPARATE message (the stored owner request text with the asking
+   *    message's quoted ranges and formatting flags (review round 1: quoted text stays data), id suffix `:consent`, no attachments
+   *    or reply-to): `handleSelected(redo selection)` when it came through selection, otherwise the
+   *    handler's own grammar `handle` (with the turn's grammar-yield fact). It never reaches the gate, the selector or the classifier
+   *    (no second selection or cap charge) and writes no `lastSelection`.
+   * 3. W3: only the asked refs are kept (`keepAskedWorkLookupRefs`). Any asked ref missing, or another lookup: the fixed "changed" line,
+   *    nothing sent. A refused re-read (no summarize outcome, summaries off): the unavailable line, nothing sent.
+   * 4. The summary runs on the ordinary D8 path (`handleTurnHandlerSummary`) with the continuation: `local` as built; any `REMOTE`
+   *    recipient only when it is the consented key AND label, through the set-bound token at hook 1 (D8 has no regeneration). The
+   *    reply ends with the A8.4 line. The prompt is the one the D8 path makes for the same read (byte-identical when nothing dropped).
+   */
+  private async continueWorkLookupSummary(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    outcome: ItemSummaryContinueOutcome,
+    continuation: WorkLookupTaken,
+  ): Promise<TurnResult> {
+    const lookup = continuation.lookup;
+    const stop = async (text: string, reason: string): Promise<TurnResult> => {
+      this.deps.logger.info('item summary continuation', { messageId: message.id, outcome: reason });
+      await this.deps.memory.recordAssistant(text, message.context, session.id);
+      return this.responded(session, outboundMessage(message.context, text));
+    };
+    if (this.consentGate?.items === undefined || !isDirectConversation(message.context)) return stop(outcome.unavailable, 'not-available');
+    const handler = this.turnHandlerRegistry.find((candidate) => candidate.id === lookup.redo.handlerId);
+    const selection = lookup.redo.selection;
+    const serveSelected = handler?.handleSelected;
+    if (handler === undefined || (selection !== undefined && typeof serveSelected !== 'function')) return stop(outcome.unavailable, 'handler-gone');
+    const { attachments: _attachments, quotedRanges: _quoted, formatting: _formatting, replyTo: _replyTo, ...rest } = message;
+    // Review round 1: the marks are the ASKING message's (they index the stored request text), never this yes message's.
+    const marks = continuation.requestMarks;
+    const redo: InboundMessage = {
+      ...rest,
+      id: `${message.id}:consent`,
+      text: continuation.requestText,
+      ...(marks.quotedRanges !== undefined ? { quotedRanges: marks.quotedRanges } : {}),
+      ...(marks.formatting !== undefined ? { formatting: marks.formatting } : {}),
+    };
+    this.consentReruns.add(redo);
+    const base = this.turnHandlerContext(redo, session, actor, null);
+    const ctx: TurnHandlerContext = lookup.redo.grammarYield === true ? Object.freeze({ ...base, grammarYield: true }) : base;
+    let reread: TurnHandlerOutcome | null;
+    try {
+      reread = selection !== undefined && serveSelected !== undefined ? await serveSelected.call(handler, selection, ctx) : await handler.handle(ctx);
+    } catch (error) {
+      this.deps.logger.warn('item summary continuation re-read failed', { messageId: message.id, errorName: error instanceof Error ? error.name : typeof error });
+      reread = null;
+    }
+    const kept = keepAskedWorkLookupRefs(lookup, reread);
+    if (kept.kind === 'refused') return stop(outcome.unavailable, 'reread-refused');
+    if (kept.kind === 'changed') return stop(renderItemSummaryChangedLine(lookup.language), 'changed');
+    this.deps.logger.info('item summary continuation', { messageId: message.id, outcome: kept.readout.items.length === lookup.refs.length ? 'reread-same' : 'reread-narrowed' });
+    const memoryId = this.nlTurnFacts.get(message)?.memoryId ?? message.id;
+    return this.handleTurnHandlerSummary(redo, session, actor, memoryId, kept.summary, continuation);
   }
 
   /** Whether `handler` still offers `item.summarize` right now (its catalog is read live; a throw is `false`). */

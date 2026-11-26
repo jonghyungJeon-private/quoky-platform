@@ -45,7 +45,7 @@ import type {
   WorkChatTarget,
 } from './work-chat-command';
 import {
-  renderExternalWorkList,
+  renderExternalWorkListRows,
   renderNumberedExternalWorkList,
   renderExternalWriteRefusal,
   renderLookupFailure,
@@ -132,6 +132,12 @@ export type WorkChatOutcome =
        * stripped. The runtime records the one that was delivered.
        */
       readonly numbered?: { readonly summary: NlListingReceipt; readonly fallback: NlListingReceipt };
+      /**
+       * ADR-0121 A8.6 (OQ1-4 review round 1, corrected in round 2): the refs of the rows `fallbackText` DISPLAYS, in order, as
+       * its renderer reports them (`shownRefs`: a row the reply budget may drop is not one), ids only. The consent question may
+       * count only items the listing shows and the prompt carries.
+       */
+      readonly listedRefs?: readonly string[];
     };
 
 /** A6 R2: one `item` read (proposal §2.1): the item with its detail, or the neutral reason it was not read. */
@@ -1063,18 +1069,22 @@ export class WorkChatService implements WorkDesk {
     const readout = previewed ? { ...complete, items: complete.items.slice(0, WORK_CHAT_COUNT_PREVIEW_ITEMS), truncated: true } : complete;
     // A6 R2 (D1): while QUOKY_NL_ITEM_R2 is not `off`, a Jira / Slack list is numbered and its delivered rows are labels.
     const numbered = this.numberedLists && (source === 'jira' || source === 'slack');
-    const list = numbered ? renderNumberedExternalWorkList(readout) : { body: renderExternalWorkList(readout), labelled: 0 };
+    const list = numbered ? renderNumberedExternalWorkList(readout) : renderExternalWorkListRows(readout);
     const fallbackText = list.body;
     const fallbackListing = this.workListingReceipt(source, readout.items, list.labelled);
     if (this.summaryEnabled && readout.items.length > 0 && options.listOnly !== true) {
       // A6 R2 (D1): a numbered list's prompt asks for one referenced line per item, so Quoky can number the body itself.
       const summaryReadout = fitExternalWorkReadoutToPrompt(numbered && fallbackListing !== undefined ? { ...readout, numbered: true } : readout);
+      // OQ1-4 review round 3 (scope narrowing): the consent question needs NO clipping of any kind. The renderer's displayed rows
+      // (`shownRefs`) must equal the full readout row set, in order; any difference gives an empty list (the question is not asked).
+      const allRefs = readout.items.map((entry) => entry.ref);
+      const listedRefs = list.shownRefs.length === allRefs.length && list.shownRefs.every((ref, index) => ref === allRefs[index]) ? list.shownRefs : [];
       if (numbered && fallbackListing !== undefined) {
         const index = renderExternalWorkIndexFooter(summaryReadout);
         const summaryListing = this.workListingReceipt(source, summaryReadout.items, index.labelled) ?? { source: source as 'jira' | 'slack', items: [] };
-        return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: index.footer, numbered: { summary: summaryListing, fallback: fallbackListing } };
+        return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: index.footer, numbered: { summary: summaryListing, fallback: fallbackListing }, listedRefs };
       }
-      return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: renderExternalWorkFooter(summaryReadout) };
+      return { kind: 'summarize', readout: summaryReadout, fallbackText, footer: renderExternalWorkFooter(summaryReadout), listedRefs };
     }
     const listed: WorkChatOutcome = {
       ...messageFields(fallbackText),

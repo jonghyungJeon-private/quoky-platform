@@ -6,7 +6,8 @@ import type {
   TurnHandlerOutcome,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
-import { itemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
+import { itemSummaryConsentDescriptor, workLookupConsentDescriptor } from '../item-summary-consent-descriptor';
+import { noticeLanguage } from '../chat-policy/internal-action-vocabulary';
 import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
@@ -180,7 +181,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
       return { reply: outboundMessage(ctx.message.context, renderListStatusDmOnly(selected.language), { replyToMessageId: ctx.message.id }) };
     }
     const command = mapped;
-    const { outcome, listed } = await this.run(command, ctx, selected.language);
+    const { outcome, listed } = await this.run(command, ctx, selected.language, selected);
     if (command.kind !== 'lookup' || command.listOnly !== true || listed === undefined || outcome === null) return outcome;
     if (outcome.kind !== undefined && outcome.kind !== 'reply') return outcome;
     const count = renderWorkChatCount(command.source, listed, selected.language);
@@ -364,6 +365,7 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     command: WorkChatCommand,
     ctx: TurnHandlerContext,
     language: 'ko' | 'en' = 'ko',
+    selected?: NlSelectedCommand,
   ): Promise<{ readonly outcome: TurnHandlerOutcome | null; readonly listed?: { readonly count: number; readonly truncated: boolean; readonly shown?: number } }> {
     // ADR-0112 D5 (CWR-2): an exact Jira comment / transition or Slack post request is handed to the runtime's
     // connector-write flow (this handler creates no approval and makes no write). `fallbackText` is the fixed refusal
@@ -396,6 +398,11 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         ...(outcome.confirm !== undefined ? { nlConfirm: { selection: outcome.confirm, language } } : {}),
         // P9: the listing actually shown (a release value read as a visible project key) becomes `lastSelection`.
         ...(outcome.resolved !== undefined ? { nlSelection: outcome.resolved } : {}),
+        // ADR-0121 A8.6 (OQ1-4 review round 1): a lookup that succeeded and found nothing says so (ids only), so a D8 consent
+        // re-run can tell "every asked item is gone" from a failed read. Read nowhere else.
+        ...(command.kind === 'lookup' && this.deps.mode === 'lookup' && outcome.listed?.count === 0
+          ? { lookupEmpty: { handlerId: this.id, source: command.source, query: command.query } }
+          : {}),
       };
       return outcome.listed === undefined ? { outcome: reply } : { outcome: reply, listed: outcome.listed };
     }
@@ -403,12 +410,28 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
     if (!this.deps.summaryEnabled || this.deps.mode !== 'lookup') {
       return { outcome: { reply: outboundMessage(ctx.message.context, outcome.fallbackText), ...(outcome.numbered !== undefined ? { nlListing: outcome.numbered.fallback } : {}) } };
     }
+    // ADR-0121 A8.6 (OQ1-4): the ids-only descriptor of this lookup (the refs of exactly the readout the prompt would carry) and the
+    // redo of the same read. The runtime reads it only with QUOKY_ITEM_SUMMARY_CONSENT=on; absent there, nothing is asked.
+    const lookupConsent =
+      command.kind === 'lookup'
+        ? workLookupConsentDescriptor({
+            handlerId: this.id,
+            source: outcome.readout.request.source,
+            query: outcome.readout.request.query,
+            refs: outcome.readout.items.map((item) => item.ref),
+            ...(outcome.listedRefs !== undefined ? { listedRefs: outcome.listedRefs } : {}),
+            language: selected?.language ?? noticeLanguage(undefined, ctx.message.text),
+            ...(selected !== undefined ? { selection: selected } : {}),
+            ...(ctx.grammarYield === true ? { grammarYield: true } : {}),
+          })
+        : undefined;
     const summarize: TurnHandlerSummarizeReply = {
       kind: 'summarize',
       readout: outcome.readout,
       fallbackText: outcome.fallbackText,
       footer: outcome.footer,
       ...(outcome.numbered !== undefined ? { numbered: outcome.numbered } : {}),
+      ...(lookupConsent !== undefined ? { lookupConsent } : {}),
     };
     return { outcome: summarize };
   }
@@ -536,9 +559,18 @@ export function isSummarizableExternalWorkReadout(readout: unknown): readout is 
  * shortened instead, so the source links and the "N items used" disclosure always reach the user. Both bounds apply
  * to the delivered text (the footer's titles are platform-rendered spans, PLT-0).
  */
-export function appendWorkSummaryFooter(summaryText: string, footer: MessageBody): MessageBody {
+export function appendWorkSummaryFooter(summaryText: string, footer: MessageBody, lastLine?: string): MessageBody {
+  // ADR-0121 A8.4 (OQ1-4): the recipient line stays the LAST line and is never clipped away with the footer (it is outside the
+  // footer's own clip, inside the reply budget). Absent: exactly as before.
+  if (lastLine !== undefined) return withWorkSummaryLastLine(summaryText, footer, lastLine);
   const body = summaryText.trim();
   if (plainTextOf(footer).trim().length === 0) return messageBody(clipMessage(body, WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points'));
   const tail = clipMessage(footer, EXTERNAL_WORK_FOOTER_MAX_CHARS, 'code-points', { trim: true });
+  return messageBody(clipMessage(body, WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', tail) }));
+}
+
+function withWorkSummaryLastLine(summaryText: string, footer: MessageBody, lastLine: string): MessageBody {
+  const body = summaryText.trim();
+  const tail = plainTextOf(footer).trim().length === 0 ? messageBody(lastLine) : messageBody(clipMessage(footer, EXTERNAL_WORK_FOOTER_MAX_CHARS, 'code-points', { trim: true }), '\n', lastLine);
   return messageBody(clipMessage(body, WORK_SUMMARY_REPLY_MAX_CHARS, 'code-points', { after: messageBody('\n\n', tail) }));
 }
