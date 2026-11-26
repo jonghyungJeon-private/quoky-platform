@@ -17,7 +17,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Changed.** The drafter's sanitiser (`agent/payload-drafter.ts`): `Q&A`, `R&D`, `AT&T` no longer refuse (only `&name;` and, without `;`, names starting
   `amp`, `lt`, `gt`, `quot` refuse); an inert bracket pair (`[BE-123]`, `[중요]`: letters, digits, hyphen, space, at most 32, not followed by `(`, `:` `[`, not
   preceded by `!` `]`) is no longer escaped. Everything else stays escaped; the re-check invariants are unchanged.
-- **Tests.** Adversarial forms for both relaxations. See DECISIONS "A7-S3 relaxation note (owner 2026-11-26)".
+- **Tests.** Adversarial forms for both relaxations; review round 1: `&shy` refused, spaced/multiline pins, renderer-premise comments on the Jira and Slack writer tests. See DECISIONS "A7-S3 relaxation note (owner 2026-11-26)".
 
 ## Unreleased — A7-S4a card (2026-11-25; dormant: `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused at startup)
 

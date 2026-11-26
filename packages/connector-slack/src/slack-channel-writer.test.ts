@@ -73,6 +73,8 @@ describe('SlackChannelWriter (ADR-0112 D2/D4)', () => {
     expect(post.init?.method).toBe('POST');
     expect(post.init?.redirect).toBe('error');
     expect((post.init?.headers as Record<string, string>).Authorization).toBe(`Bearer ${BOT_TOKEN}`);
+    // PINNED PREMISE of the A7 drafter relaxation (owner 2026-11-26, DECISIONS A7-S3 relaxation note): bare `[x]`, `&` and `*x*` stay inert only
+    // because the post is `mrkdwn:false`, `parse:'none'`, `link_names:false`. A change here must revisit the drafter relaxation.
     expect(JSON.parse(String(post.init?.body))).toEqual({
       channel: CHANNEL,
       text: 'hi &lt;!channel&gt; &amp; @here &lt;https://x|y&gt;',

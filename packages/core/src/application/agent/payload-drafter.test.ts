@@ -478,10 +478,16 @@ describe('owner relaxation 2026-11-26: bare ampersand', () => {
   });
   it.each([
     '&amp;', '&lt;', '&gt;', '&quot;', '&colon;', '&sol;', '&Tab;', '&nbsp;', 'a&b;c', 'Q&A;',
-    '&amp', '&lt', '&gt', '&quot', '&AMP', '&Lt', '&GT', '&QuOt', '&ampx', '&ltr', '&gtx', '&quotes',
+    '&amp', '&lt', '&gt', '&quot', '&AMP', '&Lt', '&GT', '&QuOt', '&ampx', '&ltr', '&gtx', '&quotes', '&shy', '&SHY', '&LT',
     '＆amp', '＆lt;', '&#38;amp', '&#38;lt', '&#x26;quot', '&#38;colon;', '&#', '&#99999999999;', 'x&amp;#58;y',
   ])('still refuses: %j', (line) => {
     expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: false, reason: 'link' });
+  });
+  it.each(['&nbsp', '&copy'])('residual (recorded): a no-semicolon name that decodes to no syntax character passes: %j', (line) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toMatchObject({ ok: true, draft: { lines: [line] } });
+  });
+  it('a no-semicolon name followed by a syntax character keeps that character neutralised', () => {
+    expect(assemblePayloadDraft(answer('&nbsp<'), PEOPLE)).toMatchObject({ ok: true, draft: { lines: ['&nbsp‹'] } });
   });
   it('the re-check agrees', () => {
     expect(containsLiveLinkForm('Q&A and R&D')).toBe(false);
@@ -555,5 +561,21 @@ describe('owner relaxation 2026-11-26: inert bracket pairs', () => {
   });
   it('the re-check refuses an unescaped live bracket', () => {
     for (const bad of ['[BE-1](x)', '[BE-1]: x', '![BE-1]', '[a][BE-1]', '[a.b]', '[~u]', '[a|b]']) expect(containsLiveLinkForm(bad)).toBe(true);
+  });
+});
+
+describe('owner relaxation 2026-11-26: review round 1 pins (spaced, multiline, hidden-character forms)', () => {
+  it.each([
+    ['[a] (b)', '[a] (b)'],
+    ['[a] [b]', '[a] [b]'],
+    ['[a] : x', '[a] : x'],
+    ['[a]@b', '\\[a\\][@]b'],
+    ['[a]\u200b(x)', '\\[a\\]\\(x)'],
+    ['[a]\u00ad(x)', '\\[a\\]\\(x)'],
+  ])('exact output (inert): %j', (line, out) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: true, draft: { lines: [out], named: 0 } });
+  });
+  it('a reference definition on line 2 is sealed with [:]', () => {
+    expect(assemblePayloadDraft(answer('[a]', '[a]: x'), PEOPLE)).toEqual({ ok: true, draft: { lines: ['[a]', '\\[a\\][:] x'], named: 0 } });
   });
 });

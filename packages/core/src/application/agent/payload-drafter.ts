@@ -201,9 +201,9 @@ const NUMERIC_REFERENCE = /&#(?:[xX]([0-9a-fA-F]+)|([0-9]+));?/gu;
 /**
  * A named character reference that refuses the draft (no entity table; owner relaxation 2026-11-26 of the Chief Architect's recorded
  * rule): ANY `&name;` with the `;`, and without the `;` only a name that STARTS with `amp`, `lt`, `gt` or `quot` (any case), the
- * legacy forms a destination decodes to `&`, `<`, `>` and `"`. So `Q&A`, `R&D` and `AT&T` pass; `&amp`, `&lt`, `&quot`, `&colon;` refuse.
+ * legacy forms a destination decodes to `&`, `<`, `>` and `"`, plus `shy` (the invisible soft hyphen, a format character). So `Q&A`, `R&D` and `AT&T` pass; `&amp`, `&lt`, `&quot`, `&colon;` refuse.
  */
-const NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;|&(?:amp|lt|gt|quot)/iu;
+const NAMED_REFERENCE = /&[A-Za-z][A-Za-z0-9]*;|&(?:amp|lt|gt|quot|shy)/iu;
 function decodeNumericReferences(text: string): string {
   return text.replace(NUMERIC_REFERENCE, (all, hex: string | undefined, dec: string | undefined) => {
     const code = hex !== undefined ? Number.parseInt(hex, 16) : Number.parseInt(dec ?? '', 10);
@@ -273,7 +273,7 @@ function keyOf(text: string, stripTags: boolean): string {
 
 /**
  * The inert bracket pair (owner relaxation 2026-11-26): `[` + an inner of 1 to 32 characters that are only letters, digits, hyphens and
- * single spaces, starting and ending with a letter or digit, + `]`, NOT followed by `(`, `:` or `[`. Its inner has none of `: / . @ ~ ! | ^ \`,
+ * spaces (runs allowed), starting and ending with a letter or digit, + `]`, NOT followed by `(`, `:` or `[`. Its inner has none of `: / . @ ~ ! | ^ \`,
  * so it is no scheme, host, mention, Jira `[~user]` or `[text|url]` and no marker; the lookahead removes `[x](dest)`, `[x]: dest` and
  * `[x][ref]`. The preceding character is checked in `inertSyntax` (`!` and `]` refuse: `![x]`, `[a][x]`).
  */
