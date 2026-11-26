@@ -13,7 +13,9 @@ import { renderItemSummaryRecipientLine } from './recipient-line';
  * - the selector's dispatch-time `isStillEligible` (missing: refused, fail closed);
  * - the live {@link recipientVerdict} (the policy's `expectedRecipientKey` and the composition root's label function) has the
  *   same kind, key and label as the snapshot (a selection that flipped, fell back or lost its name is refused);
- * - `unnamed` is never admitted; `unexpected` only through `allowsUnexpected` (the OQ1-3 consent token; absent: refused).
+ * - `unnamed` is never admitted; `unexpected` only through `consentedRemote` (absent: refused);
+ * - OQ1-3 review round 1 (strict A8.5): with `consentedRemote` (the continuation after the owner's yes) EVERY `REMOTE` recipient,
+ *   expected or not, is admitted only through it (the consent token of the one recipient the yes named); `local` needs nothing.
  *
  * The guard remembers whether a REMOTE call was admitted, so the reply can end with the A8.4 recipient line. Data only: keys and
  * labels are compared as opaque strings; Core never names, ranks or branches on a provider. Absent (the flag off): nothing here runs.
@@ -49,13 +51,16 @@ export interface SummaryRecipientGuardInput {
   readonly capability: Capability;
   /** The selection context the turn resolved the provider with (the work path builds the same one with the same helper). */
   readonly context: ProviderSelectionContext;
-  /** The turn's pre-resolved verdict: `local` or `expected` (OQ1-2); `unexpected` only with `allowsUnexpected` (OQ1-3). */
+  /** The turn's pre-resolved verdict: `local` or `expected` (OQ1-2); `unexpected` only with `consentedRemote` (OQ1-3). */
   readonly snapshot: RecipientVerdict;
   readonly selector: SummaryRecipientSelector;
   /** The composition root's display-label function (the same one the rule-① question uses). */
   readonly recipientLabel: (provider: AiProvider) => string | undefined;
-  /** OQ1-3: the consent token's judge for an `unexpected` recipient. Absent: an unexpected recipient is never admitted. */
-  readonly allowsUnexpected?: (verdict: RecipientVerdict, phase: SummaryRecipientPhase) => boolean;
+  /**
+   * OQ1-3 (the continuation after the owner's yes): the consent token's judge. Present: every `REMOTE` recipient (expected or
+   * unexpected) must pass it at both hooks. Absent (OQ1-2): an expected recipient needs nothing and an unexpected one is refused.
+   */
+  readonly consentedRemote?: (verdict: RecipientVerdict, phase: SummaryRecipientPhase) => boolean;
 }
 
 const sameVerdict = (a: RecipientVerdict, b: RecipientVerdict): boolean => {
@@ -87,7 +92,8 @@ export class SummaryRecipientGuard {
       const expectedKey = typeof selector.expectedRecipientKey === 'function' ? selector.expectedRecipientKey(capability, context) : undefined;
       const live = recipientVerdict(provider, expectedKey, this.input.recipientLabel);
       if (live.kind === 'unnamed' || !sameVerdict(live, snapshot)) return false;
-      if (live.kind === 'unexpected' && this.input.allowsUnexpected?.(live, phase) !== true) return false;
+      const judge = this.input.consentedRemote;
+      if (judge !== undefined ? live.kind !== 'local' && judge(live, phase) !== true : live.kind === 'unexpected') return false;
       if (phase === 'call') this.callAdmitted = true;
       else this.regenerationAdmitted = true;
       if (live.kind !== 'local') this.remoteLabel = live.label;

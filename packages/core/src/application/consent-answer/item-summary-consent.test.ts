@@ -168,6 +168,31 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
       expect(r.items.allows(t, unexpected(), use())).toBe(true);
     });
 
+    it('OQ1-3 review round 1: allowsContinuation judges EVERY REMOTE recipient (expected too) by the token; LOCAL and unnamed are false', () => {
+      const expected = (key = RECIPIENT.key, label = RECIPIENT.label): RecipientVerdict => ({ kind: 'expected', key, label });
+      const { r, token: t } = token();
+      expect(r.items.allowsContinuation(undefined, expected(), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, expected('k-other'), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, expected(RECIPIENT.key, 'Other'), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, { kind: 'local' }, use())).toBe(false);
+      expect(r.items.allowsContinuation(t, { kind: 'unnamed' }, use())).toBe(false);
+      expect(r.items.allowsContinuation(t, expected(), use('regeneration'))).toBe(false);
+      expect(r.items.allowsContinuation(t, expected(), use('call'))).toBe(true);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call'))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('regeneration'))).toBe(true);
+      expect(r.items.allowsContinuation(t, expected(), use('regeneration'))).toBe(false);
+      // Expired, voided and spent tokens grant nothing, expected or not.
+      const late = token();
+      late.r.clock.now = T0 + 1 + ITEM_SUMMARY_TOKEN_TTL_MS + 1;
+      expect(late.r.items.allowsContinuation(late.token, expected(), use())).toBe(false);
+      const voided = token();
+      voided.r.items.voidAll();
+      expect(voided.r.items.allowsContinuation(voided.token, expected(), use())).toBe(false);
+      const spent = token();
+      spent.r.items.spend(spent.token);
+      expect(spent.r.items.allowsContinuation(spent.token, expected(), use())).toBe(false);
+    });
+
     it('the call is single-use; the regeneration is allowed once and only after the call', () => {
       const { r, token: t } = token();
       expect(r.items.allows(t, unexpected(), use('regeneration'))).toBe(false);

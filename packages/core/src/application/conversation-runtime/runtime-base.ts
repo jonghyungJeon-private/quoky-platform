@@ -845,8 +845,9 @@ export abstract class ConversationRuntimeBase {
   protected abstract continueItemSummary(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult>;
 
   /**
-   * The kill switch: a handled stop phrase voids every pending consent and drops the continuation records (fail closed: also when
-   * the save itself reported nothing, since the owner asked to stop). No gate, nothing to void.
+   * The kill switch: a stop phrase on any of the three stop paths voids every pending consent and drops the continuation records
+   * and tokens, BEFORE the switch save is awaited (OQ1-3 review round 1, CA P3 ordering: a continuation racing the stop can never
+   * reach hook 1 with a live token), and fail closed also when the save itself reports nothing. No gate, nothing to void.
    */
   protected voidConsentsOnStop(text: string): void {
     if (this.consentGate === undefined || parseActionSwitchPhrase(text) !== 'stopped') return;

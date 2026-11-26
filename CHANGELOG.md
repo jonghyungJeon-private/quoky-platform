@@ -10,6 +10,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Added.** The owner's yes to the rule-① question for an unexpected recipient now runs the summary: the gate dispatches the yes by `runRef` and returns `continue-item` (the record is taken, the single-use token minted); the runtime re-checks the DM, the handler, and for Jira / Slack the A6 R2 level and the kill switch, re-reads the item on a separate `:consent` message with the stored request text, requires the same item (and the same thread message count), then makes the one summary call (and its one regeneration) only through the token at both hooks. The reply ends with the recipient line; a recipient flip after the yes sends nothing; a changed item gets the fixed "changed" line. Pure helpers `sameItemAsConfirmed` and `renderItemSummaryChangedLine`.
 - **Changed.** The gate no longer answers an item yes with the interim "unavailable" line (only when `take` refuses); `handleDocumentSummary` and `preResolveSummaryRecipient` take an optional consented continuation; the runtime's `nlSelection` slot may expose `itemR2Level` (no new deps key).
 - **Dormant.** Flag off (default): byte-identical (the OQ1-2 pins pass unchanged). Enabling is the A8.10 Strict step.
+- **Fixed (review round 1).** After the yes, every REMOTE recipient (expected too) must be the consented key and label and pass the token at both hooks
+  (`allowsContinuation`); only LOCAL proceeds without it. A stop phrase voids consents before the switch save is awaited on all three stop paths. A throw while the
+  reply is built after a completed REMOTE call is the fallback with the recipient line.
 
 ## Unreleased — ADR-0121 A8 OQ1-2: item-summary egress guard, recipient line and the ask (2026-11-26; flag default off)
 

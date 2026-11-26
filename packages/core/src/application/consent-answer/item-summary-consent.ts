@@ -244,7 +244,32 @@ export class ItemSummaryConsent {
   allows(token: ItemSummaryConsentToken | undefined, verdict: RecipientVerdict, use: ItemSummaryUse): boolean {
     try {
       if (verdict.kind === 'local' || verdict.kind === 'expected') return true;
-      if (verdict.kind !== 'unexpected' || token === undefined) return false;
+      if (verdict.kind !== 'unexpected') return false;
+      return this.useToken(token, verdict, use);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * OQ1-3 review round 1 (orchestrator ruling, strict A8.5): the judge of the continuation after the owner's yes. The yes names ONE
+   * recipient, so EVERY `REMOTE` recipient (expected or not) needs the token exactly as {@link allows} judges an unexpected one: this
+   * instance's live token for the same actor, conversation, source, item, key AND label, within the TTL, one `call` then one
+   * `regeneration`. `local` and `unnamed` are `false` here (a LOCAL continuation never presents the token). Total.
+   */
+  allowsContinuation(token: ItemSummaryConsentToken | undefined, verdict: RecipientVerdict, use: ItemSummaryUse): boolean {
+    try {
+      if (verdict.kind !== 'expected' && verdict.kind !== 'unexpected') return false;
+      return this.useToken(token, verdict, use);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The token check shared by both judges (a named REMOTE recipient). Consumes the phase only when everything matches. */
+  private useToken(token: ItemSummaryConsentToken | undefined, verdict: { readonly key: string; readonly label: string }, use: ItemSummaryUse): boolean {
+    try {
+      if (token === undefined) return false;
       const facts = TOKENS.get(token);
       if (facts === undefined || facts.owner !== this || facts.generation !== this.generation || facts.spent) return false;
       const nowMs = this.deps.now();

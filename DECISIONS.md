@@ -40389,10 +40389,11 @@ OQ1-3 (the continuation after the owner's yes to the A8.5 question for an unexpe
   summarize outcome with a document readout and a descriptor naming the same handler, source and item id, and for a mail or Slack thread a defined, equal message count
   (`sameItemAsConfirmed`); otherwise the fixed "changed" line (`renderItemSummaryChangedLine`), or the unavailable line for a refused re-read. Nothing is sent. (4) The
   ordinary `handleDocumentSummary` path (the S3 LOCAL long-item path first, as on the ask turn) with the continuation: `consentedRecipientStep` resolves the provider again.
-  `local` and `expected` proceed under the OQ1-2 rules (LOCAL: no line; expected: the line). `unexpected` proceeds only when key AND label equal the token's, under a
-  guard whose `allowsUnexpected` is `ItemSummaryConsent.allows(token, live verdict, {phase, actor, conversation, source, item})` at hook 1 and hook 2 (≤ 600 s from the
-  mint). Anything else (a flip to another REMOTE recipient, an unnamed one, nothing resolved) is the handler fallback plus the not-sent line; the guard refuses a flip
-  between this pre-resolve and either hook. It never asks again.
+  *(Corrected by "OQ1-3 review round 1" item 1: the original text let an `expected` recipient proceed under the OQ1-2 rules here; that was wrong.)* `local` proceeds
+  without the token (no line). ANY `REMOTE` recipient, expected or unexpected, proceeds only when key AND label equal the token's, under a guard whose
+  `consentedRemote` is `ItemSummaryConsent.allowsContinuation(token, live verdict, {phase, actor, conversation, source, item})` at hook 1 and hook 2 (≤ 600 s from the
+  mint, not voided, not spent). Anything else (another REMOTE recipient, expected or not, an unnamed one, nothing resolved) is the handler fallback plus the not-sent
+  line; the guard refuses a flip between this pre-resolve and either hook. It never asks again.
 - **Reply and history.** The A8.4 line follows the OQ1-2 rules (a completed REMOTE call only, including the fallback after a completed call). Exactly one fixed history
   note per yes turn: the work path's document note, the handler's fixed note (or the document note) on a fallback, or the fixed line itself. Never the summary, the item or
   a receipt. The summarization request is byte-identical to the one the same request makes on the expected path (pinned: whole `AiRequest` equal).
@@ -40405,3 +40406,36 @@ OQ1-3 (the continuation after the owner's yes to the A8.5 question for an unexpe
   the separate message; content-free logs. Gate unit tests for the dispatch, single use, a refused `take` and `voidAll`. The OQ1-2 dormancy pins pass unchanged.
 - **Residuals (owner FYI).** (1) The P3/P5 NL-selection origin is not distinguished from the grammar origin for mail and Drive (the descriptor does not record it), so
   the A6 kill-switch state is re-read only for Jira / Slack; a stop phrase voids every pending item record regardless. (2) A8.10 blockers (a)–(c) of OQ1-2 still stand.
+
+### ADR-0121 A8 — OQ1-3 review round 1 (2026-11-26)
+
+Codex (P1, P2) and Chief Architect (P3 ×2). Fixed; flag off byte-identical (the OQ1-2 dormancy pins pass unchanged). No prompt, catalog or question text changed.
+
+1. **P1 (Codex): the continuation accepted any currently `expected` REMOTE recipient.** Repro: asked while A is unexpected and B is not expected; B becomes
+   expected before the yes; after the yes the content went to B, and token expiry and `voidAll` were bypassed (the guard never consulted the token for an expected
+   verdict). **Orchestrator ruling (strict A8.5):** the yes names ONE recipient. In the continuation ANY `REMOTE` recipient, expected or not, must equal the token's
+   key AND label and pass the token judge for `'call'` at hook 1 and `'regeneration'` at hook 2; otherwise the handler fallback (plus the not-sent line when refused
+   at the pre-resolve) and nothing is sent. Only `LOCAL` proceeds without the token (LOCAL never needs consent), with no line. The "expected → OQ1-2 rules" branch
+   is removed from the continuation. Code: `ItemSummaryConsent.allowsContinuation` (the same token check as `allows` for an unexpected recipient, applied to every
+   named REMOTE verdict; `local` / `unnamed` false); `allows` is unchanged (its OQ1-1 pins stand). `SummaryRecipientGuard` input `allowsUnexpected` is renamed
+   `consentedRemote`: present, every REMOTE live verdict must pass it; absent, the OQ1-2 behaviour. Tests: asked for A, B became expected (before the yes, and between
+   the pre-resolve and hook 1): zero REMOTE calls; the same key with another label after the yes (unexpected and expected): refused; a relabel before hook 1:
+   refused; LOCAL after the yes: proceeds, no line; expired or voided token in the expected case: refused; a void during call 1 refuses the expected regeneration.
+2. **Mail / Drive kill switch: Codex P2 vs Chief Architect.** `Claude / Codex / conclusion`:
+   - Codex: the descriptor does not record the NL-selection origin, so the A6 kill-switch state is re-read only for Jira / Slack; a P3/P5 mail or Drive item
+     summary selected by NL could continue after a stop.
+   - Claude (with the CA): every stop path calls `voidConsentsOnStop` (which voids every record and token), the operations UI is read-only for the switch, and a
+     restart drops the in-memory records. So no stopped state can coexist with a live token, and the descriptor needs no NL / grammar origin. The real gap is
+     ordering (CA P3): the void ran AFTER the switch save was awaited, so a continuation between `take` and hook 1 could pass hook 1 inside that await.
+   - Conclusion: the CA P3 ordering fix. In `conversation-runtime.ts`, on all three stop paths (A6 `nlSelection`, the agent switch, the channel-grant switch), a
+     text that parses as `'stopped'` calls `voidConsentsOnStop` BEFORE `handleSwitchPhrase` is awaited (once per turn, whichever path comes first; fail closed
+     also when no path then reports a save). No descriptor field is added. Test: a stop racing a continuation between the take and hook 1, on each path: zero
+     REMOTE calls.
+3. **CA P3: a throw while the reply is built after a completed REMOTE call.** The owner got the unavailable line without the recipient line. Now, with the flag on
+   (a guard exists), `handleDocumentSummary` catches a throw in the reply building after the work path and returns the handler fallback plus
+   `completedCallLine(guard, …)`, so the line appears whenever content left the host (OQ1-2 round 1 item 3); LOCAL: no line. Flag off: unchanged (the throw
+   propagates as before). Tests: the continuation and the OQ1-2 expected ask turn (line), LOCAL (no line).
+4. **Rule question (orchestrator ruling, class A).** "Changed item" stays identity plus the thread message count. An edited item with the same id is still the item
+   the owner consented to: the design re-reads it fresh on purpose, and consent covers the item and the recipient, not a revision. No code change.
+
+A8.10 enabling blockers (a)–(c) of OQ1-2 still stand. Residual (1) of the OQ1-3 note is closed by item 2 (the ordering fix; no origin field needed).

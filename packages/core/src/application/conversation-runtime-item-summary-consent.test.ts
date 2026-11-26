@@ -70,6 +70,8 @@ interface HarnessOptions {
   readonly classifier?: ConsentClassifierSwitch;
   /** OQ1-3: an A6 selection service slot with the R2 level and the kill switch (mode `off`: it selects nothing). */
   readonly nl?: { readonly level: NlActionLevel; readonly itemR2: NlItemR2Level; readonly acting: boolean };
+  /** OQ1-3 review round 1: which kill-switch path handles `에이전트 중지` (its save waits for `state.stopSave`). */
+  readonly stopPath?: 'nlSelection' | 'agent' | 'surface';
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -90,6 +92,13 @@ function harness(opts: HarnessOptions = {}) {
     failRead: false,
     jiraItem: 'A-1',
     acting: opts.nl?.acting ?? false,
+    /** OQ1-3 review round 1: the re-read waits for this (a race window between the take and hook 1). */
+    readGate: undefined as Promise<void> | undefined,
+    /** OQ1-3 review round 1: the kill-switch save waits for this; `stopEntered` runs when the save starts. */
+    stopSave: undefined as Promise<void> | undefined,
+    stopEntered: undefined as (() => void) | undefined,
+    /** OQ1-3 review round 1 (CA P3): the Jira outcome's participants read throws (after the call, while the reply is built). */
+    throwParticipants: false,
   };
   /** Called at the named points (tests flip the selection there). */
   const hooks: { onCommit?: () => void; onExecute?: (n: number) => void; afterSelect?: (n: number) => void; onRead?: () => void } = {};
@@ -120,6 +129,7 @@ function harness(opts: HarnessOptions = {}) {
     },
     async getMessage(): Promise<MailMessage> {
       hooks.onRead?.();
+      if (state.readGate !== undefined) await state.readGate;
       if (state.failRead) throw new Error('read failed');
       return { ...mailSummary, bodyText: `짧은 메일이에요 ${CANARY}.`, bodyTruncated: false };
     },
@@ -172,7 +182,8 @@ function harness(opts: HarnessOptions = {}) {
     local: provider('fake-local', 'LOCAL'),
     anon: provider('fake-anon', 'REMOTE'),
   };
-  const labels: Readonly<Record<string, string>> = { 'fake-remote': 'Remote', 'fake-other': 'Other' };
+  /** Mutable: a test renames a recipient (same key, another label). */
+  const labels: Record<string, string> = { 'fake-remote': 'Remote', 'fake-other': 'Other' };
   const recipientLabel = (p: AiProvider): string | undefined => labels[p.id];
 
   const shortTerm: MemoryRecord[] = [];
@@ -197,15 +208,26 @@ function harness(opts: HarnessOptions = {}) {
   // Jira (A6 R2 single item) and the D8 lookup: fixed handlers returning what the real ones return for these phrases.
   const jira = buildUntrustedDocumentReadout({ source: 'jira-issue', title: `이슈 ${CANARY}`, author: 'Reporter', date: '2026-11-25T00:30:00.000Z', body: `이슈 본문 ${CANARY}` });
   if (!jira.ok) throw new Error('fixture');
-  const jiraOutcome = (consent: boolean, itemId = 'A-1'): TurnHandlerOutcome => ({
-    kind: 'summarize',
-    readout: jira.readout,
-    fallbackText: 'JIRA FALLBACK',
-    footer: 'JIRA FOOTER',
-    history: { assistant: 'JIRA NOTE' },
-    nlAction: { entryId: 'item.summarize', result: 'executed', source: 'jira', itemId },
-    ...(consent ? { consent: itemSummaryConsentDescriptor({ handlerId: 'jira-probe', source: 'jira', itemId, language: 'ko' }) } : {}),
-  });
+  const jiraOutcome = (consent: boolean, itemId = 'A-1'): TurnHandlerOutcome => {
+    const outcome: TurnHandlerOutcome = {
+      kind: 'summarize',
+      readout: jira.readout,
+      fallbackText: 'JIRA FALLBACK',
+      footer: 'JIRA FOOTER',
+      history: { assistant: 'JIRA NOTE' },
+      nlAction: { entryId: 'item.summarize', result: 'executed', source: 'jira', itemId },
+      ...(consent ? { consent: itemSummaryConsentDescriptor({ handlerId: 'jira-probe', source: 'jira', itemId, language: 'ko' }) } : {}),
+    };
+    // CA P3: a participants read that throws only once the test arms it (after the summary call), never before.
+    Object.defineProperty(outcome, 'participants', {
+      enumerable: false,
+      get: () => {
+        if (state.throwParticipants) throw new Error('participants failed');
+        return undefined;
+      },
+    });
+    return outcome;
+  };
   const lookup: TurnHandlerOutcome = {
     kind: 'summarize',
     readout: buildExternalWorkReadout({ source: 'jira', query: 'my-items', items: [{ id: 'A-1', title: `일 ${CANARY}` }] }),
@@ -241,6 +263,12 @@ function harness(opts: HarnessOptions = {}) {
   };
   let taskSeq = 0;
   let selectCount = 0;
+  /** The kill-switch save: signals its start, then waits for the test to release it. */
+  const stopSave = async (reply: string): Promise<string> => {
+    state.stopEntered?.();
+    if (state.stopSave !== undefined) await state.stopSave;
+    return reply;
+  };
   const router: ConversationRuntimeDeps['router'] = {
     async select() {
       counts.select += 1;
@@ -361,6 +389,31 @@ function harness(opts: HarnessOptions = {}) {
           } as unknown as ConversationRuntimeDeps['nlSelection'],
         }
       : {}),
+    ...(opts.stopPath === 'nlSelection'
+      ? { nlSelection: { mode: 'off', handleSwitchPhrase: async (_actor: Actor, text: string) => (text.trim() === '에이전트 중지' ? stopSave('멈춤(선택)') : undefined) } as unknown as ConversationRuntimeDeps['nlSelection'] }
+      : {}),
+    ...(opts.stopPath === 'agent'
+      ? {
+          agentRuns: {
+            mode: 'shadow',
+            shadowAdmits: () => false,
+            runShadow: bad('runShadow'),
+            handleSwitchPhrase: async (_actor: Actor, text: string) => (text.trim() === '에이전트 중지' ? stopSave('멈춤(에이전트)') : undefined),
+            switchSuffix: () => undefined,
+          } as unknown as ConversationRuntimeDeps['agentRuns'],
+        }
+      : {}),
+    ...(opts.stopPath === 'surface'
+      ? {
+          surfaceGrants: {
+            gate: { enforced: true },
+            service: {
+              handleSwitchPhrase: async (_actor: Actor, message: InboundMessage) => (message.text.trim() === '에이전트 중지' ? stopSave('멈춤(채널)') : undefined),
+              handlePhrase: async () => undefined,
+            },
+          } as unknown as ConversationRuntimeDeps['surfaceGrants'],
+        }
+      : {}),
     ...(opts.routing === true ? { runtimeProviderRouting: { execute: async () => { events.push('routed-execute'); throw new Error('routed seam must not run'); } } as unknown as ConversationRuntimeDeps['runtimeProviderRouting'] } : {}),
   };
 
@@ -387,7 +440,7 @@ function harness(opts: HarnessOptions = {}) {
   const runtime = new ConversationRuntime(deps, { clock: () => T0, ...(gate !== undefined ? { consentTurnGate: gate } : {}) });
   let seq = 0;
   const send = (text: string, context: ConversationContext = DM) => runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0 } satisfies InboundMessage);
-  return { runtime, send, state, hooks, events, executed, recordAssistant, logs, runs, counts, continued, items, store, gate, clock, nlCalls };
+  return { runtime, send, state, hooks, events, executed, recordAssistant, logs, runs, counts, continued, items, store, gate, clock, nlCalls, labels };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -753,12 +806,156 @@ describe('OQ1-3 continuation: the owner says yes to the question for an unexpect
     expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-local']);
   });
 
-  it('the live verdict became expected after the yes: summarised with the line (OQ1-2 rules)', async () => {
+  it('the consented recipient became the expected one after the yes: same key AND label, admitted by the token, the line', async () => {
     const h = await asked();
     h.state.expectedKey = 'fake-remote';
     const yes = await h.send('응');
     expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
     expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+  });
+
+  describe('review round 1 (P1, strict A8.5): the yes names ONE recipient; every REMOTE recipient needs the token', () => {
+    it('asked for A, B became the EXPECTED recipient before the yes: zero REMOTE calls, the fallback plus the not-sent line', async () => {
+      const h = await asked();
+      // B (`fake-other`) was the expected key all along; now the selection lands on it, so it is expected, not A.
+      h.state.selected = 'other';
+      const yes = await h.send('응');
+      expect(h.executed).toEqual([]);
+      expect(yes.reply.text).toBe(`${renderMailSummaryUnavailable('ko')}\n${renderItemSummaryNotSentLine('ko')}`);
+      expect(yes.reply.text).not.toContain('Other');
+    });
+
+    it('B becomes expected and selected only between the continuation pre-resolve and hook 1: refused at hook 1, zero calls', async () => {
+      const h = await asked();
+      h.hooks.afterSelect = (n) => {
+        if (n === 2) {
+          h.state.selected = 'other';
+          h.state.expectedKey = 'fake-other';
+        }
+      };
+      await h.send('응');
+      expect(h.executed).toEqual([]);
+    });
+
+    it.each([
+      ['unexpected', 'fake-other'],
+      ['expected', 'fake-remote'],
+    ] as const)('the same key with another label after the yes (%s): refused, nothing sent', async (_kind, expectedKey) => {
+      const h = await asked();
+      h.hooks.onRead = () => {
+        h.state.expectedKey = expectedKey;
+        h.labels['fake-remote'] = 'Remote 2';
+      };
+      const yes = await h.send('응');
+      expect(h.executed).toEqual([]);
+      expect(yes.reply.text).toBe(`${renderMailSummaryUnavailable('ko')}\n${renderItemSummaryNotSentLine('ko')}`);
+    });
+
+    it('a relabel between the pre-resolve and hook 1 is refused at hook 1 (expected case)', async () => {
+      const h = await asked();
+      h.state.expectedKey = 'fake-remote';
+      h.hooks.afterSelect = (n) => {
+        if (n === 2) h.labels['fake-remote'] = 'Remote 2';
+      };
+      await h.send('응');
+      expect(h.executed).toEqual([]);
+    });
+
+    it('LOCAL after the yes: proceeds without the token, no recipient line', async () => {
+      const h = await asked();
+      h.state.selected = 'local';
+      const yes = await h.send('응');
+      expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-local']);
+      expect(yes.reply.text).not.toContain(LINE);
+    });
+
+    it('expected case: an expired token (more than 600 s from the mint) is refused at hook 1, nothing sent', async () => {
+      const h = await asked();
+      h.state.expectedKey = 'fake-remote';
+      h.hooks.onRead = () => {
+        h.clock.now += 601_000;
+      };
+      const yes = await h.send('응');
+      expect(h.executed).toEqual([]);
+      expect(yes.reply.text).toBe(renderMailSummaryUnavailable('ko'));
+    });
+
+    it('expected case: a token voided (voidAll) after the mint is refused, nothing sent', async () => {
+      const h = await asked();
+      h.state.expectedKey = 'fake-remote';
+      h.hooks.onRead = () => h.gate?.voidAll();
+      const yes = await h.send('응');
+      expect(h.executed).toEqual([]);
+      expect(yes.reply.text).toBe(renderMailSummaryUnavailable('ko'));
+    });
+
+    it('expected case: the regeneration also needs the token (a void during the first call refuses it)', async () => {
+      const h = await asked({ summaries: [CLAIM, ATTRIBUTED] });
+      h.state.expectedKey = 'fake-remote';
+      h.hooks.onExecute = (n) => {
+        if (n === 1) h.gate?.voidAll();
+      };
+      const yes = await h.send('응');
+      expect(h.executed).toHaveLength(1);
+      expect(yes.reply.text).toBe(`${renderMailSummaryUnavailable('ko')}\n${LINE}`);
+    });
+  });
+
+  describe('review round 1 (CA P3 ordering): a stop phrase voids consents BEFORE the switch save is awaited', () => {
+    it.each(['nlSelection', 'agent', 'surface'] as const)('%s path: a stop racing a continuation between the take and hook 1: zero REMOTE calls', async (stopPath) => {
+      const h = await asked({ stopPath });
+      let releaseRead!: () => void;
+      let releaseStop!: () => void;
+      h.state.readGate = new Promise<void>((resolve) => (releaseRead = resolve));
+      h.state.stopSave = new Promise<void>((resolve) => (releaseStop = resolve));
+      const readStarted = new Promise<void>((resolve) => (h.hooks.onRead = resolve));
+      const stopStarted = new Promise<void>((resolve) => (h.state.stopEntered = resolve));
+      const yes = h.send('응');
+      await readStarted;
+      // The token is minted and the re-read is in flight; the owner stops, and the switch save is still pending.
+      const stop = h.send('에이전트 중지');
+      await stopStarted;
+      releaseRead();
+      const answered = await yes;
+      releaseStop();
+      expect((await stop).reply.text).toContain('멈춤');
+      expect(h.executed).toEqual([]);
+      expect(answered.reply.text).not.toContain(SUMMARY);
+    });
+  });
+
+  describe('review round 1 (CA P3): a throw while the reply is built after a completed REMOTE call', () => {
+    it('continuation: the handler fallback still ends with the recipient line', async () => {
+      const h = await asked({ nl: R2 }, PATHS[3]!);
+      h.hooks.onExecute = () => {
+        h.state.throwParticipants = true;
+      };
+      const yes = await h.send('응');
+      expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+      expect(yes.reply.text).toBe(`JIRA FALLBACK\n${LINE}`);
+      expect(h.recordAssistant.at(-1)).toBe('JIRA NOTE');
+      noContentInLogs(h);
+    });
+
+    it('expected recipient on the ask turn (OQ1-2): the fallback also ends with the recipient line', async () => {
+      const h = harness();
+      h.hooks.onExecute = () => {
+        h.state.throwParticipants = true;
+      };
+      const reply = await runPath(h, PATHS[3]!);
+      expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+      expect(reply.reply.text).toBe(`JIRA FALLBACK\n${LINE}`);
+    });
+
+    it('LOCAL: the fallback carries no line', async () => {
+      const h = harness({ selected: 'local' });
+      h.hooks.onExecute = () => {
+        h.state.throwParticipants = true;
+      };
+      const reply = await runPath(h, PATHS[3]!);
+      expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-local']);
+      expect(reply.reply.text).toBe('JIRA FALLBACK');
+    });
   });
 
   it('a flip between the continuation pre-resolve and the call: hook 1 refuses, no call, content-free failed run', async () => {

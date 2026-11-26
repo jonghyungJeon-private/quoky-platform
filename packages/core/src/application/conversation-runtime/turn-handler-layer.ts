@@ -571,7 +571,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     }
     // ADR-0121 amendment A8 (OQ1-2, only with QUOKY_ITEM_SUMMARY_CONSENT=on): the recipient decides whether the call is made.
     let guard: SummaryRecipientGuard | undefined;
-    // A8.5 (OQ1-3): after the owner's yes the continuation never asks again; its unexpected recipient is admitted only by the token.
+    // A8.5 (OQ1-3): after the owner's yes the continuation never asks again; any REMOTE recipient is admitted only by the token.
     if (this.consentGate?.items !== undefined) {
       const decided =
         consented === undefined
@@ -603,6 +603,25 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       return fallback(this.completedCallLine(guard, message));
     }
     if (result.status !== 'RESPONDED') return fallback(this.completedCallLine(guard, message));
+    if (guard === undefined) return this.documentSummaryReplyOf(message, result, summary, readout, guard);
+    // OQ1-3 review round 1 (CA P3): with the flag on, a throw while the reply is built after a completed REMOTE call is the
+    // handler's fallback that still ends with the recipient line (content left the host; OQ1-2 round 1 item 3). Flag off: unchanged.
+    try {
+      return this.documentSummaryReplyOf(message, result, summary, readout, guard);
+    } catch (err) {
+      this.deps.logger.warn('document summary reply build threw', { messageId: message.id, sessionId: session.id, errorName: err instanceof Error ? err.name : typeof err });
+      return fallback(this.completedCallLine(guard, message));
+    }
+  }
+
+  /** The delivered reply of a completed document summary: the footer (with the A8.4 line), the scrub and the delivered-text checks. */
+  private documentSummaryReplyOf(
+    message: InboundMessage,
+    result: TurnResult,
+    summary: TurnHandlerSummarizeReply,
+    readout: UntrustedDocumentReadout,
+    guard: SummaryRecipientGuard | undefined,
+  ): TurnResult {
     // ADR-0121 A8.4 (OQ1-2): after a completed REMOTE call the recipient line ends the footer (so it stays last and inside the
     // message budget), on the summary and on every fixed notice below (ruling (d)). No guard (flag off): the same footer object.
     const footer = guard === undefined ? summary.footer : withRecipientLine(summary.footer, guard.recipientLine(noticeLanguage(undefined, message.text)));
@@ -660,16 +679,22 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       const expectedKey = typeof router.expectedRecipientKey === 'function' ? router.expectedRecipientKey(capability, context) : undefined;
       const verdict = items.verdictOf(provider, expectedKey);
       const recipientLabel = (candidate: AiProvider): string | undefined => items.recipientLabelOf(candidate);
-      // OQ1-3: an unexpected recipient gets a guard only after a yes, only for the very recipient (key AND label) the owner said yes
-      // to, and the guard admits it only through the consent token (`allows`) at both hooks.
-      const consentedRecipient =
-        consented !== undefined && verdict.kind === 'unexpected' && verdict.key === consented.recipient.key && verdict.label === consented.recipient.label;
-      const guard =
-        verdict.kind === 'local' || verdict.kind === 'expected'
-          ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel })
-          : consentedRecipient
-            ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel, allowsUnexpected: consented.allows })
-            : undefined;
+      let guard: SummaryRecipientGuard | undefined;
+      if (consented === undefined) {
+        // OQ1-2 (the ask turn): `local` and `expected` proceed; anything else gets no guard.
+        guard = verdict.kind === 'local' || verdict.kind === 'expected' ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel }) : undefined;
+      } else if (verdict.kind === 'local') {
+        // OQ1-3 review round 1 (strict A8.5): LOCAL never needs consent, so the continuation proceeds without the token (no line).
+        guard = new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel });
+      } else {
+        // OQ1-3 review round 1 (strict A8.5): the yes names ONE recipient. ANY REMOTE recipient, expected or not, gets a guard only
+        // when it is that very recipient (key AND label), and the guard admits it only through the consent token at both hooks.
+        const consentedRecipient =
+          (verdict.kind === 'expected' || verdict.kind === 'unexpected') && verdict.key === consented.recipient.key && verdict.label === consented.recipient.label;
+        guard = consentedRecipient
+          ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel, consentedRemote: consented.allows })
+          : undefined;
+      }
       return { verdict, guard };
     } catch (error) {
       this.deps.logger.warn('item summary recipient pre-resolve failed', { errorName: error instanceof Error ? error.name : typeof error });
@@ -733,11 +758,12 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
 
   /**
    * ADR-0121 amendment A8.5 (OQ1-3): the recipient step of the continuation after the owner's yes. The provider is resolved again
-   * (the same helper as the ask turn); `local` and `expected` proceed under the normal OQ1-2 rules (LOCAL: no line; expected: the
-   * line). An `unexpected` recipient proceeds only when it is the very recipient (key and label) the owner said yes to, under a
-   * guard that admits the call and its one regeneration only through the consent token (`allows`: the same actor, conversation,
-   * source and item, at most 600 s after the mint). Anything else (the recipient flipped, became unnamed or could not be resolved)
-   * is the fallback and nothing is sent. Never asks again.
+   * (the same helper as the ask turn). `local` proceeds without the token (LOCAL never needs consent; no line). Review round 1
+   * (orchestrator ruling, strict A8.5): ANY `REMOTE` recipient, expected or not, proceeds only when it is the very recipient (key
+   * AND label) the owner said yes to, under a guard that admits the call and its one regeneration only through the consent token
+   * (`allowsContinuation`: the same actor, conversation, source and item, at most 600 s after the mint, not voided). Anything else
+   * (another REMOTE recipient, expected or not, an unnamed one, nothing resolved) is the fallback and nothing is sent. Never asks
+   * again.
    */
   protected async consentedRecipientStep(
     message: InboundMessage,
@@ -758,7 +784,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     const conversationKey = this.agentConsentFacts(message).conversationKey;
     const pre = await this.preResolveSummaryRecipient(session, actor, readout, {
       recipient,
-      allows: (verdict, phase) => items.allows(token, verdict, { phase, actorId: actor.id, conversationKey, source: descriptor.source, itemId: descriptor.itemId }),
+      allows: (verdict, phase) => items.allowsContinuation(token, verdict, { phase, actorId: actor.id, conversationKey, source: descriptor.source, itemId: descriptor.itemId }),
     });
     if (pre === undefined) {
       decided('unresolved');
