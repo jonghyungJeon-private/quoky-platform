@@ -16,7 +16,8 @@ export const HELD_RECEIPT_METADATA_KEY = 'quoky.heldReceipt';
 export const HELD_RECEIPT_TTL_MS = 10 * 60_000;
 /**
  * A7.4b / A7.4c: a carried (closed-card) receipt expires 20 minutes after its original `at`, whatever else happened. The
- * A7.4b two-window check on a frozen card's own items is an A7-S4 item; no frozen receipt exists in this slice.
+ * A7.4b two-window check on a frozen receipt's items (the pick within 10 minutes of the listing, at most 20 after the frozen `at`)
+ * is `a7-pick.ts` (A7-S4b).
  */
 export const HELD_RECEIPT_FROZEN_TTL_MS = 20 * 60_000;
 export const HELD_RECEIPT_MAX_ITEMS = 10;
@@ -70,6 +71,15 @@ export function digestHeldItemFields(
     canonical[key] = typeof value === 'string' ? value.normalize('NFC') : Array.isArray(value) ? (value as readonly string[]).map((entry) => entry.normalize('NFC')) : value;
   }
   return sha256Hex(JSON.stringify(canonical));
+}
+
+/**
+ * A7-S4b: the digest of one source document as the drafter would receive it: its A5.2 fields title, author, date and body (never the id,
+ * the position or the cut flag). The same function writes a receipt's digest and checks it at the re-read, so a receipt can only match
+ * what the drafter would be given.
+ */
+export function digestSourceDocument(document: { readonly title: string; readonly author: string; readonly date: string; readonly body: string }, sha256Hex: HeldReceiptHasher): string {
+  return digestHeldItemFields({ title: document.title, author: document.author, date: document.date, body: document.body }, sha256Hex);
 }
 
 // ── building ──────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -362,6 +362,54 @@ export function summaryGrantBasis(plan: ValidatedAgentPlan, prepared: OwnerText)
 }
 
 /**
+ * Review round 1 (P1-2): the basis for the resumed draft of a pending pick, from the closed list the ASKING turn froze (never owner text).
+ * It accepts only an entry that is the plan's own read entry AND needs a grant; anything else is ignored (fail closed), and at most the one
+ * read of the synthetic plan can be granted.
+ */
+export function summaryGrantBasisFromFrozen(plan: ValidatedAgentPlan, asked: readonly NlWave1EntryId[]): SummaryGrantBasis {
+  const basis = Object.freeze({}) as SummaryGrantBasis;
+  const granted = new Set<string>();
+  if (plan.kind === 'run') {
+    const readEntries = new Map<number, string>();
+    for (const [index, step] of plan.steps.entries()) if (step.kind === 'read') readEntries.set(index + 1, step.entry.id);
+    const own = new Set(readEntries.values());
+    for (const [index, step] of plan.steps.entries()) {
+      if (step.kind !== 'summarize') continue;
+      for (const from of step.from) {
+        const entryId = readEntries.get(from);
+        if (entryId !== undefined && own.has(entryId) && needsGrant(entryId) && (asked as readonly string[]).includes(entryId)) granted.add(keyOf(index + 1, entryId));
+      }
+    }
+  }
+  BASES.set(basis, { plan, asked: granted });
+  return basis;
+}
+
+/**
+ * The basis of a carried-over or bare follow-up draft (orchestrator ruling, review round 1): no earlier request's grant is reused across
+ * turns, and this turn's own words ask for nothing. The draft's own read is granted ONLY for the local lane: the `REMOTE` locality stays
+ * behind the unconditional rule-① guard (`deriveM2Localities`), which needs a fresh consent token for this run, step, source and ids, so a
+ * `REMOTE` summariser asks its question again and a `LOCAL` one proceeds. Never derived from any text.
+ */
+export function carriedSummaryGrantBasis(plan: ValidatedAgentPlan): SummaryGrantBasis {
+  const basis = Object.freeze({}) as SummaryGrantBasis;
+  const granted = new Set<string>();
+  if (plan.kind === 'run') {
+    const readEntries = new Map<number, string>();
+    for (const [index, step] of plan.steps.entries()) if (step.kind === 'read') readEntries.set(index + 1, step.entry.id);
+    for (const [index, step] of plan.steps.entries()) {
+      if (step.kind !== 'summarize') continue;
+      for (const from of step.from) {
+        const entryId = readEntries.get(from);
+        if (entryId !== undefined && needsGrant(entryId)) granted.add(keyOf(index + 1, entryId));
+      }
+    }
+  }
+  BASES.set(basis, { plan, asked: granted });
+  return basis;
+}
+
+/**
  * Whether `basis` (made by {@link summaryGrantBasis} for exactly `plan`) holds the owner's summary request for this step and
  * source. A forged object, a basis of another plan or an absent one answers `false`.
  */

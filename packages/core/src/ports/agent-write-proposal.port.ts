@@ -48,6 +48,11 @@ export interface AgentProposalCardFields {
    * the card (never by the agent), so the first and the re-shown card carry the same existing warning.
    */
   readonly unconfirmedEarlier?: { readonly status: 'UNCERTAIN' | 'EXECUTING'; readonly at: IsoTimestamp; readonly timeZone: string };
+  /**
+   * A7-S4b: where the destination came from (A7.5 step 7): the owner's own words (the default, the card says "대상은 보내신 문장에서") or a number
+   * the owner picked from a destination listing (A7.4b, the card says "직접 고르신 대상"). Absent: `owner-text`.
+   */
+  readonly grounding?: 'owner-text' | 'owner-picked';
 }
 
 export interface AgentWriteProposalRequest {
@@ -58,7 +63,8 @@ export interface AgentWriteProposalRequest {
   readonly payloadText: string;
   readonly actorId: Id;
   readonly sessionId: Id;
-  readonly grounding: 'owner-text';
+  /** `owner-picked`: the destination is an `OWNER_PICKED_DESTINATION` of one A7 propose step (A7.4b). Anything else is refused. */
+  readonly grounding: 'owner-text' | 'owner-picked';
   readonly banner: AgentWriteProposalBanner;
   /** The number of distinct people the remap named (the card's fixed line). */
   readonly named: number;
@@ -90,12 +96,30 @@ export type AgentWriteProposalRefusal =
   | 'unavailable';
 
 export type AgentWriteProposalResult =
-  | { readonly kind: 'carded'; readonly cardId: Id; readonly card: MessageBody; readonly payloadSha256: string }
+  | {
+      readonly kind: 'carded';
+      readonly cardId: Id;
+      readonly card: MessageBody;
+      readonly payloadSha256: string;
+      /** A7-S4b: the task the card's anchor lives on (opaque; only handed back to {@link AgentWriteProposalPort.closureOf}). */
+      readonly taskId?: Id;
+    }
   | { readonly kind: 'refused'; readonly reason: AgentWriteProposalRefusal }
   /** A7.4c item 3: an A7 card of this owner is still open; nothing was carded. `openTarget` is that card's destination. */
   | { readonly kind: 'wait-open-card'; readonly openTarget: string };
 
+/**
+ * A7-S4b (A7.4c item 4): why an A7 card is no longer open, as a closed value read from its persisted anchor. `open` means still open.
+ * `unknown` covers every closure that hands nothing on (an unresolved or unsent outcome, an inconsistent anchor, a missing anchor).
+ */
+export type AgentCardClosureState = 'open' | 'sent' | 'declined' | 'expired' | 'owner-void' | 'kill-switch' | 'unknown';
+
 export interface AgentWriteProposalPort {
+  /**
+   * A7-S4b: the closure of one card of this owner (A7.4c item 4). Optional: a port without it never lets a closed card hand anything
+   * on. The anchor must belong to `actorId` (the session's own actor), else `unknown`. Read-only; closed values only.
+   */
+  closureOf?(request: { readonly sessionId: Id; readonly taskId: Id; readonly actorId: Id; readonly now: IsoTimestamp }): Promise<AgentCardClosureState>;
   /** The destination of this owner's open A7 card, if one is open (checked BEFORE anything is read or drafted). A card whose approval or grant has lapsed at `now` is not open. */
   openCardOf(actorId: Id, now: IsoTimestamp): Promise<{ readonly cardId: Id; readonly target: string } | undefined>;
   propose(request: AgentWriteProposalRequest): Promise<AgentWriteProposalResult>;

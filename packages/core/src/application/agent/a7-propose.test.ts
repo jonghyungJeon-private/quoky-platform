@@ -124,7 +124,7 @@ function run(p: Parts, route: QuarantinedSummarizerRoute, over: Partial<Paramete
   const executor = new AgentPlanExecutor({ readers: p.readers, logger: p.logger, summarizer: route });
   return runA7ProposeStep(
     { proposal: p.port, readSource: (step, options) => executor.readDraftSource(step, options), route, logger: p.logger },
-    { plan: validatedPlan(), actorId: 'owner', sessionId: 'sess-1', language: 'ko', ownerText: { ...prepareSelectionInput(OWNER_TEXT), rawText: OWNER_TEXT }, now: T0 as never, budget: new AgentRunBudget(Date.now), ...over },
+    { plan: validatedPlan(), actorId: 'owner', sessionId: 'sess-1', language: 'ko', ownerText: { ...prepareSelectionInput(OWNER_TEXT), rawText: OWNER_TEXT }, now: T0 as never, budget: new AgentRunBudget(Date.now), alive: async () => true, ...over },
   );
 }
 const localRoute = (provider: Spy, extra: Partial<QuarantinedSummarizerRoute> = {}): QuarantinedSummarizerRoute => ({ selector: selectorOf(provider), workSummarySources: ['slack'], ...extra });
@@ -156,7 +156,7 @@ describe('A7-S4a propose step, form a, LOCAL drafter', () => {
     await run(p, localRoute(spy('local-a', 'LOCAL')));
     const lines = p.logs.filter((log) => log.event === AGENT_A7_AUDIT_EVENT);
     expect(lines).toHaveLength(1);
-    expect(lines[0]?.fields).toEqual({ planKind: 'cross-write', form: 'a', decision: 'pending', sourceEntry: 'slack.search', items: 2, dropped: 0, omitted: 0, drafterLocality: 'LOCAL', consent: 'not-needed', cardId: 'card-1', outcome: 'carded' });
+    expect(lines[0]?.fields).toEqual({ planKind: 'cross-write', form: 'a', decision: 'pending', grounding: 'owner-text', sourceEntry: 'slack.search', items: 2, dropped: 0, omitted: 0, drafterLocality: 'LOCAL', consent: 'not-needed', cardId: 'card-1', outcome: 'carded' });
     expect(JSON.stringify(lines)).not.toMatch(/BE-123|BE-999/u);
   });
 
@@ -181,15 +181,44 @@ describe('A7-S4a propose step, form a, LOCAL drafter', () => {
   it('the kill switch: stopped before the read makes no read and no call; stopped during the draft makes no card', async () => {
     const before = parts();
     const local = spy('local-a', 'LOCAL');
-    expect(await run(before, localRoute(local), { stillRunning: async () => false })).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(await run(before, localRoute(local), { alive: async () => false })).toMatchObject({ kind: 'refused', reason: 'stopped' });
     expect(before.reads).toHaveLength(0);
     expect(local.requests).toHaveLength(0);
 
     const during = parts();
     let probes = 0;
-    const out = await run(during, localRoute(local), { stillRunning: async () => (probes += 1) < 2 });
+    // Probes of a full LOCAL run: open-card (2), before the read (1), the read's own (2: entry and after readiness), after the read (1), then
+    // after the draft (1): the threshold stops exactly after the draft, so one draft was made and no proposal.
+    const out = await run(during, localRoute(local), { alive: async () => (probes += 1) < 7 });
     expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(probes).toBe(7);
+    expect(local.requests).toHaveLength(1);
     expect(during.requests).toHaveLength(0);
+  });
+
+  it('review round 5: stop then resume during the source read refuses stopped before the REMOTE consent question (no ask)', async () => {
+    const p = parts();
+    const remote = spy('remote-a', 'REMOTE');
+    let probes = 0;
+    // Probes 1-5 (open-card x2, before the read, the read's two) run; the sixth (right after the read) is the one that sees the epoch gone.
+    const out = await run(p, localRoute(remote, { askSummaryConsent: true, recipientLabel: () => 'Remote Co' }), { alive: async () => (probes += 1) < 6 });
+    expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(out.kind).not.toBe('ask');
+    expect(probes).toBe(6);
+    expect(remote.requests).toHaveLength(0);
+    expect(p.requests).toHaveLength(0);
+  });
+
+  it('review round 5: a stop during the provider readiness await refuses stopped before the port read', async () => {
+    const p = parts();
+    const local = spy('local-a', 'LOCAL');
+    let probes = 0;
+    // The fifth probe is the one right after the readiness await, before the port read.
+    const out = await run(p, localRoute(local), { alive: async () => (probes += 1) < 5 });
+    expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(p.reads).toHaveLength(0);
+    expect(local.requests).toHaveLength(0);
+    expect(p.requests).toHaveLength(0);
   });
 
   it('a refused draft (schema, credential, participants, link) makes no card; the owner gets the fixed not-made line', async () => {

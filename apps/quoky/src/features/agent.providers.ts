@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import type { Provider } from '@nestjs/common';
 import { AGENT_WRITE_PROPOSAL_PORT, AgentRunService, AgentWriteProposalService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type AgentWriteProposalPort, type ConnectorWriteFlow, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
@@ -70,9 +71,15 @@ export interface AgentFeatureConfig {
  * `jira-comment` in `QUOKY_AGENT_PROPOSE_TARGETS` AND a bound proposal port (which exists only when `QUOKY_CONNECTOR_WRITES_ENABLED`
  * built a writer). Anything else: none (the refusal of every A7 plan is unchanged).
  */
-export function agentWriteProposalDep(config: AgentFeatureConfig, port: AgentWriteProposalPort | null | undefined): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[] } | undefined {
+export function agentWriteProposalDep(
+  config: AgentFeatureConfig,
+  port: AgentWriteProposalPort | null | undefined,
+): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly sha256Hex: (text: string) => string; readonly bootId: string } | undefined {
   if (config.agent.mode !== 'active' || config.writeProposals?.mode !== 'active' || port === null || port === undefined) return undefined;
-  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'] } : undefined;
+  // A7-S4b: the SHA-256 the agent module may not import (`node:*`) is injected here: the held-receipt digests, the frozen receipt and the carry-over need it.
+  // P1-1: so is the id of this boot; every A7 record is stamped with it and a restart voids them. The destination-existence port is NOT wired
+  // (activation gate, A7-S5): without it the pick continuation refuses.
+  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'], sha256Hex: (text) => createHash('sha256').update(text, 'utf8').digest('hex'), bootId: randomUUID() } : undefined;
 }
 
 export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, options: { readonly logger?: Logger } = {}): Provider[] {
@@ -82,6 +89,8 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
       provide: AGENT_RUNS,
       useFactory: (router: CapabilityRouter, storage: StorageProvider, consentStore?: ConsentPendingStore, proposalPort?: AgentWriteProposalPort | null): AgentRunService => {
         const config = resolveConfig();
+        // Built once: each call draws its own boot id.
+        const writeProposal = agentWriteProposalDep(config, proposalPort);
         return new AgentRunService({
           mode: config.agent.mode,
           router,
@@ -106,7 +115,7 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
                 // ADR-0121 A5-S1: the per-source summary switches (default off); an empty list leaves the key out.
                 ...(config.agent.summarySources.length > 0 ? { workSummarySources: config.agent.summarySources } : {}),
                 // ADR-0121 A7 (A7-S4a, dormant): the proposal port, only with every switch on (see `agentWriteProposalDep`).
-                ...(agentWriteProposalDep(config, proposalPort) !== undefined ? { writeProposal: agentWriteProposalDep(config, proposalPort) } : {}),
+                ...(writeProposal !== undefined ? { writeProposal } : {}),
               }
             : {}),
         });

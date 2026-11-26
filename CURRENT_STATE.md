@@ -5,6 +5,16 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A7-S4b pick implemented, live effect none (2026-11-26, branch `claude/v5-a7-s4b-pick`)
+
+- The destination listing and pick (an owner-scoped read, fixed key order, never pre-selected, inert titles, pick by number only), the trust value
+  `OWNER_PICKED_DESTINATION` and the card line "직접 고르신 대상", the a7-09 board-first flow, form b with the digest recheck, the frozen receipt inside the
+  pending pick (two windows), the A7 state in `Session.metadata['quoky.heldReceipt']` and the closed-card carry-over. Dormant: agent mode `active` and
+  `QUOKY_AGENT_WRITE_PROPOSALS=active` are still refused at startup; `runActive` / `continueA7Pick` have no production caller (stage P5), and with the
+  defaults nothing new runs (spy test). Open: the automatic trip, Slack and calendar destinations (A7-S6, A7-S7), the re-draft (A7-S9), the REMOTE
+  continuation of an A7 draft, the receipt writer on ordinary turns, the real read ports, and the A7-S5 gates. See DECISIONS "ADR-0121 A7-S4b pick
+  implementation note (2026-11-26)".
+
 ### ADR-0121 A8 ratified (2026-11-26, branch `claude/v5-oq1-a8-text`)
 
 - Owner: a live item summary request is itself the consent for the chosen chat model (fixed recipient line); the rule-① question only for an unexpected recipient; D8 = listing plus question (A5-S6). Recorded in `DECISIONS.md`, `ARCHITECTURE.md` §10 (separate A8 row), §12 and `AGENTS.md` line 23 (recipient-line exception) applied; review round 1 fixed scope, flag state and the fail-closed expected recipient (identity plus label). Docs only; flag default off, enabling is a later Strict step.

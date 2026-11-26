@@ -22,6 +22,17 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
   `amp`, `lt`, `gt`, `quot` refuse); an inert bracket pair (`[BE-123]`, `[중요]`: letters, digits, hyphen, space, at most 32, not followed by `(`, `:` `[`, not
   preceded by `!` `]`) is no longer escaped. Everything else stays escaped; the re-check invariants are unchanged.
 - **Tests.** Adversarial forms for both relaxations; review round 1: `&shy` refused, spaced/multiline pins, renderer-premise comments on the Jira and Slack writer tests. See DECISIONS "A7-S3 relaxation note (owner 2026-11-26)".
+## Unreleased — A7-S4b pick (2026-11-26; dormant: `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused at startup)
+
+- **Added.** The destination listing and pick (A7.4b): an owner-scoped listing read (`AgentPlanExecutor.listDestinationRows`), the fixed-order never
+  pre-selected rows with inert titles, the pick by number only (`agent/a7-pick.ts`), the trust value `OWNER_PICKED_DESTINATION` (not `OWNER_CONFIRMED`,
+  issued only by the pick) and the card line "직접 고르신 대상"; the a7-09 board-first flow; form b drafting from a receipt with the A5.2 digest recheck; the
+  frozen receipt inside the pending pick (two-window check); the A7 state in `Session.metadata['quoky.heldReceipt']` (`agent/held-receipt-store.ts`);
+  the closed-card carry-over through an optional `closureOf` on the proposal port; `AgentRunService.continueA7Pick`.
+- **Changed.** `turn.ownerStepPending` now reaches the propose step (W2). The proposal port request takes `grounding: 'owner-picked'` and the carded result
+  a `taskId`; `writeProposal` gets an injected `sha256Hex`. No catalog, prompt, flag, migration or `ConversationRuntimeDeps` key.
+- **Tests.** Pure, flow and boundary tests with fake ports and stub providers (no model call, no eval); a spy test pins that nothing new runs with the defaults.
+  See DECISIONS "ADR-0121 A7-S4b pick implementation note (2026-11-26)".
 
 ## Unreleased — A7-S4a card (2026-11-25; dormant: `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused at startup)
 

@@ -2,6 +2,7 @@ import type { Actor, Id, IsoTimestamp, Session } from '../../domain';
 import { SessionStatus } from '../../domain';
 import {
   AGENT_WRITE_PROPOSAL_MAX_LINES,
+  type AgentCardClosureState,
   type AgentWriteProposalPort,
   type AgentWriteProposalRefusal,
   type AgentWriteProposalRequest,
@@ -30,7 +31,7 @@ import { documentedExecutionPhrase } from '../execution-command-guard';
  */
 
 export interface AgentWriteProposalServiceDeps {
-  readonly flow: Pick<ConnectorWriteFlow, 'prepare' | 'openAnchorsOf' | 'find' | 'close' | 'supports'>;
+  readonly flow: Pick<ConnectorWriteFlow, 'prepare' | 'openAnchorsOf' | 'find' | 'close' | 'supports' | 'anchorOfTask'>;
   readonly sessions: { get(id: Id): Promise<Session | null> };
   readonly actors: { get(id: Id): Promise<Actor | null> };
   readonly logger?: Logger;
@@ -44,6 +45,52 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
   async openCardOf(actorId: Id, now: IsoTimestamp): Promise<{ readonly cardId: Id; readonly target: string } | undefined> {
     const open = await this.openAnchors(actorId, now);
     return open.card;
+  }
+
+  /**
+   * A7-S4b (A7.4c item 4): why one card of this owner is no longer open, from its persisted anchor read directly by its task. Closed values:
+   * only `sent`, `declined`, `expired` and `owner-void` may hand the card's items on; a stop, an unresolved outcome and anything unreadable
+   * hand nothing on (`kill-switch`, `unknown`). Read-only and total.
+   */
+  async closureOf(request: { readonly sessionId: Id; readonly taskId: Id; readonly actorId: Id; readonly now: IsoTimestamp }): Promise<AgentCardClosureState> {
+    try {
+      const flow = this.deps.flow;
+      if (flow.anchorOfTask === undefined) return 'unknown';
+      const session = await this.deps.sessions.get(request.sessionId);
+      if (session === null) return 'unknown';
+      const view = await flow.anchorOfTask(session, request.taskId);
+      const anchor = view?.anchor;
+      if (view === null || anchor === undefined || anchor.agentProposal !== true) return 'unknown';
+      // The anchor, the session and the asking owner must be one actor: another actor's card never hands anything on.
+      if (anchor.actorId !== request.actorId || session.actorId !== request.actorId) return 'unknown';
+      if (OPEN_STATUSES.has(anchor.status)) {
+        // `anchorOfTask` carries no approval record, so a pending card lapses by its age (the ADR-0093 lifetime), like `openAnchors`.
+        if (anchor.status === 'APPROVAL_PENDING' && approvalLapsed(anchor.createdAt, request.now)) return 'expired';
+        return isConnectorWriteAnchorLapsed(anchor, request.now) ? 'expired' : 'open';
+      }
+      if (anchor.status === 'SENT') return 'sent';
+      if (anchor.status !== 'CLOSED') return 'unknown';
+      switch (anchor.closedReason) {
+        case 'denied':
+          return 'declined';
+        case 'expired':
+          return 'expired';
+        case 'cancelled':
+          return 'owner-void';
+        // `superseded` is the system displacing the session pointer and `abandoned` a flow step that did not reach a preview: neither is the
+        // owner's void, so neither hands items on. A future automatic trip (A7.10) must close its card with its own reason (or `stopped`),
+        // never `cancelled`: every reason not listed here is `unknown`, which hands nothing on.
+        case 'superseded':
+        case 'abandoned':
+          return 'unknown';
+        case 'stopped':
+          return 'kill-switch';
+        default:
+          return 'unknown';
+      }
+    } catch {
+      return 'unknown';
+    }
   }
 
   async propose(request: AgentWriteProposalRequest): Promise<AgentWriteProposalResult> {
@@ -74,7 +121,7 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
 
   private async run(request: AgentWriteProposalRequest): Promise<AgentWriteProposalResult> {
     const refused = (reason: AgentWriteProposalRefusal): AgentWriteProposalResult => ({ kind: 'refused', reason });
-    if (request.operation !== 'jira-comment' || request.grounding !== 'owner-text') return refused('unavailable');
+    if (request.operation !== 'jira-comment' || (request.grounding !== 'owner-text' && request.grounding !== 'owner-picked')) return refused('unavailable');
     const key = typeof request.target?.issueKey === 'string' ? request.target.issueKey.toUpperCase() : '';
     if (!CONNECTOR_WRITE_ISSUE_KEY.test(key)) return refused('invalid-target');
     const text = request.payloadText;
@@ -94,11 +141,12 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
 
     // The card must show the payload whole BEFORE anything is prepared: a card that does not fit is never made (and no approval is left behind).
     const executionPhrase = documentedExecutionPhrase(connectorWriteExecutionGate('ISSUE_COMMENT'));
-    const cardInput = { issueKey: key, text, banner: request.banner, named: request.named, nonTargets: request.nonTargets, executionPhrase };
+    const grounding = request.grounding === 'owner-picked' ? ({ grounding: 'owner-picked' as const }) : {};
+    const cardInput = { issueKey: key, text, banner: request.banner, named: request.named, nonTargets: request.nonTargets, executionPhrase, ...grounding };
     // Measured in UTF-16 units (`.length`), the unit the smallest live chat adapter's chunker counts against its single-message limit (review round 2): a code-point count under-counts emoji.
     const probe = plainTextOf(renderAgentProposalCard({ ...cardInput, remainingMs: PENDING_APPROVAL_TTL_MS }));
     if (probe.length > AGENT_PROPOSAL_CARD_MAX_CHARS) return refused('payload-too-large');
-    const cardFields = { banner: request.banner, named: request.named, nonTargets: request.nonTargets };
+    const cardFields = { banner: request.banner, named: request.named, nonTargets: request.nonTargets, ...grounding };
 
     const step = await this.deps.flow.prepare({ session, actor, now: request.now, agentProposal: true, agentCard: cardFields, draft });
     if (step.kind === 'writes-off') return refused('writes-off');
@@ -136,7 +184,7 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
       return refused('payload-too-large');
     }
     this.log('a7_card.carded', { operation: 'ISSUE_COMMENT', approvalId: step.approval.id });
-    return { kind: 'carded', cardId: step.approval.id, card, payloadSha256: anchor.payloadSha256 };
+    return { kind: 'carded', cardId: step.approval.id, card, payloadSha256: anchor.payloadSha256, taskId: view.taskId };
   }
 
   private log(event: string, fields: { readonly operation: string; readonly approvalId: Id }): void {
