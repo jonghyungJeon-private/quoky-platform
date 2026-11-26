@@ -454,6 +454,21 @@ describe('WorkChatTurnHandler.handleSelected item.summarize (A6 R2)', () => {
     const full = await h.handleSelected(selected('jira', { mode: 'full' }), ctxOf(DM));
     expect(full).not.toHaveProperty('consent');
     expect(full).not.toHaveProperty('kind');
+    const slackItem: ConnectorItem = {
+      id: 'C1:1.1',
+      title: '스레드',
+      itemRef: 'C1:1.1',
+      detail: { sections: [{ kind: 'message', author: 'U01', text: '안녕' }, { kind: 'message', author: 'U02', text: '답' }], partial: false, people: ['U01', 'U02'], requests: 1, bytes: 10 },
+    };
+    const slack = handler({ read: () => ({ kind: 'item', item: slackItem }) });
+    const thread = await slack.h.handleSelected(selected('slack', { scope: 'thread' }, { id: 'C1:1.1' }), ctxOf(DM));
+    if (thread === null || thread.kind !== 'summarize') throw new Error('expected summarize');
+    expect(thread.consent).toMatchObject({
+      source: 'slack-thread',
+      itemId: 'C1:1.1',
+      parts: { threadMessages: 2 },
+      redo: { selection: { entryId: 'item.summarize', args: { mode: 'summary', scope: 'thread' }, target: { source: 'slack', id: 'C1:1.1' } } },
+    });
   });
 });
 

@@ -33,6 +33,18 @@ describe('recipientVerdict (A8.3 verdict table)', () => {
     // The same label under a different key is still unexpected.
     expect(recipientVerdict(provider('p-c'), 'p-a', () => 'Alpha')).toEqual({ kind: 'unexpected', key: 'p-c', label: 'Alpha' });
   });
+  it('a label that cannot render a line is unnamed, so an expected verdict always renders (one shared shape check)', () => {
+    const bad = ['x'.repeat(41), '가'.repeat(41), 'Al\u0000pha', 'Al\u202Epha', 'Al\u200Bpha', 'Al\npha', ' Alpha', 'Alpha ', '   ', '', 'A\u0301'];
+    for (const label of bad) {
+      expect(recipientVerdict(provider('p-a'), 'p-a', () => label), JSON.stringify(label)).toEqual({ kind: 'unnamed' });
+      expect(renderItemSummaryRecipientLine(label, 'ko'), JSON.stringify(label)).toBe('');
+    }
+    for (const label of ['x'.repeat(40), 'Alpha Beta']) {
+      const verdict = recipientVerdict(provider('p-a'), 'p-a', () => label);
+      expect(verdict).toEqual({ kind: 'expected', key: 'p-a', label });
+      expect(renderItemSummaryRecipientLine(label, 'en')).not.toBe('');
+    }
+  });
   it('REMOTE without a label is unnamed, even when the key matches; a throwing label is unnamed', () => {
     expect(recipientVerdict(provider('p-z'), 'p-z', labels(table))).toEqual({ kind: 'unnamed' });
     expect(recipientVerdict(provider('p-a'), 'p-a', () => '  ')).toEqual({ kind: 'unnamed' });

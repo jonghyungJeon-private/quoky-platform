@@ -40300,3 +40300,17 @@ to the recipient key and label through a module-private `WeakMap`); `recipientVe
 `summary-consent-question.v2` (existing nouns unchanged; the version pin tests and the digest were updated); the ids-only `consent` descriptor on
 `TurnHandlerSummarizeReply` (filled for the mail item and thread, Drive and Jira/Slack single reads; never for `full`, never for D8); `renderItemSummaryRecipientLine`.
 `ItemSummaryConsent` is deliberately not exported from the application index (the consent-answer import boundary stays pinned); OQ1-2 adds the export.
+
+### ADR-0121 A8 — OQ1-1 review round 1 (2026-11-26)
+
+Chief Architect J1 review of OQ1-1, all fixed (still dormant):
+
+- **Token is single-use and item-bound.** The module-private token facts now hold actor, conversation, source, item id, recipient key and label and the mint time.
+  `allows(token, verdict, use)` takes the request facts and a phase: `call` is consumed once, `regeneration` once and only after the call; a different actor,
+  conversation, source, item, key or label, or more than 600 s (the answer window, shared clock) after the mint, is refused and consumes nothing. `local` and
+  `expected` need no token and are unaffected. `spend` stays only as an early retire.
+- **One label-shape check.** `isRenderableRecipientLabel` (`item-summary/recipient-label.ts`) is used by `recipientVerdict` (a label that fails it is `unnamed`)
+  and by the recipient-line renderer, so an `expected` verdict always renders a line.
+- **Slack thread descriptor** now carries `parts.threadMessages`, the count of message sections in the same read (no new read); tests cover the Slack thread case.
+- **Re-ask** tests pin the 600 s window after the re-ask (yes at ~1150 s mints; more than 600 s after the re-ask is refused). The inline `=== 'LOCAL'` in
+  `recipientVerdict` is commented as mirroring `executionLocalityOf` (inlined for the item-summary invariants test).

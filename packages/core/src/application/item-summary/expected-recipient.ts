@@ -1,4 +1,5 @@
 import type { AiProvider } from '../../ports/ai-provider.port';
+import { isRenderableRecipientLabel } from './recipient-label';
 
 /**
  * ADR-0121 amendment A8.3 (OQ1-1): is the provider that would summarise a live item the EXPECTED recipient?
@@ -10,7 +11,7 @@ import type { AiProvider } from '../../ports/ai-provider.port';
  * - `local`: the provider declares local execution (nothing leaves the host): no question, no recipient line (SR-1 W4).
  * - `expected`: REMOTE, its key equals the expected key AND it has a display label (a label alone never qualifies).
  * - `unexpected`: REMOTE with a label but not the expected key (a fallback, the vendor exclusion, any other recipient).
- * - `unnamed`: REMOTE without a label: no question can name it, so nothing is sent.
+ * - `unnamed`: REMOTE without a renderable label (blank, over 40 code points, control/format characters): no question can name it, so nothing is sent.
  */
 export type RecipientVerdict =
   | { readonly kind: 'local' }
@@ -24,10 +25,11 @@ export function recipientVerdict(
   recipientLabel: (provider: AiProvider) => string | undefined,
 ): RecipientVerdict {
   try {
-    // Fail closed like `executionLocalityOf`: only an explicit LOCAL declaration is local; anything else is REMOTE.
+    // Fail closed like `executionLocalityOf`: only an explicit LOCAL declaration is local; anything else is REMOTE. The inline
+    // `=== 'LOCAL'` mirrors `executionLocalityOf` (inlined because item-summary/ may not import it: the invariants test).
     if (provider.executionLocality === 'LOCAL') return { kind: 'local' };
     const label = recipientLabel(provider);
-    if (typeof label !== 'string' || label.trim().length === 0) return { kind: 'unnamed' };
+    if (!isRenderableRecipientLabel(label)) return { kind: 'unnamed' };
     // The selection key is the provider's opaque `id`, the same value the router's `selectionKeyOf` reads; compared, never branched on.
     const key = provider.id;
     if (typeof key !== 'string' || key.length === 0) return { kind: 'unnamed' };

@@ -33,3 +33,4 @@ export type { LongItemSummaryInput } from './long-item';
 export { recipientVerdict } from './expected-recipient';
 export type { RecipientVerdict } from './expected-recipient';
 export { renderItemSummaryRecipientLine } from './recipient-line';
+export { isRenderableRecipientLabel } from './recipient-label';

@@ -20,7 +20,9 @@ import { isOwnerYes } from './consent-yes';
  *   through a module-private `WeakMap` (like `mintGrant`); there is no other maker.
  * - `allows(token, verdict)` is the only judge: a `local` or `expected` recipient needs no token; an `unexpected` one needs an
  *   unspent token of this instance whose recipient KEY and LABEL both equal the live ones; `unnamed` is never allowed.
- *   A token covers one summary call and its one regeneration; `spend` retires it; `voidAll` voids every record and token.
+ *   A token is bound to the item (actor, conversation, source, item id) it was minted for, lives {@link ITEM_SUMMARY_TOKEN_TTL_MS}
+ *   from its mint, and is consumed by `allows` per phase: one `call`, then (only after it) one `regeneration`. `spend` retires it
+ *   early; `voidAll` voids every record and token.
  *
  * Core compares keys and labels as opaque strings and never names a provider.
  */
@@ -34,11 +36,33 @@ export interface ItemSummaryConsentToken {
   readonly kind: 'item-summary-consent-token';
 }
 
+/** A token's life from its mint: the answer window, on the shared clock. */
+export const ITEM_SUMMARY_TOKEN_TTL_MS = CONSENT_ANSWER_WINDOW_MS;
+
+/** Which model request of the one summary a token is presented for: the call, then at most one regeneration. */
+export type ItemSummaryUsePhase = 'call' | 'regeneration';
+
+/** The request facts a caller presents with the token: the same actor, conversation, source and item the token was minted for. */
+export interface ItemSummaryUse {
+  readonly phase: ItemSummaryUsePhase;
+  readonly actorId: string;
+  readonly conversationKey: string;
+  readonly source: ConsentSource;
+  readonly itemId: string;
+}
+
 interface TokenFacts {
   readonly owner: ItemSummaryConsent;
   readonly generation: number;
+  readonly actorId: string;
+  readonly conversationKey: string;
+  readonly source: ConsentSource;
+  readonly itemId: string;
   readonly key: string;
   readonly label: string;
+  readonly mintedAtMs: number;
+  callUsed: boolean;
+  regenerationUsed: boolean;
   spent: boolean;
 }
 
@@ -165,7 +189,20 @@ export class ItemSummaryConsent {
       if (only === undefined || only.source !== record.source || only.itemIds.length !== 1 || only.itemIds[0] !== record.itemId) return undefined;
       if (pending.recipient !== record.recipientLabel) return undefined;
       const token = Object.freeze({ kind: 'item-summary-consent-token' }) as ItemSummaryConsentToken;
-      TOKENS.set(token, { owner: this, generation: this.generation, key: record.recipientKey, label: record.recipientLabel, spent: false });
+      TOKENS.set(token, {
+        owner: this,
+        generation: this.generation,
+        actorId: record.scope.actorId,
+        conversationKey: record.scope.conversationKey,
+        source: record.source,
+        itemId: record.itemId,
+        key: record.recipientKey,
+        label: record.recipientLabel,
+        mintedAtMs: nowMs,
+        callUsed: false,
+        regenerationUsed: false,
+        spent: false,
+      });
       return { token, descriptor: record.descriptor, requestText: record.requestText, recipient: { key: record.recipientKey, label: record.recipientLabel } };
     } catch {
       return undefined;
@@ -173,22 +210,35 @@ export class ItemSummaryConsent {
   }
 
   /**
-   * Whether a summary call to the live recipient `verdict` may go out. Pure: it spends nothing (a token covers the call and its one
-   * regeneration; {@link spend} retires it). Total: any doubt is `false`.
+   * Whether the model request `use.phase` of a summary to the live recipient `verdict` may go out. `local` and `expected` need no
+   * token (and spend nothing). An `unexpected` recipient needs this instance's live token minted for the same actor, conversation,
+   * source and item, for the same key and label, within {@link ITEM_SUMMARY_TOKEN_TTL_MS} of its mint; the `call` phase is
+   * consumed once, the `regeneration` phase once and only after the call. Total: any doubt is `false` and consumes nothing.
    */
-  allows(token: ItemSummaryConsentToken | undefined, verdict: RecipientVerdict): boolean {
+  allows(token: ItemSummaryConsentToken | undefined, verdict: RecipientVerdict, use: ItemSummaryUse): boolean {
     try {
       if (verdict.kind === 'local' || verdict.kind === 'expected') return true;
       if (verdict.kind !== 'unexpected' || token === undefined) return false;
       const facts = TOKENS.get(token);
       if (facts === undefined || facts.owner !== this || facts.generation !== this.generation || facts.spent) return false;
-      return facts.key === verdict.key && facts.label === verdict.label;
+      const nowMs = this.deps.now();
+      if (!Number.isFinite(nowMs) || nowMs - facts.mintedAtMs >= ITEM_SUMMARY_TOKEN_TTL_MS) return false;
+      if (use.actorId !== facts.actorId || use.conversationKey !== facts.conversationKey || use.source !== facts.source || use.itemId !== facts.itemId) return false;
+      if (facts.key !== verdict.key || facts.label !== verdict.label) return false;
+      if (use.phase === 'call') {
+        if (facts.callUsed) return false;
+        facts.callUsed = true;
+        return true;
+      }
+      if (use.phase !== 'regeneration' || !facts.callUsed || facts.regenerationUsed) return false;
+      facts.regenerationUsed = true;
+      return true;
     } catch {
       return false;
     }
   }
 
-  /** Retires a token (after the call and its regeneration, or on any refusal): every later `allows` with it is `false`. */
+  /** Retires a token early (on any refusal or once the summary is done): every later `allows` with it is `false`. */
   spend(token: ItemSummaryConsentToken): void {
     const facts = TOKENS.get(token);
     if (facts !== undefined && facts.owner === this) facts.spent = true;

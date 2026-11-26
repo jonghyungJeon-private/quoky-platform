@@ -301,6 +301,8 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
         itemId: itemRef,
         language,
         ...(scope === 'thread' ? { thread: true } : {}),
+        // A Slack thread's message count at read time, taken from the read itself (no new read), like the mail thread's total.
+        ...(source === 'slack' && scope === 'thread' ? { threadMessages: (item.detail?.sections ?? []).filter((section) => section.kind === 'message').length } : {}),
         ...(target.label !== undefined ? { label: target.label } : {}),
         ...(target.listingAt !== undefined ? { listingAt: target.listingAt } : {}),
       }),
