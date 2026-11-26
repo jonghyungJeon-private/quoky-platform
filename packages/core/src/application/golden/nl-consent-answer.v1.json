@@ -2606,7 +2606,7 @@
       "question": "Shall I send a request about {주제} to Claude? (yes/no)",
       "reply": "that's fine",
       "gold": "yes",
-      "stage": "structural-fail",
+      "stage": "classifier",
       "origin": "drafted",
       "category": "positive",
       "context": {
@@ -2618,7 +2618,7 @@
           "topic": "vendor shortlist"
         }
       },
-      "note": "As built: the ASCII apostrophe reads as a quote marker (hasUntrustedSpanMarker), so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress."
+      "note": "Restaged under the owner decision of 2026-11-26 (A6.3 contraction note): a letter-flanked ASCII or U+2019 apostrophe is no longer an untrusted-span marker in the consent-answer structural check, so this reply reaches the classifier. Gold unchanged."
     },
     {
       "id": "ca-107",
@@ -3760,7 +3760,7 @@
       "question": "I'll send {count} Slack messages to Claude to summarise them. Shall I send them? (yes/no)",
       "reply": "don't",
       "gold": "no",
-      "stage": "structural-fail",
+      "stage": "classifier",
       "origin": "drafted",
       "category": "no",
       "context": {
@@ -3777,7 +3777,7 @@
           ]
         }
       },
-      "note": "As built: the ASCII apostrophe reads as a quote marker (hasUntrustedSpanMarker), so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress."
+      "note": "Restaged under the owner decision of 2026-11-26 (A6.3 contraction note): a letter-flanked ASCII or U+2019 apostrophe is no longer an untrusted-span marker in the consent-answer structural check, so this reply reaches the classifier. Gold unchanged."
     },
     {
       "id": "ca-156",
@@ -3786,7 +3786,7 @@
       "question": "Shall I send a request about {주제} to Claude? (yes/no)",
       "reply": "don't",
       "gold": "no",
-      "stage": "structural-fail",
+      "stage": "classifier",
       "origin": "drafted",
       "category": "no",
       "context": {
@@ -3798,7 +3798,7 @@
           "topic": "office relocation"
         }
       },
-      "note": "As built: the ASCII apostrophe reads as a quote marker (hasUntrustedSpanMarker), so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress."
+      "note": "Restaged under the owner decision of 2026-11-26 (A6.3 contraction note): a letter-flanked ASCII or U+2019 apostrophe is no longer an untrusted-span marker in the consent-answer structural check, so this reply reaches the classifier. Gold unchanged."
     },
     {
       "id": "ca-157",
@@ -9970,7 +9970,7 @@
       "question": "I'll send {count} Slack messages to Claude to summarise them. Shall I send them? (yes/no)",
       "reply": "don’t",
       "gold": "no",
-      "stage": "structural-fail",
+      "stage": "classifier",
       "origin": "drafted",
       "category": "no",
       "context": {
@@ -9987,7 +9987,7 @@
           ]
         }
       },
-      "note": "As built: the typographic apostrophe U+2019 (a \\p{Pf} glyph) reads as a quote marker (hasUntrustedSpanMarker, QUOTE_GLYPH), like the ASCII one, so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress. Owner / ADR question (A6-S4 review round 1): QUOTE_GLYPH is shared with the summary-grant rule; precedent nlWithoutInlineQuotes (contractions)."
+      "note": "Restaged under the owner decision of 2026-11-26 (A6.3 contraction note): a letter-flanked ASCII or U+2019 apostrophe is no longer an untrusted-span marker in the consent-answer structural check, so this reply reaches the classifier. Gold unchanged."
     },
     {
       "id": "ca-414",
@@ -9996,7 +9996,7 @@
       "question": "Shall I send a request about {주제} to Claude? (yes/no)",
       "reply": "that’s fine",
       "gold": "yes",
-      "stage": "structural-fail",
+      "stage": "classifier",
       "origin": "drafted",
       "category": "positive",
       "context": {
@@ -10008,7 +10008,7 @@
           "topic": "vendor shortlist"
         }
       },
-      "note": "As built: the typographic apostrophe U+2019 (a \\p{Pf} glyph) reads as a quote marker (hasUntrustedSpanMarker, QUOTE_GLYPH), like the ASCII one, so the structural checks cancel the reply before the classifier; a recorded usability cost, never an egress. Owner / ADR question (A6-S4 review round 1): QUOTE_GLYPH is shared with the summary-grant rule; precedent nlWithoutInlineQuotes (contractions)."
+      "note": "Restaged under the owner decision of 2026-11-26 (A6.3 contraction note): a letter-flanked ASCII or U+2019 apostrophe is no longer an untrusted-span marker in the consent-answer structural check, so this reply reaches the classifier. Gold unchanged."
     }
   ]
 }

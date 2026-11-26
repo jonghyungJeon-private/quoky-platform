@@ -305,6 +305,15 @@ describe('A6-S1 the structural checks and the caps (A6.3 step 1, a6-05)', () => 
   });
 });
 
+describe('A6.3 contraction note: consentReplyShape', () => {
+  it.each(["don't", 'don\u2019t', "that's fine", 'that\u2019s fine'])('%s reaches the classifier stage', (text) => {
+    expect(consentReplyShape({ text })).toEqual({ kind: 'answer', lines: 1 });
+  });
+  it.each([`don't "x"`, "'don't'", "don''t", "응'응", 'don\u2018t', "it's www.x.io"])('%s stays a structural failure', (text) => {
+    expect(consentReplyShape({ text })).toEqual({ kind: 'structural-fail', lines: 1 });
+  });
+});
+
 describe('A6-S1 the NFKC fast path (A6.3 step 2) for both consents', () => {
   it.each([
     ['응', 'yes'], ['네', 'yes'], ['예', 'yes'], ['yes', 'yes'], ['YES', 'yes'], ['Yes', 'yes'], ['응.', 'yes'], ['네!', 'yes'], ['응~', 'yes'], ['응?', 'yes'], ['  응  ', 'yes'],

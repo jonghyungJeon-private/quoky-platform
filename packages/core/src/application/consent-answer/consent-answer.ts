@@ -141,7 +141,7 @@ export function consentReplyShape(turn: Pick<ConsentReplyTurn, 'text' | 'attachm
   if (lines > CONSENT_REPLY_MAX_LINES || Array.from(turn.text.trim()).length > CONSENT_REPLY_MAX_CHARS) return { kind: 'over-caps' };
   if (FORMAT_CHARACTER.test(turn.text) || (turn.attachmentCount ?? 0) > 0) return { kind: 'structural-fail', lines };
   const prepared = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
-  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text)) return { kind: 'structural-fail', lines };
+  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text, { contractions: true })) return { kind: 'structural-fail', lines };
   return { kind: 'answer', lines };
 }
 

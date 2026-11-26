@@ -5,7 +5,7 @@ ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-1
 다시 본다). 이후 코퍼스를 고치면 sha256이 바뀌고 새 승인이 필요하다. 승인 뒤에도 run마다 소유자 알림과 yes가 따로 필요하다.
 
 - 코퍼스: `packages/core/src/application/golden/nl-consent-answer.v1.json`
-  (sha256 `50799580e3bf45847276fc5711d64cf311940d320b65e95e4ee4223ec0e74238`, 수정하면 바뀌고 새 승인이 필요하다)
+  (sha256 `901cc4891fd03184654eaee86ce646c814e637fb21158ff2cb29294ed367290f`, 수정하면 바뀌고 새 승인이 필요하다)
 - 결정적 검사(실제 Core 사용, 모델 없음): `packages/core/src/application/consent-answer/consent-answer.corpus.test.ts`.
   단계는 손으로 옮긴 규칙이 아니라 실제 `ConversationRuntime`의 `handleConsentGate`(그 안의 `isConsentControlTurn`,
   production turn handler 묶음에 대한 `turnHandlerClaims`)와 실제 `ConsentTurnGate`로 정한다.
@@ -18,15 +18,15 @@ ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-1
 
 | 범주 | 전체 | classifier 단계 | 그 밖의 단계 | 최소(classifier 단계) |
 |---|---|---|---|---|
-| positive (gold `yes`) | 88 | 86 | structural-fail 2 | 80 |
-| no (gold `no`) | 75 | 64 | fast-path 8, structural-fail 3 | 60 |
+| positive (gold `yes`) | 88 | 88 | — | 80 |
+| no (gold `no`) | 75 | 67 | fast-path 8 | 60 |
 | non-answer (gold `other`) | 130 | 106 | control-forfeit 14, handler-claimed 9, structural-fail 1 | 100 (r-03 (2)) |
 | yes-and-more | 54 | 43 | handler-claimed 7, control-forfeit 4 | 40 (r-03 (2)) |
 | unclear | 24 | 24 | — | 20 |
 | adversarial | 43 | 11 (gold `other`) | structural-fail 25, fast-path 7 | 40 (전체) |
 
 gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
-단계별: classifier 334, structural-fail 31, control-forfeit 18, handler-claimed 16, fast-path 15. classifier 단계가 아닌 80건은 실제
+단계별: classifier 339, structural-fail 26, control-forfeit 18, handler-claimed 16, fast-path 15. classifier 단계가 아닌 75건은 실제
 런타임이 분류기를 부르지 않는다. 테스트가 그 사실을 고정하므로 eval에서는 호출하지 않는다.
 
 - `handler-claimed`(리뷰 1차에서 추가한 단계): 등록된 turn handler의 `surfaceClaim`이 가져가는 답이다. 운영에서는 분류기 호출 전에
@@ -90,10 +90,10 @@ remote arm은 실제 provider가 선언한 stronger tier(`supportsStrongerIntent
 1. **코퍼스 승인(Strict). 결정됨(2026-11-26, "요약 기준 승인").** 414건 승인, `status: "approved"`, sha256을 위에 고정했다.
 2. **apostrophe가 인용 표시로 읽히는 문제(발견 사항, owner / ADR 질문).** ASCII `'`와 typographic `’`(U+2019) 모두
    `hasUntrustedSpanMarker`의 `QUOTE_GLYPH`에 걸린다. 그래서 "don't", "that's fine", "don’t", "that’s fine"은 구조 검사에서 취소되고
-   분류기까지 가지 않는다(ca-106, ca-155, ca-156, ca-413, ca-414). 송출이 없는 fail-closed 동작이지만 영어 축약형 답을 쓸 수 없다.
-   `QUOTE_GLYPH`는 summary-grant 규칙과 공유하므로 고치면 그 규칙도 바뀐다. 선례는 `nlWithoutInlineQuotes({ contractions: true })`다.
-   이번 수정에서는 운영 코드를 바꾸지 않았다.
-   **결정됨(2026-11-26): 소유자가 축약형을 고치는 별도 slice로 진행하기로 했다. 이번에는 하지 않았고 대기 중이다.**
+   분류기까지 가지 않았다(ca-106, ca-155, ca-156, ca-413, ca-414).
+   **결정됨(2026-11-26): 소유자가 축약형을 고치는 별도 slice로 진행하기로 했다. 구현됐다(DECISIONS "A6.3 contraction note").**
+   consent 답의 구조 검사에서만, 영문자 사이에 낀 apostrophe(ASCII `'` 또는 U+2019) 하나는 단독으로는 표지가 아니다.
+   summary-grant 규칙은 그대로다. 위 5건은 classifier 단계로 옮겼다(라벨 변경 없음). sha256은 위 값이다(이 결정으로 새로 고정, 소유자가 미리 승인한 재배치).
 3. **local arm의 production 배선.** 현재 A6-S2 adapter는 stronger tier를 선언하지 않은 provider에 대해 `unclear`를 반환한다.
    eval은 local 모델을 분류기로 측정하지만, local arm이 통과해 채택되면 adapter와 라우팅 변경이 별도로 필요하다(a6-12 재게이트 포함).
 4. **비용 순서. 결정됨(2026-11-26).** local arm(0 %)을 먼저 돌린다. remote는 local이 실패할 때만, 새 소유자 알림 뒤에 돌린다

@@ -37,8 +37,8 @@ import { ConsentTurnGate } from './consent-turn-gate';
  */
 
 const CORPUS_FILE = new URL('../golden/nl-consent-answer.v1.json', import.meta.url);
-/** Moves with ANY byte of the corpus (owner edits included); the frozen value goes into the measurement note after the owner review. */
-const CORPUS_SHA256 = '50799580e3bf45847276fc5711d64cf311940d320b65e95e4ee4223ec0e74238';
+/** The sha256 of the owner-approved corpus (approved 2026-11-26; restaged for the contraction decision under that approval). Any edit moves it and needs a new owner approval. */
+const CORPUS_SHA256 = '901cc4891fd03184654eaee86ce646c814e637fb21158ff2cb29294ed367290f';
 
 type Stage = 'classifier' | 'structural-fail' | 'fast-path' | 'control-forfeit' | 'handler-claimed';
 interface CorpusCase {
@@ -298,12 +298,12 @@ describe('A6-S4 consent-answer corpus: every stage is what the real pipeline doe
   });
 });
 
-describe('A6-S4 consent-answer corpus: the apostrophe finding (owner / ADR question, production unchanged)', () => {
-  it('a contraction with the ASCII or the typographic apostrophe (U+2019) is cancelled structurally, never sent to the classifier', () => {
+describe('A6-S4 consent-answer corpus: the contraction note (owner decision 2026-11-26)', () => {
+  it('a contraction with the ASCII or the typographic apostrophe (U+2019) is not a structural failure: it reaches the classifier', () => {
     const apostrophes = CASES.filter((c) => /[A-Za-z]['\u2019][A-Za-z]/u.test(c.reply));
     expect(apostrophes.filter((c) => c.reply.includes('\u2019')).map((c) => c.reply).sort()).toEqual(['don\u2019t', 'that\u2019s fine']);
     expect(apostrophes.filter((c) => c.reply.includes("'")).length).toBeGreaterThanOrEqual(3);
-    expect(apostrophes.filter((c) => c.stage !== 'structural-fail').map((c) => c.id)).toEqual([]);
+    expect(apostrophes.filter((c) => c.stage !== 'classifier').map((c) => c.id)).toEqual([]);
   });
 });
 
