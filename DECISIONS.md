@@ -19315,7 +19315,7 @@ Quoky would read.
    request: a `grounded` answer over mail or Drive items reads `REMOTE_ON_SUMMARY_REQUEST` as `LOCAL_MODEL_ONLY` and runs
    on a `LOCAL` provider (A2-D6). A topic from a mail subject or a Drive file name needs its own ADR-0121 amendment
    (A2-D11).
-   *Amended by ADR-0121 A8 (RATIFIED 2026-11-26, behind `QUOKY_ITEM_SUMMARY_CONSENT`, default off):* the D7 read on explicit request is itself the consent
+   *Amended by ADR-0121 A8 (RATIFIED 2026-11-26, behind `QUOKY_ITEM_SUMMARY_CONSENT`, default off):* the D7 summary request is itself the consent
    for the owner's chosen chat model, and the reply ends with a fixed recipient line; an unexpected `REMOTE` recipient gets the rule-① question first. D7
    as built until the flag is on.
 8. **Injection.** Handler decisions are taken from the owner's text only; mail or document content never changes routing
@@ -39170,7 +39170,7 @@ of the shared store (CS-2), the SR-1 corpus harness switch (CS-3).
   ARCHITECTURE.md §8; it will follow the ratified A2 continuation shape (no M1 or M1', re-executes the declared READ); no
   architecture text change proposed. C4: the A5-S3 stopgap said "the confirm slice replaces this guard"; the token check does,
   and is stricter (every label, mail and Drive included).
-  *Superseded by ADR-0121 A8 (2026-11-26):* once `QUOKY_ITEM_SUMMARY_CONSENT` is on, the C1 live-path exemption no longer applies to the live item summaries.
+  *Amended by ADR-0121 A8 (2026-11-26):* once `QUOKY_ITEM_SUMMARY_CONSENT` is on, the C1 live-path exemption no longer applies to the live item summaries.
 - **Class-A precedent choices (the owner may veto).** One asking step per plan (W2); `{remote}` is the product name ("Claude",
   the owner's own example); silent cancel on the ordinary path (ADR-0120 D7); the fixed expired line (ADR-0112 lapsed step);
   flag default off (A5-S1 / A6-S1 / A4 flags); the rerun as a separate delivered turn (AM-2 "a new turn"). The last three are for
@@ -40005,10 +40005,13 @@ as built, byte-identical, until A8.10 (flag off: no question, no recipient line;
 
 ### A8.3 The expected recipient (fail-closed)
 
-a. The expected recipient is the provider the owner's chat-tier setting names: the owner's explicit choice, or the configured default when the owner never
-   changed it (the default the owner runs with counts as chosen). It is not Quoky's fallback order. A selection that falls back (for example the owner
+a. Provider selection is session override, then operations-UI default, then `QUOKY_CHAT_PROVIDER`, then the derived default
+   (`apps/quoky/src/chat-provider-composition.ts`). The expected identity is the **first owner-set layer** (session override, ops-UI default or
+   `QUOKY_CHAT_PROVIDER`). If none is set, the derived default counts as expected **only while it is the Claude CLI** (the provider the owner logged in
+   to; HTTP API vendors need opt-in, ADR-0115). Any change to the derived default makes it unexpected until a Strict step approves it. It is not
+   Quoky's fallback order. A selection that falls back (for example the owner
    chose a LOCAL model that is not ready, so selection lands on the Claude CLI, `REMOTE`), and any other `REMOTE` provider, is **unexpected**.
-b. The comparison uses the provider identity (the owner-selected provider key), not only the display label, AND requires the display label (the same one
+b. The comparison uses the expected identity of (a) (the provider key), not only the display label, AND requires the display label (the same one
    `apps/quoky/src/agent/summary-recipient-label.ts` uses for the rule-① question) to match. A label alone never makes a recipient expected.
 c. The identity is re-checked immediately before the summary call and again before its one ADR-0104 regeneration, with no fallback selection in between.
    Any mismatch, an unnamed label (a question cannot name it), or a change between the checks sends nothing (the deterministic fallback text; no remote
@@ -40023,8 +40026,9 @@ provider's display label only, for example "· Claude로 요약" / "· summarise
 model output. It appears on a regenerated summary too, and never on a deterministic fallback (no model call happened) or a `LOCAL` summary.
 
 **A8.4a Scoped exception to "never surface the selected provider".** `AGENTS.md` line 23 and `ARCHITECTURE.md` §12 keep the default (the selected provider
-is audit information, not shown). The recipient line and the rule-① consent question (which names the recipient) are the only added exceptions
-(ADR-0121 A2 already has one for its egress prompt). The owner approved the recipient display by choosing that option on 2026-11-26.
+is audit information, not shown). Two separate things: (a) a consent question names its recipient under SR-1 rule ①, A5, A8.5 and A8.6, with no flag
+(the agent M2 question already names it, e.g. "Claude에 보내"; ADR-0121 A2 has the same for its egress prompt); (b) the A8.4 recipient line is the only
+part behind `QUOKY_ITEM_SUMMARY_CONSENT` and the only part the owner approved on 2026-11-26 (option text "답 끝에 받는 쪽 표시").
 
 ### A8.5 Question for an unexpected recipient
 
@@ -40043,10 +40047,9 @@ for the expected `REMOTE` recipient (the question is the consent). `LOCAL`: as b
 
 ### A8.7 Amended clauses
 
-1. **Rule ① (SR-1 owner decision ①, this file at the SR-1 section):** pointer appended there: "A8 governs every `REMOTE` SUMMARIZATION call in live item
-   summaries (mail item/thread, Drive file, Jira issue, Slack message/thread; the D8 lookup via A5-S6), behind `QUOKY_ITEM_SUMMARY_CONSENT`. The owner's
-   explicit request is the consent for the expected recipient (recipient line); the question is asked for an unexpected `REMOTE` recipient; D8 asks
-   (listing plus question) when `REMOTE`."
+1. **Rule ① (SR-1 owner decision ①, this file at the SR-1 section):** pointer appended there (at ~34446): "*Amended by ADR-0121 A8 (2026-11-26):* for the live non-agent item summaries, behind
+   `QUOKY_ITEM_SUMMARY_CONSENT`, the owner's explicit request is the consent for the expected recipient; the question is asked for an unexpected `REMOTE`
+   recipient (see A8)."
 2. **ADR-0118 D7 item 7:** an "*Amended by ADR-0121 A8*" note on item 7 (the D7 read on explicit request): behind the flag, before a `REMOTE` call, an
    expected recipient needs no question and the reply ends with the recipient line; an unexpected `REMOTE` recipient gets the A8.5 question and nothing
    is sent until the yes; `LOCAL` needs nothing; an unnamed or changed recipient or item, or a refused re-read, sends nothing. **GML-2 item 1** "(D7
@@ -40057,7 +40060,7 @@ for the expected `REMOTE` recipient (the question is the consent). `LOCAL`: as b
 5. **A6.2 "Covered":** plus A8 item summaries. Same pending type, no origin field (AM-1). The consent-answer classifier is used only for the A8.5 and A8.6 questions.
 6. **`ARCHITECTURE.md` (applied with this record):** §10 keeps the A5 LOW row as it was and gets a separate A8 LOW row; the rule-① paragraph is extended to the
    A8.5/A8.6 summary call and its one regeneration; a new A8 sentence paragraph is added; §12 gets the A8.4a exception. `AGENTS.md` line 23 gets the same exception.
-7. **Not amended:** ADR-0110 D4 (the agent M2 consent question for calendar, Jira, Slack, Confluence and GitHub stays, A5); the A5 provider rules
+7. **Not amended:** ADR-0110 D4 (the agent M2 consent question for mail, Drive (SR-1 rule ① itself), calendar, Jira, Slack, Confluence and GitHub stays, A5); the A5 provider rules
    (no-training, no HTTP API vendor without opt-in, A5 R1 item 3); the ADR-0118 D7 and ADR-0120 amendment A6 R2 rate limits; and the A6 R2 D6 vendor
    exclusion (`QUOKY_WORK_TEXT_VENDOR_ALLOWED`) still applies (item 3 only adds the A8 condition).
 8. **In-place pointers** ("*Amended by ADR-0121 A8*" one-line additions directly under the clause): rule ① (SR-1), ADR-0118 D7 item 7, GML-2 item 1, A5.4
