@@ -344,4 +344,3 @@ export async function listingOf(items: readonly ConnectorItem[]): Promise<string
   const out = await desk.handle({ kind: 'lookup', source: 'jira', query: 'my-items' }, OWNER);
   return out.kind === 'reply' ? out.text : '';
 }
-
