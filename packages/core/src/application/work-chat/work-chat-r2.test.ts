@@ -444,6 +444,17 @@ describe('WorkChatTurnHandler.handleSelected item.summarize (A6 R2)', () => {
     expect(footer).toContain('PROJ-12 → NEW-3으로 옮겨졌어요.');
     expect(footer).toContain('목록 이후 수정됨');
   });
+
+  it('A8 OQ1-1: a summary carries an ids-only consent descriptor (thread noun for a Slack thread); full carries none', async () => {
+    const { h } = handler({});
+    const jira = await h.handleSelected(selected('jira'), ctxOf(DM));
+    if (jira === null || jira.kind !== 'summarize') throw new Error('expected summarize');
+    expect(jira.consent).toMatchObject({ source: 'jira', itemId: 'PROJ-12:10012', language: 'ko', redo: { selection: { entryId: 'item.summarize', args: { mode: 'summary' }, target: { source: 'jira', id: 'PROJ-12:10012', label: 2 } } } });
+    expect(Object.keys(jira.consent ?? {}).sort()).toEqual(['itemId', 'language', 'redo', 'source']);
+    const full = await h.handleSelected(selected('jira', { mode: 'full' }), ctxOf(DM));
+    expect(full).not.toHaveProperty('consent');
+    expect(full).not.toHaveProperty('kind');
+  });
 });
 
 describe('A6 R2 review fixes (handler)', () => {

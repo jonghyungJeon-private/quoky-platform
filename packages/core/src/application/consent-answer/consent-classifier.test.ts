@@ -258,8 +258,8 @@ describe('A6-S2 adapter', () => {
 });
 
 describe('A6-S2 closed sources', () => {
-  it('CONSENT_SOURCES is mail, drive and exactly AGENT_WORK_SUMMARY_SOURCES', () => {
-    expect([...CONSENT_SOURCES]).toEqual(['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES]);
+  it('CONSENT_SOURCES is mail, drive, exactly AGENT_WORK_SUMMARY_SOURCES, then the two A8 thread nouns', () => {
+    expect([...CONSENT_SOURCES]).toEqual(['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES, 'mail-thread', 'slack-thread']);
   });
 });
 

@@ -6,6 +6,7 @@ import type {
   TurnHandlerOutcome,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
+import { itemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
 import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
@@ -294,6 +295,15 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
       history,
       nlAction: executed,
       participants: workItemParticipants(item),
+      consent: itemSummaryConsentDescriptor({
+        handlerId: this.id,
+        source: source === 'slack' && scope === 'thread' ? 'slack-thread' : source,
+        itemId: itemRef,
+        language,
+        ...(scope === 'thread' ? { thread: true } : {}),
+        ...(target.label !== undefined ? { label: target.label } : {}),
+        ...(target.listingAt !== undefined ? { listingAt: target.listingAt } : {}),
+      }),
     };
   }
 

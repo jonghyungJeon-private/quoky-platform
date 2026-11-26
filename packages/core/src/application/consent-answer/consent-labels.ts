@@ -15,7 +15,7 @@ export type ConsentAnswerLabel = (typeof CONSENT_ANSWER_LABELS)[number];
  * whose content a summary can be granted for (`REMOTE_ON_SUMMARY_REQUEST`: mail, Drive; the five work sources, A5-S3). Anything
  * else is refused when the pending step is minted, so no free text reaches the classifier question.
  */
-export const CONSENT_SOURCES = ['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES] as const;
+export const CONSENT_SOURCES = ['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES, 'mail-thread', 'slack-thread'] as const;
 export type ConsentSource = (typeof CONSENT_SOURCES)[number];
 
 export function isConsentSource(value: unknown): value is ConsentSource {

@@ -308,6 +308,44 @@ export class ProviderSelectionService implements ProviderSelectionPolicy {
   }
 
   /**
+   * ADR-0121 amendment A8.3 (OQ1-1): the EXPECTED recipient key of a chat-tier request, as data for the Core recipient
+   * comparison (`recipientVerdict`). Synchronous, never throws, any doubt is `undefined` (nothing is then expected).
+   *
+   * - The first OWNER-SET layer (session override, operations-UI default, `QUOKY_CHAT_PROVIDER`) names its provider's key.
+   *   An owner-set layer skipped because it cannot run here (`ignored`) makes the whole answer `undefined`: the owner's
+   *   choice did not run, so whoever serves the request is not what they chose (A8.3a, fallback is unexpected). This is
+   *   deliberately NOT `ownerSelectedKey` (ADR-0116 D3), which names the next resolvable layer after a skipped one.
+   * - With no owner-set layer, the derived default counts only while it is the Claude CLI (`catalog.claude`; the provider the
+   *   owner logged in to). A derived Ollama layer that cannot run on this host falls to `catalog.claude` with no owner layer
+   *   skipped: that is the derived default and it is expected (orchestrator ruling c). A derived default that is any other
+   *   provider is `undefined`.
+   * - `undefined` for a capability outside the chat tier, a locality-constrained request, a write in flight for the scope
+   *   and a scope whose override is not mirrored (the same fail-closed rules as {@link isEligible}).
+   * - The A6 R2 work-text vendor exclusion is NOT applied: the key stays the owner's vendor, so the Claude CLI that serves a
+   *   work-text request compares as unexpected (A8.3d).
+   */
+  expectedRecipientKey(capability: Capability, context: ProviderSelectionContext): string | undefined {
+    try {
+      if (!CHAT_TIER.has(capability) || context.requiredLocality !== undefined) return undefined;
+      let session: SessionSelection = {};
+      if (context.sessionId !== undefined && context.actorId !== undefined) {
+        const key = overrideKey({ sessionId: context.sessionId, actorId: context.actorId });
+        if ((this.pendingWrites.get(key) ?? 0) > 0) return undefined;
+        const mirrored = this.overrides.get(key);
+        if (mirrored === undefined) return undefined;
+        session = mirrored;
+      }
+      const chat = this.chatFromLayers(session);
+      if (chat.ignored.some((source) => isOwnerSelectionSource(source))) return undefined;
+      if (isOwnerSelectionSource(chat.source)) return chat.provider.id;
+      if (chat.source === 'default' && chat.provider === this.deps.catalog.claude) return this.deps.catalog.claude.id;
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * ADR-0124 Part L C5a-2 (P2d): under `requiredLocality: 'LOCAL'` only a SUMMARIZATION request may run, and only on the
    * long-item provider; the owner's chat selection, the `OLLAMA_MODEL` instance and every on-demand model stay excluded.
    */

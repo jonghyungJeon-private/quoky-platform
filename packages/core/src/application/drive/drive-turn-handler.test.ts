@@ -413,7 +413,8 @@ describe('Drive turn handler (ADR-0118 D4–D8, DRV-1)', () => {
     expect(exports).toEqual(['x1']);
     expect(calls.length).toBe(1);
     if (outcome?.kind !== 'summarize') throw new Error('expected summarize');
-    expect(Object.keys(outcome).sort()).toEqual(['fallbackText', 'footer', 'kind', 'readout']);
+    expect(Object.keys(outcome).sort()).toEqual(['consent', 'fallbackText', 'footer', 'kind', 'readout']);
+    expect(outcome.consent).toMatchObject({ source: 'drive', itemId: 'x1', language: 'ko', redo: { handlerId: 'drive', selection: { entryId: 'item.summarize', args: { mode: 'summary' } } } });
   });
 
   it('logs no file name, text or query', async () => {

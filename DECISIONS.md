@@ -40279,3 +40279,24 @@ removed it; reinstated on purpose). Tests: a form-a turn without A7 facts under 
 
 Correction to the round-5 residual row: a missing boot id is NOT the dormant default. The composition root (`apps/quoky/src/features/agent.providers.ts`) always wires
 `bootId: randomUUID()`; the missing case occurs only in the `bootId: null` test, which keeps the running-only check. A7-S5 gate: make `bootId` REQUIRED in the proposal dep type.
+### ADR-0121 A8 — OQ1-1 implementation note (2026-11-26)
+
+OQ1-1 (core and apps resolver, nothing calls it, no runtime effect) is implemented. Orchestrator rulings (J1), recorded here without editing the A8 text:
+
+- **(b) Pointer correction.** A8.3a points at `apps/quoky/src/chat-provider-composition.ts` for the selection precedence. The precedence lives in
+  `apps/quoky/src/provider-selection/provider-selection-service.ts` `chatFromLayers` (session override, operations-UI default, `QUOKY_CHAT_PROVIDER`, derived default,
+  then `catalog.claude`). The semantics A8.3a describes are unchanged.
+- **(c) Derived default in two stages.** When nothing is owner-set and the derived Ollama layer cannot run on this host, selection falls to `catalog.claude` with no
+  owner layer skipped. That is the derived default and it is the Claude CLI, so it counts as EXPECTED (A8.3a literal). A derived default that is any other provider, and
+  any skipped owner-set layer (session, persisted, env), makes nothing expected. `ProviderSelectionService.expectedRecipientKey` does not reuse `ownerSelectedKey`
+  (ADR-0116 D3, which names the next resolvable layer after a skipped owner layer and would contradict A8.3a); a pinned change-detector test fails if the derived
+  default stops being `catalog.claude`.
+- **(d) For OQ1-2 (recorded only, not implemented here).** The recipient line (A8.4) also goes on the fixed notices shown after a completed REMOTE call (claim,
+  too-long, card-spoof, credential-withheld): the content left the host, and A8.1 says transparency replaces the question. It never goes on a reply where no call happened.
+
+Built: `ItemSummaryConsent` (`core/application/consent-answer/item-summary-consent.ts`: ask, owns, take, allows, spend, voidAll; at most 64 records; single-use token bound
+to the recipient key and label through a module-private `WeakMap`); `recipientVerdict` (`item-summary/expected-recipient.ts`); optional data-only
+`expectedRecipientKey` on `ProviderSelectionPolicy` and `ProviderSelector` with `CapabilityRouter` delegating; thread nouns `mail-thread` and `slack-thread` and
+`summary-consent-question.v2` (existing nouns unchanged; the version pin tests and the digest were updated); the ids-only `consent` descriptor on
+`TurnHandlerSummarizeReply` (filled for the mail item and thread, Drive and Jira/Slack single reads; never for `full`, never for D8); `renderItemSummaryRecipientLine`.
+`ItemSummaryConsent` is deliberately not exported from the application index (the consent-answer import boundary stays pinned); OQ1-2 adds the export.

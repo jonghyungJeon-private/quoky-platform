@@ -29,3 +29,7 @@ export {
   sheetLongItemText,
 } from './long-item';
 export type { LongItemSummaryInput } from './long-item';
+// ADR-0121 amendment A8 (OQ1-1, dormant): the expected-recipient comparison and the recipient line (the ids-only descriptor is `../item-summary-consent-descriptor`).
+export { recipientVerdict } from './expected-recipient';
+export type { RecipientVerdict } from './expected-recipient';
+export { renderItemSummaryRecipientLine } from './recipient-line';

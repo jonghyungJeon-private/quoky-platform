@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A8 OQ1-1 implemented, live effect none (2026-11-26, branch `claude/v5-oq1-1-core`)
+
+- Item-summary consent core (`ItemSummaryConsent`, key-and-label token), `recipientVerdict`, `expectedRecipientKey` (apps resolver plus the optional port methods and router delegation), thread nouns and `summary-consent-question.v2`, the ids-only `consent` descriptor on summarize outcomes, the recipient-line renderer. Nothing calls it; `QUOKY_ITEM_SUMMARY_CONSENT` does not exist yet (OQ1-2). Rulings (b)(c)(d) are in the `DECISIONS.md` OQ1-1 note.
+
 ### A7-S4b pick implemented, live effect none (2026-11-26, branch `claude/v5-a7-s4b-pick`)
 
 - The destination listing and pick (an owner-scoped read, fixed key order, never pre-selected, inert titles, pick by number only), the trust value

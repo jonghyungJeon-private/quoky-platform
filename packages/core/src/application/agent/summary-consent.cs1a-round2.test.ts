@@ -214,6 +214,6 @@ describe('round 2 (finding 5): the question template bytes are pinned next to th
       lines.push(renderSummaryConsentQuestion({ language, recipient: 'R', sources: SUMMARY_CONSENT_SOURCE_NAMES.map((source) => ({ source, count: 2 })) }));
     }
     const digest = createHash('sha256').update(lines.join('\n')).digest('hex');
-    expect({ version: SUMMARY_CONSENT_QUESTION_VERSION, digest }).toEqual({ version: 'summary-consent-question.v1', digest: 'e6372995413e548e888ab248505bdb8bc9c4f039ca83ad40bc18a22baf32fe65' });
+    expect({ version: SUMMARY_CONSENT_QUESTION_VERSION, digest }).toEqual({ version: 'summary-consent-question.v2', digest: '3463e80f787674f965c90f011c8b1160340cbd29121c63256d15cf6e3cc74cdc' });
   });
 });

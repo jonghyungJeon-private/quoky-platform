@@ -40,4 +40,9 @@ export interface ProviderSelector {
    * the live selection. Called immediately before `execute` with nothing awaited in between.
    */
   isStillEligible?(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean;
+  /**
+   * Optional, SYNCHRONOUS, data only (ADR-0121 amendment A8.3): the policy's expected recipient key for this request, or
+   * `undefined` (no policy, no such method, a throw or any doubt: nothing is expected).
+   */
+  expectedRecipientKey?(capability: Capability, context: ProviderSelectionContext): string | undefined;
 }

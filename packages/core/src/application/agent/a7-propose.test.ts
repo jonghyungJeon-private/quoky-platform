@@ -380,9 +380,9 @@ describe('A7-S4a rule ①: the destination clause (A7.5 step 4)', () => {
     expect(remote.requests).toHaveLength(0);
   });
 
-  it('is a new fixed version for the A7 draft only; summary-consent-question.v1 is unchanged', () => {
+  it('is a new fixed version for the A7 draft only; summary-consent-question.v2 is unchanged', () => {
     expect(DRAFT_CONSENT_QUESTION_VERSION).toBe('draft-consent-question.v1');
-    expect(SUMMARY_CONSENT_QUESTION_VERSION).toBe('summary-consent-question.v1');
+    expect(SUMMARY_CONSENT_QUESTION_VERSION).toBe('summary-consent-question.v2');
     expect(renderSummaryConsentQuestion({ language: 'ko', recipient: 'Remote Co', sources: [{ source: 'slack', count: 3 }] })).toBe('슬랙 메시지 3건을 Remote Co에 보내 요약할게요. 보낼까요? (응/아니)');
     expect(renderDraftConsentQuestion({ language: 'ko', recipient: 'Remote Co', source: 'slack', count: 3, destination: 'BE-123' })).toBe('Slack 메시지 3건을 Remote Co에 보내 BE-123 댓글 초안을 만들게요. 보낼까요? (응/아니)');
     expect(renderDraftConsentQuestion({ language: 'en', recipient: 'Remote Co', source: 'jira', count: 1, destination: 'BE-123' })).toBe("I'll send 1 Jira issue to Remote Co to draft a comment for BE-123. Shall I send it? (yes/no)");

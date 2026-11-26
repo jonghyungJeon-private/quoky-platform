@@ -452,7 +452,9 @@ describe('GML-2 thread summaries', () => {
     expect(outcome?.kind).toBe('summarize');
     if (outcome?.kind !== 'summarize') return;
     expect(outcome.readout.kind).toBe('untrusted-document');
-    expect(Object.keys(outcome).sort()).toEqual(['fallbackText', 'footer', 'kind', 'readout']);
+    expect(Object.keys(outcome).sort()).toEqual(['consent', 'fallbackText', 'footer', 'kind', 'readout']);
+    expect(outcome.consent).toMatchObject({ source: 'mail-thread', parts: { threadMessages: 2 }, language: 'ko', redo: { handlerId: 'mail', selection: { args: { mode: 'summary', scope: 'thread' } } } });
+    expect(JSON.stringify(outcome.consent)).not.toContain('송금');
   });
 
   it('DM-only: a numbered thread request in a channel is refused with nothing read; "이 스레드" there is left to the platform thread', async () => {

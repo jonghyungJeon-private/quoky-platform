@@ -429,7 +429,9 @@ describe('mail turn handler (ADR-0118 D4–D8)', () => {
     expect(gets).toEqual(['x1']);
     expect(searches.length).toBe(1);
     if (outcome?.kind !== 'summarize') throw new Error('expected summarize');
-    expect(Object.keys(outcome).sort()).toEqual(['fallbackText', 'footer', 'kind', 'readout']);
+    expect(Object.keys(outcome).sort()).toEqual(['consent', 'fallbackText', 'footer', 'kind', 'readout']);
+    // A8 OQ1-1: the descriptor holds ids and closed values only (no item text), and the handler id.
+    expect(outcome.consent).toEqual({ source: 'mail', itemId: 'x1', language: 'ko', redo: { handlerId: 'mail', selection: { entryId: 'item.summarize', args: { mode: 'summary' }, language: 'ko', target: { source: 'mail', id: 'x1' } } } });
   });
 
   it('logs no mail text, sender or query', async () => {

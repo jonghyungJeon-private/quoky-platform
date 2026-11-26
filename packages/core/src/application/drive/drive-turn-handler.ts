@@ -1,4 +1,5 @@
 import { nlLimitArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlSelectedCommand } from '../nl-routing/catalog';
+import { itemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import type {
@@ -291,6 +292,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
       readout: read.readout,
       fallbackText: renderDriveSummaryUnavailable(language),
       footer: renderDriveSummaryFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+      consent: itemSummaryConsentDescriptor({ handlerId: this.id, source: 'drive', itemId: file.id, language }),
       ...this.longItemOf(ctx, read, language),
     };
   }
@@ -351,6 +353,7 @@ export class DriveTurnHandler implements ConversationTurnHandler {
         readout: read.readout,
         fallbackText: renderDriveSummaryUnavailable(language),
         footer: renderDriveSummaryFooter(language, read.firstSheetOnly, this.deps.copy, read.hiddenSheets),
+        consent: itemSummaryConsentDescriptor({ handlerId: this.id, source: 'drive', itemId: id, language, ...(selected.target.label !== undefined ? { label: selected.target.label } : {}) }),
         ...this.longItemOf(ctx, read, language),
       };
     }
