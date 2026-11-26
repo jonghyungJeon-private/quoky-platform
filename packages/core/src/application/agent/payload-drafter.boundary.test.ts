@@ -40,7 +40,8 @@ describe('A7-S3 drafter boundary', () => {
     // A7-S4a: the propose step is itself reached only by the run service (behind the `writeProposal` dep, which the environment cannot
     // build while `active` is refused at startup), and by the index and the tests; no app, runtime or port imports it.
     const proposers = files.filter((file) => /from\s+['"][^'"]*a7-propose['"]/.test(readFileSync(file, 'utf8'))).map((file) => relative(ROOT, file));
-    expect(proposers.filter((file) => !file.endsWith('.test.ts'))).toEqual(['packages/core/src/application/agent/agent-run-service.ts', 'packages/core/src/application/agent/index.ts']);
+    // A7-S4b: the destination listing (`a7-destination.ts`, dormant, in the agent module) shares its fixed refusal lines and one outcome type (no draft function).
+    expect(proposers.filter((file) => !file.endsWith('.test.ts'))).toEqual(['packages/core/src/application/agent/a7-destination.ts', 'packages/core/src/application/agent/agent-run-service.ts', 'packages/core/src/application/agent/index.ts']);
   });
 
   it('names no provider family and no platform, storage or framework in code', () => {

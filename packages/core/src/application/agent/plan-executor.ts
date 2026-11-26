@@ -538,6 +538,49 @@ export class AgentPlanExecutor {
     }
   }
 
+  /**
+   * ADR-0121 amendment A7 (A7-S4b, A7.4b): the ONE owner-scoped READ behind a destination listing (e.g. the owner's open issues). It is a
+   * plain listing read: the same read port, the same budget and bounds and the same structure projection as any read, covered by NO summary
+   * and NO draft, so it fetches no body and makes no model call. It returns the rows' closed-format ids (the projection's slots) with each
+   * row's raw `title` member as untrusted text for the caller to render inert. The args are the entry's own (never a destination or a
+   * value from content). Total: never throws.
+   */
+  async listDestinationRows(
+    entryId: NlWave1EntryId,
+    args: NlArgs,
+    options: { readonly budget?: AgentRunBudget; readonly signal?: AbortSignal; readonly stillRunning?: () => Promise<boolean> } = {},
+  ): Promise<{ readonly kind: 'ok'; readonly rows: readonly { readonly id: string; readonly title?: unknown }[] } | { readonly kind: 'not-run'; readonly reason: AgentStepNotRunReason } | { readonly kind: 'failed' }> {
+    try {
+      const budget = options.budget ?? new AgentRunBudget(this.deps.elapsed ?? Date.now, this.deps.bounds);
+      const reader = this.deps.readers[entryId];
+      if (reader === undefined || !(entryId in AGENT_READ_SOURCES)) return { kind: 'not-run', reason: 'no-reader' };
+      const aborted = (): boolean => options.signal?.aborted === true;
+      if (aborted()) return { kind: 'not-run', reason: 'stopped' };
+      if (options.stillRunning !== undefined) {
+        if (!budget.checkWall()) return { kind: 'not-run', reason: 'bound' };
+        const probe = await stillRunningWithinWall(options.stillRunning, budget);
+        if (probe === 'wall') return { kind: 'not-run', reason: 'bound' };
+        if (probe === 'stopped' || aborted()) return { kind: 'not-run', reason: 'stopped' };
+      }
+      if (!budget.reserveStep() || !budget.mayReadConnector()) return { kind: 'not-run', reason: 'bound' };
+      const response = await this.callPort(reader, { entryId, args }, budget, options.signal);
+      if (response === 'wall') return { kind: 'not-run', reason: aborted() ? 'stopped' : 'bound' };
+      budget.checkWall();
+      if (budget.breach !== undefined) return { kind: 'not-run', reason: 'bound' };
+      if (!response.ok) return response.code === 'BOUND' ? { kind: 'not-run', reason: 'bound' } : { kind: 'failed' };
+      const projection = projectStructure(entryId, response.items);
+      const rows: { id: string; title?: unknown }[] = [];
+      projection.slots.forEach((id, index) => {
+        if (id === undefined) return;
+        const item = response.items[index] as { readonly title?: unknown } | undefined;
+        rows.push({ id, ...(item !== undefined && item !== null && typeof item === 'object' && 'title' in item ? { title: item.title } : {}) });
+      });
+      return { kind: 'ok', rows };
+    } catch {
+      return { kind: 'failed' };
+    }
+  }
+
   private async runRead(
     step: ReadStep,
     number: number,

@@ -13,15 +13,19 @@ import { isNlCatalogEntryId, isNlWave1EntryId, type NlArgs, type NlCatalogEntry,
 import { nlSameEgress } from '../nl-routing/selection-egress';
 import { nlSelectionMeaning } from '../nl-routing/selection-meaning';
 import { prepareSelectionInput } from '../nl-routing/selection-input';
-import { runA7ProposeStep, type A7ProposeOutcome } from './a7-propose';
-import type { AgentCrossWriteContext } from './cross-write';
+import { runA7ProposeStep, A7_NOT_MADE_LINE, AGENT_A7_AUDIT_EVENT, type A7ProposeOutcome } from './a7-propose';
+import { A7_PICK_EXPIRED, A7_PICK_OUT_OF_RANGE, parsePendingA7Pick, resolveA7Pick, type A7FrozenOwnerText, type PickedA7Destination } from './a7-pick';
+import { rebuildA7SourceRead, runA7DestinationListing, type A7ListingOutcome, type A7PickTemplate } from './a7-destination';
+import { readA7State, withA7State, type A7ActorState, type A7CardRecord } from './held-receipt-store';
+import { HELD_RECEIPT_MAX_ITEMS, bindHeldReceipt, buildHeldReceipt, carryOverReceipt, type HeldCardClosure, type HeldReceipt, type HeldReceiptHasher } from './held-receipt';
+import { AGENT_A7_TARGETS, type AgentCrossWriteContext } from './cross-write';
 import type { ValidatedCrossWritePlan } from './cross-write-validator';
 import { checkPlannerInputs, plannerPromptCanaryHit, untrustedCanariesOf, type AgentWorkSummarySource } from './flow-policy';
 import { splitHelpClause, type AgentHelpSplit } from './help-split';
 import { AGENT_PLAN_PROMPT_VERSION, buildAgentPlanPrompt } from './plan-prompt';
 import { AgentPlanExecutor, type AgentReadPorts, type AgentRunResult } from './plan-executor';
 import { agentPlanParseFailure, parseAgentPlanOutput, type AgentPlan } from './plan-schema';
-import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext } from './plan-validator';
+import { AGENT_PLAN_SUMMARY_SCHEMAS, validateAgentPlan, type AgentPlanValidation, type AgentPlanValidationContext, type ValidatedAgentStep } from './plan-validator';
 import { agentReadWriteProbeClauses } from './read-write-probe';
 import { assembleAgentReply, type AssembledAgentReply } from './reply-assembler';
 import { a6InPlanGuidance, type AgentStepsPlan } from './reply-notes';
@@ -152,6 +156,26 @@ export interface AgentActiveTurn {
    * owner. Set by the runtime. `true`: a step that would ask stays listing-only (`consent-owner-step-open`).
    */
   readonly ownerStepPending?: boolean;
+  /**
+   * ADR-0121 A7 (A7-S4b, dormant): the A7 facts of this owner turn, set by the runtime only when it wants A7 state used (it needs
+   * `conversationKey`). Absent: no receipt is bound and no pick is pending, exactly as before.
+   */
+  readonly a7?: A7TurnFacts;
+}
+
+/**
+ * A7-S4b: what the runtime tells the agent about the A7 state of one owner DM turn. The state is `Session.metadata['quoky.heldReceipt']`
+ * as stored (`held-receipt-store.ts`); the agent returns the next value and never saves it (no new `ConversationRuntimeDeps` key, no migration).
+ */
+export interface A7TurnFacts {
+  /** The stored value of `Session.metadata['quoky.heldReceipt']`, as is (or absent). */
+  readonly state?: unknown;
+  /** This owner message's id. */
+  readonly turnId: string;
+  /** The owner turn immediately before this one in this conversation (a7-05: the immediately previous turn only). */
+  readonly previousTurnId?: string;
+  /** The A6 `yes-and-more` re-run facts of this message (A7.4c item 1); `isYesAndMoreRerun` decides. */
+  readonly rerun?: { readonly messageId: string; readonly marker: boolean };
 }
 
 /**
@@ -166,8 +190,46 @@ export type AgentActiveOutcome =
   | { readonly kind: 'reply'; readonly reply: AssembledAgentReply; readonly outcome: 'complete' | 'partial'; readonly breach?: AgentBoundKind; readonly stopped?: true }
   | { readonly kind: 'one-step'; readonly plan: AgentStepsPlan }
   /** ADR-0121 A7 (A7-S4a, dormant): a cross-source write proposal came to a card, a question, a wait line or a fixed refusal. */
-  | { readonly kind: 'proposal'; readonly outcome: A7ProposeOutcome }
+  | {
+      readonly kind: 'proposal';
+      readonly outcome: A7ProposeOutcome | A7ListingOutcome;
+      /** A7-S4b: the next `Session.metadata['quoky.heldReceipt']` value, present only when this turn changed the A7 state. */
+      readonly a7State?: unknown;
+    }
   | { readonly kind: 'declined'; readonly reason: string };
+
+/** A7-S4b: the receipt bound to a turn; `ownerText` only for a carried (closed-card) receipt: the request that asked for the summary of its items. */
+interface A7BoundReceipt {
+  readonly receipt: HeldReceipt;
+  readonly ownerText?: A7FrozenOwnerText;
+}
+
+/** A7-S4b (dormant): one owner turn that may be the reply to a pending destination pick (`AgentRunService.continueA7Pick`). */
+export interface AgentA7PickTurn {
+  readonly text: string;
+  readonly actor: Actor;
+  readonly now: IsoTimestamp;
+  /** The offered catalog entries of this turn (the frozen source read must still be one of the READ entries). */
+  readonly entries: readonly NlCatalogEntry[];
+  readonly direct: boolean;
+  readonly sessionId?: Id;
+  /** The conversation the pick was asked in (`platform|spaceId|channelId|threadId`). */
+  readonly conversationKey: string;
+  readonly ownerStepPending?: boolean;
+  readonly a7: A7TurnFacts;
+}
+
+/**
+ * What a reply to a pending pick came to (closed values): `not-pending` (route the turn as usual); `cancelled` (single use: nothing was
+ * read; `text` is the fixed line to show for a number off the list or an expiry, none for any other reply, which the caller routes as an
+ * ordinary turn); `proposal` (the next listing, a card, a rule-① question or a fixed refusal); `declined` (nothing ran). Every kind but
+ * `not-pending` carries the next A7 state: the pending pick, and a frozen receipt with it, is gone.
+ */
+export type AgentA7PickOutcome =
+  | { readonly kind: 'not-pending' }
+  | { readonly kind: 'cancelled'; readonly reason: string; readonly text?: string; readonly a7State: unknown }
+  | { readonly kind: 'proposal'; readonly outcome: A7ProposeOutcome | A7ListingOutcome; readonly a7State: unknown }
+  | { readonly kind: 'declined'; readonly reason: string; readonly a7State: unknown };
 
 export interface AgentRunServiceDeps {
   readonly mode: AgentMode;
@@ -227,7 +289,16 @@ export interface AgentRunServiceDeps {
    * The composition root must NEVER set `askConsent` until that S4b continuation exists (a question with no way to answer it would leave
    * a dead pending step); a test pins that it is absent.
    */
-  readonly writeProposal?: { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly askConsent?: boolean };
+  readonly writeProposal?: {
+    readonly port: AgentWriteProposalPort;
+    readonly targets: readonly 'jira-comment'[];
+    readonly askConsent?: boolean;
+    /**
+     * A7-S4b: SHA-256 hex of a UTF-8 string, injected by the composition root (the agent module imports no `node:*`). Form b, the frozen
+     * receipt of a destination pick and the closed-card carry-over need it; without it none of them runs (fail closed).
+     */
+    readonly sha256Hex?: HeldReceiptHasher;
+  };
   /**
    * `active` only, rule ① (CS-1a, `QUOKY_SUMMARY_CONSENT=on`): the one process-wide store of pending consent steps. Present: a
    * summarize step that would send items to a `REMOTE` model asks first (the question, then a pending step in this store).
@@ -581,6 +652,12 @@ export class AgentRunService {
     const plan = parseAgentPlanOutput(planned.text);
     if (plan === null) return declined('malformed', { parse: agentPlanParseFailure(planned.text) ?? 'unknown', ...callFields });
     const offered = new Map(turn.entries.filter((entry) => entry.risk === 'READ').map((entry) => [entry.id, entry] as const));
+    // A7-S4b (dormant): the receipt bound to this owner turn, only with the proposal dep and the A7 facts; otherwise the static context, as before.
+    const a7Receipt = await this.boundA7Receipt(turn);
+    const crossWriteContext =
+      this.deps.crossWrite !== undefined && a7Receipt !== undefined
+        ? { ...this.deps.crossWrite, receipt: { fresh: true, sourceEntryId: a7Receipt.receipt.entryId, items: a7Receipt.receipt.itemIds.length, hostOnly: false, handoffBuilt: false } }
+        : this.deps.crossWrite;
     const validation = validateAgentPlan(plan, {
       offered,
       groundingText: prepared.groundingText,
@@ -588,7 +665,7 @@ export class AgentRunService {
       now: turn.now,
       timeZone: this.deps.timeZone,
       direct: turn.direct,
-      ...(this.deps.crossWrite !== undefined ? { crossWrite: this.deps.crossWrite } : {}),
+      ...(crossWriteContext !== undefined ? { crossWrite: crossWriteContext } : {}),
     });
     if (!validation.ok) return declined('refused', { validator: validation.reason, ...callFields });
     const validated = validation.plan;
@@ -600,7 +677,7 @@ export class AgentRunService {
     if (validated.kind === 'cross-write') {
       const proposal = this.deps.writeProposal;
       if (proposal === undefined || !proposal.targets.includes('jira-comment') || validated.target !== 'jira.comment.propose') return declined('cross-write-off', callFields);
-      return await this.runCrossWrite(turn, validated, prepared, budget, readers, selector, proposal, callFields, latency);
+      return await this.runCrossWrite(turn, validated, prepared, budget, readers, selector, proposal, callFields, latency, a7Receipt);
     }
     // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the
     // read + write composition is stage P5, so the run never drops it silently.
@@ -662,10 +739,14 @@ export class AgentRunService {
   }
 
   /**
-   * ADR-0121 A7 (A7-S4a, dormant): the propose step of a validated form-a cross-source write: READ, rule ①, the quarantined draft and
-   * the one proposal-port call ({@link runA7ProposeStep}). It runs in the same admitted run, charged on the same budget (the planner
-   * call is already counted; the draft is one M2 call within the D7 caps), under the kill switch and the shutdown signal. Nothing
-   * here holds a writer: the card is made by the port's implementation outside the agent module.
+   * ADR-0121 A7 (A7-S4a, dormant): the propose step of a validated cross-source write: READ, rule ①, the quarantined draft and the one
+   * proposal-port call ({@link runA7ProposeStep}). It runs in the same admitted run, charged on the same budget (the planner call is already
+   * counted; the draft is one M2 call within the D7 caps), under the kill switch and the shutdown signal. Nothing here holds a writer: the
+   * card is made by the port's implementation outside the agent module.
+   *
+   * A7-S4b (dormant): a destination the owner named only by kind asks for a pick instead (the listing and the pending pick,
+   * {@link runA7DestinationListing}); form b drafts from the receipt bound to this turn (`a7Receipt`); `turn.ownerStepPending` reaches the
+   * propose step (W2); and a card that was made hands its frozen items to the A7 state for the closed-card carry-over (A7.4c item 4).
    */
   private async runCrossWrite(
     turn: AgentActiveTurn,
@@ -677,7 +758,9 @@ export class AgentRunService {
     proposal: NonNullable<AgentRunServiceDeps['writeProposal']>,
     callFields: LogFields,
     latency: () => number,
+    a7Bound?: A7BoundReceipt,
   ): Promise<AgentActiveOutcome> {
+    const a7Receipt = a7Bound?.receipt;
     if (turn.sessionId === undefined) {
       this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'declined', reason: 'no-session', ...callFields, latencyMs: latency() });
       return { kind: 'declined', reason: 'no-session' };
@@ -690,22 +773,329 @@ export class AgentRunService {
       ...(proposal.askConsent === true ? { askSummaryConsent: true } : {}),
     };
     const executor = new AgentPlanExecutor({ readers, logger: this.deps.logger, summarizer: route });
-    const outcome = await runA7ProposeStep(
-      { proposal: proposal.port, readSource: (step, options) => executor.readDraftSource(step, options), route, logger: this.deps.logger },
-      {
-        plan,
-        actorId: turn.actor.id,
-        sessionId: turn.sessionId,
-        language: languageOf(turn.text),
-        ownerText: { ...prepared, rawText: turn.text },
-        now: turn.now,
-        budget,
-        signal: this.background.signal,
-        stillRunning: () => this.liveSwitchRunning(turn.actor.id),
-      },
-    );
+    const language = languageOf(turn.text);
+    const hasher = proposal.sha256Hex;
+    const conversation = typeof turn.conversationKey === 'string' && turn.conversationKey.length > 0 ? turn.conversationKey : undefined;
+    const facts = turn.a7 !== undefined && conversation !== undefined ? turn.a7 : undefined;
+    const destination = plan.destination;
+    let outcome: A7ProposeOutcome | A7ListingOutcome;
+    let next: A7ActorState | undefined;
+    const state: A7ActorState = facts !== undefined ? readA7State(facts.state, turn.actor.id) : {};
+
+    if (destination.state === 'pick-project' || destination.state === 'pick-ticket') {
+      // A7.4b: the owner named the kind and not the instance (a7-09: the board first when two or more are allowlisted, then the ticket).
+      const template = this.pickTemplate(plan, a7Receipt, hasher);
+      if (facts === undefined || conversation === undefined || template === undefined) {
+        outcome = { kind: 'refused', reason: 'unsupported', text: A7_NOT_MADE_LINE[language] };
+      } else {
+        const listed = await runA7DestinationListing(
+          { proposal: proposal.port, list: (entryId, args, options) => executor.listDestinationRows(entryId, args, options), logger: this.deps.logger },
+          {
+            template,
+            stage: destination.state === 'pick-project' ? 'project' : 'ticket',
+            ...(destination.state === 'pick-ticket' ? { project: destination.project } : {}),
+            jiraProjects: (this.deps.crossWrite?.jiraProjects ?? []).map((key) => key.toUpperCase()),
+            offeredReads: turn.entries.filter((entry) => entry.risk === 'READ'),
+            actorId: turn.actor.id,
+            conversation,
+            turnId: facts.turnId,
+            language,
+            now: turn.now,
+            budget,
+            signal: this.background.signal,
+            stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+            ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
+            ownerText: a7Bound?.ownerText ?? { text: prepared.text, groundingText: prepared.groundingText, rawText: turn.text },
+          },
+        );
+        outcome = listed.outcome;
+        if (listed.pending !== undefined) {
+          // A pending pick that cannot be stored back strictly (an arg that is not a bounded scalar) is never made: fail closed.
+          if (parsePendingA7Pick(listed.pending) === undefined) outcome = { kind: 'refused', reason: 'unsupported', text: A7_NOT_MADE_LINE[language] };
+          else next = { ...state, pick: listed.pending };
+        }
+      }
+    } else {
+      const receipt = plan.form === 'b' && a7Receipt !== undefined ? this.receiptInput(turn.entries, a7Receipt) : undefined;
+      if (plan.form === 'b' && receipt === undefined) {
+        outcome = { kind: 'refused', reason: 'unsupported', text: A7_NOT_MADE_LINE[language] };
+      } else {
+        outcome = await runA7ProposeStep(
+          { proposal: proposal.port, readSource: (step, options) => executor.readDraftSource(step, options), route, logger: this.deps.logger },
+          {
+            plan,
+            actorId: turn.actor.id,
+            sessionId: turn.sessionId,
+            language,
+            // A carried receipt is granted by the request that asked for the summary of its items (a bare follow-up makes none).
+            ownerText: a7Bound?.ownerText ?? { ...prepared, rawText: turn.text },
+            now: turn.now,
+            budget,
+            signal: this.background.signal,
+            stillRunning: () => this.liveSwitchRunning(turn.actor.id),
+            ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
+            ...(receipt !== undefined ? { receipt } : {}),
+            ...(hasher !== undefined ? { hasher } : {}),
+          },
+        );
+        if (outcome.kind === 'carded' && facts !== undefined && conversation !== undefined) {
+          const card = this.cardRecord(turn, plan, outcome, a7Receipt, conversation, facts, hasher, a7Bound?.ownerText ?? { text: prepared.text, groundingText: prepared.groundingText, rawText: turn.text });
+          next = { ...state, ...(card !== undefined ? { card } : {}) };
+          if (card === undefined) delete (next as { card?: A7CardRecord }).card;
+        }
+      }
+    }
     this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'proposal', result: outcome.kind, ...callFields, latencyMs: latency() });
-    return { kind: 'proposal', outcome };
+    return { kind: 'proposal', outcome, ...(next !== undefined && facts !== undefined ? { a7State: withA7State(facts.state, turn.actor.id, next, turn.now) } : {}) };
+  }
+
+  /** The structure a pending pick freezes from a validated plan (form a: its source read; form b: the receipt bound at this turn). `undefined`: no pick can be made. */
+  private pickTemplate(plan: ValidatedCrossWritePlan, receipt: HeldReceipt | undefined, hasher: HeldReceiptHasher | undefined): A7PickTemplate | undefined {
+    if (plan.target !== 'jira.comment.propose') return undefined;
+    if (plan.form === 'a') {
+      return plan.source === undefined ? undefined : { form: 'a', target: plan.target, connectorCalls: plan.connectorCalls, source: { entryId: plan.source.entry.id, args: plan.source.args } };
+    }
+    // Form b: the receipt is frozen inside the pick (A7.4b); the pick turn needs the hasher to recheck it, so none is made without one.
+    return receipt === undefined || hasher === undefined ? undefined : { form: 'b', target: plan.target, connectorCalls: 0, frozen: receipt };
+  }
+
+  /** The receipt and the read step rebuilt from it (form b); `undefined` when the entry is not offered or a frozen arg no longer fits it. */
+  private receiptInput(entries: readonly NlCatalogEntry[], receipt: HeldReceipt): { readonly receipt: HeldReceipt; readonly source: Extract<ValidatedAgentStep, { kind: 'read' }> } | undefined {
+    const context = this.deps.crossWrite;
+    if (context === undefined) return undefined;
+    const source = rebuildA7SourceRead(entries, receipt.entryId, receipt.validatedArgs, context);
+    return source === undefined ? undefined : { receipt, source };
+  }
+
+  /**
+   * A7.4c item 4: the record a made card leaves in the A7 state (its frozen items and what the closure check needs). Form b keeps the receipt it
+   * was built from with its ORIGINAL `at` (a carried one stays carried: the card hands nothing on); form a freezes the items it was drafted
+   * from. `undefined` without a hasher, a task or a strict receipt: no carry-over then (fail closed).
+   */
+  private cardRecord(
+    turn: Pick<AgentActiveTurn, 'actor' | 'sessionId' | 'now'>,
+    plan: ValidatedCrossWritePlan,
+    carded: Extract<A7ProposeOutcome, { kind: 'carded' }>,
+    receipt: HeldReceipt | undefined,
+    conversation: string,
+    facts: A7TurnFacts,
+    hasher: HeldReceiptHasher | undefined,
+    ownerText: A7FrozenOwnerText,
+  ): A7CardRecord | undefined {
+    if (carded.taskId === undefined || hasher === undefined || turn.sessionId === undefined) return undefined;
+    let frozen: HeldReceipt | undefined;
+    if (plan.form === 'b') frozen = receipt;
+    else if (plan.source !== undefined && carded.items !== undefined && carded.items.length <= HELD_RECEIPT_MAX_ITEMS) {
+      const built = buildHeldReceipt({
+        conversation,
+        actorId: turn.actor.id,
+        turnId: facts.turnId,
+        entryId: plan.source.entry.id,
+        validatedArgs: plan.source.args,
+        items: carded.items,
+        kind: 'answer',
+        egress: carded.locality ?? 'LOCAL',
+        at: turn.now,
+        sourceOn: true,
+      });
+      frozen = 'receipt' in built ? built.receipt : undefined;
+    }
+    if (frozen === undefined) return undefined;
+    return { cardId: carded.cardId, taskId: carded.taskId, sessionId: turn.sessionId, cardAt: turn.now, frozen, ownerText, builtFromCarried: plan.form === 'b' && (receipt?.carried === true || receipt?.kind === 'card') };
+  }
+
+  /**
+   * A7.4 and A7.4c: the receipt bound to this owner turn, or `undefined`. The held receipt binds as A7.4 says (the same actor and DM conversation,
+   * the immediately previous turn, within 10 minutes, source on). A closed card's frozen items become the receipt of the next owner turn when it
+   * closed as `sent`, `declined`, `expired` or `owner-void` (never `kill-switch`, never unresolved), keeping the original `at` and expiring 20
+   * minutes after it; one carry-over at most. Only with the proposal dep, the cross-write context and the runtime's A7 facts; total, never throws.
+   */
+  private async boundA7Receipt(turn: AgentActiveTurn): Promise<A7BoundReceipt | undefined> {
+    const wp = this.deps.writeProposal;
+    const cw = this.deps.crossWrite;
+    const facts = turn.a7;
+    const conversation = turn.conversationKey;
+    if (wp === undefined || cw === undefined || facts === undefined || typeof conversation !== 'string' || conversation.length === 0) return undefined;
+    try {
+      const state = readA7State(facts.state, turn.actor.id);
+      const bind = (receipt: HeldReceipt): boolean =>
+        bindHeldReceipt(receipt, {
+          actorId: turn.actor.id,
+          conversation,
+          now: turn.now,
+          ...(facts.previousTurnId !== undefined ? { previousTurnId: facts.previousTurnId } : {}),
+          sourceOn: cw.sources.includes(receipt.entryId),
+          hostOnly: false,
+          ...(facts.rerun !== undefined ? { rerun: facts.rerun } : {}),
+        }).bound;
+      if (state.held !== undefined && bind(state.held)) return { receipt: state.held };
+      const card = state.card;
+      if (card === undefined || wp.port.closureOf === undefined || facts.previousTurnId === undefined) return undefined;
+      const closure = await wp.port.closureOf({ sessionId: card.sessionId as Id, taskId: card.taskId as Id, now: turn.now });
+      if (closure !== 'sent' && closure !== 'declined' && closure !== 'expired' && closure !== 'owner-void') return undefined;
+      const carried = carryOverReceipt(card.frozen, { by: closure satisfies HeldCardClosure, turnId: facts.previousTurnId, cardBuiltFromCarried: card.builtFromCarried });
+      return 'receipt' in carried && bind(carried.receipt) ? { receipt: carried.receipt, ownerText: card.ownerText } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * ADR-0121 A7 (A7-S4b, dormant): the reply to a pending destination pick (A7.4b). The pick is the next owner turn: this turn is NOT planned
+   * (no M1 call); the frozen validated plan of the turn that asked resumes, only its destination slot is filled with the picked value, and the
+   * A7.5 step 2 checks run again before any read (the entry still offered and on, its frozen args still fitting it, the allowlist, the writer, the
+   * switch). Single use: whatever the outcome, the pending pick (and a frozen receipt with it) is dropped from the state this returns.
+   *
+   * - no pending pick: `not-pending` (route the turn as usual);
+   * - a reply that is not a number of the list, a late reply, a frozen receipt past its 20 minutes, the kill switch: `cancelled` (the fixed line for
+   *   a number off the list and for an expiry; none otherwise, so the caller routes the turn as an ordinary one);
+   * - a project picked (a7-09): the ticket listing, a new pending pick that keeps the frozen receipt and its original `at`;
+   * - a destination picked: the propose step with `OWNER_PICKED_DESTINATION` (a card, a rule-① question, or a fixed refusal).
+   *
+   * Admission as the continuation of rule ①: no planner, at least one model call left, the live kill switch (fail closed). Total.
+   */
+  async continueA7Pick(turn: AgentA7PickTurn): Promise<AgentA7PickOutcome> {
+    const clock = this.deps.elapsed ?? Date.now;
+    const startedMs = safeClock(clock);
+    const conversation = turn.conversationKey;
+    const facts = turn.a7;
+    const base = readA7State(facts.state, turn.actor.id);
+    const pending = base.pick;
+    if (pending === undefined) return { kind: 'not-pending' };
+    // A bare number has no language of its own: the owner's asking turn decides it.
+    const language = languageOf(pending.ownerText.text);
+    const cleared: A7ActorState = { ...(base.held !== undefined ? { held: base.held } : {}), ...(base.card !== undefined ? { card: base.card } : {}) };
+    const clearedState = (): unknown => withA7State(facts.state, turn.actor.id, cleared, turn.now);
+    const cancelled = (reason: string, text?: string): AgentA7PickOutcome => {
+      this.log('info', AGENT_A7_AUDIT_EVENT, { planKind: 'cross-write', form: pending.form, stage: pending.stage, decision: 'pending', outcome: 'pick-cancelled', reason });
+      return { kind: 'cancelled', reason, ...(text !== undefined ? { text } : {}), a7State: clearedState() };
+    };
+    const declined = (reason: string): AgentA7PickOutcome => {
+      this.log('info', AGENT_A7_AUDIT_EVENT, { planKind: 'cross-write', form: pending.form, stage: pending.stage, decision: 'pending', outcome: 'pick-declined', reason });
+      return { kind: 'declined', reason, a7State: clearedState() };
+    };
+    try {
+      const wp = this.deps.writeProposal;
+      const cw = this.deps.crossWrite;
+      if (this.mode !== 'active' || !turn.direct || wp === undefined || cw === undefined || conversation.length === 0) return declined('unwired');
+      if (this.background.signal.aborted) return declined('shutdown');
+      const readers = this.deps.readers;
+      const selector = this.deps.summarizer;
+      if (readers === undefined || selector === undefined || turn.sessionId === undefined) return declined('unwired');
+      const running = await this.liveSwitchRunning(turn.actor.id);
+      const resolution = resolveA7Pick(pending, turn.text, {
+        actorId: turn.actor.id,
+        conversation,
+        now: turn.now,
+        ...(facts.previousTurnId !== undefined ? { previousTurnId: facts.previousTurnId } : {}),
+        jiraProjects: cw.jiraProjects,
+        killSwitch: !running,
+      });
+      if (resolution.kind === 'cancel') {
+        const line = resolution.reason === 'out-of-range' ? A7_PICK_OUT_OF_RANGE[language] : resolution.reason === 'expired' || resolution.reason === 'frozen-expired' ? A7_PICK_EXPIRED[language] : undefined;
+        return cancelled(resolution.reason, line);
+      }
+      // Step 2 again, before any read: the A7 switch and the writer for Jira, the source entry (form a) still on, and the target still the plan's.
+      if (!cw.active.jira || !cw.writers.jira || !wp.targets.includes('jira-comment') || pending.target !== 'jira.comment.propose') return declined('cross-write-off');
+      const entries = turn.entries.filter((entry) => entry.risk === 'READ');
+      const sourceRead = pending.form === 'a' && pending.source !== undefined ? rebuildA7SourceRead(entries, pending.source.entryId, pending.source.args, cw) : undefined;
+      const frozenInput = pending.form === 'b' && pending.frozen !== undefined ? this.receiptInput(entries, pending.frozen) : undefined;
+      if (resolution.kind === 'destination' && (pending.form === 'a' ? sourceRead === undefined : frozenInput === undefined)) return declined('source-changed');
+      if (pending.form === 'b' && wp.sha256Hex === undefined) return declined('no-hasher');
+
+      const admission = this.admitRun(turn.actor.id, startedMs, 1);
+      if (!admission.ok) return declined(admission.reason);
+      const { bounds, maxModelCalls, charged } = admission;
+      let budget: AgentRunBudget | undefined;
+      try {
+        budget = new AgentRunBudget(clock, { ...bounds, maxModelCalls });
+        const route = {
+          selector,
+          selectionContext: { sessionId: turn.sessionId, actorId: turn.actor.id },
+          ...(this.deps.workSummarySources !== undefined && this.deps.workSummarySources.length > 0 ? { workSummarySources: this.deps.workSummarySources } : {}),
+          ...(this.deps.recipientLabel !== undefined ? { recipientLabel: this.deps.recipientLabel } : {}),
+          ...(wp.askConsent === true ? { askSummaryConsent: true } : {}),
+        };
+        const executor = new AgentPlanExecutor({ readers, logger: this.deps.logger, summarizer: route });
+        const stillRunning = (): Promise<boolean> => this.liveSwitchRunning(turn.actor.id);
+        const jiraProjects = cw.jiraProjects.map((key) => key.toUpperCase());
+
+        if (resolution.kind === 'project') {
+          // a7-09: the board is picked; the ticket listing follows as a new pending pick that keeps the frozen receipt (and its original `at`).
+          const template: A7PickTemplate = { form: pending.form, target: pending.target, connectorCalls: pending.connectorCalls, ...(pending.source !== undefined ? { source: pending.source } : {}), ...(pending.frozen !== undefined ? { frozen: pending.frozen } : {}) };
+          const listed = await runA7DestinationListing(
+            { proposal: wp.port, list: (entryId, args, options) => executor.listDestinationRows(entryId, args, options), logger: this.deps.logger },
+            {
+              template,
+              stage: 'ticket',
+              project: resolution.project,
+              jiraProjects,
+              offeredReads: entries,
+              actorId: turn.actor.id,
+              conversation,
+              turnId: facts.turnId,
+              language,
+              now: turn.now,
+              budget,
+              signal: this.background.signal,
+              stillRunning,
+              ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
+              ownerText: pending.ownerText,
+            },
+          );
+          if (listed.pending !== undefined && parsePendingA7Pick(listed.pending) !== undefined) {
+            return { kind: 'proposal', outcome: listed.outcome, a7State: withA7State(facts.state, turn.actor.id, { ...cleared, pick: listed.pending }, turn.now) };
+          }
+          return { kind: 'proposal', outcome: listed.pending === undefined ? listed.outcome : { kind: 'refused', reason: 'unsupported', text: A7_NOT_MADE_LINE[language] }, a7State: clearedState() };
+        }
+
+        // The destination is picked: the frozen plan resumes with ONLY its destination slot filled (the reply is never planned).
+        const picked: PickedA7Destination = resolution.picked;
+        const resumed: ValidatedCrossWritePlan = {
+          kind: 'cross-write',
+          form: pending.form,
+          target: 'jira.comment.propose',
+          operation: AGENT_A7_TARGETS['jira.comment.propose'].operation,
+          destinationKind: 'jira',
+          ...(pending.form === 'a' && sourceRead !== undefined ? { source: sourceRead } : {}),
+          connectorCalls: pending.connectorCalls,
+          destination: { state: 'pick-ticket', kind: 'jira', project: picked.project },
+        };
+        const outcome = await runA7ProposeStep(
+          { proposal: wp.port, readSource: (step, options) => executor.readDraftSource(step, options), route, logger: this.deps.logger },
+          {
+            plan: resumed,
+            actorId: turn.actor.id,
+            sessionId: turn.sessionId,
+            language,
+            // The owner's summary request is the asking turn's (frozen in the pick), not this reply's: "2" asks for nothing.
+            ownerText: pending.ownerText,
+            now: turn.now,
+            budget,
+            signal: this.background.signal,
+            stillRunning,
+            picked,
+            ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
+            ...(frozenInput !== undefined ? { receipt: frozenInput } : {}),
+            ...(wp.sha256Hex !== undefined ? { hasher: wp.sha256Hex } : {}),
+          },
+        );
+        let next: A7ActorState = cleared;
+        if (outcome.kind === 'carded') {
+          const card = this.cardRecord(turn, resumed, outcome, pending.frozen, conversation, facts, wp.sha256Hex, pending.ownerText);
+          next = { ...cleared, ...(card !== undefined ? { card } : {}) };
+        }
+        this.log('info', AGENT_ACTIVE_LOG_EVENT, { mode: 'active', outcome: 'proposal', result: outcome.kind, pick: true, latencyMs: Math.max(0, safeClock(clock) - startedMs) });
+        return { kind: 'proposal', outcome, a7State: withA7State(facts.state, turn.actor.id, next, turn.now) };
+      } finally {
+        this.activeInFlight.delete(turn.actor.id);
+        this.inFlightCharge.delete(turn.actor.id);
+        charged.count = budget === undefined ? 0 : safeModelCalls(budget);
+      }
+    } catch (error) {
+      this.log('warn', 'agent_run.a7_pick_failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return declined('failed');
+    }
   }
 
   /**

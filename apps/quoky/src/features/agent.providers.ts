@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Provider } from '@nestjs/common';
 import { AGENT_WRITE_PROPOSAL_PORT, AgentRunService, AgentWriteProposalService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type AgentWriteProposalPort, type ConnectorWriteFlow, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
@@ -70,9 +71,13 @@ export interface AgentFeatureConfig {
  * `jira-comment` in `QUOKY_AGENT_PROPOSE_TARGETS` AND a bound proposal port (which exists only when `QUOKY_CONNECTOR_WRITES_ENABLED`
  * built a writer). Anything else: none (the refusal of every A7 plan is unchanged).
  */
-export function agentWriteProposalDep(config: AgentFeatureConfig, port: AgentWriteProposalPort | null | undefined): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[] } | undefined {
+export function agentWriteProposalDep(
+  config: AgentFeatureConfig,
+  port: AgentWriteProposalPort | null | undefined,
+): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly sha256Hex: (text: string) => string } | undefined {
   if (config.agent.mode !== 'active' || config.writeProposals?.mode !== 'active' || port === null || port === undefined) return undefined;
-  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'] } : undefined;
+  // A7-S4b: the SHA-256 the agent module may not import (`node:*`) is injected here: the held-receipt digests, the frozen receipt and the carry-over need it.
+  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'], sha256Hex: (text) => createHash('sha256').update(text, 'utf8').digest('hex') } : undefined;
 }
 
 export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, options: { readonly logger?: Logger } = {}): Provider[] {

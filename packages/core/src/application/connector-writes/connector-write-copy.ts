@@ -320,6 +320,8 @@ export interface AgentProposalCardInput {
   readonly executionPhrase: string;
   /** UNC-1 (review round 2): leads the card with the same existing duplicate warning an ordinary card shows. */
   readonly unconfirmedEarlier?: ConnectorWriteUnconfirmedEarlier;
+  /** A7-S4b: `owner-picked` says "직접 고르신 대상" (A7.4b); absent or `owner-text` says "대상은 보내신 문장에서". */
+  readonly grounding?: 'owner-text' | 'owner-picked';
 }
 
 /**
@@ -335,7 +337,7 @@ export function renderAgentProposalCard(input: AgentProposalCardInput): MessageB
   return joinBody([
     ...(input.unconfirmedEarlier ? [renderConnectorWriteDuplicateRisk('ISSUE_COMMENT', input.unconfirmedEarlier), ''] : []),
     `${connectorWriteLabel('ISSUE_COMMENT')} 제안 카드예요. ${notDoneByThisRequest(false, true)}`,
-    `대상: Jira ${input.issueKey} (대상은 보내신 문장에서 가져왔어요)`,
+    input.grounding === 'owner-picked' ? `직접 고르신 대상: Jira ${input.issueKey}` : `대상: Jira ${input.issueKey} (대상은 보내신 문장에서 가져왔어요)`,
     AGENT_PROPOSAL_MARKER,
     fenced(input.text),
     messageBody(`출처: ${source}`, ...(banner.source.query !== undefined ? [' · 검색어 ', inline(banner.source.query)] : []), ` · ${banner.items.length}건`),

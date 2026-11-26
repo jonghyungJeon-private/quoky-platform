@@ -75,10 +75,10 @@ export type AgentServiceDepsPinned = Assert<
  * ADR-0121 A7 (A7-S4a): the one proposal dep is the narrow port (an interface of Core's ports, implemented outside the agent module over
  * `connectorWriteFlow`), the closed destination list and one boolean. No writer, no flow, no storage.
  */
-export type AgentServiceWriteProposalPinned = Assert<KeysEqual<NonNullable<AgentRunServiceDeps['writeProposal']>, 'port' | 'targets' | 'askConsent'>>;
+export type AgentServiceWriteProposalPinned = Assert<KeysEqual<NonNullable<AgentRunServiceDeps['writeProposal']>, 'port' | 'targets' | 'askConsent' | 'sha256Hex'>>;
 export type AgentServiceWriteProposalPortPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['writeProposal']>['port'], AgentWriteProposalPort>>;
 /** The port itself: the open-card probe and one proposal in, one closed result out. */
-export type AgentWriteProposalPortPinned = Assert<KeysEqual<AgentWriteProposalPort, 'openCardOf' | 'propose'>>;
+export type AgentWriteProposalPortPinned = Assert<KeysEqual<AgentWriteProposalPort, 'openCardOf' | 'propose' | 'closureOf'>>;
 /** Rule ① (CS-1a): the service's two additions are the process-wide pending-step store and the recipient-name map (data), no port. */
 export type AgentServiceConsentStorePinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['consentStore']>, ConsentPendingStore>>;
 export type AgentServiceRecipientPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['recipientLabel']>, (provider: AiProvider) => string | undefined>>;

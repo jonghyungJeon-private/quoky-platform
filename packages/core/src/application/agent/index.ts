@@ -20,6 +20,10 @@ export * from './plan-executor';
 // ADR-0121 A7 (A7-S4a, dormant): the propose step and the A7 draft question.
 export * from './a7-propose';
 export * from './draft-consent-question';
+// ADR-0121 A7 (A7-S4b, dormant): the destination pick, its pending state and the A7 state in `Session.metadata`.
+export * from './a7-pick';
+export * from './a7-destination';
+export * from './held-receipt-store';
 // The summariser's value exports are pure functions and constants only: the sealed summary class, its accessor, the grant
 // seams and every `...ForTest` name stay module-private (pinned by quarantined-summary.test.ts).
 export {

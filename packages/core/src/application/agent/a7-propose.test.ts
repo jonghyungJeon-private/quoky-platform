@@ -156,7 +156,7 @@ describe('A7-S4a propose step, form a, LOCAL drafter', () => {
     await run(p, localRoute(spy('local-a', 'LOCAL')));
     const lines = p.logs.filter((log) => log.event === AGENT_A7_AUDIT_EVENT);
     expect(lines).toHaveLength(1);
-    expect(lines[0]?.fields).toEqual({ planKind: 'cross-write', form: 'a', decision: 'pending', sourceEntry: 'slack.search', items: 2, dropped: 0, omitted: 0, drafterLocality: 'LOCAL', consent: 'not-needed', cardId: 'card-1', outcome: 'carded' });
+    expect(lines[0]?.fields).toEqual({ planKind: 'cross-write', form: 'a', decision: 'pending', grounding: 'owner-text', sourceEntry: 'slack.search', items: 2, dropped: 0, omitted: 0, drafterLocality: 'LOCAL', consent: 'not-needed', cardId: 'card-1', outcome: 'carded' });
     expect(JSON.stringify(lines)).not.toMatch(/BE-123|BE-999/u);
   });
 

@@ -75,7 +75,7 @@ const codeOf = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').r
 
 describe('application/agent boundary (ADR-0121 D5)', () => {
   it('scans every source file, and every check catches what it must (calibration)', () => {
-    expect(SOURCES.map((source) => source.name).sort()).toEqual(['a7-propose.ts', 'agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'draft-consent-question.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'held-receipt.ts', 'help-split.ts', 'index.ts', 'payload-drafter.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-consent-question.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
+    expect(SOURCES.map((source) => source.name).sort()).toEqual(['a7-destination.ts', 'a7-pick.ts', 'a7-propose.ts', 'agent-contract-check.ts', 'agent-run-service.ts', 'conjuncts.ts', 'cross-write-validator.ts', 'cross-write.ts', 'draft-consent-question.ts', 'flow-policy.ts', 'handoff-grounding.ts', 'handoff-slots.ts', 'held-receipt-store.ts', 'held-receipt.ts', 'help-split.ts', 'index.ts', 'payload-drafter.ts', 'plan-executor.ts', 'plan-prompt.ts', 'plan-schema.ts', 'plan-validator.ts', 'quarantined-summary.ts', 'read-write-probe.ts', 'reply-assembler.ts', 'reply-notes.ts', 'run-bounds.ts', 'structure-projector.ts', 'summary-consent-question.ts', 'summary-grant.ts', 'unbounded-ask.ts', 'work-summary-projection.ts']);
     // The help grammar the help split may import is itself import-free (pure).
     expect(specifiersOf(readFileSync(new URL('../help-intent/help-intent.ts', DIR), 'utf8'))).toEqual([]);
     // The claim guard the summaries pass through is pure: its only import is a type (erased).
@@ -222,7 +222,7 @@ describe('the A7 proposal port direction (A7-S4a)', () => {
 
   it('the agent module reaches the card only through the port: no agent file names connector-writes, the flow or the implementation', () => {
     const importers = SOURCES.filter((source) => specifiersOf(source.text).includes('../../ports/agent-write-proposal.port')).map((source) => source.name).sort();
-    expect(importers).toEqual(['a7-propose.ts', 'agent-contract-check.ts', 'agent-run-service.ts']);
+    expect(importers).toEqual(['a7-destination.ts', 'a7-propose.ts', 'agent-contract-check.ts', 'agent-run-service.ts']);
     for (const source of SOURCES) {
       const code = codeOf(source.text);
       for (const specifier of specifiersOf(source.text)) expect(specifier, `${source.name}: ${specifier}`).not.toMatch(/connector-writes|agent-write-proposal(?!\.port)/);

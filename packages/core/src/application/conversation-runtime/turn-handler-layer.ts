@@ -1015,6 +1015,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
                   named: anchor.agentCard.named,
                   nonTargets: anchor.agentCard.nonTargets,
                   ...(anchor.agentCard.unconfirmedEarlier !== undefined ? { unconfirmedEarlier: anchor.agentCard.unconfirmedEarlier } : {}),
+                  ...(anchor.agentCard.grounding === 'owner-picked' ? { grounding: 'owner-picked' as const } : {}),
                   remainingMs: this.remainingMs(approval),
                   executionPhrase: phrase,
                 })

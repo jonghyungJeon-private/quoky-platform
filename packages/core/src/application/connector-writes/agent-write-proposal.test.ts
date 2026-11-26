@@ -420,3 +420,80 @@ describe('the key grammar helper', () => {
     expect(destinationShapedKeys('아무 키도 없어요', KEY)).toEqual([]);
   });
 });
+
+// ADR-0121 A7-S4b: a picked destination says so on the card, and the closure of a card is read from its persisted anchor.
+describe('A7-S4b: the picked destination and the closure check (A7.4b, A7.4c item 4)', () => {
+  it('an owner-picked destination says "직접 고르신 대상" on the card, on the anchor and on the re-shown card; an owner-text one keeps its line', async () => {
+    const h = harness();
+    const picked = await h.service.propose(h.request({ grounding: 'owner-picked' }));
+    if (picked.kind !== 'carded') throw new Error('no card');
+    const text = textOf(picked.card);
+    expect(text).toContain(`직접 고르신 대상: Jira ${KEY}`);
+    expect(text).not.toContain('대상은 보내신 문장에서');
+    const view = await h.flow.find(h.session());
+    expect(view?.anchor.agentCard?.grounding).toBe('owner-picked');
+    const request = h.request({ grounding: 'owner-picked' });
+    const reshown = textOf(renderAgentProposalCard({ issueKey: KEY, text: request.payloadText, banner: BANNER, named: 1, nonTargets: [], remainingMs: 60_000, executionPhrase: '댓글 실행', grounding: view?.anchor.agentCard?.grounding }));
+    expect(reshown).toContain(`직접 고르신 대상: Jira ${KEY}`);
+    const named = harness();
+    const result = await named.service.propose(named.request());
+    if (result.kind !== 'carded') throw new Error('no card');
+    expect(textOf(result.card)).toContain(`대상: Jira ${KEY} (대상은 보내신 문장에서 가져왔어요)`);
+    expect((await named.flow.find(named.session()))?.anchor.agentCard?.grounding).toBeUndefined();
+  });
+
+  it('any other grounding is refused (closed values only)', async () => {
+    const h = harness();
+    expect(await h.service.propose(h.request({ grounding: 'owner-confirmed' as never }))).toEqual({ kind: 'refused', reason: 'unavailable' });
+  });
+
+  it('closureOf reads the persisted anchor by its task: open, then each closure as a closed value; anything unreadable is unknown (hands nothing on)', async () => {
+    const reasons = [
+      ['denied', 'declined'],
+      ['cancelled', 'owner-void'],
+      ['abandoned', 'owner-void'],
+      ['superseded', 'owner-void'],
+      ['expired', 'expired'],
+      ['stopped', 'kill-switch'],
+      ['inconsistent', 'unknown'],
+    ] as const;
+    for (const [reason, expected] of reasons) {
+      const h = harness();
+      const result = await h.service.propose(h.request());
+      if (result.kind !== 'carded' || result.taskId === undefined) throw new Error('no card');
+      const ask = { sessionId: 'sess-1', taskId: result.taskId, now: T0 };
+      expect(await h.service.closureOf(ask)).toBe('open');
+      const view = await h.flow.find(h.session());
+      await h.flow.close(h.session(), view as NonNullable<typeof view>, reason, T0);
+      expect(await h.service.closureOf(ask), reason).toBe(expected);
+    }
+    const h = harness();
+    const result = await h.service.propose(h.request());
+    if (result.kind !== 'carded' || result.taskId === undefined) throw new Error('no card');
+    // A card whose approval lapsed is expired (its lifetime), another session, a missing task and a thrown read are unknown.
+    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: result.taskId, now: '2026-11-25T02:00:00.000Z' })).toBe('expired');
+    expect(await h.service.closureOf({ sessionId: 'sess-9', taskId: result.taskId, now: T0 })).toBe('unknown');
+    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: 'no-such-task', now: T0 })).toBe('unknown');
+  });
+
+  it('a send is closed as sent (the flow marks the anchor SENT)', async () => {
+    const h = harness();
+    const result = await h.service.propose(h.request());
+    if (result.kind !== 'carded' || result.taskId === undefined) throw new Error('no card');
+    // The service reads the anchor only: a SENT anchor (as the flow's execute leaves it) maps to `sent`.
+    const view = await h.flow.find(h.session());
+    const anchored = { ...(view as NonNullable<typeof view>).anchor, status: 'SENT' as const };
+    const reader = new AgentWriteProposalService({
+      flow: { ...h.flow, supports: h.flow.supports.bind(h.flow), anchorOfTask: async () => ({ ...(view as NonNullable<typeof view>), anchor: anchored }) } as never,
+      sessions: { get: async () => h.session() },
+      actors: { get: async () => OWNER },
+    });
+    expect(await reader.closureOf({ sessionId: 'sess-1', taskId: result.taskId, now: T0 })).toBe('sent');
+    const unresolved = new AgentWriteProposalService({
+      flow: { supports: () => true, anchorOfTask: async () => ({ ...(view as NonNullable<typeof view>), anchor: { ...anchored, status: 'UNCERTAIN' } }) } as never,
+      sessions: { get: async () => h.session() },
+      actors: { get: async () => OWNER },
+    });
+    expect(await unresolved.closureOf({ sessionId: 'sess-1', taskId: result.taskId, now: T0 })).toBe('unknown');
+  });
+});
