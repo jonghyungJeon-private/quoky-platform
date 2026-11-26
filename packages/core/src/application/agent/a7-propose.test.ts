@@ -124,7 +124,7 @@ function run(p: Parts, route: QuarantinedSummarizerRoute, over: Partial<Paramete
   const executor = new AgentPlanExecutor({ readers: p.readers, logger: p.logger, summarizer: route });
   return runA7ProposeStep(
     { proposal: p.port, readSource: (step, options) => executor.readDraftSource(step, options), route, logger: p.logger },
-    { plan: validatedPlan(), actorId: 'owner', sessionId: 'sess-1', language: 'ko', ownerText: { ...prepareSelectionInput(OWNER_TEXT), rawText: OWNER_TEXT }, now: T0 as never, budget: new AgentRunBudget(Date.now), ...over },
+    { plan: validatedPlan(), actorId: 'owner', sessionId: 'sess-1', language: 'ko', ownerText: { ...prepareSelectionInput(OWNER_TEXT), rawText: OWNER_TEXT }, now: T0 as never, budget: new AgentRunBudget(Date.now), alive: async () => true, ...over },
   );
 }
 const localRoute = (provider: Spy, extra: Partial<QuarantinedSummarizerRoute> = {}): QuarantinedSummarizerRoute => ({ selector: selectorOf(provider), workSummarySources: ['slack'], ...extra });
@@ -181,13 +181,13 @@ describe('A7-S4a propose step, form a, LOCAL drafter', () => {
   it('the kill switch: stopped before the read makes no read and no call; stopped during the draft makes no card', async () => {
     const before = parts();
     const local = spy('local-a', 'LOCAL');
-    expect(await run(before, localRoute(local), { stillRunning: async () => false })).toMatchObject({ kind: 'refused', reason: 'stopped' });
+    expect(await run(before, localRoute(local), { alive: async () => false })).toMatchObject({ kind: 'refused', reason: 'stopped' });
     expect(before.reads).toHaveLength(0);
     expect(local.requests).toHaveLength(0);
 
     const during = parts();
     let probes = 0;
-    const out = await run(during, localRoute(local), { stillRunning: async () => (probes += 1) < 2 });
+    const out = await run(during, localRoute(local), { alive: async () => (probes += 1) < 2 });
     expect(out).toMatchObject({ kind: 'refused', reason: 'stopped' });
     expect(during.requests).toHaveLength(0);
   });

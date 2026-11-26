@@ -108,8 +108,12 @@ export interface A7ProposeInput {
   readonly now: IsoTimestamp;
   readonly budget: AgentRunBudget;
   readonly signal?: AbortSignal;
-  /** The persisted kill switch; re-read before the read and again right before the card. */
-  readonly stillRunning?: () => Promise<boolean>;
+  /**
+   * Review round 4: the turn's liveness, built from the A7 epoch guard captured ONCE at turn entry (the kill switch running AND the same
+   * switch epoch). REQUIRED: called immediately before every external effect (the open-card read, the source read, the draft, the proposal
+   * port) and immediately after every await; false declines `stopped` with nothing further read, drafted or proposed.
+   */
+  readonly alive: () => Promise<boolean>;
   /** A rule-① re-run after the owner's yes: the run token, the consent token and the ids the owner was asked about. */
   readonly resume?: {
     readonly run: SummaryRunToken;
@@ -192,6 +196,7 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
   };
   const refuse = (reason: A7ProposeRefusalReason, text: string, extra: Record<string, string | number | boolean> = {}): A7ProposeOutcome => done({ kind: 'refused', reason, text }, reason, extra);
   const language = input.language;
+  const live = (): Promise<boolean> => input.alive().catch(() => false);
   try {
     const plan = input.plan;
     const destination = plan.destination;
@@ -226,17 +231,21 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     if (input.ownerStepPending === true) return refuse('owner-step-open', A7_OWNER_STEP_LINE[language], { consent: 'not-asked' });
 
     // A7.4c item 3: one open A7 card per owner. Nothing is read or drafted while one is open.
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     const open = await deps.proposal.openCardOf(input.actorId, input.now);
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     if (open !== undefined) return done({ kind: 'wait', text: renderA7WaitLine(language, open.target, key) }, 'wait-open-card', { consent: 'not-asked' });
 
     // The owner's summary request, judged by the SAME producer as every summary, over the synthetic plan [read, draft] this step is
     // (A7.5 step 4: Slack and Jira drafts run only where the owner's words ask for a summary of that source).
     const grantPlan = a7GrantPlan(read, plan.connectorCalls);
+    // Review round 4: right before the source read.
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     const sourced = await deps.readSource(read, {
       grants: { basis: grantBasisOf(grantPlan, input), plan: grantPlan },
       budget: input.budget,
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
-      ...(input.stillRunning !== undefined ? { stillRunning: input.stillRunning } : {}),
+      stillRunning: input.alive,
       ...(input.resume !== undefined
         ? { run: input.resume.run, consent: input.resume.consent, recorded: input.resume.recorded }
         : receipt !== undefined
@@ -270,6 +279,8 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       source = { ...source, documents: source.documents.filter((document) => kept.has(document.id)) };
       if (source.documents.length === 0) return refuse('no-documents', A7_NOT_MADE_LINE[language], { consent, dropped: receiptDrift });
     }
+    // Review round 4: right before the draft (the model call).
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     const outcome = await quarantinedDraft({
       source,
       participants: sourced.participants,
@@ -283,6 +294,7 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       askedItems: source.asked ?? source.documents.length,
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
     });
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     if (outcome.kind === 'listing-only') return refuse(outcome.reason, A7_NOT_MADE_LINE[language], { consent });
     if (outcome.kind === 'bound') return refuse('bound', A7_NOT_MADE_LINE[language], { consent });
     if (outcome.kind === 'failed') return refuse('draft-refused', A7_NOT_MADE_LINE[language], { consent, draftFailure: outcome.reason });
@@ -315,7 +327,7 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
     audit.consent = consent;
 
     // The kill switch, once more, right before the card (a stop that landed during the draft makes no card).
-    if (input.stillRunning !== undefined && !(await input.stillRunning().catch(() => false))) return refuse('stopped', A7_STOPPED_LINE[language]);
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     if (input.signal?.aborted === true) return refuse('stopped', A7_STOPPED_LINE[language]);
 
     const result = await deps.proposal.propose({
@@ -329,7 +341,7 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       named: draft.named,
       nonTargets: destinationShapedKeys(payloadText, key),
       now: input.now,
-      ...(input.stillRunning !== undefined ? { stillRunning: input.stillRunning } : {}),
+      stillRunning: input.alive,
     });
     if (result.kind === 'wait-open-card') return done({ kind: 'wait', text: renderA7WaitLine(language, result.openTarget, key) }, 'wait-open-card');
     if (result.kind === 'refused') {

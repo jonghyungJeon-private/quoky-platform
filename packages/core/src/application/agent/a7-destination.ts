@@ -83,7 +83,8 @@ export interface A7DestinationListingInput {
   readonly now: IsoTimestamp;
   readonly budget: AgentRunBudget;
   readonly signal?: AbortSignal;
-  readonly stillRunning?: () => Promise<boolean>;
+  /** Review round 4: the turn's liveness (epoch captured once at turn entry); REQUIRED, called before every external effect and after every await. */
+  readonly alive: () => Promise<boolean>;
   readonly ownerStepPending?: boolean;
   readonly sessionId: string;
   /** The closed list the asking turn froze (the source read the owner's own words asked a summary of); no owner text (P1-2). */
@@ -110,12 +111,15 @@ export async function runA7DestinationListing(
   };
   const refuse = (reason: Extract<A7ProposeOutcome, { kind: 'refused' }>['reason'], text: string): { readonly outcome: A7ListingOutcome | A7ProposeOutcome; readonly pending?: PendingA7Pick } =>
     done({ kind: 'refused', reason, text }, reason);
+  const live = (): Promise<boolean> => input.alive().catch(() => false);
   try {
     const { template } = input;
     if (template.target !== 'jira.comment.propose') return refuse('unsupported', A7_NOT_MADE_LINE[language]);
     if (template.form === 'a' ? template.source === undefined || template.frozen !== undefined : template.frozen === undefined || template.source !== undefined) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
     if (input.ownerStepPending === true) return refuse('owner-step-open', A7_OWNER_STEP_LINE[language]);
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     const open = await deps.proposal.openCardOf(input.actorId, input.now);
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     if (open !== undefined) return done({ kind: 'wait', text: A7_WAIT_LINE_UNNAMED[language] }, 'wait-open-card');
 
     let rows: readonly { readonly id: string; readonly title?: string }[];
@@ -125,11 +129,13 @@ export async function runA7DestinationListing(
       const project = input.project;
       if (project === undefined) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
       if (!input.offeredReads.some((entry) => entry.id === A7_DESTINATION_LISTING_ENTRY && entry.risk === 'READ')) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
+      if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
       const listed = await deps.list(A7_DESTINATION_LISTING_ENTRY, A7_DESTINATION_LISTING_ARGS, {
         budget: input.budget,
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
-        ...(input.stillRunning !== undefined ? { stillRunning: input.stillRunning } : {}),
+        stillRunning: input.alive,
       });
+      if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
       if (listed.kind === 'not-run') return refuse(listed.reason === 'stopped' ? 'stopped' : 'bound', listed.reason === 'stopped' ? A7_STOPPED_LINE[language] : A7_NOT_MADE_LINE[language]);
       if (listed.kind === 'failed') return refuse('read-failed', A7_NOT_MADE_LINE[language]);
       rows = buildJiraTicketRows(listed.rows, project, input.jiraProjects);
@@ -137,7 +143,7 @@ export async function runA7DestinationListing(
     if (rows.length === 0) return refuse('no-destination-rows', A7_PICK_NO_ROWS[language]);
 
     // The kill switch, once more, right before the list is shown: a stop that landed meanwhile leaves nothing pending.
-    if (input.stillRunning !== undefined && !(await input.stillRunning().catch(() => false))) return refuse('stopped', A7_STOPPED_LINE[language]);
+    if (!(await live())) return refuse('stopped', A7_STOPPED_LINE[language]);
     if (input.signal?.aborted === true) return refuse('stopped', A7_STOPPED_LINE[language]);
 
     const options = rows.map((row) => row.id);

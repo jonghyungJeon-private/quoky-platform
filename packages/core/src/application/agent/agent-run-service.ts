@@ -609,10 +609,18 @@ export class AgentRunService {
     // switch read, chat resolution or router never holds the actor's slot or the hour's charge.
     const cut = (ended: 'wall' | 'shutdown' | 'failed'): AgentActiveOutcome =>
       ended === 'wall' ? declined('bound', { breach: budget.breach ?? 'wall-time' }) : declined(ended);
+    // Review round 4: the A7 epoch is captured ONCE, here, before ANY await of the turn (the read is started synchronously), and never again.
+    const a7Capture = this.deps.writeProposal !== undefined ? this.a7Guard(turn.actor.id) : undefined;
     // The kill switch on the live actor (never the turn's snapshot); unreadable = declined (fail closed).
     const running = await withinRun(() => this.liveSwitchRunning(turn.actor.id), budget, this.background.signal);
     if (running.kind !== 'ok') return cut(running.kind);
     if (!running.value) return declined('kill-switch');
+    let a7Epoch: A7StateGuard | undefined;
+    if (a7Capture !== undefined) {
+      const raced = await withinRun(() => a7Capture, budget, this.background.signal);
+      if (raced.kind !== 'ok') return cut(raced.kind);
+      a7Epoch = raced.value;
+    }
 
     const prepared = prepareSelectionInput(turn.text, turn.attachmentCount, turn.quotedRanges ?? []);
     if ('skip' in prepared) return declined(prepared.skip);
@@ -642,7 +650,7 @@ export class AgentRunService {
     if (split !== undefined) return declined('help-split');
     const prompt = buildAgentPlanPrompt({ entries: turn.entries, text: prepared.text, ...(turn.previous !== undefined ? { previous: turn.previous } : {}) });
     if (flow !== undefined || plannerPromptCanaryHit(prompt, untrustedCanariesOf(turn.text, turn.quotedRanges ?? []), prepared.groundingText)) return declined(flow ?? 'canary');
-    return await this.runPlanned(turn, prompt, provider, budget, readers, selector, prepared, declined, latency, carry);
+    return await this.runPlanned(turn, prompt, provider, budget, readers, selector, prepared, declined, latency, carry, a7Epoch);
   }
 
   /** {@link runActive} from the planner charge on (the budget is this run's; the caller records its model calls). */
@@ -657,6 +665,7 @@ export class AgentRunService {
     declined: (reason: string, fields?: LogFields) => AgentActiveOutcome,
     latency: () => number,
     carry: A7CarryBox,
+    guard: A7StateGuard | undefined,
   ): Promise<AgentActiveOutcome> {
     // Review round 1 item 4: the kill switch re-read right before the planner is dispatched. From its answer to the dispatch
     // below nothing awaits, so a stop that the read sees is never followed by a planner call. The read is raced against the
@@ -678,16 +687,12 @@ export class AgentRunService {
     if (plan === null) return declined('malformed', { parse: agentPlanParseFailure(planned.text) ?? 'unknown', ...callFields });
     const offered = new Map(turn.entries.filter((entry) => entry.risk === 'READ').map((entry) => [entry.id, entry] as const));
     // A7-S4b (dormant): the receipt bound to this owner turn, only with the proposal dep and the A7 facts; otherwise the static context, as before.
-    // Review round 2 (P3): the A7 guard (one live-actor read) is computed ONCE per turn, raced like every other pre-dispatch await, and passed down.
-    let guard: A7StateGuard | undefined;
-    if (turn.a7 !== undefined && this.deps.writeProposal !== undefined) {
-      const raced = await withinRun(() => this.a7Guard(turn.actor.id), budget, this.background.signal);
-      if (raced.kind === 'wall') return declined('bound', { breach: budget.breach ?? 'wall-time', ...callFields });
-      if (raced.kind === 'shutdown') return declined('shutdown', callFields);
-      guard = raced.kind === 'ok' ? raced.value : undefined;
-    }
-    const a7Receipt = await this.boundA7Receipt(turn, guard);
-    if (a7Receipt?.fromCard === true) carry.voided = await this.stateWithoutCard(turn, guard);
+    // Review round 4: the A7 guard was captured at turn entry (`admitted`), before the planner; it is never re-read here. A stop then a resume
+    // during the planner moved the switch `at`, so the turn is void before any receipt bound or card state is touched.
+    const alive = (): Promise<boolean> => this.epochRunning(turn.actor.id, guard);
+    if (turn.a7 !== undefined && this.deps.writeProposal !== undefined && !(await alive())) return declined('stopped', callFields);
+    const a7Receipt = await this.boundA7Receipt(turn, turn.a7 !== undefined ? guard : undefined);
+    if (a7Receipt?.fromCard === true) carry.voided = await this.stateWithoutCard(turn, turn.a7 !== undefined ? guard : undefined);
     const crossWriteContext =
       this.deps.crossWrite !== undefined && a7Receipt !== undefined
         ? { ...this.deps.crossWrite, receipt: { fresh: true, sourceEntryId: a7Receipt.receipt.entryId, items: a7Receipt.receipt.itemIds.length, hostOnly: false, handoffBuilt: false } }
@@ -711,6 +716,8 @@ export class AgentRunService {
     if (validated.kind === 'cross-write') {
       const proposal = this.deps.writeProposal;
       if (proposal === undefined || !proposal.targets.includes('jira-comment') || validated.target !== 'jira.comment.propose') return declined('cross-write-off', callFields);
+      // Review round 4: the planner and the receipt binding are awaited above; the epoch is checked once more before the first A7 effect.
+      if (!(await alive())) return declined('stopped', callFields);
       return await this.runCrossWrite(turn, validated, prepared, budget, readers, selector, proposal, callFields, latency, a7Receipt, guard);
     }
     // The read + write trigger amendment (2026-10-26): a clause the read plan leaves is a write the owner asked for; the
@@ -845,7 +852,7 @@ export class AgentRunService {
             now: turn.now,
             budget,
             signal: this.background.signal,
-            stillRunning: () => this.epochRunning(turn.actor.id, guard),
+            alive: () => this.epochRunning(turn.actor.id, a7GuardOfTurn),
             ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
             sessionId: turn.sessionId,
             summaryAsked,
@@ -876,7 +883,7 @@ export class AgentRunService {
             now: turn.now,
             budget,
             signal: this.background.signal,
-            stillRunning: () => this.epochRunning(turn.actor.id, guard),
+            alive: () => this.epochRunning(turn.actor.id, a7GuardOfTurn),
             ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
             ...(receipt !== undefined ? { receipt } : {}),
             ...(hasher !== undefined ? { hasher } : {}),
@@ -1066,7 +1073,9 @@ export class AgentRunService {
       const readers = this.deps.readers;
       const selector = this.deps.summarizer;
       if (readers === undefined || selector === undefined || turn.sessionId === undefined) return declined('unwired');
-      const running = await this.liveSwitchRunning(turn.actor.id);
+      const alive = (): Promise<boolean> => this.epochRunning(turn.actor.id, guard);
+      // Review round 4: the guard was captured once at entry above; the running-only read is now the epoch check.
+      const running = await alive();
       const resolution = resolveA7Pick(pending, turn.text, {
         actorId: turn.actor.id,
         conversation,
@@ -1103,7 +1112,6 @@ export class AgentRunService {
           ...(wp.askConsent === true ? { askSummaryConsent: true } : {}),
         };
         const executor = new AgentPlanExecutor({ readers, logger: this.deps.logger, summarizer: route });
-        const stillRunning = (): Promise<boolean> => this.epochRunning(turn.actor.id, guard);
         const jiraProjects = cw.jiraProjects.map((key) => key.toUpperCase());
 
         if (resolution.kind === 'project') {
@@ -1124,7 +1132,7 @@ export class AgentRunService {
               now: turn.now,
               budget,
               signal: this.background.signal,
-              stillRunning,
+              alive,
               ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
               sessionId: turn.sessionId,
               summaryAsked: pending.summaryAsked,
@@ -1145,11 +1153,13 @@ export class AgentRunService {
         // GET), so a run bounded to one connector read cannot make this GET and the source read both. It is raced against the wall and shutdown.
         const destinationPort = wp.destinationCheck;
         if (!budget.reserveQuery() || !budget.reserveHttp()) return declined('bound');
+        // Review round 4: the epoch is checked immediately before the destination GET is dispatched.
+        if (!(await alive().catch(() => false))) return declined('stopped');
         const checked = await withinRun(() => checkCrossWriteDestination({ kind: 'jira', issueKey: picked.issueKey, project: picked.project }, destinationPort), budget, this.background.signal);
         if (checked.kind === 'wall') return declined('bound');
         if (checked.kind !== 'ok') return declined(checked.kind === 'shutdown' ? 'shutdown' : 'destination-unchecked');
         // Round 3 (P2-1): the switch epoch is re-read after the awaited GET (stop then resume voids; nothing is read or drafted).
-        if (!(await stillRunning().catch(() => false))) return declined('stopped');
+        if (!(await alive().catch(() => false))) return declined('stopped');
         const exists = checked.value;
         if (!exists.ok) {
           this.log('info', AGENT_A7_AUDIT_EVENT, { planKind: 'cross-write', form: pending.form, stage: pending.stage, decision: 'pending', outcome: 'destination-gone', reason: exists.reason });
@@ -1181,7 +1191,7 @@ export class AgentRunService {
             now: turn.now,
             budget,
             signal: this.background.signal,
-            stillRunning,
+            alive,
             picked,
             ...(turn.ownerStepPending !== undefined ? { ownerStepPending: turn.ownerStepPending } : {}),
             ...(frozenInput !== undefined ? { receipt: frozenInput } : {}),
@@ -1444,7 +1454,6 @@ export class AgentRunService {
     this.deps.consentStore?.voidAll();
   }
 
-  /** The persisted kill switch on the live actor: `true` only when it reads `running` (a throw or no actor is a stop). */
   /**
    * Round 3 (P2-1): running AND still the switch epoch this A7 turn started under (the record's `at` equals the guard's `switchAt`).
    * A stop then a resume moves `at`, so it voids the in-flight work (A7.4, A7.4b); a throw or a missing actor is false (fail closed).
@@ -1459,6 +1468,7 @@ export class AgentRunService {
     }
   }
 
+  /** The persisted kill switch on the live actor: `true` only when it reads `running` (a throw or no actor is a stop). */
   private async liveSwitchRunning(actorId: Id): Promise<boolean> {
     try {
       const live = await this.deps.actors.get(actorId);

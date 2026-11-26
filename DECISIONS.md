@@ -40225,3 +40225,13 @@ turn (raced in `runPlanned`, by the timeout and shutdown in `continueA7Pick`) an
 ### A7-S4b review round 3 (2026-11-26; Codex delta, 2 P2, plus the CA J3 note)
 
 Append-only under the round-2 note. Still DORMANT. P2-1: the A7 turn captures the kill-switch epoch (`at`) with its guard; `stillRunning` for the pick continuation and the ordinary A7 cross-write step is now `epochRunning` (running AND the record's `at` equals the guard's `switchAt`), so a stop then resume voids in-flight work (A7.4, A7.4b). It is re-read after the awaited destination GET (declined `stopped`) and, through `stillRunning`, before the source read and before the card. P2-2: the destination GET reserves one connector query and one HTTP request (`reserveQuery` and `reserveHttp`) before it is made; a refused reservation declines `bound` with no GET, so a run bounded to one connector read cannot make the GET and the source read both. The round-2 "charged" comment was corrected.
+
+### A7-S4b review round 4 (2026-11-26; Codex round-3 delta, 3 P2: the same race family at other await boundaries; fixed structurally)
+
+Append-only under the round-3 note. Still DORMANT. Rule: the A7 epoch guard is captured ONCE, at turn entry before any await (the head of `admitted` on the ordinary
+path, before the planner; the first statement of `continueA7Pick`), and is never re-captured. One liveness closure (`alive`: running AND the same switch epoch) is built from
+it and passed to `runA7ProposeStep` and `runA7DestinationListing` as a REQUIRED input; it is called immediately before every external effect (the destination GET, the
+open-card read, each source read, `quarantinedDraft`, the proposal port) and immediately after every await; false declines `stopped` with nothing further read, drafted or
+proposed. It replaces the ad-hoc `stillRunning` on A7 paths; the non-A7 plan run and the consent continuation are unchanged. Tests (`a7-pick-flow.test.ts`): one stop-then-resume
+per boundary (planner; the running check before the GET; the source read before the draft, ordinary and pick; the ordinary cross-write open-card read), each asserting `stopped`
+and exact zero counts of later GETs, reads, drafts and proposals; the budget test now asserts decline reason `bound` with exactly one destination check and zero source reads.

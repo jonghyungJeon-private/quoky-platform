@@ -101,9 +101,9 @@ function harness(options: Options = {}) {
   const reads: Array<{ entry: string; args: AgentReadRequest['args'] }> = [];
   const logs: Array<{ event: string; fields: LogFields }> = [];
   const script = [...(options.script ?? [])];
-  const state = { slackItems: options.slackItems ?? SLACK_ITEMS, openTarget: undefined as string | undefined, closure: options.closure ?? ((): AgentCardClosureState => 'open'), seq: 0, plannerCalls: 0, exists: options.destinationExists ?? (() => true), checks: [] as string[] };
+  const state = { slackItems: options.slackItems ?? SLACK_ITEMS, openTarget: undefined as string | undefined, closure: options.closure ?? ((): AgentCardClosureState => 'open'), seq: 0, plannerCalls: 0, exists: options.destinationExists ?? (() => true), checks: [] as string[], hooks: {} as { planner?: () => void; sourceRead?: () => void; openCard?: () => void; afterActorGet?: (n: number) => void }, actorGets: 0 };
   const port: AgentWriteProposalPort = {
-    openCardOf: async () => (state.openTarget !== undefined ? { cardId: 'open-1', target: state.openTarget } : undefined),
+    openCardOf: async () => (state.hooks.openCard?.(), state.openTarget !== undefined ? { cardId: 'open-1', target: state.openTarget } : undefined),
     closureOf: async () => state.closure(),
     propose: async (request): Promise<AgentWriteProposalResult> => {
       proposals.push(request);
@@ -115,7 +115,9 @@ function harness(options: Options = {}) {
     read: async (request) => {
       reads.push({ entry: request.entryId, args: request.args });
       if (!request.budget.reserveQuery() || !request.budget.reserveHttp()) return { ok: false, code: 'BOUND' };
-      return { ok: true, items: state.slackItems.map((item) => ({ ...item })) };
+      const items = state.slackItems.map((item) => ({ ...item }));
+      state.hooks.sourceRead?.();
+      return { ok: true, items };
     },
   };
   const jira: AgentReadPort = {
@@ -133,6 +135,7 @@ function harness(options: Options = {}) {
     isAvailable: async () => true,
     execute: async () => {
       state.plannerCalls += 1;
+      state.hooks.planner?.();
       return { text: script.shift() as string, artifacts: [] };
     },
   };
@@ -143,7 +146,15 @@ function harness(options: Options = {}) {
     mode: 'active',
     released: true,
     router: { select: async () => planner },
-    actors: { get: async (id) => live.get(id) ?? null, save: async (actor) => (live.set(actor.id, actor), actor) },
+    actors: {
+      get: async (id) => {
+        const found = live.get(id) ?? null;
+        state.actorGets += 1;
+        state.hooks.afterActorGet?.(state.actorGets);
+        return found;
+      },
+      save: async (actor) => (live.set(actor.id, actor), actor),
+    },
     logger,
     timeZone: 'Asia/Seoul',
     timeoutMs: 6_000,
@@ -793,9 +804,69 @@ describe('review round 3: the switch epoch and the destination reservation', () 
     bounds.maxConnectorQueries = 1;
     bounds.maxHttpRequests = 1;
     const outcome = await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)));
-    expect(h.state.checks.length + h.reads.filter((read) => read.entry === 'slack.search').length).toBeLessThanOrEqual(1);
+    // Exact counts: the one destination check was attempted (it took the only slot); the source read made no connector call; no draft, no card.
+    expect(h.state.checks).toEqual(['BE-77']);
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
     expect(h.drafter.requests).toHaveLength(0);
     expect(h.proposals).toHaveLength(0);
-    expect(outcome).not.toMatchObject({ outcome: { kind: 'carded' } });
+    expect(outcome).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'bound' } });
+  });
+});
+
+describe('review round 4: the epoch is captured once at turn entry and checked around every effect', () => {
+  const stopThenResume = (h: ReturnType<typeof harness>) => {
+    h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'stopped', at: at(2) } } });
+    h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'running', at: at(3) } } });
+  };
+  const asked = async (h: ReturnType<typeof harness>) => jsonRoundTrip(((await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown }).a7State);
+  const nothingAfter = (h: ReturnType<typeof harness>, sourceReads: number) => {
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(sourceReads);
+    expect(h.drafter.requests).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+  };
+
+  it('ordinary: stop then resume during the planner declines stopped before any receipt, read, draft or proposal', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN] });
+    h.state.hooks.planner = () => stopThenResume(h);
+    expect(await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)).toMatchObject({ kind: 'declined', reason: 'stopped' });
+    expect(h.state.plannerCalls).toBe(1);
+    nothingAfter(h, 0);
+    expect(h.reads).toHaveLength(0);
+  });
+
+  it('ordinary: stop then resume during the open-card read (a cross-write effect) refuses stopped with no read, draft or proposal', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN] });
+    h.state.hooks.openCard = () => stopThenResume(h);
+    expect(await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'stopped' } });
+    nothingAfter(h, 0);
+  });
+
+  it('ordinary: stop then resume during the source read refuses stopped before the draft (one read, zero drafts, zero proposals)', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN] });
+    h.state.hooks.sourceRead = () => stopThenResume(h);
+    expect(await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'stopped' } });
+    nothingAfter(h, 1);
+  });
+
+  it('pick: stop then resume during the running-only check before the destination GET declines stopped with zero GETs', async () => {
+    const h = harness({ script: [FORM_A_PLAN] });
+    const state = await asked(h);
+    // Within the pick turn the actor reads are: the entry guard (1), the running check (2), the check right before the GET (3).
+    const base = h.state.actorGets;
+    h.state.hooks.afterActorGet = (n) => {
+      if (n === base + 2) stopThenResume(h);
+    };
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)))).toMatchObject({ kind: 'declined', reason: 'stopped' });
+    expect(h.state.checks).toEqual([]);
+    nothingAfter(h, 0);
+  });
+
+  it('pick: stop then resume during the source read refuses stopped before the draft (one read, zero drafts, zero proposals)', async () => {
+    const h = harness({ script: [FORM_A_PLAN] });
+    const state = await asked(h);
+    h.state.hooks.sourceRead = () => stopThenResume(h);
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)))).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'stopped' } });
+    expect(h.state.checks).toEqual(['BE-77']);
+    nothingAfter(h, 1);
   });
 });
