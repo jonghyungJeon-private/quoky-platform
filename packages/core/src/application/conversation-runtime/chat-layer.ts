@@ -29,7 +29,8 @@ import { type PendingQuestion } from '../nl-routing/selection-state';
 import { parseActionSwitchPhrase } from '../nl-routing/action-switch';
 import { Capability, IntentType, TaskStatus } from '../../domain';
 import type { Actor, Artifact, ContextBundle, Id, InboundMessage, Intent, OutboundMessage, Session, Task, TurnWorkFacts } from '../../domain';
-import { executionLocalityOf, type AiExecutionResult, type ProjectReadout, type SurfaceClaim } from '../../ports';
+import { executionLocalityOf, type AiExecutionResult, type AiProvider, type ProjectReadout, type ProviderSelectionContext, type ResolvedProviderSelection, type SurfaceClaim } from '../../ports';
+import { RecipientRecheckRefused, SUMMARY_CONSENT_REFUSED_REPLY_ID, SUMMARY_RECIPIENT_RECHECK_REFUSED, type SummaryRecipientGuard } from '../item-summary/summary-recipient-guard';
 import { ProviderGatewayTerminalStatus } from '../provider-routing-gateway';
 import { RoutingFailureCode } from '../runtime-response-validation-contracts';
 import type { RuntimeProviderRoutingAudit } from '../runtime-provider-routing-service';
@@ -193,7 +194,42 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
     return !pending && this.deps.nlSelection?.phaseCShadowEnabled?.() === true && this.deps.nlSelection.shadowGrammarHit !== undefined;
   }
 
-  /** (F) Existing single-capability work path (relocated from QuokyCore), returning a reply. */
+  /**
+   * The selection context of a work turn: the session, the actor and, for an A6 R2 Jira / Slack item summary, the data-only
+   * work-text constraint (D6, amendment C9). The one builder the work path and the A8 pre-resolve (OQ1-2) both use.
+   */
+  protected workSelectionContext(
+    session: Session,
+    actor: Actor,
+    readout: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout | undefined,
+  ): ProviderSelectionContext {
+    return {
+      sessionId: session.id,
+      actorId: actor.id,
+      ...(isUntrustedDocumentReadout(readout) && isR2DocumentSource(readout.source) ? { workText: true as const } : {}),
+    };
+  }
+
+  /**
+   * ADR-0116 D3: the selector reports, with the provider, whether it is the owner's explicit selection; a selector without
+   * `resolve` reports nothing, which counts as "not an owner selection" (fail closed). The one resolve the work path and the A8
+   * pre-resolve (OQ1-2) both use.
+   */
+  protected async resolveWorkProvider(
+    capability: Capability,
+    context: ProviderSelectionContext,
+  ): Promise<ResolvedProviderSelection | { readonly provider: AiProvider }> {
+    return this.deps.router.resolve
+      ? await this.deps.router.resolve(capability, context)
+      : { provider: await this.deps.router.select(capability, context) };
+  }
+
+  /**
+   * (F) Existing single-capability work path (relocated from QuokyCore), returning a reply. `summaryGuard` (ADR-0121 A8.3c,
+   * OQ1-2; only with `QUOKY_ITEM_SUMMARY_CONSENT=on`) is checked synchronously right before the provider call and right before
+   * its one regeneration; a refusal makes no call, fails the run with a content-free code and returns `FAILED` (the caller's
+   * fallback). Absent: the path is exactly as before.
+   */
   protected async handleWorkTurn(
     message: InboundMessage,
     session: Session,
@@ -202,6 +238,7 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
     excludeMemoryId: Id,
     readout: ProjectReadout | ExternalWorkReadout | UntrustedDocumentReadout | undefined,
     nlFacts?: NlChatFacts,
+    summaryGuard?: SummaryRecipientGuard,
   ): Promise<TurnResult> {
     // Live DM test 2026-10-20: the switch phrases are recognized on this owner DM turn (the fact names them; the guard keeps them).
     const controls = isDirectConversation(message.context) ? this.switchScope() : undefined;
@@ -382,16 +419,8 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       }
 
       // A6 R2 (D6, amendment C9): a Jira / Slack item summary carries the data-only work-text constraint.
-      const selectionContext = {
-        sessionId: session.id,
-        actorId: actor.id,
-        ...(isUntrustedDocumentReadout(readout) && isR2DocumentSource(readout.source) ? { workText: true as const } : {}),
-      };
-      // ADR-0116 D3: the selector reports, with the provider, whether it is the owner's explicit selection; a selector
-      // without `resolve` reports nothing, which counts as "not an owner selection" (fail closed).
-      const resolved = this.deps.router.resolve
-        ? await this.deps.router.resolve(capability, selectionContext)
-        : { provider: await this.deps.router.select(capability, selectionContext) };
+      const selectionContext = this.workSelectionContext(session, actor, readout);
+      const resolved = await this.resolveWorkProvider(capability, selectionContext);
       const provider = resolved.provider;
       providerId = provider.id;
       // ADR-0107 D6 / ADR-0116: the curated-example layer is composed only now that the provider for this execution
@@ -412,6 +441,8 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
             )
           : aiRequest;
       await this.deps.dispatchCommit.commit(run.id, run.id);
+      // ADR-0121 A8.3c hook 1 (OQ1-2): the recipient re-check, synchronous, with nothing awaited between it and the call.
+      if (summaryGuard !== undefined && !summaryGuard.admit(provider, 'call')) throw new RecipientRecheckRefused('call');
       const firstExecution = await provider.execute(executionRequest);
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
       // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
@@ -427,7 +458,12 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
             message,
             task,
             readout.source,
-            () => provider.execute(this.deps.promptRenderer.render(this.deps.promptComposer.compose(task, bundle, readout, { ...composition, documentSummaryRetry: true }), renderOptions)),
+            () => {
+              const retry = this.deps.promptRenderer.render(this.deps.promptComposer.compose(task, bundle, readout, { ...composition, documentSummaryRetry: true }), renderOptions);
+              // ADR-0121 A8.3c hook 2 (OQ1-2): the same re-check right before the one regeneration (synchronous, nothing awaited).
+              if (summaryGuard !== undefined && !summaryGuard.admit(provider, 'regeneration')) throw new RecipientRecheckRefused('regeneration');
+              return provider.execute(retry);
+            },
           )
         : undefined;
       const executed = summaryCheck?.executed ?? firstExecution;
@@ -476,12 +512,15 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       return this.responded(session, reply, workFacts(providerId));
     } catch (err) {
       const failure = describeAiFailure(err);
-      await this.deps.tasks.failRun(run, failure.errorSummary, {
+      // ADR-0121 A8.3c (OQ1-2): a refused recipient re-check leaves a content-free code, never RESPONDED; the caller shows its fallback.
+      const refused = err instanceof RecipientRecheckRefused;
+      await this.deps.tasks.failRun(run, refused ? SUMMARY_RECIPIENT_RECHECK_REFUSED : failure.errorSummary, {
         ...(providerId ? { providerId } : {}),
-        ...(routingAudit ? { metadata: { routingAudit } } : {}),
+        ...(refused ? { metadata: { deterministicReply: SUMMARY_CONSENT_REFUSED_REPLY_ID } } : routingAudit ? { metadata: { routingAudit } } : {}),
       });
       await this.deps.tasks.transition(task, TaskStatus.FAILED);
-      this.deps.logger.error('work turn failed', { taskId: task.id, runId: run.id, kind: failure.kind });
+      if (refused) this.deps.logger.warn('item summary recipient re-check refused', { taskId: task.id, runId: run.id, phase: err.phase });
+      else this.deps.logger.error('work turn failed', { taskId: task.id, runId: run.id, kind: failure.kind });
       // Codex review P2 of 31dd36e9: the fixed error below is not a chat reply, so `quoky.lastReply` records a non-chat
       // turn (ending any closed-question fact) even though the turn was marked chat before the provider call.
       this.nlChatReplies.delete(message);
@@ -671,6 +710,8 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       try {
         second = await regenerate();
       } catch (err) {
+        // ADR-0121 A8.3c (OQ1-2): a refused re-check is never a "regeneration failed" claim notice; the work path fails the run.
+        if (err instanceof RecipientRecheckRefused) throw err;
         // The first call's usage is kept; with no second draft the flagged first one is replaced (fail closed).
         this.deps.logger.warn('document summary claim check', {
           taskId: task.id,

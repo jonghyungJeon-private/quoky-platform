@@ -34,3 +34,12 @@ export { recipientVerdict } from './expected-recipient';
 export type { RecipientVerdict } from './expected-recipient';
 export { renderItemSummaryRecipientLine } from './recipient-line';
 export { isRenderableRecipientLabel } from './recipient-label';
+// ADR-0121 amendment A8 (OQ1-2): the per-turn egress guard (re-checks before the call and its one regeneration) and its fixed lines.
+export {
+  RecipientRecheckRefused,
+  SUMMARY_CONSENT_REFUSED_REPLY_ID,
+  SUMMARY_RECIPIENT_RECHECK_REFUSED,
+  SummaryRecipientGuard,
+  renderItemSummaryNotSentLine,
+} from './summary-recipient-guard';
+export type { SummaryRecipientGuardInput, SummaryRecipientPhase, SummaryRecipientSelector } from './summary-recipient-guard';

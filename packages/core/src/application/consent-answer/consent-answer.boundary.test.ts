@@ -111,7 +111,7 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
     expect(named('application/conversation-runtime/types.ts')).toEqual(['../consent-answer/consent-turn-gate#ConsentTurnGate:type']);
   });
 
-  it('the Core package index exports nothing of it; the application index exports exactly the store and the gate (and the gate types), by name', () => {
+  it('the Core package index exports nothing of it; the application index exports exactly the store, the gate (and the gate types) and the A8 item consent, by name', () => {
     expect(readFileSync(join(CORE_SRC, 'index.ts'), 'utf8')).not.toMatch(/consent-answer|consent-pending/u);
     const file = join(CORE_SRC, 'application/index.ts');
     const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
@@ -132,6 +132,7 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
       './consent-answer/consent-turn-gate#ConsentGateTurn',
       './consent-answer/consent-turn-gate#ConsentTurnGate',
       './consent-answer/consent-turn-gate#ConsentTurnGateDeps',
+      './consent-answer/item-summary-consent#ItemSummaryConsent',
     ]);
     // The answer function has one non-test caller: the gate.
     const callers = sourceFiles(CORE_SRC).filter((path) => /\banswerConsentTurn\s*\(/u.test(readFileSync(path, 'utf8')) && !path.endsWith('consent-answer.ts'));

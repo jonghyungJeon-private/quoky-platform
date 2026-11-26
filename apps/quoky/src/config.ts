@@ -19,7 +19,7 @@ import { ChannelGrantsConfigErrorCode, parseChannelGrantsConfig, type ChannelGra
 import { AgentConfigErrorCode, parseAgentConfig, type AgentConfig } from './agent/agent-config';
 import { WriteProposalsConfigErrorCode, parseProposeTargets, parseWriteProposalsConfig, type ProposeTarget, type WriteProposalsConfig } from './agent/write-proposals-config';
 import { ConsentAnswerConfigErrorCode, parseConsentAnswerConfig, type ConsentAnswerConfig } from './agent/consent-answer-config';
-import { SummaryConsentConfigErrorCode, parseSummaryConsentConfig, type SummaryConsentConfig } from './agent/summary-consent-config';
+import { SummaryConsentConfigErrorCode, parseItemSummaryConsentConfig, parseSummaryConsentConfig, type ItemSummaryConsentConfig, type SummaryConsentConfig } from './agent/summary-consent-config';
 import { ChunkItemsConfigErrorCode, parseChunkItemsConfig, type ChunkItemsConfig } from './item-summary/chunk-items-config';
 import type { EgressGuardConfig } from './security/egress-config';
 import { MAX_GITHUB_REPOSITORIES, parseRepositoryEntry } from './repository-allowlist';
@@ -157,6 +157,11 @@ export interface QuokyConfig {
    * refused at startup, SUMMARY_CONSENT_INVALID). `on` makes a remote agent summary ask first. See `agent/summary-consent-config.ts`.
    */
   summaryConsent: SummaryConsentConfig;
+  /**
+   * ADR-0121 amendment A8 (OQ1-2): `QUOKY_ITEM_SUMMARY_CONSENT` (`off`, the default, or `on`, which needs `QUOKY_SUMMARY_CONSENT=on`).
+   * `on` puts the live item summaries under the A8 egress guard. See `agent/summary-consent-config.ts`.
+   */
+  itemSummaryConsent: ItemSummaryConsentConfig;
   /**
    * ADR-0121 amendment A7 (slice A7-S2): `QUOKY_AGENT_WRITE_PROPOSALS` (`off`, the default, or `shadow`: the held receipt is
    * logged with closed codes only; `active` is refused at startup, AGENT_WRITE_PROPOSALS_ACTIVE_NOT_RELEASED).
@@ -640,6 +645,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
   const agent = parseAgentConfig(env);
   const consentAnswer = parseConsentAnswerConfig(env);
   const summaryConsent = parseSummaryConsentConfig(env);
+  const itemSummaryConsent = parseItemSummaryConsentConfig(env, summaryConsent);
   const writeProposals = parseWriteProposalsConfig(env);
   const proposeTargets = parseProposeTargets(env);
   const chunkItems = parseChunkItemsConfig(env);
@@ -697,6 +703,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): QuokyConfig {
     agent,
     consentAnswer,
     summaryConsent,
+    itemSummaryConsent,
     writeProposals,
     proposeTargets,
     chunkItems,

@@ -24,8 +24,10 @@ import {
   namesApprovedWriteStepVerb,
 } from '../connector-writes/connector-write-flow';
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteChoiceStopLine, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
-import { isDirectConversation, joinBody, outboundMessage, withOutboundBody } from '../message-rendering';
+import { isDirectConversation, joinBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
 import { runS3ItemSummary, type S3ItemSummaryOutcome } from '../item-summary/s3-item-summary';
+import { SummaryRecipientGuard, renderItemSummaryNotSentLine } from '../item-summary/summary-recipient-guard';
+import type { RecipientVerdict } from '../item-summary/expected-recipient';
 import {
   LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
   LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS,
@@ -78,6 +80,15 @@ import { ActionStoppedError, SurfaceDeniedError, frozenPlainSnapshot, nlConfirmT
 import type { NlChatFacts, RecentConnectorWrite } from './internal-types';
 import { connectorWriteChoiceIndex, explicitDurableMemoryContent, interpretDecision, nlReplyKindOf } from './turn-intents';
 import type { ApplyPreviewAnchor, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
+
+/**
+ * ADR-0121 amendment A8.4 (OQ1-2): the footer of a summary reply with the recipient line as its last line (the footer's own
+ * budget then counts it). No line: the footer object itself.
+ */
+function withRecipientLine(footer: MessageBody, line: string | undefined): MessageBody {
+  if (line === undefined) return footer;
+  return plainTextOf(footer).trim().length === 0 ? line : joinBody([footer, line]);
+}
 
 export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRuntimeChatLayer {
   /** Non-execution routes after classification: (L) work surface, (B) registration, (D) analysis, (E)/(F) chat. */
@@ -454,13 +465,15 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
         listing,
       });
     };
-    const fallback = async (): Promise<TurnResult> => {
+    // ADR-0121 A8 (OQ1-2): `extra` is the one fixed not-sent line added below the fallback (flag on only); absent: as before.
+    const fallback = async (extra?: string): Promise<TurnResult> => {
       await recordListing(numbered?.fallback);
+      const fallbackText: MessageBody = extra === undefined ? summary.fallbackText : joinBody([summary.fallbackText, extra]);
       // A6 R2 (amendment C10): an item read's fallback names the item; SHORT_TERM keeps only the fixed note.
       const history = summary.history?.assistant;
-      if (history === undefined) return this.respondComposed(message, session, outboundMessage(message.context, summary.fallbackText));
+      if (history === undefined) return this.respondComposed(message, session, outboundMessage(message.context, fallbackText));
       await this.deps.memory.recordAssistant(history, message.context, session.id);
-      return { status: 'RESPONDED', reply: outboundMessage(message.context, summary.fallbackText), sessionId: session.id };
+      return { status: 'RESPONDED', reply: outboundMessage(message.context, fallbackText), sessionId: session.id };
     };
     if (isUntrustedDocumentReadout(summary.readout)) {
       return this.handleDocumentSummary(message, session, actor, userMemoryId, summary, summary.readout, fallback);
@@ -479,6 +492,17 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
         reasonCode: 'WORK_SUMMARY_REQUEST_CREDENTIAL_MATERIAL',
       });
     }
+    // ADR-0121 A8.6 until OQ1-4 (flag on only): the D8 lookup summary is never sent to a REMOTE recipient, expected or not; the
+    // reply is the listing (no question yet). A LOCAL recipient is summarised as built, held to LOCAL by the guard.
+    let guard: SummaryRecipientGuard | undefined;
+    if (this.consentGate?.items !== undefined) {
+      const pre = await this.preResolveSummaryRecipient(session, actor, readout);
+      if (pre?.guard === undefined || pre.verdict.kind !== 'local') {
+        this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome: 'listing-only' });
+        return fallback();
+      }
+      guard = pre.guard;
+    }
     const intent: Intent = {
       type: IntentType.SUMMARIZE,
       capability: Capability.SUMMARIZATION,
@@ -489,7 +513,10 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     };
     let result: TurnResult;
     try {
-      result = await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout);
+      result =
+        guard === undefined
+          ? await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout)
+          : await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout, undefined, guard);
     } catch (err) {
       this.deps.logger.warn('work summary path threw', {
         messageId: message.id,
@@ -522,7 +549,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     userMemoryId: Id,
     summary: TurnHandlerSummarizeReply,
     readout: UntrustedDocumentReadout,
-    fallback: () => Promise<TurnResult>,
+    fallback: (extra?: string) => Promise<TurnResult>,
   ): Promise<TurnResult> {
     if (!isSummarizableDocumentReadout(readout)) {
       this.deps.logger.warn('document summary readout rejected', { messageId: message.id, sessionId: session.id });
@@ -536,6 +563,13 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       const local = await this.respondLongItemSummary(message, session, actor, userMemoryId, summary, long, longOptions);
       if (local !== undefined) return local;
     }
+    // ADR-0121 amendment A8 (OQ1-2, only with QUOKY_ITEM_SUMMARY_CONSENT=on): the recipient decides whether the call is made.
+    let guard: SummaryRecipientGuard | undefined;
+    if (this.consentGate?.items !== undefined) {
+      const decided = await this.itemSummaryRecipientStep(message, session, actor, summary, readout, fallback);
+      if (decided.kind === 'replied') return decided.result;
+      guard = decided.guard;
+    }
     const intent: Intent = {
       type: IntentType.SUMMARIZE,
       capability: Capability.SUMMARIZATION,
@@ -546,7 +580,10 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     };
     let result: TurnResult;
     try {
-      result = await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout);
+      result =
+        guard === undefined
+          ? await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout)
+          : await this.handleWorkTurn(message, session, actor, intent, userMemoryId, readout, undefined, guard);
     } catch (err) {
       this.deps.logger.warn('document summary path threw', {
         messageId: message.id,
@@ -556,11 +593,14 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       return fallback();
     }
     if (result.status !== 'RESPONDED') return fallback();
+    // ADR-0121 A8.4 (OQ1-2): after a completed REMOTE call the recipient line ends the footer (so it stays last and inside the
+    // message budget), on the summary and on every fixed notice below (ruling (d)). No guard (flag off): the same footer object.
+    const footer = guard === undefined ? summary.footer : withRecipientLine(summary.footer, guard.recipientLine(noticeLanguage(undefined, message.text)));
     // A6 R2 (D5, live test 3): the output scrub. Any written form of a participant's name the summary still carries is
     // pseudonymised before anything below reads or shows it.
     const summaryText = summary.participants !== undefined ? pseudonymiseParticipants(result.reply.text, summary.participants) : result.reply.text;
     // Review P2-4: links neutralized, the provider text an untrusted span, the fixed footer appended.
-    const reply = documentSummaryReply(summaryText, summary.footer);
+    const reply = documentSummaryReply(summaryText, footer);
     // ADR-0104 D1 amendment (owner, 2026-10-15; CA P1-2): the exact lines the owner is shown — rendered, capped, built
     // from the body's own parts (the fixed footer is Quoky copy) — pass the claim check, whichever path produced them;
     // otherwise the whole summary is replaced by the fixed notice. A fixed notice is Quoky copy as written.
@@ -570,13 +610,99 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     // a card header replaces the whole Jira / Slack summary with the fixed notice.
     if (isR2DocumentSource(readout.source) && containsCardSpoofLine(reply.shown)) {
       this.deps.logger.info('document summary replaced after the card-spoof check', { messageId: message.id });
-      return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(renderCardSpoofNotice(language), summary.footer)) };
+      return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(renderCardSpoofNotice(language), footer)) };
     }
     const verdict = checkDocumentSummaryClaims(reply.shown, message.text, readout.source, language, generalChatReplyPolicy(message.text));
     if (verdict.kind === 'clean') return { ...result, reply: withOutboundBody(result.reply, reply.body) };
     this.deps.logger.info('document summary replaced after the delivered-text check', { messageId: message.id });
     const notice = verdict.kind === 'claim' ? verdict.notice : renderDocumentSummaryTooLong(language);
-    return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(notice, summary.footer)) };
+    return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(notice, footer)) };
+  }
+
+  /**
+   * ADR-0121 amendment A8.3 (OQ1-2): the turn's pre-resolve, only with `QUOKY_ITEM_SUMMARY_CONSENT=on`. The provider is resolved
+   * with the same selection context and the same resolve as the work path (one helper each, no behaviour change), and its
+   * verdict computed with the policy's `expectedRecipientKey` and the composition root's label function. A `local` or `expected`
+   * verdict gets the per-turn guard the work path re-checks before the call and the regeneration. `undefined`: nothing resolved
+   * (no provider, a throw); the caller makes no call.
+   */
+  protected async preResolveSummaryRecipient(
+    session: Session,
+    actor: Actor,
+    readout: TurnHandlerSummarizeReply['readout'],
+  ): Promise<{ readonly verdict: RecipientVerdict; readonly guard: SummaryRecipientGuard | undefined } | undefined> {
+    const items = this.consentGate?.items;
+    if (items === undefined) return undefined;
+    const capability = Capability.SUMMARIZATION;
+    const context = this.workSelectionContext(session, actor, readout);
+    try {
+      const { provider } = await this.resolveWorkProvider(capability, context);
+      const router = this.deps.router;
+      const expectedKey = typeof router.expectedRecipientKey === 'function' ? router.expectedRecipientKey(capability, context) : undefined;
+      const verdict = items.verdictOf(provider, expectedKey);
+      const guard =
+        verdict.kind === 'local' || verdict.kind === 'expected'
+          ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel: (candidate) => items.recipientLabelOf(candidate) })
+          : undefined;
+      return { verdict, guard };
+    } catch (error) {
+      this.deps.logger.warn('item summary recipient pre-resolve failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return undefined;
+    }
+  }
+
+  /**
+   * ADR-0121 amendment A8.2/A8.5 (OQ1-2): what one live item summary does with its recipient (flag on only).
+   *
+   * - `local` / `expected`: the call proceeds under the returned guard (an expected REMOTE reply ends with the recipient line).
+   * - `unexpected` in the owner DM, with the handler's ids-only descriptor and no other owner step pending: the fixed rule-①
+   *   question is the whole reply (the readout is dropped), the history keeps the question, and no call is made.
+   * - otherwise (`unexpected` in a channel, without a descriptor or with another owner step pending, `unnamed`, nothing
+   *   resolved): the handler's fallback plus one fixed line; nothing is sent.
+   */
+  protected async itemSummaryRecipientStep(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    summary: TurnHandlerSummarizeReply,
+    readout: UntrustedDocumentReadout,
+    fallback: (extra?: string) => Promise<TurnResult>,
+  ): Promise<{ readonly kind: 'replied'; readonly result: TurnResult } | { readonly kind: 'call'; readonly guard: SummaryRecipientGuard }> {
+    const language = noticeLanguage(undefined, message.text);
+    const decided = (outcome: string): void => this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome });
+    const notSent = async (outcome: string) => {
+      decided(outcome);
+      return { kind: 'replied' as const, result: await fallback(renderItemSummaryNotSentLine(language)) };
+    };
+    const items = this.consentGate?.items;
+    if (items === undefined) return notSent('no-consent');
+    const pre = await this.preResolveSummaryRecipient(session, actor, readout);
+    if (pre === undefined) {
+      decided('unresolved');
+      return { kind: 'replied', result: await fallback() };
+    }
+    if (pre.guard !== undefined) {
+      decided(pre.verdict.kind);
+      return { kind: 'call', guard: pre.guard };
+    }
+    const verdict = pre.verdict;
+    if (verdict.kind !== 'unexpected') return notSent(verdict.kind);
+    // Fail closed: a turn whose owner-step fact was never decided counts as having one pending.
+    const ownerStepPending = this.consentOwnerSteps.get(message) !== false;
+    const descriptor = summary.consent;
+    if (!isDirectConversation(message.context) || descriptor === undefined || ownerStepPending) return notSent('unexpected-not-asked');
+    const asked = items.ask({
+      scope: { actorId: actor.id, conversationKey: this.agentConsentFacts(message).conversationKey },
+      descriptor,
+      recipient: { key: verdict.key, label: verdict.label },
+      requestText: message.text,
+    });
+    if (asked === undefined) return notSent('unexpected-ask-refused');
+    decided('asked');
+    // The question is the whole reply and what the history keeps; the readout is dropped here (never stored).
+    this.nlReplyKinds.set(message, { kind: 'question' });
+    await this.deps.memory.recordAssistant(asked.question, message.context, session.id);
+    return { kind: 'replied', result: { status: 'RESPONDED', reply: outboundMessage(message.context, asked.question), sessionId: session.id } };
   }
 
   /**

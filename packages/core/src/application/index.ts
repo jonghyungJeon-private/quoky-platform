@@ -195,6 +195,8 @@ export * from './agent';
 // names leave `consent-answer/`, plus the classifier adapter factory below (the answer function and the producers stay unreachable; pinned by the boundary test).
 export { ConsentPendingStore } from './consent-answer/consent-pending';
 export { ConsentTurnGate } from './consent-answer/consent-turn-gate';
+// ADR-0121 amendment A8 (OQ1-2): the composition root builds the live item-summary consent (only with QUOKY_ITEM_SUMMARY_CONSENT=on) and hands it to the gate.
+export { ItemSummaryConsent } from './consent-answer/item-summary-consent';
 // A6 classifier wiring: the composition root builds the classifier adapter (the answer function stays unreachable; the adapter takes
 // the turn's chat facts and the cap charge per call from the gate, never at construction).
 export { createConsentAnswerClassifier } from './consent-answer/consent-classifier';

@@ -642,6 +642,11 @@ export interface ConversationRuntimeDeps {
     resolve?(capability: Capability, context?: ProviderSelectionContext): Promise<ResolvedProviderSelection>;
     /** Optional synchronous dispatch-time eligibility check (image turns; ADR-0111 amendment, runtime switching). */
     isStillEligible?(capability: Capability, context: ProviderSelectionContext, provider: AiProvider): boolean;
+    /**
+     * Optional, synchronous, data only (ADR-0121 amendment A8.3): the policy's expected recipient key. Read only while
+     * `QUOKY_ITEM_SUMMARY_CONSENT=on` (the item-summary egress guard); absent: nothing is expected (fail closed).
+     */
+    expectedRecipientKey?(capability: Capability, context: ProviderSelectionContext): string | undefined;
   };
   /** Optional Slice 5A seam. Only TaskRun-backed GENERAL_CHAT work turns may use it. */
   readonly runtimeProviderRouting?: RuntimeProviderRouting;

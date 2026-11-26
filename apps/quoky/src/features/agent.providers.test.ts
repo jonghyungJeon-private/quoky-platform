@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENT_WRITE_PROPOSAL_PORT, AgentModeError, AgentRunService, ConsentPendingStore, ConsentTurnGate, type Capability, type CapabilityRouter, type StorageProvider } from '@quoky/core';
+import { AGENT_WRITE_PROPOSAL_PORT, AgentModeError, AgentRunService, ConsentPendingStore, ConsentTurnGate, ItemSummaryConsent, type Capability, type CapabilityRouter, type StorageProvider } from '@quoky/core';
 import { AGENT_RUNS, CONSENT_TURN_GATE, SUMMARY_CONSENT_STORE, agentWriteProposalDep, createAgentProviders, createAgentReadPorts, type AgentFeatureConfig } from './agent.providers';
 
 // ADR-0121 S2 wiring slice: the composition root builds the agent from the real collaborators. `off` and `shadow` are built as
@@ -82,6 +82,33 @@ describe('createAgentProviders: the rule-① consent composition (CS-2)', () => 
     // The gate and the agent run service receive the same optional store token (one store, not two).
     expect(find(list, CONSENT_TURN_GATE).inject).toContainEqual({ token: SUMMARY_CONSENT_STORE, optional: true });
     expect(find(list, AGENT_RUNS).inject).toContainEqual({ token: SUMMARY_CONSENT_STORE, optional: true });
+  });
+
+  it('A8 (OQ1-2): the gate holds the live item-summary consent only with QUOKY_ITEM_SUMMARY_CONSENT=on (and the store); the kill switch voids it', () => {
+    const gateOf = (itemSummaryConsent?: 'off' | 'on') => {
+      const list = createAgentProviders(() => ({ agent: { mode: 'off', summarySources: [] }, timeoutMs: 6_000, timeZone: 'Asia/Seoul', summaryConsent: 'on', ...(itemSummaryConsent !== undefined ? { itemSummaryConsent } : {}) }), { logger: silent }) as unknown as Array<{ provide: symbol; useFactory: (...args: unknown[]) => unknown }>;
+      const store = find(list, SUMMARY_CONSENT_STORE).useFactory() as ConsentPendingStore;
+      const runs = { continueSummaryConsent: async () => ({ kind: 'declined', reason: 'x', text: 'y' }), voidAllSummaryConsents: () => undefined };
+      return { store, gate: find(list, CONSENT_TURN_GATE).useFactory(runs, store) as ConsentTurnGate };
+    };
+    expect(gateOf().gate.items).toBeUndefined();
+    expect(gateOf('off').gate.items).toBeUndefined();
+    const { gate, store } = gateOf('on');
+    const items = gate.items;
+    expect(items).toBeInstanceOf(ItemSummaryConsent);
+    // The composition root's label table is wired in: a known REMOTE family is named, an unknown one is not (fail closed).
+    expect(items?.recipientLabelOf({ id: 'claude-cli', capabilities: [], executionLocality: 'REMOTE', isAvailable: async () => true, execute: async () => ({ text: '' }) })).toBe('Claude');
+    expect(items?.recipientLabelOf({ id: 'unknown-x', capabilities: [], executionLocality: 'REMOTE', isAvailable: async () => true, execute: async () => ({ text: '' }) })).toBeUndefined();
+    const asked = items?.ask({
+      scope: { actorId: 'owner', conversationKey: 'k' },
+      descriptor: { source: 'mail', itemId: 'm1', language: 'ko', redo: { handlerId: 'mail', selection: { entryId: 'item.summarize', args: { mode: 'summary' }, language: 'ko', target: { source: 'mail', id: 'm1' } } } },
+      recipient: { key: 'claude-cli', label: 'Claude' },
+      requestText: 'r',
+    });
+    expect(asked?.question).toBe('메일 1건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)');
+    expect(store.languageOf({ actorId: 'owner', conversationKey: 'k' })).toBe('ko');
+    gate.voidAll();
+    expect(items?.owns(asked?.runRef ?? '')).toBe(false);
   });
 
   it('the agent service is built with or without the store as before (off mode builds neither readers nor the store)', () => {

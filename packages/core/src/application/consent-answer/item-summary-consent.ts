@@ -1,8 +1,10 @@
 import type { Actor } from '../../domain';
 import type { Logger } from '../../ports';
+import type { AiProvider } from '../../ports/ai-provider.port';
+import { renderSummaryConsentQuestion } from '../agent/summary-consent-question';
 import { newId } from '../../util/id';
 import type { ItemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
-import type { RecipientVerdict } from '../item-summary/expected-recipient';
+import { recipientVerdict, type RecipientVerdict } from '../item-summary/expected-recipient';
 import { isConsentSource, type ConsentSource } from './consent-labels';
 import { CONSENT_ANSWER_WINDOW_MS, summaryConsentPending, type BoundConsent, type ConsentLanguage, type ConsentPendingStore, type ConsentScope } from './consent-pending';
 import { isOwnerYes } from './consent-yes';
@@ -88,6 +90,11 @@ export interface ItemSummaryConsentDeps {
   readonly store: ConsentPendingStore;
   readonly now: () => number;
   readonly logger?: Logger;
+  /**
+   * OQ1-2: the composition root's display-label function of a summary recipient (the same closed table the rule-① question
+   * uses). Absent: no REMOTE recipient has a name, so every REMOTE verdict is `unnamed` (nothing is asked or sent; fail closed).
+   */
+  readonly recipientLabel?: (provider: AiProvider) => string | undefined;
 }
 
 export interface ItemSummaryConsentAsk {
@@ -115,12 +122,31 @@ export class ItemSummaryConsent {
 
   constructor(private readonly deps: ItemSummaryConsentDeps) {}
 
-  /** Opens the question's pending step and records the continuation. `undefined`: invalid input (nothing was opened, nothing may be asked). */
-  ask(input: ItemSummaryConsentAsk): { readonly runRef: string } | undefined {
+  /** The recipient's display label from the composition root's table (`undefined`: none, or no label function). Total. */
+  recipientLabelOf(provider: AiProvider): string | undefined {
+    try {
+      return this.deps.recipientLabel?.(provider);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** OQ1-2: the A8.3 verdict of `provider` against the policy's expected key, with this instance's label function. Total. */
+  verdictOf(provider: AiProvider, expectedKey: string | undefined): RecipientVerdict {
+    return recipientVerdict(provider, expectedKey, (candidate) => this.recipientLabelOf(candidate));
+  }
+
+  /**
+   * Opens the question's pending step and records the continuation; returns the run ref and the fixed rule-① question (v2 nouns,
+   * one item, the recipient's label) to show. `undefined`: invalid input or no question renders (nothing was opened, nothing may be asked).
+   */
+  ask(input: ItemSummaryConsentAsk): { readonly runRef: string; readonly question: string } | undefined {
     try {
       const { scope, descriptor, recipient } = input;
       if (!isConsentSource(descriptor?.source) || !nonEmpty(descriptor.itemId) || !nonEmpty(recipient?.key) || !nonEmpty(recipient.label) || typeof input.requestText !== 'string') return undefined;
       if (descriptor.language !== 'ko' && descriptor.language !== 'en') return undefined;
+      const question = renderSummaryConsentQuestion({ language: descriptor.language, recipient: recipient.label, sources: [{ source: descriptor.source, count: 1 }] });
+      if (question === '') return undefined;
       const nowMs = this.deps.now();
       if (!Number.isFinite(nowMs)) return undefined;
       this.purge(nowMs);
@@ -151,7 +177,7 @@ export class ItemSummaryConsent {
         requestText: input.requestText,
         createdAtMs: nowMs,
       });
-      return { runRef };
+      return { runRef, question };
     } catch {
       this.deps.logger?.warn('item_summary_consent.ask_refused', {});
       return undefined;

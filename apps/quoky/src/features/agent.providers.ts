@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Provider } from '@nestjs/common';
-import { AGENT_WRITE_PROPOSAL_PORT, AgentRunService, AgentWriteProposalService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type AgentWriteProposalPort, type ConnectorWriteFlow, type Logger, type StorageProvider } from '@quoky/core';
+import { AGENT_WRITE_PROPOSAL_PORT, AgentRunService, AgentWriteProposalService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, ItemSummaryConsent, STORAGE_PROVIDER, type AgentReadPorts, type AgentWriteProposalPort, type ConnectorWriteFlow, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
 import { CONNECTOR_WRITE_FLOW } from './connector-writes.providers';
 import type { AgentConfig } from '../agent/agent-config';
@@ -56,6 +56,12 @@ export interface AgentFeatureConfig {
   readonly timeZone: string;
   /** `QUOKY_SUMMARY_CONSENT` (rule ① confirm slice). Absent or `off`: no store, no gate, the runtime is byte-identical. */
   readonly summaryConsent?: 'off' | 'on';
+  /**
+   * `QUOKY_ITEM_SUMMARY_CONSENT` (ADR-0121 amendment A8, OQ1-2). Only `on` together with `summaryConsent: 'on'` (the parser refuses
+   * `on` alone) composes the live item-summary consent and hands it to the gate. Absent or `off`: no item consent, the live summaries
+   * are byte-identical.
+   */
+  readonly itemSummaryConsent?: 'off' | 'on';
   /** `QUOKY_CONSENT_ANSWER_CLASSIFIER`: `off` (default); `on` stays refused at startup until A6-S4, so the classifier is only built for a test. */
   readonly consentAnswerClassifier?: ConsentAnswerClassifierMode;
   /**
@@ -138,6 +144,10 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
               chargeModelCall: (actor, atMs) => agentRuns.chargeClassifierCall(actor.id, atMs),
               continueSummary: (bound, turn) => agentRuns.continueSummaryConsent(bound, turn),
               voidContinuations: () => agentRuns.voidAllSummaryConsents(),
+              // A8 (OQ1-2): the live item-summary consent, only with both switches on; it shares the store, the clock and the label table.
+              ...(resolveConfig().itemSummaryConsent === 'on'
+                ? { items: new ItemSummaryConsent({ store: consentStore, now: summaryConsentClock, logger, recipientLabel: summaryRecipientLabel }) }
+                : {}),
               now: summaryConsentClock,
               logger,
             }),
