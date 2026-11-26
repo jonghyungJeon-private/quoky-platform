@@ -356,6 +356,8 @@ describe('JiraIssueTransitionWriter (ADR-0112 D2/D5: the approved transition id 
     });
   });
 
+  // PINNED PREMISE of the A7 drafter relaxation (owner 2026-11-26): an unescaped inert `[readme]` is no Jira wiki page link only because the body is
+  // an ADF document of bare `type:'text'` nodes over REST v3 (no wiki-markup body). A change of renderer must revisit the drafter relaxation.
   // ADR-0121 A7-S4a (A7-S3 note, review round 3 item 4): the comment is sent as plain ADF text nodes, one paragraph per `\n` line. ADF is
   // a structured document: no wiki markup is parsed out of a text node, so a doubled backslash (a forced line break in Jira WIKI markup),
   // `{code}`, `[x|y]`, `*bold*` or `!img!` stay inert characters inside ONE paragraph. The rendered line count of a comment is

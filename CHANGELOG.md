@@ -12,6 +12,12 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 ## Unreleased — ADR-0121 A7.7 applied to ARCHITECTURE.md (2026-11-26; docs only)
 
 - **Changed.** `ARCHITECTURE.md` §8 items 3 and 4, §10, §12 and §13 carry the ratified A7.7 text (the `OWNER_PICKED_DESTINATION` label, the third quarantined-output exception, the A7 card payload exception, the cross-source summary write bullet, CRITICAL A7 cards, the new forbidden rule, the Execution row). No code or test change; A7 stays dormant.
+## Unreleased — A7-S3 relaxation (owner 2026-11-26; dormant, `payload-draft-prompt.v1` unchanged)
+
+- **Changed.** The drafter's sanitiser (`agent/payload-drafter.ts`): `Q&A`, `R&D`, `AT&T` no longer refuse (only `&name;` and, without `;`, names starting
+  `amp`, `lt`, `gt`, `quot` refuse); an inert bracket pair (`[BE-123]`, `[중요]`: letters, digits, hyphen, space, at most 32, not followed by `(`, `:` `[`, not
+  preceded by `!` `]`) is no longer escaped. Everything else stays escaped; the re-check invariants are unchanged.
+- **Tests.** Adversarial forms for both relaxations; review round 1: `&shy` refused, spaced/multiline pins, renderer-premise comments on the Jira and Slack writer tests. See DECISIONS "A7-S3 relaxation note (owner 2026-11-26)".
 
 ## Unreleased — A7-S4a card (2026-11-25; dormant: `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused at startup)
 

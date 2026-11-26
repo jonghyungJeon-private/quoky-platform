@@ -39928,3 +39928,33 @@ no evaluation was run.
 7. **A6-S4:** build the corpus offline first, then a notice (calls, model, 5h %) and a yes before any run.
 8. **quoky-mac Cmd+Z check:** deferred until the other session's quoky-mac work lands.
 9. **A7.7 addendum (d):** ratified (see the A7.7 addendum entry above).
+
+## ADR-0121 A7-S3 relaxation note (owner 2026-11-26)
+
+Status: implemented (branch `claude/v5-a7-draft-relax`). Owner decision 2026-11-26: relax two usability costs of the A7-S3 sanitiser before A7-S5.
+Append-only; no amendment text changes. DORMANT: the drafter still has no live caller, A7 flags stay off, `payload-draft-prompt.v1` is unchanged
+(pinned SHA-256), no model call. A7.5 step 6 is consistent with both rules: it requires every link and mention form to be inert and brackets of link
+syntax escaped; a bracket pair that is provably no link syntax is not a link form (no clause is contradicted).
+
+1. *Ampersand (the Chief Architect's safe relaxation recorded in review round 4, item 4).* The draft refuses when it holds a named reference WITH the
+   `;` (`&name;`, any name), or WITHOUT the `;` a name that starts with `amp`, `lt`, `gt` or `quot` in any case (`&amp`, `&lt`, `&GT`, `&quotes`, `&ampx`),
+   the legacy forms a destination decodes to `& < > "`. Numeric references stay decoded until stable (so `&#38;lt` and `&#38;amp` become the refused forms; `&#`
+   undecodable still refuses). `Q&A`, `R&D`, `AT&T`, `a & b`, `&6` pass byte-exact. Residual (recorded): other legacy no-`;` names (`&nbsp`, `&copy`) reach
+   the destination as text and may decode to a harmless character; none decodes to a syntax character (`: / . @ # [ ] ( ) < > & "` other than the four above).
+2. *Inert bracket pair.* A `[` ... `]` pair is kept unescaped IF AND ONLY IF all hold: (a) the inner is 1 to 32 characters, only Unicode letters, digits,
+   hyphens and spaces, starting and ending with a letter or digit (`[BE-123]`, `[Q3 plan]`, `[중요]`; no word list, no issue-key list); (b) the next character is
+   not `(`, `:` or `[`; (c) the previous character is not `!` or `]`. Derivation: the existing invariants forbid `]:` (reference definition), `](`
+   (inline link), `//`; the inner has no `: / . @ ~ ! | ^ \ < >`, so it cannot be a scheme, host, e-mail, Jira `[~user]` or `[text|url]` link, Slack `<...>`, or one of
+   our markers; (b) removes `[x](dest)`, `[x]: dest` and the full reference `[x][ref]`; (c) removes the image `![x]` and the `[a][x]` reference label. Hangul and other
+   letters are allowed in the inner because a letter or digit inner is inert in every A7 destination (the Jira writer sends ADF bare text nodes, the calendar
+   description renders HTML where a bracket is plain text, Slack is `mrkdwn: false`) and the label remap runs before this step. Every other `[`, `]`, `\`
+   is escaped as before. A reference-style shortcut `[x]` needs a definition, and no definition can be formed (`]:` is impossible).
+   The escape pass, the re-check (`containsLiveLinkForm`: fixed point plus the explicit invariants) and the markers are unchanged; an unescaped
+   non-inert bracket still refuses. Fail closed: a pair that fails any condition is escaped whole (`\[x\]`).
+3. *Cost kept.* `[a.b]`, `[x/y]`, `[~u]`, `[a|b]` and over-32-character inners stay escaped; `]:` after an escaped pair still reads `\[x\][:]`.
+   Tests: `payload-drafter.test.ts` (new relaxation sections; every previously refused live form still refuses or is escaped, byte-exact allowed forms).
+
+*Review round 1 (2026-11-26).* Chief Architect J2: PASS with three P3s, all fixed: `shy` joins the no-`;` refused names (`&shy` decodes to the invisible U+00AD, a format character; `nbsp`, `copy` and the like stay passing, cosmetic); the bracket-pair comment now says runs of spaces are allowed (behaviour unchanged); pins added for `&nbsp`, `&copy`, `&shy`, `&SHY`, `&LT`, `&nbsp<`, `[a] (b)`, `[a] [b]`, `[a] : x`, `[a]\n[a]: x` (line 2 sealed `[:]`), `[a]@b`, and the format-character splits `[a]<U+200B>(x)`, `[a]<U+00AD>(x)` (escaped). Codex P2 dispute, `Claude / Codex / conclusion`:
+- `[readme]` as a Jira wiki page link. Codex: live in Jira wiki markup. Claude: no wiki-markup path exists (the writer sends ADF `type:'text'` nodes only over REST v3, `connector-jira/src/jira-issue-writer.ts`), now pinned by `jira-issue-writer.test.ts`; Slack is pinned by `slack-channel-writer.test.ts` (`mrkdwn:false`, `parse:'none'`, `link_names:false`). Conclusion: not a defect while the pin holds; a renderer change must revisit the relaxation.
+- `&copy` / `&nbsp`. Codex: character references must all refuse. Claude: the ratified CA relaxation (round 4 item 4) accepts no-`;` names that decode to no syntax character; `&shy` (invisible) is now refused. Conclusion: residual accepted, pinned.
+- `*bold*`, `{{code}}`, `!logo!`. Pre-existing, not touched by the diff; inert in Slack (`mrkdwn:false`) and Jira ADF. Recorded as A7-S5 smuggling-row items.

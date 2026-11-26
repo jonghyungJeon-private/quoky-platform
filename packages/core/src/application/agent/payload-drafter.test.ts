@@ -423,7 +423,7 @@ describe('review round 3: HTML character references', () => {
     expect(assemblePayloadDraft(answer('x&#x3a;y&#38;#58;z'), PEOPLE)).toMatchObject({ ok: true });
   });
 
-  it.each(['http&colon;&sol;&sol;134744072', 'a&amp;#58;b', 'x &lt;b&gt; y', 'Q&A tips'])('refuses any named reference shape (fail closed): %j', (line) => {
+  it.each(['http&colon;&sol;&sol;134744072', 'a&amp;#58;b', 'x &lt;b&gt; y'])('refuses any named reference shape (fail closed): %j', (line) => {
     expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: false, reason: 'link' });
   });
 
@@ -469,5 +469,113 @@ describe('review round 4: numeric references are decoded before the pseudonym re
   it('an encoded trailing dot after the label maps', () => {
     expect(assemblePayloadDraft(answer('참여자 A&#46;'), PEOPLE)).toEqual(assemblePayloadDraft(answer('참여자 A.'), PEOPLE));
     expect(assemblePayloadDraft(answer('참여자 A&#46;'), PEOPLE)).toMatchObject({ ok: true });
+  });
+});
+
+describe('owner relaxation 2026-11-26: bare ampersand', () => {
+  it.each(['Q&A', 'R&D', 'AT&T', 'Q&A and R&D at AT&T', 'a & b', 'x &6 y', 'R&Dteam', 'Tom&Jerry', 'a&b=c'])('passes byte-exact: %j', (line) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toMatchObject({ ok: true, draft: { lines: [line] } });
+  });
+  it.each([
+    '&amp;', '&lt;', '&gt;', '&quot;', '&colon;', '&sol;', '&Tab;', '&nbsp;', 'a&b;c', 'Q&A;',
+    '&amp', '&lt', '&gt', '&quot', '&AMP', '&Lt', '&GT', '&QuOt', '&ampx', '&ltr', '&gtx', '&quotes', '&shy', '&SHY', '&LT',
+    '＆amp', '＆lt;', '&#38;amp', '&#38;lt', '&#x26;quot', '&#38;colon;', '&#', '&#99999999999;', 'x&amp;#58;y',
+  ])('still refuses: %j', (line) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: false, reason: 'link' });
+  });
+  it.each(['&nbsp', '&copy'])('residual (recorded): a no-semicolon name that decodes to no syntax character passes: %j', (line) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toMatchObject({ ok: true, draft: { lines: [line] } });
+  });
+  it('a no-semicolon name followed by a syntax character keeps that character neutralised', () => {
+    expect(assemblePayloadDraft(answer('&nbsp<'), PEOPLE)).toMatchObject({ ok: true, draft: { lines: ['&nbsp‹'] } });
+  });
+  it('the re-check agrees', () => {
+    expect(containsLiveLinkForm('Q&A and R&D')).toBe(false);
+    expect(containsLiveLinkForm('a &lt b')).toBe(true);
+    expect(containsLiveLinkForm('a &x; b')).toBe(true);
+  });
+});
+
+describe('owner relaxation 2026-11-26: inert bracket pairs', () => {
+  it.each([
+    ['[BE-123]', '[BE-123]'],
+    ['see [BE-123] now', 'see [BE-123] now'],
+    ['[BE-1] and [BE-2].', '[BE-1] and [BE-2].'],
+    ['[중요] 릴리즈', '[중요] 릴리즈'],
+    ['[Q3 plan]', '[Q3 plan]'],
+    ['[a]', '[a]'],
+    ['(see [BE-1])', '(see [BE-1])'],
+    ['x[BE-1]', 'x[BE-1]'],
+    ['\\[BE-1]', '\\[BE-1\\]'],
+  ])('keeps an inert pair: %j', (line, out) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toMatchObject({ ok: true, draft: { lines: [out] } });
+    expect(defangLinks(out)).toBe(out);
+    expect(containsLiveLinkForm(out)).toBe(false);
+  });
+  it.each([
+    ['[x](https://example.test)', '\\[x\\]\\(https[:]/[/]example[.]test)'],
+    ['[BE-1](x)', '\\[BE-1\\]\\(x)'],
+    ['[BE-1]: x', '\\[BE-1\\][:] x'],
+    ['[BE-1]:x', '\\[BE-1\\][:]x'],
+    ['![BE-1]', '!\\[BE-1\\]'],
+    ['![BE-1](a)', '!\\[BE-1\\]\\(a)'],
+    ['[a][BE-1]', '\\[a\\]\\[BE-1\\]'],
+    ['[BE-1][x]', '\\[BE-1\\]\\[x\\]'],
+    ['[BE-1][@]', '\\[BE-1\\][@]'],
+    ['[@][BE-1]', '[@]\\[BE-1\\]'],
+    ['[~user]', '\\[~user\\]'],
+    ['[a|b]', '\\[a|b\\]'],
+    ['[a.b]', '\\[a.b\\]'],
+    ['[a/b]', '\\[a/b\\]'],
+    ['[a:b]', '\\[a[:]b\\]'],
+    ['[a b ]', '\\[a b \\]'],
+    ['[ a]', '\\[ a\\]'],
+    ['[-a]', '\\[-a\\]'],
+    ['[]', '\\[\\]'],
+    ['[[BE-1]]', '\\[[BE-1]\\]'],
+    ['[BE-1]]', '[BE-1]\\]'],
+    ['\\[BE-1\\]', '\\[BE-1\\]'],
+    ['[ＢＥ-1](x)', '\\[BE-1\\]\\(x)'],
+    ['［BE-1］：x', '\\[BE-1\\][:]x'],
+    ['[BE-1]（x）', '\\[BE-1\\]\\(x)'],
+    ['[' + 'a'.repeat(40) + ']', '\\[' + 'a'.repeat(40) + '\\]'],
+  ])('still escapes a live or non-inert form: %j', (line, out) => {
+    const result = assemblePayloadDraft(answer(line), PEOPLE);
+    if (result.ok) {
+      expect(result.draft.lines[0]).not.toMatch(/\]\(|\]:|!\[/u);
+      expect(containsLiveLinkForm(result.draft.lines[0] ?? '')).toBe(false);
+    }
+    expect(defangLinks(line)).toBe(out);
+  });
+  it('is a fixed point and numeric references cannot smuggle a live bracket', () => {
+    for (const line of ['[BE-1] x', '[BE-1]&#40;x&#41;', '&#91;BE-1&#93;&#40;x', '[BE-1]&#58; x', '&#33;[BE-1]', '[BE-1]&#91;x&#93;']) {
+      const once = defangLinks(line);
+      if (once !== undefined) {
+        expect(defangLinks(once)).toBe(once);
+        expect(containsLiveLinkForm(once)).toBe(false);
+        expect(once.replace(/\\[\\[\](]|\[[@.:/]\]/gu, '')).not.toMatch(/\]\(|\]:|!\[|\]\[/u);
+      }
+    }
+    expect(defangLinks('[BE-1]&#40;x&#41;')).toBe('\\[BE-1\\]\\(x)');
+    expect(defangLinks('&#33;[BE-1]')).toBe('!\\[BE-1\\]');
+  });
+  it('the re-check refuses an unescaped live bracket', () => {
+    for (const bad of ['[BE-1](x)', '[BE-1]: x', '![BE-1]', '[a][BE-1]', '[a.b]', '[~u]', '[a|b]']) expect(containsLiveLinkForm(bad)).toBe(true);
+  });
+});
+
+describe('owner relaxation 2026-11-26: review round 1 pins (spaced, multiline, hidden-character forms)', () => {
+  it.each([
+    ['[a] (b)', '[a] (b)'],
+    ['[a] [b]', '[a] [b]'],
+    ['[a] : x', '[a] : x'],
+    ['[a]@b', '\\[a\\][@]b'],
+    ['[a]\u200b(x)', '\\[a\\]\\(x)'],
+    ['[a]\u00ad(x)', '\\[a\\]\\(x)'],
+  ])('exact output (inert): %j', (line, out) => {
+    expect(assemblePayloadDraft(answer(line), PEOPLE)).toEqual({ ok: true, draft: { lines: [out], named: 0 } });
+  });
+  it('a reference definition on line 2 is sealed with [:]', () => {
+    expect(assemblePayloadDraft(answer('[a]', '[a]: x'), PEOPLE)).toEqual({ ok: true, draft: { lines: ['[a]', '\\[a\\][:] x'], named: 0 } });
   });
 });
