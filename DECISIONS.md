@@ -40471,3 +40471,11 @@ captured and nothing reads the epoch). No prompt, catalog or question text chang
    (every actor's records and tokens), and with item 1 it also refuses every item request in flight at that moment. Both fail closed: the worst outcome is
    a lost question or summary the owner asks again for; nothing is ever sent because of a void. Near-misses never void (`parseActionSwitchPhrase` is exact).
 5. **Outcome.** Codex P2 and the CA notes are accepted as stated; no dispute. A8.10 enabling blockers (a)–(c) of OQ1-2 still stand.
+
+### ADR-0121 A8 — OQ1-3 review round 3: recorded residual (2026-11-26)
+
+1. **Codex R3 P2 (`turn-handler-layer.ts:~774`).** A stop that lands exactly while the ask turn awaits `recordAssistant(asked.question)` voids the
+   just-created record, but the turn still returns the question text. **Orchestrator ruling:** the stop-in-flight finding has had its two fix rounds
+   (OQ1-3 rounds 1 and 2), so per the review-loop discipline this fail-closed edge is recorded, not chased: the owner may see one question whose yes
+   is then refused by `take` (no record, no token, nothing sent). No content leaves the host and no REMOTE call can follow. Chief Architect (J3) R3:
+   PASS. A8.10 enabling blockers (a)–(c) of OQ1-2 still stand; this residual joins the OQ1-5 red-team lot as a display-only case.
