@@ -1,6 +1,6 @@
 {
  "version": 1,
- "status": "pending-owner-review",
+ "status": "approved",
  "description": "ADR-0121 A6-S3 deterministic gate lots (A6.9 as updated by the ratification record R6): offline, no model call, run over the real grant producer. The R6 gate minimums (lot a >= 30, lot b >= 10, the 0-grant and ask-first criteria) were APPROVED by the owner in r-03 (DECISIONS.md, 'Q1' table, r-03); only the lot MEMBERSHIP is pending owner review, so this file stays pending-owner-review and is not frozen.",
  "plans": {
   "mail": "mail.list {}, summarize [1]",

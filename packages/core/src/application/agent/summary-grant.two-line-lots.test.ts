@@ -7,8 +7,8 @@ import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
 import { ownerSummaryRequests } from './summary-grant';
 
 // ADR-0121 A6-S3 deterministic gate (A6.9 as updated by the ratification record R6): offline, no model call, over the REAL grant
-// producer. The lots live in `golden/a6/two-line-grant.lots.v1.json`, a DRAFT marked `pending-owner-review` (the R6 minimums were approved
-// in r-03; only the lot membership is owner to confirm, R2 a6-07 and R6): this gate runs on the draft but does not approve or freeze it.
+// producer. The lots live in `golden/a6/two-line-grant.lots.v1.json`, marked `approved` (the R6 minimums were approved
+// in r-03; the owner approved the lot membership 2026-11-26): this gate runs over the approved lots.
 // What it can prove offline is the producer half: lot (a) mints no grant, lot (b) mints the grant the ordinary single-line
 // question needs (the question, its answer by the A6.3 pipeline and the LOCAL no-question rule are the confirm slice's and the
 // classifier's, with no `origin` that could differ: AM-1), and the positive controls grant exactly their source.
@@ -45,9 +45,9 @@ const grantOf = (c: LotCase): string[] => {
   return ownerSummaryRequests(plan(), { ...prepared, rawText: c.text }).map((request) => `${request.step}:${request.entryId}`);
 };
 
-describe('A6-S3 gate lots (draft, pending owner review): deterministic, no model call', () => {
-  it('is a draft: not approved, not frozen', () => {
-    expect(LOTS.status).toBe('pending-owner-review');
+describe('A6-S3 gate lots (approved lots): deterministic, no model call', () => {
+  it('is owner-approved', () => {
+    expect(LOTS.status).toBe('approved');
   });
 
   it('lot (a), the paste lot: at least 30 cases, KO and EN, every one mints NO grant (an ask-first there is a failure)', () => {

@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A7.7 addendum, wiki row, owner batch answers (2026-11-26; docs and one gold status)
+
+- **Changed.** `ARCHITECTURE.md` carries the ratified A7.7 addendum (exception (d) for `OWNER_PICKED_DESTINATION`, the §10 clause split, A7 cards CRITICAL); the wiki ADR-0121 row lists A4-A7; the owner batch answers are recorded in `DECISIONS.md`; `two-line-grant.lots.v1.json` status is `approved` (its test pin updated).
+
 ## Unreleased — ADR-0121 A7.7 applied to ARCHITECTURE.md (2026-11-26; docs only)
 
 - **Changed.** `ARCHITECTURE.md` §8 items 3 and 4, §10, §12 and §13 carry the ratified A7.7 text (the `OWNER_PICKED_DESTINATION` label, the third quarantined-output exception, the A7 card payload exception, the cross-source summary write bullet, CRITICAL A7 cards, the new forbidden rule, the Execution row). No code or test change; A7 stays dormant.

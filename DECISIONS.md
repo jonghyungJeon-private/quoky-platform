@@ -39916,3 +39916,15 @@ no evaluation was run.
 - **Gap.** A7.7 (applied to `ARCHITECTURE.md` 2026-11-26) did not amend the rule that a closed-format id projected from a read result never feeds another connector, another origin or a write, except (a), (b) and (c), although A7.4b (ratified 2026-11-24) sanctions the owner's pick of a destination from a content-free listing. Found by the Chief Architect review of the A7.7 application.
 - **Ratification.** The Product Owner ratified (Strict) the addendum on 2026-11-26.
 - **Edits (exactly three, `ARCHITECTURE.md`).** (1) §8 item 3: a fourth exception, "(d) as the `OWNER_PICKED_DESTINATION` of one A7 card (ADR-0121 A7.4b)". (2) §10 destination parenthetical: the A7 clause is separated from the Slack-thread clause ("...(ADR-0121 A4); or a destination the owner picked from a destination listing built without content (ADR-0121 A7)"). (3) §10: "Every cross-destination flow is HIGH (A7 cards: CRITICAL), except ...".
+
+## Owner batch answers (2026-11-26)
+
+1. **A7 gold `agent-plan.a7.v1.json` (264 rows).** The owner asked to see a category sample (about 40 rows) before approving. It stays `pending-owner-approval`.
+2. **A7 drafter usability costs.** The owner chose to relax before A7-S5: (1) bracket escaping `\[BE-123\]` and (2) the `Q&A` / `R&D` refusal (the CA safe relaxation recorded in the A7-S3 note). Short real-name false refusals stay as they are. Its own slice.
+3. **A7 card bound 1700 UTF-16 units.** Kept; revisit with A7-S5 data.
+4. **OQ-1: yes.** Rule 1 also covers the live non-agent remote item summaries (ADR-0118 D7 mail/Drive item and thread summaries, A6 R2 `item.summarize`), as its own slice, flag default off.
+5. **CS-3 status mapping** (121 moved cases `owner-approved`, not SR-1 batch-reviewed): confirmed as is. The SR-1 batch review still comes before `active`.
+6. **A6-S3 two-line lots membership:** approved (`two-line-grant.lots.v1.json` status set to `approved`).
+7. **A6-S4:** build the corpus offline first, then a notice (calls, model, 5h %) and a yes before any run.
+8. **quoky-mac Cmd+Z check:** deferred until the other session's quoky-mac work lands.
+9. **A7.7 addendum (d):** ratified (see the A7.7 addendum entry above).
