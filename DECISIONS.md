@@ -15573,6 +15573,7 @@ connector-write request falls through to chat, the model may claim an action it 
    ADR-0098 injection and capability-honesty rules. Quoky appends a deterministic footer (≤10 real URLs plus "N
    external items were used"). On any non-RESPONDED result the reply is `fallbackText` (the deterministic list).
    `QUOKY_WORK_SUMMARY_ENABLED` (parsed by SEAM-2, default `true`) turns summarisation off entirely.
+   *Amended by ADR-0121 A8 (A8.6, slice OQ1-4 = A5-S6, 2026-11-26):* behind `QUOKY_ITEM_SUMMARY_CONSENT`, a `REMOTE` recipient gets the listing plus the rule-① question (DM only; a channel gets the listing only) and the summary only after the owner's yes; see "ADR-0121 A8 — OQ1-4 design and implementation note".
 9. **Connector writes stay out of scope.** Create/update/comment/post requests get a fixed read-only refusal with no
    provider or connector call.
 10. **Ownership.** `WorkChatService` owns command execution through `WorkManager`, `WorkSurfaceQuery` and the
@@ -40480,3 +40481,56 @@ captured and nothing reads the epoch). No prompt, catalog or question text chang
    is then refused at bind (`voidAll` marked the open step voided and cleared `ItemSummaryConsent` records, so `owns(runRef)` is false and `take`
    is never reached; no token, nothing sent). No content leaves the host and no REMOTE call can follow. Chief Architect (J3) R3:
    PASS. A8.10 enabling blockers (a)–(c) of OQ1-2 still stand; this residual joins the OQ1-5 red-team lot as a display-only case.
+
+### ADR-0121 A8 — OQ1-4 design and implementation note (2026-11-26)
+
+OQ1-4 (= A5-S6, owner R1 item 7 / a5-07: "its own design note and cases; it amends ADR-0100 D8 when it is built") implements A8.6 behind
+`QUOKY_ITEM_SUMMARY_CONSENT` (default `off`); enabling is still the A8.10 Strict step. The A8 text is not edited; a one-line pointer is added under
+ADR-0100 D8 item 8 (A8.7 item 4). No prompt, catalog or question text changed.
+
+- **Conflict check.** None with ADR-0100 D8 (flag off: as built, byte-identical) or a5-07 (this is that slice and its note). **Brief vs A8.6 (ruling,
+  strict side):** the task brief said "expected recipient → the call proceeds with the recipient line"; ratified A8.6 says "D8 asks even for the expected
+  `REMOTE` recipient (the question is the consent)", and A8.2 item 2 says "when the recipient is `REMOTE`, listing plus question". The ratified text is
+  followed: every `REMOTE` recipient, expected or not, is asked. Recorded for the orchestrator; a change needs an A8 amendment, not code.
+- **Descriptor** (`WorkLookupConsentDescriptor`, `item-summary-consent-descriptor.ts`; `TurnHandlerSummarizeReply.lookupConsent`). Ids only: `kind:
+  'work-lookup'`, the closed lookup `source` and `query`, `refs` (the `source:externalId` refs of exactly the readout items the summary prompt would carry,
+  in readout order; 1..10, distinct, non-empty, else no descriptor), `language` (the selection's, else the notice language of the owner's text), and
+  `redo` (`handlerId`; the handler's own validated `selection` when the lookup came through NL selection, else the grammar path with `grammarYield` when the
+  turn had it). A selection `keyword` arg is owner words: it is held in memory with the record exactly like the A8.8 request text (≤ 600 s, never logged or
+  rendered). The work-chat lookup handler fills it on every summarize outcome (no runtime effect with the flag off).
+- **Question.** `ItemSummaryConsent.askWorkLookup` opens the same rule-① pending step (`summaryConsentPending`, one source, the refs as `itemIds`, the
+  recipient's label) and renders the unchanged `summary-consent-question.v2` with the source noun and the ref count ("지라 이슈 2건을 Claude에 보내 요약할게요.
+  보낼까요? (응/아니)"). The question names the recipient and the count; the listing directly above it names the items. It requires the turn-entry void epoch.
+- **Token binds a SET.** `take` checks the bound step names exactly the record's refs (same order) and mints a token with `kind: 'work-lookup'` and item key
+  `workLookupRefsKey(refs)` = the canonical JSON of the distinct sorted refs (exact, collision-free, no hashing). `allowsContinuation` additionally requires
+  the use's `kind` to equal the token's: an item token never admits a lookup use, nor the reverse. Everything else is the OQ1-3 token (actor, conversation,
+  source, key AND label, 600 s from the mint, one `call`, voided by `voidAll`, retired in the base's `finally`). The gate needs no change beyond the
+  widened `continue-item` continuation type (`ItemSummaryContinuation | WorkLookupContinuation`).
+- **Ask turn (runtime, `workLookupRecipientStep`).** Pre-resolve as OQ1-2. `local`: as built under the LOCAL guard. A stop during the turn (epoch moved) or
+  nothing resolved: the listing only. A channel: the listing only, never a question (W2). `unnamed`, no descriptor, a descriptor that does not name exactly
+  the readout's refs, another owner step pending (fail closed) or a refused ask: the listing plus the fixed not-sent line. Otherwise (`expected` or
+  `unexpected`, DM): the listing, then the question; no Task, no execute call; the listing receipt is recorded as on the listing reply; the history keeps
+  the listing and the question (the as-built listing reply already records the listing).
+- **Yes (`continueWorkLookupSummary`).** Re-checks the DM and the handler (by id). The lookup is re-run fresh on a SEPARATE message (stored request text,
+  id `<yes id>:consent`, no attachments, quotes, formatting or reply-to): `handler.handleSelected(redo selection)` or the handler's grammar `handle`. **No second
+  cap charge:** the re-run calls the handler directly, so the selector (`INTENT_SELECTION`), the gate and the consent classifier are never reached, and no
+  `lastSelection` is written; the connector read is not a model call. The one summary call is the first and only model call of this D8 request.
+- **W3 and the changed set (ruling, strict side).** `keepAskedWorkLookupRefs`: rows the owner was not asked about are dropped (the readout is marked
+  partial and the plain footer re-rendered over the kept rows); if ANY asked ref is missing, or the re-run is another lookup (handler, source or query), the
+  fixed "changed" line and nothing is sent (A8.5 "a changed item sends nothing"; no summary of a remaining subset). A re-run that is not a summarize outcome
+  (summaries off, a connector failure): the unavailable line. An edited row with the same ref is the same item (OQ1-3 round 1 item 4).
+- **Call.** The ordinary D8 path (`handleTurnHandlerSummary` with the continuation): `consentedRecipientStep` (generalised to both continuation kinds) gives
+  `local` a guard without the token and a `REMOTE` recipient a guard only when it is the consented key AND label, admitted by the set-bound token at hook 1.
+  **D8 has no regeneration path** (confirmed: the ADR-0104 regeneration closure runs only for an `UntrustedDocumentReadout`), so hook 2 never runs for D8.
+  The prompt is the one the D8 path makes for the same read (pinned: the whole `AiRequest` equals the flag-off request when nothing was dropped). The reply
+  ends with the A8.4 line (`appendWorkSummaryFooter` takes an optional last line kept outside the footer clip); the fallback after a completed REMOTE call
+  carries it, a fallback without one does not. The D8 history stays as built (the work path records the summary text; D8 is not an ADR-0118 D7 path).
+- **Tests.** `conversation-runtime-d8-lookup-consent.test.ts` (real runtime, real WorkChatService and lookup handler): flag-off byte-identical; LOCAL;
+  expected and unexpected ask in the DM with zero execute calls; channel listing only; unnamed; a new lookup replaces the question; a stop in the
+  pre-resolve; yes: one REMOTE call over exactly the asked refs with the line; byte-identical request; W3 drop; changed set; recipient flip (expected or not);
+  flip before hook 1; LOCAL after the yes; single use; expiry both ways; voidAll; a no; a refused re-run; the selection redo. Unit: the descriptor bounds,
+  the set key, `askWorkLookup`, `take` and the set-bound token, `keepAskedWorkLookupRefs`. The OQ1-2/OQ1-3 suites pass; the OQ1-2 interim D8 test now
+  expects the listing plus the fixed line without a descriptor.
+- **Residuals (owner FYI).** (1) The "changed" line text says "the item changed" (singular) for a set; reused unchanged (no new copy). (2) The recipient
+  line and the not-sent line follow the language of the owner's text; the question follows the descriptor language (they agree unless a selection's
+  language differs from the text). (3) A8.10 blocker (a) of OQ1-2 is closed by this slice; (b) and (c) still stand (OQ1-5).
