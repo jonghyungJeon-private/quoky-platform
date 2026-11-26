@@ -40643,3 +40643,46 @@ runtime behaviour change (the OQ1-2..OQ1-4 suites pass unchanged; flag off stays
 - **A8.10 enabling blockers.** (b) closed (P3/P5 driven end to end with the flag on and off). (c) closed (a genuinely open owner step is a runtime test, not only the
   fail-closed rule). (a) was closed by OQ1-4. The recorded residuals above stay as owner-visible, fail-closed behaviour. Still open before the flag may be enabled: the
   A6-S4 corpus run and the Strict, attended enabling step with its Live UAT (owner approval, outside this slice).
+
+## ADR-0121 A6-S4 implementation note (corpus built, not run) (2026-11-26)
+
+Status: implemented offline; append-only. No amendment text, ratification record or gate is changed. Owner decision of 2026-11-26 ("A6-S4 = build the bundle,
+then notify"): the corpus and the eval plumbing are built; no model-in-the-loop run was made (no eval run, no probe, no Ollama call). `QUOKY_CONSENT_ANSWER_CLASSIFIER`
+stays off and `on` stays refused.
+
+- **Corpus.** `packages/core/src/application/golden/nl-consent-answer.v1.json`, `status: "owner-review"` (not frozen; sha256 at build
+  `659440d2661e769e03afd84f0d730f783e054fc46b240edc47e1da4192e2f4fa`, pinned by `consent-answer.corpus.test.ts` and moving with any owner edit). 402 cases
+  (KO 244, EN 158; rule-① 252, A2 topic 150): positive 87, no 74, non-answer 129, yes-and-more 45, unclear 24, adversarial 43. A6.9 schema plus `category`,
+  `ref`, `ownerMark` and a `context` (flow, question language, recipient, sources, and the `shown` values the classifier must never see). Labels follow R6
+  (`yes-and-more` added). Flows: SR-1 rule-① M2, A8.5 unexpected recipient (Codex / OpenAI / Gemini; 46 cases with the v2 nouns `mail-thread` / `slack-thread`),
+  A8.6 D8 lookup and the A2 topic consent; the A8.4 recipient line pasted or asked about is among the non-answers. Each owner verdict of A6.1, A6.8, R2 a6-06
+  and R8 is a case (`origin: "owner-verdict"`, 24). The 17 A6.11 question 6 replies and R8 `473` carry `ownerMark: recommended-pending-owner` (R2 note under
+  a6-06). The CS-2 round 3 residual (non-answer requests in every registered grammar and source, both languages) and the A6 classifier wiring residual
+  (work-chat yes-plus-request turns forfeit, not yes-and-more) are included with their real stage.
+- **Stages.** `classifier` 340, `structural-fail` 29, `fast-path` 15, `control-forfeit` 18 (a fourth stage, for the recorded forfeit residual). The corpus test
+  derives each stage from the real pipeline (`answerConsentTurn` with a spy classifier; the pure parsers `isConsentControlTurn` and
+  `isExplicitTurnHandlerCommand` call) and checks each classifier case's request is exactly `{ question, reply }`; every question equals
+  `consentClassifierQuestion` for its context.
+- **Finding (recorded, not changed).** The ASCII apostrophe reads as a quote marker (`hasUntrustedSpanMarker`), so "don't" and "that's fine" are cancelled
+  structurally before the classifier (fail closed, no egress; a usability cost for English contractions). Kept as three cases with that note; owner question.
+- **Eval.** `eval:nl --mode consent-answer --arm remote|local` (`apps/quoky/src/tools/nl-consent-answer-eval.ts`), the help-scope pattern: the plan
+  prints and binds the arm, model, effort, tier, `consent-answer.v1` prompt hash, `summary-consent-question.v2`, corpus hash and status, and
+  `model calls this plan authorises: at most N` (N = 340 x runs). Each case goes through the REAL adapter (`createConsentAnswerClassifier`), with every
+  request checked by `classifier-sees-content` (an exact-prompt check plus no digit, canary, topic or topic token before the reply block, no extra
+  request field). Remote: the stronger tier through the Claude CLI (sonnet / low by default). Local: `qwen3:8b` through `OllamaCliProvider` with the
+  local-weights pin `500a1f067a9f`, reasoning off. A Strict run is refused (exit 3) while the corpus is not `approved`.
+- **Gate (R6 literally).** Per run: 0 wrong captures (gold neither `yes` nor `yes-and-more` labelled either), yes recall >= 95 % (either binding label), no
+  recall >= 95 %, 0 `classifier-sees-content`, 0 harness errors, p95 <= 10 s; PASSED only when all 3 runs pass (fewer passing runs: NON-GATING, exit 4);
+  INVALID (exit 5) on an outage unless a hard failure (wrong capture or content firing) was observed. The R6 `yes-and-more` recall bar (95 %) is printed,
+  not gating, because R6 left it to the owner; confirming it changes the gate constant and every plan digest.
+- **Core export.** The application index also exports the pure `buildConsentClassifierPrompt`, `parseConsentClassifierOutput`,
+  `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION` and `CONSENT_CLASSIFIER_TIMEOUT_MS` (the eval checks requests against the exact prompt); the boundary test's
+  export pin lists them; the answer function and the producers stay unreachable.
+- **run-gates.** Modes `consent-answer` (remote, `GATES_CONSENT_MODEL`) and `consent-answer-local` (rate 0: a local model never uses the Claude 5 h
+  window), on request only; the script test covers both.
+- **Planned runs (not started).** 1,020 calls per arm (340 x 3). Remote: about 61.2 % of the 5 h window at the measured sonnet rate (over the 30 %
+  estimate guard, so `GATES_OWNER_OK` would be needed); local: 0 %. a6-02 order: local first; remote only if local fails.
+- **Open points (owner).** The corpus review (Strict) and the marks; the unconfirmed R6 items (yes-and-more recall bar, the yes read as yes-and-more
+  count, the 40 yes-and-more minimum, the other minimums); "응 근데 드라이브도" as yes-and-more (borderline with `473`); the apostrophe finding; a local
+  arm in production needs an adapter or routing change (the A6-S2 adapter refuses a provider without the stronger tier) and a new gate run (a6-12).
+  Summary: `docs/eval/a6-s4-corpus-summary.md`.
