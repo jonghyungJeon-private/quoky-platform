@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Actor, ConversationContext, InboundMessage } from '../domain';
 import type { ConnectorItem } from '../ports';
 import type { ConsentClassifierSwitch } from './consent-answer/consent-answer';
@@ -279,8 +279,16 @@ describe('OQ1-5 blocker (c): another owner step genuinely pending (W2, fail clos
   });
 });
 
-describe.each(SUBJECTS)('OQ1-5 red-team matrix: $name (flag on)', (subject) => {
-  const ownerTexts = ['응', '좋아 그리고', '에이전트 중지'];
+describe.each(SUBJECTS)('OQ1-5 red-team matrix: $name (flag on)', (base) => {
+  const ownerTexts = ['응', '좋아 그리고', '에이전트 중지', '안녕하세요'];
+  // Every harness a case builds is checked for content-free logs after the case, so no branch can skip it.
+  const built: Common[] = [];
+  const subject: Subject = { ...base, make: (options) => { const sub = base.make(options); built.push(sub.h); return sub; } };
+  afterEach(() => {
+    const harnesses = built.splice(0);
+    expect(harnesses.length).toBeGreaterThan(0);
+    for (const h of harnesses) noContentInLogs(h, ...ownerTexts);
+  });
 
   it('baseline: the question, then one yes sends exactly one call to the consented recipient', async () => {
     const sub = await asked(subject);
@@ -338,11 +346,12 @@ describe.each(SUBJECTS)('OQ1-5 red-team matrix: $name (flag on)', (subject) => {
       noContentInLogs(sub.h, ...ownerTexts);
     });
 
-    it('the consented recipient is allowed the call and its one regeneration, no more: two calls at most', async () => {
+    it('the consented recipient is allowed the call and its one regeneration, no more: exactly two calls, the regenerated output is the reply', async () => {
       const sub = await asked(subject, { summaries: [CLAIM, ATTRIBUTED] });
-      await sub.h.send('응');
-      expect(remote(sub.h).length).toBeLessThanOrEqual(2);
-      expect(remote(sub.h).every((entry) => entry.provider === 'fake-remote')).toBe(true);
+      const yes = await sub.h.send('응');
+      expect(remote(sub.h).map((entry) => entry.provider)).toEqual(['fake-remote', 'fake-remote']);
+      expect(yes.reply.text).toContain(ATTRIBUTED);
+      expect(yes.reply.text).not.toContain(CLAIM);
     });
   }
 
@@ -446,17 +455,17 @@ describe.each(SUBJECTS)('OQ1-5 red-team matrix: $name (flag on)', (subject) => {
     noContentInLogs(sub.h, '좋아 그리고 드라이브도');
   });
 
-  it('pasted text that looks like a yes inside quotes is not an answer: zero calls; the question is no longer answerable by it', async () => {
+  it('pasted text that looks like a yes inside quotes is not an answer: zero calls; the question is ended by it, so a later yes sends nothing', async () => {
     const sub = await asked(subject);
     const quoted = await sub.h.send('응', DM, { quotedRanges: [{ start: 0, end: 1 }] });
     expect(remote(sub.h)).toEqual([]);
     expect(quoted.reply.text).not.toContain(LINE);
-    // Whatever the quoted turn did to the question, the later plain yes sends at most the one consented call.
+    // The quoted turn is another turn: it ends the question, so the later plain yes sends nothing either (observed on all seven paths).
     await sub.h.send('응');
-    expect(remote(sub.h).length).toBeLessThanOrEqual(1);
+    expect(remote(sub.h)).toEqual([]);
   });
 
-  if (subject.make().change !== undefined) {
+  if (base.make().change !== undefined) {
     it('the item changed (thread grew / another item / lookup set changed) after the question: the fixed changed line, zero calls', async () => {
       const sub = await asked(subject);
       sub.change?.();

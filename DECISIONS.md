@@ -40631,11 +40631,11 @@ runtime behaviour change (the OQ1-2..OQ1-4 suites pass unchanged; flag off stays
   unaffected (one call and the line); a pending channel grant in the session (the grant record unchanged) for the Jira item and for D8 (the listing plus the fixed line).
 - **Matrix, P1-P7 (P7 = the real D8 path) with the flag on (134 cases).** Per path: baseline; recipient flips between the ask and the yes (another REMOTE not expected /
   expected / unnamed: 0 calls); between the continuation pre-resolve and hook 1 (0); before the ask resolves (0); between hook 1 and hook 2 (exactly 1, the regeneration
-  refused; the six single-item paths); the consented recipient gets at most its call and one regeneration (2); a stop during the ask pre-resolve, between the question
+  refused; the six single-item paths); the consented recipient gets exactly its call and one regeneration (2, the regenerated output is the reply); a stop during the ask pre-resolve, between the question
   and the yes, and during the continuation pre-resolve (0 each); a second request before the yes (the first question is closed, the second is answered once: 1);
   another turn instead of the yes (0); a yes from a channel, another DM conversation or another actor (not an answer, the real yes still works once: 1); a yes after
-  600 s (0, no second chance); a yes twice (1); yes-and-more (1, the rest rides as a new turn); a yes inside quoted ranges (0 from it); and, where the path has an item
-  identity, the item changed (thread grew, another Jira item, lookup set changed: the fixed changed line, 0). Every case also asserts that no item content, summary or
+  600 s (0, no second chance); a yes twice (1); yes-and-more (1, the rest rides as a new turn); a yes inside quoted ranges (0 from it, and the later plain yes sends 0: the quoted turn ended the question); and, where the path has an item
+  identity, the item changed (thread grew, another Jira item, lookup set changed: the fixed changed line, 0). Every case also asserts, in a shared afterEach so no branch can skip it, that no item content, summary or
   owner text reached a log line. A "REMOTE execute" counts provider calls whose prompt carries the item.
 - **Recorded residuals, pinned (8 cases).** OQ1-3 R3: a stop landing during the question's history write leaves one display-only question (the owner sees it; its record is
   void), and the yes is refused with zero calls, on all seven paths. OQ1-4: a long D8 listing whose rows the renderer may clip gets the listing plus the not-sent line,
