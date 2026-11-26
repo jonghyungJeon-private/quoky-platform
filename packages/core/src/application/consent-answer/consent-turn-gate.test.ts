@@ -3,6 +3,9 @@ import type { Actor } from '../../domain';
 import { ConsentPendingStore, summaryConsentPending, type BoundConsent } from './consent-pending';
 import { ConsentTurnGate, type ConsentContinuation, type ConsentGateTurn } from './consent-turn-gate';
 import type { ConsentClassifierSwitch } from './consent-answer';
+import type { AiProvider } from '../../ports/ai-provider.port';
+import { itemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
+import { ItemSummaryConsent } from './item-summary-consent';
 
 // CS-2: the runtime gate over a REAL store and the REAL answer pipeline; only the continuation and the classifier are stubs.
 
@@ -302,5 +305,71 @@ describe('ConsentTurnGate: the classifier charges the per-actor model-call cap t
     expect(reads).toEqual([]);
     expect(r.charges).toEqual([]);
     expect(r.seen).toEqual([]);
+  });
+});
+
+describe('ConsentTurnGate: an item-owned yes (ADR-0121 A8.5, OQ1-3)', () => {
+  const remote = { id: 'remote-x', executionLocality: 'REMOTE' } as unknown as AiProvider;
+  function itemRig() {
+    const store = new ConsentPendingStore();
+    const clock = { now: T0 };
+    const logs: Array<{ message: string; fields?: unknown }> = [];
+    const items = new ItemSummaryConsent({ store, now: () => clock.now, recipientLabel: () => 'Remote' });
+    const continued: BoundConsent[] = [];
+    const gate = new ConsentTurnGate({
+      store,
+      classifier: { mode: 'off' },
+      continueSummary: async (bound) => {
+        continued.push(bound);
+        return { kind: 'reply', reply: { text: 'AGENT' } };
+      },
+      items,
+      now: () => clock.now,
+      logger: { info: (message, fields) => logs.push({ message, fields }), warn: () => undefined, error: () => undefined },
+    });
+    const descriptor = itemSummaryConsentDescriptor({ handlerId: 'mail', source: 'mail', itemId: 'm-1', language: 'ko' });
+    const asked = items.ask({ scope: SCOPE, descriptor, recipient: { key: 'remote-x', label: 'Remote' }, requestText: 'OWNER-REQUEST-TEXT' });
+    if (asked === undefined) throw new Error('fixture');
+    const turn = (text: string): ConsentGateTurn => ({ actor: OWNER, conversationKey: KEY, direct: true, text, attachmentCount: 0, ownerStepPending: false, control: false });
+    return { store, clock, logs, items, gate, continued, turn };
+  }
+
+  it('a yes is dispatched by runRef: the continuation (token, descriptor, request text) goes to the runtime, the agent continuation never runs', async () => {
+    const r = itemRig();
+    const outcome = await r.gate.handle(r.turn('응'));
+    expect(outcome.kind).toBe('continue-item');
+    if (outcome.kind !== 'continue-item') return;
+    expect(outcome.continuation.descriptor.itemId).toBe('m-1');
+    expect(outcome.continuation.requestText).toBe('OWNER-REQUEST-TEXT');
+    expect(outcome.continuation.recipient).toEqual({ key: 'remote-x', label: 'Remote' });
+    expect(outcome.language).toBe('ko');
+    expect(outcome.unavailable).toBe('지금은 요약을 보낼 수 없어서 아무것도 보내지 않았어요. 다시 요청해 주세요.');
+    expect(r.continued).toEqual([]);
+    // The token admits exactly this recipient for exactly this item.
+    const verdict = r.items.verdictOf(remote, undefined);
+    const use = { phase: 'call' as const, actorId: OWNER.id, conversationKey: KEY, source: 'mail' as const, itemId: 'm-1' };
+    expect(r.items.allows(outcome.continuation.token, verdict, { ...use, itemId: 'm-2' })).toBe(false);
+    expect(r.items.allows(outcome.continuation.token, verdict, use)).toBe(true);
+    expect(r.items.allows(outcome.continuation.token, verdict, use)).toBe(false);
+    expect(JSON.stringify(r.logs)).not.toContain('OWNER-REQUEST-TEXT');
+    expect(r.logs.some((entry) => (entry.fields as { outcome?: string } | undefined)?.outcome === 'item-continue')).toBe(true);
+  });
+
+  it('the record is single use: a second yes finds no step and is never a second continuation', async () => {
+    const r = itemRig();
+    expect((await r.gate.handle(r.turn('응'))).kind).toBe('continue-item');
+    expect((await r.gate.handle(r.turn('응'))).kind).not.toBe('continue-item');
+  });
+
+  it('a yes that take refuses is the fixed unavailable line (nothing is sent)', async () => {
+    const r = itemRig();
+    r.items.take = () => undefined;
+    expect(await r.gate.handle(r.turn('응'))).toMatchObject({ kind: 'reply', text: '지금은 요약을 보낼 수 없어서 아무것도 보내지 않았어요. 다시 요청해 주세요.' });
+  });
+
+  it('the kill switch voids the item record: a later yes continues nothing', async () => {
+    const r = itemRig();
+    r.gate.voidAll();
+    expect((await r.gate.handle(r.turn('응'))).kind).not.toBe('continue-item');
   });
 });

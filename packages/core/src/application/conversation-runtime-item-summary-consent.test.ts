@@ -4,6 +4,12 @@ import type { Actor, ConversationContext, InboundMessage, Intent, MemoryRecord, 
 import type { AiProvider, AiRequest, ConversationTurnHandler, DriveDocument, DriveReader, LogFields, Logger, MailMessage, MailReader, StorageProvider, TurnHandlerOutcome } from '../ports';
 import { ConsentPendingStore } from './consent-answer/consent-pending';
 import { ConsentTurnGate } from './consent-answer/consent-turn-gate';
+import type { ConsentClassifierSwitch } from './consent-answer/consent-answer';
+import type { ItemSummaryConsentToken } from './consent-answer/item-summary-consent';
+import { nlActionEntry } from './nl-routing/action-entries';
+import type { NlActionLevel } from './nl-routing/nl-action-policy';
+import type { NlItemR2Level } from './nl-routing/nl-selection-service';
+import { renderItemSummaryChangedLine } from './item-summary/item-summary-continuation';
 import { ItemSummaryConsent } from './consent-answer/item-summary-consent';
 import { ContextBuilder } from './context-builder';
 import { ConversationRuntime, type ConversationRuntimeDeps } from './conversation-runtime';
@@ -12,7 +18,7 @@ import { IntentResolver } from './intent-resolver';
 import { itemSummaryConsentDescriptor } from './item-summary-consent-descriptor';
 import { SummaryRecipientGuard, renderItemSummaryNotSentLine, SUMMARY_CONSENT_REFUSED_REPLY_ID, SUMMARY_RECIPIENT_RECHECK_REFUSED } from './item-summary/summary-recipient-guard';
 import { createMailTurnHandler } from './mail/mail-turn-handler';
-import { renderMailSummaryFooter } from './mail/mail-reply-renderer';
+import { renderMailSummaryFooter, renderMailSummaryUnavailable } from './mail/mail-reply-renderer';
 import type { MemoryManager } from './memory-manager';
 import type { MemoryRetriever } from './memory-retriever';
 import type { MemoryWriter } from './memory-writer';
@@ -60,6 +66,10 @@ interface HarnessOptions {
   readonly failOnCall?: number;
   /** Adds a recording `runtimeProviderRouting` seam (the GENERAL_CHAT routed branch). */
   readonly routing?: boolean;
+  /** The consent classifier switch (default off: only closed tokens answer). */
+  readonly classifier?: ConsentClassifierSwitch;
+  /** OQ1-3: an A6 selection service slot with the R2 level and the kill switch (mode `off`: it selects nothing). */
+  readonly nl?: { readonly level: NlActionLevel; readonly itemR2: NlItemR2Level; readonly acting: boolean };
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -70,9 +80,20 @@ function harness(opts: HarnessOptions = {}) {
   const logs: { level: string; message: string; fields?: LogFields }[] = [];
   const runs: { kind: 'complete' | 'fail'; summary?: string; metadata?: unknown; usage?: unknown }[] = [];
   const counts = { select: 0, eligible: 0, expected: 0 };
-  const state = { selected: opts.selected ?? 'remote', expectedKey: 'expectedKey' in opts ? opts.expectedKey : 'fake-remote', eligible: true, microtaskRan: false };
+  const state = {
+    selected: opts.selected ?? 'remote',
+    expectedKey: 'expectedKey' in opts ? opts.expectedKey : 'fake-remote',
+    eligible: true,
+    microtaskRan: false,
+    /** OQ1-3: the mail thread's message count, the read failing, the Jira item id the probe re-reads, the kill switch. */
+    threadTotal: 2,
+    failRead: false,
+    jiraItem: 'A-1',
+    acting: opts.nl?.acting ?? false,
+  };
   /** Called at the named points (tests flip the selection there). */
-  const hooks: { onCommit?: () => void; onExecute?: (n: number) => void; afterSelect?: (n: number) => void } = {};
+  const hooks: { onCommit?: () => void; onExecute?: (n: number) => void; afterSelect?: (n: number) => void; onRead?: () => void } = {};
+  const nlCalls = { decide: 0, receipts: 0 };
 
   const storage = {
     sessions: {
@@ -98,12 +119,16 @@ function harness(opts: HarnessOptions = {}) {
       return { messages: [mailSummary], matched: 1, matchedIsLowerBound: false };
     },
     async getMessage(): Promise<MailMessage> {
+      hooks.onRead?.();
+      if (state.failRead) throw new Error('read failed');
       return { ...mailSummary, bodyText: `짧은 메일이에요 ${CANARY}.`, bodyTruncated: false };
     },
     async getThread() {
+      hooks.onRead?.();
+      if (state.failRead) throw new Error('read failed');
       return {
-        messages: [0, 1].map((index) => ({ ...mailSummary, id: `msg-${index}`, sender: { name: `보낸이${index}`, address: `p${index}@example.com` }, bodyText: `스레드 ${index} ${CANARY}`, bodyTruncated: false })),
-        totalMessages: 2,
+        messages: Array.from({ length: state.threadTotal }, (_, index) => ({ ...mailSummary, id: `msg-${index}`, sender: { name: `보낸이${index}`, address: `p${index}@example.com` }, bodyText: `스레드 ${index} ${CANARY}`, bodyTruncated: false })),
+        totalMessages: state.threadTotal,
       };
     },
   };
@@ -172,13 +197,14 @@ function harness(opts: HarnessOptions = {}) {
   // Jira (A6 R2 single item) and the D8 lookup: fixed handlers returning what the real ones return for these phrases.
   const jira = buildUntrustedDocumentReadout({ source: 'jira-issue', title: `이슈 ${CANARY}`, author: 'Reporter', date: '2026-11-25T00:30:00.000Z', body: `이슈 본문 ${CANARY}` });
   if (!jira.ok) throw new Error('fixture');
-  const jiraOutcome = (consent: boolean): TurnHandlerOutcome => ({
+  const jiraOutcome = (consent: boolean, itemId = 'A-1'): TurnHandlerOutcome => ({
     kind: 'summarize',
     readout: jira.readout,
     fallbackText: 'JIRA FALLBACK',
     footer: 'JIRA FOOTER',
     history: { assistant: 'JIRA NOTE' },
-    ...(consent ? { consent: itemSummaryConsentDescriptor({ handlerId: 'jira-probe', source: 'jira', itemId: 'A-1', language: 'ko' }) } : {}),
+    nlAction: { entryId: 'item.summarize', result: 'executed', source: 'jira', itemId },
+    ...(consent ? { consent: itemSummaryConsentDescriptor({ handlerId: 'jira-probe', source: 'jira', itemId, language: 'ko' }) } : {}),
   });
   const lookup: TurnHandlerOutcome = {
     kind: 'summarize',
@@ -190,6 +216,13 @@ function harness(opts: HarnessOptions = {}) {
     id: 'jira-probe',
     stage: 'pre-classify',
     order: 1,
+    catalog: [nlActionEntry('item.summarize')],
+    // OQ1-3: the re-read of the confirmed Jira item (the real handler reads it again by the selection's id).
+    async handleSelected(selected) {
+      if (selected.entryId !== 'item.summarize' || selected.target?.source !== 'jira') return null;
+      hooks.onRead?.();
+      return jiraOutcome(true, state.jiraItem);
+    },
     async handle(ctx) {
       const text = ctx.message.text;
       if (text === '지라 이슈 요약') return jiraOutcome(true);
@@ -311,6 +344,23 @@ function harness(opts: HarnessOptions = {}) {
     },
     turnHandlers: handlers,
     logger,
+    ...(opts.nl !== undefined
+      ? {
+          nlSelection: {
+            mode: 'off',
+            decide: async () => {
+              nlCalls.decide += 1;
+              throw new Error('the continuation never selects');
+            },
+            actionLevel: () => opts.nl!.level,
+            itemR2Level: () => opts.nl!.itemR2,
+            actionsStillActing: async () => state.acting,
+            recordActionReceipt: async () => {
+              nlCalls.receipts += 1;
+            },
+          } as unknown as ConversationRuntimeDeps['nlSelection'],
+        }
+      : {}),
     ...(opts.routing === true ? { runtimeProviderRouting: { execute: async () => { events.push('routed-execute'); throw new Error('routed seam must not run'); } } as unknown as ConversationRuntimeDeps['runtimeProviderRouting'] } : {}),
   };
 
@@ -324,7 +374,8 @@ function harness(opts: HarnessOptions = {}) {
       ? undefined
       : new ConsentTurnGate({
           store,
-          classifier: { mode: 'off' },
+          classifier: opts.classifier ?? { mode: 'off' },
+          chargeModelCall: () => true,
           continueSummary: async () => {
             continued.count += 1;
             return { kind: 'reply', reply: { text: 'AGENT CONTINUATION' } };
@@ -336,7 +387,7 @@ function harness(opts: HarnessOptions = {}) {
   const runtime = new ConversationRuntime(deps, { clock: () => T0, ...(gate !== undefined ? { consentTurnGate: gate } : {}) });
   let seq = 0;
   const send = (text: string, context: ConversationContext = DM) => runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0 } satisfies InboundMessage);
-  return { runtime, send, state, hooks, events, executed, recordAssistant, logs, runs, counts, continued, items, store };
+  return { runtime, send, state, hooks, events, executed, recordAssistant, logs, runs, counts, continued, items, store, gate, clock, nlCalls };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -454,10 +505,7 @@ describe('OQ1-2 flag on: the recipient decides', () => {
     expect(h.executed).toEqual([]);
     expect(h.counts.select).toBe(1);
     expect(h.runs).toEqual([]);
-    // A yes in this slice is the fixed unavailable line (the continuation is OQ1-3); still nothing is sent.
-    const yes = await h.send('응');
-    expect(yes.reply.text).toBe('지금은 요약을 보낼 수 없어서 아무것도 보내지 않았어요. 다시 요청해 주세요.');
-    expect(h.executed).toEqual([]);
+    // OQ1-3: the yes runs the continuation (covered below); the agent continuation is never reached.
     expect(h.continued.count).toBe(0);
     noContentInLogs(h);
   });
@@ -605,5 +653,297 @@ describe('OQ1-2 re-check guard (A8.3c)', () => {
     await runPath(h, PATHS[0]!);
     noContentInLogs(h);
     expect(h.logs.some((entry) => entry.message === 'item summary recipient re-check refused' && entry.fields?.phase === 'call')).toBe(true);
+  });
+});
+
+describe('OQ1-3 continuation: the owner says yes to the question for an unexpected recipient (A8.5)', () => {
+  const QUESTION = '메일 1건을 Remote에 보내 요약할게요. 보낼까요? (응/아니)';
+  const UNAVAILABLE = '지금은 요약을 보낼 수 없어서 아무것도 보내지 않았어요. 다시 요청해 주세요.';
+  const R2 = { level: 'local', itemR2: 'all', acting: true } as const;
+
+  /** Asks (unexpected: the owner expects another provider), checks the question, and returns the harness for the yes. */
+  async function asked(opts: HarnessOptions = {}, path: (typeof PATHS)[number] = PATHS[0]!) {
+    const h = harness({ expectedKey: 'fake-other', ...opts });
+    const question = await runPath(h, path);
+    expect(question.reply.text).toContain('Remote에 보내 요약할게요');
+    expect(h.executed).toEqual([]);
+    return h;
+  }
+  /** Only the provider calls that carried the item (a chat call after a routed turn carries none). */
+  const itemCalls = (h: Harness) => h.executed.filter((entry) => entry.request.prompt.includes(CANARY));
+
+  it('a yes: exactly one REMOTE call to the confirmed recipient, the reply ends with the recipient line, the history keeps the fixed notes', async () => {
+    const h = await asked();
+    const before = h.recordAssistant.length;
+    const yes = await h.send('응');
+    expect(yes.status).toBe('RESPONDED');
+    expect(yes.reply.text).toBe(`${SUMMARY}\n\n${renderMailSummaryFooter('ko')}\n${LINE}`);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+    // One fixed note for the yes turn (the work path's document note); never the summary or the item.
+    expect(h.recordAssistant.slice(before)).toEqual([renderUntrustedDocumentHistoryNote('mail', 'ko')]);
+    expect(h.events).toEqual(['commit', 'guard', 'execute']);
+    expect(h.continued.count).toBe(0);
+    noContentInLogs(h);
+  });
+
+  it('the summarization prompt is byte-identical to the one the same request sends without a question', async () => {
+    const consented = await asked();
+    await consented.send('응');
+    const direct = harness();
+    await runPath(direct, PATHS[0]!);
+    expect(consented.executed).toHaveLength(1);
+    expect(direct.executed).toHaveLength(1);
+    expect(consented.executed[0]?.request).toEqual(direct.executed[0]?.request);
+  });
+
+  it('a yes with one regeneration: two calls, both admitted by the token, the regenerated reply carries the line', async () => {
+    const h = await asked({ summaries: [CLAIM, ATTRIBUTED] });
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(`${ATTRIBUTED}\n\n${renderMailSummaryFooter('ko')}\n${LINE}`);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote', 'fake-remote']);
+    expect(h.events).toEqual(['commit', 'guard', 'execute', 'guard', 'execute']);
+  });
+
+  it('the token is retired after the call: a replay of it is refused', async () => {
+    const h = await asked();
+    const spent: ItemSummaryConsentToken[] = [];
+    const spend = h.items!.spend.bind(h.items);
+    h.items!.spend = (token) => {
+      spent.push(token);
+      spend(token);
+    };
+    await h.send('응');
+    expect(spent).toHaveLength(1);
+    const use = { phase: 'call' as const, actorId: OWNER.id, conversationKey: ConsentTurnGate.conversationKeyOf(DM), source: 'mail' as const, itemId: 'msg-1' };
+    expect(h.items!.allows(spent[0], { kind: 'unexpected', key: 'fake-remote', label: 'Remote' }, use)).toBe(false);
+    expect(h.items!.allows(spent[0], { kind: 'unexpected', key: 'fake-remote', label: 'Remote' }, { ...use, phase: 'regeneration' })).toBe(false);
+  });
+
+  it('a second yes is not a second summary (single use): the step is used and no item call follows', async () => {
+    const h = await asked();
+    await h.send('응');
+    const again = await h.send('응');
+    expect(again.reply.text).not.toContain(SUMMARY);
+    expect(again.reply.text).not.toContain(LINE);
+    expect(itemCalls(h)).toHaveLength(1);
+  });
+
+  it('a recipient flip after the yes (another unexpected REMOTE): refused, the fallback plus the not-sent line, nothing sent', async () => {
+    const h = await asked();
+    h.state.expectedKey = undefined;
+    h.state.selected = 'other';
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(`${renderMailSummaryUnavailable('ko')}\n${renderItemSummaryNotSentLine('ko')}`);
+    expect(h.executed).toEqual([]);
+    expect(h.recordAssistant.at(-1)).toBe(renderUntrustedDocumentHistoryNote('mail', 'ko'));
+  });
+
+  it('a REMOTE recipient that lost its name after the yes: refused, nothing sent', async () => {
+    const h = await asked();
+    h.state.selected = 'anon';
+    await h.send('응');
+    expect(h.executed).toEqual([]);
+  });
+
+  it('the live verdict became LOCAL after the yes: summarised under the normal rules, no line', async () => {
+    const h = await asked();
+    h.state.selected = 'local';
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(`${SUMMARY}\n\n${renderMailSummaryFooter('ko')}`);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-local']);
+  });
+
+  it('the live verdict became expected after the yes: summarised with the line (OQ1-2 rules)', async () => {
+    const h = await asked();
+    h.state.expectedKey = 'fake-remote';
+    const yes = await h.send('응');
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+  });
+
+  it('a flip between the continuation pre-resolve and the call: hook 1 refuses, no call, content-free failed run', async () => {
+    const h = await asked();
+    // Select #1 was the ask turn's pre-resolve; #2 the continuation's; #3 the work path's.
+    h.hooks.afterSelect = (n) => {
+      if (n === 2) h.state.selected = 'other';
+    };
+    const yes = await h.send('응');
+    expect(h.executed).toEqual([]);
+    expect(yes.reply.text).toBe(renderMailSummaryUnavailable('ko'));
+    expect(h.runs).toEqual([{ kind: 'fail', summary: SUMMARY_RECIPIENT_RECHECK_REFUSED, metadata: { deterministicReply: SUMMARY_CONSENT_REFUSED_REPLY_ID } }]);
+  });
+
+  it('a recipient flip during the first call: the regeneration is refused, the fallback names the completed call', async () => {
+    const h = await asked({ summaries: [CLAIM, ATTRIBUTED] });
+    h.hooks.onExecute = (n) => {
+      if (n === 1) h.state.selected = 'other';
+    };
+    const yes = await h.send('응');
+    expect(h.executed).toHaveLength(1);
+    expect(yes.reply.text).toBe(`${renderMailSummaryUnavailable('ko')}\n${LINE}`);
+  });
+
+  it('a refused re-read: nothing sent, the fixed unavailable line', async () => {
+    const h = await asked();
+    h.state.failRead = true;
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(UNAVAILABLE);
+    expect(h.executed).toEqual([]);
+    expect(h.recordAssistant.at(-1)).toBe(UNAVAILABLE);
+  });
+
+  it('the thread grew after the question: the fixed "changed" line, nothing sent', async () => {
+    const h = harness({ expectedKey: 'fake-other' });
+    expect((await runPath(h, PATHS[1]!)).reply.text).toBe('메일 스레드 1건을 Remote에 보내 요약할게요. 보낼까요? (응/아니)');
+    h.state.threadTotal = 3;
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(renderItemSummaryChangedLine('ko'));
+    expect(h.executed).toEqual([]);
+    expect(h.recordAssistant.at(-1)).toBe(renderItemSummaryChangedLine('ko'));
+  });
+
+  it('the same thread (same count) after the question: one call, the line', async () => {
+    const h = harness({ expectedKey: 'fake-other' });
+    await runPath(h, PATHS[1]!);
+    const yes = await h.send('응');
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+  });
+
+  it('expiry: more than 600 s between the mint and the call refuses the call (hook 1), nothing sent', async () => {
+    const h = await asked();
+    h.hooks.onRead = () => {
+      h.clock.now += 601_000;
+    };
+    const yes = await h.send('응');
+    expect(h.executed).toEqual([]);
+    expect(yes.reply.text).toBe(renderMailSummaryUnavailable('ko'));
+  });
+
+  it('expiry: a yes more than 600 s after the question is the expired line, nothing sent', async () => {
+    const h = await asked();
+    h.clock.now += 601_000;
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe('요약 확인 시간이 지났어요. 다시 요청해 주세요.');
+    expect(h.executed).toEqual([]);
+  });
+
+  it('the kill switch (voidAll) before the yes: the yes summarises nothing', async () => {
+    const h = await asked();
+    h.gate?.voidAll();
+    const yes = await h.send('응');
+    expect(yes.reply.text).not.toContain(SUMMARY);
+    expect(itemCalls(h)).toEqual([]);
+  });
+
+  it('the kill switch (voidAll) after the mint, during the re-read: the token is void, no call', async () => {
+    const h = await asked();
+    h.hooks.onRead = () => h.gate?.voidAll();
+    await h.send('응');
+    expect(h.executed).toEqual([]);
+  });
+
+  it('a restart (a new runtime with a new store) voids the pending question: the yes summarises nothing', async () => {
+    await asked();
+    const restarted = harness({ expectedKey: 'fake-other' });
+    const yes = await restarted.send('응');
+    // The yes is an ordinary chat turn now (the fake provider answers any call alike): the item never leaves, no recipient line.
+    expect(yes.reply.text).not.toContain(LINE);
+    expect(itemCalls(restarted)).toEqual([]);
+  });
+
+  it('a no cancels: nothing sent', async () => {
+    const h = await asked();
+    const no = await h.send('아니');
+    expect(no.reply.text).toBe('요약을 취소했어요. 원문은 보내지 않았어요.');
+    expect(h.executed).toEqual([]);
+  });
+
+  it.each(['ㅇㅇ', 'ok'])('%s with the classifier off cancels silently (existing gate rule): the item is never sent', async (text) => {
+    const h = await asked();
+    await h.send(text);
+    expect(itemCalls(h)).toEqual([]);
+  });
+
+  it.each(['ㅇㅇ', 'ok'])('%s is a yes when the gate classifier answers yes (existing gate rule): one call', async (text) => {
+    const h = await asked({ classifier: { mode: 'on', classify: async () => 'yes' } as unknown as ConsentClassifierSwitch });
+    const yes = await h.send(text);
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    expect(itemCalls(h).map((entry) => entry.provider)).toEqual(['fake-remote']);
+  });
+
+  it('yes-and-more: the summary once, and the rest rides on the result as a new ordinary turn', async () => {
+    const h = await asked({ classifier: { mode: 'on', classify: async () => 'yes-and-more' } as unknown as ConsentClassifierSwitch });
+    const yes = await h.send('좋아 그리고 드라이브도');
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    expect(yes.rerun?.text).toBe('좋아 그리고 드라이브도');
+    expect(yes.rerun?.id).toMatch(/:rerun$/u);
+    expect(itemCalls(h)).toHaveLength(1);
+  });
+
+  it('a yes in a channel is not an answer: the step stays open, nothing sent', async () => {
+    const h = await asked();
+    await h.send('응', CHANNEL);
+    expect(itemCalls(h)).toEqual([]);
+  });
+
+  it('Jira (A6 R2): with the R2 level acting and the switch running, one call; no selection and no receipt on the re-read', async () => {
+    const h = await asked({ nl: R2 }, PATHS[3]!);
+    const before = { ...h.nlCalls };
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(`${SUMMARY}\n\nJIRA FOOTER\n${LINE}`);
+    expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
+    // The re-read never reaches the selector (no second D8 cap charge) and rewrites no receipt.
+    expect(h.nlCalls).toEqual(before);
+    expect(h.nlCalls.decide).toBe(0);
+    noContentInLogs(h);
+  });
+
+  it.each([
+    ['the kill switch was stopped', { ...R2, acting: false }],
+    ['QUOKY_NL_ITEM_R2 no longer acts for Jira', { ...R2, itemR2: 'shadow' as const }],
+    ['QUOKY_NL_ACTIONS is shadow', { ...R2, level: 'shadow' as const }],
+  ])('Jira: %s: the unavailable line, nothing sent', async (_name, nl) => {
+    const h = await asked({ nl }, PATHS[3]!);
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(UNAVAILABLE);
+    expect(h.executed).toEqual([]);
+  });
+
+  it('Jira: without the selection slot the R2 re-check fails closed', async () => {
+    const h = await asked({}, PATHS[3]!);
+    expect((await h.send('응')).reply.text).toBe(UNAVAILABLE);
+    expect(h.executed).toEqual([]);
+  });
+
+  it('Jira: the re-read names another item: the "changed" line, nothing sent', async () => {
+    const h = await asked({ nl: R2 }, PATHS[3]!);
+    h.state.jiraItem = 'A-2';
+    const yes = await h.send('응');
+    expect(yes.reply.text).toBe(renderItemSummaryChangedLine('ko'));
+    expect(h.executed).toEqual([]);
+  });
+
+  it('the continuation message is separate: the request text, no attachments or reply-to, and it never re-enters the gate', async () => {
+    const h = await asked();
+    const yes = await h.runtime.handle({ id: 'yes-1', context: DM, text: '응', receivedAt: T0, replyTo: { messageId: 'q-1' } } as InboundMessage);
+    expect(yes.reply.text.endsWith(`\n${LINE}`)).toBe(true);
+    const prompt = h.executed[0]?.request.prompt ?? '';
+    expect(prompt).toContain('1번 메일 요약해줘');
+    expect(prompt).not.toContain('응\n');
+    expect(h.logs.some((entry) => entry.fields?.messageId === 'yes-1:consent')).toBe(true);
+  });
+
+  it('logs stay content-free across the continuation outcomes', async () => {
+    const flip = (h: Harness) => {
+      h.state.expectedKey = undefined;
+      h.state.selected = 'other';
+    };
+    for (const setup of [flip, (h: Harness) => (h.state.failRead = true), (h: Harness) => (h.state.selected = 'remote')]) {
+      const h = await asked();
+      setup(h);
+      await h.send('응');
+      noContentInLogs(h);
+    }
   });
 });

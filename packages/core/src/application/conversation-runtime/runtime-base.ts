@@ -59,6 +59,12 @@ import { BoundedShownItems, SurfaceDeniedError, orderTurnHandlers, sameRepositor
 import { interpretDecision, toTestResultDetail } from './turn-intents';
 import type { ApplyPreviewAnchor, ConversationRuntimeDeps, ConversationRuntimeOptions, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
 
+/**
+ * ADR-0121 amendment A8.5 (OQ1-3): the gate's `continue-item` outcome (the taken continuation, its token and the fixed lines). Derived
+ * from the gate type the runtime already imports, so no other runtime file reaches into `consent-answer/`.
+ */
+export type ItemSummaryContinueOutcome = Extract<Awaited<ReturnType<ConsentTurnGate['handle']>>, { readonly kind: 'continue-item' }>;
+
 export abstract class ConversationRuntimeBase {
   protected readonly clock: () => IsoTimestamp;
   protected readonly gitRemoteEnabled: boolean;
@@ -793,11 +799,17 @@ export abstract class ConversationRuntimeBase {
     });
     if (outcome.kind === 'route') return undefined;
     // The consumed turn is a fixed note or the question, never chat: `quoky.lastTurn` must agree with `lastReply`.
-    this.nlReplyKinds.set(message, { kind: outcome.replyKind });
+    this.nlReplyKinds.set(message, { kind: outcome.kind === 'continue-item' ? 'note' : outcome.replyKind });
     const userMemory = await this.deps.memory.recordShortTerm(message, session.id);
     this.nlTurnFacts.set(message, { sessionId: session.id, actorId: actor.id, memoryId: userMemory.id });
-    await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
-    const result = this.responded(session, outboundMessage(message.context, outcome.text));
+    let result: TurnResult;
+    if (outcome.kind === 'continue-item') {
+      // A8.5 (OQ1-3): the continuation records exactly one fixed history note itself (never the summary, never a receipt).
+      result = await this.continueItemSummaryOnce(message, session, actor, outcome);
+    } else {
+      await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
+      result = this.responded(session, outboundMessage(message.context, outcome.text));
+    }
     if (outcome.rerunText === undefined) return result;
     // AM-2: the rest of a `yes-and-more` reply is a NEW ordinary turn (its own run); the bound step is already used.
     const { attachments: _attachments, quotedRanges: _quoted, formatting: _formatting, replyTo: _replyTo, ...rest } = message;
@@ -805,6 +817,32 @@ export abstract class ConversationRuntimeBase {
     this.consentReruns.add(rerun);
     return { ...result, rerun };
   }
+
+  /**
+   * A8.5 (OQ1-3): runs the continuation once and makes sure its token is retired afterwards, whatever happened (the call and its one
+   * regeneration are the only uses). A throw is the gate's fixed unavailable line with that line as the history note; nothing more is sent.
+   */
+  private async continueItemSummaryOnce(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult> {
+    try {
+      return await this.continueItemSummary(message, session, actor, outcome);
+    } catch (error) {
+      this.deps.logger.warn('item summary continuation failed', { messageId: message.id, errorName: error instanceof Error ? error.name : typeof error });
+      await this.deps.memory.recordAssistant(outcome.unavailable, message.context, session.id);
+      return this.responded(session, outboundMessage(message.context, outcome.unavailable));
+    } finally {
+      try {
+        this.consentGate?.items?.spend(outcome.continuation.token);
+      } catch {
+        // The token also dies with its window; nothing may be sent with it after this turn either way.
+      }
+    }
+  }
+
+  /**
+   * A8.5 (OQ1-3): the continuation of the owner's yes to a live item-summary question (the turn-handler layer implements it). It
+   * records exactly one fixed history note and returns the reply.
+   */
+  protected abstract continueItemSummary(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult>;
 
   /**
    * The kill switch: a handled stop phrase voids every pending consent and drops the continuation records (fail closed: also when
