@@ -24,6 +24,7 @@ import type { SurfaceGroupId } from '../application/surface-grants/surface-group
 import type { SurfacePermit } from '../application/surface-grants/surface-permit';
 // Type-only, like the readouts above: the whole prepared item for the ADR-0124 Part L S3 summary (plain data).
 import type { LongItemSummaryInput } from '../application/item-summary/long-item';
+import type { ItemSummaryConsentDescriptor } from '../application/item-summary-consent-descriptor';
 
 /**
  * The three fixed dispatch points in `ConversationRuntime.handleInner` (ADR-0096 D3):
@@ -181,6 +182,12 @@ export interface TurnHandlerSummarizeReply {
    * keeps today's path byte for byte. Absent: today's path. Host-only data: never logged or stored.
    */
   readonly longItem?: LongItemSummaryInput;
+  /**
+   * ADR-0121 amendment A8 (OQ1-1): ids only. A handler fills it for a single `summary` read (mail item or thread, Drive file,
+   * Jira issue, Slack message or thread), never for `full` (no model call) and never for the D8 lookup; the runtime does not
+   * read it yet (OQ1-2), so it has no effect. No item text, title, owner words or readout.
+   */
+  readonly consent?: ItemSummaryConsentDescriptor;
 }
 
 /**

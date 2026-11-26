@@ -2,7 +2,7 @@ import type { SummaryConsentSourceName } from './summary-consent-question';
 
 /**
  * ADR-0121 amendment A7, slice A7-S4a (A7.5 step 4): the rule-① question of an A7 DRAFT. It is the existing summary question plus
- * the destination clause the draft needs, as a NEW version for the A7 draft consent only: `summary-consent-question.v1` is unchanged
+ * the destination clause the draft needs, as a NEW version for the A7 draft consent only: `summary-consent-question.v2` is unchanged
  * for every existing caller (it has no destination and is pinned by its own test).
  *
  * KO: `Slack 메시지 3건을 {remote}에 보내 BE-123 댓글 초안을 만들게요. 보낼까요? (응/아니)`. The question names the item count, the

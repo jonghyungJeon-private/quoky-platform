@@ -9,6 +9,8 @@ export * from './ai-provider-manager';
 export * from './capability-router';
 export * from './local-provider-dispatch';
 export * from './item-summary';
+export { itemSummaryConsentDescriptor } from './item-summary-consent-descriptor';
+export type { ItemSummaryConsentDescriptor, ItemSummaryConsentSource } from './item-summary-consent-descriptor';
 export * from './intent-classifier';
 export * from './planner';
 export * from './context-builder';

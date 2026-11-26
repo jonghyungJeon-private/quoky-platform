@@ -6,6 +6,7 @@ import type {
   TurnHandlerOutcome,
   TurnHandlerSummarizeReply,
 } from '../../ports/conversation-turn-handler.port';
+import { itemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
 import type { MessageBody } from '../../domain';
 import type { Logger } from '../../ports/logger.port';
 import { containsCredentialMaterial } from '../credential-guard';
@@ -294,6 +295,17 @@ export class WorkChatTurnHandler implements ConversationTurnHandler {
       history,
       nlAction: executed,
       participants: workItemParticipants(item),
+      consent: itemSummaryConsentDescriptor({
+        handlerId: this.id,
+        source: source === 'slack' && scope === 'thread' ? 'slack-thread' : source,
+        itemId: itemRef,
+        language,
+        ...(scope === 'thread' ? { thread: true } : {}),
+        // A Slack thread's message count at read time, taken from the read itself (no new read), like the mail thread's total.
+        ...(source === 'slack' && scope === 'thread' ? { threadMessages: (item.detail?.sections ?? []).filter((section) => section.kind === 'message').length } : {}),
+        ...(target.label !== undefined ? { label: target.label } : {}),
+        ...(target.listingAt !== undefined ? { listingAt: target.listingAt } : {}),
+      }),
     };
   }
 

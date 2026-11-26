@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A8 OQ1-1: item-summary consent core and expected-recipient resolver (2026-11-26; dormant)
+
+- **Added.** `ItemSummaryConsent` (single-use token bound to the recipient key and label, 64 records), `recipientVerdict`, the optional `expectedRecipientKey` on the provider-selection policy and selector ports (router delegates), `ProviderSelectionService.expectedRecipientKey` (first owner-set layer; the derived default only while it is the Claude CLI; fail closed), the thread nouns `mail-thread` and `slack-thread`, the ids-only `consent` descriptor on the summarize outcome (mail, Drive, Jira, Slack), and `renderItemSummaryRecipientLine`.
+- **Changed.** `summary-consent-question.v2` (the agent question text for existing sources is unchanged; version and digest pins updated); the three handler "outcome keys" tests list `consent`.
+- **Dormant.** Nothing calls the new code; no flag, no runtime or prompt effect.
+
 ## Unreleased — ADR-0121 amendment A8 ratified (2026-11-26; docs only)
 
 - **Changed.** `DECISIONS.md` records A8 (rule ① for live item summaries: the owner's request is the consent for the chosen chat model, with a fixed recipient line; the question only for an unexpected recipient; D8 listing plus question via A5-S6); `ARCHITECTURE.md` §10 gets a separate A8 LOW row (the A5 row is unchanged) and one sentence, §12 and `AGENTS.md` line 23 a scoped exception for the recipient line and the rule-① question. Review round 1: the A8 behaviour is behind `QUOKY_ITEM_SUMMARY_CONSENT` (default off, as built until then); the expected recipient is compared by provider identity plus label, re-checked before the call and the regeneration. Flag stays off; no code.

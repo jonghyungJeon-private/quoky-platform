@@ -93,4 +93,11 @@ export interface ProviderSelectionPolicy {
    * must not throw; any doubt is `false`. Absent means "no dispatch-time check" (always eligible).
    */
   isEligible?(capability: Capability, context: ProviderSelectionContext, providerKey: string): boolean;
+  /**
+   * Optional, SYNCHRONOUS, data only (ADR-0121 amendment A8.3, OQ1-1): the selection key of the provider the owner EXPECTS to
+   * serve this chat-tier request (the first owner-set layer, or the derived default only while it is the logged-in CLI).
+   * Core compares it with the selected provider's key; it never names one. Must not throw; any doubt (unknown scope, a write
+   * in flight, a skipped owner layer, a capability outside the chat tier) is `undefined`: nothing is expected.
+   */
+  expectedRecipientKey?(capability: Capability, context: ProviderSelectionContext): string | undefined;
 }

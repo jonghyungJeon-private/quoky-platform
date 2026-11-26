@@ -12,9 +12,9 @@ import { AGENT_WORK_SUMMARY_SOURCES, type AgentWorkSummarySource } from './flow-
  */
 
 /** The sources a rule-① question may name: exactly the consent sources (mail, Drive and the five A5 work sources). */
-export type SummaryConsentSourceName = 'mail' | 'drive' | AgentWorkSummarySource;
+export type SummaryConsentSourceName = 'mail' | 'drive' | AgentWorkSummarySource | 'mail-thread' | 'slack-thread';
 
-export const SUMMARY_CONSENT_SOURCE_NAMES: readonly SummaryConsentSourceName[] = Object.freeze(['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES] as const);
+export const SUMMARY_CONSENT_SOURCE_NAMES: readonly SummaryConsentSourceName[] = Object.freeze(['mail', 'drive', ...AGENT_WORK_SUMMARY_SOURCES, 'mail-thread', 'slack-thread'] as const);
 
 export interface SummaryConsentQuestionInput {
   readonly language: 'ko' | 'en';
@@ -29,7 +29,7 @@ export interface SummaryConsentQuestionInput {
  * however small, bumps it. The A6-S4 plan digest binds it with the classifier prompt version (a6-12), so a reworded question can
  * never be judged by a digest made for the old one.
  */
-export const SUMMARY_CONSENT_QUESTION_VERSION = 'summary-consent-question.v1';
+export const SUMMARY_CONSENT_QUESTION_VERSION = 'summary-consent-question.v2';
 
 /** The KO placeholder for an item count (the A6.4 classifier template). */
 export const SUMMARY_CONSENT_KO_COUNT_PLACEHOLDER = '{개수}';
@@ -45,6 +45,8 @@ const NOUN: Readonly<Record<SummaryConsentSourceName, { readonly ko: string; rea
   slack: { ko: '슬랙 메시지', enOne: 'Slack message', enMany: 'Slack messages' },
   confluence: { ko: '컨플루언스 문서', enOne: 'Confluence page', enMany: 'Confluence pages' },
   github: { ko: '깃허브 항목', enOne: 'GitHub item', enMany: 'GitHub items' },
+  'mail-thread': { ko: '메일 스레드', enOne: 'mail thread', enMany: 'mail threads' },
+  'slack-thread': { ko: '슬랙 스레드', enOne: 'Slack thread', enMany: 'Slack threads' },
 });
 
 const isSource = (value: unknown): value is SummaryConsentSourceName => typeof value === 'string' && (SUMMARY_CONSENT_SOURCE_NAMES as readonly string[]).includes(value);

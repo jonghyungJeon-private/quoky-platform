@@ -825,7 +825,7 @@ describe('review fix: the continuation record never outlives a step that did not
 
 describe('review fix: the question version and the classifier placeholders', () => {
   it('the question carries a version (bumped by any wording change; A6-S4 binds it) and both count placeholders are exported', () => {
-    expect(SUMMARY_CONSENT_QUESTION_VERSION).toBe('summary-consent-question.v1');
+    expect(SUMMARY_CONSENT_QUESTION_VERSION).toBe('summary-consent-question.v2');
     expect(CONSENT_COUNT_PLACEHOLDER_KO).toBe('{개수}');
     expect(CONSENT_COUNT_PLACEHOLDER_EN).toBe('{count}');
     const sources = [{ source: 'mail' as const }];

@@ -21,10 +21,10 @@ describe('renderSummaryConsentQuestion', () => {
   });
 
   it('the closed noun table, KO and EN, one and many', () => {
-    const ko1: Record<string, string> = { mail: '메일', drive: '드라이브 파일', calendar: '캘린더 일정', jira: '지라 이슈', slack: '슬랙 메시지', confluence: '컨플루언스 문서', github: '깃허브 항목' };
-    const enOne: Record<string, string> = { mail: 'mail', drive: 'Drive file', calendar: 'Calendar event', jira: 'Jira issue', slack: 'Slack message', confluence: 'Confluence page', github: 'GitHub item' };
-    const enMany: Record<string, string> = { mail: 'mails', drive: 'Drive files', calendar: 'Calendar events', jira: 'Jira issues', slack: 'Slack messages', confluence: 'Confluence pages', github: 'GitHub items' };
-    expect([...SUMMARY_CONSENT_SOURCE_NAMES]).toEqual(['mail', 'drive', 'calendar', 'jira', 'slack', 'confluence', 'github']);
+    const ko1: Record<string, string> = { mail: '메일', drive: '드라이브 파일', calendar: '캘린더 일정', jira: '지라 이슈', slack: '슬랙 메시지', confluence: '컨플루언스 문서', github: '깃허브 항목', 'mail-thread': '메일 스레드', 'slack-thread': '슬랙 스레드' };
+    const enOne: Record<string, string> = { mail: 'mail', drive: 'Drive file', calendar: 'Calendar event', jira: 'Jira issue', slack: 'Slack message', confluence: 'Confluence page', github: 'GitHub item', 'mail-thread': 'mail thread', 'slack-thread': 'Slack thread' };
+    const enMany: Record<string, string> = { mail: 'mails', drive: 'Drive files', calendar: 'Calendar events', jira: 'Jira issues', slack: 'Slack messages', confluence: 'Confluence pages', github: 'GitHub items', 'mail-thread': 'mail threads', 'slack-thread': 'Slack threads' };
+    expect([...SUMMARY_CONSENT_SOURCE_NAMES]).toEqual(['mail', 'drive', 'calendar', 'jira', 'slack', 'confluence', 'github', 'mail-thread', 'slack-thread']);
     for (const source of SUMMARY_CONSENT_SOURCE_NAMES) {
       expect(ko([{ source, count: 2 }])).toBe(`${ko1[source]} 2건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)`);
       expect(en([{ source, count: 1 }])).toBe(`I'll send 1 ${enOne[source]} to Claude to summarise it. Shall I send it? (yes/no)`);

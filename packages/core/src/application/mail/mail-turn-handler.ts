@@ -1,4 +1,5 @@
 import { nlFlagArg, nlLimitArg, nlStringArg, type NlCatalogEntry, type NlClassBProbe, type NlGrammarSelection, type NlSelectedCommand } from '../nl-routing/catalog';
+import { itemSummaryConsentDescriptor } from '../item-summary-consent-descriptor';
 import { nlWave1Entry } from '../nl-routing/wave1-entries';
 import { nlActionEntry } from '../nl-routing/action-entries';
 import { nlRangeLabel, type NlResolvedRange } from '../nl-routing/symbolic-time';
@@ -409,6 +410,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       readout: read.readout,
       fallbackText: renderMailSummaryUnavailable(language),
       footer: renderMailSummaryFooter(language),
+      consent: itemSummaryConsentDescriptor({ handlerId: this.id, source: 'mail', itemId: id, language }),
       ...(this.deps.longItems === true ? { longItem: this.messageLongItem(ctx, read.message, language) } : {}),
     };
   }
@@ -508,6 +510,7 @@ export class MailTurnHandler implements ConversationTurnHandler, TurnDeliveryObs
       readout,
       fallbackText: renderMailThreadSummaryUnavailable(language),
       footer: renderMailThreadSummaryFooter(shown, total, language, withheld),
+      consent: itemSummaryConsentDescriptor({ handlerId: this.id, source: 'mail-thread', itemId: messageId, language, thread: true, threadMessages: total }),
       ...(long !== undefined
         ? {
             longItem: {

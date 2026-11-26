@@ -89,6 +89,18 @@ export class CapabilityRouter implements ProviderSelector {
     }
   }
 
+  /** ADR-0121 A8.3: the policy's expected recipient key (synchronous, data only); `undefined` on no policy, no method, a throw or a non-string. */
+  expectedRecipientKey(capability: Capability, context: ProviderSelectionContext = {}): string | undefined {
+    const ask = this.policy?.expectedRecipientKey;
+    if (ask === undefined) return undefined;
+    try {
+      const key = ask.call(this.policy, capability, context);
+      return key !== undefined && key.length > 0 ? key : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Registered providers that advertise the capability (unprobed). */
   private advertising(capability: Capability): AiProvider[] {
     return this.manager.all().filter((p) => p.capabilities.some((c) => c.capability === capability));
