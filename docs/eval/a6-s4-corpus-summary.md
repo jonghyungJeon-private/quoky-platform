@@ -61,14 +61,15 @@ gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
 
 | arm | 모델 | 호출 수 | 5 h 창 추정 |
 |---|---|---|---|
-| remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 334건 × 3 run = **1,002** (+ 장애 시 canary 최대 4) | 1,002 × 0.06 % = **약 60.1 %** |
-| local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 334건 × 3 run = **1,002** | **0 %** (loopback Ollama, Claude 창 미사용) |
+| remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 339건 × 3 run = **1,017** (+ 장애 시 canary 최대 4) | 1,017 × 0.06 % = **약 61.0 %** |
+| local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 339건 × 3 run = **1,017** | **0 %** (loopback Ollama, Claude 창 미사용) |
 
-- plan digest(승인된 코퍼스 기준, 이전 owner-review 값 remote `977c8ea678ec`, local `6c50d4a0ee78`): remote `556a1337b8e0494b524b6022a37545b93b3c8eb33e5cf60313aad8a6f248ae13`,
-  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `533f20362a2d31f7ee733d49c5057909faba802104a3c75e8a4f23f3823ee187`.
+- plan digest(현재 339건 코퍼스 기준, 2026-11-26 restage 뒤 값; 검증: `pnpm eval:nl -- --mode consent-answer --arm remote|local --concurrency 1`, 오프라인): remote `7c026ba3f9bc7e0a365891c046c429a269a71401c9e003918e8e35da6fedf13a`,
+  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `8fc03eec77b02f5eafeb1efed46bcb051ae3cc2a461b6bb5560a4fa06ed57d89`.
+  (restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
   코퍼스나 옵션을 바꾸면 둘 다 바뀐다.
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
-- remote 60.1 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
+- remote 61.0 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
   a6-02 순서대로 local arm을 먼저 돌리고, 통과하면 remote가 필요 없다. 그렇다면 Claude 창 비용은 0이다.
 - run-gates 모드: `consent-answer`(remote), `consent-answer-local`(local)이다. 비율 0은 모델 이름이 아니라 `consent-answer-local` 모드에
   붙는다. local arm은 한 번에 한 호출만 보낸다(`--concurrency 1`). 기본 모드에는 넣지 않았고 요청할 때만 돈다.
