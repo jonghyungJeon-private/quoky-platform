@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A6-S4: the consent-answer classifier corpus and eval plumbing (2026-11-26; built offline, not run)
+
+- **Added.** `golden/nl-consent-answer.v1.json` (402 cases, `status: "owner-review"`, not frozen): the A6.9 corpus as updated by R6 (labels with
+  `yes-and-more`), rule-① M2, A8.5 unexpected-recipient (v2 thread nouns), A8.6 D8 lookup and A2 topic questions in their placeholder form, the owner
+  verdicts of A6.1 / A6.8 / R2 / R8, and the 17 A6.11 question 6 replies plus R8 `473` marked as recommended for the owner. `consent-answer.corpus.test.ts`
+  pins its sha256, the minimums, every question against `consentClassifierQuestion` and every stage against the real pipeline.
+- **Added.** `eval:nl --mode consent-answer --arm remote|local` (`nl-consent-answer-eval.ts`): plan / Strict-run split with the digest binding arm,
+  model, effort, tier, prompt hash, question version and corpus hash; the R6 gate (0 wrong captures, yes / no recall >= 95 %, 0
+  `classifier-sees-content`, 0 harness errors, p95 <= 10 s, every one of 3 runs); INVALID (exit 5) on an outage; a run is refused while the corpus is
+  not owner-approved. `run-gates.sh` modes `consent-answer` and `consent-answer-local` (local rate 0).
+- **Changed.** The Core application index also exports the pure `buildConsentClassifierPrompt`, `parseConsentClassifierOutput`,
+  `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION` and `CONSENT_CLASSIFIER_TIMEOUT_MS` (boundary pin updated; the answer function stays unreachable).
+- **Not changed.** No runtime behaviour, prompt or catalog; `QUOKY_CONSENT_ANSWER_CLASSIFIER` stays off and `on` refused. No model call was made.
+- **Fixed (review round 1).** The `yes-and-more` recall bar (95 %) gates (owner r-03); `473` (ca-015) is `yes-and-more` (r-01); the 17 A6.11 q6 marks
+  are owner-decided (r-04). Stages are derived on a real `ConversationRuntime` (its own control and handler-claim checks): 16 handler-claimed cases
+  restaged (new stage `handler-claimed`, no call), replenished with 10 unclaimed classifier cases; two typographic-apostrophe cases added (structural,
+  owner question). A timed-out call records `Infinity` latency (always over the p95 bound); the remote arm keeps the real provider's stronger-tier
+  declaration (the eval guard passes it through); run-gates' local arm runs at `--concurrency 1` and its zero rate is keyed on the mode. Now 414
+  cases, 334 at the classifier stage, 1,002 planned calls per arm.
+
 ## Unreleased — ADR-0121 A8 OQ1-5: deterministic red-team lot for the item summary consent (2026-11-26; tests and docs only)
 
 - **Added.** `conversation-runtime-a8-redteam.test.ts` (159 offline cases, no model): P3/P5 end to end through the real NL selection path, a genuinely pending owner step, a

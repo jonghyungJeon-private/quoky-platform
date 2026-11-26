@@ -254,6 +254,8 @@ export function guardEvalProvider(provider: AiProvider, options: GuardOptions = 
     id: provider.id,
     ...(provider.family !== undefined ? { family: provider.family } : {}),
     ...(provider.executionLocality !== undefined ? { executionLocality: provider.executionLocality } : {}),
+    // The guard is transparent: a stronger-tier declaration passes through (the consent-answer adapter reads it; A6-S4 review round 1).
+    ...(provider.supportsStrongerIntentSelection !== undefined ? { supportsStrongerIntentSelection: provider.supportsStrongerIntentSelection } : {}),
     capabilities: provider.capabilities,
     isAvailable: () => provider.isAvailable(),
     execute: async (request) => {

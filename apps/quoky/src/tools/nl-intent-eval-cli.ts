@@ -31,10 +31,18 @@
  *
  * The dedicated help-scope classifier over `golden/nl-help-scope.v1.json` (`nl-help-scope-eval.ts`); the same offline /
  * Strict digest rule as the A6 modes.
+ *
+ * ADR-0121 amendment A6, slice A6-S4 (A6.9 as updated by R6):
+ *
+ *   pnpm eval:nl -- --mode consent-answer --arm remote|local [--model M] [--effort E] [--runs N] [--concurrency N] [--approved-plan-digest <sha256>]
+ *
+ * The consent-answer classifier over `golden/nl-consent-answer.v1.json` (`nl-consent-answer-eval.ts`), through the real adapter, with
+ * every request checked by `classifier-sees-content`; the same offline / Strict digest rule, and a run is refused while the corpus is
+ * not owner-approved.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
+import { CLAUDE_EFFORT_LEVEL_NAMES, ClaudeCliProvider, OllamaCliProvider, DEFAULT_CLAUDE_EFFORT_BY_CAPABILITY, DEFAULT_CLAUDE_INTENT_SELECTION_MODEL, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT, DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL, type ClaudeEffortLevel } from '@quoky/ai-cli';
 import { Capability, type AiProvider, type AiRequest, type NlPromptRev } from '@quoky/core';
 import { gitHead as defaultGitHead } from './nl-r2-prompt-binding';
 import {
@@ -63,6 +71,19 @@ import {
   summarizeHelpScope,
   validateHelpScopeCorpus,
 } from './nl-help-scope-eval';
+import {
+  CONSENT_LOCAL_MODEL,
+  NL_CONSENT_ANSWER_EVAL_GATE,
+  buildConsentAnswerPlan,
+  computeConsentAnswerPlanDigest,
+  consentAnswerGateVerdict,
+  formatConsentAnswerSummary,
+  loadConsentAnswerCorpus,
+  runConsentAnswerEvaluation,
+  summarizeConsentAnswer,
+  validateConsentAnswerCorpus,
+  type ConsentEvalArm,
+} from './nl-consent-answer-eval';
 import {
   NL_ACTION_EVAL_GATE,
   NL_ACTION_R2_EVAL_GATE,
@@ -109,6 +130,8 @@ export const EXIT_GATE_FAILED = 1;
 export const EXIT_USAGE = 2;
 /** Strict gate refused (digest missing or mismatched, CLI unavailable); nothing was spawned. */
 export const EXIT_BLOCKED = 3;
+/** A6-S4: every run passed, but fewer runs than the gate needs (not a gate verdict). */
+export const EXIT_NON_GATING = 4;
 /** The provider was unavailable for too many calls (usage/session limit, outage): the run is INVALID, not scored. */
 export const EXIT_INVALID = EXIT_INVALID_PROVIDER;
 
@@ -185,6 +208,16 @@ Without --approved-plan-digest it is offline (schema check, plan, digest, call c
 Help-scope gate per run: ${NL_HELP_SCOPE_EVAL_GATE.wrongCaptures} wrong captures on the non-answers, answer accuracy >= ${NL_HELP_SCOPE_EVAL_GATE.answerAccuracy * 100}%, ${NL_HELP_SCOPE_EVAL_GATE.harnessErrors} harness errors;
          the multi-run gate passes only when every run passes.
 
+A6-S4 consent-answer classifier (ADR-0121 amendment A6, A6.9 as updated by R6; a6-02: both arms on the same frozen corpus):
+          pnpm eval:nl -- --mode consent-answer --arm remote|local [--model M] [--effort E] [--runs N, default ${NL_CONSENT_ANSWER_EVAL_GATE.runs}] [--concurrency N] [--approved-plan-digest <sha256>]
+--arm remote: the production route, the stronger INTENT_SELECTION tier through the Claude CLI (--model / --effort override it; defaults
+${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL} / ${DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_EFFORT}). --arm local: ${CONSENT_LOCAL_MODEL} through Ollama, pinned by digest (no --model, no --effort; no egress).
+Without --approved-plan-digest it is offline (schema check, plan, digest, call count). With it, a Strict run, refused while the corpus
+status is not "approved" (the owner's review comes first). Only the classifier-stage cases make a call (one each per run).
+Consent-answer gate per run: ${NL_CONSENT_ANSWER_EVAL_GATE.wrongCaptures} wrong captures, yes recall >= ${NL_CONSENT_ANSWER_EVAL_GATE.yesRecall * 100}% (yes or yes-and-more), no recall >= ${NL_CONSENT_ANSWER_EVAL_GATE.noRecall * 100}%,
+         yes-and-more recall >= ${NL_CONSENT_ANSWER_EVAL_GATE.yesAndMoreRecall.bar * 100}% (owner r-03), ${NL_CONSENT_ANSWER_EVAL_GATE.classifierSeesContent} classifier-sees-content firings, ${NL_CONSENT_ANSWER_EVAL_GATE.harnessErrors} harness errors,
+         p95 <= ${NL_CONSENT_ANSWER_EVAL_GATE.p95LatencyMs / 1000} s (a timed-out call counts as over the bound); PASSED needs every one of ${NL_CONSENT_ANSWER_EVAL_GATE.runs} runs (fewer passing runs: NON-GATING, exit 4).
+
 ADR-0121 S2 plan exactness (the agent planner prompt over agent-plan.v1.json plus every case above as one-step gold) has
 its own CLI: pnpm eval:agent-plan -- --mode plan|run [...] (see agent-plan-eval-cli.ts).
 `;
@@ -203,11 +236,12 @@ const OPTIONS = new Set([
   '--prompt-rev',
   '--fixture',
   '--cases',
+  '--arm',
 ]);
 
 export class UsageError extends Error {}
 
-export type NlEvalMode = 'plan' | 'run' | 'action' | 'read-regression' | 'r2' | 'help-scope' | 'help';
+export type NlEvalMode = 'plan' | 'run' | 'action' | 'read-regression' | 'r2' | 'help-scope' | 'consent-answer' | 'help';
 
 export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; options: Record<string, string> } {
   const tokens = argv[0] === '--' ? argv.slice(1) : [...argv];
@@ -222,6 +256,15 @@ export function parseArguments(argv: readonly string[]): { mode: NlEvalMode; opt
     options[name] = value;
   }
   const mode = options['--mode'];
+  if (mode === 'consent-answer') {
+    const allowed = new Set(['--mode', '--arm', '--model', '--effort', '--runs', '--concurrency', '--approved-plan-digest']);
+    for (const name of Object.keys(options)) if (!allowed.has(name)) throw new UsageError(`${name} is not an option of --mode consent-answer`);
+    const arm = options['--arm'];
+    if (arm !== 'remote' && arm !== 'local') throw new UsageError('--mode consent-answer needs --arm remote or --arm local');
+    if (arm === 'local' && ('--model' in options || '--effort' in options)) throw new UsageError(`--arm local is ${CONSENT_LOCAL_MODEL}, pinned by digest: no --model, no --effort`);
+    return { mode, options };
+  }
+  if ('--arm' in options) throw new UsageError('--arm is only an option of --mode consent-answer');
   if (mode === 'action' || mode === 'read-regression' || mode === 'r2' || mode === 'help-scope') {
     for (const name of ['--entries', '--negatives', '--per-entry', '--fixture', ...(mode === 'help-scope' ? ['--cases'] : [])]) if (name in options) throw new UsageError(`${name} is not an option of --mode ${mode}`);
     if (mode === 'help-scope' && '--prompt-rev' in options) throw new UsageError('--prompt-rev is not an option of --mode help-scope (the classifier has its own prompt)');
@@ -311,6 +354,10 @@ export interface CliDeps {
   readonly createProvider: (model: string, effort?: string, tier?: 'stronger') => AiProvider;
   /** The outage guard's canary (one tiny call through the same provider); tests inject it, production calls the provider. */
   readonly canary?: (provider: AiProvider) => Promise<CanaryResult>;
+  /** A6-S4 local arm: the Ollama provider for the pinned model (constructed only by a Strict run, after the digest and approval checks). */
+  readonly createLocalProvider?: (model: string, digest12: string) => AiProvider;
+  /** A6-S4: the consent-answer corpus (tests inject it; production reads the repository file). */
+  readonly loadConsentAnswerCorpus?: typeof loadConsentAnswerCorpus;
 }
 
 const repoRoot = resolve(__dirname, '../../../..');
@@ -394,6 +441,7 @@ export async function runCli(argv: readonly string[], deps: CliDeps = defaultDep
       return EXIT_OK;
     }
     if (parsed.mode === 'action' || parsed.mode === 'read-regression' || parsed.mode === 'r2' || parsed.mode === 'help-scope') return await runActionCli(parsed.mode, parsed.options, deps);
+    if (parsed.mode === 'consent-answer') return await runConsentAnswerCli(parsed.options, deps);
     options = planOptions(parsed.options);
   } catch (error) {
     deps.stderr(error instanceof UsageError ? error.message : 'invalid arguments');
@@ -720,6 +768,89 @@ async function runHelpScopeCli(settings: { model: string; effort?: string; runs:
   const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
   deps.stdout(`results written to ${path}`);
   return summaries.every((summary) => summary.gatePassed) ? EXIT_OK : EXIT_GATE_FAILED;
+}
+
+/** The local arm's provider: Ollama with the pinned local weights, reasoning off, the classifier bound. */
+function defaultLocalProvider(model: string, digest12: string): AiProvider {
+  return new OllamaCliProvider({ model, localWeights: { pinnedDigest: digest12 }, noThinking: true, timeoutMs: NL_CONSENT_ANSWER_EVAL_GATE.p95LatencyMs });
+}
+
+/** `--mode consent-answer` (A6-S4): the consent-answer classifier over the A6.9 corpus, one arm per plan. */
+async function runConsentAnswerCli(options: Readonly<Record<string, string>>, deps: CliDeps): Promise<number> {
+  const arm = options['--arm'] as ConsentEvalArm;
+  const settings = {
+    arm,
+    model: arm === 'local' ? CONSENT_LOCAL_MODEL : (options['--model'] ?? DEFAULT_CLAUDE_STRONGER_INTENT_SELECTION_MODEL),
+    ...(arm === 'remote' ? { effort: strongerSelectionEffort(options) } : {}),
+    runs: integer(options['--runs'], NL_CONSENT_ANSWER_EVAL_GATE.runs),
+    concurrency: integer(options['--concurrency'], 4),
+  };
+  const approved = options['--approved-plan-digest'];
+  const { corpus, sha256 } = (deps.loadConsentAnswerCorpus ?? loadConsentAnswerCorpus)();
+  const problems = validateConsentAnswerCorpus(corpus);
+  const byStage = (stage: string) => corpus.cases.filter((golden) => golden.stage === stage).length;
+  deps.stdout(
+    `consent-answer corpus: ${corpus.cases.length} cases (classifier ${byStage('classifier')}, structural-fail ${byStage('structural-fail')}, fast-path ${byStage('fast-path')}, ` +
+      `control-forfeit ${byStage('control-forfeit')}, handler-claimed ${byStage('handler-claimed')}); status ${corpus.status}; schema problems: ${problems.length}`,
+  );
+  for (const problem of problems.slice(0, 50)) deps.stdout(`  ${problem}`);
+  if (problems.length > 0 || corpus.cases.length === 0) return EXIT_GATE_FAILED;
+  let plan: ReturnType<typeof buildConsentAnswerPlan>;
+  try {
+    plan = buildConsentAnswerPlan(corpus, sha256, settings);
+  } catch (error) {
+    deps.stderr(`invalid plan: ${error instanceof Error ? error.message : 'unknown'}`);
+    return EXIT_USAGE;
+  }
+  const digest = computeConsentAnswerPlanDigest(plan);
+  if (approved === undefined) {
+    deps.stdout(JSON.stringify({ ...plan, caseIds: `${plan.caseIds.length} cases` }, null, 2));
+    deps.stdout(`plan digest (sha256): ${digest}`);
+    deps.stdout(CANARY_PLAN_LINE);
+    deps.stdout(
+      `model calls this plan authorises: at most ${plan.calls} (${plan.caseIds.length} cases x ${plan.runs} run(s), one classifier call each; ` +
+        `the ${plan.deterministicCases} structural, fast-path, control and handler-claimed cases make none)`,
+    );
+    if (arm === 'local') deps.stdout(`local arm: ${plan.model} pinned ${plan.localDigest12} through the loopback Ollama daemon; no call uses the Claude 5 h window`);
+    if (corpus.status !== 'approved') deps.stdout(`corpus status ${corpus.status}: a run is refused until the owner approves the corpus`);
+    deps.stdout('nothing was executed; a run needs --approved-plan-digest equal to this digest');
+    return EXIT_OK;
+  }
+  if (approved !== digest) {
+    deps.stderr('BLOCKED: --approved-plan-digest does not match the recomputed plan digest; nothing was executed');
+    return EXIT_BLOCKED;
+  }
+  if (corpus.status !== 'approved') {
+    deps.stderr(`BLOCKED: the consent-answer corpus status is ${corpus.status}, not approved (the owner reviews it first); nothing was executed`);
+    return EXIT_BLOCKED;
+  }
+  const provider = arm === 'local' ? (deps.createLocalProvider ?? defaultLocalProvider)(plan.model, plan.localDigest12 as string) : deps.createProvider(plan.model, plan.effort, plan.tier);
+  if (!(await provider.isAvailable().catch(() => false))) {
+    deps.stderr(`BLOCKED: the ${arm === 'local' ? `local model (${plan.model} ${plan.localDigest12})` : 'Claude CLI'} is not available; nothing was executed`);
+    return EXIT_BLOCKED;
+  }
+  const guard = guardRunProvider(provider, deps.stderr, { concurrency: plan.concurrency, maxCalls: plan.calls, ...(arm === 'remote' ? { intentSelectionTier: plan.tier } : {}), ...(deps.canary !== undefined ? { canary: deps.canary } : {}) });
+  const startedAt = deps.now();
+  const records = await runConsentAnswerEvaluation({ cases: corpus.cases, plan, provider: guard.provider });
+  await guard.settle();
+  const outage = guard.report();
+  const reportName = `nl-consent-answer-${arm}-${startedAt.replace(/[:.]/g, '-')}.json`;
+  const summaries = Array.from({ length: plan.runs }, (_, index) => summarizeConsentAnswer(records.filter((record) => record.run === index + 1)));
+  const gateLabel = `consent-answer gate (${arm}, ${plan.promptVersion})`;
+  const verdict = consentAnswerGateVerdict({ summaries, runs: plan.runs, ...(outage.invalidReason !== undefined ? { invalidReason: outage.invalidReason } : {}) });
+  const hard = sumHardFailures(summaries, ['wrongCaptures', 'classifierSeesContent']);
+  if (verdict === 'INVALID') return finishInvalid(deps, gateLabel, plan.runs, outage, reportName, { plan: { ...plan, digest }, startedAt, records }, hard);
+  for (const [index, summary] of summaries.entries()) deps.stdout(`run ${index + 1}/${plan.runs}: ${formatConsentAnswerSummary(summary)}`);
+  deps.stdout(formatProviderOutcomes(outage));
+  deps.stdout(
+    verdict === 'NON-GATING'
+      ? `${gateLabel}: NON-GATING, every run passed but the gate needs ${NL_CONSENT_ANSWER_EVAL_GATE.runs} runs (this plan had ${plan.runs})`
+      : formatGateRuns(gateLabel, summaries, outageNoteOf(outage)),
+  );
+  // Content-free: ids, labels, outcomes and closed reason codes only (never a reply or a question).
+  const path = deps.writeReport(reportName, `${JSON.stringify({ plan: { ...plan, digest }, startedAt, verdict, summaries, providerOutcomes: outage, records }, null, 2)}\n`);
+  deps.stdout(`results written to ${path}`);
+  return verdict === 'PASSED' ? EXIT_OK : verdict === 'NON-GATING' ? EXIT_NON_GATING : EXIT_GATE_FAILED;
 }
 
 if (require.main === module) {
