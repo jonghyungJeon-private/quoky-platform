@@ -7,6 +7,7 @@ import {
   buildProjectRows,
   compareJiraKeysDescending,
   inertPickTitle,
+  consumePickedA7Destination,
   isPickedA7Destination,
   jiraProjectOf,
   parsePendingA7Pick,
@@ -16,19 +17,21 @@ import {
   type PendingA7Pick,
 } from './a7-pick';
 import { buildHeldReceipt } from './held-receipt';
-import { readA7State, withA7State } from './held-receipt-store';
+import { readA7State, withA7State, withCardClosingTurn, type A7StateGuard } from './held-receipt-store';
 
 // ADR-0121 A7-S4b: the pure pieces of the destination pick (A7.4b) and the A7 state in Session.metadata.
 
 const T0 = '2026-11-26T03:00:00.000Z';
 const at = (minutes: number): string => new Date(Date.parse(T0) + minutes * 60_000).toISOString();
 const D = (n: number): string => n.toString(16).padStart(64, '0');
-const OWNER_TEXT = { text: '요약해서 지라 티켓에 달아줘', groundingText: '요약해서 지라 티켓에 달아줘', rawText: '요약해서 지라 티켓에 달아줘' };
+const GUARD: A7StateGuard = { bootId: 'boot-1' };
+const OWNER_REQUEST = '요약해서 지라 티켓에 달아줘';
 
 function pending(over: Partial<PendingA7Pick> = {}): PendingA7Pick {
   return {
     conversation: 'c1',
     actorId: 'owner',
+    sessionId: 's1',
     askedTurnId: 'm1',
     askedAt: T0,
     stage: 'ticket',
@@ -38,7 +41,8 @@ function pending(over: Partial<PendingA7Pick> = {}): PendingA7Pick {
     target: 'jira.comment.propose',
     connectorCalls: 1,
     source: { entryId: 'slack.search', args: { keyword: '릴리즈' } },
-    ownerText: OWNER_TEXT,
+    summaryAsked: ['slack.search'],
+    language: 'ko',
     ...over,
   };
 }
@@ -47,7 +51,7 @@ const receipt = (over: Record<string, unknown> = {}) => {
   if ('refused' in built) throw new Error('no receipt');
   return built.receipt;
 };
-const context = { actorId: 'owner', conversation: 'c1', now: at(1), previousTurnId: 'm1', jiraProjects: ['BE', 'OPS'] };
+const context = { actorId: 'owner', conversation: 'c1', now: at(1), turnId: 'm2', sessionId: 's1', previousTurnId: 'm1', jiraProjects: ['BE', 'OPS'] };
 
 describe('the rows (A7.4b)', () => {
   it('Jira rows are ordered by issue key numerically descending, never by anything content could change; at most 5; the project and the closed format only', () => {
@@ -164,9 +168,15 @@ describe('the pending pick and the A7 state as stored (Session.metadata[quoky.he
       { ...value, source: { entryId: 'slack.search', args: { nested: { a: 1 } } } },
       { ...value, source: { entryId: 'slack.search', args: {}, extra: 1 } },
       { ...value, frozen: receipt() },
-      { ...value, ownerText: undefined },
-      { ...value, ownerText: { ...OWNER_TEXT, text: 'x'.repeat(4001) } },
-      { ...value, ownerText: { ...OWNER_TEXT, extra: 'x' } },
+      // P1-2: no owner text of any shape; the frozen request is a closed list for THIS source read only.
+      { ...value, ownerText: { text: OWNER_REQUEST, groundingText: OWNER_REQUEST, rawText: OWNER_REQUEST } },
+      { ...value, text: OWNER_REQUEST },
+      { ...value, summaryAsked: ['jira.issues'] },
+      { ...value, summaryAsked: ['slack.search', 'jira.issues'] },
+      { ...value, summaryAsked: [OWNER_REQUEST] },
+      { ...value, summaryAsked: undefined },
+      { ...value, language: 'fr' },
+      { ...value, sessionId: '' },
       { ...formB, source: value.source },
       { ...formB, frozen: undefined },
       { ...formB, frozen: { ...formB.frozen, actorId: 'someone-else' } },
@@ -183,27 +193,96 @@ describe('the pending pick and the A7 state as stored (Session.metadata[quoky.he
   it('reads only this actor\'s parts; prunes other actors whose records are all past their windows; caps the actors; an empty state removes the actor', () => {
     const owner = { held: receipt(), pick: pending() };
     const other = { held: receipt({ actorId: 'someone' }) };
-    const first = withA7State(undefined, 'owner', owner, at(1)) as { byActor: Record<string, unknown> };
+    const first = withA7State(undefined, 'owner', owner, at(1), GUARD) as { byActor: Record<string, unknown> };
     expect(Object.keys(first.byActor)).toEqual(['owner']);
-    const both = withA7State(first, 'someone', other, at(1));
-    expect(readA7State(both, 'owner')).toEqual(owner);
-    expect(readA7State(both, 'someone').held?.actorId).toBe('someone');
-    expect(readA7State(both, 'nobody')).toEqual({});
+    const both = withA7State(first, 'someone', other, at(1), GUARD);
+    expect(readA7State(both, 'owner', GUARD)).toEqual(owner);
+    expect(readA7State(both, 'someone', GUARD).held?.actorId).toBe('someone');
+    expect(readA7State(both, 'nobody', GUARD)).toEqual({});
     // Long after every window the other actor's record is dropped at the next write.
-    const later = withA7State(both, 'owner', owner, at(60)) as { byActor: Record<string, unknown> };
+    const later = withA7State(both, 'owner', owner, at(60), GUARD) as { byActor: Record<string, unknown> };
     expect(Object.keys(later.byActor)).toEqual(['owner']);
-    expect(withA7State(later, 'owner', {}, at(60))).toEqual({ byActor: {} });
+    expect(withA7State(later, 'owner', {}, at(60), GUARD)).toEqual({ byActor: {} });
     // A malformed part counts as absent, the rest is kept; a pick of another actor stored under this one is ignored.
     const mangled = { byActor: { owner: { held: { nonsense: true }, pick: pending({ actorId: 'someone' }) } } };
-    expect(readA7State(mangled, 'owner')).toEqual({});
+    expect(readA7State(mangled, 'owner', GUARD)).toEqual({});
     let big: unknown;
-    for (let index = 0; index < 70; index += 1) big = withA7State(big, `actor-${index}`, { held: receipt({ actorId: `actor-${index}` }) }, at(1));
+    for (let index = 0; index < 70; index += 1) big = withA7State(big, `actor-${index}`, { held: receipt({ actorId: `actor-${index}` }) }, at(1), GUARD);
     expect(Object.keys((big as { byActor: Record<string, unknown> }).byActor).length).toBeLessThanOrEqual(64);
   });
 
-  it('holds no item title, field, answer text or model output: only ids, digests, closed values and the owner\'s own words', () => {
-    const state = JSON.stringify(withA7State(undefined, 'owner', { held: receipt(), pick: pending() }, at(1)));
+  it('holds no item title, field, answer text, model output or owner text: only ids, digests and closed values (P1-2)', () => {
+    const state = JSON.stringify(withA7State(undefined, 'owner', { held: receipt(), pick: pending() }, at(1), GUARD));
     expect(state).toMatch(/C0AA\.1/u);
-    expect(state).not.toMatch(/"title"|"body"|"author"|"text":"release/u);
+    expect(state).not.toMatch(/"title"|"body"|"author"|"ownerText"|"groundingText"|"rawText"/u);
+    expect(state).not.toContain(OWNER_REQUEST);
+  });
+
+  it('P1-1: another boot id, no boot id, or a record at or before the kill switch\'s last change is void; stop then resume cancels it', () => {
+    const owner = { held: receipt({ at: at(1) }), pick: pending({ askedAt: at(1) }) };
+    const stored = withA7State(undefined, 'owner', owner, at(1), GUARD);
+    expect(readA7State(stored, 'owner', GUARD)).toEqual(owner);
+    // A restart: a new boot id sees nothing, and what it writes next does not bring the old boot's records back.
+    expect(readA7State(stored, 'owner', { bootId: 'boot-2' })).toEqual({});
+    expect(readA7State(stored, 'owner', { bootId: undefined })).toEqual({});
+    expect(readA7State(stored, 'owner', { bootId: '' })).toEqual({});
+    const rewritten = withA7State(stored, 'someone', { held: receipt({ actorId: 'someone', at: at(2) }) }, at(2), { bootId: 'boot-2' });
+    expect(readA7State(rewritten, 'owner', { bootId: 'boot-2' })).toEqual({});
+    expect(readA7State(rewritten, 'owner', GUARD)).toEqual({});
+    // stop (at 2) then resume (at 3): the last change is at 3, every record made before it is void, a later one is live.
+    expect(readA7State(stored, 'owner', { ...GUARD, switchAt: at(3) })).toEqual({});
+    expect(readA7State(stored, 'owner', { ...GUARD, switchAt: at(1) })).toEqual({});
+    expect(readA7State(stored, 'owner', { ...GUARD, switchAt: at(0) })).toEqual(owner);
+  });
+
+  it('P2-2: the closing turn is recorded once on a live card; a card without one is kept as is', () => {
+    const card = { cardId: 'a1', taskId: 't1', sessionId: 's1', cardAt: at(1), frozen: receipt({ at: at(1) }), builtFromCarried: false };
+    const stored = withA7State(undefined, 'owner', { card }, at(1), GUARD);
+    const closed = withCardClosingTurn(stored, 'owner', 'm9', at(2), GUARD);
+    expect(readA7State(closed, 'owner', GUARD).card?.closingTurnId).toBe('m9');
+    // Once only: a second closing turn does not move it; a state without a card is returned unchanged.
+    expect(readA7State(withCardClosingTurn(closed, 'owner', 'm10', at(3), GUARD), 'owner', GUARD).card?.closingTurnId).toBe('m9');
+    expect(withCardClosingTurn(undefined, 'owner', 'm9', at(2), GUARD)).toBeUndefined();
+  });
+});
+
+describe('P2-1: a picked destination is bound to its actor, session, turns and expiry, and is single use', () => {
+  const picked = (over: Partial<typeof context> = {}, pend: PendingA7Pick = pending()) => {
+    const resolved = resolveA7Pick(pend, '2', { ...context, ...over });
+    if (resolved.kind !== 'destination') throw new Error('no destination');
+    return resolved.picked;
+  };
+  const use = { actorId: 'owner', sessionId: 's1', turnId: 'm2', now: at(1) };
+
+  it('is consumed once for the very actor, session and pick turn, within its expiry', () => {
+    const value = picked();
+    expect(consumePickedA7Destination(value, use)).toBe(true);
+    expect(consumePickedA7Destination(value, use)).toBe(false);
+  });
+
+  it('refuses another actor, another session, another turn, a forged or copied value, and does not spend the token on a refusal', () => {
+    const value = picked();
+    expect(consumePickedA7Destination(value, { ...use, actorId: 'someone' })).toBe(false);
+    expect(consumePickedA7Destination(value, { ...use, sessionId: 's2' })).toBe(false);
+    expect(consumePickedA7Destination(value, { ...use, turnId: 'm3' })).toBe(false);
+    expect(consumePickedA7Destination({ ...value }, use)).toBe(false);
+    expect(consumePickedA7Destination(undefined, use)).toBe(false);
+    expect(consumePickedA7Destination(value, use)).toBe(true);
+  });
+
+  it('reproduces the cross-actor 11-minute reuse: the listing\'s 10 minutes end the token, for anyone', () => {
+    const value = picked();
+    expect(consumePickedA7Destination(value, { ...use, actorId: 'someone', now: at(11) })).toBe(false);
+    expect(consumePickedA7Destination(value, { ...use, now: at(11) })).toBe(false);
+    expect(consumePickedA7Destination(value, { ...use, now: at(10) })).toBe(false);
+    expect(consumePickedA7Destination(picked(), { ...use, now: at(9) })).toBe(true);
+  });
+
+  it('a frozen receipt ends the token at its own 20 minutes if that comes first; another session cannot pick at all', () => {
+    const frozen = pending({ form: 'b', connectorCalls: 0, frozen: receipt({ at: at(-8) }), askedAt: at(0) });
+    delete (frozen as { source?: unknown }).source;
+    const value = picked({ now: at(1) }, frozen);
+    expect(consumePickedA7Destination(value, { ...use, now: at(12) })).toBe(false);
+    expect(resolveA7Pick(pending(), '2', { ...context, sessionId: 's2' })).toEqual({ kind: 'cancel', reason: 'other-session' });
   });
 });

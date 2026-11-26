@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Provider } from '@nestjs/common';
 import { AGENT_WRITE_PROPOSAL_PORT, AgentRunService, AgentWriteProposalService, CapabilityRouter, ConsentPendingStore, ConsentTurnGate, STORAGE_PROVIDER, type AgentReadPorts, type AgentWriteProposalPort, type ConnectorWriteFlow, type Logger, type StorageProvider } from '@quoky/core';
 import { ConsoleLogger } from '../console-logger';
@@ -74,10 +74,12 @@ export interface AgentFeatureConfig {
 export function agentWriteProposalDep(
   config: AgentFeatureConfig,
   port: AgentWriteProposalPort | null | undefined,
-): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly sha256Hex: (text: string) => string } | undefined {
+): { readonly port: AgentWriteProposalPort; readonly targets: readonly 'jira-comment'[]; readonly sha256Hex: (text: string) => string; readonly bootId: string } | undefined {
   if (config.agent.mode !== 'active' || config.writeProposals?.mode !== 'active' || port === null || port === undefined) return undefined;
   // A7-S4b: the SHA-256 the agent module may not import (`node:*`) is injected here: the held-receipt digests, the frozen receipt and the carry-over need it.
-  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'], sha256Hex: (text) => createHash('sha256').update(text, 'utf8').digest('hex') } : undefined;
+  // P1-1: so is the id of this boot; every A7 record is stamped with it and a restart voids them. The destination-existence port is NOT wired
+  // (activation gate, A7-S5): without it the pick continuation refuses.
+  return config.writeProposals.targets.includes('jira-comment') ? { port, targets: ['jira-comment'], sha256Hex: (text) => createHash('sha256').update(text, 'utf8').digest('hex'), bootId: randomUUID() } : undefined;
 }
 
 export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, options: { readonly logger?: Logger } = {}): Provider[] {

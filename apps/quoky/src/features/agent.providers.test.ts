@@ -127,7 +127,7 @@ describe('agentWriteProposalDep (A7-S4a, dormant)', () => {
   const on = { mode: 'active' as const, targets: ['jira-comment'] };
 
   it('is built only for agent mode active, proposals active, jira-comment switched on and a bound port', () => {
-    expect(agentWriteProposalDep(base({ writeProposals: on }), port)).toEqual({ port, targets: ['jira-comment'], sha256Hex: expect.any(Function) });
+    expect(agentWriteProposalDep(base({ writeProposals: on }), port)).toEqual({ port, targets: ['jira-comment'], sha256Hex: expect.any(Function), bootId: expect.any(String) });
     expect(agentWriteProposalDep(base(), port)).toBeUndefined();
     expect(agentWriteProposalDep(base({ writeProposals: { mode: 'off', targets: ['jira-comment'] } }), port)).toBeUndefined();
     expect(agentWriteProposalDep(base({ writeProposals: { mode: 'shadow', targets: ['jira-comment'] } }), port)).toBeUndefined();

@@ -7,12 +7,13 @@ import {
   type AgentWriteProposalPort,
   type AgentWriteProposalRefusal,
 } from '../../ports/agent-write-proposal.port';
-import { isPickedA7Destination, type PickedA7Destination } from './a7-pick';
+import { consumePickedA7Destination, isPickedA7Destination, type PickedA7Destination } from './a7-pick';
 import type { ValidatedCrossWritePlan } from './cross-write-validator';
 import { digestSourceDocument, verifyHeldItems, type HeldReceipt, type HeldReceiptHasher } from './held-receipt';
 import { renderDraftConsentQuestion } from './draft-consent-question';
 import type { AgentDraftReadOptions, AgentDraftSourceOutcome } from './plan-executor';
-import { summaryGrantBasis, type OwnerText } from './summary-grant';
+import { carriedSummaryGrantBasis, summaryGrantBasis, summaryGrantBasisFromFrozen, type OwnerText } from './summary-grant';
+import type { NlWave1EntryId } from '../nl-routing/catalog';
 import { quarantinedDraft, type QuarantinedListingOnlyReason, type QuarantinedSummarizerRoute, type SummaryConsentToken, type SummaryRunToken } from './quarantined-summary';
 import type { AgentRunBudget } from './run-bounds';
 import type { ValidatedAgentPlan, ValidatedAgentStep } from './plan-validator';
@@ -41,6 +42,9 @@ export type A7ProposeRefusalReason =
   | 'consent-mismatch'
   /** A7-S4b (A7.4b): the owner-scoped listing of a destination pick found nothing to pick. */
   | 'no-destination-rows'
+  /** A7-S4b (A7.5 step 2): the picked issue is missing or inaccessible, or the check could not be made: nothing was read or drafted. */
+  | 'destination-gone'
+  | 'no-destination-check'
   | AgentWriteProposalRefusal
   | QuarantinedListingOnlyReason
   /** The draft was refused (`schema`, `credential`, `participants`, `link`, `size`, `spoof`) or the model failed. */
@@ -93,7 +97,14 @@ export interface A7ProposeInput {
   readonly sessionId: Id;
   readonly language: 'ko' | 'en';
   /** The owner's own words of this turn as prepared (and the raw text): the only source of the summary grant (never a flag). */
-  readonly ownerText: OwnerText;
+  readonly ownerText?: OwnerText;
+  /**
+   * Review round 1 (P1-2 and the cross-turn ruling): where the summary grant comes from when it is NOT this turn's own words. `frozen`: the
+   * closed list a pending pick froze at its asking turn (the pick reply "2" asks for nothing). `carried`: a carried-over or bare follow-up
+   * draft; it NEVER reuses an earlier request's grant, so a `REMOTE` summariser needs a fresh rule-① consent (the question is asked again)
+   * and a `LOCAL` one proceeds. Absent: this turn's own words (`ownerText`).
+   */
+  readonly grantFrom?: { readonly kind: 'frozen'; readonly asked: readonly string[] } | { readonly kind: 'carried' };
   readonly now: IsoTimestamp;
   readonly budget: AgentRunBudget;
   readonly signal?: AbortSignal;
@@ -119,6 +130,8 @@ export interface A7ProposeInput {
    * pick state of the same project, only for a value `resolveA7Pick` issued, and only as this one propose step's destination.
    */
   readonly picked?: PickedA7Destination;
+  /** The owner turn this step runs in: a picked destination is bound to it (single use, P2-1). Needed with `picked`. */
+  readonly turnId?: string;
   /**
    * A7-S4b, form b: the bound (or frozen) receipt and the read step rebuilt from it. The read is the receipt's entry with its held args; only
    * the receipt's ids that still hold the same digest are drafted from, and nothing is added (A7.4). Needs `hasher`.
@@ -134,6 +147,10 @@ export const A7_DRAFT_STEP = 2;
 export const A7_NOT_MADE_LINE = {
   ko: '초안으로 카드를 만들 수 없어서 만들지 않았어요. 아무것도 보내지 않았어요.',
   en: "I couldn't make a card from the draft, so I made none. Nothing was sent.",
+} as const;
+export const A7_DESTINATION_GONE_LINE = {
+  ko: '고르신 티켓을 지금은 찾을 수 없어서 카드를 만들지 않았어요. 아무것도 읽거나 보내지 않았어요.',
+  en: "I can't find the ticket you picked right now, so I made no card. Nothing was read or sent.",
 } as const;
 export const A7_STOPPED_LINE = {
   ko: '에이전트가 멈춰 있어서 카드를 만들지 않았어요. 아무것도 보내지 않았어요.',
@@ -187,7 +204,9 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       const picked = input.picked;
       const projectOk =
         (destination.state === 'pick-ticket' && destination.project === picked.project) || (destination.state === 'pick-project' && destination.projects.includes(picked.project));
-      if (!isPickedA7Destination(picked) || !projectOk) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
+      if (!isPickedA7Destination(picked) || !projectOk || input.turnId === undefined) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
+      // Single use and bound to this actor, session and pick turn, within its expiry (P2-1): a reuse or a stranger's use refuses, nothing read.
+      if (!consumePickedA7Destination(picked, { actorId: input.actorId, sessionId: input.sessionId, turnId: input.turnId, now: input.now })) return refuse('unsupported', A7_NOT_MADE_LINE[language], { pick: 'refused' });
       key = picked.issueKey;
       grounding = 'owner-picked';
     } else {
@@ -210,9 +229,9 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
 
     // The owner's summary request, judged by the SAME producer as every summary, over the synthetic plan [read, draft] this step is
     // (A7.5 step 4: Slack and Jira drafts run only where the owner's words ask for a summary of that source).
-    const grantPlan: ValidatedAgentPlan = { kind: 'run', steps: [read, { kind: 'summarize', from: [1], schema: 'digest.v1' }], connectorCalls: plan.connectorCalls };
+    const grantPlan = a7GrantPlan(read, plan.connectorCalls);
     const sourced = await deps.readSource(read, {
-      grants: { basis: summaryGrantBasis(grantPlan, input.ownerText), plan: grantPlan },
+      grants: { basis: grantBasisOf(grantPlan, input), plan: grantPlan },
       budget: input.budget,
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       ...(input.stillRunning !== undefined ? { stillRunning: input.stillRunning } : {}),
@@ -328,6 +347,17 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
   } catch {
     return refuse('unsupported', A7_NOT_MADE_LINE[language]);
   }
+}
+
+/** The synthetic plan [read, draft] a propose step's grant is judged over (also the asking turn's, to freeze `summaryAsked`). */
+export function a7GrantPlan(read: Extract<ValidatedAgentStep, { kind: 'read' }>, connectorCalls: number): ValidatedAgentPlan {
+  return { kind: 'run', steps: [read, { kind: 'summarize', from: [1], schema: 'digest.v1' }], connectorCalls };
+}
+
+function grantBasisOf(plan: ValidatedAgentPlan, input: A7ProposeInput): ReturnType<typeof summaryGrantBasis> {
+  if (input.grantFrom?.kind === 'frozen') return summaryGrantBasisFromFrozen(plan, input.grantFrom.asked as readonly NlWave1EntryId[]);
+  if (input.grantFrom?.kind === 'carried') return carriedSummaryGrantBasis(plan);
+  return input.ownerText !== undefined ? summaryGrantBasis(plan, input.ownerText) : summaryGrantBasisFromFrozen(plan, []);
 }
 
 function queryLiteralOf(args: Readonly<Record<string, unknown>>): string | undefined {

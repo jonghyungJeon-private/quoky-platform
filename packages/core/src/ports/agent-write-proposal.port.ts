@@ -117,9 +117,9 @@ export type AgentCardClosureState = 'open' | 'sent' | 'declined' | 'expired' | '
 export interface AgentWriteProposalPort {
   /**
    * A7-S4b: the closure of one card of this owner (A7.4c item 4). Optional: a port without it never lets a closed card hand anything
-   * on. Read-only; closed values only.
+   * on. The anchor must belong to `actorId` (the session's own actor), else `unknown`. Read-only; closed values only.
    */
-  closureOf?(request: { readonly sessionId: Id; readonly taskId: Id; readonly now: IsoTimestamp }): Promise<AgentCardClosureState>;
+  closureOf?(request: { readonly sessionId: Id; readonly taskId: Id; readonly actorId: Id; readonly now: IsoTimestamp }): Promise<AgentCardClosureState>;
   /** The destination of this owner's open A7 card, if one is open (checked BEFORE anything is read or drafted). A card whose approval or grant has lapsed at `now` is not open. */
   openCardOf(actorId: Id, now: IsoTimestamp): Promise<{ readonly cardId: Id; readonly target: string } | undefined>;
   propose(request: AgentWriteProposalRequest): Promise<AgentWriteProposalResult>;

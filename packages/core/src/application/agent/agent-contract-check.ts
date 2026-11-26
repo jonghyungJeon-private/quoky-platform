@@ -73,9 +73,10 @@ export type AgentServiceDepsPinned = Assert<
 >;
 /**
  * ADR-0121 A7 (A7-S4a): the one proposal dep is the narrow port (an interface of Core's ports, implemented outside the agent module over
- * `connectorWriteFlow`), the closed destination list and one boolean. No writer, no flow, no storage.
+ * `connectorWriteFlow`), the closed destination list and one boolean. No writer, no flow, no storage. A7-S4b adds the injected hasher, the boot
+ * id string and the narrow destination-existence port (`CrossWriteDestinationPort`, read-only).
  */
-export type AgentServiceWriteProposalPinned = Assert<KeysEqual<NonNullable<AgentRunServiceDeps['writeProposal']>, 'port' | 'targets' | 'askConsent' | 'sha256Hex'>>;
+export type AgentServiceWriteProposalPinned = Assert<KeysEqual<NonNullable<AgentRunServiceDeps['writeProposal']>, 'port' | 'targets' | 'askConsent' | 'sha256Hex' | 'bootId' | 'destinationCheck'>>;
 export type AgentServiceWriteProposalPortPinned = Assert<TypesEqual<NonNullable<AgentRunServiceDeps['writeProposal']>['port'], AgentWriteProposalPort>>;
 /** The port itself: the open-card probe and one proposal in, one closed result out. */
 export type AgentWriteProposalPortPinned = Assert<KeysEqual<AgentWriteProposalPort, 'openCardOf' | 'propose' | 'closureOf'>>;

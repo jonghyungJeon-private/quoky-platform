@@ -62,33 +62,21 @@ export interface PendingA7Pick {
   readonly source?: { readonly entryId: string; readonly args: HeldReceiptArgs };
   /** Form b: the receipt bound at the turn that asked, frozen with its original `at`. */
   readonly frozen?: HeldReceipt;
+  /** The session the pick was asked in: the picked value is bound to it. */
+  readonly sessionId: string;
   /**
-   * The owner's own words of the turn that asked, as prepared (TRUSTED owner text, bounded): the summary request that grants the source read
-   * is the asking turn's, never the pick reply's ("2" asks for nothing). Dropped with the pick.
+   * Review round 1 (P1-2): NO owner text is stored. The asking turn computed which source reads the owner's own words asked a summary of
+   * (`ownerSummaryRequests`, at most the one source read) and froze only that closed list; the pick turn derives the grant from it
+   * (`summaryGrantBasisFromFrozen`). Dropped with the pick.
    */
-  readonly ownerText: A7FrozenOwnerText;
+  readonly summaryAsked: readonly string[];
+  /** The asking turn's language (a bare number has none of its own). */
+  readonly language: 'ko' | 'en';
 }
 
-/** The owner's own words of one turn as prepared, frozen for the later step that needs the summary request they made (bounded). */
-export interface A7FrozenOwnerText {
-  readonly text: string;
-  readonly groundingText: string;
-  readonly rawText: string;
-}
+export const A7_PICK_MAX_SUMMARY_ASKED = 1;
 
-export const A7_PICK_OWNER_TEXT_MAX_CHARS = 4000;
-
-/** Strict parse of a frozen owner text; `undefined` for anything malformed, with an unknown key or over the bound. */
-export function parseA7FrozenOwnerText(raw: unknown): A7FrozenOwnerText | undefined {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
-  const owner = raw as Record<string, unknown>;
-  if (Object.keys(owner).some((key) => key !== 'text' && key !== 'groundingText' && key !== 'rawText')) return undefined;
-  const { text, groundingText, rawText } = owner;
-  if ([text, groundingText, rawText].some((value) => typeof value !== 'string' || value.length > A7_PICK_OWNER_TEXT_MAX_CHARS)) return undefined;
-  return { text: text as string, groundingText: groundingText as string, rawText: rawText as string };
-}
-
-const PENDING_KEYS: ReadonlySet<string> = new Set(['conversation', 'actorId', 'askedTurnId', 'askedAt', 'stage', 'project', 'options', 'form', 'target', 'connectorCalls', 'source', 'frozen', 'ownerText']);
+const PENDING_KEYS: ReadonlySet<string> = new Set(['conversation', 'actorId', 'sessionId', 'askedTurnId', 'askedAt', 'stage', 'project', 'options', 'form', 'target', 'connectorCalls', 'source', 'frozen', 'summaryAsked', 'language']);
 
 const nonEmptyText = (value: unknown, max = 512): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const isoOk = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value));
@@ -116,7 +104,10 @@ export function parsePendingA7Pick(raw: unknown): PendingA7Pick | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
   if (Object.keys(record).some((key) => !PENDING_KEYS.has(key))) return undefined;
-  if (!nonEmptyText(record.conversation) || !nonEmptyText(record.actorId) || !nonEmptyText(record.askedTurnId) || !isoOk(record.askedAt)) return undefined;
+  if (!nonEmptyText(record.conversation) || !nonEmptyText(record.actorId) || !nonEmptyText(record.sessionId) || !nonEmptyText(record.askedTurnId) || !isoOk(record.askedAt)) return undefined;
+  if (record.language !== 'ko' && record.language !== 'en') return undefined;
+  const asked = record.summaryAsked;
+  if (!Array.isArray(asked) || asked.length > A7_PICK_MAX_SUMMARY_ASKED || !asked.every((entry) => nonEmptyText(entry, 80)) || new Set(asked).size !== asked.length) return undefined;
   if (record.stage !== 'project' && record.stage !== 'ticket') return undefined;
   if (record.form !== 'a' && record.form !== 'b') return undefined;
   if (record.target !== 'jira.comment.propose') return undefined;
@@ -127,8 +118,6 @@ export function parsePendingA7Pick(raw: unknown): PendingA7Pick | undefined {
   if (record.stage === 'project') {
     if (project !== undefined || !options.every((option) => typeof option === 'string' && PROJECT_KEY.test(option))) return undefined;
   } else if (typeof project !== 'string' || !PROJECT_KEY.test(project) || !options.every((option) => typeof option === 'string' && jiraProjectOf(option) === project)) return undefined;
-  const ownerText = parseA7FrozenOwnerText(record.ownerText);
-  if (ownerText === undefined) return undefined;
   let source: PendingA7Pick['source'];
   let frozen: HeldReceipt | undefined;
   if (record.form === 'a') {
@@ -142,9 +131,13 @@ export function parsePendingA7Pick(raw: unknown): PendingA7Pick | undefined {
     frozen = parseHeldReceipt(record.frozen);
     if (frozen === undefined || frozen.actorId !== record.actorId || frozen.conversation !== record.conversation) return undefined;
   }
+  // The frozen request can only be for the source read this pick resumes (never another entry).
+  const sourceEntry = source !== undefined ? source.entryId : frozen?.entryId;
+  if (asked.length === 1 && asked[0] !== sourceEntry) return undefined;
   return {
     conversation: record.conversation,
     actorId: record.actorId,
+    sessionId: record.sessionId,
     askedTurnId: record.askedTurnId,
     askedAt: record.askedAt,
     stage: record.stage,
@@ -155,7 +148,8 @@ export function parsePendingA7Pick(raw: unknown): PendingA7Pick | undefined {
     connectorCalls: record.connectorCalls,
     ...(source !== undefined ? { source } : {}),
     ...(frozen !== undefined ? { frozen } : {}),
-    ownerText,
+    summaryAsked: [...(asked as string[])],
+    language: record.language,
   };
 }
 
@@ -261,6 +255,8 @@ declare const PICKED_DESTINATION: unique symbol;
 /**
  * The trust value `OWNER_PICKED_DESTINATION` (A7.4b): the destination of ONE A7 propose step, picked by number from a listing of this module.
  * Not `OWNER_CONFIRMED`. Made only by {@link resolveA7Pick}; {@link isPickedA7Destination} refuses any value this module did not issue.
+ * Review round 1 (P2-1): it is bound to the actor, the session, the conversation, the listing turn, the pick turn and an expiry, and it is
+ * SINGLE USE: {@link consumePickedA7Destination} is the only way a propose step may use it.
  */
 export interface PickedA7Destination {
   readonly [PICKED_DESTINATION]: true;
@@ -270,16 +266,51 @@ export interface PickedA7Destination {
   readonly project: string;
 }
 
-const ISSUED = new WeakSet<object>();
+interface PickBinding {
+  readonly actorId: string;
+  readonly sessionId: string;
+  readonly conversation: string;
+  readonly listingTurnId: string;
+  readonly pickTurnId: string;
+  /** Epoch ms: the listing's 10 minutes, and for a frozen receipt its 20 minutes from the original `at`, whichever ends first. */
+  readonly expiresAtMs: number;
+  used: boolean;
+}
+
+const ISSUED = new WeakMap<object, PickBinding>();
 
 /** Whether `value` is a destination this module issued from a pick (a cast or a copy is not). */
 export function isPickedA7Destination(value: unknown): value is PickedA7Destination {
   return typeof value === 'object' && value !== null && ISSUED.has(value);
 }
 
-function issue(issueKey: string, project: string): PickedA7Destination {
+/** What the propose step presents when it uses a picked destination. */
+export interface PickedUse {
+  readonly actorId: string;
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly now: string;
+}
+
+/**
+ * Uses a picked destination exactly once: true only for a value this module issued, for the very actor, session and pick turn it was issued
+ * to, before its expiry, and never used before. Any other call (another actor, session or turn, a late or a second use, a forged value) is
+ * false and consumes nothing it was not issued for.
+ */
+export function consumePickedA7Destination(picked: unknown, use: PickedUse): boolean {
+  if (typeof picked !== 'object' || picked === null) return false;
+  const binding = ISSUED.get(picked);
+  if (binding === undefined || binding.used) return false;
+  const now = Date.parse(use.now);
+  if (!Number.isFinite(now) || now >= binding.expiresAtMs) return false;
+  if (binding.actorId !== use.actorId || binding.sessionId !== use.sessionId || binding.pickTurnId !== use.turnId) return false;
+  binding.used = true;
+  return true;
+}
+
+function issue(issueKey: string, project: string, binding: Omit<PickBinding, 'used'>): PickedA7Destination {
   const picked = Object.freeze({ trust: 'OWNER_PICKED_DESTINATION', kind: 'jira', issueKey, project }) as unknown as PickedA7Destination;
-  ISSUED.add(picked);
+  ISSUED.set(picked, { ...binding, used: false });
   return picked;
 }
 
@@ -293,6 +324,7 @@ export type A7PickCancelReason =
   | 'out-of-range'
   | 'not-allowlisted'
   | 'kill-switch'
+  | 'other-session'
   | 'shape';
 
 export type A7PickResolution =
@@ -307,6 +339,9 @@ export interface A7PickContext {
   readonly actorId: string;
   readonly conversation: string;
   readonly now: string;
+  /** This owner turn (the pick reply) and its session: the issued value is bound to them. */
+  readonly turnId: string;
+  readonly sessionId: string;
   /** The owner turn right before this one in this conversation. */
   readonly previousTurnId?: string;
   /** `QUOKY_CONNECTOR_WRITE_JIRA_PROJECTS`: checked again at the pick (A7.4b: "the allowlist is checked again at the card and at execution"). */
@@ -324,6 +359,7 @@ export function resolveA7Pick(pending: PendingA7Pick, text: string, context: A7P
   if (context.killSwitch === true) return cancel('kill-switch');
   if (pending.actorId !== context.actorId) return cancel('other-actor');
   if (pending.conversation !== context.conversation) return cancel('other-conversation');
+  if (pending.sessionId !== context.sessionId) return cancel('other-session');
   if (context.previousTurnId === undefined || context.previousTurnId !== pending.askedTurnId) return cancel('not-next-turn');
   const age = Date.parse(context.now) - Date.parse(pending.askedAt);
   if (!Number.isFinite(age) || age < 0 || age >= A7_PICK_WINDOW_MS) return cancel('expired');
@@ -339,5 +375,17 @@ export function resolveA7Pick(pending: PendingA7Pick, text: string, context: A7P
   if (pending.stage === 'project') return allowlist.includes(chosen) ? { kind: 'project', project: chosen } : cancel('not-allowlisted');
   const project = pending.project;
   if (project === undefined || !allowlist.includes(project) || jiraProjectOf(chosen) !== project) return cancel('not-allowlisted');
-  return { kind: 'destination', picked: issue(chosen, project) };
+  const listingEnd = Date.parse(pending.askedAt) + A7_PICK_WINDOW_MS;
+  const frozenEnd = pending.frozen !== undefined ? Date.parse(pending.frozen.at) + A7_PICK_FROZEN_WINDOW_MS : Number.POSITIVE_INFINITY;
+  return {
+    kind: 'destination',
+    picked: issue(chosen, project, {
+      actorId: pending.actorId,
+      sessionId: pending.sessionId,
+      conversation: pending.conversation,
+      listingTurnId: pending.askedTurnId,
+      pickTurnId: context.turnId,
+      expiresAtMs: Math.min(listingEnd, frozenEnd),
+    }),
+  };
 }

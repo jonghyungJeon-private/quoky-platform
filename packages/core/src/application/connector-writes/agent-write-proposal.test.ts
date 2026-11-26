@@ -451,8 +451,9 @@ describe('A7-S4b: the picked destination and the closure check (A7.4b, A7.4c ite
     const reasons = [
       ['denied', 'declined'],
       ['cancelled', 'owner-void'],
-      ['abandoned', 'owner-void'],
-      ['superseded', 'owner-void'],
+      // A system displacement and a flow step that never reached a preview are not the owner's void: they hand nothing on.
+      ['abandoned', 'unknown'],
+      ['superseded', 'unknown'],
       ['expired', 'expired'],
       ['stopped', 'kill-switch'],
       ['inconsistent', 'unknown'],
@@ -461,7 +462,7 @@ describe('A7-S4b: the picked destination and the closure check (A7.4b, A7.4c ite
       const h = harness();
       const result = await h.service.propose(h.request());
       if (result.kind !== 'carded' || result.taskId === undefined) throw new Error('no card');
-      const ask = { sessionId: 'sess-1', taskId: result.taskId, now: T0 };
+      const ask = { sessionId: 'sess-1', taskId: result.taskId, actorId: OWNER.id, now: T0 };
       expect(await h.service.closureOf(ask)).toBe('open');
       const view = await h.flow.find(h.session());
       await h.flow.close(h.session(), view as NonNullable<typeof view>, reason, T0);
@@ -471,9 +472,11 @@ describe('A7-S4b: the picked destination and the closure check (A7.4b, A7.4c ite
     const result = await h.service.propose(h.request());
     if (result.kind !== 'carded' || result.taskId === undefined) throw new Error('no card');
     // A card whose approval lapsed is expired (its lifetime), another session, a missing task and a thrown read are unknown.
-    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: result.taskId, now: '2026-11-25T02:00:00.000Z' })).toBe('expired');
-    expect(await h.service.closureOf({ sessionId: 'sess-9', taskId: result.taskId, now: T0 })).toBe('unknown');
-    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: 'no-such-task', now: T0 })).toBe('unknown');
+    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: result.taskId, actorId: OWNER.id, now: '2026-11-25T02:00:00.000Z' })).toBe('expired');
+    expect(await h.service.closureOf({ sessionId: 'sess-9', taskId: result.taskId, actorId: OWNER.id, now: T0 })).toBe('unknown');
+    // Another actor asking about this owner's card: unknown (the anchor, the session and the asker must be one actor).
+    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: result.taskId, actorId: 'someone-else' as never, now: T0 })).toBe('unknown');
+    expect(await h.service.closureOf({ sessionId: 'sess-1', taskId: 'no-such-task', actorId: OWNER.id, now: T0 })).toBe('unknown');
   });
 
   it('a send is closed as sent (the flow marks the anchor SENT)', async () => {
@@ -488,12 +491,12 @@ describe('A7-S4b: the picked destination and the closure check (A7.4b, A7.4c ite
       sessions: { get: async () => h.session() },
       actors: { get: async () => OWNER },
     });
-    expect(await reader.closureOf({ sessionId: 'sess-1', taskId: result.taskId, now: T0 })).toBe('sent');
+    expect(await reader.closureOf({ sessionId: 'sess-1', taskId: result.taskId, actorId: OWNER.id, now: T0 })).toBe('sent');
     const unresolved = new AgentWriteProposalService({
       flow: { supports: () => true, anchorOfTask: async () => ({ ...(view as NonNullable<typeof view>), anchor: { ...anchored, status: 'UNCERTAIN' } }) } as never,
       sessions: { get: async () => h.session() },
       actors: { get: async () => OWNER },
     });
-    expect(await unresolved.closureOf({ sessionId: 'sess-1', taskId: result.taskId, now: T0 })).toBe('unknown');
+    expect(await unresolved.closureOf({ sessionId: 'sess-1', taskId: result.taskId, actorId: OWNER.id, now: T0 })).toBe('unknown');
   });
 });

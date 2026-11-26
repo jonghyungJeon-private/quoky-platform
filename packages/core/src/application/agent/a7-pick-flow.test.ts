@@ -14,13 +14,20 @@ import { isPickedA7Destination } from './a7-pick';
 import { runA7ProposeStep } from './a7-propose';
 import { AgentRunService, type A7TurnFacts, type AgentActiveTurn } from './agent-run-service';
 import type { AgentCrossWriteContext } from './cross-write';
-import { readA7State } from './held-receipt-store';
+import { readA7State, withA7State, withCardClosingTurn, type A7StateGuard } from './held-receipt-store';
 import { buildHeldReceipt, HELD_RECEIPT_METADATA_KEY } from './held-receipt';
 import { AgentPlanExecutor, type AgentReadPort, type AgentReadRequest } from './plan-executor';
 
 // ADR-0121 A7-S4b: the destination listing and pick (A7.4b), the frozen receipt, the a7-09 project-first flow, the closed-card carry-over and
 // the dormancy pins, through the real AgentRunService with a fake port, fake read ports and stub providers. No model, no network.
 
+// Pass-through spies on the state reader and writer: the dormancy pin below can fail if a default path ever reaches them.
+vi.mock('./held-receipt-store', async (original) => {
+  const actual = await original<typeof import('./held-receipt-store')>();
+  return { ...actual, readA7State: vi.fn(actual.readA7State), withA7State: vi.fn(actual.withA7State) };
+});
+
+const GUARD: A7StateGuard = { bootId: 'boot-1' };
 const T0 = '2026-11-26T03:00:00.000Z';
 const at = (minutes: number): string => new Date(Date.parse(T0) + minutes * 60_000).toISOString();
 const READS: readonly NlCatalogEntry[] = NL_CATALOG_ENTRY_IDS.map((id) => NL_WAVE1_ENTRIES[id]);
@@ -59,12 +66,12 @@ const JIRA_ROWS = [
 ];
 const GOOD = JSON.stringify({ lines: ['참여자 A가 릴리즈가 하루 밀렸다고 알렸다', '참여자 B와 함께 확인 중이다'] });
 
-function drafterOf(): AiProvider & { readonly requests: AiRequest[] } {
+function drafterOf(locality: AiExecutionLocality = 'LOCAL'): AiProvider & { readonly requests: AiRequest[] } {
   const requests: AiRequest[] = [];
   return {
-    id: 'local-a',
+    id: locality === 'LOCAL' ? 'local-a' : 'remote-a',
     requests,
-    executionLocality: 'LOCAL',
+    executionLocality: locality,
     dataUse: 'no-training',
     capabilities: [{ capability: Capability.SUMMARIZATION, priority: 10 }],
     isAvailable: async () => true,
@@ -78,6 +85,11 @@ interface Options {
   readonly closure?: () => AgentCardClosureState;
   readonly withHasher?: boolean;
   readonly slackItems?: ReadonlyArray<Record<string, unknown>>;
+  /** The destination-existence check (A7.5 step 2 GET): default every issue exists; `null`: the port is not wired. */
+  readonly destinationExists?: ((issueKey: string) => boolean) | null;
+  readonly bootId?: string | null;
+  /** The summariser's locality (default `LOCAL`); `REMOTE` with `askConsent` asks the rule-① question. */
+  readonly drafterLocality?: AiExecutionLocality;
 }
 
 const policy: ProviderSelectionPolicy = { preferenceFor: async () => null, isEligible: () => true };
@@ -87,7 +99,7 @@ function harness(options: Options = {}) {
   const reads: Array<{ entry: string; args: AgentReadRequest['args'] }> = [];
   const logs: Array<{ event: string; fields: LogFields }> = [];
   const script = [...(options.script ?? [])];
-  const state = { slackItems: options.slackItems ?? SLACK_ITEMS, openTarget: undefined as string | undefined, closure: options.closure ?? ((): AgentCardClosureState => 'open'), seq: 0, plannerCalls: 0 };
+  const state = { slackItems: options.slackItems ?? SLACK_ITEMS, openTarget: undefined as string | undefined, closure: options.closure ?? ((): AgentCardClosureState => 'open'), seq: 0, plannerCalls: 0, exists: options.destinationExists ?? (() => true), checks: [] as string[] };
   const port: AgentWriteProposalPort = {
     openCardOf: async () => (state.openTarget !== undefined ? { cardId: 'open-1', target: state.openTarget } : undefined),
     closureOf: async () => state.closure(),
@@ -122,7 +134,7 @@ function harness(options: Options = {}) {
       return { text: script.shift() as string, artifacts: [] };
     },
   };
-  const drafter = drafterOf();
+  const drafter = drafterOf(options.drafterLocality);
   const owner: Actor = { id: 'owner', displayName: 'Owner', identities: [], createdAt: T0 };
   const live = new Map<string, Actor>([['owner', owner]]);
   const svc = new AgentRunService({
@@ -137,7 +149,17 @@ function harness(options: Options = {}) {
     summarizer: new CapabilityRouter(new AiProviderManager([drafter]), policy),
     workSummarySources: ['slack', 'jira'],
     crossWrite: ctx(options.jiraProjects),
-    writeProposal: { port, targets: ['jira-comment'], ...(options.withHasher === false ? {} : { sha256Hex }) },
+    writeProposal: {
+      port,
+      targets: ['jira-comment'],
+      ...(options.bootId === null ? {} : { bootId: options.bootId ?? 'boot-1' }),
+      ...(options.destinationExists === null
+        ? {}
+        : { destinationCheck: { jiraIssueExists: async (key: string) => (state.checks.push(key), state.exists(key)), slackChannelIsPublic: async () => true } }),
+      ...(options.withHasher === false ? {} : { sha256Hex }),
+      ...(options.drafterLocality === 'REMOTE' ? { askConsent: true } : {}),
+    },
+    ...(options.drafterLocality === 'REMOTE' ? { recipientLabel: () => 'Remote AI' } : {}),
   });
   const turn = (text: string, facts: A7TurnFacts, now = T0, over: Partial<AgentActiveTurn> = {}): AgentActiveTurn => ({
     text,
@@ -173,7 +195,8 @@ describe('A7-S4b destination listing: the turn that asks (A7.4b)', () => {
     expect(text).toContain('4. BE-12\n');
     expect(text).not.toMatch(/OPS-300|BE-3\b|추천|recommend/u);
     // Only the owner-scoped listing was read (its own filters); the slack source, the drafter and the port were never touched.
-    expect(h.reads).toEqual([{ entry: 'jira.issues', args: { role: 'assignee', status: 'open' } }]);
+    // P2-4: the connector's own created-DESC order (never the default updated-DESC), so editing an issue neither adds nor moves a row.
+    expect(h.reads).toEqual([{ entry: 'jira.issues', args: { role: 'assignee', status: 'open', sort: 'newest', limit: 10 } }]);
     expect(h.drafter.requests).toHaveLength(0);
     expect(h.proposals).toHaveLength(0);
   });
@@ -182,11 +205,13 @@ describe('A7-S4b destination listing: the turn that asks (A7.4b)', () => {
     const h = harness({ script: [FORM_A_PLAN] });
     const outcome = (await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
     const stored = jsonRoundTrip(outcome.a7State);
-    const state = readA7State(stored, 'owner');
+    const state = readA7State(stored, 'owner', GUARD);
     expect(state.held).toBeUndefined();
-    expect(state.pick).toMatchObject({ conversation: CONVERSATION, actorId: 'owner', askedTurnId: 'm1', askedAt: T0, stage: 'ticket', project: 'BE', form: 'a', source: { entryId: 'slack.search', args: { keyword: '릴리즈' } } });
+    expect(state.pick).toMatchObject({ conversation: CONVERSATION, actorId: 'owner', askedTurnId: 'm1', askedAt: T0, stage: 'ticket', project: 'BE', form: 'a', source: { entryId: 'slack.search', args: { keyword: '릴리즈' } }, sessionId: 'session-1', summaryAsked: ['slack.search'], language: 'ko' });
     expect(HELD_RECEIPT_METADATA_KEY).toBe('quoky.heldReceipt');
     expect(JSON.stringify(stored)).not.toMatch(/newest ticket|older ticket|이걸 고르세요/u);
+    // P1-2: not one byte of the owner's words is in the metadata (the request is frozen as a closed list of entry ids).
+    expect(JSON.stringify(stored)).not.toMatch(/ownerText|groundingText|rawText|요약해서|지라 티켓에 달아줘|슬랙 릴리즈 대화/u);
   });
 
   it('a7-09: two allowlisted projects ask the board first (no read at all), then the ticket of the picked board', async () => {
@@ -199,7 +224,7 @@ describe('A7-S4b destination listing: the turn that asks (A7.4b)', () => {
     expect(second).toMatchObject({ kind: 'proposal', outcome: { kind: 'listing', stage: 'ticket', options: ['OPS-300'] } });
     expect(h.drafter.requests).toHaveLength(0);
     expect(h.proposals).toHaveLength(0);
-    const state = readA7State(jsonRoundTrip((second as { a7State: unknown }).a7State), 'owner');
+    const state = readA7State(jsonRoundTrip((second as { a7State: unknown }).a7State), 'owner', GUARD);
     expect(state.pick).toMatchObject({ stage: 'ticket', project: 'OPS', askedTurnId: 'm2' });
     // Then the ticket: OPS-300 by number, a card for it.
     const third = await h.svc.continueA7Pick(h.pickTurn('1', facts('m3', 'm2', jsonRoundTrip((second as { a7State: unknown }).a7State)), at(2)));
@@ -250,7 +275,7 @@ describe('A7-S4b the pick (OWNER_PICKED_DESTINATION)', () => {
     // The source was read once, after the pick, with the frozen args (the pick reply contributes none).
     expect(h.reads.filter((read) => read.entry === 'slack.search')).toEqual([{ entry: 'slack.search', args: { keyword: '릴리즈' } }]);
     // The pick is single use: the next state holds no pick, but the card's frozen items (for the carry-over).
-    const next = readA7State(jsonRoundTrip((outcome as { a7State: unknown }).a7State), 'owner');
+    const next = readA7State(jsonRoundTrip((outcome as { a7State: unknown }).a7State), 'owner', GUARD);
     expect(next.pick).toBeUndefined();
     expect(next.card).toMatchObject({ cardId: 'card-1', taskId: 'task-1', sessionId: 'session-1', builtFromCarried: false });
   });
@@ -267,7 +292,7 @@ describe('A7-S4b the pick (OWNER_PICKED_DESTINATION)', () => {
       const outcome = await h.svc.continueA7Pick(h.pickTurn(reply, facts('m2', 'm1', state), at(1)));
       expect(outcome).toMatchObject({ kind: 'cancelled', reason: 'not-a-number' });
       expect((outcome as { text?: string }).text).toBeUndefined();
-      expect(readA7State((outcome as { a7State: unknown }).a7State, 'owner').pick).toBeUndefined();
+      expect(readA7State((outcome as { a7State: unknown }).a7State, 'owner', GUARD).pick).toBeUndefined();
       expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
       expect(h.proposals).toHaveLength(0);
     }
@@ -284,10 +309,11 @@ describe('A7-S4b the pick (OWNER_PICKED_DESTINATION)', () => {
       { name: 'late', reason: 'expired', run: (h, state) => h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(10))) },
       { name: 'other-conversation', reason: 'other-conversation', run: (h, state) => h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1), { conversationKey: 'dm|other|x|y' })) },
       {
+        // The switch was stopped (at -5) before the listing was shown (not possible live, but the reader must still fail closed): the live check cancels.
         name: 'kill-switch',
         reason: 'kill-switch',
         run: (h, state) => {
-          h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'stopped', at: T0 } } });
+          h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'stopped', at: at(-5) } } });
           return h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)));
         },
       },
@@ -297,7 +323,7 @@ describe('A7-S4b the pick (OWNER_PICKED_DESTINATION)', () => {
       const state = await asked(h);
       const outcome = (await entry.run(h, state)) as { kind: string; reason: string; a7State: unknown };
       expect(outcome, entry.name).toMatchObject({ kind: 'cancelled', reason: entry.reason });
-      expect(readA7State(outcome.a7State, 'owner').pick, entry.name).toBeUndefined();
+      expect(readA7State(outcome.a7State, 'owner', GUARD).pick, entry.name).toBeUndefined();
       expect(h.reads.filter((read) => read.entry === 'slack.search'), entry.name).toHaveLength(0);
       expect(h.proposals, entry.name).toHaveLength(0);
     }
@@ -313,9 +339,15 @@ describe('A7-S4b the pick (OWNER_PICKED_DESTINATION)', () => {
     const first = harness({ script: [FORM_A_PLAN] });
     const state = await asked(first);
     const bare = new AgentRunService({ mode: 'off', router: { select: async () => first.drafter }, actors: { get: async () => null, save: async (actor) => actor }, logger: { info: () => undefined, warn: () => undefined, error: () => undefined }, timeZone: 'Asia/Seoul' });
-    const outcome = await bare.continueA7Pick(first.pickTurn('2', facts('m2', 'm1', state), at(1)));
-    expect(outcome).toMatchObject({ kind: 'declined', reason: 'unwired' });
-    expect(readA7State((outcome as { a7State: unknown }).a7State, 'owner').pick).toBeUndefined();
+    // No proposal dep, so no boot id: the stored state is unreadable (void), and the caller routes the turn as an ordinary one.
+    expect(await bare.continueA7Pick(first.pickTurn('2', facts('m2', 'm1', state), at(1)))).toEqual({ kind: 'not-pending' });
+    // A boot id but no writer-side wiring of the read ports: declined and the pick dropped.
+    const unwired = harness({ script: [FORM_A_PLAN] });
+    const stored = await asked(unwired);
+    (unwired.svc as unknown as { deps: { readers?: unknown } }).deps.readers = undefined;
+    const declined = await unwired.svc.continueA7Pick(unwired.pickTurn('2', facts('m2', 'm1', stored), at(1)));
+    expect(declined).toMatchObject({ kind: 'declined', reason: 'unwired' });
+    expect(readA7State((declined as { a7State: unknown }).a7State, 'owner', GUARD).pick).toBeUndefined();
   });
 
   it('the picked value is issued only by the pick: a forged or copied value is refused by the propose step (no read, no call)', async () => {
@@ -348,14 +380,14 @@ describe('A7-S4b form b: the frozen receipt (A7.4b)', () => {
     if ('refused' in built) throw new Error('no receipt');
     return built.receipt;
   }
-  const stateOf = (receipt: unknown) => ({ byActor: { owner: { held: receipt } } });
+  const stateOf = (receipt: unknown) => ({ byActor: { owner: { bootId: 'boot-1', held: receipt } } });
 
   it('the listing does not replace the receipt: it is frozen inside the pending pick with its original at, and the held record is untouched', async () => {
     const receipt = await heldReceipt();
     const h = harness({ script: [FORM_B_PLAN] });
     const outcome = (await h.svc.runActive(h.turn(FORM_B_TEXT, facts('m2', 'm1', stateOf(receipt)), at(2)), async () => CHAT)) as { outcome: { kind: string }; a7State: unknown };
     expect(outcome.outcome.kind).toBe('listing');
-    const state = readA7State(jsonRoundTrip(outcome.a7State), 'owner');
+    const state = readA7State(jsonRoundTrip(outcome.a7State), 'owner', GUARD);
     expect(state.held).toEqual(receipt);
     expect(state.pick?.frozen).toEqual(receipt);
     expect(state.pick?.frozen?.at).toBe(T0);
@@ -375,7 +407,7 @@ describe('A7-S4b form b: the frozen receipt (A7.4b)', () => {
     expect(request.banner.dropped).toBe(1);
     expect(request.payloadText).not.toMatch(/brand new|edited meanwhile/u);
     // The card keeps the receipt's original at (the frozen record), for the carry-over.
-    const next = readA7State(jsonRoundTrip((picked as { a7State: unknown }).a7State), 'owner');
+    const next = readA7State(jsonRoundTrip((picked as { a7State: unknown }).a7State), 'owner', GUARD);
     expect(next.card?.frozen.at).toBe(T0);
     expect(next.pick).toBeUndefined();
   });
@@ -394,7 +426,7 @@ describe('A7-S4b form b: the frozen receipt (A7.4b)', () => {
     frozenLate.byActor.owner.pick.askedAt = at(12);
     const out = await second.svc.continueA7Pick(second.pickTurn('1', facts('m3', 'm2', frozenLate), at(21)));
     expect(out).toMatchObject({ kind: 'cancelled', reason: 'frozen-expired' });
-    expect(readA7State((out as { a7State: unknown }).a7State, 'owner').pick).toBeUndefined();
+    expect(readA7State((out as { a7State: unknown }).a7State, 'owner', GUARD).pick).toBeUndefined();
     expect(second.proposals).toHaveLength(0);
   });
 
@@ -410,19 +442,20 @@ describe('A7-S4b closed-card carry-over (A7.4c item 4)', () => {
   async function closedCardState(closure: AgentCardClosureState) {
     const h = harness({ script: [FORM_A_NAMED_PLAN, FORM_B_FOLLOW_PLAN, FORM_B_FOLLOW_PLAN, FORM_B_FOLLOW_PLAN], closure: () => closure });
     const first = (await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
-    return { h, state: jsonRoundTrip(first.a7State) };
+    // The runtime records the owner turn that closed the card (m3: the approval phrase turn) once it observes the closure (P2-2).
+    return { h, state: jsonRoundTrip(withCardClosingTurn(first.a7State, 'owner', 'm3', at(2), GUARD)) };
   }
 
   it('a card closed as sent hands its items on: "BE-124에도 달아줘" drafts from them (original at kept) and makes one more card', async () => {
     const { h, state } = await closedCardState('sent');
-    expect(readA7State(state, 'owner').card?.builtFromCarried).toBe(false);
+    expect(readA7State(state, 'owner', GUARD).card?.builtFromCarried).toBe(false);
     const outcome = (await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', state), at(8)), async () => CHAT)) as { outcome: { kind: string }; a7State: unknown };
     expect(outcome.outcome.kind).toBe('carded');
     expect(h.proposals).toHaveLength(2);
     expect(h.proposals[1]).toMatchObject({ target: { issueKey: 'BE-124' }, grounding: 'owner-text' });
     expect(h.proposals[1]?.banner.items).toEqual([{ id: 'C0AA.1' }, { id: 'C0AA.2' }]);
     // A card built from a carried receipt hands nothing on: its record is marked, and it keeps the original at.
-    const next = readA7State(jsonRoundTrip(outcome.a7State), 'owner');
+    const next = readA7State(jsonRoundTrip(outcome.a7State), 'owner', GUARD);
     expect(next.card).toMatchObject({ builtFromCarried: true, cardId: 'card-2' });
     expect(next.card?.frozen.at).toBe(T0);
     expect(next.card?.frozen.carried).toBe(true);
@@ -456,17 +489,20 @@ describe('A7-S4b closed-card carry-over (A7.4c item 4)', () => {
     const h = harness({ script: [FORM_A_NAMED_PLAN], withHasher: false, closure: () => 'sent' });
     const first = (await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)) as { outcome: { kind: string }; a7State?: unknown };
     expect(first.outcome.kind).toBe('carded');
-    expect(readA7State(first.a7State ?? {}, 'owner').card).toBeUndefined();
+    expect(readA7State(first.a7State ?? {}, 'owner', GUARD).card).toBeUndefined();
   });
 });
 
 describe('A7-S4b is dormant: with the defaults nothing new runs', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('without the writeProposal dep an A7 plan is declined cross-write-off and neither the listing read, the closure check nor the pick code runs (spy)', async () => {
+  it('without the writeProposal dep an A7 plan is declined cross-write-off and neither the listing read, the closure check, the state reader or writer, nor the pick code runs (spies)', async () => {
     const list = vi.spyOn(AgentPlanExecutor.prototype, 'listDestinationRows');
     const read = vi.spyOn(AgentPlanExecutor.prototype, 'readDraftSource');
-    const closure = vi.fn(async () => 'sent' as AgentCardClosureState);
+    const reader = vi.mocked(readA7State);
+    const writer = vi.mocked(withA7State);
+    reader.mockClear();
+    writer.mockClear();
     const h = harness({ script: [FORM_A_PLAN] });
     const bare = new AgentRunService({
       mode: 'active',
@@ -480,12 +516,30 @@ describe('A7-S4b is dormant: with the defaults nothing new runs', () => {
       summarizer: new CapabilityRouter(new AiProviderManager([h.drafter]), policy),
       crossWrite: ctx(),
     });
-    const outcome = await bare.runActive(h.turn(FORM_A_TEXT, facts('m1', 'm0', { byActor: { owner: { card: {} } } })), async () => CHAT);
+    const outcome = await bare.runActive(h.turn(FORM_A_TEXT, facts('m1', 'm0', { byActor: { owner: { bootId: 'boot-1', card: {} } } })), async () => CHAT);
     expect(outcome).toEqual({ kind: 'declined', reason: 'cross-write-off' });
+    expect(await bare.continueA7Pick(h.pickTurn('2', facts('m2', 'm1')))).toEqual({ kind: 'not-pending' });
     expect(list).not.toHaveBeenCalled();
     expect(read).not.toHaveBeenCalled();
+    expect(reader).not.toHaveBeenCalled();
+    expect(writer).not.toHaveBeenCalled();
+  });
+
+  it('with the dep but no boot id (the composition root did not inject one) no A7 state is read or written and the closure check is never reached (the closure spy is wired into the port)', async () => {
+    const reader = vi.mocked(readA7State);
+    const writer = vi.mocked(withA7State);
+    reader.mockClear();
+    writer.mockClear();
+    const closure = vi.fn(async () => 'sent' as AgentCardClosureState);
+    const h = harness({ script: [FORM_A_NAMED_PLAN, FORM_B_FOLLOW_PLAN], bootId: null, closure });
+    const first = (await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1', undefined, { byActor: { owner: { bootId: 'boot-1', card: {} } } })), async () => CHAT)) as { outcome: { kind: string }; a7State?: unknown };
+    expect(first.outcome.kind).toBe('carded');
+    expect(first.a7State).toBeUndefined();
+    await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m3', 'm2', { byActor: { owner: { bootId: 'boot-1', card: {} } } }), at(2)), async () => CHAT);
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1')))).toEqual({ kind: 'not-pending' });
     expect(closure).not.toHaveBeenCalled();
-    expect(await bare.continueA7Pick(h.pickTurn('2', facts('m2', 'm1')))).toEqual({ kind: 'not-pending' });
+    expect(writer).not.toHaveBeenCalled();
+    expect(reader).not.toHaveBeenCalled();
   });
 
   it('a turn without the A7 facts is exactly the earlier behaviour (a named destination cards; a kind-only one is not a pick)', async () => {
@@ -498,5 +552,183 @@ describe('A7-S4b is dormant: with the defaults nothing new runs', () => {
     const { a7: _drop2, ...bareKind } = kindOnly.turn(FORM_A_TEXT, facts('m1'));
     expect(await kindOnly.svc.runActive(bareKind, async () => CHAT)).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'unsupported' } });
     expect(kindOnly.reads).toHaveLength(0);
+  });
+});
+
+describe('review round 1: the A7 state is void after a stop or a restart (P1-1)', () => {
+  const asked = async (h: ReturnType<typeof harness>) => jsonRoundTrip(((await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown }).a7State);
+
+  it('stop then resume cancels a pending pick: the pick turn finds no pick, reads nothing and makes no card', async () => {
+    const h = harness({ script: [FORM_A_PLAN] });
+    const state = await asked(h);
+    // The owner stopped the agent at +0.5 and resumed it at +1: the last change is after the listing.
+    h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'running', at: at(1) } } });
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(2)))).toEqual({ kind: 'not-pending' });
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+    // Without the switch change the same state still picks.
+    const live = harness({ script: [FORM_A_PLAN] });
+    expect(await live.svc.continueA7Pick(live.pickTurn('2', facts('m2', 'm1', await asked(live)), at(2)))).toMatchObject({ kind: 'proposal', outcome: { kind: 'carded' } });
+  });
+
+  it('stop then resume blocks the carry-over of a closed card', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN, FORM_B_FOLLOW_PLAN], closure: () => 'sent' });
+    const first = (await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
+    const state = jsonRoundTrip(withCardClosingTurn(first.a7State, 'owner', 'm3', at(2), GUARD));
+    h.live.set('owner', { ...h.owner, metadata: { 'quoky.actionSwitch': { state: 'running', at: at(3) } } });
+    expect(await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', state), at(5)), async () => CHAT)).toMatchObject({ kind: 'declined', reason: 'refused' });
+    expect(h.proposals).toHaveLength(1);
+  });
+
+  it('a new boot id sees no state: a pending pick and a card of the old boot are absent, and an old receipt does not bind', async () => {
+    const old = harness({ script: [FORM_A_PLAN, FORM_A_NAMED_PLAN] });
+    const state = await asked(old);
+    const restarted = harness({ bootId: 'boot-2' });
+    expect(await restarted.svc.continueA7Pick(restarted.pickTurn('2', facts('m2', 'm1', state), at(1)))).toEqual({ kind: 'not-pending' });
+    expect(restarted.reads).toHaveLength(0);
+    expect(readA7State(state, 'owner', { bootId: 'boot-2' })).toEqual({});
+  });
+});
+
+describe('review round 1: no owner text in Session.metadata, and no grant across turns (P1-2)', () => {
+  it('the whole metadata of a listing, a pick and a card is plain JSON without one byte of the owner\'s request', async () => {
+    const h = harness({ script: [FORM_A_PLAN] });
+    const listed = (await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
+    const afterPick = (await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', jsonRoundTrip(listed.a7State)), at(1)))) as { a7State: unknown };
+    for (const value of [listed.a7State, afterPick.a7State]) {
+      const json = JSON.stringify(value);
+      expect(json).not.toMatch(/슬랙 릴리즈 대화|요약해서|지라 티켓에 달아줘|ownerText|groundingText|rawText/u);
+      expect(JSON.parse(json)).toEqual(value);
+    }
+    expect(readA7State(listed.a7State, 'owner', GUARD).pick?.summaryAsked).toEqual(['slack.search']);
+  });
+
+  it('the pick resumes with the frozen closed request: a source the asking turn did not ask a summary of gets no grant (nothing is drafted)', async () => {
+    const h = harness({ script: [FORM_A_PLAN] });
+    const listed = (await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
+    const stored = jsonRoundTrip(listed.a7State) as { byActor: { owner: { pick: { summaryAsked: string[] } } } };
+    stored.byActor.owner.pick.summaryAsked = [];
+    const outcome = await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', stored), at(1)));
+    expect(outcome).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused' } });
+    expect(h.drafter.requests).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+  });
+
+  it('a carried follow-up reuses no earlier grant: a LOCAL summariser proceeds, a REMOTE one asks its rule-① question again (nothing fetched, nothing drafted)', async () => {
+    const local = harness({ script: [FORM_A_NAMED_PLAN, FORM_B_FOLLOW_PLAN], closure: () => 'sent' });
+    const first = (await local.svc.runActive(local.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
+    const closed = jsonRoundTrip(withCardClosingTurn(first.a7State, 'owner', 'm3', at(2), GUARD));
+    expect(await local.svc.runActive(local.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', closed), at(5)), async () => CHAT)).toMatchObject({ outcome: { kind: 'carded' } });
+
+    const remote = harness({ script: [FORM_B_FOLLOW_PLAN], drafterLocality: 'REMOTE', closure: () => 'sent' });
+    const stored = { byActor: { owner: { bootId: 'boot-1', card: { cardId: 'c1', taskId: 't1', sessionId: 'session-1', cardAt: at(1), frozen: JSON.parse(JSON.stringify(readA7State(closed, 'owner', GUARD).card?.frozen)), builtFromCarried: false, closingTurnId: 'm3' } } } };
+    const asked = (await remote.svc.runActive(remote.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', stored), at(5)), async () => CHAT)) as { outcome: { kind: string } };
+    expect(asked.outcome.kind).toBe('ask');
+    expect(remote.drafter.requests).toHaveLength(0);
+    expect(remote.proposals).toHaveLength(0);
+  });
+});
+
+describe('review round 1: the carry-over is strictly the next owner turn after the closing turn, single use (P2-2)', () => {
+  async function closed(h: ReturnType<typeof harness>) {
+    const first = (await h.svc.runActive(h.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
+    return jsonRoundTrip(withCardClosingTurn(first.a7State, 'owner', 'm3', at(2), GUARD));
+  }
+  const script = [FORM_A_NAMED_PLAN, FORM_B_FOLLOW_PLAN, FORM_B_FOLLOW_PLAN, FORM_B_FOLLOW_PLAN];
+
+  it('an intervening owner turn voids it; with no closing turn recorded nothing carries; only the turn right after the closing turn does', async () => {
+    const intervening = harness({ script, closure: () => 'sent' });
+    expect(await intervening.svc.runActive(intervening.turn(FORM_B_FOLLOW_TEXT, facts('m5', 'm4', await closed(intervening)), at(5)), async () => CHAT)).toMatchObject({ kind: 'declined', reason: 'refused' });
+    const unrecorded = harness({ script, closure: () => 'sent' });
+    const first = (await unrecorded.svc.runActive(unrecorded.turn(FORM_A_NAMED_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown };
+    expect(await unrecorded.svc.runActive(unrecorded.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', jsonRoundTrip(first.a7State)), at(5)), async () => CHAT)).toMatchObject({ kind: 'declined', reason: 'refused' });
+    const next = harness({ script, closure: () => 'sent' });
+    expect(await next.svc.runActive(next.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', await closed(next)), at(5)), async () => CHAT)).toMatchObject({ outcome: { kind: 'carded' } });
+  });
+
+  it('once a carry-over binds the card is gone from the returned state whatever the outcome (here a refusal), so a second attempt finds nothing', async () => {
+    const h = harness({ script, closure: () => 'sent' });
+    const state = await closed(h);
+    const refused = (await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', state), at(5), { ownerStepPending: true }), async () => CHAT)) as { outcome: { kind: string }; a7State: unknown };
+    expect(refused.outcome).toMatchObject({ kind: 'refused', reason: 'owner-step-open' });
+    expect(readA7State(jsonRoundTrip(refused.a7State), 'owner', GUARD).card).toBeUndefined();
+    const second = await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', jsonRoundTrip(refused.a7State)), at(6)), async () => CHAT);
+    expect(second).toMatchObject({ kind: 'declined', reason: 'refused' });
+    expect(h.proposals).toHaveLength(1);
+  });
+
+  it('a declined plan after the bind also returns the state without the card', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN, JSON.stringify({ steps: [{ summarize: [], schema: 'payload-draft.v1' }, { propose: 'jira.comment.propose', args: { issueKey: 'XX-1' } }], ambiguity: 'CLEAR' })], closure: () => 'sent' });
+    const state = await closed(h);
+    const out = (await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', state), at(5)), async () => CHAT)) as { kind: string; a7State?: unknown };
+    expect(out).toMatchObject({ kind: 'declined', reason: 'refused' });
+    expect(out.a7State).toBeDefined();
+    expect(readA7State(jsonRoundTrip(out.a7State), 'owner', GUARD).card).toBeUndefined();
+  });
+
+  it('a cancelled pick voids the card: the returned state keeps no card, so a request after the cancel finds nothing to carry', async () => {
+    const h = harness({ script: [FORM_A_NAMED_PLAN, FORM_A_PLAN] });
+    const withCard = await closed(h);
+    const listed = (await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m4', 'm3', withCard), at(4)), async () => CHAT)) as { a7State: unknown };
+    expect(readA7State(jsonRoundTrip(listed.a7State), 'owner', GUARD).card).toBeDefined();
+    const cancelled = (await h.svc.continueA7Pick(h.pickTurn('no thanks', facts('m5', 'm4', jsonRoundTrip(listed.a7State)), at(5)))) as { kind: string; a7State: unknown };
+    expect(cancelled.kind).toBe('cancelled');
+    expect(readA7State(jsonRoundTrip(cancelled.a7State), 'owner', GUARD).card).toBeUndefined();
+  });
+});
+
+describe('review round 1: a form-b card freezes only what it placed and verified (P2-3)', () => {
+  it('Codex restore-B: B changed (dropped), the card is made from A only; B restored later never comes back through the carry-over', async () => {
+    const h = harness({ script: [FORM_B_FOLLOW_PLAN, FORM_B_FOLLOW_PLAN], closure: () => 'sent' });
+    // The receipt of [A, B] as a real earlier card froze it.
+    const base = harness({ script: [FORM_A_NAMED_PLAN] });
+    const earlier = (await base.svc.runActive(base.turn(FORM_A_NAMED_TEXT, facts('m0')), async () => CHAT)) as { outcome: { items: Array<{ id: string; digest: string }> } };
+    const built = buildHeldReceipt({ conversation: CONVERSATION, actorId: 'owner', turnId: 'm1', entryId: 'slack.search', validatedArgs: { keyword: '릴리즈' }, items: earlier.outcome.items, kind: 'listing', egress: 'LOCAL', at: T0, sourceOn: true });
+    if ('refused' in built) throw new Error('no receipt');
+    h.state.slackItems = [SLACK_ITEMS[0] as Record<string, unknown>, { ...SLACK_ITEMS[1], text: 'edited meanwhile' }];
+    const first = (await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m2', 'm1', { byActor: { owner: { bootId: 'boot-1', held: built.receipt } } }), at(2)), async () => CHAT)) as { outcome: { kind: string }; a7State: unknown };
+    expect(first.outcome.kind).toBe('carded');
+    expect(h.proposals[0]?.banner.items).toEqual([{ id: 'C0AA.1' }]);
+    const frozen = readA7State(jsonRoundTrip(first.a7State), 'owner', GUARD).card?.frozen;
+    expect(frozen?.itemIds).toEqual(['C0AA.1']);
+    expect(frozen?.at).toBe(T0);
+    // B is restored to its original text; the card closes; the follow-up still drafts from A only.
+    h.state.slackItems = SLACK_ITEMS;
+    const state = jsonRoundTrip(withCardClosingTurn(first.a7State, 'owner', 'm3', at(3), GUARD));
+    expect(await h.svc.runActive(h.turn(FORM_B_FOLLOW_TEXT, facts('m4', 'm3', state), at(6)), async () => CHAT)).toMatchObject({ outcome: { kind: 'carded' } });
+    expect(h.proposals[1]?.banner.items).toEqual([{ id: 'C0AA.1' }]);
+    expect(h.proposals[1]?.banner.dropped).toBe(0);
+  });
+});
+
+describe('review round 1: a fresh destination-existence check at the pick (P2-5)', () => {
+  const asked = async (h: ReturnType<typeof harness>) => jsonRoundTrip(((await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown }).a7State);
+
+  it('the picked issue is checked before any source read or draft; present: the card follows', async () => {
+    const h = harness({ script: [FORM_A_PLAN] });
+    const state = await asked(h);
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)))).toMatchObject({ outcome: { kind: 'carded' } });
+    expect(h.state.checks).toEqual(['BE-77']);
+  });
+
+  it('deleted between the listing and the pick: nothing is read or drafted, the fixed refusal line, the pick is gone', async () => {
+    const h = harness({ script: [FORM_A_PLAN], destinationExists: (key) => key !== 'BE-77' });
+    const state = await asked(h);
+    const outcome = (await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)))) as { kind: string; outcome: { kind: string; reason: string; text: string }; a7State: unknown };
+    expect(outcome).toMatchObject({ kind: 'proposal', outcome: { kind: 'refused', reason: 'destination-gone', text: '고르신 티켓을 지금은 찾을 수 없어서 카드를 만들지 않았어요. 아무것도 읽거나 보내지 않았어요.' } });
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    expect(h.drafter.requests).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+    expect(readA7State(outcome.a7State, 'owner', GUARD).pick).toBeUndefined();
+  });
+
+  it('a check that throws fails closed the same way; no check port wired: the pick is declined with nothing read', async () => {
+    const throwing = harness({ script: [FORM_A_PLAN], destinationExists: () => { throw new Error('network'); } });
+    expect(await throwing.svc.continueA7Pick(throwing.pickTurn('2', facts('m2', 'm1', await asked(throwing)), at(1)))).toMatchObject({ outcome: { kind: 'refused', reason: 'destination-gone' } });
+    expect(throwing.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    const unwired = harness({ script: [FORM_A_PLAN], destinationExists: null });
+    expect(await unwired.svc.continueA7Pick(unwired.pickTurn('2', facts('m2', 'm1', await asked(unwired)), at(1)))).toMatchObject({ kind: 'declined', reason: 'no-destination-check' });
+    expect(unwired.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    expect(unwired.proposals).toHaveLength(0);
   });
 });

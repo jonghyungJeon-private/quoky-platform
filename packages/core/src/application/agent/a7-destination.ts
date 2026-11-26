@@ -35,7 +35,13 @@ import type { AgentRunBudget } from './run-bounds';
 
 /** The owner-scoped listing read of the Jira destination: the entry's own filters, nothing from the owner's words or from content. */
 export const A7_DESTINATION_LISTING_ENTRY = 'jira.issues' as const;
-export const A7_DESTINATION_LISTING_ARGS: NlArgs = Object.freeze({ role: 'assignee', status: 'open' });
+/**
+ * Review round 1 (P2-4): the order is the connector's own `created DESC` (`sort: 'newest'`), never the default `updated DESC`, so editing an
+ * issue can neither add it to the listing nor move it. The read has no closed project argument (the personal-work query has none, and adding
+ * one is a catalog change), so the owner's newest issues (a bounded page) are read and the closed project filter is applied by
+ * {@link buildJiraTicketRows}: closed-format keys of the one allowlisted project only. Update time influences neither membership nor order.
+ */
+export const A7_DESTINATION_LISTING_ARGS: NlArgs = Object.freeze({ role: 'assignee', status: 'open', sort: 'newest', limit: 10 });
 
 /** A7.4c item 3 when the destination is not yet named: the open card first (the keys are not known yet). */
 export const A7_WAIT_LINE_UNNAMED = {
@@ -79,8 +85,9 @@ export interface A7DestinationListingInput {
   readonly signal?: AbortSignal;
   readonly stillRunning?: () => Promise<boolean>;
   readonly ownerStepPending?: boolean;
-  /** The asking turn's own words, frozen into the pending pick (a project pick keeps the first turn's). */
-  readonly ownerText: PendingA7Pick['ownerText'];
+  readonly sessionId: string;
+  /** The closed list the asking turn froze (the source read the owner's own words asked a summary of); no owner text (P1-2). */
+  readonly summaryAsked: PendingA7Pick['summaryAsked'];
 }
 
 /**
@@ -137,6 +144,7 @@ export async function runA7DestinationListing(
     const pending: PendingA7Pick = {
       conversation: input.conversation,
       actorId: input.actorId,
+      sessionId: input.sessionId,
       askedTurnId: input.turnId,
       askedAt: input.now,
       stage: input.stage,
@@ -147,7 +155,8 @@ export async function runA7DestinationListing(
       connectorCalls: template.connectorCalls,
       ...(template.source !== undefined ? { source: template.source } : {}),
       ...(template.frozen !== undefined ? { frozen: template.frozen } : {}),
-      ownerText: input.ownerText,
+      summaryAsked: [...input.summaryAsked],
+      language,
     };
     return done({ kind: 'listing', text: renderA7PickListing(language, rows), stage: input.stage, options }, 'pick-listed', { rows: rows.length }, pending);
   } catch {

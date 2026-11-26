@@ -52,7 +52,7 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
    * only `sent`, `declined`, `expired` and `owner-void` may hand the card's items on; a stop, an unresolved outcome and anything unreadable
    * hand nothing on (`kill-switch`, `unknown`). Read-only and total.
    */
-  async closureOf(request: { readonly sessionId: Id; readonly taskId: Id; readonly now: IsoTimestamp }): Promise<AgentCardClosureState> {
+  async closureOf(request: { readonly sessionId: Id; readonly taskId: Id; readonly actorId: Id; readonly now: IsoTimestamp }): Promise<AgentCardClosureState> {
     try {
       const flow = this.deps.flow;
       if (flow.anchorOfTask === undefined) return 'unknown';
@@ -61,6 +61,8 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
       const view = await flow.anchorOfTask(session, request.taskId);
       const anchor = view?.anchor;
       if (view === null || anchor === undefined || anchor.agentProposal !== true) return 'unknown';
+      // The anchor, the session and the asking owner must be one actor: another actor's card never hands anything on.
+      if (anchor.actorId !== request.actorId || session.actorId !== request.actorId) return 'unknown';
       if (OPEN_STATUSES.has(anchor.status)) {
         // `anchorOfTask` carries no approval record, so a pending card lapses by its age (the ADR-0093 lifetime), like `openAnchors`.
         if (anchor.status === 'APPROVAL_PENDING' && approvalLapsed(anchor.createdAt, request.now)) return 'expired';
@@ -74,9 +76,13 @@ export class AgentWriteProposalService implements AgentWriteProposalPort {
         case 'expired':
           return 'expired';
         case 'cancelled':
+          return 'owner-void';
+        // `superseded` is the system displacing the session pointer and `abandoned` a flow step that did not reach a preview: neither is the
+        // owner's void, so neither hands items on. A future automatic trip (A7.10) must close its card with its own reason (or `stopped`),
+        // never `cancelled`: every reason not listed here is `unknown`, which hands nothing on.
         case 'superseded':
         case 'abandoned':
-          return 'owner-void';
+          return 'unknown';
         case 'stopped':
           return 'kill-switch';
         default:
