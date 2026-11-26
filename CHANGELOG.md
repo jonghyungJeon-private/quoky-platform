@@ -13,6 +13,9 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 - **Fixed (review round 1).** After the yes, every REMOTE recipient (expected too) must be the consented key and label and pass the token at both hooks
   (`allowsContinuation`); only LOCAL proceeds without it. A stop phrase voids consents before the switch save is awaited on all three stop paths. A throw while the
   reply is built after a completed REMOTE call is the fallback with the recipient line.
+- **Fixed (review round 2).** The item-summary void epoch is captured at turn entry: an item request in flight at a stop asks nothing, records nothing and
+  sends nothing (`ask` requires the epoch; the guard's `stillCurrent` re-checks it at both hooks). A reply-build throw no longer records a second history note.
+  `ItemSummaryConsent.allows` (no production caller) is removed; its pins moved to `allowsContinuation`.
 
 ## Unreleased — ADR-0121 A8 OQ1-2: item-summary egress guard, recipient line and the ask (2026-11-26; flag default off)
 

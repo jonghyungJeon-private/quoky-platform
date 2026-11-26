@@ -110,6 +110,8 @@ export abstract class ConversationRuntimeBase {
   protected abstract isExplicitTurnHandlerCommand(text: string): boolean;
   /** CS-2: whether another owner step is open for this turn, computed once and read by the gate and `agentConsentFacts`. */
   protected readonly consentOwnerSteps = new WeakMap<InboundMessage, boolean>();
+  /** OQ1-3 review round 2: the item-summary void epoch each turn captured at its entry (flag on only). */
+  protected readonly itemConsentEpochs = new WeakMap<InboundMessage, number>();
   /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
   protected readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
   /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
@@ -855,6 +857,29 @@ export abstract class ConversationRuntimeBase {
       this.consentGate.voidAll();
     } catch {
       // The gate is fail closed on its own; a stop turn is never broken by it.
+    }
+  }
+
+  /**
+   * OQ1-3 review round 2: captures the item-summary void epoch at the turn's entry, synchronously, before anything is awaited.
+   * A stop that voids consents while this turn is in flight then refuses the turn's question and its item-summary call
+   * ({@link itemConsentEpochCurrent}). Flag off (no `items`): nothing is captured and nothing reads it.
+   */
+  protected captureItemConsentEpoch(message: InboundMessage): void {
+    try {
+      const items = this.consentGate?.items;
+      if (items !== undefined) this.itemConsentEpochs.set(message, items.epoch());
+    } catch {
+      // Nothing captured: the turn is fail closed (no question, no item-summary call).
+    }
+  }
+
+  /** OQ1-3 review round 2: whether no stop voided consents since this turn began. A turn with no captured epoch is `false`. */
+  protected itemConsentEpochCurrent(message: InboundMessage): boolean {
+    try {
+      return this.consentGate?.items?.isCurrent(this.itemConsentEpochs.get(message)) === true;
+    } catch {
+      return false;
     }
   }
 

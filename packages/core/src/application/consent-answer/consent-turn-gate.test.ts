@@ -328,7 +328,7 @@ describe('ConsentTurnGate: an item-owned yes (ADR-0121 A8.5, OQ1-3)', () => {
       logger: { info: (message, fields) => logs.push({ message, fields }), warn: () => undefined, error: () => undefined },
     });
     const descriptor = itemSummaryConsentDescriptor({ handlerId: 'mail', source: 'mail', itemId: 'm-1', language: 'ko' });
-    const asked = items.ask({ scope: SCOPE, descriptor, recipient: { key: 'remote-x', label: 'Remote' }, requestText: 'OWNER-REQUEST-TEXT' });
+    const asked = items.ask({ scope: SCOPE, descriptor, recipient: { key: 'remote-x', label: 'Remote' }, requestText: 'OWNER-REQUEST-TEXT', epoch: items.epoch() });
     if (asked === undefined) throw new Error('fixture');
     const turn = (text: string): ConsentGateTurn => ({ actor: OWNER, conversationKey: KEY, direct: true, text, attachmentCount: 0, ownerStepPending: false, control: false });
     return { store, clock, logs, items, gate, continued, turn };
@@ -348,9 +348,9 @@ describe('ConsentTurnGate: an item-owned yes (ADR-0121 A8.5, OQ1-3)', () => {
     // The token admits exactly this recipient for exactly this item.
     const verdict = r.items.verdictOf(remote, undefined);
     const use = { phase: 'call' as const, actorId: OWNER.id, conversationKey: KEY, source: 'mail' as const, itemId: 'm-1' };
-    expect(r.items.allows(outcome.continuation.token, verdict, { ...use, itemId: 'm-2' })).toBe(false);
-    expect(r.items.allows(outcome.continuation.token, verdict, use)).toBe(true);
-    expect(r.items.allows(outcome.continuation.token, verdict, use)).toBe(false);
+    expect(r.items.allowsContinuation(outcome.continuation.token, verdict, { ...use, itemId: 'm-2' })).toBe(false);
+    expect(r.items.allowsContinuation(outcome.continuation.token, verdict, use)).toBe(true);
+    expect(r.items.allowsContinuation(outcome.continuation.token, verdict, use)).toBe(false);
     expect(JSON.stringify(r.logs)).not.toContain('OWNER-REQUEST-TEXT');
     expect(r.logs.some((entry) => (entry.fields as { outcome?: string } | undefined)?.outcome === 'item-continue')).toBe(true);
   });

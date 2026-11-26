@@ -501,8 +501,9 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     // reply is the listing (no question yet). A LOCAL recipient is summarised as built, held to LOCAL by the guard.
     let guard: SummaryRecipientGuard | undefined;
     if (this.consentGate?.items !== undefined) {
-      const pre = await this.preResolveSummaryRecipient(session, actor, readout);
-      if (pre?.guard === undefined || pre.verdict.kind !== 'local') {
+      const pre = await this.preResolveSummaryRecipient(session, actor, readout, undefined, () => this.itemConsentEpochCurrent(message));
+      // OQ1-3 review round 2: a stop that voided consents while this turn was in flight: the listing only, nothing is sent.
+      if (pre?.guard === undefined || pre.verdict.kind !== 'local' || !this.itemConsentEpochCurrent(message)) {
         this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome: 'listing-only' });
         return fallback();
       }
@@ -610,7 +611,10 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       return this.documentSummaryReplyOf(message, result, summary, readout, guard);
     } catch (err) {
       this.deps.logger.warn('document summary reply build threw', { messageId: message.id, sessionId: session.id, errorName: err instanceof Error ? err.name : typeof err });
-      return fallback(this.completedCallLine(guard, message));
+      // OQ1-3 review round 2 (CA P3): the work path already recorded the document note for this turn, so the handler's fallback text
+      // (plus the line) is returned WITHOUT `fallback`, which would record a second history note.
+      const line = this.completedCallLine(guard, message);
+      return { ...result, reply: withOutboundBody(result.reply, line === undefined ? summary.fallbackText : joinBody([summary.fallbackText, line])) };
     }
   }
 
@@ -668,6 +672,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       readonly recipient: { readonly key: string; readonly label: string };
       readonly allows: (verdict: RecipientVerdict, phase: SummaryRecipientPhase) => boolean;
     },
+    stillCurrent?: () => boolean,
   ): Promise<{ readonly verdict: RecipientVerdict; readonly guard: SummaryRecipientGuard | undefined } | undefined> {
     const items = this.consentGate?.items;
     if (items === undefined) return undefined;
@@ -681,8 +686,12 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       const recipientLabel = (candidate: AiProvider): string | undefined => items.recipientLabelOf(candidate);
       let guard: SummaryRecipientGuard | undefined;
       if (consented === undefined) {
-        // OQ1-2 (the ask turn): `local` and `expected` proceed; anything else gets no guard.
-        guard = verdict.kind === 'local' || verdict.kind === 'expected' ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel }) : undefined;
+        // OQ1-2 (the ask turn): `local` and `expected` proceed; anything else gets no guard. Review round 2: the guard also refuses
+        // both hooks once a stop voided consents during the turn (`stillCurrent`, the turn's captured void epoch).
+        guard =
+          verdict.kind === 'local' || verdict.kind === 'expected'
+            ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel, ...(stillCurrent !== undefined ? { stillCurrent } : {}) })
+            : undefined;
       } else if (verdict.kind === 'local') {
         // OQ1-3 review round 1 (strict A8.5): LOCAL never needs consent, so the continuation proceeds without the token (no line).
         guard = new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel });
@@ -710,6 +719,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
    *   question is the whole reply (the readout is dropped), the history keeps the question, and no call is made.
    * - otherwise (`unexpected` in a channel, without a descriptor or with another owner step pending, `unnamed`, nothing
    *   resolved): the handler's fallback plus one fixed line; nothing is sent.
+   * - OQ1-3 review round 2: a stop that voided consents after this turn began (its entry void epoch moved) is the handler's
+   *   fallback whatever the verdict: no question, no record, no call (the guard also re-checks the epoch at both hooks).
    */
   protected async itemSummaryRecipientStep(
     message: InboundMessage,
@@ -727,7 +738,13 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     };
     const items = this.consentGate?.items;
     if (items === undefined) return notSent('no-consent');
-    const pre = await this.preResolveSummaryRecipient(session, actor, readout);
+    const pre = await this.preResolveSummaryRecipient(session, actor, readout, undefined, () => this.itemConsentEpochCurrent(message));
+    // OQ1-3 review round 2 (Codex P2): a stop voided consents while this turn was in flight (the void epoch the turn captured at its
+    // entry changed). No question is asked, no record is made and nothing is sent, whatever the verdict: the handler's fallback.
+    if (!this.itemConsentEpochCurrent(message)) {
+      decided('stopped');
+      return { kind: 'replied', result: await fallback() };
+    }
     if (pre === undefined) {
       decided('unresolved');
       return { kind: 'replied', result: await fallback() };
@@ -747,6 +764,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       descriptor,
       recipient: { key: verdict.key, label: verdict.label },
       requestText: message.text,
+      // OQ1-3 review round 2: `ask` itself refuses when the epoch moved (defence in depth; nothing is awaited since the check above).
+      epoch: this.itemConsentEpochs.get(message) ?? Number.NaN,
     });
     if (asked === undefined) return notSent('unexpected-ask-refused');
     decided('asked');

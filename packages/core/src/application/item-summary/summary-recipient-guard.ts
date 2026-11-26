@@ -15,7 +15,8 @@ import { renderItemSummaryRecipientLine } from './recipient-line';
  *   same kind, key and label as the snapshot (a selection that flipped, fell back or lost its name is refused);
  * - `unnamed` is never admitted; `unexpected` only through `consentedRemote` (absent: refused);
  * - OQ1-3 review round 1 (strict A8.5): with `consentedRemote` (the continuation after the owner's yes) EVERY `REMOTE` recipient,
- *   expected or not, is admitted only through it (the consent token of the one recipient the yes named); `local` needs nothing.
+ *   expected or not, is admitted only through it (the consent token of the one recipient the yes named); `local` needs nothing;
+ * - OQ1-3 review round 2: with `stillCurrent` (the ask turn) nothing is admitted once a stop voided consents during the turn.
  *
  * The guard remembers whether a REMOTE call was admitted, so the reply can end with the A8.4 recipient line. Data only: keys and
  * labels are compared as opaque strings; Core never names, ranks or branches on a provider. Absent (the flag off): nothing here runs.
@@ -61,6 +62,11 @@ export interface SummaryRecipientGuardInput {
    * unexpected) must pass it at both hooks. Absent (OQ1-2): an expected recipient needs nothing and an unexpected one is refused.
    */
   readonly consentedRemote?: (verdict: RecipientVerdict, phase: SummaryRecipientPhase) => boolean;
+  /**
+   * OQ1-3 review round 2: whether no stop voided consents since the turn began (the turn's captured void epoch is still the
+   * current one). Present and not `true`: refused at both hooks, whatever the verdict. Absent: not checked.
+   */
+  readonly stillCurrent?: () => boolean;
 }
 
 const sameVerdict = (a: RecipientVerdict, b: RecipientVerdict): boolean => {
@@ -87,7 +93,8 @@ export class SummaryRecipientGuard {
   admit(provider: AiProvider, phase: SummaryRecipientPhase): boolean {
     try {
       if (phase === 'call' ? this.callAdmitted : phase !== 'regeneration' || !this.callAdmitted || this.regenerationAdmitted) return false;
-      const { capability, context, selector, snapshot } = this.input;
+      const { capability, context, selector, snapshot, stillCurrent } = this.input;
+      if (stillCurrent !== undefined && stillCurrent() !== true) return false;
       if (typeof selector.isStillEligible !== 'function' || selector.isStillEligible(capability, context, provider) !== true) return false;
       const expectedKey = typeof selector.expectedRecipientKey === 'function' ? selector.expectedRecipientKey(capability, context) : undefined;
       const live = recipientVerdict(provider, expectedKey, this.input.recipientLabel);

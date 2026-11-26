@@ -40439,3 +40439,35 @@ Codex (P1, P2) and Chief Architect (P3 ×2). Fixed; flag off byte-identical (the
    the owner consented to: the design re-reads it fresh on purpose, and consent covers the item and the recipient, not a revision. No code change.
 
 A8.10 enabling blockers (a)–(c) of OQ1-2 still stand. Residual (1) of the OQ1-3 note is closed by item 2 (the ordering fix; no origin field needed).
+
+### ADR-0121 A8 — OQ1-3 review round 2 (2026-11-26)
+
+Codex (P2) and Chief Architect (P3, two notes). Fixed; flag off byte-identical (the OQ1-2 dormancy pins pass unchanged; with the flag off nothing is
+captured and nothing reads the epoch). No prompt, catalog or question text changed.
+
+1. **P2 (Codex): an item request in flight at a stop could open a FRESH question.** Repro: a mail / Drive item request is still in its pre-resolve when the
+   owner's stop voids every consent; the request then finds an unexpected recipient and calls `items.ask`, which opens a new record at the new generation; the
+   next yes mints a current token and, since the mail / Drive continuation does not re-read the persisted switch, a REMOTE summary runs while stopped.
+   **Fix (structural):** `ItemSummaryConsent` exposes its void epoch (`epoch()`, moved only by `voidAll`) and `isCurrent(epoch)`. The runtime captures the
+   epoch at turn entry (`ConversationRuntime.handle`, synchronously, before anything of the turn is awaited; a rerun is its own turn). `ItemSummaryConsentAsk`
+   now REQUIRES `epoch`; `ask` refuses (no record, no pending step, a content-free `item_summary_consent.ask_stale` log) when it is not current. The ask
+   turn's recipient step checks the epoch right after its pre-resolve and returns the handler's fallback with no question, no record and no call
+   (outcome `stopped`), whatever the verdict. The same epoch guards the non-consent paths that await after a stop: the `SummaryRecipientGuard` gains
+   `stillCurrent` (refuses both hooks), set on every ask-turn guard (LOCAL and expected) and on the D8 lookup's LOCAL guard, and the D8 lookup also returns
+   the listing when the epoch moved after its pre-resolve. The continuation keeps the token check (its generation is the same epoch). Tests (fail on
+   bfce5720): a stop during the pre-resolve of a P1 mail and a P4 Drive request with an unexpected recipient: no question, no open step, zero REMOTE calls,
+   and a later yes sends nothing; the expected recipient on all three stop paths: nothing sent; a stop between the pre-resolve and hook 1: hook 1 refuses;
+   a control without a stop is unchanged. Unit: the epoch moves on `voidAll`; a stale-epoch `ask` opens nothing; the guard's `stillCurrent` at both hooks.
+2. **CA P3: a double history note.** When building the reply threw after the work path had already recorded the document note, the catch called the
+   handler's `fallback`, which records `summary.history.assistant` again. The catch now returns the handler's fallback text plus `completedCallLine`
+   directly (no second record, no listing receipt, as on the success path). Tests: the continuation, the OQ1-2 expected ask turn and LOCAL assert exactly
+   one new history note (`recordAssistant.slice(before).length === 1`).
+3. **CA: `ItemSummaryConsent.allows` had no production caller.** Removed. Its OQ1-1 pins moved to `allowsContinuation` (the same token check for a
+   named REMOTE recipient: key AND label, actor, conversation, source, item, TTL, one `call` then one `regeneration`, forged / foreign / spent / voided
+   tokens refused); the old "local and expected need no token" pin is replaced by its continuation meaning (no token, LOCAL and unnamed are never allowed).
+4. **CA: the voiding scope of the early stop void (recorded, no code change).** `voidConsentsOnStop` runs before the switch save on every stop path, and
+   it is keyed only on `parseActionSwitchPhrase(text) === 'stopped'`. So (a) an exact stop phrase voids every consent also when `nlSelection` is composed
+   but not acting (the phrase then routes as chat), and (b) on the surface (channel-grant) path a non-owner's exact stop phrase is a global `voidAll`
+   (every actor's records and tokens), and with item 1 it also refuses every item request in flight at that moment. Both fail closed: the worst outcome is
+   a lost question or summary the owner asks again for; nothing is ever sent because of a void. Near-misses never void (`parseActionSwitchPhrase` is exact).
+5. **Outcome.** Codex P2 and the CA notes are accepted as stated; no dispute. A8.10 enabling blockers (a)–(c) of OQ1-2 still stand.

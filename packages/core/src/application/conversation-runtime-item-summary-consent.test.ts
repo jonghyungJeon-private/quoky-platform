@@ -99,6 +99,9 @@ function harness(opts: HarnessOptions = {}) {
     stopEntered: undefined as (() => void) | undefined,
     /** OQ1-3 review round 1 (CA P3): the Jira outcome's participants read throws (after the call, while the reply is built). */
     throwParticipants: false,
+    /** OQ1-3 review round 2: the next provider resolve waits for this (one-shot); `selectEntered` runs when it starts waiting. */
+    selectGate: undefined as Promise<void> | undefined,
+    selectEntered: undefined as (() => void) | undefined,
   };
   /** Called at the named points (tests flip the selection there). */
   const hooks: { onCommit?: () => void; onExecute?: (n: number) => void; afterSelect?: (n: number) => void; onRead?: () => void } = {};
@@ -271,6 +274,12 @@ function harness(opts: HarnessOptions = {}) {
   };
   const router: ConversationRuntimeDeps['router'] = {
     async select() {
+      const wait = state.selectGate;
+      if (wait !== undefined) {
+        state.selectGate = undefined;
+        state.selectEntered?.();
+        await wait;
+      }
       counts.select += 1;
       selectCount += 1;
       const chosen = providers[state.selected];
@@ -768,8 +777,8 @@ describe('OQ1-3 continuation: the owner says yes to the question for an unexpect
     await h.send('응');
     expect(spent).toHaveLength(1);
     const use = { phase: 'call' as const, actorId: OWNER.id, conversationKey: ConsentTurnGate.conversationKeyOf(DM), source: 'mail' as const, itemId: 'msg-1' };
-    expect(h.items!.allows(spent[0], { kind: 'unexpected', key: 'fake-remote', label: 'Remote' }, use)).toBe(false);
-    expect(h.items!.allows(spent[0], { kind: 'unexpected', key: 'fake-remote', label: 'Remote' }, { ...use, phase: 'regeneration' })).toBe(false);
+    expect(h.items!.allowsContinuation(spent[0], { kind: 'unexpected', key: 'fake-remote', label: 'Remote' }, use)).toBe(false);
+    expect(h.items!.allowsContinuation(spent[0], { kind: 'unexpected', key: 'fake-remote', label: 'Remote' }, { ...use, phase: 'regeneration' })).toBe(false);
   });
 
   it('a second yes is not a second summary (single use): the step is used and no item call follows', async () => {
@@ -930,10 +939,13 @@ describe('OQ1-3 continuation: the owner says yes to the question for an unexpect
       h.hooks.onExecute = () => {
         h.state.throwParticipants = true;
       };
+      const before = h.recordAssistant.length;
       const yes = await h.send('응');
       expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
       expect(yes.reply.text).toBe(`JIRA FALLBACK\n${LINE}`);
-      expect(h.recordAssistant.at(-1)).toBe('JIRA NOTE');
+      // Review round 2 (CA P3): exactly ONE new history note (the work path's document note); the fallback records nothing again.
+      expect(h.recordAssistant.slice(before).length).toBe(1);
+      expect(h.recordAssistant.slice(before)).toEqual([renderUntrustedDocumentHistoryNote('jira-issue', 'ko')]);
       noContentInLogs(h);
     });
 
@@ -942,9 +954,13 @@ describe('OQ1-3 continuation: the owner says yes to the question for an unexpect
       h.hooks.onExecute = () => {
         h.state.throwParticipants = true;
       };
+      const before = h.recordAssistant.length;
       const reply = await runPath(h, PATHS[3]!);
       expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
       expect(reply.reply.text).toBe(`JIRA FALLBACK\n${LINE}`);
+      // Review round 2 (CA P3): exactly ONE new history note on the ask turn too.
+      expect(h.recordAssistant.slice(before).length).toBe(1);
+      expect(h.recordAssistant.slice(before)).toEqual([renderUntrustedDocumentHistoryNote('jira-issue', 'ko')]);
     });
 
     it('LOCAL: the fallback carries no line', async () => {
@@ -952,9 +968,80 @@ describe('OQ1-3 continuation: the owner says yes to the question for an unexpect
       h.hooks.onExecute = () => {
         h.state.throwParticipants = true;
       };
+      const before = h.recordAssistant.length;
       const reply = await runPath(h, PATHS[3]!);
       expect(h.executed.map((entry) => entry.provider)).toEqual(['fake-local']);
       expect(reply.reply.text).toBe('JIRA FALLBACK');
+      expect(h.recordAssistant.slice(before).length).toBe(1);
+    });
+  });
+
+  describe('review round 2 (Codex P2): a stop while an item request is in flight voids it too (the turn-entry void epoch)', () => {
+    /** Sends the item request, holds its provider resolve (the pre-resolve), stops in between, then releases it. */
+    async function stopDuringPreResolve(h: Harness, path: (typeof PATHS)[number]) {
+      if (path.list !== undefined) await h.send(path.list);
+      let release!: () => void;
+      h.state.selectGate = new Promise<void>((resolve) => (release = resolve));
+      const entered = new Promise<void>((resolve) => (h.state.selectEntered = resolve));
+      const request = h.send(path.ask);
+      await entered;
+      const stop = await h.send('에이전트 중지');
+      expect(stop.reply.text).toContain('멈춤');
+      release();
+      return request;
+    }
+
+    it.each([
+      ['P1 mail item', PATHS[0]!, '메일'],
+      ['P4 Drive file', PATHS[2]!, '문서'],
+    ] as const)('%s, unexpected recipient: no question, no record, zero REMOTE calls; a later yes sends nothing', async (_name, path) => {
+      const h = harness({ expectedKey: 'fake-other', stopPath: 'agent' });
+      const reply = await stopDuringPreResolve(h, path);
+      expect(reply.status).toBe('RESPONDED');
+      expect(reply.reply.text).not.toContain('보낼까요');
+      expect(h.store.stateOf({ actorId: OWNER.id, conversationKey: ConsentTurnGate.conversationKeyOf(DM) })).toBeUndefined();
+      expect(h.executed).toEqual([]);
+      // No step is open, so the yes is ordinary chat: no item ever reaches a provider and no recipient line appears.
+      const yes = await h.send('응');
+      expect(yes.reply.text).not.toContain(LINE);
+      expect(itemCalls(h)).toEqual([]);
+      expect(h.logs.some((entry) => entry.fields?.outcome === 'stopped')).toBe(true);
+      noContentInLogs(h);
+    });
+
+    it.each(['nlSelection', 'agent', 'surface'] as const)('%s stop path, expected recipient: nothing is sent either', async (stopPath) => {
+      const h = harness({ stopPath });
+      const reply = await stopDuringPreResolve(h, PATHS[0]!);
+      expect(reply.reply.text).not.toContain(SUMMARY);
+      expect(h.executed).toEqual([]);
+    });
+
+    it('a stop between the pre-resolve and hook 1 (expected recipient): hook 1 refuses, zero calls', async () => {
+      const h = harness({ stopPath: 'agent' });
+      await h.send(PATHS[0]!.list!);
+      let release!: () => void;
+      const entered = new Promise<void>((resolve) => (h.state.selectEntered = resolve));
+      // The first resolve (the pre-resolve) runs free; the work path's own resolve waits, and the stop lands there.
+      let selects = 0;
+      h.hooks.afterSelect = () => {
+        selects += 1;
+        if (selects === 1) h.state.selectGate = new Promise<void>((resolve) => (release = resolve));
+      };
+      const request = h.send(PATHS[0]!.ask);
+      await entered;
+      await h.send('에이전트 중지');
+      release();
+      const reply = await request;
+      expect(reply.reply.text).not.toContain(SUMMARY);
+      expect(h.executed).toEqual([]);
+    });
+
+    it('without a stop the same request is unaffected (control): the question for an unexpected recipient, one call for an expected one', async () => {
+      const unexpectedHarness = harness({ expectedKey: 'fake-other', stopPath: 'agent' });
+      expect((await runPath(unexpectedHarness, PATHS[0]!)).reply.text).toContain('보낼까요');
+      const expectedHarness = harness({ stopPath: 'agent' });
+      await runPath(expectedHarness, PATHS[0]!);
+      expect(expectedHarness.executed.map((entry) => entry.provider)).toEqual(['fake-remote']);
     });
   });
 

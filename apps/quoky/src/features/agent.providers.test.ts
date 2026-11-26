@@ -104,6 +104,7 @@ describe('createAgentProviders: the rule-① consent composition (CS-2)', () => 
       descriptor: { source: 'mail', itemId: 'm1', language: 'ko', redo: { handlerId: 'mail', selection: { entryId: 'item.summarize', args: { mode: 'summary' }, language: 'ko', target: { source: 'mail', id: 'm1' } } } },
       recipient: { key: 'claude-cli', label: 'Claude' },
       requestText: 'r',
+      epoch: items?.epoch() ?? Number.NaN,
     });
     expect(asked?.question).toBe('메일 1건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)');
     expect(store.languageOf({ actorId: 'owner', conversationKey: 'k' })).toBe('ko');

@@ -23,7 +23,7 @@ function rig() {
   const clock = { now: T0 };
   const logs: unknown[] = [];
   const items = new ItemSummaryConsent({ store, now: () => clock.now, logger: { info: (m: string, f?: unknown) => logs.push([m, f]), warn: (m: string, f?: unknown) => logs.push([m, f]), error: () => undefined } });
-  const ask = (descriptor = DESCRIPTOR, scope = SCOPE) => items.ask({ scope, descriptor, recipient: RECIPIENT, requestText: 'summarise item 1' });
+  const ask = (descriptor = DESCRIPTOR, scope = SCOPE) => items.ask({ scope, descriptor, recipient: RECIPIENT, requestText: 'summarise item 1', epoch: items.epoch() });
   const yes = (atMs = T0 + 1): BoundConsent => yesBound(store, SCOPE, '응', atMs);
   return { store, clock, items, ask, yes, logs };
 }
@@ -45,7 +45,7 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
     expect(taken?.descriptor).toBe(DESCRIPTOR);
     expect(taken?.requestText).toBe('summarise item 1');
     expect(taken?.recipient).toEqual(RECIPIENT);
-    expect(r.items.allows(taken?.token, unexpected(), use('call'))).toBe(true);
+    expect(r.items.allowsContinuation(taken?.token, unexpected(), use('call'))).toBe(true);
   });
 
   it('single use: a second take of the same bound finds nothing', () => {
@@ -101,7 +101,7 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
       r.clock.now = T0 + 1_150_000;
       const taken = r.items.take(r.yes(T0 + 1_150_000), direct);
       expect(taken).toBeDefined();
-      expect(r.items.allows(taken?.token, unexpected(), use('call'))).toBe(true);
+      expect(r.items.allowsContinuation(taken?.token, unexpected(), use('call'))).toBe(true);
     });
 
     it('a yes more than 600 s after the re-ask is refused', () => {
@@ -131,41 +131,39 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
 
   it('invalid input opens nothing', () => {
     const r = rig();
-    expect(r.items.ask({ scope: SCOPE, descriptor: { ...DESCRIPTOR, source: 'calendar-x' as never }, recipient: RECIPIENT, requestText: '' })).toBeUndefined();
-    expect(r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: { key: '', label: 'L' }, requestText: '' })).toBeUndefined();
-    expect(r.items.ask({ scope: { actorId: '', conversationKey: KEY }, descriptor: DESCRIPTOR, recipient: RECIPIENT, requestText: '' })).toBeUndefined();
+    expect(r.items.ask({ scope: SCOPE, descriptor: { ...DESCRIPTOR, source: 'calendar-x' as never }, recipient: RECIPIENT, requestText: '', epoch: r.items.epoch() })).toBeUndefined();
+    expect(r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: { key: '', label: 'L' }, requestText: '', epoch: r.items.epoch() })).toBeUndefined();
+    expect(r.items.ask({ scope: { actorId: '', conversationKey: KEY }, descriptor: DESCRIPTOR, recipient: RECIPIENT, requestText: '', epoch: r.items.epoch() })).toBeUndefined();
     expect(r.store.stateOf(SCOPE)).toBeUndefined();
   });
 
-  describe('allows(token, verdict)', () => {
+  describe('allowsContinuation(token, verdict)', () => {
     const token = (): { r: ReturnType<typeof rig>; token: ItemSummaryConsentToken } => {
       const r = rig();
       r.ask();
       return { r, token: r.items.take(r.yes(), direct)!.token };
     };
 
-    it('local and expected need no token; unnamed never', () => {
+    it('no token, a LOCAL or an unnamed recipient is never allowed (review round 2: `allows` is gone; LOCAL never presents a token)', () => {
       const r = rig();
-      expect(r.items.allows(undefined, { kind: 'local' }, use())).toBe(true);
-      expect(r.items.allows(undefined, { kind: 'expected', key: 'k', label: 'L' }, use())).toBe(true);
-      expect(r.items.allows(undefined, { kind: 'unexpected', key: 'k', label: 'L' }, use())).toBe(false);
-      expect(r.items.allows(undefined, { kind: 'unnamed' }, use())).toBe(false);
+      expect(r.items.allowsContinuation(undefined, { kind: 'local' }, use())).toBe(false);
+      expect(r.items.allowsContinuation(undefined, { kind: 'expected', key: 'k', label: 'L' }, use())).toBe(false);
+      expect(r.items.allowsContinuation(undefined, { kind: 'unexpected', key: 'k', label: 'L' }, use())).toBe(false);
+      expect(r.items.allowsContinuation(undefined, { kind: 'unnamed' }, use())).toBe(false);
       const { r: r2, token: t } = token();
-      expect(r2.items.allows(t, { kind: 'unnamed' }, use())).toBe(false);
-      // Local and expected stay unaffected by a spent or expired token.
-      r2.items.spend(t);
-      r2.clock.now = T0 + 10 * ITEM_SUMMARY_TOKEN_TTL_MS;
-      expect(r2.items.allows(t, { kind: 'local' }, use())).toBe(true);
-      expect(r2.items.allows(t, { kind: 'expected', key: 'k', label: 'L' }, use('regeneration'))).toBe(true);
+      expect(r2.items.allowsContinuation(t, { kind: 'unnamed' }, use())).toBe(false);
+      expect(r2.items.allowsContinuation(t, { kind: 'local' }, use())).toBe(false);
+      // The refusals consumed nothing.
+      expect(r2.items.allowsContinuation(t, unexpected(), use())).toBe(true);
     });
 
     it('unexpected needs the unspent token of the same key AND label', () => {
       const { r, token: t } = token();
-      expect(r.items.allows(t, unexpected('k-other'), use())).toBe(false);
-      expect(r.items.allows(t, unexpected(RECIPIENT.key, 'Other'), use())).toBe(false);
-      expect(r.items.allows(undefined, unexpected(), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected('k-other'), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(RECIPIENT.key, 'Other'), use())).toBe(false);
+      expect(r.items.allowsContinuation(undefined, unexpected(), use())).toBe(false);
       // The refusals consumed nothing.
-      expect(r.items.allows(t, unexpected(), use())).toBe(true);
+      expect(r.items.allowsContinuation(t, unexpected(), use())).toBe(true);
     });
 
     it('OQ1-3 review round 1: allowsContinuation judges EVERY REMOTE recipient (expected too) by the token; LOCAL and unnamed are false', () => {
@@ -195,53 +193,78 @@ describe('ItemSummaryConsent (A8 OQ1-1)', () => {
 
     it('the call is single-use; the regeneration is allowed once and only after the call', () => {
       const { r, token: t } = token();
-      expect(r.items.allows(t, unexpected(), use('regeneration'))).toBe(false);
-      expect(r.items.allows(t, unexpected(), use('call'))).toBe(true);
-      expect(r.items.allows(t, unexpected(), use('call'))).toBe(false);
-      expect(r.items.allows(t, unexpected(), use('regeneration'))).toBe(true);
-      expect(r.items.allows(t, unexpected(), use('regeneration'))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('regeneration'))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call'))).toBe(true);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call'))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('regeneration'))).toBe(true);
+      expect(r.items.allowsContinuation(t, unexpected(), use('regeneration'))).toBe(false);
     });
 
     it('another item, source, actor or conversation is refused and consumes nothing', () => {
       const { r, token: t } = token();
-      expect(r.items.allows(t, unexpected(), use('call', { itemId: 'item-2' }))).toBe(false);
-      expect(r.items.allows(t, unexpected(), use('call', { source: 'drive' }))).toBe(false);
-      expect(r.items.allows(t, unexpected(), use('call', { actorId: 'intruder' }))).toBe(false);
-      expect(r.items.allows(t, unexpected(), use('call', { conversationKey: 'discord||dm-2|' }))).toBe(false);
-      expect(r.items.allows(t, unexpected(), use('call'))).toBe(true);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call', { itemId: 'item-2' }))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call', { source: 'drive' }))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call', { actorId: 'intruder' }))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call', { conversationKey: 'discord||dm-2|' }))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call'))).toBe(true);
     });
 
     it('an expired token is refused (600 s from its mint, shared clock)', () => {
       const { r, token: t } = token();
       r.clock.now = T0 + 1 + ITEM_SUMMARY_TOKEN_TTL_MS - 2;
-      expect(r.items.allows(t, unexpected(), use('call'))).toBe(true);
+      expect(r.items.allowsContinuation(t, unexpected(), use('call'))).toBe(true);
       r.clock.now = T0 + 1 + ITEM_SUMMARY_TOKEN_TTL_MS + 1;
-      expect(r.items.allows(t, unexpected(), use('regeneration'))).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use('regeneration'))).toBe(false);
       const fresh = token();
       fresh.r.clock.now = T0 + 1 + ITEM_SUMMARY_TOKEN_TTL_MS + 1;
-      expect(fresh.r.items.allows(fresh.token, unexpected(), use('call'))).toBe(false);
+      expect(fresh.r.items.allowsContinuation(fresh.token, unexpected(), use('call'))).toBe(false);
     });
 
     it('a forged token, a foreign instance token and a spent token grant nothing', () => {
       const { r, token: t } = token();
-      expect(r.items.allows({ kind: 'item-summary-consent-token' }, unexpected(), use())).toBe(false);
-      expect(rig().items.allows(t, unexpected(), use())).toBe(false);
+      expect(r.items.allowsContinuation({ kind: 'item-summary-consent-token' }, unexpected(), use())).toBe(false);
+      expect(rig().items.allowsContinuation(t, unexpected(), use())).toBe(false);
       r.items.spend(t);
-      expect(r.items.allows(t, unexpected(), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use())).toBe(false);
     });
 
     it('voidAll voids records and outstanding tokens', () => {
       const { r, token: t } = token();
       const again = r.ask(DESCRIPTOR, { actorId: 'x', conversationKey: 'y' })!;
       r.items.voidAll();
-      expect(r.items.allows(t, unexpected(), use())).toBe(false);
+      expect(r.items.allowsContinuation(t, unexpected(), use())).toBe(false);
       expect(r.items.owns(again.runRef)).toBe(false);
+    });
+  });
+
+  describe('review round 2: the void epoch', () => {
+    it('voidAll moves the epoch; isCurrent is true only for the current epoch', () => {
+      const r = rig();
+      const before = r.items.epoch();
+      expect(r.items.isCurrent(before)).toBe(true);
+      r.items.voidAll();
+      expect(r.items.epoch()).not.toBe(before);
+      expect(r.items.isCurrent(before)).toBe(false);
+      expect(r.items.isCurrent(r.items.epoch())).toBe(true);
+      expect(r.items.isCurrent(undefined)).toBe(false);
+      expect(r.items.isCurrent(Number.NaN)).toBe(false);
+    });
+
+    it('an ask with an epoch captured before a voidAll opens nothing (no record, no pending step) and a later yes mints nothing', () => {
+      const r = rig();
+      const captured = r.items.epoch();
+      r.items.voidAll();
+      const asked = r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: RECIPIENT, requestText: 'SECRET-TEXT', epoch: captured });
+      expect(asked).toBeUndefined();
+      expect(r.store.stateOf(SCOPE)).toBeUndefined();
+      expect(() => r.yes()).toThrow();
+      expect(JSON.stringify(r.logs)).not.toContain('SECRET-TEXT');
     });
   });
 
   it('logs hold no owner text or ids on a refused ask', () => {
     const r = rig();
-    r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: { key: '', label: '' }, requestText: 'SECRET-TEXT' });
+    r.items.ask({ scope: SCOPE, descriptor: DESCRIPTOR, recipient: { key: '', label: '' }, requestText: 'SECRET-TEXT', epoch: r.items.epoch() });
     expect(JSON.stringify(r.logs)).not.toContain('SECRET-TEXT');
   });
 });

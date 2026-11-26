@@ -162,6 +162,8 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
    * exception + stack are preserved in the internal log only. No business action is retried.
    */
   async handle(message: InboundMessage): Promise<TurnResult> {
+    // OQ1-3 review round 2: the item-summary void epoch, captured before anything of this turn is awaited.
+    this.captureItemConsentEpoch(message);
     try {
       let result = await this.handleInner(message);
       // A6 R5a §3.2 `none`: a turn that ended an unanswered preview says so before its own reply.

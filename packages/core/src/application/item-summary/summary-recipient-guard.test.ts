@@ -50,6 +50,16 @@ describe('SummaryRecipientGuard', () => {
     expect(guard({ recipientLabel: () => undefined }).admit(REMOTE, 'call')).toBe(false);
   });
 
+  it('OQ1-3 review round 2: stillCurrent false (a stop voided consents during the turn) refuses both hooks, LOCAL and expected alike', () => {
+    let current = true;
+    const g = guard({ stillCurrent: () => current });
+    expect(g.admit(REMOTE, 'call')).toBe(true);
+    current = false;
+    expect(g.admit(REMOTE, 'regeneration')).toBe(false);
+    expect(guard({ stillCurrent: () => false }).admit(REMOTE, 'call')).toBe(false);
+    expect(guard({ snapshot: { kind: 'local' }, stillCurrent: () => false }).admit(LOCAL, 'call')).toBe(false);
+  });
+
   it('a LOCAL snapshot admits only a LOCAL provider and renders no line', () => {
     const g = guard({ snapshot: { kind: 'local' } });
     expect(g.admit(REMOTE, 'call')).toBe(false);

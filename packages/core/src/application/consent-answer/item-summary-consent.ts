@@ -20,11 +20,14 @@ import { isOwnerYes } from './consent-yes';
  * - `take` accepts only a bound consent that the answer pipeline recorded as the owner's yes (the owner-yes brand) for a record
  *   this instance made, once, for the same actor in the same direct conversation. It mints an {@link ItemSummaryConsentToken}
  *   through a module-private `WeakMap` (like `mintGrant`); there is no other maker.
- * - `allows(token, verdict)` is the only judge: a `local` or `expected` recipient needs no token; an `unexpected` one needs an
- *   unspent token of this instance whose recipient KEY and LABEL both equal the live ones; `unnamed` is never allowed.
+ * - `allowsContinuation(token, verdict)` is the only judge (OQ1-3 review round 2: the OQ1-1 `allows` had no production caller
+ *   and was removed): every named REMOTE recipient (expected or not) needs an unspent token of this instance whose recipient KEY
+ *   and LABEL both equal the live ones; `local` and `unnamed` are `false` (a LOCAL call never presents the token).
  *   A token is bound to the item (actor, conversation, source, item id) it was minted for, lives {@link ITEM_SUMMARY_TOKEN_TTL_MS}
- *   from its mint, and is consumed by `allows` per phase: one `call`, then (only after it) one `regeneration`. `spend` retires it
- *   early; `voidAll` voids every record and token.
+ *   from its mint, and is consumed per phase: one `call`, then (only after it) one `regeneration`. `spend` retires it early;
+ *   `voidAll` voids every record and token and starts a new void epoch.
+ * - OQ1-3 review round 2: `epoch()` is the void epoch a turn captures at its entry; `ask` refuses (opens nothing) when a stop
+ *   voided consents after that capture, so a turn already in flight at the stop can never open a fresh question.
  *
  * Core compares keys and labels as opaque strings and never names a provider.
  */
@@ -104,6 +107,11 @@ export interface ItemSummaryConsentAsk {
   readonly recipient: { readonly key: string; readonly label: string };
   /** The owner's request text, kept in memory until the record dies (ARCHITECTURE.md section 8 item 5 precedent); never logged. */
   readonly requestText: string;
+  /**
+   * OQ1-3 review round 2: the void epoch ({@link ItemSummaryConsent.epoch}) the asking turn captured at its entry, before any await.
+   * A different current epoch (a stop voided consents during the turn) refuses the ask: no record, no pending step, no question.
+   */
+  readonly epoch: number;
 }
 
 /** What `take` returns: the stored continuation (ids and the request text) and the token that lets exactly this recipient be called. */
@@ -131,6 +139,16 @@ export class ItemSummaryConsent {
     }
   }
 
+  /** OQ1-3 review round 2: the current void epoch (it changes only on `voidAll`). A turn captures it at its entry. */
+  epoch(): number {
+    return this.generation;
+  }
+
+  /** OQ1-3 review round 2: whether no stop voided consents since `epoch` was captured. Total: anything but the current epoch is `false`. */
+  isCurrent(epoch: number | undefined): boolean {
+    return typeof epoch === 'number' && epoch === this.generation;
+  }
+
   /** OQ1-2: the A8.3 verdict of `provider` against the policy's expected key, with this instance's label function. Total. */
   verdictOf(provider: AiProvider, expectedKey: string | undefined): RecipientVerdict {
     return recipientVerdict(provider, expectedKey, (candidate) => this.recipientLabelOf(candidate));
@@ -145,6 +163,10 @@ export class ItemSummaryConsent {
       const { scope, descriptor, recipient } = input;
       if (!isConsentSource(descriptor?.source) || !nonEmpty(descriptor.itemId) || !nonEmpty(recipient?.key) || !nonEmpty(recipient.label) || typeof input.requestText !== 'string') return undefined;
       if (descriptor.language !== 'ko' && descriptor.language !== 'en') return undefined;
+      if (!this.isCurrent(input.epoch)) {
+        this.deps.logger?.info('item_summary_consent.ask_stale', {});
+        return undefined;
+      }
       const question = renderSummaryConsentQuestion({ language: descriptor.language, recipient: recipient.label, sources: [{ source: descriptor.source, count: 1 }] });
       if (question === '') return undefined;
       const nowMs = this.deps.now();
@@ -236,24 +258,8 @@ export class ItemSummaryConsent {
   }
 
   /**
-   * Whether the model request `use.phase` of a summary to the live recipient `verdict` may go out. `local` and `expected` need no
-   * token (and spend nothing). An `unexpected` recipient needs this instance's live token minted for the same actor, conversation,
-   * source and item, for the same key and label, within {@link ITEM_SUMMARY_TOKEN_TTL_MS} of its mint; the `call` phase is
-   * consumed once, the `regeneration` phase once and only after the call. Total: any doubt is `false` and consumes nothing.
-   */
-  allows(token: ItemSummaryConsentToken | undefined, verdict: RecipientVerdict, use: ItemSummaryUse): boolean {
-    try {
-      if (verdict.kind === 'local' || verdict.kind === 'expected') return true;
-      if (verdict.kind !== 'unexpected') return false;
-      return this.useToken(token, verdict, use);
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * OQ1-3 review round 1 (orchestrator ruling, strict A8.5): the judge of the continuation after the owner's yes. The yes names ONE
-   * recipient, so EVERY `REMOTE` recipient (expected or not) needs the token exactly as {@link allows} judges an unexpected one: this
+   * recipient, so EVERY `REMOTE` recipient (expected or not) needs the token: this
    * instance's live token for the same actor, conversation, source, item, key AND label, within the TTL, one `call` then one
    * `regeneration`. `local` and `unnamed` are `false` here (a LOCAL continuation never presents the token). Total.
    */
@@ -266,7 +272,7 @@ export class ItemSummaryConsent {
     }
   }
 
-  /** The token check shared by both judges (a named REMOTE recipient). Consumes the phase only when everything matches. */
+  /** The token check of a named REMOTE recipient. Consumes the phase only when everything matches. */
   private useToken(token: ItemSummaryConsentToken | undefined, verdict: { readonly key: string; readonly label: string }, use: ItemSummaryUse): boolean {
     try {
       if (token === undefined) return false;
@@ -289,7 +295,7 @@ export class ItemSummaryConsent {
     }
   }
 
-  /** Retires a token early (on any refusal or once the summary is done): every later `allows` with it is `false`. */
+  /** Retires a token early (on any refusal or once the summary is done): every later `allowsContinuation` with it is `false`. */
   spend(token: ItemSummaryConsentToken): void {
     const facts = TOKENS.get(token);
     if (facts !== undefined && facts.owner === this) facts.spent = true;
