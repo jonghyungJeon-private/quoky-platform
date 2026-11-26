@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### ADR-0121 A8 ratified (2026-11-26, branch `claude/v5-oq1-a8-text`)
+
+- Owner: a live item summary request is itself the consent for the chosen chat model (fixed recipient line); the rule-① question only for an unexpected recipient; D8 = listing plus question (A5-S6). Recorded in `DECISIONS.md`, `ARCHITECTURE.md` §10 applied. Docs only; flag default off, enabling is a later Strict step.
+
 ### A7-S3 sanitiser relaxed, live effect none (2026-11-26, branch `claude/v5-a7-draft-relax`)
 
 - Owner decision: `Q&A`/`R&D`/`AT&T` pass (refuse only `&name;` and, without `;`, `amp`/`lt`/`gt`/`quot` prefixes); inert bracket pairs such as `[BE-123]` are

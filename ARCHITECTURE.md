@@ -437,7 +437,7 @@ fixed; the implementations are not.
 | LOW | bounded agent **read** run over READ catalog entries (ADR-0121) | auto, within caps |
 | LOW | owner-confirmed handoff into a READ (ADR-0121 A1, A4) | the exact values shown; an owner pick when several or free text in one item; one batched yes for each-item free text; never a write |
 | LOW | owner-confirmed minimal topic to the chat-tier model (ADR-0121 A2) | owner yes on the exact displayed string and recipient; one call; never a write |
-| LOW | owner-requested remote summary (mail, Drive; ADR-0121 A5: calendar, Jira, Slack, Confluence, GitHub) | a fixed consent question naming the recipient, the owner's yes on the next DM turn; the listed fields only; never a write |
+| LOW | owner-requested remote summary (mail, Drive; ADR-0121 A5: calendar, Jira, Slack, Confluence, GitHub) | the owner's explicit request is the consent when the recipient is the owner's chosen chat model, and the reply ends with a fixed recipient line; a fixed consent question naming the recipient, the owner's yes on the next DM turn, only for an unexpected recipient (ADR-0121 A8); the listed fields only; never a write |
 | HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner; ADR-0121 A7 cards are CRITICAL) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
@@ -450,6 +450,8 @@ with no automatic retry (ADR-0112).
 Every cross-destination flow is HIGH (A7 cards: CRITICAL), except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick, and its each-item batch yes, are consent steps, not approval cards; a single structured value runs without a consent step and is shown with its result; none ever uses approval wording or authorizes a write.
 
 HIGH stays for every content-derived write. A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4), or, as a model-drafted summary on a CRITICAL card, into a Jira comment, a Slack post or a primary-calendar event description (ADR-0121 A7).
+
+For a live item summary (ADR-0121 A8) the owner's own request is the consent when the recipient is the chat model the owner chose; any other recipient needs that consent question, and the ADR-0100 D8 automatic summary lists first and then asks.
 
 The ADR-0121 A2 topic consent is likewise a consent step, not an approval card: it never uses approval wording, it
 authorizes one model call with one displayed string, and it never authorizes a write or a connector call.
