@@ -5,10 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6.3 contraction note (2026-11-26, branch `claude/v5-a6-contraction`)
+
+Consent-answer structural check no longer cancels letter-flanked apostrophes ("don't"); grant rule unchanged; 5 corpus cases restaged to the classifier stage (sha `901cc489...`); no eval run. See DECISIONS.
+
 ### A6-S4 consent-answer corpus and eval plumbing, built offline, not run (2026-11-26, branch `claude/v5-a6-s4-corpus`)
 
-- `golden/nl-consent-answer.v1.json` (414 cases after review round 1, 334 reach the classifier) awaits the owner's Strict review (`status: "owner-review"`); `eval:nl --mode
-  consent-answer --arm remote|local` plans offline and refuses a run until the corpus is approved. Planned: 1,002 calls per arm (remote about 60 % of the
+- `golden/nl-consent-answer.v1.json` (414 cases after review round 1, 334 reach the classifier) was approved by the owner on 2026-11-26 (`status: "approved"`, summary-based; sha256 `50799580e3bf...`; run order: local arm first); `eval:nl --mode
+  consent-answer --arm remote|local` plans offline; a run still needs its own notice, yes and plan digest. Planned: 1,002 calls per arm (remote about 60 % of the
   5 h window; local qwen3:8b 0 %). The yes-and-more recall bar gates (owner r-03). Owner questions in `docs/eval/a6-s4-corpus-summary.md`. Switch still off. See DECISIONS "ADR-0121 A6-S4 implementation
   note (corpus built, not run)".
 

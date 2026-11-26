@@ -451,3 +451,38 @@ describe('A6.5 two-line grant: the structural rule, every line consumed by the p
     expect(two(MAIL0(), "show my mail\ndon't summarize them")).toEqual([]);
   });
 });
+
+describe('A6.3 contraction note: hasUntrustedSpanMarker options.contractions (character structure only)', () => {
+  const C = { contractions: true } as const;
+  const OK = ["don't", 'don’t', "that's fine", 'that’s fine', "rock'n'roll", "don't’s", "it's fine, I can't"];
+  const FLAG = [
+    ['quoted span beside a contraction', `don't "x"`],
+    ['URL', "it's www.x.io"],
+    ['header', "can't: Subject:"],
+    ['short-token header after an apostrophe', "ab'c: x"],
+    ['outer quotes not flanked', "'don't'"],
+    ['doubled apostrophe', "don''t"],
+    ['leading apostrophe', "'tis"],
+    ['digit neighbour', "3'5"],
+    ['Korean flanked', "응'응"],
+    ['Cyrillic flanked', "до'мо"],
+    ['Greek flanked', "α'β"],
+    ['modifier apostrophe U+02BC', 'donʼt'],
+    ['left single quote U+2018', 'don‘t'],
+    ['fullwidth apostrophe (NFKC only)', 'don＇t'],
+    ['backtick beside a contraction', "don't `x`"],
+    ['divider beside a contraction', "don't\n-----"],
+  ] as const;
+  it.each(OK)('default: %s still flags with no option', (text) => {
+    expect(hasUntrustedSpanMarker(text)).toBe(true);
+  });
+  it.each(OK)('contractions: %s is not a marker', (text) => {
+    expect(hasUntrustedSpanMarker(text, C)).toBe(false);
+  });
+  it.each(FLAG)('contractions: %s still flags', (_label, text) => {
+    expect(hasUntrustedSpanMarker(text, C)).toBe(true);
+  });
+  it('default mode equals the option set to false', () => {
+    for (const [, text] of FLAG) expect(hasUntrustedSpanMarker(text, { contractions: false })).toBe(hasUntrustedSpanMarker(text));
+  });
+});

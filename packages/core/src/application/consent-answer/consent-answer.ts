@@ -17,7 +17,8 @@ import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, Conse
  * 2. **Caps (a6-05, R5).** More than 3 non-empty lines or 60 characters is not an answer: the consent is cancelled and the
  *    message takes the normal path as a new request, never consumed by the consent.
  * 3. **Structural checks.** Not quote-only or empty (`prepareSelectionInput` skip), no untrusted-span marker
- *    (`hasUntrustedSpanMarker`, its four forms), no format character `\p{Cf}` in the RAW reply (a zero-width or direction
+ *    (`hasUntrustedSpanMarker(…, { contractions: true })`, its four forms; a letter-flanked ASCII or U+2019 apostrophe is a
+ *    contraction, not a quote, per the A6.3 contraction note), no format character `\p{Cf}` in the RAW reply (a zero-width or direction
  *    mark), no attachment. Any failure cancels; the classifier is never called.
  * 4. **The fast path.** NFKC, then NFC, trim and one trailing `.` `!` `~` `?` removed, then the ratified closed tokens (A2
  *    answer 2, SR-1 W1): yes `응` `네` `예` `yes`, no `아니` `아니요` `아니오` `아뇨` `취소` `no`. NFKC folds compatibility forms
@@ -141,7 +142,7 @@ export function consentReplyShape(turn: Pick<ConsentReplyTurn, 'text' | 'attachm
   if (lines > CONSENT_REPLY_MAX_LINES || Array.from(turn.text.trim()).length > CONSENT_REPLY_MAX_CHARS) return { kind: 'over-caps' };
   if (FORMAT_CHARACTER.test(turn.text) || (turn.attachmentCount ?? 0) > 0) return { kind: 'structural-fail', lines };
   const prepared = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
-  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text)) return { kind: 'structural-fail', lines };
+  if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text, { contractions: true })) return { kind: 'structural-fail', lines };
   return { kind: 'answer', lines };
 }
 

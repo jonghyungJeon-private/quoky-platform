@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6.3 contraction note (2026-11-26)
+
+- **Changed.** Consent-answer structural check: one letter-flanked ASCII or U+2019 apostrophe ("don't", "that’s fine") no longer cancels the reply before the classifier
+  (`hasUntrustedSpanMarker(text, { contractions: true })`, consent answer only; the summary-grant rule is unchanged). Corpus ca-106/155/156/413/414 restaged to the classifier
+  stage (sha256 `901cc489...`); with the classifier switch off the cancel path is the same, audit code `classifier-off` instead of `structural-fail`.
+
+## Unreleased — A6-S4 consent-answer corpus approved by the owner (2026-11-26)
+
+- **Changed.** `golden/nl-consent-answer.v1.json` is `status: "approved"` (owner, summary-based approval; sha256 `50799580e3bf...`); corpus and eval tests follow, the
+  refusal test now uses an owner-review copy. No eval was run; local arm runs first, remote only if it fails and after a new notice.
+
 ## Unreleased — ADR-0121 A6-S4: the consent-answer classifier corpus and eval plumbing (2026-11-26; built offline, not run)
 
 - **Added.** `golden/nl-consent-answer.v1.json` (402 cases, `status: "owner-review"`, not frozen): the A6.9 corpus as updated by R6 (labels with

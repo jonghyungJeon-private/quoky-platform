@@ -26,7 +26,7 @@ import { EXIT_BLOCKED, EXIT_GATE_FAILED, EXIT_INVALID, EXIT_NON_GATING, EXIT_OK,
 
 const NOW = '2026-11-26T03:00:00.000Z';
 const { corpus, sha256 } = loadConsentAnswerCorpus();
-const APPROVED: ConsentEvalCorpus = { ...corpus, status: 'approved' };
+const OWNER_REVIEW: ConsentEvalCorpus = { ...corpus, status: 'owner-review' };
 const classifierCases = corpus.cases.filter((golden) => golden.stage === 'classifier');
 const byPrompt = new Map(classifierCases.map((golden) => [buildConsentClassifierPrompt({ question: golden.question, reply: golden.reply }), golden] as const));
 
@@ -87,7 +87,8 @@ function deps(
 }
 
 const digestOf = (out: readonly string[]): string => /plan digest \(sha256\): ([0-9a-f]{64})/.exec(out.join('\n'))?.[1] ?? '';
-const approvedLoad = () => ({ corpus: APPROVED, sha256 });
+const approvedLoad = () => ({ corpus, sha256 });
+const ownerReviewLoad = () => ({ corpus: OWNER_REVIEW, sha256 });
 
 async function strictRun(provider: () => AiProvider, args: readonly string[]): Promise<{ code: number; d: ReturnType<typeof deps> }> {
   const planned = deps(provider, approvedLoad);
@@ -98,9 +99,9 @@ async function strictRun(provider: () => AiProvider, args: readonly string[]): P
 }
 
 describe('the consent-answer corpus as the eval reads it', () => {
-  it('is schema-valid, awaits the owner review, and has one (question, reply) per classifier case', () => {
+  it('is schema-valid, is owner-approved, and has one (question, reply) per classifier case', () => {
     expect(validateConsentAnswerCorpus(corpus)).toEqual([]);
-    expect(corpus.status).toBe('owner-review');
+    expect(corpus.status).toBe('approved');
     expect(byPrompt.size).toBe(classifierCases.length);
     expect(classifierCases.length).toBeGreaterThanOrEqual(300);
   });
@@ -117,8 +118,7 @@ describe('the plan: offline, zero model calls, bound by its digest', () => {
       const text = d.out.join('\n');
       expect(digestOf(d.out)).toMatch(/^[0-9a-f]{64}$/);
       expect(text).toContain(`model calls this plan authorises: at most ${classifierCases.length * 3} (${classifierCases.length} cases x 3 run(s)`);
-      expect(text).toContain('status owner-review');
-      expect(text).toContain('a run is refused until the owner approves the corpus');
+      expect(text).toContain('status approved');
       expect(text).toContain('nothing was executed');
       const plan = JSON.parse(text.slice(text.indexOf('{'), text.indexOf('\n}') + 2)) as Record<string, unknown>;
       expect(plan.arm).toBe(arm);
@@ -154,9 +154,9 @@ describe('the plan: offline, zero model calls, bound by its digest', () => {
 
 describe('the Strict run', () => {
   it('is refused while the corpus is owner-review, even with the right digest: no provider is constructed', async () => {
-    const planned = deps();
+    const planned = deps(undefined, ownerReviewLoad);
     await runCli(['--mode', 'consent-answer', '--arm', 'remote'], planned);
-    const d = deps();
+    const d = deps(undefined, ownerReviewLoad);
     expect(await runCli(['--mode', 'consent-answer', '--arm', 'remote', '--approved-plan-digest', digestOf(planned.out)], d)).toBe(EXIT_BLOCKED);
     expect(d.created).toEqual([]);
     expect(d.err.join('\n')).toContain('status is owner-review, not approved');

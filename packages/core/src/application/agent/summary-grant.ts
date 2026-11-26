@@ -124,12 +124,30 @@ function hasMarkerIn(text: string): boolean {
   );
 }
 
+/** The exempt apostrophe: ASCII ' or U+2019 directly between two ASCII Latin letters. */
+const CONTRACTION_APOSTROPHE = /(?<=[A-Za-z])['\u2019](?=[A-Za-z])/gu;
+
+/**
+ * A6.3 contraction note (owner decision 2026-11-26), consent answer only: with `contractions: true`, an apostrophe that is ASCII
+ * `'` or U+2019 and directly between two ASCII Latin letters (a contraction such as "don't") is not by itself a marker; each such
+ * character is judged on its own, so "rock'n'roll" is fine and "don''t" or "'tis" is not. The exemption is applied to the RAW text
+ * (a compatibility form such as fullwidth U+FF07 that only becomes `'` under NFKC is not exempt). The apostrophe is replaced by
+ * U+00B7, NOT a letter: the apostrophe already broke every letter run, and a letter would join the neighbours into a longer run
+ * and could hide a short-token header ("ab'c:" must still flag on "c:"). U+00B7 is not a letter, digit, quote glyph, colon, dot,
+ * slash or bracket, so it can neither create nor destroy any URL, header, chat-frame, divider or placeholder shape.
+ */
+function withoutContractionApostrophes(text: string): string {
+  return text.replace(CONTRACTION_APOSTROPHE, '\u00B7');
+}
+
 /**
  * Whether the owner's prepared text holds any untrusted-span marker, in any of its four forms (as written, NFKC, without
  * format characters, both). The `[files: N]` line the preparation appends is not the owner's and is removed first. Pure.
+ * Default: byte-for-byte the summary-grant rule. `options.contractions` is the consent-answer-only exemption above.
  */
-export function hasUntrustedSpanMarker(text: string): boolean {
-  const own = nlPreparedWithoutFilesLine(text);
+export function hasUntrustedSpanMarker(text: string, options?: { readonly contractions?: boolean }): boolean {
+  const raw = nlPreparedWithoutFilesLine(text);
+  const own = options?.contractions === true ? withoutContractionApostrophes(raw) : raw;
   const bare = own.replace(/\p{Cf}/gu, '');
   return [own, own.normalize('NFKC'), bare, bare.normalize('NFKC')].some((form) => hasMarkerIn(form));
 }

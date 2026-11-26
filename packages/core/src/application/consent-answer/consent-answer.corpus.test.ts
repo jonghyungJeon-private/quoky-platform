@@ -37,8 +37,8 @@ import { ConsentTurnGate } from './consent-turn-gate';
  */
 
 const CORPUS_FILE = new URL('../golden/nl-consent-answer.v1.json', import.meta.url);
-/** Moves with ANY byte of the corpus (owner edits included); the frozen value goes into the measurement note after the owner review. */
-const CORPUS_SHA256 = '40318f1fbcafc0ab33f27c77ed005a75e9c70d70b66eb71308c4b767740e0777';
+/** The sha256 of the owner-approved corpus (approved 2026-11-26; restaged for the contraction decision under that approval). Any edit moves it and needs a new owner approval. */
+const CORPUS_SHA256 = '901cc4891fd03184654eaee86ce646c814e637fb21158ff2cb29294ed367290f';
 
 type Stage = 'classifier' | 'structural-fail' | 'fast-path' | 'control-forfeit' | 'handler-claimed';
 interface CorpusCase {
@@ -166,10 +166,10 @@ async function actualStage(c: CorpusCase): Promise<{ stage: Stage | 'unknown'; r
 }
 
 describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
-  it('has the header, the closed vocabularies and the owner-review status (not frozen)', () => {
+  it('has the header, the closed vocabularies and the approved status (owner approval 2026-11-26)', () => {
     expect(CORPUS.version).toBe(1);
     expect(CORPUS.name).toBe('nl-consent-answer.v1');
-    expect(CORPUS.status).toBe('owner-review');
+    expect(CORPUS.status).toBe('approved');
     expect(CORPUS.labels).toEqual([...CONSENT_ANSWER_LABELS]);
     expect(Object.keys(CORPUS.stages).sort()).toEqual(['classifier', 'control-forfeit', 'fast-path', 'handler-claimed', 'structural-fail']);
     expect(Object.keys(CORPUS.categories).sort()).toEqual(['adversarial', 'no', 'non-answer', 'positive', 'unclear', 'yes-and-more']);
@@ -220,7 +220,7 @@ describe('A6-S4 consent-answer corpus: schema, minimums and pin', () => {
     }
   });
 
-  it('is pinned by sha256 (an edit, the owner review included, must update this pin and the summary)', () => {
+  it('is pinned by sha256 (an edit must update this pin and the summary, and needs a new owner approval)', () => {
     expect(createHash('sha256').update(TEXT).digest('hex')).toBe(CORPUS_SHA256);
   });
 });
@@ -298,12 +298,12 @@ describe('A6-S4 consent-answer corpus: every stage is what the real pipeline doe
   });
 });
 
-describe('A6-S4 consent-answer corpus: the apostrophe finding (owner / ADR question, production unchanged)', () => {
-  it('a contraction with the ASCII or the typographic apostrophe (U+2019) is cancelled structurally, never sent to the classifier', () => {
+describe('A6-S4 consent-answer corpus: the contraction note (owner decision 2026-11-26)', () => {
+  it('a contraction with the ASCII or the typographic apostrophe (U+2019) is not a structural failure: it reaches the classifier', () => {
     const apostrophes = CASES.filter((c) => /[A-Za-z]['\u2019][A-Za-z]/u.test(c.reply));
     expect(apostrophes.filter((c) => c.reply.includes('\u2019')).map((c) => c.reply).sort()).toEqual(['don\u2019t', 'that\u2019s fine']);
     expect(apostrophes.filter((c) => c.reply.includes("'")).length).toBeGreaterThanOrEqual(3);
-    expect(apostrophes.filter((c) => c.stage !== 'structural-fail').map((c) => c.id)).toEqual([]);
+    expect(apostrophes.filter((c) => c.stage !== 'classifier').map((c) => c.id)).toEqual([]);
   });
 });
 
