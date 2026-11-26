@@ -3,7 +3,7 @@ import type { Logger } from '../../ports';
 import { answerConsentTurn, closedConsentToken, type ConsentClassifierSwitch } from './consent-answer';
 import type { ConsentChatFacts } from './consent-labels';
 import type { BoundConsent, ConsentLanguage, ConsentPendingStore, ConsentScope } from './consent-pending';
-import type { ItemSummaryConsent } from './item-summary-consent';
+import type { ItemSummaryConsent, ItemSummaryContinuation } from './item-summary-consent';
 
 /**
  * ADR-0121 SR-1 rule ① confirm slice, CS-2 "gate": the one runtime gate that gives every owner DM turn its chance to answer a
@@ -66,7 +66,8 @@ export interface ConsentTurnGateDeps {
   /**
    * ADR-0121 amendment A8 (OQ1-2): the live item-summary consent, composed only with `QUOKY_ITEM_SUMMARY_CONSENT=on` (which needs
    * `QUOKY_SUMMARY_CONSENT=on`). The runtime reaches it through {@link ConsentTurnGate.items}; absent, nothing of A8 runs. A yes to
-   * one of its questions gets the fixed "unavailable" line until the continuation lands (OQ1-3); the kill switch voids it.
+   * one of its questions is dispatched by `runRef` after the bind (AM-1): `take` mints the single-use token and the gate hands the
+   * continuation to the runtime (`continue-item`, OQ1-3); a yes `take` refuses gets the fixed "unavailable" line. The kill switch voids it.
    */
   readonly items?: ItemSummaryConsent;
   /** The one clock of the step (ms): the same function the run service uses for `createdAtMs`. */
@@ -97,7 +98,20 @@ export type ConsentGateOutcome =
   /** Not an answer, or a cancel that takes the normal path: route the turn as usual. */
   | { readonly kind: 'route' }
   /** The turn is consumed: show `text`; the history keeps `historyNote` (fixed, never the summary); `rerun` runs once as a new turn. */
-  | { readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly rerunText?: string; readonly replyKind: 'question' | 'note' };
+  | { readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly rerunText?: string; readonly replyKind: 'question' | 'note' }
+  /**
+   * ADR-0121 amendment A8.5 (OQ1-3): the owner's yes to a live item-summary question, taken (the record is consumed, the token
+   * minted). The runtime runs the continuation (re-read, re-checks, one summary call with the token) and owns the reply and its
+   * history note; `rerun` runs once afterwards as a new turn (AM-2). `unavailable` is the gate's fixed line for a continuation the
+   * runtime cannot run at all.
+   */
+  | {
+      readonly kind: 'continue-item';
+      readonly continuation: ItemSummaryContinuation;
+      readonly language: ConsentLanguage;
+      readonly unavailable: string;
+      readonly rerunText?: string;
+    };
 
 const ROUTE: ConsentGateOutcome = Object.freeze({ kind: 'route' });
 
@@ -184,7 +198,7 @@ export class ConsentTurnGate {
           return { kind: 'reply', text: decision.question, historyNote: decision.question, replyKind: 'question' };
         case 'bound': {
           this.log('bound', decision.audit.join(','));
-          const continued = await this.continueBound(decision.bound, turn, lines);
+          const continued = await this.continueBound(decision.bound, turn, lines, language ?? languageOfReply(turn.text));
           return decision.next === 'rerun' && decision.rerunText !== undefined ? { ...continued, rerunText: decision.rerunText } : continued;
         }
       }
@@ -209,21 +223,31 @@ export class ConsentTurnGate {
     }
   }
 
-  private async continueBound(bound: BoundConsent, turn: ConsentGateTurn, lines: (typeof LINES)[ConsentLanguage]): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly replyKind: 'note' }> {
+  private async continueBound(
+    bound: BoundConsent,
+    turn: ConsentGateTurn,
+    lines: (typeof LINES)[ConsentLanguage],
+    language: ConsentLanguage,
+  ): Promise<{ readonly kind: 'reply'; readonly text: string; readonly historyNote: string; readonly replyKind: 'note' } | Extract<ConsentGateOutcome, { readonly kind: 'continue-item' }>> {
     // Only the rule-① summary consent has a continuation here (the A2 topic slice adds `continueTopic`): another kind is spent, nothing runs.
     if (bound.pending.kind !== 'summary-consent') return { kind: 'reply', text: lines.expired, historyNote: lines.expired, replyKind: 'note' };
-    // A8 (OQ1-2): a yes to a live item-summary question is dispatched by `runRef` (AM-1). Its continuation is OQ1-3: until then the
-    // record is taken (single use) and its token retired at once, and the reply is the fixed unavailable line. Nothing is sent.
+    // A8.5 (OQ1-3): a yes to a live item-summary question is dispatched by `runRef` after the bind (AM-1). `take` consumes the record
+    // (single use) and mints the token; the runtime runs the continuation. A yes `take` refuses (late, another actor or conversation,
+    // not a DM, a replay) is the fixed unavailable line, and nothing is sent.
     const items = this.deps.items;
     if (items !== undefined && items.owns(bound.pending.runRef)) {
+      let taken: ItemSummaryContinuation | undefined;
       try {
-        const taken = items.take(bound, { actor: turn.actor, conversationKey: turn.conversationKey, direct: turn.direct });
-        if (taken !== undefined) items.spend(taken.token);
+        taken = items.take(bound, { actor: turn.actor, conversationKey: turn.conversationKey, direct: turn.direct });
       } catch {
-        // Fail closed: nothing is sent either way.
+        taken = undefined;
       }
-      this.log('item-unavailable', 'oq1-3-pending');
-      return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable, replyKind: 'note' };
+      if (taken === undefined) {
+        this.log('item-unavailable', 'take-refused');
+        return { kind: 'reply', text: lines.unavailable, historyNote: lines.unavailable, replyKind: 'note' };
+      }
+      this.log('item-continue', 'taken');
+      return { kind: 'continue-item', continuation: taken, language, unavailable: lines.unavailable };
     }
     let outcome: ConsentContinuation;
     try {

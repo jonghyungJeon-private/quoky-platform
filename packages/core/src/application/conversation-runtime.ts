@@ -162,6 +162,8 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
    * exception + stack are preserved in the internal log only. No business action is retried.
    */
   async handle(message: InboundMessage): Promise<TurnResult> {
+    // OQ1-3 review round 2: the item-summary void epoch, captured before anything of this turn is awaited.
+    this.captureItemConsentEpoch(message);
     try {
       let result = await this.handleInner(message);
       // A6 R5a §3.2 `none`: a turn that ended an unanswered preview says so before its own reply.
@@ -299,13 +301,22 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
     }
     // ADR-0120 amendment A6-D3: the owner's kill-switch phrase (`에이전트 중지` / `에이전트 재개`, Class A, owner DM, every
     // state). Recognized only while QUOKY_NL_ACTIONS is not `off` (with `off` the text is routed exactly as before).
+    // OQ1-3 review round 1 (CA P3 ordering): on each of the three stop paths a stop phrase voids every consent BEFORE the switch
+    // save is awaited, so a pending item-summary continuation (between its take and hook 1) can never use its token after the
+    // owner said stop. Once per turn, whichever path comes first.
+    let consentsVoided = false;
+    const voidConsentsBeforeSwitch = (): void => {
+      if (consentsVoided) return;
+      consentsVoided = true;
+      this.voidConsentsOnStop(message.text);
+    };
     if (this.deps.nlSelection?.handleSwitchPhrase !== undefined && isDirectConversation(message.context) && !expiryNotice) {
+      voidConsentsBeforeSwitch();
       const switched = await this.deps.nlSelection.handleSwitchPhrase(actor, message.text, this.clock());
       if (switched !== undefined) {
         const reply = this.withAgentSwitchSuffix(message.text, switched, this.withSurfaceSwitchSuffix(message.text, switched));
         // A6-D3 amendment (2026-11-03): a saved stop also closes the owner's open approvals of the governed kinds and lists them.
         const stopped = parseActionSwitchPhrase(message.text) === 'stopped' && switched === renderActionSwitchReply('stopped', languageOf(message.text));
-        this.voidConsentsOnStop(message.text);
         const notice = stopped ? await this.stopOpenGovernedApprovals(actor, message.text) : undefined;
         return this.responded(session, outboundMessage(message.context, notice === undefined ? reply : joinBody([reply, notice])));
       }
@@ -313,8 +324,8 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
     // ADR-0121 S2 (D7, reused switch): while QUOKY_AGENT_MODE is not `off`, the same phrase (owner DM, every state) also when
     // A6 actions are off; it saves the same `quoky.actionSwitch` record. With `off` (or absent) the text routes as before.
     if (this.deps.agentRuns !== undefined && this.deps.agentRuns.mode !== 'off' && isDirectConversation(message.context) && !expiryNotice) {
+      voidConsentsBeforeSwitch();
       const switched = await this.deps.agentRuns.handleSwitchPhrase(actor, message.text, this.clock());
-      if (switched !== undefined) this.voidConsentsOnStop(message.text);
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, this.withAgentSurfaceSuffix(message.text, switched)));
     }
     // Live DM test 2026-10-20: a near miss of the switch phrase ("에이ㄴ트 재개", "에이전트 재") while the exact phrase is
@@ -334,8 +345,8 @@ export class ConversationRuntime extends ConversationRuntimeExecutionImageLayer 
       if (ended?.cleared === true) session = withoutSessionMetadataKey(session, SURFACE_GRANT_PENDING_METADATA_KEY);
     }
     if (surfaceService !== undefined && !expiryNotice) {
+      voidConsentsBeforeSwitch();
       const switched = await surfaceService.handleSwitchPhrase(actor, message, this.clock());
-      if (switched !== undefined) this.voidConsentsOnStop(message.text);
       if (switched !== undefined) return this.responded(session, outboundMessage(message.context, switched));
       // D4.2 (P2): `허용 실행` saves a pending grant of this channel; any other message ends it and routes as before.
       if (surfaceService.handleGrantPending !== undefined) {

@@ -59,6 +59,12 @@ import { BoundedShownItems, SurfaceDeniedError, orderTurnHandlers, sameRepositor
 import { interpretDecision, toTestResultDetail } from './turn-intents';
 import type { ApplyPreviewAnchor, ConversationRuntimeDeps, ConversationRuntimeOptions, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
 
+/**
+ * ADR-0121 amendment A8.5 (OQ1-3): the gate's `continue-item` outcome (the taken continuation, its token and the fixed lines). Derived
+ * from the gate type the runtime already imports, so no other runtime file reaches into `consent-answer/`.
+ */
+export type ItemSummaryContinueOutcome = Extract<Awaited<ReturnType<ConsentTurnGate['handle']>>, { readonly kind: 'continue-item' }>;
+
 export abstract class ConversationRuntimeBase {
   protected readonly clock: () => IsoTimestamp;
   protected readonly gitRemoteEnabled: boolean;
@@ -104,6 +110,8 @@ export abstract class ConversationRuntimeBase {
   protected abstract isExplicitTurnHandlerCommand(text: string): boolean;
   /** CS-2: whether another owner step is open for this turn, computed once and read by the gate and `agentConsentFacts`. */
   protected readonly consentOwnerSteps = new WeakMap<InboundMessage, boolean>();
+  /** OQ1-3 review round 2: the item-summary void epoch each turn captured at its entry (flag on only). */
+  protected readonly itemConsentEpochs = new WeakMap<InboundMessage, number>();
   /** A6 R5a: what kind of reply each turn gave (unmarked: `chat`). */
   protected readonly nlReplyKinds = new WeakMap<InboundMessage, { readonly kind: LastTurnReplyKind; readonly listingSource?: 'todo' | 'reminder' }>();
   /** A6 R5a: the prefix of a turn that ended an unanswered preview. */
@@ -793,11 +801,17 @@ export abstract class ConversationRuntimeBase {
     });
     if (outcome.kind === 'route') return undefined;
     // The consumed turn is a fixed note or the question, never chat: `quoky.lastTurn` must agree with `lastReply`.
-    this.nlReplyKinds.set(message, { kind: outcome.replyKind });
+    this.nlReplyKinds.set(message, { kind: outcome.kind === 'continue-item' ? 'note' : outcome.replyKind });
     const userMemory = await this.deps.memory.recordShortTerm(message, session.id);
     this.nlTurnFacts.set(message, { sessionId: session.id, actorId: actor.id, memoryId: userMemory.id });
-    await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
-    const result = this.responded(session, outboundMessage(message.context, outcome.text));
+    let result: TurnResult;
+    if (outcome.kind === 'continue-item') {
+      // A8.5 (OQ1-3): the continuation records exactly one fixed history note itself (never the summary, never a receipt).
+      result = await this.continueItemSummaryOnce(message, session, actor, outcome);
+    } else {
+      await this.deps.memory.recordAssistant(outcome.historyNote, message.context, session.id);
+      result = this.responded(session, outboundMessage(message.context, outcome.text));
+    }
     if (outcome.rerunText === undefined) return result;
     // AM-2: the rest of a `yes-and-more` reply is a NEW ordinary turn (its own run); the bound step is already used.
     const { attachments: _attachments, quotedRanges: _quoted, formatting: _formatting, replyTo: _replyTo, ...rest } = message;
@@ -807,8 +821,35 @@ export abstract class ConversationRuntimeBase {
   }
 
   /**
-   * The kill switch: a handled stop phrase voids every pending consent and drops the continuation records (fail closed: also when
-   * the save itself reported nothing, since the owner asked to stop). No gate, nothing to void.
+   * A8.5 (OQ1-3): runs the continuation once and makes sure its token is retired afterwards, whatever happened (the call and its one
+   * regeneration are the only uses). A throw is the gate's fixed unavailable line with that line as the history note; nothing more is sent.
+   */
+  private async continueItemSummaryOnce(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult> {
+    try {
+      return await this.continueItemSummary(message, session, actor, outcome);
+    } catch (error) {
+      this.deps.logger.warn('item summary continuation failed', { messageId: message.id, errorName: error instanceof Error ? error.name : typeof error });
+      await this.deps.memory.recordAssistant(outcome.unavailable, message.context, session.id);
+      return this.responded(session, outboundMessage(message.context, outcome.unavailable));
+    } finally {
+      try {
+        this.consentGate?.items?.spend(outcome.continuation.token);
+      } catch {
+        // The token also dies with its window; nothing may be sent with it after this turn either way.
+      }
+    }
+  }
+
+  /**
+   * A8.5 (OQ1-3): the continuation of the owner's yes to a live item-summary question (the turn-handler layer implements it). It
+   * records exactly one fixed history note and returns the reply.
+   */
+  protected abstract continueItemSummary(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult>;
+
+  /**
+   * The kill switch: a stop phrase on any of the three stop paths voids every pending consent and drops the continuation records
+   * and tokens, BEFORE the switch save is awaited (OQ1-3 review round 1, CA P3 ordering: a continuation racing the stop can never
+   * reach hook 1 with a live token), and fail closed also when the save itself reports nothing. No gate, nothing to void.
    */
   protected voidConsentsOnStop(text: string): void {
     if (this.consentGate === undefined || parseActionSwitchPhrase(text) !== 'stopped') return;
@@ -816,6 +857,29 @@ export abstract class ConversationRuntimeBase {
       this.consentGate.voidAll();
     } catch {
       // The gate is fail closed on its own; a stop turn is never broken by it.
+    }
+  }
+
+  /**
+   * OQ1-3 review round 2: captures the item-summary void epoch at the turn's entry, synchronously, before anything is awaited.
+   * A stop that voids consents while this turn is in flight then refuses the turn's question and its item-summary call
+   * ({@link itemConsentEpochCurrent}). Flag off (no `items`): nothing is captured and nothing reads it.
+   */
+  protected captureItemConsentEpoch(message: InboundMessage): void {
+    try {
+      const items = this.consentGate?.items;
+      if (items !== undefined) this.itemConsentEpochs.set(message, items.epoch());
+    } catch {
+      // Nothing captured: the turn is fail closed (no question, no item-summary call).
+    }
+  }
+
+  /** OQ1-3 review round 2: whether no stop voided consents since this turn began. A turn with no captured epoch is `false`. */
+  protected itemConsentEpochCurrent(message: InboundMessage): boolean {
+    try {
+      return this.consentGate?.items?.isCurrent(this.itemConsentEpochs.get(message)) === true;
+    } catch {
+      return false;
     }
   }
 

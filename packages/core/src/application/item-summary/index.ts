@@ -43,3 +43,6 @@ export {
   renderItemSummaryNotSentLine,
 } from './summary-recipient-guard';
 export type { SummaryRecipientGuardInput, SummaryRecipientPhase, SummaryRecipientSelector } from './summary-recipient-guard';
+// ADR-0121 amendment A8.5 (OQ1-3): the continuation's same-item check and its fixed "changed" line.
+export { renderItemSummaryChangedLine, sameItemAsConfirmed } from './item-summary-continuation';
+export type { ItemSummaryContinuationFacts } from './item-summary-continuation';

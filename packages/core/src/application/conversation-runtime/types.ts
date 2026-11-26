@@ -864,6 +864,8 @@ export interface ConversationRuntimeDeps {
         | 'shadowGrammarHit'
         // ADR-0120 amendment A6 (no new deps key: the same `nlSelection` slot); all inert while QUOKY_NL_ACTIONS is off.
         | 'actionLevel'
+        // ADR-0121 amendment A8.5 (OQ1-3, no new deps key): the continuation of a Jira / Slack item summary re-checks the R2 level.
+        | 'itemR2Level'
         | 'actionsOffered'
         | 'actionsActing'
         | 'handleSwitchPhrase'

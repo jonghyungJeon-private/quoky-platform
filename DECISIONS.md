@@ -40370,3 +40370,113 @@ Codex PASS and Chief Architect J1 PASS with P3s. Fixed, flag off byte-identical 
 
 A8.10 enabling blockers still open: (a) D8 REMOTE is "listing only" as an interim until OQ1-4; (b) the P3/P5 NL-selection paths are not driven end to end in the
 dormancy and flag-on tests (OQ1-5 red-team lot); (c) "another owner step pending" is covered only by the fail-closed rule, not a runtime test.
+
+### ADR-0121 A8 — OQ1-3 implementation note (2026-11-26)
+
+OQ1-3 (the continuation after the owner's yes to the A8.5 question for an unexpected recipient) is implemented behind `QUOKY_ITEM_SUMMARY_CONSENT` (default
+`off`); enabling is still the A8.10 Strict step. The A8 text is not edited. No prompt, catalog or question text changed.
+
+- **Gate (AM-1).** An item-owned yes is dispatched by `runRef` after the bind: `ItemSummaryConsent.take` consumes the record and mints the single-use token, and the
+  gate returns the new `continue-item` outcome (the continuation, its language and the fixed unavailable line; `rerunText` for a yes-and-more as before). A yes that
+  `take` refuses is the fixed unavailable line. The interim OQ1-2 "unavailable for every item yes" is gone. ㅇㅇ / ok / late / cancel / re-ask / channel behave exactly as
+  the existing gate defines (with the classifier off, ㅇㅇ and ok cancel silently and route; nothing is sent).
+- **Runtime.** `handleConsentGate` records the owner's turn, then `continueItemSummary` (turn-handler layer; the base retires the token in a `finally`, and a throw is the
+  unavailable line). Order: (1) the owner DM, the handler found by `handlerId` and still serving `item.summarize` (its live catalog), and for a Jira / Slack item the A6 R2
+  level (`itemR2Acts(QUOKY_NL_ACTIONS, QUOKY_NL_ITEM_R2, source)`) and the kill switch re-read from the persisted Actor (`actionsStillActing`, the A6 last check); a mail or
+  Drive item is not governed by them (the grammar path never was), and the stop phrase voids every record and token (`voidAll`). (2) The re-read on a SEPARATE message: the
+  stored owner request text, id `<yes id>:consent`, no attachments, quotes, formatting or reply-to, marked as a gate rerun; `handler.handleSelected(redo selection)` is
+  called directly, so the selector is never reached (no second A6 R2 D8 cap charge) and no receipt, `lastSelection` or listing is written. (3) The re-read must be a
+  summarize outcome with a document readout and a descriptor naming the same handler, source and item id, and for a mail or Slack thread a defined, equal message count
+  (`sameItemAsConfirmed`); otherwise the fixed "changed" line (`renderItemSummaryChangedLine`), or the unavailable line for a refused re-read. Nothing is sent. (4) The
+  ordinary `handleDocumentSummary` path (the S3 LOCAL long-item path first, as on the ask turn) with the continuation: `consentedRecipientStep` resolves the provider again.
+  *(Corrected by "OQ1-3 review round 1" item 1: the original text let an `expected` recipient proceed under the OQ1-2 rules here; that was wrong.)* `local` proceeds
+  without the token (no line). ANY `REMOTE` recipient, expected or unexpected, proceeds only when key AND label equal the token's, under a guard whose
+  `consentedRemote` is `ItemSummaryConsent.allowsContinuation(token, live verdict, {phase, actor, conversation, source, item})` at hook 1 and hook 2 (≤ 600 s from the
+  mint, not voided, not spent). Anything else (another REMOTE recipient, expected or not, an unnamed one, nothing resolved) is the handler fallback plus the not-sent
+  line; the guard refuses a flip between this pre-resolve and either hook. It never asks again.
+- **Reply and history.** The A8.4 line follows the OQ1-2 rules (a completed REMOTE call only, including the fallback after a completed call). Exactly one fixed history
+  note per yes turn: the work path's document note, the handler's fixed note (or the document note) on a fallback, or the fixed line itself. Never the summary, the item or
+  a receipt. The summarization request is byte-identical to the one the same request makes on the expected path (pinned: whole `AiRequest` equal).
+- **Not changed.** The runtime's `nlSelection` slot may expose the existing `itemR2Level` (no new deps key). The consent-answer import boundary is unchanged: the
+  turn-handler layer derives the continuation type from the gate type `runtime-base.ts` already imports.
+- **Tests.** Runtime (real runtime, mail, Drive and a fixed Jira handler): one call after a yes, two with the regeneration; the prompt byte-identical; the token retired
+  (replay refused); a second yes no second summary; a flip after the yes refused (another REMOTE, unnamed), LOCAL and expected proceed; a flip before hook 1 and during the
+  first call; a refused re-read; a grown thread and another Jira item ("changed"); expiry both ways; the kill switch before the yes and during the re-read; a restart; a no;
+  ㅇㅇ / ok with the classifier off and on; yes-and-more; a channel yes; the Jira R2 level and switch re-checks, fail closed without the slot, no selector call or receipt;
+  the separate message; content-free logs. Gate unit tests for the dispatch, single use, a refused `take` and `voidAll`. The OQ1-2 dormancy pins pass unchanged.
+- **Residuals (owner FYI).** (1) The P3/P5 NL-selection origin is not distinguished from the grammar origin for mail and Drive (the descriptor does not record it), so
+  the A6 kill-switch state is re-read only for Jira / Slack; a stop phrase voids every pending item record regardless. (2) A8.10 blockers (a)–(c) of OQ1-2 still stand.
+
+### ADR-0121 A8 — OQ1-3 review round 1 (2026-11-26)
+
+Codex (P1, P2) and Chief Architect (P3 ×2). Fixed; flag off byte-identical (the OQ1-2 dormancy pins pass unchanged). No prompt, catalog or question text changed.
+
+1. **P1 (Codex): the continuation accepted any currently `expected` REMOTE recipient.** Repro: asked while A is unexpected and B is not expected; B becomes
+   expected before the yes; after the yes the content went to B, and token expiry and `voidAll` were bypassed (the guard never consulted the token for an expected
+   verdict). **Orchestrator ruling (strict A8.5):** the yes names ONE recipient. In the continuation ANY `REMOTE` recipient, expected or not, must equal the token's
+   key AND label and pass the token judge for `'call'` at hook 1 and `'regeneration'` at hook 2; otherwise the handler fallback (plus the not-sent line when refused
+   at the pre-resolve) and nothing is sent. Only `LOCAL` proceeds without the token (LOCAL never needs consent), with no line. The "expected → OQ1-2 rules" branch
+   is removed from the continuation. Code: `ItemSummaryConsent.allowsContinuation` (the same token check as `allows` for an unexpected recipient, applied to every
+   named REMOTE verdict; `local` / `unnamed` false); `allows` is unchanged (its OQ1-1 pins stand). `SummaryRecipientGuard` input `allowsUnexpected` is renamed
+   `consentedRemote`: present, every REMOTE live verdict must pass it; absent, the OQ1-2 behaviour. Tests: asked for A, B became expected (before the yes, and between
+   the pre-resolve and hook 1): zero REMOTE calls; the same key with another label after the yes (unexpected and expected): refused; a relabel before hook 1:
+   refused; LOCAL after the yes: proceeds, no line; expired or voided token in the expected case: refused; a void during call 1 refuses the expected regeneration.
+2. **Mail / Drive kill switch: Codex P2 vs Chief Architect.** `Claude / Codex / conclusion`:
+   - Codex: the descriptor does not record the NL-selection origin, so the A6 kill-switch state is re-read only for Jira / Slack; a P3/P5 mail or Drive item
+     summary selected by NL could continue after a stop.
+   - Claude (with the CA): every stop path calls `voidConsentsOnStop` (which voids every record and token), the operations UI is read-only for the switch, and a
+     restart drops the in-memory records. So no stopped state can coexist with a live token, and the descriptor needs no NL / grammar origin. The real gap is
+     ordering (CA P3): the void ran AFTER the switch save was awaited, so a continuation between `take` and hook 1 could pass hook 1 inside that await.
+   - Conclusion: the CA P3 ordering fix. In `conversation-runtime.ts`, on all three stop paths (A6 `nlSelection`, the agent switch, the channel-grant switch), a
+     text that parses as `'stopped'` calls `voidConsentsOnStop` BEFORE `handleSwitchPhrase` is awaited (once per turn, whichever path comes first; fail closed
+     also when no path then reports a save). No descriptor field is added. Test: a stop racing a continuation between the take and hook 1, on each path: zero
+     REMOTE calls.
+3. **CA P3: a throw while the reply is built after a completed REMOTE call.** The owner got the unavailable line without the recipient line. Now, with the flag on
+   (a guard exists), `handleDocumentSummary` catches a throw in the reply building after the work path and returns the handler fallback plus
+   `completedCallLine(guard, …)`, so the line appears whenever content left the host (OQ1-2 round 1 item 3); LOCAL: no line. Flag off: unchanged (the throw
+   propagates as before). Tests: the continuation and the OQ1-2 expected ask turn (line), LOCAL (no line).
+4. **Rule question (orchestrator ruling, class A).** "Changed item" stays identity plus the thread message count. An edited item with the same id is still the item
+   the owner consented to: the design re-reads it fresh on purpose, and consent covers the item and the recipient, not a revision. No code change.
+
+A8.10 enabling blockers (a)–(c) of OQ1-2 still stand. Residual (1) of the OQ1-3 note is closed by item 2 (the ordering fix; no origin field needed).
+
+### ADR-0121 A8 — OQ1-3 review round 2 (2026-11-26)
+
+Codex (P2) and Chief Architect (P3, two notes). Fixed; flag off byte-identical (the OQ1-2 dormancy pins pass unchanged; with the flag off nothing is
+captured and nothing reads the epoch). No prompt, catalog or question text changed.
+
+1. **P2 (Codex): an item request in flight at a stop could open a FRESH question.** Repro: a mail / Drive item request is still in its pre-resolve when the
+   owner's stop voids every consent; the request then finds an unexpected recipient and calls `items.ask`, which opens a new record at the new generation; the
+   next yes mints a current token and, since the mail / Drive continuation does not re-read the persisted switch, a REMOTE summary runs while stopped.
+   **Fix (structural):** `ItemSummaryConsent` exposes its void epoch (`epoch()`, moved only by `voidAll`) and `isCurrent(epoch)`. The runtime captures the
+   epoch at turn entry (`ConversationRuntime.handle`, synchronously, before anything of the turn is awaited; a rerun is its own turn). `ItemSummaryConsentAsk`
+   now REQUIRES `epoch`; `ask` refuses (no record, no pending step, a content-free `item_summary_consent.ask_stale` log) when it is not current. The ask
+   turn's recipient step checks the epoch right after its pre-resolve and returns the handler's fallback with no question, no record and no call
+   (outcome `stopped`), whatever the verdict. The same epoch guards the non-consent paths that await after a stop: the `SummaryRecipientGuard` gains
+   `stillCurrent` (refuses both hooks), set on every ask-turn guard (LOCAL and expected) and on the D8 lookup's LOCAL guard, and the D8 lookup also returns
+   the listing when the epoch moved after its pre-resolve. The continuation keeps the token check (its generation is the same epoch). Tests (fail on
+   bfce5720): a stop during the pre-resolve of a P1 mail and a P4 Drive request with an unexpected recipient: no question, no open step, zero REMOTE calls,
+   and a later yes sends nothing; the expected recipient on all three stop paths: nothing sent; a stop between the pre-resolve and hook 1: hook 1 refuses;
+   a control without a stop is unchanged. Unit: the epoch moves on `voidAll`; a stale-epoch `ask` opens nothing; the guard's `stillCurrent` at both hooks.
+2. **CA P3: a double history note.** When building the reply threw after the work path had already recorded the document note, the catch called the
+   handler's `fallback`, which records `summary.history.assistant` again. The catch now returns the handler's fallback text plus `completedCallLine`
+   directly (no second record, no listing receipt, as on the success path). Tests: the continuation, the OQ1-2 expected ask turn and LOCAL assert exactly
+   one new history note (`recordAssistant.slice(before).length === 1`).
+3. **CA: `ItemSummaryConsent.allows` had no production caller.** Removed. Its OQ1-1 pins moved to `allowsContinuation` (the same token check for a
+   named REMOTE recipient: key AND label, actor, conversation, source, item, TTL, one `call` then one `regeneration`, forged / foreign / spent / voided
+   tokens refused); the old "local and expected need no token" pin is replaced by its continuation meaning (no token, LOCAL and unnamed are never allowed).
+4. **CA: the voiding scope of the early stop void (recorded, no code change).** `voidConsentsOnStop` runs before the switch save on every stop path, and
+   it is keyed only on `parseActionSwitchPhrase(text) === 'stopped'`. So (a) an exact stop phrase voids every consent also when `nlSelection` is composed
+   but not acting (the phrase then routes as chat), and (b) on the surface (channel-grant) path a non-owner's exact stop phrase is a global `voidAll`
+   (every actor's records and tokens), and with item 1 it also refuses every item request in flight at that moment. Both fail closed: the worst outcome is
+   a lost question or summary the owner asks again for; nothing is ever sent because of a void. Near-misses never void (`parseActionSwitchPhrase` is exact).
+5. **Outcome.** Codex P2 and the CA notes are accepted as stated; no dispute. A8.10 enabling blockers (a)–(c) of OQ1-2 still stand.
+
+### ADR-0121 A8 — OQ1-3 review round 3: recorded residual (2026-11-26)
+
+1. **Codex R3 P2 (`turn-handler-layer.ts:~774`).** A stop that lands exactly while the ask turn awaits `recordAssistant(asked.question)` voids the
+   just-created record, but the turn still returns the question text. **Orchestrator ruling:** the stop-in-flight finding has had its two fix rounds
+   (OQ1-3 rounds 1 and 2), so per the review-loop discipline this fail-closed edge is recorded, not chased: the owner may see one question whose yes
+   is then refused at bind (`voidAll` marked the open step voided and cleared `ItemSummaryConsent` records, so `owns(runRef)` is false and `take`
+   is never reached; no token, nothing sent). No content leaves the host and no REMOTE call can follow. Chief Architect (J3) R3:
+   PASS. A8.10 enabling blockers (a)–(c) of OQ1-2 still stand; this residual joins the OQ1-5 red-team lot as a display-only case.

@@ -26,8 +26,10 @@ import {
 import { CONNECTOR_WRITE_CALENDAR_HISTORY_NOTE, renderConnectorWriteChoiceStopLine, renderConnectorWriteStopLine } from '../connector-writes/connector-write-copy';
 import { isDirectConversation, joinBody, outboundMessage, plainTextOf, withOutboundBody } from '../message-rendering';
 import { runS3ItemSummary, type S3ItemSummaryOutcome } from '../item-summary/s3-item-summary';
-import { SummaryRecipientGuard, renderItemSummaryNotSentLine } from '../item-summary/summary-recipient-guard';
+import { SummaryRecipientGuard, renderItemSummaryNotSentLine, type SummaryRecipientPhase } from '../item-summary/summary-recipient-guard';
 import type { RecipientVerdict } from '../item-summary/expected-recipient';
+import { renderItemSummaryChangedLine, sameItemAsConfirmed } from '../item-summary/item-summary-continuation';
+import { itemR2Acts } from '../nl-routing/nl-selection-service';
 import {
   LONG_ITEM_PROGRESS_NOTICE_AFTER_MS,
   LONG_ITEM_PROGRESS_NOTICE_SEND_MAX_MS,
@@ -41,7 +43,7 @@ import { interpretStrayDecisionUtterance, isPendingCancelUtterance } from '../ap
 import { externalLastActionOf } from '../nl-routing/last-action';
 import { type ConversationControlCommand } from '../conversation-commands';
 import { NON_ABSOLUTE_REGISTRATION_KIND } from '../intent-classifier';
-import { type NlListingReceipt } from '../nl-routing/catalog';
+import { isNlR2ItemSource, type NlListingReceipt } from '../nl-routing/catalog';
 import { surfacePermittedWorkSources } from '../surface-grants/surface-permit';
 import { SURFACE_GRANT_HELP_LINES } from '../surface-grants/surface-grant-copy';
 import { surfaceGroupsOfSelection, surfaceGroupsOfWriteDraft, surfaceGroupsOfWriteFamily, surfaceGroupsOfWriteOperation } from '../surface-grants/surface-group-map';
@@ -49,6 +51,7 @@ import { Capability, IntentType } from '../../domain';
 import type { Actor, ApprovalRequest, Id, InboundMessage, Intent, IsoTimestamp, MessageBody, OutboundMessage, Session, WorkspaceRef } from '../../domain';
 import {
   CONNECTOR_WRITE_OPERATIONS,
+  type AiProvider,
   type ConnectorWriteOperation,
   type ProjectReadout,
   type ConversationTurnHandler,
@@ -72,6 +75,7 @@ import {
   isSummarizableDocumentReadout,
   isR2DocumentSource,
   isUntrustedDocumentReadout,
+  renderUntrustedDocumentHistoryNote,
   type UntrustedDocumentReadout,
 } from '../untrusted-document-readout';
 import { checkDocumentSummaryClaims, isFixedDocumentSummaryNotice, renderDocumentSummaryTooLong } from '../document-summary-claim-check';
@@ -80,6 +84,7 @@ import { ActionStoppedError, SurfaceDeniedError, frozenPlainSnapshot, nlConfirmT
 import type { NlChatFacts, RecentConnectorWrite } from './internal-types';
 import { connectorWriteChoiceIndex, explicitDurableMemoryContent, interpretDecision, nlReplyKindOf } from './turn-intents';
 import type { ApplyPreviewAnchor, LongItemSummaryOptions, RuntimeTurnStatus, TurnResult } from './types';
+import type { ItemSummaryContinueOutcome } from './runtime-base';
 
 /**
  * ADR-0121 amendment A8.4 (OQ1-2): the footer of a summary reply with the recipient line as its last line (the footer's own
@@ -496,8 +501,9 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     // reply is the listing (no question yet). A LOCAL recipient is summarised as built, held to LOCAL by the guard.
     let guard: SummaryRecipientGuard | undefined;
     if (this.consentGate?.items !== undefined) {
-      const pre = await this.preResolveSummaryRecipient(session, actor, readout);
-      if (pre?.guard === undefined || pre.verdict.kind !== 'local') {
+      const pre = await this.preResolveSummaryRecipient(session, actor, readout, undefined, () => this.itemConsentEpochCurrent(message));
+      // OQ1-3 review round 2: a stop that voided consents while this turn was in flight: the listing only, nothing is sent.
+      if (pre?.guard === undefined || pre.verdict.kind !== 'local' || !this.itemConsentEpochCurrent(message)) {
         this.deps.logger.info('item summary recipient decided', { messageId: message.id, outcome: 'listing-only' });
         return fallback();
       }
@@ -550,6 +556,7 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     summary: TurnHandlerSummarizeReply,
     readout: UntrustedDocumentReadout,
     fallback: (extra?: string) => Promise<TurnResult>,
+    consented?: ItemSummaryContinueOutcome['continuation'],
   ): Promise<TurnResult> {
     if (!isSummarizableDocumentReadout(readout)) {
       this.deps.logger.warn('document summary readout rejected', { messageId: message.id, sessionId: session.id });
@@ -565,8 +572,12 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     }
     // ADR-0121 amendment A8 (OQ1-2, only with QUOKY_ITEM_SUMMARY_CONSENT=on): the recipient decides whether the call is made.
     let guard: SummaryRecipientGuard | undefined;
+    // A8.5 (OQ1-3): after the owner's yes the continuation never asks again; any REMOTE recipient is admitted only by the token.
     if (this.consentGate?.items !== undefined) {
-      const decided = await this.itemSummaryRecipientStep(message, session, actor, summary, readout, fallback);
+      const decided =
+        consented === undefined
+          ? await this.itemSummaryRecipientStep(message, session, actor, summary, readout, fallback)
+          : await this.consentedRecipientStep(message, session, actor, readout, fallback, consented);
       if (decided.kind === 'replied') return decided.result;
       guard = decided.guard;
     }
@@ -593,6 +604,28 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       return fallback(this.completedCallLine(guard, message));
     }
     if (result.status !== 'RESPONDED') return fallback(this.completedCallLine(guard, message));
+    if (guard === undefined) return this.documentSummaryReplyOf(message, result, summary, readout, guard);
+    // OQ1-3 review round 1 (CA P3): with the flag on, a throw while the reply is built after a completed REMOTE call is the
+    // handler's fallback that still ends with the recipient line (content left the host; OQ1-2 round 1 item 3). Flag off: unchanged.
+    try {
+      return this.documentSummaryReplyOf(message, result, summary, readout, guard);
+    } catch (err) {
+      this.deps.logger.warn('document summary reply build threw', { messageId: message.id, sessionId: session.id, errorName: err instanceof Error ? err.name : typeof err });
+      // OQ1-3 review round 2 (CA P3): the work path already recorded the document note for this turn, so the handler's fallback text
+      // (plus the line) is returned WITHOUT `fallback`, which would record a second history note.
+      const line = this.completedCallLine(guard, message);
+      return { ...result, reply: withOutboundBody(result.reply, line === undefined ? summary.fallbackText : joinBody([summary.fallbackText, line])) };
+    }
+  }
+
+  /** The delivered reply of a completed document summary: the footer (with the A8.4 line), the scrub and the delivered-text checks. */
+  private documentSummaryReplyOf(
+    message: InboundMessage,
+    result: TurnResult,
+    summary: TurnHandlerSummarizeReply,
+    readout: UntrustedDocumentReadout,
+    guard: SummaryRecipientGuard | undefined,
+  ): TurnResult {
     // ADR-0121 A8.4 (OQ1-2): after a completed REMOTE call the recipient line ends the footer (so it stays last and inside the
     // message budget), on the summary and on every fixed notice below (ruling (d)). No guard (flag off): the same footer object.
     const footer = guard === undefined ? summary.footer : withRecipientLine(summary.footer, guard.recipientLine(noticeLanguage(undefined, message.text)));
@@ -635,6 +668,11 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     session: Session,
     actor: Actor,
     readout: TurnHandlerSummarizeReply['readout'],
+    consented?: {
+      readonly recipient: { readonly key: string; readonly label: string };
+      readonly allows: (verdict: RecipientVerdict, phase: SummaryRecipientPhase) => boolean;
+    },
+    stillCurrent?: () => boolean,
   ): Promise<{ readonly verdict: RecipientVerdict; readonly guard: SummaryRecipientGuard | undefined } | undefined> {
     const items = this.consentGate?.items;
     if (items === undefined) return undefined;
@@ -645,10 +683,27 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       const router = this.deps.router;
       const expectedKey = typeof router.expectedRecipientKey === 'function' ? router.expectedRecipientKey(capability, context) : undefined;
       const verdict = items.verdictOf(provider, expectedKey);
-      const guard =
-        verdict.kind === 'local' || verdict.kind === 'expected'
-          ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel: (candidate) => items.recipientLabelOf(candidate) })
+      const recipientLabel = (candidate: AiProvider): string | undefined => items.recipientLabelOf(candidate);
+      let guard: SummaryRecipientGuard | undefined;
+      if (consented === undefined) {
+        // OQ1-2 (the ask turn): `local` and `expected` proceed; anything else gets no guard. Review round 2: the guard also refuses
+        // both hooks once a stop voided consents during the turn (`stillCurrent`, the turn's captured void epoch).
+        guard =
+          verdict.kind === 'local' || verdict.kind === 'expected'
+            ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel, ...(stillCurrent !== undefined ? { stillCurrent } : {}) })
+            : undefined;
+      } else if (verdict.kind === 'local') {
+        // OQ1-3 review round 1 (strict A8.5): LOCAL never needs consent, so the continuation proceeds without the token (no line).
+        guard = new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel });
+      } else {
+        // OQ1-3 review round 1 (strict A8.5): the yes names ONE recipient. ANY REMOTE recipient, expected or not, gets a guard only
+        // when it is that very recipient (key AND label), and the guard admits it only through the consent token at both hooks.
+        const consentedRecipient =
+          (verdict.kind === 'expected' || verdict.kind === 'unexpected') && verdict.key === consented.recipient.key && verdict.label === consented.recipient.label;
+        guard = consentedRecipient
+          ? new SummaryRecipientGuard({ capability, context, snapshot: verdict, selector: router, recipientLabel, consentedRemote: consented.allows })
           : undefined;
+      }
       return { verdict, guard };
     } catch (error) {
       this.deps.logger.warn('item summary recipient pre-resolve failed', { errorName: error instanceof Error ? error.name : typeof error });
@@ -664,6 +719,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
    *   question is the whole reply (the readout is dropped), the history keeps the question, and no call is made.
    * - otherwise (`unexpected` in a channel, without a descriptor or with another owner step pending, `unnamed`, nothing
    *   resolved): the handler's fallback plus one fixed line; nothing is sent.
+   * - OQ1-3 review round 2: a stop that voided consents after this turn began (its entry void epoch moved) is the handler's
+   *   fallback whatever the verdict: no question, no record, no call (the guard also re-checks the epoch at both hooks).
    */
   protected async itemSummaryRecipientStep(
     message: InboundMessage,
@@ -681,7 +738,13 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     };
     const items = this.consentGate?.items;
     if (items === undefined) return notSent('no-consent');
-    const pre = await this.preResolveSummaryRecipient(session, actor, readout);
+    const pre = await this.preResolveSummaryRecipient(session, actor, readout, undefined, () => this.itemConsentEpochCurrent(message));
+    // OQ1-3 review round 2 (Codex P2): a stop voided consents while this turn was in flight (the void epoch the turn captured at its
+    // entry changed). No question is asked, no record is made and nothing is sent, whatever the verdict: the handler's fallback.
+    if (!this.itemConsentEpochCurrent(message)) {
+      decided('stopped');
+      return { kind: 'replied', result: await fallback() };
+    }
     if (pre === undefined) {
       decided('unresolved');
       return { kind: 'replied', result: await fallback() };
@@ -701,6 +764,8 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
       descriptor,
       recipient: { key: verdict.key, label: verdict.label },
       requestText: message.text,
+      // OQ1-3 review round 2: `ask` itself refuses when the epoch moved (defence in depth; nothing is awaited since the check above).
+      epoch: this.itemConsentEpochs.get(message) ?? Number.NaN,
     });
     if (asked === undefined) return notSent('unexpected-ask-refused');
     decided('asked');
@@ -708,6 +773,130 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     this.nlReplyKinds.set(message, { kind: 'question' });
     await this.deps.memory.recordAssistant(asked.question, message.context, session.id);
     return { kind: 'replied', result: { status: 'RESPONDED', reply: outboundMessage(message.context, asked.question), sessionId: session.id } };
+  }
+
+  /**
+   * ADR-0121 amendment A8.5 (OQ1-3): the recipient step of the continuation after the owner's yes. The provider is resolved again
+   * (the same helper as the ask turn). `local` proceeds without the token (LOCAL never needs consent; no line). Review round 1
+   * (orchestrator ruling, strict A8.5): ANY `REMOTE` recipient, expected or not, proceeds only when it is the very recipient (key
+   * AND label) the owner said yes to, under a guard that admits the call and its one regeneration only through the consent token
+   * (`allowsContinuation`: the same actor, conversation, source and item, at most 600 s after the mint, not voided). Anything else
+   * (another REMOTE recipient, expected or not, an unnamed one, nothing resolved) is the fallback and nothing is sent. Never asks
+   * again.
+   */
+  protected async consentedRecipientStep(
+    message: InboundMessage,
+    session: Session,
+    actor: Actor,
+    readout: UntrustedDocumentReadout,
+    fallback: (extra?: string) => Promise<TurnResult>,
+    consented: ItemSummaryContinueOutcome['continuation'],
+  ): Promise<{ readonly kind: 'replied'; readonly result: TurnResult } | { readonly kind: 'call'; readonly guard: SummaryRecipientGuard }> {
+    const language = noticeLanguage(undefined, message.text);
+    const decided = (outcome: string): void => this.deps.logger.info('item summary continuation recipient', { messageId: message.id, outcome });
+    const items = this.consentGate?.items;
+    if (items === undefined) {
+      decided('no-consent');
+      return { kind: 'replied', result: await fallback(renderItemSummaryNotSentLine(language)) };
+    }
+    const { token, descriptor, recipient } = consented;
+    const conversationKey = this.agentConsentFacts(message).conversationKey;
+    const pre = await this.preResolveSummaryRecipient(session, actor, readout, {
+      recipient,
+      allows: (verdict, phase) => items.allowsContinuation(token, verdict, { phase, actorId: actor.id, conversationKey, source: descriptor.source, itemId: descriptor.itemId }),
+    });
+    if (pre === undefined) {
+      decided('unresolved');
+      return { kind: 'replied', result: await fallback() };
+    }
+    if (pre.guard === undefined) {
+      decided('recipient-changed');
+      return { kind: 'replied', result: await fallback(renderItemSummaryNotSentLine(language)) };
+    }
+    decided(pre.verdict.kind);
+    return { kind: 'call', guard: pre.guard };
+  }
+
+  /**
+   * ADR-0121 amendment A8.5 (OQ1-3): the continuation of the owner's yes to the rule-① question for an unexpected recipient of ONE
+   * live item summary (the gate took the record and minted the single-use token; the runtime base retires the token afterwards).
+   *
+   * 1. Re-checks: the owner DM, the handler still registered and still serving `item.summarize`, and for a Jira / Slack item the
+   *    A6 R2 level (`QUOKY_NL_ITEM_R2` with `QUOKY_NL_ACTIONS`) and the kill switch re-read from the persisted Actor.
+   * 2. The item is re-read fresh through the same handler and the same content-free selection, on a SEPARATE message: the stored
+   *    owner request text (so the summary prompt is the one the ask turn would have sent), id suffix `:consent`, no attachments,
+   *    quotes, formatting or reply-to; it never reaches the gate or the selector (no second A6 R2 cap charge, no receipt).
+   * 3. The re-read must be a summarize outcome naming the same item (same handler, source, item id; for a thread the same message
+   *    count), else the fixed "changed" line and nothing is sent. A refused re-read sends nothing either (the unavailable line).
+   * 4. The summary runs on the ordinary document-summary path with the token (`consentedRecipientStep`): the re-checks at both hooks,
+   *    the A8.4 recipient line after a completed REMOTE call.
+   *
+   * History: exactly one fixed note (the work path's document note, the handler's fixed note or the document note on the fallback,
+   * or the fixed line itself); never the summary, the item or a receipt. Logs: closed outcome codes and message ids only.
+   */
+  protected override async continueItemSummary(message: InboundMessage, session: Session, actor: Actor, outcome: ItemSummaryContinueOutcome): Promise<TurnResult> {
+    const { continuation } = outcome;
+    const descriptor = continuation.descriptor;
+    const language = descriptor.language;
+    const stop = async (text: string, reason: string): Promise<TurnResult> => {
+      this.deps.logger.info('item summary continuation', { messageId: message.id, outcome: reason });
+      await this.deps.memory.recordAssistant(text, message.context, session.id);
+      return this.responded(session, outboundMessage(message.context, text));
+    };
+    if (this.consentGate?.items === undefined || !isDirectConversation(message.context)) return stop(outcome.unavailable, 'not-available');
+    const handler = this.turnHandlerRegistry.find((candidate) => candidate.id === descriptor.redo.handlerId);
+    const serve = handler?.handleSelected;
+    if (handler === undefined || typeof serve !== 'function' || !this.servesItemSummarize(handler)) return stop(outcome.unavailable, 'handler-gone');
+    if (!(await this.itemSummaryStillActs(descriptor.redo.selection.target?.source, actor))) return stop(outcome.unavailable, 'level-or-switch');
+    const { attachments: _attachments, quotedRanges: _quoted, formatting: _formatting, replyTo: _replyTo, ...rest } = message;
+    const redo: InboundMessage = { ...rest, id: `${message.id}:consent`, text: continuation.requestText };
+    this.consentReruns.add(redo);
+    let reread: TurnHandlerOutcome | null;
+    try {
+      reread = await serve.call(handler, descriptor.redo.selection, this.turnHandlerContext(redo, session, actor, null));
+    } catch (error) {
+      this.deps.logger.warn('item summary continuation re-read failed', { messageId: message.id, errorName: error instanceof Error ? error.name : typeof error });
+      reread = null;
+    }
+    if (reread === null || reread.kind !== 'summarize' || !isUntrustedDocumentReadout(reread.readout)) return stop(outcome.unavailable, 'reread-refused');
+    if (!sameItemAsConfirmed(descriptor, reread.consent)) return stop(renderItemSummaryChangedLine(language), 'changed');
+    const summary = reread;
+    const readout = reread.readout;
+    // The fallback of the continuation: the handler's fallback (plus `extra`), one fixed history note, no listing receipt.
+    const fallback = async (extra?: string): Promise<TurnResult> => {
+      const fallbackText: MessageBody = extra === undefined ? summary.fallbackText : joinBody([summary.fallbackText, extra]);
+      await this.deps.memory.recordAssistant(summary.history?.assistant ?? renderUntrustedDocumentHistoryNote(readout.source, language), message.context, session.id);
+      return this.responded(session, outboundMessage(message.context, fallbackText));
+    };
+    this.deps.logger.info('item summary continuation', { messageId: message.id, outcome: 'reread-same' });
+    const memoryId = this.nlTurnFacts.get(message)?.memoryId ?? message.id;
+    return this.handleDocumentSummary(redo, session, actor, memoryId, summary, readout, fallback, continuation);
+  }
+
+  /** Whether `handler` still offers `item.summarize` right now (its catalog is read live; a throw is `false`). */
+  private servesItemSummarize(handler: ConversationTurnHandler): boolean {
+    try {
+      return (handler.catalog ?? []).some((entry) => entry.id === 'item.summarize');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * OQ1-3 re-check: a Jira / Slack item summary is an A6 R2 read, so its continuation needs the R2 level to still act for that source
+   * (`itemR2Acts`) and the kill switch re-read from the persisted Actor (`actionsStillActing`, the A6 last check). Missing methods or a
+   * throw refuse. A mail or Drive item is not governed by them (the stop phrase still voids every record and token: `voidAll`).
+   */
+  private async itemSummaryStillActs(source: string | undefined, actor: Actor): Promise<boolean> {
+    if (!isNlR2ItemSource(source)) return true;
+    const nl = this.deps.nlSelection;
+    if (nl?.actionLevel === undefined || nl.itemR2Level === undefined || nl.actionsStillActing === undefined) return false;
+    try {
+      if (!itemR2Acts(nl.actionLevel(), nl.itemR2Level(), source)) return false;
+      return (await nl.actionsStillActing(actor)) === true;
+    } catch {
+      return false;
+    }
   }
 
   /**
