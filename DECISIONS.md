@@ -40024,6 +40024,7 @@ d. Example: the ADR-0120 amendment A6 R2 D6 work-text vendor exclusion pushes a 
 Every reply that carries a model summary of a live item and went to a `REMOTE` recipient ends with one fixed line naming who summarised it, built from the
 provider's display label only, for example "· Claude로 요약" / "· summarised by Claude" (KO/EN by the owner's language). It holds no content, ids or
 model output. It appears on a regenerated summary too, and never on a deterministic fallback (no model call happened) or a `LOCAL` summary.
+(Clarified 2026-11-26, "ADR-0121 A8 — OQ1-2 review round 1" item 3: a fallback shown after a REMOTE call already completed carries the line, because the content left the host.)
 
 **A8.4a Scoped exception to "never surface the selected provider".** `AGENTS.md` line 23 and `ARCHITECTURE.md` §12 keep the default (the selected provider
 is audit information, not shown). Two separate things: (a) a consent question names its recipient under SR-1 rule ①, A5, A8.5 and A8.6, with no flag
