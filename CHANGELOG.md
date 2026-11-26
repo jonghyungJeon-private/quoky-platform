@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 amendment A8 ratified (2026-11-26; docs only)
+
+- **Changed.** `DECISIONS.md` records A8 (rule ① for live item summaries: the owner's request is the consent for the chosen chat model, with a fixed recipient line; the question only for an unexpected recipient; D8 listing plus question via A5-S6); `ARCHITECTURE.md` §10 gets a separate A8 LOW row (the A5 row is unchanged) and one sentence, §12 and `AGENTS.md` line 23 a scoped exception for the recipient line and the rule-① question. Review round 1: the A8 behaviour is behind `QUOKY_ITEM_SUMMARY_CONSENT` (default off, as built until then); the expected recipient is compared by provider identity plus label, re-checked before the call and the regeneration. Flag stays off; no code.
+
 ## Unreleased — A7.7 addendum, wiki row, owner batch answers (2026-11-26; docs and one gold status)
 
 - **Changed.** `ARCHITECTURE.md` carries the ratified A7.7 addendum (exception (d) for `OWNER_PICKED_DESTINATION`, the §10 clause split, A7 cards CRITICAL); the wiki ADR-0121 row lists A4-A7; the owner batch answers are recorded in `DECISIONS.md`; `two-line-grant.lots.v1.json` status is `approved` (its test pin updated).
