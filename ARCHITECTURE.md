@@ -313,8 +313,9 @@ fixed; the implementations are not.
    - A closed-format id projected deterministically from a read result may feed only a later read of the same source
      and destination origin. It never feeds another connector, another origin or a write, except (a) through the owner-confirmed handoff, (b) as
      the item an owner's own write clause numbers or picks from this turn's listing for a local content card (n147,
-     n148), and (c) as the thread of a Slack reply that the owner picks from a listing they saw, with the reply text
-     in the owner's own words, on the approval card (n019, ADR-0120 A6).
+     n148), (c) as the thread of a Slack reply that the owner picks from a listing they saw, with the reply text
+     in the owner's own words, on the approval card (n019, ADR-0120 A6), and (d) as the `OWNER_PICKED_DESTINATION` of one A7 card
+     (ADR-0121 A7.4b).
    - **Owner-confirmed handoff (ADR-0121 A1).** A value taken from one owner-chosen item, or from every listed item the owner's words designate (at most 10 values),
      of one source may fill one
      argument slot of a READ in another source only if all of the following hold:
@@ -443,10 +444,10 @@ fixed; the implementations are not.
 Reminder create/list/cancel is LOW (ADR-0101): an owner-instructed local write whose only effect is text addressed to
 that owner (owner DM by default). The one-time credential-guard override (ADR-0097) is a CRITICAL approval.
 
-An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from the owner's own words, or, for a Slack thread reply, the thread the owner picked from a listing they saw (ADR-0121 A4), or picked by the owner from a destination listing built without content (ADR-0121 A7)) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
+An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from the owner's own words, or, for a Slack thread reply, the thread the owner picked from a listing they saw (ADR-0121 A4); or a destination the owner picked from a destination listing built without content (ADR-0121 A7)) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
 with no automatic retry (ADR-0112).
 
-Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick, and its each-item batch yes, are consent steps, not approval cards; a single structured value runs without a consent step and is shown with its result; none ever uses approval wording or authorizes a write.
+Every cross-destination flow is HIGH (A7 cards: CRITICAL), except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick, and its each-item batch yes, are consent steps, not approval cards; a single structured value runs without a consent step and is shown with its result; none ever uses approval wording or authorizes a write.
 
 HIGH stays for every content-derived write. A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4), or, as a model-drafted summary on a CRITICAL card, into a Jira comment, a Slack post or a primary-calendar event description (ADR-0121 A7).
 
