@@ -68,6 +68,7 @@ const sameVerdict = (a: RecipientVerdict, b: RecipientVerdict): boolean => {
 export class SummaryRecipientGuard {
   private callAdmitted = false;
   private regenerationAdmitted = false;
+  private callDone = false;
   private remoteLabel: string | undefined;
 
   constructor(private readonly input: SummaryRecipientGuardInput) {}
@@ -94,6 +95,20 @@ export class SummaryRecipientGuard {
     } catch {
       return false;
     }
+  }
+
+  /** The work path calls this when the admitted summary call returned (a model call happened, content left the host if REMOTE). */
+  callCompleted(): void {
+    if (this.callAdmitted) this.callDone = true;
+  }
+
+  /**
+   * OQ1-2 review round 1 (ruling): the recipient line for the handler's FALLBACK, only when a REMOTE call already COMPLETED
+   * (the regeneration was refused or failed afterwards). No completed REMOTE call (hook 1 refusal, LOCAL, a failed first call):
+   * `undefined`, the fallback carries no line.
+   */
+  completedRecipientLine(language: 'ko' | 'en'): string | undefined {
+    return this.callDone ? this.recipientLine(language) : undefined;
   }
 
   /**

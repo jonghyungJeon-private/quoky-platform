@@ -590,9 +590,9 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
         sessionId: session.id,
         errorName: err instanceof Error ? err.name : typeof err,
       });
-      return fallback();
+      return fallback(this.completedCallLine(guard, message));
     }
-    if (result.status !== 'RESPONDED') return fallback();
+    if (result.status !== 'RESPONDED') return fallback(this.completedCallLine(guard, message));
     // ADR-0121 A8.4 (OQ1-2): after a completed REMOTE call the recipient line ends the footer (so it stays last and inside the
     // message budget), on the summary and on every fixed notice below (ruling (d)). No guard (flag off): the same footer object.
     const footer = guard === undefined ? summary.footer : withRecipientLine(summary.footer, guard.recipientLine(noticeLanguage(undefined, message.text)));
@@ -617,6 +617,11 @@ export abstract class ConversationRuntimeTurnHandlerLayer extends ConversationRu
     this.deps.logger.info('document summary replaced after the delivered-text check', { messageId: message.id });
     const notice = verdict.kind === 'claim' ? verdict.notice : renderDocumentSummaryTooLong(language);
     return { ...result, reply: withOutboundBody(result.reply, documentSummaryReplyBody(notice, footer)) };
+  }
+
+  /** OQ1-2 review round 1: the recipient line for the fallback after a REMOTE call that already completed; otherwise nothing. */
+  private completedCallLine(guard: SummaryRecipientGuard | undefined, message: InboundMessage): string | undefined {
+    return guard?.completedRecipientLine(noticeLanguage(undefined, message.text));
   }
 
   /**

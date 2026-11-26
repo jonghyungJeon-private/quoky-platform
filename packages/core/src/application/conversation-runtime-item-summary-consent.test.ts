@@ -10,7 +10,7 @@ import { ConversationRuntime, type ConversationRuntimeDeps } from './conversatio
 import { createDriveTurnHandler } from './drive/drive-turn-handler';
 import { IntentResolver } from './intent-resolver';
 import { itemSummaryConsentDescriptor } from './item-summary-consent-descriptor';
-import { renderItemSummaryNotSentLine, SUMMARY_CONSENT_REFUSED_REPLY_ID, SUMMARY_RECIPIENT_RECHECK_REFUSED } from './item-summary/summary-recipient-guard';
+import { SummaryRecipientGuard, renderItemSummaryNotSentLine, SUMMARY_CONSENT_REFUSED_REPLY_ID, SUMMARY_RECIPIENT_RECHECK_REFUSED } from './item-summary/summary-recipient-guard';
 import { createMailTurnHandler } from './mail/mail-turn-handler';
 import { renderMailSummaryFooter } from './mail/mail-reply-renderer';
 import type { MemoryManager } from './memory-manager';
@@ -56,6 +56,10 @@ interface HarnessOptions {
   /** The summaries the selected provider returns, in order (the last repeats). */
   readonly summaries?: readonly string[];
   readonly failExecute?: boolean;
+  /** Only the Nth execute call throws (1-based); earlier calls return normally with reported usage. */
+  readonly failOnCall?: number;
+  /** Adds a recording `runtimeProviderRouting` seam (the GENERAL_CHAT routed branch). */
+  readonly routing?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}) {
@@ -64,7 +68,7 @@ function harness(opts: HarnessOptions = {}) {
   const executed: { provider: string; request: AiRequest }[] = [];
   const recordAssistant: string[] = [];
   const logs: { level: string; message: string; fields?: LogFields }[] = [];
-  const runs: { kind: 'complete' | 'fail'; summary?: string; metadata?: unknown }[] = [];
+  const runs: { kind: 'complete' | 'fail'; summary?: string; metadata?: unknown; usage?: unknown }[] = [];
   const counts = { select: 0, eligible: 0, expected: 0 };
   const state = { selected: opts.selected ?? 'remote', expectedKey: 'expectedKey' in opts ? opts.expectedKey : 'fake-remote', eligible: true, microtaskRan: false };
   /** Called at the named points (tests flip the selection there). */
@@ -132,9 +136,9 @@ function harness(opts: HarnessOptions = {}) {
       executed.push({ provider: id, request });
       executeCount += 1;
       hooks.onExecute?.(executeCount);
-      if (opts.failExecute === true) throw new Error('provider down');
+      if (opts.failExecute === true || opts.failOnCall === executeCount) throw new Error('provider down');
       const list = opts.summaries ?? [SUMMARY];
-      return { text: list[Math.min(executeCount - 1, list.length - 1)] ?? SUMMARY, artifacts: [] };
+      return { text: list[Math.min(executeCount - 1, list.length - 1)] ?? SUMMARY, artifacts: [], usage: { label: 'fake-usage', inputTokens: 7, outputTokens: 3 } };
     },
   });
   const providers: Record<ProviderName, AiProvider> = {
@@ -272,7 +276,7 @@ function harness(opts: HarnessOptions = {}) {
         return undefined;
       },
       async failRun(_run, summary, o) {
-        runs.push({ kind: 'fail', summary, metadata: o.metadata });
+        runs.push({ kind: 'fail', summary, metadata: o.metadata, ...(o.usage ? { usage: o.usage } : {}) });
         return undefined;
       },
     },
@@ -307,6 +311,7 @@ function harness(opts: HarnessOptions = {}) {
     },
     turnHandlers: handlers,
     logger,
+    ...(opts.routing === true ? { runtimeProviderRouting: { execute: async () => { events.push('routed-execute'); throw new Error('routed seam must not run'); } } as unknown as ConversationRuntimeDeps['runtimeProviderRouting'] } : {}),
   };
 
   const consent = opts.consent ?? 'items';
@@ -331,7 +336,7 @@ function harness(opts: HarnessOptions = {}) {
   const runtime = new ConversationRuntime(deps, { clock: () => T0, ...(gate !== undefined ? { consentTurnGate: gate } : {}) });
   let seq = 0;
   const send = (text: string, context: ConversationContext = DM) => runtime.handle({ id: `msg-${++seq}`, context, text, receivedAt: T0 } satisfies InboundMessage);
-  return { send, state, hooks, events, executed, recordAssistant, logs, runs, counts, continued, items, store };
+  return { runtime, send, state, hooks, events, executed, recordAssistant, logs, runs, counts, continued, items, store };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -425,11 +430,20 @@ describe('OQ1-2 flag on: the recipient decides', () => {
     expect(h.executed).toHaveLength(2);
   });
 
-  it('never on the handler fallback: a provider failure is the fallback without the line', async () => {
+  it('no completed REMOTE call: a first-call provider failure is the fallback without the line', async () => {
     const h = harness({ failExecute: true });
     const result = await runPath(h, PATHS[3]!);
     expect(result.reply.text).toBe('JIRA FALLBACK');
     expect(h.recordAssistant.at(-1)).toBe('JIRA NOTE');
+  });
+
+  it('a completed REMOTE call then a failed regeneration: the fixed notice (a reply of a completed call) ends with the recipient line', async () => {
+    const h = harness({ summaries: [CLAIM, ATTRIBUTED], failOnCall: 2 });
+    const result = await runPath(h, PATHS[3]!);
+    expect(result.status).toBe('RESPONDED');
+    expect(result.reply.text.endsWith(`JIRA FOOTER\n${LINE}`)).toBe(true);
+    expect(result.reply.text).not.toContain('JIRA FALLBACK');
+    expect(h.executed).toHaveLength(2);
   });
 
   it('unexpected in the DM: the fixed question is the whole reply, the history keeps it, zero execute calls', async () => {
@@ -543,15 +557,36 @@ describe('OQ1-2 re-check guard (A8.3c)', () => {
     expect(h.executed).toEqual([]);
   });
 
-  it('hook 2: the recipient changes during the first call: the regeneration is refused, the reply is the fallback (no claim notice, no line)', async () => {
+  it('hook 2: the recipient changes during the first call: the regeneration is refused, the reply is the fallback with the line (no claim notice)', async () => {
     const h = harness({ summaries: [CLAIM, ATTRIBUTED] });
     h.hooks.onExecute = (n) => {
       if (n === 1) h.state.expectedKey = 'fake-other';
     };
     const result = await runPath(h, PATHS[3]!);
-    expect(result.reply.text).toBe('JIRA FALLBACK');
+    // Call 1 completed on a REMOTE provider: the fallback names its recipient and the failed run keeps call 1's usage.
+    expect(result.reply.text).toBe(`JIRA FALLBACK\n${LINE}`);
     expect(h.executed).toHaveLength(1);
     expect(h.events).toEqual(['commit', 'guard', 'execute', 'guard']);
+    expect(h.runs).toEqual([{ kind: 'fail', summary: SUMMARY_RECIPIENT_RECHECK_REFUSED, metadata: { deterministicReply: SUMMARY_CONSENT_REFUSED_REPLY_ID }, usage: expect.objectContaining({ totalTokens: 10 }) }]);
+  });
+
+  it('the GENERAL_CHAT routed seam refuses a guarded call in one line: no execute, content-free code', async () => {
+    const h = harness({ routing: true });
+    const guard = new SummaryRecipientGuard({
+      capability: Capability.GENERAL_CHAT,
+      context: {} as never,
+      snapshot: { kind: 'local' },
+      selector: {},
+      recipientLabel: () => undefined,
+    });
+    const session = { id: 'session-x', context: DM, status: SessionStatus.ACTIVE, createdAt: T0, updatedAt: T0 } as unknown as Session;
+    const intent: Intent = { type: IntentType.CHAT, capability: Capability.GENERAL_CHAT, confidence: 1, requiresWork: true, summary: 'chat', raw: {} } as Intent;
+    const message: InboundMessage = { id: 'msg-direct', context: DM, text: '안녕', receivedAt: T0 };
+    const handle = (h.runtime as unknown as { handleWorkTurn(...args: unknown[]): Promise<{ status: string }> }).handleWorkTurn.bind(h.runtime);
+    const result = await handle(message, session, OWNER, intent, 'mem-x', undefined, undefined, guard);
+    expect(result.status).toBe('FAILED');
+    expect(h.events).not.toContain('routed-execute');
+    expect(h.executed).toEqual([]);
     expect(h.runs).toEqual([{ kind: 'fail', summary: SUMMARY_RECIPIENT_RECHECK_REFUSED, metadata: { deterministicReply: SUMMARY_CONSENT_REFUSED_REPLY_ID } }]);
   });
 

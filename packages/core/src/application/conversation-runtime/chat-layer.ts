@@ -29,7 +29,7 @@ import { type PendingQuestion } from '../nl-routing/selection-state';
 import { parseActionSwitchPhrase } from '../nl-routing/action-switch';
 import { Capability, IntentType, TaskStatus } from '../../domain';
 import type { Actor, Artifact, ContextBundle, Id, InboundMessage, Intent, OutboundMessage, Session, Task, TurnWorkFacts } from '../../domain';
-import { executionLocalityOf, type AiExecutionResult, type AiProvider, type ProjectReadout, type ProviderSelectionContext, type ResolvedProviderSelection, type SurfaceClaim } from '../../ports';
+import { executionLocalityOf, type AiExecutionResult, type AiProvider, type AiUsage, type ProjectReadout, type ProviderSelectionContext, type ResolvedProviderSelection, type SurfaceClaim } from '../../ports';
 import { RecipientRecheckRefused, SUMMARY_CONSENT_REFUSED_REPLY_ID, SUMMARY_RECIPIENT_RECHECK_REFUSED, type SummaryRecipientGuard } from '../item-summary/summary-recipient-guard';
 import { ProviderGatewayTerminalStatus } from '../provider-routing-gateway';
 import { RoutingFailureCode } from '../runtime-response-validation-contracts';
@@ -260,6 +260,8 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
     const run = await this.deps.tasks.startRun(task, capability);
 
     let providerId: string | undefined;
+    // OQ1-2 review round 1: the usage of a summary call that already COMPLETED under a guard, kept for a later failed run.
+    let completedUsage: AiUsage | undefined;
     let routingAudit: RuntimeProviderRoutingAudit | undefined;
     // ADR-0098 D5: transient routing facts for feedback capture; `providerId` is audit-only, never shown.
     const workFacts = (accepted: string | undefined): TurnWorkFacts => ({
@@ -350,6 +352,8 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       const aiRequest = this.deps.promptRenderer.render(promptSpec, renderOptions);
 
       if (capability === Capability.GENERAL_CHAT && this.deps.runtimeProviderRouting) {
+        // OQ1-2 review round 1: the routed seam has no recipient re-check, so a guarded item summary never goes through it.
+        if (summaryGuard !== undefined) throw new RecipientRecheckRefused('call');
         const recencyFact = [...(bundle.conversationTranscript ?? [])]
           .reverse()
           .find((entry) => (entry.role ?? (entry.provenance === 'USER' ? 'user' : 'unknown')) === 'user')
@@ -444,6 +448,10 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       // ADR-0121 A8.3c hook 1 (OQ1-2): the recipient re-check, synchronous, with nothing awaited between it and the call.
       if (summaryGuard !== undefined && !summaryGuard.admit(provider, 'call')) throw new RecipientRecheckRefused('call');
       const firstExecution = await provider.execute(executionRequest);
+      if (summaryGuard !== undefined) {
+        summaryGuard.callCompleted();
+        completedUsage = firstExecution.usage;
+      }
       // ADR-0104 D1: the internal-action claim guard runs on every chat reply, whichever provider produced it.
       // ADR-0111 D3: the attachment credential check runs FIRST, on the original reply and every artifact.
       // ADR-0118 D7/D8: a document summary gets both — the credential check (its own notice) and the claim check
@@ -514,8 +522,10 @@ export abstract class ConversationRuntimeChatLayer extends ConversationRuntimeBa
       const failure = describeAiFailure(err);
       // ADR-0121 A8.3c (OQ1-2): a refused recipient re-check leaves a content-free code, never RESPONDED; the caller shows its fallback.
       const refused = err instanceof RecipientRecheckRefused;
+      const completedRunUsage = completedUsage === undefined ? undefined : runUsageRecord(completedUsage);
       await this.deps.tasks.failRun(run, refused ? SUMMARY_RECIPIENT_RECHECK_REFUSED : failure.errorSummary, {
         ...(providerId ? { providerId } : {}),
+        ...(completedRunUsage ? { usage: completedRunUsage } : {}),
         ...(refused ? { metadata: { deterministicReply: SUMMARY_CONSENT_REFUSED_REPLY_ID } } : routingAudit ? { metadata: { routingAudit } } : {}),
       });
       await this.deps.tasks.transition(task, TaskStatus.FAILED);

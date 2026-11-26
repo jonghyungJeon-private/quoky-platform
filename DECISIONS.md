@@ -40352,3 +40352,20 @@ OQ1-2 (the egress guard, the recipient line and the ask for an unexpected recipi
   drives P1, P2, P4, P6 and P7 end to end, not the NL selection itself. (2) Flag on, the pre-resolve is one extra provider resolution (readiness probe) per item
   summary. (3) The owner-step-pending branch is covered by the fail-closed rule, not by a runtime test that opens another owner step. (4) Logs carry the closed
   outcome codes and message ids only.
+
+### ADR-0121 A8 — OQ1-2 review round 1 (2026-11-26)
+
+Codex PASS and Chief Architect J1 PASS with P3s. Fixed, flag off byte-identical (the dormancy pins pass unchanged):
+
+1. **Usage of a completed call on a failed run.** When the regeneration is refused after call 1 already completed under a guard, the failed run now records call 1's
+   `usage` (`TaskManager.failRun` gains an optional `usage`), so the audit shows the call that left the host. Guarded turns only.
+2. **Routed seam.** The GENERAL_CHAT `runtimeProviderRouting` branch has no recipient re-check, so a guarded call there is refused in one line before any execute
+   (`SUMMARY_RECIPIENT_RECHECK_REFUSED`, content-free).
+3. **Ruling (orchestrator, class A).** A8.4 "never on a deterministic fallback" is read as "no model call happened". When a REMOTE call already COMPLETED and the owner
+   then gets the handler fallback (regeneration refused at hook 2, or the handler path failed after call 1 completed), the fallback carries the recipient line naming
+   that call's recipient (content left the host, transparency replaces the question). The fallback after no completed REMOTE call (hook 1 refusal, LOCAL, a failed
+   first call, pre-resolve throw, unexpected/unnamed paths) still carries no line. A provider failure of the regeneration itself stays the fixed notice of the
+   claim check, which already carries the line.
+
+A8.10 enabling blockers still open: (a) D8 REMOTE is "listing only" as an interim until OQ1-4; (b) the P3/P5 NL-selection paths are not driven end to end in the
+dormancy and flag-on tests (OQ1-5 red-team lot); (c) "another owner step pending" is covered only by the fail-closed rule, not a runtime test.

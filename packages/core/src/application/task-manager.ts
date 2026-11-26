@@ -111,7 +111,7 @@ export class TaskManager implements ContinuationContainmentEvidenceSink {
   async failRun(
     run: TaskRun,
     error: string,
-    info: { providerId?: string; metadata?: Metadata } = {},
+    info: { providerId?: string; metadata?: Metadata; usage?: RunUsageRecord } = {},
   ): Promise<TaskRun> {
     const finishedAt = now();
     const updated: TaskRun = {
@@ -122,6 +122,7 @@ export class TaskManager implements ContinuationContainmentEvidenceSink {
       durationMs: TaskManager.elapsed(run.startedAt, finishedAt),
       ...(info.providerId ? { providerId: info.providerId } : {}),
       ...(info.metadata ? { metadata: info.metadata } : {}),
+      ...(info.usage ? { usage: info.usage } : {}),
     };
     return this.storage.taskRuns.save(updated);
   }
