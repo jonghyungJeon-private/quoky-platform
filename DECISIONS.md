@@ -40370,3 +40370,38 @@ Codex PASS and Chief Architect J1 PASS with P3s. Fixed, flag off byte-identical 
 
 A8.10 enabling blockers still open: (a) D8 REMOTE is "listing only" as an interim until OQ1-4; (b) the P3/P5 NL-selection paths are not driven end to end in the
 dormancy and flag-on tests (OQ1-5 red-team lot); (c) "another owner step pending" is covered only by the fail-closed rule, not a runtime test.
+
+### ADR-0121 A8 — OQ1-3 implementation note (2026-11-26)
+
+OQ1-3 (the continuation after the owner's yes to the A8.5 question for an unexpected recipient) is implemented behind `QUOKY_ITEM_SUMMARY_CONSENT` (default
+`off`); enabling is still the A8.10 Strict step. The A8 text is not edited. No prompt, catalog or question text changed.
+
+- **Gate (AM-1).** An item-owned yes is dispatched by `runRef` after the bind: `ItemSummaryConsent.take` consumes the record and mints the single-use token, and the
+  gate returns the new `continue-item` outcome (the continuation, its language and the fixed unavailable line; `rerunText` for a yes-and-more as before). A yes that
+  `take` refuses is the fixed unavailable line. The interim OQ1-2 "unavailable for every item yes" is gone. ㅇㅇ / ok / late / cancel / re-ask / channel behave exactly as
+  the existing gate defines (with the classifier off, ㅇㅇ and ok cancel silently and route; nothing is sent).
+- **Runtime.** `handleConsentGate` records the owner's turn, then `continueItemSummary` (turn-handler layer; the base retires the token in a `finally`, and a throw is the
+  unavailable line). Order: (1) the owner DM, the handler found by `handlerId` and still serving `item.summarize` (its live catalog), and for a Jira / Slack item the A6 R2
+  level (`itemR2Acts(QUOKY_NL_ACTIONS, QUOKY_NL_ITEM_R2, source)`) and the kill switch re-read from the persisted Actor (`actionsStillActing`, the A6 last check); a mail or
+  Drive item is not governed by them (the grammar path never was), and the stop phrase voids every record and token (`voidAll`). (2) The re-read on a SEPARATE message: the
+  stored owner request text, id `<yes id>:consent`, no attachments, quotes, formatting or reply-to, marked as a gate rerun; `handler.handleSelected(redo selection)` is
+  called directly, so the selector is never reached (no second A6 R2 D8 cap charge) and no receipt, `lastSelection` or listing is written. (3) The re-read must be a
+  summarize outcome with a document readout and a descriptor naming the same handler, source and item id, and for a mail or Slack thread a defined, equal message count
+  (`sameItemAsConfirmed`); otherwise the fixed "changed" line (`renderItemSummaryChangedLine`), or the unavailable line for a refused re-read. Nothing is sent. (4) The
+  ordinary `handleDocumentSummary` path (the S3 LOCAL long-item path first, as on the ask turn) with the continuation: `consentedRecipientStep` resolves the provider again.
+  `local` and `expected` proceed under the OQ1-2 rules (LOCAL: no line; expected: the line). `unexpected` proceeds only when key AND label equal the token's, under a
+  guard whose `allowsUnexpected` is `ItemSummaryConsent.allows(token, live verdict, {phase, actor, conversation, source, item})` at hook 1 and hook 2 (≤ 600 s from the
+  mint). Anything else (a flip to another REMOTE recipient, an unnamed one, nothing resolved) is the handler fallback plus the not-sent line; the guard refuses a flip
+  between this pre-resolve and either hook. It never asks again.
+- **Reply and history.** The A8.4 line follows the OQ1-2 rules (a completed REMOTE call only, including the fallback after a completed call). Exactly one fixed history
+  note per yes turn: the work path's document note, the handler's fixed note (or the document note) on a fallback, or the fixed line itself. Never the summary, the item or
+  a receipt. The summarization request is byte-identical to the one the same request makes on the expected path (pinned: whole `AiRequest` equal).
+- **Not changed.** The runtime's `nlSelection` slot may expose the existing `itemR2Level` (no new deps key). The consent-answer import boundary is unchanged: the
+  turn-handler layer derives the continuation type from the gate type `runtime-base.ts` already imports.
+- **Tests.** Runtime (real runtime, mail, Drive and a fixed Jira handler): one call after a yes, two with the regeneration; the prompt byte-identical; the token retired
+  (replay refused); a second yes no second summary; a flip after the yes refused (another REMOTE, unnamed), LOCAL and expected proceed; a flip before hook 1 and during the
+  first call; a refused re-read; a grown thread and another Jira item ("changed"); expiry both ways; the kill switch before the yes and during the re-read; a restart; a no;
+  ㅇㅇ / ok with the classifier off and on; yes-and-more; a channel yes; the Jira R2 level and switch re-checks, fail closed without the slot, no selector call or receipt;
+  the separate message; content-free logs. Gate unit tests for the dispatch, single use, a refused `take` and `voidAll`. The OQ1-2 dormancy pins pass unchanged.
+- **Residuals (owner FYI).** (1) The P3/P5 NL-selection origin is not distinguished from the grammar origin for mail and Drive (the descriptor does not record it), so
+  the A6 kill-switch state is re-read only for Jira / Slack; a stop phrase voids every pending item record regardless. (2) A8.10 blockers (a)–(c) of OQ1-2 still stand.

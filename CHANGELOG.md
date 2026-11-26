@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A8 OQ1-3: the continuation after a yes for an unexpected recipient (2026-11-26; flag default off)
+
+- **Added.** The owner's yes to the rule-① question for an unexpected recipient now runs the summary: the gate dispatches the yes by `runRef` and returns `continue-item` (the record is taken, the single-use token minted); the runtime re-checks the DM, the handler, and for Jira / Slack the A6 R2 level and the kill switch, re-reads the item on a separate `:consent` message with the stored request text, requires the same item (and the same thread message count), then makes the one summary call (and its one regeneration) only through the token at both hooks. The reply ends with the recipient line; a recipient flip after the yes sends nothing; a changed item gets the fixed "changed" line. Pure helpers `sameItemAsConfirmed` and `renderItemSummaryChangedLine`.
+- **Changed.** The gate no longer answers an item yes with the interim "unavailable" line (only when `take` refuses); `handleDocumentSummary` and `preResolveSummaryRecipient` take an optional consented continuation; the runtime's `nlSelection` slot may expose `itemR2Level` (no new deps key).
+- **Dormant.** Flag off (default): byte-identical (the OQ1-2 pins pass unchanged). Enabling is the A8.10 Strict step.
+
 ## Unreleased — ADR-0121 A8 OQ1-2: item-summary egress guard, recipient line and the ask (2026-11-26; flag default off)
 
 - **Added.** `QUOKY_ITEM_SUMMARY_CONSENT` (`off|on`, needs `QUOKY_SUMMARY_CONSENT=on`; startup codes `ITEM_SUMMARY_CONSENT_INVALID`, `ITEM_SUMMARY_CONSENT_REQUIRES_SUMMARY_CONSENT`); the per-turn `SummaryRecipientGuard` re-checked right before the summary call and its one regeneration; the recipient line ("· Claude로 요약") on replies of a completed REMOTE call; the rule-① question for an unexpected recipient in the DM (a yes is "unavailable" until OQ1-3); D8 lookups to a REMOTE recipient show the listing only (until OQ1-4).
