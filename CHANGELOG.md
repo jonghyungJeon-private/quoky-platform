@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — ADR-0121 A7.7 applied to ARCHITECTURE.md (2026-11-26; docs only)
+
+- **Changed.** `ARCHITECTURE.md` §8 items 3 and 4, §10, §12 and §13 carry the ratified A7.7 text (the `OWNER_PICKED_DESTINATION` label, the third quarantined-output exception, the A7 card payload exception, the cross-source summary write bullet, CRITICAL A7 cards, the new forbidden rule, the Execution row). No code or test change; A7 stays dormant.
+
 ## Unreleased — A7-S4a card (2026-11-25; dormant: `QUOKY_AGENT_WRITE_PROPOSALS` and agent mode `active` still refused at startup)
 
 - **Added.** The proposal port (`ports/agent-write-proposal.port.ts`, token `AGENT_WRITE_PROPOSAL_PORT`) and its implementation over the ADR-0112

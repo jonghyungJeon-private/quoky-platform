@@ -285,7 +285,7 @@ fixed; the implementations are not.
    - the providers come from capability routing;
    - the authority comes from the risk table (§10) and the approval gates.
 3. **Information-flow control is mandatory for any agent.** Every value carries a label. The label has four parts:
-   - trust: `TRUSTED`, `STRUCTURE`, `OWNER_CONFIRMED` or `UNTRUSTED`;
+   - trust: `TRUSTED`, `STRUCTURE`, `OWNER_CONFIRMED`, `OWNER_PICKED_DESTINATION` or `UNTRUSTED`;
    - egress: `REMOTE_OK`, `REMOTE_ON_SUMMARY_REQUEST`, `LOCAL_MODEL_ONLY` or `HOST_ONLY`;
    - scope: `WORK_CHANNEL_OK` or `OWNER_DM_ONLY`;
    - its sources.
@@ -293,19 +293,23 @@ fixed; the implementations are not.
    Labels join to the most restrictive value. Labels are domain data, never a provider id. The rules are:
    - The planner receives only `TRUSTED` and `STRUCTURE` values. An `OWNER_CONFIRMED` value (below) never reaches it.
    - Raw external content is read only by a **quarantined** model call. That call has no tools and uses a
-     schema-bound output. Its output goes only to the owner's reply, with two narrow exceptions. The first is for the
+     schema-bound output. Its output goes only to the owner's reply, with three narrow exceptions. The first is for the
      owner-confirmed handoff of ADR-0121 A1 (free-text keyword flows H-5..H-7 only): a candidate the call extracted
      may fill the declared READ slot only after it is verified deterministically as a verbatim substring of the one
      owner-chosen item, passes the keyword filter, and is picked by the owner. It then carries `OWNER_CONFIRMED`. No
      other quarantined output is ever an argument.
      The second is for the owner-confirmed minimal topic of ADR-0121 A2: a local topic-classifier call returns only
      indices of one item's title tokens, from which deterministic code builds the topic.
+     The third is the cross-source summary write of ADR-0121 A7: the schema-bound output of a draft call becomes the
+     exact payload of one CRITICAL approval card, never a step, a destination, an operation or an argument.
    - For answer-step outputs (ADR-0121 A2): the output is schema-bound and carries no URL, and a model never writes
      a time, a date or a count that deterministic code can compute from read results; Core computes and renders
      those facts.
    - Content can never choose a step, a destination or an operation, and never becomes a free-text argument, with
-     two exceptions: the **owner-confirmed handoff** of ADR-0121 A1 / A4 into a READ slot, and the exact payload of a local
-     `todo.add` / `reminder.create` on an approval card that shows it with its source item (ADR-0121 A4).
+     three exceptions: the **owner-confirmed handoff** of ADR-0121 A1 / A4 into a READ slot, the exact payload of a local
+     `todo.add` / `reminder.create` on an approval card that shows it with its source item (ADR-0121 A4), and the exact
+     payload of an ADR-0121 A7 card (a Jira comment, a Slack post or a primary-calendar event description) whose
+     destination came from the owner's words or pick, shown byte for byte with its provenance banner.
    - A closed-format id projected deterministically from a read result may feed only a later read of the same source
      and destination origin. It never feeds another connector, another origin or a write, except (a) through the owner-confirmed handoff, (b) as
      the item an owner's own write clause numbers or picks from this turn's listing for a local content card (n147,
@@ -325,11 +329,16 @@ fixed; the implementations are not.
      Such a value, picked, retyped, shown and run as the one structured candidate, or shown in an accepted batch preview, is labelled `OWNER_CONFIRMED`: never `TRUSTED`, never a planner input, never a
      destination, never part of a write, and never stored. It is capped, DM-only, stopped by the kill switch and
      audited without content.
+   - **Owner-picked destination (ADR-0121 A7).** A Jira key or allowlisted channel that the owner picks by number from a
+     destination listing built from an owner-scoped READ (never from content, never ordered or pre-selected by content)
+     is `OWNER_PICKED_DESTINATION`: only the destination of the one A7 card it was picked for; never a planner input, a
+     READ argument or a payload; single use, turn-bound, DM only; rechecked against the allowlist at the card and at
+     execution.
    - Every argument carries a provenance label.
    - A model call's provider must satisfy the strictest egress label of its inputs (§5.14). **Egress labels govern
-     model providers.** For connector egress of values taken from content, the declared slot of an owner-confirmed
-     handoff is the only sanctioned path. In particular, a value from a `LOCAL_MODEL_ONLY` source (calendar) may reach
-     a connector only through that slot, and a `REMOTE` model only as an owner-confirmed minimal topic (below) or as the
+     model providers.** For connector egress of values taken from content, there are two sanctioned paths only: the declared
+     slot of an owner-confirmed handoff, and the approved payload of an ADR-0121 A7 card. In particular, a value from a
+     `LOCAL_MODEL_ONLY` source (calendar) may reach a connector only through that slot, and a `REMOTE` model only as an owner-confirmed minimal topic (below) or as the
      listed fields of an owner-requested summary after the owner's consent (ADR-0121 A5, below).
    - **Owner-confirmed minimal topic (ADR-0121 A2).** When the owner asks Quoky to generate new material from one item
      whose egress label forbids a `REMOTE` model, a short topic may reach a remote chat-tier provider only if all of
@@ -351,6 +360,15 @@ fixed; the implementations are not.
      generated answer enter the history only as fixed structural notes. It is capped, DM-only, stopped by the kill
      switch and audited without content. It is released only after the pre-registered gates of ADR-0121 A2 (G4 shows
      that a local answer is not adequate and that the remote one is better; G5 name-filter bar).
+   - **Cross-source summary write (ADR-0121 A7).** Items of one source may be summarised into the payload of one write on
+     another destination only if: the destination and the operation are in the owner's own words (with a deterministic
+     role when two literals of one kind appear) or picked by the owner from a destination listing, before any content is
+     read; the items are the ones the owner's words designate, or the held receipt of the owner's previous turn (same
+     items, digest-checked, next turn, 10 minutes); the drafter satisfies the items' egress labels, with the rule-①
+     question before a remote draft; the payload is shown whole on a CRITICAL card with a '모델 작성 초안' marker and a
+     provenance banner, every autolinkable link form defanged and mentions inert before the hash; the approval is
+     hash-bound, single use and never automatic; one write per request; DM only; capped, stopped by the kill switch,
+     audited without content.
    - **Owner-requested summary of listed items (ADR-0121 A5).** In a summarize step, the listed fields of calendar,
      Jira, Slack, Confluence and GitHub items (a fixed field table per source, taken from the listing read itself with its
      request parameters unchanged; no attachment, comment, thread, linked page or further request; no person name) carry
@@ -361,7 +379,7 @@ fixed; the implementations are not.
      words only. Each source is enabled separately. The output is schema-bound and URL-free; credential-shaped items are
      withheld; the history keeps only structural notes. Every other use of these items keeps its label.
 4. An agent has **no** shell, code execution, arbitrary URL fetch, MCP or plugin tool, memory write or connector
-   write. A write is only ever a proposal that creates an existing exact-payload, one-time approval (§10). Steps,
+   write. A write is only ever a proposal that creates an existing exact-payload, one-time approval (§10); a model-drafted payload only under ADR-0121 A7. Steps,
    model calls, connector calls, wall time and cost are capped. A kill switch stops runs without a restart.
 5. Further autonomy beyond the following needs its own ADR amending this section:
    - sub-agents;
@@ -419,18 +437,18 @@ fixed; the implementations are not.
 | LOW | owner-confirmed handoff into a READ (ADR-0121 A1, A4) | the exact values shown; an owner pick when several or free text in one item; one batched yes for each-item free text; never a write |
 | LOW | owner-confirmed minimal topic to the chat-tier model (ADR-0121 A2) | owner yes on the exact displayed string and recipient; one call; never a write |
 | LOW | owner-requested remote summary (mail, Drive; ADR-0121 A5: calendar, Jira, Slack, Confluence, GitHub) | a fixed consent question naming the recipient, the owner's yes on the next DM turn; the listed fields only; never a write |
-| HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner) |
+| HIGH | agent **write proposal**; any flow of data read from one source to a different destination | **approval** (exact payload + provenance banner; ADR-0121 A7 cards are CRITICAL) |
 | CRITICAL | deploy, DB migration, destructive shell, force push, secret access | **approval** |
 
 Reminder create/list/cancel is LOW (ADR-0101): an owner-instructed local write whose only effect is text addressed to
 that owner (owner DM by default). The one-time credential-guard override (ADR-0097) is a CRITICAL approval.
 
-An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from the owner's own words, or, for a Slack thread reply, the thread the owner picked from a listing they saw (ADR-0121 A4)) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
+An agent proposal never executes a write. The approval card shows the exact payload, the destination (taken only from the owner's own words, or, for a Slack thread reply, the thread the owner picked from a listing they saw (ADR-0121 A4), or picked by the owner from a destination listing built without content (ADR-0121 A7)) and the label sources of the data in it. Approval is one-time, hash-bound and at-most-once,
 with no automatic retry (ADR-0112).
 
 Every cross-destination flow is HIGH, except the ADR-0121 A1 owner-confirmed handoff into a READ. That handoff's pick, and its each-item batch yes, are consent steps, not approval cards; a single structured value runs without a consent step and is shown with its result; none ever uses approval wording or authorizes a write.
 
-HIGH stays for every content-derived write. A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4).
+HIGH stays for every content-derived write. A content-derived payload is allowed only into `todo.add` or `reminder.create`, on the approval card with the source shown (ADR-0121 A4), or, as a model-drafted summary on a CRITICAL card, into a Jira comment, a Slack post or a primary-calendar event description (ADR-0121 A7).
 
 The ADR-0121 A2 topic consent is likewise a consent step, not an approval card: it never uses approval wording, it
 authorizes one model call with one displayed string, and it never authorizes a write or a connector call.
@@ -487,7 +505,11 @@ planning. Approval requests and decisions are persisted as governance records.
   them) reach a planning model, choose a step, a destination or an operation, or become a free-text argument of a
   tool call, except as an `OWNER_CONFIRMED` value in the one READ slot an owner-confirmed handoff declared (ADR-0121 A1; under A4
   also a shown single structured value or an accepted batch preview, at most 10 values), or as the exact payload of a
-  local `todo.add` / `reminder.create` on an approval card that shows it with its source (ADR-0121 A4).
+  local `todo.add` / `reminder.create` on an approval card that shows it with its source (ADR-0121 A4), or as the approved
+  payload of an ADR-0121 A7 card.
+- ❌ Letting content choose, add or change a write's destination, operation, recipient or number of writes; sending a
+  model-drafted payload without the CRITICAL approval of its exact bytes, after any change to them, or automatically
+  (ADR-0121 A7).
 - ❌ Acting on instructions found in content ("do what the mail says", "follow the PR description"), at any level.
   Content may only be summarized or quoted as a fixed, inert list (ADR-0121 A4); an action needs the owner's own request through the approval paths.
 - ❌ Sending item content to a model whose locality its egress label forbids — through a summary, an answer, history
@@ -516,7 +538,7 @@ planning. Approval requests and decisions are persisted as governance records.
 | Connectors | Jira/Slack/Confluence read adapters (config-gated) | additional read/write systems | `ConnectorProvider` (ADR-0072); writes use separately approved narrow ports |
 | Extensibility | manual registration | plugin bundles + manifest | bundle of existing ports `[LATER]` |
 | Orchestration | single task | workflows | `workflowId` reserve → engine `[LATER]` |
-| Execution | single-shot + one bounded plan-then-execute read agent (ADR-0121) | write proposals, then further autonomy only by ADR | `AgentProfile` seam → bounded runtime `[NOW]` behind flags; broader runtime `[LATER]` |
+| Execution | single-shot + one bounded plan-then-execute read agent with S3 cross-source write proposals (ADR-0121 A7) | further autonomy only by ADR | `AgentProfile` seam → bounded runtime `[NOW]` behind flags; broader runtime `[LATER]` |
 | Scheduling / notification | in-process, composition-root tick for owner reminders; owner-only `NotificationSink` (ADR-0101) | distributed scheduler / queue, multi-recipient notifications | `ReminderRepository` + `NotificationSink` ports; swap the tick driver and sink adapter, never the Core contracts |
 | Network posture | outbound-only to an allowlist, loopback listener only, traffic/volume ledger (ADR-0121) | same in Team Edition, enforced at the network layer | egress guard in the composition root; Core unaware |
 
