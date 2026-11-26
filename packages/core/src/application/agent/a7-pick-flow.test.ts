@@ -86,7 +86,9 @@ interface Options {
   readonly withHasher?: boolean;
   readonly slackItems?: ReadonlyArray<Record<string, unknown>>;
   /** The destination-existence check (A7.5 step 2 GET): default every issue exists; `null`: the port is not wired. */
-  readonly destinationExists?: ((issueKey: string) => boolean) | null;
+  readonly destinationExists?: ((issueKey: string) => boolean | Promise<boolean>) | null;
+  /** Injected run bounds (the object is read at every admission, so a test may change it after the asking turn). */
+  readonly bounds?: { -readonly [K in keyof import('./run-bounds').AgentRunBoundValues]?: number };
   readonly bootId?: string | null;
   /** The summariser's locality (default `LOCAL`); `REMOTE` with `askConsent` asks the rule-① question. */
   readonly drafterLocality?: AiExecutionLocality;
@@ -145,6 +147,7 @@ function harness(options: Options = {}) {
     logger,
     timeZone: 'Asia/Seoul',
     timeoutMs: 6_000,
+    ...(options.bounds !== undefined ? { bounds: options.bounds } : {}),
     readers: { 'slack.search': slack, 'jira.issues': jira },
     summarizer: new CapabilityRouter(new AiProviderManager([drafter]), policy),
     workSummarySources: ['slack', 'jira'],
@@ -730,5 +733,35 @@ describe('review round 1: a fresh destination-existence check at the pick (P2-5)
     expect(await unwired.svc.continueA7Pick(unwired.pickTurn('2', facts('m2', 'm1', await asked(unwired)), at(1)))).toMatchObject({ kind: 'declined', reason: 'no-destination-check' });
     expect(unwired.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
     expect(unwired.proposals).toHaveLength(0);
+  });
+});
+
+describe('review round 2: the destination check is charged and raced (P2)', () => {
+  const asked = async (h: ReturnType<typeof harness>) => jsonRoundTrip(((await h.svc.runActive(h.turn(FORM_A_TEXT, facts('m1')), async () => CHAT)) as { a7State: unknown }).a7State);
+
+  it('a hung destination GET is cut by the wall: nothing is read, drafted or proposed, and no slot stays in flight', async () => {
+    const bounds = {} as { wallMs?: number };
+    const h = harness({ script: [FORM_A_PLAN], destinationExists: () => new Promise<boolean>(() => undefined), bounds });
+    const state = await asked(h);
+    bounds.wallMs = 80;
+    const started = Date.now();
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)))).toMatchObject({ kind: 'declined', reason: 'bound' });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
+    // The slot is free: a second pick turn is admitted (the pick was single use, so it is simply not pending).
+    expect(await h.svc.continueA7Pick(h.pickTurn('2', facts('m3', 'm2', state), at(2)))).toMatchObject({ kind: expect.stringMatching(/not-pending|declined|cancelled/u) });
+  }, 5_000);
+
+  it('a connector budget that refuses the charge: no GET at all, nothing read', async () => {
+    const bounds = {} as { maxConnectorQueries?: number };
+    const h = harness({ script: [FORM_A_PLAN], bounds });
+    const state = await asked(h);
+    bounds.maxConnectorQueries = 0;
+    const outcome = await h.svc.continueA7Pick(h.pickTurn('2', facts('m2', 'm1', state), at(1)));
+    expect(outcome).toMatchObject({ kind: 'declined' });
+    expect(h.state.checks).toEqual([]);
+    expect(h.reads.filter((read) => read.entry === 'slack.search')).toHaveLength(0);
+    expect(h.proposals).toHaveLength(0);
   });
 });

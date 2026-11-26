@@ -40213,3 +40213,11 @@ SUPERSEDED by this round (the owner's words are no longer frozen; the carry-over
 - **A7-S5 must-haves (from the Chief Architect).** (1) The caller saves `a7State` on every non-`not-pending` outcome before any ordinary re-route;
   (2) it routes a pending pick first; (3) it sets `previousTurnId` from owner turns only; (4) it calls `withCardClosingTurn` on the closure turn; (5) the
   named-destination GET is an ACTIVATION GATE before `active` (the same `CrossWriteDestinationPort`, wired in `apps/quoky`, for named and picked targets).
+
+### A7-S4b review round 2 (2026-11-26; Chief Architect J2 delta review PASS with P2 and P3 fixes)
+
+Append-only under the round-1 note. Still DORMANT. P2: the pick's destination check is charged through `budget.mayReadConnector()` (refused: declined `bound`, no GET)
+and runs inside `withinRun` against the wall and shutdown, so a hung GET is cut and holds no slot or charge. P3: the A7 guard (one live-actor read) is computed once per
+turn (raced in `runPlanned`, by the timeout and shutdown in `continueA7Pick`) and passed to the receipt bind, the card void and the cross-write step;
+`consumePickedA7Destination` also refuses a non-finite expiry and checks the stored conversation and listing turn (`pickBinding` on the propose input);
+`withA7State` reads other actors' records by boot only (each actor's own read applies its own kill switch); `agentWriteProposalDep` is called once (one boot id).

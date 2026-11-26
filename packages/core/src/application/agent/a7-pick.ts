@@ -290,6 +290,9 @@ export interface PickedUse {
   readonly sessionId: string;
   readonly turnId: string;
   readonly now: string;
+  /** Round 2: the DM conversation the pick was made in, and the turn that showed the listing (the pick turn's previous turn). */
+  readonly conversation: string;
+  readonly listingTurnId: string;
 }
 
 /**
@@ -302,8 +305,9 @@ export function consumePickedA7Destination(picked: unknown, use: PickedUse): boo
   const binding = ISSUED.get(picked);
   if (binding === undefined || binding.used) return false;
   const now = Date.parse(use.now);
-  if (!Number.isFinite(now) || now >= binding.expiresAtMs) return false;
+  if (!Number.isFinite(now) || !Number.isFinite(binding.expiresAtMs) || now >= binding.expiresAtMs) return false;
   if (binding.actorId !== use.actorId || binding.sessionId !== use.sessionId || binding.pickTurnId !== use.turnId) return false;
+  if (binding.conversation !== use.conversation || binding.listingTurnId !== use.listingTurnId) return false;
   binding.used = true;
   return true;
 }

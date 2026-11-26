@@ -125,7 +125,8 @@ export function withA7State(current: unknown, actorId: string, next: A7ActorStat
   const byActor: Record<string, unknown> = {};
   for (const other of Object.keys(recordOf(recordOf(current).byActor))) {
     if (other === actorId) continue;
-    const state = readA7State(current, other, guard);
+    // Round 2 (P3): another actor's record is judged by the boot only, never by THIS actor's kill-switch time (that actor's own read applies its own switch).
+    const state = readA7State(current, other, { bootId: guard.bootId });
     if (Number.isFinite(nowMs) && stillUseful(state, nowMs)) byActor[other] = { bootId: guard.bootId, ...serialise(state) };
   }
   const keys = Object.keys(byActor);

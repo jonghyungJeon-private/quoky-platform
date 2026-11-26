@@ -132,6 +132,8 @@ export interface A7ProposeInput {
   readonly picked?: PickedA7Destination;
   /** The owner turn this step runs in: a picked destination is bound to it (single use, P2-1). Needed with `picked`. */
   readonly turnId?: string;
+  /** Round 2: the conversation and the listing turn the pick was bound to (checked at consume). Needed with `picked`. */
+  readonly pickBinding?: { readonly conversation: string; readonly listingTurnId: string };
   /**
    * A7-S4b, form b: the bound (or frozen) receipt and the read step rebuilt from it. The read is the receipt's entry with its held args; only
    * the receipt's ids that still hold the same digest are drafted from, and nothing is added (A7.4). Needs `hasher`.
@@ -204,9 +206,9 @@ export async function runA7ProposeStep(deps: A7ProposeDeps, input: A7ProposeInpu
       const picked = input.picked;
       const projectOk =
         (destination.state === 'pick-ticket' && destination.project === picked.project) || (destination.state === 'pick-project' && destination.projects.includes(picked.project));
-      if (!isPickedA7Destination(picked) || !projectOk || input.turnId === undefined) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
+      if (!isPickedA7Destination(picked) || !projectOk || input.turnId === undefined || input.pickBinding === undefined) return refuse('unsupported', A7_NOT_MADE_LINE[language]);
       // Single use and bound to this actor, session and pick turn, within its expiry (P2-1): a reuse or a stranger's use refuses, nothing read.
-      if (!consumePickedA7Destination(picked, { actorId: input.actorId, sessionId: input.sessionId, turnId: input.turnId, now: input.now })) return refuse('unsupported', A7_NOT_MADE_LINE[language], { pick: 'refused' });
+      if (!consumePickedA7Destination(picked, { actorId: input.actorId, sessionId: input.sessionId, turnId: input.turnId, now: input.now, conversation: input.pickBinding.conversation, listingTurnId: input.pickBinding.listingTurnId })) return refuse('unsupported', A7_NOT_MADE_LINE[language], { pick: 'refused' });
       key = picked.issueKey;
       grounding = 'owner-picked';
     } else {

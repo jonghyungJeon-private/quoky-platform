@@ -89,6 +89,8 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
       provide: AGENT_RUNS,
       useFactory: (router: CapabilityRouter, storage: StorageProvider, consentStore?: ConsentPendingStore, proposalPort?: AgentWriteProposalPort | null): AgentRunService => {
         const config = resolveConfig();
+        // Built once: each call draws its own boot id.
+        const writeProposal = agentWriteProposalDep(config, proposalPort);
         return new AgentRunService({
           mode: config.agent.mode,
           router,
@@ -113,7 +115,7 @@ export function createAgentProviders(resolveConfig: () => AgentFeatureConfig, op
                 // ADR-0121 A5-S1: the per-source summary switches (default off); an empty list leaves the key out.
                 ...(config.agent.summarySources.length > 0 ? { workSummarySources: config.agent.summarySources } : {}),
                 // ADR-0121 A7 (A7-S4a, dormant): the proposal port, only with every switch on (see `agentWriteProposalDep`).
-                ...(agentWriteProposalDep(config, proposalPort) !== undefined ? { writeProposal: agentWriteProposalDep(config, proposalPort) } : {}),
+                ...(writeProposal !== undefined ? { writeProposal } : {}),
               }
             : {}),
         });

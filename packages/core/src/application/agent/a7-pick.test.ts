@@ -252,7 +252,7 @@ describe('P2-1: a picked destination is bound to its actor, session, turns and e
     if (resolved.kind !== 'destination') throw new Error('no destination');
     return resolved.picked;
   };
-  const use = { actorId: 'owner', sessionId: 's1', turnId: 'm2', now: at(1) };
+  const use = { actorId: 'owner', sessionId: 's1', turnId: 'm2', now: at(1), conversation: context.conversation, listingTurnId: 'm1' };
 
   it('is consumed once for the very actor, session and pick turn, within its expiry', () => {
     const value = picked();
@@ -265,6 +265,8 @@ describe('P2-1: a picked destination is bound to its actor, session, turns and e
     expect(consumePickedA7Destination(value, { ...use, actorId: 'someone' })).toBe(false);
     expect(consumePickedA7Destination(value, { ...use, sessionId: 's2' })).toBe(false);
     expect(consumePickedA7Destination(value, { ...use, turnId: 'm3' })).toBe(false);
+    expect(consumePickedA7Destination(value, { ...use, conversation: 'other-dm' })).toBe(false);
+    expect(consumePickedA7Destination(value, { ...use, listingTurnId: 'm0' })).toBe(false);
     expect(consumePickedA7Destination({ ...value }, use)).toBe(false);
     expect(consumePickedA7Destination(undefined, use)).toBe(false);
     expect(consumePickedA7Destination(value, use)).toBe(true);
@@ -284,5 +286,15 @@ describe('P2-1: a picked destination is bound to its actor, session, turns and e
     const value = picked({ now: at(1) }, frozen);
     expect(consumePickedA7Destination(value, { ...use, now: at(12) })).toBe(false);
     expect(resolveA7Pick(pending(), '2', { ...context, sessionId: 's2' })).toEqual({ kind: 'cancel', reason: 'other-session' });
+  });
+});
+
+describe('review round 2 (P3): another actor\'s record is never voided by THIS actor\'s kill switch', () => {
+  it('a write by an actor whose switch changed late keeps the other actor\'s older record', () => {
+    const first = withA7State(undefined, 'someone', { held: receipt() }, at(1), GUARD);
+    const written = withA7State(first, 'owner', {}, at(5), { bootId: 'boot-1', switchAt: at(4) });
+    expect(readA7State(written, 'someone', GUARD).held).toBeDefined();
+    // The other actor's own switch still voids it on that actor's own read.
+    expect(readA7State(written, 'someone', { bootId: 'boot-1', switchAt: at(4) }).held).toBeUndefined();
   });
 });
