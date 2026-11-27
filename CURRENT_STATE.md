@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6-S4 measurement 1 and consent-answer.v2 (2026-11-27, branch `claude/v5-a6-prompt-v2`)
+
+v1 classifier failed both arms 0/3 (local 27 wrong captures/run; remote 19-20, mostly scope changes read as yes-and-more against AM-2); prompt `consent-answer.v2` made offline (no gold/gate change); v2 not run, switch off. See DECISIONS.
+
 ### A6.3 contraction note (2026-11-26, branch `claude/v5-a6-contraction`)
 
 Consent-answer structural check no longer cancels letter-flanked apostrophes ("don't"); grant rule unchanged; 5 corpus cases restaged to the classifier stage (sha `901cc489...`); no eval run. See DECISIONS.

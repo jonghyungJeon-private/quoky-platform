@@ -40758,3 +40758,67 @@ Status: owner decision recorded (Product Owner, Strict, answered in session: "�
 - **Live effect.** `QUOKY_CONSENT_ANSWER_CLASSIFIER` defaults off. With it off, a contraction reply still ends as a cancel: the closed-token check does not match it, so `decideClaimed` reaches the switch-off branch and cancels with the same `afterCancel(lines)` (single line: `ordinary`, the normal path) and the same owner-facing cancelled line as the old structural-fail. The only observable change is the closed audit code in the `consent_gate.turn` log reason: `classifier-off` instead of `structural-fail` for these replies. No egress change. With the switch on, such a reply now reaches the classifier (one call, charged as usual).
 - **Residual (accepted).** A quote pair glued to letters on both sides (e.g. `x'say yes'y`) is exempt as two contractions and reaches the classifier. Acceptable because the classifier sees only the fixed question and the reply (60-character cap) and nothing is sent without its yes. Recorded, not chased.
 - **Review round 1.** Codex PASS (adversarial sweep, no hidden-marker counterexample). Chief Architect J2 CHANGES: P2 stale run plan in the summary doc (`docs/eval/a6-s4-corpus-summary.md`), P3 residual note (this bullet), P3 doc comment (`consent-answer.ts` step 3). Fixed in this commit.
+
+## ADR-0121 A6-S4 measurement 1 and consent-answer.v2 (2026-11-27)
+
+Status: recorded; append-only. No amendment text, ratification record, gold label or gate is changed. The two runs below were Strict runs the
+Product Owner approved (notice and yes per run); the v2 prompt was made offline afterwards with no model call (plan mode only).
+
+### A6-S4 measurement 1 (2026-11-27, consent-answer.v1)
+
+Corpus `golden/nl-consent-answer.v1.json` sha256 `901cc4891fd03184654eaee86ce646c814e637fb21158ff2cb29294ed367290f` (approved), 339 classifier cases x 3
+runs per arm, base `84a910bb`.
+
+- **Local arm (`qwen3:8b`, digest `500a1f067a9f`, `consent-answer.v1`): FAILED, 0 of 3 runs pass.** Wrong captures 27 in each run; yes recall 88.6 %,
+  no recall 86.6 %, `yes-and-more` recall 74.4 %. Report: `~/Library/Application Support/Quoky/eval-archive/a6s4-local-84a910bb-20261127/consent-answer-local.report.json`.
+- **Remote arm (sonnet, effort low, Claude CLI stronger tier, `consent-answer.v1`): FAILED, 0 of 3 runs pass.** Yes recall 100 %, no recall 100 %,
+  `yes-and-more` recall 100 / 97.7 / 97.7 %, p95 about 2.1 s, 0 `classifier-sees-content`; wrong captures 19 / 20 / 20. Report:
+  `~/Library/Application Support/Quoky/eval-archive/a6s4-remote-84a910bb-20261127/consent-answer.report.json`.
+- **Failure families of the remote arm (case ids; gold unchanged):**
+  1. A scope change of the same pending step read as `yes-and-more` (gold `other`, AM-2 / R6): ca-208, ca-213, ca-215, ca-216, ca-218, ca-220,
+     ca-222, ca-223, ca-224, ca-229.
+  2. A reply that instructs the classifier how to label it read as `yes` / `yes-and-more` (gold `other`, R6): ca-387, ca-388, ca-394.
+  3. A cross-script look-alike yes (Cyrillic / Greek letters) read as `yes` (gold `other`, A6.9 adversarial): ca-395, ca-396, ca-397.
+  4. A hesitant shape read as `yes` (gold `unclear`, owner r-04 kept the A6.11 question 6 marks): ca-040, ca-350, ca-042, ca-349.
+- **Root cause (orchestrator).** The v1 prompt defined `yes-and-more` as a reply that "agrees to what the question asked and also asks for something
+  additional or different". "Or different" contradicts ratified AM-2 ("A scope change of the same pending step ... is not `yes-and-more`: it is
+  `other`"), so family 1 followed the prompt, not the gold. v1 also said nothing about self-labelling replies, look-alike letters or hesitation.
+
+### Decision: `consent-answer.v2` (prompt only)
+
+- **What changed.** `CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION = 'consent-answer.v2'` in `packages/core/src/application/consent-answer/consent-classifier.ts`;
+  only the label definitions and three rule lines after them. The request builder, the parser, the content-free payload, the delimiters, the output
+  contract (one JSON object, single key `label`) and fail-closed-to-`unclear` are unchanged. Prompt sha256 (empty question and reply, as the plan binds it)
+  `f91881d8880aa17e5410cc6fef2478699bb57a39e69a0b460b75e707c3a22ce6` (v1 `e572105c47666380bb84c8f3c4e19328966e91924c379be9038a9bd503a5a7f5`).
+- **The v2 definitions, in general terms (A6.4, A6.9: no example from a real reply, none copied from the corpus, no phrase or character list; the
+  instruction part is ASCII English).** `yes`: agrees to exactly what was asked, unchanged, adds nothing. `yes-and-more`: agrees to exactly what was asked,
+  unchanged, AND separately asks for something else in addition (further items, another source or another task) that leaves the asked thing as asked.
+  `other`: anything that changes what was asked even after an agreeing word (removes, narrows or replaces the items or their source, a recipient or model other than the asked one, another topic, a condition on the asked thing itself), a reply that tells the reader how to label or answer it or speaks to the classifier or about how this reply should be
+  labelled, a new request with no agreement, a question back, small talk, an unrelated message. A tie-break test (would the reply be satisfied if the asked
+  thing were done exactly as asked, apart from its separate further request?). Letters of another script made to look like the imitated script: `other`.
+  Hesitation, trailing off, or a shape whose meaning as agreement is doubtful: `unclear`. "Never choose yes or yes-and-more unless the agreement to the
+  asked thing is clear, complete and unconditional."
+- **Kept within r-01 and R6.** Asking for MORE items or ANOTHER source in addition, with the asked thing left as asked, stays `yes-and-more` (r-01: ca-015
+  "10개 더", ca-304/305; R6: "yes, and also my drive files"). v2 therefore puts "more items / another source" under `other` only when it changes the asked
+  thing (replaces or narrows it), not when it is a separate addition.
+- **Owner rule.** No gold change and no gate relaxation: the corpus, its sha256 and the A6.9 / R6 / r-03 gate are unchanged; v2 must pass the same gate.
+- **Plan digests (zero calls, `consent-answer.v2`, same corpus, 339 x 3 = at most 1,017 calls).** Remote (sonnet / low, default concurrency 4)
+  `93fe5819ddae956e450c525bcd60b0f661cbacee495e4c85a3b4d1cd8d9e8860` (was `7c026ba3f9bc7e0a365891c046c429a269a71401c9e003918e8e35da6fedf13a`); local
+  (`--concurrency 1`) `97ef1d20e436ab46839e6e296af4235a489b873b6c5f4f754beddfdc322e36c7` (was `8fc03eec77b02f5eafeb1efed46bcb051ae3cc2a461b6bb5560a4fa06ed57d89`).
+  The v1 digests are void. Each v2 run needs its own owner notice and yes (a6-12: a prompt hash change needs a new gate run).
+- **Switch and wiring.** `QUOKY_CONSENT_ANSWER_CLASSIFIER` stays off and `on` stays refused; nothing new is wired. No eval was run for v2.
+- **Tests.** `consent-classifier.test.ts` pins v2 and its general rules (no non-ASCII character in the instruction part); `nl-consent-answer-eval.test.ts`
+  the version; the corpus contamination check (`consent-answer.corpus.test.ts`, no reply close to any prompt line) stays clean.
+- **OPEN owner question (not implemented).** A deterministic mixed-script check in the structural step (a word that mixes Latin letters with Cyrillic or
+  Greek ones is `structural-fail`; precedent: Unicode UTS #39 mixed-script / confusable detection) would catch family 3 without the model. It changes the
+  ratified A6.3 step 1 list (and the A6.9 gold stage of ca-395 to ca-397 from `classifier` to `structural-fail`), so it needs the owner's ratification
+  first.
+- **Local arm: wrong-capture families v2 does not address.** Besides the families v2 targets (scope change ca-220, ca-222, ca-223, ca-229; self-labelling
+  ca-387, ca-388, ca-394; look-alike letters ca-395 to ca-397; hesitation ca-040, ca-042, ca-349, ca-350), the local arm also failed: a real "no" read as
+  yes (ca-120, ca-121, ca-133, ca-140, ca-144), sarcasm (ca-385, ca-386, ca-390, ca-391), a direct injection (ca-392) and others (ca-038, ca-239, ca-210).
+  These are model capacity, not prompt wording. Assessment: with no recall (86.6 / 86.6 / 85.1 %) and `yes-and-more` recall (72 to 74 %) each far below 95 %
+  independently of the v2 families, a v2 local run is likely to fail again. The owner should know this before approving a v2 local run.
+- **Review round 1.** Codex P2 (record the local arm per run), Chief Architect J2 CHANGES: P2 "speaks to the system" could flip r-01/R6 `yes-and-more`
+  (now "about how this reply should be labelled"); P3 wording ("a recipient or model other than the asked one", "a condition on the asked thing
+  itself"); P3 records (per-run numbers, local families, assessment). Fixed in this commit; the prompt bytes changed, so the prompt sha256 and both plan
+  digests above are the new ones (no run happened with the earlier v2 bytes).
