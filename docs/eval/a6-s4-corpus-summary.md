@@ -23,10 +23,10 @@ ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-1
 | non-answer (gold `other`) | 130 | 106 | control-forfeit 14, handler-claimed 9, structural-fail 1 | 100 (r-03 (2)) |
 | yes-and-more | 54 | 43 | handler-claimed 7, control-forfeit 4 | 40 (r-03 (2)) |
 | unclear | 24 | 24 | — | 20 |
-| adversarial | 43 | 11 (gold `other`) | structural-fail 25, fast-path 7 | 40 (전체) |
+| adversarial | 43 | 8 | structural-fail 28, fast-path 7 | 40 (전체) |
 
 gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
-단계별: classifier 336, structural-fail 29, control-forfeit 18, handler-claimed 16, fast-path 15. classifier 단계가 아닌 75건은 실제
+단계별: classifier 336, structural-fail 29, control-forfeit 18, handler-claimed 16, fast-path 15. classifier 단계가 아닌 78건은 실제
 런타임이 분류기를 부르지 않는다. 테스트가 그 사실을 고정하므로 eval에서는 호출하지 않는다.
 
 - `handler-claimed`(리뷰 1차에서 추가한 단계): 등록된 turn handler의 `surfaceClaim`이 가져가는 답이다. 운영에서는 분류기 호출 전에
@@ -94,7 +94,7 @@ no recall 86.6/86.6/85.1 %, yes-and-more recall 72~74 %가 v2 묶음과 무관�
   (혼합 문자 restage 전 339건 v2 값 remote `93fe5819…`, local `97ef1d20…`, v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
   코퍼스, 옵션이나 프롬프트를 바꾸면 둘 다 바뀐다. run마다 소유자 알림과 yes가 따로 필요하다(a6-12).
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
-- remote 61.0 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
+- remote 60.5 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
   a6-02 순서대로 local arm을 먼저 돌리고, 통과하면 remote가 필요 없다. 그렇다면 Claude 창 비용은 0이다.
 - run-gates 모드: `consent-answer`(remote), `consent-answer-local`(local)이다. 비율 0은 모델 이름이 아니라 `consent-answer-local` 모드에
   붙는다. local arm은 한 번에 한 호출만 보낸다(`--concurrency 1`). 기본 모드에는 넣지 않았고 요청할 때만 돈다.
