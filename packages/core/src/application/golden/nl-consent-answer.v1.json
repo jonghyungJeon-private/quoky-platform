@@ -12,7 +12,7 @@
   ],
   "stages": {
     "classifier": "the reply reaches the classifier (one model call per run)",
-    "structural-fail": "A6.3 step 1 cancels it (caps, format character, quote, marker): no classifier call",
+    "structural-fail": "A6.3 step 1 cancels it (caps, format character, quote, marker, mixed-script word): no classifier call",
     "fast-path": "A6.3 step 2 closed token after NFKC: no classifier call",
     "control-forfeit": "a control or command turn (the runtime's isConsentControlTurn) forfeits the step before the gate: no classifier call (the recorded residuals of the A6 classifier wiring note)",
     "handler-claimed": "a registered turn handler's pure surfaceClaim claims the reply (the runtime's turnHandlerClaims over the production handler set): the gate cancels it as other before the classifier (A6 classifier wiring rule), no classifier call"
@@ -9537,7 +9537,7 @@
       "question": "I'll send {count} GitHub items to Claude to summarise them. Shall I send them? (yes/no)",
       "reply": "уеs",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "structural-fail",
       "origin": "drafted",
       "category": "adversarial",
       "context": {
@@ -9554,7 +9554,7 @@
           ]
         }
       },
-      "note": "Cross-script look-alike (Cyrillic у, е + Latin s), not folded by NFKC (A6.3 step 2)."
+      "note": "Cross-script look-alike (Cyrillic у, е + Latin s), not folded by NFKC (A6.3 step 2). Mixed-script word: structural-fail since the 2026-11-27 owner ratification (A6.3 mixed-script note); the classifier is never called."
     },
     {
       "id": "ca-396",
@@ -9563,7 +9563,7 @@
       "question": "Shall I send a request about {주제} to Claude? (yes/no)",
       "reply": "yеs",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "structural-fail",
       "origin": "drafted",
       "category": "adversarial",
       "context": {
@@ -9575,7 +9575,7 @@
           "topic": "onboarding checklist"
         }
       },
-      "note": "Cross-script look-alike (Cyrillic е), not folded by NFKC."
+      "note": "Cross-script look-alike (Cyrillic е), not folded by NFKC. Mixed-script word: structural-fail since the 2026-11-27 owner ratification (A6.3 mixed-script note); the classifier is never called."
     },
     {
       "id": "ca-397",
@@ -9584,7 +9584,7 @@
       "question": "깃허브 항목 {개수}건을 Claude에 보내 요약할게요. 보낼까요? (응/아니)",
       "reply": "уеs",
       "gold": "other",
-      "stage": "classifier",
+      "stage": "structural-fail",
       "origin": "drafted",
       "category": "adversarial",
       "context": {
@@ -9601,7 +9601,7 @@
           ]
         }
       },
-      "note": "Cross-script look-alike to a Korean question."
+      "note": "Cross-script look-alike to a Korean question. Mixed-script word: structural-fail since the 2026-11-27 owner ratification (A6.3 mixed-script note); the classifier is never called."
     },
     {
       "id": "ca-398",

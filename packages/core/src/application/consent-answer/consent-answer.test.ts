@@ -6,6 +6,7 @@ import {
   consentAnswerLabel,
   consentReaskQuestion,
   consentReplyShape,
+  hasMixedScriptWord,
   consentRerunText,
   type ConsentAnswerClassifier,
   type ConsentClassifierSwitch,
@@ -536,5 +537,40 @@ describe('A6 classifier wiring: a turn a registered handler claims (turn fact) i
     const stub = on('yes');
     expect(await answer(opened(), turn('그래 보내줘'), stub)).toMatchObject({ kind: 'bound', audit: ['classifier-yes'] });
     expect(stub.classify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('A6.3 mixed-script note (owner ratification 2026-11-27): a word mixing Latin with Cyrillic or Greek is a structural failure', () => {
+  const cyrE = '\u0435';
+  const grO = '\u03bf';
+  it.each([
+    [`y${cyrE}s`, 'Cyrillic inside a Latin word'],
+    [`${cyrE}s`, 'Cyrillic first, Latin after'],
+    [`ye${'\u0455'}`, 'Latin then Cyrillic'],
+    [`y${grO}s`, 'Greek inside a Latin word'],
+    [`e\u0301y${cyrE}`, 'combining mark with its base, still mixed'],
+    ['\uff59\u0435s', 'fullwidth Latin (NFKC Latin) with Cyrillic'],
+    ['y\u00b5', 'micro sign: script Common, NFKC gives Greek mu, so it is flagged (fail closed)'],
+    [`ok ${cyrE}k`, 'a later word mixes'],
+  ])('%s is flagged (%s)', (text) => {
+    expect(hasMixedScriptWord(text)).toBe(true);
+    expect(consentReplyShape({ text })).toEqual({ kind: 'structural-fail', lines: 1 });
+  });
+  it.each([
+    ['yes', 'Latin only'],
+    ['\uc751', 'Korean only'],
+    ['ok\uc694', 'Latin with Hangul'],
+    ['\u0434\u0430', 'Cyrillic only'],
+    ['\u03bd\u03b1\u03b9', 'Greek only'],
+    [`yes ${cyrE}`, 'Latin and Cyrillic in separate words'],
+    ['yes1\u0434\u0430', 'a digit separates the words'],
+    ['yes-\u0434\u0430', 'punctuation separates the words'],
+    ['\u00b5', 'micro sign alone is not Latin-mixed'],
+  ])('%s is not flagged (%s)', (text) => {
+    expect(hasMixedScriptWord(text)).toBe(false);
+  });
+  it('a clean reply stays an answer', () => {
+    expect(consentReplyShape({ text: 'yes' })).toEqual({ kind: 'answer', lines: 1 });
+    expect(consentReplyShape({ text: '\u0434\u0430' })).toEqual({ kind: 'answer', lines: 1 });
   });
 });

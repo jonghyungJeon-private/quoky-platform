@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6.3 mixed-script note (2026-11-27)
+
+- **Changed.** Consent-answer structural check (A6.3 step 1): a word mixing Latin with Cyrillic or Greek letters (NFC raw and NFKC forms, script property only) is a `structural-fail` (owner ratification 2026-11-27, UTS #39 precedent). Corpus ca-395..397 restaged to `structural-fail` (sha `685b2b12...`, classifier 336); new plan digests. With the classifier switch off the user-visible cancel is unchanged; only the audit reason changes. No eval run.
+
 ## Unreleased — A6-S4 measurement 1 and consent-answer.v2 (2026-11-27)
 
 - **Changed.** Consent-answer classifier prompt `consent-answer.v2` (sha256 `f91881d8...`): `yes-and-more` now leaves the asked thing unchanged (AM-2: a scope
