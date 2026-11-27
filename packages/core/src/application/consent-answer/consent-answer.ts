@@ -134,6 +134,26 @@ export function closedConsentToken(reply: string): 'yes' | 'no' | undefined {
   return undefined;
 }
 
+const WORD_RUN = /[\p{L}\p{M}]+/gu;
+// A script predicate counts only on a LETTER: a Cyrillic or Greek combining mark (script Cyrillic/Greek/Inherited) is not one.
+const LATIN_LETTER = /(?=\p{L})\p{sc=Latin}/u;
+const LOOKALIKE_LETTER = /(?=\p{L})[\p{sc=Cyrillic}\p{sc=Greek}]/u;
+
+/**
+ * A6.3 step 1 mixed-script check (owner ratification 2026-11-27; Unicode UTS #39 mixed-script precedent): true when one word
+ * (a maximal run of letters and combining marks) holds at least one Latin letter and at least one Cyrillic or Greek letter (marks only join the word, they are never the letter),
+ * judged on the NFC form of the RAW reply and on its NFKC form. Script property only; pure Cyrillic or Greek words, Latin with
+ * Hangul and Latin and Cyrillic in separate words are not flagged. Pure.
+ */
+export function hasMixedScriptWord(text: string): boolean {
+  for (const form of [text.normalize('NFC'), text.normalize('NFKC')]) {
+    for (const word of form.match(WORD_RUN) ?? []) {
+      if (LATIN_LETTER.test(word) && LOOKALIKE_LETTER.test(word)) return true;
+    }
+  }
+  return false;
+}
+
 export type ConsentReplyShape = { readonly kind: 'answer'; readonly lines: number } | { readonly kind: 'over-caps' } | { readonly kind: 'structural-fail'; readonly lines: number };
 
 /** A6.3 step 1 (caps first, R5; then the structural checks) on the RAW reply. No model call. Pure. */
@@ -143,6 +163,7 @@ export function consentReplyShape(turn: Pick<ConsentReplyTurn, 'text' | 'attachm
   if (FORMAT_CHARACTER.test(turn.text) || (turn.attachmentCount ?? 0) > 0) return { kind: 'structural-fail', lines };
   const prepared = prepareSelectionInput(turn.text, 0, turn.quotedRanges ?? []);
   if ('skip' in prepared || hasUntrustedSpanMarker(prepared.text, { contractions: true })) return { kind: 'structural-fail', lines };
+  if (hasMixedScriptWord(turn.text)) return { kind: 'structural-fail', lines };
   return { kind: 'answer', lines };
 }
 

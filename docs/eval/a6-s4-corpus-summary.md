@@ -5,7 +5,7 @@ ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-1
 다시 본다). 이후 코퍼스를 고치면 sha256이 바뀌고 새 승인이 필요하다. 승인 뒤에도 run마다 소유자 알림과 yes가 따로 필요하다.
 
 - 코퍼스: `packages/core/src/application/golden/nl-consent-answer.v1.json`
-  (sha256 `901cc4891fd03184654eaee86ce646c814e637fb21158ff2cb29294ed367290f`, 수정하면 바뀌고 새 승인이 필요하다)
+  (sha256 `685b2b1296b307efe0d1e88d4f435ec3e0ba5ec223ea5fb5b358a63d7da1ca81`, 수정하면 바뀌고 새 승인이 필요하다)
 - 결정적 검사(실제 Core 사용, 모델 없음): `packages/core/src/application/consent-answer/consent-answer.corpus.test.ts`.
   단계는 손으로 옮긴 규칙이 아니라 실제 `ConversationRuntime`의 `handleConsentGate`(그 안의 `isConsentControlTurn`,
   production turn handler 묶음에 대한 `turnHandlerClaims`)와 실제 `ConsentTurnGate`로 정한다.
@@ -23,10 +23,10 @@ ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-1
 | non-answer (gold `other`) | 130 | 106 | control-forfeit 14, handler-claimed 9, structural-fail 1 | 100 (r-03 (2)) |
 | yes-and-more | 54 | 43 | handler-claimed 7, control-forfeit 4 | 40 (r-03 (2)) |
 | unclear | 24 | 24 | — | 20 |
-| adversarial | 43 | 11 (gold `other`) | structural-fail 25, fast-path 7 | 40 (전체) |
+| adversarial | 43 | 8 | structural-fail 28, fast-path 7 | 40 (전체) |
 
 gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
-단계별: classifier 339, structural-fail 26, control-forfeit 18, handler-claimed 16, fast-path 15. classifier 단계가 아닌 75건은 실제
+단계별: classifier 336, structural-fail 29, control-forfeit 18, handler-claimed 16, fast-path 15. classifier 단계가 아닌 78건은 실제
 런타임이 분류기를 부르지 않는다. 테스트가 그 사실을 고정하므로 eval에서는 호출하지 않는다.
 
 - `handler-claimed`(리뷰 1차에서 추가한 단계): 등록된 turn handler의 `surfaceClaim`이 가져가는 답이다. 운영에서는 분류기 호출 전에
@@ -86,15 +86,15 @@ no recall 86.6/86.6/85.1 %, yes-and-more recall 72~74 %가 v2 묶음과 무관�
 
 | arm | 모델 | 호출 수 | 5 h 창 추정 |
 |---|---|---|---|
-| remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 339건 × 3 run = **1,017** (+ 장애 시 canary 최대 4) | 1,017 × 0.06 % = **약 61.0 %** |
-| local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 339건 × 3 run = **1,017** | **0 %** (loopback Ollama, Claude 창 미사용) |
+| remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 336건 × 3 run = **1,008** (+ 장애 시 canary 최대 4) | 1,008 × 0.06 % = **약 60.5 %** |
+| local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 336건 × 3 run = **1,008** | **0 %** (loopback Ollama, Claude 창 미사용) |
 
-- plan digest(`consent-answer.v2`, 339건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `93fe5819ddae956e450c525bcd60b0f661cbacee495e4c85a3b4d1cd8d9e8860`,
-  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `97ef1d20e436ab46839e6e296af4235a489b873b6c5f4f754beddfdc322e36c7`.
-  (v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
+- plan digest(`consent-answer.v3`, 336건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `28886e3e72cceb0167ebfff88e0faea6a71ec52932f0fbde2d177d011f3e883e`,
+  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `b34d512ebf939a7cf77997a3d7cf6846a71e895e67e03d3eae3a1711eb797066`.
+  (혼합 문자 restage 전 339건 v2 값 remote `93fe5819…`, local `97ef1d20…`, v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다. 폐기된 336건 v2 값 remote `ad3c54a0…`, local `eda5be9b…`, 첫 v3(문구 축소 전) remote `72147639…`/local `709096d2…`/프롬프트 sha `b4a7c11a…`도 폐기됐다.)
   코퍼스, 옵션이나 프롬프트를 바꾸면 둘 다 바뀐다. run마다 소유자 알림과 yes가 따로 필요하다(a6-12).
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
-- remote 61.0 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
+- remote 60.5 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
   a6-02 순서대로 local arm을 먼저 돌리고, 통과하면 remote가 필요 없다. 그렇다면 Claude 창 비용은 0이다.
 - run-gates 모드: `consent-answer`(remote), `consent-answer-local`(local)이다. 비율 0은 모델 이름이 아니라 `consent-answer-local` 모드에
   붙는다. local arm은 한 번에 한 호출만 보낸다(`--concurrency 1`). 기본 모드에는 넣지 않았고 요청할 때만 돈다.
@@ -124,3 +124,10 @@ remote arm은 실제 provider가 선언한 stronger tier(`supportsStrongerIntent
    eval은 local 모델을 분류기로 측정하지만, local arm이 통과해 채택되면 adapter와 라우팅 변경이 별도로 필요하다(a6-12 재게이트 포함).
 4. **비용 순서. 결정됨(2026-11-26).** local arm(0 %)을 먼저 돌린다. remote는 local이 실패할 때만, 새 소유자 알림 뒤에 돌린다
    (60 %에 대한 `GATES_OWNER_OK` 필요).
+
+## 혼합 문자 단어 restage (소유자 비준 2026-11-27)
+
+A6.3 1단계에 "한 단어 안에 라틴 문자와 키릴/그리스 문자가 섞이면 structural-fail" 검사가 추가되어 ca-395, ca-396, ca-397을 classifier에서 structural-fail로 옮겼다(stage와 note만, 라벨 불변). 코퍼스 sha256 `685b2b1296b307efe0d1e88d4f435ec3e0ba5ec223ea5fb5b358a63d7da1ca81`. classifier 336, structural-fail 29. 최소치 유지: positive 88, no 67, non-answer 106, unclear 24, yes-and-more 43, adversarial 43. DECISIONS "A6.3 mixed-script note" 참조.
+
+
+프롬프트 `consent-answer.v3`(2026-11-28, 소유자 결정): 일반 규칙 한 줄 추가(여러 글자로 그려 만든 얼굴은 `unclear`, 단일 이모지와 흔한 약어는 그대로). 프롬프트 sha256 `ea9fbd78d3414ee7e1a1dc3bb1cd9ebc546491ba0c69aedeb5cc54e638ab1872`, 코퍼스·gold 불변, 스위치 꺼짐. 위 plan digest는 v3 값이다. 다음 측정은 소유자 알림과 yes가 필요하다.

@@ -37,8 +37,8 @@ import { ConsentTurnGate } from './consent-turn-gate';
  */
 
 const CORPUS_FILE = new URL('../golden/nl-consent-answer.v1.json', import.meta.url);
-/** The sha256 of the owner-approved corpus (approved 2026-11-26; restaged for the contraction decision under that approval). Any edit moves it and needs a new owner approval. */
-const CORPUS_SHA256 = '901cc4891fd03184654eaee86ce646c814e637fb21158ff2cb29294ed367290f';
+/** The sha256 of the owner-approved corpus (approved 2026-11-26; restaged for the contraction decision and the mixed-script decision under that approval). Any edit moves it and needs a new owner approval. */
+const CORPUS_SHA256 = '685b2b1296b307efe0d1e88d4f435ec3e0ba5ec223ea5fb5b358a63d7da1ca81';
 
 type Stage = 'classifier' | 'structural-fail' | 'fast-path' | 'control-forfeit' | 'handler-claimed';
 interface CorpusCase {

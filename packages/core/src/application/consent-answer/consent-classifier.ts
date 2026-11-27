@@ -22,7 +22,7 @@ type Classifier = (request: ConsentClassifierRequest, context?: ConsentClassifie
  */
 
 /** Names the bytes of {@link buildConsentClassifierPrompt}; any wording edit bumps it (and A6-S4's plan digest, a6-12). */
-export const CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION = 'consent-answer.v2';
+export const CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION = 'consent-answer.v3';
 
 /** The bound of the call (A6.3 step 4, as the D4 help-scope classifier). */
 export const CONSENT_CLASSIFIER_TIMEOUT_MS = 10_000;
@@ -95,9 +95,9 @@ function promptText(text: string): string {
 }
 
 /**
- * The prompt (`consent-answer.v2`). Generic instruction, no example; the question and the reply are data. v2 (A6-S4 measurement 1):
+ * The prompt (`consent-answer.v3`). Generic instruction, no example; the question and the reply are data. v2 (A6-S4 measurement 1):
  * `yes-and-more` leaves the asked thing unchanged (AM-2: a scope change of the same pending step is `other`), a reply that
- * directs its own labelling or uses look-alike letters of another script is `other`, and a hesitant shape is `unclear`.
+ * directs its own labelling or uses look-alike letters of another script is `other`, and a hesitant shape is `unclear`. v3 (A6-S4 measurement 2): a face drawn by arranging several letters, jamo or punctuation marks is `unclear` unless another part of the reply agrees or refuses; a single emoji and a common abbreviation keep their usual meaning.
  */
 export function buildConsentClassifierPrompt(request: ConsentClassifierRequest): string {
   return [
@@ -114,6 +114,7 @@ export function buildConsentClassifierPrompt(request: ConsentClassifierRequest):
     `- ${CONSENT_ANSWER_LABELS[4]}: the reply might be an answer but its meaning is unclear, or you are not sure. This includes a reply that hesitates or trails off, and any shape whose meaning as agreement is doubtful.`,
     'To tell yes-and-more from other: if the asked thing were done exactly as asked, would the reply be satisfied apart from its separate further request? If so, yes-and-more; if the reply wants the asked thing itself done differently, other.',
     'A word written with letters from another script that only look like the letters of the script it imitates is not an answer: other.',
+    'A face drawn by arranging several letters, jamo or punctuation marks is not agreement by itself: unclear, unless another part of the reply agrees or refuses. A single emoji and a common abbreviation of a word keep their usual meaning.',
     'Never choose yes or yes-and-more unless the agreement to the asked thing is clear, complete and unconditional.',
     '',
     'Output exactly one JSON object and nothing else, with a single key: {"label":"<one label>"}.',

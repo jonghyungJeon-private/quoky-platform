@@ -5,6 +5,14 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### consent-answer.v3 (2026-11-28, branch `claude/v5-a6-mixed-script`)
+
+Prompt v3 adds one generic line (multi-character drawn faces are `unclear`) after measurement 2; sha `ea9fbd78...`; re-measurement needs owner notice and yes; no eval run. See DECISIONS.
+
+### A6.3 mixed-script note (2026-11-27, branch `claude/v5-a6-mixed-script`)
+
+Consent-answer structural check cancels a word mixing Latin with Cyrillic/Greek (owner ratified); ca-395..397 restaged to structural-fail (sha `685b2b12...`); no eval run. See DECISIONS.
+
 ### A6-S4 measurement 1 and consent-answer.v2 (2026-11-27, branch `claude/v5-a6-prompt-v2`)
 
 v1 classifier failed both arms 0/3 (local 27 wrong captures/run; remote 19-20, mostly scope changes read as yes-and-more against AM-2); prompt `consent-answer.v2` made offline (no gold/gate change); v2 not run, switch off. See DECISIONS.
