@@ -200,6 +200,8 @@ export { ItemSummaryConsent } from './consent-answer/item-summary-consent';
 // A6 classifier wiring: the composition root builds the classifier adapter (the answer function stays unreachable; the adapter takes
 // the turn's chat facts and the cap charge per call from the gate, never at construction).
 export { createConsentAnswerClassifier } from './consent-answer/consent-classifier';
+// A6.3 standalone vowel jamo note (owner 2026-11-28): the eval harness applies the same pure cap production applies after the classifier.
+export { capConsentLabelForJamoVowel } from './consent-answer/consent-answer';
 // A6-S4 (consent-eval): the eval harness (`eval:nl --mode consent-answer`) checks every request against the exact classifier prompt and binds
 // its version and bound into the plan digest. Pure values only: no store, no producer, no answer function.
 export { buildConsentClassifierPrompt, CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION, CONSENT_CLASSIFIER_TIMEOUT_MS, parseConsentClassifierOutput } from './consent-answer/consent-classifier';

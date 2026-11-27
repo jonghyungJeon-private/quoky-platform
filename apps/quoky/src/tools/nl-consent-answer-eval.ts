@@ -25,6 +25,7 @@ import {
   CONSENT_CLASSIFIER_TIMEOUT_MS,
   SUMMARY_CONSENT_QUESTION_VERSION,
   buildConsentClassifierPrompt,
+  capConsentLabelForJamoVowel,
   createConsentAnswerClassifier,
   executionLocalityOf,
   parseConsentClassifierOutput,
@@ -146,12 +147,17 @@ export interface NlConsentAnswerPlan {
   /** Cases pinned offline (structural-fail, fast-path, control-forfeit, handler-claimed): no call. */
   readonly deterministicCases: number;
   readonly calls: number;
+  /** The Core rules applied to the classifier label before scoring, as production does (binds the run to them). */
+  readonly postRules: readonly string[];
   readonly gate: typeof NL_CONSENT_ANSWER_EVAL_GATE;
 }
 
 export function consentAnswerPromptSha256(): string {
   return createHash('sha256').update(buildConsentClassifierPrompt({ question: '', reply: '' })).digest('hex');
 }
+
+/** The Core post-classifier rules the scorer applies (A6.3 standalone vowel jamo note); a new rule changes the plan digest. */
+export const CONSENT_EVAL_POST_RULES: readonly string[] = ['jamo-vowel-cap.v1'];
 
 export function buildConsentAnswerPlan(
   corpus: ConsentEvalCorpus,
@@ -183,6 +189,7 @@ export function buildConsentAnswerPlan(
     caseIds,
     deterministicCases: corpus.cases.length - caseIds.length,
     calls: caseIds.length * options.runs,
+    postRules: CONSENT_EVAL_POST_RULES,
     gate: NL_CONSENT_ANSWER_EVAL_GATE,
   };
 }
@@ -225,8 +232,10 @@ export interface ConsentEvalRecord {
   readonly run: number;
   readonly id: string;
   readonly gold: ConsentEvalLabel;
-  /** What the production adapter returned (fail closed: anything but a clean, timely label is `unclear`). */
+  /** The final label, after the Core post-classifier cap, as production decides; the gate scores this. */
   readonly label: ConsentEvalLabel;
+  /** What the production adapter returned (fail closed: anything but a clean, timely label is `unclear`). */
+  readonly rawLabel: ConsentEvalLabel;
   readonly outcome: ConsentEvalOutcome;
   readonly latencyMs: number;
   /** `classifier-sees-content` reasons (closed codes; empty when clean). */
@@ -279,18 +288,19 @@ async function classifyOne(provider: AiProvider, golden: ConsentEvalCase, plan: 
   };
   const classify = createConsentAnswerClassifier({ select: async () => capturing, timeoutMs: plan.callTimeoutMs, now: clock });
   const started = clock();
-  const label = await classify(
+  const rawLabel = await classify(
     { question: golden.question, reply: golden.reply },
     { chat: { id: capturing.family ?? capturing.id, locality: executionLocalityOf(capturing) }, charge: () => true },
   );
+  const label = capConsentLabelForJamoVowel(rawLabel, golden.reply);
   const measuredMs = clock() - started;
   const contentFired = request === undefined ? [] : classifierSeesContent(request, golden);
-  const base = { run, id: golden.id, gold: golden.gold, label: label as ConsentEvalLabel, latencyMs: measuredMs, contentFired };
+  const base = { run, id: golden.id, gold: golden.gold, label: label as ConsentEvalLabel, rawLabel: rawLabel as ConsentEvalLabel, latencyMs: measuredMs, contentFired };
   if (request === undefined) return { ...base, outcome: 'no-call' };
   if (failure !== undefined) return { ...base, outcome: failure.kind, ...(failure.kind === 'error' ? { error: failure.name } : { latencyMs: TIMED_OUT_LATENCY_MS }) };
   // The adapter gave up (its 10 s bound) before the provider settled, or the answer came at or after the deadline.
-  if (raw === undefined || (label === 'unclear' && parseConsentClassifierOutput(raw) !== 'unclear')) return { ...base, outcome: 'timeout', latencyMs: TIMED_OUT_LATENCY_MS };
-  if (label === 'unclear' && !CLEAN_UNCLEAR.test(raw)) return { ...base, outcome: 'malformed', raw: raw.slice(0, 200) };
+  if (raw === undefined || (rawLabel === 'unclear' && parseConsentClassifierOutput(raw) !== 'unclear')) return { ...base, outcome: 'timeout', latencyMs: TIMED_OUT_LATENCY_MS };
+  if (rawLabel === 'unclear' && !CLEAN_UNCLEAR.test(raw)) return { ...base, outcome: 'malformed', raw: raw.slice(0, 200) };
   return { ...base, outcome: 'answered' };
 }
 

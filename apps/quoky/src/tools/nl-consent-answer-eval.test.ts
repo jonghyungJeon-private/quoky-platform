@@ -209,7 +209,7 @@ describe('the Strict run', () => {
 });
 
 describe('the R6 gate on synthetic results', () => {
-  const record = (gold: ConsentEvalLabel, label: ConsentEvalLabel, extra: Partial<ConsentEvalRecord> = {}, id = `${gold}-${label}`): ConsentEvalRecord => ({ run: 1, id, gold, label, outcome: 'answered', latencyMs: 1_000, contentFired: [], ...extra });
+  const record = (gold: ConsentEvalLabel, label: ConsentEvalLabel, extra: Partial<ConsentEvalRecord> = {}, id = `${gold}-${label}`): ConsentEvalRecord => ({ run: 1, id, gold, label, rawLabel: label, outcome: 'answered', latencyMs: 1_000, contentFired: [], ...extra });
   const clean = (): ConsentEvalRecord[] => [
     ...Array.from({ length: 20 }, (_, i) => record('yes', 'yes', {}, `y${i}`)),
     ...Array.from({ length: 20 }, (_, i) => record('no', 'no', {}, `n${i}`)),
@@ -379,5 +379,18 @@ describe('classifier-sees-content (A6.10) and the content-free payload', () => {
     const measured = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...local, caseIds: [rule1.id], calls: 1 }, provider: localNoTier });
     expect(measured[0]).toMatchObject({ outcome: 'answered', label: rule1.gold });
     expect(localNoTier.calls).toHaveLength(1);
+  });
+
+  it('the scorer applies the Core jamo-vowel cap: a raw yes on a standalone-vowel face scores unclear (not a wrong capture); the plan binds the rule', async () => {
+    const plan = buildConsentAnswerPlan(corpus, sha256, { arm: 'remote', model: 'sonnet', effort: 'low', runs: 1, concurrency: 1 });
+    expect(plan.postRules).toEqual(['jamo-vowel-cap.v1']);
+    const face = classifierCases.find((golden) => golden.gold === 'unclear' && /[\u3131-\u3163]/u.test(golden.reply) && /[\u314f-\u3163]/u.test(golden.reply)) as ConsentEvalCase;
+    const records = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...plan, caseIds: [face.id], calls: 1 }, provider: scriptedProvider(() => '{"label":"yes"}') });
+    expect(records[0]).toMatchObject({ rawLabel: 'yes', label: 'unclear', gold: 'unclear', outcome: 'answered' });
+    expect(summarizeConsentAnswer(records).wrongCaptures).toBe(0);
+    const plain = classifierCases.find((golden) => golden.gold === 'other' && !/[\u314f-\u3163]/u.test(golden.reply)) as ConsentEvalCase;
+    const uncapped = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...plan, caseIds: [plain.id], calls: 1 }, provider: scriptedProvider(() => '{"label":"yes"}') });
+    expect(uncapped[0]).toMatchObject({ rawLabel: 'yes', label: 'yes' });
+    expect(summarizeConsentAnswer(uncapped).wrongCaptures).toBe(1);
   });
 });

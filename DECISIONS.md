@@ -40861,3 +40861,24 @@ Owner decision 2026-11-28: "프롬프트 v3 + 재측정". One generic instructio
 - **Version.** The line was narrowed before any measurement used it, so the version stays `consent-answer.v3` (nothing was measured with the earlier v3 bytes; retired prompt sha256 `b4a7c11a...`, retired plan digests remote `72147639...`, local `709096d2...`).
 - **Review round 1: Codex P2 + CA P2** (wording covered a single emoji and jamo abbreviations, conflicting with r-04 gold ca-032 and ㅇㅇ/ㅇ/ㅇㅋ/ㄴㄴ/ㄴ) -> narrowed to faces drawn by arranging several characters; P2 stale local digest fixed; P3 Greek-script combining-mark test (U+1D242).
 - **Next.** A new measurement needs the owner's notice and yes (remote 1,008 calls, about 60.5 % of the 5h window).
+
+## ADR-0121 amendment A6 — A6.3 standalone vowel jamo note (owner ratification 2026-11-28)
+
+Owner ratification 2026-11-28 (Strict, "구조 규칙 비준"): a reply that holds a Hangul vowel jamo written on its own (a vowel that is not composed into a syllable) is lowered from a classifier `yes` to `unclear` and re-asked once (a re-ask, not a cancel). A character-class rule, not a word list.
+
+- **Rule (A6.3 step 5, switch on only).** After the classifier, if the closed label is `yes` or `yes-and-more` and the reply has a standalone Hangul vowel jamo, the label is `unclear`: the existing path (the fixed question is re-asked once; a second `unclear` cancels). `no`, `other`, `unclear` are unchanged.
+- **Predicate** (`hasStandaloneHangulVowelJamo`, pure, in `consent-answer.ts`): the NFC form or the NFKC form of the reply contains a character in Hangul Compatibility Jamo vowels U+314F-U+3163, archaic U+3187-U+318E, Hangul Jamo medial vowels U+1160-U+11A7 (filler included), Jamo Extended-B vowels U+D7B0-U+D7C6, or halfwidth vowels U+FFC2-U+FFDC. NFC composes a conjoining lead + vowel into a syllable, so a remaining vowel is standalone. Consonant-only jamo (`ㅇㅇ`, `ㅇㅋ`, `ㄴㄴ`) and composed syllables are not flagged. No closed fast-path token holds a vowel jamo; the fast path runs before and is unchanged.
+- **Scope.** Only the classifier path. Switch off: no effect at all (the classifier is not called; pinned by a test). Audit: new closed code `jamo-vowel-cap` replaces `classifier-unclear` when the cap lowered the label (`['jamo-vowel-cap','reask']`, or `['jamo-vowel-cap']` on the cancel); never the reply text.
+- **Why.** A6-S4 measurement 3 (consent-answer.v3, remote sonnet low, owner yes 2026-11-28, run on 9934d7d1, corpus sha256 `685b2b12...`, plan digest `28886e3e...`, 336 classifier cases): FAILED 0/3 only because ca-040 and ca-350 ("ㅇㅡㅇ", a jamo face, gold `unclear` per owner r-04) were read `yes` 3/3, as in v2, despite the v3 face line. The prompt route is capped (2 rounds on this family).
+- **UX cost.** A reply such as a yes with trailing vowel jamo (e.g. `응ㅠㅠ`) is asked once more. This is the fail-safe direction (a re-ask, never a cancel or a bind).
+- **Harness alignment (gates must match live).** `nl-consent-answer-eval.ts` applies the same exported Core cap (`capConsentLabelForJamoVowel`) when scoring; records keep `rawLabel` (the classifier's) and `label` (final); the gate scores the final label. The plan binds `postRules: ['jamo-vowel-cap.v1']`, so the plan digest changes. New plan digests (offline, "nothing was executed"): remote `c0796a073be4b8c3b0c65caa8dc2c08dc3a3aebec2256a6987e0692ab8f766ab`, local (`--concurrency 1`) `81c8448692ef21f0051839aef9007c2938bb967a9652d1567e022e2166c3accd`. Superseded: remote `28886e3e...`, local `b34d512e...`.
+- **Corpus unchanged.** sha256 `685b2b12...`, 336 classifier cases, no label or stage change. The only corpus replies with a standalone vowel jamo are ca-040 and ca-350 (gold `unclear`); no gold `yes`, `no` or `yes-and-more` case holds one, so yes recall is not affected.
+- **Live effect.** None until `QUOKY_CONSENT_ANSWER_CLASSIFIER` is enabled (default off).
+
+### A6-S4 measurement 3 (2026-11-28, consent-answer.v3, remote)
+
+Owner yes 2026-11-28. Archive `~/Library/Application Support/Quoky/eval-archive/a6v3-remote-9934d7d1-20261128/consent-answer.report.json` (`summaries`).
+
+- **Verdict: FAILED 0/3.** Wrong captures 2/2/2 (ca-040, ca-350 read `yes` in all runs); every other wrong capture 0.
+- yes recall 88/88, no recall 67/67, yes-and-more recall 43/43 in all three runs; p95 2017 / 2035 / 1998 ms; 1,008 calls, 0 provider failures, 0 harness errors, 0 malformed, 0 timeouts.
+- **Next.** The cap above, then a remote re-measurement (needs the owner's notice and yes).
