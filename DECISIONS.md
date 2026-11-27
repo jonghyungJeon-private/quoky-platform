@@ -40847,7 +40847,7 @@ Owner yes 2026-11-27 ("remote만 3회"). Run on 38eae038 with the 339-case corpu
 - yes recall 100 % in all three; no recall 100 / 100 / 98.5 % (ca-133 "ㄴ" once `unclear`); yes-and-more recall 100 %; other 92.3 / 92.3 / 93.2 %; unclear 83.3 / 79.2 / 83.3 %; p95 about 2.1 s (2054 / 2151 / 2150 ms). 1,017 calls, 0 provider failures, 0 harness errors, 0 malformed, 0 timeouts.
 - v1's scope-change, injection, look-alike and "응..." families are gone.
 - **Remaining cause:** the jamo face "ㅇㅡㅇ" is read as the yes slang "ㅇㅇ". Gold not changed, gate not relaxed (owner rule). Next step is an owner decision.
-- The corpus is unchanged by this round, so the sha256 and both plan digests stay as recorded in the mixed-script note (336-case corpus, `685b2b12…`, remote `ad3c54a0…`, local `eda5be9b…`).
+- The corpus is unchanged by this round: sha256 `685b2b12…` and the 336-case count stay as recorded in the mixed-script note. The plan digests change with the prompt (see the v3 prompt sha256 and digests below).
 
 ### consent-answer.v3 (2026-11-28, owner decision after measurement 2)
 
