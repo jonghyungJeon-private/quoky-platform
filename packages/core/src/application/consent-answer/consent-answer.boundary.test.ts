@@ -124,6 +124,8 @@ describe('A6-S1 import boundary: nothing outside consent-answer/ can reach the a
       if (clause !== undefined && ts.isNamedExports(clause)) for (const element of clause.elements) exported.push(`${node.moduleSpecifier.text}#${element.propertyName?.text ?? element.name.text}`);
     }
     expect(exported.sort()).toEqual([
+      './consent-answer/consent-answer#CONSENT_JAMO_VOWEL_CAP_VERSION',
+      './consent-answer/consent-answer#capConsentLabelForJamoVowel',
       './consent-answer/consent-classifier#CONSENT_ANSWER_CLASSIFIER_PROMPT_VERSION',
       './consent-answer/consent-classifier#CONSENT_CLASSIFIER_TIMEOUT_MS',
       './consent-answer/consent-classifier#ConsentClassifierDeps',

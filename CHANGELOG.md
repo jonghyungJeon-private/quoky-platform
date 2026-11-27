@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6.3 standalone vowel jamo note (2026-11-28)
+
+- **Changed.** Consent answer (A6.3, after the classifier and before the bind; switch on only): a classifier `yes`/`yes-and-more` on a reply with a standalone Hangul vowel jamo (character-class rule, NFC and NFKC) is lowered to `unclear` and re-asked once (audit `jamo-vowel-cap`); owner ratification 2026-11-28 after measurement 3 (FAILED 0/3 on ca-040, ca-350). The eval harness applies the same Core cap and records `rawLabel`; the plan binds `postRules: [CONSENT_JAMO_VOWEL_CAP_VERSION] (`jamo-vowel-cap.v2`)` (new plan digests in DECISIONS). Corpus unchanged; switch off: no effect.
+
 ## Unreleased — consent-answer.v3 (2026-11-28)
 
 - **Changed.** Consent-answer classifier prompt `consent-answer.v3` (sha256 `ea9fbd78...`): one generic line, a face drawn by arranging several letters, jamo or punctuation marks is `unclear` unless another part of the reply agrees or refuses; a single emoji and a common abbreviation keep their meaning (owner decision after measurement 2; ca-040/ca-350). No example or list; corpus and gold unchanged; switch still off; no eval run.

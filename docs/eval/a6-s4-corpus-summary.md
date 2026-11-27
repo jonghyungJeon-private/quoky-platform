@@ -131,3 +131,7 @@ A6.3 1단계에 "한 단어 안에 라틴 문자와 키릴/그리스 문자가 �
 
 
 프롬프트 `consent-answer.v3`(2026-11-28, 소유자 결정): 일반 규칙 한 줄 추가(여러 글자로 그려 만든 얼굴은 `unclear`, 단일 이모지와 흔한 약어는 그대로). 프롬프트 sha256 `ea9fbd78d3414ee7e1a1dc3bb1cd9ebc546491ba0c69aedeb5cc54e638ab1872`, 코퍼스·gold 불변, 스위치 꺼짐. 위 plan digest는 v3 값이다. 다음 측정은 소유자 알림과 yes가 필요하다.
+
+## 측정 3과 standalone vowel jamo cap (소유자 비준 2026-11-28)
+
+측정 3(`consent-answer.v3`, remote, 9934d7d1, 코퍼스 sha `685b2b12...`)은 FAILED 0/3이다. ca-040, ca-350("ㅇㅡㅇ", gold `unclear`)이 3회 모두 `yes`로 읽혔고(wrong capture 2/2/2) 그 외 wrong capture는 0, yes 88/88, no 67/67, yes-and-more 43/43 재현율 100 %, p95 2017/2035/1998 ms, 1,008 호출, 장애 0이다. 프롬프트 경로는 한도에 도달해, 소유자가 구조 규칙을 비준했다: 답에 홀로 쓴 한글 모음 자모가 있으면 분류기의 yes/yes-and-more를 `unclear`로 낮춘다(재질문, 취소 아님). 하네스는 같은 Core cap을 점수에 적용하고(레코드에 `rawLabel`과 최종 `label`), plan이 `postRules: [CONSENT_JAMO_VOWEL_CAP_VERSION]` (`jamo-vowel-cap.v2`)을 묶는다. 코퍼스와 gold는 불변이다(모음 자모가 있는 코퍼스 답은 ca-040, ca-350 둘뿐이고 둘 다 gold `unclear`). 리뷰 1라운드 후 plan digest(`jamo-vowel-cap.v2`, 오프라인): remote `af59e1a59b99c6bb15c44ad6cd2a9dba39b2a2fc95fbbb37708102d27e0b17e2`, local(`--concurrency 1`) `16cf97989bed1683b4d7b2cdb4917915b6222bcb2e2b5543c86de01ebdc49711`. 이전 값(`c0796a07...`/`81c84486...` v1, `28886e3e...`/`b34d512e...`)은 폐기. 다음 측정은 소유자 알림과 yes가 필요하다.

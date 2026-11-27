@@ -5,6 +5,10 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 (rules) or `ROADMAP.md` (direction); for the status of individual concepts see the
 `[NOW]/[RESERVE]/[LATER]` labels in `ARCHITECTURE.md`.
 
+### A6.3 standalone vowel jamo note (2026-11-28, branch `claude/v5-a6-jamo-vowel`)
+
+Measurement 3 FAILED 0/3 (ca-040, ca-350); owner ratified a Core cap: classifier yes on a standalone vowel jamo becomes `unclear` (re-ask); harness applies it, plan digests changed; corpus unchanged; no eval run. See DECISIONS.
+
 ### consent-answer.v3 (2026-11-28, branch `claude/v5-a6-mixed-script`)
 
 Prompt v3 adds one generic line (multi-character drawn faces are `unclear`) after measurement 2; sha `ea9fbd78...`; re-measurement needs owner notice and yes; no eval run. See DECISIONS.

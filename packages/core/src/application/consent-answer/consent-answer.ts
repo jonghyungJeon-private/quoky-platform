@@ -35,6 +35,8 @@ import type { BoundConsent, ConsentClaim, ConsentLanguage, ConsentPending, Conse
  *
  * After a cancel: a multi-line reply within the caps is consumed and NOT re-planned (`462` as built); a single-line `other`,
  * structural failure or switch-off reply takes the normal path (`472`, `473` as built); a no is the answer and is consumed.
+ * Step 5 cap (A6.3 standalone vowel jamo note, owner 2026-11-28): a classifier `yes`/`yes-and-more` on a reply with a standalone Hangul
+ * vowel jamo ({@link hasStandaloneHangulVowelJamo}) is lowered to `unclear` (audit `jamo-vowel-cap`); switch off, the classifier is not called.
  * `unclear` re-asks the fixed question once ({@link consentReaskQuestion}); a second `unclear` cancels. The audit carries
  * closed codes only ({@link ConsentAnswerCode}), never the reply text.
  */
@@ -48,6 +50,7 @@ export const CONSENT_ANSWER_CODES = [
   'classifier-no',
   'classifier-other',
   'classifier-unclear',
+  'jamo-vowel-cap',
   'classifier-off',
   'handler-claimed',
   'structural-fail',
@@ -152,6 +155,25 @@ export function hasMixedScriptWord(text: string): boolean {
     }
   }
   return false;
+}
+
+// Standalone vowel jamo by Unicode block (A6.3 standalone vowel jamo note): compatibility vowels, archaic compatibility vowels, conjoining
+// medial vowels (U+1160 JUNGSEONG FILLER excluded: invisible, not a vowel; NFKC maps U+3164/U+FFA0 to it), Jamo Extended-B medial vowels, halfwidth vowels. A character class, never a word list.
+/** Version of the cap's rule (range/normalization); the eval plan binds it, so a change to the regex must bump it. */
+export const CONSENT_JAMO_VOWEL_CAP_VERSION = 'jamo-vowel-cap.v2';
+const STANDALONE_VOWEL_JAMO = /[\u314F-\u3163\u3187-\u318E\u1161-\u11A7\uD7B0-\uD7C6\uFFC2-\uFFDC]/u;
+
+/**
+ * A6.3 standalone vowel jamo cap predicate (applied between step 3, classifier, and step 4, bind; owner ratification 2026-11-28): true when the reply holds a Hangul vowel jamo that is not composed into a
+ * syllable. NFC composes a conjoining lead + vowel into a syllable, so any vowel left is standalone; the NFKC form is checked too. Pure.
+ */
+export function hasStandaloneHangulVowelJamo(reply: string): boolean {
+  return [reply.normalize('NFC'), reply.normalize('NFKC')].some((form) => STANDALONE_VOWEL_JAMO.test(form));
+}
+
+/** The post-classifier cap: a binding label (`yes`, `yes-and-more`) on a reply with a standalone vowel jamo is `unclear`; any other label is unchanged. Pure. */
+export function capConsentLabelForJamoVowel(label: ConsentAnswerLabel, reply: string): ConsentAnswerLabel {
+  return (label === 'yes' || label === 'yes-and-more') && hasStandaloneHangulVowelJamo(reply) ? 'unclear' : label;
 }
 
 export type ConsentReplyShape = { readonly kind: 'answer'; readonly lines: number } | { readonly kind: 'over-caps' } | { readonly kind: 'structural-fail'; readonly lines: number };
@@ -279,7 +301,9 @@ async function decideClaimed(
     store.cancel(claim);
     return { kind: 'cancelled', audit: ['handler-claimed'], next: afterCancel(shape.lines) };
   }
-  const label = await classifyStrict(classifier.classify, buildConsentClassifierRequest(claim.pending, turn.text), turn);
+  const rawLabel = await classifyStrict(classifier.classify, buildConsentClassifierRequest(claim.pending, turn.text), turn);
+  const label = capConsentLabelForJamoVowel(rawLabel, turn.text);
+  const unclearCode = label !== rawLabel ? 'jamo-vowel-cap' : 'classifier-unclear';
   // Freshness is judged on a fresh clock read after the classifier, never on the arrival time of the message.
   const atMs = now();
   switch (label) {
@@ -297,12 +321,12 @@ async function decideClaimed(
       if (claim.pending.reasked) {
         const lost = !store.holds(claim);
         store.cancel(claim);
-        return { kind: 'cancelled', audit: lost ? ['classifier-unclear', 'claim-lost'] : ['classifier-unclear'], next: 'consumed' };
+        return { kind: 'cancelled', audit: lost ? [unclearCode, 'claim-lost'] : [unclearCode], next: 'consumed' };
       }
       const pending = store.reask(claim, atMs);
       // Lost or expired (late or non-finite clock): the step is not re-asked; an expiry reports `claim-lost` like a late bind.
-      if (pending === undefined) return { kind: 'cancelled', audit: ['classifier-unclear', 'claim-lost'], next: 'consumed' };
-      return { kind: 'reask', audit: ['classifier-unclear', 'reask'], pending, question: consentReaskQuestion(pending.language), next: 'consumed' };
+      if (pending === undefined) return { kind: 'cancelled', audit: [unclearCode, 'claim-lost'], next: 'consumed' };
+      return { kind: 'reask', audit: [unclearCode, 'reask'], pending, question: consentReaskQuestion(pending.language), next: 'consumed' };
     }
   }
 }

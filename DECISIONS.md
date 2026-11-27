@@ -40861,3 +40861,26 @@ Owner decision 2026-11-28: "프롬프트 v3 + 재측정". One generic instructio
 - **Version.** The line was narrowed before any measurement used it, so the version stays `consent-answer.v3` (nothing was measured with the earlier v3 bytes; retired prompt sha256 `b4a7c11a...`, retired plan digests remote `72147639...`, local `709096d2...`).
 - **Review round 1: Codex P2 + CA P2** (wording covered a single emoji and jamo abbreviations, conflicting with r-04 gold ca-032 and ㅇㅇ/ㅇ/ㅇㅋ/ㄴㄴ/ㄴ) -> narrowed to faces drawn by arranging several characters; P2 stale local digest fixed; P3 Greek-script combining-mark test (U+1D242).
 - **Next.** A new measurement needs the owner's notice and yes (remote 1,008 calls, about 60.5 % of the 5h window).
+
+## ADR-0121 amendment A6 — A6.3 standalone vowel jamo note (owner ratification 2026-11-28)
+
+Owner ratification 2026-11-28 (Strict, "구조 규칙 비준"): a reply that holds a Hangul vowel jamo written on its own (a vowel that is not composed into a syllable) is lowered from a classifier `yes` to `unclear` and re-asked once (a re-ask, not a cancel). A character-class rule, not a word list.
+
+- **Rule (A6.3, between step 3 classifier and step 4 bind; switch on only).** After the classifier, if the closed label is `yes` or `yes-and-more` and the reply has a standalone Hangul vowel jamo, the label is `unclear`: the existing path (the fixed question is re-asked once; a second `unclear` cancels). `no`, `other`, `unclear` are unchanged.
+- **Predicate** (`hasStandaloneHangulVowelJamo`, pure, in `consent-answer.ts`): the NFC form or the NFKC form of the reply contains a character in Hangul Compatibility Jamo vowels U+314F-U+3163, archaic U+3187-U+318E, Hangul Jamo medial vowels U+1161-U+11A7 (U+1160 JUNGSEONG FILLER excluded: invisible, not a vowel; NFKC maps U+3164 and U+FFA0 to it, so a filler after a yes must not re-ask), Jamo Extended-B vowels U+D7B0-U+D7C6, or halfwidth vowels U+FFC2-U+FFDC. NFC composes a conjoining lead + vowel into a syllable, so a remaining vowel is standalone. Consonant-only jamo (`ㅇㅇ`, `ㅇㅋ`, `ㄴㄴ`) and composed syllables are not flagged. No closed fast-path token holds a vowel jamo; the fast path runs before and is unchanged.
+- **Scope.** Only the classifier path. Switch off: no effect at all (the classifier is not called; pinned by a test). Audit: new closed code `jamo-vowel-cap` replaces `classifier-unclear` when the cap lowered the label (`['jamo-vowel-cap','reask']`, or `['jamo-vowel-cap']` on the cancel); never the reply text.
+- **Why.** A6-S4 measurement 3 (consent-answer.v3, remote sonnet low, owner yes 2026-11-28, run on 9934d7d1, corpus sha256 `685b2b12...`, plan digest `28886e3e...`, 336 classifier cases): FAILED 0/3 only because ca-040 and ca-350 ("ㅇㅡㅇ", a jamo face, gold `unclear` per owner r-04) were read `yes` 3/3, as in v2, despite the v3 face line. The prompt route is capped (2 rounds on this family).
+- **UX cost.** A reply such as a yes with trailing vowel jamo (e.g. `응ㅠㅠ`) is asked once more. This is the fail-safe direction (a re-ask, never a cancel or a bind).
+- **Harness alignment (gates must match live).** `nl-consent-answer-eval.ts` applies the same exported Core cap (`capConsentLabelForJamoVowel`) when scoring; records keep `rawLabel` (the classifier's) and `label` (final); the gate scores the final label. The plan binds `postRules: [CONSENT_JAMO_VOWEL_CAP_VERSION]` (`jamo-vowel-cap.v2`), so the plan digest changes. Plan digests after review round 1 (`jamo-vowel-cap.v2`, offline, "nothing was executed"): remote `af59e1a59b99c6bb15c44ad6cd2a9dba39b2a2fc95fbbb37708102d27e0b17e2`, local (`--concurrency 1`) `16cf97989bed1683b4d7b2cdb4917915b6222bcb2e2b5543c86de01ebdc49711`. Superseded: `c0796a07...`/`81c84486...` (v1, retired), `28886e3e...`/`b34d512e...`.
+- **Corpus unchanged.** sha256 `685b2b12...`, 336 classifier cases, no label or stage change. The only corpus replies with a standalone vowel jamo are ca-040 and ca-350 (gold `unclear`); no gold `yes`, `no` or `yes-and-more` case holds one, so yes recall is not affected.
+- **Second answer.** A capped reply to the re-ask (the second answer) cancels ("재질문, 두 번째도 불명확이면 취소"), so the owner's "취소가 아니라 재질문" holds for the first answer only.
+- **Review round 1.** Codex PASS; Chief Architect PASS with P3 (filler U+1160 in the range, step number wording, digest binding of the rule) -> fixed here: range starts at U+1161, wording is between step 3 and step 4, Core exports `CONSENT_JAMO_VOWEL_CAP_VERSION = 'jamo-vowel-cap.v2'` and the plan binds it (`postRules`).
+- **Live effect.** None until `QUOKY_CONSENT_ANSWER_CLASSIFIER` is enabled (default off).
+
+### A6-S4 measurement 3 (2026-11-28, consent-answer.v3, remote)
+
+Owner yes 2026-11-28. Archive `~/Library/Application Support/Quoky/eval-archive/a6v3-remote-9934d7d1-20261128/consent-answer.report.json` (`summaries`).
+
+- **Verdict: FAILED 0/3.** Wrong captures 2/2/2 (ca-040, ca-350 read `yes` in all runs); every other wrong capture 0.
+- yes recall 88/88, no recall 67/67, yes-and-more recall 43/43 in all three runs; p95 2017 / 2035 / 1998 ms; 1,008 calls, 0 provider failures, 0 harness errors, 0 malformed, 0 timeouts.
+- **Next.** The cap above, then a remote re-measurement (needs the owner's notice and yes).

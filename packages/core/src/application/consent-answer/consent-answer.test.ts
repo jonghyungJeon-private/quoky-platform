@@ -7,6 +7,8 @@ import {
   consentReaskQuestion,
   consentReplyShape,
   hasMixedScriptWord,
+  hasStandaloneHangulVowelJamo,
+  capConsentLabelForJamoVowel,
   consentRerunText,
   type ConsentAnswerClassifier,
   type ConsentClassifierSwitch,
@@ -442,7 +444,7 @@ describe('A6-S1 the switch QUOKY_CONSENT_ANSWER_CLASSIFIER (default off)', () =>
   it('audit codes are closed and content-free', async () => {
     const seen = new Set<string>();
     const replies: Array<[string, ConsentClassifierSwitch]> = [
-      ['응', OFF], ['아니', OFF], ['ㅇㅇ', OFF], ['> 응', OFF], ['응\n응\n응\n응', OFF], ['ㅇㅇ', on('yes')], ['ㅇㅇ', on('yes-and-more')], ['ㅇㅇ', on('no')], ['ㅇㅇ', on('other')], ['ㅇㅇ', on('unclear')],
+      ['응', OFF], ['아니', OFF], ['ㅇㅇ', OFF], ['> 응', OFF], ['응\n응\n응\n응', OFF], ['ㅇㅇ', on('yes')], ['ㅇㅇ', on('yes-and-more')], ['ㅇㅇ', on('no')], ['ㅇㅇ', on('other')], ['ㅇㅇ', on('unclear')], ['ㅇㅡㅇ', on('yes')],
     ];
     for (const code of (await answer(opened(), turn('오늘 메일 보여줘', { handlerClaimed: () => true }), on('yes'))).audit) seen.add(code);
     for (const [text, sw] of replies) for (const code of (await answer(opened(), turn(text), sw)).audit) seen.add(code);
@@ -581,5 +583,71 @@ describe('A6.3 mixed-script note (owner ratification 2026-11-27): a word mixing 
   it('a clean reply stays an answer', () => {
     expect(consentReplyShape({ text: 'yes' })).toEqual({ kind: 'answer', lines: 1 });
     expect(consentReplyShape({ text: '\u0434\u0430' })).toEqual({ kind: 'answer', lines: 1 });
+  });
+});
+
+describe('A6.3 standalone vowel jamo note (owner ratification 2026-11-28): a standalone Hangul vowel jamo lowers a binding label to unclear', () => {
+  const eu = '\u3161';
+  const ieung = '\u3147';
+  it.each([
+    ['\u3161', 'compatibility vowel eu'],
+    ['\u315c', 'compatibility vowel u'],
+    ['\u3160', 'compatibility vowel yu'],
+    [`${ieung}${eu}${ieung}`, 'consonant, vowel, consonant face'],
+    [`\uc751\u3160\u3160`, 'a composed syllable followed by standalone vowels'],
+    ['\u3187', 'archaic compatibility vowel'],
+    ['\u1161', 'conjoining medial vowel alone (standalone under NFC too)'],
+    ['\ud7b0', 'Jamo Extended-B medial vowel'],
+    ['\uffd7', 'halfwidth vowel'],
+    ['\uffc2', 'halfwidth vowel a (NFKC path)'],
+  ])('%s is flagged (%s)', (text) => {
+    expect(hasStandaloneHangulVowelJamo(text)).toBe(true);
+  });
+  it.each([
+    ['\u3147\u3147', 'consonants only'],
+    ['\uc751\u3164', 'yes + HANGUL FILLER (NFKC U+1160)'],
+    ['\uc751\uffa0', 'yes + halfwidth filler (NFKC U+1160)'],
+    ['\u1160', 'jungseong filler alone'],
+    ['\u3147\u314b', 'consonants only'],
+    ['\u3134\u3134', 'consonants only'],
+    ['\uc751', 'composed syllable'],
+    ['\ub124', 'composed syllable'],
+    ['\u110b\u1175', 'conjoining lead + vowel, NFC composes a syllable'],
+    ['yes', 'Latin'],
+    ['', 'empty'],
+  ])('%s is not flagged (%s)', (text) => {
+    expect(hasStandaloneHangulVowelJamo(text)).toBe(false);
+  });
+  it('the cap lowers yes and yes-and-more only', () => {
+    const face = `${ieung}${eu}${ieung}`;
+    expect(capConsentLabelForJamoVowel('yes', face)).toBe('unclear');
+    expect(capConsentLabelForJamoVowel('yes-and-more', face)).toBe('unclear');
+    for (const label of ['no', 'other', 'unclear'] as const) expect(capConsentLabelForJamoVowel(label, face)).toBe(label);
+    expect(capConsentLabelForJamoVowel('yes', '\u3147\u3147')).toBe('yes');
+  });
+  it('on: a classifier yes or yes-and-more on a standalone-vowel reply re-asks once (audit jamo-vowel-cap); a second one cancels', async () => {
+    const face = `${ieung}${eu}${ieung}`;
+    for (const label of ['yes', 'yes-and-more']) {
+      const store = opened();
+      const first = await answer(store, turn(face), on(label));
+      expect(first).toMatchObject({ kind: 'reask', audit: ['jamo-vowel-cap', 'reask'], next: 'consumed' });
+      expect(await answer(store, turn(face), on(label))).toEqual({ kind: 'cancelled', audit: ['jamo-vowel-cap'], next: 'consumed' });
+    }
+    expect(CONSENT_ANSWER_CODES).toContain('jamo-vowel-cap');
+  });
+  it('on: no and other are untouched; a consonant-only yes still binds; a real unclear keeps its own code', async () => {
+    const face = `${ieung}${eu}${ieung}`;
+    expect(await answer(opened(), turn(face), on('no'))).toEqual({ kind: 'cancelled', audit: ['classifier-no'], next: 'consumed' });
+    expect(await answer(opened(), turn(face), on('other'))).toEqual({ kind: 'cancelled', audit: ['classifier-other'], next: 'ordinary' });
+    expect(await answer(opened(), turn(face), on('unclear'))).toMatchObject({ kind: 'reask', audit: ['classifier-unclear', 'reask'] });
+    expect(await answer(opened(), turn('\u3147\u3147'), on('yes'))).toMatchObject({ kind: 'bound', audit: ['classifier-yes'] });
+  });
+  it('closed tokens never hold a vowel jamo, so the fast path runs unchanged before the cap', async () => {
+    for (const token of ['\uc751', '\ub124', '\uc608', 'yes', '\uc544\ub2c8', '\uc544\ub2c8\uc694', '\uc544\ub2c8\uc624', '\uc544\ub1fc', '\ucde8\uc18c', 'no']) expect(hasStandaloneHangulVowelJamo(token), token).toBe(false);
+    expect(await answer(opened(), turn('\uc751'), on('unclear'))).toMatchObject({ kind: 'bound', audit: ['closed-yes'] });
+  });
+  it('off: no effect, the classifier is not called', async () => {
+    const face = `${ieung}${eu}${ieung}`;
+    expect(await answer(opened(), turn(face), OFF)).toEqual({ kind: 'cancelled', audit: ['classifier-off'], next: 'ordinary' });
   });
 });
