@@ -61,8 +61,8 @@ gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
 
 | arm | 결과 | wrong capture (run별) | yes / no / yes-and-more recall | 보고서 |
 |---|---|---|---|---|
-| local (`qwen3:8b`) | **FAILED 0/3** | 27 / 27 / 27 | 88.6 % / 86.6 % / 74.4 % | `~/Library/Application Support/Quoky/eval-archive/a6s4-local-84a910bb-20261127/consent-answer-local.report.json` |
-| remote (sonnet low) | **FAILED 0/3** | 19 / 20 / 20 | 100 % / 100 % / 100·97.7·97.7 %, p95 약 2.1 s | `~/Library/Application Support/Quoky/eval-archive/a6s4-remote-84a910bb-20261127/consent-answer.report.json` |
+| local (`qwen3:8b`) | **FAILED 0/3** | 27 / 27 / 27 | yes 88.6 / 88.6 / 88.6 %, no 86.6 / 86.6 / 85.1 %, yes-and-more 74.4 / 72.1 / 74.4 % | `~/Library/Application Support/Quoky/eval-archive/a6s4-local-84a910bb-20261127/consent-answer-local.report.json` |
+| remote (sonnet low) | **FAILED 0/3** | 19 / 20 / 20 | yes 100 / 100 / 100 %, no 100 / 100 / 100 %, yes-and-more 100 / 97.7 / 97.7 %, p95 약 2.1 s | `~/Library/Application Support/Quoky/eval-archive/a6s4-remote-84a910bb-20261127/consent-answer.report.json` |
 
 remote의 실패 묶음(gold는 그대로):
 1. 같은 대기 단계의 범위 변경을 `yes-and-more`로 읽음(gold `other`, AM-2/R6): ca-208, 213, 215, 216, 218, 220, 222, 223, 224, 229.
@@ -73,7 +73,11 @@ remote의 실패 묶음(gold는 그대로):
 원인: v1 프롬프트가 `yes-and-more`를 "동의하고 추가 **또는 다른** 것을 요청"으로 정의해 AM-2(범위 변경은 `other`)와 어긋났다.
 결정: 프롬프트만 `consent-answer.v2`로 바꾼다(라벨 정의를 일반 규칙으로; 예시·문구 목록 없음). gold 변경 없음, 게이트 완화 없음(소유자 규칙).
 r-01/R6에 따라 asked 항목을 그대로 두고 **따로 더** 요청하는 답(항목 추가, 다른 소스 추가)은 계속 `yes-and-more`다.
-분류기 스위치는 꺼진 채이고 새로 배선한 것은 없다. 프롬프트 sha256 `8d15143adb46b5ea8fd0cdc3f659ff868a173de6746154f2f4505ed69ff78469`(v1 `e572105c…`).
+분류기 스위치는 꺼진 채이고 새로 배선한 것은 없다. 프롬프트 sha256 `f91881d8880aa17e5410cc6fef2478699bb57a39e69a0b460b75e707c3a22ce6`(v1 `e572105c…`).
+
+local arm에는 v2가 다루지 않는 실패도 있다: 진짜 "no"를 yes로 읽음(ca-120, 121, 133, 140, 144), 비꼼(ca-385, 386, 390, 391), 직접 주입(ca-392), 기타(ca-038, 239, 210).
+no recall 86.6/86.6/85.1 %, yes-and-more recall 72~74 %가 v2 묶음과 무관하게 95 %보다 한참 낮아(모델 용량), v2 local run도 다시 실패할 가능성이 높다. 소유자는 run 승인 전에 이를 알아야 한다.
+리뷰 1라운드(Codex P2, CA P2/P3)로 `other` 정의 문구를 고쳐 프롬프트 sha256과 plan digest가 바뀌었다(v2 바이트로 돌린 run은 없다).
 
 열린 소유자 질문: 구조 검사에 결정적 mixed-script 검사(라틴 글자와 키릴·그리스 글자를 섞은 단어는 `structural-fail`, UTS #39 선례)를 넣으면
 묶음 3을 모델 없이 막지만 비준된 A6.3 1단계를 바꾸므로 소유자 비준이 먼저 필요하다(구현하지 않음).
@@ -85,8 +89,8 @@ r-01/R6에 따라 asked 항목을 그대로 두고 **따로 더** 요청하는 �
 | remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 339건 × 3 run = **1,017** (+ 장애 시 canary 최대 4) | 1,017 × 0.06 % = **약 61.0 %** |
 | local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 339건 × 3 run = **1,017** | **0 %** (loopback Ollama, Claude 창 미사용) |
 
-- plan digest(`consent-answer.v2`, 339건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `8320032b1f8e06532864e84eaeb9c2a53c9a91bb3067050e9c2db3ff56d1ccf5`,
-  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `572b14c7cd36ec1d801261e281ce0e9ac5796f494e31c769f9555b0572602ed6`.
+- plan digest(`consent-answer.v2`, 339건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `93fe5819ddae956e450c525bcd60b0f661cbacee495e4c85a3b4d1cd8d9e8860`,
+  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `97ef1d20e436ab46839e6e296af4235a489b873b6c5f4f754beddfdc322e36c7`.
   (v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
   코퍼스, 옵션이나 프롬프트를 바꾸면 둘 다 바뀐다. run마다 소유자 알림과 yes가 따로 필요하다(a6-12).
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
