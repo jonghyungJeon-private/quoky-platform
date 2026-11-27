@@ -90,7 +90,7 @@ describe('A6-S2 content-free request (A6.4)', () => {
     expect(rule('other')).toContain('how to label, classify or answer it');
     expect(rule('unclear')).toContain('hesitates or trails off');
     expect(lines).toContain('Never choose yes or yes-and-more unless the agreement to the asked thing is clear, complete and unconditional.');
-    expect(lines).toContain('A face, emoticon or picture drawn with letters, jamo or symbols is not agreement by itself: unclear, unless the reply also states agreement or refusal in words.');
+    expect(lines).toContain('A face drawn by arranging several letters, jamo or punctuation marks is not agreement by itself: unclear, unless another part of the reply agrees or refuses. A single emoji and a common abbreviation of a word keep their usual meaning.');
     // A6.4 / A6.9: the instruction part is generic English; no example reply or phrase list in any other script.
     const instruction = lines.slice(0, lines.indexOf('<question>')).join('\n');
     expect(instruction).not.toMatch(/[^\x00-\x7f]/u);

@@ -7,7 +7,7 @@ sprint's definition-of-done. It deliberately avoids duplicating `ARCHITECTURE.md
 
 ### consent-answer.v3 (2026-11-28, branch `claude/v5-a6-mixed-script`)
 
-Prompt v3 adds one generic line (drawn faces are `unclear`) after measurement 2; sha `b4a7c11a...`; re-measurement needs owner notice and yes; no eval run. See DECISIONS.
+Prompt v3 adds one generic line (multi-character drawn faces are `unclear`) after measurement 2; sha `ea9fbd78...`; re-measurement needs owner notice and yes; no eval run. See DECISIONS.
 
 ### A6.3 mixed-script note (2026-11-27, branch `claude/v5-a6-mixed-script`)
 

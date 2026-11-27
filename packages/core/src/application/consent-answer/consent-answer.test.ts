@@ -574,7 +574,7 @@ describe('A6.3 mixed-script note (owner ratification 2026-11-27): a word mixing 
     ['yes-\u0434\u0430', 'punctuation separates the words'],
     ['\u00b5', 'micro sign alone is not Latin-mixed'],
     ['yes\u0483', 'a Cyrillic combining mark on Latin is not a Cyrillic letter'],
-    ['y\u0342es', 'a Greek combining mark on Latin is not a Greek letter'],
+    ['y\u{1D242}es', 'a Greek combining mark on Latin is not a Greek letter'],
   ])('%s is not flagged (%s)', (text) => {
     expect(hasMixedScriptWord(text)).toBe(false);
   });

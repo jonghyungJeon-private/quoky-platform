@@ -89,9 +89,9 @@ no recall 86.6/86.6/85.1 %, yes-and-more recall 72~74 %가 v2 묶음과 무관�
 | remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 336건 × 3 run = **1,008** (+ 장애 시 canary 최대 4) | 1,008 × 0.06 % = **약 60.5 %** |
 | local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 336건 × 3 run = **1,008** | **0 %** (loopback Ollama, Claude 창 미사용) |
 
-- plan digest(`consent-answer.v3`, 336건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `72147639f88b4318c2ed1d441ef292f358488034918d8002f05efc381318136f`,
-  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `eda5be9bd75c7641d98198e02dfb5916d9790ac7f83168e9b5bcbb13d3d15cfa`.
-  (혼합 문자 restage 전 339건 v2 값 remote `93fe5819…`, local `97ef1d20…`, v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
+- plan digest(`consent-answer.v3`, 336건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `28886e3e72cceb0167ebfff88e0faea6a71ec52932f0fbde2d177d011f3e883e`,
+  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `b34d512ebf939a7cf77997a3d7cf6846a71e895e67e03d3eae3a1711eb797066`.
+  (혼합 문자 restage 전 339건 v2 값 remote `93fe5819…`, local `97ef1d20…`, v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다. 폐기된 v2 local `eda5be9b…`, 첫 v3(문구 축소 전) remote `72147639…`/local `709096d2…`/프롬프트 sha `b4a7c11a…`도 폐기됐다.)
   코퍼스, 옵션이나 프롬프트를 바꾸면 둘 다 바뀐다. run마다 소유자 알림과 yes가 따로 필요하다(a6-12).
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
 - remote 60.5 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
@@ -130,4 +130,4 @@ remote arm은 실제 provider가 선언한 stronger tier(`supportsStrongerIntent
 A6.3 1단계에 "한 단어 안에 라틴 문자와 키릴/그리스 문자가 섞이면 structural-fail" 검사가 추가되어 ca-395, ca-396, ca-397을 classifier에서 structural-fail로 옮겼다(stage와 note만, 라벨 불변). 코퍼스 sha256 `685b2b1296b307efe0d1e88d4f435ec3e0ba5ec223ea5fb5b358a63d7da1ca81`. classifier 336, structural-fail 29. 최소치 유지: positive 88, no 67, non-answer 106, unclear 24, yes-and-more 43, adversarial 43. DECISIONS "A6.3 mixed-script note" 참조.
 
 
-프롬프트 `consent-answer.v3`(2026-11-28, 소유자 결정): 일반 규칙 한 줄 추가(그림으로 그린 얼굴은 `unclear`). 프롬프트 sha256 `b4a7c11a5698376278895f826c8aed53b020d0f288fd905b2879133402da9c5a`, 코퍼스·gold 불변, 스위치 꺼짐. 위 plan digest는 v3 값이다. 다음 측정은 소유자 알림과 yes가 필요하다.
+프롬프트 `consent-answer.v3`(2026-11-28, 소유자 결정): 일반 규칙 한 줄 추가(여러 글자로 그려 만든 얼굴은 `unclear`, 단일 이모지와 흔한 약어는 그대로). 프롬프트 sha256 `ea9fbd78d3414ee7e1a1dc3bb1cd9ebc546491ba0c69aedeb5cc54e638ab1872`, 코퍼스·gold 불변, 스위치 꺼짐. 위 plan digest는 v3 값이다. 다음 측정은 소유자 알림과 yes가 필요하다.
