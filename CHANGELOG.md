@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — consent-answer.v3 (2026-11-28)
+
+- **Changed.** Consent-answer classifier prompt `consent-answer.v3` (sha256 `b4a7c11a...`): one generic line, a face or picture drawn with letters, jamo or symbols is `unclear` unless the reply states agreement or refusal in words (owner decision after measurement 2; ca-040/ca-350). No example or list; corpus and gold unchanged; switch still off; no eval run.
+
 ## Unreleased — A6.3 mixed-script note (2026-11-27)
 
 - **Changed.** Consent-answer structural check (A6.3 step 1): a word mixing Latin with Cyrillic or Greek letters (NFC raw and NFKC forms, script property only) is a `structural-fail` (owner ratification 2026-11-27, UTS #39 precedent). Corpus ca-395..397 restaged to `structural-fail` (sha `685b2b12...`, classifier 336); new plan digests. With the classifier switch off the user-visible cancel is unchanged; only the audit reason changes. No eval run.

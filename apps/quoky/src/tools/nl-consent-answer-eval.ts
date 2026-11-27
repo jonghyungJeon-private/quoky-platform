@@ -4,7 +4,7 @@
  * frozen corpus: `remote` (the production route, the stronger `INTENT_SELECTION` tier through the Claude CLI, sonnet / low) or
  * `local` (`qwen3:8b` through Ollama, pinned by digest; no egress). If the local arm passes the gate it is preferred (a6-02).
  *
- * Each classifier-stage case makes ONE call through the REAL adapter (`createConsentAnswerClassifier`: the `consent-answer.v2`
+ * Each classifier-stage case makes ONE call through the REAL adapter (`createConsentAnswerClassifier`: the `consent-answer.v3`
  * prompt, the strict JSON parse, the 10 s bound, fail closed to `unclear`) with exactly `{ question, reply }`. The structural,
  * fast-path, control-forfeit and handler-claimed cases never reach the classifier; their stage is pinned offline on the real
  * runtime by `consent-answer.corpus.test.ts` and they make no call here. Every request the provider receives is checked by `classifier-sees-content` (A6.10). No LLM judge.

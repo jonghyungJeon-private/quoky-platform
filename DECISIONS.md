@@ -40848,3 +40848,14 @@ Owner yes 2026-11-27 ("remote만 3회"). Run on 38eae038 with the 339-case corpu
 - v1's scope-change, injection, look-alike and "응..." families are gone.
 - **Remaining cause:** the jamo face "ㅇㅡㅇ" is read as the yes slang "ㅇㅇ". Gold not changed, gate not relaxed (owner rule). Next step is an owner decision.
 - The corpus is unchanged by this round, so the sha256 and both plan digests stay as recorded in the mixed-script note (336-case corpus, `685b2b12…`, remote `ad3c54a0…`, local `eda5be9b…`).
+
+### consent-answer.v3 (2026-11-28, owner decision after measurement 2)
+
+Owner decision 2026-11-28: "프롬프트 v3 + 재측정". One generic instruction line, no example, no phrase list, no jamo/character list (A6.4/A6.9), added next to the `unclear` definition:
+
+> A face, emoticon or picture drawn with letters, jamo or symbols is not agreement by itself: unclear, unless the reply also states agreement or refusal in words.
+
+- **Why.** Measurement 2 failed only on ca-040 and ca-350 (a drawn face made of jamo, gold `unclear` per owner r-04), read as `yes` in all three runs. The "unless ... in words" clause leaves a plain short yes unaffected; the "Never choose yes ... clear, complete and unconditional" line is kept.
+- **Prompt sha256** `b4a7c11a5698376278895f826c8aed53b020d0f288fd905b2879133402da9c5a`. **Plan digests** (offline, "nothing was executed"): remote `72147639f88b4318c2ed1d441ef292f358488034918d8002f05efc381318136f`, local `709096d298809a7b87d5b91c15ac4c0ecd7b02b34d5da625c0a24636fd0eaf08`.
+- Corpus unchanged (336 classifier cases, sha256 `685b2b12...`), no gold change, gate not relaxed, `QUOKY_CONSENT_ANSWER_CLASSIFIER` still off.
+- **Next.** A new measurement needs the owner's notice and yes (remote 1,008 calls, about 60.5 % of the 5h window).

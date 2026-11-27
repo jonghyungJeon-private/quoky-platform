@@ -125,7 +125,7 @@ describe('the plan: offline, zero model calls, bound by its digest', () => {
       expect(plan.model).toBe(arm === 'local' ? CONSENT_LOCAL_MODEL : 'sonnet');
       expect(plan.effort).toBe(arm === 'local' ? undefined : 'low');
       expect(plan.localDigest12).toBe(arm === 'local' ? CONSENT_LOCAL_DIGEST12 : undefined);
-      expect(plan.promptVersion).toBe('consent-answer.v2');
+      expect(plan.promptVersion).toBe('consent-answer.v3');
       expect(plan.questionVersion).toBe('summary-consent-question.v2');
       expect(plan.corpusSha256).toBe(sha256);
       if (arm === 'local') expect(text).toContain('no call uses the Claude 5 h window');
@@ -175,7 +175,7 @@ describe('the Strict run', () => {
       expect(code).toBe(EXIT_OK);
       expect(d.created).toEqual([arm === 'local' ? `local:${CONSENT_LOCAL_MODEL}:${CONSENT_LOCAL_DIGEST12}` : 'remote:sonnet:low:stronger']);
       expect(provider.calls).toHaveLength(classifierCases.length * 3);
-      expect(d.out.join('\n')).toContain(`consent-answer gate (${arm}, consent-answer.v2): PASSED in all 3 run(s)`);
+      expect(d.out.join('\n')).toContain(`consent-answer gate (${arm}, consent-answer.v3): PASSED in all 3 run(s)`);
       const report = d.written[0]?.contents ?? '';
       expect(JSON.parse(report).verdict).toBe('PASSED');
       // No reply and no question text in the report (replies of 4+ characters are distinctive enough to search for).
