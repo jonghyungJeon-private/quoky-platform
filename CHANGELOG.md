@@ -7,7 +7,7 @@ Versioning follows [SemVer](https://semver.org/). Commits follow
 
 ## Unreleased — A6.3 standalone vowel jamo note (2026-11-28)
 
-- **Changed.** Consent answer (A6.3 step 5, switch on only): a classifier `yes`/`yes-and-more` on a reply with a standalone Hangul vowel jamo (character-class rule, NFC and NFKC) is lowered to `unclear` and re-asked once (audit `jamo-vowel-cap`); owner ratification 2026-11-28 after measurement 3 (FAILED 0/3 on ca-040, ca-350). The eval harness applies the same Core cap and records `rawLabel`; the plan binds `postRules: ['jamo-vowel-cap.v1']` (new plan digests in DECISIONS). Corpus unchanged; switch off: no effect.
+- **Changed.** Consent answer (A6.3, after the classifier and before the bind; switch on only): a classifier `yes`/`yes-and-more` on a reply with a standalone Hangul vowel jamo (character-class rule, NFC and NFKC) is lowered to `unclear` and re-asked once (audit `jamo-vowel-cap`); owner ratification 2026-11-28 after measurement 3 (FAILED 0/3 on ca-040, ca-350). The eval harness applies the same Core cap and records `rawLabel`; the plan binds `postRules: [CONSENT_JAMO_VOWEL_CAP_VERSION] (`jamo-vowel-cap.v2`)` (new plan digests in DECISIONS). Corpus unchanged; switch off: no effect.
 
 ## Unreleased — consent-answer.v3 (2026-11-28)
 

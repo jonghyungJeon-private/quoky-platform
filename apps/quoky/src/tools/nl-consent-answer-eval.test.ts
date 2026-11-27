@@ -383,7 +383,7 @@ describe('classifier-sees-content (A6.10) and the content-free payload', () => {
 
   it('the scorer applies the Core jamo-vowel cap: a raw yes on a standalone-vowel face scores unclear (not a wrong capture); the plan binds the rule', async () => {
     const plan = buildConsentAnswerPlan(corpus, sha256, { arm: 'remote', model: 'sonnet', effort: 'low', runs: 1, concurrency: 1 });
-    expect(plan.postRules).toEqual(['jamo-vowel-cap.v1']);
+    expect(plan.postRules).toEqual(['jamo-vowel-cap.v2']);
     const face = classifierCases.find((golden) => golden.gold === 'unclear' && /[\u3131-\u3163]/u.test(golden.reply) && /[\u314f-\u3163]/u.test(golden.reply)) as ConsentEvalCase;
     const records = await runConsentAnswerEvaluation({ cases: corpus.cases, plan: { ...plan, caseIds: [face.id], calls: 1 }, provider: scriptedProvider(() => '{"label":"yes"}') });
     expect(records[0]).toMatchObject({ rawLabel: 'yes', label: 'unclear', gold: 'unclear', outcome: 'answered' });

@@ -158,8 +158,10 @@ export function hasMixedScriptWord(text: string): boolean {
 }
 
 // Standalone vowel jamo by Unicode block (A6.3 standalone vowel jamo note): compatibility vowels, archaic compatibility vowels, conjoining
-// medial vowels incl. filler, Jamo Extended-B medial vowels, halfwidth vowels. A character class, never a word list.
-const STANDALONE_VOWEL_JAMO = /[\u314F-\u3163\u3187-\u318E\u1160-\u11A7\uD7B0-\uD7C6\uFFC2-\uFFDC]/u;
+// medial vowels (U+1160 JUNGSEONG FILLER excluded: invisible, not a vowel; NFKC maps U+3164/U+FFA0 to it), Jamo Extended-B medial vowels, halfwidth vowels. A character class, never a word list.
+/** Version of the cap's rule (range/normalization); the eval plan binds it, so a change to the regex must bump it. */
+export const CONSENT_JAMO_VOWEL_CAP_VERSION = 'jamo-vowel-cap.v2';
+const STANDALONE_VOWEL_JAMO = /[\u314F-\u3163\u3187-\u318E\u1161-\u11A7\uD7B0-\uD7C6\uFFC2-\uFFDC]/u;
 
 /**
  * A6.3 step 5 cap predicate (owner ratification 2026-11-28): true when the reply holds a Hangul vowel jamo that is not composed into a

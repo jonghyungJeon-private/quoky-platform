@@ -25,6 +25,7 @@ import {
   CONSENT_CLASSIFIER_TIMEOUT_MS,
   SUMMARY_CONSENT_QUESTION_VERSION,
   buildConsentClassifierPrompt,
+  CONSENT_JAMO_VOWEL_CAP_VERSION,
   capConsentLabelForJamoVowel,
   createConsentAnswerClassifier,
   executionLocalityOf,
@@ -157,7 +158,7 @@ export function consentAnswerPromptSha256(): string {
 }
 
 /** The Core post-classifier rules the scorer applies (A6.3 standalone vowel jamo note); a new rule changes the plan digest. */
-export const CONSENT_EVAL_POST_RULES: readonly string[] = ['jamo-vowel-cap.v1'];
+export const CONSENT_EVAL_POST_RULES: readonly string[] = [CONSENT_JAMO_VOWEL_CAP_VERSION];
 
 export function buildConsentAnswerPlan(
   corpus: ConsentEvalCorpus,

@@ -596,7 +596,7 @@ describe('A6.3 standalone vowel jamo note (owner ratification 2026-11-28): a sta
     [`${ieung}${eu}${ieung}`, 'consonant, vowel, consonant face'],
     [`\uc751\u3160\u3160`, 'a composed syllable followed by standalone vowels'],
     ['\u3187', 'archaic compatibility vowel'],
-    ['\u1161', 'conjoining medial vowel alone'],
+    ['\u1161', 'conjoining medial vowel alone (NFD-only)'],
     ['\ud7b0', 'Jamo Extended-B medial vowel'],
     ['\uffd7', 'halfwidth vowel'],
     ['\uffc2', 'halfwidth vowel a (NFKC path)'],
@@ -605,6 +605,9 @@ describe('A6.3 standalone vowel jamo note (owner ratification 2026-11-28): a sta
   });
   it.each([
     ['\u3147\u3147', 'consonants only'],
+    ['\uc751\u3164', 'yes + HANGUL FILLER (NFKC U+1160)'],
+    ['\uc751\uffa0', 'yes + halfwidth filler (NFKC U+1160)'],
+    ['\u1160', 'jungseong filler alone'],
     ['\u3147\u314b', 'consonants only'],
     ['\u3134\u3134', 'consonants only'],
     ['\uc751', 'composed syllable'],
