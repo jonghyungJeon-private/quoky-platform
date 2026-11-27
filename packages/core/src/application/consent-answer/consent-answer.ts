@@ -164,7 +164,7 @@ export const CONSENT_JAMO_VOWEL_CAP_VERSION = 'jamo-vowel-cap.v2';
 const STANDALONE_VOWEL_JAMO = /[\u314F-\u3163\u3187-\u318E\u1161-\u11A7\uD7B0-\uD7C6\uFFC2-\uFFDC]/u;
 
 /**
- * A6.3 step 5 cap predicate (owner ratification 2026-11-28): true when the reply holds a Hangul vowel jamo that is not composed into a
+ * A6.3 standalone vowel jamo cap predicate (applied between step 3, classifier, and step 4, bind; owner ratification 2026-11-28): true when the reply holds a Hangul vowel jamo that is not composed into a
  * syllable. NFC composes a conjoining lead + vowel into a syllable, so any vowel left is standalone; the NFKC form is checked too. Pure.
  */
 export function hasStandaloneHangulVowelJamo(reply: string): boolean {

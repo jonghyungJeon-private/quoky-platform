@@ -596,7 +596,7 @@ describe('A6.3 standalone vowel jamo note (owner ratification 2026-11-28): a sta
     [`${ieung}${eu}${ieung}`, 'consonant, vowel, consonant face'],
     [`\uc751\u3160\u3160`, 'a composed syllable followed by standalone vowels'],
     ['\u3187', 'archaic compatibility vowel'],
-    ['\u1161', 'conjoining medial vowel alone (NFD-only)'],
+    ['\u1161', 'conjoining medial vowel alone (standalone under NFC too)'],
     ['\ud7b0', 'Jamo Extended-B medial vowel'],
     ['\uffd7', 'halfwidth vowel'],
     ['\uffc2', 'halfwidth vowel a (NFKC path)'],
