@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [SemVer](https://semver.org/). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/).
 
+## Unreleased — A6-S4 measurement 1 and consent-answer.v2 (2026-11-27)
+
+- **Changed.** Consent-answer classifier prompt `consent-answer.v2` (sha256 `8d15143a...`): `yes-and-more` now leaves the asked thing unchanged (AM-2: a scope
+  change is `other`), replies that direct their own labelling or use look-alike letters of another script are `other`, hesitant shapes are `unclear`; generic
+  rules only, no examples. Builder, parser, payload and fail-closed behaviour unchanged. Recorded measurement 1 (v1 failed both arms, 0/3); new plan digests;
+  switch stays off, no gold or gate change, no v2 run yet.
+
 ## Unreleased — A6.3 contraction note (2026-11-26)
 
 - **Changed.** Consent-answer structural check: one letter-flanked ASCII or U+2019 apostrophe ("don't", "that’s fine") no longer cancels the reply before the classifier

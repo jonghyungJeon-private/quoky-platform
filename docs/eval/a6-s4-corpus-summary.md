@@ -1,4 +1,4 @@
-# A6-S4 consent-answer 코퍼스 요약 (소유자 승인 2026-11-26, 실행 안 함)
+# A6-S4 consent-answer 코퍼스 요약 (소유자 승인 2026-11-26, 측정 1 2026-11-27: v1 두 arm 실패 → v2 프롬프트, 미실행)
 
 ADR-0121 amendment A6 §A6.9(비준 기록 R6, 소유자 결정 r-01~r-04(2026-11-24)로 갱신), A6.10 A6-S4 행, a6-02. 2026-11-26 오프라인으로
 만들고 같은 날 리뷰 1차 수정을 반영했다. 모델 호출 0회. 소유자가 2026-11-26에 이 요약 기준으로 코퍼스를 승인했다(`status: "approved"`, 초안 372건은 eval 실패가 가리킬 때만
@@ -57,17 +57,38 @@ gold 라벨별: `yes` 94, `yes-and-more` 54, `no` 76, `other` 166, `unclear` 24.
 4. **최소치**: r-03 (2)로 `yes-and-more` ≥ 40, non-answer(`other`) ≥ 100이 확정됐다. classifier 단계 기준으로 센다.
 5. `origin: "owner-verdict"` 42건은 소유자 판정이 있는 사례다. `ref`가 SR-1, A2 사례나 A6.1 항목을 가리킨다. 나머지 372건은 초안(`drafted`)이다.
 
-## 계획한 run (아직 실행하지 않음)
+## 측정 1 (2026-11-27, `consent-answer.v1`, 소유자 승인 Strict run)
+
+| arm | 결과 | wrong capture (run별) | yes / no / yes-and-more recall | 보고서 |
+|---|---|---|---|---|
+| local (`qwen3:8b`) | **FAILED 0/3** | 27 / 27 / 27 | 88.6 % / 86.6 % / 74.4 % | `~/Library/Application Support/Quoky/eval-archive/a6s4-local-84a910bb-20261127/consent-answer-local.report.json` |
+| remote (sonnet low) | **FAILED 0/3** | 19 / 20 / 20 | 100 % / 100 % / 100·97.7·97.7 %, p95 약 2.1 s | `~/Library/Application Support/Quoky/eval-archive/a6s4-remote-84a910bb-20261127/consent-answer.report.json` |
+
+remote의 실패 묶음(gold는 그대로):
+1. 같은 대기 단계의 범위 변경을 `yes-and-more`로 읽음(gold `other`, AM-2/R6): ca-208, 213, 215, 216, 218, 220, 222, 223, 224, 229.
+2. 분류기에게 라벨을 지시하는 답을 `yes`/`yes-and-more`로 읽음(gold `other`): ca-387, 388, 394.
+3. 다른 문자(키릴·그리스) 모양 흉내 yes를 `yes`로 읽음(gold `other`): ca-395, 396, 397.
+4. 망설임 형태를 `yes`로 읽음(gold `unclear`, r-04): ca-040, 350, 042, 349.
+
+원인: v1 프롬프트가 `yes-and-more`를 "동의하고 추가 **또는 다른** 것을 요청"으로 정의해 AM-2(범위 변경은 `other`)와 어긋났다.
+결정: 프롬프트만 `consent-answer.v2`로 바꾼다(라벨 정의를 일반 규칙으로; 예시·문구 목록 없음). gold 변경 없음, 게이트 완화 없음(소유자 규칙).
+r-01/R6에 따라 asked 항목을 그대로 두고 **따로 더** 요청하는 답(항목 추가, 다른 소스 추가)은 계속 `yes-and-more`다.
+분류기 스위치는 꺼진 채이고 새로 배선한 것은 없다. 프롬프트 sha256 `8d15143adb46b5ea8fd0cdc3f659ff868a173de6746154f2f4505ed69ff78469`(v1 `e572105c…`).
+
+열린 소유자 질문: 구조 검사에 결정적 mixed-script 검사(라틴 글자와 키릴·그리스 글자를 섞은 단어는 `structural-fail`, UTS #39 선례)를 넣으면
+묶음 3을 모델 없이 막지만 비준된 A6.3 1단계를 바꾸므로 소유자 비준이 먼저 필요하다(구현하지 않음).
+
+## 다음 run (v2, 아직 실행하지 않음)
 
 | arm | 모델 | 호출 수 | 5 h 창 추정 |
 |---|---|---|---|
 | remote | sonnet, effort low, Claude CLI stronger tier, concurrency 4 | 339건 × 3 run = **1,017** (+ 장애 시 canary 최대 4) | 1,017 × 0.06 % = **약 61.0 %** |
 | local | `qwen3:8b`, Ollama digest `500a1f067a9f`로 고정, concurrency 1 | 339건 × 3 run = **1,017** | **0 %** (loopback Ollama, Claude 창 미사용) |
 
-- plan digest(현재 339건 코퍼스 기준, 2026-11-26 restage 뒤 값; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `7c026ba3f9bc7e0a365891c046c429a269a71401c9e003918e8e35da6fedf13a`,
-  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `8fc03eec77b02f5eafeb1efed46bcb051ae3cc2a461b6bb5560a4fa06ed57d89`.
-  (restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
-  코퍼스나 옵션을 바꾸면 둘 다 바뀐다.
+- plan digest(`consent-answer.v2`, 339건 코퍼스; 검증(오프라인, 모델 호출 없음): remote는 `pnpm eval:nl -- --mode consent-answer --arm remote`(기본 concurrency 4), local은 `pnpm eval:nl -- --mode consent-answer --arm local --concurrency 1`): remote `8320032b1f8e06532864e84eaeb9c2a53c9a91bb3067050e9c2db3ff56d1ccf5`,
+  local(`run-gates.sh`가 넘기는 `--concurrency 1`) `572b14c7cd36ec1d801261e281ce0e9ac5796f494e31c769f9555b0572602ed6`.
+  (v1 값 remote `7c026ba3…`, local `8fc03eec…`과 restage 전 334건 값 remote `556a1337…`, local `533f2036…`은 폐기됐다.)
+  코퍼스, 옵션이나 프롬프트를 바꾸면 둘 다 바뀐다. run마다 소유자 알림과 yes가 따로 필요하다(a6-12).
 - 7 d 창: 측정한 호출당 비율이 없다(run-gates는 5 h 창만 추정한다).
 - remote 61.0 %는 `GATES_MAX_EST_PCT`(30 %)를 넘는다. 그래서 `run-gates.sh`는 `GATES_OWNER_OK` 없이는 실행을 막는다.
   a6-02 순서대로 local arm을 먼저 돌리고, 통과하면 remote가 필요 없다. 그렇다면 Claude 창 비용은 0이다.
